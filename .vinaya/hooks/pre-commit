@@ -18,5 +18,5 @@ if [ ! -f apps/cli/dist/index.js ]; then
   echo "vinaya: apps/cli/dist/index.js is missing — run \`bun run --cwd apps/cli build\`" >&2
   exit 1
 fi
-node apps/cli/dist/index.js check --all --diff-only --local --skip-full || exit 1
+VINAYA_HOST=hook node apps/cli/dist/index.js check --all --diff-only --local --skip-full || exit 1
 # <<< vinaya:managed:pre-commit <<<

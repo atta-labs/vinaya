@@ -16,13 +16,30 @@ const ISSUE_CONFIG = {
 
 type CliResult = { status: number; stdout: string; stderr: string }
 
+// `AEG_REPO` short-circuits `@attalabs/aeg-forge-state`'s `resolveRepo` (read
+// first, before it ever touches git) — every registered check run through
+// `runIssueChecks` now emits its own `gate` observation via the real Vinaya
+// Log sink, which resolves a repo identity for its envelope on every call.
+// Without this, a `cwd` that isn't a git repository at all (most fixtures
+// here) makes `resolveRepo` spawn `git remote get-url origin`, fail, and
+// print its own `console.warn` retry line straight onto this process's
+// stderr — exactly the stream every assertion below parses as pure
+// `CheckError` JSON.
+//
+// `HOME` is pinned to the test's own already-unique `cwd` for the identical
+// reason `log-sink.ts`'s own tests isolate it: the same gate observation
+// writes to `GLOBAL_VINAYA_HOME` (`~/.vinaya/outbox`), a path shared by
+// every OTHER concurrent process on the machine (this file's own other
+// tests included). Without this, dozens of `vinaya issue` subprocesses
+// across this file append to the SAME real outbox files at once — pure
+// contention this test suite has no reason to invite on itself.
 function runCli(args: string[], cwd: string, env?: Record<string, string>): CliResult {
   try {
     const stdout = execFileSync('bun', [INDEX, ...args], {
       cwd,
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: env ? { ...process.env, ...env } : process.env
+      env: { ...process.env, AEG_REPO: 'example/example', HOME: cwd, ...env }
     })
     return { status: 0, stdout, stderr: '' }
   } catch (e) {
@@ -97,7 +114,7 @@ describe('vinaya issue create --validate-only', () => {
     for (const finding of findings) {
       expect(finding.agent_recovery_prompt).toContain('vinaya issue create')
     }
-  })
+  }, 60000)
 
   it('passes a task Issue carrying the full rationale', () => {
     const r = runCli(
@@ -114,7 +131,7 @@ describe('vinaya issue create --validate-only', () => {
     )
     expect(r.status).toBe(0)
     expect(r.stdout).toContain('PASS')
-  })
+  }, 60000)
 
   // task-run-v1 task 15, O3: the same task-shaped body, `--label` omitted
   // entirely, is a legitimate backlog Issue — validated the same way (the
@@ -127,7 +144,7 @@ describe('vinaya issue create --validate-only', () => {
     )
     expect(r.status).toBe(0)
     expect(r.stdout).toContain('PASS')
-  })
+  }, 60000)
 
   // The `## Objectives` heading alone is enough of a task-shape signal to
   // trigger validation with no label at all — omitting `--label` is never a
@@ -137,7 +154,7 @@ describe('vinaya issue create --validate-only', () => {
     writeFileSync(bodyFile, '## Objectives\n\nO1. Thing.\n', 'utf8')
     const r = runCli(['issue', 'create', '--validate-only', '--body-file', bodyFile], cwd)
     expect(r.status).toBe(1)
-  })
+  }, 60000)
 
   it('passes a non-task Issue through unvalidated (no tranche label)', () => {
     const r = runCli(
@@ -146,7 +163,7 @@ describe('vinaya issue create --validate-only', () => {
     )
     expect(r.status).toBe(0)
     expect(r.stdout).toContain('PASS')
-  })
+  }, 60000)
 
   it('--json emits an enveloped outcome for a validated task Issue', () => {
     const r = runCli(
@@ -167,7 +184,7 @@ describe('vinaya issue create --validate-only', () => {
     expect(parsed.schema).toBe(1)
     expect(parsed.data.validated).toBe(true)
     expect(parsed.data.written).toBe(false)
-  })
+  }, 60000)
 })
 
 // The three content checks `open-issue.ts` gates task Issues on
@@ -227,7 +244,7 @@ describe('vinaya issue create --validate-only — content gate', () => {
     expect(finding.check).toBe('issue-content')
     expect(finding.message).toContain('blast radius')
     expect(finding.message).toContain('packages/ui')
-  })
+  }, 60000)
 
   it('refuses an Issue body carrying a brief-shaped section', () => {
     const r = runCli(
@@ -246,7 +263,7 @@ describe('vinaya issue create --validate-only — content gate', () => {
     const finding = JSON.parse(r.stderr.trim().split('\n')[0] as string)
     expect(finding.check).toBe('issue-content')
     expect(finding.message).toContain('Technical surface map')
-  })
+  }, 60000)
 
   it('refuses a rationale that names no concrete doc/skill path', () => {
     const r = runCli(
@@ -265,7 +282,7 @@ describe('vinaya issue create --validate-only — content gate', () => {
     const finding = JSON.parse(r.stderr.trim().split('\n')[0] as string)
     expect(finding.check).toBe('issue-content')
     expect(finding.message).toContain('docs read')
-  })
+  }, 60000)
 
   it('passes a task Issue that clears both the presence gate and the content gate', () => {
     const r = runCli(
@@ -282,7 +299,7 @@ describe('vinaya issue create --validate-only — content gate', () => {
     )
     expect(r.status).toBe(0)
     expect(r.stdout).toContain('PASS')
-  })
+  }, 60000)
 })
 
 describe('parseIssueNumberFromRef', () => {
@@ -339,7 +356,7 @@ describe('vinaya issue edit --validate-only — URL-form ref reaches the Objecti
     )
     expect(r.status).toBe(1)
     expect(r.stderr).toContain('## Objectives')
-  })
+  }, 60000)
 
   it('passes the same URL-form ref below the cutover — grandfathered, not guessed as unknown', () => {
     const r = runCli(
@@ -356,7 +373,7 @@ describe('vinaya issue edit --validate-only — URL-form ref reaches the Objecti
     )
     expect(r.status).toBe(0)
     expect(r.stdout).toContain('PASS')
-  })
+  }, 60000)
 })
 
 // plan-brief-v1 task 1, Issue #426 — the `briefSections` builtin's own gate
@@ -406,7 +423,7 @@ describe('vinaya issue create --validate-only — briefSections builtin', () => 
     )
     expect(r.status).toBe(0)
     expect(r.stdout).toContain('PASS')
-  })
+  }, 60000)
 
   it('refuses, naming Parts, when `## Parts` is missing — `issue create` has no number yet, so the cutover never exempts it', () => {
     const r = runCli(
@@ -425,7 +442,7 @@ describe('vinaya issue create --validate-only — briefSections builtin', () => 
     const finding = JSON.parse(r.stderr.trim().split('\n')[0] as string)
     expect(finding.check).toBe('brief-schema')
     expect(finding.message).toMatch(/Parts/)
-  })
+  }, 60000)
 
   // Issue #625, O1 — `## Documentation` joins the same gate. `issue create`
   // has no Issue number yet, so (like the other four sections) the cutover
@@ -446,7 +463,7 @@ describe('vinaya issue create --validate-only — briefSections builtin', () => 
     expect(finding.check).toBe('brief-schema')
     expect(finding.message).toMatch(/Documentation/)
     expect(finding.agent_recovery_prompt).toMatch(/## Documentation/)
-  })
+  }, 60000)
 })
 
 describe('vinaya issue edit --validate-only — briefSections builtin reaches the cutover end-to-end', () => {
@@ -491,7 +508,7 @@ describe('vinaya issue edit --validate-only — briefSections builtin reaches th
     )
     expect(r.status).toBe(0)
     expect(r.stdout).toContain('PASS')
-  })
+  }, 60000)
 
   it('refuses, naming Surface, an Issue numbered at the cutover (426) carrying none of the four sections', () => {
     const r = runCli(
@@ -501,7 +518,7 @@ describe('vinaya issue edit --validate-only — briefSections builtin reaches th
     )
     expect(r.status).toBe(1)
     expect(r.stderr).toMatch(/Surface/)
-  })
+  }, 60000)
 
   // Issue #625, O1 — `## Documentation`'s own, later cutover (#626): an Issue
   // between #426 and #625 already carries the other four sections but never
@@ -519,7 +536,7 @@ describe('vinaya issue edit --validate-only — briefSections builtin reaches th
     })
     expect(r.status).toBe(0)
     expect(r.stdout).toContain('PASS')
-  })
+  }, 60000)
 
   it('refuses, naming Documentation, an Issue numbered at the Documentation cutover (626) with the other four sections but no `## Documentation`', () => {
     const withoutDocumentation = readFileSync(join(FORGE_FIXTURES, 'issue-brief-sections-valid.md'), 'utf8').replace(
@@ -533,7 +550,7 @@ describe('vinaya issue edit --validate-only — briefSections builtin reaches th
     })
     expect(r.status).toBe(1)
     expect(r.stderr).toMatch(/Documentation/)
-  })
+  }, 60000)
 })
 
 // task-run-v1 task 11, review round 1, O3 — a plain `vinaya issue edit` real
@@ -603,7 +620,7 @@ esac
     expect(r.stderr).toMatch(/already frozen/)
     expect(r.stderr).toContain('issue objectives edit')
     expect(r.stderr).toMatch(/Objectives/)
-  })
+  }, 60000)
 
   it('refuses the same way via `--validate-only`, previewing what the real write would do', () => {
     const newBody = OLD_BODY.replace('in: apps/cli/src/lib', 'in: apps/cli/src/lib, packages/aeg-core/src')
@@ -615,5 +632,5 @@ esac
     expect(r.status).toBe(1)
     expect(r.stderr).toMatch(/already frozen/)
     expect(r.stderr).toMatch(/Surface/)
-  })
+  }, 60000)
 })

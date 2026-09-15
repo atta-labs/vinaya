@@ -1336,7 +1336,7 @@ git rev-parse --git-dir 2>&1 || true
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const prePush = readFileSync(join(root, '.husky/pre-push'), 'utf-8')
     expect(prePush).toContain('xargs bunx biome check --no-errors-on-unmatched -- ||')
-    expect(prePush).toContain('xargs bun test -- ||')
+    expect(prePush).toContain('xargs bun test --timeout=30000 -- ||')
   })
 
   it("real subprocess: 'bun test --' really does refuse to treat a selected file named like a flag as one — without it, a tracked file named '--preload=<module>' would load and run that module (round-4 security review, HIGH)", () => {
