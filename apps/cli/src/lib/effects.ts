@@ -36,6 +36,7 @@ import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { acquireOwnership, type ControlStoreDeps, readEffect, writeEffect } from '@attalabs/aeg-core'
 import { GLOBAL_VINAYA_HOME } from './config.js'
+import { log as logEvent, type LogEventInput } from './log-sink.js'
 
 /** `join(GLOBAL_VINAYA_HOME, 'control-store')` — a sibling of `outboxRoot()` (`dev-review-loop/reviewer-dispatch.ts`), never nested inside the legacy outbox tree this store replaces. */
 export function controlStoreRoot(): string {
@@ -100,11 +101,36 @@ function sameIdentity(a: EffectIdentity, b: EffectIdentity): boolean {
   )
 }
 
+/**
+ * Builds this write's `effect` log family target (O1: "normalized ...
+ * attempted, observed and verified outcomes"). `effect_id` is the
+ * control-store `key` itself — the SAME idempotent identity every retry or
+ * idempotent replay of this write already shares, so two log lines carrying
+ * the same `effect_id` are provably the same effect observed twice, never a
+ * coincidence of two unrelated writes (O3's "idempotent observation
+ * identities").
+ */
+function effectLogTarget(
+  key: string,
+  identity: EffectIdentity
+): { effect_id: string; target: { kind: string; ref: string } } {
+  return { effect_id: key, target: { kind: identity.operation, ref: identity.target } }
+}
+
 export class EffectExecutor {
   constructor(
     private readonly deps: ControlStoreDeps,
     private readonly task: number,
-    private readonly epoch: number
+    private readonly epoch: number,
+    /**
+     * Injectable for a test that wants to assert on the emitted sequence —
+     * defaults to the real global sink every production call site relies on
+     * implicitly, the same bare-singleton convention `dispatch.ts`/
+     * `round-assess.ts` already use for the `dispatch`/`dev_review_loop`
+     * families. Never throws (`log()`'s own contract) — a log failure never
+     * fails the write it is only observing.
+     */
+    private readonly logEffectEvent: (e: LogEventInput) => void = logEvent
   ) {}
 
   execute(input: EffectExecuteInput): string {
@@ -153,9 +179,28 @@ export class EffectExecutor {
           `effects: '${key}' for task ${this.task} is recorded 'verified' with no url — this executor never writes that shape`
         )
       }
+      // An idempotent replay of an already-completed write — no new
+      // external effect happens, but O3 wants this observable too: a
+      // second `log()` line at the SAME `effect_id`, reporting the SAME
+      // true outcome, is what tells a reader "this ran twice and both
+      // times agreed" apart from "this never ran a second time at all."
+      this.logEffectEvent({
+        kind: 'effect',
+        event: 'verified',
+        outcome: 'success',
+        payload: {},
+        ...effectLogTarget(key, recorded)
+      })
       return recorded.url
     }
     if (recorded.status === 'uncertain') {
+      this.logEffectEvent({
+        kind: 'effect',
+        event: 'observed',
+        outcome: 'uncertain',
+        payload: {},
+        ...effectLogTarget(key, recorded)
+      })
       throw new EffectRetryRefusedError(
         this.task,
         key,
@@ -180,10 +225,31 @@ export class EffectExecutor {
         url: result.url,
         recordedAt: now
       })
+      this.logEffectEvent({
+        kind: 'effect',
+        event: 'observed',
+        outcome: 'success',
+        payload: {},
+        ...effectLogTarget(key, identity)
+      })
+      this.logEffectEvent({
+        kind: 'effect',
+        event: 'verified',
+        outcome: 'success',
+        payload: {},
+        ...effectLogTarget(key, identity)
+      })
       return result.url
     }
     if (result.outcome === 'ambiguous') {
       writeEffect(this.deps, this.task, this.epoch, key, { ...identity, status: 'uncertain', recordedAt: now })
+      this.logEffectEvent({
+        kind: 'effect',
+        event: 'observed',
+        outcome: 'uncertain',
+        payload: {},
+        ...effectLogTarget(key, identity)
+      })
       throw new EffectRetryRefusedError(this.task, key, result.reason)
     }
     // 'absent' — the intent was recorded but nothing actually landed
@@ -195,20 +261,52 @@ export class EffectExecutor {
   private postAndRecord(key: string, identity: EffectIdentity, poster: () => string): string {
     const startedAt = this.deps.now().toISOString()
     writeEffect(this.deps, this.task, this.epoch, key, { ...identity, status: 'started', recordedAt: startedAt })
-    const url = poster()
+    this.logEffectEvent({ kind: 'effect', event: 'attempted', payload: {}, ...effectLogTarget(key, identity) })
+    let url: string
+    try {
+      url = poster()
+    } catch (err) {
+      this.logEffectEvent({
+        kind: 'effect',
+        event: 'observed',
+        outcome: 'failure',
+        payload: {},
+        ...effectLogTarget(key, identity)
+      })
+      throw err
+    }
+    this.logEffectEvent({
+      kind: 'effect',
+      event: 'observed',
+      outcome: 'success',
+      payload: {},
+      ...effectLogTarget(key, identity)
+    })
     const verifiedAt = this.deps.now().toISOString()
     writeEffect(this.deps, this.task, this.epoch, key, { ...identity, status: 'verified', url, recordedAt: verifiedAt })
+    this.logEffectEvent({
+      kind: 'effect',
+      event: 'verified',
+      outcome: 'success',
+      payload: {},
+      ...effectLogTarget(key, identity)
+    })
     return url
   }
 }
 
 /** Acquires the task's next control-store epoch and returns an `EffectExecutor` bound to it — the convenience entry point every production call site uses; a unit test that wants to construct a stale epoch directly calls `acquireOwnership`/`new EffectExecutor` itself instead. */
-export function createEffectExecutor(deps: ControlStoreDeps, task: number, ownerId: string): EffectExecutor {
+export function createEffectExecutor(
+  deps: ControlStoreDeps,
+  task: number,
+  ownerId: string,
+  logEffectEvent: (e: LogEventInput) => void = logEvent
+): EffectExecutor {
   const acquired = acquireOwnership(deps, task, ownerId)
   if (!acquired.acquired) {
     throw new Error(
       `effects: could not acquire a control-store epoch for task ${task} — epoch ${acquired.currentEpoch} is currently held by ${acquired.currentOwnerId ?? 'unknown'}`
     )
   }
-  return new EffectExecutor(deps, task, acquired.epoch)
+  return new EffectExecutor(deps, task, acquired.epoch, logEffectEvent)
 }

@@ -25,6 +25,7 @@ import {
   type EffectReconcileResult,
   sha256Hex
 } from '../../../src/lib/effects'
+import type { LogEventInput } from '../../../src/lib/log-sink'
 
 let dir: string
 let deps: ControlStoreDeps
@@ -303,5 +304,122 @@ describe('EffectExecutor', () => {
         reconcile: neverReconcile
       })
     ).toThrow(EffectRetryRefusedError)
+  })
+})
+
+/**
+ * task-log-v1 task 6 (O1): the `effect` log family's `attempted`/`observed`/
+ * `verified` outcomes, one call per real external write and one idempotent
+ * `verified` observation per replay — never a second `attempted` for a
+ * replay that performed no new write. `effect_id` is the control-store
+ * `key` itself, held fixed across every event in one test (O3: idempotent
+ * observation identities).
+ */
+describe('EffectExecutor — effect log events (task-log-v1 task 6, O1/O3)', () => {
+  function loggingExecutor(task: number, ownerId = 'owner-a'): { executor: EffectExecutor; events: LogEventInput[] } {
+    const events: LogEventInput[] = []
+    const acquired = acquireOwnership(deps, task, ownerId)
+    if (!acquired.acquired) throw new Error('test setup: could not acquire a control-store epoch')
+    return { executor: new EffectExecutor(deps, task, acquired.epoch, (e) => events.push(e)), events }
+  }
+
+  it('emits attempted → observed(success) → verified(success), all under the same effect_id, for a fresh write', () => {
+    const { executor, events } = loggingExecutor(1)
+    executor.execute({
+      key: 'k1',
+      identity: { operation: 'pr-comment', target: 'pr:1', inputVersion: 1, payloadDigest: sha256Hex('body') },
+      poster: () => 'https://example.com/comment/1',
+      reconcile: neverReconcile
+    })
+    expect(events.map((e) => e.event)).toEqual(['attempted', 'observed', 'verified'])
+    const effectIds = new Set(events.map((e) => (e as { effect_id: string }).effect_id))
+    expect(effectIds).toEqual(new Set(['k1']))
+    expect((events[1] as { outcome: string }).outcome).toBe('success')
+    expect((events[2] as { outcome: string }).outcome).toBe('success')
+  })
+
+  it('an idempotent replay of an already-verified write emits only a verified(success) observation — never a second attempted', () => {
+    const { executor, events } = loggingExecutor(1)
+    const identity = { operation: 'pr-comment', target: 'pr:1', inputVersion: 1, payloadDigest: sha256Hex('body') }
+    executor.execute({ key: 'k1', identity, poster: () => 'https://example.com/comment/1', reconcile: neverReconcile })
+    events.length = 0
+    executor.execute({
+      key: 'k1',
+      identity,
+      poster: () => {
+        throw new Error('poster must not be called on an idempotent replay')
+      },
+      reconcile: neverReconcile
+    })
+    expect(events.map((e) => e.event)).toEqual(['verified'])
+    expect((events[0] as { effect_id: string }).effect_id).toBe('k1')
+  })
+
+  it('a poster failure emits attempted → observed(failure), never a verified event, and rethrows', () => {
+    const { executor, events } = loggingExecutor(1)
+    expect(() =>
+      executor.execute({
+        key: 'k1',
+        identity: { operation: 'pr-comment', target: 'pr:1', inputVersion: 1, payloadDigest: sha256Hex('body') },
+        poster: () => {
+          throw new Error('simulated crash')
+        },
+        reconcile: neverReconcile
+      })
+    ).toThrow('simulated crash')
+    expect(events.map((e) => e.event)).toEqual(['attempted', 'observed'])
+    expect((events[1] as { outcome: string }).outcome).toBe('failure')
+  })
+
+  it('a lost acknowledgement that reconciles ambiguous emits observed(uncertain), visible rather than silently dropped (O3: visible gaps)', () => {
+    const { executor, events } = loggingExecutor(1)
+    const identity = { operation: 'pr-comment', target: 'pr:1', inputVersion: 1, payloadDigest: sha256Hex('body') }
+    expect(() =>
+      executor.execute({
+        key: 'k1',
+        identity,
+        poster: () => {
+          throw new Error('crash')
+        },
+        reconcile: neverReconcile
+      })
+    ).toThrow('crash')
+    events.length = 0
+    expect(() =>
+      executor.execute({
+        key: 'k1',
+        identity,
+        poster: () => {
+          throw new Error('poster must not be called while reconciling')
+        },
+        reconcile: () => ({ outcome: 'ambiguous', reason: 'gh unreachable' })
+      })
+    ).toThrow(EffectRetryRefusedError)
+    expect(events.map((e) => e.event)).toEqual(['observed'])
+    expect((events[0] as { outcome: string; effect_id: string }).outcome).toBe('uncertain')
+    expect((events[0] as { effect_id: string }).effect_id).toBe('k1')
+  })
+
+  it("a reconciliation confirming the write already landed emits observed(success) → verified(success), never a repeated 'attempted'", () => {
+    const { executor, events } = loggingExecutor(1)
+    const identity = { operation: 'pr-comment', target: 'pr:1', inputVersion: 1, payloadDigest: sha256Hex('body') }
+    expect(() =>
+      executor.execute({
+        key: 'k1',
+        identity,
+        poster: () => {
+          throw new Error('crash')
+        },
+        reconcile: neverReconcile
+      })
+    ).toThrow('crash')
+    events.length = 0
+    executor.execute({
+      key: 'k1',
+      identity,
+      poster: () => 'should-not-be-called',
+      reconcile: () => ({ outcome: 'confirmed', url: 'https://example.com/comment/already-there' })
+    })
+    expect(events.map((e) => e.event)).toEqual(['observed', 'verified'])
   })
 })
