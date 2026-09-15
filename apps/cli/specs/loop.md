@@ -83,6 +83,15 @@ Whichever path is taken, a poll that still gives up names everything it waited f
 
 Round numbering: `round` advances only when a genuine review round concludes `changes_requested` and hands back another developer dispatch. A mechanical-gate-red retry and the confidence rule's one-extra-turn both resubmit the same round number — advancing on every developer dispatch would make a CI hiccup on round 1 silently trigger the round-1-never-asks confidence question.
 
+## The Documentation read-gate (`driver-lifecycle-v1` task 7, Issue #625)
+
+A brief's own `## Documentation` section (`issue-validation.ts`'s `parseIssueDocumentation`, rendered verbatim into the frozen brief right after Objectives) names the normative sources a task depends on, against the mechanism each governs. Whether one was actually read is never left to the Developer's own say-so: `dispatchRole` (`apps/cli/src/lib/dispatch.ts`), on every `developer` dispatch whose prompt carries that section, parses the URL-shaped sources out of it and passes them to `writeDispatchSettings`, which wires two hooks into that dispatch's own `--settings` file, keyed by this dispatch's `VINAYA_RUN_ID` (never a fixed path — two tasks dispatched concurrently on one box must never share one) —
+
+- **`PostToolUse` (matcher `WebFetch`)** appends every fetched URL to a per-run log.
+- **`Stop`** reads that log against the sources file and exits 2 — "prevents Claude from stopping, continues the conversation" (code.claude.com/docs/en/hooks) — naming every URL-shaped source not yet fetched, whenever one remains.
+
+Dormant, never blocking, in three cases: a prompt with no `## Documentation` section (a round-2+ fix prompt, never the full brief again — the sources were already read to reach round 1's PR), a section carrying only in-repo paths (read via `Read`, which this gate names no hook for — `WebFetch` is the only tool call it can observe), or the explicit `None` sentinel. A non-`developer` dispatch never gets a sources file at all — the obligation is `aeg-root/roles/developer.md`'s entry-gate item, not any other role's.
+
 ## The confidence rule
 
 Round 1 never asks for confidence. From round 2 on, a green gate reads `.vinaya-confidence` (written by the developer per `CONFIDENCE_PROMPT_LINE`'s instruction) before reviewers are ever dispatched:

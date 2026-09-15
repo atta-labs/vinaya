@@ -42,6 +42,7 @@ import {
   colourEnabled,
   colourLoopLine,
   recoverUsageFromDispatchTee,
+  unreadDocumentationSources,
   type DispatchTeeRecoveryDeps
 } from '../../src/lib/dispatch.js'
 
@@ -2224,6 +2225,165 @@ describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
       const argv = readFileSync(argvOut, 'utf8').trim().split('\n')
       expect(argv.includes('--settings')).toBe(false)
     }
+  })
+})
+
+describe('unreadDocumentationSources', () => {
+  it('reports a URL-shaped source never fetched', () => {
+    const sources = [{ source: 'https://example.com/docs/a', mechanism: 'the mechanism it governs' }]
+    expect(unreadDocumentationSources(sources, [])).toEqual(sources)
+  })
+
+  it('clears a source once its exact URL was fetched', () => {
+    const sources = [{ source: 'https://example.com/docs/a', mechanism: 'x' }]
+    expect(unreadDocumentationSources(sources, ['https://example.com/docs/a'])).toEqual([])
+  })
+
+  it('tolerates a trailing slash or fragment difference on either side', () => {
+    const sources = [{ source: 'https://example.com/docs/a/', mechanism: 'x' }]
+    expect(unreadDocumentationSources(sources, ['https://example.com/docs/a#section'])).toEqual([])
+  })
+
+  it('never reports a non-URL (in-repo path) source — WebFetch cannot answer for it', () => {
+    const sources = [{ source: 'apps/cli/specs/loop.md', mechanism: 'x' }]
+    expect(unreadDocumentationSources(sources, [])).toEqual([])
+  })
+})
+
+describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () => {
+  const DOC_PROMPT = [
+    '## Objectives',
+    '',
+    'O1. Fixture prompt for the Documentation read-gate.',
+    '',
+    '## Documentation',
+    '',
+    '- https://example.com/docs/fixture — the mechanism this fixture governs'
+  ].join('\n')
+
+  it('wires PostToolUse (WebFetch) and Stop hooks, and writes a per-run sources file, for a developer dispatch whose prompt carries `## Documentation`', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const argvOut = join(cwd, 'argv.out')
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\nfor a in "$@"; do echo "$a"; done > "${argvOut}"\ncat > /dev/null\necho '{}'\nexit 0\n`
+    )
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, DOC_PROMPT)
+
+    const runId = 'doc-gate-fixture-run-id'
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`,
+      { VINAYA_RUN_ID: runId }
+    )
+    expect(r.status).toBe(0)
+
+    const argv = readFileSync(argvOut, 'utf8').trim().split('\n')
+    const settingsPath = argv[argv.indexOf('--settings') + 1] as string
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as {
+      hooks: {
+        PostToolUse: Array<{ matcher: string; hooks: Array<{ command: string }> }>
+        Stop: Array<{ hooks: Array<{ command: string }> }>
+      }
+    }
+    expect(settings.hooks.PostToolUse[0]?.matcher).toBe('WebFetch')
+    const logScript = settings.hooks.PostToolUse[0]?.hooks[0]?.command.slice('bun "'.length, -1) as string
+    const stopScript = settings.hooks.Stop[0]?.hooks[0]?.command.slice('bun "'.length, -1) as string
+
+    const sourcesPath = join(home, '.vinaya', 'dispatch-settings', `documentation-sources-${runId}.json`)
+    expect(JSON.parse(readFileSync(sourcesPath, 'utf8'))).toEqual([
+      { source: 'https://example.com/docs/fixture', mechanism: 'the mechanism this fixture governs' }
+    ])
+
+    // Behavioral proof: Stop refuses (exit 2, naming the source) before any
+    // fetch is logged...
+    const beforeFetch = spawnSync('bun', [stopScript], {
+      input: JSON.stringify({ hook_event_name: 'Stop' }),
+      encoding: 'utf8',
+      env: { ...process.env, VINAYA_RUN_ID: runId }
+    })
+    expect(beforeFetch.status).toBe(2)
+    expect(beforeFetch.stderr).toMatch(/example\.com\/docs\/fixture/)
+
+    // ...the PostToolUse hook records a WebFetch call to that exact URL...
+    const logged = spawnSync('bun', [logScript], {
+      input: JSON.stringify({ tool_name: 'WebFetch', tool_input: { url: 'https://example.com/docs/fixture' } }),
+      encoding: 'utf8',
+      env: { ...process.env, VINAYA_RUN_ID: runId }
+    })
+    expect(logged.status).toBe(0)
+
+    // ...and Stop now passes.
+    const afterFetch = spawnSync('bun', [stopScript], {
+      input: JSON.stringify({ hook_event_name: 'Stop' }),
+      encoding: 'utf8',
+      env: { ...process.env, VINAYA_RUN_ID: runId }
+    })
+    expect(afterFetch.status).toBe(0)
+    expect(afterFetch.stderr.trim()).toBe('')
+  })
+
+  it('never wires a sources file, and Stop passes trivially, for a non-developer dispatch even with the same prompt', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    writeFakeBinary(binDir, 'claude', `#!/bin/sh\ncat > /dev/null\necho '{}'\nexit 0\n`)
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, DOC_PROMPT)
+
+    const runId = 'doc-gate-non-developer-run-id'
+    const r = runDispatch(
+      ['code-reviewer', '--agent', 'claude', '--prompt-file', promptFile],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`,
+      { VINAYA_RUN_ID: runId }
+    )
+    expect(r.status).toBe(0)
+
+    const sourcesPath = join(home, '.vinaya', 'dispatch-settings', `documentation-sources-${runId}.json`)
+    expect(existsSync(sourcesPath)).toBe(false)
+  })
+
+  it('Stop passes trivially for an unrelated run_id with no sources file at all — nothing owed, never a crash', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const argvOut = join(cwd, 'argv.out')
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\nfor a in "$@"; do echo "$a"; done > "${argvOut}"\ncat > /dev/null\necho '{}'\nexit 0\n`
+    )
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(0)
+
+    const argv = readFileSync(argvOut, 'utf8').trim().split('\n')
+    const settingsPath = argv[argv.indexOf('--settings') + 1] as string
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as {
+      hooks: { Stop: Array<{ hooks: Array<{ command: string }> }> }
+    }
+    const stopScript = settings.hooks.Stop[0]?.hooks[0]?.command.slice('bun "'.length, -1) as string
+    const result = spawnSync('bun', [stopScript], {
+      input: JSON.stringify({ hook_event_name: 'Stop' }),
+      encoding: 'utf8',
+      env: { ...process.env, VINAYA_RUN_ID: 'some-run-id-with-no-sources-file' }
+    })
+    expect(result.status).toBe(0)
   })
 })
 

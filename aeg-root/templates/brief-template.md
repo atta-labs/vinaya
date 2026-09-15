@@ -24,7 +24,7 @@ You are the AEG Developer. Read `aeg-root/roles/developer.md` first[, then the h
 
 ## Documentation
 
-[Copied verbatim from the Issue's own `## Documentation` section — every normative source this task depends on (a doc URL, an in-repo spec), each against the mechanism it governs: `- <source> — <mechanism>`. A task with no externally-normative source states the explicit `None` sentinel instead of an empty section. Placed immediately after Objectives, before the Developer holds a complete plan, so it is read first rather than skimmed as appendix evidence after the fact (Issue #625). Every source named here must be read before Step 0 — `aeg-root/roles/developer.md`'s entry gate names the obligation; a `PostToolUse`/`Stop` hook pair enforces it mechanically, not the Developer's own judgement.]
+[Copied verbatim from the Issue's own `## Documentation` section — every normative source this task depends on (a doc URL, an in-repo spec), each against the mechanism it governs: `- <source> — <mechanism>`. A task with no externally-normative source states the explicit `None` sentinel instead of an empty section. Placed immediately after Objectives, before the Developer holds a complete plan, so it is read first rather than skimmed as appendix evidence after the fact. Every source named here must be read before Step 0 — `aeg-root/roles/developer.md`'s entry gate names the obligation; a `PostToolUse`/`Stop` hook pair enforces it mechanically, not the Developer's own judgement.]
 
 ## 2. Context — read before doing anything
 
