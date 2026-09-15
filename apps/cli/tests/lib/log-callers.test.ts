@@ -60,6 +60,14 @@ import { fileURLToPath } from 'node:url'
  * "polls/reads, never appends or truncates" category `dispatch.ts` already
  * occupies in this allowlist, so it joins `CALLER_ALLOWLIST` alone, neither
  * truncate nor held-verdict allowlist.
+ *
+ * Amended by task-operator-v1 task 4 (#570): `resume.ts` and `cancel.ts`
+ * (`apps/cli/src/lib/task-tools/`) each call `log()` once, emitting the
+ * `operation`-family event their own handler's outcome resolves to (never a
+ * write under the outbox root — the outbox truncate/held-verdict allowlists
+ * are unaffected). Two real callers, not a single shared chokepoint, because
+ * each handler owns its own outcome classification independently of the
+ * other; both join `CALLER_ALLOWLIST` alone.
  */
 
 const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..', '..')
@@ -72,13 +80,17 @@ const DEV_REVIEW_LOOP_REVIEWER_DISPATCH_PATH = 'apps/cli/src/lib/dev-review-loop
 const DEV_REVIEW_LOOP_PUBLICATION_PATH = 'apps/cli/src/lib/dev-review-loop/publication.ts'
 const DEV_REVIEW_LOOP_PAUSE_RESUME_PATH = 'apps/cli/src/lib/dev-review-loop/pause-resume.ts'
 const DEV_REVIEW_LOOP_JOURNAL_HISTORY_PATH = 'apps/cli/src/lib/dev-review-loop/journal-history.ts'
+const TASK_TOOLS_RESUME_PATH = 'apps/cli/src/lib/task-tools/resume.ts'
+const TASK_TOOLS_CANCEL_PATH = 'apps/cli/src/lib/task-tools/cancel.ts'
 const FUTURE_CALLER_ALLOWLIST = new Set<string>([])
 const CALLER_ALLOWLIST = new Set([
   ...FUTURE_CALLER_ALLOWLIST,
   LOG_FLUSH_LIB_PATH,
   DISPATCH_PATH,
   DEV_REVIEW_LOOP_PATH,
-  DEV_REVIEW_LOOP_JOURNAL_HISTORY_PATH
+  DEV_REVIEW_LOOP_JOURNAL_HISTORY_PATH,
+  TASK_TOOLS_RESUME_PATH,
+  TASK_TOOLS_CANCEL_PATH
 ])
 const OUTBOX_TRUNCATE_ALLOWLIST = new Set([LOG_FLUSH_LIB_PATH])
 const OUTBOX_HELD_VERDICT_ALLOWLIST = new Set([
@@ -97,8 +109,14 @@ const OUTBOX_HELD_VERDICT_ALLOWLIST = new Set([
  * merely mentions `outbox` and separately calls a write. It cannot tell where
  * the write points, so the exemption is stated here rather than the check
  * silently widened.
+ *
+ * Amended by task-operator-v1 task 4 (#570): `resume.ts` durably claims one
+ * request per escalation under `~/.vinaya/task-resume/` — the identical
+ * sibling-of-the-outbox shape as `dispatch.ts`'s own resume record above,
+ * named in prose only because it reads the outbox root to derive the pause's
+ * own control-store path, never to write there.
  */
-const OUTBOX_RESUME_RECORD_ALLOWLIST = new Set([DISPATCH_PATH])
+const OUTBOX_RESUME_RECORD_ALLOWLIST = new Set([DISPATCH_PATH, TASK_TOOLS_RESUME_PATH])
 
 function sourceFiles(dir: string, prefix: string): [string, string][] {
   const out: [string, string][] = []
