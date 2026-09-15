@@ -36,7 +36,8 @@ import { applyTierFloor, deriveTierFromDiff, readTierFromPrBody } from './pr-tie
 
 /**
  * Renders the Issue's `## Documentation` section verbatim — one bullet per
- * source/mechanism pair, or the `None` sentinel line. Called only when
+ * source/mechanism pair (with its `(O<n>)` citation, when present — O3,
+ * Issue #625), or the `None` sentinel line. Called only when
  * `facts.documentation` is not the absent-section sentinel (see the join in
  * `renderBrief`), so both variants here always have something real to print.
  */
@@ -44,7 +45,14 @@ function renderDocumentation(documentation: IssueDocumentation): string {
   if (documentation.kind === 'none') {
     return ['## Documentation', '', 'None — no normative external source governs this task.'].join('\n')
   }
-  return ['## Documentation', '', ...documentation.sources.map((s) => `- ${s.source} — ${s.mechanism}`)].join('\n')
+  return [
+    '## Documentation',
+    '',
+    ...documentation.sources.map((s) => {
+      const citation = s.objectiveIds.length > 0 ? ` (${s.objectiveIds.map((id) => `O${id}`).join(', ')})` : ''
+      return `- ${s.source} — ${s.mechanism}${citation}`
+    })
+  ].join('\n')
 }
 
 export type RationaleFieldKey =

@@ -2230,22 +2230,22 @@ describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
 
 describe('unreadDocumentationSources', () => {
   it('reports a URL-shaped source never fetched', () => {
-    const sources = [{ source: 'https://example.com/docs/a', mechanism: 'the mechanism it governs' }]
+    const sources = [{ source: 'https://example.com/docs/a', mechanism: 'the mechanism it governs', objectiveIds: [1] }]
     expect(unreadDocumentationSources(sources, [])).toEqual(sources)
   })
 
   it('clears a source once its exact URL was fetched', () => {
-    const sources = [{ source: 'https://example.com/docs/a', mechanism: 'x' }]
+    const sources = [{ source: 'https://example.com/docs/a', mechanism: 'x', objectiveIds: [1] }]
     expect(unreadDocumentationSources(sources, ['https://example.com/docs/a'])).toEqual([])
   })
 
   it('tolerates a trailing slash or fragment difference on either side', () => {
-    const sources = [{ source: 'https://example.com/docs/a/', mechanism: 'x' }]
+    const sources = [{ source: 'https://example.com/docs/a/', mechanism: 'x', objectiveIds: [1] }]
     expect(unreadDocumentationSources(sources, ['https://example.com/docs/a#section'])).toEqual([])
   })
 
   it('never reports a non-URL (in-repo path) source — WebFetch cannot answer for it', () => {
-    const sources = [{ source: 'apps/cli/specs/loop.md', mechanism: 'x' }]
+    const sources = [{ source: 'apps/cli/specs/loop.md', mechanism: 'x', objectiveIds: [1] }]
     expect(unreadDocumentationSources(sources, [])).toEqual([])
   })
 })
@@ -2298,7 +2298,7 @@ describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () =
 
     const sourcesPath = join(home, '.vinaya', 'dispatch-settings', `documentation-sources-${runId}.json`)
     expect(JSON.parse(readFileSync(sourcesPath, 'utf8'))).toEqual([
-      { source: 'https://example.com/docs/fixture', mechanism: 'the mechanism this fixture governs' }
+      { source: 'https://example.com/docs/fixture', mechanism: 'the mechanism this fixture governs', objectiveIds: [] }
     ])
 
     // Behavioral proof: Stop refuses (exit 2, naming the source) before any

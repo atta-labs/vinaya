@@ -554,24 +554,34 @@ export function parseIssueStopConditions(body: string): ParsedIssueSection<strin
   return { ok: true, value: items }
 }
 
-export type IssueDocumentationSource = { source: string; mechanism: string }
+export type IssueDocumentationSource = { source: string; mechanism: string; objectiveIds: number[] }
 export type IssueDocumentation = { kind: 'none' } | { kind: 'sources'; sources: IssueDocumentationSource[] }
 
 /** The explicit opt-out for a task with no externally-normative source — same sentinel shape as `Test Plan: unit-tests-only`/"No doc updates required". */
 const NO_DOCUMENTATION_SENTINEL_RE = /^none\b/i
 
-/** One well-formed `## Documentation` line: a source, then the mechanism it governs, split on the same hyphen/en-dash/em-dash separator `## Parts`'s `Part <n> (<refs>) — <outcome>` line uses. */
-const ISSUE_DOCUMENTATION_LINE_RE = /^[-*]\s+(.+?)\s*[-—–]\s*(.+)$/
+/**
+ * One well-formed `## Documentation` line: a source, then the mechanism it
+ * governs, split on the same hyphen/en-dash/em-dash separator `## Parts`'s
+ * `Part <n> (<refs>) — <outcome>` line uses, with an OPTIONAL trailing
+ * `(O<n>[, O<m>])` citation — same grammar Parts cites Objectives with,
+ * moved to the end here since a source/mechanism pair reads naturally before
+ * the citation that grades it (O3, Issue #625). The citation group only ever
+ * matches a real `O<digits>` list, so a mechanism whose own prose ends in an
+ * ordinary parenthetical (never shaped like `(O2)`) is never mistaken for one
+ * — it stays part of the mechanism capture instead.
+ */
+const ISSUE_DOCUMENTATION_LINE_RE = /^[-*]\s+(.+?)\s*[-—–]\s*(.+?)(?:\s*\((O\d+(?:\s*,\s*O\d+)*)\))?$/i
 
 /**
  * `## Documentation` — one bullet per normative source (a doc URL or an
- * in-repo path) against the mechanism it governs: `- <source> — <mechanism>`.
- * A task with no externally-documented mechanism states the explicit `None`
- * sentinel instead of an empty section — silence is never read as "nothing to
- * cite" (Issue #625: the failure this section closes is a source assumed
- * read, never verified). `topLevelSectionText`/the dash-split grammar mirror
- * `parseIssueParts`'s own shape, so this reads as one more judgment section,
- * not a bespoke grammar.
+ * in-repo path) against the mechanism it governs: `- <source> — <mechanism>
+ * (O<n>)`. A task with no externally-documented mechanism states the
+ * explicit `None` sentinel instead of an empty section — silence is never
+ * read as "nothing to cite" (Issue #625: the failure this section closes is
+ * a source assumed read, never verified). `topLevelSectionText`/the
+ * dash-split grammar mirror `parseIssueParts`'s own shape, so this reads as
+ * one more judgment section, not a bespoke grammar.
  */
 export function parseIssueDocumentation(body: string): ParsedIssueSection<IssueDocumentation> {
   const section = topLevelSectionText(body, 'Documentation')
@@ -602,7 +612,10 @@ export function parseIssueDocumentation(body: string): ParsedIssueSection<IssueD
       errors.push(`"${line}" is missing a source or a mechanism — a Documentation line needs both.`)
       continue
     }
-    sources.push({ source, mechanism })
+    const objectiveIds = m[3]
+      ? [...(m[3] as string).matchAll(/O(\d+)/gi)].map((r) => Number.parseInt(r[1] as string, 10))
+      : []
+    sources.push({ source, mechanism, objectiveIds })
   }
   if (sources.length === 0 && errors.length === 0) {
     errors.push(
@@ -611,6 +624,40 @@ export function parseIssueDocumentation(body: string): ParsedIssueSection<IssueD
   }
   if (errors.length > 0) return { ok: false, errors }
   return { ok: true, value: { kind: 'sources', sources } }
+}
+
+/**
+ * **O3 — the Documentation obligation is graded, not assumed.** When
+ * `## Documentation` names at least one real source (`kind: 'sources'`, the
+ * `None` sentinel is exempt — nothing to grade), at least one of those
+ * sources must cite a real `## Objectives` id via the trailing `(O<n>)`
+ * grammar `parseIssueDocumentation` accepts. This is what lets the Reviewer's
+ * ordinary `O<n>: MET | NOT MET` grading (already run on every task) cover
+ * whether the cited source's mechanism/version was actually incorporated,
+ * rather than leaving the obligation to compete on salience alone with
+ * nothing checking it (Issue #625's own finding). The review-gate stays the
+ * backstop that catches a wrong `MET`; this check only proves a graded home
+ * for the obligation exists at all.
+ *
+ * Passes trivially when Documentation or Objectives fails to parse —
+ * `checkIssueBriefSections`'s own Documentation branch and
+ * `checkIssueObjectives` already report that; this function only ever
+ * reports a genuinely uncited, well-formed Documentation section.
+ */
+export function checkDocumentationCitesObjective(body: string): IssueSectionResult {
+  const documentation = parseIssueDocumentation(body)
+  if (!documentation.ok || documentation.value.kind === 'none') return { status: 'pass', errors: [] }
+  const objectives = objectivesOf(body)
+  if (!objectives.ok) return { status: 'pass', errors: [] }
+  const definedIds = new Set(objectives.objectives.map((o) => Number.parseInt(o.id.slice(1), 10)))
+  const cited = documentation.value.sources.some((s) => s.objectiveIds.some((id) => definedIds.has(id)))
+  if (cited) return { status: 'pass', errors: [] }
+  return {
+    status: 'fail',
+    errors: [
+      "issue-validation Documentation: `## Documentation` names a real source but none cites a defined `## Objectives` id — add `(O<n>)` to at least one source line so the Reviewer's ordinary Objectives grading covers whether its mechanism/version was actually incorporated."
+    ]
+  }
 }
 
 /**
@@ -663,6 +710,7 @@ export function checkIssueBriefSections(body: string, issueNumber: number | null
   if (issueNumber === null || issueNumber >= DOCUMENTATION_SINCE_ISSUE) {
     const documentation = parseIssueDocumentation(body)
     if (!documentation.ok) errors.push(...documentation.errors.map((e) => `issue-validation Documentation: ${e}`))
+    else errors.push(...checkDocumentationCitesObjective(body).errors)
   }
 
   return { status: errors.length > 0 ? 'fail' : 'pass', errors }

@@ -226,6 +226,7 @@ export {
   checkBlastRadiusScope,
   checkConflictCompleteness,
   checkDocsWithinSurface,
+  checkDocumentationCitesObjective,
   checkIssueBriefSections,
   checkIssueObjectives,
   checkIssueRationale,
