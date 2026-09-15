@@ -398,7 +398,22 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
   // existing lazy-on-first-log behavior this never changes.
   const warmup = (): void => {
     doctrine()
-    resolveRepoOnce()
+    // `resolveRepo` (`@attalabs/aeg-forge-state`) prints its own
+    // `console.warn` straight to this process's real stderr when the
+    // lookup fails (no git repo, or a repo with no configured `origin`) —
+    // reasonable for its own pre-existing callers, but this warmup call is
+    // background telemetry setup, not a user-facing action, and the noise
+    // lands on the SAME stream a caller like `runIssueChecks`/`vinaya check`
+    // routes a check's own findings through. Suppressed only around this
+    // ONE call: it is the very first thing `runChecks` does, before any
+    // check has even spawned, so nothing else could legitimately want to
+    // warn during this exact window — restored the moment the promise
+    // settles, success or failure, never left off.
+    const originalWarn = console.warn
+    console.warn = () => {}
+    resolveRepoOnce().finally(() => {
+      console.warn = originalWarn
+    })
   }
 
   return { log, runId, warmup }
