@@ -50,3 +50,4 @@ tests/commands/operator-role.test.ts
 tests/lib/task-tools/start.test.ts
 tests/lib/task-tools/cancel.test.ts
 tests/lib/broker/request-effect.test.ts
+tests/checks/runner/correlation.test.ts
