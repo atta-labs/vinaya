@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { cpus } from 'node:os'
 import { globToRegex, type GateOutcome } from '@attalabs/aeg-core'
-import { log as defaultLog, type LogEventInput } from '../lib/log-sink.js'
+import { log as defaultLog, warmupLogSink, type LogEventInput } from '../lib/log-sink.js'
 import { CHECK_SCHEMA_VERSION, type CheckError, type CheckOutcome, type CheckSpec, type CheckStatus } from './contract'
 
 export type RunOptions = {
@@ -681,6 +681,11 @@ async function runOne(
 export async function runChecks(specs: CheckSpec[], opts: RunOptions): Promise<CheckOutcome[]> {
   const callerEnv = opts.callerEnv ?? process.env
   const logFn = opts.log ?? defaultLog
+  // Only for the real default sink — an injected test logger has no
+  // doctrine/repo resolution to warm, and calling this before a burst of
+  // concurrent check completions is precisely what closes the race
+  // `warmupLogSink`'s own doc comment describes.
+  if (opts.log === undefined) warmupLogSink()
   const results: CheckOutcome[] = new Array(specs.length)
   const fingerprints: string[] = new Array(specs.length)
   const toRun: number[] = []

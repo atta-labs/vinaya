@@ -273,6 +273,7 @@ function appendLine(path: string, line: string, warn: (message: string) => void)
 export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
   log: (e: LogEventInput) => void
   runId: string
+  warmup: () => void
 } {
   const deps: LogSinkDeps = { ...defaultDeps(), ...overrides }
   const runId = deps.env().VINAYA_RUN_ID || randomUUID()
@@ -379,7 +380,28 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
     }
   }
 
-  return { log, runId }
+  // Forces `doctrine()`'s memoized resolution now, on demand, instead of
+  // lazily on this sink's first `log()` call. `resolveDoctrine` is a
+  // synchronous, blocking `execFileSync` — cheap once, but measured live:
+  // when its FIRST run lands during a burst of several child processes
+  // exiting at once (`runChecks` dispatching many checks concurrently, each
+  // calling `log()` on completion), the resulting event-loop stall can
+  // coincide with another child's own 'close' event delivery closely enough
+  // that the event is never delivered at all — the check's own process
+  // confirmed dead, but nothing left to resolve the `runOne` promise
+  // waiting on it (see `apps/cli/src/checks/runner.ts`'s own safety-net
+  // timeout, added for the case this call site cannot prevent). Calling
+  // this once, deliberately, BEFORE that burst begins — `runChecks`'s own
+  // job — means the blocking work is already done and cached by the time
+  // any check's process has even been spawned, let alone exited. Harmless
+  // to call from elsewhere or not at all: every other caller keeps the
+  // existing lazy-on-first-log behavior this never changes.
+  const warmup = (): void => {
+    doctrine()
+    resolveRepoOnce()
+  }
+
+  return { log, runId, warmup }
 }
 
 const defaultSink = createLogSink()
@@ -407,4 +429,15 @@ export function currentRunId(): string {
  */
 export function log(e: LogEventInput): void {
   defaultSink.log(e)
+}
+
+/**
+ * Forces the default sink's one-time doctrine/repo resolution now rather
+ * than on its first `log()` call — see `createLogSink`'s own `warmup` for
+ * why this matters and when to call it (`runChecks`, before dispatching a
+ * batch of checks whose completions could otherwise cluster around that
+ * first call). A no-op on every subsequent call in the same process.
+ */
+export function warmupLogSink(): void {
+  defaultSink.warmup()
 }
