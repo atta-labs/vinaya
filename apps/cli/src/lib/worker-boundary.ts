@@ -165,7 +165,7 @@ function sbSubpathAllows(operations: string, dirs: readonly string[]): string {
  *    the PROFILE still denies file access to that real home path except for
  *    the caller's own named `readWriteDirs` (the target worktree/scratch
  *    dir, and `GLOBAL_VINAYA_HOME` — a Worker's own later `vinaya`
- *    subcommands need to read config and write outbox/resume records there).
+ *    subcommands need to read config and write their own log/resume records there).
  *    The env value and the filesystem permission are independent: Seatbelt
  *    enforces the latter regardless of what `$HOME` merely says.
  */
@@ -272,7 +272,7 @@ export type WorkerBoundaryLaunchOpts = {
   args: readonly string[]
   /** The role's own confined workspace — the target worktree (developer/operator) or the reviewer's own scratch copy (`reviewer-isolation.ts`). */
   allowedDir: string
-  /** `GLOBAL_VINAYA_HOME` (`config.ts`) — carved out read/write alongside `allowedDir` so a Worker's own later `vinaya` subcommands (config reads, outbox/resume writes) keep working confined. */
+  /** `GLOBAL_VINAYA_HOME` (`config.ts`) — carved out read/write alongside `allowedDir` so a Worker's own later `vinaya` subcommands (config reads, log/resume writes) keep working confined. */
   vinayaHomeDir: string
 }
 
