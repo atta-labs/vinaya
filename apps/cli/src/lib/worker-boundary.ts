@@ -429,6 +429,28 @@ function resolveGitExecPath(): string | null {
   }
 }
 
+/**
+ * Round 5 review, BLOCKER: this dispatcher's own toolchain is bun
+ * (`bun.lock`, `bunfig.toml`) — a confined role must be able to exec `bun`
+ * itself for `bun install`/`bun test` (O1's own build/test-subprocess
+ * requirement) and for `writeDispatchSettings`'s `bun "${scriptPath}"`
+ * PreToolUse hook command. `CANDIDATE_SYSTEM_BIN_DIRS` never covered this:
+ * a standard bun install (`~/.bun/bin`, verified live on the authoring
+ * host) sits under `realHome`, which this profile denies for file-read
+ * and grants no process-exec over. No candidate-directory list is needed
+ * here at all — this dispatcher process is ITSELF running under bun, so
+ * `process.execPath` is the exact, live bun binary on this exact host,
+ * the same "never assumed, verified live" posture `resolveGitExecPath`
+ * above already takes for `git`.
+ */
+function resolveBunExecDir(): string | null {
+  try {
+    return dirname(realpathSync(process.execPath))
+  } catch {
+    return null
+  }
+}
+
 function resolveSshSockCanon(): string {
   const raw = process.env.SSH_AUTH_SOCK
   if (!raw) return '/nonexistent/vinaya-worker-boundary-no-ssh-sock'
@@ -605,9 +627,16 @@ export function resolveWorkerBoundaryLaunch(
     )
 
     const gitExecPath = resolveGitExecPath()
+    const bunExecDir = resolveBunExecDir()
     const systemBinDirs = CANDIDATE_SYSTEM_BIN_DIRS.filter((d) => existsSync(d)).map((d) => realpathSync(d))
     const execAllowDirs = Array.from(
-      new Set([allowedDirReal, runtimeDir, ...(gitExecPath ? [gitExecPath] : []), ...systemBinDirs])
+      new Set([
+        allowedDirReal,
+        runtimeDir,
+        ...(gitExecPath ? [gitExecPath] : []),
+        ...(bunExecDir ? [bunExecDir] : []),
+        ...systemBinDirs
+      ])
     )
 
     const credentialHelperDenyLiterals = gitExecPath

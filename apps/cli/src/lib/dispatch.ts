@@ -2087,6 +2087,11 @@ export async function dispatchRole(
   }
 
   const baseArgs = opts.resumeId ? vendor.resumeArgs(opts.resumeId, opts.model) : vendor.args(opts.model)
+  // Computed here, once — both the settings-write fail-closed check below
+  // and the boundary-resolution block further down read the SAME value,
+  // never two independently-evaluated `loadConfig()` calls that could
+  // observe a config change mid-dispatch and disagree with each other.
+  const requireIsolation = loadConfig()?.dispatch?.requireWorkerIsolation ?? process.platform === 'darwin'
   // O1: claude only — see `writeDispatchSettings`'s own doc comment for why
   // Codex/Gemini are not silently included. Computed here, once, before the
   // 'dispatched' log line — moved up from inside the spawn `Promise` (this
@@ -2094,6 +2099,45 @@ export async function dispatchRole(
   // is what an unattended start's boundary resolution wraps below, rather
   // than wrapping a pre-settings argv and reconciling the two later.
   const dispatchSettingsPath = agent === 'claude' ? writeDispatchSettings() : null
+  // Round 5 review, MEDIUM: an unattended, isolation-required Claude dispatch
+  // whose settings write failed (disk/permission fault under
+  // `GLOBAL_VINAYA_HOME/dispatch-settings`) previously dropped `--settings`
+  // silently and launched anyway — the PreToolUse background-deny hook the
+  // brief names a trap to preserve would never load, with no refusal and no
+  // surfaced error, unlike O3's own boundary-unavailable path. Fail closed
+  // here the same way: refuse before any spawn, exactly as the
+  // binary-not-resolvable and boundary-unavailable refusals below do.
+  if (agent === 'claude' && opts.unattended === true && requireIsolation && dispatchSettingsPath === null) {
+    const durationMs = Date.now() - start
+    const priorSize = sizeOfSafe(outboxPath)
+    log({
+      kind: 'dispatch',
+      event: 'dispatch_failed',
+      payload: {},
+      target_role: role,
+      model: resolvedModel,
+      ...roundField,
+      effect_id: effectId,
+      reason: 'refused',
+      usage: null,
+      duration_ms: durationMs
+    })
+    writeLifecycle(
+      `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended start requires the PreToolUse ` +
+        `background-deny hook's settings file, which could not be written under ${GLOBAL_VINAYA_HOME}/dispatch-settings`
+    )
+    patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason: 'refused' })
+    await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
+    return {
+      exitCode: null,
+      durationMs,
+      usage: null,
+      resumeId: null,
+      timedOut: false,
+      failureReason: 'refused',
+      effectId
+    }
+  }
   const spawnArgs = dispatchSettingsPath ? [...baseArgs, '--settings', dispatchSettingsPath] : baseArgs
 
   // O1/O3 (task 3, #560): an unattended start must run inside the proven
@@ -2113,7 +2157,6 @@ export async function dispatchRole(
   // keeps today's exact behavior unless a repo explicitly opts in.
   let boundaryLaunch: ReturnType<typeof resolveWorkerBoundaryLaunch> | null = null
   let boundaryAllowedDir: string | null = null
-  const requireIsolation = loadConfig()?.dispatch?.requireWorkerIsolation ?? process.platform === 'darwin'
   if (opts.unattended === true && requireIsolation) {
     // O2 (round 2 review, CRITICAL): when no real worktree exists yet
     // (`opts.cwd` omitted — the round-1 Developer bootstrap, whose own Step 0
