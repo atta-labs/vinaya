@@ -654,6 +654,38 @@ export const VinayaConfigSchema = z.object({
         })
       }
     })
+    .optional(),
+  // Where the developer-review loop's own round-end flush publishes telemetry
+  // (Issue #626, O1/O2) — `apps/cli/src/lib/log-flush.ts`'s
+  // `flushOutbox`, called in-process at every round end. Absent (the default
+  // for every repo that has never set this key): the round-end flush is a
+  // no-op — telemetry stays in the local, already-bounded/rotated outbox
+  // (`log-sink.ts`, out of this task's surface) until an operator explicitly
+  // runs `vinaya log flush --issue <n>` by hand. NEVER falls back to the
+  // task's own Issue — that Issue is precisely the surface
+  // `fetchFrozenBrief` must read to dispatch the next developer round, and
+  // publishing unbounded telemetry there is the defect this key exists to
+  // stop (Issue #626: Issue #566's comment payload reached 1,597,599 bytes
+  // and broke `fetchFrozenBrief`'s own `gh issue view --json comments`
+  // read). `resolveLogPublishTarget`/`resolveLogPublishMaxChunksPerFlush`
+  // (below) are the two read sides; `dev-review-loop.ts`'s own
+  // `resolveRoundEndFlushTarget` additionally refuses a configured `issue`
+  // equal to the task being flushed, for the same reason.
+  logPublish: z
+    .object({
+      issue: z.number().int().positive().optional(),
+      pr: z.number().int().positive().optional(),
+      // Caps how many comments (`FlushChunk`s, each up to
+      // `FORGE_COMMENT_MAX_CHARS`) one `flushOutbox` call posts to this
+      // target — the rest stay queued, untouched, in the outbox for a later
+      // flush (O2's bound, never a drop: `log-flush.ts`'s durability
+      // guarantee — truncate only what the target confirmed — is
+      // unaffected). Absent defaults to `DEFAULT_MAX_CHUNKS_PER_FLUSH`.
+      maxChunksPerFlush: z.number().int().positive().optional()
+    })
+    .refine((v) => !(v.issue !== undefined && v.pr !== undefined), {
+      message: 'logPublish: set at most one of issue/pr, not both'
+    })
     .optional()
 })
 
@@ -853,6 +885,76 @@ export function resolveReviewPolicy(config: VinayaConfig | null): ReviewPolicy {
     securityThreshold: securityThreshold as ReviewPolicy['securityThreshold'],
     maxRounds
   }
+}
+
+/** Exactly one of `issue`/`pr` — mirrors `log-flush.ts`'s own `LogFlushTarget` shape without importing it (avoids a `config.ts` → `log-flush.ts` dependency; `log-flush.ts` already imports from `config.ts`, not the reverse). */
+export type LogPublishTarget = { issue: number } | { pr: number }
+
+/**
+ * The round-end flush's configured destination (Issue #626,
+ * O1) — `config?.logPublish`'s `issue`/`pr`, or `null` when the key is
+ * absent, which means "publish nowhere automatically." This is an
+ * operational choice, not a trust decision (unlike `principals`/
+ * `reviewPolicy`), so callers pass `loadConfig()` (the local, repo-walking
+ * resolution), the same sourcing `dispatch.timeoutMs`/`prePush.alwaysRun`/
+ * `report.commandTimeoutMs` already use — never `loadTrustAnchorConfig()`.
+ */
+export function resolveLogPublishTarget(config: VinayaConfig | null): LogPublishTarget | null {
+  const raw = config?.logPublish
+  if (!raw) return null
+  if (raw.issue !== undefined) return { issue: raw.issue }
+  if (raw.pr !== undefined) return { pr: raw.pr }
+  return null
+}
+
+/** `log-flush.ts`'s own default when a caller passes no `maxChunksPerFlush` at all — kept here, next to the config field it backs, so the schema comment and the default never drift apart. */
+export const DEFAULT_MAX_CHUNKS_PER_FLUSH = 5
+
+/** The effective per-flush chunk bound (O2): `config?.logPublish?.maxChunksPerFlush` when a valid positive integer, else `DEFAULT_MAX_CHUNKS_PER_FLUSH`. Same sourcing as `resolveLogPublishTarget`. */
+export function resolveLogPublishMaxChunksPerFlush(config: VinayaConfig | null): number {
+  const n = config?.logPublish?.maxChunksPerFlush
+  return typeof n === 'number' && Number.isInteger(n) && n > 0 ? n : DEFAULT_MAX_CHUNKS_PER_FLUSH
+}
+
+/**
+ * The round-end flush's own destination for `task` (Issue
+ * #626, O1) — `resolveLogPublishTarget`'s result, or `null` when either
+ * unconfigured or configured to the very Issue being flushed. That second
+ * case is refused, not merely discouraged: it would silently recreate the
+ * exact defect this task fixes — telemetry published straight onto the
+ * Issue `fetchFrozenBrief` must read to dispatch the next developer round.
+ * Pure — no forge read, no filesystem beyond the already-loaded `config` —
+ * so it is directly unit-testable with a plain object
+ * (`dev-review-loop.test.ts`). Lives here, not in `dev-review-loop.ts`
+ * (where the round-end flush's own call site is), so `journal-history.ts`'s
+ * `fetchLoopHistory` can resolve the SAME destination when reading back
+ * what was already flushed, without a `dev-review-loop.ts` →
+ * `journal-history.ts` → `dev-review-loop.ts` import cycle.
+ */
+export function resolveRoundEndFlushTarget(config: VinayaConfig | null, task: number): LogPublishTarget | null {
+  const target = resolveLogPublishTarget(config)
+  if (target === null) return null
+  if ('issue' in target && target.issue === task) return null
+  return target
+}
+
+/**
+ * The visible (never silent) reason the round-end flush skipped a round's
+ * publish for a CONFIGURATION reason — `null` when nothing was skipped for
+ * one: either a real target was flushed, or `logPublish` was never
+ * configured at all, which is this task's ordinary, unremarkable default
+ * (telemetry simply stays in the local outbox) and not itself a loss to
+ * report. Kept separate from `resolveRoundEndFlushTarget` so the two can be
+ * unit-tested independently — one resolves WHAT to flush, this one explains
+ * WHY nothing was.
+ */
+export function describeSkippedRoundEndFlush(config: VinayaConfig | null, task: number): string | null {
+  const configured = resolveLogPublishTarget(config)
+  if (configured === null) return null
+  if ('issue' in configured && configured.issue === task) {
+    return `vinaya dev-review-loop: logPublish.issue (#${configured.issue}) is this task's own Issue — refusing to flush there (that is exactly the surface \`fetchFrozenBrief\` must read to dispatch); configure a different target in vinaya.config.json.`
+  }
+  return null
 }
 
 /**

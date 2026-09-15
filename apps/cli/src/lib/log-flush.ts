@@ -21,10 +21,29 @@ import { join } from 'node:path'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import { classifyStoredLine, extractIssue, isPrincipal, type ForgeOp } from '@attalabs/aeg-core'
 import { currentRunId, log, outboxPathFor as sinkOutboxPathFor, type LogEventInput } from './log-sink.js'
-import { GLOBAL_VINAYA_HOME, loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
+import {
+  DEFAULT_MAX_CHUNKS_PER_FLUSH,
+  GLOBAL_VINAYA_HOME,
+  loadTrustAnchorConfig,
+  resolvePrincipalAllowlist
+} from './config.js'
 
 /** A comment is closed before adding the next line would push it past this (`apps/cli/specs/log.md`). */
 const FORGE_COMMENT_MAX_CHARS = 65536
+
+/**
+ * `execFileSync`'s own default `maxBuffer` (1 MiB) is what broke
+ * `fetchFrozenBrief`'s `gh issue view --json comments` read once an Issue's
+ * own log-dump comments passed it (Issue #626, O3: Issue
+ * #566 measured at 1,597,599 bytes). This file's own `gh()` reads the same
+ * `--json comments` shape (`existingLogMarkers`, the idempotent-retry read)
+ * against the exact target being flushed, so it is exposed to the identical
+ * failure — bounded generously (64 MiB) rather than left at the 1 MiB
+ * default, never unbounded: a target's comment payload is attacker/
+ * adopter-influenced content, not something this process should buffer
+ * without any ceiling at all.
+ */
+const MAX_GH_OUTPUT_BYTES = 64 * 1024 * 1024
 
 function isEnoent(err: unknown): boolean {
   return typeof err === 'object' && err !== null && (err as NodeJS.ErrnoException).code === 'ENOENT'
@@ -118,23 +137,22 @@ async function waitForOwnLine(
  * `log()` fills `subject.issue` from `process.env.VINAYA_TASK`
  * (`log/envelope.ts`'s `issueFromTask`) — never from an argument. For this
  * call's line to land in the SAME outbox this function is about to
- * truncate, `VINAYA_TASK` is set to the flushed Issue for the duration of
- * the call, restored after — this holds identically whether the caller is
- * the one-shot command or an in-process, long-running driver (O2/O3): the
- * driver's own `VINAYA_TASK` is a live process env var this restores
- * exactly, never clobbers. Returns whether the write was confirmed landed
- * (`waitForOwnLine`) rather than throwing — a timeout is not necessarily
- * fatal (see call sites below): a bare `process.exit()` right after `log()`
- * would abandon the write mid-flight, but the caller decides what "not
- * confirmed" means for its own position in the flush.
+ * truncate, `VINAYA_TASK` is set to `outboxTask` — the task whose outbox is
+ * being flushed (Issue #626, O1: NOT necessarily the Issue/PR
+ * being posted TO, once `FlushOptions.outboxTask` names a distinct posting
+ * destination) — for the duration of the call, restored after. This holds
+ * identically whether the caller is the one-shot command or an in-process,
+ * long-running driver (O2/O3): the driver's own `VINAYA_TASK` is a live
+ * process env var this restores exactly, never clobbers. Returns whether the
+ * write was confirmed landed (`waitForOwnLine`) rather than throwing — a
+ * timeout is not necessarily fatal (see call sites below): a bare
+ * `process.exit()` right after `log()` would abandon the write mid-flight,
+ * but the caller decides what "not confirmed" means for its own position in
+ * the flush.
  */
-async function logForFlush(
-  issueNumber: number,
-  path: string,
-  e: LogEventInput & ForgeWriteSignature
-): Promise<boolean> {
+async function logForFlush(outboxTask: number, path: string, e: LogEventInput & ForgeWriteSignature): Promise<boolean> {
   const prevTask = process.env.VINAYA_TASK
-  process.env.VINAYA_TASK = String(issueNumber)
+  process.env.VINAYA_TASK = String(outboxTask)
   const priorSize = sizeOf(path)
   try {
     log(e)
@@ -338,7 +356,11 @@ function planFlush(lines: readonly string[], maxChars: number): FlushChunk[] {
 /** Array-form `execFileSync` against `gh`, throwing with the real stderr text (`pr-report.ts`'s `gh()`). */
 function gh(args: string[]): string {
   try {
-    return execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+    return execFileSync('gh', args, {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      maxBuffer: MAX_GH_OUTPUT_BYTES
+    }).trim()
   } catch (err) {
     const stderr = (err as { stderr?: Buffer | string }).stderr
     throw new Error(String(stderr ?? (err as Error).message).trim() || 'gh command failed')
@@ -421,6 +443,17 @@ export type LogFlushOutcome =
       commentIds: string[]
       chunkCount: number
       /**
+       * How many of this outbox's chunks the per-flush bound (O2) left
+       * un-attempted this call — `0` when nothing was bounded away. Never a
+       * drop: those chunks' lines are still exactly where they were,
+       * untouched by truncation, queued for a future `flushOutbox` call on
+       * the same target. A caller should surface a non-zero value as a
+       * visible (never silent) "partial coverage this round" signal — the
+       * Log contract's own requirement — the same way it already surfaces
+       * `warning` below.
+       */
+      deferredChunkCount: number
+      /**
        * Non-null when the 'written' forge_write audit line could not be
        * confirmed landed — posting and truncation still completed; a
        * caller should surface this as a non-fatal warning, worded exactly
@@ -441,13 +474,38 @@ export type LogFlushOutcome =
  * exact call count; the retriable one-shot `vinaya log flush` command, the
  * surface the Boundary names ("flush retries can repeat remotely accepted
  * batches"), is the caller that turns it ON.
+ *
+ * `maxChunksPerFlush` (Issue #626, O2) bounds how many chunks
+ * (each already bounded at `FORGE_COMMENT_MAX_CHARS`) ONE call posts to the
+ * target — the rest stay queued in the outbox, untouched, for a later call.
+ * This is what keeps a backlogged target's comment COUNT from growing
+ * without limit round after round (Issue #626's measured case: 56 log-dump
+ * comments on one Issue). Omit for `DEFAULT_MAX_CHUNKS_PER_FLUSH`; every
+ * caller gets this bound by default, including the one-shot `vinaya log
+ * flush` command — re-run it (its `skipRemotelyAccepted: true` makes that
+ * safe and idempotent) to drain a larger backlog across several calls.
  */
-export type FlushOptions = { skipRemotelyAccepted?: boolean }
+export type FlushOptions = {
+  skipRemotelyAccepted?: boolean
+  maxChunksPerFlush?: number
+  /**
+   * Which task's own outbox file to read (Issue #626, O1) —
+   * defaults to `target`'s own resolved issue number, exactly the prior,
+   * only behavior (`vinaya log flush --issue <n>`/`--pr <n>`, where the
+   * flushed outbox and the posting destination were always the same
+   * number). Set this when `target` names somewhere OTHER than the task
+   * being flushed — the round-end flush's whole point once a `logPublish`
+   * target is configured: read task `<n>`'s own outbox, but POST the
+   * result to a distinct, configured Issue/PR, never back onto `<n>`
+   * itself (the surface `fetchFrozenBrief` must read to dispatch it).
+   */
+  outboxTask?: number
+}
 
 /**
- * The flush's whole body (task 3, `#482`, O1) — posts `target`'s outbox as
- * one or more comments and truncates only what the forge confirmed, exactly
- * as `apps/cli/specs/log.md` § The flush describes. Never calls
+ * The flush's whole body (task 3, `#482`, O1) — posts a task's outbox as one
+ * or more comments to `target` and truncates only what the forge confirmed,
+ * exactly as `apps/cli/specs/log.md` § The flush describes. Never calls
  * `process.exit`: returns `{flushed: false}` for a missing or empty outbox,
  * returns the posted outcome on success, and throws `LogFlushError` for
  * every refusal — safe to call in-process from a long-running driver as
@@ -455,14 +513,16 @@ export type FlushOptions = { skipRemotelyAccepted?: boolean }
  */
 export async function flushOutbox(target: LogFlushTarget, options: FlushOptions = {}): Promise<LogFlushOutcome> {
   const op: ForgeOp = 'pr' in target ? 'pr.comment' : 'issue.comment'
-  const issueNumber = 'pr' in target ? issueFromPr(String(target.pr)) : target.issue
-  const eventTarget = 'pr' in target ? { pr: target.pr } : { issue: issueNumber }
-  const forgeTargetId = 'pr' in target ? String(target.pr) : String(issueNumber)
+  const postIssueNumber = 'pr' in target ? issueFromPr(String(target.pr)) : target.issue
+  const eventTarget = 'pr' in target ? { pr: target.pr } : { issue: postIssueNumber }
+  const forgeTargetId = 'pr' in target ? String(target.pr) : String(postIssueNumber)
+  // The outbox actually being read/truncated — see `FlushOptions.outboxTask`.
+  const outboxTask = options.outboxTask ?? postIssueNumber
 
   const resolved = await resolveRepo()
   const repo = resolved && isSafeRepoSegment(resolved.owner) && isSafeRepoSegment(resolved.repo) ? resolved : null
   const outboxRoot = () => join(GLOBAL_VINAYA_HOME, 'outbox')
-  const path = sinkOutboxPathFor({ outboxRoot }, repo, issueNumber)
+  const path = sinkOutboxPathFor({ outboxRoot }, repo, outboxTask)
 
   let lstat: ReturnType<typeof lstatSync> | undefined
   try {
@@ -501,7 +561,7 @@ export async function flushOutbox(target: LogFlushTarget, options: FlushOptions 
   // it landed, we do not know that ordering held — refuse before posting
   // anything rather than proceed on an unconfirmed guarantee. Nothing has
   // been posted or truncated yet, so refusing here is safe and total.
-  const validatedLanded = await logForFlush(issueNumber, path, {
+  const validatedLanded = await logForFlush(outboxTask, path, {
     kind: 'forge_write',
     event: 'validated',
     op,
@@ -522,11 +582,27 @@ export async function flushOutbox(target: LogFlushTarget, options: FlushOptions 
   // command opts in (see `FlushOptions`).
   const alreadyPosted = options.skipRemotelyAccepted ? existingLogMarkers(op, forgeTargetId) : new Set<string>()
 
+  // O2 (Issue #626): bounds how many NEW comments this call posts — an
+  // already-posted chunk found via `alreadyPosted` above is acknowledged
+  // (truncated) for free and never counts against this bound, since it
+  // creates no new comment on the target and grows nothing. Once the bound
+  // is reached, every remaining chunk — new or already-posted — is left
+  // untouched for a later call: `deferredChunkCount` names exactly how many,
+  // the visible (never silent) record O2 requires.
+  const maxChunksPerFlush = Math.max(1, Math.floor(options.maxChunksPerFlush ?? DEFAULT_MAX_CHUNKS_PER_FLUSH))
+
   const commentIds: string[] = []
   let postedLineCount = 0
+  let newPostCount = 0
+  let deferredChunkCount = 0
   let failure: { chunk: FlushChunk; message: string } | undefined
 
-  for (const chunk of chunks) {
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i] as FlushChunk
+    if (newPostCount >= maxChunksPerFlush) {
+      deferredChunkCount = chunks.length - i
+      break
+    }
     const markerKey = `${chunk.runId}:${chunk.seqFrom}-${chunk.seqTo}`
     if (alreadyPosted.has(markerKey)) {
       // Remotely accepted on a prior attempt — acknowledge, never re-post.
@@ -537,6 +613,7 @@ export async function flushOutbox(target: LogFlushTarget, options: FlushOptions 
       const id = postChunk(op, forgeTargetId, chunk.body, postedLineCount)
       commentIds.push(id)
       postedLineCount += chunk.lineCount
+      newPostCount++
     } catch (err) {
       failure = { chunk, message: err instanceof Error ? err.message : String(err) }
       break
@@ -548,7 +625,7 @@ export async function flushOutbox(target: LogFlushTarget, options: FlushOptions 
   // or an unconfirmed timeout here would silently re-post already-succeeded
   // comments on the next flush (worse than a missing audit line).
   const finalLanded = failure
-    ? await logForFlush(issueNumber, path, {
+    ? await logForFlush(outboxTask, path, {
         kind: 'forge_write',
         event: 'refused',
         op,
@@ -556,7 +633,7 @@ export async function flushOutbox(target: LogFlushTarget, options: FlushOptions 
         payload: {},
         reason: `flush of run ${failure.chunk.runId} seq ${failure.chunk.seqFrom}-${failure.chunk.seqTo} failed: ${failure.message}`
       })
-    : await logForFlush(issueNumber, path, {
+    : await logForFlush(outboxTask, path, {
         kind: 'forge_write',
         event: 'written',
         op,
@@ -595,6 +672,7 @@ export async function flushOutbox(target: LogFlushTarget, options: FlushOptions 
     target: eventTarget,
     commentIds,
     chunkCount: chunks.length,
+    deferredChunkCount,
     warning: finalLanded ? null : warningFor('written')
   }
 }
