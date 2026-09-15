@@ -51,3 +51,4 @@ tests/lib/task-tools/resume.test.ts
 tests/lib/broker/operator-grants.test.ts
 tests/lib/dispatch/unattended-publication.test.ts
 tests/lib/task-run/background.test.ts
+tests/checks/runner/cancelled.test.ts
