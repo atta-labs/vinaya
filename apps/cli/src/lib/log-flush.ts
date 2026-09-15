@@ -376,7 +376,15 @@ export class LogFlushError extends Error {
   }
 }
 
-function issueFromPr(prNumber: string): number {
+/**
+ * Exported for `log-artifact.ts`'s collector: the
+ * collector must write a downloaded artifact's validated records into the
+ * SAME outbox path `flushOutbox` is about to read from, which means
+ * resolving the SAME Issue this PR's body declares — one implementation of
+ * that resolution, never a second copy of the `gh pr view` + `extractIssue`
+ * call.
+ */
+export function issueFromPr(prNumber: string): number {
   const body = JSON.parse(gh(['pr', 'view', prNumber, '--json', 'body'])) as { body: string }
   const { issue } = extractIssue(body.body)
   if (issue === null) {
@@ -386,6 +394,20 @@ function issueFromPr(prNumber: string): number {
     )
   }
   return issue
+}
+
+/**
+ * Exported for `log-artifact.ts`'s collector: the exact outbox path
+ * `flushOutbox` itself resolves internally for a given Issue — reused
+ * rather than re-derived, so the collector writes into the identical file
+ * `flushOutbox` is about to read.
+ */
+export function outboxPathForIssue(issueNumber: number): Promise<string> {
+  const outboxRoot = () => join(GLOBAL_VINAYA_HOME, 'outbox')
+  return resolveRepo().then((resolved) => {
+    const repo = resolved && isSafeRepoSegment(resolved.owner) && isSafeRepoSegment(resolved.repo) ? resolved : null
+    return sinkOutboxPathFor({ outboxRoot }, repo, issueNumber)
+  })
 }
 
 function postChunk(op: ForgeOp, targetId: string, body: string, index: number): string {
