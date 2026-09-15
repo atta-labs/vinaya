@@ -911,17 +911,70 @@ describe('resolveWorkerBoundaryLaunch — live sandbox-exec enforcement (round 3
         // macOS user account — list it (never write/read a specific
         // keychain file, which this account may not have) to prove the
         // profile's dedicated Keychain deny rule actually reaches it.
-        const listRealKeychain = `require('node:fs').readdirSync(require('node:os').homedir() + '/Library/Keychains')`
+        // `/bin/ls`, not a `bun -e` expression (round 5 review, BLOCKER
+        // fix, adjacent): once bun's own install dir is a granted
+        // exec/read path (see `resolveBunExecDir` in `worker-boundary.ts`),
+        // this repo's own bun's `-e` mode was found live to exit `0` on an
+        // uncaught synchronous exception when confined — a bun/Seatbelt
+        // interaction, not a signal the underlying deny rule failed (a
+        // caught `readdirSync` under the same profile, verified separately,
+        // still throws EPERM). `/bin/ls` is a plain binary with no such
+        // exception-reporting layer and reliably reflects its own exit code.
         const spawnResult = spawnSync(
           '/usr/bin/sandbox-exec',
-          ['-f', result.launch.args[1] as string, process.execPath, '-e', listRealKeychain],
+          ['-f', result.launch.args[1] as string, '/bin/ls', join(homedir(), 'Library', 'Keychains')],
           {
             cwd: allowedDir,
             encoding: 'utf8'
           }
         )
         expect(spawnResult.status).not.toBe(0)
-        expect(spawnResult.stderr).toMatch(/EPERM|EACCES|operation not permitted/i)
+        expect(spawnResult.stderr).toMatch(/EPERM|EACCES|operation not permitted|permission denied/i)
+      } finally {
+        result.launch.cleanup()
+      }
+    }
+  )
+})
+
+describe('resolveWorkerBoundaryLaunch — bun toolchain reachable (round 5 review, BLOCKER)', () => {
+  it.skipIf(!isWorkerBoundaryAvailable(REAL_WORKER_BOUNDARY_DEPS))(
+    'a confined child can still exec bun for its own build/test subprocesses when binaryPath is a non-bun vendor binary (the real production shape)',
+    () => {
+      const allowedDir = tempDir('vinaya-wb-live-bun-')
+      const homeDir = tempDir('vinaya-wb-live-bun-home-')
+      const binDir = tempDir('vinaya-wb-live-bun-bin-')
+      // The real production shape the round 5 finding named: the vendor
+      // binary (`binaryPath`) lives OUTSIDE `~/.bun/bin` — every prior live
+      // test here instead passed `binaryPath: process.execPath` (this test
+      // runner's own bun binary), which incidentally granted bun's own
+      // directory as `runtimeDir` and so never exercised this gap.
+      const fakeVendorBinary = fakeBinaryIn(binDir)
+
+      const result = resolveWorkerBoundaryLaunch(
+        {
+          binaryPath: fakeVendorBinary,
+          args: [],
+          allowedDir,
+          vinayaHomeDir: homeDir,
+          vinayaHomeWritableSubdirs: []
+        },
+        REAL_WORKER_BOUNDARY_DEPS
+      )
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      try {
+        const spawnResult = spawnSync(
+          '/usr/bin/sandbox-exec',
+          ['-f', result.launch.args[1] as string, 'bun', '--version'],
+          {
+            cwd: allowedDir,
+            encoding: 'utf8',
+            env: { PATH: process.env.PATH ?? '' }
+          }
+        )
+        expect(spawnResult.status, `stderr: ${spawnResult.stderr}`).toBe(0)
+        expect(spawnResult.stdout.trim().length).toBeGreaterThan(0)
       } finally {
         result.launch.cleanup()
       }
