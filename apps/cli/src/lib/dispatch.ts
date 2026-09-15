@@ -1145,7 +1145,7 @@ const IDENTITY_SETTLE_POLL_MS = 20
  * read if the process is gone by the next poll (a vendor CLI that exits
  * within this budget is not the case this guards).
  */
-function captureSettledChildSnapshot(pid: number): ProcessSnapshot | null {
+export function captureSettledChildSnapshot(pid: number): ProcessSnapshot | null {
   let snapshot = getProcessSnapshot(pid)
   if (snapshot === null) return null
   const deadline = Date.now() + IDENTITY_SETTLE_BUDGET_MS
