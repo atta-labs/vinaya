@@ -2,6 +2,10 @@
 
 O1. The validated forge-write commands ship.
 
+## Documentation
+
+None — no externally-normative source governs this task.
+
 ## Task Issue — Planner rationale
 
 **Boundary** — Ship the validated forge-write commands; nothing beyond the CLI surface.

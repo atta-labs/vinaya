@@ -491,7 +491,7 @@ const BUILTIN_RECOVERY: Record<BriefBuiltin, string> = {
   objectives:
     'Add a `## Objectives` section of numbered `O<n>. <sentence>` lines (one observable outcome each), then re-run `{cmd}`.',
   briefSections:
-    'Add the missing `## Surface`/`## Parts`/`## Test plan`/`## Stop conditions` section(s) named above, well-formed per their own grammar, then re-run `{cmd}`.',
+    'Add the missing `## Surface`/`## Parts`/`## Test plan`/`## Stop conditions`/`## Documentation` section(s) named above, well-formed per their own grammar (`## Documentation` accepts an explicit `None` line when no normative source governs this task), then re-run `{cmd}`.',
   milestoneShape:
     'Fix the Milestone description as named above — a goal, an optional well-formed `Release:` field, and an optional parseable `### Tranche intents` section — then re-run `{cmd}`.'
 }

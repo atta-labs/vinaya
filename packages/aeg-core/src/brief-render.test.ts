@@ -67,6 +67,7 @@ function baseFacts(overrides: Partial<BriefFacts> = {}): BriefFacts {
       principal: []
     },
     stopConditions: ['If the fixture ever needs a second file, STOP and escalate severity: execution.'],
+    documentation: { kind: 'sources', sources: [] },
     dispatchReady: true,
     dispatchBlockers: [],
     surfaceFiles: [

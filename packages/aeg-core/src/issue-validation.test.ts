@@ -27,10 +27,12 @@ import {
   checkSurfaceScope,
   checkTrancheLabelPresence,
   declaredProjects,
+  DOCUMENTATION_SINCE_ISSUE,
   frozenSectionsChanged,
   isTaskIssueBodyShaped,
   isTaskIssueLabelSet,
   OBJECTIVES_SINCE_ISSUE,
+  parseIssueDocumentation,
   parseIssueParts,
   parseIssueStopConditions,
   parseIssueSurface,
@@ -1884,6 +1886,51 @@ describe('parseIssueStopConditions', () => {
   })
 })
 
+describe('parseIssueDocumentation', () => {
+  it('parses one or more `- <source> — <mechanism>` bullets', () => {
+    const r = parseIssueDocumentation(
+      '## Documentation\n\n' +
+        '- https://modelcontextprotocol.io/docs/hooks — the PostToolUse/Stop hook JSON contract\n' +
+        '- https://code.claude.com/docs/en/hooks — exit-code semantics for Stop hooks\n'
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value).toEqual({
+      kind: 'sources',
+      sources: [
+        { source: 'https://modelcontextprotocol.io/docs/hooks', mechanism: 'the PostToolUse/Stop hook JSON contract' },
+        { source: 'https://code.claude.com/docs/en/hooks', mechanism: 'exit-code semantics for Stop hooks' }
+      ]
+    })
+  })
+
+  it('parses the explicit `None` sentinel as a valid, sourceless opt-out', () => {
+    const r = parseIssueDocumentation('## Documentation\n\nNone — no normative source governs this task.\n')
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value).toEqual({ kind: 'none' })
+  })
+
+  it('refuses when the `## Documentation` heading is absent', () => {
+    const r = parseIssueDocumentation('nothing here')
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.errors[0]).toMatch(/no `## Documentation` heading/)
+  })
+
+  it('refuses a bullet with no dash separator between source and mechanism', () => {
+    const r = parseIssueDocumentation('## Documentation\n\n- https://example.com/docs\n')
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.errors[0]).toMatch(/not a well-formed Documentation line/)
+  })
+
+  it('refuses an empty section with no bullets and no `None` sentinel', () => {
+    const r = parseIssueDocumentation('## Documentation\n\nnothing here yet\n')
+    expect(r.ok).toBe(false)
+  })
+})
+
 describe('checkIssueBriefSections', () => {
   it('passes a fully-formed Issue at the cutover (#426 itself)', () => {
     expect(BRIEF_SECTIONS_SINCE_ISSUE).toBe(426)
@@ -1907,6 +1954,33 @@ describe('checkIssueBriefSections', () => {
     const r = checkIssueBriefSections('a body with nothing but a title.', null)
     expect(r.status).toBe('fail')
     expect(r.errors.length).toBeGreaterThan(0)
+  })
+
+  it('does not require `## Documentation` below its own cutover (#625, one below #626)', () => {
+    expect(DOCUMENTATION_SINCE_ISSUE).toBe(626)
+    const r = checkIssueBriefSections(ISSUE_426_BODY, 625)
+    expect(r.status).toBe('pass')
+  })
+
+  it('fails, naming Documentation, on an Issue at/above #626 with no `## Documentation` section', () => {
+    const r = checkIssueBriefSections(ISSUE_426_BODY, 626)
+    expect(r.status).toBe('fail')
+    expect(r.errors.join(' ')).toMatch(/Documentation/)
+  })
+
+  it('passes an Issue at/above #626 that names a source and its mechanism', () => {
+    const withDocumentation = ISSUE_426_BODY.replace(
+      '## Objectives',
+      '## Documentation\n\n- https://example.com/docs — the mechanism this task implements\n\n## Objectives'
+    )
+    const r = checkIssueBriefSections(withDocumentation, 626)
+    expect(r.status).toBe('pass')
+  })
+
+  it('passes a null-numbered (create) body at the Documentation cutover when the `None` sentinel is used', () => {
+    const withNone = ISSUE_426_BODY.replace('## Objectives', '## Documentation\n\nNone.\n\n## Objectives')
+    const r = checkIssueBriefSections(withNone, null)
+    expect(r.status).toBe('pass')
   })
 })
 

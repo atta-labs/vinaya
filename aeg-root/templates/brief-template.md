@@ -22,6 +22,10 @@ You are the AEG Developer. Read `aeg-root/roles/developer.md` first[, then the h
 
 [Copy the Issue's `## Objectives` section here byte-for-byte — `checkObjectivesCopy` refuses a brief whose section does not match the Issue's, compared normalised (whitespace never fails it; a changed word does). Every numbered Part in §6 must cite at least one `O<n>` from this list, and every `O<n>` here must be cited by at least one Part — `checkObjectivesCoverage` refuses either gap.]
 
+## Documentation
+
+[Copied verbatim from the Issue's own `## Documentation` section — every normative source this task depends on (a doc URL, an in-repo spec), each against the mechanism it governs: `- <source> — <mechanism>`. A task with no externally-normative source states the explicit `None` sentinel instead of an empty section. Placed immediately after Objectives, before the Developer holds a complete plan, so it is read first rather than skimmed as appendix evidence after the fact (Issue #625). Every source named here must be read before Step 0 — `aeg-root/roles/developer.md`'s entry gate names the obligation; a `PostToolUse`/`Stop` hook pair enforces it mechanically, not the Developer's own judgement.]
+
 ## 2. Context — read before doing anything
 
 - **Tranche:** [`tranche-slug`], task [n], Issue #[N]. Branch `task/[tranche-slug]/[n]`. `Depends-on: [—|ids]`, `Conflicts-with: [—|ids]`. Confirm `READY TO DISPATCH` at your own Step 0.
