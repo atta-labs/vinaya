@@ -54,8 +54,48 @@ export const WORKER_ENV_ALLOWLIST_KEYS = [
 ] as const
 
 /**
+ * O1/O2 (round 2 review, BLOCKER): the model-runtime credential a real
+ * vendor CLI needs to keep answering at all once dispatched inside the
+ * boundary — `isolation.md` §3's own pre-existing "runtime authentication
+ * path" contract, unimplemented by this task until this finding. Verified
+ * live on this authoring host, not guessed (`claude --help`): Claude's own
+ * `--bare` flag documents that "Anthropic auth is strictly
+ * `ANTHROPIC_API_KEY` or `apiKeyHelper` via `--settings` (OAuth and keychain
+ * are never read)" — confirming `ANTHROPIC_API_KEY` is a real, first-class
+ * auth path, independent of the OAuth session file (`~/.claude/.credentials.json`
+ * on this host) the sandbox profile denies. `--bare` itself is NOT threaded
+ * through here — its own doc also says it skips "hooks", which would
+ * silently disable the pre-existing PreToolUse background-deny mechanism
+ * (`writeDispatchSettings`) this task's own brief named a trap ("Preserve
+ * and test the incoming PreToolUse rule rather than duplicate it") — so a
+ * confined Claude dispatch still tries OAuth/keychain first and falls
+ * through to `ANTHROPIC_API_KEY` only because the sandbox denies the former;
+ * this is a real but slightly less certain guarantee than `--bare` would
+ * give, disclosed here rather than silently assumed.
+ *
+ * `codex`/`gemini` entries are NOT verified live — this host has neither
+ * binary installed (confirmed: `which codex`/`which gemini` both fail) — so
+ * their env var names follow each vendor's own well-documented public
+ * convention (`OPENAI_API_KEY`, `GEMINI_API_KEY`/`GOOGLE_API_KEY`) rather
+ * than a live-confirmed reading of `--help`: disclosed as unverified rather
+ * than invented, the same posture a prior task in this repo's history set
+ * for an unverifiable Codex figure (marked explicitly unverified rather
+ * than guessed).
+ * Keyed by the plain vendor string (never `dispatch.ts`'s own `AgentVendor`
+ * type) to avoid a circular import — `dispatch.ts` already imports FROM this
+ * module.
+ */
+export const RUNTIME_CREDENTIAL_ENV_KEYS: Readonly<Record<string, readonly string[]>> = {
+  claude: ['ANTHROPIC_API_KEY'],
+  codex: ['OPENAI_API_KEY'],
+  gemini: ['GEMINI_API_KEY', 'GOOGLE_API_KEY']
+}
+
+/**
  * Builds a confined child's environment from an explicit allowlist —
- * `sourceEnv`'s own `WORKER_ENV_ALLOWLIST_KEYS` values, plus every entry in
+ * `sourceEnv`'s own `WORKER_ENV_ALLOWLIST_KEYS` values plus `extraAllowlistKeys`
+ * (the dispatched vendor's own `RUNTIME_CREDENTIAL_ENV_KEYS`, named by the
+ * caller — this function stays vendor-agnostic), plus every entry in
  * `attribution` (dispatch's own `VINAYA_RUN_ID`/`VINAYA_ROLE`/`VINAYA_TASK`/
  * `VINAYA_ROUND` — the "scoped broker channel" a worker needs to
  * authenticate itself to `broker.ts`'s `authenticateWorkerInvocation`, see
@@ -69,10 +109,11 @@ export const WORKER_ENV_ALLOWLIST_KEYS = [
  */
 export function buildWorkerEnv(
   sourceEnv: Readonly<Record<string, string | undefined>>,
-  attribution: Readonly<Record<string, string | undefined>>
+  attribution: Readonly<Record<string, string | undefined>>,
+  extraAllowlistKeys: readonly string[] = []
 ): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = {}
-  for (const key of WORKER_ENV_ALLOWLIST_KEYS) {
+  for (const key of [...WORKER_ENV_ALLOWLIST_KEYS, ...extraAllowlistKeys]) {
     if (sourceEnv[key] !== undefined) env[key] = sourceEnv[key]
   }
   return { ...env, ...attribution }
@@ -163,14 +204,28 @@ function sbSubpathAllows(operations: string, dirs: readonly string[]): string {
  *    sets the child's `HOME` env value to the genuine home path (so any tool
  *    that constructs a `$HOME/.something` path resolves predictably) while
  *    the PROFILE still denies file access to that real home path except for
- *    the caller's own named `readWriteDirs` (the target worktree/scratch
- *    dir, and `GLOBAL_VINAYA_HOME` — a Worker's own later `vinaya`
- *    subcommands need to read config and write their own log/resume records there).
- *    The env value and the filesystem permission are independent: Seatbelt
- *    enforces the latter regardless of what `$HOME` merely says.
+ *    the caller's own named `readOnlyDirs`/`readWriteDirs`. The env value
+ *    and the filesystem permission are independent: Seatbelt enforces the
+ *    latter regardless of what `$HOME` merely says.
+ *
+ * `readOnlyDirs` (round 2 review, CRITICAL/MAJOR) is a directory the confined
+ * role must be able to READ but never write: a round-1 Developer's own repo
+ * root (it needs to read doctrine/code before its own `git worktree add` has
+ * even run, but must never be able to rewrite `vinaya.config.json` — the
+ * trusted Controller's own `loadConfig()` re-reads that file live, uncached,
+ * on every later dispatch), and `GLOBAL_VINAYA_HOME` itself (its own
+ * `config.json`, and every other task's/repo's state — a Worker's later
+ * `vinaya` subcommands need to read it, never rewrite it wholesale).
+ * `readWriteDirs` stays the narrower, per-purpose write surface: the
+ * confined role's own EXCLUSIVE workspace (a post-bootstrap worktree, a
+ * Reviewer's own scratch copy) or specific named subpaths a bootstrap
+ * dispatch's own tooling needs to write (`.git`, `.worktrees` — never the
+ * whole repo), plus the scratch tmp dir and `GLOBAL_VINAYA_HOME`'s own
+ * caller-named log/resume subdirectories (never its `config.json`).
  */
 export function buildWorkerSandboxProfile(opts: {
   realHome: string
+  readOnlyDirs: readonly string[]
   readWriteDirs: readonly string[]
   execAllowDirs: readonly string[]
   runtimeDir: string
@@ -194,26 +249,39 @@ export function buildWorkerSandboxProfile(opts: {
     sbSubpathAllows('file-read*', readAllowDirs),
     sbSubpathAllows('process-exec', opts.execAllowDirs),
     '',
-    ';; HOME confinement: deny the real HOME entirely, then carve out only the',
-    ';; directories this role actually needs to read/write (its own worktree,',
-    ';; and GLOBAL_VINAYA_HOME for its own later `vinaya` subcommands).',
+    ';; HOME confinement: deny the real HOME entirely, then carve out',
+    ';; read-only access to directories this role must READ but never write,',
+    ';; and read+write for directories it actually owns or has a named write',
+    ";; target inside (see this function's own doc comment on the two lists).",
     `(deny file-read* file-write*\n    (subpath ${sbLiteral(opts.realHome)}))`,
+    sbSubpathAllows('file-read*', opts.readOnlyDirs),
     sbSubpathAllows('file-read* file-write*', opts.readWriteDirs),
     '',
     ';; Filesystem write confinement, PART 2: close every OTHER writable path',
     ';; the baseline would otherwise leave open (/tmp, /var, anywhere else a',
-    ';; bare process can write) — "read/write inside its own worktree" is the',
-    ';; ceiling, not one of several open paths.',
+    ';; bare process can write, AND readOnlyDirs above) — "read/write inside',
+    ';; its own worktree" is the ceiling, not one of several open paths.',
     '(deny file-write*',
     '  (require-all',
     opts.readWriteDirs.map((d) => `    (require-not (subpath ${sbLiteral(d)}))`).join('\n'),
     '  ))',
     '',
     ';; Network: allowed — a real Worker must reach the model runtime endpoint',
-    ';; (isolation.md §1, Worker row) — except the ssh-agent socket, denied by',
-    ';; this LATER, more specific rule (Seatbelt applies the last match).',
+    ';; (isolation.md §1, Worker row) — except the ssh-agent socket (denied by',
+    ';; this LATER, more specific rule — Seatbelt applies the last match) and',
+    ';; outbound port 22, which no legitimate HTTPS-speaking model-runtime or',
+    ';; package-registry client ever needs and which would otherwise let a',
+    ';; malicious test script relay traffic over SSH. Scoping egress further',
+    ';; (to the specific model-runtime/registry hosts) is deliberately',
+    ';; deferred — a per-vendor host allowlist depends on details (which',
+    ';; endpoints each vendor CLI actually calls, whether those change without',
+    ';; notice) this task has not verified live, and a wrong allowlist entry',
+    ';; would silently break a legitimate dispatch rather than merely widen',
+    ';; one; disclosed here as a known, accepted residual risk (round 2',
+    ';; review, LOW), not a silent gap.',
     '(allow network-outbound)',
     `(deny network-outbound\n  (remote unix-socket (path-literal ${sbLiteral(opts.sshSockCanon)})))`,
+    '(deny network-outbound (remote tcp "*:22"))',
     '',
     ';; Keychain: file access AND the mach-lookup route Keychain Services',
     ";; itself talks to securityd/trustd through — see this function's own doc",
@@ -270,10 +338,35 @@ function resolveSshSockCanon(): string {
 export type WorkerBoundaryLaunchOpts = {
   binaryPath: string
   args: readonly string[]
-  /** The role's own confined workspace — the target worktree (developer/operator) or the reviewer's own scratch copy (`reviewer-isolation.ts`). */
+  /** The role's own confined workspace — the target worktree (developer/operator) or the reviewer's own scratch copy (`reviewer-isolation.ts`). Read-only when `bootstrapWritableSubpaths` is given (see that field's own doc); otherwise read+write, the steady-state case. */
   allowedDir: string
-  /** `GLOBAL_VINAYA_HOME` (`config.ts`) — carved out read/write alongside `allowedDir` so a Worker's own later `vinaya` subcommands (config reads, log/resume writes) keep working confined. */
+  /** `GLOBAL_VINAYA_HOME` (`config.ts`) — read-only itself (its own `config.json` must never be rewritable by a confined Worker, round 2 review, MAJOR); `vinayaHomeWritableSubdirs` are the only writable subpaths inside it. */
   vinayaHomeDir: string
+  /**
+   * Directory names, relative to `vinayaHomeDir`, a Worker's own later
+   * `vinaya` subcommand genuinely needs to WRITE (the driver's own log
+   * queue and its per-dispatch resume records — named by the caller, which
+   * already legitimately names both elsewhere, rather than duplicated here:
+   * this module stays a generic, reusable confinement primitive with no
+   * hardcoded opinion about `GLOBAL_VINAYA_HOME`'s own internal layout).
+   * Never `config.json`, never any other repo's/task's state wholesale —
+   * see `buildWorkerSandboxProfile`'s own doc comment.
+   */
+  vinayaHomeWritableSubdirs: readonly string[]
+  /**
+   * Round-1 Developer bootstrap only (round 2 review, CRITICAL): when given
+   * (as directory names relative to `allowedDir`, e.g. `['.git', '.worktrees']`),
+   * `allowedDir` itself becomes READ-ONLY and these specific subpaths become
+   * the only writable ones inside it — the shared repo checkout a
+   * not-yet-worktreed Developer dispatch is confined to must never be
+   * rewritable wholesale (it carries `vinaya.config.json`, read live and
+   * uncached by the trusted Controller's own `loadConfig()` on every later
+   * dispatch, and `aeg-root/roles/*.md` doctrine every future dispatch
+   * reads), only the two paths its own `git worktree add` genuinely writes.
+   * Omitted (default) grants `allowedDir` full read+write — the steady-state
+   * case, where the confined role owns the whole directory outright.
+   */
+  bootstrapWritableSubpaths?: readonly string[]
 }
 
 /**
@@ -316,8 +409,35 @@ export function resolveWorkerBoundaryLaunch(
       vinayaHomeDirReal = null
     }
 
+    /** Resolves a subpath of an already-realpath'd parent — realpath'd itself when it already exists (closing the same symlink-alias gap every other path here closes), or left as a plain `join()` when it does not yet exist (`.worktrees` on a fresh clone, a log/resume subdirectory on a fresh machine): the PARENT is already canonical, so a not-yet-existing child's constructed path is exact, and Seatbelt subpath rules need no existing target to compile. */
+    const resolveExistingOrJoined = (parentReal: string, rel: string): string => {
+      const joined = join(parentReal, rel)
+      try {
+        return realpathSync(joined)
+      } catch {
+        return joined
+      }
+    }
+
+    const bootstrapWriteDirs = (opts.bootstrapWritableSubpaths ?? []).map((rel) =>
+      resolveExistingOrJoined(allowedDirReal, rel)
+    )
+    const vinayaWritableDirs = vinayaHomeDirReal
+      ? opts.vinayaHomeWritableSubdirs.map((rel) => resolveExistingOrJoined(vinayaHomeDirReal as string, rel))
+      : []
+
+    const readOnlyDirs = Array.from(
+      new Set([
+        ...(opts.bootstrapWritableSubpaths ? [allowedDirReal] : []),
+        ...(vinayaHomeDirReal ? [vinayaHomeDirReal] : [])
+      ])
+    )
     const readWriteDirs = Array.from(
-      new Set([allowedDirReal, scratchTmpDir, ...(vinayaHomeDirReal ? [vinayaHomeDirReal] : [])])
+      new Set([
+        ...(opts.bootstrapWritableSubpaths ? bootstrapWriteDirs : [allowedDirReal]),
+        scratchTmpDir,
+        ...vinayaWritableDirs
+      ])
     )
 
     const gitExecPath = resolveGitExecPath()
@@ -334,6 +454,7 @@ export function resolveWorkerBoundaryLaunch(
 
     const profile = buildWorkerSandboxProfile({
       realHome,
+      readOnlyDirs,
       readWriteDirs,
       execAllowDirs,
       runtimeDir,

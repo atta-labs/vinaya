@@ -587,19 +587,22 @@ export const VinayaConfigSchema = z.object({
   // signalling it exercises.
   // `requireWorkerIsolation` (task 3, `#560`, O3): the "declared, visible
   // setting that refuses when isolation is absent" this tranche's own
-  // milestone names — off (absent/`false`) by default. An unattended
-  // dispatch (`DispatchOpts.unattended`) only refuses for lack of
-  // `apps/cli/specs/isolation.md`'s OS-level boundary when this is `true`;
-  // left off, an unattended dispatch runs exactly as it did before this
-  // task. This default matters: the boundary's only currently-supported
-  // mechanism (Seatbelt) is macOS-only, and this repo's own CI, its own
-  // operational host, and the pre-existing `dev-review-loop`/`dispatch-task`
-  // test suites all run on Linux — flipping the default to `true` would make
-  // every unattended dispatch refuse unconditionally on the one host this
-  // repo actually runs on, with no remediation until a non-Darwin mechanism
-  // exists (`isolation.md` §3, "a container is out of scope for this task's
-  // probe"). Set it once a supported host is confirmed for this repo's own
-  // unattended runs.
+  // milestone names. An unattended dispatch (`DispatchOpts.unattended`) only
+  // refuses for lack of `apps/cli/specs/isolation.md`'s OS-level boundary
+  // when this RESOLVES `true`. Absent, the resolved value is
+  // PLATFORM-CONDITIONAL (`dispatch.ts`'s own call site,
+  // `?? process.platform === 'darwin'`) — round 2 review, HIGH: an
+  // unconditional off-by-default left O3's "fail closed" opt-in even on the
+  // one host (Darwin) the boundary's only mechanism (Seatbelt) actually
+  // works on, which does not match O3's own unconditional wording read
+  // together with its "on the declared supported environment" qualifier.
+  // `true` (fail closed is automatic) on Darwin; `false` on any other host
+  // unless explicitly set `true` — forcing it on where no mechanism exists
+  // yet would only ever refuse, never protect anything, and this repo's own
+  // CI, its own operational host, and the pre-existing `dev-review-loop`/
+  // `dispatch-task` test suites all run on Linux, so their behavior is
+  // unchanged by this default either way. An explicit `true`/`false` here
+  // always overrides the platform-conditional default, on any host.
   dispatch: z
     .object({
       timeoutMs: z.number().int().positive().optional(),

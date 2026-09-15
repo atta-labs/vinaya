@@ -63,7 +63,7 @@ import { createLogSink, outboxPathFor } from './log-sink.js'
 import { appendRoleLine } from './loop-log.js'
 import { loadConfig, GLOBAL_VINAYA_HOME } from './config.js'
 import { dirname, join } from 'node:path'
-import { buildWorkerEnv, resolveWorkerBoundaryLaunch } from './worker-boundary.js'
+import { buildWorkerEnv, resolveWorkerBoundaryLaunch, RUNTIME_CREDENTIAL_ENV_KEYS } from './worker-boundary.js'
 import { repoRoot } from './diff-evidence.js'
 
 /**
@@ -191,18 +191,24 @@ export type DispatchOpts = {
    * `vinaya dispatch` by hand. Attribution only by itself: whether an
    * unattended start actually REQUIRES `apps/cli/specs/isolation.md`'s
    * OS-level boundary is the separate, declared `dispatch.requireWorkerIsolation`
-   * config setting (`config.ts`) — off by default. When BOTH `unattended` is
-   * `true` here AND that setting is `true`, the dispatch REFUSES, before
-   * ever spawning, if the boundary cannot be established on this host
+   * config setting (`config.ts`) — `true` by default on Darwin (the declared
+   * supported environment, where O3's "fail closed" is now the automatic
+   * default this objective's own unconditional wording names), `false`
+   * elsewhere unless a repo opts in explicitly (round 2 review, HIGH — see
+   * that config field's own doc comment for why an unconditional default
+   * everywhere would only ever refuse on an unsupported host, never protect
+   * anything). When BOTH `unattended` is `true` here AND the resolved
+   * setting is `true`, the dispatch REFUSES, before ever spawning, if the
+   * boundary cannot be established on this host
    * (`worker-boundary.ts`'s `isWorkerBoundaryAvailable`) — never a silent
    * fallback to full environment inheritance (isolation.md §3, "Refusal
-   * conditions"). With the config setting left off (its default), this
-   * field changes nothing observable — the plain `vinaya dispatch` CLI
-   * command, this file's own pre-existing test suite
+   * conditions"). On a host where the setting resolves off (Linux, absent an
+   * explicit override), this field changes nothing observable — the plain
+   * `vinaya dispatch` CLI command, this file's own pre-existing test suite
    * (`apps/cli/tests/lib/dispatch.test.ts`), and the pre-existing
    * `dev-review-loop`/`dispatch-task` automated-loop dispatch sites (which
    * DO set this field, for attribution) all keep their exact pre-task-3
-   * behavior.
+   * behavior there.
    */
   unattended?: boolean
 }
@@ -1869,17 +1875,33 @@ export async function dispatchRole(
   // boundary — refused, before the 'dispatched' event and before any spawn,
   // when it cannot be established (`DispatchOpts.unattended`'s own doc
   // comment) — but only when `dispatch.requireWorkerIsolation` (`config.ts`)
-  // is explicitly `true`, the "declared, visible setting" this tranche's
-  // milestone names (see that config field's own doc comment for why the
-  // default is off). Attended dispatch, an unattended dispatch with the
-  // setting left off (the plain `vinaya dispatch` CLI, this file's own
-  // pre-existing test suite, and the pre-existing `dev-review-loop`/
-  // `dispatch-task` automated-loop call sites, none of which set it) is
-  // entirely unaffected: `boundaryLaunch` stays `null` and the spawn below
-  // falls through to its pre-task-3 shape exactly.
+  // resolves `true`, the "declared, visible setting" this tranche's
+  // milestone names. Round 2 review, HIGH: an unconditional off-by-default
+  // left O3's "fail closed" as opt-in everywhere, including the ONE
+  // environment the boundary actually works on — the default is now
+  // platform-conditional (`config.ts`'s own doc comment on this field):
+  // `true` on Darwin (the declared supported environment, where nothing
+  // needs to change for O3 to hold as the automatic default), `false`
+  // elsewhere (where forcing it on would only ever refuse, never protect
+  // anything, since no mechanism exists there yet). An explicit config value
+  // always wins either way. This repo's own CI/operational host (Linux)
+  // keeps today's exact behavior unless a repo explicitly opts in.
   let boundaryLaunch: ReturnType<typeof resolveWorkerBoundaryLaunch> | null = null
   let boundaryAllowedDir: string | null = null
-  if (opts.unattended === true && loadConfig()?.dispatch?.requireWorkerIsolation === true) {
+  const requireIsolation = loadConfig()?.dispatch?.requireWorkerIsolation ?? process.platform === 'darwin'
+  if (opts.unattended === true && requireIsolation) {
+    // O2 (round 2 review, CRITICAL): when no real worktree exists yet
+    // (`opts.cwd` omitted — the round-1 Developer bootstrap, whose own Step 0
+    // is `git worktree add`), `boundaryAllowedDir` falls back to the shared
+    // repo root — which must be READ-ONLY, never read+write, or a confined
+    // Developer could rewrite `vinaya.config.json`/`aeg-root/` doctrine and
+    // persistently defeat this very boundary (see
+    // `WorkerBoundaryLaunchOpts.bootstrapWritableSubpaths`'s own doc
+    // comment). Only the `developer` role's own bootstrap genuinely needs
+    // `git worktree add`'s two write targets; any other role falling back to
+    // the repo root (a Reviewer with no candidate built yet) gets a
+    // read-only repo root and nothing else.
+    const usingRepoRootFallback = opts.cwd === undefined
     boundaryAllowedDir = opts.cwd ?? repoRoot()
     boundaryLaunch =
       boundaryAllowedDir === null
@@ -1888,7 +1910,17 @@ export async function dispatchRole(
             binaryPath,
             args: spawnArgs,
             allowedDir: boundaryAllowedDir,
-            vinayaHomeDir: GLOBAL_VINAYA_HOME
+            vinayaHomeDir: GLOBAL_VINAYA_HOME,
+            // Named here, not inside worker-boundary.ts (round 2 review,
+            // MAJOR fix): the two GLOBAL_VINAYA_HOME subdirectories a
+            // Worker's own later `vinaya` subcommand genuinely needs to
+            // write — this file's own outbox root (`outboxPathFor`, above)
+            // and its `dispatch-resume` convention (`resumeRecordPathFor`,
+            // below) — never its `config.json`.
+            vinayaHomeWritableSubdirs: ['outbox', 'dispatch-resume'],
+            ...(usingRepoRootFallback
+              ? { bootstrapWritableSubpaths: role === 'developer' ? ['.git', '.worktrees'] : [] }
+              : {})
           })
     if (!boundaryLaunch.ok) {
       const durationMs = Date.now() - start
@@ -1953,7 +1985,14 @@ export async function dispatchRole(
     const child = spawn(spawnCommand, spawnCommandArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
       ...(spawnCwd ? { cwd: spawnCwd } : {}),
-      env: resolvedBoundary ? buildWorkerEnv(process.env, attribution) : { ...process.env, ...attribution }
+      env: resolvedBoundary
+        ? // O1 (round 2 review, BLOCKER): named-through by vendor, never a
+          // blanket credential spread — `RUNTIME_CREDENTIAL_ENV_KEYS`'s own
+          // doc comment records what is (Claude, `ANTHROPIC_API_KEY`,
+          // verified live) and is not (Codex/Gemini, disclosed as unverified
+          // on this host) confirmed.
+          buildWorkerEnv(process.env, attribution, RUNTIME_CREDENTIAL_ENV_KEYS[agent] ?? [])
+        : { ...process.env, ...attribution }
     })
 
     // O1/O3: bind the child's own identity onto the launch record right

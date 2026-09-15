@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { chmodSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -8,6 +8,7 @@ import {
   buildWorkerSandboxProfile,
   isWorkerBoundaryAvailable,
   resolveWorkerBoundaryLaunch,
+  RUNTIME_CREDENTIAL_ENV_KEYS,
   WORKER_ENV_ALLOWLIST_KEYS,
   type WorkerBoundaryDeps
 } from '../../../src/lib/worker-boundary'
@@ -29,6 +30,13 @@ function tempDir(prefix: string): string {
 
 const AVAILABLE_DEPS: WorkerBoundaryDeps = {
   detectHost: () => ({ platform: 'darwin', sandboxExecExecutable: true })
+}
+
+function fakeBinaryIn(binDir: string): string {
+  const fakeBinary = join(binDir, 'fake-vendor')
+  writeFileSync(fakeBinary, '#!/bin/sh\nexit 0\n')
+  chmodSync(fakeBinary, 0o755)
+  return fakeBinary
 }
 
 describe('buildWorkerEnv — O2 allowlist, never a spread', () => {
@@ -63,6 +71,37 @@ describe('buildWorkerEnv — O2 allowlist, never a spread', () => {
     const env = buildWorkerEnv({ PATH: '/from-source' }, { PATH: '/from-attribution' })
     expect(env.PATH).toBe('/from-attribution')
   })
+
+  it('threads an extraAllowlistKeys entry through when present on the source, same as a baseline key', () => {
+    const env = buildWorkerEnv({ ANTHROPIC_API_KEY: 'sk-ant-fixture-not-real' }, {}, ['ANTHROPIC_API_KEY'])
+    expect(env.ANTHROPIC_API_KEY).toBe('sk-ant-fixture-not-real')
+  })
+
+  it('never includes an extraAllowlistKeys entry the source does not carry', () => {
+    const env = buildWorkerEnv({}, {}, ['ANTHROPIC_API_KEY'])
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined()
+  })
+
+  it('never includes an unrelated vendor credential key not named in extraAllowlistKeys', () => {
+    const env = buildWorkerEnv({ ANTHROPIC_API_KEY: 'leak', OPENAI_API_KEY: 'also-leak' }, {}, ['OPENAI_API_KEY'])
+    expect(env.OPENAI_API_KEY).toBe('also-leak')
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined()
+  })
+})
+
+describe('RUNTIME_CREDENTIAL_ENV_KEYS — round 2 review, BLOCKER (a real model-runtime credential route)', () => {
+  it('names ANTHROPIC_API_KEY for claude — verified live on this authoring host via `claude --help`', () => {
+    expect(RUNTIME_CREDENTIAL_ENV_KEYS.claude).toEqual(['ANTHROPIC_API_KEY'])
+  })
+
+  it('names a vendor key for codex and gemini too, disclosed as convention-based rather than live-verified', () => {
+    expect(RUNTIME_CREDENTIAL_ENV_KEYS.codex?.length).toBeGreaterThan(0)
+    expect(RUNTIME_CREDENTIAL_ENV_KEYS.gemini?.length).toBeGreaterThan(0)
+  })
+
+  it('an unknown vendor string yields no entry — a caller falls back to an empty list, never throws', () => {
+    expect(RUNTIME_CREDENTIAL_ENV_KEYS['not-a-real-vendor']).toBeUndefined()
+  })
 })
 
 describe('isWorkerBoundaryAvailable — O3 host detection', () => {
@@ -94,7 +133,8 @@ describe('resolveWorkerBoundaryLaunch — O3 fail-closed refusal', () => {
         binaryPath: '/usr/bin/env',
         args: [],
         allowedDir: tempDir('vinaya-wb-'),
-        vinayaHomeDir: tempDir('vinaya-wb-home-')
+        vinayaHomeDir: tempDir('vinaya-wb-home-'),
+        vinayaHomeWritableSubdirs: ['outbox', 'dispatch-resume']
       },
       { detectHost: () => ({ platform: 'linux', sandboxExecExecutable: false }) }
     )
@@ -111,7 +151,8 @@ describe('resolveWorkerBoundaryLaunch — O3 fail-closed refusal', () => {
         binaryPath: '/usr/bin/env',
         args: [],
         allowedDir: tempDir('vinaya-wb-'),
-        vinayaHomeDir: tempDir('vinaya-wb-home-')
+        vinayaHomeDir: tempDir('vinaya-wb-home-'),
+        vinayaHomeWritableSubdirs: ['outbox', 'dispatch-resume']
       },
       { detectHost: () => ({ platform: 'linux', sandboxExecExecutable: false }) }
     )
@@ -124,12 +165,16 @@ describe('resolveWorkerBoundaryLaunch — O1/O2 resolved launch (available bound
     const allowedDir = tempDir('vinaya-wb-allowed-')
     const homeDir = tempDir('vinaya-wb-home-')
     const binDir = tempDir('vinaya-wb-bin-')
-    const fakeBinary = join(binDir, 'fake-vendor')
-    writeFileSync(fakeBinary, '#!/bin/sh\nexit 0\n')
-    chmodSync(fakeBinary, 0o755)
+    const fakeBinary = fakeBinaryIn(binDir)
 
     const result = resolveWorkerBoundaryLaunch(
-      { binaryPath: fakeBinary, args: ['--foo', 'bar'], allowedDir, vinayaHomeDir: homeDir },
+      {
+        binaryPath: fakeBinary,
+        args: ['--foo', 'bar'],
+        allowedDir,
+        vinayaHomeDir: homeDir,
+        vinayaHomeWritableSubdirs: ['outbox', 'dispatch-resume']
+      },
       AVAILABLE_DEPS
     )
     expect(result.ok).toBe(true)
@@ -149,6 +194,40 @@ describe('resolveWorkerBoundaryLaunch — O1/O2 resolved launch (available bound
       expect(profile).toContain('com.apple.securityd')
       expect(profile).toContain('(deny signal)')
       expect(profile).toContain('(deny process-info* (target others))')
+      // round 2 review, LOW: outbound port 22 denied as a cheap, disclosed
+      // partial egress mitigation.
+      expect(profile).toContain('(deny network-outbound (remote tcp "*:22"))')
+    } finally {
+      result.launch.cleanup()
+    }
+  })
+
+  it("(steady state, no bootstrapWritableSubpaths) grants allowedDir full read+write — a Worker's own worktree, a Reviewer's own scratch copy", () => {
+    const allowedDir = tempDir('vinaya-wb-allowed-')
+    const homeDir = tempDir('vinaya-wb-home-')
+    const binDir = tempDir('vinaya-wb-bin-')
+    const fakeBinary = fakeBinaryIn(binDir)
+
+    const result = resolveWorkerBoundaryLaunch(
+      {
+        binaryPath: fakeBinary,
+        args: [],
+        allowedDir,
+        vinayaHomeDir: homeDir,
+        vinayaHomeWritableSubdirs: ['outbox', 'dispatch-resume']
+      },
+      AVAILABLE_DEPS
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    try {
+      const profilePath = result.launch.args[1] as string
+      const profile = readFileSync(profilePath, 'utf8')
+      // allowedDir appears inside a `file-read* file-write*` allow rule.
+      const rwBlockStart = profile.indexOf('(allow file-read* file-write*')
+      const rwBlockEnd = profile.indexOf(')', profile.indexOf(allowedDir, rwBlockStart))
+      expect(rwBlockStart).toBeGreaterThan(-1)
+      expect(profile.indexOf(allowedDir, rwBlockStart)).toBeLessThan(rwBlockEnd + 1)
     } finally {
       result.launch.cleanup()
     }
@@ -158,12 +237,16 @@ describe('resolveWorkerBoundaryLaunch — O1/O2 resolved launch (available bound
     const allowedDir = tempDir('vinaya-wb-allowed-')
     const homeDir = tempDir('vinaya-wb-home-')
     const binDir = tempDir('vinaya-wb-bin-')
-    const fakeBinary = join(binDir, 'fake-vendor')
-    writeFileSync(fakeBinary, '#!/bin/sh\nexit 0\n')
-    chmodSync(fakeBinary, 0o755)
+    const fakeBinary = fakeBinaryIn(binDir)
 
     const result = resolveWorkerBoundaryLaunch(
-      { binaryPath: fakeBinary, args: [], allowedDir, vinayaHomeDir: homeDir },
+      {
+        binaryPath: fakeBinary,
+        args: [],
+        allowedDir,
+        vinayaHomeDir: homeDir,
+        vinayaHomeWritableSubdirs: ['outbox', 'dispatch-resume']
+      },
       AVAILABLE_DEPS
     )
     expect(result.ok).toBe(true)
@@ -180,11 +263,259 @@ describe('resolveWorkerBoundaryLaunch — O1/O2 resolved launch (available bound
         binaryPath: '/usr/bin/env',
         args: [],
         allowedDir: join(tmpdir(), `vinaya-wb-does-not-exist-${Math.random().toString(36).slice(2)}`),
-        vinayaHomeDir: tempDir('vinaya-wb-home-')
+        vinayaHomeDir: tempDir('vinaya-wb-home-'),
+        vinayaHomeWritableSubdirs: ['outbox', 'dispatch-resume']
       },
       AVAILABLE_DEPS
     )
     expect(result.ok).toBe(false)
+  })
+})
+
+describe('resolveWorkerBoundaryLaunch — bootstrapWritableSubpaths (round 2 review, CRITICAL: repo root must not be writable)', () => {
+  it('with bootstrapWritableSubpaths given, allowedDir itself is read-only — never in a file-write* allow rule', () => {
+    const allowedDir = tempDir('vinaya-wb-repo-root-')
+    mkdirSync(join(allowedDir, '.git'))
+    mkdirSync(join(allowedDir, '.worktrees'))
+    writeFileSync(join(allowedDir, 'vinaya.config.json'), '{}')
+    const homeDir = tempDir('vinaya-wb-home-')
+    const binDir = tempDir('vinaya-wb-bin-')
+    const fakeBinary = fakeBinaryIn(binDir)
+
+    const result = resolveWorkerBoundaryLaunch(
+      {
+        binaryPath: fakeBinary,
+        args: [],
+        allowedDir,
+        vinayaHomeDir: homeDir,
+        vinayaHomeWritableSubdirs: ['outbox', 'dispatch-resume'],
+        bootstrapWritableSubpaths: ['.git', '.worktrees']
+      },
+      AVAILABLE_DEPS
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    try {
+      const profilePath = result.launch.args[1] as string
+      const profile = readFileSync(profilePath, 'utf8')
+      // allowedDir must appear ONLY in a read-only allow rule, never in the
+      // `file-read* file-write*` (both) allow rule — the CRITICAL finding's
+      // own repro shape (a confined round-1 Developer rewriting
+      // vinaya.config.json) requires allowedDir to carry write access; this
+      // asserts it structurally cannot.
+      const rwRuleIdx = profile.indexOf('(allow file-read* file-write*')
+      const rwRuleEnd = profile.indexOf('))', rwRuleIdx) + 2
+      const rwRuleBody = profile.slice(rwRuleIdx, rwRuleEnd)
+      // The EXACT quoted literal, not a bare substring match — allowedDir is
+      // itself a string prefix of `<allowedDir>/.git`, which legitimately
+      // does appear here (the next test), so a naive `.not.toContain(allowedDir)`
+      // would false-fail on that real, correct subpath.
+      expect(rwRuleBody).not.toContain(`"${allowedDir}"`)
+      // But it IS still readable — a bare `(allow file-read* ...)` rule
+      // names it, so the Developer can still read doctrine/code pre-worktree.
+      expect(profile).toContain(`(allow file-read*\n    (subpath "${allowedDir}")`)
+    } finally {
+      result.launch.cleanup()
+    }
+  })
+
+  it('the named bootstrap subpaths (.git, .worktrees) DO get read+write', () => {
+    const allowedDir = tempDir('vinaya-wb-repo-root-')
+    mkdirSync(join(allowedDir, '.git'))
+    mkdirSync(join(allowedDir, '.worktrees'))
+    const homeDir = tempDir('vinaya-wb-home-')
+    const binDir = tempDir('vinaya-wb-bin-')
+    const fakeBinary = fakeBinaryIn(binDir)
+
+    const result = resolveWorkerBoundaryLaunch(
+      {
+        binaryPath: fakeBinary,
+        args: [],
+        allowedDir,
+        vinayaHomeDir: homeDir,
+        vinayaHomeWritableSubdirs: ['outbox', 'dispatch-resume'],
+        bootstrapWritableSubpaths: ['.git', '.worktrees']
+      },
+      AVAILABLE_DEPS
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    try {
+      const profilePath = result.launch.args[1] as string
+      const profile = readFileSync(profilePath, 'utf8')
+      const rwRuleIdx = profile.indexOf('(allow file-read* file-write*')
+      const rwRuleEnd = profile.indexOf('))', rwRuleIdx) + 2
+      const rwRuleBody = profile.slice(rwRuleIdx, rwRuleEnd)
+      expect(rwRuleBody).toContain(join(allowedDir, '.git'))
+      expect(rwRuleBody).toContain(join(allowedDir, '.worktrees'))
+    } finally {
+      result.launch.cleanup()
+    }
+  })
+
+  it('a bootstrap subpath that does not exist yet (a fresh clone with no .worktrees dir) is still named, not silently dropped', () => {
+    const allowedDir = tempDir('vinaya-wb-repo-root-')
+    mkdirSync(join(allowedDir, '.git'))
+    // .worktrees deliberately not created — first task ever dispatched here.
+    const homeDir = tempDir('vinaya-wb-home-')
+    const binDir = tempDir('vinaya-wb-bin-')
+    const fakeBinary = fakeBinaryIn(binDir)
+
+    const result = resolveWorkerBoundaryLaunch(
+      {
+        binaryPath: fakeBinary,
+        args: [],
+        allowedDir,
+        vinayaHomeDir: homeDir,
+        vinayaHomeWritableSubdirs: ['outbox', 'dispatch-resume'],
+        bootstrapWritableSubpaths: ['.git', '.worktrees']
+      },
+      AVAILABLE_DEPS
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    try {
+      const profilePath = result.launch.args[1] as string
+      const profile = readFileSync(profilePath, 'utf8')
+      expect(profile).toContain(join(allowedDir, '.worktrees'))
+    } finally {
+      result.launch.cleanup()
+    }
+  })
+
+  it('an empty bootstrapWritableSubpaths array still makes allowedDir read-only (a Reviewer falling back to the repo root never gets any repo write access)', () => {
+    const allowedDir = tempDir('vinaya-wb-repo-root-')
+    const homeDir = tempDir('vinaya-wb-home-')
+    const binDir = tempDir('vinaya-wb-bin-')
+    const fakeBinary = fakeBinaryIn(binDir)
+
+    const result = resolveWorkerBoundaryLaunch(
+      {
+        binaryPath: fakeBinary,
+        args: [],
+        allowedDir,
+        vinayaHomeDir: homeDir,
+        vinayaHomeWritableSubdirs: ['outbox', 'dispatch-resume'],
+        bootstrapWritableSubpaths: []
+      },
+      AVAILABLE_DEPS
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    try {
+      const profilePath = result.launch.args[1] as string
+      const profile = readFileSync(profilePath, 'utf8')
+      const rwRuleIdx = profile.indexOf('(allow file-read* file-write*')
+      const rwRuleEnd = profile.indexOf('))', rwRuleIdx) + 2
+      expect(profile.slice(rwRuleIdx, rwRuleEnd)).not.toContain(allowedDir)
+    } finally {
+      result.launch.cleanup()
+    }
+  })
+})
+
+describe('resolveWorkerBoundaryLaunch — GLOBAL_VINAYA_HOME narrowed (round 2 review, MAJOR)', () => {
+  it("vinayaHomeDir itself is read-only — a confined Worker cannot rewrite ~/.vinaya's own config.json", () => {
+    const allowedDir = tempDir('vinaya-wb-allowed-')
+    const homeDir = tempDir('vinaya-wb-home-')
+    writeFileSync(join(homeDir, 'config.json'), '{}')
+    const binDir = tempDir('vinaya-wb-bin-')
+    const fakeBinary = fakeBinaryIn(binDir)
+
+    const result = resolveWorkerBoundaryLaunch(
+      {
+        binaryPath: fakeBinary,
+        args: [],
+        allowedDir,
+        vinayaHomeDir: homeDir,
+        vinayaHomeWritableSubdirs: ['outbox', 'dispatch-resume']
+      },
+      AVAILABLE_DEPS
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    try {
+      const profilePath = result.launch.args[1] as string
+      const profile = readFileSync(profilePath, 'utf8')
+      const rwRuleIdx = profile.indexOf('(allow file-read* file-write*')
+      const rwRuleEnd = profile.indexOf('))', rwRuleIdx) + 2
+      // The EXACT quoted literal — homeDir is a string prefix of its own
+      // `outbox`/`dispatch-resume` subpaths, which legitimately DO appear
+      // here (the next test); a bare substring check would false-fail.
+      expect(profile.slice(rwRuleIdx, rwRuleEnd)).not.toContain(`"${homeDir}"`)
+      expect(profile).toContain(`(allow file-read*\n    (subpath "${homeDir}")`)
+    } finally {
+      result.launch.cleanup()
+    }
+  })
+
+  it('only outbox/ and dispatch-resume/ under vinayaHomeDir get read+write, even when they do not exist yet', () => {
+    const allowedDir = tempDir('vinaya-wb-allowed-')
+    const homeDir = tempDir('vinaya-wb-home-')
+    const binDir = tempDir('vinaya-wb-bin-')
+    const fakeBinary = fakeBinaryIn(binDir)
+
+    const result = resolveWorkerBoundaryLaunch(
+      {
+        binaryPath: fakeBinary,
+        args: [],
+        allowedDir,
+        vinayaHomeDir: homeDir,
+        vinayaHomeWritableSubdirs: ['outbox', 'dispatch-resume']
+      },
+      AVAILABLE_DEPS
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    try {
+      const profilePath = result.launch.args[1] as string
+      const profile = readFileSync(profilePath, 'utf8')
+      const rwRuleIdx = profile.indexOf('(allow file-read* file-write*')
+      const rwRuleEnd = profile.indexOf('))', rwRuleIdx) + 2
+      const rwRuleBody = profile.slice(rwRuleIdx, rwRuleEnd)
+      expect(rwRuleBody).toContain(join(homeDir, 'outbox'))
+      expect(rwRuleBody).toContain(join(homeDir, 'dispatch-resume'))
+    } finally {
+      result.launch.cleanup()
+    }
+  })
+})
+
+describe('buildWorkerSandboxProfile — read-only vs read-write directories', () => {
+  it('a readOnlyDirs entry is read-allowed but excluded from the file-write* allow rule', () => {
+    const profile = buildWorkerSandboxProfile({
+      realHome: '/Users/marker',
+      readOnlyDirs: ['/tmp/readonly-repo-root'],
+      readWriteDirs: ['/tmp/writable-worktree'],
+      execAllowDirs: ['/usr/bin'],
+      runtimeDir: '/usr/bin',
+      sshSockCanon: '/nonexistent',
+      credentialHelperDenyLiterals: []
+    })
+    expect(profile).toContain('(allow file-read*\n    (subpath "/tmp/readonly-repo-root")')
+    const rwRuleIdx = profile.indexOf('(allow file-read* file-write*')
+    const rwRuleEnd = profile.indexOf('))', rwRuleIdx) + 2
+    expect(profile.slice(rwRuleIdx, rwRuleEnd)).not.toContain('/tmp/readonly-repo-root')
+    expect(profile.slice(rwRuleIdx, rwRuleEnd)).toContain('/tmp/writable-worktree')
+  })
+
+  it('the write-deny-elsewhere rule still applies to a readOnlyDirs entry — it is not exempted from the blanket write deny', () => {
+    const profile = buildWorkerSandboxProfile({
+      realHome: '/Users/marker',
+      readOnlyDirs: ['/tmp/readonly-repo-root'],
+      readWriteDirs: ['/tmp/writable-worktree'],
+      execAllowDirs: ['/usr/bin'],
+      runtimeDir: '/usr/bin',
+      sshSockCanon: '/nonexistent',
+      credentialHelperDenyLiterals: []
+    })
+    const denyElsewhereIdx = profile.indexOf('(deny file-write*\n  (require-all')
+    const denyElsewhereEnd = profile.indexOf('))', denyElsewhereIdx) + 2
+    const denyElsewhereBody = profile.slice(denyElsewhereIdx, denyElsewhereEnd)
+    // Only readWriteDirs are named as exceptions (require-not) — a readOnlyDirs
+    // entry is absent from the exception list, so the blanket deny reaches it.
+    expect(denyElsewhereBody).toContain('/tmp/writable-worktree')
+    expect(denyElsewhereBody).not.toContain('/tmp/readonly-repo-root')
   })
 })
 
@@ -193,6 +524,7 @@ describe('buildWorkerSandboxProfile — Seatbelt string-literal escaping', () =>
     const hostile = '/tmp/evil"))(allow default)(deny file-read* (subpath "'
     const profile = buildWorkerSandboxProfile({
       realHome: '/Users/marker',
+      readOnlyDirs: [],
       readWriteDirs: [hostile],
       execAllowDirs: ['/usr/bin'],
       runtimeDir: '/usr/bin',
@@ -206,6 +538,7 @@ describe('buildWorkerSandboxProfile — Seatbelt string-literal escaping', () =>
   it('names every credential-helper literal as its own deny rule, layered after the process-exec allow', () => {
     const profile = buildWorkerSandboxProfile({
       realHome: '/Users/marker',
+      readOnlyDirs: [],
       readWriteDirs: ['/tmp/allowed'],
       execAllowDirs: ['/usr/bin'],
       runtimeDir: '/usr/bin',
