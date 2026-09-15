@@ -551,7 +551,7 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     key: 'logPublish',
     type: 'object (optional)',
     semantics: [
-      "Where the developer-review loop's own round-end flush publishes telemetry (`apps/vinaya/cli/src/lib/log-flush.ts`'s `flushOutbox`, called in-process at every round end). Absent — this key's own default for every repo that has never set it — the round-end flush is a no-op: telemetry simply stays in the local, already-bounded outbox until an operator runs `vinaya log flush --issue <n>` by hand. NEVER falls back to the task's own Issue — that Issue is exactly the surface the loop must read to dispatch the next developer round, and publishing unbounded telemetry there is the defect this key exists to prevent. Set at most one of `issue`/`pr`; config load refuses both set together."
+      "Where the developer-review loop's own round-end flush publishes telemetry (`apps/cli/src/lib/log-flush.ts`'s `flushOutbox`, called in-process at every round end). Absent — this key's own default for every repo that has never set it — the round-end flush is a no-op: telemetry simply stays in the local, already-bounded outbox until an operator runs `vinaya log flush --issue <n>` by hand. NEVER falls back to the task's own Issue — that Issue is exactly the surface the loop must read to dispatch the next developer round, and publishing unbounded telemetry there is the defect this key exists to prevent. Set at most one of `issue`/`pr`; config load refuses both set together."
     ],
     example: `{
   "logPublish": {
@@ -580,7 +580,7 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     key: 'logPublish.maxChunksPerFlush',
     type: 'number (optional, positive integer)',
     semantics: [
-      'Caps how many NEW comments one round-end flush call posts to the configured target — the rest stay queued, untouched, in the outbox for a later flush. Absent defaults to `DEFAULT_MAX_CHUNKS_PER_FLUSH` (`apps/vinaya/cli/src/lib/config.ts`). A non-zero deferred count is always surfaced visibly (stderr for the round-end flush, stdout for `vinaya log flush`), never silently reported as a complete flush.'
+      'Caps how many NEW comments one round-end flush call posts to the configured target — the rest stay queued, untouched, in the outbox for a later flush. Absent defaults to `DEFAULT_MAX_CHUNKS_PER_FLUSH` (`apps/cli/src/lib/config.ts`). A non-zero deferred count is always surfaced visibly (stderr for the round-end flush, stdout for `vinaya log flush`), never silently reported as a complete flush.'
     ],
     example: `{ "logPublish": { "maxChunksPerFlush": 10 } }`
   }

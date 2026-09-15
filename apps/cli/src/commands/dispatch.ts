@@ -21,7 +21,7 @@
 import { readFileSync } from 'node:fs'
 import { ROLE_VALUES, type Role } from '@attalabs/aeg-core'
 import { AGENT_VENDOR_NAMES, dispatchRole, isAgentVendor, type AgentVendor } from '../lib/dispatch.js'
-import { loadConfig } from '../lib/config.js'
+import { loadConfig, resolveLogPublishMaxChunksPerFlush } from '../lib/config.js'
 import { printJson } from '../lib/envelope.js'
 import { flushOutbox, LogFlushError } from '../lib/log-flush.js'
 
@@ -172,7 +172,17 @@ export async function dispatchCommand(args: string[]): Promise<void> {
 
   if (parsed.task !== undefined || parsed.pr !== undefined) {
     try {
-      await flushOutbox(parsed.task !== undefined ? { issue: parsed.task } : { pr: parsed.pr as number })
+      const outcome = await flushOutbox(
+        parsed.task !== undefined ? { issue: parsed.task } : { pr: parsed.pr as number },
+        {
+          maxChunksPerFlush: resolveLogPublishMaxChunksPerFlush(loadConfig())
+        }
+      )
+      if (outcome.flushed && outcome.deferredChunkCount > 0) {
+        process.stderr.write(
+          `vinaya dispatch: trailing flush bounded — ${outcome.deferredChunkCount} chunk(s) remain queued in the outbox (non-fatal — retry with \`vinaya log flush\`).\n`
+        )
+      }
     } catch (err) {
       const message = err instanceof LogFlushError || err instanceof Error ? err.message : String(err)
       process.stderr.write(
@@ -187,5 +197,5 @@ export async function dispatchCommand(args: string[]): Promise<void> {
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  dispatch: { date: '2026-09-11', callsToday: 5, retiresVia: 'sharedCommandShell' }
+  dispatch: { date: '2026-09-11', callsToday: 6, retiresVia: 'sharedCommandShell' }
 }

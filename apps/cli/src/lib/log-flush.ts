@@ -693,7 +693,10 @@ export async function flushOutbox(target: LogFlushTarget, options: FlushOptions 
     op,
     target: eventTarget,
     commentIds,
-    chunkCount: chunks.length,
+    // Chunks this call actually considered (posted or acknowledged-as-already-posted)
+    // — never the full planned count, which would overstate work when `maxChunksPerFlush`
+    // cut the loop short (`deferredChunkCount` covers exactly what was left behind).
+    chunkCount: chunks.length - deferredChunkCount,
     deferredChunkCount,
     warning: finalLanded ? null : warningFor('written')
   }
