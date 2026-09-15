@@ -290,8 +290,53 @@ export const TaskCancelInputSchema = z
   .strict()
 export type TaskCancelInput = z.infer<typeof TaskCancelInputSchema>
 
-/** No mutating tool below has a result shape yet — each one always refuses (O3) — so its schema is `z.never()`: a handler that ever resolves rather than refuses is a type error at the call site, not a silent success. */
-export const NoResultSchema = z.never()
+/**
+ * `task_resume`'s durable result: the run this call
+ * addressed (`task`/`pr`), the escalation it resolved (`escalationId`), and
+ * the authenticated decision reference it consumed — `authenticatedBy`/
+ * `authenticatedFrom` mirror `ResolutionRecord`'s own fields exactly, never a
+ * caller-supplied claim (Traps to avoid: no free-text approved boolean).
+ * `outcome: 'started'` — this call is the one that triggered the existing
+ * `dev-review-loop --resume` continuation. `outcome: 'already_resumed'` — a
+ * prior call (or a race this call lost) already did, and this call is a
+ * truthful idempotent replay: nothing new was started.
+ */
+export const TaskResumeResultSchema = z.object({
+  task: z.number().int().positive(),
+  pr: z.number().int().positive(),
+  escalationId: z.string().min(1),
+  outcome: z.enum(['started', 'already_resumed']),
+  authenticatedBy: z.string().min(1),
+  authenticatedFrom: z.string().min(1)
+})
+export type TaskResumeResult = z.infer<typeof TaskResumeResultSchema>
+
+/**
+ * `task_cancel`'s three truthful outcomes:
+ * `'confirmed'` — the cancellation is durably resolved and, where a local
+ * in-flight process existed, it was signaled on this host. `'pending'` — the
+ * cancellation is durably resolved, but the run's own driver was dispatched
+ * on a DIFFERENT host, so this call cannot itself confirm the process
+ * stopped (the driver's own next control-store write is fenced regardless —
+ * see `fencedEffectKeys`). `'uncertain'` — one or more in-flight external
+ * effects could not be confirmed complete and were fenced instead; a late
+ * result cannot land under the superseded epoch, but whether it had already
+ * landed before the fence is not knowable from here.
+ */
+export const TaskCancelOutcomeSchema = z.enum(['confirmed', 'pending', 'uncertain'])
+export type TaskCancelOutcome = z.infer<typeof TaskCancelOutcomeSchema>
+
+export const TaskCancelResultSchema = z.object({
+  task: z.number().int().positive(),
+  pr: z.number().int().positive(),
+  escalationId: z.string().min(1),
+  outcome: TaskCancelOutcomeSchema,
+  authenticatedBy: z.string().min(1),
+  authenticatedFrom: z.string().min(1),
+  /** Effect keys fenced from `'started'` to `'uncertain'` by this cancel — empty on an idempotent replay, which fences nothing new. */
+  fencedEffectKeys: z.array(z.string())
+})
+export type TaskCancelResult = z.infer<typeof TaskCancelResultSchema>
 
 // --- catalog -----------------------------------------------------------------
 
@@ -371,28 +416,28 @@ export const TASK_START_TOOL: TaskToolDefinition<TaskStartInput, TaskStartResult
   handlerBinding: { kind: 'bound', module: 'apps/cli/src/lib/task-tools/start.ts', export: 'defaultTaskStartHandler' }
 }
 
-export const TASK_RESUME_TOOL: TaskToolDefinition<TaskResumeInput, never> = {
+export const TASK_RESUME_TOOL: TaskToolDefinition<TaskResumeInput, TaskResumeResult> = {
   name: 'task_resume',
-  purpose: 'Continue a paused or exited dev-review-loop run from where it left off.',
+  purpose: 'Continue a paused dev-review-loop run from where it left off, once a Principal ruling authenticates it.',
   boundaries:
-    "Distinct from `task_start`: this tool only ever applies to a task that already has a run. It refuses every call today (`capability_unavailable`) — resuming a run is a process start, and this task's Surface admits no process start.",
+    "Distinct from `task_start`: this tool only ever applies to a task that already has a paused run, never a fresh one. It never accepts a caller-supplied approval — the only decision reference it consumes is a Principal ruling comment already posted on the run's own PR, read fresh from the forge every call, never taken from a tool argument. It never resolves a decision itself: it triggers the SAME `dev-review-loop --resume` continuation the CLI has always used, guarded so the same paused escalation is never resumed by two calls.",
   inputSchema: TaskResumeInputSchema,
-  resultSchema: NoResultSchema,
+  resultSchema: TaskResumeResultSchema,
   errorSchema: TaskToolErrorSchema,
   examples: [{ task: { tranche: 'task-operator-v1', id: '1' } }],
-  handlerBinding: { kind: 'stub', module: 'apps/cli/src/lib/task-tools/handlers.ts', export: 'taskResumeHandler' }
+  handlerBinding: { kind: 'bound', module: 'apps/cli/src/lib/task-tools/resume.ts', export: 'defaultTaskResumeHandler' }
 }
 
-export const TASK_CANCEL_TOOL: TaskToolDefinition<TaskCancelInput, never> = {
+export const TASK_CANCEL_TOOL: TaskToolDefinition<TaskCancelInput, TaskCancelResult> = {
   name: 'task_cancel',
-  purpose: 'Stop a running or paused dev-review-loop run and release its driver lock.',
+  purpose: 'Stop a paused dev-review-loop run, fencing any in-flight effect it can no longer safely complete.',
   boundaries:
-    'The only tool in this catalog whose job is to end a run rather than read or continue one. It refuses every call today (`capability_unavailable`) — releasing a lock and terminating a driver is a forge/process mutation this Surface does not admit yet.',
+    'The only tool in this catalog whose job is to end a run rather than read or continue one. Like `task_resume`, it consumes a Principal ruling read fresh from the forge, never a caller-supplied approval. A repeated call against an already-cancelled escalation reports the same outcome again rather than erroring — cancelling twice is never a retry of a failed cancel.',
   inputSchema: TaskCancelInputSchema,
-  resultSchema: NoResultSchema,
+  resultSchema: TaskCancelResultSchema,
   errorSchema: TaskToolErrorSchema,
   examples: [{ task: { issue: 558 }, reason: 'superseded by a re-plan' }],
-  handlerBinding: { kind: 'stub', module: 'apps/cli/src/lib/task-tools/handlers.ts', export: 'taskCancelHandler' }
+  handlerBinding: { kind: 'bound', module: 'apps/cli/src/lib/task-tools/cancel.ts', export: 'defaultTaskCancelHandler' }
 }
 
 /** The one place every tool's name and shape can be found — in this fixed order, matching `TASK_TOOL_NAMES`. */

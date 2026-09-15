@@ -8,17 +8,17 @@
  * unknown observations). Neither handler writes anything or starts a
  * process.
  *
- * The three mutating tools' handlers validate their input the same way,
- * then refuse unconditionally with `capability_unavailable` (O3) — no
- * branch below ever reaches a forge write or a process start for them.
+ * `task_start` (`start.ts`), `task_resume` (`resume.ts`) and `task_cancel`
+ * (`cancel.ts`) are real handlers of their own, each in its own module —
+ * this file also exports `resolveIssueForRef`, the SAME `TaskToolRef`
+ * resolution `task_status`/`task_escalation_read` use, so those two mutating
+ * handlers resolve a `{ tranche, id }` ref through the identical forge read
+ * rather than a second, divergent implementation.
  */
 
 import {
-  capabilityUnavailable,
   DEFAULT_PAGE_LIMIT,
-  TaskCancelInputSchema,
   TaskEscalationReadInputSchema,
-  TaskResumeInputSchema,
   TaskStatusInputSchema,
   taskToolError,
   type TaskEscalationReadResult,
@@ -82,8 +82,16 @@ export function taskStatusHandler(input: unknown): TaskToolCallResult<TaskStatus
 
 // --- task_escalation_read ------------------------------------------------
 
-/** `{ issue }` needs no forge call at all — the outbox is keyed by Issue number directly. `{ tranche, id }` is resolved through the same rows `task_status` reads, so a tranche-shaped ref that names no open task fails the same way in both tools. */
-function resolveIssueNumber(ref: TaskToolRef): number | null {
+/**
+ * `{ issue }` needs no forge call at all — the outbox is keyed by Issue
+ * number directly. `{ tranche, id }` is resolved through the same rows
+ * `task_status` reads, so a tranche-shaped ref that names no open task fails
+ * the same way in every tool. Exported (not just used by
+ * `task_escalation_read` below) so `resume.ts`/`cancel.ts` resolve a
+ * `TaskToolRef` through this identical read rather than a second,
+ * divergent implementation.
+ */
+export function resolveIssueForRef(ref: TaskToolRef): number | null {
   if ('issue' in ref) return ref.issue
   const row = currentTaskStatusRows().find((r) => r.tranche === ref.tranche && r.id === ref.id)
   return row ? row.issue : null
@@ -94,7 +102,7 @@ export function taskEscalationReadHandler(input: unknown): TaskToolCallResult<Ta
   if (!parsed.success) return fail(taskToolError('validation', parsed.error.issues[0]?.message ?? 'invalid input'))
   const { task, cursor, limit } = parsed.data
 
-  const issue = resolveIssueNumber(task)
+  const issue = resolveIssueForRef(task)
   if (issue === null) return fail(taskToolError('precondition', `no open task matches ${refDescription(task)}`))
 
   // A task with no pause record ever written is not an error (the catalog's
@@ -110,24 +118,7 @@ export function taskEscalationReadHandler(input: unknown): TaskToolCallResult<Ta
   })
 }
 
-// --- task_resume / task_cancel (O3 — refusing stubs) ----------------------
-// `task_start` is no longer here — it is a real, caller-context-aware handler
-// in `start.ts` (O2). Resume and cancel remain refusing stubs — no process
-// start, no forge write — until a later tranche gives them a real handler.
-
-export function taskResumeHandler(input: unknown): TaskToolCallResult<never> {
-  const parsed = TaskResumeInputSchema.safeParse(input)
-  if (!parsed.success) return fail(taskToolError('validation', parsed.error.issues[0]?.message ?? 'invalid input'))
-  return fail(capabilityUnavailable('task_resume', 'resuming a run is a process start this Surface does not admit'))
-}
-
-export function taskCancelHandler(input: unknown): TaskToolCallResult<never> {
-  const parsed = TaskCancelInputSchema.safeParse(input)
-  if (!parsed.success) return fail(taskToolError('validation', parsed.error.issues[0]?.message ?? 'invalid input'))
-  return fail(
-    capabilityUnavailable(
-      'task_cancel',
-      'releasing a lock and stopping a driver is a mutation this Surface does not admit'
-    )
-  )
-}
+// `task_start` (`start.ts`), `task_resume` (`resume.ts`) and `task_cancel`
+// (`cancel.ts`) are real, caller-context-aware handlers of their own — see
+// each module's header for why they live apart from the two pure reads
+// above.
