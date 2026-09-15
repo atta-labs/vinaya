@@ -160,7 +160,16 @@ const OUTBOX_APPEND_ALLOWLIST = new Set([LOG_ARTIFACT_LIB_PATH])
  */
 const OUTBOX_RESUME_RECORD_ALLOWLIST = new Set([DISPATCH_PATH, TASK_TOOLS_RESUME_PATH])
 const CONFIG_PATH = 'apps/cli/src/lib/config.ts'
-const OUTBOX_PROSE_MENTION_ALLOWLIST = new Set([CONFIG_PATH])
+const WORKER_BOUNDARY_PATH = 'apps/cli/src/lib/worker-boundary.ts'
+/**
+ * Amended by worker-isolation-v1 task 3 (#560, round 5 review, CRITICAL fix):
+ * `worker-boundary.ts` names `outboxPathFor`'s own file in prose (the exact
+ * literal path `dispatch.ts` grants a confined dispatch — see
+ * `writableFiles`'s own doc comment), and separately calls `writeFileSync` to
+ * write its OWN generated Seatbelt profile to a scratch temp dir, never to
+ * the outbox itself. Same shape as `OUTBOX_RESUME_RECORD_ALLOWLIST`, above.
+ */
+const OUTBOX_PROSE_MENTION_ALLOWLIST = new Set([CONFIG_PATH, WORKER_BOUNDARY_PATH])
 
 function sourceFiles(dir: string, prefix: string): [string, string][] {
   const out: [string, string][] = []
