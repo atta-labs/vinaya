@@ -12,6 +12,7 @@ import { CHECK_SCHEMA_VERSION, type CheckError, emitCheckError } from '../checks
 import { flushOutbox, LogFlushError, type LogFlushErrorCode, type LogFlushTarget } from '../lib/log-flush.js'
 import { collectTaskLogArtifact, exportTaskLogArtifact } from '../lib/log-artifact.js'
 import { printJson } from '../lib/envelope.js'
+import { loadConfig, resolveLogPublishMaxChunksPerFlush } from '../lib/config.js'
 
 function makeCheckError(check: string, message: string, agentRecoveryPrompt: string): CheckError {
   return { schema: CHECK_SCHEMA_VERSION, check, severity: 'error', message, agent_recovery_prompt: agentRecoveryPrompt }
@@ -80,7 +81,12 @@ export async function logFlushCommand(args: string[]): Promise<void> {
 
   const target: LogFlushTarget = parsed.pr !== undefined ? { pr: parsed.pr } : { issue: parsed.issue as number }
 
-  const outcome = await flushOutbox(target, { skipRemotelyAccepted: true }).catch((err: unknown) => {
+  // O2 (Issue #626): honors the same `logPublish.maxChunksPerFlush` bound
+  // the round-end flush reads, so an adopter's configured per-target cap
+  // applies uniformly regardless of which caller reaches `flushOutbox`.
+  const maxChunksPerFlush = resolveLogPublishMaxChunksPerFlush(loadConfig())
+
+  const outcome = await flushOutbox(target, { skipRemotelyAccepted: true, maxChunksPerFlush }).catch((err: unknown) => {
     if (err instanceof LogFlushError) {
       if (err.warning) emitAuditLineWarning(err.warning)
       refuse2(makeCheckError(err.code, err.message, RECOVERY_PROMPTS[err.code]))
@@ -96,9 +102,23 @@ export async function logFlushCommand(args: string[]): Promise<void> {
   if (outcome.warning) emitAuditLineWarning(outcome.warning)
 
   if (parsed.json) {
-    printJson({ posted: outcome.chunkCount, comment_ids: outcome.commentIds, target: outcome.target })
+    printJson({
+      posted: outcome.chunkCount,
+      comment_ids: outcome.commentIds,
+      target: outcome.target,
+      deferred: outcome.deferredChunkCount
+    })
   } else {
     process.stdout.write(`log flush: posted ${outcome.chunkCount} comment(s), ${outcome.commentIds.length} confirmed\n`)
+    // O2 (Issue #626): a non-zero count is bounded, per-flush "partial
+    // coverage this round" — visible, never silent — not a failure of any
+    // kind, so it is stdout, not a `CheckError`. Re-run the same command
+    // (idempotent — `skipRemotelyAccepted: true` above) to post more.
+    if (outcome.deferredChunkCount > 0) {
+      process.stdout.write(
+        `log flush: ${outcome.deferredChunkCount} chunk(s) remain queued in the outbox — re-run to post more.\n`
+      )
+    }
   }
 }
 
@@ -196,5 +216,5 @@ export async function logCollectArtifactCommand(args: string[]): Promise<void> {
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'log flush': { date: '2026-09-11', callsToday: 2, retiresVia: 'sharedCommandShell' }
+  'log flush': { date: '2026-09-11', callsToday: 4, retiresVia: 'sharedCommandShell' }
 }

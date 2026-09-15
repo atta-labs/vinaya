@@ -88,6 +88,16 @@ import { fileURLToPath } from 'node:url'
  * so `OUTBOX_APPEND_ALLOWLIST` is its own category rather than a stretch
  * of either existing one. It calls no `log()` of its own, so it does not
  * join `CALLER_ALLOWLIST`.
+ *
+ * Amended by `task-log-v1` 8 (Issue #626): `config.ts`
+ * (`apps/cli/src/lib/config.ts`) documents the `logPublish` key's default
+ * behavior in prose — "telemetry stays in the local, already-bounded
+ * outbox" — the same "mentions `outbox`, separately calls a write" false
+ * positive `OUTBOX_RESUME_RECORD_ALLOWLIST`'s own doc comment above already
+ * describes: `config.ts`'s two `writeFileSync` calls write a resolved
+ * config file and an unrelated store, never the outbox. `config.ts` never
+ * imports `log-sink.js` either, so it is not a `CALLER_ALLOWLIST` member —
+ * this exemption is scoped to the prose-mention check alone.
  */
 
 const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..', '..')
@@ -149,6 +159,8 @@ const OUTBOX_APPEND_ALLOWLIST = new Set([LOG_ARTIFACT_LIB_PATH])
  * own control-store path, never to write there.
  */
 const OUTBOX_RESUME_RECORD_ALLOWLIST = new Set([DISPATCH_PATH, TASK_TOOLS_RESUME_PATH])
+const CONFIG_PATH = 'apps/cli/src/lib/config.ts'
+const OUTBOX_PROSE_MENTION_ALLOWLIST = new Set([CONFIG_PATH])
 
 function sourceFiles(dir: string, prefix: string): [string, string][] {
   const out: [string, string][] = []
@@ -193,7 +205,8 @@ describe('log-callers — O2', () => {
           !OUTBOX_TRUNCATE_ALLOWLIST.has(rel) &&
           !OUTBOX_HELD_VERDICT_ALLOWLIST.has(rel) &&
           !OUTBOX_RESUME_RECORD_ALLOWLIST.has(rel) &&
-          !OUTBOX_APPEND_ALLOWLIST.has(rel)
+          !OUTBOX_APPEND_ALLOWLIST.has(rel) &&
+          !OUTBOX_PROSE_MENTION_ALLOWLIST.has(rel)
       )
       .filter(([, abs]) => {
         const content = readFileSync(abs, 'utf8')
