@@ -533,6 +533,200 @@ describe('buildWorkerSandboxProfile — read-only vs read-write directories', ()
   })
 })
 
+describe('buildWorkerSandboxProfile — DNS resolution (round 4 review, BLOCKER)', () => {
+  it('grants the mDNSResponder unix-socket route and its three mach-lookup names, distinct from the tcp port allows', () => {
+    const profile = buildWorkerSandboxProfile({
+      realHome: '/Users/marker',
+      readOnlyDirs: [],
+      readWriteDirs: ['/tmp/writable-worktree'],
+      execAllowDirs: ['/usr/bin'],
+      runtimeDir: '/usr/bin',
+      sshSockCanon: '/nonexistent',
+      credentialHelperDenyLiterals: []
+    })
+    expect(profile).toContain(
+      '(allow network-outbound\n  (remote unix-socket (path-literal "/private/var/run/mDNSResponder")))'
+    )
+    const machLookupIdx = profile.indexOf('(allow mach-lookup\n  (global-name "com.apple.dnssd")')
+    expect(machLookupIdx).toBeGreaterThan(-1)
+    const machLookupEnd = profile.indexOf('))', machLookupIdx) + 2
+    const machLookupBody = profile.slice(machLookupIdx, machLookupEnd)
+    expect(machLookupBody).toContain('com.apple.dnssd')
+    expect(machLookupBody).toContain('com.apple.mDNSResponder')
+    expect(machLookupBody).toContain('com.apple.mDNSResponderUnix')
+    // The DNS route is additive to, never a substitute for, the tcp 80/443
+    // allows a round-3 fix already put in place — both must survive together.
+    expect(profile).toContain('(allow network-outbound (remote tcp "*:443"))')
+    expect(profile).toContain('(allow network-outbound (remote tcp "*:80"))')
+  })
+})
+
+describe('resolveWorkerBoundaryLaunch — vinayaHomeReadOnlySubdirs (round 4 review, BLOCKER: --settings file readable)', () => {
+  it('a readOnlySubdir is read-allowed but excluded from the read-write rule, distinct from a writable subdir', () => {
+    const allowedDir = tempDir('vinaya-wb-ro-allowed-')
+    const homeDir = tempDir('vinaya-wb-ro-home-')
+    const binDir = tempDir('vinaya-wb-ro-bin-')
+    const fakeBinary = fakeBinaryIn(binDir)
+
+    const result = resolveWorkerBoundaryLaunch(
+      {
+        binaryPath: fakeBinary,
+        args: [],
+        allowedDir,
+        vinayaHomeDir: homeDir,
+        vinayaHomeWritableSubdirs: ['outbox'],
+        vinayaHomeReadOnlySubdirs: ['dispatch-settings']
+      },
+      AVAILABLE_DEPS
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    try {
+      const profilePath = result.launch.args[1] as string
+      const profile = readFileSync(profilePath, 'utf8')
+      const rwRuleIdx = profile.indexOf('(allow file-read* file-write*')
+      const rwRuleEnd = profile.indexOf('))', rwRuleIdx) + 2
+      const rwRuleBody = profile.slice(rwRuleIdx, rwRuleEnd)
+      // The HOME-confinement carve-out is the read-only rule immediately
+      // preceding the read-write one — the same `sbSubpathAllows` call site
+      // `readOnlyDirs` tests above assert against, distinct from the
+      // process-exec/runtime `file-read*`-only allow much earlier in the
+      // profile (which never names anything under `vinayaHomeDir`).
+      const readOnlyIdx = profile.lastIndexOf('(allow file-read*\n    (subpath', rwRuleIdx)
+      const readOnlyEnd = profile.indexOf('))', readOnlyIdx) + 2
+      expect(profile.slice(readOnlyIdx, readOnlyEnd)).toContain(join(homeDir, 'dispatch-settings'))
+      expect(rwRuleBody).not.toContain(join(homeDir, 'dispatch-settings'))
+      expect(rwRuleBody).toContain(join(homeDir, 'outbox'))
+    } finally {
+      result.launch.cleanup()
+    }
+  })
+
+  it('an absent vinayaHomeReadOnlySubdirs (undefined) behaves exactly like an empty array — no crash, nothing extra granted', () => {
+    const allowedDir = tempDir('vinaya-wb-ro-absent-allowed-')
+    const homeDir = tempDir('vinaya-wb-ro-absent-home-')
+    const binDir = tempDir('vinaya-wb-ro-absent-bin-')
+    const fakeBinary = fakeBinaryIn(binDir)
+
+    const result = resolveWorkerBoundaryLaunch(
+      {
+        binaryPath: fakeBinary,
+        args: [],
+        allowedDir,
+        vinayaHomeDir: homeDir,
+        vinayaHomeWritableSubdirs: []
+      },
+      AVAILABLE_DEPS
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    result.launch.cleanup()
+  })
+
+  it.skipIf(!isWorkerBoundaryAvailable(REAL_WORKER_BOUNDARY_DEPS))(
+    'a real confined child can READ a file under a readOnlySubdir but cannot write into it',
+    () => {
+      const allowedDir = tempDir('vinaya-wb-live-ro-allowed-')
+      const homeDir = tempDir('vinaya-wb-live-ro-home-')
+      mkdirSync(join(homeDir, 'dispatch-settings'), { recursive: true })
+      const settingsFile = join(homeDir, 'dispatch-settings', 'settings.json')
+      writeFileSync(settingsFile, '{"hooks":{}}')
+
+      const probeScript = join(allowedDir, 'ro-subdir-probe.js')
+      writeFileSync(
+        probeScript,
+        [
+          "const fs = require('node:fs')",
+          'const [settingsPath] = process.argv.slice(2)',
+          'let readOk = true',
+          'try { fs.readFileSync(settingsPath, "utf8") } catch { readOk = false }',
+          'let writeBlocked = true',
+          'try { fs.appendFileSync(settingsPath, "x"); writeBlocked = false } catch { writeBlocked = true }',
+          'process.stdout.write(JSON.stringify({ readOk, writeBlocked }))'
+        ].join('\n')
+      )
+
+      const result = resolveWorkerBoundaryLaunch(
+        {
+          binaryPath: process.execPath,
+          args: [probeScript, settingsFile],
+          allowedDir,
+          vinayaHomeDir: homeDir,
+          vinayaHomeWritableSubdirs: [],
+          vinayaHomeReadOnlySubdirs: ['dispatch-settings']
+        },
+        REAL_WORKER_BOUNDARY_DEPS
+      )
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      try {
+        const spawnResult = spawnSync(result.launch.command, result.launch.args, {
+          cwd: allowedDir,
+          encoding: 'utf8'
+        })
+        expect(spawnResult.status, `stderr: ${spawnResult.stderr}`).toBe(0)
+        const parsed = JSON.parse(spawnResult.stdout) as { readOk: boolean; writeBlocked: boolean }
+        expect(parsed.readOk, 'reading the settings file the dispatch was handed should succeed').toBe(true)
+        expect(parsed.writeBlocked, 'writing into the read-only settings directory should be blocked').toBe(true)
+      } finally {
+        result.launch.cleanup()
+      }
+    }
+  )
+
+  it.skipIf(!isWorkerBoundaryAvailable(REAL_WORKER_BOUNDARY_DEPS))(
+    'a confined child can reach the mDNSResponder unix socket — Seatbelt does not report EPERM/EACCES',
+    () => {
+      const allowedDir = tempDir('vinaya-wb-live-dns-allowed-')
+      const homeDir = tempDir('vinaya-wb-live-dns-home-')
+
+      const probeScript = join(allowedDir, 'dns-route-probe.js')
+      writeFileSync(
+        probeScript,
+        [
+          "const net = require('node:net')",
+          'const socket = net.createConnection({ path: "/private/var/run/mDNSResponder" })',
+          'const finish = (code) => { try { socket.destroy() } catch {}; process.stdout.write(JSON.stringify({ code })) }',
+          "socket.on('connect', () => finish(null))",
+          "socket.on('error', (err) => finish(err.code ?? String(err)))",
+          'setTimeout(() => finish("TIMEOUT"), 2000).unref()'
+        ].join('\n')
+      )
+
+      const result = resolveWorkerBoundaryLaunch(
+        {
+          binaryPath: process.execPath,
+          args: [probeScript],
+          allowedDir,
+          vinayaHomeDir: homeDir,
+          vinayaHomeWritableSubdirs: []
+        },
+        REAL_WORKER_BOUNDARY_DEPS
+      )
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      try {
+        const spawnResult = spawnSync(result.launch.command, result.launch.args, {
+          cwd: allowedDir,
+          encoding: 'utf8',
+          timeout: 5000
+        })
+        expect(spawnResult.status, `stderr: ${spawnResult.stderr}`).toBe(0)
+        const parsed = JSON.parse(spawnResult.stdout) as { code: string | null }
+        // A protocol mismatch (mDNSResponder is a datagram-style endpoint) or
+        // even a clean connect are both fine — the property under test is
+        // that Seatbelt itself never refuses the attempt, which is what
+        // EPERM/EACCES on the connect() syscall would mean. Before this
+        // task's fix, no rule named this socket at all and `(deny default)`
+        // applied, which surfaces this same way.
+        expect(['EPERM', 'EACCES']).not.toContain(parsed.code)
+      } finally {
+        result.launch.cleanup()
+      }
+    }
+  )
+})
+
 describe('buildWorkerSandboxProfile — Seatbelt string-literal escaping', () => {
   it('escapes a backslash or double quote so it cannot break out of the profile string literal', () => {
     const hostile = '/tmp/evil"))(allow default)(deny file-read* (subpath "'
