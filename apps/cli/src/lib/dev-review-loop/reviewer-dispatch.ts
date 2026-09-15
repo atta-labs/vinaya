@@ -15,6 +15,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFile
 import { join } from 'node:path'
 import {
   CODE_REVIEW_SEVERITY_ORDER,
+  codeReviewBlockingSeverities,
   defaultControlStoreDeps,
   extractCodeReviewVerdict,
   extractSecurityReviewVerdict,
@@ -22,8 +23,10 @@ import {
   type ManifestInput,
   type ManifestRecord,
   type Objective,
+  PROSE_CAP_SEVERITY,
   type ReviewInputManifest,
   SECURITY_SEVERITY_ORDER,
+  securityBlockingSeverities,
   type ReviewPolicy,
   type VerdictObservation,
   writeManifest
@@ -316,7 +319,18 @@ export function missingReviewerArtifacts(workDir: string, hasObjectives: boolean
 export class ReviewerInfrastructureFailure extends Error {
   constructor(
     public readonly role: 'reviewer' | 'security',
-    public readonly missing: readonly string[]
+    public readonly missing: readonly string[],
+    /**
+     * Round 2 review, MAJOR: the last attempt's own `effect_id`/`durationMs`
+     * (from its real `DispatchHandle`), so the caller's own failure
+     * observation can carry this attempt's real evidence identity and
+     * timing instead of a freshly generated id and the whole round's
+     * elapsed time. `null` only when no attempt ever produced a handle
+     * (never reachable today — `dispatchReviewer` always has one by the
+     * time this throws — kept `null`-safe rather than assumed).
+     */
+    public readonly attemptEffectId: string | null = null,
+    public readonly attemptDurationMs: number | null = null
   ) {
     super(`${role}'s work directory carried no ${missing.join(' and no ')} after a fresh dispatch and one fresh retry.`)
   }
@@ -340,7 +354,10 @@ export class ReviewerReportParseFailure extends Error {
     public readonly role: 'reviewer' | 'security',
     public readonly file: 'findings.txt' | 'objectives.txt' | 'report.txt',
     public readonly sessionId: string,
-    public readonly parseError: Error
+    public readonly parseError: Error,
+    /** Round 2 review, MAJOR: this exact attempt's own `effect_id`/`durationMs`, from `buildVerdictFromReport`'s own `handle` parameter — see `ReviewerInfrastructureFailure`'s identical fields for why. */
+    public readonly attemptEffectId: string | null = null,
+    public readonly attemptDurationMs: number | null = null
   ) {
     super(`${role}'s ${file} did not parse (session ${sessionId}): ${parseError.message}`)
   }
@@ -405,6 +422,23 @@ export function reclassifyProseOnlyNotMet(results: readonly ObjectiveResult[]): 
   )
 }
 
+/**
+ * The SAME `isProseLocation`/threshold rule
+ * `evaluateReviewFindings` applies internally (`@attalabs/aeg-core`) to
+ * decide `outcome`/`blockingFindings` — recomputed here, over the SAME
+ * finding, only to attach the resulting fact onto the finding's own
+ * observation record, which that evaluator's return value has no room for
+ * (`PolicyEvaluation.blockingFindings` is a filtered array, not an annotated
+ * one — see this task's PR Decisions). `severity` itself is never
+ * overwritten: this only ever changes how the finding COUNTS toward this
+ * threshold, not what it reports (Traps to avoid: "retain reported severity
+ * separately from the incoming prose cap").
+ */
+function policyTreatmentFor(finding: Finding, blockingSeverities: readonly string[]): 'blocking' | 'non_blocking' {
+  const effectiveSeverity = isProseLocation(finding.location) ? PROSE_CAP_SEVERITY : finding.severity
+  return blockingSeverities.includes(effectiveSeverity) ? 'blocking' : 'non_blocking'
+}
+
 export type RoundVerdictParse = { observation: VerdictObservation; rendered: string }
 
 export function buildVerdictFromReport(
@@ -465,7 +499,14 @@ export function buildVerdictFromReport(
     findings = findingsRaw.trim() ? parseFindingsFile(findingsRaw, allowedSeverities) : []
   } catch (err) {
     if (err instanceof FindingsParseError) {
-      throw new ReviewerReportParseFailure(role, 'findings.txt', sessionId, err)
+      throw new ReviewerReportParseFailure(
+        role,
+        'findings.txt',
+        sessionId,
+        err,
+        handle.effectId ?? null,
+        handle.durationMs
+      )
     }
     throw err
   }
@@ -476,7 +517,14 @@ export function buildVerdictFromReport(
     objectiveResults = objectivesRaw?.trim() ? parseObjectivesFile(objectivesRaw) : []
   } catch (err) {
     if (err instanceof ObjectivesParseError) {
-      throw new ReviewerReportParseFailure(role, 'objectives.txt', sessionId, err)
+      throw new ReviewerReportParseFailure(
+        role,
+        'objectives.txt',
+        sessionId,
+        err,
+        handle.effectId ?? null,
+        handle.durationMs
+      )
     }
     throw err
   }
@@ -494,7 +542,9 @@ export function buildVerdictFromReport(
         role,
         'objectives.txt',
         sessionId,
-        new Error(`objectives.txt does not cover the resolved objectives list exactly: ${coverageProblem}`)
+        new Error(`objectives.txt does not cover the resolved objectives list exactly: ${coverageProblem}`),
+        handle.effectId ?? null,
+        handle.durationMs
       )
     }
   }
@@ -510,7 +560,19 @@ export function buildVerdictFromReport(
   // (`objectiveResults` non-null iff `objectivesVersion` non-null).
   const renderedObjectiveResults = objectivesVersionAtDispatch !== null ? objectiveResults : null
 
-  const findingObservations = findings.map((f, i) => ({ id: `F${i + 1}`, severity: f.severity, state: null }))
+  // `severityScale`/`policyTreatment` populated
+  // from real policy/finding data, never fabricated; `confidence` and its
+  // siblings stay unset — no reviewer grammar reports one yet (optional,
+  // self-reported: absent is honest, not a gap this task's own grammar
+  // needs to close).
+  const blockingSet = role === 'reviewer' ? codeReviewBlockingSeverities(policy) : securityBlockingSeverities(policy)
+  const findingObservations = findings.map((f, i) => ({
+    id: `F${i + 1}`,
+    severity: f.severity,
+    state: null,
+    severityScale: role === 'reviewer' ? 'code-review' : 'security',
+    policyTreatment: policyTreatmentFor(f, blockingSet)
+  }))
 
   if (role === 'reviewer') {
     const verdict = deriveCodeReviewVerdict(findings, policy)
@@ -561,7 +623,9 @@ export function buildVerdictFromReport(
       role,
       'report.txt',
       sessionId,
-      new Error('missing required `SECRETS:` line — a security reviewer must always report one')
+      new Error('missing required `SECRETS:` line — a security reviewer must always report one'),
+      handle.effectId ?? null,
+      handle.durationMs
     )
   }
 

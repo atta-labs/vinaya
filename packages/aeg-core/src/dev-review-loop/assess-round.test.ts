@@ -61,7 +61,8 @@ describe('assessRound — Part 1 (O1, O5): green path', () => {
         round: 1,
         head: 'head1',
         all_approve: true,
-        blockers: 0
+        blockers: 0,
+        findings: []
       },
       {
         kind: 'dev_review_loop',

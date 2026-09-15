@@ -27,16 +27,18 @@ import { colourLoopLine } from '../lib/dispatch.js'
 import { DISPATCH_AGENTS, type DispatchAgent } from '../lib/dispatch-task.js'
 import { loadConfig } from '../lib/config.js'
 import { runTask, type RunTaskResult } from '../lib/task-run.js'
+import { startBackgroundRun } from '../lib/task-run-background.js'
 
 /** Any failure other than a usage/argv error or a policy `pause` — see the module doc comment's exit-code table. */
 const TASK_RUN_FAILURE_EXIT_CODE = 3
 
-const KNOWN_FLAGS = ['--agent', '--issue']
+const KNOWN_FLAGS = ['--agent', '--issue', '--background']
 
 type ParsedFlags = {
   agent: string | undefined
   agentFlagPresent: boolean
   issue: string | undefined
+  background: boolean
   unknown: string[]
 }
 
@@ -59,6 +61,7 @@ function parseFlags(rest: string[]): ParsedFlags {
   let agent: string | undefined
   let agentFlagPresent = false
   let issue: string | undefined
+  let background = false
   const unknown: string[] = []
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i]
@@ -67,14 +70,16 @@ function parseFlags(rest: string[]): ParsedFlags {
       agent = rest[++i]
     } else if (a === '--issue') {
       issue = rest[++i]
+    } else if (a === '--background') {
+      background = true
     } else if (a !== undefined) unknown.push(a)
   }
-  return { agent, agentFlagPresent, issue, unknown }
+  return { agent, agentFlagPresent, issue, background, unknown }
 }
 
 const USAGE = [
-  `Usage: vinaya task run <tranche> <n> --agent ${DISPATCH_AGENTS.join(' | ')}`,
-  `   or: vinaya task run --issue <n> --agent ${DISPATCH_AGENTS.join(' | ')}`
+  `Usage: vinaya task run <tranche> <n> --agent ${DISPATCH_AGENTS.join(' | ')} [--background]`,
+  `   or: vinaya task run --issue <n> --agent ${DISPATCH_AGENTS.join(' | ')} [--background]`
 ].join('\n')
 
 /** `--agent` falls back to `dispatch.agent` in `vinaya.config.json` when omitted entirely — see `parseFlags`'s own doc comment on `agentFlagPresent`. `null` when no valid agent could be resolved (message already printed). */
@@ -139,6 +144,30 @@ async function runAndReport(input: Parameters<typeof runTask>[0]): Promise<void>
 }
 
 /**
+ * O1/O2 — `--background`'s own report: prints the durable run handle and
+ * returns at once, never awaiting the loop. `startBackgroundRun` itself
+ * already refuses (before spawning anything) on an unsupported host or a
+ * controller conflict — both surfaced here as the same
+ * `TASK_RUN_FAILURE_EXIT_CODE` an ordinary preparation refusal gets, never
+ * exit `1` (reserved for a policy `pause`, which a background start never
+ * itself decides).
+ */
+async function runBackgroundAndReport(input: Parameters<typeof startBackgroundRun>[0]): Promise<void> {
+  try {
+    const handle = await startBackgroundRun(input)
+    process.stdout.write(
+      `${colourLoopLine(`vinaya task run: task ${handle.task} — background controller acknowledged (pid ${handle.pid}, run ${handle.runId})`, process.stdout)}\n`
+    )
+    process.stdout.write(`Follow with: vinaya task status --issue ${handle.task} --follow\n`)
+    process.stdout.write(`Log: ${handle.logPath}\n`)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    process.stderr.write(`Error: ${message}\n`)
+    process.exit(TASK_RUN_FAILURE_EXIT_CODE)
+  }
+}
+
+/**
  * `--issue <n>` (O1) — a backlog Issue that carries no
  * `vinaya/tranche:*` label runs the same unattended path as a tranche task:
  * one frozen brief, one developer on `task/issue-<n>`, the same loop and
@@ -172,6 +201,10 @@ export async function taskRunCommand(args: string[]): Promise<void> {
     }
     const agent = resolveAgentOrReport(parsed)
     if (!agent) process.exit(2)
+    if (parsed.background) {
+      await runBackgroundAndReport({ issue: issueN, agent })
+      return
+    }
     await runAndReport({ issue: issueN, agent })
     return
   }
@@ -198,11 +231,15 @@ export async function taskRunCommand(args: string[]): Promise<void> {
   }
   const agent = resolveAgentOrReport(parsed)
   if (!agent) process.exit(2)
+  if (parsed.background) {
+    await runBackgroundAndReport({ tranche: trancheSlug, n, agent })
+    return
+  }
   await runAndReport({ tranche: trancheSlug, n, agent })
 }
 
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'task run': { date: '2026-09-11', callsToday: 3, retiresVia: 'sharedCommandShell' }
+  'task run': { date: '2026-09-15', callsToday: 4, retiresVia: 'sharedCommandShell' }
 }

@@ -106,7 +106,8 @@ function realIsDriverAlive(task: number): boolean {
   return lock !== null && isDriverPidAlive(lock.pid)
 }
 
-const defaultRunTaskDeps: RunTaskDeps = {
+/** Exported for `task-run-background.ts`'s own `resolveIssueForRunTask` call — the same real preparation functions, never a second copy. */
+export const defaultRunTaskDeps: RunTaskDeps = {
   prepareTask: realPrepareTask,
   prepareIssueTask: realPrepareIssueTask,
   assembleAndRenderBrief: realAssembleAndRenderBrief,
@@ -142,16 +143,33 @@ async function resolvePrUrl(resolveRepo: () => Promise<RepoRef | null>, prNumber
  *    entry is what actually starts (or attaches to) the developer; this
  *    function makes no dispatch decision of its own (Traps to avoid).
  */
-export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRunTaskDeps): Promise<RunTaskResult> {
-  const { agent } = input
-  const taskLabel = 'tranche' in input ? `task ${input.n} in tranche \`${input.tranche}\`` : `Issue #${input.issue}`
+/** `RunTaskInput`'s own label for error text — a task ordinal or a bare Issue reference, whichever form the caller used. */
+export function taskLabelFor(input: RunTaskInput): string {
+  return 'tranche' in input ? `task ${input.n} in tranche \`${input.tranche}\`` : `Issue #${input.issue}`
+}
 
-  let issue: number
+/**
+ * The preparation half of `runTask` — render/freeze the brief and resolve
+ * the real forge Issue number, tolerating the "already dispatched" refusal
+ * by re-resolving through the same read-only render rather than treating it
+ * as a hard stop (see `runTask`'s own doc comment, step 1). Factored out so
+ * `startBackgroundRun` (`task-run-background.ts`) can resolve the SAME
+ * issue number before acquiring controller ownership,
+ * without duplicating this exact retry shape or calling `devReviewLoop`
+ * itself — background start never starts a developer in this process; the
+ * detached child it launches does that, through its OWN call to `runTask`.
+ */
+export async function resolveIssueForRunTask(
+  input: RunTaskInput,
+  deps: Pick<
+    RunTaskDeps,
+    'prepareTask' | 'prepareIssueTask' | 'assembleAndRenderBrief' | 'assembleAndRenderBriefForIssue'
+  >
+): Promise<number> {
   try {
-    issue =
-      'tranche' in input
-        ? (await deps.prepareTask({ tranche: input.tranche, n: input.n })).issue
-        : (await deps.prepareIssueTask({ issue: input.issue })).issue
+    return 'tranche' in input
+      ? (await deps.prepareTask({ tranche: input.tranche, n: input.n })).issue
+      : (await deps.prepareIssueTask({ issue: input.issue })).issue
   } catch (err) {
     if (!isAlreadyDispatchedError(err)) throw err
     const rendered =
@@ -160,11 +178,17 @@ export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRu
         : await deps.assembleAndRenderBriefForIssue(input.issue)
     if (!rendered.ok) {
       throw new RunTaskError(
-        `runTask: ${taskLabel} was already dispatched, but re-resolving its Issue number failed:\n${rendered.missing.map((m) => `  - ${m}`).join('\n')}`
+        `runTask: ${taskLabelFor(input)} was already dispatched, but re-resolving its Issue number failed:\n${rendered.missing.map((m) => `  - ${m}`).join('\n')}`
       )
     }
-    issue = rendered.issue
+    return rendered.issue
   }
+}
+
+export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRunTaskDeps): Promise<RunTaskResult> {
+  const { agent } = input
+  const taskLabel = taskLabelFor(input)
+  const issue = await resolveIssueForRunTask(input, deps)
 
   // Round 2 security review, LOW: this check-then-act read has a real, accepted
   // race window — two concurrent `runTask` calls for the same task can both
