@@ -1,17 +1,20 @@
 /**
  * O9 (`#541`): the impure half of round-journal
  * reconstruction — gathering every `dev_review_loop` log line this task has
- * ever emitted, from the two places it can live: the task Issue's own
- * comments (`log-flush.ts` always flushes this driver's own `log()` calls
- * to the ISSUE, `flushOutbox({issue: task})`, never the PR — see
- * `defaultFlushOutbox`), and whatever is still unflushed in the local
- * outbox on this machine (a crash between a round concluding and its flush).
- * `journal-reconstruction.ts` (`@attalabs/aeg-core`) does the actual
- * replay; this file only fetches and parses.
+ * ever emitted, from the two places it can live: wherever the round-end
+ * flush actually posted it (Issue #626, O1: the task's own
+ * Issue is no longer that place by default — `resolveRoundEndFlushTarget`,
+ * `../config.js`, resolves the SAME `vinaya.config.json` `logPublish`
+ * destination `defaultFlushOutbox` posts to, so this read and that write can
+ * never disagree about where "already flushed" means), and whatever is
+ * still unflushed in the local outbox on this machine (a crash between a
+ * round concluding and its flush). `journal-reconstruction.ts`
+ * (`@attalabs/aeg-core`) does the actual replay; this file only fetches and
+ * parses.
  *
  * Same trust boundary every other forge read in this directory already
  * applies (security review, PR #445): only principal-authored comments are
- * trusted, so a non-principal Issue commenter cannot forge a
+ * trusted, so a non-principal Issue/PR commenter cannot forge a
  * `<!-- aeg:log: -->`-shaped comment to inject fabricated rounds into the
  * published journal.
  */
@@ -25,17 +28,31 @@ import {
   type DevReviewLoopEvent,
   type ReconstructedJournal
 } from '@attalabs/aeg-core'
+import { loadConfig, resolveRoundEndFlushTarget, type LogPublishTarget } from '../config.js'
 import { markerComments, principalAllowlist } from './developer-dispatch.js'
 import { sh } from './gate-reading.js'
 import { outboxPathFor } from '../log-sink.js'
 
-/** Every `dev_review_loop` event already flushed to task Issue `task`'s comments — principal-authored only. */
-function fetchFlushedLoopEvents(task: number): DevReviewLoopEvent[] {
+/**
+ * Every `dev_review_loop` event already flushed to `target`'s comments —
+ * principal-authored only. `target === null` (no `logPublish` configured,
+ * or configured back onto `task`'s own Issue and refused) means nothing was
+ * ever posted anywhere for this feature — skips the forge read entirely
+ * rather than reading the task's own Issue on the offchance an OLDER build
+ * once flushed there: a stale read is worse than an honest empty one, and
+ * the unflushed local outbox below still covers this machine's own recent
+ * history regardless.
+ */
+function fetchFlushedLoopEvents(target: LogPublishTarget | null): DevReviewLoopEvent[] {
+  if (target === null) return []
   let out: string
   try {
-    out = sh('gh', ['issue', 'view', String(task), '--json', 'comments'])
+    out =
+      'pr' in target
+        ? sh('gh', ['pr', 'view', String(target.pr), '--json', 'comments'])
+        : sh('gh', ['issue', 'view', String(target.issue), '--json', 'comments'])
   } catch {
-    // No Issue, or `gh` unreachable — reconstruction degrades to whatever
+    // No Issue/PR, or `gh` unreachable — reconstruction degrades to whatever
     // the local outbox alone can offer, never a hard failure: a task
     // journal is a display concern, not a dispatch gate.
     return []
@@ -70,15 +87,17 @@ function fetchUnflushedLoopEvents(
  * driver can reach — the forge's already-flushed record and this machine's
  * still-unflushed one, combined. Called on every entry (fresh round 1,
  * attach to an existing PR, and `--resume`) so a task with no history at
- * all pays for one `gh issue view` and gets back `{rounds: [], ...}`, a
- * harmless no-op — reconstruction is idempotent, never destructive.
+ * all pays for at most one `gh issue/pr view` (none at all when `logPublish`
+ * is unconfigured) and gets back `{rounds: [], ...}`, a harmless no-op —
+ * reconstruction is idempotent, never destructive.
  */
 export function fetchLoopHistory(
   root: string,
   repo: { owner: string; repo: string } | null,
   task: number
 ): ReconstructedJournal {
-  const flushed = fetchFlushedLoopEvents(task)
+  const target = resolveRoundEndFlushTarget(loadConfig(), task)
+  const flushed = fetchFlushedLoopEvents(target)
   const unflushed = fetchUnflushedLoopEvents(root, repo, task)
   return reconstructRounds([...flushed, ...unflushed])
 }

@@ -84,6 +84,20 @@ import { postMarkedComment } from './forge-write.js'
 import { createLogSink, outboxPathFor } from './log-sink.js'
 import { appendRoleLine, appendRunStartMarker, loopLogPathFor } from './loop-log.js'
 import { flushOutbox as flushOutboxLib, LogFlushError } from './log-flush.js'
+import {
+  describeSkippedRoundEndFlush,
+  loadConfig,
+  resolveLogPublishMaxChunksPerFlush,
+  resolveRoundEndFlushTarget
+} from './config.js'
+
+// Re-exported under this file's own path (this module's composition-root
+// convention, `gate-reading.ts`'s own doc comment): `resolveRoundEndFlushTarget`/
+// `describeSkippedRoundEndFlush` moved to `config.ts` (Issue
+// #626, O1) so `journal-history.ts` can read the SAME resolved target
+// without a `dev-review-loop.ts` → `journal-history.ts` → `dev-review-loop.ts`
+// import cycle; existing callers/tests importing them from here keep working.
+export { describeSkippedRoundEndFlush, resolveRoundEndFlushTarget } from './config.js'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import {
   describeFailingCheckRun,
@@ -507,10 +521,36 @@ function defaultReadUnpushedWorkDetail(worktreePath: string): { dirtyFiles: stri
  * path; a thrown `LogFlushError` — or any other failure — is caught and
  * logged to stderr, never fatal to the loop (flush failures don't undo a
  * dispatch's own already-durable outbox lines).
+ *
+ * **No longer defaults to the task's own Issue (Issue #626,
+ * O1).** `resolveRoundEndFlushTarget` reads `vinaya.config.json`'s
+ * `logPublish`; unconfigured (this task's own default for every existing
+ * repo), this function is a no-op — telemetry accumulates in the local,
+ * already-bounded outbox (`log-sink.ts`) until an operator runs
+ * `vinaya log flush --issue <n>` by hand. A configured target still passes
+ * through O2's own per-flush chunk bound (`resolveLogPublishMaxChunksPerFlush`),
+ * and a non-zero `deferredChunkCount` is surfaced to stderr — partial
+ * coverage, made visible, never silent.
  */
 async function defaultFlushOutbox(task: number): Promise<void> {
+  const config = loadConfig()
+  const skipReason = describeSkippedRoundEndFlush(config, task)
+  if (skipReason) {
+    process.stderr.write(`${skipReason}\n`)
+    return
+  }
+  const target = resolveRoundEndFlushTarget(config, task)
+  if (target === null) return
   try {
-    await flushOutboxLib({ issue: task })
+    const outcome = await flushOutboxLib(target, {
+      outboxTask: task,
+      maxChunksPerFlush: resolveLogPublishMaxChunksPerFlush(config)
+    })
+    if (outcome.flushed && outcome.deferredChunkCount > 0) {
+      process.stderr.write(
+        `vinaya dev-review-loop: round-end flush bounded — ${outcome.deferredChunkCount} chunk(s) remain queued in the outbox for a later flush (non-fatal, no lines lost).\n`
+      )
+    }
   } catch (err) {
     const message = err instanceof LogFlushError || err instanceof Error ? err.message : String(err)
     process.stderr.write(

@@ -554,6 +554,43 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
       'The wall-time budget, in milliseconds, for each `[agent]` Test Plan command the evidence runner executes. Defaults to `900000` (15 minutes), capped at `3600000` (1 hour) — a config load refuses a value above the cap. A command that exceeds it is recorded in `AEG:EVIDENCE` as `timeout` alongside the budget it exceeded, never silently dropped — raising this key up to the cap is the sanctioned way to give a genuinely slow command more room; the runner never reads a bigger number from anywhere else.'
     ],
     example: `{ "report": { "commandTimeoutMs": 1800000 } }`
+  },
+  {
+    key: 'logPublish',
+    type: 'object (optional)',
+    semantics: [
+      "Where the developer-review loop's own round-end flush publishes telemetry (`apps/cli/src/lib/log-flush.ts`'s `flushOutbox`, called in-process at every round end). Absent — this key's own default for every repo that has never set it — the round-end flush is a no-op: telemetry simply stays in the local, already-bounded outbox until an operator runs `vinaya log flush --issue <n>` by hand. NEVER falls back to the task's own Issue — that Issue is exactly the surface the loop must read to dispatch the next developer round, and publishing unbounded telemetry there is the defect this key exists to prevent. Set at most one of `issue`/`pr`; config load refuses both set together."
+    ],
+    example: `{
+  "logPublish": {
+    "issue": 42,
+    "maxChunksPerFlush": 5
+  }
+}`
+  },
+  {
+    key: 'logPublish.issue',
+    type: 'number (optional, positive integer)',
+    semantics: [
+      'The Issue the round-end flush posts to. Mutually exclusive with `logPublish.pr`. A value equal to the task being flushed is refused (silently downgraded to unconfigured, reported to stderr by name) rather than recreating the exact defect this key exists to prevent.'
+    ],
+    example: `{ "logPublish": { "issue": 42 } }`
+  },
+  {
+    key: 'logPublish.pr',
+    type: 'number (optional, positive integer)',
+    semantics: [
+      'The pull request the round-end flush posts to, instead of an Issue. Mutually exclusive with `logPublish.issue`.'
+    ],
+    example: `{ "logPublish": { "pr": 42 } }`
+  },
+  {
+    key: 'logPublish.maxChunksPerFlush',
+    type: 'number (optional, positive integer)',
+    semantics: [
+      'Caps how many NEW comments one round-end flush call posts to the configured target — the rest stay queued, untouched, in the outbox for a later flush. Absent defaults to `DEFAULT_MAX_CHUNKS_PER_FLUSH` (`apps/cli/src/lib/config.ts`). A non-zero deferred count is always surfaced visibly (stderr for the round-end flush, stdout for `vinaya log flush`), never silently reported as a complete flush.'
+    ],
+    example: `{ "logPublish": { "maxChunksPerFlush": 10 } }`
   }
 ] as const
 

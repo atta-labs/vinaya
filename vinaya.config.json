@@ -25,7 +25,8 @@
   "releaseActor": "daniboomerang",
   "reviewPolicy": {
     "codeReviewThreshold": "MAJOR",
-    "securityThreshold": "HIGH"
+    "securityThreshold": "HIGH",
+    "maxRounds": 7
   },
   "dispatch": {
     "agent": "claude"
@@ -76,6 +77,7 @@
       ".github/workflows/vinaya-review-verdict.yml",
       ".github/workflows/vinaya-archivist.yml",
       ".github/workflows/vinaya-body-checks.yml",
+      ".github/workflows/vinaya-task-log-collector.yml",
       "vinaya.config.json",
       "VINAYA.md",
       ".vinaya/doc-owners",

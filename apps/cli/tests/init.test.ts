@@ -31,7 +31,8 @@ import {
   REVIEW_RETRIGGER_WORKFLOW_PATH,
   REVIEW_VERDICT_WORKFLOW_PATH,
   SETUP_BUN_SHA,
-  starterConfig
+  starterConfig,
+  TASK_LOG_COLLECTOR_WORKFLOW_PATH
 } from '../src/lib/artifacts.js'
 import { agentSkillPath, discoverRoleNames } from '../src/lib/agents-skills-emitter.js'
 import { CLAUDE_COMMAND_PATH } from '../src/lib/claude-command-emitter.js'
@@ -157,8 +158,11 @@ describe('vinaya init', () => {
     // #402 O4) — the CI-green retrigger half of the review gate, split into
     // its own file for the same reason the verdict-comment half already
     // was: a `workflow_run`-only trigger there means it never reports a
-    // `skipped` check-run against vinaya-review.yml's own head):
-    // config + root VINAYA.md + six workflows (tracked) +
+    // `skipped` check-run against vinaya-review.yml's own head; and to seven
+    // with vinaya-task-log-collector.yml (task-log-v1 task 4) — the trusted
+    // collector that validates and publishes a task-path job's exported
+    // outbox, the SAME `workflow_run` trust boundary):
+    // config + root VINAYA.md + seven workflows (tracked) +
     // three hook stubs (pre-commit/pre-push/commit-msg, the last added by
     // Issue #63) + the .vinaya/doc-owners starter, PLUS — as of task 5
     // (#152) — the three agent-vendor emitters (tasks 2/3/4), installed by
@@ -178,6 +182,7 @@ describe('vinaya init', () => {
       REVIEW_VERDICT_WORKFLOW_PATH,
       ARCHIVIST_WORKFLOW_PATH,
       BODY_CHECKS_WORKFLOW_PATH,
+      TASK_LOG_COLLECTOR_WORKFLOW_PATH,
       '.husky/pre-commit',
       '.husky/pre-push',
       '.husky/commit-msg',
@@ -208,6 +213,7 @@ describe('vinaya init', () => {
       REVIEW_VERDICT_WORKFLOW_PATH,
       ARCHIVIST_WORKFLOW_PATH,
       BODY_CHECKS_WORKFLOW_PATH,
+      TASK_LOG_COLLECTOR_WORKFLOW_PATH,
       '.husky/pre-commit',
       '.husky/pre-push',
       '.husky/commit-msg',
@@ -709,7 +715,9 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const files = generated()
 
-    expect(occurrences(files, `${PUBLISHED_RUN} `)).toBe(7)
+    // Seven pre-existing invocations plus one more (task-log-v1 task 4):
+    // vinaya-checks.yml's own new "Export task-log artifact" step.
+    expect(occurrences(files, `${PUBLISHED_RUN} `)).toBe(8)
     // …and none of them unpinned. An unpinned `npx` is NOT "latest". Where
     // the generated checks workflow carries an install step — only when the
     // adopter declares `ci.setup` — a repo carrying `@attalabs/vinaya` as a
@@ -745,8 +753,9 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     // workflows lost their pin entirely and the hook alone contributed the
     // single value. Seven workflow invocations (O4, issue-545: the
     // archivist's post-merge job now also self-archives the tranche) plus
-    // one hook.
-    expect(specs).toHaveLength(8)
+    // one more (task-log-v1 task 4: vinaya-checks.yml's own new "Export
+    // task-log artifact" step) plus one hook.
+    expect(specs).toHaveLength(9)
     expect([...new Set(specs)]).toEqual([OWN_VERSION])
   })
 
@@ -957,9 +966,11 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const files = generated()
 
-    // All seven invocations move — none left on the broken path.
+    // All eight invocations move — none left on the broken path. Seven
+    // pre-existing plus one more (task-log-v1 task 4): vinaya-checks.yml's
+    // own new "Export task-log artifact" step.
     expect(occurrences(files, 'npx --yes @attalabs/vinaya')).toBe(0)
-    expect(occurrences(files, VENDORED_BIN)).toBe(7)
+    expect(occurrences(files, VENDORED_BIN)).toBe(8)
     // Every job in `WORKFLOWS` installs (6 — see the setup-bun count above);
     // only the jobs that actually BUILD their own copy run the build
     // command — every one except `vinaya-checks.yml`, which downloads the

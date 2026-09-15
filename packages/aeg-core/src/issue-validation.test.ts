@@ -11,6 +11,7 @@ import {
   checkIssueObjectives,
   checkIssueRationale,
   checkDocsWithinSurface,
+  checkDocumentationCitesObjective,
   checkIssueType,
   checkMilestoneAttach,
   checkNoBriefContent,
@@ -27,10 +28,12 @@ import {
   checkSurfaceScope,
   checkTrancheLabelPresence,
   declaredProjects,
+  DOCUMENTATION_SINCE_ISSUE,
   frozenSectionsChanged,
   isTaskIssueBodyShaped,
   isTaskIssueLabelSet,
   OBJECTIVES_SINCE_ISSUE,
+  parseIssueDocumentation,
   parseIssueParts,
   parseIssueStopConditions,
   parseIssueSurface,
@@ -930,6 +933,51 @@ describe('frozenSectionsChanged (task-run-v1 11, review round 1, O3)', () => {
   it('reports nothing for a section malformed identically on both sides', () => {
     const noSurface = body.replace('## Surface\n\nin: apps/cli/src/lib\nout: apps/cli/src/commands\n', '')
     expect(frozenSectionsChanged(noSurface, noSurface)).toEqual([])
+  })
+
+  // round 2 security review, HIGH (Issue #625) — `## Documentation` is a
+  // frozen-brief-locked section too, same as Surface/Parts: an ordinary
+  // `issue edit` must not be able to silently drop or reword a source once
+  // the brief is frozen.
+  const documentation = '## Documentation\n\n- https://example.com/docs — the mechanism it governs\n'
+  const bodyWithDocs = `${body}\n${documentation}`
+
+  it('reports `Documentation` when a source or its mechanism changes', () => {
+    const changed = bodyWithDocs.replace('the mechanism it governs', 'a different mechanism')
+    expect(frozenSectionsChanged(bodyWithDocs, changed)).toEqual(['Documentation'])
+  })
+
+  it('reports `Documentation` when a source is dropped from an already-frozen Issue', () => {
+    const dropped = bodyWithDocs.replace(documentation, '## Documentation\n\nNone — no source governs this task.\n')
+    expect(frozenSectionsChanged(bodyWithDocs, dropped)).toEqual(['Documentation'])
+  })
+
+  it('reports `Documentation` when the section stops parsing on one side', () => {
+    const removed = bodyWithDocs.replace(documentation, '')
+    expect(frozenSectionsChanged(bodyWithDocs, removed)).toEqual(['Documentation'])
+  })
+
+  it('does not report `Documentation` when the section is byte-identical', () => {
+    expect(frozenSectionsChanged(bodyWithDocs, bodyWithDocs)).toEqual([])
+  })
+
+  // F3 (round 2 code review, MINOR, Issue #625) — documentationEqual's own
+  // doc comment claims order-significance like Parts; this proves it against
+  // two otherwise-identical sources, the way the Surface/Parts cases above
+  // each prove their own order-(in)sensitivity.
+  it('reports `Documentation` when two otherwise-identical sources are reordered', () => {
+    const twoSources =
+      '## Documentation\n\n' +
+      '- https://example.com/a — the mechanism it governs\n' +
+      '- https://example.com/b — a different mechanism\n'
+    const withTwoSources = `${body}\n${twoSources}`
+    const reordered = withTwoSources.replace(
+      twoSources,
+      '## Documentation\n\n' +
+        '- https://example.com/b — a different mechanism\n' +
+        '- https://example.com/a — the mechanism it governs\n'
+    )
+    expect(frozenSectionsChanged(withTwoSources, reordered)).toEqual(['Documentation'])
   })
 })
 
@@ -1884,6 +1932,141 @@ describe('parseIssueStopConditions', () => {
   })
 })
 
+describe('parseIssueDocumentation', () => {
+  it('parses one or more `- <source> — <mechanism>` bullets, with no citation when none is given', () => {
+    const r = parseIssueDocumentation(
+      '## Documentation\n\n' +
+        '- https://modelcontextprotocol.io/docs/hooks — the PostToolUse/Stop hook JSON contract\n' +
+        '- https://code.claude.com/docs/en/hooks — exit-code semantics for Stop hooks\n'
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value).toEqual({
+      kind: 'sources',
+      sources: [
+        {
+          source: 'https://modelcontextprotocol.io/docs/hooks',
+          mechanism: 'the PostToolUse/Stop hook JSON contract',
+          objectiveIds: []
+        },
+        {
+          source: 'https://code.claude.com/docs/en/hooks',
+          mechanism: 'exit-code semantics for Stop hooks',
+          objectiveIds: []
+        }
+      ]
+    })
+  })
+
+  // round 2 review, BLOCKER (O1/O2, Issue #625) — a real doc-page URL
+  // routinely contains an unspaced hyphen; the separator must never mistake
+  // one for the source/mechanism split, or the source recorded (and later
+  // compared against a real `WebFetch` call by the Stop hook) is truncated.
+  it('never splits on a hyphen embedded in the source URL itself', () => {
+    const r = parseIssueDocumentation(
+      '## Documentation\n\n' +
+        '- https://code.claude.com/docs/en/agent-sdk/cost-tracking — the mechanism this task implements (O1)\n'
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value).toEqual({
+      kind: 'sources',
+      sources: [
+        {
+          source: 'https://code.claude.com/docs/en/agent-sdk/cost-tracking',
+          mechanism: 'the mechanism this task implements',
+          objectiveIds: [1]
+        }
+      ]
+    })
+  })
+
+  it('still accepts a plain ASCII hyphen separator when it carries real whitespace on both sides', () => {
+    const r = parseIssueDocumentation('## Documentation\n\n- https://example.com/docs - the mechanism\n')
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value).toEqual({
+      kind: 'sources',
+      sources: [{ source: 'https://example.com/docs', mechanism: 'the mechanism', objectiveIds: [] }]
+    })
+  })
+
+  it('parses a trailing `(O<n>[, O<m>])` citation off the mechanism', () => {
+    const r = parseIssueDocumentation(
+      '## Documentation\n\n- https://example.com/docs — the mechanism this task implements (O1, O2)\n'
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value).toEqual({
+      kind: 'sources',
+      sources: [
+        {
+          source: 'https://example.com/docs',
+          mechanism: 'the mechanism this task implements',
+          objectiveIds: [1, 2]
+        }
+      ]
+    })
+  })
+
+  it('parses the explicit `None` sentinel as a valid, sourceless opt-out', () => {
+    const r = parseIssueDocumentation('## Documentation\n\nNone — no normative source governs this task.\n')
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value).toEqual({ kind: 'none' })
+  })
+
+  it('refuses when the `## Documentation` heading is absent', () => {
+    const r = parseIssueDocumentation('nothing here')
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.errors[0]).toMatch(/no `## Documentation` heading/)
+  })
+
+  it('refuses a bullet with no dash separator between source and mechanism', () => {
+    const r = parseIssueDocumentation('## Documentation\n\n- https://example.com/docs\n')
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.errors[0]).toMatch(/not a well-formed Documentation line/)
+  })
+
+  it('refuses an empty section with no bullets and no `None` sentinel', () => {
+    const r = parseIssueDocumentation('## Documentation\n\nnothing here yet\n')
+    expect(r.ok).toBe(false)
+  })
+})
+
+describe('checkDocumentationCitesObjective', () => {
+  const OBJECTIVES = '## Objectives\n\nO1. First objective.\nO2. Second objective.\n'
+
+  it('passes when a real source cites a real Objective id', () => {
+    const body = `${OBJECTIVES}\n## Documentation\n\n- https://example.com/docs — the mechanism (O2)\n`
+    expect(checkDocumentationCitesObjective(body).status).toBe('pass')
+  })
+
+  it('fails, naming the gap, when no source cites any Objective id', () => {
+    const body = `${OBJECTIVES}\n## Documentation\n\n- https://example.com/docs — the mechanism\n`
+    const r = checkDocumentationCitesObjective(body)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/none cites a defined/)
+  })
+
+  it('fails when the only citation names an Objective id the section never defines', () => {
+    const body = `${OBJECTIVES}\n## Documentation\n\n- https://example.com/docs — the mechanism (O9)\n`
+    expect(checkDocumentationCitesObjective(body).status).toBe('fail')
+  })
+
+  it('passes trivially on the `None` sentinel — nothing to grade', () => {
+    const body = `${OBJECTIVES}\n## Documentation\n\nNone.\n`
+    expect(checkDocumentationCitesObjective(body).status).toBe('pass')
+  })
+
+  it('passes trivially when Documentation or Objectives fails to parse — other checks already report that', () => {
+    expect(checkDocumentationCitesObjective('nothing here').status).toBe('pass')
+    expect(checkDocumentationCitesObjective('## Documentation\n\n- https://example.com/docs — x\n').status).toBe('pass')
+  })
+})
+
 describe('checkIssueBriefSections', () => {
   it('passes a fully-formed Issue at the cutover (#426 itself)', () => {
     expect(BRIEF_SECTIONS_SINCE_ISSUE).toBe(426)
@@ -1907,6 +2090,44 @@ describe('checkIssueBriefSections', () => {
     const r = checkIssueBriefSections('a body with nothing but a title.', null)
     expect(r.status).toBe('fail')
     expect(r.errors.length).toBeGreaterThan(0)
+  })
+
+  it('does not require `## Documentation` below its own cutover (#625, one below #626)', () => {
+    expect(DOCUMENTATION_SINCE_ISSUE).toBe(626)
+    const r = checkIssueBriefSections(ISSUE_426_BODY, 625)
+    expect(r.status).toBe('pass')
+  })
+
+  it('fails, naming Documentation, on an Issue at/above #626 with no `## Documentation` section', () => {
+    const r = checkIssueBriefSections(ISSUE_426_BODY, 626)
+    expect(r.status).toBe('fail')
+    expect(r.errors.join(' ')).toMatch(/Documentation/)
+  })
+
+  it('fails, naming Documentation, when a real source cites no `## Objectives` id (O3, ungraded)', () => {
+    const withUncitedDocumentation = ISSUE_426_BODY.replace(
+      '## Objectives',
+      '## Documentation\n\n- https://example.com/docs — the mechanism this task implements\n\n## Objectives'
+    )
+    const r = checkIssueBriefSections(withUncitedDocumentation, 626)
+    expect(r.status).toBe('fail')
+    expect(r.errors.join(' ')).toMatch(/Documentation/)
+    expect(r.errors.join(' ')).toMatch(/cites/)
+  })
+
+  it('passes an Issue at/above #626 that names a source, its mechanism, and cites a real Objective (O3, graded)', () => {
+    const withDocumentation = ISSUE_426_BODY.replace(
+      '## Objectives',
+      '## Documentation\n\n- https://example.com/docs — the mechanism this task implements (O1)\n\n## Objectives'
+    )
+    const r = checkIssueBriefSections(withDocumentation, 626)
+    expect(r.status).toBe('pass')
+  })
+
+  it('passes a null-numbered (create) body at the Documentation cutover when the `None` sentinel is used', () => {
+    const withNone = ISSUE_426_BODY.replace('## Objectives', '## Documentation\n\nNone.\n\n## Objectives')
+    const r = checkIssueBriefSections(withNone, null)
+    expect(r.status).toBe('pass')
   })
 })
 

@@ -55,3 +55,4 @@ tests/lib/broker/worker-grants.test.ts
 tests/lib/dispatch/unattended.test.ts
 tests/checks/runner/outcomes.test.ts
 tests/checks/runner/traces.test.ts
+tests/lib/artifacts/collect.test.ts

@@ -23,6 +23,7 @@ import {
   fetchForgeFacts,
   fetchOpenIssuesByLabel,
   objectivesOf,
+  parseIssueDocumentation,
   parseIssueParts,
   parseIssueStopConditions,
   parseIssueSurface,
@@ -37,6 +38,7 @@ import {
   type DispatchDependsOnFact,
   type DispatchGateInput,
   type DispatchPriorTrancheFact,
+  type IssueDocumentation,
   type IssuePart,
   type IssueSurface,
   type IssueTestPlan,
@@ -498,6 +500,7 @@ export async function assembleAndRenderBrief(
   const partsResult = parseIssueParts(issueBody)
   const testPlanResult = parseIssueTestPlan(issueBody)
   const stopConditionsResult = parseIssueStopConditions(issueBody)
+  const documentationResult = parseIssueDocumentation(issueBody)
 
   // A whole-suite Test plan line (a bare `bun test`, a
   // directory argument, any `bunx turbo test` form, `vitest run` on a
@@ -510,6 +513,9 @@ export async function assembleAndRenderBrief(
   const parts: IssuePart[] = partsResult.ok ? partsResult.value : []
   const testPlan: IssueTestPlan = testPlanResult.value
   const stopConditions: string[] = stopConditionsResult.ok ? stopConditionsResult.value : []
+  const documentation: IssueDocumentation = documentationResult.ok
+    ? documentationResult.value
+    : { kind: 'sources', sources: [] }
 
   const facts: BriefFacts = {
     trancheSlug,
@@ -528,6 +534,7 @@ export async function assembleAndRenderBrief(
     parts,
     testPlan,
     stopConditions,
+    documentation,
     dispatchReady: gate.ready,
     dispatchBlockers: gate.blockers,
     surfaceFiles,
@@ -759,6 +766,7 @@ export async function assembleAndRenderBriefForIssue(
   const partsResult = parseIssueParts(issueBody)
   const testPlanResult = parseIssueTestPlan(issueBody)
   const stopConditionsResult = parseIssueStopConditions(issueBody)
+  const documentationResult = parseIssueDocumentation(issueBody)
 
   // See the matching comment in `assembleAndRenderBrief`
   // above: a whole-suite refusal must name the offending line, which an
@@ -768,6 +776,9 @@ export async function assembleAndRenderBriefForIssue(
   const parts: IssuePart[] = partsResult.ok ? partsResult.value : []
   const testPlan: IssueTestPlan = testPlanResult.value
   const stopConditions: string[] = stopConditionsResult.ok ? stopConditionsResult.value : []
+  const documentation: IssueDocumentation = documentationResult.ok
+    ? documentationResult.value
+    : { kind: 'sources', sources: [] }
 
   const facts: BriefFacts = {
     trancheSlug: null,
@@ -786,6 +797,7 @@ export async function assembleAndRenderBriefForIssue(
     parts,
     testPlan,
     stopConditions,
+    documentation,
     dispatchReady: gate.ready,
     dispatchBlockers: gate.blockers,
     surfaceFiles,
