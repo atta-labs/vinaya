@@ -191,6 +191,13 @@ function sbLiteralMetadataAllows(dirs: readonly string[]): string {
   return `(allow file-read-metadata\n    ${rules})`
 }
 
+/** `(literal ...)`, never `(subpath ...)` — round 5 review, CRITICAL fix: grants full read+write on exact file paths only, never their containing directory, so a directory shared with sibling tasks'/roles' own files (`outboxPathFor`/`resumeRecordPathFor`'s own naming convention) never exposes those siblings. See `writableFiles`'s own doc comment on `buildWorkerSandboxProfile`. */
+function sbLiteralAllows(operations: string, files: readonly string[]): string {
+  if (files.length === 0) return ''
+  const rules = files.map((f) => `(literal ${sbLiteral(f)})`).join('\n    ')
+  return `(allow ${operations}\n    ${rules})`
+}
+
 /**
  * Renders the real launch's Seatbelt profile — same `(deny default)` plus
  * `(import "system.sb")` baseline the probe's own fixture uses
@@ -293,6 +300,29 @@ export function buildWorkerSandboxProfile(opts: {
    * below an already-`readOnlyDirs`/`realHome`-adjacent ancestor needs none.
    */
   metadataOnlyDirs?: readonly string[]
+  /**
+   * Round 5 review, CRITICAL fix: exact file paths — never their containing
+   * directory — granted `file-read*`/`file-write*` via `(literal ...)`.
+   * `dispatch.ts`'s own outbox line and resume record for THIS dispatch
+   * both live in a directory shared by every OTHER task's and role's own
+   * outbox line / resume record for the same repo (`outboxPathFor`'s and
+   * `resumeRecordPathFor`'s own naming convention, neither of which this
+   * task's `## Surface` permits restructuring). Granting that directory
+   * itself (the pre-round-5 approach, `readWriteDirs`) therefore handed a
+   * confined role read+write over every sibling task's audit-log line and
+   * every sibling role's live vendor `resumeId` — verified live on this
+   * host to include another concurrently-running review's own resume
+   * record. A `(literal ...)` rule matches only the named path, the same
+   * "resolve/create a specific already-known child without granting
+   * recursive access to whatever else lives beside it" property
+   * `metadataOnlyDirs` already proves live for directory children — placed
+   * AFTER the "close every other writable path" rule below so this later,
+   * more specific allow wins for exactly these paths (Seatbelt evaluates
+   * same-operation rules in profile order); their parent directory still
+   * needs only `metadataOnlyDirs`' own traversal grant, passed by the
+   * caller alongside this list.
+   */
+  writableFiles?: readonly string[]
   execAllowDirs: readonly string[]
   runtimeDir: string
   sshSockCanon: string
@@ -346,7 +376,15 @@ export function buildWorkerSandboxProfile(opts: {
     '(deny file-write*',
     '  (require-all',
     opts.readWriteDirs.map((d) => `    (require-not (subpath ${sbLiteral(d)}))`).join('\n'),
+    (opts.writableFiles ?? []).map((f) => `    (require-not (literal ${sbLiteral(f)}))`).join('\n'),
     '  ))',
+    '',
+    ';; Round 5 review, CRITICAL fix: exact-file write grants — see this',
+    ";; function's own doc comment on `writableFiles`. Placed after the",
+    "; 'close every other writable path' rule above so this more specific,",
+    ';; later rule wins for exactly these paths, matching the ordering',
+    ';; `sbLiteralMetadataAllows` already relies on for directory children.',
+    sbLiteralAllows('file-read* file-write*', opts.writableFiles ?? []),
     '',
     ';; Network (round 3 security review, HIGH): denied by default, allowed',
     ';; ONLY on ports 80/443 — a real Worker must reach the model runtime',
@@ -430,22 +468,26 @@ function resolveGitExecPath(): string | null {
 }
 
 /**
- * Round 5 review, BLOCKER: this dispatcher's own toolchain is bun
- * (`bun.lock`, `bunfig.toml`) — a confined role must be able to exec `bun`
- * itself for `bun install`/`bun test` (O1's own build/test-subprocess
- * requirement) and for `writeDispatchSettings`'s `bun "${scriptPath}"`
- * PreToolUse hook command. `CANDIDATE_SYSTEM_BIN_DIRS` never covered this:
- * a standard bun install (`~/.bun/bin`, verified live on the authoring
- * host) sits under `realHome`, which this profile denies for file-read
- * and grants no process-exec over. No candidate-directory list is needed
- * here at all — this dispatcher process is ITSELF running under bun, so
- * `process.execPath` is the exact, live bun binary on this exact host,
- * the same "never assumed, verified live" posture `resolveGitExecPath`
- * above already takes for `git`.
+ * Round 5 review, BLOCKER (round 6 fix): a confined role must be able to
+ * exec `bun` itself for `bun install`/`bun test` (O1's own build/test-
+ * subprocess requirement) and for `writeDispatchSettings`'s
+ * `bun "${scriptPath}"` PreToolUse hook command. The round-5 approach
+ * (`dirname(process.execPath)`) assumed the dispatcher process is itself
+ * bun-hosted — true only for this repo's own source invocation
+ * (`bun apps/cli/src/index.ts`). The published, declared-supported entry
+ * point (`apps/cli/scripts/build.ts`'s `--target=node` build, shipped with
+ * a `#!/usr/bin/env node` shebang, `engines.node >=20`) runs under Node,
+ * where `process.execPath` is Node's own binary and never contains `bun`
+ * at all — silently granting exec over the wrong directory while the real
+ * `bun` install (typically under `realHome`, denied elsewhere in this
+ * file) stayed unreachable. Resolved the same "never assumed, verified
+ * live" way `resolveGitExecPath` above already resolves `git`: a `which`
+ * lookup, independent of which runtime hosts the dispatcher process.
  */
 function resolveBunExecDir(): string | null {
   try {
-    return dirname(realpathSync(process.execPath))
+    const out = execFileSync('which', ['bun'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+    return out.length > 0 ? dirname(realpathSync(out)) : null
   } catch {
     return null
   }
@@ -486,6 +528,25 @@ export type WorkerBoundaryLaunchOpts = {
    * top-level directory name.
    */
   vinayaHomeWritableSubdirs: readonly string[]
+  /**
+   * Round 5 review, CRITICAL fix: exact FILE paths, relative to
+   * `vinayaHomeDir`, a Worker's own later `vinaya` subcommand genuinely
+   * needs to READ and WRITE — supersedes `vinayaHomeWritableSubdirs` for
+   * the log-queue line and resume record THIS dispatch owns. The round-4
+   * fix above scoped those grants to the repo-scoped DIRECTORY containing
+   * them, but that directory is shared by every OTHER task's and role's
+   * own outbox line / resume record for the same repo (neither path's own
+   * naming convention nests one directory per task or role) — a confined
+   * Worker could therefore still read a sibling task's audit log or steal
+   * a sibling role's live vendor `resumeId` and resume that session
+   * directly. Naming the exact file closes that: see `writableFiles` on
+   * `buildWorkerSandboxProfile`. The caller still names the file's
+   * containing directory in `vinayaHomeWritableSubdirs`'s array ONLY for
+   * generic directory-scoped uses this module also supports — the two
+   * production writes this dispatch performs pass their file here instead
+   * and leave `vinayaHomeWritableSubdirs` for them empty.
+   */
+  vinayaHomeWritableFiles?: readonly string[]
   /**
    * Round 4 review, BLOCKER fix: subpaths, relative to `vinayaHomeDir`, a
    * confined dispatch must be able to READ but never write — today, exactly
@@ -578,6 +639,9 @@ export function resolveWorkerBoundaryLaunch(
     const vinayaWritableDirs = vinayaHomeDirReal
       ? opts.vinayaHomeWritableSubdirs.map((rel) => resolveExistingOrJoined(vinayaHomeDirReal as string, rel))
       : []
+    const vinayaWritableFiles = vinayaHomeDirReal
+      ? (opts.vinayaHomeWritableFiles ?? []).map((rel) => resolveExistingOrJoined(vinayaHomeDirReal as string, rel))
+      : []
     const vinayaReadOnlyDirs = vinayaHomeDirReal
       ? (opts.vinayaHomeReadOnlySubdirs ?? []).map((rel) => resolveExistingOrJoined(vinayaHomeDirReal as string, rel))
       : []
@@ -615,7 +679,7 @@ export function resolveWorkerBoundaryLaunch(
     // read of whatever ELSE lives beside this dispatch's own child.
     const vinayaWritableParents = Array.from(
       new Set(
-        vinayaWritableDirs.map((d) => {
+        [...vinayaWritableDirs, ...vinayaWritableFiles].map((d) => {
           const parent = dirname(d)
           try {
             return realpathSync(parent)
@@ -650,6 +714,7 @@ export function resolveWorkerBoundaryLaunch(
       readOnlyDirs,
       readWriteDirs,
       metadataOnlyDirs: vinayaWritableParents,
+      writableFiles: vinayaWritableFiles,
       execAllowDirs,
       runtimeDir,
       sshSockCanon: resolveSshSockCanon(),

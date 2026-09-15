@@ -2179,31 +2179,47 @@ export async function dispatchRole(
             args: spawnArgs,
             allowedDir: boundaryAllowedDir,
             vinayaHomeDir: GLOBAL_VINAYA_HOME,
-            // Round 4 review, BLOCKER: scoped to THIS dispatch's own repo,
-            // never the bare top-level directory name — a bare
-            // 'outbox'/'dispatch-resume' previously granted read+write over
-            // EVERY repo's and EVERY task's outbox line and resume record
-            // on the machine, letting a confined Worker forge another
-            // task's audit log or steal another task's live `resumeId` and
-            // resume its session directly (the vendor binary sits in this
-            // same profile's own exec-allow list). `dirname(outboxPath)`
-            // and `dirname(resumeRecordPathFor(...))` both resolve to
-            // `<subdir>/<repoSegment>` — the SAME repo-segment convention
-            // `outboxPathFor`/`resumeRecordPathFor` already use to locate
-            // this exact dispatch's own files, so nothing here duplicates
-            // their naming rule. Scoped to the repo-segment DIRECTORY, not
-            // the individual file: `writeLaunchRecord`'s own
-            // `mkdirSync(dirname(path), { recursive: true })` needs that
-            // directory itself to be a granted subpath the first time a
-            // given repo dispatches — a bare-file grant would deny the
-            // directory-create step, silently losing the resume record.
-            // This still fully closes the cross-repo exposure the finding
-            // demonstrated; a residual, narrower same-repo cross-task/role
-            // exposure remains (see the PR body's Decisions section).
-            vinayaHomeWritableSubdirs: [
-              relative(GLOBAL_VINAYA_HOME, dirname(outboxPath)),
-              relative(GLOBAL_VINAYA_HOME, dirname(resumeRecordPathFor(role, agent, repo, opts.task, opts.pr)))
-            ],
+            // Round 5 review, CRITICAL fix: scoped to THIS dispatch's own
+            // exact FILE, never its containing directory. The round-4 fix
+            // (scoping to the repo-segment DIRECTORY, `dirname(outboxPath)`/
+            // `dirname(resumeRecordPathFor(...))`) closed the cross-repo
+            // exposure but left every sibling task's outbox line and every
+            // sibling role's own resume record in that SAME directory
+            // (`outboxPathFor`/`resumeRecordPathFor` share one flat
+            // directory per repo across every task and role) readable and
+            // writable by this confined dispatch — verified live to include
+            // a concurrently-running review's own resume record, whose
+            // `resumeId` the vendor binary's own `--resume` flag accepts.
+            // `vinayaHomeWritableFiles` grants exactly these two paths via
+            // `(literal ...)`, never `(subpath ...)`, so no sibling file in
+            // the shared directory is exposed. `writeLaunchRecord`'s own
+            // `mkdirSync(dirname(path), { recursive: true })` still needs
+            // that containing directory to exist — pre-created here, by the
+            // TRUSTED, unsandboxed controller, the same way
+            // `writeDispatchSettings` pre-creates its own directory before
+            // this resolution runs, so the confined child's own
+            // `mkdirSync(..., {recursive:true})` on an already-existing
+            // directory needs only the `metadataOnlyDirs` traversal grant
+            // this same resolution already derives from these paths' own
+            // parents.
+            vinayaHomeWritableFiles: (() => {
+              const resumePath = resumeRecordPathFor(role, agent, repo, opts.task, opts.pr)
+              try {
+                mkdirSync(dirname(outboxPath), { recursive: true })
+              } catch {
+                // best-effort — an unwritable GLOBAL_VINAYA_HOME is a
+                // pre-existing condition this resolution's own later steps
+                // already handle by narrowing what gets exposed, never by
+                // widening the grant to compensate.
+              }
+              try {
+                mkdirSync(dirname(resumePath), { recursive: true })
+              } catch {
+                // best-effort, same reasoning as above.
+              }
+              return [relative(GLOBAL_VINAYA_HOME, outboxPath), relative(GLOBAL_VINAYA_HOME, resumePath)]
+            })(),
+            vinayaHomeWritableSubdirs: [],
             // Round 4 review, BLOCKER: the confined child's own `--settings
             // <path>` argv (added above, before this resolution) points at
             // `writeDispatchSettings`'s `dispatch-settings` directory, which
