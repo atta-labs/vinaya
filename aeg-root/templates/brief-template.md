@@ -22,6 +22,10 @@ You are the AEG Developer. Read `aeg-root/roles/developer.md` first[, then the h
 
 [Copy the Issue's `## Objectives` section here byte-for-byte — `checkObjectivesCopy` refuses a brief whose section does not match the Issue's, compared normalised (whitespace never fails it; a changed word does). Every numbered Part in §6 must cite at least one `O<n>` from this list, and every `O<n>` here must be cited by at least one Part — `checkObjectivesCoverage` refuses either gap.]
 
+## Documentation
+
+[Copied verbatim from the Issue's own `## Documentation` section — every normative source this task depends on (a doc URL, an in-repo spec), each against the mechanism it governs: `- <source> — <mechanism>`. A task with no externally-normative source states the explicit `None` sentinel instead of an empty section. Placed immediately after Objectives, before the Developer holds a complete plan, so it is read first rather than skimmed as appendix evidence after the fact. Every source named here must be read before Step 0 — `aeg-root/roles/developer.md`'s entry gate names the obligation; a `PostToolUse`/`Stop` hook pair enforces it mechanically, not the Developer's own judgement.]
+
 ## 2. Context — read before doing anything
 
 - **Tranche:** [`tranche-slug`], task [n], Issue #[N]. Branch `task/[tranche-slug]/[n]`. `Depends-on: [—|ids]`, `Conflicts-with: [—|ids]`. Confirm `READY TO DISPATCH` at your own Step 0.
@@ -77,9 +81,9 @@ On any failure: STOP and report.
 
 ## 8. Verification before claiming done
 
-<!-- AEG:CLAIM: apps/cli/src/lib/artifacts.ts contains:bunx turbo test --affected --concurrency=1 || exit 1 -->
+<!-- AEG:CLAIM: apps/cli/src/lib/artifacts.ts contains:pre-push-select-tests.ts -->
 
-- [the repo's static gates, by command, and nothing else — this repo: `bun run typecheck`, `bun run format-and-lint`, and the production build. Do NOT ask for a test-suite run per Part: the managed `pre-push` hook runs `bunx turbo test --affected` itself, once, on the one push, and refuses the push when it fails. A brief that also asks for it per Part buys nothing and pays the suite's full wall-clock on every Part.]
+- [the repo's static gates, by command, and nothing else — this repo: `bun run typecheck`, `bun run format-and-lint`, and the production build. Do NOT ask for a test-suite run per Part: the managed `pre-push` hook selects the test files the changed files' own import graph could affect and runs them itself, once, on the one push, refusing the push when it fails. A brief that also asks for it per Part buys nothing and pays the suite's full wall-clock on every Part.]
 - [every blast-radius consumer named in §4 re-verified, by name]
 - `roles/developer.md`'s tier checklist genuinely satisfied, and `PR_BODY="$(cat <body-file>)" vinaya check doc-coverage` green. (On this repo's toolchain, `PR_BODY="$(cat <body-file>)" bun packages/aeg-core/bin/verify-docs.ts --pr` runs both as one command.)
 

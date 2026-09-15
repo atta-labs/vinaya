@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
@@ -443,6 +443,27 @@ describe('vinaya issue create --validate-only — briefSections builtin', () => 
     expect(finding.check).toBe('brief-schema')
     expect(finding.message).toMatch(/Parts/)
   }, 60000)
+
+  // Issue #625, O1 — `## Documentation` joins the same gate. `issue create`
+  // has no Issue number yet, so (like the other four sections) the cutover
+  // never exempts it — a brand-new brief cannot be created without it.
+  it('refuses, naming Documentation, with a recovery prompt naming it, when `## Documentation` is missing', () => {
+    const withoutDocumentation = readFileSync(join(FORGE_FIXTURES, 'issue-brief-sections-valid.md'), 'utf8').replace(
+      /## Documentation\n\nNone.*?\n\n/s,
+      ''
+    )
+    const bodyPath = join(cwd, 'body-without-documentation.md')
+    writeFileSync(bodyPath, withoutDocumentation)
+    const r = runCli(
+      ['issue', 'create', '--validate-only', '--body-file', bodyPath, '--label', 'vinaya/tranche:demo'],
+      cwd
+    )
+    expect(r.status).toBe(1)
+    const finding = JSON.parse(r.stderr.trim().split('\n')[0] as string)
+    expect(finding.check).toBe('brief-schema')
+    expect(finding.message).toMatch(/Documentation/)
+    expect(finding.agent_recovery_prompt).toMatch(/## Documentation/)
+  }, 60000)
 })
 
 describe('vinaya issue edit --validate-only — briefSections builtin reaches the cutover end-to-end', () => {
@@ -456,6 +477,16 @@ describe('vinaya issue edit --validate-only — briefSections builtin reaches th
     cwd = mkdtempSync(join(tmpdir(), 'vinaya-issue-edit-brief-sections-test-'))
     writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify(BRIEF_SECTIONS_CONFIG), 'utf8')
     ghDir = mkdtempSync(join(tmpdir(), 'vinaya-issue-edit-brief-sections-fake-gh-'))
+    // The Documentation-cutover tests below reuse `issue-brief-sections-valid.md`,
+    // whose `## Surface` `in:` globs must resolve against real tracked files
+    // (`checkSurfaceGlobsResolve`) — same fixture setup the `issue create`
+    // describe block above uses.
+    execFileSync('git', ['init', '--quiet'], { cwd })
+    mkdirSync(join(cwd, 'apps/cli/src/commands'), { recursive: true })
+    mkdirSync(join(cwd, 'apps/cli/src/lib'), { recursive: true })
+    writeFileSync(join(cwd, 'apps/cli/src/commands/fixture.ts'), '')
+    writeFileSync(join(cwd, 'apps/cli/src/lib/fixture.ts'), '')
+    execFileSync('git', ['add', '.'], { cwd })
   })
   afterEach(() => {
     rmSync(cwd, { recursive: true, force: true })
@@ -487,6 +518,38 @@ describe('vinaya issue edit --validate-only — briefSections builtin reaches th
     )
     expect(r.status).toBe(1)
     expect(r.stderr).toMatch(/Surface/)
+  }, 60000)
+
+  // Issue #625, O1 — `## Documentation`'s own, later cutover (#626): an Issue
+  // between #426 and #625 already carries the other four sections but never
+  // had a reason to carry `## Documentation`, so `issue edit` on it must stay
+  // exempt; only at/above #626 does the gate start requiring it.
+  it('passes an Issue numbered below the Documentation cutover (625) carrying the other four sections but no `## Documentation`', () => {
+    const withoutDocumentation = readFileSync(join(FORGE_FIXTURES, 'issue-brief-sections-valid.md'), 'utf8').replace(
+      /## Documentation\n\nNone.*?\n\n/s,
+      ''
+    )
+    const bodyPath = join(cwd, 'body-below-documentation-cutover.md')
+    writeFileSync(bodyPath, withoutDocumentation)
+    const r = runCli(['issue', 'edit', '625', '--validate-only', '--body-file', bodyPath], cwd, {
+      PATH: fakeGhLabelsPath(ghDir)
+    })
+    expect(r.status).toBe(0)
+    expect(r.stdout).toContain('PASS')
+  }, 60000)
+
+  it('refuses, naming Documentation, an Issue numbered at the Documentation cutover (626) with the other four sections but no `## Documentation`', () => {
+    const withoutDocumentation = readFileSync(join(FORGE_FIXTURES, 'issue-brief-sections-valid.md'), 'utf8').replace(
+      /## Documentation\n\nNone.*?\n\n/s,
+      ''
+    )
+    const bodyPath = join(cwd, 'body-at-documentation-cutover.md')
+    writeFileSync(bodyPath, withoutDocumentation)
+    const r = runCli(['issue', 'edit', '626', '--validate-only', '--body-file', bodyPath], cwd, {
+      PATH: fakeGhLabelsPath(ghDir)
+    })
+    expect(r.status).toBe(1)
+    expect(r.stderr).toMatch(/Documentation/)
   }, 60000)
 })
 

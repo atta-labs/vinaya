@@ -54,6 +54,10 @@ const ISSUE_BODY = `[${TRANCHE_SLUG}] ${TASK_ID} — synthetic fixture issue for
 
 O1. A synthetic objective proving the dispatch-to-vendor path end to end.
 
+## Documentation
+
+None — no externally-normative source governs this task.
+
 ## Planner's rationale
 
 **Boundary** — Nothing real; a synthetic fixture Issue for a bundle test. Out: everything else.

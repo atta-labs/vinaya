@@ -491,7 +491,7 @@ const BUILTIN_RECOVERY: Record<BriefBuiltin, string> = {
   objectives:
     'Add a `## Objectives` section of numbered `O<n>. <sentence>` lines (one observable outcome each), then re-run `{cmd}`.',
   briefSections:
-    'Add the missing `## Surface`/`## Parts`/`## Test plan`/`## Stop conditions` section(s) named above, well-formed per their own grammar, then re-run `{cmd}`.',
+    'Add the missing `## Surface`/`## Parts`/`## Test plan`/`## Stop conditions`/`## Documentation` section(s) named above, well-formed per their own grammar (`## Documentation` accepts an explicit `None` line when no normative source governs this task; otherwise at least one source must cite a real `## Objectives` id via a trailing `(O<n>)`), then re-run `{cmd}`.',
   milestoneShape:
     'Fix the Milestone description as named above — a goal, an optional well-formed `Release:` field, and an optional parseable `### Tranche intents` section — then re-run `{cmd}`.'
 }
@@ -1127,7 +1127,7 @@ export function fetchForgeIssueContext(
  * against the frozen comment's own rendered text — see that function's own
  * doc comment for why). Names the frozen comment's URL and
  * `vinaya issue objectives edit` as the sanctioned path for an Objectives
- * change; `## Surface`/`## Parts` have no self-serve edit path once frozen.
+ * change; `## Surface`/`## Parts`/`## Documentation` have no self-serve edit path once frozen.
  *
  * `skipCheck`, when true, is `issue objectives edit`'s own escape hatch: that
  * command IS the sanctioned way to change `## Objectives` on a frozen task
@@ -1152,7 +1152,7 @@ export function refuseFrozenSectionChange(
   refuse([
     makeCheckError(
       'issue-frozen-brief',
-      `This task Issue's brief is already frozen — the frozen comment is at ${frozen.url}. This edit changes ${sections}, which is locked once frozen. Use \`vinaya issue objectives edit\` for an Objectives change; \`## Surface\`/\`## Parts\` have no self-serve edit path once frozen — escalate to the Planner to supersede the frozen brief.`,
+      `This task Issue's brief is already frozen — the frozen comment is at ${frozen.url}. This edit changes ${sections}, which is locked once frozen. Use \`vinaya issue objectives edit\` for an Objectives change; \`## Surface\`/\`## Parts\`/\`## Documentation\` have no self-serve edit path once frozen — escalate to the Planner to supersede the frozen brief.`,
       `Revert the ${sections} change(s) in the body, or use \`vinaya issue objectives edit\` for an Objectives change, then re-run \`${retryCommand}\`.`
     )
   ])

@@ -65,8 +65,8 @@ import { chmodSync, createWriteStream } from 'node:fs'
 import { execFileSync, spawn } from 'node:child_process'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import { homedir, hostname as osHostname } from 'node:os'
-import { redact, summarizeTranscript } from '@attalabs/aeg-core'
-import type { Role, RoleAttemptOutcome, TranscriptSummary } from '@attalabs/aeg-core'
+import { parseIssueDocumentation, redact, summarizeTranscript } from '@attalabs/aeg-core'
+import type { IssueDocumentationSource, Role, RoleAttemptOutcome, TranscriptSummary } from '@attalabs/aeg-core'
 import { createLogSink, outboxPathFor } from './log-sink.js'
 import { appendRoleLine } from './loop-log.js'
 import { loadConfig, GLOBAL_VINAYA_HOME } from './config.js'
@@ -523,6 +523,143 @@ function backgroundDenyHookScript(): string {
 }
 
 /**
+ * True for a `## Documentation` source shaped as a URL — the only shape a
+ * `WebFetch` call can ever answer for. An in-repo path (a spec, a role doc)
+ * is read via `Read`, which this task's O2 names no hook for; mechanizing
+ * "was this URL fetched" only ever applies to the URL-shaped subset. Same
+ * `https?://` test `doc-owners.ts`'s `isUrlPointer` already uses, duplicated
+ * rather than imported — that module is out of this task's surface and the
+ * test is a one-line literal, not a shared grammar worth a cross-file wire.
+ */
+function isDocumentationUrl(source: string): boolean {
+  return /^https?:\/\//i.test(source.trim())
+}
+
+/**
+ * Which of `sources`' URL-shaped entries never appear (as a normalized
+ * prefix match — a trailing slash or `#fragment` on either side never
+ * causes a false miss) in `fetchedUrls` — the `WebFetch` URLs the
+ * `PostToolUse` hook already recorded for this session. Pure, exported for
+ * unit testing; the generated Stop hook script below duplicates this exact
+ * logic inline (it must run standalone, no workspace module resolution —
+ * same posture `backgroundShapeDetectorSource` already takes).
+ */
+export function unreadDocumentationSources(
+  sources: IssueDocumentationSource[],
+  fetchedUrls: string[]
+): IssueDocumentationSource[] {
+  const normalize = (u: string) => u.trim().split('#')[0]!.replace(/\/+$/, '')
+  const fetched = new Set(fetchedUrls.map(normalize))
+  return sources.filter((s) => isDocumentationUrl(s.source) && !fetched.has(normalize(s.source)))
+}
+
+/**
+ * Extracts the `## Documentation` sources this dispatch's own prompt names,
+ * for a `developer` dispatch only — the entry-gate obligation `roles/
+ * developer.md` states is the Developer's alone, never another role's. A
+ * fresh (round 1) developer dispatch's prompt IS the frozen brief text
+ * (`dispatch-task.ts`'s `prep.brief`), which now carries `## Documentation`
+ * verbatim (`brief-render.ts`'s `renderDocumentation`) right after
+ * Objectives. A resumed/round-2+ prompt (a review-finding fix, never the
+ * full brief again) simply has no such heading, `parseIssueDocumentation`
+ * returns not-ok, and this degrades to `[]` — no re-imposed obligation on a
+ * later round, since the sources were already read to reach round 1's PR.
+ */
+function documentationSourcesFromPrompt(role: Role, prompt: string): IssueDocumentationSource[] {
+  if (role !== 'developer') return []
+  const parsed = parseIssueDocumentation(prompt)
+  if (!parsed.ok || parsed.value.kind !== 'sources') return []
+  return parsed.value.sources
+}
+
+/**
+ * The `PostToolUse` hook that records every `WebFetch` URL for this session
+ * — Issue #625, O2. Appends one JSON line (`{url}`) per call to a per-run log
+ * file keyed by `VINAYA_RUN_ID` (never a fixed global path: two tasks
+ * dispatched concurrently, an observed live pattern on this box, would
+ * otherwise share one file and each would see the other's fetches). Exit
+ * code 2 is not honored on `PostToolUse` at all (confirmed against
+ * code.claude.com/docs/en/hooks: "There is no way to block or undo a tool
+ * call after it succeeds") — this hook only ever records, and always exits
+ * 0, matching that constraint rather than attempting a block it structurally
+ * cannot perform.
+ */
+function documentationLogHookScript(dir: string): string {
+  return [
+    "const fs = require('fs');",
+    "let d = '';",
+    "process.stdin.on('data', (c) => { d += c });",
+    "process.stdin.on('end', () => {",
+    '  try {',
+    '    const e = JSON.parse(d);',
+    "    const runId = process.env.VINAYA_RUN_ID || '';",
+    "    if (runId && e.tool_name === 'WebFetch' && e.tool_input && typeof e.tool_input.url === 'string') {",
+    `      const logPath = ${JSON.stringify(join(dir, 'documentation-log-'))} + runId + '.jsonl';`,
+    "      try { fs.appendFileSync(logPath, JSON.stringify({ url: e.tool_input.url }) + '\\n', { mode: 0o600 }); } catch {}",
+    '    }',
+    '  } catch {',
+    '    // not a JSON line — never fail a hook whose only job is to record',
+    '  }',
+    '  process.exit(0);',
+    '});',
+    ''
+  ].join('\n')
+}
+
+/**
+ * The `Stop` hook that refuses to let the turn end while a `## Documentation`
+ * source named in this dispatch's own brief was never fetched — Issue #625,
+ * O2. Reads the per-run sources file `writeDispatchSettings` wrote (dormant,
+ * exit 0, when absent or empty: a task whose brief carried no Documentation
+ * section, or none of it URL-shaped, owes nothing here) and the log file the
+ * `PostToolUse` hook above wrote, and exits 2 — "prevents Claude from
+ * stopping, continues the conversation" (code.claude.com/docs/en/hooks) —
+ * naming every unread source on stderr when the two disagree. Enforcement is
+ * this hook's, never the Developer's own judgement call about whether it
+ * read enough.
+ */
+function documentationStopHookScript(dir: string): string {
+  return [
+    "const fs = require('fs');",
+    "let d = '';",
+    "process.stdin.on('data', (c) => { d += c });",
+    "process.stdin.on('end', () => {",
+    '  try {',
+    '    JSON.parse(d);',
+    "    const runId = process.env.VINAYA_RUN_ID || '';",
+    '    if (!runId) { process.exit(0); }',
+    `    const sourcesPath = ${JSON.stringify(join(dir, 'documentation-sources-'))} + runId + '.json';`,
+    `    const logPath = ${JSON.stringify(join(dir, 'documentation-log-'))} + runId + '.jsonl';`,
+    '    let sources = [];',
+    "    try { sources = JSON.parse(fs.readFileSync(sourcesPath, 'utf8')); } catch { sources = []; }",
+    '    if (!Array.isArray(sources) || sources.length === 0) { process.exit(0); }',
+    '    let fetchedUrls = [];',
+    '    try {',
+    "      fetchedUrls = fs.readFileSync(logPath, 'utf8')",
+    "        .split('\\n')",
+    '        .filter(Boolean)',
+    '        .map((line) => { try { return JSON.parse(line).url; } catch { return null; } })',
+    "        .filter((u) => typeof u === 'string');",
+    '    } catch { fetchedUrls = []; }',
+    "    const normalize = (u) => String(u).trim().split('#')[0].replace(/\\/+$/, '');",
+    '    const fetched = new Set(fetchedUrls.map(normalize));',
+    '    const isUrl = (s) => /^https?:\\/\\//i.test(String(s).trim());',
+    '    const unread = sources.filter((s) => isUrl(s.source) && !fetched.has(normalize(s.source)));',
+    '    if (unread.length > 0) {',
+    "      const names = unread.map((s) => '- ' + s.source + ' (governs: ' + s.mechanism + ')').join('\\n');",
+    "      process.stderr.write('The brief\\'s `## Documentation` section names a source not yet fetched via WebFetch. Fetch it before ending the turn, and record the mechanism/version it confirms:\\n' + names + '\\n');",
+    '      process.exit(2);',
+    '    }',
+    '  } catch {',
+    '    // an unreadable/malformed hook payload never blocks a Stop this hook cannot evaluate',
+    '  }',
+    '  process.exit(0);',
+    '});',
+    ''
+  ].join('\n')
+}
+
+/**
  * The ceiling this repo's own doctrine commands can genuinely need —
  * `roles/developer.md` records the real gate suite running "past ten
  * minutes" on a real Test Plan, above the installed binary's own default
@@ -552,14 +689,38 @@ const DISPATCH_BASH_MAX_TIMEOUT_MS = '1800000'
  * the installed binary's own strings) — its own `run_in_background` flag
  * defaults to true, so an agent that never sets it explicitly would
  * otherwise background every subagent it spawns.
+ *
+ * `documentation` (Issue #625, O2) wires the second enforcement pair this
+ * settings file carries: a `PostToolUse` hook that logs every `WebFetch` URL
+ * and a `Stop` hook that refuses to let the turn end while a URL-shaped
+ * `## Documentation` source this dispatch's own brief named was never
+ * fetched. Both scripts are static/generic (the same content on every call,
+ * like `deny-background-bash.mjs`) — only the per-run SOURCES file this
+ * writes is call-specific, keyed by `runId` rather than a fixed name,
+ * because two tasks dispatched concurrently on this box (an observed live
+ * pattern, not hypothetical) would otherwise share one file and each would
+ * see the other's obligation. `runId` must be the same id threaded onto the
+ * child's `VINAYA_RUN_ID` env var by the caller, or the hooks can never find
+ * the file this call wrote. An empty/absent `documentation` list writes no
+ * sources file at all — the Stop hook reads that as "nothing owed" and never
+ * blocks, the same seam-is-dormant-when-absent posture `doc-owners.ts`
+ * already uses.
  */
-export function writeDispatchSettings(): string | null {
+export function writeDispatchSettings(runId: string, documentation: IssueDocumentationSource[] = []): string | null {
   try {
     const dir = join(GLOBAL_VINAYA_HOME, 'dispatch-settings')
     mkdirSync(dir, { recursive: true, mode: 0o700 })
     chmodSync(dir, 0o700)
     const scriptPath = join(dir, 'deny-background-bash.mjs')
     writeFileSync(scriptPath, backgroundDenyHookScript(), { mode: 0o600 })
+    const documentationLogScriptPath = join(dir, 'documentation-log.mjs')
+    writeFileSync(documentationLogScriptPath, documentationLogHookScript(dir), { mode: 0o600 })
+    const documentationStopScriptPath = join(dir, 'documentation-stop.mjs')
+    writeFileSync(documentationStopScriptPath, documentationStopHookScript(dir), { mode: 0o600 })
+    if (documentation.length > 0) {
+      const sourcesPath = join(dir, `documentation-sources-${runId}.json`)
+      writeFileSync(sourcesPath, JSON.stringify(documentation), { mode: 0o600 })
+    }
     const settingsPath = join(dir, 'settings.json')
     const settings = {
       env: {
@@ -571,6 +732,17 @@ export function writeDispatchSettings(): string | null {
           {
             matcher: 'Bash|Agent|Task',
             hooks: [{ type: 'command', command: `bun "${scriptPath}"` }]
+          }
+        ],
+        PostToolUse: [
+          {
+            matcher: 'WebFetch',
+            hooks: [{ type: 'command', command: `bun "${documentationLogScriptPath}"` }]
+          }
+        ],
+        Stop: [
+          {
+            hooks: [{ type: 'command', command: `bun "${documentationStopScriptPath}"` }]
           }
         ]
       }
@@ -2079,7 +2251,20 @@ export async function dispatchRole(
     const baseArgs = opts.resumeId ? vendor.resumeArgs(opts.resumeId, opts.model) : vendor.args(opts.model)
     // O1: claude only — see `writeDispatchSettings`'s own doc comment for why
     // Codex/Gemini are not silently included.
-    const dispatchSettingsPath = agent === 'claude' ? writeDispatchSettings() : null
+    const documentationSources = documentationSourcesFromPrompt(role, prompt)
+    if (agent !== 'claude' && documentationSources.some((s) => isDocumentationUrl(s.source))) {
+      // round 2 security review, LOW (Issue #625) — the PostToolUse/Stop hook
+      // pair below is Claude-only, same limitation `deny-background-bash.mjs`
+      // already has; unlike that hook, an unenforced Documentation obligation
+      // is silent otherwise, so this dispatch names it rather than leaving
+      // the operator to discover it only by a source never actually read.
+      writeLifecycle(
+        'vinaya dispatch-role: the Documentation read-gate (Issue #625, O2) is Claude-only — ' +
+          `agent '${agent}' gets no WebFetch log/Stop hook, so this brief's URL-shaped ` +
+          `'## Documentation' source(s) are not mechanically enforced for this dispatch.`
+      )
+    }
+    const dispatchSettingsPath = agent === 'claude' ? writeDispatchSettings(runId, documentationSources) : null
     const spawnArgs = dispatchSettingsPath ? [...baseArgs, '--settings', dispatchSettingsPath] : baseArgs
     const child = spawn(binaryPath, spawnArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],

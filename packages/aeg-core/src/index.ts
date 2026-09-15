@@ -226,6 +226,7 @@ export {
   checkBlastRadiusScope,
   checkConflictCompleteness,
   checkDocsWithinSurface,
+  checkDocumentationCitesObjective,
   checkIssueBriefSections,
   checkIssueObjectives,
   checkIssueRationale,
@@ -251,7 +252,9 @@ export {
   isTaskIssueBodyShaped,
   isTaskIssueLabelSet,
   BRIEF_SECTIONS_SINCE_ISSUE,
+  DOCUMENTATION_SINCE_ISSUE,
   OBJECTIVES_SINCE_ISSUE,
+  parseIssueDocumentation,
   parseIssueParts,
   parseIssueStopConditions,
   parseIssueSurface,
@@ -259,6 +262,8 @@ export {
 } from './issue-validation'
 export type {
   FrozenSection,
+  IssueDocumentation,
+  IssueDocumentationSource,
   IssuePart,
   IssueSectionResult,
   IssueSurface,
