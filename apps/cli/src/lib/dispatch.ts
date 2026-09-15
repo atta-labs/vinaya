@@ -60,15 +60,7 @@
  */
 
 import { randomUUID, createHash } from 'node:crypto'
-import {
-  accessSync,
-  constants as fsConstants,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  writeFileSync
-} from 'node:fs'
+import { accessSync, constants as fsConstants, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { chmodSync, createWriteStream } from 'node:fs'
 import { execFileSync, spawn } from 'node:child_process'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
