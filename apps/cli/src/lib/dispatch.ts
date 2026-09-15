@@ -2472,9 +2472,7 @@ export async function dispatchRole(
     // `opts.cwd` only when the caller named one. `spawnArgs` (baseArgs plus
     // `--settings`, and `dispatchSettingsPath`/`documentationSources` behind
     // it) are computed once, above, before the boundary resolution — see
-    // that computation's own comment for why (merged from `main`'s
-    // driver-lifecycle-v1 #630, which had computed them again here, against
-    // a pre-#560 shape of this file).
+    // that computation's own comment for why.
     const resolvedBoundary = boundaryLaunch?.ok ? boundaryLaunch.launch : null
     const spawnCommand = resolvedBoundary ? resolvedBoundary.command : binaryPath
     const spawnCommandArgs = resolvedBoundary ? resolvedBoundary.args : spawnArgs
