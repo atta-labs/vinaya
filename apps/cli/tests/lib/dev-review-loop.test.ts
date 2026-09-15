@@ -1927,6 +1927,134 @@ describe('devReviewLoop — round 1 clean, ends on publish', () => {
   }, 20000)
 })
 
+// --- task-log-v1 task 6, O3: restart fixtures ---
+//
+// A genuine restart here is a second, independent `dev-review-loop` process
+// re-run against the SAME task/$HOME as the first (`setUp`'s own `writeFakeGh`
+// never lets the local outbox flush — `issue comment` always refuses — so
+// both processes' own lines accumulate in the ONE local ndjson file this
+// suite already reads via `outboxLines`, letting a raw two-run trace be
+// inspected directly, exactly what the Issue's own "Observable evidence"
+// asks for: a whole-task normal AND a whole-task resumed raw-event trace).
+// Round 1 is genuinely clean on both runs (`setUp`'s deterministic fixture),
+// so the second run re-derives the identical 'publish' decision from
+// scratch — never a held/short-circuited replay — which is what makes
+// "equivalent lineage" a real claim about the controller's own behavior,
+// not an artifact of skipping the second run's own assessment.
+describe('devReviewLoop — restart fixtures (task-log-v1 task 6, O3): equivalent lineage, idempotent identities, visible gaps', () => {
+  const CANONICAL_ROUND_1_SHAPE = [
+    'loop_started',
+    'round_started',
+    'gate_result_read',
+    'verdicts_read',
+    'findings_compared',
+    'stop_condition_met',
+    'round_ended',
+    'journal_finalized'
+  ]
+
+  it('a second whole-task run reproduces the SAME dev_review_loop event shape under a DIFFERENT lineage.run — two genuine runs, never one fabricated as a continuation of the other', () => {
+    const { home, cwd, path } = setUp()
+
+    const r1 = runLoop(home, cwd, path)
+    expect(r1.status).toBe(0)
+    const linesAfterR1 = outboxLines(home)
+    const loopEventsR1 = linesAfterR1.filter((l) => l.kind === 'dev_review_loop').map((l) => l.event)
+    expect(loopEventsR1).toEqual(CANONICAL_ROUND_1_SHAPE)
+
+    const r2 = runLoop(home, cwd, path)
+    expect(r2.status).toBe(0)
+
+    const allLines = outboxLines(home)
+    const loopLines = allLines.filter((l) => l.kind === 'dev_review_loop')
+    // Every dev_review_loop line partitions cleanly by lineage.run into
+    // exactly two runs — the SAME canonical shape twice, never one merged
+    // 16-event stream and never a shape that only makes sense assuming the
+    // two processes shared state they never actually shared.
+    const runsInOrder = [...new Set(loopLines.map((l) => (l.meta as { lineage: { run: string } }).lineage.run))]
+    expect(runsInOrder).toHaveLength(2)
+    for (const run of runsInOrder) {
+      expect(
+        loopLines.filter((l) => (l.meta as { lineage: { run: string } }).lineage.run === run).map((l) => l.event)
+      ).toEqual(CANONICAL_ROUND_1_SHAPE)
+    }
+    // The restart itself is visible directly in the data, not inferred: two
+    // distinct process identities, never a single lineage.run silently
+    // spanning both runs as if nothing happened in between.
+    expect(runsInOrder[0]).not.toBe(runsInOrder[1])
+  }, 20000)
+
+  it("the rerun's own effect events reconcile the FIRST run's identities — an idempotent 'verified' replay, never a second 'attempted', for the SAME effect_id across the restart (O1/O3)", () => {
+    const { home, cwd, path } = setUp()
+
+    const r1 = runLoop(home, cwd, path)
+    expect(r1.status).toBe(0)
+    const r2 = runLoop(home, cwd, path)
+    expect(r2.status).toBe(0)
+    // No new forge write landed on the rerun — the pre-existing O1 proof
+    // (`postedCommentFiles` unchanged) this task's own fixture already
+    // established; the assertions below are the RAW EVENT counterpart of
+    // that same fact.
+    expect(postedCommentFiles(home)).toHaveLength(4)
+
+    const effectLines = outboxLines(home).filter((l) => l.kind === 'effect') as Array<{
+      effect_id: string
+      event: string
+      outcome?: string
+    }>
+    expect(effectLines.length).toBeGreaterThan(0)
+
+    const byId = new Map<string, typeof effectLines>()
+    for (const l of effectLines) {
+      const arr = byId.get(l.effect_id) ?? []
+      arr.push(l)
+      byId.set(l.effect_id, arr)
+    }
+    // The reviewer- and security-verdict posts (`publishRound`'s own
+    // `postPrCommentOnce`, the shared `EffectExecutor`) are keyed by round,
+    // not by process — `1-reviewer-verdict`/`1-security-verdict` are the
+    // SAME identity string a fresh process re-derives independently, which
+    // is exactly what makes a genuine cross-process replay observable here.
+    for (const key of ['1-reviewer-verdict', '1-security-verdict']) {
+      const forId = byId.get(key)
+      expect(forId, `no effect events for ${key}`).toBeDefined()
+      const events = (forId ?? []).map((l) => l.event)
+      // First run: a fresh write — attempted, then observed(success), then
+      // verified(success). Second run: the SAME identity is already
+      // 'verified' on disk, so `EffectExecutor.reconcileExisting` emits only
+      // one more 'verified' line — never a second 'attempted', which would
+      // mean the executor forgot this write ever happened.
+      expect(events).toEqual(['attempted', 'observed', 'verified', 'verified'])
+      expect(events.filter((e) => e === 'attempted')).toHaveLength(1)
+    }
+  }, 20000)
+
+  it('the controller never reads the Vinaya Log to decide — deleting the local outbox between the two runs changes nothing about the rerun’s own decision (O2/O3)', () => {
+    const { home, cwd, path } = setUp()
+
+    const r1 = runLoop(home, cwd, path)
+    expect(r1.status).toBe(0)
+    const firstRunFiles = postedCommentFiles(home)
+    expect(firstRunFiles).toHaveLength(4)
+
+    // The ONLY input this suite's own restart tests otherwise leave
+    // untouched between runs — gone, not merely unread, so a controller
+    // that secretly depended on replaying it would fail loudly here rather
+    // than passing by accident.
+    const outboxPath = join(home, '.vinaya', 'outbox', 'unresolved', `${TASK}.ndjson`)
+    expect(existsSync(outboxPath)).toBe(true)
+    rmSync(outboxPath)
+
+    const r2 = runLoop(home, cwd, path)
+    expect(r2.status).toBe(0)
+    expect(r2.stdout).toMatch(/publish/)
+    // The identical decision — nothing reposted — still holds with no log to
+    // consult: idempotency here comes from `postForgeEffectOnce`'s/the
+    // control store's own durable records, never from re-reading this file.
+    expect(postedCommentFiles(home)).toEqual(firstRunFiles)
+  }, 20000)
+})
+
 /**
  * Same as `writeFakeClaude`, plus — for both reviewer roles only — writing
  * the role's own `$PWD` to `cwd.txt` and the content of a
