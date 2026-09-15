@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import {
-  taskCancelHandler,
-  taskEscalationReadHandler,
-  taskResumeHandler,
-  taskStatusHandler
-} from '../../../src/lib/task-tools/handlers.js'
+import { taskEscalationReadHandler, taskStatusHandler } from '../../../src/lib/task-tools/handlers.js'
 
 /**
  * The forge-touching composition inside `taskStatusHandler`/
@@ -14,10 +9,11 @@ import {
  * against a `gh` stub on `PATH`, never re-mocked here (this task adds no
  * CLI command for these tools to front such a test). What IS safe and
  * deterministic in-process: validation (rejected before any read at all),
- * the three refusing stubs (which touch no outbox and no forge), and the
- * `{ issue }` shape of `task_escalation_read`, which resolves straight to
- * the outbox with no forge call — read against a bare Issue number no real
- * outbox on this machine will ever carry.
+ * and the `{ issue }` shape of `task_escalation_read`, which resolves
+ * straight to the outbox with no forge call — read against a bare Issue
+ * number no real outbox on this machine will ever carry. `task_start`,
+ * `task_resume` and `task_cancel` are real handlers of their own now — see
+ * `start.test.ts`, `resume.test.ts` and `resume-cancel.test.ts`.
  */
 
 const NEVER_DISPATCHED_ISSUE = 900_000_001
@@ -51,27 +47,5 @@ describe('taskEscalationReadHandler', () => {
     expect(result.result.nextCursor).toBeNull()
     expect(result.result.freshness).toBe('unknown')
     expect(typeof result.result.observedAt).toBe('string')
-  })
-})
-
-describe('the two remaining mutating stubs (task_start is real now — see start.test.ts)', () => {
-  it('task_resume refuses with capability_unavailable for schema-valid input', () => {
-    const result = taskResumeHandler({ task: { issue: NEVER_DISPATCHED_ISSUE } })
-    expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.error.kind).toBe('capability')
-  })
-
-  it('task_cancel refuses with capability_unavailable for schema-valid input', () => {
-    const result = taskCancelHandler({ task: { issue: NEVER_DISPATCHED_ISSUE }, reason: 'no longer needed' })
-    expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.error.kind).toBe('capability')
-  })
-
-  it('every stub still validates its input first — malformed input is validation, not capability', () => {
-    const resume = taskResumeHandler({ task: { tranche: '', id: '' } })
-    if (!resume.ok) expect(resume.error.kind).toBe('validation')
-
-    const cancel = taskCancelHandler({ task: { issue: 1 }, reason: '' })
-    if (!cancel.ok) expect(cancel.error.kind).toBe('validation')
   })
 })

@@ -47,4 +47,5 @@ tests/lib/task-tools/read.test.ts
 tests/lib/context-packet.test.ts
 tests/lib/task-tools/protocol.test.ts
 tests/lib/task-tools/server.test.ts
+tests/lib/task-tools/resume.test.ts
 tests/lib/broker/operator-grants.test.ts
