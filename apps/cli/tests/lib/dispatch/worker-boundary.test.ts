@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:net'
+import { spawnSync } from 'node:child_process'
+import { homedir, tmpdir } from 'node:os'
 import { chmodSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import {
   buildWorkerEnv,
   buildWorkerSandboxProfile,
   isWorkerBoundaryAvailable,
+  REAL_WORKER_BOUNDARY_DEPS,
   resolveWorkerBoundaryLaunch,
   RUNTIME_CREDENTIAL_ENV_KEYS,
   WORKER_ENV_ALLOWLIST_KEYS,
@@ -194,13 +197,15 @@ describe('resolveWorkerBoundaryLaunch — O1/O2 resolved launch (available bound
       expect(profile).toContain('(deny default)')
       expect(profile).toContain('(import "system.sb")')
       expect(profile).toContain(allowedDir)
-      expect(profile).toContain('(allow network-outbound)')
       expect(profile).toContain('com.apple.securityd')
       expect(profile).toContain('(deny signal)')
       expect(profile).toContain('(deny process-info* (target others))')
-      // round 2 review, LOW: outbound port 22 denied as a cheap, disclosed
-      // partial egress mitigation.
-      expect(profile).toContain('(deny network-outbound (remote tcp "*:22"))')
+      // round 3 review, HIGH: network-outbound is denied by default and
+      // allowed only on the plain HTTP(S) ports a model-runtime/registry
+      // client actually needs — never a blanket allow.
+      expect(profile).toContain('(deny network-outbound)')
+      expect(profile).toContain('(allow network-outbound (remote tcp "*:443"))')
+      expect(profile).toContain('(allow network-outbound (remote tcp "*:80"))')
     } finally {
       result.launch.cleanup()
     }
@@ -554,4 +559,173 @@ describe('buildWorkerSandboxProfile — Seatbelt string-literal escaping', () =>
     expect(execAllowIdx).toBeGreaterThan(-1)
     expect(denyHelperIdx).toBeGreaterThan(execAllowIdx)
   })
+})
+
+/**
+ * Round 3 review, MAJOR (F1): every assertion above this point checks the
+ * generated Seatbelt profile as TEXT (injected `detectHost`, no real
+ * `sandbox-exec` invocation) — a syntax/ordering mistake that compiles but
+ * does not enforce as intended would pass all of them. These tests close
+ * that gap the same way `isolation-probe.test.ts` already does for task 1's
+ * narrower probe profile (`test.skipIf(!isSandboxSupported())`): they build
+ * a REAL profile with `buildWorkerSandboxProfile`/`resolveWorkerBoundaryLaunch`
+ * and run it through the REAL `/usr/bin/sandbox-exec`, on the one host
+ * `isolation.md` §3 actually names as supported — skipped elsewhere as
+ * documented scope, not a gap this suite papers over.
+ */
+// A plain `bash` script, never a node/bun one: the interpreter a shebang
+// names must itself be inside the profile's own `execAllowDirs` for the OS
+// to exec it at all, and `/bin` (bash's real home) is always a member of
+// `CANDIDATE_SYSTEM_BIN_DIRS` — a `#!/usr/bin/env node`/`bun` script would
+// need ITS OWN interpreter's real install directory named too, which this
+// probe has no reason to depend on. Uses bash's own `/dev/tcp` pseudo-device
+// for the network checks so no separate network client binary is needed
+// either — one process-exec allow (`/bin`) is enough for every check here.
+const CONFINEMENT_PROBE_SCRIPT = `#!/bin/bash
+set -u
+inside_path="$1"; outside_path="$2"; denied_home_dir="$3"; allowed_port="$4"; denied_port="$5"
+
+inside_write_ok=false
+echo probe > "$inside_path" 2>/dev/null && inside_write_ok=true
+
+outside_write_blocked=true
+echo probe > "$outside_path" 2>/dev/null && outside_write_blocked=false
+
+home_read_blocked=true
+ls "$denied_home_dir" >/dev/null 2>&1 && home_read_blocked=false
+
+allowed_port_reachable=false
+(exec 3<>"/dev/tcp/127.0.0.1/$allowed_port") 2>/dev/null && allowed_port_reachable=true
+
+denied_port_blocked=true
+(exec 4<>"/dev/tcp/127.0.0.1/$denied_port") 2>/dev/null && denied_port_blocked=false
+
+printf '{"insideWriteOk":%s,"outsideWriteBlocked":%s,"homeReadBlocked":%s,"allowedPortReachable":%s,"deniedPortBlocked":%s}\\n' \\
+  "$inside_write_ok" "$outside_write_blocked" "$home_read_blocked" "$allowed_port_reachable" "$denied_port_blocked"
+`
+
+describe('resolveWorkerBoundaryLaunch — live sandbox-exec enforcement (round 3 review, MAJOR)', () => {
+  it.skipIf(!isWorkerBoundaryAvailable(REAL_WORKER_BOUNDARY_DEPS))(
+    'a real confined child can write only inside its allowed dir, cannot read the real HOME, and can reach only the allowed port',
+    async () => {
+      const allowedDir = tempDir('vinaya-wb-live-allowed-')
+      const homeDir = tempDir('vinaya-wb-live-home-')
+      const binDir = tempDir('vinaya-wb-live-bin-')
+      const probeBinary = join(binDir, 'probe.sh')
+      writeFileSync(probeBinary, CONFINEMENT_PROBE_SCRIPT)
+      chmodSync(probeBinary, 0o755)
+      const insidePath = join(allowedDir, 'inside.txt')
+      const outsidePath = join(tmpdir(), `vinaya-wb-live-outside-${process.pid}-${Date.now()}`)
+      // The REAL account home (`os.homedir()`, never this test's own scratch
+      // `homeDir` — that is only `vinayaHomeDir`, an unrelated parameter) is
+      // what `resolveWorkerBoundaryLaunch` denies internally as `realHome`.
+      // Listing it (never writing into it) proves the profile's HOME-wide
+      // deny reaches a confined role, independent of Keychain's own
+      // dedicated rule — mirrors the Keychain test below, which lists
+      // rather than reads/writes a specific file for the same reason.
+      const deniedHomeDir = homedir()
+
+      const allowedServer = createServer((socket) => socket.end())
+      const deniedServer = createServer((socket) => socket.end())
+      const listen = (server: ReturnType<typeof createServer>): Promise<number> =>
+        new Promise((resolve) => {
+          server.listen(0, '127.0.0.1', () => {
+            const address = server.address()
+            resolve(typeof address === 'object' && address !== null ? address.port : 0)
+          })
+        })
+      const allowedPort = await listen(allowedServer)
+      const deniedPort = await listen(deniedServer)
+
+      const result = resolveWorkerBoundaryLaunch(
+        {
+          binaryPath: probeBinary,
+          args: [insidePath, outsidePath, deniedHomeDir, String(allowedPort), String(deniedPort)],
+          allowedDir,
+          vinayaHomeDir: homeDir,
+          vinayaHomeWritableSubdirs: []
+        },
+        REAL_WORKER_BOUNDARY_DEPS
+      )
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      const profilePath = result.launch.args[1] as string
+      // The real launch's own profile only opens 80/443 — this probe's own
+      // "allowed port" server stands in for one of those (binding 80/443
+      // itself needs root, unavailable in CI); patching just the port
+      // number in an otherwise-untouched, REAL, live-compiled profile keeps
+      // every other rule (HOME/Keychain/exec/write) exactly as shipped.
+      const liveProfile = readFileSync(profilePath, 'utf8').replace(
+        '(allow network-outbound (remote tcp "*:443"))',
+        `(allow network-outbound (remote tcp "*:443"))\n(allow network-outbound (remote tcp "*:${allowedPort}"))`
+      )
+      writeFileSync(profilePath, liveProfile)
+      try {
+        const spawnResult = spawnSync(result.launch.command, result.launch.args, {
+          cwd: allowedDir,
+          encoding: 'utf8'
+        })
+        expect(spawnResult.status, `stderr: ${spawnResult.stderr}`).toBe(0)
+        const parsed = JSON.parse(spawnResult.stdout) as {
+          insideWriteOk: boolean
+          outsideWriteBlocked: boolean
+          homeReadBlocked: boolean
+          allowedPortReachable: boolean
+          deniedPortBlocked: boolean
+        }
+        expect(parsed.insideWriteOk, 'writing inside allowedDir should succeed while confined').toBe(true)
+        expect(parsed.outsideWriteBlocked, 'writing outside allowedDir should be blocked while confined').toBe(true)
+        expect(parsed.homeReadBlocked, 'reading the real HOME should be blocked while confined').toBe(true)
+        expect(parsed.allowedPortReachable, 'the profile-allowed port should be reachable while confined').toBe(true)
+        expect(parsed.deniedPortBlocked, 'a port outside 80/443 should be blocked while confined').toBe(true)
+      } finally {
+        result.launch.cleanup()
+        allowedServer.close()
+        deniedServer.close()
+        rmSync(outsidePath, { force: true })
+      }
+    }
+  )
+
+  it.skipIf(!isWorkerBoundaryAvailable(REAL_WORKER_BOUNDARY_DEPS))(
+    'a real confined child cannot read the real Keychain directory',
+    () => {
+      const allowedDir = tempDir('vinaya-wb-live-keychain-')
+      const homeDir = tempDir('vinaya-wb-live-keychain-home-')
+      const binDir = tempDir('vinaya-wb-live-keychain-bin-')
+      const fakeBinary = fakeBinaryIn(binDir)
+
+      const result = resolveWorkerBoundaryLaunch(
+        {
+          binaryPath: fakeBinary,
+          args: [],
+          allowedDir,
+          vinayaHomeDir: homeDir,
+          vinayaHomeWritableSubdirs: []
+        },
+        REAL_WORKER_BOUNDARY_DEPS
+      )
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      try {
+        // The REAL home's own Keychain directory always exists on a real
+        // macOS user account — list it (never write/read a specific
+        // keychain file, which this account may not have) to prove the
+        // profile's dedicated Keychain deny rule actually reaches it.
+        const listRealKeychain = `require('node:fs').readdirSync(require('node:os').homedir() + '/Library/Keychains')`
+        const spawnResult = spawnSync(
+          '/usr/bin/sandbox-exec',
+          ['-f', result.launch.args[1] as string, process.execPath, '-e', listRealKeychain],
+          {
+            cwd: allowedDir,
+            encoding: 'utf8'
+          }
+        )
+        expect(spawnResult.status).not.toBe(0)
+        expect(spawnResult.stderr).toMatch(/EPERM|EACCES|operation not permitted/i)
+      } finally {
+        result.launch.cleanup()
+      }
+    }
+  )
 })
