@@ -573,10 +573,15 @@ export {
   RoleAttemptOutcomeSchema,
   RoleSchema,
   ROLE_VALUES,
-  UsageEventSchema
+  TASK_LOG_ARTIFACT_MAX_BYTES,
+  UsageEventSchema,
+  validateTaskLogArtifact
 } from './log'
 export type {
   AppendOutcome,
+  ArtifactExpectedProvenance,
+  ArtifactGap,
+  ArtifactValidationResult,
   DispatchEvent,
   DispatchOutcome,
   DevReviewLoopEvent,

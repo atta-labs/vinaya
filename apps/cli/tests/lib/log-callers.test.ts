@@ -76,6 +76,18 @@ import { fileURLToPath } from 'node:url'
  * itself (it never truncates or writes a held-verdict file), the same
  * "joins `CALLER_ALLOWLIST` alone" shape `journal-history.ts`/`resume.ts`/
  * `cancel.ts` already occupy above.
+ *
+ * Amended by task-log-v1 task 4 (#564): `log-artifact.ts`
+ * (`apps/cli/src/lib/`) is a fourth write category, distinct from truncate
+ * and held-verdict. Its export half reads every outbox file under the
+ * outbox root and writes them, concatenated, to an UNRELATED destination
+ * (a CI artifact file, never the outbox itself); its collect half APPENDS
+ * an already-validated batch of records into the outbox for a target
+ * Issue — before calling `flushOutbox` (already allowlisted) to publish
+ * them. Neither truncates, and neither writes a held-verdict sibling file,
+ * so `OUTBOX_APPEND_ALLOWLIST` is its own category rather than a stretch
+ * of either existing one. It calls no `log()` of its own, so it does not
+ * join `CALLER_ALLOWLIST`.
  */
 
 const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..', '..')
@@ -91,6 +103,7 @@ const DEV_REVIEW_LOOP_JOURNAL_HISTORY_PATH = 'apps/cli/src/lib/dev-review-loop/j
 const TASK_TOOLS_RESUME_PATH = 'apps/cli/src/lib/task-tools/resume.ts'
 const TASK_TOOLS_CANCEL_PATH = 'apps/cli/src/lib/task-tools/cancel.ts'
 const RUNNER_PATH = 'apps/cli/src/checks/runner.ts'
+const LOG_ARTIFACT_LIB_PATH = 'apps/cli/src/lib/log-artifact.ts'
 const FUTURE_CALLER_ALLOWLIST = new Set<string>([])
 const CALLER_ALLOWLIST = new Set([
   ...FUTURE_CALLER_ALLOWLIST,
@@ -109,6 +122,15 @@ const OUTBOX_HELD_VERDICT_ALLOWLIST = new Set([
   DEV_REVIEW_LOOP_PUBLICATION_PATH,
   DEV_REVIEW_LOOP_PAUSE_RESUME_PATH
 ])
+/**
+ * `log-artifact.ts` reads outbox files (to export them elsewhere) and
+ * appends an already-validated batch into the outbox (before `flushOutbox`
+ * publishes it) — a fourth write category next to the sink's append, the
+ * flush's truncate, and the held-verdict sibling-file write. Named
+ * explicitly rather than stretched into either existing allowlist, since
+ * it describes neither a truncate nor a held-verdict file.
+ */
+const OUTBOX_APPEND_ALLOWLIST = new Set([LOG_ARTIFACT_LIB_PATH])
 /**
  * Amended by task 8 (#454, O8): `dispatch.ts` durably records a run's vendor
  * resume identifier under `~/.vinaya/dispatch-resume/`, so an operator can
@@ -170,7 +192,8 @@ describe('log-callers — O2', () => {
           rel !== SINK_PATH &&
           !OUTBOX_TRUNCATE_ALLOWLIST.has(rel) &&
           !OUTBOX_HELD_VERDICT_ALLOWLIST.has(rel) &&
-          !OUTBOX_RESUME_RECORD_ALLOWLIST.has(rel)
+          !OUTBOX_RESUME_RECORD_ALLOWLIST.has(rel) &&
+          !OUTBOX_APPEND_ALLOWLIST.has(rel)
       )
       .filter(([, abs]) => {
         const content = readFileSync(abs, 'utf8')
@@ -230,6 +253,14 @@ describe('log-callers — O2', () => {
     expect(existing).toContain(DEV_REVIEW_LOOP_REVIEWER_DISPATCH_PATH)
     expect(existing).toContain(DEV_REVIEW_LOOP_PUBLICATION_PATH)
     expect(existing).toContain(DEV_REVIEW_LOOP_PAUSE_RESUME_PATH)
+  })
+
+  it('the log-artifact allowlist entry does exist, and really does append to the outbox — task-log-v1 task 4 is the landed chokepoint, not a future one', () => {
+    const entry = files.find(([rel]) => rel === LOG_ARTIFACT_LIB_PATH)
+    expect(entry, `${LOG_ARTIFACT_LIB_PATH} not found by the scan`).toBeDefined()
+    const content = readFileSync((entry as [string, string])[1], 'utf8')
+    expect(content.includes('outbox')).toBe(true)
+    expect(OUTBOX_WRITE_CALLS.some((call) => content.includes(call))).toBe(true)
   })
 })
 
