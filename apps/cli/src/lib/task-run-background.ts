@@ -30,7 +30,7 @@
  */
 
 import { spawn } from 'node:child_process'
-import { closeSync, mkdirSync, openSync } from 'node:fs'
+import { closeSync, constants as fsConstants, mkdirSync, openSync } from 'node:fs'
 import { hostname as osHostname } from 'node:os'
 import { dirname } from 'node:path'
 import { resolveRepo as realResolveRepo } from '@attalabs/aeg-forge-state'
@@ -77,15 +77,23 @@ export type BackgroundRunHandle = {
 /** Refused before launch (O3) — a host this driver cannot supervise, named so a caller reads a refusal rather than a silent hang or an orphaned child. */
 export class BackgroundUnsupportedError extends Error {}
 
-/** A live controller for this task is recorded on a DIFFERENT host, or a genuinely concurrent starter won the race for the next epoch — never silently taken over. */
+/**
+ * A live controller for this task is recorded on a DIFFERENT host, or a
+ * genuinely concurrent starter won the race for the next epoch — never
+ * silently taken over. `detail` is the caller's own accurate description of
+ * WHO holds it — a real `host` name for the different-host case, or the
+ * `ownerId` string `acquireOwnership` was called with (never mislabeled as a
+ * host) when a race is lost and the winner's own `run` record cannot yet be
+ * read back. Code review, round 2, MINOR: an earlier version always rendered
+ * this as `on host '<value>'`, which named the composite `background:<host>:
+ * <pid>` ownerId as if it were a bare host on the race-loss path.
+ */
 export class ControllerConflictError extends Error {
   constructor(
     readonly task: number,
-    readonly host: string
+    readonly detail: string
   ) {
-    super(
-      `task ${task} already has a controller recorded on host '${host}' — reattach with \`vinaya task status\` from that host rather than starting a second one here.`
-    )
+    super(`task ${task} already has a controller recorded — ${detail}.`)
     this.name = 'ControllerConflictError'
   }
 }
@@ -227,10 +235,27 @@ async function defaultResolveLoopLogPath(task: number): Promise<string> {
   return loopLogPathFor(repo, task)
 }
 
-/** Opens (creating the parent directory as needed) `path` in append mode for a spawned child's `stdio` — closed by the caller immediately after `spawn` returns; the child's own inherited copy of the descriptor stays open regardless (POSIX `fork`/`exec` semantics), so closing ours here never truncates or races the child's writes. */
+/**
+ * Opens (creating the parent directory as needed) `path` in append mode for
+ * a spawned child's `stdio` — closed by the caller immediately after `spawn`
+ * returns; the child's own inherited copy of the descriptor stays open
+ * regardless (POSIX `fork`/`exec` semantics), so closing ours here never
+ * truncates or races the child's writes. Code review, round 2, MEDIUM: a
+ * plain `openSync(path, 'a')` follows a symlink and creates a new file at
+ * the process umask's default mode — the same hardening `loop-log.ts`'s
+ * `appendLoopLogLine` already applies to this identical log family, applied
+ * here too: `O_NOFOLLOW` refuses a symlink planted at `path` rather than
+ * writing the controller's full stdout/stderr through it to an arbitrary
+ * target, and an explicit `0o600` never leaves the log world- or group-
+ * readable regardless of umask.
+ */
 function openLoopLogAppendFd(path: string): number {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
-  return openSync(path, 'a')
+  return openSync(
+    path,
+    fsConstants.O_WRONLY | fsConstants.O_APPEND | fsConstants.O_CREAT | fsConstants.O_NOFOLLOW,
+    0o600
+  )
 }
 
 export type SpawnedController = {
@@ -323,7 +348,12 @@ export async function startBackgroundRun(
   const controller = readCurrentControllerRun(task, deps.controlStore)
   if (controller) {
     const liveness = classifyBackgroundControllerLiveness(controller.run, livenessDeps)
-    if (liveness === 'other-host') throw new ControllerConflictError(task, controller.run.host)
+    if (liveness === 'other-host') {
+      throw new ControllerConflictError(
+        task,
+        `recorded on host '${controller.run.host}' — reattach with \`vinaya task status\` from that host rather than starting a second one here`
+      )
+    }
     if (liveness === 'live') return handleFromRun(controller.run, controller.epoch, logPath)
     // 'gone' — a genuine restart: this epoch's controller crashed or was
     // killed without confirming its in-flight forge writes. Fence them
@@ -340,7 +370,10 @@ export async function startBackgroundRun(
     // did nothing wrong.
     const winner = readRun(deps.controlStore, task, runIdFor(task, acquire.currentEpoch))
     if (winner.status === 'ok') return handleFromRun(winner.value, acquire.currentEpoch, logPath)
-    throw new ControllerConflictError(task, acquire.currentOwnerId ?? 'unknown')
+    throw new ControllerConflictError(
+      task,
+      `epoch ${acquire.currentEpoch} was just claimed by owner '${acquire.currentOwnerId ?? 'unknown'}', whose own run record is not yet readable — retry \`vinaya task status\` shortly`
+    )
   }
   const { epoch } = acquire
 

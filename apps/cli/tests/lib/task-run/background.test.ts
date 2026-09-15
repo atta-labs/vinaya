@@ -198,14 +198,23 @@ describe('startBackgroundRun', () => {
     expect(fresh.status).toBe('ok')
   })
 
-  it('refuses a controller recorded on a different host rather than guessing', async () => {
+  it('refuses a controller recorded on a different host rather than guessing, naming the real host', async () => {
     const deps = makeDeps()
     await startBackgroundRun({ issue: 42, agent: 'claude' }, deps)
 
     const otherHostDeps = makeDeps({ controlStore: { ...deps.controlStore, hostname: () => 'other-host' } })
-    await expect(startBackgroundRun({ issue: 42, agent: 'claude' }, otherHostDeps)).rejects.toThrow(
-      ControllerConflictError
-    )
+    let thrown: unknown
+    try {
+      await startBackgroundRun({ issue: 42, agent: 'claude' }, otherHostDeps)
+    } catch (err) {
+      thrown = err
+    }
+    expect(thrown).toBeInstanceOf(ControllerConflictError)
+    // Code review, round 2, MINOR: the message must name the recorded run's
+    // real host ('test-host', where the first start actually ran) — never
+    // the composite `background:<host>:<pid>` ownerId string.
+    expect((thrown as Error).message).toContain("host 'test-host'")
+    expect((thrown as Error).message).not.toContain('background:')
     expect(spawnCalls).toHaveLength(1)
   })
 
