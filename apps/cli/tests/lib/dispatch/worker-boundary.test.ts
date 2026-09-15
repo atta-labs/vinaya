@@ -675,6 +675,69 @@ describe('resolveWorkerBoundaryLaunch — vinayaHomeReadOnlySubdirs (round 4 rev
   )
 
   it.skipIf(!isWorkerBoundaryAvailable(REAL_WORKER_BOUNDARY_DEPS))(
+    'round 6 review, security CRITICAL: a confined child can append to its own named file inside an otherwise read-only vinayaHomeReadOnlySubdirs directory, but still cannot write a sibling file there',
+    () => {
+      // Reproduces `documentationLogHookScript`'s own shape live: the
+      // `PostToolUse` WebFetch hook appends to `documentation-log-<runId>
+      // .jsonl` inside `dispatch-settings`, a directory otherwise granted
+      // read-only (`vinayaHomeReadOnlySubdirs`, above) because nothing else
+      // in it is ever rewritten by the confined child — `settings.json`
+      // itself, and every hook script, are written once by the trusted
+      // controller and must stay unwritable from inside the sandbox.
+      const allowedDir = tempDir('vinaya-wb-live-ro-file-allowed-')
+      const homeDir = tempDir('vinaya-wb-live-ro-file-home-')
+      mkdirSync(join(homeDir, 'dispatch-settings'), { recursive: true })
+      const settingsFile = join(homeDir, 'dispatch-settings', 'settings.json')
+      writeFileSync(settingsFile, '{"hooks":{}}')
+      const logFile = join(homeDir, 'dispatch-settings', 'documentation-log-run1.jsonl')
+
+      const probeScript = join(allowedDir, 'ro-dir-writable-file-probe.js')
+      writeFileSync(
+        probeScript,
+        [
+          "const fs = require('node:fs')",
+          'const [settingsPath, logPath] = process.argv.slice(2)',
+          'let logWriteOk = true',
+          'try { fs.appendFileSync(logPath, "{\\"url\\":\\"https://example.com\\"}\\n") } catch { logWriteOk = false }',
+          'let settingsWriteBlocked = true',
+          'try { fs.appendFileSync(settingsPath, "x"); settingsWriteBlocked = false } catch { settingsWriteBlocked = true }',
+          'process.stdout.write(JSON.stringify({ logWriteOk, settingsWriteBlocked }))'
+        ].join('\n')
+      )
+
+      const result = resolveWorkerBoundaryLaunch(
+        {
+          binaryPath: process.execPath,
+          args: [probeScript, settingsFile, logFile],
+          allowedDir,
+          vinayaHomeDir: homeDir,
+          vinayaHomeWritableSubdirs: [],
+          vinayaHomeReadOnlySubdirs: ['dispatch-settings'],
+          vinayaHomeWritableFiles: [join('dispatch-settings', 'documentation-log-run1.jsonl')]
+        },
+        REAL_WORKER_BOUNDARY_DEPS
+      )
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      try {
+        const spawnResult = spawnSync(result.launch.command, result.launch.args, {
+          cwd: allowedDir,
+          encoding: 'utf8'
+        })
+        expect(spawnResult.status, `stderr: ${spawnResult.stderr}`).toBe(0)
+        const parsed = JSON.parse(spawnResult.stdout) as { logWriteOk: boolean; settingsWriteBlocked: boolean }
+        expect(parsed.logWriteOk, 'appending to the named documentation-log file should succeed').toBe(true)
+        expect(
+          parsed.settingsWriteBlocked,
+          'writing into a SIBLING file in the same read-only directory should still be blocked'
+        ).toBe(true)
+      } finally {
+        result.launch.cleanup()
+      }
+    }
+  )
+
+  it.skipIf(!isWorkerBoundaryAvailable(REAL_WORKER_BOUNDARY_DEPS))(
     'a confined child can reach the mDNSResponder unix socket — Seatbelt does not report EPERM/EACCES',
     () => {
       const allowedDir = tempDir('vinaya-wb-live-dns-allowed-')
