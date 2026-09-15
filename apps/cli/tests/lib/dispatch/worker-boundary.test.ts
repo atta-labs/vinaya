@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { chmodSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -25,7 +25,11 @@ import {
  */
 
 function tempDir(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), prefix))
+  // `realpathSync`: on macOS `tmpdir()` is `/var/...`, a symlink to
+  // `/private/var/...`, and the profile builder writes the CANONICAL path.
+  // Comparing against the uncanonical one fails on Darwin only — the exact
+  // host this boundary is built for. Canonicalise here, once.
+  return realpathSync(mkdtempSync(join(tmpdir(), prefix)))
 }
 
 const AVAILABLE_DEPS: WorkerBoundaryDeps = {
