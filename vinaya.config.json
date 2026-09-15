@@ -25,7 +25,8 @@
   "releaseActor": "daniboomerang",
   "reviewPolicy": {
     "codeReviewThreshold": "MAJOR",
-    "securityThreshold": "HIGH"
+    "securityThreshold": "HIGH",
+    "maxRounds": 7
   },
   "dispatch": {
     "agent": "claude"
