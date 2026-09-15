@@ -283,8 +283,9 @@ export function buildWorkerSandboxProfile(opts: {
   readWriteDirs: readonly string[]
   /**
    * Round 4 review, BLOCKER fix: the immediate parent of a NESTED
-   * `readWriteDirs` entry (e.g. `outbox/<repoSegment>`, two levels below
-   * `GLOBAL_VINAYA_HOME`) — granted `file-read-metadata` only (`(literal
+   * `readWriteDirs` entry (e.g. a caller-named, repo-scoped log-queue
+   * subdirectory, two levels below `GLOBAL_VINAYA_HOME`) — granted
+   * `file-read-metadata` only (`(literal
    * ...)`, never `(subpath ...)`), enough for the kernel to resolve/create
    * the already-known child path beneath it without granting recursive read
    * of whatever ELSE lives there (see `sbLiteralMetadataAllows`'s own doc
@@ -430,19 +431,20 @@ export type WorkerBoundaryLaunchOpts = {
   vinayaHomeDir: string
   /**
    * Subpaths, relative to `vinayaHomeDir`, a Worker's own later `vinaya`
-   * subcommand genuinely needs to READ and WRITE. Scoping these to exactly
-   * THIS dispatch's own repo is the CALLER's job (round 4 review, BLOCKER:
-   * a bare top-level name like `outbox` previously granted read+write over
-   * the ENTIRE `outbox`/`dispatch-resume` tree, spanning every repo and
-   * every task ever dispatched on the machine — a confined Worker could
-   * forge another task's audit log, or steal another task's live
-   * `resumeId` and resume its session directly, since the vendor binary
-   * sits in this same profile's own exec-allow list). This module stays a
-   * generic, reusable confinement primitive with no hardcoded opinion about
+   * subcommand genuinely needs to READ and WRITE — its own log queue and
+   * its per-dispatch resume records. Scoping these to exactly THIS
+   * dispatch's own repo is the CALLER's job (round 4 review, BLOCKER: a
+   * bare top-level directory name previously granted read+write over the
+   * ENTIRE log-queue/resume-record tree, spanning every repo and every task
+   * ever dispatched on the machine — a confined Worker could forge another
+   * task's audit-log line, or steal another task's live vendor `resumeId`
+   * and resume its session directly, since the vendor binary sits in this
+   * same profile's own exec-allow list). This module stays a generic,
+   * reusable confinement primitive with no hardcoded opinion about
    * `GLOBAL_VINAYA_HOME`'s own internal layout — the caller (`dispatch.ts`)
-   * derives the repo-scoped subpath from the SAME `outboxPathFor`/
-   * `resumeRecordPathFor` convention it already uses to locate its own
-   * files. Never `config.json`, never a bare top-level directory name.
+   * derives the repo-scoped subpath from the SAME naming convention it
+   * already uses to locate its own files. Never `config.json`, never a bare
+   * top-level directory name.
    */
   vinayaHomeWritableSubdirs: readonly string[]
   /**
@@ -535,10 +537,11 @@ export function resolveWorkerBoundaryLaunch(
     )
 
     // Round 4 review, BLOCKER fix: a `vinayaHomeWritableSubdirs` entry
-    // scoped to THIS dispatch's own repo (e.g. `outbox/<repoSegment>`) sits
-    // TWO levels below `vinayaHomeDir`, and `vinayaHomeDir` itself carries
-    // no grant at all any more (the HIGH fix, above) — verified live on
-    // this host: without SOMETHING on the immediate parent (`outbox`), even
+    // scoped to THIS dispatch's own repo (e.g. one repo's own log-queue
+    // subdirectory) sits TWO levels below `vinayaHomeDir`, and
+    // `vinayaHomeDir` itself carries no grant at all any more (the HIGH
+    // fix, above) — verified live on this host: without SOMETHING on the
+    // immediate parent (the log-queue/resume-record directory itself), even
     // `writeLaunchRecord`'s own `mkdirSync(dirname(path), {recursive:true})`
     // targeting the exact, already-granted child path is denied outright,
     // regardless of whether that child pre-exists. `file-read-metadata` on
