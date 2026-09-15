@@ -303,7 +303,7 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
               role: env.VINAYA_ROLE,
               task: env.VINAYA_TASK,
               round: env.VINAYA_ROUND,
-              // task-log-v1 task 6 (O1/O2): "linked to the current run" —
+              // "Linked to the current run" —
               // a producer that structurally knows a broader run identity
               // (the dev-review-loop driver sets `VINAYA_RUN` to its own
               // `loop_id` once one exists) still wins; absent that, this

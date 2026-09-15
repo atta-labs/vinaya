@@ -963,7 +963,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       }
     }
 
-    // task-log-v1 task 6 (O1/O2): every `log()` call this process makes from
+    // Every `log()` call this process makes from
     // here on — this driver's own `dev_review_loop` events AND every
     // `effect`/`operation` event a downstream call into `effects.ts`/
     // `broker.ts` emits (pause posts, escalation writes) — reads
@@ -995,7 +995,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     }
     let state: LoopState = initialLoopState(config)
 
-    // task-log-v1 task 6 (O2): the `resumed` observation — a genuine
+    // The `resumed` observation — a genuine
     // `--resume` attach, already authenticated (`resolveEscalation`, above)
     // before this process ever re-entered the round loop. A bare
     // `'infrastructure'` recoverable-hiccup resume is never a Principal
@@ -3059,7 +3059,7 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
   d.terminateInFlightLaunchesOnShutdown(task, terminateAgent, repo)
   const fencedEffectKeys = fenceStartedEffectsAsUncertain(task, resolved.epoch)
 
-  // task-log-v1 task 6 (O2): the `cancelled` terminal observation — this
+  // The `cancelled` terminal observation — this
   // command is its own process, with no `LoopConfig.loopId` carried over
   // from whatever run it is cancelling (never persisted anywhere to
   // recover), so it mints one of its own, the same fresh-`loop_id`-per-
