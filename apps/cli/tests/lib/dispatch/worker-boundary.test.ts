@@ -1062,3 +1062,146 @@ describe('resolveWorkerBoundaryLaunch — repo-segment scoping (round 4 review, 
     }
   )
 })
+
+describe('resolveWorkerBoundaryLaunch — cross-task/role scoping (round 5 review, CRITICAL)', () => {
+  it.skipIf(!isWorkerBoundaryAvailable(REAL_WORKER_BOUNDARY_DEPS))(
+    'a confined dispatch granted vinayaHomeWritableFiles can write its OWN outbox/resume file but not a SIBLING task/role file in the SAME repo-segment directory',
+    () => {
+      const allowedDir = tempDir('vinaya-wb-live-file-scope-allowed-')
+      const homeDir = tempDir('vinaya-wb-live-file-scope-home-')
+
+      // Same repo-segment DIRECTORY (`outbox/owner-repo`) two DIFFERENT
+      // tasks' own outbox lines share by `outboxPathFor`'s own naming
+      // convention — the exact shape the round 5 CRITICAL finding named:
+      // one confined dispatch (task 560) must never reach a sibling task's
+      // (561) own file in that same shared directory, even though both
+      // sit one literal path apart.
+      const repoSegDir = join(homeDir, 'outbox', 'owner-repo')
+      mkdirSync(repoSegDir, { recursive: true })
+      const ownFile = join(repoSegDir, '560.ndjson')
+      const siblingFile = join(repoSegDir, '561.ndjson')
+      writeFileSync(siblingFile, 'sibling task already wrote this')
+
+      const probeScript = join(allowedDir, 'file-scope-probe.js')
+      writeFileSync(
+        probeScript,
+        [
+          "const fs = require('node:fs')",
+          'const [ownPath, siblingPath] = process.argv.slice(2)',
+          'let ownWriteOk = true',
+          'try {',
+          "  fs.writeFileSync(ownPath, 'own')",
+          '} catch { ownWriteOk = false }',
+          'let siblingWriteBlocked = true',
+          'try {',
+          "  fs.writeFileSync(siblingPath, 'stolen')",
+          '  siblingWriteBlocked = false',
+          '} catch { siblingWriteBlocked = true }',
+          'let siblingReadBlocked = true',
+          'try {',
+          '  fs.readFileSync(siblingPath, "utf8")',
+          '  siblingReadBlocked = false',
+          '} catch { siblingReadBlocked = true }',
+          'process.stdout.write(JSON.stringify({ ownWriteOk, siblingWriteBlocked, siblingReadBlocked }))'
+        ].join('\n')
+      )
+
+      const result = resolveWorkerBoundaryLaunch(
+        {
+          binaryPath: process.execPath,
+          args: [probeScript, ownFile, siblingFile],
+          allowedDir,
+          vinayaHomeDir: homeDir,
+          vinayaHomeWritableSubdirs: [],
+          // Exactly what `dispatch.ts` now computes for its own outbox
+          // line: the exact FILE, never the shared directory it lives in.
+          vinayaHomeWritableFiles: [join('outbox', 'owner-repo', '560.ndjson')]
+        },
+        REAL_WORKER_BOUNDARY_DEPS
+      )
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      try {
+        const spawnResult = spawnSync(result.launch.command, result.launch.args, {
+          cwd: allowedDir,
+          encoding: 'utf8'
+        })
+        expect(spawnResult.status, `stderr: ${spawnResult.stderr}`).toBe(0)
+        const parsed = JSON.parse(spawnResult.stdout) as {
+          ownWriteOk: boolean
+          siblingWriteBlocked: boolean
+          siblingReadBlocked: boolean
+        }
+        expect(parsed.ownWriteOk, "writing this dispatch's own named file should succeed, first write included").toBe(
+          true
+        )
+        expect(
+          parsed.siblingWriteBlocked,
+          'writing a SIBLING task/role file in the same shared directory should be blocked'
+        ).toBe(true)
+        expect(
+          parsed.siblingReadBlocked,
+          "reading a SIBLING task/role file (e.g. another role's live vendor resumeId) should be blocked"
+        ).toBe(true)
+      } finally {
+        result.launch.cleanup()
+      }
+    }
+  )
+})
+
+describe('resolveBunExecDir — independent of the DISPATCHER process own runtime (round 5 review, BLOCKER; round 6 fix)', () => {
+  it.skipIf(!isWorkerBoundaryAvailable(REAL_WORKER_BOUNDARY_DEPS))(
+    'a confined child can still exec bun even when process.execPath (this dispatcher process own interpreter) is NOT bun',
+    () => {
+      // The exact gap round 5 review found: the prior fix derived bun's own
+      // directory from `dirname(process.execPath)`, true only when the
+      // DISPATCHER is itself running under bun (this repo's own source
+      // invocation, `bun apps/cli/src/index.ts`) — never true for the
+      // published, declared-supported entry point, built `--target=node`
+      // with a `#!/usr/bin/env node` shebang, where `process.execPath`
+      // never contains `bun` at all. Every live test through round 5 ran
+      // under `bun test`, where `process.execPath` genuinely IS bun, so
+      // none of them could catch this — reproduced here by stubbing
+      // `process.execPath` to a plainly non-bun path for the duration of
+      // the resolution call, proving the fix (`which bun`, independent of
+      // `process.execPath`) no longer depends on which runtime hosts the
+      // dispatcher process. Fails under the prior `dirname(process.execPath)`
+      // implementation; passes under the current one.
+      const allowedDir = tempDir('vinaya-wb-live-execpath-allowed-')
+      const homeDir = tempDir('vinaya-wb-live-execpath-home-')
+      const binDir = tempDir('vinaya-wb-live-execpath-bin-')
+      const fakeVendorBinary = fakeBinaryIn(binDir)
+      const originalExecPath = process.execPath
+      Object.defineProperty(process, 'execPath', { value: '/usr/bin/node-that-does-not-exist', configurable: true })
+      let result: ReturnType<typeof resolveWorkerBoundaryLaunch>
+      try {
+        result = resolveWorkerBoundaryLaunch(
+          {
+            binaryPath: fakeVendorBinary,
+            args: [],
+            allowedDir,
+            vinayaHomeDir: homeDir,
+            vinayaHomeWritableSubdirs: []
+          },
+          REAL_WORKER_BOUNDARY_DEPS
+        )
+      } finally {
+        Object.defineProperty(process, 'execPath', { value: originalExecPath, configurable: true })
+      }
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      try {
+        const spawnResult = spawnSync(
+          '/usr/bin/sandbox-exec',
+          ['-f', result.launch.args[1] as string, 'bun', '--version'],
+          { cwd: allowedDir, encoding: 'utf8', env: { PATH: process.env.PATH ?? '' } }
+        )
+        expect(spawnResult.status, `stderr: ${spawnResult.stderr}`).toBe(0)
+        expect(spawnResult.stdout.trim().length).toBeGreaterThan(0)
+      } finally {
+        result.launch.cleanup()
+      }
+    }
+  )
+})
