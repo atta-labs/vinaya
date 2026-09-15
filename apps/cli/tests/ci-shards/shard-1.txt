@@ -54,3 +54,4 @@ tests/lib/broker/authenticate.test.ts
 tests/lib/broker/worker-grants.test.ts
 tests/checks/runner/outcomes.test.ts
 tests/checks/runner/traces.test.ts
+tests/lib/artifacts/collect.test.ts
