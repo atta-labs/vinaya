@@ -562,16 +562,31 @@ const NO_DOCUMENTATION_SENTINEL_RE = /^none\b/i
 
 /**
  * One well-formed `## Documentation` line: a source, then the mechanism it
- * governs, split on the same hyphen/en-dash/em-dash separator `## Parts`'s
- * `Part <n> (<refs>) — <outcome>` line uses, with an OPTIONAL trailing
- * `(O<n>[, O<m>])` citation — same grammar Parts cites Objectives with,
- * moved to the end here since a source/mechanism pair reads naturally before
- * the citation that grades it (O3, Issue #625). The citation group only ever
- * matches a real `O<digits>` list, so a mechanism whose own prose ends in an
- * ordinary parenthetical (never shaped like `(O2)`) is never mistaken for one
- * — it stays part of the mechanism capture instead.
+ * governs, split on an em/en-dash (optional surrounding whitespace — those
+ * two characters never appear inside a real URL/path, so they are
+ * unambiguous) or an ASCII hyphen with MANDATORY whitespace on both sides.
+ * The mandatory-whitespace form is deliberate, not `## Parts`'s own looser
+ * `\s*[-—–]\s*` (`ISSUE_PART_LINE_RE`): Parts' literal `Part <n> (<refs>)`
+ * prefix already anchors where its separator falls, so a hyphen anywhere
+ * else in the line is never ambiguous there. A Documentation line has no
+ * such anchor — its source is very often a URL — and a real doc-page path
+ * routinely contains an unspaced hyphen (`agent-sdk`, `cost-tracking`);
+ * against the old `\s*[-—–]\s*` shape, the lazy source capture stopped at
+ * the FIRST such in-URL hyphen, truncating the source and corrupting the
+ * mechanism text (round 2 review, BLOCKER, Issue #625 O1/O2 — verified live:
+ * `https://code.claude.com/docs/en/agent-sdk/cost-tracking` split at
+ * `.../agent`). Requiring `\s+-\s+` for the hyphen form specifically closes
+ * that gap: no URL contains a literal space, so an in-path hyphen can never
+ * satisfy it, while a real Planner-written ` - ` separator still does. An
+ * OPTIONAL trailing `(O<n>[, O<m>])` citation follows — same grammar Parts
+ * cites Objectives with, moved to the end here since a source/mechanism pair
+ * reads naturally before the citation that grades it (O3, Issue #625). The
+ * citation group only ever matches a real `O<digits>` list, so a mechanism
+ * whose own prose ends in an ordinary parenthetical (never shaped like
+ * `(O2)`) is never mistaken for one — it stays part of the mechanism capture
+ * instead.
  */
-const ISSUE_DOCUMENTATION_LINE_RE = /^[-*]\s+(.+?)\s*[-—–]\s*(.+?)(?:\s*\((O\d+(?:\s*,\s*O\d+)*)\))?$/i
+const ISSUE_DOCUMENTATION_LINE_RE = /^[-*]\s+(.+?)(?:\s+-\s+|\s*[—–]\s*)(.+?)(?:\s*\((O\d+(?:\s*,\s*O\d+)*)\))?$/i
 
 /**
  * `## Documentation` — one bullet per normative source (a doc URL or an
@@ -1997,12 +2012,35 @@ export function checkPartsCoverageAndSequence(body: string): IssueSectionResult 
 // message; the pre-edit live body is the comparison basis.
 // ---------------------------------------------------------------------------
 
-export type FrozenSection = 'Objectives' | 'Surface' | 'Parts'
+export type FrozenSection = 'Objectives' | 'Surface' | 'Parts' | 'Documentation'
 
 /** True when two `## Surface` sections carry the same `in:`/`out:` glob sets, order-insensitive. */
 function surfacesEqual(a: IssueSurface, b: IssueSurface): boolean {
   const norm = (globs: string[]) => [...globs].sort().join(' ')
   return norm(a.in) === norm(b.in) && norm(a.out) === norm(b.out)
+}
+
+/**
+ * True when two `## Documentation` sections carry the same sources, in the
+ * same order (round 2 security review, HIGH, Issue #625) — order-significant
+ * like `## Parts`, since a source's own position has no independent meaning
+ * to render but a reordering is still an edit a Planner made, not a no-op.
+ * `{ kind: 'none' }` only ever equals another `{ kind: 'none' }`.
+ */
+function documentationEqual(a: IssueDocumentation, b: IssueDocumentation): boolean {
+  if (a.kind !== b.kind) return false
+  if (a.kind === 'none') return true
+  const bSources = (b as { kind: 'sources'; sources: IssueDocumentationSource[] }).sources
+  if (a.sources.length !== bSources.length) return false
+  return a.sources.every((s, i) => {
+    const t = bSources[i] as IssueDocumentationSource
+    return (
+      s.source === t.source &&
+      s.mechanism === t.mechanism &&
+      s.objectiveIds.length === t.objectiveIds.length &&
+      s.objectiveIds.every((id, j) => id === t.objectiveIds[j])
+    )
+  })
 }
 
 /** True when two `## Parts` lists carry the same `{n, objectiveIds, text}` tuples, in the same order — a Part's own order is significant (it drives §6's rendering), unlike a Surface glob set. */
@@ -2061,6 +2099,14 @@ export function frozenSectionsChanged(oldBody: string, newBody: string): FrozenS
     if (!partsEqual(oldParts.value, newParts.value)) changed.push('Parts')
   } else if (oldParts.ok !== newParts.ok) {
     changed.push('Parts')
+  }
+
+  const oldDocumentation = parseIssueDocumentation(oldBody)
+  const newDocumentation = parseIssueDocumentation(newBody)
+  if (oldDocumentation.ok && newDocumentation.ok) {
+    if (!documentationEqual(oldDocumentation.value, newDocumentation.value)) changed.push('Documentation')
+  } else if (oldDocumentation.ok !== newDocumentation.ok) {
+    changed.push('Documentation')
   }
 
   return changed

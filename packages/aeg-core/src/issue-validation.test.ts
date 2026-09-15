@@ -934,6 +934,32 @@ describe('frozenSectionsChanged (task-run-v1 11, review round 1, O3)', () => {
     const noSurface = body.replace('## Surface\n\nin: apps/cli/src/lib\nout: apps/cli/src/commands\n', '')
     expect(frozenSectionsChanged(noSurface, noSurface)).toEqual([])
   })
+
+  // round 2 security review, HIGH (Issue #625) — `## Documentation` is a
+  // frozen-brief-locked section too, same as Surface/Parts: an ordinary
+  // `issue edit` must not be able to silently drop or reword a source once
+  // the brief is frozen.
+  const documentation = '## Documentation\n\n- https://example.com/docs — the mechanism it governs\n'
+  const bodyWithDocs = `${body}\n${documentation}`
+
+  it('reports `Documentation` when a source or its mechanism changes', () => {
+    const changed = bodyWithDocs.replace('the mechanism it governs', 'a different mechanism')
+    expect(frozenSectionsChanged(bodyWithDocs, changed)).toEqual(['Documentation'])
+  })
+
+  it('reports `Documentation` when a source is dropped from an already-frozen Issue', () => {
+    const dropped = bodyWithDocs.replace(documentation, '## Documentation\n\nNone — no source governs this task.\n')
+    expect(frozenSectionsChanged(bodyWithDocs, dropped)).toEqual(['Documentation'])
+  })
+
+  it('reports `Documentation` when the section stops parsing on one side', () => {
+    const removed = bodyWithDocs.replace(documentation, '')
+    expect(frozenSectionsChanged(bodyWithDocs, removed)).toEqual(['Documentation'])
+  })
+
+  it('does not report `Documentation` when the section is byte-identical', () => {
+    expect(frozenSectionsChanged(bodyWithDocs, bodyWithDocs)).toEqual([])
+  })
 })
 
 describe('code-blindness — every content check reuses the single stripCode (PR #617)', () => {
@@ -1910,6 +1936,39 @@ describe('parseIssueDocumentation', () => {
           objectiveIds: []
         }
       ]
+    })
+  })
+
+  // round 2 review, BLOCKER (O1/O2, Issue #625) — a real doc-page URL
+  // routinely contains an unspaced hyphen; the separator must never mistake
+  // one for the source/mechanism split, or the source recorded (and later
+  // compared against a real `WebFetch` call by the Stop hook) is truncated.
+  it('never splits on a hyphen embedded in the source URL itself', () => {
+    const r = parseIssueDocumentation(
+      '## Documentation\n\n' +
+        '- https://code.claude.com/docs/en/agent-sdk/cost-tracking — the mechanism this task implements (O1)\n'
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value).toEqual({
+      kind: 'sources',
+      sources: [
+        {
+          source: 'https://code.claude.com/docs/en/agent-sdk/cost-tracking',
+          mechanism: 'the mechanism this task implements',
+          objectiveIds: [1]
+        }
+      ]
+    })
+  })
+
+  it('still accepts a plain ASCII hyphen separator when it carries real whitespace on both sides', () => {
+    const r = parseIssueDocumentation('## Documentation\n\n- https://example.com/docs - the mechanism\n')
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value).toEqual({
+      kind: 'sources',
+      sources: [{ source: 'https://example.com/docs', mechanism: 'the mechanism', objectiveIds: [] }]
     })
   })
 
