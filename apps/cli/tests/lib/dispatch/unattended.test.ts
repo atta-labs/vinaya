@@ -8,30 +8,33 @@ import { fileURLToPath } from 'node:url'
 /**
  * `worker-isolation-v1` task 3 (`#560`), O3: `--unattended` (`DispatchOpts.unattended`)
  * marks a `vinaya dispatch` invocation as an unattended start; the SEPARATE
- * `dispatch.requireWorkerIsolation` config setting (`config.ts`, off by
- * default — "the declared, visible setting" this tranche's own milestone
- * names) decides whether that actually requires `apps/cli/specs/isolation.md`'s
- * OS-level boundary. Both must hold for a dispatch to refuse before any
- * spawn when the boundary cannot be established. Exercised through the real
- * `vinaya dispatch` CLI entry point (`execFileSync('bun', [INDEX, ...])`),
- * the same discipline and the same scratch-`HOME`/non-git-`cwd` reasoning
- * `apps/cli/tests/lib/dispatch.test.ts`'s own header documents — never by
- * importing `dispatchRole` in-process, which would write real launch/outbox
- * records under this machine's own `HOME`.
+ * `dispatch.requireWorkerIsolation` config setting (`config.ts`) decides
+ * whether that actually requires `apps/cli/specs/isolation.md`'s OS-level
+ * boundary — an explicit config value always wins, and an unset value
+ * resolves platform-conditionally: `true` on Darwin, `false` elsewhere
+ * (round 2 review, HIGH; `dispatch.ts`'s own doc comment on this default).
+ * Both `--unattended` and the resolved setting must hold for a dispatch to
+ * refuse before any spawn when the boundary cannot be established.
+ * Exercised through the real `vinaya dispatch` CLI entry point
+ * (`execFileSync('bun', [INDEX, ...])`), the same discipline and the same
+ * scratch-`HOME`/non-git-`cwd` reasoning `apps/cli/tests/lib/dispatch.test.ts`'s
+ * own header documents — never by importing `dispatchRole` in-process, which
+ * would write real launch/outbox records under this machine's own `HOME`.
  *
- * This CI host is not Darwin, so a run with BOTH `--unattended` and the
- * config setting on refuses here every time — documented scope
- * (`isolation.md` §3), not a gap this suite papers over, mirroring
- * `isolation-probe.test.ts`'s own `skipIf(isSandboxSupported())`
- * "on an unsupported host" test. The available-boundary branch (the
+ * This fixture's `cwd` is a plain temp dir, never a real git repo, so on a
+ * host where the resolved setting is `true` (Darwin, or any host with an
+ * explicit override), `repoRoot()` resolves `null` and the boundary is
+ * unavailable — the SAME refusal as the explicit-on case, not the inert
+ * case a Linux CI host sees. The available-boundary branch (the
  * profile/env/command a resolved launch actually produces) is unit-tested
  * directly, with injected host detection, in `worker-boundary.test.ts` —
- * this file proves the WIRING: with the setting on, `--unattended` on this
- * host never reaches the vendor binary at all; with the setting left off
- * (its default — the pre-existing `dev-review-loop`/`dispatch-task`
- * automated-loop call sites' own posture), `--unattended` is inert and a
- * dispatch with neither flag nor setting is entirely unaffected (the
- * pre-task-3 regression guard).
+ * this file proves the WIRING, host-conditional default included: with the
+ * setting resolving on, `--unattended` never reaches the vendor binary at
+ * all; with it resolving off, `--unattended` is inert (the pre-existing
+ * `dev-review-loop`/`dispatch-task` automated-loop call sites' own posture);
+ * a dispatch with neither flag nor setting is entirely unaffected on every
+ * host (the pre-task-3 regression guard), since that path never evaluates
+ * the setting at all.
  */
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
@@ -125,12 +128,21 @@ describe('vinaya dispatch --unattended — O3 fail-closed refusal', () => {
     expect(lines.find((l) => l.event === 'dispatched')).toBeUndefined()
   })
 
-  it('--unattended alone, with requireWorkerIsolation left at its default (off), is inert', () => {
+  it("--unattended alone, with requireWorkerIsolation left unset, follows this host's resolved default", () => {
     const fixture = buildFixture()
     const result = runDispatch(fixture, ['--unattended'])
 
-    expect(result.status).toBe(0)
-    expect(existsSync(fixture.markerFile)).toBe(true)
+    if (process.platform === 'darwin') {
+      // The unset default resolves `true` here, same as the explicit-on
+      // case above — this fixture's non-repo cwd makes the boundary
+      // unavailable, so the dispatch refuses the same way.
+      expect(result.status).not.toBe(0)
+      expect(existsSync(fixture.markerFile)).toBe(false)
+      expect(result.stderr).toContain('refused')
+    } else {
+      expect(result.status).toBe(0)
+      expect(existsSync(fixture.markerFile)).toBe(true)
+    }
   })
 
   it('the config setting alone, with no --unattended flag, is inert — attribution AND the setting must both hold', () => {
