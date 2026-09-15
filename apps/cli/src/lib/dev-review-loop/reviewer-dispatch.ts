@@ -319,7 +319,18 @@ export function missingReviewerArtifacts(workDir: string, hasObjectives: boolean
 export class ReviewerInfrastructureFailure extends Error {
   constructor(
     public readonly role: 'reviewer' | 'security',
-    public readonly missing: readonly string[]
+    public readonly missing: readonly string[],
+    /**
+     * Round 2 review, MAJOR: the last attempt's own `effect_id`/`durationMs`
+     * (from its real `DispatchHandle`), so the caller's own failure
+     * observation can carry this attempt's real evidence identity and
+     * timing instead of a freshly generated id and the whole round's
+     * elapsed time. `null` only when no attempt ever produced a handle
+     * (never reachable today — `dispatchReviewer` always has one by the
+     * time this throws — kept `null`-safe rather than assumed).
+     */
+    public readonly attemptEffectId: string | null = null,
+    public readonly attemptDurationMs: number | null = null
   ) {
     super(`${role}'s work directory carried no ${missing.join(' and no ')} after a fresh dispatch and one fresh retry.`)
   }
@@ -343,7 +354,10 @@ export class ReviewerReportParseFailure extends Error {
     public readonly role: 'reviewer' | 'security',
     public readonly file: 'findings.txt' | 'objectives.txt' | 'report.txt',
     public readonly sessionId: string,
-    public readonly parseError: Error
+    public readonly parseError: Error,
+    /** Round 2 review, MAJOR: this exact attempt's own `effect_id`/`durationMs`, from `buildVerdictFromReport`'s own `handle` parameter — see `ReviewerInfrastructureFailure`'s identical fields for why. */
+    public readonly attemptEffectId: string | null = null,
+    public readonly attemptDurationMs: number | null = null
   ) {
     super(`${role}'s ${file} did not parse (session ${sessionId}): ${parseError.message}`)
   }
@@ -485,7 +499,14 @@ export function buildVerdictFromReport(
     findings = findingsRaw.trim() ? parseFindingsFile(findingsRaw, allowedSeverities) : []
   } catch (err) {
     if (err instanceof FindingsParseError) {
-      throw new ReviewerReportParseFailure(role, 'findings.txt', sessionId, err)
+      throw new ReviewerReportParseFailure(
+        role,
+        'findings.txt',
+        sessionId,
+        err,
+        handle.effectId ?? null,
+        handle.durationMs
+      )
     }
     throw err
   }
@@ -496,7 +517,14 @@ export function buildVerdictFromReport(
     objectiveResults = objectivesRaw?.trim() ? parseObjectivesFile(objectivesRaw) : []
   } catch (err) {
     if (err instanceof ObjectivesParseError) {
-      throw new ReviewerReportParseFailure(role, 'objectives.txt', sessionId, err)
+      throw new ReviewerReportParseFailure(
+        role,
+        'objectives.txt',
+        sessionId,
+        err,
+        handle.effectId ?? null,
+        handle.durationMs
+      )
     }
     throw err
   }
@@ -514,7 +542,9 @@ export function buildVerdictFromReport(
         role,
         'objectives.txt',
         sessionId,
-        new Error(`objectives.txt does not cover the resolved objectives list exactly: ${coverageProblem}`)
+        new Error(`objectives.txt does not cover the resolved objectives list exactly: ${coverageProblem}`),
+        handle.effectId ?? null,
+        handle.durationMs
       )
     }
   }
@@ -593,7 +623,9 @@ export function buildVerdictFromReport(
       role,
       'report.txt',
       sessionId,
-      new Error('missing required `SECRETS:` line — a security reviewer must always report one')
+      new Error('missing required `SECRETS:` line — a security reviewer must always report one'),
+      handle.effectId ?? null,
+      handle.durationMs
     )
   }
 

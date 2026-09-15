@@ -3145,8 +3145,22 @@ describe('devReviewLoop — a findings.txt line that still does not parse is an 
     // both reviewer attempts) are ALSO present now
     // — this is the additional one dev-review-loop.ts logs for the
     // security role's own invalid report, distinguished by its outcome.
-    const failureAttempt = events.find((e) => e.kind === 'role_attempt' && e.outcome === 'incomplete')
+    const failureAttempt = events.find((e) => e.kind === 'role_attempt' && e.outcome === 'incomplete') as
+      | { effect_id: string; duration_ms: number }
+      | undefined
     expect(failureAttempt).toMatchObject({ actor: 'security', outcome: 'incomplete', usage: null })
+
+    // Round 2 review, MAJOR (fixed): this failure's own `effect_id` must be
+    // the SAME id the failing security attempt's own `dispatch` line(s)
+    // carry — never a freshly minted, unjoinable one — and its `duration_ms`
+    // must be that one attempt's own duration, not the whole round's.
+    const securityDispatchOutcomeLines = events.filter(
+      (e) =>
+        e.kind === 'dispatch' && (e as { target_role?: string }).target_role === 'security' && e.event !== 'dispatched'
+    ) as Array<{ effect_id: string; duration_ms: number }>
+    const matching = securityDispatchOutcomeLines.find((l) => l.effect_id === failureAttempt?.effect_id)
+    expect(matching).toBeDefined()
+    expect(failureAttempt?.duration_ms).toBe(matching?.duration_ms)
   }, 20000)
 })
 

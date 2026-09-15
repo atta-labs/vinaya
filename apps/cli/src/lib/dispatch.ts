@@ -219,6 +219,16 @@ export type DispatchHandle = {
   timedOut: boolean
   /** Set only when the dispatch did not reach a normal `outcome_received`. */
   failureReason?: DispatchFailureReason
+  /**
+   * The same `effect_id` this attempt's own `dispatch`/`role_attempt`/`usage`
+   * lines already carry — optional so a hand-built fixture value in an
+   * existing test keeps type-checking, but always set on a real return from
+   * `dispatchRole`. Lets a caller that only sees this handle (never the
+   * `log()` calls themselves) correlate a failure it detects downstream
+   * back to the exact attempt that produced it, rather than inventing a
+   * fresh, unjoinable id.
+   */
+  effectId?: string
 }
 
 /**
@@ -1983,7 +1993,15 @@ export async function dispatchRole(
       )
       patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason: 'refused' })
       await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
-      return { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason: 'refused' }
+      return {
+        exitCode: null,
+        durationMs,
+        usage: null,
+        resumeId: null,
+        timedOut: false,
+        failureReason: 'refused',
+        effectId
+      }
     }
   }
 
@@ -2028,7 +2046,15 @@ export async function dispatchRole(
     })
     patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason: 'refused' })
     await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
-    return { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason: 'refused' }
+    return {
+      exitCode: null,
+      durationMs,
+      usage: null,
+      resumeId: null,
+      timedOut: false,
+      failureReason: 'refused',
+      effectId
+    }
   }
 
   {
@@ -2283,7 +2309,7 @@ export async function dispatchRole(
       // merge, so recovery can still resume it.
       patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason: 'crash' })
       void finish(
-        { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason: 'crash' },
+        { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason: 'crash', effectId },
         'dispatch_failed',
         priorSize
       )
@@ -2363,7 +2389,7 @@ export async function dispatchRole(
           resumeId: launch.resumeId ?? vendor.parseResumeId(stdoutBuf)
         })
         void finish(
-          { exitCode: code, durationMs, usage, resumeId: null, timedOut: true, failureReason: 'timeout' },
+          { exitCode: code, durationMs, usage, resumeId: null, timedOut: true, failureReason: 'timeout', effectId },
           'dispatch_failed',
           priorSize
         )
@@ -2416,7 +2442,7 @@ export async function dispatchRole(
           resumeId: launch.resumeId ?? vendor.parseResumeId(stdoutBuf)
         })
         void finish(
-          { exitCode: code, durationMs, usage, resumeId: null, timedOut: false, failureReason: 'crash' },
+          { exitCode: code, durationMs, usage, resumeId: null, timedOut: false, failureReason: 'crash', effectId },
           'dispatch_failed',
           priorSize
         )
@@ -2482,7 +2508,11 @@ export async function dispatchRole(
         unknown_reason: usageUnits.unknownReason,
         duration_ms: durationMs
       })
-      void finish({ exitCode: code, durationMs, usage, resumeId, timedOut: false }, 'outcome_received', priorSize)
+      void finish(
+        { exitCode: code, durationMs, usage, resumeId, timedOut: false, effectId },
+        'outcome_received',
+        priorSize
+      )
     }
 
     // `exit`, never `close`: `close` waits for every stdio stream to see
