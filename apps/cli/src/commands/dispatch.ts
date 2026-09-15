@@ -36,6 +36,8 @@ type ParsedArgs = {
   resume: string | undefined
   roleLogPath: string | undefined
   json: boolean
+  /** O3 (task 3, `#560`): threads `DispatchOpts.unattended` — see that field's own doc comment. Off by default: a manual `vinaya dispatch` invocation is attended unless this flag says otherwise. */
+  unattended: boolean
   /** Any `--flag`-shaped or stray positional token this parser does not
    * recognize — `dispatchCommand` refuses rather than silently dropping it.
    * Found live: an unrecognized `--tranche` flag on this command was
@@ -55,7 +57,8 @@ const KNOWN_FLAGS = [
   '--round',
   '--resume',
   '--role-log-path',
-  '--json'
+  '--json',
+  '--unattended'
 ]
 
 function parseArgs(args: string[]): ParsedArgs {
@@ -69,6 +72,7 @@ function parseArgs(args: string[]): ParsedArgs {
   let resume: string | undefined
   let roleLogPath: string | undefined
   let json = false
+  let unattended = false
   const unknown: string[] = []
   for (let i = 1; i < args.length; i++) {
     const a = args[i]
@@ -81,9 +85,10 @@ function parseArgs(args: string[]): ParsedArgs {
     else if (a === '--resume') resume = args[++i]
     else if (a === '--role-log-path') roleLogPath = args[++i]
     else if (a === '--json') json = true
+    else if (a === '--unattended') unattended = true
     else if (a !== undefined) unknown.push(a)
   }
-  return { role, agent, model, promptFile, task, pr, round, resume, roleLogPath, json, unknown }
+  return { role, agent, model, promptFile, task, pr, round, resume, roleLogPath, json, unattended, unknown }
 }
 
 export async function dispatchCommand(args: string[]): Promise<void> {
@@ -150,7 +155,8 @@ export async function dispatchCommand(args: string[]): Promise<void> {
     resumeId: parsed.resume,
     model: parsed.model,
     promptFile,
-    roleLogPath: parsed.roleLogPath
+    roleLogPath: parsed.roleLogPath,
+    unattended: parsed.unattended
   })
 
   if (parsed.json) {

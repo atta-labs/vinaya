@@ -1244,13 +1244,23 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     ): Promise<DispatchHandle> {
       const isResume = devResumeId !== null
       const fullPrompt = opts.skipResumeContext ? prompt : `${resumeContextBlock()}\n\n${prompt}`
+      // O1/O3 (task 3, #560): confine the Developer to
+      // its own worktree when one already exists on this machine — `null`
+      // on a fresh attach with nothing dispatched here yet (the same
+      // "driver running on a different host" case `reviewer-isolation.ts`'s
+      // own doc names), where `dispatchRole` falls back to the repo root
+      // instead (its own doc comment on `unattended`) rather than refusing
+      // a round-1 dispatch whose own Step 0 is creating that worktree.
+      const devWorktreeDir = existsSync(worktreePathForBranch()) ? worktreePathForBranch() : null
       const handle = await withPromptFile(fullPrompt, (promptFile) =>
         d.dispatchRole('developer', input.agent, fullPrompt, {
           task: task,
           round: roundNum,
           resumeId: devResumeId ?? undefined,
           promptFile,
-          roleLogPath: loopLogPath
+          roleLogPath: loopLogPath,
+          ...(devWorktreeDir ? { cwd: devWorktreeDir } : {}),
+          unattended: true
         })
       )
       await assertDispatchOrEscalate(handle, input.agent, isResume, devDispatchSucceededBefore)
@@ -1544,7 +1554,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           round: roundNum,
           promptFile,
           roleLogPath: loopLogPath,
-          ...(scratchDir ? { cwd: scratchDir } : {})
+          ...(scratchDir ? { cwd: scratchDir } : {}),
+          // O1/O3 (task 3, #560): a Reviewer dispatched
+          // by this driver is unattended the same way the Developer is.
+          unattended: true
         })
       )
       await assertDispatchOrEscalate(handle, input.agent, false, false)
@@ -1598,7 +1611,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             round: roundNum,
             promptFile,
             roleLogPath: loopLogPath,
-            ...(scratchDir ? { cwd: scratchDir } : {})
+            ...(scratchDir ? { cwd: scratchDir } : {}),
+            // O1/O3 (task 3, #560): a Reviewer
+            // dispatched by this driver is unattended the same way the
+            // Developer is.
+            unattended: true
           })
         )
         await assertDispatchOrEscalate(handle, input.agent, false, false)

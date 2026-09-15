@@ -63,6 +63,8 @@ import { createLogSink, outboxPathFor } from './log-sink.js'
 import { appendRoleLine } from './loop-log.js'
 import { loadConfig, GLOBAL_VINAYA_HOME } from './config.js'
 import { dirname, join } from 'node:path'
+import { buildWorkerEnv, resolveWorkerBoundaryLaunch } from './worker-boundary.js'
+import { repoRoot } from './diff-evidence.js'
 
 /**
  * Terminal colour, applied only at the point a line is written to a real
@@ -182,6 +184,27 @@ export type DispatchOpts = {
    * unchanged for the developer role and every pre-existing dispatch site.
    */
   cwd?: string
+  /**
+   * O1/O3 (task 3, `#560`): marks this dispatch as an unattended start —
+   * a driver launching a Developer, Reviewer or operational agent with
+   * nobody watching each tool call, as opposed to an Operator running
+   * `vinaya dispatch` by hand. Attribution only by itself: whether an
+   * unattended start actually REQUIRES `apps/cli/specs/isolation.md`'s
+   * OS-level boundary is the separate, declared `dispatch.requireWorkerIsolation`
+   * config setting (`config.ts`) — off by default. When BOTH `unattended` is
+   * `true` here AND that setting is `true`, the dispatch REFUSES, before
+   * ever spawning, if the boundary cannot be established on this host
+   * (`worker-boundary.ts`'s `isWorkerBoundaryAvailable`) — never a silent
+   * fallback to full environment inheritance (isolation.md §3, "Refusal
+   * conditions"). With the config setting left off (its default), this
+   * field changes nothing observable — the plain `vinaya dispatch` CLI
+   * command, this file's own pre-existing test suite
+   * (`apps/cli/tests/lib/dispatch.test.ts`), and the pre-existing
+   * `dev-review-loop`/`dispatch-task` automated-loop dispatch sites (which
+   * DO set this field, for attribution) all keep their exact pre-task-3
+   * behavior.
+   */
+  unattended?: boolean
 }
 
 /** `'signal'` (O1, Issue #605): the driver's own shutdown path terminated this launch's child on `SIGTERM`/`SIGINT` — distinct from `'crash'` (the child died on its own) so recovery can read it as a cancelled attempt, never an infrastructure failure of the child's own making. */
@@ -1832,6 +1855,65 @@ export async function dispatchRole(
     return { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason: 'refused' }
   }
 
+  const baseArgs = opts.resumeId ? vendor.resumeArgs(opts.resumeId, opts.model) : vendor.args(opts.model)
+  // O1: claude only — see `writeDispatchSettings`'s own doc comment for why
+  // Codex/Gemini are not silently included. Computed here, once, before the
+  // 'dispatched' log line — moved up from inside the spawn `Promise` (this
+  // task, #560) so the SAME final `spawnArgs` (baseArgs plus `--settings`)
+  // is what an unattended start's boundary resolution wraps below, rather
+  // than wrapping a pre-settings argv and reconciling the two later.
+  const dispatchSettingsPath = agent === 'claude' ? writeDispatchSettings() : null
+  const spawnArgs = dispatchSettingsPath ? [...baseArgs, '--settings', dispatchSettingsPath] : baseArgs
+
+  // O1/O3 (task 3, #560): an unattended start must run inside the proven
+  // boundary — refused, before the 'dispatched' event and before any spawn,
+  // when it cannot be established (`DispatchOpts.unattended`'s own doc
+  // comment) — but only when `dispatch.requireWorkerIsolation` (`config.ts`)
+  // is explicitly `true`, the "declared, visible setting" this tranche's
+  // milestone names (see that config field's own doc comment for why the
+  // default is off). Attended dispatch, an unattended dispatch with the
+  // setting left off (the plain `vinaya dispatch` CLI, this file's own
+  // pre-existing test suite, and the pre-existing `dev-review-loop`/
+  // `dispatch-task` automated-loop call sites, none of which set it) is
+  // entirely unaffected: `boundaryLaunch` stays `null` and the spawn below
+  // falls through to its pre-task-3 shape exactly.
+  let boundaryLaunch: ReturnType<typeof resolveWorkerBoundaryLaunch> | null = null
+  let boundaryAllowedDir: string | null = null
+  if (opts.unattended === true && loadConfig()?.dispatch?.requireWorkerIsolation === true) {
+    boundaryAllowedDir = opts.cwd ?? repoRoot()
+    boundaryLaunch =
+      boundaryAllowedDir === null
+        ? { ok: false, reason: 'no worktree/repo root could be resolved to confine this dispatch to' }
+        : resolveWorkerBoundaryLaunch({
+            binaryPath,
+            args: spawnArgs,
+            allowedDir: boundaryAllowedDir,
+            vinayaHomeDir: GLOBAL_VINAYA_HOME
+          })
+    if (!boundaryLaunch.ok) {
+      const durationMs = Date.now() - start
+      const priorSize = sizeOfSafe(outboxPath)
+      log({
+        kind: 'dispatch',
+        event: 'dispatch_failed',
+        payload: {},
+        target_role: role,
+        model: resolvedModel,
+        ...roundField,
+        effect_id: effectId,
+        reason: 'refused',
+        usage: null,
+        duration_ms: durationMs
+      })
+      writeLifecycle(
+        `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended start requires the worker isolation boundary, which is unavailable: ${boundaryLaunch.reason}`
+      )
+      patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason: 'refused' })
+      await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
+      return { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason: 'refused' }
+    }
+  }
+
   {
     const priorSize = sizeOfSafe(outboxPath)
     log({
@@ -1851,21 +1933,27 @@ export async function dispatchRole(
   const killGraceMs = loadConfig()?.dispatch?.killGraceMs ?? SIGKILL_GRACE_MS
 
   return new Promise<DispatchHandle>((resolve) => {
-    const baseArgs = opts.resumeId ? vendor.resumeArgs(opts.resumeId, opts.model) : vendor.args(opts.model)
-    // O1: claude only — see `writeDispatchSettings`'s own doc comment for why
-    // Codex/Gemini are not silently included.
-    const dispatchSettingsPath = agent === 'claude' ? writeDispatchSettings() : null
-    const spawnArgs = dispatchSettingsPath ? [...baseArgs, '--settings', dispatchSettingsPath] : baseArgs
-    const child = spawn(binaryPath, spawnArgs, {
+    // O1/O2: an unattended start with a resolved boundary spawns the WRAPPED
+    // command (`sandbox-exec -f <profile> <binary> <args…>`) with a
+    // NAMED-ALLOWLIST environment (`buildWorkerEnv` — never `{ ...process.env }`)
+    // and `cwd` set to the exact directory the profile confines it to.
+    // Attended dispatch (`boundaryLaunch === null`) keeps the pre-task-3
+    // shape byte for byte: the real binary, the full parent environment,
+    // `opts.cwd` only when the caller named one.
+    const resolvedBoundary = boundaryLaunch?.ok ? boundaryLaunch.launch : null
+    const spawnCommand = resolvedBoundary ? resolvedBoundary.command : binaryPath
+    const spawnCommandArgs = resolvedBoundary ? resolvedBoundary.args : spawnArgs
+    const spawnCwd = resolvedBoundary ? (boundaryAllowedDir ?? opts.cwd) : opts.cwd
+    const attribution = {
+      VINAYA_RUN_ID: runId,
+      VINAYA_ROLE: role,
+      VINAYA_TASK: opts.task !== undefined ? String(opts.task) : undefined,
+      VINAYA_ROUND: opts.round !== undefined ? String(opts.round) : undefined
+    }
+    const child = spawn(spawnCommand, spawnCommandArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      ...(opts.cwd ? { cwd: opts.cwd } : {}),
-      env: {
-        ...process.env,
-        VINAYA_RUN_ID: runId,
-        VINAYA_ROLE: role,
-        VINAYA_TASK: opts.task !== undefined ? String(opts.task) : undefined,
-        VINAYA_ROUND: opts.round !== undefined ? String(opts.round) : undefined
-      }
+      ...(spawnCwd ? { cwd: spawnCwd } : {}),
+      env: resolvedBoundary ? buildWorkerEnv(process.env, attribution) : { ...process.env, ...attribution }
     })
 
     // O1/O3: bind the child's own identity onto the launch record right
@@ -2030,6 +2118,11 @@ export async function dispatchRole(
       clearInterval(heartbeatTimer)
       clearTimeout(warnTimer)
       outputTee.end()
+      // O1: the boundary's own profile/scratch-dir temp files never outlive
+      // the dispatch that created them — best-effort, matching every other
+      // filesystem-bookkeeping concern in this file (`removeIfPresent`,
+      // `reviewer-isolation.ts`'s own posture).
+      resolvedBoundary?.cleanup()
       // The corresponding `log()` call already ran, with `priorSize` taken
       // right before it — this just confirms it landed before the caller
       // can possibly exit the process out from under it.
