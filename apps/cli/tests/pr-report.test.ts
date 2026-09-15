@@ -489,6 +489,25 @@ describe('computeGroupC — extracts and runs, end to end', () => {
   it('is the empty commands list for a body with no Test Plan command list', () => {
     expect(computeGroupC('Test Plan: unit-tests-only')).toEqual({ commands: [] })
   })
+
+  // Round 3 review, F2 (test-honesty): a `[agent]` command that itself reads
+  // `PR_BODY` (any `vinaya check` invocation, e.g. `closes-n`) used to always
+  // see an empty body here — `runAgentCommand`'s own env never carried it —
+  // so Group C's own evidence could never demonstrate a Test Plan's
+  // "→ exits 0" claim for such a command, no matter when it ran.
+  it('threads the graded body through as PR_BODY, so a command that reads it sees the SAME text Group C extracted its own command list from', () => {
+    const body = ['## Test Plan', '', '```', 'echo "body was: $PR_BODY"', '```'].join('\n')
+    const groupC = computeGroupC(body)
+    expect(groupC.commands[0]?.output).toBe(`body was: ${body}`)
+  })
+
+  it('threads PR_NUMBER/BRANCH through when the caller supplies them, never on its own', () => {
+    const body = ['## Test Plan', '', '```', 'echo "pr=$PR_NUMBER branch=$BRANCH"', '```'].join('\n')
+    const withoutExtras = computeGroupC(body)
+    expect(withoutExtras.commands[0]?.output).toBe('pr= branch=')
+    const withExtras = computeGroupC(body, undefined, { PR_NUMBER: '623', BRANCH: 'task/worker-isolation-v1/3' })
+    expect(withExtras.commands[0]?.output).toBe('pr=623 branch=task/worker-isolation-v1/3')
+  })
 })
 
 describe('buildReport — Group C wiring', () => {
