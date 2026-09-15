@@ -2256,6 +2256,68 @@ describe('devReviewLoop — escalation pauses, --resume continues after a ruling
     const allComments = postedCommentFiles(home)
     expect(allComments).toHaveLength(6)
   }, 20000)
+
+  it("a single pause's dev_review_loop 'paused' event and the effect events its own pause-comment post fires share the SAME meta.lineage.run (task-log-v1 task 6, O1/O2: one correlated history)", () => {
+    const { home, cwd, path } = setUpPauseResume()
+
+    const paused = runLoop(home, cwd, path)
+    expect(paused.status).not.toBe(0)
+
+    const lines = outboxLines(home)
+    const pausedEvents = lines.filter((l) => l.event === 'paused')
+    expect(pausedEvents).toHaveLength(1)
+    // `postPauseComment` (`pause-resume.ts`) runs through the SAME
+    // `EffectExecutor` this task instruments — its own `effect` family
+    // `attempted`/`observed`/`verified` sequence for the pause-comment post
+    // lands in this SAME outbox file, alongside the policy layer's own
+    // `dev_review_loop` events, because both are `log()` calls made from
+    // this one process.
+    const effectEvents = lines.filter((l) => l.kind === 'effect')
+    expect(effectEvents.length).toBeGreaterThan(0)
+    expect(effectEvents.map((e) => e.event)).toEqual(expect.arrayContaining(['attempted', 'observed', 'verified']))
+    const runs = new Set(
+      [...pausedEvents, ...effectEvents].map((l) => (l.meta as { lineage: { run: string | null } }).lineage.run)
+    )
+    expect(runs.size).toBe(1)
+    expect([...runs][0]).not.toBeNull()
+  }, 20000)
+
+  it('logs a resumed event, and every event this resumed process emits shares the SAME meta.lineage.run (task-log-v1 task 6, O1/O2/O3: one correlated history)', () => {
+    const { home, cwd, path } = setUpPauseResume()
+
+    const paused = runLoop(home, cwd, path)
+    expect(paused.status).not.toBe(0)
+
+    writeFileSync(
+      join(home, '.fake-gh-posted-comments', 'comment-3.md'),
+      `<!-- aeg:principal:ruling:${TASK}-1 -->\nGo ahead and fix it.\n`
+    )
+
+    const resumed = runResume(home, cwd, path, 123)
+    expect(resumed.status).toBe(0)
+
+    const lines = outboxLines(home)
+    const resumedEvents = lines.filter((l) => l.event === 'resumed')
+    expect(resumedEvents).toHaveLength(1)
+    expect(resumedEvents[0]).toMatchObject({ kind: 'dev_review_loop', round: 1, by: 'principal' })
+
+    // Every line THIS resumed process itself logged — starting with its own
+    // `resumed` event — carries the identical `meta.lineage.run`, the
+    // resumed run's own `loopId`: a `dev_review_loop` event from the round
+    // loop itself and any `operation`/`effect` event a pause-adjacent write
+    // fires in the SAME process are provably part of the same one history,
+    // not two independently-correlated streams. (Lines from BEFORE the
+    // resume — the original paused run's own `loop_started`.. `paused`/
+    // `journal_finalized` batch — belong to a DIFFERENT process and are
+    // correctly excluded: `resumed` is the first line the code under test
+    // logs.)
+    const resumedIdx = lines.findIndex((l) => l.event === 'resumed')
+    expect(resumedIdx).toBeGreaterThanOrEqual(0)
+    const resumedRunLines = lines.slice(resumedIdx)
+    const lineageRuns = new Set(resumedRunLines.map((l) => (l.meta as { lineage: { run: string | null } }).lineage.run))
+    expect(lineageRuns.size).toBe(1)
+    expect([...lineageRuns][0]).not.toBeNull()
+  }, 20000)
 })
 
 // --- control-store-v1 task 6, #556: escalation record, resolution replay, cancel ---
@@ -2399,6 +2461,24 @@ describe('devReviewLoop — --cancel (O3)', () => {
     expect(cancelledAgain.status).not.toBe(0)
     expect(cancelledAgain.stderr).toMatch(/already has a consumed resolution|replay refused/)
     expect(ownershipEpochFiles(home, TASK)).toEqual(epochsAfterFirstCancel)
+  }, 20000)
+
+  it('logs a cancelled event, correlated to the task (task-log-v1 task 6, O2)', () => {
+    const { home, cwd, path } = setUpPauseResume()
+
+    const paused = runLoop(home, cwd, path)
+    expect(paused.status).not.toBe(0)
+
+    seedRuling(home, 'comment-3.md')
+
+    const cancelled = runCancel(home, cwd, path, 123)
+    expect(cancelled.status).toBe(0)
+
+    const cancelledEvents = outboxLines(home).filter((l) => l.event === 'cancelled')
+    expect(cancelledEvents).toHaveLength(1)
+    const cancelledEvent = cancelledEvents[0] as { kind: string; round: number; by: string; subject: { issue: number } }
+    expect(cancelledEvent).toMatchObject({ kind: 'dev_review_loop', round: 1, by: 'principal' })
+    expect(cancelledEvent.subject.issue).toBe(TASK)
   }, 20000)
 })
 

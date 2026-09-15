@@ -283,7 +283,8 @@ export const DispatchEventSchema = z.discriminatedUnion('event', [
 export type DispatchEvent = z.infer<typeof DispatchEventSchema>
 
 // ---------------------------------------------------------------------------
-// `dev_review_loop` family (§5.2) — eleven events, `loop_id` shared on each.
+// `dev_review_loop` family (§5.2) — twelve events (task-log-v1 task 6 adds
+// `cancelled`), `loop_id` shared on each.
 
 const loopShared = {
   meta: HeaderMetaSchema,
@@ -374,6 +375,25 @@ export const DevReviewLoopEventSchema = z.discriminatedUnion('event', [
     .object({
       ...loopShared,
       event: z.literal('resumed'),
+      round: z.number().int(),
+      // `'principal'` — an authenticated ruling resolved the pause.
+      // `'driver'` (task-log-v1 task 6, O2) — a bare `'infrastructure'`
+      // recoverable-hiccup resume, authenticated as the driver's own
+      // recovery rather than a Principal decision (`resolveEscalation`'s
+      // `authenticatedBy: 'driver-self'` path, `dev-review-loop.ts`) — never
+      // silently reported as `'principal'` when no ruling was ever read.
+      by: z.enum(['principal', 'driver'])
+    })
+    .strict(),
+  // (task-log-v1 task 6, O2) The cancellation twin of `resumed` above — a
+  // paused escalation's OTHER resolution (`resolveEscalation`'s
+  // `decision: 'cancel'` path, `cancelDevReviewLoop`). Always
+  // principal-authenticated (a cancel always requires a posted ruling,
+  // unlike an infrastructure resume) — no `'driver'` member here.
+  z
+    .object({
+      ...loopShared,
+      event: z.literal('cancelled'),
       round: z.number().int(),
       by: z.literal('principal')
     })

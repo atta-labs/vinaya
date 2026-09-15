@@ -303,10 +303,15 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
               role: env.VINAYA_ROLE,
               task: env.VINAYA_TASK,
               round: env.VINAYA_ROUND,
-              // Not yet set by any caller — read now so the envelope carries
-              // the slot honestly `null` today, real once a future producer
-              // starts setting it.
-              run: env.VINAYA_RUN,
+              // task-log-v1 task 6 (O1/O2): "linked to the current run" —
+              // a producer that structurally knows a broader run identity
+              // (the dev-review-loop driver sets `VINAYA_RUN` to its own
+              // `loop_id` once one exists) still wins; absent that, this
+              // process's own `runId` — already the identity every event
+              // this process emits shares via `meta.run_id` — is a truthful,
+              // non-invented default rather than leaving the slot `null`
+              // forever for want of a caller that never opts in.
+              run: env.VINAYA_RUN || runId,
               attempt: env.VINAYA_ATTEMPT,
               parent: env.VINAYA_PARENT_EVENT
             },

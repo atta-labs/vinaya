@@ -125,6 +125,62 @@ describe('LogEventSchema — dev_review_loop family', () => {
     }
     expect(LogEventSchema.safeParse(line).success).toBe(true)
   })
+
+  it('parses a resumed line authenticated by a principal ruling', () => {
+    const line = {
+      meta,
+      subject,
+      kind: 'dev_review_loop' as const,
+      event: 'resumed' as const,
+      payload: {},
+      loop_id: 'loop-1',
+      round: 3,
+      by: 'principal' as const
+    }
+    expect(LogEventSchema.safeParse(line).success).toBe(true)
+  })
+
+  it("parses a resumed line for a bare 'infrastructure' recoverable-hiccup resume (task-log-v1 task 6, O2 — never claimed 'principal' with no ruling read)", () => {
+    const line = {
+      meta,
+      subject,
+      kind: 'dev_review_loop' as const,
+      event: 'resumed' as const,
+      payload: {},
+      loop_id: 'loop-1',
+      round: 3,
+      by: 'driver' as const
+    }
+    expect(LogEventSchema.safeParse(line).success).toBe(true)
+  })
+
+  it('parses a cancelled line (task-log-v1 task 6, O2)', () => {
+    const line = {
+      meta,
+      subject,
+      kind: 'dev_review_loop' as const,
+      event: 'cancelled' as const,
+      payload: {},
+      loop_id: 'loop-1',
+      round: 3,
+      by: 'principal' as const
+    }
+    expect(LogEventSchema.safeParse(line).success).toBe(true)
+  })
+
+  it("refuses a cancelled line claiming by: 'driver' — a cancel always requires an authenticated principal ruling", () => {
+    const line = {
+      meta,
+      subject,
+      kind: 'dev_review_loop' as const,
+      event: 'cancelled' as const,
+      payload: {},
+      loop_id: 'loop-1',
+      round: 3,
+      by: 'driver' as const
+    }
+    expect(LogEventSchema.safeParse(line).success).toBe(false)
+  })
 })
 
 const validForgeWrite = {
