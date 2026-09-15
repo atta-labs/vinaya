@@ -287,18 +287,33 @@ export function createTaskResumeHandler(
     // (Traps to avoid). A driver hitting an infrastructure hiccup is still
     // resumable through `vinaya dev-review-loop --resume` directly; this is
     // a deliberately narrower, more conservative gate for the Operator path.
+    //
+    // Security review, round 3, MEDIUM: `rulings.length > 0` alone only
+    // proves SOME principal ruling exists on this PR at some point in its
+    // history — never that it says anything about THIS escalation. A ruling
+    // left over from an earlier, already-addressed round would satisfy that
+    // check forever after, letting a stale approval authenticate a resume it
+    // never spoke to. `escalation.rulingOrdinal` is the ruling ordinal this
+    // pause was ALREADY raised under (the same "input version a round was
+    // judged against" `ManifestRecord`/`compareManifest` bind a verdict to);
+    // a ruling that authorizes resuming THIS pause must postdate that — its
+    // ordinal must have moved, exactly the inequality `compareManifest`'s own
+    // `binding.rulingOrdinal` already checks for "a new ruling landed."
     const rulings = deps.fetchRulings(pr)
-    if (rulings.length === 0) {
+    const newestRulingOrdinal = deps.fetchNewestRulingOrdinal(pr)
+    if (rulings.length === 0 || newestRulingOrdinal <= escalation.rulingOrdinal) {
       emitOperationEvent(deps.log, target, 'refused', 'authority')
       return fail(
         taskToolError(
           'authority',
-          `PR ${pr} carries no Principal ruling comment yet — nothing authenticates this resume`
+          rulings.length === 0
+            ? `PR ${pr} carries no Principal ruling comment yet — nothing authenticates this resume`
+            : `PR ${pr}'s newest ruling (ordinal ${newestRulingOrdinal}) is no newer than the ruling this escalation was already raised under (ordinal ${escalation.rulingOrdinal}) — nothing new authenticates resuming this pause`
         )
       )
     }
     const authenticatedBy = deps.fetchNewestRulingAuthor(pr) ?? 'unknown-principal'
-    const authenticatedFrom = `${pr}-${deps.fetchNewestRulingOrdinal(pr)}`
+    const authenticatedFrom = `${pr}-${newestRulingOrdinal}`
 
     const agent: AgentVendor = escalation.agent && isAgentVendor(escalation.agent) ? escalation.agent : 'claude'
 

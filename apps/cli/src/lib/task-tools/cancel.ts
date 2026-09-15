@@ -29,7 +29,7 @@ import {
 } from '@attalabs/aeg-core'
 import { type AgentVendor, isAgentVendor } from '../dispatch.js'
 import { cancelDevReviewLoop, type CancelResult, outboxRoot } from '../dev-review-loop.js'
-import { fetchRulings } from '../dev-review-loop/developer-dispatch.js'
+import { fetchNewestRulingOrdinal, fetchRulings } from '../dev-review-loop/developer-dispatch.js'
 import { appendRoleLine, loopLogPathFor } from '../loop-log.js'
 import {
   escalationIdFor,
@@ -56,6 +56,7 @@ export type TaskCancelDeps = {
   outboxRoot: () => string
   resolveIssueForRef: (ref: TaskToolRef) => number | null
   fetchRulings: (pr: number) => string[]
+  fetchNewestRulingOrdinal: (pr: number) => number
   cancelDevReviewLoop: (input: { cancelPr: number; agent: AgentVendor }) => Promise<CancelResult>
   hostname: () => string
   /** The Vinaya Log chokepoint (`log-sink.ts`) — injectable so a fixture can capture the typed `operation` event this handler emits without touching the real, machine-global outbox. */
@@ -66,6 +67,7 @@ export const defaultTaskCancelDeps: TaskCancelDeps = {
   outboxRoot,
   resolveIssueForRef,
   fetchRulings,
+  fetchNewestRulingOrdinal,
   cancelDevReviewLoop: (input) => cancelDevReviewLoop(input),
   hostname: osHostname,
   log
@@ -124,19 +126,35 @@ export function createTaskCancelHandler(
     }
     const pr = packet.inputs.prNumber
 
-    if (deps.fetchRulings(pr).length === 0) {
+    const held = readPauseState(root, issue)
+    const escalationId = held?.escalationId ?? escalationIdFor(issue, packet.inputs.round, packet.inputs.head)
+    const peekedEscalation = readEscalationRecord(issue, escalationId, controlStoreDeps)
+
+    // Security review, round 3, MEDIUM (the same defect as `resume.ts`'s
+    // identical gate): `rulings.length > 0` alone only proves SOME principal
+    // ruling exists on this PR, ever — never that it authorizes cancelling
+    // THIS pause. `peekedEscalation.rulingOrdinal` is the ruling ordinal this
+    // pause was already raised under; a ruling that authorizes cancelling it
+    // must postdate that, exactly the inequality `compareManifest`'s own
+    // `binding.rulingOrdinal` uses for "a new ruling landed." When no durable
+    // escalation record exists yet to compare against, this falls back to
+    // the plain any-ruling check — `cancelDevReviewLoop`'s own
+    // `resolveEscalation` call below refuses that case on its own terms
+    // (`StaleEscalationError`) regardless of what this gate decides.
+    const rulings = deps.fetchRulings(pr)
+    const newestRulingOrdinal = deps.fetchNewestRulingOrdinal(pr)
+    if (rulings.length === 0 || (peekedEscalation !== null && newestRulingOrdinal <= peekedEscalation.rulingOrdinal)) {
       emitOperationEvent(deps.log, target, 'refused', 'authority')
       return fail(
         taskToolError(
           'authority',
-          `PR ${pr} carries no Principal ruling comment yet — nothing authenticates this cancel`
+          rulings.length === 0
+            ? `PR ${pr} carries no Principal ruling comment yet — nothing authenticates this cancel`
+            : `PR ${pr}'s newest ruling (ordinal ${newestRulingOrdinal}) is no newer than the ruling this escalation was already raised under (ordinal ${peekedEscalation?.rulingOrdinal}) — nothing new authenticates cancelling this pause`
         )
       )
     }
 
-    const held = readPauseState(root, issue)
-    const escalationId = held?.escalationId ?? escalationIdFor(issue, packet.inputs.round, packet.inputs.head)
-    const peekedEscalation = readEscalationRecord(issue, escalationId, controlStoreDeps)
     const agent: AgentVendor =
       peekedEscalation?.agent && isAgentVendor(peekedEscalation.agent) ? peekedEscalation.agent : 'claude'
 

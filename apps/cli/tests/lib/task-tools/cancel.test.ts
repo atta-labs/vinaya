@@ -93,6 +93,7 @@ function writeEscalationFixture(overrides: Partial<EscalationInput> = {}) {
 function harness(
   overrides: {
     rulings?: string[]
+    newestRulingOrdinal?: number
     hostname?: string
     cancelResult?: { escalationId: string; fencedEffectKeys: string[] }
     cancelError?: Error
@@ -104,6 +105,7 @@ function harness(
     outboxRoot: () => outbox,
     resolveIssueForRef: () => ISSUE,
     fetchRulings: () => overrides.rulings ?? ['LGTM, cancel.'],
+    fetchNewestRulingOrdinal: () => overrides.newestRulingOrdinal ?? 1,
     hostname: () => overrides.hostname ?? 'test-host',
     cancelDevReviewLoop: async (input) => {
       calls.push(input)
@@ -152,6 +154,19 @@ describe('task_cancel handler', () => {
     const result = await handler({ task: { issue: ISSUE }, reason: 'no longer needed' }, CALLER)
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.error.kind).toBe('authority')
+    expect(calls).toHaveLength(0)
+  })
+
+  it('rejects a stale ruling — its ordinal has not advanced past the one this escalation was already raised under', async () => {
+    writePause()
+    writeEscalationFixture({ host: 'test-host', rulingOrdinal: 1 })
+    const { handler, calls } = harness({ newestRulingOrdinal: 1 })
+    const result = await handler({ task: { issue: ISSUE }, reason: 'no longer needed' }, CALLER)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.kind).toBe('authority')
+      expect(result.error.message).toContain('no newer than the ruling this escalation was already raised under')
+    }
     expect(calls).toHaveLength(0)
   })
 

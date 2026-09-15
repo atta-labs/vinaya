@@ -108,7 +108,12 @@ function memClaimStore(): { store: ResumeClaimStore; map: Map<string, ResumeReco
 }
 
 function harness(
-  overrides: { rulings?: string[]; launch?: () => void; resolveIssue?: (ref: unknown) => number | null } = {}
+  overrides: {
+    rulings?: string[]
+    newestRulingOrdinal?: number
+    launch?: () => void
+    resolveIssue?: (ref: unknown) => number | null
+  } = {}
 ) {
   const launches: Array<{ pr: number; agent: string }> = []
   const events: Array<{ operation: string; target: string; result: string; error_class: string | null }> = []
@@ -118,7 +123,7 @@ function harness(
     resolveIssueForRef: (overrides.resolveIssue as never) ?? (() => ISSUE),
     fetchRulings: () => overrides.rulings ?? ['LGTM, resume.'],
     fetchNewestRulingAuthor: () => 'principal-1',
-    fetchNewestRulingOrdinal: () => 1,
+    fetchNewestRulingOrdinal: () => overrides.newestRulingOrdinal ?? 1,
     store,
     launch: (target, _meta, onAsyncFailure) => {
       overrides.launch?.()
@@ -205,6 +210,22 @@ describe('task_resume handler', () => {
     const result = await handler({ task: { issue: ISSUE } }, CALLER)
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.error.kind).toBe('authority')
+    expect(launches).toHaveLength(0)
+    expect(events).toEqual([
+      { operation: 'task_resume', target: `task:${ISSUE}`, result: 'refused', error_class: 'authority' }
+    ])
+  })
+
+  it('rejects a stale ruling — its ordinal has not advanced past the one this escalation was already raised under', async () => {
+    writePause()
+    writeEscalationFixture({ rulingOrdinal: 1 })
+    const { handler, launches, events } = harness({ newestRulingOrdinal: 1 })
+    const result = await handler({ task: { issue: ISSUE } }, CALLER)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.kind).toBe('authority')
+      expect(result.error.message).toContain('no newer than the ruling this escalation was already raised under')
+    }
     expect(launches).toHaveLength(0)
     expect(events).toEqual([
       { operation: 'task_resume', target: `task:${ISSUE}`, result: 'refused', error_class: 'authority' }
