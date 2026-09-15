@@ -193,13 +193,39 @@ function sbSubpathAllows(operations: string, dirs: readonly string[]): string {
  *    additionally names any concretely-resolved helper binary (e.g.
  *    `git --exec-path`'s own `git-credential-osxkeychain`) for defense in
  *    depth, layered on top of, never instead of, the mach-lookup denial.
- * 2. **Network-outbound is allowed**, not denied — a real Worker must reach
- *    the model runtime endpoint to keep functioning as an agent
- *    (`isolation.md` §1, Worker row's own "Permitted operations"), and
- *    typically its own package registry. The SSH-agent socket is still
- *    denied specifically (a later, more specific rule than the general
- *    allow — Seatbelt profiles apply the LAST matching rule), matching the
- *    probe's own documented posture for check 5.
+ * 2. **Network-outbound is allowed only on ports 80/443**, not denied
+ *    outright and not left wide open either — a real Worker must reach the
+ *    model runtime endpoint to keep functioning as an agent (`isolation.md`
+ *    §1, Worker row's own "Permitted operations"), and typically its own
+ *    package registry, both of which are plain HTTP(S). The SSH-agent
+ *    socket is denied specifically regardless (a unix-socket rule, disjoint
+ *    from the tcp port rules), matching the probe's own documented posture
+ *    for check 5. **What this does and does not close (round 3 security
+ *    review, HIGH):** a credential threaded into the confined env
+ *    (`RUNTIME_CREDENTIAL_ENV_KEYS`) is inherited by any subprocess a
+ *    dispatched agent runs, and Seatbelt confinement has no concept of
+ *    "which process in the tree may use this socket" — only which
+ *    destinations the WHOLE tree may reach. Restricting to 80/443 closes
+ *    every non-HTTP(S) exfiltration channel (a raw TCP beacon on an
+ *    arbitrary port, DNS tunneling over a raw UDP socket, relaying over a
+ *    non-standard port) but does NOT and cannot close an HTTPS POST to an
+ *    attacker-controlled host on port 443 — that is indistinguishable, at
+ *    this layer, from the legitimate model-runtime call the confined
+ *    process must be allowed to make. Closing that specific gap needs a
+ *    destination check ABOVE the port number (a hostname or IP allowlist),
+ *    and this task verified LIVE that Seatbelt's own `remote` filter cannot
+ *    express one on this host: `(remote tcp "example.com:443")` and
+ *    `(remote ip "<literal IP>:443")` both fail to compile with
+ *    `sandbox-exec: host must be * or localhost in network address` — the
+ *    grammar accepts only the wildcard or the loopback name, never an
+ *    arbitrary hostname or IP literal. This is the concrete, verified
+ *    reason Apple's own recommendation (item 1's `secure-deployment`
+ *    citation) is an EGRESS PROXY, not a sandbox-profile allowlist: a proxy
+ *    is the only place that can actually inspect and gate the destination,
+ *    and building one remains the deliberately deferred, separate,
+ *    task-sized item already named above — this finding does not change
+ *    that scoping, it replaces "not verified live" with a live-verified
+ *    negative result.
  * 3. **`HOME` is not replaced with a synthetic directory.** The real launch
  *    sets the child's `HOME` env value to the genuine home path (so any tool
  *    that constructs a `$HOME/.something` path resolves predictably) while
@@ -249,6 +275,21 @@ export function buildWorkerSandboxProfile(opts: {
     sbSubpathAllows('file-read*', readAllowDirs),
     sbSubpathAllows('process-exec', opts.execAllowDirs),
     '',
+    ';; process-fork (round 3 review, F1 live-enforcement testing): a SEPARATE',
+    ';; Seatbelt operation from process-exec, denied by `(deny default)` like',
+    ";; everything else unless named — found live, by this task's own new",
+    ';; live `sandbox-exec` test, only once a real confined shell actually',
+    ';; tried a subshell/pipeline: every prior test here asserted profile TEXT',
+    ';; only, so a confined role that could exec its own toolchain still could',
+    ';; not fork to run ANY of it (`bash: fork: Operation not permitted`) —',
+    ';; the single most basic thing "run its own declared toolchain" (item 1',
+    ";; above) requires, silently broken since this profile's first version.",
+    ';; No filter exists for it (fork has no path/target argument the way',
+    ';; exec and file operations do) — it is an unconditional allow, scoped',
+    ";; by every OTHER rule in this profile exactly as the exec'd/forked",
+    ';; child itself is.',
+    '(allow process-fork)',
+    '',
     ';; HOME confinement: deny the real HOME entirely, then carve out',
     ';; read-only access to directories this role must READ but never write,',
     ';; and read+write for directories it actually owns or has a named write',
@@ -266,22 +307,27 @@ export function buildWorkerSandboxProfile(opts: {
     opts.readWriteDirs.map((d) => `    (require-not (subpath ${sbLiteral(d)}))`).join('\n'),
     '  ))',
     '',
-    ';; Network: allowed — a real Worker must reach the model runtime endpoint',
-    ';; (isolation.md §1, Worker row) — except the ssh-agent socket (denied by',
-    ';; this LATER, more specific rule — Seatbelt applies the last match) and',
-    ';; outbound port 22, which no legitimate HTTPS-speaking model-runtime or',
-    ';; package-registry client ever needs and which would otherwise let a',
-    ';; malicious test script relay traffic over SSH. Scoping egress further',
-    ';; (to the specific model-runtime/registry hosts) is deliberately',
-    ';; deferred — a per-vendor host allowlist depends on details (which',
-    ';; endpoints each vendor CLI actually calls, whether those change without',
-    ';; notice) this task has not verified live, and a wrong allowlist entry',
-    ';; would silently break a legitimate dispatch rather than merely widen',
-    ';; one; disclosed here as a known, accepted residual risk (round 2',
-    ';; review, LOW), not a silent gap.',
-    '(allow network-outbound)',
+    ';; Network (round 3 security review, HIGH): denied by default, allowed',
+    ';; ONLY on ports 80/443 — a real Worker must reach the model runtime',
+    ';; endpoint to keep functioning as an agent (isolation.md §1, Worker',
+    ';; row), and typically its own package registry, both plain HTTP(S).',
+    ';; The ssh-agent socket is denied too (a unix-socket rule, independent',
+    ';; of the tcp port rules above it). This closes every non-HTTP(S)',
+    ';; exfiltration channel (a raw-socket beacon, DNS tunneling over a raw',
+    ";; UDP socket, SSH relay, any other port) but — see this function's own",
+    ';; doc comment, item 2 — CANNOT close an HTTPS POST to an',
+    ';; attacker-controlled host on port 443: this task verified LIVE that',
+    ";; Seatbelt's `remote` filter accepts only `*`/`localhost` as the host",
+    ';; component (`sandbox-exec: host must be * or localhost in network',
+    ';; address` on an attempted hostname or IP literal), so no allowlist of',
+    ';; specific destinations can be expressed at this layer at all. Closing',
+    ";; that gap needs an egress-scoping proxy (Apple's own recommendation,",
+    ";; item 1's citation) — deliberately deferred, a separate, larger,",
+    ';; task-sized item, not silently built or silently skipped here.',
+    '(deny network-outbound)',
+    '(allow network-outbound (remote tcp "*:443"))',
+    '(allow network-outbound (remote tcp "*:80"))',
     `(deny network-outbound\n  (remote unix-socket (path-literal ${sbLiteral(opts.sshSockCanon)})))`,
-    '(deny network-outbound (remote tcp "*:22"))',
     '',
     ';; Keychain: file access AND the mach-lookup route Keychain Services',
     ";; itself talks to securityd/trustd through — see this function's own doc",
