@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -302,5 +303,112 @@ describe('task_cancel handler', () => {
     const result = await handler({ task: { issue: ISSUE }, reason: 'superseded' }, CALLER)
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.error.kind).toBe('precondition')
+  })
+})
+
+/**
+ * Security review, round 3, HIGH: every test above injects a fake
+ * `cancelDevReviewLoop`, so none of them ever exercised the REAL function's
+ * own error-wrapping — which used to lose `ReplayedResolutionError`'s
+ * identity (`new Error(...)` instead of rethrowing the same instance),
+ * breaking `task_cancel`'s `instanceof` translation the instant it was
+ * wired to the real default dependency. `cancelDevReviewLoop`'s own
+ * control-store reads default to this machine's real `~/.vinaya/` (`config.ts`'s
+ * `GLOBAL_VINAYA_HOME` is a module-level constant frozen at first import —
+ * `dev-review-loop.test.ts`'s own header explains why an in-process fixture
+ * can never isolate it), so proving the real function's behavior needs a
+ * real subprocess with its own scratch `HOME`, the same pattern that file
+ * already uses. This fixture calls `cancelDevReviewLoop` itself directly
+ * (never through the CLI, which never inspects `instanceof`) so a
+ * regression in the error identity is caught here even though the CLI's own
+ * existing replay test (message-substring only) could not have caught it.
+ */
+describe('cancelDevReviewLoop — real subprocess, real control store (security review round 3)', () => {
+  it('a replayed cancel throws an error still instanceof ReplayedResolutionError, not a generic Error', () => {
+    const home = mkdtempSync(join(tmpdir(), 'vinaya-cancel-integration-'))
+    const repoRoot = join(import.meta.dir, '..', '..', '..', '..', '..')
+    const scriptPath = join(import.meta.dir, `.cancel-integration-fixture-${process.pid}-${Date.now()}.ts`)
+    const script = `
+import { acquireOwnership, defaultControlStoreDeps, writeEscalation } from '@attalabs/aeg-core'
+import { writePauseState } from '../../../src/lib/dev-review-loop/pause-resume.js'
+import { cancelDevReviewLoop, ReplayedResolutionError } from '../../../src/lib/dev-review-loop.js'
+import { outboxRoot } from '../../../src/lib/dev-review-loop/reviewer-dispatch.js'
+import { controlStoreRoot } from '../../../src/lib/effects.js'
+
+const ISSUE = 558
+const PR = 900
+const ESCALATION_ID = \`\${ISSUE}-1-headsha1\`
+
+writePauseState(outboxRoot(), {
+  task: ISSUE,
+  round: 1,
+  head: 'headsha1',
+  branch: 'task/x/1',
+  prNumber: PR,
+  reason: 'escalation',
+  pausedAt: new Date().toISOString(),
+  escalationId: ESCALATION_ID
+})
+
+const controlStoreDeps = defaultControlStoreDeps(controlStoreRoot)
+const acquired = acquireOwnership(controlStoreDeps, ISSUE, 'fixture')
+if (!acquired.acquired) throw new Error('fixture: could not acquire epoch')
+writeEscalation(controlStoreDeps, ISSUE, acquired.epoch, {
+  escalationId: ESCALATION_ID,
+  round: 1,
+  head: 'headsha1',
+  branch: 'task/x/1',
+  pr: PR,
+  runId: 'run-1',
+  pid: 12345,
+  host: 'test-host',
+  agent: 'claude',
+  reason: 'escalation',
+  attemptedRecovery: 'none',
+  requestedDecision: 'resume or cancel',
+  recipient: 'principal',
+  briefHash: null,
+  objectivesVersion: null,
+  rulingOrdinal: 0,
+  policyDigest: 'digest',
+  recordedAt: new Date().toISOString()
+})
+
+const cancelDeps = {
+  fetchPrBody: () => 'Closes #558',
+  fetchRulings: () => ['LGTM, cancel.'],
+  fetchNewestRulingOrdinal: () => 1,
+  fetchNewestRulingAuthor: () => 'principal-1',
+  resolveRepo: async () => null,
+  terminateInFlightLaunchesOnShutdown: () => {},
+  flushOutbox: async () => {}
+}
+
+await cancelDevReviewLoop({ cancelPr: PR, agent: 'claude' }, cancelDeps)
+console.log('FIRST_OK')
+
+try {
+  await cancelDevReviewLoop({ cancelPr: PR, agent: 'claude' }, cancelDeps)
+  console.log('SECOND_NO_THROW')
+} catch (err) {
+  console.log('SECOND_IS_REPLAYED:' + (err instanceof ReplayedResolutionError))
+  console.log('SECOND_MESSAGE:' + err.message)
+}
+`
+    writeFileSync(scriptPath, script)
+    try {
+      const output = execFileSync('bun', [scriptPath], {
+        cwd: repoRoot,
+        env: { ...process.env, HOME: home },
+        encoding: 'utf8'
+      })
+      expect(output).toContain('FIRST_OK')
+      expect(output).toContain('SECOND_IS_REPLAYED:true')
+      expect(output).toContain('SECOND_MESSAGE:devReviewLoop --cancel:')
+      expect(output).not.toContain('SECOND_NO_THROW')
+    } finally {
+      rmSync(scriptPath, { force: true })
+      rmSync(home, { recursive: true, force: true })
+    }
   })
 })

@@ -13,7 +13,7 @@ import { taskEscalationReadHandler, taskStatusHandler } from '../../../src/lib/t
  * straight to the outbox with no forge call — read against a bare Issue
  * number no real outbox on this machine will ever carry. `task_start`,
  * `task_resume` and `task_cancel` are real handlers of their own now — see
- * `start.test.ts`, `resume.test.ts` and `resume-cancel.test.ts`.
+ * `start.test.ts`, `resume.test.ts` and `cancel.test.ts`.
  */
 
 const NEVER_DISPATCHED_ISSUE = 900_000_001
