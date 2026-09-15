@@ -22,6 +22,7 @@ import { resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
 import { findOpenPrForBranch, outboxRoot } from './dev-review-loop.js'
 import { loopLogPathFor, loopsRoot, type LoopLogRepo } from './loop-log.js'
+import { findRecordedControllerRun } from './task-run-background.js'
 
 function sh(cmd: string, args: string[]): string {
   return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
@@ -332,6 +333,16 @@ export function deriveLoopState(
 ): TaskLoopState {
   const lock = readDriverLock(root, task)
   if (lock && isDriverPidAlive(lock.pid)) return { kind: 'running', pid: lock.pid, startedAt: lock.startedAt }
+  // Falls through here in the brief window between a `--background` start
+  // (`task-run-background.ts`) acknowledging controller ownership and its
+  // detached child reaching its OWN `driver.pid.json` write above — or after
+  // that child's own lock is somehow cleared while it is genuinely still
+  // running. `findRecordedControllerRun` never overrides a live legacy
+  // lock (checked first, unchanged) and never claims 'running' for a
+  // controller this host cannot itself verify (O2's "task status attaches
+  // by run identity").
+  const controller = findRecordedControllerRun(task)
+  if (controller) return { kind: 'running', pid: controller.pid, startedAt: controller.startedAt }
   if (lock) {
     const trace = readLastDriverExited(task, loopLog)
     if (trace) return { kind: 'exited', reason: trace.reason, lastDecision: trace.lastDecision }
