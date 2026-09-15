@@ -239,7 +239,14 @@ const DispatchOutcomeSchema = z.discriminatedUnion('type', [
     .strict(),
   z.object({ type: z.literal('brief'), comment_id: z.number().int(), hash: z.string() }).strict(),
   z.object({ type: z.literal('plan'), issues: z.array(z.number().int()) }).strict(),
-  z.object({ type: z.literal('archive'), provenance_comment_id: z.number().int() }).strict()
+  z.object({ type: z.literal('archive'), provenance_comment_id: z.number().int() }).strict(),
+  // The generic "the process exited cleanly with no
+  // specific, identifiable forge outcome" member the module doc of
+  // `apps/cli/src/lib/dispatch.ts` used to name as missing — no
+  // role/action-specific identifier is fabricated; a successful dispatch
+  // that produced no PR, comment, or archive fact reports this instead of a
+  // placeholder borrowed from an unrelated variant.
+  z.object({ type: z.literal('completed') }).strict()
 ])
 export type DispatchOutcome = z.infer<typeof DispatchOutcomeSchema>
 
@@ -328,7 +335,19 @@ export const DevReviewLoopEventSchema = z.discriminatedUnion('event', [
       round: z.number().int(),
       head: z.string(),
       all_approve: z.boolean(),
-      blockers: z.number().int().nonnegative()
+      blockers: z.number().int().nonnegative(),
+      // Every finding from every verdict this round
+      // read, carrying its own severity_scale/policy_treatment/confidence —
+      // the full per-review metadata `blockers` alone could never retain
+      // (see `journal-reconstruction.ts`'s own doc on this gap). `blockers`
+      // stays, unchanged, as the cheap coarse count every existing reader
+      // already trusts. Optional, not required: a real `verdicts_read` line
+      // logged before this task carries no such field at all, and
+      // `log/compat.test.ts` proves that a line logged before this field existed still parses
+      // — a schema change is additive here, never a reason an old line on
+      // disk starts reading as corrupt. This task's own producer
+      // (`assess-round.ts`) always sets it explicitly, `[]` included.
+      findings: z.array(ReviewFindingSchema).optional()
     })
     .strict(),
   z
@@ -619,7 +638,16 @@ const roleAttemptShared = {
   kind: z.literal('role_attempt'),
   ...envelopeTail,
   actor: z.string().nullable(),
-  attempt: z.number().int().nullable()
+  attempt: z.number().int().nullable(),
+  // `effect_id` mirrors the `dispatch` family's own
+  // field, the same value, so one attempt's `role_attempt` line and its
+  // `dispatch` lines are the evidence identity a reader joins on. `model` is
+  // the runtime's own genuine receipt when the vendor gave one, else the
+  // pre-completion request label — same precedence `dispatch.ts` already
+  // applies to the `dispatch` family's own `model` field, never guessed here
+  // a second way.
+  effect_id: z.string(),
+  model: z.string().nullable()
 }
 
 export const RoleAttemptEventSchema = z.discriminatedUnion('event', [

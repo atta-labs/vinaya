@@ -89,11 +89,49 @@ function gateResultReadEvent(state: LoopState, round: number, head: string, gree
   return { ...loopEventEnvelope(state), event: 'gate_result_read', round, head, green }
 }
 
+/**
+ * `FindingObservation` → `ReviewFindingSchema`
+ * field-for-field, snake_cased at this boundary the same way every other
+ * envelope field already is. `state: null` reads back as omitted — the
+ * schema's own `state` is an optional string, never nullable, matching
+ * `dispatchShared`'s sibling fields' own "absent, not null" convention.
+ */
+function toReviewFinding(f: VerdictObservation['findings'][number]): {
+  id: string
+  severity: string
+  state?: string
+  severity_scale?: string
+  policy_treatment?: 'blocking' | 'non_blocking' | 'unavailable'
+  confidence?: number
+  confidence_scale?: string
+  confidence_source?: string
+} {
+  return {
+    id: f.id,
+    severity: f.severity,
+    ...(f.state !== null && f.state !== undefined ? { state: f.state } : {}),
+    ...(f.severityScale !== undefined ? { severity_scale: f.severityScale } : {}),
+    ...(f.policyTreatment !== undefined ? { policy_treatment: f.policyTreatment } : {}),
+    ...(f.confidence !== undefined ? { confidence: f.confidence } : {}),
+    ...(f.confidenceScale !== undefined ? { confidence_scale: f.confidenceScale } : {}),
+    ...(f.confidenceSource !== undefined ? { confidence_source: f.confidenceSource } : {})
+  }
+}
+
 function verdictsReadEvent(state: LoopState, round: number, verdicts: VerdictObservation[]): DevReviewLoopEventInput {
   const allApprove = verdicts.every((v) => v.verdict === 'APPROVE' || v.verdict === 'PASS')
   const head = pendingHead(state, round)
   const blockers = verdicts.filter((v) => v.verdict === 'REQUEST CHANGES' || v.verdict === 'FAIL').length
-  return { ...loopEventEnvelope(state), event: 'verdicts_read', round, head, all_approve: allApprove, blockers }
+  const findings = verdicts.flatMap((v) => v.findings.map(toReviewFinding))
+  return {
+    ...loopEventEnvelope(state),
+    event: 'verdicts_read',
+    round,
+    head,
+    all_approve: allApprove,
+    blockers,
+    findings
+  }
 }
 
 type FindingsCompared = { round: number; open: string[]; resolved: string[]; new: string[]; recurring: string[] }

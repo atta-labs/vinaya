@@ -238,9 +238,18 @@ describe('dispatchRole — no matching binary on PATH', () => {
     expect(r.status).toBe(1)
 
     const lines = outboxLines(home, 'none') as Array<Record<string, unknown>>
-    expect(lines).toHaveLength(1)
-    expect(lines[0]?.event).toBe('dispatch_failed')
-    expect((lines[0] as { reason: string }).reason).toBe('refused')
+    // A refused attempt now also logs its own
+    // `role_attempt`/`usage` lines alongside the pre-existing
+    // `dispatch_failed` — three lines, one per family, for one attempt.
+    // `log()` writes each asynchronously (`log-sink.ts`'s own
+    // `resolveRepo().then(...)`), so the three calls' lines can land in
+    // either order — never asserted on position.
+    expect(lines).toHaveLength(3)
+    const dispatchLine = lines.find((l) => l.kind === 'dispatch')
+    expect(dispatchLine?.event).toBe('dispatch_failed')
+    expect((dispatchLine as { reason: string }).reason).toBe('refused')
+    expect(lines.find((l) => l.kind === 'role_attempt')).toMatchObject({ outcome: 'capability_refused' })
+    expect(lines.find((l) => l.kind === 'usage')).toMatchObject({ units: { input: null, output: null, cache: null } })
   })
 })
 
@@ -263,8 +272,10 @@ describe('dispatchRole — present but not executable', () => {
     )
     expect(r.status).toBe(1)
     const lines = outboxLines(home, 'none') as Array<Record<string, unknown>>
-    expect(lines).toHaveLength(1)
-    expect((lines[0] as { reason: string }).reason).toBe('refused')
+    expect(lines).toHaveLength(3)
+    const dispatchLine = lines.find((l) => l.kind === 'dispatch')
+    expect((dispatchLine as { reason: string }).reason).toBe('refused')
+    expect(lines.find((l) => l.kind === 'role_attempt')).toMatchObject({ outcome: 'capability_refused' })
   })
 })
 
@@ -351,7 +362,7 @@ describe('dispatchRole — timeout ceiling', () => {
     writeFakeBinary(
       binDir,
       'claude',
-      `#!/bin/sh\necho '{"usage":{"input_tokens":184327,"output_tokens":22190}}'\ntrap '' TERM\ncat > /dev/null &\nsleep 30\n`
+      `#!/bin/sh\necho '{"usage":{"input_tokens":184327,"output_tokens":22190,"cache_read_input_tokens":500}}'\ntrap '' TERM\ncat > /dev/null &\nsleep 30\n`
     )
     // killGraceMs: 200 — same reasoning as the escalation test above; this
     // test's own concern (usage survives the kill) needs only that a
@@ -374,6 +385,16 @@ describe('dispatchRole — timeout ceiling', () => {
       | undefined
     expect(failed?.reason).toBe('timeout')
     expect(failed?.usage).toEqual({ input: 184327, output: 22190 })
+
+    // The richer `usage` family event survives the
+    // kill exactly the same way — including the cache breakout the
+    // pre-existing `dispatch` family's own usage field has no room for.
+    const usageEvent = lines.find((l) => l.kind === 'usage') as
+      | { units: { input: number | null; output: number | null; cache: number | null }; unknown_reason: string | null }
+      | undefined
+    expect(usageEvent?.units).toEqual({ input: 184327, output: 22190, cache: 500 })
+    expect(usageEvent?.unknown_reason).toBeNull()
+    expect(lines.find((l) => l.kind === 'role_attempt')).toMatchObject({ outcome: 'timed_out' })
   }, 10_000)
 })
 
@@ -442,12 +463,13 @@ describe('dispatchRole — two dispatches in the same process', () => {
       env: spawnEnv
     })
 
-    // Each call's own `dispatched`/`outcome_received` pair legitimately
-    // shares ONE run_id (one `createLogSink()` call per `dispatchRole`
-    // invocation) — the invariant under test is exactly two DISTINCT
-    // run_ids (one per call), not that every line's run_id is unique.
+    // Each call's own `dispatched`/`role_attempt`/`usage`/`outcome_received`
+    // quartet (added alongside dispatched/outcome_received) legitimately shares
+    // ONE run_id (one `createLogSink()` call per `dispatchRole` invocation)
+    // — the invariant under test is exactly two DISTINCT run_ids (one per
+    // call), not that every line's run_id is unique.
     const lines = outboxLines(home, 'none') as Array<{ meta: { run_id: string } }>
-    expect(lines.length).toBe(4)
+    expect(lines.length).toBe(8)
     const runIds = new Set(lines.map((l) => l.meta.run_id))
     expect(runIds.size).toBe(2)
   })
@@ -837,35 +859,42 @@ describe('dispatchRole — a shared run_id (a nested dispatch inheriting VINAYA_
     })
 
     const lines = outboxLines(home, 'none') as Array<{
+      kind: string
       meta: { run_id: string }
-      effect_id: string
+      effect_id?: string
       event: string
-      target_role: string
+      target_role?: string
     }>
-    expect(lines.length).toBe(4)
+    // Two concurrent dispatches, each now a `dispatched`/`role_attempt`/
+    // `usage`/`outcome_received` quartet — eight lines.
+    expect(lines.length).toBe(8)
 
     // Both calls really did share one run_id — the scenario under test,
     // not a fixture that accidentally avoided it.
     const runIds = new Set(lines.map((l) => l.meta.run_id))
     expect(runIds).toEqual(new Set(['shared-run-id-fixture']))
 
-    // Despite the shared run_id, every line is unambiguously attributable
-    // to its own call via effect_id: exactly two distinct effect_ids, each
-    // carrying exactly one 'dispatched' and one 'outcome_received' line,
-    // and each effect_id's lines agree on which role they belong to (never
-    // a 'developer' line and a 'code-reviewer' line sharing one effect_id).
-    const byEffectId = new Map<string, typeof lines>()
-    for (const line of lines) {
-      const group = byEffectId.get(line.effect_id) ?? []
+    // Despite the shared run_id, every `dispatch`/`role_attempt` line is
+    // unambiguously attributable to its own call via effect_id — exactly
+    // two distinct effect_ids, each carrying exactly one 'dispatched', one
+    // 'attempted', and one 'outcome_received' line, agreeing on which role
+    // they belong to (never a 'developer' line and a 'code-reviewer' line
+    // sharing one effect_id). `usage` lines carry no `effect_id` at all
+    // (`log/schema.ts`'s `usage` family) — excluded from this grouping,
+    // never silently bucketed under an `undefined` key.
+    const attributable = lines.filter((l) => l.kind !== 'usage')
+    const byEffectId = new Map<string, typeof attributable>()
+    for (const line of attributable) {
+      const group = byEffectId.get(line.effect_id as string) ?? []
       group.push(line)
-      byEffectId.set(line.effect_id, group)
+      byEffectId.set(line.effect_id as string, group)
     }
     expect(byEffectId.size).toBe(2)
     for (const group of byEffectId.values()) {
-      expect(group.map((l) => l.event).sort()).toEqual(['dispatched', 'outcome_received'])
-      expect(new Set(group.map((l) => l.target_role)).size).toBe(1)
+      expect(group.map((l) => l.event).sort()).toEqual(['attempted', 'dispatched', 'outcome_received'])
     }
-    expect(new Set(lines.map((l) => l.target_role))).toEqual(new Set(['developer', 'code-reviewer']))
+    const dispatchLines = lines.filter((l) => l.kind === 'dispatch')
+    expect(new Set(dispatchLines.map((l) => l.target_role))).toEqual(new Set(['developer', 'code-reviewer']))
   }, 10_000)
 })
 
@@ -1879,10 +1908,11 @@ describe('dispatchRole — model selection (O1/O2/O4, #456)', () => {
     expect(r.stderr).toContain('codex does not accept it')
 
     const lines = outboxLines(home, 'none') as Array<Record<string, unknown>>
-    expect(lines).toHaveLength(1)
-    expect(lines[0]?.event).toBe('dispatch_failed')
-    expect((lines[0] as { reason: string }).reason).toBe('refused')
-    expect((lines[0] as { model: string }).model).toBe('requested:claude-opus-5')
+    expect(lines).toHaveLength(3)
+    const dispatchLine = lines.find((l) => l.kind === 'dispatch')
+    expect(dispatchLine?.event).toBe('dispatch_failed')
+    expect((dispatchLine as { reason: string }).reason).toBe('refused')
+    expect((dispatchLine as { model: string }).model).toBe('requested:claude-opus-5')
   })
 
   it('O4: a Gemini-shaped model passed to claude is refused the same way', () => {

@@ -24,10 +24,28 @@ export const SEVERITY_COLUMNS = ['blocker', 'major', 'minor', 'critical', 'high'
 /** The built form's finding identity (spec §0 item 1) — no fingerprint hashing. */
 export type FindingState = 'open' | 'fix-claimed' | 'reproduced' | 'resolved' | null
 
+/**
+ * The optional fields mirror
+ * `ReviewFindingSchema` (`log/schema.ts`) field-for-field — `severityScale`
+ * names which scale `severity` is read against (a free string: this
+ * doctrine already has a code-review scale and a security scale, and a
+ * third reviewer type should never need a schema change to name its own);
+ * `policyTreatment` is a SEPARATE fact from `severity` — the same reported
+ * severity can bind or not bind a verdict depending on the effective policy
+ * threshold and the body-located-prose cap, so the two are never conflated
+ * here either; `confidence`/`confidenceScale`/`confidenceSource` are
+ * optional and self-reported, left unset rather than fabricated wherever no
+ * reviewer grammar produces one yet.
+ */
 export type FindingObservation = {
   id: string
   severity: string
   state: FindingState
+  severityScale?: string
+  policyTreatment?: 'blocking' | 'non_blocking' | 'unavailable'
+  confidence?: number
+  confidenceScale?: string
+  confidenceSource?: string
 }
 
 export type VerdictObservation = {

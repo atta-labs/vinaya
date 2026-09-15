@@ -1575,6 +1575,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           round: roundNum,
           promptFile,
           roleLogPath: loopLogPath,
+          inputVersions: {
+            objectivesVersion: facts.manifest.objectivesVersion,
+            briefHash: facts.manifest.briefHash,
+            rulingOrdinal: facts.manifest.rulingOrdinal,
+            policyDigest: facts.manifest.policyDigest
+          },
           ...(scratchDir ? { cwd: scratchDir } : {})
         })
       )
@@ -1610,6 +1616,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       const dispatchRoleName = role === 'reviewer' ? ('code-reviewer' as const) : ('security' as const)
       let lastMissing: string[] = []
       let lastParseFailure: ReviewerReportParseFailure | null = null
+      // Round 2 review, MAJOR: captured so a `ReviewerInfrastructureFailure`
+      // thrown after the loop can carry the LAST attempt's own real
+      // effect_id/durationMs, rather than the caller inventing a fresh id
+      // and timing it against the whole round.
+      let lastHandle: DispatchHandle | null = null
       for (let attempt = 1; attempt <= 2; attempt++) {
         const workDir = reviewerWorkDir(root, task, roundNum, role, attempt)
         mkdirSync(workDir, { recursive: true })
@@ -1629,10 +1640,17 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             round: roundNum,
             promptFile,
             roleLogPath: loopLogPath,
+            inputVersions: {
+              objectivesVersion: facts.manifest.objectivesVersion,
+              briefHash: facts.manifest.briefHash,
+              rulingOrdinal: facts.manifest.rulingOrdinal,
+              policyDigest: facts.manifest.policyDigest
+            },
             ...(scratchDir ? { cwd: scratchDir } : {})
           })
         )
         await assertDispatchOrEscalate(handle, input.agent, false, false)
+        lastHandle = handle
         const missing = missingReviewerArtifacts(workDir, hasObjectives)
         if (missing.length > 0) {
           lastMissing = missing
@@ -1665,7 +1683,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         }
       }
       if (lastParseFailure) throw lastParseFailure
-      throw new ReviewerInfrastructureFailure(role, lastMissing)
+      throw new ReviewerInfrastructureFailure(
+        role,
+        lastMissing,
+        lastHandle?.effectId ?? null,
+        lastHandle?.durationMs ?? null
+      )
     }
 
     function computeStats(head: string, roundStartMs: number): RoundStats {
@@ -2671,6 +2694,35 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           } catch (err) {
             if (!(err instanceof ReviewerInfrastructureFailure) && !(err instanceof ReviewerReportParseFailure))
               throw err
+            // An invalid report is a failure
+            // observation, never something a reader could mistake for a
+            // clean, empty `verdicts_read` — this role never reached one, so
+            // its own `role_attempt` line is the only durable record of the
+            // attempt at all. `usage`/`attempt` stay honestly unavailable at
+            // this generic catch site, but `effect_id`/`duration_ms` are the
+            // failing attempt's own REAL values (round 2 review, MAJOR: a
+            // freshly minted id here could never be joined back to the
+            // `dispatch`/`role_attempt`/`usage` lines `dispatchRole` already
+            // logged for that same attempt, and the whole round's elapsed
+            // time is not this attempt's own duration) — carried on the
+            // thrown error by `buildVerdictFromReport`'s own `handle`
+            // parameter (`ReviewerReportParseFailure`) or the last dispatch
+            // attempt in `dispatchReviewer`'s retry loop
+            // (`ReviewerInfrastructureFailure`). `null` only in the
+            // structurally unreachable case where no attempt ever produced
+            // a handle at all.
+            log({
+              kind: 'role_attempt',
+              event: 'attempted',
+              payload: {},
+              actor: err.role,
+              attempt: null,
+              effect_id: err.attemptEffectId ?? randomUUID(),
+              model: input.agent,
+              outcome: err instanceof ReviewerInfrastructureFailure ? 'infrastructure_failed' : 'incomplete',
+              usage: null,
+              duration_ms: err.attemptDurationMs ?? d.now() - roundStartMs
+            })
             const stats = computeStats(head, roundStartMs)
             await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
             decision = { type: 'pause', reason: 'infrastructure', detail: err.message }
@@ -3051,7 +3103,15 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
       err instanceof StaleEscalationError ||
       err instanceof ReplayedResolutionError
     ) {
-      throw new Error(`devReviewLoop --cancel: ${err.message}`)
+      // Mutate the message in place and rethrow the SAME instance — a caller
+      // (`task_cancel`'s handler) that needs `instanceof` to tell a replayed
+      // cancel apart from a wrong-target/stale one must still be able to,
+      // which a fresh `new Error(...)` here would silently lose (code review,
+      // MAJOR: this used to throw a plain `Error`, so `instanceof
+      // ReplayedResolutionError` downstream could never match a real
+      // duplicate cancel request going through this function).
+      err.message = `devReviewLoop --cancel: ${err.message}`
+      throw err
     }
     throw err
   }

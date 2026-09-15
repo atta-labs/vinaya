@@ -28,7 +28,18 @@ const isoTimestamp = z.string().min(1)
 const taskId = z.number().int().positive()
 const epochNumber = z.number().int().nonnegative()
 
-/** One execution attempt against a task — written once, at start, immutable thereafter. */
+/**
+ * One execution attempt against a task — written once, at start, immutable
+ * thereafter. `childStartedAt`/`childCommand` are the same process-identity
+ * pair `apps/cli/src/lib/dispatch.ts`'s `LaunchRecord` already captures for
+ * a dispatched role's child — reused
+ * here, under the identical field names, so `matchesCapturedIdentity` (which
+ * only requires `Pick<LaunchRecord, 'childStartedAt' | 'childCommand'>`)
+ * applies to a controller's own run record unchanged. `.optional()` since a
+ * `run` record written before this task carries neither — a reader falls
+ * back to "nothing captured, nothing to fail closed on" exactly as
+ * `matchesCapturedIdentity` already does for a pre-existing `LaunchRecord`.
+ */
 export const RunRecordSchema = z
   .object({
     version: z.literal(1),
@@ -37,7 +48,9 @@ export const RunRecordSchema = z
     runId: z.string().min(1),
     pid: z.number().int().positive(),
     host: z.string().min(1),
-    startedAt: isoTimestamp
+    startedAt: isoTimestamp,
+    childStartedAt: z.string().min(1).nullable().optional(),
+    childCommand: z.string().min(1).nullable().optional()
   })
   .strict()
 export type RunRecord = z.infer<typeof RunRecordSchema>

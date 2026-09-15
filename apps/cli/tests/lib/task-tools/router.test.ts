@@ -1,11 +1,8 @@
 import { describe, expect, it } from 'bun:test'
-import {
-  taskCancelHandler,
-  taskEscalationReadHandler,
-  taskResumeHandler,
-  taskStatusHandler
-} from '../../../src/lib/task-tools/handlers.js'
+import { defaultTaskCancelHandler } from '../../../src/lib/task-tools/cancel.js'
+import { taskEscalationReadHandler, taskStatusHandler } from '../../../src/lib/task-tools/handlers.js'
 import { routeTaskToolIntent } from '../../../src/lib/task-tools/router.js'
+import { defaultTaskResumeHandler } from '../../../src/lib/task-tools/resume.js'
 import { defaultTaskStartHandler } from '../../../src/lib/task-tools/start.js'
 
 /**
@@ -62,8 +59,8 @@ describe('routing never reaches the wrong handler', () => {
     task_start: defaultTaskStartHandler,
     task_status: taskStatusHandler,
     task_escalation_read: taskEscalationReadHandler,
-    task_resume: taskResumeHandler,
-    task_cancel: taskCancelHandler
+    task_resume: defaultTaskResumeHandler,
+    task_cancel: defaultTaskCancelHandler
   } as const
 
   it('a read-intent prompt never resolves to a mutating handler', () => {
@@ -71,14 +68,14 @@ describe('routing never reaches the wrong handler', () => {
     expect(name).toBe('task_status')
     expect(HANDLERS[name!]).toBe(taskStatusHandler)
     expect(HANDLERS[name!]).not.toBe(defaultTaskStartHandler)
-    expect(HANDLERS[name!]).not.toBe(taskResumeHandler)
-    expect(HANDLERS[name!]).not.toBe(taskCancelHandler)
+    expect(HANDLERS[name!]).not.toBe(defaultTaskResumeHandler)
+    expect(HANDLERS[name!]).not.toBe(defaultTaskCancelHandler)
   })
 
   it('a cancel-intent prompt never resolves to a read handler', () => {
     const name = routeTaskToolIntent('please abort this task, it is no longer needed')
     expect(name).toBe('task_cancel')
-    expect(HANDLERS[name!]).toBe(taskCancelHandler)
+    expect(HANDLERS[name!]).toBe(defaultTaskCancelHandler)
     expect(HANDLERS[name!]).not.toBe(taskStatusHandler)
     expect(HANDLERS[name!]).not.toBe(taskEscalationReadHandler)
   })

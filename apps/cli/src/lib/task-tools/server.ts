@@ -35,9 +35,11 @@ import {
   taskToolError
 } from '@attalabs/aeg-core'
 import { type Readable, Writable } from 'node:stream'
+import { defaultTaskCancelHandler } from './cancel.js'
 import type { TaskToolCallResult } from './handlers.js'
-import { taskCancelHandler, taskEscalationReadHandler, taskResumeHandler, taskStatusHandler } from './handlers.js'
+import { taskEscalationReadHandler, taskStatusHandler } from './handlers.js'
 import { refuseUngrantedTool } from './router.js'
+import { defaultTaskResumeHandler } from './resume.js'
 import { defaultTaskStartHandler } from './start.js'
 
 /** The MCP spec revision this server implements and both adapters were verified against. */
@@ -78,17 +80,17 @@ export type ToolHandler = (
 export type TaskToolHandlers = Record<TaskToolName, ToolHandler>
 
 /**
- * The default binding: the two read tools and the two still-refusing mutating
- * stubs (`task_resume`/`task_cancel`) from `handlers.ts`, and the real
- * caller-context-aware `task_start` from `start.ts`. This is the single wiring
- * point O1 names — a catalog tool with no entry here is a type error, not a
- * silent gap.
+ * The default binding: the two pure reads from `handlers.ts`, and the three
+ * real, caller-context-aware mutating handlers, each from its own module —
+ * `task_start` (`start.ts`), `task_resume` (`resume.ts`), `task_cancel`
+ * (`cancel.ts`). This is the single wiring point O1 names — a catalog tool
+ * with no entry here is a type error, not a silent gap.
  */
 export const defaultTaskToolHandlers: TaskToolHandlers = {
   task_status: (input) => taskStatusHandler(input),
   task_escalation_read: (input) => taskEscalationReadHandler(input),
-  task_resume: (input) => taskResumeHandler(input),
-  task_cancel: (input) => taskCancelHandler(input),
+  task_resume: (input, ctx) => defaultTaskResumeHandler(input, ctx),
+  task_cancel: (input, ctx) => defaultTaskCancelHandler(input, ctx),
   task_start: (input, ctx) => defaultTaskStartHandler(input, ctx)
 }
 
