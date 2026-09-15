@@ -15,6 +15,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFile
 import { join } from 'node:path'
 import {
   CODE_REVIEW_SEVERITY_ORDER,
+  codeReviewBlockingSeverities,
   defaultControlStoreDeps,
   extractCodeReviewVerdict,
   extractSecurityReviewVerdict,
@@ -22,8 +23,10 @@ import {
   type ManifestInput,
   type ManifestRecord,
   type Objective,
+  PROSE_CAP_SEVERITY,
   type ReviewInputManifest,
   SECURITY_SEVERITY_ORDER,
+  securityBlockingSeverities,
   type ReviewPolicy,
   type VerdictObservation,
   writeManifest
@@ -405,6 +408,23 @@ export function reclassifyProseOnlyNotMet(results: readonly ObjectiveResult[]): 
   )
 }
 
+/**
+ * The SAME `isProseLocation`/threshold rule
+ * `evaluateReviewFindings` applies internally (`@attalabs/aeg-core`) to
+ * decide `outcome`/`blockingFindings` — recomputed here, over the SAME
+ * finding, only to attach the resulting fact onto the finding's own
+ * observation record, which that evaluator's return value has no room for
+ * (`PolicyEvaluation.blockingFindings` is a filtered array, not an annotated
+ * one — see this task's PR Decisions). `severity` itself is never
+ * overwritten: this only ever changes how the finding COUNTS toward this
+ * threshold, not what it reports (Traps to avoid: "retain reported severity
+ * separately from the incoming prose cap").
+ */
+function policyTreatmentFor(finding: Finding, blockingSeverities: readonly string[]): 'blocking' | 'non_blocking' {
+  const effectiveSeverity = isProseLocation(finding.location) ? PROSE_CAP_SEVERITY : finding.severity
+  return blockingSeverities.includes(effectiveSeverity) ? 'blocking' : 'non_blocking'
+}
+
 export type RoundVerdictParse = { observation: VerdictObservation; rendered: string }
 
 export function buildVerdictFromReport(
@@ -510,7 +530,19 @@ export function buildVerdictFromReport(
   // (`objectiveResults` non-null iff `objectivesVersion` non-null).
   const renderedObjectiveResults = objectivesVersionAtDispatch !== null ? objectiveResults : null
 
-  const findingObservations = findings.map((f, i) => ({ id: `F${i + 1}`, severity: f.severity, state: null }))
+  // `severityScale`/`policyTreatment` populated
+  // from real policy/finding data, never fabricated; `confidence` and its
+  // siblings stay unset — no reviewer grammar reports one yet (optional,
+  // self-reported: absent is honest, not a gap this task's own grammar
+  // needs to close).
+  const blockingSet = role === 'reviewer' ? codeReviewBlockingSeverities(policy) : securityBlockingSeverities(policy)
+  const findingObservations = findings.map((f, i) => ({
+    id: `F${i + 1}`,
+    severity: f.severity,
+    state: null,
+    severityScale: role === 'reviewer' ? 'code-review' : 'security',
+    policyTreatment: policyTreatmentFor(f, blockingSet)
+  }))
 
   if (role === 'reviewer') {
     const verdict = deriveCodeReviewVerdict(findings, policy)

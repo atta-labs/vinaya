@@ -2676,6 +2676,18 @@ describe('devReviewLoop — round 1 blocked, round 2 genuinely resumes', () => {
     )
     expect(round2Verdict).toMatch(/^VERDICT: APPROVE$/m)
 
+    // The round's real BLOCKER survives into the
+    // durable `verdicts_read` event's own `findings` array — not just the
+    // rendered comment — carrying its real, uncapped severity, which scale
+    // it's read against, and that it counted as blocking under this repo's
+    // default policy (BLOCKER threshold).
+    const round1VerdictsRead = outboxLines(home).find(
+      (l) => l.kind === 'dev_review_loop' && l.event === 'verdicts_read' && (l as { round: number }).round === 1
+    ) as { findings: Array<Record<string, unknown>> } | undefined
+    expect(round1VerdictsRead?.findings).toEqual([
+      { id: 'F1', severity: 'BLOCKER', severity_scale: 'code-review', policy_treatment: 'blocking' }
+    ])
+
     const lines = outboxLines(home)
     const loopEvents = lines.filter((l) => l.kind === 'dev_review_loop').map((l) => l.event)
     expect(loopEvents).toEqual([
@@ -3121,6 +3133,20 @@ describe('devReviewLoop — a findings.txt line that still does not parse is an 
     // and the machine-local pause-state.json.
     expect(pauseComment).not.toContain('ghp_abcdefghijklmnopqrstuvwxyz012345')
     expect(pauseComment).toContain('<redacted>')
+
+    // An invalid report is a failure observation,
+    // never something indistinguishable from a clean round: no `verdicts_read`
+    // was ever logged for this round (the throw happened before `assessRound`
+    // saw a `verdicts` observation), but a `role_attempt` line names the
+    // security role's own failed attempt explicitly.
+    const events = outboxLines(home)
+    expect(events.some((e) => e.event === 'verdicts_read')).toBe(false)
+    // `dispatchRole`'s own per-attempt `role_attempt` lines (developer,
+    // both reviewer attempts) are ALSO present now
+    // — this is the additional one dev-review-loop.ts logs for the
+    // security role's own invalid report, distinguished by its outcome.
+    const failureAttempt = events.find((e) => e.kind === 'role_attempt' && e.outcome === 'incomplete')
+    expect(failureAttempt).toMatchObject({ actor: 'security', outcome: 'incomplete', usage: null })
   }, 20000)
 })
 
@@ -6773,7 +6799,8 @@ describe('assertValidLoopEvent (pure) — O6 (#595): a malformed emitted event i
         round: 1,
         head: HEAD_SHA,
         all_approve: true,
-        blockers: 0
+        blockers: 0,
+        findings: []
       },
       {
         kind: 'dev_review_loop',

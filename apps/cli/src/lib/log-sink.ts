@@ -46,6 +46,14 @@ export type LogEventInput = StripEnvelope<LogEvent>
 
 type RepoRef = { owner: string; repo: string }
 
+/** Mirrors `envelope.ts`'s `HeaderInput.inputVersions` — read once per sink instance, applied to every line it logs. */
+export type LogSinkInputVersions = {
+  objectivesVersion?: string | null
+  briefHash?: string | null
+  rulingOrdinal?: number | null
+  policyDigest?: string | null
+}
+
 export type LogSinkDeps = {
   outboxRoot: () => string
   home: () => string
@@ -56,6 +64,15 @@ export type LogSinkDeps = {
   resolveRepo: () => Promise<RepoRef | null>
   vinayaVersion: () => string
   stderr: (message: string) => void
+  /**
+   * A caller that structurally knows which
+   * objectives/brief/ruling/policy identity this sink's own dispatch was
+   * judged against (`dispatch.ts`, given a `DispatchOpts.inputVersions`) —
+   * `undefined` when the caller has none, the honest default every prior
+   * caller already gets (`buildHeader` itself already reads all four sub-
+   * fields as optional, `null` for whichever it isn't given).
+   */
+  inputVersions: () => LogSinkInputVersions | undefined
 }
 
 function isEnoent(err: unknown): boolean {
@@ -144,7 +161,8 @@ function defaultDeps(): LogSinkDeps {
     vinayaVersion: () => readVinayaVersion(),
     stderr: (message: string) => {
       process.stderr.write(message)
-    }
+    },
+    inputVersions: () => undefined
   }
 }
 
@@ -311,7 +329,8 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
               parent: env.VINAYA_PARENT_EVENT
             },
             eventId: randomUUID(),
-            processId
+            processId,
+            inputVersions: deps.inputVersions()
           })
           // `header` spreads LAST: it carries the only trusted `meta`/`subject`
           // values (environment/remote/package/tree-derived), and `e`'s type

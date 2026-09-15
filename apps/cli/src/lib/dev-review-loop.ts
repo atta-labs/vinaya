@@ -1544,6 +1544,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           round: roundNum,
           promptFile,
           roleLogPath: loopLogPath,
+          inputVersions: {
+            objectivesVersion: facts.manifest.objectivesVersion,
+            briefHash: facts.manifest.briefHash,
+            rulingOrdinal: facts.manifest.rulingOrdinal,
+            policyDigest: facts.manifest.policyDigest
+          },
           ...(scratchDir ? { cwd: scratchDir } : {})
         })
       )
@@ -1598,6 +1604,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             round: roundNum,
             promptFile,
             roleLogPath: loopLogPath,
+            inputVersions: {
+              objectivesVersion: facts.manifest.objectivesVersion,
+              briefHash: facts.manifest.briefHash,
+              rulingOrdinal: facts.manifest.rulingOrdinal,
+              policyDigest: facts.manifest.policyDigest
+            },
             ...(scratchDir ? { cwd: scratchDir } : {})
           })
         )
@@ -2640,6 +2652,27 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           } catch (err) {
             if (!(err instanceof ReviewerInfrastructureFailure) && !(err instanceof ReviewerReportParseFailure))
               throw err
+            // An invalid report is a failure
+            // observation, never something a reader could mistake for a
+            // clean, empty `verdicts_read` — this role never reached one, so
+            // its own `role_attempt` line is the only durable record of the
+            // attempt at all. `usage`/`attempt` are honestly unavailable at
+            // this generic catch site (both roles' own dispatch attempts
+            // already logged their own `dispatch`/`role_attempt` lines
+            // inside `dispatchRole`; this is the review-report-validity
+            // failure ON TOP of that, not a re-report of the vendor launch).
+            log({
+              kind: 'role_attempt',
+              event: 'attempted',
+              payload: {},
+              actor: err.role,
+              attempt: null,
+              effect_id: randomUUID(),
+              model: input.agent,
+              outcome: err instanceof ReviewerInfrastructureFailure ? 'infrastructure_failed' : 'incomplete',
+              usage: null,
+              duration_ms: d.now() - roundStartMs
+            })
             const stats = computeStats(head, roundStartMs)
             await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
             decision = { type: 'pause', reason: 'infrastructure', detail: err.message }

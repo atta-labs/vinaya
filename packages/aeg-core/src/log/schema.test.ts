@@ -318,6 +318,9 @@ const roleAttemptEvent = {
   payload: {},
   actor: 'ci-gate',
   attempt: 1,
+  // Evidence identity + runtime receipt, added alongside actor/attempt.
+  effect_id: 'effect-1',
+  model: 'claude-opus-5',
   outcome: 'completed' as const,
   usage: { input: 100, output: 50 }
 }
@@ -341,6 +344,15 @@ describe('LogEventSchema — role_attempt family (O2)', () => {
 
   it('parses null usage — no fabricated process success, and no fabricated usage either', () => {
     expect(LogEventSchema.safeParse({ ...roleAttemptEvent, usage: null }).success).toBe(true)
+  })
+
+  it('accepts a null model — a pre-spawn refusal has no receipt to give', () => {
+    expect(LogEventSchema.safeParse({ ...roleAttemptEvent, model: null }).success).toBe(true)
+  })
+
+  it('refuses a missing effect_id — the evidence identity that joins this line to its dispatch lines', () => {
+    const { effect_id: _effectId, ...withoutEffectId } = roleAttemptEvent
+    expect(LogEventSchema.safeParse(withoutEffectId).success).toBe(false)
   })
 
   it('refuses an outcome outside the enum', () => {
