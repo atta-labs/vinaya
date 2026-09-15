@@ -75,8 +75,11 @@ import {
   renderDeveloperRoundComment,
   renderReviewerPrompt,
   type ReviewerPromptFacts,
-  routeCompletionEvents
+  routeCompletionEvents,
+  describeSkippedRoundEndFlush,
+  resolveRoundEndFlushTarget
 } from '../../src/lib/dev-review-loop.js'
+import type { VinayaConfig } from '../../src/lib/config.js'
 import { MAX_INFRASTRUCTURE_RETRIES } from '../../src/lib/dev-review-loop/round-assess.js'
 import {
   deriveCodeReviewVerdict,
@@ -1116,8 +1119,14 @@ describe('devReviewLoop — a crash mid-publish never logs merged_ready (regress
     expect(journalFinalizedLines.some((l) => l.result === 'merged_ready')).toBe(false)
   }, 20000)
 
-  it('O10 (task-run-v1 21, #541): still flushes the outbox to the forge on the way out, even though this run ends via an uncaught throw', () => {
+  it("O10 (task-run-v1 21, #541): still flushes the outbox to the forge on the way out, even though this run ends via an uncaught throw — task-log-v1 8 (#626, O1): only once a target is configured, never to the task's own Issue", () => {
     const { home, cwd, path } = setUpCrashMidPublishFlushSucceeds()
+    // task-log-v1 8 (Issue #626, O1): the round-end flush no longer
+    // defaults to the task's own Issue — it is a no-op unless
+    // `logPublish` names a target. The fake `gh issue comment` stub
+    // doesn't discriminate by issue number, so any distinct number proves
+    // the same crash-survival guarantee at its new, configured home.
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ logPublish: { issue: TASK + 1 } }))
     const r = runLoop(home, cwd, path)
     expect(r.status).not.toBe(0)
 
@@ -1132,6 +1141,16 @@ describe('devReviewLoop — a crash mid-publish never logs merged_ready (regress
 
     const body = readFileSync(join(issueDir, posted[0] as string), 'utf8')
     expect(body).toMatch(/^<!-- aeg:log:/)
+  }, 20000)
+
+  it('task-log-v1 8 (Issue #626, O1): with no logPublish configured, the round-end flush posts nowhere, even on the same uncaught-throw exit path O10 guarantees for a configured target', () => {
+    const { home, cwd, path } = setUpCrashMidPublishFlushSucceeds()
+    const r = runLoop(home, cwd, path)
+    expect(r.status).not.toBe(0)
+
+    const issueDir = join(home, '.fake-gh-posted-issue-comments')
+    const posted = existsSync(issueDir) ? readdirSync(issueDir).filter((f) => f.startsWith('comment-')) : []
+    expect(posted).toHaveLength(0)
   }, 20000)
 
   // `#548` v3, O2: this exact scenario — a genuinely uncaught throw mid-round,
@@ -1547,6 +1566,12 @@ describe('devReviewLoop — O9 (task-run-v1 21, #541, round 2 review BLOCKER): a
     writeFakeGhCrashOnceThenReattach(binDir)
     writeFakeGit(binDir)
     const path = `${binDir}:${pathWithoutRealVendors()}`
+    // task-log-v1 8 (Issue #626, O1): the round-end flush no longer
+    // defaults to the task's own Issue — this fixture's fake `gh` doesn't
+    // discriminate by issue number for either the read or the write, so any
+    // distinct number reproduces the SAME crash-recovery/reattach story at
+    // its new, configured home.
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ logPublish: { issue: TASK + 1 } }))
 
     // Round 1: gate green, reviewers clean, `round_ended(outcome: 'green')`
     // logs — then `publishRound` crashes posting the security verdict,
@@ -7786,4 +7811,31 @@ describe('devReviewLoop — a principal-owed red never redispatches the develope
     const gateResult = outboxLines(home).find((l) => l.event === 'gate_result_read') as Record<string, unknown>
     expect(gateResult.green).toBe(true)
   }, 20000)
+})
+
+describe('resolveRoundEndFlushTarget / describeSkippedRoundEndFlush (pure) — task-log-v1 8, Issue #626, O1: the round-end flush never defaults to the task Issue', () => {
+  it('is null — no publish — when logPublish is unconfigured, the ordinary default for every existing repo', () => {
+    expect(resolveRoundEndFlushTarget(null, TASK)).toBeNull()
+    expect(describeSkippedRoundEndFlush(null, TASK)).toBeNull()
+  })
+
+  it('resolves a configured issue distinct from the task being flushed', () => {
+    const config = { logPublish: { issue: TASK + 1 } } as VinayaConfig
+    expect(resolveRoundEndFlushTarget(config, TASK)).toEqual({ issue: TASK + 1 })
+    expect(describeSkippedRoundEndFlush(config, TASK)).toBeNull()
+  })
+
+  it('resolves a configured pr target unconditionally — a pr number is never compared against the task Issue', () => {
+    const config = { logPublish: { pr: TASK } } as VinayaConfig
+    expect(resolveRoundEndFlushTarget(config, TASK)).toEqual({ pr: TASK })
+  })
+
+  it("refuses a configured issue equal to the task's own Issue — the loss is named, not swallowed", () => {
+    const config = { logPublish: { issue: TASK } } as VinayaConfig
+    expect(resolveRoundEndFlushTarget(config, TASK)).toBeNull()
+    const reason = describeSkippedRoundEndFlush(config, TASK)
+    expect(reason).not.toBeNull()
+    expect(reason).toContain(`#${TASK}`)
+    expect(reason).toContain("this task's own Issue")
+  })
 })
