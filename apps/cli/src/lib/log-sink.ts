@@ -273,6 +273,7 @@ function appendLine(path: string, line: string, warn: (message: string) => void)
 export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
   log: (e: LogEventInput) => void
   runId: string
+  warmup: () => void
 } {
   const deps: LogSinkDeps = { ...defaultDeps(), ...overrides }
   const runId = deps.env().VINAYA_RUN_ID || randomUUID()
@@ -297,14 +298,35 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
     return doctrineCache
   }
 
+  // `deps.resolveRepo()` (the real default is `@attalabs/aeg-forge-state`'s
+  // `resolveRepo`) is called at most ONCE per sink, its result — including a
+  // failed `null` — cached for every later `log()` call in this process.
+  // `resolveRepo` itself deliberately does NOT cache a failure (a transient
+  // git-remote lookup error should retry on the NEXT call, in ITS docs'
+  // words) — correct for its own callers, wrong for a chokepoint every
+  // check attempt now reaches once each: a process running `vinaya check
+  // --all` calls `log()` once per check (dozens, `runChecks`'s own
+  // per-check chokepoint), and a `cwd` outside any git repository makes
+  // every one of those spawn its own `git remote get-url origin` subprocess
+  // with its own 5s timeout — measured live, running many such processes
+  // concurrently (the shape a CI matrix or a parallel test suite both take)
+  // stalls indefinitely under the resulting fork/exec pressure, where the
+  // otherwise-identical run without this per-check chokepoint completes in
+  // seconds. A repo identity cannot change mid-process, so caching the
+  // failure here is exactly as safe as caching the success already was.
+  let resolveRepoCache: ReturnType<LogSinkDeps['resolveRepo']> | undefined
+  const resolveRepoOnce = (): ReturnType<LogSinkDeps['resolveRepo']> => {
+    if (resolveRepoCache === undefined) resolveRepoCache = deps.resolveRepo()
+    return resolveRepoCache
+  }
+
   function log(e: LogEventInput): void {
     try {
       const env = deps.env()
       const host = hostFromEnv(env)
       const now = deps.now()
       const mySeq = seq++
-      deps
-        .resolveRepo()
+      resolveRepoOnce()
         .then((resolved) => {
           const repo =
             resolved && isSafeRepoSegment(resolved.owner) && isSafeRepoSegment(resolved.repo) ? resolved : null
@@ -358,7 +380,43 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
     }
   }
 
-  return { log, runId }
+  // Forces `doctrine()`'s memoized resolution now, on demand, instead of
+  // lazily on this sink's first `log()` call. `resolveDoctrine` is a
+  // synchronous, blocking `execFileSync` — cheap once, but measured live:
+  // when its FIRST run lands during a burst of several child processes
+  // exiting at once (`runChecks` dispatching many checks concurrently, each
+  // calling `log()` on completion), the resulting event-loop stall can
+  // coincide with another child's own 'close' event delivery closely enough
+  // that the event is never delivered at all — the check's own process
+  // confirmed dead, but nothing left to resolve the `runOne` promise
+  // waiting on it (see `apps/cli/src/checks/runner.ts`'s own safety-net
+  // timeout, added for the case this call site cannot prevent). Calling
+  // this once, deliberately, BEFORE that burst begins — `runChecks`'s own
+  // job — means the blocking work is already done and cached by the time
+  // any check's process has even been spawned, let alone exited. Harmless
+  // to call from elsewhere or not at all: every other caller keeps the
+  // existing lazy-on-first-log behavior this never changes.
+  const warmup = (): void => {
+    doctrine()
+    // `resolveRepo` (`@attalabs/aeg-forge-state`) prints its own
+    // `console.warn` straight to this process's real stderr when the
+    // lookup fails (no git repo, or a repo with no configured `origin`) —
+    // reasonable for its own pre-existing callers, but this warmup call is
+    // background telemetry setup, not a user-facing action, and the noise
+    // lands on the SAME stream a caller like `runIssueChecks`/`vinaya check`
+    // routes a check's own findings through. Suppressed only around this
+    // ONE call: it is the very first thing `runChecks` does, before any
+    // check has even spawned, so nothing else could legitimately want to
+    // warn during this exact window — restored the moment the promise
+    // settles, success or failure, never left off.
+    const originalWarn = console.warn
+    console.warn = () => {}
+    resolveRepoOnce().finally(() => {
+      console.warn = originalWarn
+    })
+  }
+
+  return { log, runId, warmup }
 }
 
 const defaultSink = createLogSink()
@@ -386,4 +444,15 @@ export function currentRunId(): string {
  */
 export function log(e: LogEventInput): void {
   defaultSink.log(e)
+}
+
+/**
+ * Forces the default sink's one-time doctrine/repo resolution now rather
+ * than on its first `log()` call — see `createLogSink`'s own `warmup` for
+ * why this matters and when to call it (`runChecks`, before dispatching a
+ * batch of checks whose completions could otherwise cluster around that
+ * first call). A no-op on every subsequent call in the same process.
+ */
+export function warmupLogSink(): void {
+  defaultSink.warmup()
 }

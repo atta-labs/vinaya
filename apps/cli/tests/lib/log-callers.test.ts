@@ -68,6 +68,14 @@ import { fileURLToPath } from 'node:url'
  * are unaffected). Two real callers, not a single shared chokepoint, because
  * each handler owns its own outcome classification independently of the
  * other; both join `CALLER_ALLOWLIST` alone.
+ *
+ * Amended by #563: `runner.ts` (`apps/cli/src/checks/`)
+ * is the `gate` family's own chokepoint — one `log()` call per check per
+ * attempt, from `runOne`, plus a one-time `warmupLogSink()` call from
+ * `runChecks` before dispatching a batch. Read-only against the outbox
+ * itself (it never truncates or writes a held-verdict file), the same
+ * "joins `CALLER_ALLOWLIST` alone" shape `journal-history.ts`/`resume.ts`/
+ * `cancel.ts` already occupy above.
  */
 
 const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..', '..')
@@ -82,6 +90,7 @@ const DEV_REVIEW_LOOP_PAUSE_RESUME_PATH = 'apps/cli/src/lib/dev-review-loop/paus
 const DEV_REVIEW_LOOP_JOURNAL_HISTORY_PATH = 'apps/cli/src/lib/dev-review-loop/journal-history.ts'
 const TASK_TOOLS_RESUME_PATH = 'apps/cli/src/lib/task-tools/resume.ts'
 const TASK_TOOLS_CANCEL_PATH = 'apps/cli/src/lib/task-tools/cancel.ts'
+const RUNNER_PATH = 'apps/cli/src/checks/runner.ts'
 const FUTURE_CALLER_ALLOWLIST = new Set<string>([])
 const CALLER_ALLOWLIST = new Set([
   ...FUTURE_CALLER_ALLOWLIST,
@@ -90,7 +99,8 @@ const CALLER_ALLOWLIST = new Set([
   DEV_REVIEW_LOOP_PATH,
   DEV_REVIEW_LOOP_JOURNAL_HISTORY_PATH,
   TASK_TOOLS_RESUME_PATH,
-  TASK_TOOLS_CANCEL_PATH
+  TASK_TOOLS_CANCEL_PATH,
+  RUNNER_PATH
 ])
 const OUTBOX_TRUNCATE_ALLOWLIST = new Set([LOG_FLUSH_LIB_PATH])
 const OUTBOX_HELD_VERDICT_ALLOWLIST = new Set([
