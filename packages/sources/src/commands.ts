@@ -353,6 +353,31 @@ export const COMMANDS: readonly Command[] = [
     status: 'shipped'
   },
   {
+    name: 'log export-artifact',
+    description: "Copy this run's own local outbox into a file, for the generated task-path workflow's own upload step",
+    flags: [],
+    details: [
+      "Concatenates every `*.ndjson` file under `~/.vinaya/outbox/` into `<dest>`, verbatim — no filtering, no second redaction pass (lines are already redacted at `log()`'s own write boundary). Writes nothing when the outbox is empty, and exits 0 either way: no gate events this run is a legitimate outcome, never a failure.",
+      'Runs inside the generated `vinaya-checks.yml` job, which holds no forge-write credential — this command never calls the forge. Both this step and the `actions/upload-artifact` step after it run `if: always()`, so a cancelled or failed job still exports whatever partial outbox it has.'
+    ],
+    status: 'shipped'
+  },
+  {
+    name: 'log collect-artifact',
+    description:
+      'Validate a downloaded task-log artifact and publish the valid records through the existing flush path',
+    flags: [
+      { flag: '--pr', description: 'The pull request this artifact belongs to' },
+      { flag: '--repo', description: 'Expected `owner/repo` — a provenance cross-check against each record' }
+    ],
+    details: [
+      'Runs inside the generated `vinaya-task-log-collector.yml` workflow — a `workflow_run`-triggered job on the default branch, holding the write credential the task-path job that produced the artifact never gets. `<path>` is already downloaded by that workflow, scoped to a specific, API-verified run id — a provenance guarantee this command never re-derives from the artifact bytes.',
+      "Never executes, imports, or evaluates the artifact's content: every line is read as text and validated (schema, an 8 MiB whole-artifact size cap, redaction, and a repo cross-check) before anything is trusted. A rejected line becomes a named gap — printed, never a silent drop — and the artifact is never partially trusted past that check into executing anything.",
+      "The valid, re-redacted survivors are appended into the same local outbox `vinaya log flush` would read for that PR's Issue, then published through the existing `flushOutbox` unmodified — reusing its chunking, its `<!-- aeg:log:… -->` marker, and its idempotent-retry read, rather than a second publisher. A retried collector run (a fresh runner, the same forge state) therefore dedupes for free: the marker already on the forge is acknowledged, never re-posted."
+    ],
+    status: 'shipped'
+  },
+  {
     name: 'milestone create',
     description: 'Create a GitHub Milestone from a validated body',
     flags: [

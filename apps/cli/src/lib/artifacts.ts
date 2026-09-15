@@ -4,15 +4,17 @@
 // content + a typed `Op` (see lib/ops.ts). Naming and collision rules follow
 // Issue #384's 2026-07-23 MINIMAL-MANIFEST re-ruling: **init installs only
 // what a shipped check or ring-2 mechanism consumes.** The manifest is
-// exactly six items — `vinaya.config.json` (starter ruleset, `checks: {}`
-// empty), three `vinaya-` workflows (checks, review, and — since #761 —
-// the archivist's ring-2 post-merge/scheduled jobs), git-hook managed
-// blocks, a root `VINAYA.md` doctrine pointer (reading-order convention),
-// an empty `.vinaya/doc-owners` starter manifest (#665), and labels.
-// Everything else the earlier amendment-4 manifest carried (GitHub
-// templates, the governance/ scaffold, example check scripts) was this
-// monorepo's own operational apparatus, not product surface — no shipped
-// check consumes it, so it is cut from the installer.
+// `vinaya.config.json` (starter ruleset, `checks: {}` empty), the
+// `vinaya-` workflows (checks, review, and its retrigger/verdict split,
+// body checks, the archivist's ring-2 post-merge/scheduled jobs, and the
+// task-log collector that gives task-path CI evidence a credentialed
+// publisher), git-hook managed blocks, a root
+// `VINAYA.md` doctrine pointer (reading-order convention), an empty
+// `.vinaya/doc-owners` starter manifest (#665), and labels. Everything else
+// the earlier amendment-4 manifest carried (GitHub templates, the
+// governance/ scaffold, example check scripts) was this monorepo's own
+// operational apparatus, not product surface — no shipped check consumes
+// it, so it is cut from the installer.
 //
 // The starter ruleset seeded into `vinaya.config.json` is EXTRACTED from this
 // repo's own battle-tested gates, not invented blanks — the failure it
@@ -92,6 +94,7 @@ export const REVIEW_RETRIGGER_WORKFLOW_PATH = '.github/workflows/vinaya-review-r
 export const REVIEW_VERDICT_WORKFLOW_PATH = '.github/workflows/vinaya-review-verdict.yml'
 export const ARCHIVIST_WORKFLOW_PATH = '.github/workflows/vinaya-archivist.yml'
 export const BODY_CHECKS_WORKFLOW_PATH = '.github/workflows/vinaya-body-checks.yml'
+export const TASK_LOG_COLLECTOR_WORKFLOW_PATH = '.github/workflows/vinaya-task-log-collector.yml'
 // Empty scaffold folders (task 8, #42) — `vinaya new noop-check` writes into
 // `vinaya/checks/`, `vinaya new role` writes into `vinaya/roles/`. Git does
 // not track empty directories, so each folder is represented by one
@@ -617,6 +620,29 @@ ${verifiedFetchPrBodyStep()}      - name: Run checks
             cat vinaya-check-output.txt 2>/dev/null || echo 'no check output captured (runner did not start)'
             echo '~~~'
           } >> "$GITHUB_STEP_SUMMARY"
+      # This job holds no forge-write credential
+      # (see \`permissions:\` above) — it only ever copies THIS run's own
+      # local outbox to a file and uploads it as a plain build artifact.
+      # \`if: always()\` on both steps is load-bearing, not decorative: a
+      # cancelled or failed run must still export whatever partial evidence
+      # its outbox already holds (O2's "cancellation preserve[s] available
+      # evidence"), not only a clean pass. Nothing here posts, comments, or
+      # calls the forge — \`vinaya-task-log-collector.yml\`, running on the
+      # default branch with its own credential, is the only place a
+      # downloaded copy of this artifact is ever validated and published.
+      - name: Export task-log artifact
+        if: always()
+        run: ${vinayaRun(selfHost, 'log export-artifact vinaya-task-log.ndjson')}
+      - name: Upload task-log artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vinaya-task-log-\${{ github.run_id }}
+          path: vinaya-task-log.ndjson
+          # A run with no gate events yet (the export step wrote nothing) is
+          # a legitimate outcome, never a reason to fail this job.
+          if-no-files-found: ignore
+          retention-days: 1
 `
 }
 
@@ -968,6 +994,105 @@ ${verifiedFetchPrBodyStep()}      - name: Body checks
           # bare-digit scan.
           PR_NUMBER: \${{ github.event.pull_request.number }}
         run: ${vinayaRun(selfHost, 'check body-bare-digits')}
+`
+}
+
+/**
+ * The trusted collector for task-path CI
+ * evidence. `workflow_run` is the SAME trust boundary
+ * `vinaya-review-retrigger.yml` already established and this generator
+ * already documents there: GitHub loads this workflow from the default
+ * branch, never from the pull request, and the triggering
+ * \`vinaya-checks.yml\` run's own artifact is downloaded by RUN ID — an
+ * API-level binding to a specific, already-completed run, never a value
+ * this job trusts the artifact's own bytes to assert. The artifact's
+ * CONTENT is still untrusted (a fork PR's own check run produced it): this
+ * job never executes it, only parses it as data through
+ * \`vinaya log collect-artifact\`'s schema/size/redaction/provenance
+ * validation (\`@attalabs/aeg-core\`'s \`validateTaskLogArtifact\`) before
+ * publishing anything.
+ *
+ * \`github.event.workflow_run.pull_requests\` is empty for a fork-originated
+ * pull request (the same documented GitHub Actions limitation
+ * \`vinaya-review-retrigger.yml\` already notes) — this job's own \`if:\`
+ * below is therefore also the fork boundary: with no PR number to resolve,
+ * there is nothing to collect into and nothing runs, so a fork's own
+ * artifact is never downloaded, let alone published, under this
+ * credential (O2).
+ *
+ * Fires on every conclusion \`workflow_run\` reports — success, failure,
+ * cancelled, timed out — not only success: a cancelled or failed
+ * \`vinaya-checks.yml\` run already exported whatever partial outbox it had
+ * (that export step's own \`if: always()\`), and this is where that partial
+ * evidence still reaches durable storage (O2).
+ */
+function taskLogCollectorWorkflow(selfHost: VendoredVinaya | null): string {
+  return `# ${MANAGED_NOTE}
+#
+# The trusted collector for task-path CI evidence. Runs
+# on the default branch with its own credential — never the pull request
+# being judged, never the worker that produced the artifact it downloads.
+name: Vinaya Task Log Collector
+
+on:
+  workflow_run:
+    workflows: [Vinaya Checks]
+    types: [completed]
+
+concurrency:
+  group: vinaya-task-log-collector-\${{ github.event.workflow_run.id }}
+  cancel-in-progress: true
+
+jobs:
+  collect:
+    name: vinaya log collect-artifact
+    # No \`pull_requests\` entry means either a non-PR run (a push straight to
+    # a branch with no open PR) or a FORK pull request — GitHub does not
+    # populate this field for fork-originated PRs. Either way there is no
+    # trusted PR number to resolve an outbox for, so this job does nothing
+    # rather than guess one (O2).
+    if: \${{ github.event.workflow_run.pull_requests[0] != null }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      actions: read
+    steps:
+      - name: Check for a task-log artifact on this run
+        id: probe
+        env:
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: \${{ github.event.workflow_run.id }}
+        run: |
+          set -o pipefail
+          HAS_ARTIFACT=$(gh api "repos/\${{ github.repository }}/actions/runs/$RUN_ID/artifacts" \\
+            --jq "[.artifacts[] | select(.name == \\"vinaya-task-log-$RUN_ID\\")] | length > 0")
+          echo "has_artifact=$HAS_ARTIFACT" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        if: \${{ steps.probe.outputs.has_artifact == 'true' }}
+        with:
+          # Explicit trusted ref: never use the PR head/merge ref in this job.
+          ref: \${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        if: \${{ steps.probe.outputs.has_artifact == 'true' }}
+        with:
+          node-version: 20
+${vinayaSetupSteps(selfHost, 'trusted')}      - name: Download the task-log artifact
+        if: \${{ steps.probe.outputs.has_artifact == 'true' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: vinaya-task-log-\${{ github.event.workflow_run.id }}
+          path: vinaya-task-log-download
+          github-token: \${{ secrets.GITHUB_TOKEN }}
+          run-id: \${{ github.event.workflow_run.id }}
+      - name: Validate and publish
+        if: \${{ steps.probe.outputs.has_artifact == 'true' }}
+        env:
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+        run: ${vinayaRun(selfHost, 'log collect-artifact vinaya-task-log-download/vinaya-task-log.ndjson')} --pr \${{ github.event.workflow_run.pull_requests[0].number }} --repo \${{ github.repository }}
 `
 }
 
@@ -1809,6 +1934,12 @@ export function buildInitOps(ctx: InitContext): Op[] {
     kind: 'create-file',
     path: BODY_CHECKS_WORKFLOW_PATH,
     content: bodyChecksWorkflow(ctx.selfHost),
+    group: 'CI workflows'
+  })
+  ops.push({
+    kind: 'create-file',
+    path: TASK_LOG_COLLECTOR_WORKFLOW_PATH,
+    content: taskLogCollectorWorkflow(ctx.selfHost),
     group: 'CI workflows'
   })
 
