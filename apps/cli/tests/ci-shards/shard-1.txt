@@ -51,3 +51,4 @@ tests/lib/dispatch/outcomes.test.ts
 tests/lib/dispatch/launch-intent.test.ts
 tests/lib/broker/authenticate.test.ts
 tests/lib/broker/worker-grants.test.ts
+tests/lib/dispatch/unattended.test.ts

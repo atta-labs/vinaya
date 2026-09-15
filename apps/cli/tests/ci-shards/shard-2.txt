@@ -48,3 +48,4 @@ tests/lib/context-packet.test.ts
 tests/lib/task-tools/protocol.test.ts
 tests/lib/task-tools/server.test.ts
 tests/lib/broker/operator-grants.test.ts
+tests/lib/dispatch/unattended-publication.test.ts
