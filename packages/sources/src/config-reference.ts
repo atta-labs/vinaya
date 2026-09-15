@@ -438,7 +438,7 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     key: 'dispatch',
     type: 'object (optional)',
     semantics: [
-      '`vinaya dispatch <role> --agent claude|codex|gemini` (`apps/cli/src/lib/dispatch.ts`) settings: the wall-time ceiling before the headless child is signaled, and a default vendor for repos that always dispatch the same one.'
+      '`vinaya dispatch <role> --agent claude|codex|gemini` (`apps/cli/src/lib/dispatch.ts`) settings: the wall-time ceiling before the headless child is signaled, a default vendor for repos that always dispatch the same one, and whether an unattended start requires the worker isolation boundary.'
     ],
     example: `{
   "dispatch": {
@@ -462,6 +462,14 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
       "A default vendor `vinaya dispatch`'s own `--agent` flag overrides when given. Absent, `--agent` is required on the command line."
     ],
     example: `{ "dispatch": { "agent": "claude" } }`
+  },
+  {
+    key: 'dispatch.requireWorkerIsolation',
+    type: 'boolean (optional)',
+    semantics: [
+      "The declared, visible setting that makes an unattended dispatch (`DispatchOpts.unattended` — `vinaya dispatch --unattended`, and the automated `task run`/`dev-review-loop` driver's own developer/reviewer dispatches) refuse before any spawn when `apps/cli/specs/isolation.md`'s OS-level boundary cannot be established on this host. Absent or `false` (the default): an unattended dispatch runs exactly as an attended one does — no boundary, no refusal. The boundary's only currently-supported mechanism (Apple Seatbelt) is macOS-only; setting this `true` on a host without it makes every unattended dispatch refuse unconditionally."
+    ],
+    example: `{ "dispatch": { "requireWorkerIsolation": true } }`
   },
   {
     key: 'reviewPolicy',

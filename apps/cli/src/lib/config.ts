@@ -585,11 +585,27 @@ export const VinayaConfigSchema = z.object({
   // test config can set this to a few milliseconds and assert the same
   // behavior in a fraction of the wall time, without faking the process
   // signalling it exercises.
+  // `requireWorkerIsolation` (task 3, `#560`, O3): the "declared, visible
+  // setting that refuses when isolation is absent" this tranche's own
+  // milestone names — off (absent/`false`) by default. An unattended
+  // dispatch (`DispatchOpts.unattended`) only refuses for lack of
+  // `apps/cli/specs/isolation.md`'s OS-level boundary when this is `true`;
+  // left off, an unattended dispatch runs exactly as it did before this
+  // task. This default matters: the boundary's only currently-supported
+  // mechanism (Seatbelt) is macOS-only, and this repo's own CI, its own
+  // operational host, and the pre-existing `dev-review-loop`/`dispatch-task`
+  // test suites all run on Linux — flipping the default to `true` would make
+  // every unattended dispatch refuse unconditionally on the one host this
+  // repo actually runs on, with no remediation until a non-Darwin mechanism
+  // exists (`isolation.md` §3, "a container is out of scope for this task's
+  // probe"). Set it once a supported host is confirmed for this repo's own
+  // unattended runs.
   dispatch: z
     .object({
       timeoutMs: z.number().int().positive().optional(),
       killGraceMs: z.number().int().positive().optional(),
-      agent: z.enum(['claude', 'codex', 'gemini']).optional()
+      agent: z.enum(['claude', 'codex', 'gemini']).optional(),
+      requireWorkerIsolation: z.boolean().optional()
     })
     .optional(),
   // Which severities block is repository policy (task 8,
