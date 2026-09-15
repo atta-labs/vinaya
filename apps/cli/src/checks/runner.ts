@@ -473,17 +473,51 @@ async function runOne(
   // caller THAT the spawn failed but never why, which reads identically to a
   // check that exited non-zero in silence.
   let spawnError: Error | undefined
-  const exitCode = await new Promise<number | null>((resolve) => {
-    // 'close', not 'exit' — it fires after the stdio pipes have drained, so
-    // stderr is complete before parsing.
-    proc.on('close', (code) => resolve(code))
-    // A spawn failure (e.g. the executable does not exist) must surface as a
-    // loud `status: 'error'` outcome, never an unhandled 'error' crash.
-    proc.on('error', (err: Error) => {
-      spawnError = err
-      resolve(null)
+  let eventSettled = false
+  let deadlineTimer: ReturnType<typeof setTimeout> | undefined
+  const exitCode = await Promise.race([
+    new Promise<number | null>((resolve) => {
+      // 'close', not 'exit' — it fires after the stdio pipes have drained, so
+      // stderr is complete before parsing.
+      proc.on('close', (code) => {
+        eventSettled = true
+        resolve(code)
+      })
+      // A spawn failure (e.g. the executable does not exist) must surface as a
+      // loud `status: 'error'` outcome, never an unhandled 'error' crash.
+      proc.on('error', (err: Error) => {
+        eventSettled = true
+        spawnError = err
+        resolve(null)
+      })
+    }),
+    // Absolute safety net, independent of `proc`'s own events: observed
+    // live, a check that exits near-instantly (`process.exit(0)` before its
+    // own output even matters) can have its 'close' event never delivered
+    // at all — no error, no signal, the child genuinely gone (confirmed
+    // `<defunct>` in the process table) but this promise waiting forever
+    // regardless, since neither 'close' nor 'error' ever fires again. The
+    // per-check timeout above only sets `timedOut` and signals a process
+    // that, in this exact failure, is already dead — it never by itself
+    // unblocks a promise with nothing left to resolve it. This second race
+    // arm is the one thing that does: past the full escalation window
+    // (timeout, SIGTERM, `KILL_GRACE_MS` for SIGKILL) plus a real margin,
+    // resolve `null` unconditionally rather than hang the whole run on one
+    // check's undelivered event. Cleared the moment the real race arm wins
+    // (the overwhelmingly common case) — an uncleared timer would otherwise
+    // hold the whole CLI process alive for its full duration after every
+    // single healthy check.
+    new Promise<number | null>((resolve) => {
+      deadlineTimer = setTimeout(
+        () => {
+          if (!eventSettled) timedOut = true
+          resolve(null)
+        },
+        timeoutMs + KILL_GRACE_MS * 2 + 5000
+      )
     })
-  })
+  ])
+  if (deadlineTimer !== undefined) clearTimeout(deadlineTimer)
   clearTimeout(timer)
   if (timedOut) {
     // Fast path: the direct child's own close/error just fired — if the
