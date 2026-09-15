@@ -960,6 +960,25 @@ describe('frozenSectionsChanged (task-run-v1 11, review round 1, O3)', () => {
   it('does not report `Documentation` when the section is byte-identical', () => {
     expect(frozenSectionsChanged(bodyWithDocs, bodyWithDocs)).toEqual([])
   })
+
+  // F3 (round 2 code review, MINOR, Issue #625) — documentationEqual's own
+  // doc comment claims order-significance like Parts; this proves it against
+  // two otherwise-identical sources, the way the Surface/Parts cases above
+  // each prove their own order-(in)sensitivity.
+  it('reports `Documentation` when two otherwise-identical sources are reordered', () => {
+    const twoSources =
+      '## Documentation\n\n' +
+      '- https://example.com/a — the mechanism it governs\n' +
+      '- https://example.com/b — a different mechanism\n'
+    const withTwoSources = `${body}\n${twoSources}`
+    const reordered = withTwoSources.replace(
+      twoSources,
+      '## Documentation\n\n' +
+        '- https://example.com/b — a different mechanism\n' +
+        '- https://example.com/a — the mechanism it governs\n'
+    )
+    expect(frozenSectionsChanged(withTwoSources, reordered)).toEqual(['Documentation'])
+  })
 })
 
 describe('code-blindness — every content check reuses the single stripCode (PR #617)', () => {
