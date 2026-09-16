@@ -98,6 +98,15 @@ import { fileURLToPath } from 'node:url'
  * config file and an unrelated store, never the outbox. `config.ts` never
  * imports `log-sink.js` either, so it is not a `CALLER_ALLOWLIST` member —
  * this exemption is scoped to the prose-mention check alone.
+ *
+ * Amended by task-log-v1 task 6 (#566, O1): `effects.ts`
+ * (`EffectExecutor`) and `broker.ts` (`requestEffect`/`authenticate*Invocation`)
+ * each call `log()` to emit the new `effect`/`operation` event families around
+ * every real write, idempotent replay, and authorization outcome. Neither
+ * touches the outbox path directly — both go through the sink's own append —
+ * so they join `CALLER_ALLOWLIST` alone, the same "no truncate, no
+ * held-verdict write" shape `journal-history.ts`/`resume.ts`/`cancel.ts`/
+ * `runner.ts` already occupy above.
  */
 
 const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..', '..')
@@ -114,6 +123,8 @@ const TASK_TOOLS_RESUME_PATH = 'apps/cli/src/lib/task-tools/resume.ts'
 const TASK_TOOLS_CANCEL_PATH = 'apps/cli/src/lib/task-tools/cancel.ts'
 const RUNNER_PATH = 'apps/cli/src/checks/runner.ts'
 const LOG_ARTIFACT_LIB_PATH = 'apps/cli/src/lib/log-artifact.ts'
+const EFFECTS_PATH = 'apps/cli/src/lib/effects.ts'
+const BROKER_PATH = 'apps/cli/src/lib/broker.ts'
 const FUTURE_CALLER_ALLOWLIST = new Set<string>([])
 const CALLER_ALLOWLIST = new Set([
   ...FUTURE_CALLER_ALLOWLIST,
@@ -123,7 +134,9 @@ const CALLER_ALLOWLIST = new Set([
   DEV_REVIEW_LOOP_JOURNAL_HISTORY_PATH,
   TASK_TOOLS_RESUME_PATH,
   TASK_TOOLS_CANCEL_PATH,
-  RUNNER_PATH
+  RUNNER_PATH,
+  EFFECTS_PATH,
+  BROKER_PATH
 ])
 const OUTBOX_TRUNCATE_ALLOWLIST = new Set([LOG_FLUSH_LIB_PATH])
 const OUTBOX_HELD_VERDICT_ALLOWLIST = new Set([
