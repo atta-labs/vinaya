@@ -303,7 +303,27 @@ export function createTaskToolsMcpServer(opts: CreateTaskToolsMcpServerOptions):
             )
           }
         }
-        return rpcResult(id, toolCallResult(outcome))
+        // `toolCallResult`/`rpcResult` both `JSON.stringify` the handler's own
+        // result — a value that isn't serializable (a `BigInt` field, say)
+        // throws there, OUTSIDE the `try` above (round 3 security review,
+        // HIGH). Before `serve`'s serialized dispatch chain existed, an
+        // escaped throw here only orphaned this one call's own `.then()`
+        // (`serve`'s earlier `void handleLine(line).then(...)` never awaited
+        // it); now that every line is chained through one `Promise`
+        // (`chain.then(...)`), an uncaught rejection here would otherwise
+        // skip every later queued `.then` forever — silently wedging every
+        // OTHER task's future call on this shared server, not just this
+        // one's. Caught here so a bad result becomes this call's own error
+        // response, same as a handler that threw outright.
+        try {
+          return rpcResult(id, toolCallResult(outcome))
+        } catch (err) {
+          return rpcError(
+            id,
+            -32603,
+            `${params.name}: result could not be serialized — ${err instanceof Error ? err.message : String(err)}`
+          )
+        }
       }
       default:
         // Every `notifications/*` message (initialized, cancelled, …) is a
@@ -350,6 +370,18 @@ export function createTaskToolsMcpServer(opts: CreateTaskToolsMcpServerOptions):
     // to the wrong task's outbox (round 2 review, HIGH). A single chained
     // promise makes that race structurally impossible: at most one
     // `handleLine` is ever in flight.
+    //
+    // Each link swallows its own failure rather than letting it reject the
+    // chain (round 3 security review, HIGH): standard `Promise.then` chain
+    // semantics mean one rejected link skips every `.then(onFulfilled)`
+    // already queued behind it, so an unguarded rejection here — a `write`
+    // that throws synchronously, or any defect `handleLine`'s own "never
+    // throws" contract fails to cover — would silently stop dispatching
+    // EVERY later line for the rest of the process's life, not just the one
+    // that failed. `handleLine` itself is hardened to return an error
+    // response rather than throw (see `handle`'s `tools/call` branch), but
+    // this catch is this chain's own last line of defense, independent of
+    // that contract holding.
     let chain: Promise<void> = Promise.resolve()
 
     await new Promise<void>((resolve) => {
@@ -360,8 +392,14 @@ export function createTaskToolsMcpServer(opts: CreateTaskToolsMcpServerOptions):
           const line = buffer.slice(0, idx)
           buffer = buffer.slice(idx + 1)
           chain = chain.then(async () => {
-            const response = await handleLine(line)
-            if (response !== null) await write(response)
+            try {
+              const response = await handleLine(line)
+              if (response !== null) await write(response)
+            } catch (err) {
+              process.stderr.write(
+                `vinaya task-tools serve: dropped one line after an internal error — ${err instanceof Error ? err.message : String(err)}\n`
+              )
+            }
           })
           idx = buffer.indexOf('\n')
         }

@@ -206,3 +206,62 @@ describe('serve — two different tasks never interleave through the shared per-
     expect(responses).toHaveLength(2)
   })
 })
+
+/**
+ * Round 3 security review, HIGH: `serve`'s serialized dispatch chains every
+ * line through one `Promise` (the fix for the interleaving race above), but
+ * a chained `.then()` sequence skips every later queued callback once one
+ * link rejects — so an unguarded failure anywhere in one line's processing
+ * (a handler result `JSON.stringify` can't serialize, say) would silently
+ * stop dispatching every LATER line for the rest of the process's life, not
+ * just the failing one. Two fixes close this: `handle`'s `tools/call` branch
+ * now catches a `JSON.stringify` failure and turns it into this call's own
+ * JSON-RPC error, and `serve`'s own chain link independently catches
+ * whatever `handleLine`/`write` throw as a last line of defense. This proves
+ * the chain survives either way: line 1 fails to serialize, line 2 (a
+ * different, unrelated call) still gets its own response.
+ */
+describe('serve — a failure on one line never wedges dispatch for a later line', () => {
+  it('a result JSON.stringify cannot serialize becomes this call’s own error response, and the next line still runs', async () => {
+    const handlers: TaskToolHandlers = {
+      // A BigInt field is valid JS but `JSON.stringify` throws on it —
+      // exactly the "handler result isn't serializable" failure mode named
+      // in the finding.
+      task_status: () => ({ ok: true, result: { items: [], nextCursor: null, bad: 1n } }) as never,
+      task_escalation_read: () => ({
+        ok: true,
+        result: { items: [], nextCursor: null, observedAt: '2026-01-01T00:00:00.000Z', freshness: 'unknown' }
+      }),
+      task_resume: () => ({ ok: false, error: { kind: 'capability', message: 'stub' } }),
+      task_cancel: () => ({ ok: false, error: { kind: 'capability', message: 'stub' } }),
+      task_start: () => ({ ok: false, error: { kind: 'capability', message: 'stub' } })
+    }
+    const server = createTaskToolsMcpServer({ serverVersion: '0.0.0-test', handlers })
+
+    const input = new PassThrough()
+    const output = new PassThrough()
+    const responses: Array<{ id: number; error?: { message: string } }> = []
+    output.on('data', (chunk: Buffer) => {
+      for (const line of chunk.toString('utf8').split('\n').filter(Boolean)) {
+        responses.push(JSON.parse(line))
+      }
+    })
+
+    const servePromise = server.serve(input, output)
+    const call = (id: number, name: string) =>
+      `${JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: {} } })}\n`
+    // Pushed back-to-back, no await between them — line 1's failure must not
+    // stop line 2's chain link from ever running.
+    input.write(call(1, 'task_status'))
+    input.write(call(2, 'task_escalation_read'))
+    input.end()
+
+    await servePromise
+
+    expect(responses).toHaveLength(2)
+    expect(responses[0]?.id).toBe(1)
+    expect(responses[0]?.error?.message).toContain('could not be serialized')
+    expect(responses[1]?.id).toBe(2)
+    expect(responses[1]?.error).toBeUndefined()
+  })
+})
