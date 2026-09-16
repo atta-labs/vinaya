@@ -35,6 +35,7 @@ tests/lib/dev-review-loop/developer-dispatch.test.ts
 tests/lib/dev-review-loop/publication.test.ts
 tests/lib/dispatch-task.test.ts
 tests/lib/dispatch.test.ts
+tests/lib/log-webhook-flush.test.ts
 tests/lib/pr-report-engine.test.ts
 tests/lib/remote-base.test.ts
 tests/lib/test-selector.test.ts

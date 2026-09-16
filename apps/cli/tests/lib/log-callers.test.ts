@@ -123,12 +123,24 @@ const TASK_TOOLS_RESUME_PATH = 'apps/cli/src/lib/task-tools/resume.ts'
 const TASK_TOOLS_CANCEL_PATH = 'apps/cli/src/lib/task-tools/cancel.ts'
 const RUNNER_PATH = 'apps/cli/src/checks/runner.ts'
 const LOG_ARTIFACT_LIB_PATH = 'apps/cli/src/lib/log-artifact.ts'
+/**
+ * The webhook destination (`task-log-v1` 10, Issue #636) is the flush's
+ * second implementation, not a second kind of caller: it reads the same
+ * outbox, re-validates and re-redacts the same way, and truncates exactly
+ * the lines the endpoint confirmed with a 2xx — the identical durability
+ * rule `log-flush.ts` carries. It therefore joins the same two allowlists
+ * that file does, for the same reasons, rather than earning a category of
+ * its own. A third destination would join them too; a caller that merely
+ * *asks* for a flush still would not.
+ */
+const LOG_WEBHOOK_FLUSH_LIB_PATH = 'apps/cli/src/lib/log-webhook-flush.ts'
 const EFFECTS_PATH = 'apps/cli/src/lib/effects.ts'
 const BROKER_PATH = 'apps/cli/src/lib/broker.ts'
 const FUTURE_CALLER_ALLOWLIST = new Set<string>([])
 const CALLER_ALLOWLIST = new Set([
   ...FUTURE_CALLER_ALLOWLIST,
   LOG_FLUSH_LIB_PATH,
+  LOG_WEBHOOK_FLUSH_LIB_PATH,
   DISPATCH_PATH,
   DEV_REVIEW_LOOP_PATH,
   DEV_REVIEW_LOOP_JOURNAL_HISTORY_PATH,
@@ -138,7 +150,7 @@ const CALLER_ALLOWLIST = new Set([
   EFFECTS_PATH,
   BROKER_PATH
 ])
-const OUTBOX_TRUNCATE_ALLOWLIST = new Set([LOG_FLUSH_LIB_PATH])
+const OUTBOX_TRUNCATE_ALLOWLIST = new Set([LOG_FLUSH_LIB_PATH, LOG_WEBHOOK_FLUSH_LIB_PATH])
 const OUTBOX_HELD_VERDICT_ALLOWLIST = new Set([
   DEV_REVIEW_LOOP_PATH,
   DEV_REVIEW_LOOP_REVIEWER_DISPATCH_PATH,
