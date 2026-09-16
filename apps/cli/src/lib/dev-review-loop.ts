@@ -2146,13 +2146,20 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 deliveredFindingsIdentity !== null &&
                 deliveredFindingsIdentity.round === held.round &&
                 deliveredFindingsIdentity.head === currentHead
-              if (existsSync(marker) || alreadyDeliveredInStore) {
+              const markerPresent = existsSync(marker)
+              if (markerPresent || alreadyDeliveredInStore) {
                 const stats = computeStats(currentHead, d.now())
                 await logEvents(driverDecidedPauseEvents(config.loopId, state, held.round + 1, stats))
+                // O3: names WHICH of the two independent guard inputs was
+                // observed true — a local marker this machine wrote
+                // earlier, a control-store identity a (possibly different)
+                // machine wrote — so a comment where neither actually held
+                // is visibly wrong, rather than reading identically to an
+                // ordinary redelivery pause.
                 decision = {
                   type: 'pause',
                   reason: 'no_progress',
-                  detail: `round ${held.round} findings delivered again on unchanged head ${currentHead}, with no developer push since the first delivery`
+                  detail: `round ${held.round} findings delivered again on unchanged head ${currentHead}, with no developer push since the first delivery (guard: local marker file ${markerPresent ? 'present' : 'absent'}, control-store delivered-findings identity ${alreadyDeliveredInStore ? 'matched' : 'absent'})`
                 }
               } else {
                 mkdirSync(dirname(marker), { recursive: true })

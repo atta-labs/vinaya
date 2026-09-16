@@ -3744,6 +3744,18 @@ describe('devReviewLoop — control-store-v1 task 4 (#554, O3): a delivered-find
     expect(
       existsSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'round-1-attach-redelivered'))
     ).toBe(false)
+
+    // O3 ([task-log-v1] 9, Issue #631): the mirror of the sibling fixture
+    // above — here the CONTROL STORE is what actually held, and the local
+    // marker never existed, so the comment must name it the other way
+    // around.
+    const postedFiles = postedCommentFiles(home)
+    const pauseComment = readFileSync(
+      join(home, '.fake-gh-posted-comments', postedFiles[postedFiles.length - 1] as string),
+      'utf8'
+    )
+    expect(pauseComment).toContain('local marker file absent')
+    expect(pauseComment).toContain('control-store delivered-findings identity matched')
   }, 20000)
 })
 
@@ -5277,6 +5289,19 @@ describe('devReviewLoop — a second attach on the same unchanged head reads as 
     expect(existsSync(join(home, '.dev-invocations'))).toBe(false)
     expect(existsSync(join(heldDir, 'round-2-reviewer-work'))).toBe(false)
     expect(existsSync(join(heldDir, 'round-2-security-work'))).toBe(false)
+
+    // O3 ([task-log-v1] 9, Issue #631): this pause is decided by an OR of
+    // two independent guard inputs (the local marker file this fixture
+    // wrote, and a control-store delivered-findings identity this fixture
+    // never wrote) — the comment now names which one actually held, rather
+    // than reading identically regardless.
+    const postedFiles = postedCommentFiles(home)
+    const pauseComment = readFileSync(
+      join(home, '.fake-gh-posted-comments', postedFiles[postedFiles.length - 1] as string),
+      'utf8'
+    )
+    expect(pauseComment).toContain('local marker file present')
+    expect(pauseComment).toContain('control-store delivered-findings identity absent')
   }, 20000)
 })
 
