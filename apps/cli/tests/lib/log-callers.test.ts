@@ -136,6 +136,8 @@ const LOG_ARTIFACT_LIB_PATH = 'apps/cli/src/lib/log-artifact.ts'
 const LOG_WEBHOOK_FLUSH_LIB_PATH = 'apps/cli/src/lib/log-webhook-flush.ts'
 const EFFECTS_PATH = 'apps/cli/src/lib/effects.ts'
 const BROKER_PATH = 'apps/cli/src/lib/broker.ts'
+const SCHEMA_PATH = 'packages/aeg-core/src/log/schema.ts'
+const ASSESS_ROUND_PATH = 'packages/aeg-core/src/dev-review-loop/assess-round.ts'
 const FUTURE_CALLER_ALLOWLIST = new Set<string>([])
 const CALLER_ALLOWLIST = new Set([
   ...FUTURE_CALLER_ALLOWLIST,
@@ -341,5 +343,235 @@ describe('log-callers — O2 (task 3, #482): no internal subprocess flush', () =
       })
       .map(([rel]) => rel)
     expect(offenders).toEqual([])
+  })
+})
+
+/**
+ * O1 (task-log-v1 7, Issue #567): every task entry / producer boundary this
+ * doctrine documents (`apps/cli/specs/log.md` "The families shipped so
+ * far") maps to the `LogEventSchema` kind/event pairs it is required to
+ * emit on every supported exit — checked against the real source tree in
+ * BOTH directions, never a hand-trusted table alone:
+ *
+ *  - each `PRODUCER_BOUNDARIES` entry's own `requires` list is checked
+ *    against that boundary's own named file(s) — a kind/event pair claimed
+ *    here but missing an `event: '<name>'` literal in the file it names is
+ *    a real coverage gap, not a passing belief;
+ *  - every kind/event pair `packages/aeg-core/src/log/schema.ts` itself
+ *    declares (derived from that file's own text, never a second hand-typed
+ *    copy of it — `familyEventsFromSchema` below) is checked against the
+ *    UNION of every boundary's `requires` list — a schema addition with no
+ *    boundary claiming it, and no `LOG_COVERAGE_EXEMPTIONS` entry naming the
+ *    gap explicitly, fails this file rather than silently shipping an
+ *    uninstrumented event.
+ *
+ * `handoff` (`raised`/`resolved`) is the one family with zero real callers
+ * anywhere in the tree today — declared, not yet real, the same
+ * "declared here, enforced later" pattern this doctrine already applies to
+ * `meta.lineage.attempt`/`meta.lineage.parent` (`apps/cli/specs/log.md`
+ * "Attribution"). It is named in `LOG_COVERAGE_EXEMPTIONS` explicitly rather
+ * than silently passing (a hand-trusted table that forgot to require it) or
+ * silently failing (this file refusing to land until a task outside this
+ * one's boundary wires a producer it was never asked to build).
+ */
+
+type RequiredEvent = { kind: string; event: string }
+type ProducerBoundary = {
+  name: string
+  files: string[]
+  requires: RequiredEvent[]
+}
+
+const PRODUCER_BOUNDARIES: ProducerBoundary[] = [
+  {
+    name: 'dispatchRole — every per-attempt exit path (pre-spawn refusal, spawn crash, timeout, clean exit)',
+    files: [DISPATCH_PATH],
+    requires: [
+      { kind: 'dispatch', event: 'dispatched' },
+      { kind: 'dispatch', event: 'outcome_received' },
+      { kind: 'dispatch', event: 'dispatch_failed' },
+      { kind: 'role_attempt', event: 'attempted' },
+      { kind: 'usage', event: 'observed' }
+    ]
+  },
+  {
+    name: "assessRound's pure round-decision layer",
+    files: [ASSESS_ROUND_PATH],
+    requires: [
+      { kind: 'dev_review_loop', event: 'loop_started' },
+      { kind: 'dev_review_loop', event: 'round_started' },
+      { kind: 'dev_review_loop', event: 'gate_result_read' },
+      { kind: 'dev_review_loop', event: 'verdicts_read' },
+      { kind: 'dev_review_loop', event: 'findings_compared' },
+      { kind: 'dev_review_loop', event: 'stop_condition_met' },
+      { kind: 'dev_review_loop', event: 'paused' },
+      { kind: 'dev_review_loop', event: 'round_ended' },
+      { kind: 'dev_review_loop', event: 'journal_finalized' }
+    ]
+  },
+  {
+    name: 'devReviewLoop driver — resume, cancel, unpushed-work resume, a failed reviewer report',
+    files: [DEV_REVIEW_LOOP_PATH],
+    requires: [
+      { kind: 'dev_review_loop', event: 'resumed' },
+      { kind: 'dev_review_loop', event: 'unpushed_work_resume' },
+      { kind: 'dev_review_loop', event: 'cancelled' },
+      { kind: 'role_attempt', event: 'attempted' }
+    ]
+  },
+  {
+    name: 'runOne — one gate `checked` observation per attempted check',
+    files: [RUNNER_PATH],
+    requires: [{ kind: 'gate', event: 'checked' }]
+  },
+  {
+    name: 'EffectExecutor — attempted/observed/verified around every idempotent external write',
+    files: [EFFECTS_PATH],
+    requires: [
+      { kind: 'effect', event: 'attempted' },
+      { kind: 'effect', event: 'observed' },
+      { kind: 'effect', event: 'verified' }
+    ]
+  },
+  {
+    name: 'broker — authenticate*Invocation / requestEffect',
+    files: [BROKER_PATH],
+    requires: [{ kind: 'operation', event: 'completed' }]
+  },
+  {
+    name: 'task-tools cancel/resume handlers',
+    files: [TASK_TOOLS_CANCEL_PATH, TASK_TOOLS_RESUME_PATH],
+    requires: [{ kind: 'operation', event: 'completed' }]
+  },
+  {
+    name: "flushOutbox — validated before post, written/refused after (this task's own line, not a caller's)",
+    files: [LOG_FLUSH_LIB_PATH],
+    requires: [
+      { kind: 'forge_write', event: 'validated' },
+      { kind: 'forge_write', event: 'refused' },
+      { kind: 'forge_write', event: 'written' }
+    ]
+  }
+]
+
+/** A kind/event pair no real caller emits yet — named explicitly so this file neither silently passes nor silently fails on it. */
+const LOG_COVERAGE_EXEMPTIONS: RequiredEvent[] = [
+  { kind: 'handoff', event: 'raised' },
+  { kind: 'handoff', event: 'resolved' }
+]
+
+function pairKey(p: RequiredEvent): string {
+  return `${p.kind}.${p.event}`
+}
+
+/** Every kind/event pair a boundary's own named file(s) do NOT actually contain a matching `event: '<name>'` literal for — the refusal this architecture test exists to raise. */
+function missingFromBoundary(boundary: ProducerBoundary, byPath: ReadonlyMap<string, string>): RequiredEvent[] {
+  const missing: RequiredEvent[] = []
+  for (const required of boundary.requires) {
+    const foundInAnyFile = boundary.files.some((rel) => {
+      const content = byPath.get(rel)
+      if (content === undefined) return false
+      return new RegExp(`event:\\s*'${required.event}'`).test(content)
+    })
+    if (!foundInAnyFile) missing.push(required)
+  }
+  return missing
+}
+
+/**
+ * Every `event: z.literal('<name>')` inside one family's own
+ * `export const <exportName> = z.discriminatedUnion('event', [ ... ])`
+ * block in `schema.ts`, paired with that family's own
+ * `kind: z.literal('<expectedKind>')` declared just above it. Derived from
+ * the real schema text — never a second, hand-typed copy of what
+ * `schema.ts` already declares, so a family or event added there is caught
+ * here without this file's own table ever being asked to notice by hand.
+ */
+function familyEventsFromSchema(schemaSource: string, exportName: string, expectedKind: string): RequiredEvent[] {
+  const startMarker = `export const ${exportName} = z.discriminatedUnion('event', [`
+  const start = schemaSource.indexOf(startMarker)
+  if (start === -1) throw new Error(`log coverage: could not find ${exportName} in ${SCHEMA_PATH}`)
+  const end = schemaSource.indexOf('\n])', start)
+  if (end === -1) throw new Error(`log coverage: could not find the closing '])' for ${exportName}`)
+  const body = schemaSource.slice(start, end)
+  const nearby = schemaSource.slice(Math.max(0, start - 3000), start)
+  if (!new RegExp(`kind: z\\.literal\\('${expectedKind}'\\)`).test(nearby)) {
+    throw new Error(
+      `log coverage: ${exportName}'s own shared object does not declare kind: z.literal('${expectedKind}') nearby — fix FAMILY_EXPORTS, not this assertion`
+    )
+  }
+  const events: RequiredEvent[] = []
+  const eventPattern = /event: z\.literal\('([a-z_]+)'\)/g
+  let match: RegExpExecArray | null
+  // biome-ignore lint/suspicious/noAssignInExpressions: standard exec-loop idiom
+  while ((match = eventPattern.exec(body)) !== null) {
+    events.push({ kind: expectedKind, event: match[1] as string })
+  }
+  return events
+}
+
+const FAMILY_EXPORTS: Array<{ exportName: string; kind: string }> = [
+  { exportName: 'DispatchEventSchema', kind: 'dispatch' },
+  { exportName: 'DevReviewLoopEventSchema', kind: 'dev_review_loop' },
+  { exportName: 'ForgeWriteEventSchema', kind: 'forge_write' },
+  { exportName: 'GateEventSchema', kind: 'gate' },
+  { exportName: 'OperationEventSchema', kind: 'operation' },
+  { exportName: 'UsageEventSchema', kind: 'usage' },
+  { exportName: 'RoleAttemptEventSchema', kind: 'role_attempt' },
+  { exportName: 'HandoffEventSchema', kind: 'handoff' },
+  { exportName: 'EffectEventSchema', kind: 'effect' }
+]
+
+describe('log coverage — O1 (task-log-v1 7, Issue #567): every schema event maps to a producer boundary', () => {
+  const schemaSource = readFileSync(join(REPO_ROOT, SCHEMA_PATH), 'utf8')
+  const allDeclaredEvents = FAMILY_EXPORTS.flatMap(({ exportName, kind }) =>
+    familyEventsFromSchema(schemaSource, exportName, kind)
+  )
+
+  it('sanity: the schema really does declare 27 kind/event pairs across 9 families today', () => {
+    // A change to this number is a real schema change (a family or event
+    // added/removed) — update it alongside PRODUCER_BOUNDARIES /
+    // LOG_COVERAGE_EXEMPTIONS in the same diff, never silently.
+    expect(allDeclaredEvents.length).toBe(27)
+  })
+
+  it('every declared kind/event pair is required by a producer boundary, or named in LOG_COVERAGE_EXEMPTIONS', () => {
+    const claimed = new Set(PRODUCER_BOUNDARIES.flatMap((b) => b.requires).map(pairKey))
+    const exempted = new Set(LOG_COVERAGE_EXEMPTIONS.map(pairKey))
+    const uncovered = allDeclaredEvents.filter((e) => !claimed.has(pairKey(e)) && !exempted.has(pairKey(e)))
+    expect(uncovered.map(pairKey)).toEqual([])
+  })
+
+  it('no LOG_COVERAGE_EXEMPTIONS entry names a pair the schema does not actually declare', () => {
+    const declared = new Set(allDeclaredEvents.map(pairKey))
+    const stale = LOG_COVERAGE_EXEMPTIONS.filter((e) => !declared.has(pairKey(e)))
+    expect(stale.map(pairKey)).toEqual([])
+  })
+
+  it('every producer boundary really does emit every kind/event pair it claims, in its own named file(s)', () => {
+    const files = allSourceFiles()
+    const byPath = new Map(files.map(([rel, abs]) => [rel, readFileSync(abs, 'utf8')]))
+    const offenders: string[] = []
+    for (const boundary of PRODUCER_BOUNDARIES) {
+      for (const m of missingFromBoundary(boundary, byPath)) offenders.push(`${boundary.name}: ${pairKey(m)}`)
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('refuses an uninstrumented path — the checker is not vacuous', () => {
+    // Self-test: a boundary planted here on purpose, requiring an event its
+    // own named file never emits, must be caught by the exact same
+    // `missingFromBoundary` function the passing assertion above trusts —
+    // proving a real gap in PRODUCER_BOUNDARIES would fail this file rather
+    // than the check silently passing because it never runs the negative
+    // case. This entry is never added to the real PRODUCER_BOUNDARIES list.
+    const files = allSourceFiles()
+    const byPath = new Map(files.map(([rel, abs]) => [rel, readFileSync(abs, 'utf8')]))
+    const plantedUninstrumentedPath: ProducerBoundary = {
+      name: 'planted uninstrumented path (self-test only — never a real boundary)',
+      files: [RUNNER_PATH],
+      requires: [{ kind: 'gate', event: 'this_event_is_never_emitted_by_runner_ts' }]
+    }
+    expect(missingFromBoundary(plantedUninstrumentedPath, byPath)).toEqual(plantedUninstrumentedPath.requires)
   })
 })

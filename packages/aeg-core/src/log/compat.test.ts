@@ -215,6 +215,196 @@ describe('pre-task-log-v1 fixtures — forge_write family', () => {
   })
 })
 
+/**
+ * Retention-gap fixtures for the six families this task's own tranche
+ * introduced (`gate`, `operation`, `usage`, `role_attempt`, `handoff`,
+ * `effect`) — task-log-v1 7, Issue #567, O3. A pre-task-log-v1 outbox has
+ * no history for these six (they didn't exist yet), so "historical
+ * compatibility" here means: the MINIMAL shape a real caller emits when it
+ * genuinely has nothing more to report (a pre-spawn refusal with no usage
+ * receipt, a vendor shape this build doesn't parse inner fields for yet, a
+ * finding with no severity metadata) still parses cleanly, and every
+ * optional/nullable slot reads back exactly what was sent — `undefined`
+ * when the key was never set, `null` when it was set to `null` — NEVER a
+ * fabricated default (a coerced `0`, a guessed `'unavailable'`, an injected
+ * key that was never in the payload). Every assertion below reads the
+ * schema's own parsed output directly; none of it calls a report-rendering
+ * function (`renderSummary`, `vinaya pr report`'s engine, or any Studio
+ * artifact) — capture completeness is verified against the typed event
+ * itself, never against a generated report (Traps to avoid).
+ */
+
+describe('retention-gap fixtures — usage family (O3): unknown usage is null, never coerced to zero', () => {
+  it('a usage line with every unit genuinely unknown parses, and none of the three units silently become 0', () => {
+    const line = {
+      meta,
+      subject,
+      kind: 'usage' as const,
+      event: 'observed' as const,
+      payload: {},
+      model: null,
+      source: 'gemini',
+      semantics: 'cumulative' as const,
+      units: { input: null, output: null, cache: null },
+      unknown_reason: 'gemini usage shape not yet read for inner fields'
+    }
+    const result = LogEventSchema.safeParse(line)
+    expect(result.success).toBe(true)
+    if (result.success && result.data.kind === 'usage') {
+      expect(result.data.units).toEqual({ input: null, output: null, cache: null })
+      expect(result.data.unknown_reason).toBe('gemini usage shape not yet read for inner fields')
+    }
+  })
+})
+
+describe('retention-gap fixtures — role_attempt family (O3): a pre-spawn refusal has no usage receipt to fabricate', () => {
+  it('a capability-refused attempt with null usage and a null model parses, neither field defaulted', () => {
+    const line = {
+      meta,
+      subject,
+      kind: 'role_attempt' as const,
+      event: 'attempted' as const,
+      payload: {},
+      actor: 'claude',
+      attempt: 1,
+      effect_id: 'e1',
+      // No model receipt was ever given — the vendor never spawned.
+      model: null,
+      outcome: 'capability_refused' as const,
+      usage: null
+    }
+    const result = LogEventSchema.safeParse(line)
+    expect(result.success).toBe(true)
+    if (result.success && result.data.kind === 'role_attempt') {
+      expect(result.data.model).toBeNull()
+      expect(result.data.usage).toBeNull()
+    }
+  })
+})
+
+describe('retention-gap fixtures — verdict findings (O3): absent severity metadata is absent, not defaulted', () => {
+  it('a finding carrying only id/severity has no severity_scale/policy_treatment/confidence key at all — not undefined-but-present, genuinely absent', () => {
+    const line = {
+      ...dispatchBase,
+      event: 'outcome_received' as const,
+      outcome: {
+        type: 'verdict',
+        verdict: 'REQUEST CHANGES',
+        head: 'sha1',
+        comment_id: 7,
+        objectives: [{ id: 'O1', met: false }],
+        findings: [{ id: 'F1', severity: 'BLOCKER' }]
+      },
+      usage: null
+    }
+    const result = LogEventSchema.safeParse(line)
+    expect(result.success).toBe(true)
+    if (result.success && result.data.kind === 'dispatch' && result.data.event === 'outcome_received') {
+      const outcome = result.data.outcome
+      if (outcome.type === 'verdict') {
+        const finding = outcome.findings[0] as Record<string, unknown>
+        expect(Object.hasOwn(finding, 'severity_scale')).toBe(false)
+        expect(Object.hasOwn(finding, 'policy_treatment')).toBe(false)
+        expect(Object.hasOwn(finding, 'confidence')).toBe(false)
+        expect(Object.hasOwn(finding, 'confidence_scale')).toBe(false)
+        expect(Object.hasOwn(finding, 'confidence_source')).toBe(false)
+      }
+    }
+  })
+
+  it('a finding that genuinely could not determine policy treatment declares policy_treatment: "unavailable" rather than guessing blocking/non_blocking', () => {
+    const line = {
+      ...dispatchBase,
+      event: 'outcome_received' as const,
+      outcome: {
+        type: 'verdict',
+        verdict: 'REQUEST CHANGES',
+        head: 'sha1',
+        comment_id: 7,
+        objectives: [{ id: 'O1', met: false }],
+        findings: [{ id: 'F1', severity: 'MAJOR', policy_treatment: 'unavailable' }]
+      },
+      usage: null
+    }
+    expect(LogEventSchema.safeParse(line).success).toBe(true)
+  })
+})
+
+describe('retention-gap fixtures — gate/operation/handoff/effect (O3): the minimal shape each family accepts', () => {
+  const gateBase = {
+    meta,
+    subject: { issue: 412, role: 'unattributed' as const },
+    kind: 'gate' as const,
+    payload: {},
+    check: 'typecheck',
+    check_version: null,
+    policy_version: null,
+    input_fingerprint: null
+  }
+
+  it('a gate check with no policy_version and no input_fingerprint (no per-check policy-version concept exists yet) parses honestly null, not fabricated', () => {
+    const line = { ...gateBase, event: 'checked' as const, outcome: 'pass' as const }
+    const result = LogEventSchema.safeParse(line)
+    expect(result.success).toBe(true)
+    if (result.success && result.data.kind === 'gate') {
+      expect(result.data.policy_version).toBeNull()
+      expect(result.data.input_fingerprint).toBeNull()
+      expect(Object.hasOwn(result.data, 'reason')).toBe(false)
+    }
+  })
+
+  it('an operation with a null target and a null error_class (a check with nothing further to report) parses', () => {
+    const line = {
+      meta,
+      subject,
+      kind: 'operation' as const,
+      event: 'completed' as const,
+      payload: {},
+      operation: 'authenticate-invocation',
+      target: null,
+      result: 'ok' as const,
+      error_class: null
+    }
+    expect(LogEventSchema.safeParse(line).success).toBe(true)
+  })
+
+  it('a handoff raised with no requested_decision, and its later resolved twin with no resolution/resolved_by, both parse', () => {
+    const handoffShared = {
+      meta,
+      subject,
+      kind: 'handoff' as const,
+      payload: {},
+      class: 'strategy' as const,
+      reason: 'the brief assumes an approach the codebase no longer takes'
+    }
+    expect(
+      LogEventSchema.safeParse({ ...handoffShared, event: 'raised' as const, requested_decision: null }).success
+    ).toBe(true)
+    expect(
+      LogEventSchema.safeParse({ ...handoffShared, event: 'resolved' as const, resolution: null, resolved_by: null })
+        .success
+    ).toBe(true)
+  })
+
+  it('an effect observed as "uncertain" (a reconciliation that came back ambiguous) parses — never silently treated as success', () => {
+    const line = {
+      meta,
+      subject,
+      kind: 'effect' as const,
+      event: 'observed' as const,
+      payload: {},
+      effect_id: 'eff-1',
+      target: { kind: 'pr_comment', ref: 'pr-42' },
+      outcome: 'uncertain' as const
+    }
+    const result = LogEventSchema.safeParse(line)
+    expect(result.success).toBe(true)
+    if (result.success && result.data.kind === 'effect' && result.data.event === 'observed') {
+      expect(result.data.outcome).toBe('uncertain')
+    }
+  })
+})
+
 describe('pre-task-log-v1 fixtures — verdict findings, the pre-O3 minimal shape', () => {
   it('a finding with only id/severity, no state — the oldest recorded shape', () => {
     const line = {
