@@ -176,6 +176,55 @@ describe('vinaya log flush — logPublish.webhookUrl', () => {
     expect(readFileSync(path, 'utf8')).toBe('not valid json\n')
   })
 
+  it('round-2 security review, MEDIUM: bounds the POST — a slow/unresponsive endpoint fails fast rather than hanging the flush indefinitely, and the outbox stays untouched', async () => {
+    const cwd = tempDir('log-webhook-cwd-')
+    initGitRepo(cwd)
+    const home = tempDir('log-webhook-home-')
+    const line = ndjsonLine('run-1', 704)
+    const path = seedOutbox(home, 704, [line])
+
+    // Never responds — proves the timeout, not the endpoint, ends this call.
+    const server = Bun.serve({
+      port: 0,
+      async fetch() {
+        return new Promise(() => {})
+      }
+    })
+
+    // A fresh `bun` subprocess, not an in-process import: `GLOBAL_VINAYA_HOME`
+    // (`../../src/lib/config.ts`) is a module-level constant frozen at first
+    // import — this file's own top comment documents exactly why every other
+    // test here that touches a real outbox goes through a subprocess instead.
+    // A short test-only `fetchTimeoutMs` override (this file's own 4th
+    // argument to `flushOutboxToWebhook`, never reachable from any real CLI
+    // command) means this test never pays the real 30s production bound.
+    const script = join(cwd, 'run-flush.ts')
+    writeFileSync(
+      script,
+      `import { flushOutboxToWebhook, WebhookFlushError } from ${JSON.stringify(join(CLI_ROOT, 'src', 'lib', 'log-webhook-flush.ts'))}
+      try {
+        await flushOutboxToWebhook(704, ${JSON.stringify(`http://127.0.0.1:${server.port}/ingest`)}, undefined, 200)
+        console.log(JSON.stringify({ ok: true }))
+      } catch (err) {
+        console.log(JSON.stringify({ ok: false, isWebhookFlushError: err instanceof WebhookFlushError, message: err instanceof Error ? err.message : String(err) }))
+      }`
+    )
+    let stdout: string
+    try {
+      stdout = execFileSync('bun', [script], { encoding: 'utf8', cwd, env: { ...process.env, HOME: home } })
+    } catch (e) {
+      stdout = String((e as { stdout?: string }).stdout ?? '')
+    }
+    const r = { stdout }
+    server.stop(true)
+
+    const result = JSON.parse(r.stdout.trim().split('\n').pop() as string)
+    expect(result.ok).toBe(false)
+    expect(result.isWebhookFlushError).toBe(true)
+    expect(result.message).toContain('timed out after 200ms')
+    expect(readFileSync(path, 'utf8')).toBe(`${line}\n`)
+  }, 10000)
+
   it('reports nothing to flush for a missing outbox, without contacting the webhook', () => {
     const cwd = tempDir('log-webhook-cwd-')
     initGitRepo(cwd)

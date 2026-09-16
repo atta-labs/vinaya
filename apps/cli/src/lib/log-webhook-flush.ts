@@ -25,6 +25,9 @@ import { GLOBAL_VINAYA_HOME } from './config.js'
 /** One POST body capped well under common reverse-proxy/body-size limits (most default to 1-10 MiB) — a task that outgrows this should flush more often, not have this function silently start splitting one webhook call into several with no marker to dedupe them against on retry. */
 export const MAX_WEBHOOK_BODY_BYTES = 5 * 1024 * 1024
 
+/** Bounds the POST itself (round-2 security review, MEDIUM) — an unresponsive or intentionally slow endpoint would otherwise hang this call, and with it the round-end auto-flush and the whole dev-review-loop, indefinitely. */
+export const WEBHOOK_FETCH_TIMEOUT_MS = 30_000
+
 // Mirrors `log-flush.ts`'s own `SAFE_PATH_SEGMENT`/`isSafeRepoSegment` — not
 // exported from there, so the same narrow guard is repeated here rather than
 // widening that file's export surface for a one-line check.
@@ -69,7 +72,9 @@ export class WebhookFlushError extends Error {
 export async function flushOutboxToWebhook(
   outboxTask: number,
   webhookUrl: string,
-  headers?: Record<string, string>
+  headers?: Record<string, string>,
+  /** Test-only override of `WEBHOOK_FETCH_TIMEOUT_MS` — every production call site omits this and gets the real bound; a test proving the timeout fires does not have to pay the real 30s to observe it. */
+  fetchTimeoutMs: number = WEBHOOK_FETCH_TIMEOUT_MS
 ): Promise<WebhookFlushOutcome> {
   const resolved = await resolveRepo()
   const repo = resolved && isSafeRepoSegment(resolved.owner) && isSafeRepoSegment(resolved.repo) ? resolved : null
@@ -124,12 +129,19 @@ export async function flushOutboxToWebhook(
     response = await fetch(webhookUrl, {
       method: 'POST',
       headers: { 'content-type': 'application/x-ndjson', ...headers },
-      body
+      body,
+      signal: AbortSignal.timeout(fetchTimeoutMs)
     })
   } catch (err) {
+    const reason =
+      err instanceof Error && err.name === 'TimeoutError'
+        ? `timed out after ${fetchTimeoutMs}ms`
+        : err instanceof Error
+          ? err.message
+          : String(err)
     throw new WebhookFlushError(
       'log-webhook-flush-failed',
-      `log webhook flush: POST to ${webhookUrl} failed: ${err instanceof Error ? err.message : String(err)}`
+      `log webhook flush: POST to ${webhookUrl} failed: ${reason}`
     )
   }
   if (!response.ok) {
