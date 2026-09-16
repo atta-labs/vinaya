@@ -2540,7 +2540,27 @@ export async function dispatchRole(
           // doc comment records what is (Claude, `ANTHROPIC_API_KEY`,
           // verified live) and is not (Codex/Gemini, disclosed as unverified
           // on this host) confirmed.
-          buildWorkerEnv(process.env, attribution, RUNTIME_CREDENTIAL_ENV_KEYS[agent] ?? [])
+          //
+          // Round 2 security review, HIGH: `WORKER_ENV_ALLOWLIST_KEYS`
+          // passes `TMPDIR` through from the parent unmodified, still naming
+          // the real host temp base the profile never grants — only
+          // `resolvedBoundary.tmpDir` (the profile's own scratch dir) is
+          // read+write inside the confinement. `TMPDIR`/`TMP`/`TEMP` are
+          // overridden here, in `attribution` (which always wins over the
+          // allowlisted value, per `buildWorkerEnv`'s own doc comment), so a
+          // confined `mkdir -p "$TMPDIR/x"` — a pattern common across
+          // `bun install`/`npm`/most POSIX toolchains — resolves to a path
+          // the profile actually grants.
+          buildWorkerEnv(
+            process.env,
+            {
+              ...attribution,
+              TMPDIR: resolvedBoundary.tmpDir,
+              TMP: resolvedBoundary.tmpDir,
+              TEMP: resolvedBoundary.tmpDir
+            },
+            RUNTIME_CREDENTIAL_ENV_KEYS[agent] ?? []
+          )
         : { ...process.env, ...attribution }
     })
 

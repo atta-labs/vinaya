@@ -950,6 +950,75 @@ describe('resolveWorkerBoundaryLaunch — live sandbox-exec enforcement (round 3
   )
 
   it.skipIf(!isWorkerBoundaryAvailable(REAL_WORKER_BOUNDARY_DEPS))(
+    // Round 2 security review, HIGH: proves both halves live — the bug
+    // (parent TMPDIR passed through unmodified is NOT writable inside the
+    // confinement) and the fix (`launch.tmpDir`, overridden into the
+    // spawned env's `TMPDIR`/`TMP`/`TEMP`, IS writable). A single-level
+    // `mkdir "$TMPDIR/x"` — the shape `fs.mkdtempSync(os.tmpdir())` and most
+    // Node/bun toolchain temp-dir creation actually issues (one syscall
+    // against an already-existing parent) — not `mkdir -p`: live-verified
+    // separately that BSD `mkdir -p` walks and `mkdir()`s every ancestor
+    // component from `/private` down regardless of whether it already
+    // exists, so it hits `EPERM` on an ancestor outside the granted subpath
+    // (e.g. `/private`) even once `TMPDIR` itself is correctly overridden —
+    // a real, disclosed limitation of `-p` specifically under this profile,
+    // not evidence the override in this fix does not work, and not the
+    // pattern real toolchain temp-dir creation uses.
+    'a real confined child can only use $TMPDIR for scratch writes once TMPDIR is overridden to launch.tmpDir',
+    () => {
+      const allowedDir = tempDir('vinaya-wb-live-tmpdir-allowed-')
+      const homeDir = tempDir('vinaya-wb-live-tmpdir-home-')
+      const binDir = tempDir('vinaya-wb-live-tmpdir-bin-')
+      const probeBinary = join(binDir, 'tmpdir-probe.sh')
+      writeFileSync(probeBinary, '#!/bin/bash\nmkdir "$TMPDIR/child-test-dir" 2>/dev/null && echo ok || echo blocked\n')
+      chmodSync(probeBinary, 0o755)
+
+      const result = resolveWorkerBoundaryLaunch(
+        {
+          binaryPath: probeBinary,
+          args: [],
+          allowedDir,
+          vinayaHomeDir: homeDir,
+          vinayaHomeWritableSubdirs: []
+        },
+        REAL_WORKER_BOUNDARY_DEPS
+      )
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      try {
+        expect(result.launch.tmpDir, 'tmpDir must not be the same path as allowedDir').not.toBe(allowedDir)
+
+        const overriddenEnv = buildWorkerEnv(process.env, {
+          TMPDIR: result.launch.tmpDir,
+          TMP: result.launch.tmpDir,
+          TEMP: result.launch.tmpDir
+        })
+        const withOverride = spawnSync(result.launch.command, result.launch.args, {
+          cwd: allowedDir,
+          env: overriddenEnv,
+          encoding: 'utf8'
+        })
+        expect(withOverride.stdout.trim(), `stderr: ${withOverride.stderr}`).toBe('ok')
+
+        // Regression guard: the parent's own real TMPDIR, unmodified — the
+        // pre-fix shape `buildWorkerEnv`'s allowlist alone produced — must
+        // still be denied, proving this is the profile actually enforcing
+        // the boundary and not merely `launch.tmpDir` happening to be
+        // writable for an unrelated reason.
+        const unoverriddenEnv = buildWorkerEnv(process.env, {})
+        const withoutOverride = spawnSync(result.launch.command, result.launch.args, {
+          cwd: allowedDir,
+          env: unoverriddenEnv,
+          encoding: 'utf8'
+        })
+        expect(withoutOverride.stdout.trim()).toBe('blocked')
+      } finally {
+        result.launch.cleanup()
+      }
+    }
+  )
+
+  it.skipIf(!isWorkerBoundaryAvailable(REAL_WORKER_BOUNDARY_DEPS))(
     'a real confined child cannot read the real Keychain directory',
     () => {
       const allowedDir = tempDir('vinaya-wb-live-keychain-')

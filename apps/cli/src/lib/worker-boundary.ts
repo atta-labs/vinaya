@@ -450,7 +450,21 @@ export function buildWorkerSandboxProfile(opts: {
 
 // --- resolving a real launch (O1) -------------------------------------------
 
-export type WorkerBoundaryLaunch = { command: string; args: string[]; cleanup: () => void }
+/**
+ * `tmpDir` (round 2 security review, HIGH): the confined child's own
+ * `TMPDIR`/`TMP`/`TEMP` must be repointed at this exact path — the ONE
+ * directory this profile grants read+write beyond `allowedDir` for a
+ * scratch temp use (`scratchTmpDir`, below). `buildWorkerEnv`'s own
+ * `WORKER_ENV_ALLOWLIST_KEYS` passes `TMPDIR` through from the parent
+ * unmodified, which still names the real host temp base — a path this
+ * profile never grants, so a confined `mkdir -p "$TMPDIR/x"` (a pattern
+ * common across `bun install`/`npm`/most POSIX toolchains) failed with a
+ * real permission denial, live-reproduced on this host. The caller
+ * (`dispatch.ts`) must override `TMPDIR`/`TMP`/`TEMP` to this value in the
+ * env it actually spawns with — this type only carries the value out;
+ * `resolveWorkerBoundaryLaunch` has no env-construction role of its own.
+ */
+export type WorkerBoundaryLaunch = { command: string; args: string[]; cleanup: () => void; tmpDir: string }
 
 export type WorkerBoundaryResolution = { ok: true; launch: WorkerBoundaryLaunch } | { ok: false; reason: string }
 
@@ -738,7 +752,8 @@ export function resolveWorkerBoundaryLaunch(
       launch: {
         command: '/usr/bin/sandbox-exec',
         args: ['-f', profilePath, opts.binaryPath, ...opts.args],
-        cleanup
+        cleanup,
+        tmpDir: scratchTmpDir
       }
     }
   } catch (error) {
