@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { createServer } from 'node:net'
-import { spawnSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { homedir, tmpdir } from 'node:os'
 import { chmodSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -1564,6 +1573,115 @@ describe('resolveBunExecDir — independent of the DISPATCHER process own runtim
         )
         expect(spawnResult.status, `stderr: ${spawnResult.stderr}`).toBe(0)
         expect(spawnResult.stdout.trim().length).toBeGreaterThan(0)
+      } finally {
+        result.launch.cleanup()
+      }
+    }
+  )
+})
+
+/** `null` when no real `node` binary is on this host's PATH — best-effort, never assumed, the same posture `resolveGitExecPath`/`resolveBunExecDir` already take in `worker-boundary.ts` itself. */
+const REAL_NODE_PATH: string | null = (() => {
+  try {
+    return execFileSync('which', ['node'], { encoding: 'utf8' }).trim() || null
+  } catch {
+    return null
+  }
+})()
+
+describe('resolveWorkerBoundaryLaunch — file-read-metadata for Node.js-hosted confined processes (round 2 review, MAJOR)', () => {
+  it.skipIf(!isWorkerBoundaryAvailable(REAL_WORKER_BOUNDARY_DEPS) || !REAL_NODE_PATH)(
+    'a real node binary no longer crashes at startup on an ancestor lstat EPERM, while the real credentials file stays content-denied',
+    () => {
+      const allowedDir = tempDir('vinaya-wb-live-node-allowed-')
+      const homeDir = tempDir('vinaya-wb-live-node-home-')
+      const realCredentialPath = join(homedir(), '.claude', '.credentials.json')
+
+      const probeScript = join(allowedDir, 'node-probe.js')
+      writeFileSync(
+        probeScript,
+        [
+          "const fs = require('node:fs')",
+          "console.log('STARTED')",
+          `try { fs.readFileSync(${JSON.stringify(realCredentialPath)}, 'utf8'); console.log('CRED:READABLE') } catch { console.log('CRED:BLOCKED') }`
+        ].join('\n')
+      )
+
+      const result = resolveWorkerBoundaryLaunch(
+        {
+          binaryPath: REAL_NODE_PATH as string,
+          args: [probeScript],
+          allowedDir,
+          vinayaHomeDir: homeDir,
+          vinayaHomeWritableSubdirs: []
+        },
+        REAL_WORKER_BOUNDARY_DEPS
+      )
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      try {
+        // Before this fix: `node <script>` failed immediately with `EPERM:
+        // operation not permitted, lstat '/private'` (Node's own module
+        // resolution walking every ancestor directory up to the filesystem
+        // root) — never reaching `STARTED` at all, live-reproduced on this
+        // host with the un-fixed profile.
+        const spawnResult = spawnSync(result.launch.command, result.launch.args, {
+          cwd: allowedDir,
+          encoding: 'utf8'
+        })
+        expect(spawnResult.status, `stderr: ${spawnResult.stderr}`).toBe(0)
+        const lines = spawnResult.stdout.trim().split('\n')
+        expect(lines[0], 'the confined node process must start and run its own script').toBe('STARTED')
+        expect(
+          lines[1],
+          'file-read-metadata is a separate Seatbelt operation from file-read* (content) — granting the former must not reopen the latter'
+        ).toBe('CRED:BLOCKED')
+      } finally {
+        result.launch.cleanup()
+      }
+    }
+  )
+})
+
+describe('resolveWorkerBoundaryLaunch — symlinked binaryPath exec target (security review, HIGH)', () => {
+  it.skipIf(!isWorkerBoundaryAvailable(REAL_WORKER_BOUNDARY_DEPS))(
+    'a binaryPath that is a symlink into a different directory (the official installer layout) still execs successfully',
+    () => {
+      const allowedDir = tempDir('vinaya-wb-live-symlink-allowed-')
+      const homeDir = tempDir('vinaya-wb-live-symlink-home-')
+      const targetDir = tempDir('vinaya-wb-live-symlink-target-')
+      const binDir = tempDir('vinaya-wb-live-symlink-bin-')
+      const realVendor = join(targetDir, 'real-vendor')
+      writeFileSync(realVendor, '#!/bin/bash\necho ran-ok\n')
+      chmodSync(realVendor, 0o755)
+      // Mirrors the officially documented macOS install layout: a PATH
+      // entry symlinked into a SEPARATE directory from the symlink itself
+      // (e.g. `~/.local/bin/claude` -> `~/.local/share/claude/versions/<v>`)
+      // — the exact shape `dispatch.ts`'s own `which claude` resolution
+      // returns, and the shape the security review's HIGH finding
+      // reproduced against.
+      const symlinkPath = join(binDir, 'claude')
+      symlinkSync(realVendor, symlinkPath)
+
+      const result = resolveWorkerBoundaryLaunch(
+        { binaryPath: symlinkPath, args: [], allowedDir, vinayaHomeDir: homeDir, vinayaHomeWritableSubdirs: [] },
+        REAL_WORKER_BOUNDARY_DEPS
+      )
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      try {
+        // Before this fix: `sandbox-exec` was launched with the ORIGINAL,
+        // un-realpath'd symlink path as its exec target, while the
+        // profile's own process-exec allowlist was built from the
+        // REALPATH'd target directory — a mismatch that denied the launch
+        // outright (`execvp() ... Operation not permitted`), live-verified
+        // by the security reviewer against exactly this installer layout.
+        const spawnResult = spawnSync(result.launch.command, result.launch.args, {
+          cwd: allowedDir,
+          encoding: 'utf8'
+        })
+        expect(spawnResult.status, `stderr: ${spawnResult.stderr}`).toBe(0)
+        expect(spawnResult.stdout.trim()).toBe('ran-ok')
       } finally {
         result.launch.cleanup()
       }

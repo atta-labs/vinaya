@@ -426,6 +426,34 @@ export function buildWorkerSandboxProfile(opts: {
     '(deny default)',
     '(import "system.sb")',
     '',
+    ';; file-read-metadata, UNCONDITIONALLY (round 2 review, MAJOR — a Node.js-',
+    ';; hosted confined process crashes at startup before running any code).',
+    ';; A real `node` binary walks from its own script path up through EVERY',
+    ";; ancestor directory to the filesystem root, `lstat`'ing each one (module",
+    ';; resolution and its own `realpath` of the entry script) — live-reproduced',
+    ';; on this host: with no rule naming any ancestor of `allowedDir`/`runtimeDir`',
+    ";; (e.g. `/private`, a `subpath`-only ancestor of macOS's own tmp layout),",
+    ';; `node <script>` fails immediately with `EPERM: operation not permitted,',
+    "; lstat '/private'` — before the confined role, whatever it is, ever runs a",
+    ";; line of its own code. This never reproduced against `bun` (this profile's",
+    ';; own prior live tests all pass a `bun`-hosted `binaryPath`, masking the',
+    ';; gap) but would hit any Node-hosted vendor CLI — `codex`/`gemini` are',
+    ';; commonly shipped as `node`-shebang npm packages, unlike `claude`, which',
+    ';; is a native Mach-O binary on this host and unaffected either way.',
+    ';; `file-read-metadata` is a SEPARATE Seatbelt operation from `file-read*`',
+    '; (content) — granting it exposes only existence/size/permissions/mtime,',
+    ';; never file CONTENTS; verified live that the real HOME/Keychain/OAuth-',
+    ';; credential `file-read*` denies below are completely unaffected by this',
+    ';; rule (a confined read of a real credential file still fails `EPERM`',
+    ';; with this rule present). Scoping this to only the specific ancestor',
+    ";; directories each dispatch's own `allowedDir`/`execAllowDirs`/`vinayaHomeDir`",
+    ';; actually need would require enumerating every possible ancestor of an',
+    ';; unpredictable, host-varying allowlist (a git/bun/homebrew install path,',
+    ";; the vendor binary's own real location) — intractable and no more secure",
+    ';; than this single blanket metadata-only allow, since metadata alone lets',
+    ';; a confined process learn only that SOME path exists, not what it holds.',
+    '(allow file-read-metadata)',
+    '',
     ";; Process-exec: the confined role's own worktree, the runtime interpreter's",
     ';; install dir, and whatever standard toolchain directories were resolved as',
     ";; present on this host — see this function's own doc comment, item 1.",
@@ -740,7 +768,23 @@ export function resolveWorkerBoundaryLaunch(
   try {
     const realHome = realpathSync(homedir())
     const allowedDirReal = realpathSync(opts.allowedDir)
-    const runtimeDir = dirname(realpathSync(opts.binaryPath))
+    // Security review (round 2), HIGH: this MUST be the same resolved value
+    // used both to derive `runtimeDir`'s exec-allow grant below AND as the
+    // actual `sandbox-exec` exec target — Seatbelt's `process-exec` rule
+    // matches the LITERAL path handed to it, before any symlink resolution
+    // of its own, live-reproduced: the official macOS installer's own
+    // layout (`~/.local/bin/claude` symlinked to
+    // `~/.local/share/claude/versions/<version>`, the exact shape
+    // `dispatch.ts`'s own `which claude` resolution returns) put the
+    // profile's exec-allow rule on the REALPATH'd target directory while
+    // the un-realpath'd symlink path was still what got exec'd — denied
+    // outright (`execvp() ... Operation not permitted`) before the vendor
+    // process ever started, defeating O1 even with a correctly staged
+    // credential. Resolving once, here, and using this SAME value for both
+    // purposes closes the gap structurally rather than by naming the
+    // installer's specific symlink shape.
+    const resolvedBinaryPath = realpathSync(opts.binaryPath)
+    const runtimeDir = dirname(resolvedBinaryPath)
     const scratchTmpDir = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-worker-boundary-')))
 
     // O1 (Issue #640): staged into `scratchTmpDir` — a directory already
@@ -878,7 +922,7 @@ export function resolveWorkerBoundaryLaunch(
       ok: true,
       launch: {
         command: '/usr/bin/sandbox-exec',
-        args: ['-f', profilePath, opts.binaryPath, ...opts.args],
+        args: ['-f', profilePath, resolvedBinaryPath, ...opts.args],
         cleanup,
         tmpDir: scratchTmpDir,
         oauthConfigDir
