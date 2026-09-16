@@ -674,11 +674,39 @@ export async function runBodyChecks(
   prNumber: number | undefined,
   retryCommand: string
 ): Promise<void> {
+  const errors = await collectBodyCheckErrors(body, branch, prNumber)
+  if (errors.length === 0) return
+  refuse(
+    errors.map((e) =>
+      makeCheckError(e.check, e.message, `${e.agent_recovery_prompt} Fix the body, then re-run \`${retryCommand}\`.`)
+    )
+  )
+}
+
+/**
+ * The non-refusing half of `runBodyChecks` above — runs the exact same
+ * `validates: 'body'` registry over `body` and returns the aggregated
+ * findings as an ordinary array (empty on pass) instead of calling
+ * `refuse()`. Same `ring1_forgeWriteInterception` opt-out, same
+ * `localOnly`/`PR_NUMBER` handling, same `principalOwed`/`pending`
+ * exclusion as `runBodyChecks` — the two must never drift apart, which is
+ * why `runBodyChecks` now delegates to this rather than duplicating the
+ * logic. Exists for a caller that needs the findings without the process
+ * ever being able to exit underneath it (`pr-report-engine.ts`'s
+ * `bodyCheckRefusalMessage`, called from the developer-review loop's own
+ * long-lived driver, where `refuse()`'s `process.exit(1)` would kill the
+ * whole driver instead of just this one write, round 3 review MAJOR/HIGH).
+ */
+export async function collectBodyCheckErrors(
+  body: string,
+  branch: string,
+  prNumber: number | undefined
+): Promise<CheckError[]> {
   const config = loadConfigChecked()
-  if (config.ok && config.config?.rings?.ring1_forgeWriteInterception === false) return
+  if (config.ok && config.config?.rings?.ring1_forgeWriteInterception === false) return []
 
   const specs = resolvedRegistry().filter((s) => s.validates === 'body')
-  if (specs.length === 0) return
+  if (specs.length === 0) return []
 
   const callerEnv: NodeJS.ProcessEnv = { ...process.env, PR_BODY: body, BRANCH: branch }
   if (prNumber === undefined) delete callerEnv.PR_NUMBER
@@ -693,19 +721,13 @@ export async function runBodyChecks(
     localOnly: prNumber === undefined
   })
 
-  const errors = outcomes
+  return outcomes
     .filter((o) => o.status === 'fail' || o.status === 'error')
     .flatMap((o) => {
       const spec = specs.find((s) => s.name === o.name)
       if (spec?.principalOwed && o.errors.length > 0 && o.errors.every((e) => e.pending === true)) return []
       return o.errors
     })
-  if (errors.length === 0) return
-  refuse(
-    errors.map((e) =>
-      makeCheckError(e.check, e.message, `${e.agent_recovery_prompt} Fix the body, then re-run \`${retryCommand}\`.`)
-    )
-  )
 }
 
 /**

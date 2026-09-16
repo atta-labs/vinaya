@@ -17,7 +17,7 @@ import { buildCheckEnv } from '../checks/runner'
 import { ScanContext } from '../checks/scan-context'
 import { loadConfig } from './config'
 import { type DispatchTeeRecovery, realDispatchTeeRecoveryDeps, recoverUsageFromDispatchTee } from './dispatch.js'
-import { runBodyChecks } from './forge-write.js'
+import { collectBodyCheckErrors } from './forge-write.js'
 import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from './numstat'
 import { packageRoot } from './package-root.js'
 import { meteringRefusalMessage, realDeps } from '../commands/tokens'
@@ -1207,10 +1207,43 @@ export function ghEditBody(pr: string, body: string): void {
 export type EvidenceReportOutcome =
   | { kind: 'ok'; tokensSpliced: boolean; tokensCollected: boolean; tokensRefusal?: string; gatesFailed: boolean }
   | { kind: 'splice-refused'; message: string }
+  | { kind: 'body-checks-refused'; message: string }
   | { kind: 'edit-failed'; message: string }
   | { kind: 'reread-failed'; message: string }
   | { kind: 'drift-restore-failed'; message: string }
   | { kind: 'drift-restored'; message: string }
+
+/**
+ * `runBodyChecks` (`forge-write.ts`) refuses via `refuse()`, which is typed
+ * `never` and calls `process.exit(1)` directly — there is no exception a
+ * caller could ordinarily catch. `runReportForOpenPr` below runs this check
+ * from inside the developer-review loop's own long-lived driver process,
+ * concurrently (via `Promise.all`) with reviewer dispatch and that same
+ * process's own real `SIGTERM`/`SIGINT` handlers, so that exit would kill
+ * the WHOLE driver mid-round — or, if a shutdown signal happened to land
+ * while some earlier version of this code had globally monkey-patched
+ * `process.exit` for the call's duration, hijack that unrelated signal's
+ * own real exit into a thrown error instead (round 3 review, MAJOR/HIGH:
+ * patching a process-global for a concurrently-running process is exactly
+ * the shared-mutable-state hazard `defaultRunEvidenceReport`'s own doc
+ * comment already calls out and avoids for `process.env`). Never
+ * intercepting `process.exit` at all — rather than patching it — is what
+ * actually closes both hazards: `collectBodyCheckErrors` below runs the
+ * SAME registry `runBodyChecks` runs and returns its findings as an
+ * ordinary array instead of calling `refuse()`, so this call site simply
+ * never reaches the one line that would exit the process. `runBodyChecks`
+ * and `refuse()` themselves are unchanged (each now calls
+ * `collectBodyCheckErrors` too, so behavior for their existing callers is
+ * byte-for-byte the same): every OTHER caller (`pr.ts`'s create/edit paths,
+ * `pr-report.ts`'s own `--push <n> --body-file` branch) still goes through
+ * `runBodyChecks` directly and still exits the process on a refusal,
+ * exactly as before.
+ */
+async function bodyCheckRefusalMessage(body: string, branch: string, prNumber: number): Promise<string | null> {
+  const errors = await collectBodyCheckErrors(body, branch, prNumber)
+  if (errors.length === 0) return null
+  return `vinaya pr report: refused — ${errors.map((e) => `${e.check}: ${e.message}`).join(' | ')}`
+}
 
 /**
  * Pushes `result` (a `buildReport` output already computed against `pushPr`'s
@@ -1275,15 +1308,20 @@ export async function runReportForOpenPr(
   }
 
   // O1 (task 17): the outgoing spliced bytes go through the SAME registry
-  // runner `pr create`/`pr edit` do before `gh pr edit` ever sees them —
-  // refuses (never returns) on a finding, so a body this function sends is a
-  // body CI's own `vinaya-checks.yml`/`vinaya-body-checks.yml` also accepts.
-  await runBodyChecks(
+  // runner `pr create`/`pr edit` do before `gh pr edit` ever sees them — a
+  // body this function sends is, by construction, a body CI's own
+  // `vinaya-checks.yml`/`vinaya-body-checks.yml` also accepts. Goes through
+  // `collectBodyCheckErrors` rather than `runBodyChecks` itself: a refusal
+  // here must return an outcome, never exit this process (see
+  // `bodyCheckRefusalMessage`'s own doc comment above for why).
+  const bodyCheckMessage = await bodyCheckRefusalMessage(
     spliced.body,
     opts.branch ?? process.env.BRANCH ?? '',
-    Number(pushPr),
-    `vinaya pr report --push ${pushPr}`
+    Number(pushPr)
   )
+  if (bodyCheckMessage !== null) {
+    return { kind: 'body-checks-refused', message: bodyCheckMessage }
+  }
 
   try {
     ghEditBody(pushPr, spliced.body)

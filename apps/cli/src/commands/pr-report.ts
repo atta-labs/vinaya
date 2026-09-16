@@ -311,6 +311,7 @@ export async function prReportCommand(args: string[], testOverrides?: { gateRunn
         console.error(`vinaya pr report: refused — ${outcome.message}`)
         process.exit(1)
         break
+      case 'body-checks-refused':
       case 'edit-failed':
       case 'reread-failed':
       case 'drift-restore-failed':

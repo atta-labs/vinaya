@@ -791,6 +791,10 @@ async function defaultRunEvidenceReport(
   const envOverlay: NodeJS.ProcessEnv = { ...process.env, PR_BODY: preEditBody, PR_NUMBER: pushPr, BRANCH: branch }
   try {
     const result = await buildReport({ body: preEditBody, gradedBodySource: 'push', cwd, envOverlay })
+    // Every non-`'ok'` kind carries a `message` and reaches here as an
+    // ordinary return, never a process exit — including `'body-checks-refused'`
+    // (Issue #639): a body-check refusal during this push is just one more
+    // failure mode this ternary already collapses to `{ ok: false, reason }`.
     const outcome = await runReportForOpenPr(pushPr, preEditBody, result, { includeTokens: false, branch })
     return outcome.kind === 'ok'
       ? { ok: true, gatesFailed: outcome.gatesFailed }
