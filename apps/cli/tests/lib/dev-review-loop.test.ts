@@ -60,7 +60,9 @@ import {
   assertValidLoopEvent,
   buildReexecArgs,
   CONFIDENCE_PROMPT_LINE,
+  describeConfidencePauseDetail,
   describeObjectivesEdit,
+  deriveVerdictPauseDetail,
   developerRoundMarker,
   DRIVER_OWNED_PATHS,
   extractObjectivesSection,
@@ -2236,12 +2238,18 @@ describe('devReviewLoop — escalation pauses, --resume continues after a ruling
     expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:escalation -->$/m)
     expect(pauseComment).toMatch(/vinaya dev-review-loop --resume 123/)
     expect(pauseComment).not.toMatch(/^VERDICT:/m)
+    // O1 ([task-log-v1] 9, Issue #631): `assessRound`'s own `'escalation'`
+    // decision (a reviewer's ESCALATE verdict) carries no `detail` at all —
+    // the driver narrates it from the same verdicts it already dispatched,
+    // naming WHICH role escalated, so the comment alone states what fired.
+    expect(pauseComment).toContain('reviewer returned ESCALATE this round')
 
     const pauseState = JSON.parse(
       readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
     ) as Record<string, unknown>
     expect(pauseState.round).toBe(1)
     expect(pauseState.reason).toBe('escalation')
+    expect(pauseState.detail).toContain('reviewer returned ESCALATE this round')
 
     // Seed a Principal ruling comment on the PR — the same shape
     // `filterPrincipalRulings`'s own unit tests use — before resuming. Named
@@ -2809,6 +2817,13 @@ describe('devReviewLoop — a paused loop for reason no_progress still logs its 
       'utf8'
     )
     expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:no_progress -->$/m)
+    // O1 ([task-log-v1] 9, Issue #631): `assessRound`'s own generic
+    // `'no_progress'` decision (two consecutive rounds resolving no finding)
+    // carries no `detail` at all — the driver narrates it from the round's
+    // own `findings_compared` event, so the comment alone states what
+    // the driver observed, not just the bare reason name.
+    expect(pauseComment).toContain('no finding was marked resolved this round')
+    expect(pauseComment).toContain('two consecutive rounds with no forward motion')
 
     // The regression: this event was captured into `pendingCompletionEvents`
     // by the `dispatch_reviewers` branch's unconditional filter, and only
@@ -7057,6 +7072,70 @@ describe('routeCompletionEvents (pure) — regression, PR #459 MAJOR', () => {
   // propagates out before `await logEvents(pendingCompletionEvents)` is ever
   // reached. See 'a crash mid-publish never logs merged_ready', below, for
   // the real, end-to-end proof of that.
+})
+
+describe('describeConfidencePauseDetail (pure) — [task-log-v1] 9, Issue #631, O1/O3', () => {
+  it('names the absent case — no confidence line on the re-asked turn', () => {
+    expect(describeConfidencePauseDetail('absent')).toContain('no confidence line was found on the re-asked turn')
+  })
+
+  it('names the reported-but-low case, including the developer-supplied reason when present', () => {
+    const detail = describeConfidencePauseDetail({ value: 35, reason: 'flaky test environment' })
+    expect(detail).toContain('confidence reported at 35')
+    expect(detail).toContain('(flaky test environment)')
+    expect(detail).toContain('below the required 50 threshold')
+  })
+
+  it('omits the parenthetical when no reason was supplied', () => {
+    const detail = describeConfidencePauseDetail({ value: 20 })
+    expect(detail).toContain('confidence reported at 20')
+    expect(detail).not.toContain('()')
+  })
+})
+
+describe('deriveVerdictPauseDetail (pure) — [task-log-v1] 9, Issue #631, O1/O3', () => {
+  const findingsComparedEvent = (
+    overrides: Partial<{ open: string[]; resolved: string[]; new: string[]; recurring: string[] }>
+  ) =>
+    ({
+      event: 'findings_compared',
+      round: 2,
+      open: [],
+      resolved: [],
+      new: [],
+      recurring: [],
+      ...overrides
+    }) as unknown as DevReviewLoopEventInput
+
+  it('names the escalating role(s) for reason escalation', () => {
+    expect(deriveVerdictPauseDetail('escalation', [], true, false)).toBe('reviewer returned ESCALATE this round')
+    expect(deriveVerdictPauseDetail('escalation', [], false, true)).toBe('security returned ESCALATE this round')
+    expect(deriveVerdictPauseDetail('escalation', [], true, true)).toBe(
+      'reviewer and security returned ESCALATE this round'
+    )
+  })
+
+  it('names the reappearing finding ids for reason reappearance, read from the round’s own findings_compared event', () => {
+    const events = [findingsComparedEvent({ recurring: ['F1', 'F3'] })]
+    const detail = deriveVerdictPauseDetail('reappearance', events, false, false)
+    expect(detail).toContain('F1, F3')
+    expect(detail).toContain('reappeared after being marked resolved')
+  })
+
+  it('narrates the no_progress case from the same findings_compared event, never inventing a fact assessRound did not already compute', () => {
+    const events = [findingsComparedEvent({ open: ['F1'] })]
+    const detail = deriveVerdictPauseDetail('no_progress', events, false, false)
+    expect(detail).toContain('no finding was marked resolved this round')
+    expect(detail).toContain('two consecutive rounds with no forward motion')
+  })
+
+  it('returns undefined when no findings_compared event is present at all — never fabricates one', () => {
+    expect(deriveVerdictPauseDetail('reappearance', [], false, false)).toBeUndefined()
+  })
+
+  it('returns undefined for max_rounds — that reason already carries its own detail from assessRound, so the call site never even calls this for it', () => {
+    expect(deriveVerdictPauseDetail('max_rounds', [], false, false)).toBeUndefined()
+  })
 })
 
 describe('filterPrincipalRulings / findPrincipalFrozenBrief (pure)', () => {

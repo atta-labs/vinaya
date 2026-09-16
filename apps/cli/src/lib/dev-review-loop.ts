@@ -64,6 +64,7 @@ import {
   type LoopConfig,
   type LoopState,
   type Observations,
+  type PauseReason,
   type ReconstructedJournal,
   type ReviewInputManifest,
   type ReviewPolicy,
@@ -557,6 +558,62 @@ async function defaultFlushOutbox(task: number): Promise<void> {
       `vinaya dev-review-loop: round-end flush failed (non-fatal, lines stay in the outbox for a later flush): ${message}\n`
     )
   }
+}
+
+/**
+ * O1/O3: `assessRound`'s own `'confidence'` pause (`packages/aeg-core`, out
+ * of this task's Surface — the guard itself is untouched) carries no
+ * `detail` at all for either branch that reaches it (a re-asked turn that
+ * never reported one; a reported value still under 50 after the loop's one
+ * extra turn). The driver already read the exact `Confidence` value that
+ * decided which branch fired — this only narrates that already-observed
+ * fact, never a new one `assessRound` didn't already see.
+ */
+export function describeConfidencePauseDetail(confidence: Confidence): string {
+  if (confidence === 'absent') {
+    return 'no confidence line was found on the re-asked turn — the developer never reported one a second time'
+  }
+  const reasonSuffix = confidence.reason ? ` (${confidence.reason})` : ''
+  return `confidence reported at ${confidence.value}${reasonSuffix}, below the required 50 threshold, after the loop's one extra turn was already used`
+}
+
+/**
+ * O1/O3: the `'reappearance'`/`'no_progress'`/`'escalation'` pauses
+ * `assessVerdicts` decides (`packages/aeg-core`, out of Surface) carry no
+ * `detail` either, though the round's own `findings_compared` event (Boundary:
+ * read here, never recomputed — the comparison itself stays entirely in
+ * `assessRound`) already names exactly which finding ids reappeared, and the
+ * driver already knows which role(s) returned `ESCALATE` from the same
+ * verdicts it built `Observations` from. `max_rounds` is excluded: it
+ * already carries its own `detail` from `assessRound` (`max rounds: <n>`),
+ * so this is never called for it (see the `decision.detail === undefined`
+ * guard at each call site).
+ */
+export function deriveVerdictPauseDetail(
+  reason: PauseReason,
+  events: readonly DevReviewLoopEventInput[],
+  reviewerEscalated: boolean,
+  securityEscalated: boolean
+): string | undefined {
+  if (reason === 'escalation') {
+    const roles = [reviewerEscalated ? 'reviewer' : null, securityEscalated ? 'security' : null].filter(
+      (r): r is string => r !== null
+    )
+    return roles.length > 0 ? `${roles.join(' and ')} returned ESCALATE this round` : undefined
+  }
+  const findingsCompared = events.find(
+    (e): e is Extract<DevReviewLoopEventInput, { event: 'findings_compared' }> => e.event === 'findings_compared'
+  )
+  if (!findingsCompared) return undefined
+  if (reason === 'reappearance') {
+    return findingsCompared.recurring.length > 0
+      ? `finding${findingsCompared.recurring.length > 1 ? 's' : ''} ${findingsCompared.recurring.join(', ')} reappeared after being marked resolved in an earlier round`
+      : undefined
+  }
+  if (reason === 'no_progress') {
+    return `no finding was marked resolved this round (open: ${findingsCompared.open.length}, new: ${findingsCompared.new.length}), the same as the round before it — two consecutive rounds with no forward motion`
+  }
+  return undefined
 }
 
 function defaultSleep(ms: number): Promise<void> {
@@ -2520,6 +2577,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           const result = assessRound(state, obs)
           state = result.state
           decision = result.decision
+          if (decision.type === 'pause' && decision.reason === 'confidence' && decision.detail === undefined) {
+            decision = { ...decision, detail: describeConfidencePauseDetail(confidence ?? 'absent') }
+          }
           await logEvents(result.events)
           await d.flushOutbox(task)
           persistCurrentLoopState(decision.type, decision.type === 'pause' ? decision.reason : undefined)
@@ -2533,6 +2593,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           const result = assessRound(state, obs)
           state = result.state
           decision = result.decision
+          if (decision.type === 'pause' && decision.reason === 'confidence' && decision.detail === undefined) {
+            decision = { ...decision, detail: describeConfidencePauseDetail(confidence) }
+          }
           pendingGateRedRetry = false
           if (mechanicalRetryRecoverySurvivesOneReset) {
             mechanicalRetryRecoverySurvivesOneReset = false
@@ -2849,6 +2912,17 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               const result = assessRound(state, obs)
               state = result.state
               decision = result.decision
+              if (decision.type === 'pause' && decision.detail === undefined) {
+                decision = {
+                  ...decision,
+                  detail: deriveVerdictPauseDetail(
+                    decision.reason,
+                    result.events,
+                    reviewer.verdict.observation.verdict === 'ESCALATE',
+                    security.verdict.observation.verdict === 'ESCALATE'
+                  )
+                }
+              }
               const routed = routeCompletionEvents(result.events, decision.type)
               pendingCompletionEvents = routed.toDeferUntilPublish
               await logEvents(routed.toLogNow)
