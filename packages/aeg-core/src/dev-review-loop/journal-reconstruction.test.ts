@@ -179,6 +179,21 @@ describe('reconstructRounds', () => {
     expect(parseLoopEventLines(lines)).toEqual([])
   })
 
+  // task-log-v1 7, Issue #567, O3: a retention gap — a round whose
+  // verdicts_read line was never captured at all (an outbox rotation that
+  // dropped it before this task's O2 overflow reporting existed, or a flush
+  // window that genuinely never posted it) — must reconstruct with an
+  // honest, empty countsBySeverity, never a guessed blocker count read out
+  // of round_ended's own outcome field (which carries no severity
+  // breakdown at all). This is the real consumer O1's coverage map names
+  // ("capture completeness is verified without generating reports" — this
+  // function returns structured RoundRecord data, never rendered text).
+  it('a round missing its verdicts_read entirely (a genuine retention gap) reconstructs with an empty countsBySeverity, never a guessed blocker count', () => {
+    const events = [roundEnded(1, 0, 0, 'changes_requested')]
+    const { rounds } = reconstructRounds(events)
+    expect(rounds).toEqual([{ round: 1, countsBySeverity: {}, confidence: null, outcome: 'changes_requested' }])
+  })
+
   // Round 2 review, BLOCKER: `round_ended.outcome` reads 'green' the moment
   // `assessRound` decides `publish` — logged immediately — but the caller
   // (`dev-review-loop.ts`'s `seedLoopHistory`) must never treat that alone
