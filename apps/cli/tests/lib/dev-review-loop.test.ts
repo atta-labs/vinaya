@@ -1985,6 +1985,62 @@ describe('devReviewLoop — round 1 clean, ends on publish', () => {
     expect(existsSync(join(home, '.reviewer-dispatch-started'))).toBe(true)
     expect(existsSync(join(home, '.evidence-report-gh-timed-out'))).toBe(false)
   }, 20000)
+
+  // Issue #639: `runReportForOpenPr`'s call to `runBodyChecks` had no
+  // `try`/`catch` around it — `refuse()` (`forge-write.ts`) calls
+  // `process.exit(1)` directly on any finding, which killed this driver's
+  // whole process mid-round, not just the one evidence-report push. This
+  // registers a `validates: 'body'` fixture check (`fake-always-refuse-
+  // body-check.cjs`, same fixture `pr-report-engine.test.ts` uses) in the
+  // task's own `vinaya.config.json` so the round-end push genuinely
+  // refuses, then proves the round still completes: `r.status` is `0` and
+  // the round still publishes (never a driver death with no publish and no
+  // trace), and the role log carries a normal `evidence_report_failed` line
+  // naming the refusal — the SAME logged-and-continued shape any other
+  // evidence-report failure already takes. `writeFakeGitAnsweringGroupA`
+  // additionally answers `computeGroupA`'s own plain `rev-parse HEAD`/
+  // `merge-base`/`diff --numstat` calls (the driver's `Group A` recompute,
+  // not otherwise exercised by `writeFakeGit`'s `-C`-qualified form) so
+  // `buildReport` reaches the body-check step at all, and the worktree
+  // directory `computeGroupA` spawns `git` from is created first — a
+  // missing `cwd` fails `posix_spawn` itself before `git` ever answers.
+  it('Issue #639: a body-check refusal during the round-end evidence push is logged and the round still publishes, never killing the driver', () => {
+    const home = tempDir('vinaya-drl-home-')
+    const cwd = tempDir('vinaya-drl-cwd-')
+    const binDir = tempDir('vinaya-drl-bin-')
+    writeFakeClaude(binDir)
+    writeFakeGhWithEvidenceAnchorBody(binDir)
+    writeFakeGitAnsweringGroupA(binDir)
+    const path = `${binDir}:${pathWithoutRealVendors()}`
+
+    mkdirSync(join(cwd, '.worktrees', BRANCH), { recursive: true })
+    writeFileSync(
+      join(cwd, 'vinaya.config.json'),
+      JSON.stringify({
+        briefSchema: { pr: { sections: [] } },
+        checks: {
+          'fixture/always-refuse-body': {
+            // `bun`, not `node`: this test's own `path` is deliberately
+            // narrowed (`pathWithoutRealVendors()`), and `node` is not
+            // guaranteed reachable there — `bun` is, since the whole driver
+            // this test spawns runs under it.
+            run: 'bun',
+            args: [join(CLI_ROOT, 'tests', 'fixtures', 'forge', 'fake-always-refuse-body-check.cjs')],
+            scope: 'full',
+            validates: 'body'
+          }
+        }
+      })
+    )
+
+    const r = runLoop(home, cwd, path)
+    expect(r.status).toBe(0)
+    expect(r.stdout).toMatch(/publish/)
+
+    const roleLog = readFileSync(join(home, '.vinaya', 'loops', 'unresolved', `${TASK}.log`), 'utf8')
+    expect(roleLog).toMatch(/evidence_report_failed: round=1 head=\S+ reason=/)
+    expect(roleLog).toContain('fake-always-refuse-body: fixture forces a body-check refusal')
+  }, 20000)
 })
 
 // --- task-log-v1 task 6, O3: restart fixtures ---
@@ -2114,6 +2170,142 @@ describe('devReviewLoop — restart fixtures (task-log-v1 task 6, O3): equivalen
     expect(postedCommentFiles(home)).toEqual(firstRunFiles)
   }, 20000)
 })
+
+/**
+ * Same as `writeFakeGh`, except the evidence report's own `pr view <n>
+ * --json body -q .body` fetch (`defaultRunEvidenceReport`'s first step,
+ * distinguished from the plain `--json body` call other loop paths make by
+ * checking `-q`/`.body` too) answers RAW body text carrying a real
+ * `AEG:EVIDENCE` anchor pair — never the JSON-wrapped `{"body":"..."}`
+ * shape `writeFakeGh`'s own generic handler returns, which is what a real
+ * `gh -q .body` never produces either. Without a real anchor pair here,
+ * `spliceIntoLiveBody` refuses with `'splice-refused'` before `runBodyChecks`
+ * is ever reached, masking the very refusal this fixture exists to reach.
+ */
+function writeFakeGhWithEvidenceAnchorBody(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'gh',
+    `#!/bin/sh
+STATE_DIR="$HOME/.fake-gh-posted-comments"
+mkdir -p "$STATE_DIR"
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n\\n## Planner rationale\\n\\nOut of scope for facts.\\n","author":{"login":"daniboomerang"}}]}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
+  printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
+  printf '%s\\n' ''
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo '[{"number":123,"headRefName":"${BRANCH}"}]'
+  else
+    echo '[]'
+  fi
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
+  N=$(ls "$STATE_DIR"/comment-*.md 2>/dev/null | wc -l | tr -d ' ')
+  BODY_FILE="$5"
+  cp "$BODY_FILE" "$STATE_DIR/comment-$((N + 1)).md"
+  echo "https://github.com/example/repo/pull/$3#issuecomment-$((N + 1))"
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "body" ] && [ "$6" = "-q" ] && [ "$7" = ".body" ]; then
+  printf '%s\\n' 'Closes #${TASK}'
+  printf '%s\\n' ''
+  printf '%s\\n' '<!-- AEG:EVIDENCE:START -->'
+  printf '%s\\n' 'placeholder'
+  printf '%s\\n' '<!-- AEG:EVIDENCE:END -->'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "body" ]; then
+  echo '{"body":"Closes #${TASK}"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "mergeable" ]; then
+  echo '{"mergeable":"MERGEABLE"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  FAKE_GH_STATE="$STATE_DIR" bun -e '
+    const fs = require("fs")
+    const dir = process.env.FAKE_GH_STATE
+    const files = fs
+      .readdirSync(dir)
+      .filter((f) => f.startsWith("comment-"))
+      .sort((a, b) => Number(a.match(/\\d+/)[0]) - Number(b.match(/\\d+/)[0]))
+    const bodies = files.map((f) => fs.readFileSync(dir + "/" + f, "utf8"))
+    console.log(JSON.stringify({ comments: bodies.map((body) => ({ body, author: { login: "daniboomerang" } })) }))
+  '
+  exit 0
+fi
+if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
+  echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
+  echo "fake gh: refusing issue comment (log flush not under test)" >&2
+  exit 1
+fi
+echo "unhandled fake gh call: $*" >&2
+exit 1
+`
+  )
+}
+
+/** Same as `writeFakeGit`, plus answers to `computeGroupA`'s (`pr-report-engine.ts`) own plain `rev-parse HEAD`/`merge-base origin/main <head>`/`diff <base>...<head> --numstat` calls — the ONE additional git surface the driver's round-end evidence-report push exercises that no other `writeFakeGit*` fixture in this file needs. */
+function writeFakeGitAnsweringGroupA(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'git',
+    `#!/bin/sh
+if [ "$1" = "ls-remote" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo "${HEAD_SHA}	refs/heads/${BRANCH}"
+  fi
+  exit 0
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "origin/main" ]; then
+  echo "${BASE_SHA}"
+  exit 0
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
+  echo "$PWD"
+  exit 0
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "HEAD" ]; then
+  echo "${HEAD_SHA}"
+  exit 0
+fi
+if [ "$1" = "-C" ] && [ "$3" = "rev-parse" ] && [ "$4" = "HEAD" ]; then
+  echo "${HEAD_SHA}"
+  exit 0
+fi
+if [ "$1" = "merge-base" ]; then
+  echo "${BASE_SHA}"
+  exit 0
+fi
+if [ "$1" = "fetch" ]; then
+  exit 0
+fi
+if [ "$1" = "diff" ]; then
+  echo "1\\t0\\tfixture.txt"
+  exit 0
+fi
+exit 1
+`
+  )
+}
 
 /**
  * Same as `writeFakeClaude`, plus — for both reviewer roles only — writing
