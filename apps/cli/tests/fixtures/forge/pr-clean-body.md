@@ -29,6 +29,12 @@ bun test → passes
 
 - none
 
+## Doc coverage
+
+Doc-neutral: apps/cli/specs/self-hosting.md — this fixture exercises --validate-only against this repo's own live diff, which may carry a comment-only edit to apps/cli/src/lib/ops.ts.
+Doc-neutral: apps/cli/specs/log.md — this fixture exercises --validate-only against this repo's own live diff, which may carry a comment-only edit to apps/cli/src/lib/log-sink.ts.
+Doc-neutral: apps/cli/specs/loop.md — this fixture exercises --validate-only against this repo's own live diff, which may carry a comment-only edit to apps/cli/src/lib/dev-review-loop.ts.
+
 ## Stop conditions
 
 - Pre-flight failure.
