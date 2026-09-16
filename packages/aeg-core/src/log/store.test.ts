@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { classifyStoredLine, createFixtureStore, KNOWN_SCHEMA_VERSIONS, readPageFrom, recordIdentity } from './store'
 
@@ -564,7 +565,7 @@ describe('fault-driven scenario fixtures (O2, task-log-v1 7, Issue #567)', () =>
     // (apps/cli/specs/log.md § "The flush") are a SEPARATE, later, optional
     // step this file never reaches, and every event below is still stored,
     // valid, and complete without it.
-    const storeSource = readFileSync(join(import.meta.dir, 'store.ts'), 'utf8')
+    const storeSource = readFileSync(join(fileURLToPath(new URL('.', import.meta.url)), 'store.ts'), 'utf8')
     expect(storeSource).not.toContain('logPublish')
     expect(storeSource).not.toContain('flushOutbox')
     expect(storeSource).not.toMatch(/\bfetch\(/)
