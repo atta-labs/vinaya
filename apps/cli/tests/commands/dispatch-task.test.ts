@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -103,6 +103,30 @@ afterEach(() => {
 
 function tempDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix))
+  tempDirs.push(dir)
+  return dir
+}
+
+/**
+ * Round 6 fix, live-reproduced on the declared supported host: the
+ * dispatched Developer here is unattended (`dispatch-task.ts`'s own O1/O3
+ * comment), so on Darwin it runs for real inside the confined boundary,
+ * whose `allowedDir` — with no worktree yet and `cwd: REPO_ROOT` below —
+ * resolves to `REPO_ROOT` itself, READ-ONLY except `.git`/`.worktrees`
+ * (`WorkerBoundaryLaunchOpts.bootstrapWritableSubpaths`'s own doc comment).
+ * A system `tmpdir()` fixture path (`tempDir`, above) is outside every
+ * granted path, so the fake vendor's own call-log write silently failed
+ * under real confinement — this suite is about O1/O2's dispatch wiring,
+ * never about the isolation boundary itself (`worker-boundary.test.ts`
+ * owns that, with real live `sandbox-exec` coverage). `.worktrees` is
+ * gitignored scratch space already inside the granted carve-out, so a
+ * fixture directory placed there is reachable, cleaned up the same way
+ * `tempDir`'s own entries are.
+ */
+function worktreeScratchDir(prefix: string): string {
+  const parent = join(REPO_ROOT, '.worktrees')
+  mkdirSync(parent, { recursive: true })
+  const dir = mkdtempSync(join(parent, prefix))
   tempDirs.push(dir)
   return dir
 }
@@ -254,7 +278,7 @@ function buildFixture(): Fixture {
   writeFakeGh(binDir, issueListPath)
   const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim()
   writeFakeGit(binDir, realGit)
-  const callLog = join(dataDir, 'vendor-call.log')
+  const callLog = join(worktreeScratchDir('vinaya-dispatch-task-call-'), 'vendor-call.log')
   writeFakeVendor(binDir, callLog)
   const preload = writeFetchPreload(dataDir, issueListPath)
   return { binDir, home, callLog, preload, path: `${binDir}:${process.env.PATH ?? ''}` }

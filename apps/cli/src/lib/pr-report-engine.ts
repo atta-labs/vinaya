@@ -529,25 +529,35 @@ function truncateAgentOutput(output: string): string {
  * never silently dropped from the block and never a bare, budget-less
  * `timeout` string.
  *
- * Spawned with `buildCheckEnv(undefined)` — the same baseline `runner.ts`
- * gives every registered check (`PATH`/`LANG`/`HOME`/proxy vars/`TMPDIR`
- * only) — never the bare `spawnSync` default of the full `process.env`
- * (Principal ruling, PR `open-1` addendum). This command's text came from a
- * PR body; nothing in `AEG:EVIDENCE`'s trust model lets a body author choose
- * what secrets its own §9 line can read, so `GH_TOKEN`/`GITHUB_TOKEN` never
- * reach it.
+ * Spawned with `buildCheckEnv(undefined)` plus `extraEnv` — the same
+ * baseline `runner.ts` gives every registered check (`PATH`/`LANG`/`HOME`/
+ * proxy vars/`TMPDIR` only) — never the bare `spawnSync` default of the full
+ * `process.env` (Principal ruling, PR `open-1` addendum). This command's
+ * text came from a PR body; nothing in `AEG:EVIDENCE`'s trust model lets a
+ * body author choose what secrets its own §9 line can read, so
+ * `GH_TOKEN`/`GITHUB_TOKEN` never reach it. `extraEnv` (round 3 review,
+ * F2 test-honesty) is never a secret — `PR_BODY` is the exact text this
+ * command was extracted FROM, not new information the body author could
+ * leverage — and is what makes a `[agent]` command that itself calls
+ * `vinaya check` (reading `PR_BODY`, e.g. `closes-n`/`test-plan`) grade
+ * correctly instead of always seeing an empty body and failing every
+ * `requiresOpenPr` check regardless of the PR's real state: found live, this
+ * exact PR's own Evidence Group C previously showed `closes-n` failing on
+ * every run for this reason alone, contradicting the Test Plan's own
+ * "→ exits 0" claim for a command that could never have exited 0.
  */
 export function runAgentCommand(
   command: string,
   timeoutMs: number = resolveCommandTimeoutMs(),
-  cwd?: string
+  cwd?: string,
+  extraEnv: Record<string, string> = {}
 ): GroupCCommandResult {
   const proc = spawnSync('bash', ['-c', command], {
     cwd: cwd ?? process.cwd(),
     encoding: 'utf8',
     timeout: timeoutMs,
     maxBuffer: 32 * 1024 * 1024,
-    env: buildCheckEnv(undefined)
+    env: { ...buildCheckEnv(undefined), ...extraEnv }
   })
   if (proc.error && (proc.error as NodeJS.ErrnoException).code === 'ETIMEDOUT') {
     return { command, output: `timeout (budget ${timeoutMs}ms)`, exitCode: null, timedOut: true }
@@ -556,10 +566,21 @@ export function runAgentCommand(
   return { command, output, exitCode: proc.status, timedOut: false }
 }
 
-/** Extracts the command list from `prBody` and runs each one from `cwd` — the one place this module actually executes PR-body content. */
-export function computeGroupC(prBody: string, cwd?: string): GroupC {
+/**
+ * Extracts the command list from `prBody` and runs each one from `cwd` — the
+ * one place this module actually executes PR-body content. `extraEnv`
+ * (round 3 review, F2) threads `PR_BODY` (always — it is `prBody` itself,
+ * the exact text these commands were extracted from) and, when the caller
+ * has them, `PR_NUMBER`/`BRANCH`: a `[agent]` command that itself invokes
+ * `vinaya check` needs these to grade the SAME PR the rest of this report is
+ * about, never an ambient value some other repo state happened to leave
+ * around.
+ */
+export function computeGroupC(prBody: string, cwd?: string, extraEnv: Record<string, string> = {}): GroupC {
   return {
-    commands: extractAgentCommandLines(prBody).map((line) => runAgentCommand(agentCommandText(line), undefined, cwd))
+    commands: extractAgentCommandLines(prBody).map((line) =>
+      runAgentCommand(agentCommandText(line), undefined, cwd, { PR_BODY: prBody, ...extraEnv })
+    )
   }
 }
 
@@ -1137,7 +1158,15 @@ export async function buildReport(
   const outcomes = gateResult.outcomes
     .filter((o) => o.name !== 'evidence-fresh')
     .map((o) => (shouldRenderAsSkipped(o, gradedBody) ? { ...o, status: 'skipped' } : o))
-  const groupC = opts.groupC ?? computeGroupC(gradedBody, opts.cwd)
+  // PR_NUMBER/BRANCH: read from the SAME source Group B's gate child already
+  // reads them from (`opts.envOverlay ?? process.env` — `runRealGates`'s own
+  // default) rather than a third, independent source, so Group C's `[agent]`
+  // commands and Group B's gates always grade the identical PR context.
+  const ambientReportEnv = opts.envOverlay ?? process.env
+  const groupCExtraEnv: Record<string, string> = {}
+  if (ambientReportEnv.PR_NUMBER !== undefined) groupCExtraEnv.PR_NUMBER = ambientReportEnv.PR_NUMBER
+  if (ambientReportEnv.BRANCH !== undefined) groupCExtraEnv.BRANCH = ambientReportEnv.BRANCH
+  const groupC = opts.groupC ?? computeGroupC(gradedBody, opts.cwd, groupCExtraEnv)
   const blockInner = buildBlockInner(groupA, outcomes, groupC, gradedBodySource)
   const block = `${EVIDENCE_START}\n${blockInner}\n${EVIDENCE_END}`
   return {

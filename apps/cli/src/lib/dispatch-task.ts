@@ -586,7 +586,12 @@ export async function dispatchTask(
       deps.dispatchRole('developer', agent, prep.brief, {
         task: prep.issue,
         promptFile,
-        model: resolvedModel
+        model: resolvedModel,
+        // O1/O3 (task 3, #560): this call is `vinaya
+        // task run`'s own unattended loop starting the Developer — nobody is
+        // watching each tool call, so it must run inside the proven boundary
+        // (`DispatchOpts.unattended`'s own doc comment).
+        unattended: true
       })
     )
   }

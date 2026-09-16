@@ -1735,6 +1735,37 @@ function runCancel(home: string, cwd: string, path: string, pr: number): CliResu
   return runDevReviewLoopArgs(home, cwd, path, ['--cancel', String(pr), '--agent', 'claude'])
 }
 
+/**
+ * Round 6 fix, live-reproduced on the declared supported host (Darwin):
+ * every fixture in this file signals through `$HOME` (`.fake-dev-invoked`,
+ * `.dev-invocations`, `.reviewer-dispatch-started`, `.fake-gh-posted-
+ * comments`, …) — this suite is entirely about LOOP LOGIC (round
+ * assessment, publish/pause/resume), never about the isolation boundary
+ * itself (that is `worker-boundary.test.ts`'s own, dedicated, real
+ * `sandbox-exec` coverage). Task 3 (`#560`)'s round-2 fix made
+ * `requireWorkerIsolation` default `true` on Darwin — the correct O3
+ * behavior for a real dispatch, but it means a Developer/Reviewer dispatch
+ * from this suite is confined for real, on this one host, and its
+ * confined `allowedDir` (the worktree/repo-root fallback) is a DIFFERENT
+ * directory from `$HOME`: every fixture's `$HOME`-based signal silently
+ * fails to write, and the loop waits forever for state that can never
+ * arrive. Writing (or merging into) `cwd`'s own `vinaya.config.json` here
+ * — the SAME repo-local config `loadConfig()` already resolves everything
+ * else from — opts these loop-logic fixtures out of a feature they were
+ * never designed to exercise, without touching the two existing scenarios
+ * that already write their own `cwd`-local config for an unrelated key
+ * (`logPublish`).
+ */
+function disableIsolationForFixture(cwd: string): void {
+  const path = join(cwd, 'vinaya.config.json')
+  const existing = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {}
+  if (existing.dispatch?.requireWorkerIsolation !== undefined) return
+  writeFileSync(
+    path,
+    JSON.stringify({ ...existing, dispatch: { ...existing.dispatch, requireWorkerIsolation: false } })
+  )
+}
+
 function runDevReviewLoopArgs(
   home: string,
   cwd: string,
@@ -1742,6 +1773,7 @@ function runDevReviewLoopArgs(
   args: string[],
   extraEnv: Record<string, string> = {}
 ): CliResult {
+  disableIsolationForFixture(cwd)
   // `spawnSync` (never `execFileSync`) — it hands back stdout AND stderr on
   // BOTH the success and the non-zero-exit path; `execFileSync` only
   // surfaces piped stderr via the thrown error, so a passing run's own
