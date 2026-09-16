@@ -435,6 +435,47 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     example: `{ "legacySlugDir": "governance-docs/tranches/completed" }`
   },
   {
+    key: 'proseGates.sourceComments',
+    type: 'object (optional)',
+    semantics: [
+      "`reader-resolvable-prose`'s source-comment class: scans comment lines of `.ts` files for a tranche-slug (`[a-z0-9]+(-[a-z0-9]+)*-v[0-9]+`) or forge-number (`#[0-9]{2,}`) citation. Unset entirely, the class is dormant — the same declared-no-op discipline `readerFacingPrefix`/`readerFacingSuffix` use.",
+      'Report-only (`severity: "warning"`, exit `0`) by default. This repository sets `severity: "error"` once its own sweep reached zero findings, so a new citation now fails `check --all` the same way the `product` class always has.'
+    ],
+    example: `{
+  "proseGates": {
+    "sourceComments": {
+      "globs": ["apps/cli/src", "packages/aeg-core/src"],
+      "allowlist": ["packages/aeg-core/src/golden-forge-vs-file.test.ts"],
+      "severity": "error"
+    }
+  }
+}`
+  },
+  {
+    key: 'proseGates.sourceComments.globs',
+    type: 'string[] (optional)',
+    semantics: [
+      "Repo-relative directory (or file) roots swept recursively for `.ts` files — a prefix match, like `PRODUCT_SLUG_SCOPE`, never a shell glob pattern despite the field's name. Unset (the default) leaves the class dormant: no directory is swept."
+    ],
+    example: `{ "globs": ["apps/cli/src", "packages/aeg-core/src", "packages/aeg-forge-state/src", "packages/sources/src"] }`
+  },
+  {
+    key: 'proseGates.sourceComments.allowlist',
+    type: 'string[] (optional)',
+    semantics: [
+      'Exact repo-relative file paths skipped entirely by the source-comment class — for a test fixture that deliberately pins a historical tranche name or forge number in a comment, where rewriting the citation away would break the thing the fixture exists to prove. Not a pattern; every entry is a full path.'
+    ],
+    example: `{ "allowlist": ["packages/aeg-core/src/golden-forge-vs-file.test.ts"] }`
+  },
+  {
+    key: 'proseGates.sourceComments.severity',
+    type: '"warning" | "error" (optional)',
+    semantics: [
+      'Defaults to `"warning"` (reports, exit `0`) — the same rollout precedent every class in this key follows. `"error"` fails the check\'s exit code on a reportable finding, same as the `product` class already does unconditionally.'
+    ],
+    example: `{ "severity": "error" }`
+  },
+  {
     key: 'dispatch',
     type: 'object (optional)',
     semantics: [

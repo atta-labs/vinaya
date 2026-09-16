@@ -4,9 +4,11 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
   checkReaderResolvableProse,
+  checkSourceComments,
   checkUndefinedVocabulary,
   checkUnresolvableReferences,
   classifyProseFile,
+  extractComments,
   legacySlugPattern,
   parseGlossaryTerms,
   PRODUCT_SLUG_SCOPE,
@@ -419,6 +421,94 @@ describe('class 2 — undefined coined vocabulary — the gate can see what it b
       READER_FACING_SUFFIX
     )
     expect(fixed).toEqual([])
+  })
+})
+
+describe('checkSourceComments — the source-comment class (Issue #575)', () => {
+  it('fires on a tranche-slug citation in a line comment', () => {
+    const findings = checkSourceComments([
+      { path: 'packages/aeg-core/src/x.ts', content: '// landed in review-convergence-v1 task 3\nexport const a = 1' }
+    ])
+    expect(findings, JSON.stringify(findings)).toHaveLength(1)
+    expect(findings[0]!.message).toContain('tranche-slug')
+    expect(findings[0]!.message).toContain('review-convergence-v1')
+    expect(findings[0]!.line).toBe(1)
+  })
+
+  it('fires on a forge-number citation in a block comment', () => {
+    const findings = checkSourceComments([
+      { path: 'packages/aeg-core/src/x.ts', content: '/**\n * fixed the gap (#4213)\n */\nexport const a = 1' }
+    ])
+    expect(findings, JSON.stringify(findings)).toHaveLength(1)
+    expect(findings[0]!.message).toContain('forge-number')
+    expect(findings[0]!.line).toBe(2)
+  })
+
+  it('does NOT fire on a slug/number-shaped string inside a string literal, not a comment', () => {
+    const findings = checkSourceComments([
+      { path: 'packages/aeg-core/src/x.ts', content: 'const url = "https://vinaya.dev/review-convergence-v1/#4213"' }
+    ])
+    expect(findings).toEqual([])
+  })
+
+  it('does NOT fire on a non-.ts file', () => {
+    const findings = checkSourceComments([{ path: 'aeg-root/roles/developer.md', content: '// review-convergence-v1' }])
+    expect(findings).toEqual([])
+  })
+
+  it('honours the allowlist — a named file is skipped entirely', () => {
+    const content = '// review-convergence-v1 (#4213)'
+    const findings = checkSourceComments(
+      [{ path: 'packages/aeg-core/src/allowed.ts', content }],
+      ['packages/aeg-core/src/allowed.ts']
+    )
+    expect(findings).toEqual([])
+
+    const stillFires = checkSourceComments([{ path: 'packages/aeg-core/src/allowed.ts', content }])
+    expect(stillFires.length).toBeGreaterThan(0)
+  })
+
+  it('red before green — a seeded comment citation fails, then a fact-stated rewrite passes', () => {
+    const violating = checkSourceComments([
+      { path: 'packages/aeg-core/src/x.ts', content: '// closed the gap (#4213)' }
+    ])
+    expect(violating.length, 'expected the seeded violation to be caught').toBeGreaterThan(0)
+
+    const fixed = checkSourceComments([
+      { path: 'packages/aeg-core/src/x.ts', content: '// a closed union now covers every failure class' }
+    ])
+    expect(fixed).toEqual([])
+  })
+})
+
+describe('extractComments', () => {
+  it('keeps only line- and block-comment text, blanking code and preserving line count', () => {
+    const content = ['const a = 1 // review-convergence-v1', '/* #4213', 'still a comment */', 'const b = 2'].join('\n')
+    const extracted = extractComments('packages/aeg-core/src/x.ts', content)
+    expect(extracted.split('\n')).toHaveLength(4)
+    expect(extracted).toContain('review-convergence-v1')
+    expect(extracted).toContain('#4213')
+    expect(extracted).not.toContain('const a')
+    expect(extracted).not.toContain('const b')
+  })
+
+  it('blanks string and template literal content so an embedded "//" is never read as a comment start', () => {
+    const content = 'const url = "https://vinaya.dev" // review-convergence-v1'
+    const extracted = extractComments('packages/aeg-core/src/x.ts', content)
+    expect(extracted).not.toContain('https://vinaya.dev')
+    expect(extracted).toContain('review-convergence-v1')
+  })
+
+  it('honours a backslash escape inside a string so an escaped quote does not end the literal early', () => {
+    const content = String.raw`const s = "a \" review-convergence-v1" // real comment #4213`
+    const extracted = extractComments('packages/aeg-core/src/x.ts', content)
+    expect(extracted).not.toContain('review-convergence-v1')
+    expect(extracted).toContain('real comment #4213')
+  })
+
+  it('returns an all-blank string for a non-.ts/.tsx file', () => {
+    const extracted = extractComments('aeg-root/roles/developer.md', 'review-convergence-v1\n#4213')
+    expect(extracted.replace(/\n/g, '')).toBe('')
   })
 })
 

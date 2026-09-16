@@ -4,10 +4,10 @@
  * Core check: reader-resolvable-prose. Thin adapter over
  * `@attalabs/aeg-core`'s `checkReaderResolvableProse` — the two mechanizable
  * classes (unresolvable references, undefined coined vocabulary) from
- * Issue #694's three-class analysis. Class 3 (register/slop) stays with the
+ * a three-class analysis of unresolvable prose. Class 3 (register/slop) stays with the
  * review role; it is not deterministic and is not attempted here.
  *
- * De-hardcoded (task 7, Issue #56): the doctrine root, reader-facing page
+ * De-hardcoded: the doctrine root, reader-facing page
  * globs, and legacy-slug corpus location all come from
  * `vinaya.config.json`'s `proseGates` key, read via `loadConfig()` — the
  * cwd-walking resolver every other repo-local, non-trust config value uses.
@@ -32,7 +32,7 @@
  * per aeg-core's zero-I/O pure-rule charter (the rule itself takes file
  * paths + contents + term/slug lists and returns findings).
  *
- * **Report-only, except one blocking class (Issue #435).** The `ships` and
+ * **Report-only, except one blocking class.** The `ships` and
  * `reader-facing` classes stay the original rollout precedent
  * (`aeg-root/enforcement.md`'s G1/G2 report-only period): findings print as
  * `warning` severity and never fail the exit code — a blocking check on day
@@ -44,7 +44,7 @@
  * finding is `blocking: true`, prints as `severity: 'error'`, and this run
  * exits `1` if any reportable finding is blocking. It runs at the pre-push
  * hook (`check --all --local`) over the diff and refuses the push, and again
- * in CI, blocking, over the same diff. Orthogonal exception (Issue #314): a
+ * in CI, blocking, over the same diff. Orthogonal exception: a
  * genuinely unresolvable doctrine root is not a backlog finding — `main()`
  * exits non-`0`/non-`1` for that case, so it reads as a distinct
  * `status: 'error'`, never a clean pass.
@@ -55,7 +55,7 @@
  * reference correctly. But which findings get REPORTED is now diff-scoped
  * (`resolveChangedFiles`, lib/diff-evidence.ts) — full sweep, without that,
  * meant every PR reprinted this package's entire shipped-doctrine backlog
- * regardless of what it touched (found live, atta-labs/vinaya#289, on a PR
+ * regardless of what it touched (found live on a real PR
  * that changed one `packages/aeg-core` test file and nothing under
  * `aeg-root/`). A real new coined-term/unresolvable-reference finding in a
  * file the PR actually changed still surfaces.
@@ -65,6 +65,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { extname, join } from 'node:path'
 import {
   checkReaderResolvableProse,
+  checkSourceComments,
   parseGlossaryTerms,
   PRODUCT_SLUG_SCOPE,
   type ProseSourceFile
@@ -89,8 +90,8 @@ const proseGates = loadConfig()?.proseGates
  * repo's checkout happens to sit under an ancestor directory literally named
  * `node_modules` (a nested/linked checkout, a worktree under a differently-
  * shaped path) flips `resolveDoctrineRoot`'s internal fallback-candidate gate
- * with no relation to whether this repo's own `aeg-root/` exists (Issue
- * #314 — reproduced live: the same commit, checked out one directory deeper
+ * with no relation to whether this repo's own `aeg-root/` exists
+ * (reproduced live: the same commit, checked out one directory deeper
  * under a `node_modules`-named ancestor, silently swept zero files instead
  * of its real backlog).
  *
@@ -98,7 +99,7 @@ const proseGates = loadConfig()?.proseGates
  * --show-toplevel`) — deterministic regardless of checkout shape, and
  * already the anchor `resolveChangedFiles()` below uses for the same reason.
  * Only when THAT doesn't resolve to a real doctrine root (a `vinaya init`
- * adopter with no repo-local `aeg-root/` of their own — Issue #232, settled
+ * adopter with no repo-local `aeg-root/` of their own — settled
  * by experiment) does this fall back to `resolveDoctrineRoot()`'s package-
  * relative "my own shipped copy" resolution, which is genuinely the right
  * target for that case: the doctrine prose this check sweeps is the same
@@ -139,6 +140,11 @@ const READER_FACING_ACTIVE = READER_FACING_PREFIX !== null && READER_FACING_SUFF
  */
 const LEGACY_SLUG_DIR =
   proseGates?.legacySlugDir ?? (DOCTRINE_ROOT === null ? null : `${DOCTRINE_ROOT}/tranches/completed`)
+
+/** `undefined` globs — the default — leaves the class dormant, same discipline as `READER_FACING_ACTIVE` above. */
+const SOURCE_COMMENTS_GLOBS = proseGates?.sourceComments?.globs ?? []
+const SOURCE_COMMENTS_ALLOWLIST = proseGates?.sourceComments?.allowlist ?? []
+const SOURCE_COMMENTS_SEVERITY: 'warning' | 'error' = proseGates?.sourceComments?.severity ?? 'warning'
 
 /** Recursively collects repo-relative paths under `dir`. Missing/unreadable `dir` degrades to `[]`, never throws — the same dormancy discipline `legacySlugs()` below documents. */
 function collect(dir: string, out: string[] = []): string[] {
@@ -208,6 +214,36 @@ function readProductFiles(root: string, relPaths: string[]): ProseSourceFile[] {
 }
 
 /**
+ * The source-comment class's file set — entirely config-driven, unlike the
+ * fixed `PRODUCT_SLUG_SCOPE` above. Each `proseGates.sourceComments.globs`
+ * entry is a repo-relative directory (or file) root, swept recursively for
+ * `.ts` files the same way `collectProductScopeFiles` sweeps its own fixed
+ * list — "globs" names the config field (matching the brief's own
+ * vocabulary for it), not a shell glob syntax this function implements.
+ */
+function collectSourceCommentFiles(root: string, globs: readonly string[]): string[] {
+  const out: string[] = []
+  for (const prefix of globs) {
+    const abs = join(root, prefix)
+    let isDir: boolean
+    try {
+      isDir = statSync(abs).isDirectory()
+    } catch {
+      continue
+    }
+    if (isDir) {
+      for (const f of collect(abs)) {
+        const rel = f.slice(root.length + 1)
+        if (extname(rel) === '.ts') out.push(rel)
+      }
+    } else if (extname(prefix) === '.ts') {
+      out.push(prefix)
+    }
+  }
+  return out
+}
+
+/**
  * Legacy-slug list, derived from `<legacySlugDir>`'s `*.md` filenames.
  * Distinguishes "directory absent, class dormant" from "directory present,
  * empty" so the dormancy is visible in the check's own output rather than
@@ -246,8 +282,8 @@ function main(): void {
   // exit-code mapping (`runner.ts`: 0 → pass, 1 → fail, else → error) marks
   // this run `status: 'error'` — never `'pass'` with zero findings, which
   // would be structurally indistinguishable from "swept the real tree and
-  // found nothing" (the exact failure this task exists to close, Issue
-  // #314). This is orthogonal to the check's own report-only exit-0 policy
+  // found nothing" (the exact failure this class exists to close). This is
+  // orthogonal to the check's own report-only exit-0 policy
   // for the PROSE-FINDINGS class below, which is unchanged.
   if (DOCTRINE_ROOT === null) {
     console.log(`${CHECK_NAME}: doctrine root unresolvable — sweep did not run.`)
@@ -276,6 +312,9 @@ function main(): void {
   const productRelPaths = collectProductScopeFiles(productRoot)
   const productFiles = readProductFiles(productRoot, productRelPaths)
 
+  const sourceCommentRelPaths = collectSourceCommentFiles(productRoot, SOURCE_COMMENTS_GLOBS)
+  const sourceCommentFiles = readProductFiles(productRoot, sourceCommentRelPaths)
+
   const files = [...readAll([...shipsPaths, ...readerFacingPaths]), ...productFiles]
   const glossaryPath = join(DOCTRINE_ROOT, 'glossary.md')
   const glossaryTerms = existsSync(glossaryPath) ? parseGlossaryTerms(readFileSync(glossaryPath, 'utf8')) : []
@@ -297,14 +336,14 @@ function main(): void {
 
   // `resolveChangedFiles()` returns absolute paths, resolved against the
   // real repo root (`git rev-parse --show-toplevel`), never an assumed
-  // `process.cwd()` (review finding, PR #290 MAJOR: a check bin invoked from
+  // `process.cwd()` (a MAJOR review finding: a check bin invoked from
   // any other cwd silently matched nothing under the old cwd-relative
   // comparison). `finding.file` is usually already absolute — it comes from
   // `collect(DOCTRINE_ROOT)`, walked from an absolute `repoRoot()`- or
   // `resolveDoctrineRoot()`-derived path — but `DOCTRINE_ROOT` can also be a
   // relative `proseGates.doctrineRoot` config value. Anchor
   // to the SAME real repo root `resolveChangedFiles()` used, not a second,
-  // independent `process.cwd()` assumption (review finding, PR #290 MINOR:
+  // independent `process.cwd()` assumption (a MINOR review finding:
   // the two absolute-path shapes were each internally consistent but could
   // still diverge from each other outside the common invocation shape) —
   // falling back to `process.cwd()` only if this process is somehow outside
@@ -313,17 +352,20 @@ function main(): void {
   //
   // `null` (no diff boundary could be established at all — a bare/single-
   // commit repo with no `origin` remote, or a shallow clone/orphan history
-  // with no merge base, review finding PR #290 BLOCKER) reports every
+  // with no merge base, a BLOCKER review finding) reports every
   // finding unfiltered, same as before diff-scoping existed — indeterminate
   // must never collapse into "confirmed clean." Only an ACTUAL
   // resolved-but-empty diff suppresses findings.
-  // Line-scoped, not merely file-scoped (task 8): a finding prints only when
+  // Line-scoped, not merely file-scoped: a finding prints only when
   // its own line falls inside a changed hunk of a file this diff touched.
   // `findingsInThisDiff` owns both halves — one hunk parser for the whole
   // repo, and the same "indeterminate reports everything" rule
   // `resolveChangedFiles` already established. Full-sweep mode (no diff
   // boundary resolvable at all) is unchanged.
   const reportable = findingsInThisDiff(findings)
+
+  const sourceCommentFindings = checkSourceComments(sourceCommentFiles, SOURCE_COMMENTS_ALLOWLIST)
+  const reportableSourceComments = findingsInThisDiff(sourceCommentFindings)
 
   // stdout only — this check's stderr is the CheckError JSON channel
   // (`contract.ts`'s `emitCheckError`); a plain-text line there would make
@@ -333,7 +375,8 @@ function main(): void {
     `${CHECK_NAME}: doctrine root "${DOCTRINE_ROOT}"; reader-facing class ${READER_FACING_ACTIVE ? 'ran' : 'dormant — proseGates.readerFacingPrefix/readerFacingSuffix not both set'}; ` +
       `legacy-slug class ${legacySlugsDormant ? `dormant — ${legacySlugDir} is absent` : `ran (${slugs.length} slug(s))`}; ` +
       `product class ran (${productRelPaths.length} file(s) swept); ` +
-      `${findings.length} finding(s) swept, ${reportable.length} in this diff`
+      `source-comment class ${SOURCE_COMMENTS_GLOBS.length === 0 ? 'dormant — proseGates.sourceComments.globs not set' : `ran (${sourceCommentRelPaths.length} file(s) swept, severity: ${SOURCE_COMMENTS_SEVERITY})`}; ` +
+      `${findings.length + sourceCommentFindings.length} finding(s) swept, ${reportable.length + reportableSourceComments.length} in this diff`
   )
 
   let hasBlocking = false
@@ -352,19 +395,36 @@ function main(): void {
           'or link to the glossary. Do not simply delete the word if the sentence needs it.'
         : finding.blocking
           ? 'This product-code file cites an internal tranche slug a reader outside this repo cannot resolve ' +
-            '(Issue #435 — reader-resolvable-prose.ts PRODUCT_SLUG_SCOPE). Remove the citation or rewrite the ' +
-            'comment/doc to state the fact plainly instead of pointing at the tranche that did it. This finding ' +
-            'blocks the push and CI.'
+            '(the reader-resolvable-prose product class). Remove the citation or rewrite the comment/doc to state ' +
+            'the fact plainly instead of pointing at the tranche that did it. This finding blocks the push and CI.'
           : 'This doctrine or page cites a forge number or an internal tranche slug the reader has no tracker to ' +
             'resolve. Rewrite the sentence to state the fact plainly instead of pointing at the citation — say what ' +
             'was learned/decided, not where it was logged.'
     })
   }
 
+  for (const finding of reportableSourceComments) {
+    const blocking = SOURCE_COMMENTS_SEVERITY === 'error'
+    if (blocking) hasBlocking = true
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: blocking ? 'error' : 'warning',
+      message: `${finding.file}:${finding.line}: ${finding.message}`,
+      file: finding.file,
+      line: finding.line,
+      agent_recovery_prompt:
+        'This source comment cites a tranche name or a forge number a reader outside this repo cannot resolve. ' +
+        'Rewrite the comment to state the fact it pointed at, or, for a comment that deliberately pins historical ' +
+        'content (a test fixture), add its file path to proseGates.sourceComments.allowlist in vinaya.config.json.'
+    })
+  }
+
   // Report-only for `ships`/`reader-facing` findings — that backlog surfaces
   // and gets cleaned up before the gate turns strict (mirrors the G1/G2
-  // rollout in `aeg-root/enforcement.md`). The `product` class is the one
-  // exception (Issue #435): any reportable blocking finding fails this run.
+  // rollout in `aeg-root/enforcement.md`). The `product` class is always
+  // blocking; the source-comment class is blocking only once
+  // `proseGates.sourceComments.severity` is set to `'error'`.
   process.exit(hasBlocking ? 1 : 0)
 }
 

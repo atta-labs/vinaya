@@ -31,6 +31,16 @@
   "dispatch": {
     "agent": "claude"
   },
+  "proseGates": {
+    "sourceComments": {
+      "globs": ["apps/cli/src", "packages/aeg-core/src", "packages/aeg-forge-state/src", "packages/sources/src"],
+      "allowlist": [
+        "packages/aeg-forge-state/src/parse-rationale-deps.test.ts",
+        "packages/aeg-forge-state/src/amend-rationale-deps.test.ts"
+      ],
+      "severity": "warning"
+    }
+  },
   "briefSchema": {
     "pr": {
       "sections": [
