@@ -49,4 +49,7 @@ tests/lib/task-tools/protocol.test.ts
 tests/lib/task-tools/server.test.ts
 tests/lib/task-tools/resume.test.ts
 tests/lib/broker/operator-grants.test.ts
+tests/lib/dispatch/unattended-publication.test.ts
 tests/lib/task-run/background.test.ts
+tests/checks/runner/cancelled.test.ts
+tests/lib/artifacts/export.test.ts

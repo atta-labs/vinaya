@@ -226,6 +226,7 @@ export {
   checkBlastRadiusScope,
   checkConflictCompleteness,
   checkDocsWithinSurface,
+  checkDocumentationCitesObjective,
   checkIssueBriefSections,
   checkIssueObjectives,
   checkIssueRationale,
@@ -251,7 +252,9 @@ export {
   isTaskIssueBodyShaped,
   isTaskIssueLabelSet,
   BRIEF_SECTIONS_SINCE_ISSUE,
+  DOCUMENTATION_SINCE_ISSUE,
   OBJECTIVES_SINCE_ISSUE,
+  parseIssueDocumentation,
   parseIssueParts,
   parseIssueStopConditions,
   parseIssueSurface,
@@ -259,6 +262,8 @@ export {
 } from './issue-validation'
 export type {
   FrozenSection,
+  IssueDocumentation,
+  IssueDocumentationSource,
   IssuePart,
   IssueSectionResult,
   IssueSurface,
@@ -568,10 +573,15 @@ export {
   RoleAttemptOutcomeSchema,
   RoleSchema,
   ROLE_VALUES,
-  UsageEventSchema
+  TASK_LOG_ARTIFACT_MAX_BYTES,
+  UsageEventSchema,
+  validateTaskLogArtifact
 } from './log'
 export type {
   AppendOutcome,
+  ArtifactExpectedProvenance,
+  ArtifactGap,
+  ArtifactValidationResult,
   DispatchEvent,
   DispatchOutcome,
   DevReviewLoopEvent,

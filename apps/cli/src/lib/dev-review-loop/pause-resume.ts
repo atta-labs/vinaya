@@ -85,12 +85,17 @@ export function pauseMarker(reason: PauseReason): string {
 
 /**
  * The pause comment's body — the reason and the exact resume command,
- * nothing verdict-shaped. `detail` is set for `reason: 'infrastructure'`
- * (O2, the role and missing artifact(s) the driver observed on both dispatch
- * attempts), for `reason: 'no_push'` (`#543` O2, the branch and dirty
- * file(s) the driver observed), and for `reason: 'max_rounds'` (`#543` O4,
- * the configured round cap) — appended to the first line either way; every
- * other reason carries no detail and renders exactly as before.
+ * nothing verdict-shaped. `detail`, when the caller passes one, is appended
+ * to the first line — unconditionally, for every `PauseReason`, not only a
+ * fixed subset (Issue #631: before this task, several
+ * reasons — `confidence`, `reappearance`, the `assessRound`-decided generic
+ * `no_progress`, a reviewer's own `escalation` — simply never had a `detail`
+ * computed for them at the call site, so they rendered with none in
+ * practice even though this renderer never special-cased them). Which
+ * reasons carry a real, non-empty `detail` today is the CALL SITE's own
+ * concern (`dev-review-loop.ts`'s `describeConfidencePauseDetail`/
+ * `deriveVerdictPauseDetail`, and every driver-decided pause's own inline
+ * `detail:` field) — this function renders whatever it is handed.
  */
 export function renderPauseComment(prNumber: number, reason: PauseReason, detail?: string): string {
   return [

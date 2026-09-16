@@ -150,7 +150,7 @@ describe('runChecks', () => {
       skipFull: true
     })
     expect(outcome?.status).toBe('skipped')
-    expect(outcome?.skipReason).toBeUndefined()
+    expect(outcome?.skipReason).toBe('no-matching-include-glob')
   })
 
   it('skips a requiresOpenPr check under localOnly, even though the fixture would fail', async () => {
@@ -163,6 +163,7 @@ describe('runChecks', () => {
     const [outcome] = await runChecks([spec], { ...BASE_OPTS, localOnly: true })
     expect(outcome?.status).toBe('skipped')
     expect(outcome?.exitCode).toBeNull()
+    expect(outcome?.skipReason).toBe('requires-open-pr, local-only')
   })
 
   it("runs a requiresOpenPr check for real when localOnly is not set (CI's own invocation)", async () => {

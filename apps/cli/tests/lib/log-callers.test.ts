@@ -68,6 +68,36 @@ import { fileURLToPath } from 'node:url'
  * are unaffected). Two real callers, not a single shared chokepoint, because
  * each handler owns its own outcome classification independently of the
  * other; both join `CALLER_ALLOWLIST` alone.
+ *
+ * Amended by #563: `runner.ts` (`apps/cli/src/checks/`)
+ * is the `gate` family's own chokepoint — one `log()` call per check per
+ * attempt, from `runOne`, plus a one-time `warmupLogSink()` call from
+ * `runChecks` before dispatching a batch. Read-only against the outbox
+ * itself (it never truncates or writes a held-verdict file), the same
+ * "joins `CALLER_ALLOWLIST` alone" shape `journal-history.ts`/`resume.ts`/
+ * `cancel.ts` already occupy above.
+ *
+ * Amended by task-log-v1 task 4 (#564): `log-artifact.ts`
+ * (`apps/cli/src/lib/`) is a fourth write category, distinct from truncate
+ * and held-verdict. Its export half reads every outbox file under the
+ * outbox root and writes them, concatenated, to an UNRELATED destination
+ * (a CI artifact file, never the outbox itself); its collect half APPENDS
+ * an already-validated batch of records into the outbox for a target
+ * Issue — before calling `flushOutbox` (already allowlisted) to publish
+ * them. Neither truncates, and neither writes a held-verdict sibling file,
+ * so `OUTBOX_APPEND_ALLOWLIST` is its own category rather than a stretch
+ * of either existing one. It calls no `log()` of its own, so it does not
+ * join `CALLER_ALLOWLIST`.
+ *
+ * Amended by `task-log-v1` 8 (Issue #626): `config.ts`
+ * (`apps/cli/src/lib/config.ts`) documents the `logPublish` key's default
+ * behavior in prose — "telemetry stays in the local, already-bounded
+ * outbox" — the same "mentions `outbox`, separately calls a write" false
+ * positive `OUTBOX_RESUME_RECORD_ALLOWLIST`'s own doc comment above already
+ * describes: `config.ts`'s two `writeFileSync` calls write a resolved
+ * config file and an unrelated store, never the outbox. `config.ts` never
+ * imports `log-sink.js` either, so it is not a `CALLER_ALLOWLIST` member —
+ * this exemption is scoped to the prose-mention check alone.
  */
 
 const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..', '..')
@@ -82,6 +112,8 @@ const DEV_REVIEW_LOOP_PAUSE_RESUME_PATH = 'apps/cli/src/lib/dev-review-loop/paus
 const DEV_REVIEW_LOOP_JOURNAL_HISTORY_PATH = 'apps/cli/src/lib/dev-review-loop/journal-history.ts'
 const TASK_TOOLS_RESUME_PATH = 'apps/cli/src/lib/task-tools/resume.ts'
 const TASK_TOOLS_CANCEL_PATH = 'apps/cli/src/lib/task-tools/cancel.ts'
+const RUNNER_PATH = 'apps/cli/src/checks/runner.ts'
+const LOG_ARTIFACT_LIB_PATH = 'apps/cli/src/lib/log-artifact.ts'
 const FUTURE_CALLER_ALLOWLIST = new Set<string>([])
 const CALLER_ALLOWLIST = new Set([
   ...FUTURE_CALLER_ALLOWLIST,
@@ -90,7 +122,8 @@ const CALLER_ALLOWLIST = new Set([
   DEV_REVIEW_LOOP_PATH,
   DEV_REVIEW_LOOP_JOURNAL_HISTORY_PATH,
   TASK_TOOLS_RESUME_PATH,
-  TASK_TOOLS_CANCEL_PATH
+  TASK_TOOLS_CANCEL_PATH,
+  RUNNER_PATH
 ])
 const OUTBOX_TRUNCATE_ALLOWLIST = new Set([LOG_FLUSH_LIB_PATH])
 const OUTBOX_HELD_VERDICT_ALLOWLIST = new Set([
@@ -99,6 +132,15 @@ const OUTBOX_HELD_VERDICT_ALLOWLIST = new Set([
   DEV_REVIEW_LOOP_PUBLICATION_PATH,
   DEV_REVIEW_LOOP_PAUSE_RESUME_PATH
 ])
+/**
+ * `log-artifact.ts` reads outbox files (to export them elsewhere) and
+ * appends an already-validated batch into the outbox (before `flushOutbox`
+ * publishes it) — a fourth write category next to the sink's append, the
+ * flush's truncate, and the held-verdict sibling-file write. Named
+ * explicitly rather than stretched into either existing allowlist, since
+ * it describes neither a truncate nor a held-verdict file.
+ */
+const OUTBOX_APPEND_ALLOWLIST = new Set([LOG_ARTIFACT_LIB_PATH])
 /**
  * Amended by task 8 (#454, O8): `dispatch.ts` durably records a run's vendor
  * resume identifier under `~/.vinaya/dispatch-resume/`, so an operator can
@@ -117,6 +159,17 @@ const OUTBOX_HELD_VERDICT_ALLOWLIST = new Set([
  * own control-store path, never to write there.
  */
 const OUTBOX_RESUME_RECORD_ALLOWLIST = new Set([DISPATCH_PATH, TASK_TOOLS_RESUME_PATH])
+const CONFIG_PATH = 'apps/cli/src/lib/config.ts'
+const WORKER_BOUNDARY_PATH = 'apps/cli/src/lib/worker-boundary.ts'
+/**
+ * Amended by worker-isolation-v1 task 3 (#560, round 5 review, CRITICAL fix):
+ * `worker-boundary.ts` names `outboxPathFor`'s own file in prose (the exact
+ * literal path `dispatch.ts` grants a confined dispatch — see
+ * `writableFiles`'s own doc comment), and separately calls `writeFileSync` to
+ * write its OWN generated Seatbelt profile to a scratch temp dir, never to
+ * the outbox itself. Same shape as `OUTBOX_RESUME_RECORD_ALLOWLIST`, above.
+ */
+const OUTBOX_PROSE_MENTION_ALLOWLIST = new Set([CONFIG_PATH, WORKER_BOUNDARY_PATH])
 
 function sourceFiles(dir: string, prefix: string): [string, string][] {
   const out: [string, string][] = []
@@ -160,7 +213,9 @@ describe('log-callers — O2', () => {
           rel !== SINK_PATH &&
           !OUTBOX_TRUNCATE_ALLOWLIST.has(rel) &&
           !OUTBOX_HELD_VERDICT_ALLOWLIST.has(rel) &&
-          !OUTBOX_RESUME_RECORD_ALLOWLIST.has(rel)
+          !OUTBOX_RESUME_RECORD_ALLOWLIST.has(rel) &&
+          !OUTBOX_APPEND_ALLOWLIST.has(rel) &&
+          !OUTBOX_PROSE_MENTION_ALLOWLIST.has(rel)
       )
       .filter(([, abs]) => {
         const content = readFileSync(abs, 'utf8')
@@ -220,6 +275,14 @@ describe('log-callers — O2', () => {
     expect(existing).toContain(DEV_REVIEW_LOOP_REVIEWER_DISPATCH_PATH)
     expect(existing).toContain(DEV_REVIEW_LOOP_PUBLICATION_PATH)
     expect(existing).toContain(DEV_REVIEW_LOOP_PAUSE_RESUME_PATH)
+  })
+
+  it('the log-artifact allowlist entry does exist, and really does append to the outbox — task-log-v1 task 4 is the landed chokepoint, not a future one', () => {
+    const entry = files.find(([rel]) => rel === LOG_ARTIFACT_LIB_PATH)
+    expect(entry, `${LOG_ARTIFACT_LIB_PATH} not found by the scan`).toBeDefined()
+    const content = readFileSync((entry as [string, string])[1], 'utf8')
+    expect(content.includes('outbox')).toBe(true)
+    expect(OUTBOX_WRITE_CALLS.some((call) => content.includes(call))).toBe(true)
   })
 })
 

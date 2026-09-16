@@ -554,6 +554,127 @@ export function parseIssueStopConditions(body: string): ParsedIssueSection<strin
   return { ok: true, value: items }
 }
 
+export type IssueDocumentationSource = { source: string; mechanism: string; objectiveIds: number[] }
+export type IssueDocumentation = { kind: 'none' } | { kind: 'sources'; sources: IssueDocumentationSource[] }
+
+/** The explicit opt-out for a task with no externally-normative source — same sentinel shape as `Test Plan: unit-tests-only`/"No doc updates required". */
+const NO_DOCUMENTATION_SENTINEL_RE = /^none\b/i
+
+/**
+ * One well-formed `## Documentation` line: a source, then the mechanism it
+ * governs, split on an em/en-dash (optional surrounding whitespace — those
+ * two characters never appear inside a real URL/path, so they are
+ * unambiguous) or an ASCII hyphen with MANDATORY whitespace on both sides.
+ * The mandatory-whitespace form is deliberate, not `## Parts`'s own looser
+ * `\s*[-—–]\s*` (`ISSUE_PART_LINE_RE`): Parts' literal `Part <n> (<refs>)`
+ * prefix already anchors where its separator falls, so a hyphen anywhere
+ * else in the line is never ambiguous there. A Documentation line has no
+ * such anchor — its source is very often a URL — and a real doc-page path
+ * routinely contains an unspaced hyphen (`agent-sdk`, `cost-tracking`);
+ * against the old `\s*[-—–]\s*` shape, the lazy source capture stopped at
+ * the FIRST such in-URL hyphen, truncating the source and corrupting the
+ * mechanism text (round 2 review, BLOCKER, Issue #625 O1/O2 — verified live:
+ * `https://code.claude.com/docs/en/agent-sdk/cost-tracking` split at
+ * `.../agent`). Requiring `\s+-\s+` for the hyphen form specifically closes
+ * that gap: no URL contains a literal space, so an in-path hyphen can never
+ * satisfy it, while a real Planner-written ` - ` separator still does. An
+ * OPTIONAL trailing `(O<n>[, O<m>])` citation follows — same grammar Parts
+ * cites Objectives with, moved to the end here since a source/mechanism pair
+ * reads naturally before the citation that grades it (O3, Issue #625). The
+ * citation group only ever matches a real `O<digits>` list, so a mechanism
+ * whose own prose ends in an ordinary parenthetical (never shaped like
+ * `(O2)`) is never mistaken for one — it stays part of the mechanism capture
+ * instead.
+ */
+const ISSUE_DOCUMENTATION_LINE_RE = /^[-*]\s+(.+?)(?:\s+-\s+|\s*[—–]\s*)(.+?)(?:\s*\((O\d+(?:\s*,\s*O\d+)*)\))?$/i
+
+/**
+ * `## Documentation` — one bullet per normative source (a doc URL or an
+ * in-repo path) against the mechanism it governs: `- <source> — <mechanism>
+ * (O<n>)`. A task with no externally-documented mechanism states the
+ * explicit `None` sentinel instead of an empty section — silence is never
+ * read as "nothing to cite" (Issue #625: the failure this section closes is
+ * a source assumed read, never verified). `topLevelSectionText`/the
+ * dash-split grammar mirror `parseIssueParts`'s own shape, so this reads as
+ * one more judgment section, not a bespoke grammar.
+ */
+export function parseIssueDocumentation(body: string): ParsedIssueSection<IssueDocumentation> {
+  const section = topLevelSectionText(body, 'Documentation')
+  if (section === null) return { ok: false, errors: ['no `## Documentation` heading found in the body.'] }
+
+  const lines = section
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0)
+
+  if (lines.length > 0 && lines.every((l) => NO_DOCUMENTATION_SENTINEL_RE.test(l))) {
+    return { ok: true, value: { kind: 'none' } }
+  }
+
+  const sources: IssueDocumentationSource[] = []
+  const errors: string[] = []
+  for (const line of lines) {
+    const m = ISSUE_DOCUMENTATION_LINE_RE.exec(line)
+    if (!m) {
+      errors.push(
+        `"${line}" is not a well-formed Documentation line — expected \`- <source> — <mechanism it governs>\` (or the \`None\` sentinel).`
+      )
+      continue
+    }
+    const source = (m[1] as string).trim()
+    const mechanism = (m[2] as string).trim()
+    if (source.length === 0 || mechanism.length === 0) {
+      errors.push(`"${line}" is missing a source or a mechanism — a Documentation line needs both.`)
+      continue
+    }
+    const objectiveIds = m[3]
+      ? [...(m[3] as string).matchAll(/O(\d+)/gi)].map((r) => Number.parseInt(r[1] as string, 10))
+      : []
+    sources.push({ source, mechanism, objectiveIds })
+  }
+  if (sources.length === 0 && errors.length === 0) {
+    errors.push(
+      'the `## Documentation` section has no well-formed `- <source> — <mechanism>` lines, and no `None` sentinel.'
+    )
+  }
+  if (errors.length > 0) return { ok: false, errors }
+  return { ok: true, value: { kind: 'sources', sources } }
+}
+
+/**
+ * **O3 — the Documentation obligation is graded, not assumed.** When
+ * `## Documentation` names at least one real source (`kind: 'sources'`, the
+ * `None` sentinel is exempt — nothing to grade), at least one of those
+ * sources must cite a real `## Objectives` id via the trailing `(O<n>)`
+ * grammar `parseIssueDocumentation` accepts. This is what lets the Reviewer's
+ * ordinary `O<n>: MET | NOT MET` grading (already run on every task) cover
+ * whether the cited source's mechanism/version was actually incorporated,
+ * rather than leaving the obligation to compete on salience alone with
+ * nothing checking it (Issue #625's own finding). The review-gate stays the
+ * backstop that catches a wrong `MET`; this check only proves a graded home
+ * for the obligation exists at all.
+ *
+ * Passes trivially when Documentation or Objectives fails to parse —
+ * `checkIssueBriefSections`'s own Documentation branch and
+ * `checkIssueObjectives` already report that; this function only ever
+ * reports a genuinely uncited, well-formed Documentation section.
+ */
+export function checkDocumentationCitesObjective(body: string): IssueSectionResult {
+  const documentation = parseIssueDocumentation(body)
+  if (!documentation.ok || documentation.value.kind === 'none') return { status: 'pass', errors: [] }
+  const objectives = objectivesOf(body)
+  if (!objectives.ok) return { status: 'pass', errors: [] }
+  const definedIds = new Set(objectives.objectives.map((o) => Number.parseInt(o.id.slice(1), 10)))
+  const cited = documentation.value.sources.some((s) => s.objectiveIds.some((id) => definedIds.has(id)))
+  if (cited) return { status: 'pass', errors: [] }
+  return {
+    status: 'fail',
+    errors: [
+      "issue-validation Documentation: `## Documentation` names a real source but none cites a defined `## Objectives` id — add `(O<n>)` to at least one source line so the Reviewer's ordinary Objectives grading covers whether its mechanism/version was actually incorporated."
+    ]
+  }
+}
+
 /**
  * The Issue number from which the four judgment sections above become
  * mandatory — this Issue's own number, the first Issue this tranche cut.
@@ -563,12 +684,30 @@ export function parseIssueStopConditions(body: string): ParsedIssueSection<strin
 export const BRIEF_SECTIONS_SINCE_ISSUE = 426
 
 /**
+ * The Issue number from which `## Documentation` becomes mandatory alongside
+ * the four sections above — deliberately one past #625 (this requirement's
+ * own Issue, and the highest Issue number in existence when it was authored),
+ * so no open or historical Issue is invalidated by the new requirement and
+ * `issue edit` on one never starts refusing a body it could not have carried
+ * the section in. Never grandfathered further back than that: unlike
+ * `BRIEF_SECTIONS_SINCE_ISSUE`'s 426, there is no stock of Issues that
+ * already carry a literal `## Documentation` heading by hand to preserve.
+ */
+export const DOCUMENTATION_SINCE_ISSUE = 626
+
+/**
  * **The brief-sections gate.** A task Issue numbered at or above
  * `BRIEF_SECTIONS_SINCE_ISSUE` must carry all four of `## Surface`,
  * `## Parts`, `## Test plan`, `## Stop conditions`, each well-formed per its
  * own parser above. Below the cutover, an Issue passes unconditionally.
  * `issueNumber === null` is NOT exempted — fail-closed, the same posture
  * `checkIssueObjectives` takes for an Issue with no number yet.
+ *
+ * A fifth section, `## Documentation`, is folded into this same gate rather
+ * than a new builtin (Issue #625, O1) — it is graded on its own, later
+ * cutover (`DOCUMENTATION_SINCE_ISSUE`), since no pre-existing Issue ever
+ * carried it and requiring it retroactively on an `issue edit` would refuse a
+ * body no author had reason to write that way.
  */
 export function checkIssueBriefSections(body: string, issueNumber: number | null): IssueSectionResult {
   if (issueNumber !== null && issueNumber < BRIEF_SECTIONS_SINCE_ISSUE) return { status: 'pass', errors: [] }
@@ -582,6 +721,12 @@ export function checkIssueBriefSections(body: string, issueNumber: number | null
   if (!testPlan.ok) errors.push(...testPlan.errors.map((e) => `issue-validation Test plan: ${e}`))
   const stopConditions = parseIssueStopConditions(body)
   if (!stopConditions.ok) errors.push(...stopConditions.errors.map((e) => `issue-validation Stop conditions: ${e}`))
+
+  if (issueNumber === null || issueNumber >= DOCUMENTATION_SINCE_ISSUE) {
+    const documentation = parseIssueDocumentation(body)
+    if (!documentation.ok) errors.push(...documentation.errors.map((e) => `issue-validation Documentation: ${e}`))
+    else errors.push(...checkDocumentationCitesObjective(body).errors)
+  }
 
   return { status: errors.length > 0 ? 'fail' : 'pass', errors }
 }
@@ -1867,12 +2012,35 @@ export function checkPartsCoverageAndSequence(body: string): IssueSectionResult 
 // message; the pre-edit live body is the comparison basis.
 // ---------------------------------------------------------------------------
 
-export type FrozenSection = 'Objectives' | 'Surface' | 'Parts'
+export type FrozenSection = 'Objectives' | 'Surface' | 'Parts' | 'Documentation'
 
 /** True when two `## Surface` sections carry the same `in:`/`out:` glob sets, order-insensitive. */
 function surfacesEqual(a: IssueSurface, b: IssueSurface): boolean {
   const norm = (globs: string[]) => [...globs].sort().join(' ')
   return norm(a.in) === norm(b.in) && norm(a.out) === norm(b.out)
+}
+
+/**
+ * True when two `## Documentation` sections carry the same sources, in the
+ * same order (round 2 security review, HIGH, Issue #625) — order-significant
+ * like `## Parts`, since a source's own position has no independent meaning
+ * to render but a reordering is still an edit a Planner made, not a no-op.
+ * `{ kind: 'none' }` only ever equals another `{ kind: 'none' }`.
+ */
+function documentationEqual(a: IssueDocumentation, b: IssueDocumentation): boolean {
+  if (a.kind !== b.kind) return false
+  if (a.kind === 'none') return true
+  const bSources = (b as { kind: 'sources'; sources: IssueDocumentationSource[] }).sources
+  if (a.sources.length !== bSources.length) return false
+  return a.sources.every((s, i) => {
+    const t = bSources[i] as IssueDocumentationSource
+    return (
+      s.source === t.source &&
+      s.mechanism === t.mechanism &&
+      s.objectiveIds.length === t.objectiveIds.length &&
+      s.objectiveIds.every((id, j) => id === t.objectiveIds[j])
+    )
+  })
 }
 
 /** True when two `## Parts` lists carry the same `{n, objectiveIds, text}` tuples, in the same order — a Part's own order is significant (it drives §6's rendering), unlike a Surface glob set. */
@@ -1931,6 +2099,14 @@ export function frozenSectionsChanged(oldBody: string, newBody: string): FrozenS
     if (!partsEqual(oldParts.value, newParts.value)) changed.push('Parts')
   } else if (oldParts.ok !== newParts.ok) {
     changed.push('Parts')
+  }
+
+  const oldDocumentation = parseIssueDocumentation(oldBody)
+  const newDocumentation = parseIssueDocumentation(newBody)
+  if (oldDocumentation.ok && newDocumentation.ok) {
+    if (!documentationEqual(oldDocumentation.value, newDocumentation.value)) changed.push('Documentation')
+  } else if (oldDocumentation.ok !== newDocumentation.ok) {
+    changed.push('Documentation')
   }
 
   return changed

@@ -65,8 +65,19 @@ export type DispatchTaskResult = { posted: boolean; commentUrl: string | null; b
  * a direct caller (a test, `runTask` later) catches it like any `Error`. */
 export class DispatchTaskError extends Error {}
 
+// `execFileSync`'s own default `maxBuffer` (1 MiB) is the same ceiling that
+// broke `gate-reading.ts`'s `gh` reads at Issue #566 (1,597,599 bytes) —
+// bounded here, once, generously (64 MiB), for the identical reason: an
+// Issue's comment payload is adopter-influenced content this process
+// should not buffer with no ceiling at all (Issue #626, O3).
+const MAX_GH_OUTPUT_BYTES = 64 * 1024 * 1024
+
 function sh(cmd: string, args: string[]): string {
-  return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+  return execFileSync(cmd, args, {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    maxBuffer: MAX_GH_OUTPUT_BYTES
+  }).trim()
 }
 
 type IssueComment = { body: string; url: string; author: string | null }
@@ -575,7 +586,12 @@ export async function dispatchTask(
       deps.dispatchRole('developer', agent, prep.brief, {
         task: prep.issue,
         promptFile,
-        model: resolvedModel
+        model: resolvedModel,
+        // O1/O3 (task 3, #560): this call is `vinaya
+        // task run`'s own unattended loop starting the Developer — nobody is
+        // watching each tool call, so it must run inside the proven boundary
+        // (`DispatchOpts.unattended`'s own doc comment).
+        unattended: true
       })
     )
   }

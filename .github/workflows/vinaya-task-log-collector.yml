@@ -1,0 +1,92 @@
+# Managed by Vinaya — created by `vinaya init`. `vinaya upgrade` regenerates it; `vinaya eject` removes it.
+#
+# The trusted collector for task-path CI evidence. Runs
+# on the default branch with its own credential — never the pull request
+# being judged, never the worker that produced the artifact it downloads.
+name: Vinaya Task Log Collector
+
+on:
+  workflow_run:
+    workflows: [Vinaya Checks]
+    types: [completed]
+
+concurrency:
+  group: vinaya-task-log-collector-${{ github.event.workflow_run.id }}
+  cancel-in-progress: true
+
+jobs:
+  collect:
+    name: vinaya log collect-artifact
+    # No `pull_requests` entry means either a non-PR run (a push straight to
+    # a branch with no open PR) or a FORK pull request — GitHub does not
+    # populate this field for fork-originated PRs. Either way there is no
+    # trusted PR number to resolve an outbox for, so this job does nothing
+    # rather than guess one (O2).
+    if: ${{ github.event.workflow_run.pull_requests[0] != null }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      actions: read
+    steps:
+      - name: Check for a task-log artifact on this run
+        id: probe
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -o pipefail
+          HAS_ARTIFACT=$(gh api "repos/${{ github.repository }}/actions/runs/$RUN_ID/artifacts" \
+            --jq "[.artifacts[] | select(.name == \"vinaya-task-log-$RUN_ID\")] | length > 0")
+          echo "has_artifact=$HAS_ARTIFACT" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        if: ${{ steps.probe.outputs.has_artifact == 'true' }}
+        with:
+          # Explicit trusted ref: never use the PR head/merge ref in this job.
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        if: ${{ steps.probe.outputs.has_artifact == 'true' }}
+        with:
+          node-version: 20
+      # Pinned to a commit, not the mutable `v2` tag. A repoint of
+      # `v2` would execute new upstream code in every adopter on the next run,
+      # with no diff anywhere to review. Resolved from the `v2` tag on
+      # 2026-08-14. Bun's own version still comes from the repo's
+      # `packageManager` field, not from this pin.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+      - name: Restore Bun install cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock', 'bun.lockb') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+      # This repo declares the `@attalabs/vinaya` workspace package itself, so
+      # `npx @attalabs/vinaya` resolves to that local member instead of the
+      # registry and dies on its unbuilt `bin`. Build and run the trusted
+      # default-branch copy directly.
+      #
+      # This workflow executes only a trusted checkout selected by its event:
+      # never the pull request head or merge ref. The review-authority decision
+      # therefore comes from code the pull request cannot alter. `--ignore-scripts`
+      # remains defense in depth against lifecycle hooks in that trusted tree.
+      - name: Build the trusted Vinaya CLI
+        run: |
+          bun install --frozen-lockfile --ignore-scripts
+          bun run --cwd apps/cli build
+      - name: Download the task-log artifact
+        if: ${{ steps.probe.outputs.has_artifact == 'true' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: vinaya-task-log-${{ github.event.workflow_run.id }}
+          path: vinaya-task-log-download
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+      - name: Validate and publish
+        if: ${{ steps.probe.outputs.has_artifact == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node apps/cli/dist/index.js log collect-artifact vinaya-task-log-download/vinaya-task-log.ndjson --pr ${{ github.event.workflow_run.pull_requests[0].number }} --repo ${{ github.repository }}

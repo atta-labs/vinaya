@@ -20,6 +20,22 @@ function shEnvOverride(name: string, fallback: number): number {
   return Number.isFinite(n) && n >= 0 ? n : fallback
 }
 
+/**
+ * `execFileSync`'s own default `maxBuffer` (1 MiB) is what broke
+ * `fetchFrozenBrief`'s `gh issue view --json comments` read once a task
+ * Issue's own log-dump comments passed it (Issue #626, O3):
+ * Issue #566 measured at 1,597,599 bytes, and the loop exited
+ * `reason=error` at `last_decision=dispatch_developer` on every restart —
+ * unable to read the very brief it needed to dispatch. Every `gh` read this
+ * module makes (`fetchFrozenBrief`, `fetchIssueComments`,
+ * `resolveIssueObjectives`, `fetchRulings` — all in `developer-dispatch.ts`,
+ * all funneled through this one `sh()`) goes through the SAME 1 MiB ceiling,
+ * so it is bounded here, once, generously (64 MiB) rather than left
+ * unbounded: an Issue/PR's comment payload is adopter-influenced content,
+ * not something this process should buffer with no ceiling at all.
+ */
+const MAX_GH_OUTPUT_BYTES = 64 * 1024 * 1024
+
 /** Blocking, in-process sleep — `sh()` is itself fully synchronous (`execFileSync`), so an `async` backoff here would require threading a Promise through every one of this module's exported, synchronous read functions. */
 function sleepSyncMs(ms: number): void {
   if (ms <= 0) return
@@ -28,7 +44,11 @@ function sleepSyncMs(ms: number): void {
 
 function sh(cmd: string, args: string[]): string {
   if (cmd !== 'gh') {
-    return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+    return execFileSync(cmd, args, {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      maxBuffer: MAX_GH_OUTPUT_BYTES
+    }).trim()
   }
   // O5: every `gh` READ this driver makes retries this many times, total,
   // before a transient forge hiccup counts as a real failure — never
@@ -41,7 +61,11 @@ function sh(cmd: string, args: string[]): string {
   let lastErr: unknown
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
-      return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+      return execFileSync(cmd, args, {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        maxBuffer: MAX_GH_OUTPUT_BYTES
+      }).trim()
     } catch (err) {
       lastErr = err
       if (attempt < attempts) sleepSyncMs(backoffMs * attempt)

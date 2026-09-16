@@ -65,12 +65,14 @@ import { chmodSync, createWriteStream } from 'node:fs'
 import { execFileSync, spawn } from 'node:child_process'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import { homedir, hostname as osHostname } from 'node:os'
-import { redact, summarizeTranscript } from '@attalabs/aeg-core'
-import type { Role, RoleAttemptOutcome, TranscriptSummary } from '@attalabs/aeg-core'
+import { parseIssueDocumentation, redact, summarizeTranscript } from '@attalabs/aeg-core'
+import type { IssueDocumentationSource, Role, RoleAttemptOutcome, TranscriptSummary } from '@attalabs/aeg-core'
 import { createLogSink, outboxPathFor } from './log-sink.js'
 import { appendRoleLine } from './loop-log.js'
 import { loadConfig, GLOBAL_VINAYA_HOME } from './config.js'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative } from 'node:path'
+import { buildWorkerEnv, resolveWorkerBoundaryLaunch, RUNTIME_CREDENTIAL_ENV_KEYS } from './worker-boundary.js'
+import { repoRoot } from './diff-evidence.js'
 
 /**
  * Terminal colour, applied only at the point a line is written to a real
@@ -190,6 +192,56 @@ export type DispatchOpts = {
    * unchanged for the developer role and every pre-existing dispatch site.
    */
   cwd?: string
+  /**
+   * O1/O3 (task 3, `#560`): marks this dispatch as an unattended start —
+   * a driver launching a Developer, Reviewer or operational agent with
+   * nobody watching each tool call, as opposed to an Operator running
+   * `vinaya dispatch` by hand. Attribution only by itself: whether an
+   * unattended start actually REQUIRES `apps/cli/specs/isolation.md`'s
+   * OS-level boundary is the separate, declared `dispatch.requireWorkerIsolation`
+   * config setting (`config.ts`) — `true` by default on Darwin (the declared
+   * supported environment, where O3's "fail closed" is now the automatic
+   * default this objective's own unconditional wording names), `false`
+   * elsewhere unless a repo opts in explicitly (round 2 review, HIGH — see
+   * that config field's own doc comment for why an unconditional default
+   * everywhere would only ever refuse on an unsupported host, never protect
+   * anything). When BOTH `unattended` is `true` here AND the resolved
+   * setting is `true`, the dispatch REFUSES, before ever spawning, if the
+   * boundary cannot be established on this host
+   * (`worker-boundary.ts`'s `isWorkerBoundaryAvailable`) — never a silent
+   * fallback to full environment inheritance (isolation.md §3, "Refusal
+   * conditions"). On a host where the setting resolves off (Linux, absent an
+   * explicit override), this field changes nothing observable — the plain
+   * `vinaya dispatch` CLI command, this file's own pre-existing test suite
+   * (`apps/cli/tests/lib/dispatch.test.ts`), and the pre-existing
+   * `dev-review-loop`/`dispatch-task` automated-loop dispatch sites (which
+   * DO set this field, for attribution) all keep their exact pre-task-3
+   * behavior there.
+   */
+  unattended?: boolean
+  /**
+   * Round 6 fix, live-reproduced: additional subpaths, relative to
+   * `GLOBAL_VINAYA_HOME`, this dispatch's own confined child needs to
+   * READ+WRITE beyond the outbox/resume-record files every unattended
+   * dispatch already gets — `dev-review-loop.ts`'s own reviewer/security
+   * dispatch is the one caller with a need today: it tells a reviewer,
+   * via its OWN prompt text, to write `findings.txt`/`report.txt`/
+   * `objectives.txt` into `reviewerWorkDir`'s own
+   * `outbox/dev-review-loop/<task>/round-<n>-<role>-work[-retry<n>]`
+   * directory (`reviewer-dispatch.ts`) — a path this module has no
+   * hardcoded opinion about, so the caller names it directly, the same
+   * "generic primitive, caller supplies the repo/dispatch-specific shape"
+   * posture `vinayaHomeWritableFiles` already takes. Found live: with no
+   * grant here, a confined reviewer/security dispatch on the declared
+   * supported host could not write its own findings — `dev-review-loop`'s
+   * own real fixture test hung waiting for a report file no confined
+   * dispatch had permission to create. Unlike the single-file outbox/resume
+   * grant, `reviewerWorkDir`'s own path is ALREADY uniquely scoped per
+   * task/round/role/attempt by its own naming convention, so a directory-
+   * level (`subpath`) grant here — not the narrower per-file `literal` one —
+   * carries no cross-task/cross-role exposure.
+   */
+  extraVinayaWritableSubdirs?: readonly string[]
   /**
    * The objectives/brief/ruling/policy identity
    * this attempt is being judged against, when the caller already resolved
@@ -523,6 +575,143 @@ function backgroundDenyHookScript(): string {
 }
 
 /**
+ * True for a `## Documentation` source shaped as a URL — the only shape a
+ * `WebFetch` call can ever answer for. An in-repo path (a spec, a role doc)
+ * is read via `Read`, which this task's O2 names no hook for; mechanizing
+ * "was this URL fetched" only ever applies to the URL-shaped subset. Same
+ * `https?://` test `doc-owners.ts`'s `isUrlPointer` already uses, duplicated
+ * rather than imported — that module is out of this task's surface and the
+ * test is a one-line literal, not a shared grammar worth a cross-file wire.
+ */
+function isDocumentationUrl(source: string): boolean {
+  return /^https?:\/\//i.test(source.trim())
+}
+
+/**
+ * Which of `sources`' URL-shaped entries never appear (as a normalized
+ * prefix match — a trailing slash or `#fragment` on either side never
+ * causes a false miss) in `fetchedUrls` — the `WebFetch` URLs the
+ * `PostToolUse` hook already recorded for this session. Pure, exported for
+ * unit testing; the generated Stop hook script below duplicates this exact
+ * logic inline (it must run standalone, no workspace module resolution —
+ * same posture `backgroundShapeDetectorSource` already takes).
+ */
+export function unreadDocumentationSources(
+  sources: IssueDocumentationSource[],
+  fetchedUrls: string[]
+): IssueDocumentationSource[] {
+  const normalize = (u: string) => u.trim().split('#')[0]!.replace(/\/+$/, '')
+  const fetched = new Set(fetchedUrls.map(normalize))
+  return sources.filter((s) => isDocumentationUrl(s.source) && !fetched.has(normalize(s.source)))
+}
+
+/**
+ * Extracts the `## Documentation` sources this dispatch's own prompt names,
+ * for a `developer` dispatch only — the entry-gate obligation `roles/
+ * developer.md` states is the Developer's alone, never another role's. A
+ * fresh (round 1) developer dispatch's prompt IS the frozen brief text
+ * (`dispatch-task.ts`'s `prep.brief`), which now carries `## Documentation`
+ * verbatim (`brief-render.ts`'s `renderDocumentation`) right after
+ * Objectives. A resumed/round-2+ prompt (a review-finding fix, never the
+ * full brief again) simply has no such heading, `parseIssueDocumentation`
+ * returns not-ok, and this degrades to `[]` — no re-imposed obligation on a
+ * later round, since the sources were already read to reach round 1's PR.
+ */
+function documentationSourcesFromPrompt(role: Role, prompt: string): IssueDocumentationSource[] {
+  if (role !== 'developer') return []
+  const parsed = parseIssueDocumentation(prompt)
+  if (!parsed.ok || parsed.value.kind !== 'sources') return []
+  return parsed.value.sources
+}
+
+/**
+ * The `PostToolUse` hook that records every `WebFetch` URL for this session
+ * — Issue #625, O2. Appends one JSON line (`{url}`) per call to a per-run log
+ * file keyed by `VINAYA_RUN_ID` (never a fixed global path: two tasks
+ * dispatched concurrently, an observed live pattern on this box, would
+ * otherwise share one file and each would see the other's fetches). Exit
+ * code 2 is not honored on `PostToolUse` at all (confirmed against
+ * code.claude.com/docs/en/hooks: "There is no way to block or undo a tool
+ * call after it succeeds") — this hook only ever records, and always exits
+ * 0, matching that constraint rather than attempting a block it structurally
+ * cannot perform.
+ */
+function documentationLogHookScript(dir: string): string {
+  return [
+    "const fs = require('fs');",
+    "let d = '';",
+    "process.stdin.on('data', (c) => { d += c });",
+    "process.stdin.on('end', () => {",
+    '  try {',
+    '    const e = JSON.parse(d);',
+    "    const runId = process.env.VINAYA_RUN_ID || '';",
+    "    if (runId && e.tool_name === 'WebFetch' && e.tool_input && typeof e.tool_input.url === 'string') {",
+    `      const logPath = ${JSON.stringify(join(dir, 'documentation-log-'))} + runId + '.jsonl';`,
+    "      try { fs.appendFileSync(logPath, JSON.stringify({ url: e.tool_input.url }) + '\\n', { mode: 0o600 }); } catch {}",
+    '    }',
+    '  } catch {',
+    '    // not a JSON line — never fail a hook whose only job is to record',
+    '  }',
+    '  process.exit(0);',
+    '});',
+    ''
+  ].join('\n')
+}
+
+/**
+ * The `Stop` hook that refuses to let the turn end while a `## Documentation`
+ * source named in this dispatch's own brief was never fetched — Issue #625,
+ * O2. Reads the per-run sources file `writeDispatchSettings` wrote (dormant,
+ * exit 0, when absent or empty: a task whose brief carried no Documentation
+ * section, or none of it URL-shaped, owes nothing here) and the log file the
+ * `PostToolUse` hook above wrote, and exits 2 — "prevents Claude from
+ * stopping, continues the conversation" (code.claude.com/docs/en/hooks) —
+ * naming every unread source on stderr when the two disagree. Enforcement is
+ * this hook's, never the Developer's own judgement call about whether it
+ * read enough.
+ */
+function documentationStopHookScript(dir: string): string {
+  return [
+    "const fs = require('fs');",
+    "let d = '';",
+    "process.stdin.on('data', (c) => { d += c });",
+    "process.stdin.on('end', () => {",
+    '  try {',
+    '    JSON.parse(d);',
+    "    const runId = process.env.VINAYA_RUN_ID || '';",
+    '    if (!runId) { process.exit(0); }',
+    `    const sourcesPath = ${JSON.stringify(join(dir, 'documentation-sources-'))} + runId + '.json';`,
+    `    const logPath = ${JSON.stringify(join(dir, 'documentation-log-'))} + runId + '.jsonl';`,
+    '    let sources = [];',
+    "    try { sources = JSON.parse(fs.readFileSync(sourcesPath, 'utf8')); } catch { sources = []; }",
+    '    if (!Array.isArray(sources) || sources.length === 0) { process.exit(0); }',
+    '    let fetchedUrls = [];',
+    '    try {',
+    "      fetchedUrls = fs.readFileSync(logPath, 'utf8')",
+    "        .split('\\n')",
+    '        .filter(Boolean)',
+    '        .map((line) => { try { return JSON.parse(line).url; } catch { return null; } })',
+    "        .filter((u) => typeof u === 'string');",
+    '    } catch { fetchedUrls = []; }',
+    "    const normalize = (u) => String(u).trim().split('#')[0].replace(/\\/+$/, '');",
+    '    const fetched = new Set(fetchedUrls.map(normalize));',
+    '    const isUrl = (s) => /^https?:\\/\\//i.test(String(s).trim());',
+    '    const unread = sources.filter((s) => isUrl(s.source) && !fetched.has(normalize(s.source)));',
+    '    if (unread.length > 0) {',
+    "      const names = unread.map((s) => '- ' + s.source + ' (governs: ' + s.mechanism + ')').join('\\n');",
+    "      process.stderr.write('The brief\\'s `## Documentation` section names a source not yet fetched via WebFetch. Fetch it before ending the turn, and record the mechanism/version it confirms:\\n' + names + '\\n');",
+    '      process.exit(2);',
+    '    }',
+    '  } catch {',
+    '    // an unreadable/malformed hook payload never blocks a Stop this hook cannot evaluate',
+    '  }',
+    '  process.exit(0);',
+    '});',
+    ''
+  ].join('\n')
+}
+
+/**
  * The ceiling this repo's own doctrine commands can genuinely need —
  * `roles/developer.md` records the real gate suite running "past ten
  * minutes" on a real Test Plan, above the installed binary's own default
@@ -552,14 +741,38 @@ const DISPATCH_BASH_MAX_TIMEOUT_MS = '1800000'
  * the installed binary's own strings) — its own `run_in_background` flag
  * defaults to true, so an agent that never sets it explicitly would
  * otherwise background every subagent it spawns.
+ *
+ * `documentation` (Issue #625, O2) wires the second enforcement pair this
+ * settings file carries: a `PostToolUse` hook that logs every `WebFetch` URL
+ * and a `Stop` hook that refuses to let the turn end while a URL-shaped
+ * `## Documentation` source this dispatch's own brief named was never
+ * fetched. Both scripts are static/generic (the same content on every call,
+ * like `deny-background-bash.mjs`) — only the per-run SOURCES file this
+ * writes is call-specific, keyed by `runId` rather than a fixed name,
+ * because two tasks dispatched concurrently on this box (an observed live
+ * pattern, not hypothetical) would otherwise share one file and each would
+ * see the other's obligation. `runId` must be the same id threaded onto the
+ * child's `VINAYA_RUN_ID` env var by the caller, or the hooks can never find
+ * the file this call wrote. An empty/absent `documentation` list writes no
+ * sources file at all — the Stop hook reads that as "nothing owed" and never
+ * blocks, the same seam-is-dormant-when-absent posture `doc-owners.ts`
+ * already uses.
  */
-export function writeDispatchSettings(): string | null {
+export function writeDispatchSettings(runId: string, documentation: IssueDocumentationSource[] = []): string | null {
   try {
     const dir = join(GLOBAL_VINAYA_HOME, 'dispatch-settings')
     mkdirSync(dir, { recursive: true, mode: 0o700 })
     chmodSync(dir, 0o700)
     const scriptPath = join(dir, 'deny-background-bash.mjs')
     writeFileSync(scriptPath, backgroundDenyHookScript(), { mode: 0o600 })
+    const documentationLogScriptPath = join(dir, 'documentation-log.mjs')
+    writeFileSync(documentationLogScriptPath, documentationLogHookScript(dir), { mode: 0o600 })
+    const documentationStopScriptPath = join(dir, 'documentation-stop.mjs')
+    writeFileSync(documentationStopScriptPath, documentationStopHookScript(dir), { mode: 0o600 })
+    if (documentation.length > 0) {
+      const sourcesPath = join(dir, `documentation-sources-${runId}.json`)
+      writeFileSync(sourcesPath, JSON.stringify(documentation), { mode: 0o600 })
+    }
     const settingsPath = join(dir, 'settings.json')
     const settings = {
       env: {
@@ -571,6 +784,17 @@ export function writeDispatchSettings(): string | null {
           {
             matcher: 'Bash|Agent|Task',
             hooks: [{ type: 'command', command: `bun "${scriptPath}"` }]
+          }
+        ],
+        PostToolUse: [
+          {
+            matcher: 'WebFetch',
+            hooks: [{ type: 'command', command: `bun "${documentationLogScriptPath}"` }]
+          }
+        ],
+        Stop: [
+          {
+            hooks: [{ type: 'command', command: `bun "${documentationStopScriptPath}"` }]
           }
         ]
       }
@@ -2057,6 +2281,217 @@ export async function dispatchRole(
     }
   }
 
+  const baseArgs = opts.resumeId ? vendor.resumeArgs(opts.resumeId, opts.model) : vendor.args(opts.model)
+  // Computed here, once — both the settings-write fail-closed check below
+  // and the boundary-resolution block further down read the SAME value,
+  // never two independently-evaluated `loadConfig()` calls that could
+  // observe a config change mid-dispatch and disagree with each other.
+  const requireIsolation = loadConfig()?.dispatch?.requireWorkerIsolation ?? process.platform === 'darwin'
+  // O1: claude only — see `writeDispatchSettings`'s own doc comment for why
+  // Codex/Gemini are not silently included. Computed here, once, before the
+  // 'dispatched' log line — moved up from inside the spawn `Promise` (this
+  // task, #560) so the SAME final `spawnArgs` (baseArgs plus `--settings`)
+  // is what an unattended start's boundary resolution wraps below, rather
+  // than wrapping a pre-settings argv and reconciling the two later.
+  const documentationSources = documentationSourcesFromPrompt(role, prompt)
+  if (agent !== 'claude' && documentationSources.some((s) => isDocumentationUrl(s.source))) {
+    // round 2 security review, LOW (Issue #625) — the PostToolUse/Stop hook
+    // pair below is Claude-only, same limitation `deny-background-bash.mjs`
+    // already has; unlike that hook, an unenforced Documentation obligation
+    // is silent otherwise, so this dispatch names it rather than leaving
+    // the operator to discover it only by a source never actually read.
+    writeLifecycle(
+      'vinaya dispatch-role: the Documentation read-gate (Issue #625, O2) is Claude-only — ' +
+        `agent '${agent}' gets no WebFetch log/Stop hook, so this brief's URL-shaped ` +
+        `'## Documentation' source(s) are not mechanically enforced for this dispatch.`
+    )
+  }
+  const dispatchSettingsPath = agent === 'claude' ? writeDispatchSettings(runId, documentationSources) : null
+  // Round 5 review, MEDIUM: an unattended, isolation-required Claude dispatch
+  // whose settings write failed (disk/permission fault under
+  // `GLOBAL_VINAYA_HOME/dispatch-settings`) previously dropped `--settings`
+  // silently and launched anyway — the PreToolUse background-deny hook the
+  // brief names a trap to preserve would never load, with no refusal and no
+  // surfaced error, unlike O3's own boundary-unavailable path. Fail closed
+  // here the same way: refuse before any spawn, exactly as the
+  // binary-not-resolvable and boundary-unavailable refusals below do.
+  if (agent === 'claude' && opts.unattended === true && requireIsolation && dispatchSettingsPath === null) {
+    const durationMs = Date.now() - start
+    const priorSize = sizeOfSafe(outboxPath)
+    log({
+      kind: 'dispatch',
+      event: 'dispatch_failed',
+      payload: {},
+      target_role: role,
+      model: resolvedModel,
+      ...roundField,
+      effect_id: effectId,
+      reason: 'refused',
+      usage: null,
+      duration_ms: durationMs
+    })
+    writeLifecycle(
+      `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended start requires the PreToolUse ` +
+        `background-deny hook's settings file, which could not be written under ${GLOBAL_VINAYA_HOME}/dispatch-settings`
+    )
+    patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason: 'refused' })
+    await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
+    return {
+      exitCode: null,
+      durationMs,
+      usage: null,
+      resumeId: null,
+      timedOut: false,
+      failureReason: 'refused',
+      effectId
+    }
+  }
+  const spawnArgs = dispatchSettingsPath ? [...baseArgs, '--settings', dispatchSettingsPath] : baseArgs
+
+  // O1/O3 (task 3, #560): an unattended start must run inside the proven
+  // boundary — refused, before the 'dispatched' event and before any spawn,
+  // when it cannot be established (`DispatchOpts.unattended`'s own doc
+  // comment) — but only when `dispatch.requireWorkerIsolation` (`config.ts`)
+  // resolves `true`, the "declared, visible setting" this tranche's
+  // milestone names. Round 2 review, HIGH: an unconditional off-by-default
+  // left O3's "fail closed" as opt-in everywhere, including the ONE
+  // environment the boundary actually works on — the default is now
+  // platform-conditional (`config.ts`'s own doc comment on this field):
+  // `true` on Darwin (the declared supported environment, where nothing
+  // needs to change for O3 to hold as the automatic default), `false`
+  // elsewhere (where forcing it on would only ever refuse, never protect
+  // anything, since no mechanism exists there yet). An explicit config value
+  // always wins either way. This repo's own CI/operational host (Linux)
+  // keeps today's exact behavior unless a repo explicitly opts in.
+  let boundaryLaunch: ReturnType<typeof resolveWorkerBoundaryLaunch> | null = null
+  let boundaryAllowedDir: string | null = null
+  if (opts.unattended === true && requireIsolation) {
+    // O2 (round 2 review, CRITICAL): when no real worktree exists yet
+    // (`opts.cwd` omitted — the round-1 Developer bootstrap, whose own Step 0
+    // is `git worktree add`), `boundaryAllowedDir` falls back to the shared
+    // repo root — which must be READ-ONLY, never read+write, or a confined
+    // Developer could rewrite `vinaya.config.json`/`aeg-root/` doctrine and
+    // persistently defeat this very boundary (see
+    // `WorkerBoundaryLaunchOpts.bootstrapWritableSubpaths`'s own doc
+    // comment). Only the `developer` role's own bootstrap genuinely needs
+    // `git worktree add`'s two write targets; any other role falling back to
+    // the repo root (a Reviewer with no candidate built yet) gets a
+    // read-only repo root and nothing else.
+    const usingRepoRootFallback = opts.cwd === undefined
+    boundaryAllowedDir = opts.cwd ?? repoRoot()
+    boundaryLaunch =
+      boundaryAllowedDir === null
+        ? { ok: false, reason: 'no worktree/repo root could be resolved to confine this dispatch to' }
+        : resolveWorkerBoundaryLaunch({
+            binaryPath,
+            args: spawnArgs,
+            allowedDir: boundaryAllowedDir,
+            vinayaHomeDir: GLOBAL_VINAYA_HOME,
+            // Round 5 review, CRITICAL fix: scoped to THIS dispatch's own
+            // exact FILE, never its containing directory. The round-4 fix
+            // (scoping to the repo-segment DIRECTORY, `dirname(outboxPath)`/
+            // `dirname(resumeRecordPathFor(...))`) closed the cross-repo
+            // exposure but left every sibling task's outbox line and every
+            // sibling role's own resume record in that SAME directory
+            // (`outboxPathFor`/`resumeRecordPathFor` share one flat
+            // directory per repo across every task and role) readable and
+            // writable by this confined dispatch — verified live to include
+            // a concurrently-running review's own resume record, whose
+            // `resumeId` the vendor binary's own `--resume` flag accepts.
+            // `vinayaHomeWritableFiles` grants exactly these two paths via
+            // `(literal ...)`, never `(subpath ...)`, so no sibling file in
+            // the shared directory is exposed. `writeLaunchRecord`'s own
+            // `mkdirSync(dirname(path), { recursive: true })` still needs
+            // that containing directory to exist — pre-created here, by the
+            // TRUSTED, unsandboxed controller, the same way
+            // `writeDispatchSettings` pre-creates its own directory before
+            // this resolution runs, so the confined child's own
+            // `mkdirSync(..., {recursive:true})` on an already-existing
+            // directory needs only the `metadataOnlyDirs` traversal grant
+            // this same resolution already derives from these paths' own
+            // parents.
+            vinayaHomeWritableFiles: (() => {
+              const resumePath = resumeRecordPathFor(role, agent, repo, opts.task, opts.pr)
+              try {
+                mkdirSync(dirname(outboxPath), { recursive: true })
+              } catch {
+                // best-effort — an unwritable GLOBAL_VINAYA_HOME is a
+                // pre-existing condition this resolution's own later steps
+                // already handle by narrowing what gets exposed, never by
+                // widening the grant to compensate.
+              }
+              try {
+                mkdirSync(dirname(resumePath), { recursive: true })
+              } catch {
+                // best-effort, same reasoning as above.
+              }
+              const files = [relative(GLOBAL_VINAYA_HOME, outboxPath), relative(GLOBAL_VINAYA_HOME, resumePath)]
+              // Round 6 review, security CRITICAL fix: `documentationLogHookScript`'s
+              // own `PostToolUse` hook (`writeDispatchSettings`, above) appends one
+              // line per `WebFetch` call to `documentation-log-<runId>.jsonl` inside
+              // `dispatch-settings` — but that whole directory sits in
+              // `vinayaHomeReadOnlySubdirs` below, read-only, since nothing else in
+              // it is ever rewritten by the confined child. Live-reproduced: a write
+              // into a read-only-granted directory fails `Operation not permitted`,
+              // so the hook's own `try/catch` silently swallows it — every WebFetch
+              // of a Documentation source goes unrecorded, `documentationStopHookScript`
+              // always reads it as unfetched, and the Stop hook refuses forever,
+              // exactly the fail-closed contract `roles/developer.md` describes but
+              // never resolvable, breaking O3 for any confined developer whose brief
+              // names a URL-shaped `## Documentation` source. Named here, alongside
+              // the outbox/resume-record files, as the one file in that otherwise
+              // read-only directory the confined child genuinely writes.
+              if (dispatchSettingsPath) {
+                const docLogPath = join(dirname(dispatchSettingsPath), `documentation-log-${runId}.jsonl`)
+                files.push(relative(GLOBAL_VINAYA_HOME, docLogPath))
+              }
+              return files
+            })(),
+            // Round 6 fix, live-reproduced: `extraVinayaWritableSubdirs`'s
+            // own doc comment (above, on `DispatchOpts`) has the finding —
+            // `dev-review-loop.ts`'s reviewer/security dispatch is the one
+            // caller today, naming its own `reviewerWorkDir`, already
+            // uniquely scoped per task/round/role/attempt.
+            vinayaHomeWritableSubdirs: opts.extraVinayaWritableSubdirs ?? [],
+            // Round 4 review, BLOCKER: the confined child's own `--settings
+            // <path>` argv (added above, before this resolution) points at
+            // `writeDispatchSettings`'s `dispatch-settings` directory, which
+            // was never carved into either list — a confined Claude dispatch
+            // could not read the settings file it was handed. Read-only:
+            // this directory is written by the trusted controller before
+            // this resolution runs, and nothing inside the sandbox ever
+            // needs to rewrite it.
+            vinayaHomeReadOnlySubdirs: dispatchSettingsPath
+              ? [relative(GLOBAL_VINAYA_HOME, dirname(dispatchSettingsPath))]
+              : [],
+            ...(usingRepoRootFallback
+              ? { bootstrapWritableSubpaths: role === 'developer' ? ['.git', '.worktrees'] : [] }
+              : {})
+          })
+    if (!boundaryLaunch.ok) {
+      const durationMs = Date.now() - start
+      const priorSize = sizeOfSafe(outboxPath)
+      log({
+        kind: 'dispatch',
+        event: 'dispatch_failed',
+        payload: {},
+        target_role: role,
+        model: resolvedModel,
+        ...roundField,
+        effect_id: effectId,
+        reason: 'refused',
+        usage: null,
+        duration_ms: durationMs
+      })
+      writeLifecycle(
+        `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended start requires the worker isolation boundary, which is unavailable: ${boundaryLaunch.reason}`
+      )
+      patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason: 'refused' })
+      await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
+      return { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason: 'refused' }
+    }
+  }
+
   {
     const priorSize = sizeOfSafe(outboxPath)
     log({
@@ -2076,21 +2511,57 @@ export async function dispatchRole(
   const killGraceMs = loadConfig()?.dispatch?.killGraceMs ?? SIGKILL_GRACE_MS
 
   return new Promise<DispatchHandle>((resolve) => {
-    const baseArgs = opts.resumeId ? vendor.resumeArgs(opts.resumeId, opts.model) : vendor.args(opts.model)
-    // O1: claude only — see `writeDispatchSettings`'s own doc comment for why
-    // Codex/Gemini are not silently included.
-    const dispatchSettingsPath = agent === 'claude' ? writeDispatchSettings() : null
-    const spawnArgs = dispatchSettingsPath ? [...baseArgs, '--settings', dispatchSettingsPath] : baseArgs
-    const child = spawn(binaryPath, spawnArgs, {
+    // O1/O2: an unattended start with a resolved boundary spawns the WRAPPED
+    // command (`sandbox-exec -f <profile> <binary> <args…>`) with a
+    // NAMED-ALLOWLIST environment (`buildWorkerEnv` — never `{ ...process.env }`)
+    // and `cwd` set to the exact directory the profile confines it to.
+    // Attended dispatch (`boundaryLaunch === null`) keeps the pre-task-3
+    // shape byte for byte: the real binary, the full parent environment,
+    // `opts.cwd` only when the caller named one. `spawnArgs` (baseArgs plus
+    // `--settings`, and `dispatchSettingsPath`/`documentationSources` behind
+    // it) are computed once, above, before the boundary resolution — see
+    // that computation's own comment for why.
+    const resolvedBoundary = boundaryLaunch?.ok ? boundaryLaunch.launch : null
+    const spawnCommand = resolvedBoundary ? resolvedBoundary.command : binaryPath
+    const spawnCommandArgs = resolvedBoundary ? resolvedBoundary.args : spawnArgs
+    const spawnCwd = resolvedBoundary ? (boundaryAllowedDir ?? opts.cwd) : opts.cwd
+    const attribution = {
+      VINAYA_RUN_ID: runId,
+      VINAYA_ROLE: role,
+      VINAYA_TASK: opts.task !== undefined ? String(opts.task) : undefined,
+      VINAYA_ROUND: opts.round !== undefined ? String(opts.round) : undefined
+    }
+    const child = spawn(spawnCommand, spawnCommandArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      ...(opts.cwd ? { cwd: opts.cwd } : {}),
-      env: {
-        ...process.env,
-        VINAYA_RUN_ID: runId,
-        VINAYA_ROLE: role,
-        VINAYA_TASK: opts.task !== undefined ? String(opts.task) : undefined,
-        VINAYA_ROUND: opts.round !== undefined ? String(opts.round) : undefined
-      }
+      ...(spawnCwd ? { cwd: spawnCwd } : {}),
+      env: resolvedBoundary
+        ? // O1 (round 2 review, BLOCKER): named-through by vendor, never a
+          // blanket credential spread — `RUNTIME_CREDENTIAL_ENV_KEYS`'s own
+          // doc comment records what is (Claude, `ANTHROPIC_API_KEY`,
+          // verified live) and is not (Codex/Gemini, disclosed as unverified
+          // on this host) confirmed.
+          //
+          // Round 2 security review, HIGH: `WORKER_ENV_ALLOWLIST_KEYS`
+          // passes `TMPDIR` through from the parent unmodified, still naming
+          // the real host temp base the profile never grants — only
+          // `resolvedBoundary.tmpDir` (the profile's own scratch dir) is
+          // read+write inside the confinement. `TMPDIR`/`TMP`/`TEMP` are
+          // overridden here, in `attribution` (which always wins over the
+          // allowlisted value, per `buildWorkerEnv`'s own doc comment), so a
+          // confined `mkdir -p "$TMPDIR/x"` — a pattern common across
+          // `bun install`/`npm`/most POSIX toolchains — resolves to a path
+          // the profile actually grants.
+          buildWorkerEnv(
+            process.env,
+            {
+              ...attribution,
+              TMPDIR: resolvedBoundary.tmpDir,
+              TMP: resolvedBoundary.tmpDir,
+              TEMP: resolvedBoundary.tmpDir
+            },
+            RUNTIME_CREDENTIAL_ENV_KEYS[agent] ?? []
+          )
+        : { ...process.env, ...attribution }
     })
 
     // O1/O3: bind the child's own identity onto the launch record right
@@ -2255,6 +2726,11 @@ export async function dispatchRole(
       clearInterval(heartbeatTimer)
       clearTimeout(warnTimer)
       outputTee.end()
+      // O1: the boundary's own profile/scratch-dir temp files never outlive
+      // the dispatch that created them — best-effort, matching every other
+      // filesystem-bookkeeping concern in this file (`removeIfPresent`,
+      // `reviewer-isolation.ts`'s own posture).
+      resolvedBoundary?.cleanup()
       // The corresponding `log()` call already ran, with `priorSize` taken
       // right before it — this just confirms it landed before the caller
       // can possibly exit the process out from under it.

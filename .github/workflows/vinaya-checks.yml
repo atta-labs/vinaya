@@ -202,3 +202,26 @@ jobs:
             cat vinaya-check-output.txt 2>/dev/null || echo 'no check output captured (runner did not start)'
             echo '~~~'
           } >> "$GITHUB_STEP_SUMMARY"
+      # This job holds no forge-write credential
+      # (see `permissions:` above) — it only ever copies THIS run's own
+      # local outbox to a file and uploads it as a plain build artifact.
+      # `if: always()` on both steps is load-bearing, not decorative: a
+      # cancelled or failed run must still export whatever partial evidence
+      # its outbox already holds (O2's "cancellation preserve[s] available
+      # evidence"), not only a clean pass. Nothing here posts, comments, or
+      # calls the forge — `vinaya-task-log-collector.yml`, running on the
+      # default branch with its own credential, is the only place a
+      # downloaded copy of this artifact is ever validated and published.
+      - name: Export task-log artifact
+        if: always()
+        run: node apps/cli/dist/index.js log export-artifact vinaya-task-log.ndjson
+      - name: Upload task-log artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vinaya-task-log-${{ github.run_id }}
+          path: vinaya-task-log.ndjson
+          # A run with no gate events yet (the export step wrote nothing) is
+          # a legitimate outcome, never a reason to fail this job.
+          if-no-files-found: ignore
+          retention-days: 1

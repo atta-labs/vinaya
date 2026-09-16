@@ -23,7 +23,9 @@ import { packagesNamedIn } from './brief-validation'
 import { deriveSection7 } from './derive-section7'
 import {
   BRIEF_SECTIONS_SINCE_ISSUE,
+  DOCUMENTATION_SINCE_ISSUE,
   globCoversPath,
+  type IssueDocumentation,
   type IssuePart,
   type IssueSurface,
   type IssueTestPlan,
@@ -31,6 +33,27 @@ import {
 } from './issue-validation'
 import { type Objective, renderObjectives } from './objectives'
 import { applyTierFloor, deriveTierFromDiff, readTierFromPrBody } from './pr-tier'
+
+/**
+ * Renders the Issue's `## Documentation` section verbatim — one bullet per
+ * source/mechanism pair (with its `(O<n>)` citation, when present — O3,
+ * Issue #625), or the `None` sentinel line. Called only when
+ * `facts.documentation` is not the absent-section sentinel (see the join in
+ * `renderBrief`), so both variants here always have something real to print.
+ */
+function renderDocumentation(documentation: IssueDocumentation): string {
+  if (documentation.kind === 'none') {
+    return ['## Documentation', '', 'None — no normative external source governs this task.'].join('\n')
+  }
+  return [
+    '## Documentation',
+    '',
+    ...documentation.sources.map((s) => {
+      const citation = s.objectiveIds.length > 0 ? ` (${s.objectiveIds.map((id) => `O${id}`).join(', ')})` : ''
+      return `- ${s.source} — ${s.mechanism}${citation}`
+    })
+  ].join('\n')
+}
 
 export type RationaleFieldKey =
   | 'boundary'
@@ -218,6 +241,17 @@ export type BriefFacts = {
    * convention as `objectives`/`parts`.
    */
   stopConditions: string[]
+  /**
+   * The Issue's `## Documentation` section (`issue-validation.ts`'s
+   * `parseIssueDocumentation`), copied into the brief verbatim right after
+   * Objectives — the earliest a Developer reads anything, addressing Issue
+   * #625's own finding that a documentation obligation buried after Parts/
+   * Test plan/Stop conditions competes for attention it never wins.
+   * `{ kind: 'sources', sources: [] }` is the absent-section sentinel, same
+   * convention as `parts`/`stopConditions`; `{ kind: 'none' }` is the
+   * legitimate explicit opt-out and is rendered, never treated as absent.
+   */
+  documentation: IssueDocumentation
   dispatchReady: boolean
   dispatchBlockers: string[]
   surfaceFiles: SurfaceFileFact[]
@@ -760,6 +794,18 @@ export function renderBrief(facts: BriefFacts, template: string): RenderResult {
   if (facts.objectives.length === 0 && facts.issue >= OBJECTIVES_SINCE_ISSUE) {
     missing.push('Objectives (Issue has no `## Objectives` section)')
   }
+  // Same grandfather posture as Objectives, not the four judgment sections
+  // below: no pre-#626 Issue ever carried a `## Documentation` heading, so
+  // the renderer must not newly refuse that whole stock. `{ kind: 'sources',
+  // sources: [] }` is the absent-section sentinel; `{ kind: 'none' }` is a
+  // real, valid opt-out and never reaches this branch.
+  if (
+    facts.documentation.kind === 'sources' &&
+    facts.documentation.sources.length === 0 &&
+    facts.issue >= DOCUMENTATION_SINCE_ISSUE
+  ) {
+    missing.push('Documentation (Issue has no `## Documentation` section)')
+  }
   // The four judgment sections (plan-brief-v1 task 1, Issue #426) are NOT
   // grandfathered by `BRIEF_SECTIONS_SINCE_ISSUE` here, unlike Objectives
   // above: a brief genuinely needs §4's Out of surface, §6's Parts, §9's
@@ -819,6 +865,9 @@ export function renderBrief(facts: BriefFacts, template: string): RenderResult {
     renderHeader(scopedFacts, template),
     '',
     ...(facts.objectives.length > 0 ? [renderObjectives(facts.objectives), ''] : []),
+    ...(facts.documentation.kind === 'none' || facts.documentation.sources.length > 0
+      ? [renderDocumentation(facts.documentation), '']
+      : []),
     renderSection2(facts),
     '',
     renderSection3(facts),
