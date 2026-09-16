@@ -253,5 +253,5 @@ export async function logCollectArtifactCommand(args: string[]): Promise<void> {
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'log flush': { date: '2026-09-11', callsToday: 4, retiresVia: 'sharedCommandShell' }
+  'log flush': { date: '2026-09-16', callsToday: 7, retiresVia: 'sharedCommandShell' }
 }
