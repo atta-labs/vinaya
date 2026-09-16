@@ -353,22 +353,6 @@ function loopEvent(
   }
 }
 
-function gateEvent(runId: string, outcome: string, reason?: string): Record<string, unknown> {
-  return {
-    meta: scenarioMeta(runId),
-    subject: { issue: 567, role: 'unattributed' as const },
-    kind: 'gate',
-    payload: {},
-    check: 'typecheck',
-    check_version: '1',
-    policy_version: null,
-    input_fingerprint: 'sha256:abc123',
-    event: 'checked',
-    outcome,
-    ...(reason !== undefined ? { reason } : {})
-  }
-}
-
 function effectEvent(
   runId: string,
   event: 'attempted' | 'observed' | 'verified',
