@@ -1207,10 +1207,77 @@ export function ghEditBody(pr: string, body: string): void {
 export type EvidenceReportOutcome =
   | { kind: 'ok'; tokensSpliced: boolean; tokensCollected: boolean; tokensRefusal?: string; gatesFailed: boolean }
   | { kind: 'splice-refused'; message: string }
+  | { kind: 'body-checks-refused'; message: string }
   | { kind: 'edit-failed'; message: string }
   | { kind: 'reread-failed'; message: string }
   | { kind: 'drift-restore-failed'; message: string }
   | { kind: 'drift-restored'; message: string }
+
+/**
+ * `runBodyChecks` (`forge-write.ts`) refuses via `refuse()`, which is typed
+ * `never` and calls `process.exit(1)` directly — there is no exception a
+ * caller could ordinarily catch. `runReportForOpenPr` below runs this check
+ * from inside the developer-review loop's own long-lived driver process, so
+ * that exit would kill the WHOLE driver mid-round, not just this one push
+ * (Issue #639 — reproduced live via a blank token-report cell). This is the
+ * one place that turns that exit back into an ordinary return: for the exact
+ * duration of the `runBodyChecks` call, it swaps in a `process.exit` that
+ * throws a private sentinel instead of exiting, and a `process.stderr.write`
+ * that captures rather than prints — both restored in `finally` regardless
+ * of outcome — then replays the captured `emitCheckError` JSON lines (the
+ * same ones `refuse()` would have printed) into the returned message.
+ * `runBodyChecks` and `refuse()` themselves are untouched by this: every
+ * OTHER caller (`pr.ts`'s create/edit paths, `pr-report.ts`'s own
+ * `--push <n> --body-file` branch) still calls `runBodyChecks` directly and
+ * still exits the process on a refusal, exactly as before.
+ */
+async function runBodyChecksWithoutExiting(
+  body: string,
+  branch: string,
+  prNumber: number,
+  retryCommand: string
+): Promise<{ refused: false } | { refused: true; message: string }> {
+  class BodyChecksRefused extends Error {}
+  const originalExit = process.exit
+  const originalStderrWrite = process.stderr.write.bind(process.stderr)
+  const captured: string[] = []
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    captured.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'))
+    return true
+  }) as typeof process.stderr.write
+  process.exit = (() => {
+    throw new BodyChecksRefused()
+  }) as never
+  try {
+    await runBodyChecks(body, branch, prNumber, retryCommand)
+    return { refused: false }
+  } catch (err) {
+    if (!(err instanceof BodyChecksRefused)) throw err
+    const lines = captured
+      .join('')
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0)
+    const findings = lines.map((line) => {
+      try {
+        const parsed = JSON.parse(line) as { check?: string; message?: string }
+        return parsed.check && parsed.message ? `${parsed.check}: ${parsed.message}` : line
+      } catch {
+        return line
+      }
+    })
+    return {
+      refused: true,
+      message:
+        findings.length > 0
+          ? `vinaya pr report: refused — ${findings.join(' | ')}`
+          : 'vinaya pr report: refused — runBodyChecks rejected the spliced body (no findings captured).'
+    }
+  } finally {
+    process.exit = originalExit
+    process.stderr.write = originalStderrWrite
+  }
+}
 
 /**
  * Pushes `result` (a `buildReport` output already computed against `pushPr`'s
@@ -1276,14 +1343,19 @@ export async function runReportForOpenPr(
 
   // O1 (task 17): the outgoing spliced bytes go through the SAME registry
   // runner `pr create`/`pr edit` do before `gh pr edit` ever sees them —
-  // refuses (never returns) on a finding, so a body this function sends is a
-  // body CI's own `vinaya-checks.yml`/`vinaya-body-checks.yml` also accepts.
-  await runBodyChecks(
+  // refuses on a finding, so a body this function sends is a body CI's own
+  // `vinaya-checks.yml`/`vinaya-body-checks.yml` also accepts. Issue #639:
+  // routed through `runBodyChecksWithoutExiting` rather than called directly
+  // — a refusal here must return an outcome, never exit this process.
+  const bodyCheck = await runBodyChecksWithoutExiting(
     spliced.body,
     opts.branch ?? process.env.BRANCH ?? '',
     Number(pushPr),
     `vinaya pr report --push ${pushPr}`
   )
+  if (bodyCheck.refused) {
+    return { kind: 'body-checks-refused', message: bodyCheck.message }
+  }
 
   try {
     ghEditBody(pushPr, spliced.body)
