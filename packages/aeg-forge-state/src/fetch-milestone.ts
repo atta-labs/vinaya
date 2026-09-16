@@ -12,7 +12,7 @@ export type MilestoneFacts = {
 /**
  * Reads the `Release:` field from a Milestone description — this package's
  * own copy of the grammar `@attalabs/aeg-core`'s `milestone-validation.ts`
- * defines (`vinaya-milestone-model-v1` task 2): line-anchored, `**`-optional
+ * defines: line-anchored, `**`-optional
  * on both sides, code fences stripped first, first match wins. Duplicated
  * rather than imported because this package sits BELOW `aeg-core` in the
  * dependency graph (`aeg-core → aeg-forge-state`) and cannot import back up
@@ -58,8 +58,8 @@ function intentsSection(text: string): string | null {
 
 /**
  * The tranche goal is never stored — it is the `### Tranche intents` line
- * matching `slug` in a Milestone's description (vinaya-milestone-model-v1
- * task 2, settled decision). A label with no intent line resolves to `''`,
+ * matching `slug` in a Milestone's description (a settled decision). A
+ * label with no intent line resolves to `''`,
  * exactly as an unmilestoned tranche did before this task. Same intents
  * grammar as `@attalabs/aeg-core`'s `milestone-validation.ts`, duplicated for
  * the same layering reason `releaseFromDescription` is.
@@ -142,7 +142,7 @@ type GhLabel = {
 
 /**
  * A tranche's identity is its `vinaya/tranche:<slug>` label
- * (vinaya-milestone-model-v1 task 1) — a Milestone is no longer required to
+ * — a Milestone is no longer required to
  * exist, and one Milestone may legitimately hold several tranches. The
  * legacy exception, kept forever with no backfill: a Milestone titled
  * EXACTLY a tranche slug (no prefix/suffix convention) is still read the old
@@ -159,22 +159,21 @@ function matchesLegacyMilestone(milestones: GhMilestone[], slug: string): GhMile
 /**
  * Lowercase, digits, and hyphens, ending in a `-v<N>` version suffix — every
  * one of this repo's real legacy-titled Milestones is shaped exactly this
- * way (`vinaya-milestone-model-v1`, `vinaya-selfgov-v1`, `aeg-seam-hardening-v1`,
- * …; confirmed live against this repo's real Milestones, round 4 of code
- * review), with no exception. This
+ * way, confirmed live against this repo's real Milestones across several
+ * rounds of review, with no exception. This
  * is deliberately tighter than "any kebab-case string": an earlier version
  * of this guard accepted any lowercase, hyphenated title, which still
  * phantom-matched a plausible Architect product-goal title like
- * `improve-onboarding-flow` (round 3 finding) — the `-v<N>` suffix is a
+ * `improve-onboarding-flow` — the `-v<N>` suffix is a
  * narrower, still-real-data-precedented signal a free-text title is
  * unlikely to end with by accident. `open_issues`/`closed_issues` (also
  * present on the Milestone API response) was considered and rejected as a
  * stronger signal: a legacy-titled Milestone's tasks are label-tracked, not
  * milestone-attached, so its native Issue counts can legitimately read zero
- * while the tranche itself is still active (confirmed live against
- * `vinaya-milestone-model-v1` while it was that tranche's active Milestone —
- * since closed, but the underlying fact does not depend on any one
- * Milestone's current state) — gating on that count would misclassify a
+ * while the tranche itself is still active (confirmed live against a real
+ * tranche while its own Milestone was still active — since closed, but the
+ * underlying fact does not depend on any one Milestone's current state) —
+ * gating on that count would misclassify a
  * real, currently-active tranche as inactive.
  *
  * Residual, knowingly accepted gap: an Architect who deliberately titles a
@@ -190,8 +189,8 @@ const TRANCHE_SLUG_SHAPE = /^[a-z0-9]+(?:-[a-z0-9]+)*-v\d+$/
 
 /**
  * Every Milestone whose title is even SLUG-SHAPED — the candidate universe
- * for "is this title a legacy tranche" enumeration (vinaya-milestone-model-v1
- * task 2, fixing a live bug a code review caught). Before this guard, the
+ * for "is this title a legacy tranche" enumeration (fixing a live bug a
+ * code review caught). Before this guard, the
  * three enumeration functions below (`listActiveTrancheSlugs`,
  * `listArchivedTrancheSlugs`, `indexTrancheMilestonesAsync`) fed EVERY
  * Milestone's title into their candidate-slug set unconditionally — safe
@@ -228,11 +227,11 @@ function factsFromLegacyMilestone(milestone: GhMilestone): MilestoneFacts {
  * real Issues to a different, still-open Milestone. The old Milestone still
  * legacy-matches by title, is still closed, and `factsFromLegacyMilestone`
  * still reads that as `complete` forever — even though the tranche's real
- * work is active somewhere else. Measured live on `vinaya-agentic-interface-v1`:
- * Milestone #7 (legacy title match) closed, 0 native issues; the label's
- * real Issues (#150–152, two open) live under Milestone #13 "Flows become
- * files" — every reader using the legacy path alone reported the tranche
- * `complete` with zero active tranches left in the whole repo.
+ * work is active somewhere else. Measured live on a real tranche: its
+ * legacy-titled Milestone (title match) closed with zero native issues,
+ * while the label's own Issues (two still open) lived under a separate,
+ * still-open Milestone — every reader using the legacy path alone reported
+ * the tranche `complete` with zero active tranches left in the whole repo.
  *
  * `labelIssues` — this slug's own `vinaya/tranche:<slug>`-labeled Issues,
  * fetched regardless of legacy status now — is the tiebreak, but ONLY when
@@ -260,7 +259,7 @@ function resolveLegacyFacts(milestone: GhMilestone, labelIssues: GhIssue[]): Mil
 }
 
 /**
- * The new-path lifecycle rule (§2 of Issue #191): `planned` when the label
+ * The new-path lifecycle rule: `planned` when the label
  * carries no Issues yet, `active` when any is open, `complete` when at least
  * one exists and every one is closed. The at-least-one guard is not
  * optional — a freshly created label with zero Issues must NOT read as
@@ -276,7 +275,7 @@ function lifecycleFromIssues(issues: GhIssue[]): Lifecycle {
  * The goal for a label-derived (non-legacy) tranche: the first matching
  * `### Tranche intents` line found across every fetched Milestone, in list
  * order — `''` when none declares one, exactly as an unmilestoned tranche
- * read before this task (vinaya-milestone-model-v1 task 2).
+ * read before this task.
  */
 function goalFromMilestones(milestones: GhMilestone[], slug: string): string {
   for (const m of milestones) {
@@ -313,7 +312,7 @@ export type MilestoneAttachTarget = { number: number; title: string }
  * `gh issue create --milestone <value>` resolves `<value>` by TITLE — a
  * tranche's SLUG is only ever a valid title in the legacy 1:1 regime
  * (Milestone titled exactly the slug). Once a Milestone can hold several
- * tranches via `### Tranche intents` (vinaya-milestone-model-v1), the slug
+ * tranches via `### Tranche intents`, the slug
  * is not a title at all, and handing `gh` the slug for an intent-declared
  * tranche fails outright (a Milestone with that exact title does not exist).
  *
@@ -420,9 +419,9 @@ export function listActiveTrancheSlugs(owner: string, repo: string): ActiveTranc
 }
 
 /**
- * Lists every tranche whose derived lifecycle is COMPLETE (#515's original
+ * Lists every tranche whose derived lifecycle is COMPLETE — the original
  * "archived" list, extended past Milestones the same way `listActiveTrancheSlugs`
- * was). Mirrors its shape, query, and legacy/label split exactly — see that
+ * was. Mirrors its shape, query, and legacy/label split exactly — see that
  * function's doc comment for the `state=all` rationale, which applies
  * identically here.
  */
@@ -535,7 +534,7 @@ export async function listArchivedTrancheSlugsAsync(owner: string, repo: string)
  * Every distinct tranche (`vinaya/tranche:*` label) among the Issues
  * attached to one Milestone, by its native number — the fact `dispatch-gate`
  * needs to know whether a bare `Depends-on`/`Conflicts-with` edge id on an
- * Issue in this Milestone is genuinely ambiguous (issue-545, O3): a Milestone
+ * Issue in this Milestone is genuinely ambiguous (O3): a Milestone
  * holding two or more tranches means the same bare id could belong to
  * either, where a Milestone holding only one (the ordinary case) leaves no
  * real ambiguity. `state=all` — a closed sibling task still counts toward
@@ -548,11 +547,11 @@ export async function listArchivedTrancheSlugsAsync(owner: string, repo: string)
  * fetching the REST default (full issue, including `body`) through
  * `ghApiGetAllPagesAsync`'s own `-q` server-side filter means the buffered
  * call only ever has to hold one page's worth of `{labels}` objects, never
- * one page's worth of full issue bodies (found live against this repo's own
- * Milestone #15, 80+ Issues with full bodies: the old single, unpaginated,
- * un-filtered `ghApiGet` fetch overran `execFileSync`'s default output
- * buffer, `ENOBUFS`, before this predicate ever ran). Raising the buffer
- * size would not have fixed this — a Milestone can always grow past
+ * one page's worth of full issue bodies (found live against a real
+ * Milestone with 80+ Issues carrying full bodies: the old single,
+ * unpaginated, un-filtered `ghApiGet` fetch overran `execFileSync`'s default
+ * output buffer, `ENOBUFS`, before this predicate ever ran). Raising the
+ * buffer size would not have fixed this — a Milestone can always grow past
  * whatever ceiling was picked; only fetching less per Issue scales.
  */
 export async function tranchesAttachedToMilestone(

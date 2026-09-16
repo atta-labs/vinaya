@@ -86,8 +86,8 @@ export type ArchiveTokensResult = { line: string | null; dangling: string | null
  * `capable: true` but empty — see `isEmptySummary` — omits the line (`line:
  * null`) rather than posting a misleading zero, and returns a `dangling`
  * note for the CALLER to fold into the provenance comment alongside its own
- * DANGLING trailer. This never aborts the whole post: PR #305 review
- * (BLOCKER) — an earlier version of this function returned a hard refusal
+ * DANGLING trailer. This never aborts the whole post: a BLOCKER review
+ * finding — an earlier version of this function returned a hard refusal
  * that `runArchive` used to skip posting the comment and closing the Issue
  * entirely, collateral-damaging a duty this feature has nothing to do with
  * over one missing token row. The brief's own §10 names that exact
@@ -248,7 +248,7 @@ export async function runArchive(args: string[], deps: ArchiveDeps): Promise<num
   const tokensResult = renderArchiveTokensLine(deps.meteringCapability(), phase, 'Archivist')
   // A missing/anomalous Tokens row is never a reason to withhold the whole
   // comment: provenance and Issue-closure are a separate, pre-existing duty
-  // this feature must not put at risk (PR #305 review BLOCKER — an earlier
+  // this feature must not put at risk (a BLOCKER review finding — an earlier
   // version refused the entire post here, losing both over one token row).
   const tokensAddition = tokensResult.line !== null ? tokensResult.line : `DANGLING (tokens): ${tokensResult.dangling}`
   const blockWithTokens = `${block}\n\n${tokensAddition}`
@@ -311,6 +311,57 @@ type TaskMilestoneRef = { number: number; title: string }
 type LabeledIssueRef = { number: number; title: string; state: 'OPEN' | 'CLOSED'; milestone: TaskMilestoneRef | null }
 type TaskPrForRetrospective = { number: number; comments: { body: string }[] }
 
+/** GitHub's own page-size ceiling — the size every page of the walk below requests. */
+const ISSUES_PER_PAGE = 100
+
+/** Page-count ceiling — reaching it means either a tranche far larger than this model expects, or an endpoint ignoring `page=` and returning a full page forever; both must surface as an error rather than loop forever. */
+const ISSUES_MAX_PAGES = 100
+
+/**
+ * Every Issue carrying `label`, across as many pages as it takes — never a
+ * single capped `--limit` read. A tranche is not itself an Issue and is
+ * never deleted, so its Issue count only grows over its life; a fixed cap
+ * silently drops the tail once a tranche's task count crosses it, and
+ * `trancheArchivalStatus` below would then judge "complete" from a partial
+ * Issue set, having never seen the still-open tasks past the cut line.
+ *
+ * REST (`gh api .../issues`), not `gh issue list --label` (the GraphQL-backed
+ * command the archival check used before): the REST endpoint's own `page=`
+ * parameter is what lets this walk explicitly to exhaustion rather than
+ * trusting a single `--limit` value to be large enough. The endpoint also
+ * returns pull requests carrying the label, so each page is filtered to
+ * genuine Issues (no `pull_request` field) before counting.
+ */
+export function fetchTrancheIssuesByLabel(repoFlag: string, label: string): LabeledIssueRef[] {
+  const out: LabeledIssueRef[] = []
+  const params = new URLSearchParams({ labels: label, state: 'all', per_page: String(ISSUES_PER_PAGE) })
+  for (let page = 1; page <= ISSUES_MAX_PAGES; page++) {
+    params.set('page', String(page))
+    const batch = shJson<
+      Array<{
+        number: number
+        title: string
+        state: string
+        pull_request?: unknown
+        milestone: { number: number; title: string } | null
+      }>
+    >(['gh', 'api', `repos/${repoFlag}/issues?${params.toString()}`])
+    for (const issue of batch) {
+      if ('pull_request' in issue) continue
+      out.push({
+        number: issue.number,
+        title: issue.title,
+        state: issue.state.toUpperCase() as 'OPEN' | 'CLOSED',
+        milestone: issue.milestone ? { number: issue.milestone.number, title: issue.milestone.title } : null
+      })
+    }
+    if (batch.length < ISSUES_PER_PAGE) return out
+  }
+  throw new Error(
+    `fetchTrancheIssuesByLabel: "${label}" did not terminate within ${ISSUES_MAX_PAGES} pages (${ISSUES_MAX_PAGES * ISSUES_PER_PAGE} items) — refusing to keep walking.`
+  )
+}
+
 /**
  * The Milestone this tranche's own task Issues are actually attached to —
  * never a Milestone titled exactly the slug. Several
@@ -344,7 +395,7 @@ export function roundsForTaskPr(pr: TaskPrForRetrospective): number {
 /**
  * The `### Retrospective: <slug>` section `archive tranche` appends to the
  * Milestone description once a tranche is complete — task count, rounds per
- * task, and the merged PR list (O4). Pure: takes the tranche's merged task
+ * task, and the merged PR list. Pure: takes the tranche's merged task
  * PRs (each with its own comments, for `roundsForTaskPr`) and renders the
  * section text; never writes anywhere itself.
  */
@@ -445,21 +496,7 @@ export async function runArchiveTranche(args: string[], deps: ArchiveDeps): Prom
   }
   const repoFlag = `${repo.owner}/${repo.repo}`
 
-  const issues = shJson<LabeledIssueRef[]>([
-    'gh',
-    'issue',
-    'list',
-    '-R',
-    repoFlag,
-    '--label',
-    trancheLabel(slug),
-    '--state',
-    'all',
-    '--json',
-    'number,title,state,milestone',
-    '--limit',
-    '200'
-  ])
+  const issues = fetchTrancheIssuesByLabel(repoFlag, trancheLabel(slug))
   const status = trancheArchivalStatus(issues)
   if (status.kind === 'no-tranche') {
     console.error(`Error: no tranche found for '${slug}' in ${repoFlag} — no Issues carry ${trancheLabel(slug)}.`)
@@ -527,7 +564,7 @@ export async function runArchiveTranche(args: string[], deps: ArchiveDeps): Prom
     }
   }
 
-  // The retrospective (O4): every merged task PR on this tranche's own
+  // The retrospective: every merged task PR on this tranche's own
   // branch prefix (`task/<slug>/…`), each with its comments so
   // `roundsForTaskPr` can count Developer rounds from the same round
   // marker `roles/developer.md`'s post-open sequence posts. Never an

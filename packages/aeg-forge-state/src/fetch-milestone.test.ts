@@ -460,7 +460,7 @@ describe('listActiveTrancheSlugs', () => {
   })
 
   it('a free-text-titled Architect Milestone is never listed as a phantom tranche', () => {
-    // vinaya-milestone-model-v1 task 2: an Architect Milestone's title is
+    // An Architect Milestone's title is
     // free text, not a tranche slug. Before the shape guard, EVERY
     // Milestone's title fed the candidate-slug set, so this title
     // trivially legacy-matched itself and was listed as a fake tranche.
@@ -608,7 +608,7 @@ describe('indexTrancheMilestonesAsync', () => {
   it('a label matching a legacy slug is fetched exactly once, and a live open Issue under it overrides a stale-closed legacy Milestone', async () => {
     mockPages(MILESTONES, [{ name: 'vinaya/tranche:vinaya-cli-v1' }])
     vi.mocked(ghIssueListByLabelAsync).mockClear()
-    // `vinaya-cli-v1` legacy-matches a CLOSED Milestone in `MILESTONES` — before
+    // That label's slug legacy-matches a CLOSED Milestone in `MILESTONES` — before
     // this fix that alone made it `complete` forever. A live open Issue under
     // its label (the post-`adopt` shape) must override that stale read.
     vi.mocked(ghIssueListByLabelAsync).mockImplementation(async (_o, _r, label: string) =>
@@ -648,7 +648,7 @@ describe('indexTrancheMilestonesAsync', () => {
   })
 
   it('a free-text-titled Architect Milestone is never indexed as a phantom tranche', async () => {
-    // vinaya-milestone-model-v1 task 2: before the shape guard, every real
+    // Before the shape guard, every real
     // Milestone in the paginated fetch was unconditionally treated as a
     // legacy tranche (`legacySlugs = new Set(milestones.map(m => m.title))`,
     // no `matchesLegacyMilestone` gate at all in this async path) — so an
@@ -719,10 +719,10 @@ describe('indexTrancheMilestonesAsync reads every page', () => {
   })
 })
 
-// issue-545, O3 — the tranche-count fact `requireTrancheQualifiedEdges`
+// O3 — the tranche-count fact `requireTrancheQualifiedEdges`
 // needs: how many distinct tranches share one Milestone.
 //
-// issue-586, O1: fetches labels only, paginated, through
+// O1: fetches labels only, paginated, through
 // `ghApiGetAllPagesAsync` (the buffered async `gh` client) rather than a
 // single unpaginated, un-filtered `ghApiGet` — so it is async now, and its
 // own fixtures exercise the paginated fetcher directly rather than `ghApiGet`.
@@ -760,6 +760,17 @@ describe('tranchesAttachedToMilestone', () => {
   it('tolerates the REST API returning a bare label-string array, not just {name} objects', async () => {
     vi.mocked(ghApiGetAllPagesAsync).mockResolvedValue([{ labels: ['vinaya/tranche:tranche-a'] }])
     expect(await tranchesAttachedToMilestone(OWNER, REPO, 1)).toEqual(['tranche-a'])
+  })
+
+  it('collects a tranche label whose Issue only exists past the first 100-item page', async () => {
+    // A Milestone of 250 Issues: the 101st+ Issue is exactly the
+    // range a single-page `per_page=100` read used to drop silently.
+    const pastFirstPage: Array<{ labels: Array<{ name: string }> }> = []
+    for (let i = 0; i < 250; i++) {
+      pastFirstPage.push({ labels: [{ name: i === 249 ? 'vinaya/tranche:tail-tranche' : 'vinaya/tier:0' }] })
+    }
+    vi.mocked(ghApiGetAllPagesAsync).mockResolvedValue(pastFirstPage)
+    expect(await tranchesAttachedToMilestone(OWNER, REPO, 1)).toEqual(['tail-tranche'])
   })
 
   it('a Milestone holding 80+ Issues with full bodies over 1MB each, delivered across three pages, yields the union of their tranche slugs — the fixture the ENOBUFS fix must survive', async () => {
