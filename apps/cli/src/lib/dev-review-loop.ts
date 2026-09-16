@@ -89,8 +89,11 @@ import { flushOutboxToWebhook, WebhookFlushError } from './log-webhook-flush.js'
 import {
   describeSkippedRoundEndFlush,
   loadConfig,
+  loadTrustAnchorConfig,
   resolveLogPublishMaxChunksPerFlush,
-  resolveRoundEndFlushTarget
+  resolveRoundEndFlushTarget,
+  resolveTrustAnchorWebhookTarget,
+  type VinayaConfig
 } from './config.js'
 
 // Re-exported under this file's own path (this module's composition-root
@@ -542,10 +545,29 @@ function defaultReadUnpushedWorkDetail(worktreePath: string): { dirtyFiles: stri
  * days later can see. Every OTHER call site in this file (the ~25 mid-round
  * flushes) still just awaits this and ignores the result, exactly as
  * before — this function itself still never throws.
+ *
+ * **`webhookUrl` is trust-anchor-gated (round-2 security review, HIGH).**
+ * Unlike `issue`/`pr` — forge-internal, already the same repo this loop is
+ * running against — a `webhookUrl` is an arbitrary outbound HTTP
+ * destination: honoring one read from `loadConfig()` (the PR's own working
+ * tree) would let a PR under review add or edit `logPublish.webhookUrl` in
+ * its own diff and have this unattended loop POST task telemetry straight
+ * to an attacker-chosen host on the very next round, with no human in the
+ * loop. `resolveRoundEndFlushTarget`/`loadConfig()` above still resolve
+ * `issue`/`pr` the ordinary operational way; a resolved `webhookUrl` is
+ * additionally checked against `loadTrustAnchorConfig()` (the repository's
+ * default branch, the same source `principals`/`tokens.collect` require for
+ * exactly this reason, see `config.ts`'s own doc comments) and only the
+ * default branch's OWN `webhookUrl`/`headers` are ever POSTed to — a PR
+ * cannot grant itself a new outbound destination, only use one already
+ * merged.
  */
 type FlushOutboxOutcome = { ok: true } | { ok: false; error: string }
 
-async function defaultFlushOutbox(task: number): Promise<FlushOutboxOutcome> {
+export async function defaultFlushOutbox(
+  task: number,
+  loadTrustAnchor: () => VinayaConfig | null = loadTrustAnchorConfig
+): Promise<FlushOutboxOutcome> {
   const config = loadConfig()
   const skipReason = describeSkippedRoundEndFlush(config, task)
   if (skipReason) {
@@ -560,8 +582,30 @@ async function defaultFlushOutbox(task: number): Promise<FlushOutboxOutcome> {
   // contract as the `gh` path below, just via `flushOutboxToWebhook`
   // (`./log-webhook-flush.js`) instead of `flushOutboxLib`.
   if ('webhookUrl' in target) {
+    // `loadTrustAnchor()` (the real default, `loadTrustAnchorConfig`) never
+    // throws on its own — every failure mode already resolves to `null` — but
+    // this call is still guarded so an injected loader's own throw can never
+    // escape this function either, matching the "never throws" contract
+    // every other branch here already honors.
+    let anchorConfig: VinayaConfig | null
     try {
-      await flushOutboxToWebhook(task, target.webhookUrl, target.headers)
+      anchorConfig = loadTrustAnchor()
+    } catch {
+      anchorConfig = null
+    }
+    const anchorTarget = resolveTrustAnchorWebhookTarget(target.webhookUrl, anchorConfig)
+    if (!anchorTarget) {
+      process.stderr.write(
+        `vinaya dev-review-loop: round-end flush's configured logPublish.webhookUrl is not present on the repository's default branch (or doesn't match it) — refusing to POST there automatically, since a PR under review cannot grant itself a new outbound destination; merge it to the default branch first.\n`
+      )
+      return { ok: true }
+    }
+    try {
+      // Posts the TRUST-ANCHOR's own webhookUrl/headers, never the working
+      // tree's — a PR that leaves `webhookUrl` untouched but edits `headers`
+      // (e.g. to smuggle its own value into an `Authorization` header, or
+      // strip one) is caught the same way.
+      await flushOutboxToWebhook(task, anchorTarget.webhookUrl, anchorTarget.headers)
       return { ok: true }
     } catch (err) {
       const message = err instanceof WebhookFlushError || err instanceof Error ? err.message : String(err)

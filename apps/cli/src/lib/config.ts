@@ -934,6 +934,20 @@ export type LogPublishTarget =
  * `reviewPolicy`), so callers pass `loadConfig()` (the local, repo-walking
  * resolution), the same sourcing `dispatch.timeoutMs`/`prePush.alwaysRun`/
  * `report.commandTimeoutMs` already use — never `loadTrustAnchorConfig()`.
+ *
+ * **`webhookUrl` is the one exception (Issue #636; round-2 security review,
+ * HIGH).** An `issue`/`pr` destination stays inside the same forge repo this
+ * process is already running against; a `webhookUrl` is an arbitrary
+ * outbound HTTP destination, so an UNATTENDED caller (the dev-review-loop's
+ * own round-end auto-flush) honoring one resolved here — from the PR's own
+ * working tree — would let a PR under review add or edit
+ * `logPublish.webhookUrl` in its own diff and have that loop POST task
+ * telemetry straight to an attacker-chosen host. `resolveTrustAnchorWebhookTarget`
+ * (below) is the additional gate an unattended caller must run before ever
+ * honoring a `webhookUrl` this function resolved. An interactively-run
+ * command (`vinaya log flush`) is not gated this way — a human is choosing
+ * to run it, the same trust level as running `vinaya.config.json`'s own
+ * `dispatch.agent`/`prePush.alwaysRun`.
  */
 export function resolveLogPublishTarget(config: VinayaConfig | null): LogPublishTarget | null {
   const raw = config?.logPublish
@@ -942,6 +956,30 @@ export function resolveLogPublishTarget(config: VinayaConfig | null): LogPublish
   if (raw.issue !== undefined) return { issue: raw.issue }
   if (raw.pr !== undefined) return { pr: raw.pr }
   return null
+}
+
+/**
+ * The trust-anchor-approved webhook target for an UNATTENDED flush caller
+ * (Issue #636; round-2 security review, HIGH) — `null` unless the
+ * repository's default-branch copy of `vinaya.config.json`
+ * (`trustAnchorConfig`, from `loadTrustAnchorConfig()`) configures the
+ * EXACT SAME `webhookUrl` the working tree resolved via
+ * `resolveLogPublishTarget`. Pure — takes the already-resolved local
+ * `webhookUrl` and an already-loaded trust-anchor config, so it is directly
+ * unit-testable with plain objects, no filesystem or network of its own.
+ *
+ * Returns the TRUST ANCHOR's own `headers`, never the working tree's — a PR
+ * that leaves `webhookUrl` untouched but edits `headers` (e.g. to smuggle
+ * its own value into an `Authorization` header, or strip one) is caught the
+ * same way a changed `webhookUrl` is.
+ */
+export function resolveTrustAnchorWebhookTarget(
+  localWebhookUrl: string,
+  trustAnchorConfig: VinayaConfig | null
+): { webhookUrl: string; headers?: Record<string, string> } | null {
+  const anchorTarget = resolveLogPublishTarget(trustAnchorConfig)
+  if (!anchorTarget || !('webhookUrl' in anchorTarget) || anchorTarget.webhookUrl !== localWebhookUrl) return null
+  return anchorTarget
 }
 
 /** `log-flush.ts`'s own default when a caller passes no `maxChunksPerFlush` at all — kept here, next to the config field it backs, so the schema comment and the default never drift apart. */
