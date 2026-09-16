@@ -35,11 +35,17 @@ type CliResult = { status: number; stdout: string; stderr: string }
 // on a zero exit code (it only ever surfaces it via a caught error's
 // `.stderr`), so a passing run's own non-fatal stderr warnings (e.g. a
 // skipped trailing flush) were unobservable here before this fix.
-function runDispatch(args: string[], cwd: string, home: string, path: string): CliResult {
+function runDispatch(
+  args: string[],
+  cwd: string,
+  home: string,
+  path: string,
+  extraEnv: Record<string, string> = {}
+): CliResult {
   const result = spawnSync('bun', [INDEX, 'dispatch', ...args], {
     encoding: 'utf8',
     cwd,
-    env: { ...process.env, HOME: home, PATH: path }
+    env: { ...process.env, HOME: home, PATH: path, ...extraEnv }
   })
   return { status: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' }
 }
@@ -50,9 +56,20 @@ function writeFakeVendor(dir: string): void {
   chmodSync(p, 0o755)
 }
 
-/** A `gh` stub logging every invocation, so a test can assert whether the flush fired at all. */
-function writeFakeGh(dir: string, callsLog: string): void {
+/**
+ * A `gh` stub logging every invocation, so a test can assert whether the
+ * flush fired at all. `trustAnchorConfig`, when given, answers the
+ * `gh api repos/.../contents/vinaya.config.json --jq .content` read Issue
+ * #636's trust-anchor webhook gate makes — base64-encoded, exactly the shape
+ * `loadTrustAnchorConfig` decodes; omitted, that read 404s, matching a repo
+ * whose default branch carries no `vinaya.config.json` at all.
+ */
+function writeFakeGh(dir: string, callsLog: string, trustAnchorConfig?: Record<string, unknown>): void {
   const gh = join(dir, 'gh')
+  const trustAnchorCase =
+    trustAnchorConfig === undefined
+      ? `*"contents/vinaya.config.json"*)\n  echo "gh: 404 Not Found" >&2\n  exit 1\n  ;;`
+      : `*"contents/vinaya.config.json"*)\n  echo "${Buffer.from(JSON.stringify(trustAnchorConfig), 'utf-8').toString('base64')}"\n  exit 0\n  ;;`
   writeFileSync(
     gh,
     `#!/bin/sh
@@ -64,6 +81,15 @@ fi
 if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
   echo "https://github.com/test-owner/test-repo/pull/$3#issuecomment-9001"
   exit 0
+fi
+if [ "$1" = "api" ]; then
+  case "$*" in
+    ${trustAnchorCase}
+    *)
+      echo "unhandled gh api: $*" >&2
+      exit 1
+      ;;
+  esac
 fi
 echo "unhandled gh: $*" >&2
 exit 1
@@ -216,14 +242,13 @@ describe('vinaya dispatch — the flush call', () => {
     expect(r.stderr).toMatch(/refusing to flush there/)
   })
 
-  it('routes the trailing flush to a configured logPublish.webhookUrl instead of gh — O4/O1 interaction', () => {
+  it('routes the trailing flush to a configured logPublish.webhookUrl instead of gh, once the trust anchor agrees — O4/O1 interaction, Issue #636 round-2 BLOCKER', () => {
     const home = tempDir('vinaya-dispatch-cmd-home-')
     const cwd = tempDir('vinaya-dispatch-cmd-cwd-')
     const toolsDir = tempDir('vinaya-dispatch-cmd-tools-')
     writeFakeVendor(toolsDir)
     const callsLog = join(cwd, 'gh-calls.log')
     writeFileSync(callsLog, '')
-    writeFakeGh(toolsDir, callsLog)
     const requests: string[] = []
     const server = Bun.serve({
       port: 0,
@@ -232,10 +257,11 @@ describe('vinaya dispatch — the flush call', () => {
         return new Response('ok', { status: 200 })
       }
     })
-    writeFileSync(
-      join(cwd, 'vinaya.config.json'),
-      JSON.stringify({ logPublish: { webhookUrl: `http://127.0.0.1:${server.port}/ingest` } })
-    )
+    const webhookUrl = `http://127.0.0.1:${server.port}/ingest`
+    // The default branch's own copy names the SAME webhookUrl — the only
+    // case the trust-anchor gate honors automatically.
+    writeFakeGh(toolsDir, callsLog, { logPublish: { webhookUrl } })
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ logPublish: { webhookUrl } }))
     const promptFile = join(cwd, 'prompt.txt')
     writeFileSync(promptFile, 'p')
 
@@ -243,14 +269,53 @@ describe('vinaya dispatch — the flush call', () => {
       ['developer', '--agent', 'claude', '--prompt-file', promptFile, '--task', '778'],
       cwd,
       home,
-      `${toolsDir}:${process.env.PATH}`
+      `${toolsDir}:${process.env.PATH}`,
+      { GITHUB_REPOSITORY: 'test-owner/test-repo' }
     )
     server.stop()
 
     expect(r.status).toBe(0)
-    expect(readFileSync(callsLog, 'utf8')).toBe('')
+    expect(readFileSync(callsLog, 'utf8')).not.toMatch(/^(issue|pr) comment/m)
     expect(requests.length).toBe(1)
     expect(outboxLines(home, 778).length).toBe(0)
+  })
+
+  it("refuses to POST a working-tree webhookUrl the default branch doesn't also name — a PR cannot grant itself a new outbound destination, Issue #636 round-2 BLOCKER", () => {
+    const home = tempDir('vinaya-dispatch-cmd-home-')
+    const cwd = tempDir('vinaya-dispatch-cmd-cwd-')
+    const toolsDir = tempDir('vinaya-dispatch-cmd-tools-')
+    writeFakeVendor(toolsDir)
+    const callsLog = join(cwd, 'gh-calls.log')
+    writeFileSync(callsLog, '')
+    const requests: string[] = []
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        requests.push(await req.text())
+        return new Response('ok', { status: 200 })
+      }
+    })
+    const webhookUrl = `http://127.0.0.1:${server.port}/ingest`
+    // No `gh api .../contents/vinaya.config.json` stub given — the default
+    // branch has no logPublish at all, so it disagrees with the PR's own.
+    writeFakeGh(toolsDir, callsLog)
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ logPublish: { webhookUrl } }))
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, 'p')
+
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile, '--task', '779'],
+      cwd,
+      home,
+      `${toolsDir}:${process.env.PATH}`,
+      { GITHUB_REPOSITORY: 'test-owner/test-repo' }
+    )
+    server.stop()
+
+    expect(r.status).toBe(0)
+    expect(requests.length).toBe(0)
+    expect(readFileSync(callsLog, 'utf8')).not.toMatch(/^(issue|pr) comment/m)
+    expect(r.stderr).toMatch(/refusing to POST there automatically/)
   })
 
   it('never calls gh at all when neither --task nor --pr is given', () => {

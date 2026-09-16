@@ -26,6 +26,15 @@
  * repo), this command now publishes nowhere and says so on stderr, rather
  * than defaulting to the task's own Issue/PR.
  *
+ * A resolved `webhookUrl` is additionally gated against
+ * `loadTrustAnchorConfig()` (round-2 security review, BLOCKER) the same way
+ * `defaultFlushOutbox` (`../lib/dev-review-loop.js`) gates the round-end
+ * auto-flush: this command is not always human-run, since a dispatched
+ * role's own nested `vinaya dispatch` call reaches this exact trailing-flush
+ * code with no human approving that run, so a PR-controlled working-tree
+ * `webhookUrl` is never honored on its own — only the repository's
+ * default-branch copy of the SAME `webhookUrl` authorizes the POST.
+ *
  * `flushOutbox`/`flushOutboxToWebhook` never call `process.exit` (task 3,
  * `#482`, O1) — unlike the `logFlushCommand` this used to call directly, a
  * real command-calling-command case `surface.md`'s Exemptions table used to
@@ -42,8 +51,11 @@ import { AGENT_VENDOR_NAMES, dispatchRole, isAgentVendor, type AgentVendor } fro
 import {
   describeSkippedRoundEndFlush,
   loadConfig,
+  loadTrustAnchorConfig,
   resolveLogPublishMaxChunksPerFlush,
-  resolveRoundEndFlushTarget
+  resolveRoundEndFlushTarget,
+  resolveTrustAnchorWebhookTarget,
+  type VinayaConfig
 } from '../lib/config.js'
 import { printJson } from '../lib/envelope.js'
 import { flushOutbox, issueFromPr, LogFlushError } from '../lib/log-flush.js'
@@ -213,16 +225,37 @@ export async function dispatchCommand(args: string[]): Promise<void> {
           `vinaya dispatch: no logPublish target configured in vinaya.config.json — skipping publish; telemetry stays in the local outbox for #${outboxTask} (retry later with \`vinaya log flush\`).\n`
         )
       } else if ('webhookUrl' in target) {
+        // Same trust-anchor gate `defaultFlushOutbox` (`../lib/dev-review-loop.js`)
+        // applies to the round-end auto-flush — required here too, not just
+        // there: this command's own doc comment above documents a dispatched
+        // role's nested `vinaya dispatch` call reaching this exact code path
+        // with no human approving the run, so a working-tree `webhookUrl`
+        // (the PR's own `vinaya.config.json`) is never honored on its own.
+        // Only the repository's default-branch copy of the SAME `webhookUrl`
+        // authorizes the POST.
+        let anchorConfig: VinayaConfig | null
         try {
-          const outcome = await flushOutboxToWebhook(outboxTask, target.webhookUrl, target.headers)
-          if (!outcome.flushed) {
-            process.stderr.write('vinaya dispatch: trailing webhook flush — nothing to flush\n')
-          }
-        } catch (err) {
-          const message = err instanceof WebhookFlushError || err instanceof Error ? err.message : String(err)
+          anchorConfig = loadTrustAnchorConfig()
+        } catch {
+          anchorConfig = null
+        }
+        const anchorTarget = resolveTrustAnchorWebhookTarget(target.webhookUrl, anchorConfig)
+        if (!anchorTarget) {
           process.stderr.write(
-            `vinaya dispatch: trailing webhook flush failed (non-fatal — retry with \`vinaya log flush\`): ${message}\n`
+            `vinaya dispatch: trailing flush's configured logPublish.webhookUrl is not present on the repository's default branch (or doesn't match it) — refusing to POST there automatically, since a PR under review cannot grant itself a new outbound destination; merge it to the default branch first.\n`
           )
+        } else {
+          try {
+            const outcome = await flushOutboxToWebhook(outboxTask, anchorTarget.webhookUrl, anchorTarget.headers)
+            if (!outcome.flushed) {
+              process.stderr.write('vinaya dispatch: trailing webhook flush — nothing to flush\n')
+            }
+          } catch (err) {
+            const message = err instanceof WebhookFlushError || err instanceof Error ? err.message : String(err)
+            process.stderr.write(
+              `vinaya dispatch: trailing webhook flush failed (non-fatal — retry with \`vinaya log flush\`): ${message}\n`
+            )
+          }
         }
       } else {
         try {
