@@ -9,10 +9,17 @@
  */
 
 import { CHECK_SCHEMA_VERSION, type CheckError, emitCheckError } from '../checks/contract.js'
-import { flushOutbox, LogFlushError, type LogFlushErrorCode, type LogFlushTarget } from '../lib/log-flush.js'
+import {
+  flushOutbox,
+  issueFromPr,
+  LogFlushError,
+  type LogFlushErrorCode,
+  type LogFlushTarget
+} from '../lib/log-flush.js'
+import { flushOutboxToWebhook, WebhookFlushError } from '../lib/log-webhook-flush.js'
 import { collectTaskLogArtifact, exportTaskLogArtifact } from '../lib/log-artifact.js'
 import { printJson } from '../lib/envelope.js'
-import { loadConfig, resolveLogPublishMaxChunksPerFlush } from '../lib/config.js'
+import { loadConfig, resolveLogPublishMaxChunksPerFlush, resolveLogPublishTarget } from '../lib/config.js'
 
 function makeCheckError(check: string, message: string, agentRecoveryPrompt: string): CheckError {
   return { schema: CHECK_SCHEMA_VERSION, check, severity: 'error', message, agent_recovery_prompt: agentRecoveryPrompt }
@@ -81,10 +88,40 @@ export async function logFlushCommand(args: string[]): Promise<void> {
 
   const target: LogFlushTarget = parsed.pr !== undefined ? { pr: parsed.pr } : { issue: parsed.issue as number }
 
+  const config = loadConfig()
+
+  // `logPublish.webhookUrl` (set) overrides GitHub-comment posting entirely
+  // for every caller of this command — `--issue`/`--pr` still selects WHICH
+  // task's local outbox to drain (the outbox is keyed by Issue only, same
+  // as the GitHub path: `--pr` resolves its Issue via `Closes #N`), but the
+  // destination is the configured webhook, not a comment on that Issue/PR.
+  const webhookTarget = resolveLogPublishTarget(config)
+  if (webhookTarget !== null && 'webhookUrl' in webhookTarget) {
+    const outboxTask = parsed.pr !== undefined ? issueFromPr(String(parsed.pr)) : (parsed.issue as number)
+    const outcome = await flushOutboxToWebhook(outboxTask, webhookTarget.webhookUrl, webhookTarget.headers).catch(
+      (err: unknown) => {
+        if (err instanceof WebhookFlushError) {
+          refuse2(makeCheckError(err.code, err.message, 'Fix the reported error, then re-run `vinaya log flush`.'))
+        }
+        throw err
+      }
+    )
+    if (!outcome.flushed) {
+      process.stdout.write('log flush: nothing to flush\n')
+      process.exit(0)
+    }
+    if (parsed.json) {
+      printJson({ posted: outcome.lineCount, bytes: outcome.bytes, target: { webhookUrl: webhookTarget.webhookUrl } })
+    } else {
+      process.stdout.write(`log flush: posted ${outcome.lineCount} line(s), ${outcome.bytes} byte(s) to webhook\n`)
+    }
+    return
+  }
+
   // O2 (Issue #626): honors the same `logPublish.maxChunksPerFlush` bound
   // the round-end flush reads, so an adopter's configured per-target cap
   // applies uniformly regardless of which caller reaches `flushOutbox`.
-  const maxChunksPerFlush = resolveLogPublishMaxChunksPerFlush(loadConfig())
+  const maxChunksPerFlush = resolveLogPublishMaxChunksPerFlush(config)
 
   const outcome = await flushOutbox(target, { skipRemotelyAccepted: true, maxChunksPerFlush }).catch((err: unknown) => {
     if (err instanceof LogFlushError) {

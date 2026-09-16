@@ -42,6 +42,14 @@ describe('resolveLogPublishTarget (pure) — O1: target selection honours config
     expect(resolveLogPublishTarget({ logPublish: { pr: 42 } } as VinayaConfig)).toEqual({ pr: 42 })
   })
 
+  it('resolves an explicit webhookUrl, with its headers, ahead of issue/pr', () => {
+    expect(
+      resolveLogPublishTarget({
+        logPublish: { webhookUrl: 'https://example.com/ingest', headers: { 'x-api-key': 'k' } }
+      } as VinayaConfig)
+    ).toEqual({ webhookUrl: 'https://example.com/ingest', headers: { 'x-api-key': 'k' } })
+  })
+
   it('a logPublish object with neither issue nor pr resolves to null', () => {
     expect(resolveLogPublishTarget({ logPublish: {} } as VinayaConfig)).toBeNull()
   })

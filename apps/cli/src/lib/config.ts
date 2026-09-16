@@ -694,16 +694,30 @@ export const VinayaConfigSchema = z.object({
     .object({
       issue: z.number().int().positive().optional(),
       pr: z.number().int().positive().optional(),
+      // A third, mutually-exclusive destination alongside issue/pr
+      // (`log-webhook-flush.ts`'s O1): a plain HTTP endpoint that receives
+      // one POST of the outbox's validated, redacted lines as ndjson,
+      // instead of a GitHub Issue/PR comment. No forge account or `gh` auth
+      // required on the receiving end — the point of this option is a
+      // destination an adopter can point at without any GitHub-side setup.
+      webhookUrl: z.string().url().optional(),
+      // Extra headers merged into the POST (e.g. `Authorization`) — only
+      // meaningful alongside `webhookUrl`, checked below.
+      headers: z.record(z.string()).optional(),
       // Caps how many comments (`FlushChunk`s, each up to
       // `FORGE_COMMENT_MAX_CHARS`) one `flushOutbox` call posts to this
       // target — the rest stay queued, untouched, in the outbox for a later
       // flush (O2's bound, never a drop: `log-flush.ts`'s durability
       // guarantee — truncate only what the target confirmed — is
-      // unaffected). Absent defaults to `DEFAULT_MAX_CHUNKS_PER_FLUSH`.
+      // unaffected). Absent defaults to `DEFAULT_MAX_CHUNKS_PER_FLUSH`. Not
+      // read by the webhook path, which posts the whole outbox in one call.
       maxChunksPerFlush: z.number().int().positive().optional()
     })
-    .refine((v) => !(v.issue !== undefined && v.pr !== undefined), {
-      message: 'logPublish: set at most one of issue/pr, not both'
+    .refine((v) => [v.issue, v.pr, v.webhookUrl].filter((x) => x !== undefined).length <= 1, {
+      message: 'logPublish: set at most one of issue/pr/webhookUrl'
+    })
+    .refine((v) => v.headers === undefined || v.webhookUrl !== undefined, {
+      message: 'logPublish: headers requires webhookUrl'
     })
     .optional()
 })
@@ -906,13 +920,16 @@ export function resolveReviewPolicy(config: VinayaConfig | null): ReviewPolicy {
   }
 }
 
-/** Exactly one of `issue`/`pr` — mirrors `log-flush.ts`'s own `LogFlushTarget` shape without importing it (avoids a `config.ts` → `log-flush.ts` dependency; `log-flush.ts` already imports from `config.ts`, not the reverse). */
-export type LogPublishTarget = { issue: number } | { pr: number }
+/** Exactly one of `issue`/`pr`/`webhookUrl` — mirrors `log-flush.ts`'s own `LogFlushTarget` shape (plus the webhook variant `log-webhook-flush.ts` adds) without importing either (avoids a `config.ts` → `log-flush.ts` dependency; those files already import from `config.ts`, not the reverse). */
+export type LogPublishTarget =
+  | { issue: number }
+  | { pr: number }
+  | { webhookUrl: string; headers?: Record<string, string> }
 
 /**
  * The round-end flush's configured destination (Issue #626,
- * O1) — `config?.logPublish`'s `issue`/`pr`, or `null` when the key is
- * absent, which means "publish nowhere automatically." This is an
+ * O1) — `config?.logPublish`'s `issue`/`pr`/`webhookUrl`, or `null` when the
+ * key is absent, which means "publish nowhere automatically." This is an
  * operational choice, not a trust decision (unlike `principals`/
  * `reviewPolicy`), so callers pass `loadConfig()` (the local, repo-walking
  * resolution), the same sourcing `dispatch.timeoutMs`/`prePush.alwaysRun`/
@@ -921,6 +938,7 @@ export type LogPublishTarget = { issue: number } | { pr: number }
 export function resolveLogPublishTarget(config: VinayaConfig | null): LogPublishTarget | null {
   const raw = config?.logPublish
   if (!raw) return null
+  if (raw.webhookUrl !== undefined) return { webhookUrl: raw.webhookUrl, headers: raw.headers }
   if (raw.issue !== undefined) return { issue: raw.issue }
   if (raw.pr !== undefined) return { pr: raw.pr }
   return null

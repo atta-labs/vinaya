@@ -85,6 +85,7 @@ import { postMarkedComment } from './forge-write.js'
 import { createLogSink, outboxPathFor } from './log-sink.js'
 import { appendRoleLine, appendRunStartMarker, loopLogPathFor } from './loop-log.js'
 import { flushOutbox as flushOutboxLib, LogFlushError } from './log-flush.js'
+import { flushOutboxToWebhook, WebhookFlushError } from './log-webhook-flush.js'
 import {
   describeSkippedRoundEndFlush,
   loadConfig,
@@ -553,6 +554,24 @@ async function defaultFlushOutbox(task: number): Promise<FlushOutboxOutcome> {
   }
   const target = resolveRoundEndFlushTarget(config, task)
   if (target === null) return { ok: true }
+
+  // `logPublish.webhookUrl` (set) routes the round-end flush to a plain
+  // HTTP POST instead of a GitHub comment — same non-fatal-failure
+  // contract as the `gh` path below, just via `flushOutboxToWebhook`
+  // (`./log-webhook-flush.js`) instead of `flushOutboxLib`.
+  if ('webhookUrl' in target) {
+    try {
+      await flushOutboxToWebhook(task, target.webhookUrl, target.headers)
+      return { ok: true }
+    } catch (err) {
+      const message = err instanceof WebhookFlushError || err instanceof Error ? err.message : String(err)
+      process.stderr.write(
+        `vinaya dev-review-loop: round-end webhook flush failed (non-fatal, lines stay in the outbox for a later flush): ${message}\n`
+      )
+      return { ok: false, error: message }
+    }
+  }
+
   try {
     const outcome = await flushOutboxLib(target, {
       outboxTask: task,
