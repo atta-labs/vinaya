@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -338,6 +338,28 @@ describe('task_cancel handler', () => {
  * regression in the error identity is caught here even though the CLI's own
  * existing replay test (message-substring only) could not have caught it.
  */
+
+/**
+ * `log()`'s own default `resolveRepo` (unlike `cancelDeps.resolveRepo`
+ * above, which only affects `cancelDevReviewLoop`'s own repo lookups) reads
+ * the REAL git remote of whatever `cwd` the fixture script runs in — this
+ * repo's own real `owner-repo` directory, never `unresolved` — so a test
+ * asserting on the outbox layout searches for the file by name instead of
+ * assuming a fixed directory.
+ */
+function findOutboxFile(root: string, name: string): string {
+  const stack = [root]
+  while (stack.length > 0) {
+    const dir = stack.pop() as string
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry)
+      if (statSync(full).isDirectory()) stack.push(full)
+      else if (entry === name) return full
+    }
+  }
+  throw new Error(`no file named ${name} found under ${root}`)
+}
+
 describe('cancelDevReviewLoop — real subprocess, real control store (security review round 3)', () => {
   it('a replayed cancel throws an error still instanceof ReplayedResolutionError, not a generic Error', () => {
     const home = mkdtempSync(join(tmpdir(), 'vinaya-cancel-integration-'))
@@ -426,4 +448,148 @@ try {
       rmSync(home, { recursive: true, force: true })
     }
   })
+
+  it("restores process.env.VINAYA_TASK/VINAYA_RUN after returning, and never lets a later, unrelated task's own log() land in this run's outbox (round 2 security review, HIGH)", () => {
+    // `cancelDevReviewLoop` is called IN-PROCESS from `task-tools/cancel.ts`
+    // inside the shared, multi-task `vinaya task-tools serve` MCP server —
+    // never as its own dedicated subprocess there. This fixture models
+    // exactly that: one process, one cancel for ISSUE, then a plain `log()`
+    // call for a COMPLETELY DIFFERENT task, the same shape
+    // `task-tools/resume.ts`'s own `emitOperationEvent` takes (it never sets
+    // VINAYA_TASK itself, trusting whatever the process's ambient env is).
+    const home = mkdtempSync(join(tmpdir(), 'vinaya-cancel-env-restore-'))
+    const repoRoot = join(import.meta.dir, '..', '..', '..', '..', '..')
+    const scriptPath = join(import.meta.dir, `.cancel-env-restore-fixture-${process.pid}-${Date.now()}.ts`)
+    const script = `
+import { existsSync, readdirSync, statSync } from 'node:fs'
+import { join } from 'node:path'
+import { acquireOwnership, defaultControlStoreDeps, writeEscalation } from '@attalabs/aeg-core'
+import { writePauseState } from '../../../src/lib/dev-review-loop/pause-resume.js'
+import { cancelDevReviewLoop } from '../../../src/lib/dev-review-loop.js'
+import { outboxRoot } from '../../../src/lib/dev-review-loop/reviewer-dispatch.js'
+import { controlStoreRoot } from '../../../src/lib/effects.js'
+import { log } from '../../../src/lib/log-sink.js'
+
+const ISSUE = 558
+const OTHER_ISSUE = 991
+const PR = 900
+const ESCALATION_ID = \`\${ISSUE}-1-headsha1\`
+
+writePauseState(outboxRoot(), {
+  task: ISSUE,
+  round: 1,
+  head: 'headsha1',
+  branch: 'task/x/1',
+  prNumber: PR,
+  reason: 'escalation',
+  pausedAt: new Date().toISOString(),
+  escalationId: ESCALATION_ID
+})
+
+const controlStoreDeps = defaultControlStoreDeps(controlStoreRoot)
+const acquired = acquireOwnership(controlStoreDeps, ISSUE, 'fixture')
+if (!acquired.acquired) throw new Error('fixture: could not acquire epoch')
+writeEscalation(controlStoreDeps, ISSUE, acquired.epoch, {
+  escalationId: ESCALATION_ID,
+  round: 1,
+  head: 'headsha1',
+  branch: 'task/x/1',
+  pr: PR,
+  runId: 'run-1',
+  pid: 12345,
+  host: 'test-host',
+  agent: 'claude',
+  reason: 'escalation',
+  attemptedRecovery: 'none',
+  requestedDecision: 'resume or cancel',
+  recipient: 'principal',
+  briefHash: null,
+  objectivesVersion: null,
+  rulingOrdinal: 0,
+  policyDigest: 'digest',
+  recordedAt: new Date().toISOString()
+})
+
+const cancelDeps = {
+  fetchPrBody: () => 'Closes #558',
+  fetchRulings: () => ['LGTM, cancel.'],
+  fetchNewestRulingOrdinal: () => 1,
+  fetchNewestRulingAuthor: () => 'principal-1',
+  resolveRepo: async () => null,
+  terminateInFlightLaunchesOnShutdown: () => {},
+  flushOutbox: async () => {}
+}
+
+// A sentinel ambient value — never touched by this task's own work — proves
+// the restore puts things back exactly as found, not merely "unset".
+process.env.VINAYA_TASK = 'sentinel-task'
+process.env.VINAYA_RUN = 'sentinel-run'
+
+await cancelDevReviewLoop({ cancelPr: PR, agent: 'claude' }, cancelDeps)
+
+console.log('TASK_AFTER:' + process.env.VINAYA_TASK)
+console.log('RUN_AFTER:' + process.env.VINAYA_RUN)
+
+// The exact shape \`task-tools/resume.ts\`'s own \`emitOperationEvent\` takes
+// for a DIFFERENT task's operation event in the SAME process: it sets
+// VINAYA_TASK itself (a real caller always does, for its OWN task) and logs
+// — nothing here reads or depends on whatever cancelDevReviewLoop left
+// behind.
+process.env.VINAYA_TASK = String(OTHER_ISSUE)
+delete process.env.VINAYA_RUN
+log({ kind: 'operation', event: 'completed', operation: 'task_resume', target: \`task:\${OTHER_ISSUE}\`, result: 'ok', error_class: null, payload: {} })
+
+function fileExistsUnder(root, name) {
+  if (!existsSync(root)) return false
+  const stack = [root]
+  while (stack.length > 0) {
+    const dir = stack.pop()
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry)
+      if (statSync(full).isDirectory()) stack.push(full)
+      else if (entry === name) return true
+    }
+  }
+  return false
+}
+
+const outboxRootPath = \`\${process.env.HOME}/.vinaya/outbox\`
+const deadline = Date.now() + 10000
+while (Date.now() < deadline) {
+  if (fileExistsUnder(outboxRootPath, \`\${OTHER_ISSUE}.ndjson\`)) break
+  await new Promise((resolve) => setTimeout(resolve, 20))
+}
+console.log('DONE')
+`
+    writeFileSync(scriptPath, script)
+    try {
+      const output = execFileSync('bun', [scriptPath], {
+        cwd: repoRoot,
+        env: { ...process.env, HOME: home },
+        encoding: 'utf8'
+      })
+      expect(output).toContain('TASK_AFTER:sentinel-task')
+      expect(output).toContain('RUN_AFTER:sentinel-run')
+      expect(output).toContain('DONE')
+
+      const outboxRoot = join(home, '.vinaya', 'outbox')
+      const otherOutboxPath = findOutboxFile(outboxRoot, '991.ndjson')
+      const cancelledOutboxPath = findOutboxFile(outboxRoot, '558.ndjson')
+      const otherLines = readFileSync(otherOutboxPath, 'utf8').trim().split('\n').filter(Boolean)
+      expect(otherLines).toHaveLength(1)
+      const otherEvent = JSON.parse(otherLines[0] as string) as { subject: { issue: number }; operation: string }
+      expect(otherEvent.subject.issue).toBe(991)
+      expect(otherEvent.operation).toBe('task_resume')
+
+      // The OTHER task's own operation event never lands in the cancelled
+      // task's outbox — no fabricated cross-task history.
+      const cancelledLines = readFileSync(cancelledOutboxPath, 'utf8').trim().split('\n').filter(Boolean)
+      expect(cancelledLines.every((l) => (JSON.parse(l) as { subject: { issue: number } }).subject.issue === 558)).toBe(
+        true
+      )
+    } finally {
+      rmSync(scriptPath, { force: true })
+      rmSync(home, { recursive: true, force: true })
+    }
+  }, 20000)
 })

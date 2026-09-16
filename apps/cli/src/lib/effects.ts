@@ -152,7 +152,17 @@ export class EffectExecutor {
       // Something is recorded but cannot be trusted — this is exactly the
       // "cannot tell" case O2 refuses to blindly replay past, so it is
       // treated the same as a reconciliation that came back ambiguous,
-      // never silently as if nothing had ever been attempted.
+      // never silently as if nothing had ever been attempted — including
+      // the SAME observed/uncertain log line that branch emits (round 2
+      // review, MAJOR: this branch used to throw with no log event at all,
+      // leaving a real refused-replay outcome invisible in the Vinaya Log).
+      this.logEffectEvent({
+        kind: 'effect',
+        event: 'observed',
+        outcome: 'uncertain',
+        payload: {},
+        ...effectLogTarget(key, identity)
+      })
       throw new EffectRetryRefusedError(this.task, key, `existing effect record is corrupt: ${existing.reason}`)
     }
 

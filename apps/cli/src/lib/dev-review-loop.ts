@@ -3313,7 +3313,19 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
   // NEW process that was never part of the original loop run. `VINAYA_TASK`
   // is set first so this line (and its own `lineage.run`, via
   // `process.env.VINAYA_RUN` below) files under the SAME task outbox every
-  // other event for this task already lands in, never the `none` bucket.
+  // other event for this task already lands in, never the `none` bucket —
+  // and restored in the `finally` below, the SAME save/restore-around-one-
+  // call discipline `log-flush.ts`'s `logForFlush` already uses. This
+  // function is a one-shot CLI command's own process (safe to mutate for its
+  // remaining lifetime either way) but is ALSO called in-process, unchanged,
+  // from `task-tools/cancel.ts` inside the shared, multi-task `vinaya
+  // task-tools serve` MCP server (round 2 security review, HIGH): leaving
+  // these globals mutated after this call returns would silently misattribute
+  // every later `log()` call in that process — including a completely
+  // different task's own `task_resume` — into THIS task's outbox, exactly
+  // the fabricated cross-task history O1/O3 forbid.
+  const prevTask = process.env.VINAYA_TASK
+  const prevRun = process.env.VINAYA_RUN
   process.env.VINAYA_TASK = String(task)
   const cancelLoopId = randomUUID()
   process.env.VINAYA_RUN = cancelLoopId
@@ -3327,8 +3339,15 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
   }
   const cancelOutboxPath = outboxPathFor({ outboxRoot: () => root }, repo, task)
   const priorSize = sizeOfSafe(cancelOutboxPath)
-  log(cancelEvent)
-  await waitForOwnLoopLine(cancelOutboxPath, priorSize, currentRunId(), cancelEvent, d.sleep)
+  try {
+    log(cancelEvent)
+    await waitForOwnLoopLine(cancelOutboxPath, priorSize, currentRunId(), cancelEvent, d.sleep)
+  } finally {
+    if (prevTask === undefined) delete process.env.VINAYA_TASK
+    else process.env.VINAYA_TASK = prevTask
+    if (prevRun === undefined) delete process.env.VINAYA_RUN
+    else process.env.VINAYA_RUN = prevRun
+  }
 
   await d.flushOutbox(task)
   return { task, escalationId, fencedEffectKeys }

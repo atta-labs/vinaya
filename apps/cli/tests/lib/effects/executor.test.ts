@@ -422,4 +422,29 @@ describe('EffectExecutor — effect log events (task-log-v1 task 6, O1/O3)', () 
     })
     expect(events.map((e) => e.event)).toEqual(['observed', 'verified'])
   })
+
+  it('a corrupt existing record emits observed(uncertain), the SAME line the ambiguous-reconciliation branch emits, before refusing (round 2 review, MAJOR)', () => {
+    const { executor, events } = loggingExecutor(1)
+    executor.execute({
+      key: 'k1',
+      identity: { operation: 'pr-comment', target: 'pr:1', inputVersion: 1, payloadDigest: sha256Hex('body') },
+      poster: () => 'https://example.com/comment/1',
+      reconcile: neverReconcile
+    })
+    writeFileSync(join(dir, '1', 'effect', 'k1.json'), 'not json', 'utf8')
+    events.length = 0
+    expect(() =>
+      executor.execute({
+        key: 'k1',
+        identity: { operation: 'pr-comment', target: 'pr:1', inputVersion: 1, payloadDigest: sha256Hex('body') },
+        poster: () => {
+          throw new Error('poster must not be called over a corrupt record')
+        },
+        reconcile: neverReconcile
+      })
+    ).toThrow(EffectRetryRefusedError)
+    expect(events.map((e) => e.event)).toEqual(['observed'])
+    expect((events[0] as { outcome: string; effect_id: string }).outcome).toBe('uncertain')
+    expect((events[0] as { effect_id: string }).effect_id).toBe('k1')
+  })
 })
