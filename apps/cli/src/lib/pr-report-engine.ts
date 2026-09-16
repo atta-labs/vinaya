@@ -17,7 +17,7 @@ import { buildCheckEnv } from '../checks/runner'
 import { ScanContext } from '../checks/scan-context'
 import { loadConfig } from './config'
 import { type DispatchTeeRecovery, realDispatchTeeRecoveryDeps, recoverUsageFromDispatchTee } from './dispatch.js'
-import { runBodyChecks } from './forge-write.js'
+import { collectBodyCheckErrors } from './forge-write.js'
 import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from './numstat'
 import { packageRoot } from './package-root.js'
 import { meteringRefusalMessage, realDeps } from '../commands/tokens'
@@ -1217,66 +1217,32 @@ export type EvidenceReportOutcome =
  * `runBodyChecks` (`forge-write.ts`) refuses via `refuse()`, which is typed
  * `never` and calls `process.exit(1)` directly — there is no exception a
  * caller could ordinarily catch. `runReportForOpenPr` below runs this check
- * from inside the developer-review loop's own long-lived driver process, so
- * that exit would kill the WHOLE driver mid-round, not just this one push
- * (Issue #639 — reproduced live via a blank token-report cell). This is the
- * one place that turns that exit back into an ordinary return: for the exact
- * duration of the `runBodyChecks` call, it swaps in a `process.exit` that
- * throws a private sentinel instead of exiting, and a `process.stderr.write`
- * that captures rather than prints — both restored in `finally` regardless
- * of outcome — then replays the captured `emitCheckError` JSON lines (the
- * same ones `refuse()` would have printed) into the returned message.
- * `runBodyChecks` and `refuse()` themselves are untouched by this: every
- * OTHER caller (`pr.ts`'s create/edit paths, `pr-report.ts`'s own
- * `--push <n> --body-file` branch) still calls `runBodyChecks` directly and
- * still exits the process on a refusal, exactly as before.
+ * from inside the developer-review loop's own long-lived driver process,
+ * concurrently (via `Promise.all`) with reviewer dispatch and that same
+ * process's own real `SIGTERM`/`SIGINT` handlers, so that exit would kill
+ * the WHOLE driver mid-round — or, if a shutdown signal happened to land
+ * while some earlier version of this code had globally monkey-patched
+ * `process.exit` for the call's duration, hijack that unrelated signal's
+ * own real exit into a thrown error instead (round 3 review, MAJOR/HIGH:
+ * patching a process-global for a concurrently-running process is exactly
+ * the shared-mutable-state hazard `defaultRunEvidenceReport`'s own doc
+ * comment already calls out and avoids for `process.env`). Never
+ * intercepting `process.exit` at all — rather than patching it — is what
+ * actually closes both hazards: `collectBodyCheckErrors` below runs the
+ * SAME registry `runBodyChecks` runs and returns its findings as an
+ * ordinary array instead of calling `refuse()`, so this call site simply
+ * never reaches the one line that would exit the process. `runBodyChecks`
+ * and `refuse()` themselves are unchanged (each now calls
+ * `collectBodyCheckErrors` too, so behavior for their existing callers is
+ * byte-for-byte the same): every OTHER caller (`pr.ts`'s create/edit paths,
+ * `pr-report.ts`'s own `--push <n> --body-file` branch) still goes through
+ * `runBodyChecks` directly and still exits the process on a refusal,
+ * exactly as before.
  */
-async function runBodyChecksWithoutExiting(
-  body: string,
-  branch: string,
-  prNumber: number,
-  retryCommand: string
-): Promise<{ refused: false } | { refused: true; message: string }> {
-  class BodyChecksRefused extends Error {}
-  const originalExit = process.exit
-  const originalStderrWrite = process.stderr.write.bind(process.stderr)
-  const captured: string[] = []
-  process.stderr.write = ((chunk: string | Uint8Array) => {
-    captured.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'))
-    return true
-  }) as typeof process.stderr.write
-  process.exit = (() => {
-    throw new BodyChecksRefused()
-  }) as never
-  try {
-    await runBodyChecks(body, branch, prNumber, retryCommand)
-    return { refused: false }
-  } catch (err) {
-    if (!(err instanceof BodyChecksRefused)) throw err
-    const lines = captured
-      .join('')
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0)
-    const findings = lines.map((line) => {
-      try {
-        const parsed = JSON.parse(line) as { check?: string; message?: string }
-        return parsed.check && parsed.message ? `${parsed.check}: ${parsed.message}` : line
-      } catch {
-        return line
-      }
-    })
-    return {
-      refused: true,
-      message:
-        findings.length > 0
-          ? `vinaya pr report: refused — ${findings.join(' | ')}`
-          : 'vinaya pr report: refused — runBodyChecks rejected the spliced body (no findings captured).'
-    }
-  } finally {
-    process.exit = originalExit
-    process.stderr.write = originalStderrWrite
-  }
+async function bodyCheckRefusalMessage(body: string, branch: string, prNumber: number): Promise<string | null> {
+  const errors = await collectBodyCheckErrors(body, branch, prNumber)
+  if (errors.length === 0) return null
+  return `vinaya pr report: refused — ${errors.map((e) => `${e.check}: ${e.message}`).join(' | ')}`
 }
 
 /**
@@ -1342,19 +1308,19 @@ export async function runReportForOpenPr(
   }
 
   // O1 (task 17): the outgoing spliced bytes go through the SAME registry
-  // runner `pr create`/`pr edit` do before `gh pr edit` ever sees them —
-  // refuses on a finding, so a body this function sends is a body CI's own
-  // `vinaya-checks.yml`/`vinaya-body-checks.yml` also accepts. Issue #639:
-  // routed through `runBodyChecksWithoutExiting` rather than called directly
-  // — a refusal here must return an outcome, never exit this process.
-  const bodyCheck = await runBodyChecksWithoutExiting(
+  // runner `pr create`/`pr edit` do before `gh pr edit` ever sees them — a
+  // body this function sends is, by construction, a body CI's own
+  // `vinaya-checks.yml`/`vinaya-body-checks.yml` also accepts. Goes through
+  // `collectBodyCheckErrors` rather than `runBodyChecks` itself: a refusal
+  // here must return an outcome, never exit this process (see
+  // `bodyCheckRefusalMessage`'s own doc comment above for why).
+  const bodyCheckMessage = await bodyCheckRefusalMessage(
     spliced.body,
     opts.branch ?? process.env.BRANCH ?? '',
-    Number(pushPr),
-    `vinaya pr report --push ${pushPr}`
+    Number(pushPr)
   )
-  if (bodyCheck.refused) {
-    return { kind: 'body-checks-refused', message: bodyCheck.message }
+  if (bodyCheckMessage !== null) {
+    return { kind: 'body-checks-refused', message: bodyCheckMessage }
   }
 
   try {

@@ -1,14 +1,15 @@
 /**
- * Issue #639: `runReportForOpenPr`'s call to `runBodyChecks` had no
- * `try`/`catch` around it, unlike every other step in the same function —
- * `refuse()` (`forge-write.ts`) calls `process.exit(1)` directly on a
- * finding, which killed the WHOLE driver process mid-round when this ran
- * from inside the developer-review loop. These tests exercise the real
- * `runBodyChecks` registry (a config-registered `validates: 'body'` fixture
- * check that always refuses — `fake-always-refuse-body-check.cjs`), proving
- * the refusal now comes back as an ordinary `EvidenceReportOutcome` instead
- * of tearing down the process, and that an EARLIER, pre-existing refusal
- * path (`spliceIntoLiveBody`'s own `'splice-refused'`) is untouched.
+ * `runReportForOpenPr`'s push runs inside the developer-review loop's own
+ * long-lived driver process — `runBodyChecks` (`forge-write.ts`) refusing
+ * via `refuse()`'s direct `process.exit(1)` there would kill the whole
+ * driver mid-round, not just this one push. `runReportForOpenPr` now goes
+ * through `collectBodyCheckErrors` (the non-refusing half `runBodyChecks`
+ * itself delegates to) instead, so it never reaches a line that could exit
+ * the process at all. These tests exercise the real body-check registry (a
+ * config-registered `validates: 'body'` fixture check that always refuses —
+ * `fake-always-refuse-body-check.cjs`), proving the refusal comes back as
+ * an ordinary `EvidenceReportOutcome`, and that an EARLIER, pre-existing
+ * refusal path (`spliceIntoLiveBody`'s own `'splice-refused'`) is untouched.
  */
 
 import { afterEach, describe, expect, it } from 'bun:test'
@@ -60,8 +61,8 @@ function tempCwd(): string {
   return dir
 }
 
-describe('runReportForOpenPr — a runBodyChecks refusal returns an outcome, never exits (O1, Issue #639)', () => {
-  it("catches refuse()'s real process.exit(1) and returns 'body-checks-refused' carrying the same findings, instead of the process dying mid-push", async () => {
+describe('runReportForOpenPr — a body-check refusal returns an outcome, never exits (O1)', () => {
+  it("never reaches refuse()'s real process.exit(1) — returns 'body-checks-refused' carrying the same findings instead of the process dying mid-push", async () => {
     const cwd = tempCwd()
     writeFileSync(
       join(cwd, 'vinaya.config.json'),
