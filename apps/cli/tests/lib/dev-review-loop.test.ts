@@ -57,10 +57,13 @@ import { hostname, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
+  appendFinalFlushFailureNote,
   assertValidLoopEvent,
   buildReexecArgs,
   CONFIDENCE_PROMPT_LINE,
+  describeConfidencePauseDetail,
   describeObjectivesEdit,
+  deriveVerdictPauseDetail,
   developerRoundMarker,
   DRIVER_OWNED_PATHS,
   extractObjectivesSection,
@@ -2236,12 +2239,18 @@ describe('devReviewLoop — escalation pauses, --resume continues after a ruling
     expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:escalation -->$/m)
     expect(pauseComment).toMatch(/vinaya dev-review-loop --resume 123/)
     expect(pauseComment).not.toMatch(/^VERDICT:/m)
+    // O1 ([task-log-v1] 9, Issue #631): `assessRound`'s own `'escalation'`
+    // decision (a reviewer's ESCALATE verdict) carries no `detail` at all —
+    // the driver narrates it from the same verdicts it already dispatched,
+    // naming WHICH role escalated, so the comment alone states what fired.
+    expect(pauseComment).toContain('reviewer returned ESCALATE this round')
 
     const pauseState = JSON.parse(
       readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
     ) as Record<string, unknown>
     expect(pauseState.round).toBe(1)
     expect(pauseState.reason).toBe('escalation')
+    expect(pauseState.detail).toContain('reviewer returned ESCALATE this round')
 
     // Seed a Principal ruling comment on the PR — the same shape
     // `filterPrincipalRulings`'s own unit tests use — before resuming. Named
@@ -2809,6 +2818,13 @@ describe('devReviewLoop — a paused loop for reason no_progress still logs its 
       'utf8'
     )
     expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:no_progress -->$/m)
+    // O1 ([task-log-v1] 9, Issue #631): `assessRound`'s own generic
+    // `'no_progress'` decision (two consecutive rounds resolving no finding)
+    // carries no `detail` at all — the driver narrates it from the round's
+    // own `findings_compared` event, so the comment alone states what
+    // the driver observed, not just the bare reason name.
+    expect(pauseComment).toContain('no finding was marked resolved this round')
+    expect(pauseComment).toContain('two consecutive rounds with no forward motion')
 
     // The regression: this event was captured into `pendingCompletionEvents`
     // by the `dispatch_reviewers` branch's unconditional filter, and only
@@ -2820,6 +2836,34 @@ describe('devReviewLoop — a paused loop for reason no_progress still logs its 
       | undefined
     expect(journalFinalized).toBeDefined()
     expect(journalFinalized?.result).toBe('stopped')
+  }, 20000)
+
+  // O2 ([task-log-v1] 9, Issue #631): the SAME pause, but with a configured
+  // `logPublish` target so the driver's own final flush actually attempts a
+  // forge post — `writeFakeGh` (the default stub every scenario above this
+  // one uses) deliberately fails every `gh issue comment` call, exactly the
+  // shape a real round-end flush failure takes. Before this task the flush
+  // ran AFTER the comment was already posted, so a failure here reached
+  // only stderr; now it is flushed first, and a failure is folded into the
+  // pause's own `detail`.
+  it('a final flush that fails before this pause is folded into the posted detail, never only reaching stderr', () => {
+    const { home, cwd, path } = setUpNoProgress()
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ logPublish: { issue: TASK + 1 } }))
+    const r = runLoop(home, cwd, path)
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(no_progress\)/)
+
+    const postedFiles = postedCommentFiles(home)
+    const pauseComment = readFileSync(
+      join(home, '.fake-gh-posted-comments', postedFiles[postedFiles.length - 1] as string),
+      'utf8'
+    )
+    expect(pauseComment).toContain('the final outbox flush before this pause failed')
+
+    const pauseState = JSON.parse(
+      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
+    ) as Record<string, unknown>
+    expect(pauseState.detail).toContain('the final outbox flush before this pause failed')
   }, 20000)
 })
 
@@ -3700,6 +3744,18 @@ describe('devReviewLoop — control-store-v1 task 4 (#554, O3): a delivered-find
     expect(
       existsSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'round-1-attach-redelivered'))
     ).toBe(false)
+
+    // O3 ([task-log-v1] 9, Issue #631): the mirror of the sibling fixture
+    // above — here the CONTROL STORE is what actually held, and the local
+    // marker never existed, so the comment must name it the other way
+    // around.
+    const postedFiles = postedCommentFiles(home)
+    const pauseComment = readFileSync(
+      join(home, '.fake-gh-posted-comments', postedFiles[postedFiles.length - 1] as string),
+      'utf8'
+    )
+    expect(pauseComment).toContain('local marker file absent')
+    expect(pauseComment).toContain('control-store delivered-findings identity matched')
   }, 20000)
 })
 
@@ -5233,6 +5289,19 @@ describe('devReviewLoop — a second attach on the same unchanged head reads as 
     expect(existsSync(join(home, '.dev-invocations'))).toBe(false)
     expect(existsSync(join(heldDir, 'round-2-reviewer-work'))).toBe(false)
     expect(existsSync(join(heldDir, 'round-2-security-work'))).toBe(false)
+
+    // O3 ([task-log-v1] 9, Issue #631): this pause is decided by an OR of
+    // two independent guard inputs (the local marker file this fixture
+    // wrote, and a control-store delivered-findings identity this fixture
+    // never wrote) — the comment now names which one actually held, rather
+    // than reading identically regardless.
+    const postedFiles = postedCommentFiles(home)
+    const pauseComment = readFileSync(
+      join(home, '.fake-gh-posted-comments', postedFiles[postedFiles.length - 1] as string),
+      'utf8'
+    )
+    expect(pauseComment).toContain('local marker file present')
+    expect(pauseComment).toContain('control-store delivered-findings identity absent')
   }, 20000)
 })
 
@@ -7057,6 +7126,85 @@ describe('routeCompletionEvents (pure) — regression, PR #459 MAJOR', () => {
   // propagates out before `await logEvents(pendingCompletionEvents)` is ever
   // reached. See 'a crash mid-publish never logs merged_ready', below, for
   // the real, end-to-end proof of that.
+})
+
+describe('describeConfidencePauseDetail (pure) — [task-log-v1] 9, Issue #631, O1/O3', () => {
+  it('names the absent case — no confidence line on the re-asked turn', () => {
+    expect(describeConfidencePauseDetail('absent')).toContain('no confidence line was found on the re-asked turn')
+  })
+
+  it('names the reported-but-low case, including the developer-supplied reason when present', () => {
+    const detail = describeConfidencePauseDetail({ value: 35, reason: 'flaky test environment' })
+    expect(detail).toContain('confidence reported at 35')
+    expect(detail).toContain('(flaky test environment)')
+    expect(detail).toContain('below the required 50 threshold')
+  })
+
+  it('omits the parenthetical when no reason was supplied', () => {
+    const detail = describeConfidencePauseDetail({ value: 20 })
+    expect(detail).toContain('confidence reported at 20')
+    expect(detail).not.toContain('()')
+  })
+})
+
+describe('deriveVerdictPauseDetail (pure) — [task-log-v1] 9, Issue #631, O1/O3', () => {
+  const findingsComparedEvent = (
+    overrides: Partial<{ open: string[]; resolved: string[]; new: string[]; recurring: string[] }>
+  ) =>
+    ({
+      event: 'findings_compared',
+      round: 2,
+      open: [],
+      resolved: [],
+      new: [],
+      recurring: [],
+      ...overrides
+    }) as unknown as DevReviewLoopEventInput
+
+  it('names the escalating role(s) for reason escalation', () => {
+    expect(deriveVerdictPauseDetail('escalation', [], true, false)).toBe('reviewer returned ESCALATE this round')
+    expect(deriveVerdictPauseDetail('escalation', [], false, true)).toBe('security returned ESCALATE this round')
+    expect(deriveVerdictPauseDetail('escalation', [], true, true)).toBe(
+      'reviewer and security returned ESCALATE this round'
+    )
+  })
+
+  it('names the reappearing finding ids for reason reappearance, read from the round’s own findings_compared event', () => {
+    const events = [findingsComparedEvent({ recurring: ['F1', 'F3'] })]
+    const detail = deriveVerdictPauseDetail('reappearance', events, false, false)
+    expect(detail).toContain('F1, F3')
+    expect(detail).toContain('reappeared after being marked resolved')
+  })
+
+  it('narrates the no_progress case from the same findings_compared event, never inventing a fact assessRound did not already compute', () => {
+    const events = [findingsComparedEvent({ open: ['F1'] })]
+    const detail = deriveVerdictPauseDetail('no_progress', events, false, false)
+    expect(detail).toContain('no finding was marked resolved this round')
+    expect(detail).toContain('two consecutive rounds with no forward motion')
+  })
+
+  it('returns undefined when no findings_compared event is present at all — never fabricates one', () => {
+    expect(deriveVerdictPauseDetail('reappearance', [], false, false)).toBeUndefined()
+  })
+
+  it('returns undefined for max_rounds — that reason already carries its own detail from assessRound, so the call site never even calls this for it', () => {
+    expect(deriveVerdictPauseDetail('max_rounds', [], false, false)).toBeUndefined()
+  })
+})
+
+describe('appendFinalFlushFailureNote (pure) — [task-log-v1] 9, Issue #631, O2: a failed final flush is folded into detail, never swallowed', () => {
+  it('appends the note when no detail existed yet', () => {
+    const detail = appendFinalFlushFailureNote(undefined, 'gh: rate limited')
+    expect(detail).toContain('the final outbox flush before this pause failed')
+    expect(detail).toContain('gh: rate limited')
+  })
+
+  it('appends the note onto an existing detail, never replacing it', () => {
+    const detail = appendFinalFlushFailureNote('round 4 findings delivered again', 'gh: rate limited')
+    expect(detail).toContain('round 4 findings delivered again')
+    expect(detail).toContain('the final outbox flush before this pause failed')
+    expect(detail).toContain('gh: rate limited')
+  })
 })
 
 describe('filterPrincipalRulings / findPrincipalFrozenBrief (pure)', () => {

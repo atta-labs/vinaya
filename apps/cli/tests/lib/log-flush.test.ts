@@ -270,3 +270,64 @@ describe('vinaya log flush — per-flush chunk bound (O2, Issue #626)', () => {
     expect(r.stdout).toContain('3 chunk(s) remain queued')
   })
 })
+
+/**
+ * `[task-log-v1] 9` (Issue #631, O2): the driver's own final flush before a
+ * pause exit relies on `flushOutbox` (this file) never swallowing a genuine
+ * post failure — `apps/cli/specs/log.md` § The flush already documents that
+ * a failed chunk logs a `forge_write refused` line, into the very outbox
+ * being flushed, before throwing. This pins that contract directly: a `gh`
+ * failure must both (a) surface as a non-zero exit, never a quiet success,
+ * and (b) leave the `refused` line, and every original unposted line,
+ * durably on disk — the record this task's driver-level fix (folding the
+ * failure into a pause's own `detail`) depends on existing at all.
+ */
+function stubFailingGh(): { env: Record<string, string> } {
+  const dir = tempDir('log-flush-lib-gh-failing-')
+  const gh = join(dir, 'gh')
+  writeFileSync(
+    gh,
+    `#!/bin/sh
+if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
+  echo '{"comments":[]}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
+  echo "gh: could not post comment (simulated failure)" >&2
+  exit 1
+fi
+echo "unhandled gh: $*" >&2
+exit 1
+`
+  )
+  chmodSync(gh, 0o755)
+  return { env: { PATH: `${dir}:${process.env.PATH ?? ''}` } }
+}
+
+describe('vinaya log flush — a gh failure is recorded, never silently swallowed (O2, Issue #631)', () => {
+  it('exits non-zero, and the outbox still carries a forge_write refused line plus every original unposted line', () => {
+    const cwd = tempDir('log-flush-lib-cwd-')
+    initGitRepo(cwd)
+    const home = tempDir('log-flush-lib-home-')
+    const gh = stubFailingGh()
+
+    seedOutbox(home, 568, 1)
+
+    const r = runCli(['log', 'flush', '--issue', '568'], cwd, { HOME: home, ...gh.env })
+
+    expect(r.status).not.toBe(0)
+    expect(r.stderr).toContain('gh failed posting')
+
+    const survivors = readFileSync(outboxPath(home, 568), 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+    // The original line this attempt never confirmed posting.
+    expect(survivors.some((l) => l.meta?.run_id === 'run-0')).toBe(true)
+    // The audit trail of the failure itself — never dropped, never only a
+    // stderr line the outbox's own next reader could miss.
+    const refused = survivors.find((l) => l.kind === 'forge_write' && l.event === 'refused')
+    expect(refused).toBeDefined()
+    expect(refused.reason).toContain('failed')
+  })
+})
