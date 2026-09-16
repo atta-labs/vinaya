@@ -2403,7 +2403,7 @@ export async function dispatchRole(
             args: spawnArgs,
             allowedDir: boundaryAllowedDir,
             vinayaHomeDir: GLOBAL_VINAYA_HOME,
-            // O1 (Issue #640): claude only — the one vendor whose OAuth
+            // O1: claude only — the one vendor whose OAuth
             // credential shape `stageOAuthCredential` knows how to stage;
             // Codex/Gemini get no staging attempt (`oauthConfigDir` stays
             // `null` on the resolved launch, same as before this task).
@@ -2512,7 +2512,7 @@ export async function dispatchRole(
       return { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason: 'refused' }
     }
 
-    // O2 (Issue #640): the boundary resolved, but a confined `agent` child
+    // O2: the boundary resolved, but a confined `agent` child
     // still has no way to authenticate — no vendor API key on the parent's
     // own environment (`RUNTIME_CREDENTIAL_ENV_KEYS[agent]`), and no OAuth
     // session credential was found to stage (`boundaryLaunch.launch.oauthConfigDir`).
@@ -2618,7 +2618,7 @@ export async function dispatchRole(
               TMPDIR: resolvedBoundary.tmpDir,
               TMP: resolvedBoundary.tmpDir,
               TEMP: resolvedBoundary.tmpDir,
-              // O1 (Issue #640): only set when a real OAuth session
+              // O1: only set when a real OAuth session
               // credential was actually staged (`resolveWorkerBoundaryLaunch`'s
               // `stageOAuthCredential` opt, claude-only) — repoints the
               // confined child's own config-dir lookup at the staged COPY
@@ -2658,7 +2658,7 @@ export async function dispatchRole(
     let settled = false
     let timedOut = false
     // Set synchronously the moment the OS reports the child has exited —
-    // Issue #636, O5. This is read by the heartbeat below to stop reporting
+    // O5. This is read by the heartbeat below to stop reporting
     // elapsed time about a process that is gone; it is set well before
     // `finish()` runs (which only happens after `handleChildExit`'s own
     // awaits complete), closing the race the round-2 security review found:
@@ -2767,7 +2767,7 @@ export async function dispatchRole(
     // child's own output, so liveness is reported even when there is
     // nothing yet to tee.
     //
-    // Issue #636, O5: verifies the child is actually still alive
+    // O5: verifies the child is actually still alive
     // (`childExited`) before reporting elapsed time, rather than measuring
     // wall-clock alone — a real production case measured a heartbeat that
     // kept printing "still running" at 60s/120s/180s/240s about a
@@ -2911,7 +2911,7 @@ export async function dispatchRole(
       const reportedModel = vendor.parseModel(stdoutBuf)
       const attemptModel = reportedModel ?? resolvedModel
       const usageUnits = vendor.parseUsageUnits(stdoutBuf)
-      // Issue #636, O5: this dispatch never produced a working vendor
+      // O5: this dispatch never produced a working vendor
       // session — checked against the SAME two sources every other resumeId
       // read in this function already uses (the stream-bound `launch.resumeId`,
       // then a final read of the completed buffer), so "never bound" here
@@ -2959,7 +2959,7 @@ export async function dispatchRole(
         // report before the ceiling killed it (mid-stream, or a final line in
         // `stdoutBuf`) — an interrupted attempt no longer loses its session.
         //
-        // Issue #636, O5: a dispatch that never bound a session at all is
+        // O5: a dispatch that never bound a session at all is
         // named `'unbound'` here, distinct from an ordinary `'timeout'` that
         // at least got a vendor session running — this is CLI-local
         // bookkeeping (`DispatchHandle.failureReason`/the launch record),
@@ -3027,7 +3027,7 @@ export async function dispatchRole(
         // O1: same as the timeout path — interrupted, intent kept, session
         // bound from whatever the child managed to report before it crashed.
         //
-        // Issue #636, O5: same `'unbound'` distinction as the timeout branch
+        // O5: same `'unbound'` distinction as the timeout branch
         // above — a child that exited on its own without ever binding a
         // session names that failure specifically, rather than the generic
         // `'crash'` every other non-zero exit gets.
@@ -3128,7 +3128,7 @@ export async function dispatchRole(
     // the correct signal for a process-supervisor ceiling that must never
     // hang regardless of what the vendor's own process tree does.
     child.on('exit', (code) => {
-      // Set BEFORE the async `handleChildExit` runs (Issue #636, O5) — the
+      // Set BEFORE the async `handleChildExit` runs (O5) — the
       // heartbeat above reads this on its very next tick, which can land
       // before `handleChildExit`'s own awaits (and therefore `finish()`,
       // which also clears this timer) complete.

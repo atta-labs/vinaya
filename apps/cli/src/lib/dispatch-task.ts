@@ -66,10 +66,10 @@ export type DispatchTaskResult = { posted: boolean; commentUrl: string | null; b
 export class DispatchTaskError extends Error {}
 
 // `execFileSync`'s own default `maxBuffer` (1 MiB) is the same ceiling that
-// broke `gate-reading.ts`'s `gh` reads at Issue #566 (1,597,599 bytes) —
-// bounded here, once, generously (64 MiB), for the identical reason: an
-// Issue's comment payload is adopter-influenced content this process
-// should not buffer with no ceiling at all (Issue #626, O3).
+// broke `gate-reading.ts`'s `gh` reads once a tracker comment payload
+// reached 1,597,599 bytes — bounded here, once, generously (64 MiB), for
+// the identical reason: an Issue's comment payload is adopter-influenced
+// content this process should not buffer with no ceiling at all (O3).
 const MAX_GH_OUTPUT_BYTES = 64 * 1024 * 1024
 
 function sh(cmd: string, args: string[]): string {
@@ -587,7 +587,7 @@ export async function dispatchTask(
         task: prep.issue,
         promptFile,
         model: resolvedModel,
-        // O1/O3 (task 3, #560): this call is `vinaya
+        // O1/O3 (task 3): this call is `vinaya
         // task run`'s own unattended loop starting the Developer — nobody is
         // watching each tool call, so it must run inside the proven boundary
         // (`DispatchOpts.unattended`'s own doc comment).

@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import type { ArchiveDeps } from '../src/commands/archive.js'
 import {
   appendRetrospectiveSection,
+  fetchMilestoneIssueStates,
   fetchTrancheIssuesByLabel,
   renderArchiveTokensLine,
   renderRetrospectiveSection,
@@ -422,6 +423,67 @@ describe('fetchTrancheIssuesByLabel — pagination (task 4)', () => {
   })
 })
 
+/**
+ * Fakes `gh issue list --milestone <n> --json state --limit <n>` the way
+ * the real CLI behaves: a single canned Issue-state array, sliced to
+ * whatever `--limit` the call under test asked for — so a fixture proves
+ * `fetchMilestoneIssueStates` actually grows its `--limit` across rounds
+ * rather than trusting one arbitrary cap.
+ */
+function withGrowingLimitFakeGh<T>(
+  states: Array<'OPEN' | 'CLOSED'>,
+  fn: (calls: () => string[]) => Promise<T> | T
+): Promise<T> {
+  const dir = mkdtempSync(join(tmpdir(), 'vinaya-archive-milestone-fakegh-'))
+  const dataPath = join(dir, 'states.json')
+  const logPath = join(dir, 'calls.log')
+  writeFileSync(dataPath, JSON.stringify(states.map((state) => ({ state }))))
+  writeFileSync(logPath, '')
+  const script = `#!/usr/bin/env bash
+echo "$*" >> "${logPath}"
+limit="\${@: -1}"
+node -e "const fs=require('fs'); const a=JSON.parse(fs.readFileSync('${dataPath}','utf8')); process.stdout.write(JSON.stringify(a.slice(0, \${limit})))"
+`
+  const ghPath = join(dir, 'gh')
+  writeFileSync(ghPath, script)
+  chmodSync(ghPath, 0o755)
+  const originalPath = process.env.PATH
+  process.env.PATH = `${dir}:${originalPath}`
+  return Promise.resolve(
+    fn(() =>
+      readFileSync(logPath, 'utf8')
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean)
+    )
+  ).finally(() => {
+    process.env.PATH = originalPath
+    rmSync(dir, { recursive: true, force: true })
+  })
+}
+
+describe('fetchMilestoneIssueStates — pagination (O4)', () => {
+  it('walks every round of a Milestone with 250 Issues, never truncating at the first 100-item `--limit`', async () => {
+    // 250 Issues, all closed except the 250th — the exact tail a single
+    // `--limit 500`-style cap that happened to undershoot would drop.
+    const states: Array<'OPEN' | 'CLOSED'> = [...Array.from({ length: 249 }, () => 'CLOSED' as const), 'OPEN']
+    const result = await withGrowingLimitFakeGh(states, () => fetchMilestoneIssueStates('acme/widget', 15))
+    expect(result).toHaveLength(250)
+    expect(result.filter((i) => i.state === 'OPEN')).toHaveLength(1)
+    expect(result.at(-1)?.state).toBe('OPEN')
+  })
+
+  it('stops after the first round short of its own `--limit`, never requesting a round beyond the last one', async () => {
+    const states: Array<'OPEN' | 'CLOSED'> = ['CLOSED', 'CLOSED']
+    const result = await withGrowingLimitFakeGh(states, (calls) => {
+      const r = fetchMilestoneIssueStates('acme/widget', 15)
+      expect(calls()).toHaveLength(1)
+      return r
+    })
+    expect(result).toHaveLength(2)
+  })
+})
+
 // The retrospective `archive tranche` appends to the Milestone description
 // once a tranche is complete.
 describe('roundsForTaskPr', () => {
@@ -561,7 +623,8 @@ case "$*" in
     cat > "${patchedPath}"
     ;;
   "issue list"*"--milestone"*)
-    cat "${milestoneIssuesPath}"
+    limit="\${@: -1}"
+    node -e "const fs=require('fs'); const a=JSON.parse(fs.readFileSync('${milestoneIssuesPath}','utf8')); process.stdout.write(JSON.stringify(a.slice(0, \${limit})))"
     ;;
   *"/milestones/"*)
     cat "${milestonePath}"

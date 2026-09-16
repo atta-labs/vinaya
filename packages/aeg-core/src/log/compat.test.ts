@@ -218,8 +218,8 @@ describe('pre-task-log-v1 fixtures — forge_write family', () => {
 /**
  * Retention-gap fixtures for the six families this task's own tranche
  * introduced (`gate`, `operation`, `usage`, `role_attempt`, `handoff`,
- * `effect`) — task-log-v1 7, Issue #567, O3. A pre-task-log-v1 outbox has
- * no history for these six (they didn't exist yet), so "historical
+ * `effect`) — O3. An outbox recorded before these six families existed has
+ * no history for them (they didn't exist yet), so "historical
  * compatibility" here means: the MINIMAL shape a real caller emits when it
  * genuinely has nothing more to report (a pre-spawn refusal with no usage
  * receipt, a vendor shape this build doesn't parse inner fields for yet, a

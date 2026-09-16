@@ -352,8 +352,8 @@ function shaFromGhApi(branch: string): string | null {
  * with the resolved true head.
  */
 /**
- * The base commit the PR's candidate is judged against (task 5, `#555`, O1)
- * — the PR's base branch (`baseRefName`) resolved to its
+ * The base commit the PR's candidate is judged against — the PR's base
+ * branch (`baseRefName`) resolved to its
  * current tip via the same `git ls-remote`/forge-ref path `resolveTrueHeadSha`
  * uses for the head. `null` on a genuine resolution failure, which
  * `checkReviewGate` reads as "skip the base binding" — never a fallback to a
@@ -530,7 +530,7 @@ function main(): void {
   // as `baseSha: null` would make `compareManifest`'s own "nothing to bind
   // against" skip (`isBoundToBase`) silently revert this check to its
   // pre-task, base-blind behavior on a transient `gh`/`git` hiccup — the
-  // exact bug `#433`'s MAJOR finding already closed for
+  // same base-blind-fallback bug a prior MAJOR finding already closed for
   // `resolveObjectivesVersion`, reapplied here (round 2 review, security
   // MEDIUM). Fails closed the same way `resolveTrueHeadSha`'s own `null`
   // does, above.
@@ -606,8 +606,8 @@ function main(): void {
     // from `main` or a rebase that leaves the patch untouched must not void
     // a review that already read exactly those changes.
     patchIdOf: (sha: string) => patchIdAt(pr.baseRefName, sha),
-    // The base identity the verdict is bound to (task 5, `#555`, O1) — the
-    // PR's base branch tip, resolved the same fail-safe way as the head. A
+    // The base identity the verdict is bound to — the PR's base branch tip,
+    // resolved the same fail-safe way as the head. A
     // base-only change under an unchanged candidate now invalidates; an
     // equivalent rebase (patchIdOf above proving the diff identical) still
     // keeps, unchanged.

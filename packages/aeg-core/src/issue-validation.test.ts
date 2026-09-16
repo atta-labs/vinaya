@@ -961,7 +961,7 @@ describe('frozenSectionsChanged (task-run-v1 11, review round 1, O3)', () => {
     expect(frozenSectionsChanged(bodyWithDocs, bodyWithDocs)).toEqual([])
   })
 
-  // F3 (round 2 code review, MINOR, Issue #625) — documentationEqual's own
+  // F3 (round 2 code review, MINOR) — documentationEqual's own
   // doc comment claims order-significance like Parts; this proves it against
   // two otherwise-identical sources, the way the Surface/Parts cases above
   // each prove their own order-(in)sensitivity.
@@ -1958,7 +1958,7 @@ describe('parseIssueDocumentation', () => {
     })
   })
 
-  // round 2 review, BLOCKER (O1/O2, Issue #625) — a real doc-page URL
+  // round 2 review, BLOCKER (O1/O2) — a real doc-page URL
   // routinely contains an unspaced hyphen; the separator must never mistake
   // one for the source/mechanism split, or the source recorded (and later
   // compared against a real `WebFetch` call by the Stop hook) is truncated.

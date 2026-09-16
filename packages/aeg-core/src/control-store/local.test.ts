@@ -397,7 +397,7 @@ describe('writeEffect / readEffect', () => {
   })
 })
 
-// --- escalation / resolution (control-store-v1 task 6, #556) ---------------
+// --- escalation / resolution ------------------------------------------------
 
 const escalationInput = {
   escalationId: '556-1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',

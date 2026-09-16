@@ -43,7 +43,7 @@ function parseArgs(args: string[]): ParsedArgs {
     // matches `task run --issue <n>` / `task brief --issue <n>`.
     if (a === '--task' || a === '--issue') task = Number(args[++i])
     else if (a === '--resume') resumePr = Number(args[++i])
-    // O3 (`#556`): the mirror of `--resume <pr>` — cancels the SAME held
+    // The mirror of `--resume <pr>` — cancels the SAME held
     // pause a `--resume` would otherwise continue, rather than dispatching
     // anything.
     else if (a === '--cancel') cancelPr = Number(args[++i])

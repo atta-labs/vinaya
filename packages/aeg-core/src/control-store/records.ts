@@ -110,9 +110,9 @@ export const TransitionRecordSchema = z
 export type TransitionRecord = z.infer<typeof TransitionRecordSchema>
 
 /**
- * The review-input manifest a round was dispatched against, persisted durably
- * (`control-store-v1` task 5, `#555`, O1) — the record the "Deferred,
- * deliberately" paragraph in `loop.md` named as waiting for this store: base
+ * The review-input manifest a round was dispatched against, persisted
+ * durably — the record the "Deferred, deliberately" paragraph in `loop.md`
+ * named as waiting for this store: base
  * identity and a durable policy history now have a home. One immutable
  * snapshot per (task, round), built by the parent before it dispatches
  * reviewers, binding the complete identity of everything a verdict is judged
@@ -239,8 +239,8 @@ export type EffectStatus = EffectRecord['status']
 
 /**
  * Everything a paused run's human decision needs without chat history
- * (`control-store-v1` task 6, `#556`, O1) — one immutable record per pause
- * instance, keyed by `escalationId` (`<task>-<round>-<head>`, the same
+ * (O1) — one immutable record per pause instance, keyed by `escalationId`
+ * (`<task>-<round>-<head>`, the same
  * round+head granularity `pause-resume.ts`'s own pause-comment idempotency
  * key already uses, since two real pauses are told apart the identical way).
  * `runId`/`pid`/`host` are the run identity; `briefHash`/`objectivesVersion`/

@@ -609,7 +609,7 @@ export const VinayaConfigSchema = z.object({
   // test config can set this to a few milliseconds and assert the same
   // behavior in a fraction of the wall time, without faking the process
   // signalling it exercises.
-  // `requireWorkerIsolation` (task 3, `#560`, O3): the "declared, visible
+  // `requireWorkerIsolation` (task 3, O3): the "declared, visible
   // setting that refuses when isolation is absent" this tranche's own
   // milestone names. An unattended dispatch (`DispatchOpts.unattended`) only
   // refuses for lack of `apps/cli/specs/isolation.md`'s OS-level boundary
@@ -708,9 +708,9 @@ export const VinayaConfigSchema = z.object({
   // task's own Issue — that Issue is precisely the surface
   // `fetchFrozenBrief` must read to dispatch the next developer round, and
   // publishing unbounded telemetry there is the defect this key exists to
-  // stop (Issue #626: Issue #566's comment payload reached 1,597,599 bytes
-  // and broke `fetchFrozenBrief`'s own `gh issue view --json comments`
-  // read). `resolveLogPublishTarget`/`resolveLogPublishMaxChunksPerFlush`
+  // stop (a prior task's own tracker comment payload once reached
+  // 1,597,599 bytes and broke `fetchFrozenBrief`'s own `gh issue view
+  // --json comments` read). `resolveLogPublishTarget`/`resolveLogPublishMaxChunksPerFlush`
   // (below) are the two read sides; `dev-review-loop.ts`'s own
   // `resolveRoundEndFlushTarget` additionally refuses a configured `issue`
   // equal to the task being flushed, for the same reason.
@@ -951,15 +951,15 @@ export type LogPublishTarget =
   | { webhookUrl: string; headers?: Record<string, string> }
 
 /**
- * The round-end flush's configured destination (Issue #626,
- * O1) — `config?.logPublish`'s `issue`/`pr`/`webhookUrl`, or `null` when the
+ * The round-end flush's configured destination
+ * (O1) — `config?.logPublish`'s `issue`/`pr`/`webhookUrl`, or `null` when the
  * key is absent, which means "publish nowhere automatically." This is an
  * operational choice, not a trust decision (unlike `principals`/
  * `reviewPolicy`), so callers pass `loadConfig()` (the local, repo-walking
  * resolution), the same sourcing `dispatch.timeoutMs`/`prePush.alwaysRun`/
  * `report.commandTimeoutMs` already use — never `loadTrustAnchorConfig()`.
  *
- * **`webhookUrl` is the one exception (Issue #636; round-2 security review,
+ * **`webhookUrl` is the one exception (round-2 security review,
  * HIGH).** An `issue`/`pr` destination stays inside the same forge repo this
  * process is already running against; a `webhookUrl` is an arbitrary
  * outbound HTTP destination, so an UNATTENDED caller (the dev-review-loop's
@@ -984,7 +984,7 @@ export function resolveLogPublishTarget(config: VinayaConfig | null): LogPublish
 
 /**
  * The trust-anchor-approved webhook target for an UNATTENDED flush caller
- * (Issue #636; round-2 security review, HIGH) — `null` unless the
+ * (round-2 security review, HIGH) — `null` unless the
  * repository's default-branch copy of `vinaya.config.json`
  * (`trustAnchorConfig`, from `loadTrustAnchorConfig()`) configures the
  * EXACT SAME `webhookUrl` the working tree resolved via
@@ -1016,8 +1016,8 @@ export function resolveLogPublishMaxChunksPerFlush(config: VinayaConfig | null):
 }
 
 /**
- * The round-end flush's own destination for `task` (Issue
- * #626, O1) — `resolveLogPublishTarget`'s result, or `null` when either
+ * The round-end flush's own destination for `task`
+ * (O1) — `resolveLogPublishTarget`'s result, or `null` when either
  * unconfigured or configured to the very Issue being flushed. That second
  * case is refused, not merely discouraged: it would silently recreate the
  * exact defect this task fixes — telemetry published straight onto the

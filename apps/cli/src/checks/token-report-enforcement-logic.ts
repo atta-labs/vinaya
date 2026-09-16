@@ -63,7 +63,7 @@ const KNOWN_INCAPABLE_REASONS: readonly MeteringIncapableReason[] = [
 ]
 
 /**
- * O2/O3 (#608): a row that HONESTLY declares itself unmetered — never a new
+ * A row that HONESTLY declares itself unmetered — never a new
  * sentinel, since neither row-writer (`commands/pr.ts`'s `tokenRowForOpen`,
  * `pr-report-engine.ts`'s `collectTokensAddition`) is in this task's
  * admitted surface to change. Both already write the exact `— (<reason>)`
@@ -156,7 +156,7 @@ export function evaluateTokenReportEnforcement(
 
   if (!capability.capable) return { pass: true }
 
-  // O2/O3 (#608): a blank cell next to a declared-unmetered Agent/Model
+  // A blank cell next to a declared-unmetered Agent/Model
   // marker is "not metered, declared" — accepted regardless of THIS check's
   // own capability, since that capability describes this check's own
   // resolution, never the row-writer's — and a row written earlier, in a

@@ -363,6 +363,45 @@ export function fetchTrancheIssuesByLabel(repoFlag: string, label: string): Labe
 }
 
 /**
+ * Every Issue in a Milestone's `state`, across as many pages as it takes —
+ * never a single capped `--limit` read. `gh issue list` exposes no page
+ * cursor flag, so this walks to exhaustion the way that CLI allows: each
+ * round re-requests the same query with a `--limit` grown by one page's
+ * worth of Issues, and a returned batch shorter than the `--limit` just
+ * asked for means the Milestone had no more Issues left to return.
+ * `--json state` keeps every request's payload to one small field per
+ * Issue, so even the largest re-fetch this loop reaches stays far under
+ * the child-process output buffer a full-body Milestone read can overrun.
+ */
+export function fetchMilestoneIssueStates(
+  repoFlag: string,
+  milestoneNumber: number
+): Array<{ state: 'OPEN' | 'CLOSED' }> {
+  for (let page = 1; page <= ISSUES_MAX_PAGES; page++) {
+    const limit = page * ISSUES_PER_PAGE
+    const batch = shJson<Array<{ state: 'OPEN' | 'CLOSED' }>>([
+      'gh',
+      'issue',
+      'list',
+      '-R',
+      repoFlag,
+      '--milestone',
+      String(milestoneNumber),
+      '--state',
+      'all',
+      '--json',
+      'state',
+      '--limit',
+      String(limit)
+    ])
+    if (batch.length < limit) return batch
+  }
+  throw new Error(
+    `fetchMilestoneIssueStates: milestone #${milestoneNumber} did not terminate within ${ISSUES_MAX_PAGES} pages (${ISSUES_MAX_PAGES * ISSUES_PER_PAGE} items) — refusing to keep walking.`
+  )
+}
+
+/**
  * The Milestone this tranche's own task Issues are actually attached to —
  * never a Milestone titled exactly the slug. Several
  * tranches can legitimately share one Milestone whose title names neither —
@@ -528,28 +567,15 @@ export async function runArchiveTranche(args: string[], deps: ArchiveDeps): Prom
   // it the moment THIS tranche finishes would close out work that is
   // still open. The raw `gh api .../issues?milestone=…` REST call
   // `tranchesAttachedToMilestone` (`@attalabs/aeg-forge-state`) used for
-  // this same question returns each Issue's FULL body/labels/etc — against
-  // this repo's own Milestone #15 (80+ Issues) that overran
-  // `execFileSync`'s default output buffer (`ENOBUFS`) before a single
-  // state could be read. `gh issue list --json state` selects only the one
-  // field this check needs, the same field-selecting shape already used a
-  // few lines up for this tranche's own labeled Issues, so the payload
-  // stays small regardless of how many Issues the Milestone holds.
-  const milestoneIssues = shJson<Array<{ state: 'OPEN' | 'CLOSED' }>>([
-    'gh',
-    'issue',
-    'list',
-    '-R',
-    repoFlag,
-    '--milestone',
-    String(milestone.number),
-    '--state',
-    'all',
-    '--json',
-    'state',
-    '--limit',
-    '500'
-  ])
+  // this same question returns each Issue's FULL body/labels/etc — a
+  // Milestone with more Issues than that call can hold in one response
+  // overran `execFileSync`'s default output buffer (`ENOBUFS`) before a
+  // single state could be read. `fetchMilestoneIssueStates` below asks for
+  // only the one field this check needs (`gh issue list --json state`),
+  // the same field-selecting shape already used a few lines up for this
+  // tranche's own labeled Issues, so the payload stays small regardless of
+  // how many Issues the Milestone holds.
+  const milestoneIssues = fetchMilestoneIssueStates(repoFlag, milestone.number)
   const otherWorkOpen = milestoneIssues.some((i) => i.state === 'OPEN')
 
   if (!yes) {

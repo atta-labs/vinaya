@@ -574,14 +574,14 @@ export type ReconcileLaunchDeps = {
   isPidAlive: (pid: number) => boolean
   /** This machine's hostname — a launch recorded on a DIFFERENT host can never be probed for liveness here, so it is treated as not-live. */
   hostname: () => string
-  /** O3, Issue #605: a live snapshot of `pid`'s current identity (parent pid, start time, command), or `null` when no process answers there at all. Injected so the pure reconciler stays testable without a real process — `classifyChildLiveness` is the pure logic that reads it. */
+  /** O3: a live snapshot of `pid`'s current identity (parent pid, start time, command), or `null` when no process answers there at all. Injected so the pure reconciler stays testable without a real process — `classifyChildLiveness` is the pure logic that reads it. */
   getProcessSnapshot: (pid: number) => ProcessSnapshot | null
-  /** O2, Issue #605 (code review, MAJOR): terminates an abandoned child by pid — `recoverDeveloperLaunch`'s reap step calls THIS, never `dispatch.ts`'s `terminateChildWithGrace` directly, so the reap step itself has a test seam: a test can inject a spy here and assert the orphan was actually reaped, without sending a real OS signal. */
+  /** O2 (found by code review, MAJOR): terminates an abandoned child by pid — `recoverDeveloperLaunch`'s reap step calls THIS, never `dispatch.ts`'s `terminateChildWithGrace` directly, so the reap step itself has a test seam: a test can inject a spy here and assert the orphan was actually reaped, without sending a real OS signal. */
   terminateChild: (pid: number) => void
 }
 
 /**
- * O2/O3 (Issue #605), pure: is `record.childPid` genuinely still this
+ * O2/O3, pure: is `record.childPid` genuinely still this
  * launch's own child — and, if so, still parented to the driver that
  * spawned it?
  *
@@ -650,7 +650,7 @@ function outcomeSignalsFor(record: LaunchRecord, artifactsPresent: boolean): Out
   return {
     exitCode: null,
     timedOut: record.failureReason === 'timeout',
-    // O1 (Issue #605): a driver-terminated child (`'signal'`) is a cancelled
+    // O1: a driver-terminated child (`'signal'`) is a cancelled
     // attempt, never an infrastructure failure of its own making — the same
     // distinction `'crash'` (the child's own doing) already draws.
     cancelled: record.failureReason === 'signal',
@@ -755,7 +755,7 @@ export function recoverDeveloperLaunch(
   deps: ReconcileLaunchDeps = defaultReconcileLaunchDeps()
 ): LaunchReconciliation {
   const parsed = readLaunchRecord('developer', agent, repo, task)
-  // O2 (Issue #605): an abandoned child — still alive, confirmed by
+  // O2: an abandoned child — still alive, confirmed by
   // identity, but no longer parented to the driver that spawned it — is
   // reaped HERE, before the disposition below is computed, so it never
   // survives to race whatever worker this reconciliation is about to hand

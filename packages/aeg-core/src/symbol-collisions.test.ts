@@ -202,7 +202,7 @@ describe('symbol-collision detection', () => {
  *                        reads a workspace `package.json`, while
  *                        `src/control-store/local.ts`'s exported
  *                        `readManifest(deps, task, round)` reads a control-store
- *                        `manifest` record (`#555`). Same `read<Kind>` verb, no
+ *                        `manifest` record. Same `read<Kind>` verb, no
  *                        shared code. Not renamed: `read<Kind>` is the control
  *                        store's own API convention (`readRun`/`readInput`/
  *                        `readTransitions`), so the src/ export is correctly

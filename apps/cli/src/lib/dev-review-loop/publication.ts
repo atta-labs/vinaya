@@ -78,8 +78,8 @@ export function postForgeEffectOnce(root: string, task: number, key: string, pos
 }
 
 /**
- * Posts `body` on `prNumber` through the shared `EffectExecutor` (Issue
- * #552), keyed by `key` — O1's "persist the effect identity before the
+ * Posts `body` on `prNumber` through the shared `EffectExecutor`,
+ * keyed by `key` — O1's "persist the effect identity before the
  * write," O2's "reconcile against the remote before a retry," in place of
  * `postForgeEffectOnce`'s own local `'posted'` flag, which cannot tell a
  * confirmed post apart from one whose confirmation was lost to a crash.
@@ -152,7 +152,7 @@ export type PublishInput = {
   policy: ReviewPolicy
   /**
    * The manifest this round was dispatched against (task 5,
-   * `#555`, O3) — `compareManifest`, the SAME comparison the merge gate and
+   * O3) — `compareManifest`, the SAME comparison the merge gate and
    * the driver's own pre-hold self-check call, is applied here too against
    * each posted verdict's echoed lines, so publication binds on EVERY field
    * (base, brief, objectives, ruling, policy), not just the head it already
@@ -177,8 +177,8 @@ export function unboundFields(binding: ManifestBindingResult): string[] {
 
 /**
  * The echoed manifest a posted verdict re-parses to, compared against the
- * round's own manifest with the SAME `compareManifest` the gate uses (`#555`,
- * O3). Never trusts the echo as provenance — it is read back from the posted
+ * round's own manifest with the SAME `compareManifest` the gate uses
+ * (O3). Never trusts the echo as provenance — it is read back from the posted
  * text only to confirm the comment still covers the manifest the round was
  * dispatched with (`patchIdOf` is deliberately not supplied here: a
  * just-posted verdict must bind by exact identity, never rely on a rebase

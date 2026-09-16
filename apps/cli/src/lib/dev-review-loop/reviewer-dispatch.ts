@@ -116,7 +116,7 @@ export function outboxRoot(): string {
   return join(GLOBAL_VINAYA_HOME, 'outbox')
 }
 
-// --- parent-built manifest record (task 5, `#555`, O1) ---
+// --- parent-built manifest record (task 5, O1) ---
 
 /**
  * The control-store root, derived from the loop's own outbox root so it is the
@@ -129,7 +129,7 @@ export function controlStoreRoot(outbox: string): string {
   return join(outbox, 'control-store')
 }
 
-/** What the parent must supply beyond the manifest itself to persist a record — the repository and work identity a manifest snapshot carries but the `ReviewInputManifest` binding type does not (`#555`, O1). */
+/** What the parent must supply beyond the manifest itself to persist a record — the repository and work identity a manifest snapshot carries but the `ReviewInputManifest` binding type does not (O1). */
 export type ManifestRecordIdentity = {
   /** Repository identity — `owner/repo`. */
   repository: string
@@ -143,7 +143,7 @@ export type ManifestRecordIdentity = {
 
 /**
  * Assembles the durable manifest record the parent persists before dispatching
- * reviewers (`#555`, O1) — the binding manifest (`baseSha`/`headSha`/
+ * reviewers (O1) — the binding manifest (`baseSha`/`headSha`/
  * `briefHash`/`objectivesVersion`/`rulingOrdinal`/`policyDigest`) plus the
  * repository and work identity the store record keys on. Pure — no I/O, no
  * clock; `recordedAt` is supplied by the caller (the driver's own injected
@@ -166,7 +166,7 @@ export function buildManifestRecord(manifest: ReviewInputManifest, identity: Man
 }
 
 /**
- * Persists the round's manifest snapshot to the control store (`#555`, O1),
+ * Persists the round's manifest snapshot to the control store (O1),
  * built by the parent from the manifest it dispatched reviewers against.
  * `outbox` is the driver's own `d.outboxRoot()`; the record lands under
  * `controlStoreRoot(outbox)`. Best-effort by design: a failed write is

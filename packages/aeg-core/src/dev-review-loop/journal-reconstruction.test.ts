@@ -179,7 +179,7 @@ describe('reconstructRounds', () => {
     expect(parseLoopEventLines(lines)).toEqual([])
   })
 
-  // task-log-v1 7, Issue #567, O3: a retention gap — a round whose
+  // O3: a retention gap — a round whose
   // verdicts_read line was never captured at all (an outbox rotation that
   // dropped it before this task's O2 overflow reporting existed, or a flush
   // window that genuinely never posted it) — must reconstruct with an

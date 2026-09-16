@@ -290,7 +290,7 @@ export const DispatchEventSchema = z.discriminatedUnion('event', [
 export type DispatchEvent = z.infer<typeof DispatchEventSchema>
 
 // ---------------------------------------------------------------------------
-// `dev_review_loop` family (§5.2) — twelve events (task-log-v1 task 6 adds
+// `dev_review_loop` family (§5.2) — twelve events (a later addition added
 // `cancelled`), `loop_id` shared on each.
 
 const loopShared = {
@@ -396,7 +396,7 @@ export const DevReviewLoopEventSchema = z.discriminatedUnion('event', [
       event: z.literal('resumed'),
       round: z.number().int(),
       // `'principal'` — an authenticated ruling resolved the pause.
-      // `'driver'` (task-log-v1 task 6, O2) — a bare `'infrastructure'`
+      // `'driver'` (O2) — a bare `'infrastructure'`
       // recoverable-hiccup resume, authenticated as the driver's own
       // recovery rather than a Principal decision (`resolveEscalation`'s
       // `authenticatedBy: 'driver-self'` path, `dev-review-loop.ts`) — never
@@ -404,7 +404,7 @@ export const DevReviewLoopEventSchema = z.discriminatedUnion('event', [
       by: z.enum(['principal', 'driver'])
     })
     .strict(),
-  // (task-log-v1 task 6, O2) The cancellation twin of `resumed` above — a
+  // (O2) The cancellation twin of `resumed` above — a
   // paused escalation's OTHER resolution (`resolveEscalation`'s
   // `decision: 'cancel'` path, `cancelDevReviewLoop`). Always
   // principal-authenticated (a cancel always requires a posted ruling,

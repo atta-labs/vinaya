@@ -117,7 +117,7 @@ export async function logFlushCommand(args: string[]): Promise<void> {
     return
   }
 
-  // O2 (Issue #626): honors the same `logPublish.maxChunksPerFlush` bound
+  // Honors the same `logPublish.maxChunksPerFlush` bound
   // the round-end flush reads, so an adopter's configured per-target cap
   // applies uniformly regardless of which caller reaches `flushOutbox`.
   const maxChunksPerFlush = resolveLogPublishMaxChunksPerFlush(config)
@@ -146,7 +146,7 @@ export async function logFlushCommand(args: string[]): Promise<void> {
     })
   } else {
     process.stdout.write(`log flush: posted ${outcome.chunkCount} comment(s), ${outcome.commentIds.length} confirmed\n`)
-    // O2 (Issue #626): a non-zero count is bounded, per-flush "partial
+    // A non-zero count is bounded, per-flush "partial
     // coverage this round" — visible, never silent — not a failure of any
     // kind, so it is stdout, not a `CheckError`. Re-run the same command
     // (idempotent — `skipRemotelyAccepted: true` above) to post more.

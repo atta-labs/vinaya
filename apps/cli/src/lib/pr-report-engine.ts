@@ -40,12 +40,12 @@ import { meteringRefusalMessage, realDeps } from '../commands/tokens'
  * (`resolveMeteringCapability`), rendered into the `## Token report`
  * heading's table. Unlike Evidence, re-entry APPENDS a row rather than
  * replacing the block — see `writeTokensBlock`'s doc comment and this
- * task's brief (#270) for why. Cost is always `—` by design (no maintained
+ * task's own brief for why. Cost is always `—` by design (no maintained
  * pricing table). A session whose OWN wiring was reached but failed — a pointer
  * whose id matches, or one at this project's own pointer path — gets an
  * all-`—` row carrying the probe's reason inline (Agent/Model cell),
  * never a fabricated `0/0/—`; a session that resolved no transcript at all
- * gets NO row and a refusal (`collectTokensAddition`, Issue #365) — the
+ * gets NO row and a refusal (`collectTokensAddition`) — the
  * Evidence block is written either way.
  *
  * Two groups, deliberately kept apart, because they are verifiable to
@@ -153,7 +153,7 @@ export function gh(args: string[]): string {
  * `git diff --numstat` printing nothing means "no files changed" — a real,
  * verifiable answer; `git diff` FAILING also produced `''`, and both sides of
  * the evidence contract then agreed on it and reported PASS having compared
- * nothing. An earlier fix (PR #126) covered the merge-base only;
+ * nothing. An earlier fix covered the merge-base only;
  * the same collapse survived behind `rev-parse` and `diff`. Commands whose
  * empty output is meaningful must therefore distinguish "empty" from
  * "failed", which means throwing rather than returning a sentinel.
@@ -197,7 +197,7 @@ function gitStrict(args: string[], cwd?: string): string {
  * `git()` itself does for every other caller) let a REAL failure collapse
  * into the exact same value as a genuinely empty diff, and `compareEvidenceBlock`
  * cannot tell "verified: no changes" from "never verified anything" once both
- * sides independently produce `''` — found in review (PR #126): an
+ * sides independently produce `''` — found in review: an
  * adopter whose default branch is `master`/`develop` hits this on every run,
  * silently.
  */
@@ -300,7 +300,7 @@ const BODY_READING_CHECK_NAMES: ReadonlySet<string> = new Set(
 
 /**
  * A body-reading check handed an empty body exits 0 with no error — the
- * same silent shape a genuine pass has (PR #481's incident: `pr-report-density`
+ * same silent shape a genuine pass has (a real incident: `pr-report-density`
  * read `pass` on an empty body, then CI failed the same check against the
  * real one). `gradedBody` is the exact text this run fed Group B, so when it
  * is empty, any of THOSE checks reporting a clean pass graded nothing — shown
@@ -445,8 +445,8 @@ function renderGroupB(outcomes: GateOutcome[], gradedBodySource: GradedBodySourc
 }
 
 /**
- * Group C — the `[agent]` half of the Test Plan (task 12, #387; Principal
- * ruling after PR #395: an agent never ticks a box or edits a PR body). The
+ * Group C — the `[agent]` half of the Test Plan (task 12; per a Principal
+ * ruling: an agent never ticks a box or edits a PR body). The
  * renderer emits §9 as a fenced list of commands, one per line, each with
  * its expected observable after a literal `→`; this runs every command in
  * that list from the PR head and records its actual output, so the
@@ -475,7 +475,7 @@ export type GroupC = { commands: GroupCCommandResult[] }
  * first fenced block found there, one command per non-blank line, with the
  * `→ <observable>` half of each line stripped off. Empty (no commands) for
  * the `unit-tests-only` sentinel, a body with no Test Plan section at all,
- * or a Test Plan with no fenced block (the pre-#387 checkbox shape) — in
+ * or a Test Plan with no fenced block (the earlier checkbox shape) — in
  * every one of those cases there is nothing for this group to run.
  */
 export function extractAgentCommandLines(prBody: string): string[] {
@@ -505,7 +505,7 @@ export function agentCommandText(line: string): string {
  * `AGENT_COMMAND_OUTPUT_MAX_CHARS`, since the observable a §9 item states
  * (`→ summary line ends "0 fail"`) is conventionally the tail of the run,
  * never the head — never silently dropped, marked when cut. Kept the tail,
- * not the whole run (task 1, #397): task `12` measured a `47` KB PR body
+ * not the whole run (task 1): task `12` measured a `47` KB PR body
  * from six-command §9 lists whose full output rode into `AEG:EVIDENCE`
  * uncut at `4_000` chars each; `renderGroupC` below puts the pass/fail
  * status first in the block, so cutting the tail harder never costs the one
@@ -608,7 +608,7 @@ export function renderGroupC(groupC: GroupC): string {
   }
   const blocks = groupC.commands.map((c, i) => {
     const status = c.timedOut ? '[timeout]' : c.exitCode !== 0 ? `[exit ${c.exitCode}]` : null
-    // Status FIRST (task 5, #397): the one fact a reviewer reads is
+    // Status FIRST (task 5): the one fact a reviewer reads is
     // pass/fail, and a tail-truncated 600-char block should never bury it
     // below output text — put it at the top of the fence, not the bottom.
     const output = [...(status ? [status] : []), c.output].join('\n')
@@ -619,11 +619,11 @@ export function renderGroupC(groupC: GroupC): string {
 
 /**
  * The `Summary:` line — column 0, one space, case-sensitive, immediately under
- * `Head:` (Issue #189).
+ * `Head:`.
  *
  * Derived from the very numstat two lines below it, so a PR body never needs a
  * hand-written "four files changed" sentence that a later commit silently
- * falsifies — measured to have gone stale three times on `atta-labs/vinaya#185`.
+ * falsifies — measured to have gone stale three times in production.
  *
  * The VALUE is emitted inside an inline code span, and that is load-bearing
  * rather than cosmetic. `body-bare-digits` runs from a `pull_request_target`
@@ -680,7 +680,8 @@ export function replaceEvidenceBlock(body: string, blockInner: string): string {
   // readers' offsets: it must splice into the raw body it was handed, and
   // normalisation is not length-preserving. What it can do is refuse when the
   // raw and normalised resolutions disagree about whether a real pair exists —
-  // which is precisely the channel Issue #189 closes on the reader side. Left
+  // which is precisely the channel the reader-side checks already close for
+  // the same zero-width-character mismatch. Left
   // unchecked, a body with a zero-width character in its START marker gets a
   // SECOND block appended here while `body-bare-digits` treats the first,
   // hand-written one as the trusted region.
@@ -702,16 +703,16 @@ export function replaceEvidenceBlock(body: string, blockInner: string): string {
  * explicit that a second report is a second row — "never a sum, never an
  * overwrite" — with the tranche total derived at read time
  * (`sum-ledger.ts`). `replaceEvidenceBlock`'s replace-in-place model is
- * therefore the wrong one to copy here; see this task's brief (#270) for why.
+ * therefore the wrong one to copy here; see this task's own brief for why.
  *
  * The anchors are deliberately sited INSIDE the `## Token report` heading
  * this repo's own PR template already carries — `body-bare-digits-logic.ts`'s
  * `blankTokenReportSection` already blanks that whole heading's content,
  * unconditionally, before the bare-digit scan ever runs. Anchoring inside a
  * region a sibling check already exempts needs no new exemption of any kind,
- * which is the point: `body-bare-digits-logic.ts` stays untouched, and #189
- * (a still-open exemption/verification coupling failure) never has a new
- * instance to reopen.
+ * which is the point: `body-bare-digits-logic.ts` stays untouched, and the
+ * still-open exemption/verification coupling failure this avoids never has a
+ * new instance to reopen.
  *
  * `TOKEN_REPORT_HEADING`/`HEADING_LINE` intentionally duplicate
  * `blankTokenReportSection`'s own heading/section-bound regexes rather than
@@ -822,7 +823,7 @@ export function isoToday(): string {
  * composed inside `collectTokensAddition`, which writes no file — a sentence
  * here claiming the Evidence block was written would be true only because
  * one caller happens to write it, which is the same shape of unearned claim
- * this whole change exists to remove (code review, PR #369). The caller
+ * this whole change exists to remove (per code review). The caller
  * states that, where it is the caller's own fact.
  */
 const TOKEN_ROW_REMEDY = [
@@ -856,7 +857,7 @@ export type TokensAddition = { collected: true; row: string } | { collected: fal
  * discipline, which must survive here too). Three outcomes, not two:
  *
  *   - **Capable** — a real row.
- *   - **Incapable, `no-transcript-resolved`** — REFUSES (Issue #365). That
+ *   - **Incapable, `no-transcript-resolved`** — REFUSES. That
  *     reason covers "no pointer file at all" and "a pointer that could not be
  *     corroborated as this session's": both mean this session has no wiring of
  *     its own, and neither means this host cannot produce usage figures. A
@@ -886,7 +887,7 @@ export type TokensAddition = { collected: true; row: string } | { collected: fal
 /**
  * `resolveTokenReportCapabilityWith`'s I/O, injected the same way every
  * other deps type in this file is — the merge logic below is otherwise
- * untestable end to end (round-2 review, #608, MAJOR finding F1): the two
+ * untestable end to end (round-2 review, MAJOR finding F1): the two
  * halves — `resolveMeteringCapability` and `recoverUsageFromDispatchTee` —
  * each had unit coverage in isolation, but nothing proved the merge itself
  * (a `no-transcript-resolved` verdict plus a real recovered summary
@@ -906,7 +907,7 @@ export function realTokenReportCapabilityDeps(): TokenReportCapabilityDeps {
 }
 
 /**
- * O1 (#608): tries the real probe first, exactly as before; only when it
+ * O1: tries the real probe first, exactly as before; only when it
  * comes back `no-transcript-resolved` (this session's own wiring — no
  * pointer at all — never a resolved-but-broken one) does it also try
  * `recoverUsageFromDispatchTee` before giving up. Every other verdict
@@ -1098,7 +1099,7 @@ export function bodiesAgreeOutsideRegions(before: string, after: string): boolea
  * was: `prReportCommand` ends in `process.exit`, so the computation is
  * otherwise reachable only through a real subprocess run, and an inline
  * expression there is invisible to the unit suite — the exact mutation-survivor
- * gap this module's own doc comment records (code review, PR #369).
+ * gap this module's own doc comment records (per code review).
  */
 export function prReportExitCode(opts: { gatesFailed: boolean; tokensRefused: boolean }): number {
   return opts.gatesFailed || opts.tokensRefused ? 1 : 0
@@ -1146,7 +1147,7 @@ export async function buildReport(
   const gateResult = await gateRunner()
   const gradedBody = opts.body ?? process.env.PR_BODY ?? ''
   const gradedBodySource = opts.gradedBodySource ?? 'ambient'
-  // O6 (found live 2026-09-04, misread on PR #409): this gate run happens
+  // O6 (found live 2026-09-04, initially misread): this gate run happens
   // while the OLD AEG:EVIDENCE block is still the live/on-disk body —
   // `evidence-fresh` necessarily grades that stale block against a fresh
   // recompute and reports `fail`, even though the block this very Group B is

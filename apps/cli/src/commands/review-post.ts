@@ -569,7 +569,7 @@ export function renderSecurityComment(input: SecurityInput): string {
   lines.push(`Ruling ordinal: ${input.rulingOrdinal}`, '')
   lines.push(`Brief hash: ${input.briefHash ?? '(none)'}`, '')
   lines.push(`Policy digest: ${input.policyDigest}`, '')
-  // `Judged base:` last of the head lines (`#555`, O1) — see the identical
+  // `Judged base:` last of the head lines — see the identical
   // note in `renderCodeReviewComment`.
   lines.push(`Judged base: ${input.baseSha ?? '(none)'}`, '')
   lines.push('FINDINGS (ordered by severity):', renderFindingsSection(sorted), '')
@@ -738,7 +738,7 @@ export function renderEscalationComment(input: EscalationInput): string {
   lines.push(`Ruling ordinal: ${input.rulingOrdinal}`, '')
   lines.push(`Brief hash: ${input.briefHash ?? '(none)'}`, '')
   lines.push(`Policy digest: ${input.policyDigest}`, '')
-  // `Judged base:` last of the head lines (`#555`, O1). It renders ahead of
+  // `Judged base:` last of the head lines. It renders ahead of
   // the free-text `summary`, so — unlike the collision `summary` itself can
   // cause — this line is renderer-owned and never caller-controlled.
   lines.push(`Judged base: ${input.baseSha ?? '(none)'}`, '')

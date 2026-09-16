@@ -1,6 +1,6 @@
 /**
  * Reviewers inspect one immutable candidate with isolated scratch space
- * (`#561`, O1/O2/O3).
+ * (O1/O2/O3).
  *
  * `apps/cli/specs/isolation.md` specifies the full OS-level Worker/Reviewer
  * boundary (Seatbelt, credential scoping) and is explicit that wiring

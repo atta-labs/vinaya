@@ -464,7 +464,7 @@ export function readInput(
 export type ManifestInput = Omit<ManifestRecord, 'version' | 'kind' | 'task'>
 
 /**
- * Writes the review-input manifest snapshot for `(task, round)` (`#555`, O1).
+ * Writes the review-input manifest snapshot for `(task, round)` (O1).
  * Deliberately NOT epoch-fenced, unlike `writeRun`/`writeInput`: this record
  * is an IMMUTABLE per-round snapshot the parent stamps once before dispatching
  * reviewers, not a mutable state transition two owners could race on, and the

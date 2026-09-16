@@ -49,8 +49,8 @@ export function newestPrincipalRulingOrdinal(comments: readonly RulingComment[],
 /**
  * The AUTHOR of the newest principal-authored ruling comment — `null` when
  * none matches (`newestPrincipalRulingOrdinal` returning `0` for the
- * identical reason). `control-store-v1` task 6 (`#556`, O2)'s own need: an
- * authenticated resolution record's `authenticatedBy` field names WHO
+ * identical reason). An authenticated resolution record's own need (O2): its
+ * `authenticatedBy` field names WHO
  * authorized a `--resume`/`--cancel`, not just that an authorization
  * existed. Same scan, same ordinal-wins rule, so the two functions can never
  * disagree about which ruling is newest.

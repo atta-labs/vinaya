@@ -1,5 +1,5 @@
 /**
- * The shared effect executor (Issue #552) — replaces
+ * The shared effect executor — replaces
  * `dev-review-loop/publication.ts`'s `postForgeEffectOnce`'s own local
  * `ForgeEffectRecord` file for the two writers migrated onto it
  * (`publication.ts`'s `publishRound`, `pause-resume.ts`'s pause posts).

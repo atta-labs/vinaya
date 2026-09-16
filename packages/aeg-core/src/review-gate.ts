@@ -219,7 +219,7 @@ export type ReviewGateInput = {
   briefHash?: string | null
   /**
    * The base commit the PR's candidate is judged against at evaluation time
-   * (`control-store-v1` task 5, `#555`, O1) — resolved by the caller (never
+   * (O1) — resolved by the caller (never
    * here; this stays pure) from the PR's base branch tip, the same
    * `origin/<baseRefName>` `patchIdOf` already diffs against. Optional,
    * defaulting to `null` (skip the base binding) when omitted — every existing

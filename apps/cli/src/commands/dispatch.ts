@@ -72,7 +72,7 @@ type ParsedArgs = {
   resume: string | undefined
   roleLogPath: string | undefined
   json: boolean
-  /** O3 (task 3, `#560`): threads `DispatchOpts.unattended` — see that field's own doc comment. Off by default: a manual `vinaya dispatch` invocation is attended unless this flag says otherwise. */
+  /** Threads `DispatchOpts.unattended` — see that field's own doc comment. Off by default: a manual `vinaya dispatch` invocation is attended unless this flag says otherwise. */
   unattended: boolean
   /** Any `--flag`-shaped or stray positional token this parser does not
    * recognize — `dispatchCommand` refuses rather than silently dropping it.
