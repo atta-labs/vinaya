@@ -44,7 +44,11 @@ import { outboxPathFor } from '../log-sink.js'
  * history regardless.
  */
 function fetchFlushedLoopEvents(target: LogPublishTarget | null): DevReviewLoopEvent[] {
-  if (target === null) return []
+  // A webhook target has no comment history to read back (unlike GitHub's
+  // issue/pr, there is nothing to `gh ... view --json comments` against) —
+  // treated the same as unconfigured: the local outbox below still covers
+  // this machine's own recent history regardless.
+  if (target === null || 'webhookUrl' in target) return []
   let out: string
   try {
     out =

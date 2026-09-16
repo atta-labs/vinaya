@@ -215,7 +215,62 @@ describe('dispatchRole — a crashing child', () => {
     const lines = outboxLines(home, 'none') as Array<Record<string, unknown>>
     const failed = lines.find((l) => l.event === 'dispatch_failed')
     expect(failed).toBeDefined()
+    // The `dispatch_failed` log event's own `reason` field is validated
+    // against `@attalabs/aeg-core`'s schema (out of this task's surface) and
+    // keeps reporting the real event class unchanged — `DispatchHandle`'s
+    // own, CLI-local `failureReason` is where the finer `'unbound'`
+    // distinction lives (Issue #636, O5; see the describe block below).
     expect((failed as { reason: string }).reason).toBe('crash')
+  })
+})
+
+describe("dispatchRole — Issue #636, O5: a child that exits without ever binding a session is named 'unbound', not 'crash'/'timeout'", () => {
+  it('a non-zero exit with no session ever reported returns failureReason "unbound", and says so on stderr', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    // Never prints a `session_id`-bearing line at all — the exact
+    // "sandbox-exec whose vendor output stayed at 0 bytes" shape the brief's
+    // motivating incident measured.
+    writeFakeBinary(binDir, 'claude', '#!/bin/sh\ncat > /dev/null\nexit 7\n')
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile, '--json'],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(1)
+
+    const parsed = JSON.parse(r.stdout) as { data: { failureReason: string | null } }
+    expect(parsed.data.failureReason).toBe('unbound')
+    expect(r.stderr).toMatch(/without ever producing a working vendor session — failing now as 'unbound'/)
+  })
+
+  it('a crash AFTER the vendor bound a session still reports failureReason "crash", never "unbound"', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\ncat > /dev/null\nprintf '%s\\n' '{"type":"system","subtype":"init","session_id":"bound-session-1"}'\nexit 7\n`
+    )
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile, '--json'],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(1)
+
+    const parsed = JSON.parse(r.stdout) as { data: { failureReason: string | null } }
+    expect(parsed.data.failureReason).toBe('crash')
   })
 })
 
@@ -1153,7 +1208,7 @@ describe('dispatchRole — resume state durably recorded (O8)', () => {
     expect(existsSync(join(home, '.vinaya', 'dispatch-resume', 'etc'))).toBe(false)
   })
 
-  it('a crashing child that never reported a session keeps its interrupted intent record, with no session to resume (O1)', () => {
+  it('a crashing child that never reported a session keeps its interrupted intent record, with no session to resume (O1) — named unbound, not crash (Issue #636, O5)', () => {
     const home = tempDir('vinaya-dispatch-home-')
     const cwd = tempDir('vinaya-dispatch-cwd-')
     const binDir = tempDir('vinaya-dispatch-bin-')
@@ -1164,9 +1219,14 @@ describe('dispatchRole — resume state durably recorded (O8)', () => {
     // Crashes before printing any `session_id` at all — the "failed attempts
     // can lose session identity" defect this task closes: the intent record
     // now PERSISTS (O1, launch intent written before spawn, never deleted on
-    // an interrupt), marked `interrupted`/`crash`, but with `resumeId: null`
-    // because the vendor never reported one — the honest "there is genuinely
-    // no session to resume" case, distinct from "no launch ever happened."
+    // an interrupt), marked `interrupted`, but with `resumeId: null` because
+    // the vendor never reported one — the honest "there is genuinely no
+    // session to resume" case, distinct from "no launch ever happened."
+    //
+    // Issue #636, O5: this exact case — exited, never bound a session — is
+    // named `'unbound'`, not the generic `'crash'` every other non-zero exit
+    // gets, so recovery can tell "the vendor never came up at all" apart from
+    // "the vendor did real work, then died."
     writeFakeBinary(binDir, 'claude', '#!/bin/sh\ncat > /dev/null\nexit 7\n')
     const result = runDispatch(['developer', '--agent', 'claude', '--prompt-file', promptFile], cwd, home, path)
     expect(result.status).toBe(1)
@@ -1178,7 +1238,7 @@ describe('dispatchRole — resume state durably recorded (O8)', () => {
       resumeId: string | null
     }
     expect(record.status).toBe('interrupted')
-    expect(record.failureReason).toBe('crash')
+    expect(record.failureReason).toBe('unbound')
     // No session was ever bound — `readResumeRecord`'s own compat view returns
     // null for exactly this, so the loop still starts fresh rather than
     // resuming a session that never existed.
