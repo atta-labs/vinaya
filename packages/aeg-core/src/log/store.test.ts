@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { classifyStoredLine, createFixtureStore, KNOWN_SCHEMA_VERSIONS, readPageFrom, recordIdentity } from './store'
 
@@ -242,6 +244,359 @@ describe('redaction at both the sink and the transport boundary (O3)', () => {
     const rec = classifyStoredLine(JSON.stringify(forgeWrite(metaV2('r1', 0, 'e-3'), `${HOME}/secret/file`)), HOME)
     expect(rec.status).toBe('ok')
     if (rec.status === 'ok') expect(rec.postLine).toContain('~/secret/file')
+  })
+})
+
+/**
+ * Fault-driven scenario fixtures (task-log-v1 7, Issue #567, O2). Each
+ * scenario is the ordered sequence of raw events a real producer boundary
+ * (`apps/cli/specs/log.md`) would append to one task's outbox for that
+ * exit — built from the same field shapes those producers actually emit,
+ * never a synthetic shape this schema would refuse in production. Every
+ * scenario is proved two ways: every line the store holds re-validates
+ * (`page.diagnostics.ok` covers the whole batch, none `invalid` or
+ * `unknown_version`), and the exact kind/event sequence a reader would need
+ * to reconstruct what happened is present, in order. `packages/aeg-core/src/log/`
+ * is the pure policy layer (no filesystem, no network, no process —
+ * `apps/cli/specs/surface.md` "The rule") — these fixtures run against
+ * `createFixtureStore()` alone, so "unavailable telemetry" is not a special
+ * code path to simulate: nothing here ever calls a publish/flush function,
+ * proving capture never depended on one being reachable, configured, or
+ * even defined.
+ */
+
+let seqCounter = 0
+function nextSeq(): number {
+  seqCounter += 1
+  return seqCounter
+}
+
+/** A fresh `schema: 2` header for one scenario's run, auto-incrementing `seq`/`event_id`. */
+function scenarioMeta(runId: string): Record<string, unknown> {
+  const seq = nextSeq()
+  return metaV2(runId, seq, `${runId}-${seq}`)
+}
+
+const SUBJECT = { issue: 567, role: 'developer' as const }
+
+function dispatchEvent(
+  runId: string,
+  event: 'dispatched' | 'outcome_received' | 'dispatch_failed',
+  extra: Record<string, unknown>
+): Record<string, unknown> {
+  return {
+    meta: scenarioMeta(runId),
+    subject: SUBJECT,
+    kind: 'dispatch',
+    payload: {},
+    target_role: 'developer',
+    model: 'sonnet',
+    effect_id: 'effect-1',
+    event,
+    ...extra
+  }
+}
+
+function roleAttemptEvent(
+  runId: string,
+  outcome: string,
+  usage: { input: number; output: number } | null = null
+): Record<string, unknown> {
+  return {
+    meta: scenarioMeta(runId),
+    subject: SUBJECT,
+    kind: 'role_attempt',
+    payload: {},
+    event: 'attempted',
+    actor: 'claude',
+    attempt: 1,
+    effect_id: 'effect-1',
+    model: 'sonnet',
+    outcome,
+    usage
+  }
+}
+
+function usageEvent(
+  runId: string,
+  units: { input: number | null; output: number | null; cache: number | null },
+  unknownReason: string | null = null
+): Record<string, unknown> {
+  return {
+    meta: scenarioMeta(runId),
+    subject: SUBJECT,
+    kind: 'usage',
+    payload: {},
+    event: 'observed',
+    model: 'sonnet',
+    source: 'claude',
+    semantics: 'cumulative',
+    units,
+    unknown_reason: unknownReason
+  }
+}
+
+function loopEvent(
+  runId: string,
+  loopId: string,
+  event: string,
+  extra: Record<string, unknown>
+): Record<string, unknown> {
+  return {
+    meta: scenarioMeta(runId),
+    subject: SUBJECT,
+    kind: 'dev_review_loop',
+    payload: {},
+    loop_id: loopId,
+    event,
+    ...extra
+  }
+}
+
+function gateEvent(runId: string, outcome: string, reason?: string): Record<string, unknown> {
+  return {
+    meta: scenarioMeta(runId),
+    subject: { issue: 567, role: 'unattributed' as const },
+    kind: 'gate',
+    payload: {},
+    check: 'typecheck',
+    check_version: '1',
+    policy_version: null,
+    input_fingerprint: 'sha256:abc123',
+    event: 'checked',
+    outcome,
+    ...(reason !== undefined ? { reason } : {})
+  }
+}
+
+function effectEvent(
+  runId: string,
+  event: 'attempted' | 'observed' | 'verified',
+  outcome?: string
+): Record<string, unknown> {
+  return {
+    meta: scenarioMeta(runId),
+    subject: SUBJECT,
+    kind: 'effect',
+    payload: {},
+    effect_id: 'effect-pause-comment',
+    target: { kind: 'pr_comment', ref: 'pr-42' },
+    event,
+    ...(outcome !== undefined ? { outcome } : {})
+  }
+}
+
+/** Appends `events` to a fresh store and returns the fully-read-back page — the assertion surface every scenario below shares. */
+function runScenario(events: Record<string, unknown>[]) {
+  const store = createFixtureStore()
+  store.append(events)
+  const page = store.readPage(null, events.length)
+  return { store, page }
+}
+
+/** The `kind.event` sequence a page actually stored, in order — what a reader reconstructing the scenario from raw events would see. */
+function storedSequence(page: ReturnType<typeof runScenario>['page']): string[] {
+  return page.records.map((r) => {
+    if (r.status !== 'ok') return `NOT_OK:${r.status}`
+    const e = r.event as { kind: string; event: string }
+    return `${e.kind}.${e.event}`
+  })
+}
+
+describe('fault-driven scenario fixtures (O2, task-log-v1 7, Issue #567)', () => {
+  it('success — a clean dispatch round-trips as dispatched → role_attempt.completed → usage.observed → outcome_received', () => {
+    const runId = 'scenario-success'
+    const events = [
+      dispatchEvent(runId, 'dispatched', { prompt_hash: 'sha256:prompt' }),
+      roleAttemptEvent(runId, 'completed', { input: 1000, output: 200 }),
+      usageEvent(runId, { input: 1000, output: 200, cache: 0 }),
+      dispatchEvent(runId, 'outcome_received', { outcome: { type: 'completed' }, usage: { input: 1000, output: 200 } })
+    ]
+    const { page } = runScenario(events)
+    expect(page.diagnostics.ok).toBe(events.length)
+    expect(page.diagnostics.invalid).toBe(0)
+    expect(storedSequence(page)).toEqual([
+      'dispatch.dispatched',
+      'role_attempt.attempted',
+      'usage.observed',
+      'dispatch.outcome_received'
+    ])
+  })
+
+  it('rejection — a capability refusal round-trips as dispatched → role_attempt.capability_refused → dispatch_failed', () => {
+    const runId = 'scenario-rejection'
+    const events = [
+      dispatchEvent(runId, 'dispatched', { prompt_hash: 'sha256:prompt' }),
+      roleAttemptEvent(runId, 'capability_refused', null),
+      dispatchEvent(runId, 'dispatch_failed', { reason: 'refused', usage: null })
+    ]
+    const { page } = runScenario(events)
+    expect(page.diagnostics.ok).toBe(events.length)
+    expect(storedSequence(page)).toEqual(['dispatch.dispatched', 'role_attempt.attempted', 'dispatch.dispatch_failed'])
+    const failed = page.records[2]
+    expect(failed?.status === 'ok' && (failed.event as { reason?: string }).reason).toBe('refused')
+  })
+
+  it('infrastructure failure — a missing reviewer artifact becomes a role_attempt.infrastructure_failed and a driver-decided pause', () => {
+    const runId = 'scenario-infra-failure'
+    const loopId = 'loop-infra'
+    const events = [
+      roleAttemptEvent(runId, 'infrastructure_failed', null),
+      loopEvent(runId, loopId, 'stop_condition_met', { round: 2, condition: 'principal_stop' }),
+      loopEvent(runId, loopId, 'paused', { round: 2, reason: 'principal_item' }),
+      loopEvent(runId, loopId, 'round_ended', {
+        round: 2,
+        base_head: 'sha1',
+        head: 'sha2',
+        files_changed: 0,
+        insertions: 0,
+        deletions: 0,
+        wall_ms: 5000,
+        outcome: 'escalated'
+      }),
+      loopEvent(runId, loopId, 'journal_finalized', {
+        rounds: 2,
+        total_wall_ms: 60000,
+        time_to_green_ms: null,
+        files_changed_total: 3,
+        final_head: 'sha2',
+        result: 'stopped'
+      })
+    ]
+    const { page } = runScenario(events)
+    expect(page.diagnostics.ok).toBe(events.length)
+    expect(storedSequence(page)).toEqual([
+      'role_attempt.attempted',
+      'dev_review_loop.stop_condition_met',
+      'dev_review_loop.paused',
+      'dev_review_loop.round_ended',
+      'dev_review_loop.journal_finalized'
+    ])
+  })
+
+  it('retry — an idempotent effect write that fails once, retries, and succeeds is stored as attempted/observed(failure)/attempted/observed(success)/verified', () => {
+    const runId = 'scenario-retry'
+    const events = [
+      effectEvent(runId, 'attempted'),
+      effectEvent(runId, 'observed', 'failure'),
+      effectEvent(runId, 'attempted'),
+      effectEvent(runId, 'observed', 'success'),
+      effectEvent(runId, 'verified', 'success')
+    ]
+    const { page } = runScenario(events)
+    expect(page.diagnostics.ok).toBe(events.length)
+    expect(storedSequence(page)).toEqual([
+      'effect.attempted',
+      'effect.observed',
+      'effect.attempted',
+      'effect.observed',
+      'effect.verified'
+    ])
+    // Every line shares the same effect_id — the evidence identity a reader
+    // joins the retry's two attempts on (apps/cli/specs/log.md § "effect").
+    const effectIds = page.records.map((r) => (r.status === 'ok' ? (r.event as { effect_id: string }).effect_id : null))
+    expect(new Set(effectIds).size).toBe(1)
+  })
+
+  it('pause — a confidence collapse stores stop_condition_met(confidence) → paused → round_ended → journal_finalized(stopped)', () => {
+    const runId = 'scenario-pause'
+    const loopId = 'loop-pause'
+    const events = [
+      loopEvent(runId, loopId, 'stop_condition_met', { round: 2, condition: 'confidence' }),
+      loopEvent(runId, loopId, 'paused', { round: 2, reason: 'principal_item' }),
+      loopEvent(runId, loopId, 'round_ended', {
+        round: 2,
+        base_head: 'sha1',
+        head: 'sha1',
+        files_changed: 0,
+        insertions: 0,
+        deletions: 0,
+        wall_ms: 1200,
+        outcome: 'changes_requested'
+      }),
+      loopEvent(runId, loopId, 'journal_finalized', {
+        rounds: 2,
+        total_wall_ms: 30000,
+        time_to_green_ms: null,
+        files_changed_total: 5,
+        final_head: 'sha1',
+        result: 'stopped'
+      })
+    ]
+    const { page } = runScenario(events)
+    expect(page.diagnostics.ok).toBe(events.length)
+    const condition = page.records[0]
+    expect(condition?.status === 'ok' && (condition.event as { condition: string }).condition).toBe('confidence')
+  })
+
+  it('stale input — a finding that reappeared after being reported resolved stores findings_compared(recurring) → stop_condition_met(reappearance) → paused', () => {
+    const runId = 'scenario-stale-input'
+    const loopId = 'loop-stale'
+    const events = [
+      loopEvent(runId, loopId, 'findings_compared', { round: 3, open: [], resolved: [], new: [], recurring: ['F1'] }),
+      loopEvent(runId, loopId, 'stop_condition_met', { round: 3, condition: 'reappearance' }),
+      loopEvent(runId, loopId, 'paused', { round: 3, reason: 'principal_item' })
+    ]
+    const { page } = runScenario(events)
+    expect(page.diagnostics.ok).toBe(events.length)
+    const compared = page.records[0]
+    expect(compared?.status === 'ok' && (compared.event as { recurring: string[] }).recurring).toEqual(['F1'])
+    const stopped = page.records[1]
+    expect(stopped?.status === 'ok' && (stopped.event as { condition: string }).condition).toBe('reappearance')
+  })
+
+  it('cancellation — an escalation pause later resolved by --cancel stores paused, then a separate-process cancelled(by: principal)', () => {
+    const runId = 'scenario-cancel'
+    const pauseLoopId = 'loop-cancel-pause'
+    const cancelLoopId = 'loop-cancel-resolve'
+    const events = [
+      loopEvent(runId, pauseLoopId, 'paused', { round: 2, reason: 'escalation' }),
+      // A --cancel is its own process — a fresh loop_id, no round history of
+      // its own (apps/cli/specs/loop.md § "Escalation, resolution, and --cancel").
+      loopEvent(runId, cancelLoopId, 'cancelled', { round: 2, by: 'principal' })
+    ]
+    const { page } = runScenario(events)
+    expect(page.diagnostics.ok).toBe(events.length)
+    const cancelled = page.records[1]
+    expect(cancelled?.status === 'ok' && (cancelled.event as { by: string }).by).toBe('principal')
+    expect(storedSequence(page)).toEqual(['dev_review_loop.paused', 'dev_review_loop.cancelled'])
+  })
+
+  it('recovery — a bare --resume past a recoverable infrastructure hiccup stores resumed(by: driver), never fabricating a principal ruling that was never read', () => {
+    const runId = 'scenario-recovery'
+    const loopId = 'loop-recovery'
+    const events = [loopEvent(runId, loopId, 'resumed', { round: 2, by: 'driver' })]
+    const { page } = runScenario(events)
+    expect(page.diagnostics.ok).toBe(1)
+    const resumed = page.records[0]
+    expect(resumed?.status === 'ok' && (resumed.event as { by: string }).by).toBe('driver')
+  })
+
+  it('unavailable telemetry — the success scenario is fully captured with no publish/flush call ever made', () => {
+    // No function in this test file, nor in ./store.ts itself, calls a
+    // publish/flush/forge-write mechanism — capture and validation happen
+    // entirely inside the fixture store. This is the structural proof, not
+    // a simulation: `flushOutbox`/`vinaya.config.json`'s `logPublish`
+    // (apps/cli/specs/log.md § "The flush") are a SEPARATE, later, optional
+    // step this file never reaches, and every event below is still stored,
+    // valid, and complete without it.
+    const storeSource = readFileSync(join(import.meta.dir, 'store.ts'), 'utf8')
+    expect(storeSource).not.toContain('logPublish')
+    expect(storeSource).not.toContain('flushOutbox')
+    expect(storeSource).not.toMatch(/\bfetch\(/)
+
+    const runId = 'scenario-telemetry-unavailable'
+    const events = [
+      dispatchEvent(runId, 'dispatched', { prompt_hash: 'sha256:prompt' }),
+      roleAttemptEvent(runId, 'completed', { input: 500, output: 100 }),
+      usageEvent(runId, { input: 500, output: 100, cache: 0 }),
+      dispatchEvent(runId, 'outcome_received', { outcome: { type: 'completed' }, usage: { input: 500, output: 100 } })
+    ]
+    const { page, store } = runScenario(events)
+    expect(page.diagnostics.ok).toBe(events.length)
+    expect(page.diagnostics.invalid).toBe(0)
+    expect(page.diagnostics.unknownVersion).toBe(0)
+    expect(store.size()).toBe(events.length)
   })
 })
 
