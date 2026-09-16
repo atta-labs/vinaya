@@ -326,6 +326,37 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
       const host = hostFromEnv(env)
       const now = deps.now()
       const mySeq = seq++
+      // Captured synchronously, as plain values, at the moment `log()` is
+      // called — never a live reference into `env` read later inside the
+      // `.then()` below. The real `deps.env()` IS `process.env` itself (one
+      // shared, mutable object across the whole process), and this module's
+      // own callers set VINAYA_TASK/VINAYA_RUN for the duration of a single
+      // `log()` call, then restore them (`log-flush.ts`'s `logForFlush`,
+      // `dev-review-loop.ts`'s `cancelDevReviewLoop`) — safe in a one-task-
+      // per-process CLI, but the multi-tenant `vinaya task-tools serve` MCP
+      // server (`task-tools/server.ts`) dispatches calls for DIFFERENT tasks
+      // without awaiting each to completion before the next. Reading `env.*`
+      // lazily inside the `.then()` would race: this call's own header could
+      // pick up a CONCURRENT caller's task/run value if that caller's own
+      // mutation lands between this synchronous call and the microtask
+      // below. Snapshotting here closes that race regardless of what
+      // `process.env` does afterward (round 2 security review, HIGH).
+      const envFields = {
+        role: env.VINAYA_ROLE,
+        task: env.VINAYA_TASK,
+        round: env.VINAYA_ROUND,
+        // "Linked to the current run" —
+        // a producer that structurally knows a broader run identity
+        // (the dev-review-loop driver sets `VINAYA_RUN` to its own
+        // `loop_id` once one exists) still wins; absent that, this
+        // process's own `runId` — already the identity every event
+        // this process emits shares via `meta.run_id` — is a truthful,
+        // non-invented default rather than leaving the slot `null`
+        // forever for want of a caller that never opts in.
+        run: env.VINAYA_RUN || runId,
+        attempt: env.VINAYA_ATTEMPT,
+        parent: env.VINAYA_PARENT_EVENT
+      }
       resolveRepoOnce()
         .then((resolved) => {
           const repo =
@@ -339,17 +370,7 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
             doctrine: doctrine(),
             host,
             hostname: deps.hostname(),
-            env: {
-              role: env.VINAYA_ROLE,
-              task: env.VINAYA_TASK,
-              round: env.VINAYA_ROUND,
-              // Not yet set by any caller — read now so the envelope carries
-              // the slot honestly `null` today, real once a future producer
-              // starts setting it.
-              run: env.VINAYA_RUN,
-              attempt: env.VINAYA_ATTEMPT,
-              parent: env.VINAYA_PARENT_EVENT
-            },
+            env: envFields,
             eventId: randomUUID(),
             processId,
             inputVersions: deps.inputVersions()

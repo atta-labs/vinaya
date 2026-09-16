@@ -21,6 +21,7 @@ import {
   UnboundTargetError,
   UngrantedOperationError
 } from '../../../src/lib/broker'
+import type { LogEventInput } from '../../../src/lib/log-sink'
 
 let dir: string
 let deps: ControlStoreDeps
@@ -250,5 +251,65 @@ describe('requestEffect', () => {
         reconcile: neverReconcile
       })
     ).toThrow(StaleEpochWriteError)
+  })
+})
+
+/**
+ * task-log-v1 task 6 (O1): `requestEffect`'s own `operation` log line for
+ * the authorization checks it runs — `ok` when every check passes, `refused`
+ * naming the throwing check's own class when one doesn't — followed by the
+ * effect executor's `attempted`/`observed`/`verified` sequence
+ * (`effects.ts`) for a request that clears authorization.
+ */
+describe('requestEffect — operation log events (task-log-v1 task 6, O1)', () => {
+  it("emits operation(ok) then the effect executor's attempted/observed/verified sequence for an authorized request", () => {
+    const events: LogEventInput[] = []
+    requestEffect(
+      deps,
+      worker,
+      {
+        operation: 'branch-push',
+        target: scopeTarget(2, 'task/worker-isolation-v1/2'),
+        inputVersion: 1,
+        key: 'push-logged',
+        payload: 'commit-sha-abc',
+        poster: () => 'https://github.com/example/repo/tree/task/worker-isolation-v1/2',
+        reconcile: neverReconcile
+      },
+      (e) => events.push(e)
+    )
+    expect(events.map((e) => `${e.kind}:${e.event}`)).toEqual([
+      'operation:completed',
+      'effect:attempted',
+      'effect:observed',
+      'effect:verified'
+    ])
+  })
+
+  it('emits only operation(refused) — never reaching the effect executor — for an ungranted operation', () => {
+    const events: LogEventInput[] = []
+    expect(() =>
+      requestEffect(
+        deps,
+        worker,
+        {
+          operation: 'ruling-post',
+          target: scopeTarget(2, 'task/worker-isolation-v1/2'),
+          inputVersion: 1,
+          key: 'ruling-logged',
+          payload: 'x',
+          poster: () => 'https://example.com',
+          reconcile: neverReconcile
+        },
+        (e) => events.push(e)
+      )
+    ).toThrow(UngrantedOperationError)
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({
+      kind: 'operation',
+      event: 'completed',
+      result: 'refused',
+      error_class: 'UngrantedOperationError'
+    })
   })
 })

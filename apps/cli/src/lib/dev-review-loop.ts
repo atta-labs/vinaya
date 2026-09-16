@@ -82,7 +82,7 @@ import {
   terminateLaunchedChildOnShutdown as realTerminateLaunchedChildOnShutdown
 } from './dispatch.js'
 import { postMarkedComment } from './forge-write.js'
-import { createLogSink, outboxPathFor } from './log-sink.js'
+import { createLogSink, currentRunId, log, outboxPathFor } from './log-sink.js'
 import { appendRoleLine, appendRunStartMarker, loopLogPathFor } from './loop-log.js'
 import { flushOutbox as flushOutboxLib, LogFlushError } from './log-flush.js'
 import {
@@ -1079,8 +1079,19 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       }
     }
 
+    // Every `log()` call this process makes from
+    // here on — this driver's own `dev_review_loop` events AND every
+    // `effect`/`operation` event a downstream call into `effects.ts`/
+    // `broker.ts` emits (pause posts, escalation writes) — reads
+    // `meta.lineage.run` from THIS env var (`log-sink.ts`'s own default
+    // falls back to the process's bare `runId` only when it's unset), so
+    // setting it to this run's own `loopId` is what makes "one correlated
+    // history" (this task's own title) literally true: every event kind
+    // this one process emits shares the same `lineage.run` value.
+    const loopId = randomUUID()
+    process.env.VINAYA_RUN = loopId
     const config: LoopConfig = {
-      loopId: randomUUID(),
+      loopId,
       task: task,
       // `loop_started`'s own schema constrains `policy.reviewers`/`policy.models`
       // keys to `RoleSchema` (`schema.ts`) — the DOCTRINE role vocabulary
@@ -1099,6 +1110,26 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       maxRounds: DEFAULT_REVIEW_POLICY.maxRounds
     }
     let state: LoopState = initialLoopState(config)
+
+    // The `resumed` observation — a genuine
+    // `--resume` attach, already authenticated (`resolveEscalation`, above)
+    // before this process ever re-entered the round loop. A bare
+    // `'infrastructure'` recoverable-hiccup resume is never a Principal
+    // decision (`resumeAuthenticatedBy` above reads `'driver-self'` for
+    // exactly this reason) — `by: 'driver'` says so honestly rather than
+    // claiming a ruling this process never actually read.
+    if (resumeFrom !== null) {
+      await logEvents([
+        {
+          kind: 'dev_review_loop',
+          payload: {},
+          loop_id: config.loopId,
+          event: 'resumed',
+          round: resumeFrom.round,
+          by: resumeFrom.reason === 'infrastructure' ? 'driver' : 'principal'
+        }
+      ])
+    }
 
     /**
      * O9: the round journal is the task's, not this process's — on a plain
@@ -3163,6 +3194,7 @@ export type CancelDeps = {
     repo: { owner: string; repo: string } | null
   ) => void
   flushOutbox: (task: number) => Promise<FlushOutboxOutcome>
+  sleep: (ms: number) => Promise<void>
 }
 
 function defaultCancelDeps(): CancelDeps {
@@ -3175,6 +3207,7 @@ function defaultCancelDeps(): CancelDeps {
     fetchNewestRulingAuthor,
     outboxRoot,
     resolveRepo: () => resolveRepo().catch(() => null),
+    sleep: defaultSleep,
     terminateInFlightLaunchesOnShutdown: defaultTerminateInFlightLaunchesOnShutdown,
     flushOutbox: defaultFlushOutbox
   }
@@ -3271,6 +3304,51 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
   const repo = await d.resolveRepo()
   d.terminateInFlightLaunchesOnShutdown(task, terminateAgent, repo)
   const fencedEffectKeys = fenceStartedEffectsAsUncertain(task, resolved.epoch)
+
+  // The `cancelled` terminal observation — this
+  // command is its own process, with no `LoopConfig.loopId` carried over
+  // from whatever run it is cancelling (never persisted anywhere to
+  // recover), so it mints one of its own, the same fresh-`loop_id`-per-
+  // process convention every other pause/crash event already follows for a
+  // NEW process that was never part of the original loop run. `VINAYA_TASK`
+  // is set first so this line (and its own `lineage.run`, via
+  // `process.env.VINAYA_RUN` below) files under the SAME task outbox every
+  // other event for this task already lands in, never the `none` bucket —
+  // and restored in the `finally` below, the SAME save/restore-around-one-
+  // call discipline `log-flush.ts`'s `logForFlush` already uses. This
+  // function is a one-shot CLI command's own process (safe to mutate for its
+  // remaining lifetime either way) but is ALSO called in-process, unchanged,
+  // from `task-tools/cancel.ts` inside the shared, multi-task `vinaya
+  // task-tools serve` MCP server (round 2 security review, HIGH): leaving
+  // these globals mutated after this call returns would silently misattribute
+  // every later `log()` call in that process — including a completely
+  // different task's own `task_resume` — into THIS task's outbox, exactly
+  // the fabricated cross-task history O1/O3 forbid.
+  const prevTask = process.env.VINAYA_TASK
+  const prevRun = process.env.VINAYA_RUN
+  process.env.VINAYA_TASK = String(task)
+  const cancelLoopId = randomUUID()
+  process.env.VINAYA_RUN = cancelLoopId
+  const cancelEvent: DevReviewLoopEventInput = {
+    kind: 'dev_review_loop',
+    payload: {},
+    loop_id: cancelLoopId,
+    event: 'cancelled',
+    round: held.round,
+    by: 'principal'
+  }
+  const cancelOutboxPath = outboxPathFor({ outboxRoot: () => root }, repo, task)
+  const priorSize = sizeOfSafe(cancelOutboxPath)
+  try {
+    log(cancelEvent)
+    await waitForOwnLoopLine(cancelOutboxPath, priorSize, currentRunId(), cancelEvent, d.sleep)
+  } finally {
+    if (prevTask === undefined) delete process.env.VINAYA_TASK
+    else process.env.VINAYA_TASK = prevTask
+    if (prevRun === undefined) delete process.env.VINAYA_RUN
+    else process.env.VINAYA_RUN = prevRun
+  }
+
   await d.flushOutbox(task)
   return { task, escalationId, fencedEffectKeys }
 }

@@ -303,7 +303,27 @@ export function createTaskToolsMcpServer(opts: CreateTaskToolsMcpServerOptions):
             )
           }
         }
-        return rpcResult(id, toolCallResult(outcome))
+        // `toolCallResult`/`rpcResult` both `JSON.stringify` the handler's own
+        // result — a value that isn't serializable (a `BigInt` field, say)
+        // throws there, OUTSIDE the `try` above (round 3 security review,
+        // HIGH). Before `serve`'s serialized dispatch chain existed, an
+        // escaped throw here only orphaned this one call's own `.then()`
+        // (`serve`'s earlier `void handleLine(line).then(...)` never awaited
+        // it); now that every line is chained through one `Promise`
+        // (`chain.then(...)`), an uncaught rejection here would otherwise
+        // skip every later queued `.then` forever — silently wedging every
+        // OTHER task's future call on this shared server, not just this
+        // one's. Caught here so a bad result becomes this call's own error
+        // response, same as a handler that threw outright.
+        try {
+          return rpcResult(id, toolCallResult(outcome))
+        } catch (err) {
+          return rpcError(
+            id,
+            -32603,
+            `${params.name}: result could not be serialized — ${err instanceof Error ? err.message : String(err)}`
+          )
+        }
       }
       default:
         // Every `notifications/*` message (initialized, cancelled, …) is a
@@ -332,19 +352,37 @@ export function createTaskToolsMcpServer(opts: CreateTaskToolsMcpServerOptions):
   async function serve(input: Readable, output: Writable): Promise<void> {
     let buffer = ''
     input.setEncoding('utf8')
-    // Sequential per line: an interleaved response order would still be legal
-    // JSON-RPC (ids match), but a strictly ordered writer keeps the fixture's
-    // reads simple and the transport easy to reason about.
+    const write = (s: string): Promise<void> =>
+      new Promise<void>((resolve) => {
+        output.write(`${s}\n`, () => resolve())
+      })
+
+    // Sequential per line, dispatch included: each line's `handleLine` runs
+    // to completion and its response is written before the NEXT line's
+    // `handleLine` even starts. This is not just about response ordering —
+    // `resume.ts`/`cancel.ts`'s handlers mutate `process.env.VINAYA_TASK`
+    // for the duration of their own `log()` calls (the same save/restore
+    // discipline `log-flush.ts`'s `logForFlush` and `dev-review-loop.ts`'s
+    // `cancelDevReviewLoop` use), and this server is the one caller that can
+    // hold calls for DIFFERENT tasks in flight at once. Letting two lines'
+    // `handleLine` run concurrently would let one call's restore of
+    // `VINAYA_TASK` race another's mutation of it, misattributing an event
+    // to the wrong task's outbox (round 2 review, HIGH). A single chained
+    // promise makes that race structurally impossible: at most one
+    // `handleLine` is ever in flight.
+    //
+    // Each link swallows its own failure rather than letting it reject the
+    // chain (round 3 security review, HIGH): standard `Promise.then` chain
+    // semantics mean one rejected link skips every `.then(onFulfilled)`
+    // already queued behind it, so an unguarded rejection here — a `write`
+    // that throws synchronously, or any defect `handleLine`'s own "never
+    // throws" contract fails to cover — would silently stop dispatching
+    // EVERY later line for the rest of the process's life, not just the one
+    // that failed. `handleLine` itself is hardened to return an error
+    // response rather than throw (see `handle`'s `tools/call` branch), but
+    // this catch is this chain's own last line of defense, independent of
+    // that contract holding.
     let chain: Promise<void> = Promise.resolve()
-    const write = (s: string) => {
-      chain = chain.then(
-        () =>
-          new Promise<void>((resolve) => {
-            output.write(`${s}\n`, () => resolve())
-          })
-      )
-      return chain
-    }
 
     await new Promise<void>((resolve) => {
       input.on('data', (chunk: string) => {
@@ -353,8 +391,15 @@ export function createTaskToolsMcpServer(opts: CreateTaskToolsMcpServerOptions):
         while (idx !== -1) {
           const line = buffer.slice(0, idx)
           buffer = buffer.slice(idx + 1)
-          void handleLine(line).then((response) => {
-            if (response !== null) void write(response)
+          chain = chain.then(async () => {
+            try {
+              const response = await handleLine(line)
+              if (response !== null) await write(response)
+            } catch (err) {
+              process.stderr.write(
+                `vinaya task-tools serve: dropped one line after an internal error — ${err instanceof Error ? err.message : String(err)}\n`
+              )
+            }
           })
           idx = buffer.indexOf('\n')
         }
