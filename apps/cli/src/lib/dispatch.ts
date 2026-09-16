@@ -259,8 +259,23 @@ export type DispatchOpts = {
   }
 }
 
-/** `'signal'` (O1, Issue #605): the driver's own shutdown path terminated this launch's child on `SIGTERM`/`SIGINT` — distinct from `'crash'` (the child died on its own) so recovery can read it as a cancelled attempt, never an infrastructure failure of the child's own making. */
-export type DispatchFailureReason = 'timeout' | 'crash' | 'refused' | 'signal'
+/**
+ * `'signal'` (O1, Issue #605): the driver's own shutdown path terminated this
+ * launch's child on `SIGTERM`/`SIGINT` — distinct from `'crash'` (the child
+ * died on its own) so recovery can read it as a cancelled attempt, never an
+ * infrastructure failure of the child's own making.
+ *
+ * `'unbound'` (Issue #636, O5): the child exited — on a timeout kill or on
+ * its own, any exit code — having never once bound a vendor session
+ * (`launch.resumeId` stayed `null` for the whole run, and the completed
+ * `stdoutBuf` still parses to no session either). Distinct from `'crash'`/
+ * `'timeout'`, which both mean the vendor came up and did SOME work before
+ * dying: a dispatch that never produced a working vendor session at all
+ * (measured live: a `sandbox-exec` child whose vendor output file stayed at
+ * 0 bytes for its entire life) is a different, more actionable failure —
+ * recovery should not treat it the same as an ordinary crash mid-session.
+ */
+export type DispatchFailureReason = 'timeout' | 'crash' | 'refused' | 'signal' | 'unbound'
 
 export type DispatchHandle = {
   exitCode: number | null
@@ -1242,7 +1257,8 @@ function coerceLaunchRecord(json: unknown): LaunchRecord | null {
     o.failureReason === 'timeout' ||
     o.failureReason === 'crash' ||
     o.failureReason === 'refused' ||
-    o.failureReason === 'signal'
+    o.failureReason === 'signal' ||
+    o.failureReason === 'unbound'
       ? o.failureReason
       : null
   return {
@@ -2588,6 +2604,14 @@ export async function dispatchRole(
 
     let settled = false
     let timedOut = false
+    // Set synchronously the moment the OS reports the child has exited —
+    // Issue #636, O5. This is read by the heartbeat below to stop reporting
+    // elapsed time about a process that is gone; it is set well before
+    // `finish()` runs (which only happens after `handleChildExit`'s own
+    // awaits complete), closing the race the round-2 security review found:
+    // `finish()` alone clearing the timer left a window where the heartbeat
+    // could still fire once for an already-dead child.
+    let childExited = false
     let killTimer: ReturnType<typeof setTimeout> | undefined
     let stdoutBuf = ''
     const MAX_STDOUT_BYTES = 1_000_000
@@ -2689,7 +2713,22 @@ export async function dispatchRole(
     // the very end — the heartbeat is deliberately independent of the
     // child's own output, so liveness is reported even when there is
     // nothing yet to tee.
+    //
+    // Issue #636, O5: verifies the child is actually still alive
+    // (`childExited`) before reporting elapsed time, rather than measuring
+    // wall-clock alone — a real production case measured a heartbeat that
+    // kept printing "still running" at 60s/120s/180s/240s about a
+    // `sandbox-exec` child whose vendor output stayed empty for its whole
+    // life, because nothing here ever checked the child. `childExited` is
+    // set synchronously the moment the `exit` event fires, below — this
+    // guard is therefore self-clearing on the very next tick even in the
+    // (already-closed) race window before `finish()` itself clears the
+    // timer.
     const heartbeatTimer: ReturnType<typeof setInterval> = setInterval(() => {
+      if (childExited) {
+        clearInterval(heartbeatTimer)
+        return
+      }
       const elapsedS = Math.round((Date.now() - start) / 1000)
       writeLifecycle(
         `[vinaya dispatch ${effectId}] ${role} via ${agent}: still running — ${elapsedS}s elapsed (ceiling ${Math.round(timeoutMs / 1000)}s)`
@@ -2743,6 +2782,8 @@ export async function dispatchRole(
       // committed to `dispatched` (e.g. the binary vanished between the
       // pre-check and the spawn) — reported as a crash, never as `refused`,
       // since `refused` is reserved for the pre-spawn check above.
+      childExited = true
+      clearInterval(heartbeatTimer)
       const durationMs = Date.now() - start
       const priorSize = sizeOfSafe(outboxPath)
       log({
@@ -2817,6 +2858,12 @@ export async function dispatchRole(
       const reportedModel = vendor.parseModel(stdoutBuf)
       const attemptModel = reportedModel ?? resolvedModel
       const usageUnits = vendor.parseUsageUnits(stdoutBuf)
+      // Issue #636, O5: this dispatch never produced a working vendor
+      // session — checked against the SAME two sources every other resumeId
+      // read in this function already uses (the stream-bound `launch.resumeId`,
+      // then a final read of the completed buffer), so "never bound" here
+      // means exactly what it means everywhere else in this file.
+      const neverBoundSession = launch.resumeId === null && vendor.parseResumeId(stdoutBuf) === null
 
       if (timedOut) {
         const priorSize = sizeOfSafe(outboxPath)
@@ -2858,14 +2905,29 @@ export async function dispatchRole(
         // O1: keep the intent record, and bind whatever session the child did
         // report before the ceiling killed it (mid-stream, or a final line in
         // `stdoutBuf`) — an interrupted attempt no longer loses its session.
+        //
+        // Issue #636, O5: a dispatch that never bound a session at all is
+        // named `'unbound'` here, distinct from an ordinary `'timeout'` that
+        // at least got a vendor session running — this is CLI-local
+        // bookkeeping (`DispatchHandle.failureReason`/the launch record),
+        // never the `dispatch_failed` log event's own `reason` field above
+        // (that field's schema lives in `@attalabs/aeg-core`, out of this
+        // task's surface, and keeps reporting the real event class —
+        // `'timeout'` — unchanged).
+        const failureReason = neverBoundSession ? 'unbound' : 'timeout'
+        if (neverBoundSession) {
+          writeLifecycle(
+            `[vinaya dispatch ${effectId}] ${role} via ${agent}: never produced a working vendor session before the ceiling was reached — failing now as 'unbound', not reporting further elapsed time`
+          )
+        }
         patchLaunch({
           status: 'interrupted',
           finishedAt: new Date().toISOString(),
-          failureReason: 'timeout',
+          failureReason,
           resumeId: launch.resumeId ?? vendor.parseResumeId(stdoutBuf)
         })
         void finish(
-          { exitCode: code, durationMs, usage, resumeId: null, timedOut: true, failureReason: 'timeout', effectId },
+          { exitCode: code, durationMs, usage, resumeId: null, timedOut: true, failureReason, effectId },
           'dispatch_failed',
           priorSize
         )
@@ -2911,14 +2973,25 @@ export async function dispatchRole(
         })
         // O1: same as the timeout path — interrupted, intent kept, session
         // bound from whatever the child managed to report before it crashed.
+        //
+        // Issue #636, O5: same `'unbound'` distinction as the timeout branch
+        // above — a child that exited on its own without ever binding a
+        // session names that failure specifically, rather than the generic
+        // `'crash'` every other non-zero exit gets.
+        const failureReason = neverBoundSession ? 'unbound' : 'crash'
+        if (neverBoundSession) {
+          writeLifecycle(
+            `[vinaya dispatch ${effectId}] ${role} via ${agent}: exited (code ${code}) without ever producing a working vendor session — failing now as 'unbound'`
+          )
+        }
         patchLaunch({
           status: 'interrupted',
           finishedAt: new Date().toISOString(),
-          failureReason: 'crash',
+          failureReason,
           resumeId: launch.resumeId ?? vendor.parseResumeId(stdoutBuf)
         })
         void finish(
-          { exitCode: code, durationMs, usage, resumeId: null, timedOut: false, failureReason: 'crash', effectId },
+          { exitCode: code, durationMs, usage, resumeId: null, timedOut: false, failureReason, effectId },
           'dispatch_failed',
           priorSize
         )
@@ -3002,6 +3075,12 @@ export async function dispatchRole(
     // the correct signal for a process-supervisor ceiling that must never
     // hang regardless of what the vendor's own process tree does.
     child.on('exit', (code) => {
+      // Set BEFORE the async `handleChildExit` runs (Issue #636, O5) — the
+      // heartbeat above reads this on its very next tick, which can land
+      // before `handleChildExit`'s own awaits (and therefore `finish()`,
+      // which also clears this timer) complete.
+      childExited = true
+      clearInterval(heartbeatTimer)
       void handleChildExit(code, Date.now() - start)
     })
 
