@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test'
+import { PassThrough } from 'node:stream'
 import {
   createTaskToolsMcpServer,
   dispatchToolCall,
@@ -134,5 +135,74 @@ describe('dispatchToolCall — the grant gate runs on the real call path, before
   it('the real refuseUngrantedTool is used when no grantCheck is passed — the production wiring', async () => {
     const result = await dispatchToolCall(handlers, 'task_status', {}, { caller: null })
     expect(result).toEqual({ ok: true, result: { items: [], nextCursor: null } })
+  })
+})
+
+/**
+ * `serve`'s per-line dispatch is the one place two DIFFERENT tasks' calls
+ * can be in flight on this shared, multi-tenant server at once. Round 2
+ * security review (HIGH): `resume.ts`/`cancel.ts`'s handlers mutate
+ * `process.env.VINAYA_TASK` around their own `log()` call — safe only if no
+ * OTHER call's own mutate/restore can land in between. This models that
+ * exact shape (a handler that mutates the shared env, yields, then reads it
+ * back) without depending on the real handlers' filesystem state, and
+ * proves two lines pushed into the stream back-to-back — no delay, no await
+ * between them — never interleave.
+ */
+describe('serve — two different tasks never interleave through the shared per-line dispatch', () => {
+  it('a slow first call is not clobbered by a second call for a different task arriving before it finishes', async () => {
+    const observed: Record<string, string | undefined> = {}
+    const handlers: TaskToolHandlers = {
+      task_status: () => ({ ok: true, result: { items: [], nextCursor: null } }),
+      task_escalation_read: () => ({
+        ok: true,
+        result: { items: [], nextCursor: null, observedAt: '2026-01-01T00:00:00.000Z', freshness: 'unknown' }
+      }),
+      task_resume: async (input) => {
+        const task = String((input as { task: number }).task)
+        const prev = process.env.VINAYA_TASK
+        process.env.VINAYA_TASK = task
+        // Yields the microtask/macrotask queue mid-handler — exactly where an
+        // unserialized dispatcher would let a second call's own mutation of
+        // the same shared `process.env.VINAYA_TASK` slip in.
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        observed[task] = process.env.VINAYA_TASK
+        if (prev === undefined) delete process.env.VINAYA_TASK
+        else process.env.VINAYA_TASK = prev
+        return { ok: true, result: { task } }
+      },
+      task_cancel: () => ({ ok: false, error: { kind: 'capability', message: 'stub' } }),
+      task_start: () => ({ ok: false, error: { kind: 'capability', message: 'stub' } })
+    }
+    const server = createTaskToolsMcpServer({ serverVersion: '0.0.0-test', handlers })
+
+    const input = new PassThrough()
+    const output = new PassThrough()
+    const responses: unknown[] = []
+    output.on('data', (chunk: Buffer) => {
+      for (const line of chunk.toString('utf8').split('\n').filter(Boolean)) {
+        responses.push(JSON.parse(line))
+      }
+    })
+
+    const servePromise = server.serve(input, output)
+    const call = (id: number, task: number) =>
+      `${JSON.stringify({
+        jsonrpc: '2.0',
+        id,
+        method: 'tools/call',
+        params: { name: 'task_resume', arguments: { task } }
+      })}\n`
+    // Both lines pushed in the same tick, back-to-back — the shape that
+    // raced before this fix.
+    input.write(call(1, 111))
+    input.write(call(2, 222))
+    input.end()
+
+    await servePromise
+
+    expect(observed['111']).toBe('111')
+    expect(observed['222']).toBe('222')
+    expect(responses).toHaveLength(2)
   })
 })

@@ -449,14 +449,20 @@ try {
     }
   })
 
-  it("restores process.env.VINAYA_TASK/VINAYA_RUN after returning, and never lets a later, unrelated task's own log() land in this run's outbox (round 2 security review, HIGH)", () => {
+  it("restores process.env.VINAYA_TASK/VINAYA_RUN after returning, and never lets a later, unrelated task's own task_resume land in this run's outbox (round 2 security review, HIGH)", () => {
     // `cancelDevReviewLoop` is called IN-PROCESS from `task-tools/cancel.ts`
     // inside the shared, multi-task `vinaya task-tools serve` MCP server —
     // never as its own dedicated subprocess there. This fixture models
-    // exactly that: one process, one cancel for ISSUE, then a plain `log()`
-    // call for a COMPLETELY DIFFERENT task, the same shape
-    // `task-tools/resume.ts`'s own `emitOperationEvent` takes (it never sets
-    // VINAYA_TASK itself, trusting whatever the process's ambient env is).
+    // exactly that: one process, one cancel for ISSUE, then a REAL
+    // `task_resume` call (via `createTaskResumeHandler`, the actual code
+    // path `server.ts` dispatches through) for a COMPLETELY DIFFERENT task.
+    // Round 2 review flagged an earlier version of this test for calling
+    // `log()` directly with `VINAYA_TASK` set by the fixture itself — a
+    // shape the real code path never took, since neither handler's own
+    // `emitOperationEvent` scoped `VINAYA_TASK` at all before this task's
+    // fix. Driving the real handler here means this test would have failed
+    // against that unfixed code (the ambient sentinel would have leaked into
+    // the 991 event) and now proves the fix.
     const home = mkdtempSync(join(tmpdir(), 'vinaya-cancel-env-restore-'))
     const repoRoot = join(import.meta.dir, '..', '..', '..', '..', '..')
     const scriptPath = join(import.meta.dir, `.cancel-env-restore-fixture-${process.pid}-${Date.now()}.ts`)
@@ -469,6 +475,7 @@ import { cancelDevReviewLoop } from '../../../src/lib/dev-review-loop.js'
 import { outboxRoot } from '../../../src/lib/dev-review-loop/reviewer-dispatch.js'
 import { controlStoreRoot } from '../../../src/lib/effects.js'
 import { log } from '../../../src/lib/log-sink.js'
+import { createTaskResumeHandler } from '../../../src/lib/task-tools/resume.js'
 
 const ISSUE = 558
 const OTHER_ISSUE = 991
@@ -530,14 +537,28 @@ await cancelDevReviewLoop({ cancelPr: PR, agent: 'claude' }, cancelDeps)
 console.log('TASK_AFTER:' + process.env.VINAYA_TASK)
 console.log('RUN_AFTER:' + process.env.VINAYA_RUN)
 
-// The exact shape \`task-tools/resume.ts\`'s own \`emitOperationEvent\` takes
-// for a DIFFERENT task's operation event in the SAME process: it sets
-// VINAYA_TASK itself (a real caller always does, for its OWN task) and logs
-// — nothing here reads or depends on whatever cancelDevReviewLoop left
-// behind.
-process.env.VINAYA_TASK = String(OTHER_ISSUE)
-delete process.env.VINAYA_RUN
-log({ kind: 'operation', event: 'completed', operation: 'task_resume', target: \`task:\${OTHER_ISSUE}\`, result: 'ok', error_class: null, payload: {} })
+// The REAL \`task_resume\` handler for a DIFFERENT task, driven right after
+// \`cancelDevReviewLoop\` returns, in the SAME process — the actual code path
+// \`task-tools/server.ts\` dispatches through, never a fixture that sets
+// VINAYA_TASK itself. No pause state is recorded for OTHER_ISSUE, so the
+// handler refuses fast ("nothing to resume") but still reaches its own
+// \`emitOperationEvent\`, which must scope VINAYA_TASK to OTHER_ISSUE
+// internally — nothing here reads or depends on whatever
+// \`cancelDevReviewLoop\` left behind, and the ambient sentinel set above is
+// never touched by this call.
+const resumeHandler = createTaskResumeHandler({
+  outboxRoot,
+  resolveIssueForRef: () => OTHER_ISSUE,
+  fetchRulings: () => [],
+  fetchNewestRulingAuthor: () => null,
+  fetchNewestRulingOrdinal: () => 0,
+  store: { claim: () => ({ claimed: false, record: { escalationId: '', caller: '', pr: 0, startedAt: '' } }), release: () => {} },
+  launch: () => {},
+  now: () => new Date().toISOString(),
+  log
+})
+const resumeOutcome = await resumeHandler({ task: { issue: OTHER_ISSUE } }, { caller: { id: 'other-caller' } })
+console.log('RESUME_REFUSED:' + (resumeOutcome.ok === false))
 
 function fileExistsUnder(root, name) {
   if (!existsSync(root)) return false
@@ -570,6 +591,7 @@ console.log('DONE')
       })
       expect(output).toContain('TASK_AFTER:sentinel-task')
       expect(output).toContain('RUN_AFTER:sentinel-run')
+      expect(output).toContain('RESUME_REFUSED:true')
       expect(output).toContain('DONE')
 
       const outboxRoot = join(home, '.vinaya', 'outbox')

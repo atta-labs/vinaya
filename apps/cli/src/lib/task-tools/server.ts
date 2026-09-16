@@ -332,19 +332,25 @@ export function createTaskToolsMcpServer(opts: CreateTaskToolsMcpServerOptions):
   async function serve(input: Readable, output: Writable): Promise<void> {
     let buffer = ''
     input.setEncoding('utf8')
-    // Sequential per line: an interleaved response order would still be legal
-    // JSON-RPC (ids match), but a strictly ordered writer keeps the fixture's
-    // reads simple and the transport easy to reason about.
+    const write = (s: string): Promise<void> =>
+      new Promise<void>((resolve) => {
+        output.write(`${s}\n`, () => resolve())
+      })
+
+    // Sequential per line, dispatch included: each line's `handleLine` runs
+    // to completion and its response is written before the NEXT line's
+    // `handleLine` even starts. This is not just about response ordering —
+    // `resume.ts`/`cancel.ts`'s handlers mutate `process.env.VINAYA_TASK`
+    // for the duration of their own `log()` calls (the same save/restore
+    // discipline `log-flush.ts`'s `logForFlush` and `dev-review-loop.ts`'s
+    // `cancelDevReviewLoop` use), and this server is the one caller that can
+    // hold calls for DIFFERENT tasks in flight at once. Letting two lines'
+    // `handleLine` run concurrently would let one call's restore of
+    // `VINAYA_TASK` race another's mutation of it, misattributing an event
+    // to the wrong task's outbox (round 2 review, HIGH). A single chained
+    // promise makes that race structurally impossible: at most one
+    // `handleLine` is ever in flight.
     let chain: Promise<void> = Promise.resolve()
-    const write = (s: string) => {
-      chain = chain.then(
-        () =>
-          new Promise<void>((resolve) => {
-            output.write(`${s}\n`, () => resolve())
-          })
-      )
-      return chain
-    }
 
     await new Promise<void>((resolve) => {
       input.on('data', (chunk: string) => {
@@ -353,8 +359,9 @@ export function createTaskToolsMcpServer(opts: CreateTaskToolsMcpServerOptions):
         while (idx !== -1) {
           const line = buffer.slice(0, idx)
           buffer = buffer.slice(idx + 1)
-          void handleLine(line).then((response) => {
-            if (response !== null) void write(response)
+          chain = chain.then(async () => {
+            const response = await handleLine(line)
+            if (response !== null) await write(response)
           })
           idx = buffer.indexOf('\n')
         }

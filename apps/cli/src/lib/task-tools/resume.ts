@@ -152,21 +152,41 @@ export const defaultTaskResumeDeps: TaskResumeDeps = {
   log
 }
 
+/**
+ * `log()` fills `subject.issue` from `process.env.VINAYA_TASK`, never from an
+ * argument (`log-sink.ts`), so this event lands under the outbox for `task`
+ * — the one this handler is actually acting on — only if `VINAYA_TASK` is
+ * set for the duration of the call, exactly the save/restore-around-one-call
+ * discipline `log-flush.ts`'s `logForFlush` and `dev-review-loop.ts`'s
+ * `cancelDevReviewLoop` already use. Without this, every `task_resume` event
+ * emitted by the shared, multi-tenant `vinaya task-tools serve` MCP server
+ * (`server.ts`) — not just a concurrent one — misfiles into whatever task
+ * (or none) the process's ambient env happened to carry (round 2 review,
+ * HIGH).
+ */
 function emitOperationEvent(
   emit: typeof log,
+  task: number,
   target: string,
   result: OperationResult,
   errorClass: string | null
 ): void {
-  emit({
-    kind: 'operation',
-    event: 'completed',
-    operation: 'task_resume',
-    target,
-    result,
-    error_class: errorClass,
-    payload: {}
-  })
+  const prevTask = process.env.VINAYA_TASK
+  process.env.VINAYA_TASK = String(task)
+  try {
+    emit({
+      kind: 'operation',
+      event: 'completed',
+      operation: 'task_resume',
+      target,
+      result,
+      error_class: errorClass,
+      payload: {}
+    })
+  } finally {
+    if (prevTask === undefined) delete process.env.VINAYA_TASK
+    else process.env.VINAYA_TASK = prevTask
+  }
 }
 
 // --- the handler ---------------------------------------------------------------
@@ -202,17 +222,17 @@ export function createTaskResumeHandler(
     const controlStoreDeps: ControlStoreDeps = defaultControlStoreDeps(() => join(dirname(root), 'control-store'))
     const packet = readEscalationPacket(root, issue)
     if (packet === null) {
-      emitOperationEvent(deps.log, target, 'refused', 'precondition')
+      emitOperationEvent(deps.log, issue, target, 'refused', 'precondition')
       return fail(taskToolError('precondition', `task ${issue} has no paused run recorded — nothing to resume`))
     }
     if (packet.inputs === null || packet.inputs.prNumber === null) {
-      emitOperationEvent(deps.log, target, 'refused', 'precondition')
+      emitOperationEvent(deps.log, issue, target, 'refused', 'precondition')
       return fail(
         taskToolError('precondition', `task ${issue}'s pause carries no PR yet — resume it with \`vinaya task run\``)
       )
     }
     if (packet.freshness === 'stale') {
-      emitOperationEvent(deps.log, target, 'refused', 'precondition')
+      emitOperationEvent(deps.log, issue, target, 'refused', 'precondition')
       return fail(
         taskToolError('precondition', `task ${issue}'s pause has already been superseded by a published round`)
       )
@@ -221,7 +241,7 @@ export function createTaskResumeHandler(
     const pr = packet.inputs.prNumber
     const held = readPauseState(root, issue)
     if (held === null) {
-      emitOperationEvent(deps.log, target, 'refused', 'precondition')
+      emitOperationEvent(deps.log, issue, target, 'refused', 'precondition')
       return fail(taskToolError('precondition', `task ${issue} has no paused run recorded — nothing to resume`))
     }
     const escalationId = held.escalationId ?? escalationIdFor(issue, held.round, held.head)
@@ -230,7 +250,7 @@ export function createTaskResumeHandler(
     const existingResolution = resolutionRead.status === 'ok' ? resolutionRead.value : null
     if (existingResolution) {
       if (existingResolution.decision === 'cancel') {
-        emitOperationEvent(deps.log, target, 'refused', 'precondition')
+        emitOperationEvent(deps.log, issue, target, 'refused', 'precondition')
         return fail(
           taskToolError(
             'precondition',
@@ -238,7 +258,7 @@ export function createTaskResumeHandler(
           )
         )
       }
-      emitOperationEvent(deps.log, target, 'ok', null)
+      emitOperationEvent(deps.log, issue, target, 'ok', null)
       return ok({
         task: issue,
         pr,
@@ -251,7 +271,7 @@ export function createTaskResumeHandler(
 
     const escalation = readEscalationRecord(issue, escalationId, controlStoreDeps)
     if (escalation === null) {
-      emitOperationEvent(deps.log, target, 'refused', 'precondition')
+      emitOperationEvent(deps.log, issue, target, 'refused', 'precondition')
       return fail(
         taskToolError(
           'precondition',
@@ -260,7 +280,7 @@ export function createTaskResumeHandler(
       )
     }
     if (escalation.pr !== pr) {
-      emitOperationEvent(deps.log, target, 'refused', 'precondition')
+      emitOperationEvent(deps.log, issue, target, 'refused', 'precondition')
       return fail(
         taskToolError(
           'precondition',
@@ -271,7 +291,7 @@ export function createTaskResumeHandler(
 
     const lock = readDriverLock(root, issue)
     if (lock && isDriverPidAlive(lock.pid)) {
-      emitOperationEvent(deps.log, target, 'refused', 'precondition')
+      emitOperationEvent(deps.log, issue, target, 'refused', 'precondition')
       return fail(
         taskToolError(
           'precondition',
@@ -302,7 +322,7 @@ export function createTaskResumeHandler(
     const rulings = deps.fetchRulings(pr)
     const newestRulingOrdinal = deps.fetchNewestRulingOrdinal(pr)
     if (rulings.length === 0 || newestRulingOrdinal <= escalation.rulingOrdinal) {
-      emitOperationEvent(deps.log, target, 'refused', 'authority')
+      emitOperationEvent(deps.log, issue, target, 'refused', 'authority')
       return fail(
         taskToolError(
           'authority',
@@ -319,7 +339,7 @@ export function createTaskResumeHandler(
 
     const claim = deps.store.claim({ escalationId, caller: ctx.caller.id, pr, startedAt: deps.now() })
     if (!claim.claimed) {
-      emitOperationEvent(deps.log, target, 'ok', null)
+      emitOperationEvent(deps.log, issue, target, 'ok', null)
       return ok({ task: issue, pr, escalationId, outcome: 'already_resumed', authenticatedBy, authenticatedFrom })
     }
 
@@ -334,11 +354,11 @@ export function createTaskResumeHandler(
       })
     } catch (err) {
       deps.store.release(escalationId)
-      emitOperationEvent(deps.log, target, 'error', 'infrastructure')
+      emitOperationEvent(deps.log, issue, target, 'error', 'infrastructure')
       return fail(taskToolError('infrastructure', `task_resume could not launch the run: ${(err as Error).message}`))
     }
 
-    emitOperationEvent(deps.log, target, 'ok', null)
+    emitOperationEvent(deps.log, issue, target, 'ok', null)
     return ok({ task: issue, pr, escalationId, outcome: 'started', authenticatedBy, authenticatedFrom })
   }
 }
