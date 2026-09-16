@@ -1,6 +1,6 @@
 {
   "name": "@attalabs/aeg-forge-state",
-  "version": "0.28.0",
+  "version": "0.29.0",
   "publishConfig": {
     "access": "public"
   },
@@ -28,7 +28,7 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "@attalabs/aeg-types": "0.28.0",
+    "@attalabs/aeg-types": "0.29.0",
     "@octokit/graphql": "^8.1.1"
   },
   "devDependencies": {
