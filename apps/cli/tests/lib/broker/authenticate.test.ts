@@ -11,6 +11,7 @@ import {
   authenticateWorkerInvocation,
   ForgedInvocationError
 } from '../../../src/lib/broker'
+import type { LogEventInput } from '../../../src/lib/log-sink'
 
 /** An in-memory `DispatchTeeRecoveryDeps` naming exactly one launch record — `records` is `[runId, role, task]` triples, mirroring what `dispatchRole` would have durably written before spawning this child. */
 function fakeDispatchDeps(records: readonly [string, string, number][]): DispatchTeeRecoveryDeps {
@@ -149,5 +150,47 @@ describe('authenticateOperatorInvocation', () => {
     expect(() => authenticateOperatorInvocation({ VINAYA_MCP_CALLER: 'operator-session-1' }, 0)).toThrow(
       ForgedInvocationError
     )
+  })
+})
+
+/** task-log-v1 task 6 (O1): both `authenticate*Invocation` functions emit one `operation` event for the invocation itself — `ok` on success, `refused` (naming `ForgedInvocationError`) on failure — before ever returning or throwing. */
+describe('authenticate*Invocation — operation log events (task-log-v1 task 6, O1)', () => {
+  it('authenticateWorkerInvocation emits operation(ok) on success', () => {
+    const events: LogEventInput[] = []
+    authenticateWorkerInvocation(
+      { VINAYA_ROLE: 'developer', VINAYA_TASK: '2', VINAYA_RUN_ID: 'run-abc' },
+      REAL_DISPATCH,
+      (e) => events.push(e)
+    )
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({ kind: 'operation', event: 'completed', result: 'ok' })
+  })
+
+  it('authenticateWorkerInvocation emits operation(refused) naming ForgedInvocationError on failure, never a silent throw', () => {
+    const events: LogEventInput[] = []
+    expect(() =>
+      authenticateWorkerInvocation(
+        { VINAYA_ROLE: 'principal', VINAYA_TASK: '2', VINAYA_RUN_ID: 'run-abc' },
+        REAL_DISPATCH,
+        (e) => events.push(e)
+      )
+    ).toThrow(ForgedInvocationError)
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({
+      kind: 'operation',
+      event: 'completed',
+      result: 'refused',
+      error_class: 'ForgedInvocationError'
+    })
+  })
+
+  it('authenticateOperatorInvocation emits operation(ok) on success and operation(refused) on failure', () => {
+    const okEvents: LogEventInput[] = []
+    authenticateOperatorInvocation({ VINAYA_MCP_CALLER: 'operator-session-1' }, 2, (e) => okEvents.push(e))
+    expect(okEvents).toMatchObject([{ result: 'ok' }])
+
+    const refusedEvents: LogEventInput[] = []
+    expect(() => authenticateOperatorInvocation({}, 2, (e) => refusedEvents.push(e))).toThrow(ForgedInvocationError)
+    expect(refusedEvents).toMatchObject([{ result: 'refused', error_class: 'ForgedInvocationError' }])
   })
 })

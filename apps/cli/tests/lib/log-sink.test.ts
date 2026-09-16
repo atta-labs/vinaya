@@ -54,6 +54,29 @@ describe('log-sink — a valid line', () => {
     expect(parsed.meta.host).toBe('cli')
   })
 
+  it("defaults meta.lineage.run to this sink's own runId when VINAYA_RUN is unset (task-log-v1 task 6, O1: 'linked to the current run')", async () => {
+    const { dir, deps } = testDeps()
+    const { log, runId } = createLogSink(deps)
+    log(DISPATCHED)
+    await flush()
+    const path = join(dir, 'outbox', 'atta-labs-vinaya', '404.ndjson')
+    const parsed = JSON.parse(readFileSync(path, 'utf8').trim())
+    expect(parsed.meta.lineage.run).toBe(runId)
+    expect(parsed.meta.run_id).toBe(runId)
+  })
+
+  it("honors an explicit VINAYA_RUN over this process's own runId — a caller that structurally knows a broader run identity (e.g. a loop_id) still wins", async () => {
+    const { dir, deps } = testDeps({
+      env: () => ({ VINAYA_ROLE: 'developer', VINAYA_TASK: '404', VINAYA_RUN: 'loop-abc' })
+    })
+    const { log } = createLogSink(deps)
+    log(DISPATCHED)
+    await flush()
+    const path = join(dir, 'outbox', 'atta-labs-vinaya', '404.ndjson')
+    const parsed = JSON.parse(readFileSync(path, 'utf8').trim())
+    expect(parsed.meta.lineage.run).toBe('loop-abc')
+  })
+
   it('two calls in the same millisecond each carry a distinct, correctly-assigned seq', async () => {
     // `seq` is assigned synchronously at call time (call order), not at
     // write time — two overlapping async appends are not guaranteed to

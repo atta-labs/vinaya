@@ -41,6 +41,30 @@ import { posix as posixPath } from 'node:path'
 import { acquireOwnership, type ControlStoreDeps, readEffect, type Role, ROLE_VALUES } from '@attalabs/aeg-core'
 import { type DispatchTeeRecoveryDeps, launchRecordMatchesRun, realDispatchTeeRecoveryDeps } from './dispatch.js'
 import { createEffectExecutor, type EffectReconciler, sha256Hex } from './effects.js'
+import { log as defaultLogEvent, type LogEventInput } from './log-sink.js'
+
+/**
+ * Every `operation` log line this module emits (O1: "normalized invocation,
+ * authorization ... outcomes"): one call for authenticating the invocation
+ * context itself (`authenticate*Invocation`), one for the grant/target/
+ * replay checks `requestEffect` runs before ever reaching the effect
+ * executor (whose own `attempted`/`observed`/`verified` sequence,
+ * `effects.ts`, picks up from there). Threaded as an optional trailing
+ * parameter, defaulting to the real global sink — the SAME `deps`-with-a-
+ * real-default shape `authenticateWorkerInvocation`'s own
+ * `DispatchTeeRecoveryDeps` parameter already uses in this file, rather
+ * than a second, differently-shaped injection convention.
+ */
+export type BrokerLogEvent = (e: LogEventInput) => void
+
+function operationEvent(
+  operation: string,
+  target: string | null,
+  result: 'ok' | 'refused' | 'error',
+  errorClass: string | null
+): LogEventInput {
+  return { kind: 'operation', event: 'completed', payload: {}, operation, target, result, error_class: errorClass }
+}
 
 // --- invocation context (O1) ------------------------------------------------
 
@@ -138,34 +162,48 @@ function assertPositiveTaskId(task: number, raw: unknown): number {
  */
 export function authenticateWorkerInvocation(
   env: Readonly<Record<string, string | undefined>>,
-  deps: DispatchTeeRecoveryDeps = realDispatchTeeRecoveryDeps()
+  deps: DispatchTeeRecoveryDeps = realDispatchTeeRecoveryDeps(),
+  logEvent: BrokerLogEvent = defaultLogEvent
 ): InvocationContext {
-  const role = env.VINAYA_ROLE
-  if (!isDispatchedRole(role)) {
-    throw new ForgedInvocationError(
-      `VINAYA_ROLE ${JSON.stringify(role ?? null)} is not a recognized dispatched role at all`
-    )
-  }
-  const mapped = DISPATCHED_ROLE_TO_BROKER_ROLE[role]
-  if (mapped === undefined) {
-    throw new ForgedInvocationError(
-      `VINAYA_ROLE ${JSON.stringify(role)} does not map to a broker-grantable Worker role`
-    )
-  }
-  const taskRaw = env.VINAYA_TASK
-  const task = taskRaw === undefined ? Number.NaN : Number.parseInt(taskRaw, 10)
-  const validTask = assertPositiveTaskId(task, taskRaw ?? null)
+  try {
+    const role = env.VINAYA_ROLE
+    if (!isDispatchedRole(role)) {
+      throw new ForgedInvocationError(
+        `VINAYA_ROLE ${JSON.stringify(role ?? null)} is not a recognized dispatched role at all`
+      )
+    }
+    const mapped = DISPATCHED_ROLE_TO_BROKER_ROLE[role]
+    if (mapped === undefined) {
+      throw new ForgedInvocationError(
+        `VINAYA_ROLE ${JSON.stringify(role)} does not map to a broker-grantable Worker role`
+      )
+    }
+    const taskRaw = env.VINAYA_TASK
+    const task = taskRaw === undefined ? Number.NaN : Number.parseInt(taskRaw, 10)
+    const validTask = assertPositiveTaskId(task, taskRaw ?? null)
 
-  const runId = env.VINAYA_RUN_ID
-  if (runId === undefined || runId.trim().length === 0) {
-    throw new ForgedInvocationError('no VINAYA_RUN_ID on this invocation — cannot cross-check the claimed task')
-  }
-  if (!launchRecordMatchesRun(deps, runId, role, validTask)) {
-    throw new ForgedInvocationError(
-      `no launch record names run ${JSON.stringify(runId)} as role ${JSON.stringify(role)} for task ${validTask} — the claimed task does not match what dispatchRole actually launched this child for`
+    const runId = env.VINAYA_RUN_ID
+    if (runId === undefined || runId.trim().length === 0) {
+      throw new ForgedInvocationError('no VINAYA_RUN_ID on this invocation — cannot cross-check the claimed task')
+    }
+    if (!launchRecordMatchesRun(deps, runId, role, validTask)) {
+      throw new ForgedInvocationError(
+        `no launch record names run ${JSON.stringify(runId)} as role ${JSON.stringify(role)} for task ${validTask} — the claimed task does not match what dispatchRole actually launched this child for`
+      )
+    }
+    logEvent(operationEvent('authenticate-invocation', `task:${validTask}`, 'ok', null))
+    return mintInvocationContext(mapped, validTask)
+  } catch (err) {
+    logEvent(
+      operationEvent(
+        'authenticate-invocation',
+        null,
+        'refused',
+        err instanceof Error ? err.constructor.name : 'UnknownError'
+      )
     )
+    throw err
   }
-  return mintInvocationContext(mapped, validTask)
 }
 
 /**
@@ -180,13 +218,28 @@ export function authenticateWorkerInvocation(
  */
 export function authenticateOperatorInvocation(
   env: Readonly<Record<string, string | undefined>>,
-  task: number
+  task: number,
+  logEvent: BrokerLogEvent = defaultLogEvent
 ): InvocationContext {
-  const callerId = env.VINAYA_MCP_CALLER
-  if (callerId === undefined || callerId.trim().length === 0) {
-    throw new ForgedInvocationError('no VINAYA_MCP_CALLER on this invocation — the Operator channel requires one')
+  try {
+    const callerId = env.VINAYA_MCP_CALLER
+    if (callerId === undefined || callerId.trim().length === 0) {
+      throw new ForgedInvocationError('no VINAYA_MCP_CALLER on this invocation — the Operator channel requires one')
+    }
+    const context = mintInvocationContext('operator', assertPositiveTaskId(task, task))
+    logEvent(operationEvent('authenticate-invocation', `task:${context.task}`, 'ok', null))
+    return context
+  } catch (err) {
+    logEvent(
+      operationEvent(
+        'authenticate-invocation',
+        null,
+        'refused',
+        err instanceof Error ? err.constructor.name : 'UnknownError'
+      )
+    )
+    throw err
   }
-  return mintInvocationContext('operator', assertPositiveTaskId(task, task))
 }
 
 // --- operations and the grant table (O2, O3) --------------------------------
@@ -408,16 +461,33 @@ export type BrokerEffectRequest = {
 export function requestEffect(
   deps: ControlStoreDeps,
   context: InvocationContext,
-  request: BrokerEffectRequest
+  request: BrokerEffectRequest,
+  logEvent: BrokerLogEvent = defaultLogEvent
 ): string {
-  assertAuthenticatedContext(context)
-  assertGranted(context.role, request.operation)
-  assertTargetScopedToTask(context.task, request.target)
-  assertNoProtectedPaths(request.touchedPaths)
-  assertNoReplayedInputVersion(deps, context.task, request.key, request.inputVersion)
+  try {
+    assertAuthenticatedContext(context)
+    assertGranted(context.role, request.operation)
+    assertTargetScopedToTask(context.task, request.target)
+    assertNoProtectedPaths(request.touchedPaths)
+    assertNoReplayedInputVersion(deps, context.task, request.key, request.inputVersion)
+  } catch (err) {
+    logEvent(
+      operationEvent(
+        request.operation,
+        request.target,
+        'refused',
+        err instanceof Error ? err.constructor.name : 'UnknownError'
+      )
+    )
+    throw err
+  }
+  // O1's "authorization" outcome — the four checks above all passed, before
+  // the effect executor's own `attempted`/`observed`/`verified` sequence
+  // (`effects.ts`) picks up the write itself.
+  logEvent(operationEvent(request.operation, request.target, 'ok', null))
 
   const ownerId = `broker:${context.task}:${context.role}:${request.operation}:${request.key}`
-  const executor = createEffectExecutor(deps, context.task, ownerId)
+  const executor = createEffectExecutor(deps, context.task, ownerId, logEvent)
   return executor.execute({
     key: request.key,
     identity: {
