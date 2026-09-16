@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { createServer } from 'node:net'
-import { spawnSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { homedir, tmpdir } from 'node:os'
 import { chmodSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -10,8 +19,10 @@ import {
   buildWorkerSandboxProfile,
   isWorkerBoundaryAvailable,
   REAL_WORKER_BOUNDARY_DEPS,
+  resolveOAuthConfigSourceDir,
   resolveWorkerBoundaryLaunch,
   RUNTIME_CREDENTIAL_ENV_KEYS,
+  stageOAuthCredential,
   WORKER_ENV_ALLOWLIST_KEYS,
   type WorkerBoundaryDeps
 } from '../../../src/lib/worker-boundary'
@@ -108,6 +119,122 @@ describe('RUNTIME_CREDENTIAL_ENV_KEYS — round 2 review, BLOCKER (a real model-
 
   it('an unknown vendor string yields no entry — a caller falls back to an empty list, never throws', () => {
     expect(RUNTIME_CREDENTIAL_ENV_KEYS['not-a-real-vendor']).toBeUndefined()
+  })
+})
+
+describe('resolveOAuthConfigSourceDir — O1 (Issue #640)', () => {
+  it('defaults to <realHome>/.claude when the source env carries no CLAUDE_CONFIG_DIR', () => {
+    expect(resolveOAuthConfigSourceDir({}, '/home/dev')).toBe(join('/home/dev', '.claude'))
+  })
+
+  it('honors an explicit CLAUDE_CONFIG_DIR override on the source env', () => {
+    expect(resolveOAuthConfigSourceDir({ CLAUDE_CONFIG_DIR: '/custom/config' }, '/home/dev')).toBe('/custom/config')
+  })
+})
+
+describe('stageOAuthCredential — O1 (Issue #640)', () => {
+  it('returns null, and writes nothing, when no credential file exists at the source', () => {
+    const scratchTmpDir = tempDir('vinaya-wb-oauth-stage-none-')
+    const result = stageOAuthCredential({}, '/home/dev', scratchTmpDir, { readOAuthCredentialFile: () => null })
+    expect(result).toBeNull()
+    expect(existsSync(join(scratchTmpDir, 'claude-config'))).toBe(false)
+  })
+
+  it('stages a scoped COPY of the credential contents into scratchTmpDir, never the real source path', () => {
+    const scratchTmpDir = tempDir('vinaya-wb-oauth-stage-copy-')
+    const fixtureContents = JSON.stringify({ accessToken: 'fixture-not-a-real-oauth-token' })
+    let requestedPath: string | null = null
+    const result = stageOAuthCredential({}, '/home/dev', scratchTmpDir, {
+      readOAuthCredentialFile: (path) => {
+        requestedPath = path
+        return fixtureContents
+      }
+    })
+    expect(requestedPath).toBe(join('/home/dev', '.claude', '.credentials.json'))
+    expect(result).not.toBeNull()
+    const stagedPath = join(result!.configDir, '.credentials.json')
+    expect(stagedPath.startsWith(scratchTmpDir)).toBe(true)
+    expect(stagedPath).not.toContain('/home/dev')
+    expect(readFileSync(stagedPath, 'utf8')).toBe(fixtureContents)
+  })
+
+  it('reads from CLAUDE_CONFIG_DIR when the source env sets one, rather than the <realHome>/.claude default', () => {
+    const scratchTmpDir = tempDir('vinaya-wb-oauth-stage-override-')
+    let requestedPath: string | null = null
+    stageOAuthCredential({ CLAUDE_CONFIG_DIR: '/custom/config' }, '/home/dev', scratchTmpDir, {
+      readOAuthCredentialFile: (path) => {
+        requestedPath = path
+        return '{}'
+      }
+    })
+    expect(requestedPath).toBe(join('/custom/config', '.credentials.json'))
+  })
+
+  it('falls back to a real file read when no readOAuthCredentialFile dep is given', () => {
+    const scratchTmpDir = tempDir('vinaya-wb-oauth-stage-realread-')
+    const result = stageOAuthCredential({ CLAUDE_CONFIG_DIR: '/definitely/does/not/exist' }, '/home/dev', scratchTmpDir)
+    expect(result).toBeNull()
+  })
+})
+
+describe('resolveWorkerBoundaryLaunch — OAuth credential staging (O1, Issue #640, injected deps)', () => {
+  it('stageOAuthCredential: true with a credential present resolves a non-null oauthConfigDir readable inside the launch', () => {
+    const allowedDir = tempDir('vinaya-wb-oauth-launch-allowed-')
+    const homeDir = tempDir('vinaya-wb-oauth-launch-home-')
+    const fixtureContents = JSON.stringify({ accessToken: 'fixture-not-a-real-oauth-token' })
+    const result = resolveWorkerBoundaryLaunch(
+      {
+        binaryPath: '/usr/bin/env',
+        args: [],
+        allowedDir,
+        vinayaHomeDir: homeDir,
+        vinayaHomeWritableSubdirs: [],
+        stageOAuthCredential: true
+      },
+      { ...AVAILABLE_DEPS, readOAuthCredentialFile: () => fixtureContents }
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    try {
+      expect(result.launch.oauthConfigDir).not.toBeNull()
+      const stagedPath = join(result.launch.oauthConfigDir as string, '.credentials.json')
+      expect(readFileSync(stagedPath, 'utf8')).toBe(fixtureContents)
+    } finally {
+      result.launch.cleanup()
+    }
+  })
+
+  it('stageOAuthCredential: true with no credential present resolves oauthConfigDir: null, never throws', () => {
+    const allowedDir = tempDir('vinaya-wb-oauth-launch-missing-allowed-')
+    const homeDir = tempDir('vinaya-wb-oauth-launch-missing-home-')
+    const result = resolveWorkerBoundaryLaunch(
+      {
+        binaryPath: '/usr/bin/env',
+        args: [],
+        allowedDir,
+        vinayaHomeDir: homeDir,
+        vinayaHomeWritableSubdirs: [],
+        stageOAuthCredential: true
+      },
+      { ...AVAILABLE_DEPS, readOAuthCredentialFile: () => null }
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.launch.oauthConfigDir).toBeNull()
+    result.launch.cleanup()
+  })
+
+  it('stageOAuthCredential omitted never attempts staging, even when a credential would be found', () => {
+    const allowedDir = tempDir('vinaya-wb-oauth-launch-disabled-allowed-')
+    const homeDir = tempDir('vinaya-wb-oauth-launch-disabled-home-')
+    const result = resolveWorkerBoundaryLaunch(
+      { binaryPath: '/usr/bin/env', args: [], allowedDir, vinayaHomeDir: homeDir, vinayaHomeWritableSubdirs: [] },
+      { ...AVAILABLE_DEPS, readOAuthCredentialFile: () => '{"accessToken":"should-never-be-staged"}' }
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.launch.oauthConfigDir).toBeNull()
+    result.launch.cleanup()
   })
 })
 
@@ -1069,6 +1196,121 @@ describe('resolveWorkerBoundaryLaunch — live sandbox-exec enforcement (round 3
   )
 })
 
+describe('resolveWorkerBoundaryLaunch — OAuth credential staging, live sandbox-exec (O1/O3, Issue #640)', () => {
+  it.skipIf(!isWorkerBoundaryAvailable(REAL_WORKER_BOUNDARY_DEPS))(
+    'an OAuth-only host resolves a working staged credential path into the confined session; the real credentials file and Keychain remain denied',
+    () => {
+      const allowedDir = tempDir('vinaya-wb-live-oauth-allowed-')
+      const homeDir = tempDir('vinaya-wb-live-oauth-home-')
+      const fixtureContents = JSON.stringify({ accessToken: 'fixture-not-a-real-oauth-token' })
+      const realCredentialPath = join(homedir(), '.claude', '.credentials.json')
+
+      // A bash probe, not a bun/node one, deliberately (round 5's own
+      // `/bin/ls`-over-`bun -e` precedent, this Keychain describe block's
+      // sibling test, above): found LIVE, in authoring this task, that a
+      // confined bun process's own `process.env` reads back EMPTY under
+      // this profile — the kernel-level `execve` environment (confirmed via
+      // a confined `/usr/bin/env`, which prints it correctly) is intact, so
+      // this is a bun-runtime-under-Seatbelt quirk, not evidence the env
+      // override failed — a plain shell reads `$CLAUDE_CONFIG_DIR` reliably
+      // instead, the same posture the pre-existing `$TMPDIR` override test
+      // above already takes for exactly this reason.
+      const probeScript = join(allowedDir, 'oauth-probe.sh')
+      writeFileSync(
+        probeScript,
+        [
+          '#!/bin/bash',
+          'printf \'STAGED:%s\\n\' "$(cat "$CLAUDE_CONFIG_DIR/.credentials.json" 2>/dev/null)"',
+          `if cat ${JSON.stringify(realCredentialPath)} >/dev/null 2>&1; then echo 'REAL:READABLE'; else echo 'REAL:BLOCKED'; fi`,
+          `if ls ${JSON.stringify(join(homedir(), 'Library', 'Keychains'))} >/dev/null 2>&1; then echo 'KEYCHAIN:READABLE'; else echo 'KEYCHAIN:BLOCKED'; fi`
+        ].join('\n')
+      )
+      chmodSync(probeScript, 0o755)
+
+      const result = resolveWorkerBoundaryLaunch(
+        {
+          binaryPath: probeScript,
+          args: [],
+          allowedDir,
+          vinayaHomeDir: homeDir,
+          vinayaHomeWritableSubdirs: [],
+          stageOAuthCredential: true
+        },
+        { ...REAL_WORKER_BOUNDARY_DEPS, readOAuthCredentialFile: () => fixtureContents }
+      )
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.launch.oauthConfigDir).not.toBeNull()
+      try {
+        const env = buildWorkerEnv(process.env, { CLAUDE_CONFIG_DIR: result.launch.oauthConfigDir as string })
+        const spawnResult = spawnSync(result.launch.command, result.launch.args, {
+          cwd: allowedDir,
+          encoding: 'utf8',
+          env
+        })
+        expect(spawnResult.status, `stderr: ${spawnResult.stderr}`).toBe(0)
+        const lines = spawnResult.stdout.trim().split('\n')
+        expect(lines[0], 'the confined child reads the staged COPY via CLAUDE_CONFIG_DIR').toBe(
+          `STAGED:${fixtureContents}`
+        )
+        expect(
+          lines[1],
+          "the real ~/.claude/.credentials.json stays denied — it is a subpath of the boundary's own HOME deny rule, never widened by staging"
+        ).toBe('REAL:BLOCKED')
+        expect(lines[2], 'the Keychain deny rule is unaffected by OAuth staging').toBe('KEYCHAIN:BLOCKED')
+      } finally {
+        result.launch.cleanup()
+      }
+    }
+  )
+
+  it.skipIf(!isWorkerBoundaryAvailable(REAL_WORKER_BOUNDARY_DEPS))(
+    'O3: the real credentials file and Keychain stay denied on the ANTHROPIC_API_KEY credential path too, not only the staged-OAuth path proven above',
+    () => {
+      const allowedDir = tempDir('vinaya-wb-live-oauth-o3-allowed-')
+      const homeDir = tempDir('vinaya-wb-live-oauth-o3-home-')
+      const realCredentialPath = join(homedir(), '.claude', '.credentials.json')
+
+      const probeScript = join(allowedDir, 'o3-probe.sh')
+      writeFileSync(
+        probeScript,
+        [
+          '#!/bin/bash',
+          `if cat ${JSON.stringify(realCredentialPath)} >/dev/null 2>&1; then echo 'REAL:READABLE'; else echo 'REAL:BLOCKED'; fi`,
+          `if ls ${JSON.stringify(join(homedir(), 'Library', 'Keychains'))} >/dev/null 2>&1; then echo 'KEYCHAIN:READABLE'; else echo 'KEYCHAIN:BLOCKED'; fi`
+        ].join('\n')
+      )
+      chmodSync(probeScript, 0o755)
+
+      // `stageOAuthCredential` omitted entirely — `dispatch.ts` only ever
+      // sets it `true` for `agent === 'claude'` regardless of whether an
+      // `ANTHROPIC_API_KEY` is also present, so this launch resolves
+      // exactly as an API-key-authenticated dispatch's boundary does.
+      const result = resolveWorkerBoundaryLaunch(
+        { binaryPath: probeScript, args: [], allowedDir, vinayaHomeDir: homeDir, vinayaHomeWritableSubdirs: [] },
+        REAL_WORKER_BOUNDARY_DEPS
+      )
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.launch.oauthConfigDir, 'no staging was requested on this path').toBeNull()
+      try {
+        const env = buildWorkerEnv(process.env, {}, RUNTIME_CREDENTIAL_ENV_KEYS.claude)
+        const spawnResult = spawnSync(result.launch.command, result.launch.args, {
+          cwd: allowedDir,
+          encoding: 'utf8',
+          env
+        })
+        expect(spawnResult.status, `stderr: ${spawnResult.stderr}`).toBe(0)
+        const lines = spawnResult.stdout.trim().split('\n')
+        expect(lines[0], 'the real credentials file stays denied regardless of credential path').toBe('REAL:BLOCKED')
+        expect(lines[1], 'the Keychain deny rule stays in force regardless of credential path').toBe('KEYCHAIN:BLOCKED')
+      } finally {
+        result.launch.cleanup()
+      }
+    }
+  )
+})
+
 describe('resolveWorkerBoundaryLaunch — bun toolchain reachable (round 5 review, BLOCKER)', () => {
   it.skipIf(!isWorkerBoundaryAvailable(REAL_WORKER_BOUNDARY_DEPS))(
     'a confined child can still exec bun for its own build/test subprocesses when binaryPath is a non-bun vendor binary (the real production shape)',
@@ -1331,6 +1573,115 @@ describe('resolveBunExecDir — independent of the DISPATCHER process own runtim
         )
         expect(spawnResult.status, `stderr: ${spawnResult.stderr}`).toBe(0)
         expect(spawnResult.stdout.trim().length).toBeGreaterThan(0)
+      } finally {
+        result.launch.cleanup()
+      }
+    }
+  )
+})
+
+/** `null` when no real `node` binary is on this host's PATH — best-effort, never assumed, the same posture `resolveGitExecPath`/`resolveBunExecDir` already take in `worker-boundary.ts` itself. */
+const REAL_NODE_PATH: string | null = (() => {
+  try {
+    return execFileSync('which', ['node'], { encoding: 'utf8' }).trim() || null
+  } catch {
+    return null
+  }
+})()
+
+describe('resolveWorkerBoundaryLaunch — file-read-metadata for Node.js-hosted confined processes (round 2 review, MAJOR)', () => {
+  it.skipIf(!isWorkerBoundaryAvailable(REAL_WORKER_BOUNDARY_DEPS) || !REAL_NODE_PATH)(
+    'a real node binary no longer crashes at startup on an ancestor lstat EPERM, while the real credentials file stays content-denied',
+    () => {
+      const allowedDir = tempDir('vinaya-wb-live-node-allowed-')
+      const homeDir = tempDir('vinaya-wb-live-node-home-')
+      const realCredentialPath = join(homedir(), '.claude', '.credentials.json')
+
+      const probeScript = join(allowedDir, 'node-probe.js')
+      writeFileSync(
+        probeScript,
+        [
+          "const fs = require('node:fs')",
+          "console.log('STARTED')",
+          `try { fs.readFileSync(${JSON.stringify(realCredentialPath)}, 'utf8'); console.log('CRED:READABLE') } catch { console.log('CRED:BLOCKED') }`
+        ].join('\n')
+      )
+
+      const result = resolveWorkerBoundaryLaunch(
+        {
+          binaryPath: REAL_NODE_PATH as string,
+          args: [probeScript],
+          allowedDir,
+          vinayaHomeDir: homeDir,
+          vinayaHomeWritableSubdirs: []
+        },
+        REAL_WORKER_BOUNDARY_DEPS
+      )
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      try {
+        // Before this fix: `node <script>` failed immediately with `EPERM:
+        // operation not permitted, lstat '/private'` (Node's own module
+        // resolution walking every ancestor directory up to the filesystem
+        // root) — never reaching `STARTED` at all, live-reproduced on this
+        // host with the un-fixed profile.
+        const spawnResult = spawnSync(result.launch.command, result.launch.args, {
+          cwd: allowedDir,
+          encoding: 'utf8'
+        })
+        expect(spawnResult.status, `stderr: ${spawnResult.stderr}`).toBe(0)
+        const lines = spawnResult.stdout.trim().split('\n')
+        expect(lines[0], 'the confined node process must start and run its own script').toBe('STARTED')
+        expect(
+          lines[1],
+          'file-read-metadata is a separate Seatbelt operation from file-read* (content) — granting the former must not reopen the latter'
+        ).toBe('CRED:BLOCKED')
+      } finally {
+        result.launch.cleanup()
+      }
+    }
+  )
+})
+
+describe('resolveWorkerBoundaryLaunch — symlinked binaryPath exec target (security review, HIGH)', () => {
+  it.skipIf(!isWorkerBoundaryAvailable(REAL_WORKER_BOUNDARY_DEPS))(
+    'a binaryPath that is a symlink into a different directory (the official installer layout) still execs successfully',
+    () => {
+      const allowedDir = tempDir('vinaya-wb-live-symlink-allowed-')
+      const homeDir = tempDir('vinaya-wb-live-symlink-home-')
+      const targetDir = tempDir('vinaya-wb-live-symlink-target-')
+      const binDir = tempDir('vinaya-wb-live-symlink-bin-')
+      const realVendor = join(targetDir, 'real-vendor')
+      writeFileSync(realVendor, '#!/bin/bash\necho ran-ok\n')
+      chmodSync(realVendor, 0o755)
+      // Mirrors the officially documented macOS install layout: a PATH
+      // entry symlinked into a SEPARATE directory from the symlink itself
+      // (e.g. `~/.local/bin/claude` -> `~/.local/share/claude/versions/<v>`)
+      // — the exact shape `dispatch.ts`'s own `which claude` resolution
+      // returns, and the shape the security review's HIGH finding
+      // reproduced against.
+      const symlinkPath = join(binDir, 'claude')
+      symlinkSync(realVendor, symlinkPath)
+
+      const result = resolveWorkerBoundaryLaunch(
+        { binaryPath: symlinkPath, args: [], allowedDir, vinayaHomeDir: homeDir, vinayaHomeWritableSubdirs: [] },
+        REAL_WORKER_BOUNDARY_DEPS
+      )
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      try {
+        // Before this fix: `sandbox-exec` was launched with the ORIGINAL,
+        // un-realpath'd symlink path as its exec target, while the
+        // profile's own process-exec allowlist was built from the
+        // REALPATH'd target directory — a mismatch that denied the launch
+        // outright (`execvp() ... Operation not permitted`), live-verified
+        // by the security reviewer against exactly this installer layout.
+        const spawnResult = spawnSync(result.launch.command, result.launch.args, {
+          cwd: allowedDir,
+          encoding: 'utf8'
+        })
+        expect(spawnResult.status, `stderr: ${spawnResult.stderr}`).toBe(0)
+        expect(spawnResult.stdout.trim()).toBe('ran-ok')
       } finally {
         result.launch.cleanup()
       }

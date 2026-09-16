@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -164,4 +164,164 @@ describe('vinaya dispatch --unattended — O3 fail-closed refusal', () => {
     expect(lines.find((l) => l.event === 'dispatched')).toBeDefined()
     expect(lines.find((l) => l.event === 'outcome_received')).toBeDefined()
   })
+})
+
+/**
+ * `worker-isolation-v1` task 3's own O3 fixture (`buildFixture`, above)
+ * always makes the boundary itself unavailable (a plain, non-git `cwd`), so
+ * every case there refuses before ever reaching O2's own credential check —
+ * proving O2 needs a fixture where the boundary actually RESOLVES: a real
+ * (if minimal) git repo as `cwd`, so `repoRoot()` finds it and the round-1
+ * Developer bootstrap grants the confined boundary a real, if read-only,
+ * launch (`apps/cli/specs/isolation.md` §4 item 4). This is Issue #640's
+ * own fixture shape, distinct from `buildFixture`'s deliberately-unavailable
+ * one above.
+ */
+function buildGitFixture(
+  opts: { requireWorkerIsolation?: boolean; homeCredential?: string } = {}
+): Fixture & { envCaptureFile: string } {
+  const home = tempDir('vinaya-unattended-oauth-home-')
+  const cwd = tempDir('vinaya-unattended-oauth-cwd-')
+  const binDir = tempDir('vinaya-unattended-oauth-bin-')
+  execFileSync('git', ['init', '-q'], { cwd })
+  const promptFile = join(cwd, 'prompt.txt')
+  writeFileSync(promptFile, 'do the thing')
+  // Round-1 Developer bootstrap (`isolation.md` §4 item 4): the repo root
+  // itself is READ-ONLY under confinement — only `.git`/`.worktrees` are
+  // writable. A marker/capture file at the repo root would silently fail to
+  // write (no error surfaced — the fake vendor script has no `set -e`, so a
+  // denied `touch`/`printf` is swallowed and the final line still emits a
+  // valid usage JSON, making the dispatch look like it "succeeded" while
+  // actually proving nothing) — found live authoring this fixture. `.git`
+  // is one of the two paths this bootstrap mode actually grants write to.
+  const markerFile = join(cwd, '.git', 'vendor-was-run.marker')
+  const envCaptureFile = join(cwd, '.git', 'env-capture.json')
+  // Captures $CLAUDE_CONFIG_DIR into a file (never stdout — stdout must stay
+  // the usage-shaped JSON `dispatch.ts`'s own vendor-output parser expects)
+  // so a test that DOES spawn can assert the confined child saw a staged
+  // path, distinct from the real fixture `home`.
+  writeFileSync(
+    join(binDir, 'claude'),
+    [
+      '#!/bin/bash',
+      `touch "${markerFile}"`,
+      `printf '{"claudeConfigDir":"%s"}' "$CLAUDE_CONFIG_DIR" > "${envCaptureFile}"`,
+      'cat > /dev/null',
+      `printf '%s' '{"session_id":"sess-x","usage":{"input_tokens":1,"output_tokens":1}}'`,
+      'exit 0'
+    ].join('\n')
+  )
+  chmodSync(join(binDir, 'claude'), 0o755)
+  if (opts.requireWorkerIsolation !== undefined) {
+    writeFileSync(
+      join(cwd, 'vinaya.config.json'),
+      JSON.stringify({ dispatch: { requireWorkerIsolation: opts.requireWorkerIsolation } })
+    )
+  }
+  if (opts.homeCredential !== undefined) {
+    mkdirSync(join(home, '.claude'), { recursive: true })
+    writeFileSync(join(home, '.claude', '.credentials.json'), opts.homeCredential)
+  }
+  return { home, cwd, binDir, promptFile, markerFile, envCaptureFile }
+}
+
+/** Same shape as `runDispatch`, but strips `ANTHROPIC_API_KEY` from the spawned CLI's own environment first — the Operator's real shell may have one set, which would silently give a "no credential" fixture a real credential and defeat the test. */
+function runDispatchNoApiKey(
+  fixture: Fixture,
+  extraArgs: string[]
+): { status: number; stdout: string; stderr: string } {
+  const { ANTHROPIC_API_KEY: _drop, ...envWithoutApiKey } = process.env
+  try {
+    const stdout = execFileSync(
+      'bun',
+      [INDEX, 'dispatch', 'developer', '--agent', 'claude', '--prompt-file', fixture.promptFile, ...extraArgs],
+      {
+        encoding: 'utf8',
+        cwd: fixture.cwd,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...envWithoutApiKey, HOME: fixture.home, PATH: `${fixture.binDir}:${pathWithoutRealVendors()}` }
+      }
+    )
+    return { status: 0, stdout, stderr: '' }
+  } catch (e) {
+    const err = e as { status?: number; stdout?: string; stderr?: string }
+    return { status: err.status ?? 1, stdout: String(err.stdout ?? ''), stderr: String(err.stderr ?? '') }
+  }
+}
+
+describe('vinaya dispatch --unattended — O2 fail-closed refusal (Issue #640, no resolvable credential)', () => {
+  it.skipIf(process.platform !== 'darwin')(
+    'refuses before ever spawning the vendor binary, boundary resolved but no ANTHROPIC_API_KEY and no OAuth session credential to stage',
+    () => {
+      const fixture = buildGitFixture({ requireWorkerIsolation: true })
+      const result = runDispatchNoApiKey(fixture, ['--unattended'])
+
+      expect(result.status).not.toBe(0)
+      expect(existsSync(fixture.markerFile), 'the vendor binary must never be spawned at all').toBe(false)
+      expect(existsSync(fixture.envCaptureFile)).toBe(false)
+      expect(result.stderr).toContain('refused')
+      expect(result.stderr).toContain('no resolvable credential')
+
+      const lines = outboxLines(fixture.home) as Array<{ event?: string; reason?: string }>
+      const failed = lines.find((l) => l.event === 'dispatch_failed')
+      expect(failed).toBeDefined()
+      expect(failed?.reason).toBe('refused')
+      expect(lines.find((l) => l.event === 'dispatched')).toBeUndefined()
+    }
+  )
+
+  it.skipIf(process.platform !== 'darwin')(
+    'succeeds, staging a scoped copy, when a real OAuth session credential exists at the fixture HOME — never refused',
+    () => {
+      const fixture = buildGitFixture({
+        requireWorkerIsolation: true,
+        homeCredential: JSON.stringify({ accessToken: 'fixture-not-a-real-oauth-token' })
+      })
+      const result = runDispatchNoApiKey(fixture, ['--unattended'])
+
+      expect(result.status, `stderr: ${result.stderr}`).toBe(0)
+      expect(existsSync(fixture.markerFile)).toBe(true)
+
+      const captured = JSON.parse(readFileSync(fixture.envCaptureFile, 'utf8')) as { claudeConfigDir: string }
+      expect(captured.claudeConfigDir.length).toBeGreaterThan(0)
+      expect(
+        captured.claudeConfigDir,
+        'the confined child must see a STAGED copy, never the real fixture HOME/.claude'
+      ).not.toBe(join(fixture.home, '.claude'))
+    }
+  )
+
+  it.skipIf(process.platform !== 'darwin')(
+    'succeeds without refusal when ANTHROPIC_API_KEY is set, even with no OAuth session credential at all',
+    () => {
+      const fixture = buildGitFixture({ requireWorkerIsolation: true })
+      const { ANTHROPIC_API_KEY: _drop, ...envWithoutApiKey } = process.env
+      const result = (() => {
+        try {
+          const stdout = execFileSync(
+            'bun',
+            [INDEX, 'dispatch', 'developer', '--agent', 'claude', '--prompt-file', fixture.promptFile, '--unattended'],
+            {
+              encoding: 'utf8',
+              cwd: fixture.cwd,
+              stdio: ['pipe', 'pipe', 'pipe'],
+              env: {
+                ...envWithoutApiKey,
+                HOME: fixture.home,
+                PATH: `${fixture.binDir}:${pathWithoutRealVendors()}`,
+                ANTHROPIC_API_KEY: 'sk-ant-fixture-not-real'
+              }
+            }
+          )
+          return { status: 0, stdout, stderr: '' }
+        } catch (e) {
+          const err = e as { status?: number; stdout?: string; stderr?: string }
+          return { status: err.status ?? 1, stdout: String(err.stdout ?? ''), stderr: String(err.stderr ?? '') }
+        }
+      })()
+
+      expect(result.status, `stderr: ${result.stderr}`).toBe(0)
+      expect(existsSync(fixture.markerFile)).toBe(true)
+    }
+  )
 })

@@ -2403,6 +2403,11 @@ export async function dispatchRole(
             args: spawnArgs,
             allowedDir: boundaryAllowedDir,
             vinayaHomeDir: GLOBAL_VINAYA_HOME,
+            // O1 (Issue #640): claude only — the one vendor whose OAuth
+            // credential shape `stageOAuthCredential` knows how to stage;
+            // Codex/Gemini get no staging attempt (`oauthConfigDir` stays
+            // `null` on the resolved launch, same as before this task).
+            stageOAuthCredential: agent === 'claude',
             // Round 5 review, CRITICAL fix: scoped to THIS dispatch's own
             // exact FILE, never its containing directory. The round-4 fix
             // (scoping to the repo-segment DIRECTORY, `dirname(outboxPath)`/
@@ -2506,6 +2511,45 @@ export async function dispatchRole(
       await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
       return { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason: 'refused' }
     }
+
+    // O2 (Issue #640): the boundary resolved, but a confined `agent` child
+    // still has no way to authenticate — no vendor API key on the parent's
+    // own environment (`RUNTIME_CREDENTIAL_ENV_KEYS[agent]`), and no OAuth
+    // session credential was found to stage (`boundaryLaunch.launch.oauthConfigDir`).
+    // This is exactly this task's own Origin: a confined `claude` dispatch
+    // on a subscription/OAuth-only Mac with no `ANTHROPIC_API_KEY` launched
+    // anyway, tried OAuth/keychain (both denied by the boundary), and hung
+    // silently to the dispatch ceiling with 0-byte output. Refuse here,
+    // before any spawn, naming the reason — the same shape every other
+    // pre-spawn refusal above already takes.
+    const runtimeCredentialKeys = RUNTIME_CREDENTIAL_ENV_KEYS[agent] ?? []
+    const hasRuntimeApiKey = runtimeCredentialKeys.some((key) => Boolean(process.env[key]))
+    const hasStagedOAuthCredential = boundaryLaunch.launch.oauthConfigDir !== null
+    if (!hasRuntimeApiKey && !hasStagedOAuthCredential) {
+      const durationMs = Date.now() - start
+      const priorSize = sizeOfSafe(outboxPath)
+      log({
+        kind: 'dispatch',
+        event: 'dispatch_failed',
+        payload: {},
+        target_role: role,
+        model: resolvedModel,
+        ...roundField,
+        effect_id: effectId,
+        reason: 'refused',
+        usage: null,
+        duration_ms: durationMs
+      })
+      writeLifecycle(
+        `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended start inside the worker boundary has ` +
+          `no resolvable credential (no ${runtimeCredentialKeys.length > 0 ? runtimeCredentialKeys.join('/') : 'known runtime env key'} ` +
+          'set on the parent environment, and no OAuth session credential could be staged)'
+      )
+      boundaryLaunch.launch.cleanup()
+      patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason: 'refused' })
+      await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
+      return { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason: 'refused' }
+    }
   }
 
   {
@@ -2573,7 +2617,16 @@ export async function dispatchRole(
               ...attribution,
               TMPDIR: resolvedBoundary.tmpDir,
               TMP: resolvedBoundary.tmpDir,
-              TEMP: resolvedBoundary.tmpDir
+              TEMP: resolvedBoundary.tmpDir,
+              // O1 (Issue #640): only set when a real OAuth session
+              // credential was actually staged (`resolveWorkerBoundaryLaunch`'s
+              // `stageOAuthCredential` opt, claude-only) — repoints the
+              // confined child's own config-dir lookup at the staged COPY
+              // (`worker-boundary.ts`'s `stageOAuthCredential`), never the
+              // real, denied `<realHome>/.claude`. The key is omitted
+              // entirely (not set to `undefined`) when nothing was staged,
+              // so an API-key-only dispatch's env is unaffected.
+              ...(resolvedBoundary.oauthConfigDir ? { CLAUDE_CONFIG_DIR: resolvedBoundary.oauthConfigDir } : {})
             },
             RUNTIME_CREDENTIAL_ENV_KEYS[agent] ?? []
           )

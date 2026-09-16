@@ -33,7 +33,9 @@ import {
   accessSync,
   constants as fsConstants,
   existsSync,
+  mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync
@@ -92,6 +94,76 @@ export const RUNTIME_CREDENTIAL_ENV_KEYS: Readonly<Record<string, readonly strin
 }
 
 /**
+ * O1 (Issue #640): the file name Claude's own `CLAUDE_CONFIG_DIR` (default
+ * `<realHome>/.claude`, verified live via `strings` on this authoring
+ * host's installed `claude` binary — no `--help`-documented flag exists for
+ * it, so it is confirmed the same way a prior task in this file already
+ * disclosed `codex`/`gemini`'s env-var names as convention rather than
+ * `--help` text: read directly off the vendor's own shipped artifact) holds
+ * an OAuth-authenticated session's credential. `isolation.md` §1's HOME deny
+ * rule denies this path unconditionally (it is a subpath of the real
+ * `HOME`) — exactly the boundary this task must NOT widen (Issue #640's own
+ * Traps) — so a confined `claude` session that authenticates by
+ * subscription rather than `ANTHROPIC_API_KEY` needs a scoped COPY staged
+ * somewhere the profile already grants access to, never a new grant onto
+ * this real path.
+ */
+const OAUTH_CREDENTIAL_FILE_NAME = '.credentials.json'
+
+/** Real read — `null` on any failure (file absent, unreadable, or any other I/O error), never throws. The one case this function exists to make injectable: a test can assert staging behavior without a real OAuth session on the test host. */
+function readRealOAuthCredentialFile(path: string): string | null {
+  try {
+    return readFileSync(path, 'utf8')
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Resolves the real, unconfined directory holding a dispatched vendor's
+ * OAuth session credential — `sourceEnv.CLAUDE_CONFIG_DIR` when the parent
+ * process itself already overrides it, else `<realHome>/.claude`, Claude's
+ * own documented default. Exported so a caller/test can name the exact
+ * source path this module will look for `.credentials.json` under, without
+ * duplicating the same two-branch default logic.
+ */
+export function resolveOAuthConfigSourceDir(
+  sourceEnv: Readonly<Record<string, string | undefined>>,
+  realHome: string
+): string {
+  return sourceEnv.CLAUDE_CONFIG_DIR ?? join(realHome, '.claude')
+}
+
+/**
+ * O1: stages a scoped COPY of the OAuth session credential — never the real
+ * file, never a grant onto the real file's real location — into
+ * `scratchTmpDir` (a directory `resolveWorkerBoundaryLaunch` already grants
+ * full read+write, so staging here needs no new profile grant at all). The
+ * confined child is then launched with `CLAUDE_CONFIG_DIR` repointed at the
+ * returned `configDir`, so it authenticates against the staged copy instead
+ * of ever reading the real path. `null` when the source file does not
+ * exist — an API-key-only host, or a genuinely unauthenticated one; either
+ * way this function's job is only "stage what's there," never to decide
+ * whether a missing credential should refuse the dispatch (that is O2,
+ * `dispatchRole`'s own pre-spawn check).
+ */
+export function stageOAuthCredential(
+  sourceEnv: Readonly<Record<string, string | undefined>>,
+  realHome: string,
+  scratchTmpDir: string,
+  deps: Pick<WorkerBoundaryDeps, 'readOAuthCredentialFile'> = {}
+): { configDir: string } | null {
+  const sourceConfigDir = resolveOAuthConfigSourceDir(sourceEnv, realHome)
+  const readFile = deps.readOAuthCredentialFile ?? readRealOAuthCredentialFile
+  const contents = readFile(join(sourceConfigDir, OAUTH_CREDENTIAL_FILE_NAME))
+  if (contents === null) return null
+  const stagedConfigDir = join(scratchTmpDir, 'claude-config')
+  mkdirSync(stagedConfigDir, { recursive: true })
+  writeFileSync(join(stagedConfigDir, OAUTH_CREDENTIAL_FILE_NAME), contents, { mode: 0o600 })
+  return { configDir: stagedConfigDir }
+}
+
+/**
  * Builds a confined child's environment from an explicit allowlist —
  * `sourceEnv`'s own `WORKER_ENV_ALLOWLIST_KEYS` values plus `extraAllowlistKeys`
  * (the dispatched vendor's own `RUNTIME_CREDENTIAL_ENV_KEYS`, named by the
@@ -143,9 +215,24 @@ function detectRealHost(): WorkerBoundaryHostInfo {
 
 export type WorkerBoundaryDeps = {
   detectHost: () => WorkerBoundaryHostInfo
+  /**
+   * O1: reads the OAuth session credential file at an already-resolved
+   * source path (`resolveOAuthConfigSourceDir(...)/.credentials.json`),
+   * returning its contents or `null` when absent/unreadable — never throws.
+   * Injectable so `stageOAuthCredential`'s behavior is provable without a
+   * real OAuth session on the test host, the same posture `detectHost`
+   * already takes for the Darwin/`sandbox-exec` check above. Optional —
+   * every existing caller/test that only ever exercised `detectHost` (from
+   * before this task) keeps compiling unchanged; an omitted entry falls
+   * back to the real file read.
+   */
+  readOAuthCredentialFile?: (path: string) => string | null
 }
 
-export const REAL_WORKER_BOUNDARY_DEPS: WorkerBoundaryDeps = { detectHost: detectRealHost }
+export const REAL_WORKER_BOUNDARY_DEPS: WorkerBoundaryDeps = {
+  detectHost: detectRealHost,
+  readOAuthCredentialFile: readRealOAuthCredentialFile
+}
 
 /** `true` only on a host `isolation.md` §3 actually names as supported — Darwin, `sandbox-exec` present. Injectable (`deps`) so a test can assert `dispatchRole`'s fail-closed wiring without needing a real macOS host — see `apps/cli/tests/lib/dispatch/worker-boundary.test.ts`. */
 export function isWorkerBoundaryAvailable(deps: WorkerBoundaryDeps = REAL_WORKER_BOUNDARY_DEPS): boolean {
@@ -339,6 +426,34 @@ export function buildWorkerSandboxProfile(opts: {
     '(deny default)',
     '(import "system.sb")',
     '',
+    ';; file-read-metadata, UNCONDITIONALLY (round 2 review, MAJOR — a Node.js-',
+    ';; hosted confined process crashes at startup before running any code).',
+    ';; A real `node` binary walks from its own script path up through EVERY',
+    ";; ancestor directory to the filesystem root, `lstat`'ing each one (module",
+    ';; resolution and its own `realpath` of the entry script) — live-reproduced',
+    ';; on this host: with no rule naming any ancestor of `allowedDir`/`runtimeDir`',
+    ";; (e.g. `/private`, a `subpath`-only ancestor of macOS's own tmp layout),",
+    ';; `node <script>` fails immediately with `EPERM: operation not permitted,',
+    "; lstat '/private'` — before the confined role, whatever it is, ever runs a",
+    ";; line of its own code. This never reproduced against `bun` (this profile's",
+    ';; own prior live tests all pass a `bun`-hosted `binaryPath`, masking the',
+    ';; gap) but would hit any Node-hosted vendor CLI — `codex`/`gemini` are',
+    ';; commonly shipped as `node`-shebang npm packages, unlike `claude`, which',
+    ';; is a native Mach-O binary on this host and unaffected either way.',
+    ';; `file-read-metadata` is a SEPARATE Seatbelt operation from `file-read*`',
+    '; (content) — granting it exposes only existence/size/permissions/mtime,',
+    ';; never file CONTENTS; verified live that the real HOME/Keychain/OAuth-',
+    ';; credential `file-read*` denies below are completely unaffected by this',
+    ';; rule (a confined read of a real credential file still fails `EPERM`',
+    ';; with this rule present). Scoping this to only the specific ancestor',
+    ";; directories each dispatch's own `allowedDir`/`execAllowDirs`/`vinayaHomeDir`",
+    ';; actually need would require enumerating every possible ancestor of an',
+    ';; unpredictable, host-varying allowlist (a git/bun/homebrew install path,',
+    ";; the vendor binary's own real location) — intractable and no more secure",
+    ';; than this single blanket metadata-only allow, since metadata alone lets',
+    ';; a confined process learn only that SOME path exists, not what it holds.',
+    '(allow file-read-metadata)',
+    '',
     ";; Process-exec: the confined role's own worktree, the runtime interpreter's",
     ';; install dir, and whatever standard toolchain directories were resolved as',
     ";; present on this host — see this function's own doc comment, item 1.",
@@ -464,7 +579,24 @@ export function buildWorkerSandboxProfile(opts: {
  * env it actually spawns with — this type only carries the value out;
  * `resolveWorkerBoundaryLaunch` has no env-construction role of its own.
  */
-export type WorkerBoundaryLaunch = { command: string; args: string[]; cleanup: () => void; tmpDir: string }
+/**
+ * `oauthConfigDir` (O1, Issue #640): non-`null` only when `stageOAuthCredential`
+ * was requested AND a real OAuth session credential was found to stage —
+ * the caller (`dispatch.ts`) sets the confined child's `CLAUDE_CONFIG_DIR`
+ * to this value so it authenticates against the staged copy, never the real
+ * `<realHome>/.claude`. `null` either when staging was never requested, or
+ * when it was and nothing was there to stage (an API-key-only or
+ * unauthenticated host) — `dispatchRole`'s own O2 pre-spawn check is what
+ * turns a `null` here, combined with no vendor API key either, into a
+ * refusal; this type only reports what was found.
+ */
+export type WorkerBoundaryLaunch = {
+  command: string
+  args: string[]
+  cleanup: () => void
+  tmpDir: string
+  oauthConfigDir: string | null
+}
 
 export type WorkerBoundaryResolution = { ok: true; launch: WorkerBoundaryLaunch } | { ok: false; reason: string }
 
@@ -595,6 +727,19 @@ export type WorkerBoundaryLaunchOpts = {
    * case, where the confined role owns the whole directory outright.
    */
   bootstrapWritableSubpaths?: readonly string[]
+  /**
+   * O1 (Issue #640): when `true`, this resolution attempts
+   * `stageOAuthCredential` — reading the real, unconfined
+   * `resolveOAuthConfigSourceDir(process.env, realHome)/.credentials.json`
+   * and, if it exists, staging a scoped COPY into `scratchTmpDir` (already
+   * granted read+write; no new profile grant). The caller decides when this
+   * applies — `dispatch.ts` sets it only for `agent === 'claude'`, the one
+   * vendor this module knows how to stage a credential for today; this
+   * module has no vendor-branching of its own beyond that one shape.
+   * `false`/omitted: no staging attempted, `oauthConfigDir` on the resolved
+   * launch is always `null`.
+   */
+  stageOAuthCredential?: boolean
 }
 
 /**
@@ -623,8 +768,34 @@ export function resolveWorkerBoundaryLaunch(
   try {
     const realHome = realpathSync(homedir())
     const allowedDirReal = realpathSync(opts.allowedDir)
-    const runtimeDir = dirname(realpathSync(opts.binaryPath))
+    // Security review (round 2), HIGH: this MUST be the same resolved value
+    // used both to derive `runtimeDir`'s exec-allow grant below AND as the
+    // actual `sandbox-exec` exec target — Seatbelt's `process-exec` rule
+    // matches the LITERAL path handed to it, before any symlink resolution
+    // of its own, live-reproduced: the official macOS installer's own
+    // layout (`~/.local/bin/claude` symlinked to
+    // `~/.local/share/claude/versions/<version>`, the exact shape
+    // `dispatch.ts`'s own `which claude` resolution returns) put the
+    // profile's exec-allow rule on the REALPATH'd target directory while
+    // the un-realpath'd symlink path was still what got exec'd — denied
+    // outright (`execvp() ... Operation not permitted`) before the vendor
+    // process ever started, defeating O1 even with a correctly staged
+    // credential. Resolving once, here, and using this SAME value for both
+    // purposes closes the gap structurally rather than by naming the
+    // installer's specific symlink shape.
+    const resolvedBinaryPath = realpathSync(opts.binaryPath)
+    const runtimeDir = dirname(resolvedBinaryPath)
     const scratchTmpDir = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-worker-boundary-')))
+
+    // O1 (Issue #640): staged into `scratchTmpDir` — a directory already
+    // granted read+write below (`readWriteDirs`) — so this never widens the
+    // profile beyond what the steady-state grant already covers. Resolved
+    // here, before `readWriteDirs`/`execAllowDirs` are built, purely so the
+    // staged path can be reported on the returned launch; it needs no
+    // profile entry of its own.
+    const oauthConfigDir = opts.stageOAuthCredential
+      ? (stageOAuthCredential(process.env, realHome, scratchTmpDir, deps)?.configDir ?? null)
+      : null
 
     let vinayaHomeDirReal: string | null = null
     try {
@@ -751,9 +922,10 @@ export function resolveWorkerBoundaryLaunch(
       ok: true,
       launch: {
         command: '/usr/bin/sandbox-exec',
-        args: ['-f', profilePath, opts.binaryPath, ...opts.args],
+        args: ['-f', profilePath, resolvedBinaryPath, ...opts.args],
         cleanup,
-        tmpDir: scratchTmpDir
+        tmpDir: scratchTmpDir,
+        oauthConfigDir
       }
     }
   } catch (error) {
