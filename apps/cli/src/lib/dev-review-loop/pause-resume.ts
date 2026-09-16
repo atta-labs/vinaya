@@ -87,7 +87,7 @@ export function pauseMarker(reason: PauseReason): string {
  * The pause comment's body — the reason and the exact resume command,
  * nothing verdict-shaped. `detail`, when the caller passes one, is appended
  * to the first line — unconditionally, for every `PauseReason`, not only a
- * fixed subset (`[task-log-v1] 9`, Issue #631, O1: before this task, several
+ * fixed subset (Issue #631: before this task, several
  * reasons — `confidence`, `reappearance`, the `assessRound`-decided generic
  * `no_progress`, a reviewer's own `escalation` — simply never had a `detail`
  * computed for them at the call site, so they rendered with none in
