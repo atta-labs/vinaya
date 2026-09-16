@@ -249,7 +249,7 @@ export async function prReportCommand(args: string[], testOverrides?: { gateRunn
   // would leave every unwired host unable to populate Evidence at all.
   let tokensRefused = false
   if (pushPr && bodyFileSource !== undefined) {
-    // (`#543` O6) The whole local body — every byte of it, never only the
+    // O6: the whole local body — every byte of it, never only the
     // regenerated blocks — replaces the live body outright. `composeWrittenBody`
     // is the SAME whole-body composer `--write` alone already uses (source +
     // freshly regenerated Evidence/Tokens); the only difference here is the

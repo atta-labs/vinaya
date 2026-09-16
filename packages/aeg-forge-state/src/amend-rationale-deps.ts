@@ -38,8 +38,8 @@ type SpanHit = { start: number; end: number; inner: string; field: FieldKey }
  * field was last labeled, and returns in order every span so attributed to
  * `field` — its labeled span first, then any bare continuation spans.
  *
- * This carry-forward is DELIBERATELY WIDER than the reader's. Since Issue #347
- * `parseRationaleDeps` reads edges from the labeled span only and ignores every
+ * This carry-forward is DELIBERATELY WIDER than the reader's: `parseRationaleDeps`
+ * reads edges from the labeled span only and ignores every
  * other span; the writer keeps scanning so `rewriteField` can unwrap the bare
  * continuation spans a body written in the old multi-span form still contains.
  * Narrowing this to match the reader would leave those spans backticked in the
@@ -48,10 +48,11 @@ type SpanHit = { start: number; end: number; inner: string; field: FieldKey }
  *
  * It is wider than that job strictly needs, and not precise: EVERY span after a
  * field's label is attributed to that field, so an unrelated prose span in the
- * same paragraph is unwrapped too. Issue #384's real body loses the backticks
- * around its `` `vinaya check` `` command-name mention when its Depends-on is
+ * same paragraph is unwrapped too. A real body lost the backticks
+ * around its `` `vinaya check` `` command-name mention when its Depends-on was
  * amended. That is cosmetic — the id set round-trips either way, and it predates
- * Issue #347 — but it is a wart, not a guarantee, and this comment should not be
+ * the reader's own narrowing — but it is a wart, not a guarantee, and this
+ * comment should not be
  * read as promising continuation spans are the only thing touched. Shares the
  * parser's own `FIELD_LABEL` grammar either way; it does not re-implement it.
  */
@@ -114,11 +115,11 @@ function rewriteField(section: string, field: FieldKey, ids: string[], date: str
 /**
  * Atomically rewrites an Issue body's structured `Dependency rationale` edge
  * set AND appends the matching `**Amendment (...)**` paragraph — the two halves
- * that five live incidents this session drifted apart (#429/#431, #388 twice,
- * #382) because nothing forced them to change together. Both happen in this one
- * function; there is no way to do one without the other (Issue #481, drift
- * class #1; the Ring 0 shape follows the rule that "the sanctioned path is
- * the only path").
+ * that several live incidents drifted apart because nothing forced them to
+ * change together. Both happen in this one
+ * function; there is no way to do one without the other — the Ring 0 shape
+ * follows the rule that "the sanctioned path is
+ * the only path".
  *
  * Deterministic and pure — `date` is injected. The amendment paragraph is
  * appended at the very END of the body, which keeps it structurally OUTSIDE the
@@ -129,8 +130,8 @@ function rewriteField(section: string, field: FieldKey, ids: string[], date: str
  *
  * The caller (bin) gates every real invocation on a runtime round-trip check
  * (`parseRationaleDeps(result)` must deep-equal the requested sets) — never
- * trusting this rewrite by construction (Issue #481's own rationale: this class
- * bit the Planner four times by trusting assumptions over verification).
+ * trusting this rewrite by construction (this class of bug bit the Planner
+ * more than once by trusting assumptions over verification).
  *
  * @throws if the body has no `**Dependency rationale**` section — a conforming
  *   task Issue always has one; the caller turns this into a refusal.

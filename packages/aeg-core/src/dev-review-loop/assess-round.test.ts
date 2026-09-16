@@ -305,7 +305,7 @@ describe('assessRound — Part 3 (O2): the four exits', () => {
       { type: 'dispatch_reviewers' },
       { type: 'dispatch_developer' }
     ])
-    // Round 4 stops. (#543 O4) The pause names the configured cap.
+    // Round 4 stops. The pause names the configured cap.
     expect(decisions.at(-1)).toEqual({ type: 'pause', reason: 'max_rounds', detail: 'max rounds: 3' })
     const round4Stop = events.find((e) => e.event === 'stop_condition_met' && 'round' in e && e.round === 4)
     expect(round4Stop).toMatchObject({ condition: 'max_rounds' })
@@ -479,7 +479,7 @@ describe('assessRound — Part 3 (O2): the four exits', () => {
       ])
     ])
 
-    // Only one genuine resolved-nothing round has happened (round 3) — the
+    // Only one genuine resolved-nothing round has happened — the
     // confidence bounce must not have hardcoded a fake second strike.
     expect(decisions.at(-1)).toEqual({ type: 'dispatch_developer' })
   })

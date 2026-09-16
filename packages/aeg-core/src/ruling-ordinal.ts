@@ -1,6 +1,6 @@
 /**
- * The newest principal-authored ruling ordinal on a pull request
- * (`review-validity-v1` task 3, `#477`). One implementation, shared by
+ * The newest principal-authored ruling ordinal on a pull request.
+ * One implementation, shared by
  * every caller that needs it — `apps/cli/src/lib/dev-review-loop.ts` (the
  * loop's own `fetchRulings`, which this duplicates the marker regex for,
  * predates this package's involvement and stays local; this is the

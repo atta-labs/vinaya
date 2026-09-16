@@ -5,13 +5,13 @@ import { fileURLToPath } from 'node:url'
 import { GATE_AUDIENCE, isShipped, NON_GATE_BINS, SHIPPED_BIN_AUDIENCE } from './gate-audience'
 
 /**
- * The fail-closed half of `gate-audience.ts` (atta-labs/vinaya#186).
+ * The fail-closed half of `gate-audience.ts`.
  *
  * Modelled on the mechanism this repo already proved works for commands:
  * `verify-published-lifecycle.ts` refuses to start when a `status: 'shipped'`
  * command has no `EXERCISES`/`EXEMPTIONS` entry. Same shape, different
  * registry — a declaration plus a gate that refuses when the directory
- * outgrows it. That is why atta-labs/vinaya#134 surfaced as a loud refusal
+ * outgrows it. That is why a real gap surfaced as a loud refusal
  * rather than rotting quietly for months.
  */
 const BIN_DIR = fileURLToPath(new URL('../bin', import.meta.url))

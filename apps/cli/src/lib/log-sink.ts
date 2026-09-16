@@ -447,7 +447,7 @@ const defaultSink = createLogSink()
  * at `defaultSink`'s construction (`VINAYA_RUN_ID` or a fresh `randomUUID()`).
  * `vinaya log flush` reads this to tell its OWN fire-and-forget `log()` call
  * apart from a concurrent, unrelated process appending to the same outbox
- * file at the same moment (code review, PR #439) — a bare "did the file
+ * file at the same moment (a code-review finding) — a bare "did the file
  * grow" signal cannot make that distinction on its own.
  */
 export function currentRunId(): string {

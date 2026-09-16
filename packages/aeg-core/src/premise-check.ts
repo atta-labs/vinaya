@@ -1,5 +1,5 @@
 /**
- * Premise-pinning grammar (aeg-governance-hardening task 11, #324). Pure —
+ * Premise-pinning grammar. Pure —
  * no `fs`; file content is injected via `fileReader` so the checker stays
  * testable and CWD-independent.
  *

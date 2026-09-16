@@ -42,8 +42,8 @@ import {
   type TaskSurfaceFacts
 } from './issue-validation'
 
-// Issue #404's real live body, verbatim (`gh issue view 404 --json body`, dev-review-loop-v1
-// task 1 authoring time) — the cutover's own first Issue, already carrying the section by hand.
+// A real live Issue body, verbatim (`gh issue view <n> --json body`,
+// captured at the cutover's own authoring time) — the cutover's own first Issue, already carrying the section by hand.
 const ISSUE_404_BODY = `vinaya-log-v1 1 — log() with the typed header, two families, and the outbox sink
 
 **Tier:** 1
@@ -61,7 +61,7 @@ O3. \`apps/cli/specs/log.md\` exists, describes the header, the two families and
 **Boundary** — One function \`log(e: LogEvent)\` and the one place its lines land.
 `
 
-// Bold-inline style, as on Issue #309.
+// Bold-inline style, as on a real Issue.
 const BOLD_STYLE = `
 **Tranche:** aeg-governance-hardening · **Task:** 5d · **Project(s):** aeg
 
@@ -84,7 +84,7 @@ const BOLD_STYLE = `
 **Docs to keep coherent** — state-machine.md §12.
 `
 
-// Heading style, as on Issue #219.
+// Heading style, as on a real Issue.
 const HEADING_STYLE = `
 ### Boundary
 
@@ -147,7 +147,7 @@ describe('checkIssueRationale', () => {
 })
 
 describe('checkIssueObjectives', () => {
-  // #403-shaped: below OBJECTIVES_SINCE_ISSUE (404), no `## Objectives` section at all.
+  // Below OBJECTIVES_SINCE_ISSUE, no `## Objectives` section at all.
   const PRE_CUTOVER_BODY = BOLD_STYLE
 
   it('passes a body below the cutover with no `## Objectives` section (#403 shape)', () => {
@@ -419,7 +419,7 @@ describe('checkProjectsRegistered', () => {
   // -------------------------------------------------------------------------
 
   it('fails a declaration whose value yields no name — it can no longer pass vacuously', () => {
-    // #554's exact shape: prose in the field. `projectsFromBody` still yields
+    // A real Issue's exact shape: prose in the field. `projectsFromBody` still yields
     // nothing, which used to read to this gate as "no project declared".
     const body = '**Project:** (none — tools/admin is unregistered; see Project(s) + blast radius above)'
     expect(projectsFromBody(body)).toEqual([])
@@ -557,7 +557,7 @@ describe('checkBlastRadiusScope (A)', () => {
   })
 
   // -------------------------------------------------------------------------
-  // The parse and the count (#864), proven on live bodies. A synthetic body can
+  // The parse and the count, proven on live bodies. A synthetic body can
   // carry a project shape no real Issue has, and the suite then passes over a
   // gate that never fires — which is how both defects below survived a green
   // suite. Every fixture here is a body that shipped on the forge.
@@ -642,7 +642,7 @@ describe('checkNoBriefContent (B)', () => {
     expect(checkNoBriefContent(rationale({ boundary: 'x' })).status).toBe('pass')
   })
 
-  // plan-brief-v1 task 1, Issue #426: `## Surface`/`## Parts`/`## Test plan`/
+  // `## Surface`/`## Parts`/`## Test plan`/
   // `## Stop conditions` are Issue-native sections since `BRIEF_SECTIONS_SINCE_ISSUE`
   // — a heading is not a brief-content marker for these four any more.
   it.each(['Surface', 'Parts', 'Test plan', 'Stop conditions'])(
@@ -935,7 +935,7 @@ describe('frozenSectionsChanged (task-run-v1 11, review round 1, O3)', () => {
     expect(frozenSectionsChanged(noSurface, noSurface)).toEqual([])
   })
 
-  // round 2 security review, HIGH (Issue #625) — `## Documentation` is a
+  // a round-2 HIGH security-review finding — `## Documentation` is a
   // frozen-brief-locked section too, same as Surface/Parts: an ordinary
   // `issue edit` must not be able to silently drop or reword a source once
   // the brief is frozen.
@@ -997,13 +997,13 @@ describe('code-blindness — every content check reuses the single stripCode (PR
 })
 
 // ---------------------------------------------------------------------------
-// One rationale grammar (task 738): an Issue body the creation gate accepts
+// One rationale grammar: an Issue body the creation gate accepts
 // must always be rewritable by `amend-deps`. `checkIssueRationale` and
 // `amendRationaleDeps` are two independent consumers of the same
 // `Dependency rationale` field; this suite feeds a shared set of bodies
 // through BOTH and asserts they agree, rather than trusting two
 // independently-passing unit tests that never run against each other's
-// fixtures (Issue #736, found live 2026-08-05).
+// fixtures (found live 2026-08-05).
 // ---------------------------------------------------------------------------
 
 /** A complete, otherwise-canonical rationale body with only the `Dependency
@@ -1091,8 +1091,8 @@ describe('checkIssueRationale / amendRationaleDeps — round-trip agreement (tas
 })
 
 // ---------------------------------------------------------------------------
-// `hasRationaleField` regex-grouping regression (found live 2026-08-07 while
-// unblocking PR #754): `labelPattern`'s own top-level `|` (e.g. `Dependency
+// `hasRationaleField` regex-grouping regression (found live 2026-08-07):
+// `labelPattern`'s own top-level `|` (e.g. `Dependency
 // rationale|Depends[- ]on`) must not split the surrounding
 // `(?:\*\*|^#{1,4}\s+)\s*` alternation. Ungrouped, `Depends[- ]on` becomes a
 // bare, unanchored alternative that matches ANY "Depends on"/"Depends-on"
@@ -1223,7 +1223,7 @@ describe('checkProjectsRegistered — what reaches the operator’s terminal', (
 })
 
 // ---------------------------------------------------------------------------
-// plan-brief-v1 task 1, Issue #426 — the four judgment-sections-as-data
+// The four judgment-sections-as-data
 // parsers, and the gate that composes them.
 // ---------------------------------------------------------------------------
 
@@ -1627,7 +1627,7 @@ describe('checkRationaleSurfaceCoverage (task-run-v1 11, O4)', () => {
 })
 
 describe('checkSurfaceExcludesBoundDoc (task-run-v1 9, O1/O2/O3)', () => {
-  // The Planner's own sizing example (Issue #493): `apps/cli/src/lib/**` binds
+  // The Planner's own sizing example: `apps/cli/src/lib/**` binds
   // to `apps/cli/specs/surface.md`, and a Surface that pulls the code glob
   // into `in:` while excluding the doc via `out:` is the contradiction.
   const manifest = 'apps/cli/src/lib/**  apps/cli/specs/surface.md\n'
@@ -2132,7 +2132,7 @@ describe('checkIssueBriefSections', () => {
 })
 
 // task 17, O2 — the six write-only rules named apart.
-// Retired to an always-pass check by task-run-v1 task 15, O3: a task-shaped
+// Retired to an always-pass check: a task-shaped
 // body with no tranche label is now a legitimate backlog Issue, not a
 // Planner mistake — see the function's own doc comment.
 describe('checkTrancheLabelPresence', () => {

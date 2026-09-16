@@ -10,7 +10,7 @@
 // The type vocabulary is `@attalabs/aeg-core`'s `COMMIT_TYPE_STYLE`/
 // `COMMIT_TYPES` — the same list `checkForgeTitle` enforces on PR/Issue
 // titles. One list, every call site (including this file's own error text);
-// never a second copy here (Issue #63).
+// never a second copy here.
 //
 // Source `merge` is skipped outright: a merge commit's message is written by
 // git itself (`Merge branch '…'`, `Merge pull request #N from …`), not by

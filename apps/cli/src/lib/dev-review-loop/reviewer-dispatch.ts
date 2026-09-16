@@ -1,6 +1,6 @@
 /**
  * `dev-review-loop`'s reviewer-dispatch-and-report-parsing concern
- * (task 8, `#506`, O8) — the reviewer's own prompt,
+ * — the reviewer's own prompt,
  * the held-verdict outbox, the `findings.txt`/`objectives.txt`/`report.txt`
  * grammar, and turning a reviewer's own report into a rendered verdict via
  * `buildVerdictFromReport` (which calls `@attalabs/aeg-core`'s pure
@@ -54,15 +54,14 @@ import { GLOBAL_VINAYA_HOME } from '../config.js'
 
 export type ReviewerPromptFacts = {
   objectives: string
-  /** The `objectives` text, parsed — `[]` exactly when `objectives` is empty. Threaded into `buildVerdictFromReport`'s own `checkObjectiveIdCoverage` call (task 4, `#478`, O4), the same coverage rule `review post` already applies. */
+  /** The `objectives` text, parsed — `[]` exactly when `objectives` is empty. Threaded into `buildVerdictFromReport`'s own `checkObjectiveIdCoverage` call, the same coverage rule `review post` already applies. */
   resolvedObjectives: readonly Objective[]
   rulings: string[]
   ciConclusion: 'green' | 'red' | 'pending'
-  /** The frozen brief's own `**Revision:**` fact (task 4, Issue #483, O2) — `fetchSourceRevision`. */
+  /** The frozen brief's own `**Revision:**` fact — `fetchSourceRevision`. */
   revision: string
   /**
-   * The one review-input manifest (task 4, `#478`,
-   * O1) — head, the frozen brief's own hash, objectives version, ruling
+   * The one review-input manifest — head, the frozen brief's own hash, objectives version, ruling
    * ordinal, and the effective review policy's digest, built by the driver
    * BEFORE this dispatch. The only source of `HEAD:` in the rendered prompt
    * below and of every structural line `buildVerdictFromReport` renders —
@@ -226,7 +225,7 @@ export function discardHeldVerdicts(root: string, task: number, round: number): 
 export type HeldRequestChanges = { round: number; head: string; rendered: string }
 
 /**
- * O4 (task 3, `#482`): the HIGHEST round number with any held
+ * O4: the HIGHEST round number with any held
  * verdict file at all, read ONLY if its own reviewer AND security pair are
  * both still on disk and re-parse as REQUEST CHANGES — the durable,
  * machine-local record of "round k sent the developer back" a fresh attach
@@ -312,7 +311,7 @@ export function missingReviewerArtifacts(workDir: string, hasObjectives: boolean
 
 /**
  * Thrown by `dispatchReviewer` when a role's work directory is still missing
- * a required artifact after its one fresh retry (O2) — caught by the loop
+ * a required artifact after its one fresh retry — caught by the loop
  * and turned into `{ type: 'pause', reason: 'infrastructure' }`, never read
  * as a clean verdict on any path.
  */
@@ -338,7 +337,7 @@ export class ReviewerInfrastructureFailure extends Error {
 
 /**
  * Thrown by `buildVerdictFromReport` when `findings.txt`/`objectives.txt`
- * still does not parse (task 8, `#506`, O6) — the file
+ * still does not parse — the file
  * exists (`missingReviewerArtifacts` already passed), but a line inside it
  * is malformed beyond `parseFindingsFile`/`parseObjectivesFile`'s own
  * tolerance (a status that starts with neither `MET` nor `NOT MET`, a
@@ -528,7 +527,7 @@ export function buildVerdictFromReport(
     }
     throw err
   }
-  // O4 (task 4, `#478`): the SAME coverage rule `review post`'s own
+  // O4: the SAME coverage rule `review post`'s own
   // `resolveObjectiveResultsForCommand` already applies to a human-posted
   // verdict — an under-reporting reviewer (one that wrote fewer, or extra,
   // `O<n>|...` lines than the resolved objectives list) never yields a
@@ -680,7 +679,7 @@ export function renderReviewerDispatchPrompt(
       ? '(severities: BLOCKER, MAJOR, MINOR — leave the file empty if there are none).'
       : '(severities: CRITICAL, HIGH, MEDIUM, LOW — leave the file empty if there are none).',
     '`|` never appears in a description — write the finding without one, even inside a quoted or piped example.',
-    // (#543 O5) Named so a reviewer never under-reports a body/comment/
+    // Named so a reviewer never under-reports a body/comment/
     // role-file finding's real severity to pre-empt this — the cap is
     // applied by the policy evaluator, not something to guess around.
     'A finding whose own location is the PR body, a comment, or a role file is capped to MINOR before it counts toward the threshold, regardless of the severity you assign it — write its real severity anyway.',
@@ -692,7 +691,7 @@ export function renderReviewerDispatchPrompt(
       : []),
     `Write a short report to ${join(workDir, 'report.txt')} as one \`KEY: value\` line per field:`,
     role === 'reviewer' ? '  BRIEF_CONFORMANCE, SPEC_CONFORMANCE, SCOPE, TESTS, DOCS' : '  CONFIG_SCAN, SECRETS',
-    // (#543 O3) A round's own findings are compared to the NEXT round's by
+    // A round's own findings are compared to the NEXT round's by
     // id — never by writing order, which is not stable across two separate
     // dispatches. Skipped only when findings.txt is empty (nothing to cite).
     '  If findings.txt is non-empty, also write `FINDING_IDS: <id>,<id>,...` — one id per findings.txt line, in the SAME order, e.g. `F1,F2,F3`. A report with findings but no matching `FINDING_IDS:` line is sent back once for this alone.',

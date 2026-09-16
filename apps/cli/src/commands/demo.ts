@@ -1,7 +1,7 @@
 // `vinaya demo break` — the productized belief moment.
 //
 // On an ISOLATED, DISCARDABLE branch of the CURRENT repo (never a separate
-// temp-dir sandbox — Issue #387's Boundary corrects an earlier scratch doc on
+// temp-dir sandbox — this module's Boundary corrects an earlier scratch doc on
 // exactly this point): stage a deliberately malformed brief, attempt a real
 // `git commit`, let the repo's REAL installed pre-commit hook refuse it with
 // its real output, apply the minimal fix, commit again, then clean up.

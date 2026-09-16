@@ -64,7 +64,7 @@ export function readTierFromPrBody(prBody: string): 0 | 1 | 3 | null {
 }
 
 /**
- * The floor-raise combinator (task 12, Issue #469, O1): a declared tier is
+ * The floor-raise combinator: a declared tier is
  * never lowered, only raised to the mechanically-derived floor when that
  * floor is higher — a Planner's judgment is never silently overridden by a
  * derivation that cannot see it. `declared: null` means the source (an
@@ -82,7 +82,7 @@ export function applyTierFloor(declared: 0 | 1 | 3 | null, derivedFloor: 0 | 1):
 /**
  * The body token that activates the override — the label name in brackets, so
  * the two spellings cannot drift. Built from the code-owned vocabulary rather
- * than written as a literal (#614): `override:docs` was the one §14 system
+ * than written as a literal: `override:docs` was the one §14 system
  * label the namespace migration missed, precisely because it lived here as a
  * bare string that no label-family grep looked for.
  */

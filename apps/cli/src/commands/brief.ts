@@ -1,5 +1,5 @@
 /**
- * `vinaya brief render <tranche> <n> --surfaces <glob,...>` (task 12, #387)
+ * `vinaya brief render <tranche> <n> --surfaces <glob,...>`
  * — argv parsing around `../lib/brief-assembly.js`'s `assembleAndRenderBrief`,
  * the forge/tree shim over `@attalabs/aeg-core`'s pure `renderBrief`. Never
  * writes under `aeg-root/` or to the Issue: stdout, or `--out <path>`, only —
@@ -30,7 +30,7 @@ export async function briefRenderCommand(args: string[]): Promise<void> {
     process.exit(2)
   }
 
-  // `--surfaces` is an override, not a requirement (task 5, Issue #447, O4):
+  // `--surfaces` is an override, not a requirement:
   // omitted, `assembleAndRenderBrief` derives the surface from the Issue's
   // own `## Surface` section — the same source `vinaya task dispatch`
   // already reads — so the two entry points can never render a brief from

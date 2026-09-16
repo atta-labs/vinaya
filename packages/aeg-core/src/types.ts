@@ -30,8 +30,8 @@ export type Registry = Project[]
 // ---------- Tranche file (tranches/<name>.md) ----------
 
 /**
- * `Lifecycle`/`Task`/`Tranche` live in `@attalabs/aeg-types` (task
- * aeg-forge-state-v1 3a) — re-exported here since every existing call site
+ * `Lifecycle`/`Task`/`Tranche` live in `@attalabs/aeg-types` —
+ * re-exported here since every existing call site
  * across the repo imports them from `@attalabs/aeg-core`. Moved out so
  * `@attalabs/aeg-forge-state` can depend on these shapes without creating a
  * package cycle with `aeg-core` (which in turn depends on
@@ -42,7 +42,7 @@ export type { Lifecycle, Task, Tranche }
 // ---------- Forge facts ----------
 
 /**
- * `ForgeFacts` lives in `@attalabs/aeg-types` (aeg-core-purity fix, #521) —
+ * `ForgeFacts` lives in `@attalabs/aeg-types` (an aeg-core-purity fix) —
  * re-exported here for the same reason as `Lifecycle`/`Task`/`Tranche`:
  * every existing call site imports it from `@attalabs/aeg-core`, and it moved
  * out so the I/O-performing fetchers that produce it (now in

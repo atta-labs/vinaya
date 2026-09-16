@@ -6,8 +6,8 @@ import { evaluateTestPlanGate } from './test-plan-gate'
 const TASK_BRANCH = 'task/herald-hardening-v1/2'
 const NON_TASK_BRANCH = 'fix/some-bug'
 
-/** A faithful excerpt of PR #377's real body — the exact live-fire specimen
- * (aeg-governance-hardening task 25, #365): a `## 9. Test Plan` heading, two
+/** A faithful excerpt of a real PR's body — the exact live-fire specimen:
+ * a `## 9. Test Plan` heading, two
  * ticked `[agent]` items, and one unticked `[principal]` item. The original
  * inline-only regex found no `Test Plan:` section here and advisory-PASSED. */
 const PR_377_SPECIMEN = `## Summary

@@ -1,5 +1,5 @@
 // Emitter for the Claude Code Stop hook that records each session's
-// transcript pointer (task 10, #278) — the fact
+// transcript pointer — the fact
 // `packages/aeg-core/bin/report-tokens.ts`'s `resolveTranscriptPath()` needs
 // to resolve capable in a fresh Claude Code adopter, not just in a repo that
 // happens to carry its own hand-rolled equivalent (attalabs' own
@@ -64,8 +64,8 @@ const SH_PREAMBLE = '#!/usr/bin/env sh\n'
  * `-` plus a full SHA-256 hex digest of the uncollapsed `projectDir`) match
  * `packages/aeg-core/bin/report-tokens.ts`'s `sanitizeKey`/
  * `collisionResistantKey`/`transcriptPointerPath` byte-for-byte, confirmed by
- * reading that file's parser directly (Dig, task 10; re-confirmed `#315`,
- * which added the digest suffix — before it, distinct project directories
+ * reading that file's parser directly (re-confirmed against a later
+ * migration that added the digest suffix — before it, distinct project directories
  * whose `sanitizeKey` output collapsed to the same string shared one pointer
  * file). Concatenation (`+`), not template interpolation, so `tmpDir`'s own
  * value (including a trailing slash, which `TMPDIR` commonly carries) is
@@ -74,8 +74,8 @@ const SH_PREAMBLE = '#!/usr/bin/env sh\n'
  * it, so both sides agree on the same (possibly double-slashed, and that's
  * fine — the OS collapses it) path string.
  *
- * `#315` migration: this writer always writes the NEW (collision-resistant)
- * pointer name — never the pre-`#315` legacy name. The read side
+ * This migration: this writer always writes the NEW (collision-resistant)
+ * pointer name — never the pre-migration legacy name. The read side
  * (`resolveMeteringCapability`/`resolveTranscriptPath`) still falls back to
  * the legacy name when the new one is absent, so a pointer an unupgraded
  * copy of this same script already wrote stays readable; this writer itself

@@ -1,7 +1,7 @@
 /**
- * Test Plan section locator (aeg-governance-hardening task 25, #365). Pure —
+ * Test Plan section locator. Pure —
  * no `fs`, no `gh`/`git`. Extracted from `bin/verify-test-plan.ts`'s original
- * inline-only regex to fix the live-fire gap PR #377 exposed: its body used
+ * inline-only regex to fix a live-fire gap a real PR exposed: its body used
  * the `## 9. Test Plan` heading form, which the old inline-only regex never
  * matched, so `verify-test-plan` reported "no section" and advisory-PASSED a
  * PR that actually had an unticked `**[principal]**` box.
@@ -43,9 +43,9 @@ const NEXT_SECTION_RE = /\n(?:#{1,3}[ \t]|\*\*[A-Z][^*\n]*:\*\*)/
  * task 30), the pair IS the section: its whole content is returned verbatim,
  * with no heading/inline marker required inside it — requiring a second,
  * redundant in-region marker would reintroduce the unrecognized-heading
- * failure class (#377) the anchors exist to close. Identical-looking Test
- * Plan text elsewhere in the body (a pasted reference brief's own §9, the
- * PR #392 shape) is ignored. Bodies without the pair parse exactly as before.
+ * failure class the anchors exist to close. Identical-looking Test
+ * Plan text elsewhere in the body (a pasted reference brief's own §9)
+ * is ignored. Bodies without the pair parse exactly as before.
  */
 export function locateTestPlanSection(body: string): TestPlanSection {
   const region = anchoredRegion(body, 'TEST-PLAN')

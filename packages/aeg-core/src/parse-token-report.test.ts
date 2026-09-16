@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { aggregateTaskTokenRows, parseTokenReportEntries, parseTokensLines } from './parse-token-report'
 
 // Real PR body text, captured verbatim from this repo's own merged PRs
-// during 4b's research (#445) — the bold-inline heading form.
+// during 4b's research — the bold-inline heading form.
 const PR_454_BODY = `**Token report**
 
 | Phase | Role | Agent/Model | Tokens in | Tokens out | Cost | Date |

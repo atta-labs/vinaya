@@ -1,5 +1,5 @@
 /**
- * The flush's own body (task 3, Issue #482, O1) — moved verbatim out of
+ * The flush's own body — moved verbatim out of
  * `apps/cli/src/commands/log.ts`'s `logFlushCommand`, which is now argv
  * parsing and process-exit translation around this one function. Posts a
  * target's outbox — written by `log()` (`./log-sink.js`) — as one or more
@@ -34,8 +34,8 @@ const FORGE_COMMENT_MAX_CHARS = 65536
 /**
  * `execFileSync`'s own default `maxBuffer` (1 MiB) is what broke
  * `fetchFrozenBrief`'s `gh issue view --json comments` read once an Issue's
- * own log-dump comments passed it (Issue #626, O3: Issue
- * #566 measured at 1,597,599 bytes). This file's own `gh()` reads the same
+ * own log-dump comments passed it (O3: one
+ * measured at 1,597,599 bytes). This file's own `gh()` reads the same
  * `--json comments` shape (`existingLogMarkers`, the idempotent-retry read)
  * against the exact target being flushed, so it is exposed to the identical
  * failure — bounded generously (64 MiB) rather than left at the 1 MiB
@@ -66,7 +66,7 @@ type ForgeWriteSignature = {
 /**
  * True iff the bytes appended to `path` since `priorSize` include a line
  * matching `expected` AND carrying `runId`. The `runId` check is
- * load-bearing, not decorative (code review, PR #439): "the file grew"
+ * load-bearing, not decorative (a code-review finding): "the file grew"
  * alone cannot tell this call's own fire-and-forget `log()` write apart
  * from an unrelated, concurrent `vinaya` process appending to the SAME
  * outbox at the same moment — two processes sharing an Issue's outbox is
@@ -138,7 +138,7 @@ async function waitForOwnLine(
  * (`log/envelope.ts`'s `issueFromTask`) — never from an argument. For this
  * call's line to land in the SAME outbox this function is about to
  * truncate, `VINAYA_TASK` is set to `outboxTask` — the task whose outbox is
- * being flushed (Issue #626, O1: NOT necessarily the Issue/PR
+ * being flushed (O1: NOT necessarily the Issue/PR
  * being posted TO, once `FlushOptions.outboxTask` names a distinct posting
  * destination) — for the duration of the call, restored after. This holds
  * identically whether the caller is the one-shot command or an in-process,
@@ -182,8 +182,8 @@ function isSafeRepoSegment(segment: string): boolean {
  * seq span would then overstate how many raw lines this chunk actually
  * covers, and the caller's running `postedLineCount` — a POSITIONAL index
  * into `rawLines` — would drift ahead of the real count, silently truncating
- * an unposted line off the front of the next, unrelated chunk (review
- * finding, round 2, Issue #562).
+ * an unposted line off the front of the next, unrelated chunk (a round-2
+ * review finding).
  */
 type FlushChunk = { runId: string; seqFrom: number; seqTo: number; lineCount: number; body: string }
 
@@ -218,7 +218,7 @@ type ParsedLine = { postLine: string; runId: string; seq: number }
  * The storage contract). The classifier runs the FULL `LogEventSchema` (not
  * merely presence of `meta.run_id`/`meta.seq`), validates a `schema: 2`
  * line's provenance, and re-applies `redact()` at this second check-moment
- * before the text is ever posted publicly (security review, PR #439): the
+ * before the text is ever posted publicly (a security-review finding): the
  * on-disk file is trusted for its own append-time write, but a manually
  * edited line, a corrupted one, or a future gap in `redact.ts`'s coverage
  * must not slip through. This transport is deliberately fail-closed — a
@@ -246,7 +246,7 @@ function extractLogMarkers(body: string): string[] {
 /**
  * The set of chunk marker keys already posted on `targetId` — the on-forge
  * idempotency key that closes the "flush retries can repeat remotely accepted
- * batches" defect (O2, Issue #562's Boundary). A prior flush that posted a
+ * batches" defect (O2). A prior flush that posted a
  * chunk but died before truncating (a lost acknowledgement) leaves the
  * chunk's `<!-- aeg:log:<run_id>:<seq_from>-<seq_to> -->` marker on the
  * forge; the retry reads it here and acknowledges that chunk without posting
@@ -485,7 +485,7 @@ export type LogFlushOutcome =
     }
 
 /**
- * Options for `flushOutbox`. `skipRemotelyAccepted` (Issue #562, O2) turns on
+ * Options for `flushOutbox`. `skipRemotelyAccepted` (O2) turns on
  * the idempotent-retry read: before posting, read the
  * target's existing comments and acknowledge — without re-posting — any chunk
  * whose `<!-- aeg:log:… -->` marker is already on the forge (a prior attempt
@@ -497,11 +497,11 @@ export type LogFlushOutcome =
  * surface the Boundary names ("flush retries can repeat remotely accepted
  * batches"), is the caller that turns it ON.
  *
- * `maxChunksPerFlush` (Issue #626, O2) bounds how many chunks
+ * `maxChunksPerFlush` (O2) bounds how many chunks
  * (each already bounded at `FORGE_COMMENT_MAX_CHARS`) ONE call posts to the
  * target — the rest stay queued in the outbox, untouched, for a later call.
  * This is what keeps a backlogged target's comment COUNT from growing
- * without limit round after round (Issue #626's measured case: 56 log-dump
+ * without limit round after round (a measured case reached 56 log-dump
  * comments on one Issue). Omit for `DEFAULT_MAX_CHUNKS_PER_FLUSH`; every
  * caller gets this bound by default, including the one-shot `vinaya log
  * flush` command — re-run it (its `skipRemotelyAccepted: true` makes that
@@ -511,7 +511,7 @@ export type FlushOptions = {
   skipRemotelyAccepted?: boolean
   maxChunksPerFlush?: number
   /**
-   * Which task's own outbox file to read (Issue #626, O1) —
+   * Which task's own outbox file to read (O1) —
    * defaults to `target`'s own resolved issue number, exactly the prior,
    * only behavior (`vinaya log flush --issue <n>`/`--pr <n>`, where the
    * flushed outbox and the posting destination were always the same
@@ -525,13 +525,13 @@ export type FlushOptions = {
 }
 
 /**
- * The flush's whole body (task 3, `#482`, O1) — posts a task's outbox as one
+ * The flush's whole body (O1) — posts a task's outbox as one
  * or more comments to `target` and truncates only what the forge confirmed,
  * exactly as `apps/cli/specs/log.md` § The flush describes. Never calls
  * `process.exit`: returns `{flushed: false}` for a missing or empty outbox,
  * returns the posted outcome on success, and throws `LogFlushError` for
  * every refusal — safe to call in-process from a long-running driver as
- * well as from the one-shot command (O2).
+ * well as from the one-shot command.
  */
 export async function flushOutbox(target: LogFlushTarget, options: FlushOptions = {}): Promise<LogFlushOutcome> {
   const op: ForgeOp = 'pr' in target ? 'pr.comment' : 'issue.comment'
@@ -604,7 +604,7 @@ export async function flushOutbox(target: LogFlushTarget, options: FlushOptions 
   // command opts in (see `FlushOptions`).
   const alreadyPosted = options.skipRemotelyAccepted ? existingLogMarkers(op, forgeTargetId) : new Set<string>()
 
-  // O2 (Issue #626): bounds how many NEW comments this call posts — an
+  // O2: bounds how many NEW comments this call posts — an
   // already-posted chunk found via `alreadyPosted` above is acknowledged
   // (truncated) for free and never counts against this bound, since it
   // creates no new comment on the target and grows nothing. Once the bound

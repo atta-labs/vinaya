@@ -119,7 +119,7 @@ function git(args: string[]): string {
  * (same class of bug, mirrored here: `base ? git([...]) : ''` collapsed a
  * real resolution failure into the exact same `''` a genuinely empty diff
  * produces, so `compareEvidenceBlock` reported PASS having recomputed
- * nothing at all — found in review, PR #126).
+ * nothing at all — found in review).
  */
 class UnresolvableMergeBaseError extends Error {
   constructor(triedRefs: readonly string[]) {
@@ -132,7 +132,7 @@ class UnresolvableMergeBaseError extends Error {
  * collapsing to `''`. `git diff --numstat` printing nothing is a real answer
  * ("no files changed"); `git diff` FAILING also printed nothing, and the
  * emitter's side collapsed the same way, so both agreed on `''` and this
- * check reported PASS having recomputed nothing. An earlier fix in PR #126
+ * check reported PASS having recomputed nothing. An earlier fix
  * closed that for the merge-base only.
 
  */
@@ -193,8 +193,8 @@ function main(): void {
   }
 
   // The SAME context `body-bare-digits` scans from, and the same resolver.
-  // Reading `PR_BODY` directly here — which is what this check did until
-  // Issue #189 — meant one zero-width character inside the START marker made
+  // Reading `PR_BODY` directly here — which is what this check did until a
+  // real regression — meant one zero-width character inside the START marker made
   // this side see no anchor at all while the other side saw a real evidence
   // block and exempted every digit in it. Both green, nothing verified. The
   // resolver takes a `ScanContext`, so this cannot drift back.
@@ -209,8 +209,8 @@ function main(): void {
   if (resolved === 'hidden') {
     // The body DOES carry the pair, but only inside a collapsed `<details>`
     // block, where `body-bare-digits` blanks every digit unconditionally.
-    // Exiting 0 here would grant that block the silent exemption Issue #189
-    // is about, so this refuses instead: "unverifiable" is not "not adopted".
+    // Exiting 0 here would grant that block the silent exemption a real
+    // regression exposed, so this refuses instead: "unverifiable" is not "not adopted".
     emitCheckError({
       schema: CHECK_SCHEMA_VERSION,
       check: CHECK_NAME,
@@ -273,7 +273,7 @@ function main(): void {
   const expectedGroupCCommandLines = extractAgentCommandLines(body).map(agentCommandText)
 
   // A verdict binds to a PATCH, not a sha (`check-review-gate.ts`'s own
-  // `patchIdOf` binding, `#497`) — this check's `Head:` binding uses the
+  // `patchIdOf` binding) — this check's `Head:` binding uses the
   // identical rule, computed against the PR's real base branch.
   const patchIdOf = (sha: string) => patchIdAt(prRefs.base, sha)
 

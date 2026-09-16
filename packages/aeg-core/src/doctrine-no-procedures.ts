@@ -1,5 +1,5 @@
 /**
- * Doctrine-no-procedures sweep (task 10, Issue #385) — task 9's rule that
+ * Doctrine-no-procedures sweep — task 9's rule that
  * doctrine prose describes no command sequence, made a check. `roles/*.md`
  * and `contracts/*.md` explain *what* a command sequence does and *why*;
  * they are not a runbook a reader executes verbatim, and a copy-pasted

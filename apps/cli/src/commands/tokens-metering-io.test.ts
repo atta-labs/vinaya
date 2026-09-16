@@ -7,7 +7,7 @@ import { resolveMeteringCapability } from '@attalabs/aeg-core'
 import { realDeps } from './tokens'
 
 /**
- * `#313`: `vinaya tokens`'s `realDeps()` must resolve through
+ * `vinaya tokens`'s `realDeps()` must resolve through
  * `hardenedMeteringDeps()`, not hand-rolled `existsSync`/`readFileSync` —
  * proven here against an explicit `--transcript` path (the same route
  * `buildTokensResult` takes), so this needs no `TMPDIR` pointer-file

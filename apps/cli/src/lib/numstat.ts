@@ -4,7 +4,7 @@
  * Derived, never typed — which is the entire point. A PR body that restates
  * "five files changed" in prose has a second copy of a fact whose first copy
  * sits feet below it, regenerated on every write, and the prose copy loses that
- * race every time. Measured on `atta-labs/vinaya#185`: the file count went
+ * race every time. Measured live: the file count went
  * stale three times and the pasted `--stat` twice, each time because a commit
  * landed after the sentence was written. Putting the summary INSIDE the block
  * removes the reason to write the sentence at all.

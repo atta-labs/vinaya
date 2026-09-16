@@ -1,19 +1,19 @@
 /**
- * Task-brief renderer (review-convergence-v1 task 12, #387). Pure — no `fs`,
+ * Task-brief renderer. Pure — no `fs`,
  * no `gh`/`git`, no `process.env`. Reads `aeg-root/templates/brief-template.md`
  * (passed in as `template`, read at run time by the CLI shim
  * `apps/cli/src/commands/brief.ts`) and every derivable fact (`BriefFacts`,
  * assembled by that same shim from the forge and the tree) and emits the
  * twelve-section brief skeleton with every mechanically-derivable section
  * filled. A section this module cannot derive from a stated fact is never
- * defaulted — `renderBrief` refuses, naming the missing fact, per Issue #387's
+ * defaulted — `renderBrief` refuses, naming the missing fact, per this
  * rule: "no section is written by hand; the rationale is the one hand-written
  * artefact and the Issue creation gate is its review."
  *
  * Every judgment section (Technical dependencies' free-form detail beyond the
  * Dependency-rationale field, the Pre-flight task-specific checks, the
  * Verification command list beyond the fixed full run) is out of this task's
- * scope — Issue #387: "NOT this task: rendering any judgment section." Those
+ * scope: "NOT this task: rendering any judgment section." Those
  * sections are rendered with the mechanical content this module CAN derive;
  * anything genuinely judgment-only is left for the Planner to add by
  * hand after render.
@@ -36,8 +36,8 @@ import { applyTierFloor, deriveTierFromDiff, readTierFromPrBody } from './pr-tie
 
 /**
  * Renders the Issue's `## Documentation` section verbatim — one bullet per
- * source/mechanism pair (with its `(O<n>)` citation, when present — O3,
- * Issue #625), or the `None` sentinel line. Called only when
+ * source/mechanism pair (with its `(O<n>)` citation, when present — O3),
+ * or the `None` sentinel line. Called only when
  * `facts.documentation` is not the absent-section sentinel (see the join in
  * `renderBrief`), so both variants here always have something real to print.
  */
@@ -99,7 +99,7 @@ const RATIONALE_FIELD_NAMES: Record<RationaleFieldKey, string> = {
  * (`^\s*`), unlike the copied original — a presence-only check can tolerate
  * matching a field name mentioned in passing mid-paragraph (the field is
  * still present somewhere), but an EXTRACTION cannot: found live, self-
- * rendering this very task's own Issue (#387), whose "Boundary" field
+ * rendering this very task's own Issue, whose "Boundary" field
  * prose contains the inline aside "`For:`/`Reason:` from
  * **Suggested agent-class**" — the unanchored original matched that inline
  * mention first (it is merely preceded by literal `**` characters
@@ -117,7 +117,7 @@ function sliceRationaleField(text: string, labelPattern: string): string {
 
 /**
  * `parseRationaleFields`' result — the five rationale fields plus the
- * Issue's own declared `Tier:` field (task 12, Issue #469, O1), read from
+ * Issue's own declared `Tier:` field, read from
  * the same `body` this function already receives. Piggybacked on this
  * existing call rather than added as a new `BriefFacts` property threaded in
  * by the caller: `rationale: parseRationaleFields(issueBody)` is already the
@@ -150,7 +150,7 @@ export function parseRationaleFields(body: string): ParsedRationale {
 /**
  * The backtick-wrapped, path-shaped tokens named in the Boundary field's own
  * prose — the ONLY mechanical source §4 (`renderSection4`, below) draws its
- * Create/Modify file list and premise pins from (task 5, Issue #447, O3).
+ * Create/Modify file list and premise pins from.
  *
  * `## Surface` is directory-level globs only, by design (its own grammar
  * refuses file paths) — expanding those globs wholesale into §4 is the exact
@@ -197,7 +197,7 @@ export type SurfaceFileFact = {
 
 export type BriefFacts = {
   /**
-   * `null` for a backlog Issue with no tranche (task-run-v1 task 15, O1) —
+   * `null` for a backlog Issue with no tranche (O1) —
    * the brief renders `task/issue-<n>` as its branch and the Issue's own
    * title as its PR title, instead of the tranche+task-id forms below.
    */
@@ -244,8 +244,8 @@ export type BriefFacts = {
   /**
    * The Issue's `## Documentation` section (`issue-validation.ts`'s
    * `parseIssueDocumentation`), copied into the brief verbatim right after
-   * Objectives — the earliest a Developer reads anything, addressing Issue
-   * #625's own finding that a documentation obligation buried after Parts/
+   * Objectives — the earliest a Developer reads anything, addressing the
+   * finding that a documentation obligation buried after Parts/
    * Test plan/Stop conditions competes for attention it never wins.
    * `{ kind: 'sources', sources: [] }` is the absent-section sentinel, same
    * convention as `parts`/`stopConditions`; `{ kind: 'none' }` is the
@@ -261,7 +261,7 @@ export type BriefFacts = {
   docOwnersContent: string | null
   /**
    * The checkout's `HEAD` sha at the moment this brief's facts (the §4
-   * premise pins above all) were read — task-run-v1 task 4, Issue #483, O1/O2.
+   * premise pins above all) were read (O1/O2).
    * The caller (`assembleAndRenderBrief`, `apps/cli`) refuses to call
    * `renderBrief` at all when this HEAD is behind the fetched remote default
    * branch, or the working tree is dirty on any pinned file — by the time
@@ -276,8 +276,8 @@ export type BriefFacts = {
 export type RenderResult = { ok: true; brief: string } | { ok: false; missing: string[] }
 
 /**
- * §4's surface map lists only what the Issue's own `## Surface` admits (task
- * 12, Issue #469, O2) — a path the Boundary named inside its `Out:` clause
+ * §4's surface map lists only what the Issue's own `## Surface` admits
+ * (O2) — a path the Boundary named inside its `Out:` clause
  * was named in order to exclude it, and prose position is not a reliable
  * signal of that, so the `## Surface` globs are the authority. Admitted
  * means covered by at least one `in:` glob and by no `out:` glob;
@@ -298,7 +298,7 @@ function bulletList(items: string[]): string {
 
 /**
  * A `## Surface` `in:` entry renders as a clean directory path, never a raw
- * glob (#526 round 2 MINOR): `globCoversPath`/`admittedSurfaceFiles` above
+ * glob (a round-2 MINOR review finding): `globCoversPath`/`admittedSurfaceFiles` above
  * already tolerate a `/**`/`/*` suffix on an `in:` entry, but Modify's
  * directory-listing branch rendered the entry verbatim — the same stripping
  * `globCoversPath` does internally, exposed here for display.
@@ -325,7 +325,7 @@ function renderHeader(facts: BriefFacts, template: string): string {
   // derivation only when that derivation is higher, never lowered — a
   // Planner's judgment (including a hand-raised Tier 3, which no derivation
   // can reach) is never silently overridden by a derivation that cannot see
-  // it (task 12, Issue #469, O1).
+  // it.
   const derivedFloor = deriveTierFromDiff(facts.surfaceFiles.map((f) => f.path))
   const tier = applyTierFloor(facts.rationale.declaredTier ?? null, derivedFloor)
   const lines = [
@@ -343,7 +343,7 @@ function renderHeader(facts: BriefFacts, template: string): string {
   return lines.join('\n')
 }
 
-/** `task/<tranche>/<n>`, or `task/issue-<n>` for a backlog Issue (`facts.trancheSlug === null`, task-run-v1 task 15, O1). */
+/** `task/<tranche>/<n>`, or `task/issue-<n>` for a backlog Issue (`facts.trancheSlug === null`). */
 function developerBranchForFacts(facts: BriefFacts): string {
   return facts.trancheSlug !== null ? `task/${facts.trancheSlug}/${facts.taskId}` : `task/issue-${facts.issue}`
 }
@@ -371,13 +371,13 @@ function renderSection2(facts: BriefFacts): string {
 /**
  * The exact string `renderSection2` emits, read back out of a rendered/
  * frozen brief — the review loop's reviewer prompt names this revision as a
- * fact (task 4, Issue #483, O2) rather than re-deriving it from `git`, since
+ * fact rather than re-deriving it from `git`, since
  * the loop's job is to judge the developer's work against the facts the
  * brief actually stated, not against a revision read fresh from a tree that
  * has since moved on. `null` when the text carries no such line (a brief
  * from before this task).
  *
- * Security review, PR #503 round 2, HIGH: an unanchored, whole-document
+ * A HIGH security-review finding: an unanchored, whole-document
  * regex here took the FIRST `**Revision:** rendered at \`<hex>\`` match
  * anywhere in the text — including inside `## Objectives`, which is copied
  * VERBATIM from the task Issue's own body (`renderObjectives`) and is
@@ -407,7 +407,7 @@ function renderSection3(facts: BriefFacts): string {
   return ['## 3. Technical dependencies', '', `${facts.rationale.dependencyRationale}`].join('\n')
 }
 
-// O6 (task 17): the nearest ancestor directory of `path` that is itself
+// O6: the nearest ancestor directory of `path` that is itself
 // named `tests`/`specs` — e.g. `apps/cli/tests/checks/foo.test.ts` ->
 // `apps/cli/tests`. `checkConsumerTests`'s validator accepts a bare
 // reference to this directory as coverage evidence (same segment-equality
@@ -442,18 +442,18 @@ function renderSection4(facts: BriefFacts): string {
   const created = facts.surfaceFiles.filter((f) => f.sha256 === null).map((f) => f.path)
   const modified = facts.surfaceFiles.filter((f) => f.sha256 !== null).map((f) => f.path)
 
-  // O7 (task 8, `#506`): a Boundary that named fewer files than the Issue's
+  // O7: a Boundary that named fewer files than the Issue's
   // own `## Surface` `in:` list is narrower than the real scope — Boundary
   // prose justifies a few files, it is never an exhaustive enumeration.
   // When the Boundary names fewer files than there are `in:` directories,
   // Modify lists each `in:` directory instead of the handful of files the
   // prose happened to name, so a developer reads the scope as the
-  // directory, not the one file the rationale mentioned (Issue's own
-  // Origin, O6/O7: exactly this narrowing shipped two lines against ten
-  // objectives on #508).
+  // directory, not the one file the rationale mentioned (a real Issue's
+  // own Origin: exactly this narrowing shipped two lines against ten
+  // objectives).
   //
-  // A bare count comparison misses an uneven distribution (review-validity-v1
-  // 12, #526 round 2 MINOR): two Boundary files and two `in:` directories
+  // A bare count comparison misses an uneven distribution (a MINOR review
+  // finding): two Boundary files and two `in:` directories
   // pass the count check even when both files land in the SAME directory,
   // leaving the other entirely unnamed anywhere in Modify. Coverage is
   // checked per directory instead — `globCoversPath` is the same matcher
@@ -465,8 +465,7 @@ function renderSection4(facts: BriefFacts): string {
   const boundaryNarrowsSurface = uncoveredSurfaceDirs.length > 0
   // `facts.surface.in` is never empty when `boundaryNarrowsSurface` is true
   // (an empty list has nothing to be uncovered), so the `- (none named)`
-  // arm below could never execute — removed rather than left dead (#526
-  // round 2 MINOR).
+  // arm below could never execute — removed rather than left dead (a MINOR review finding).
   const modifyLines = boundaryNarrowsSurface
     ? bulletList(facts.surface.in.map(stripSurfaceGlobSuffix))
     : modified.length > 0
@@ -491,6 +490,17 @@ function renderSection4(facts: BriefFacts): string {
   // sentinel — ONE sentinel occurrence anywhere in §4 satisfies the whole
   // section, so a single combined line covers every uncovered consumer.
   //
+  // O6: when `boundaryNarrowsSurface` is true, `modifyLines` above
+  // lists bare Surface DIRECTORIES, never the individual files — so a
+  // covered consumer's actual test FILE path never appears anywhere in §4,
+  // and `checkConsumerTests`'s file-path regex finds nothing even though
+  // real coverage exists (a real frozen brief: this renderer produced a
+  // brief its own validator rejected). A covered consumer gets an explicit
+  // line naming its covering test DIRECTORY (or the file itself, when no
+  // `tests`/`specs` ancestor exists to name — see `nearestTestDir`) in that
+  // mode — a form `checkConsumerTests` accepts either way — so the renderer
+  // can never again produce a brief its own validator fails.
+  //
   // The trigger reads `packagesNamedIn` against the SAME text
   // `checkConsumerTests` will re-scan (Create + Modify + Out of surface +
   // Premise pins, everything but the consumer lines themselves, not yet
@@ -498,8 +508,8 @@ function renderSection4(facts: BriefFacts): string {
   // A Boundary that narrows Modify to bare Surface DIRECTORIES (`in:`
   // globs with no individual file pinned under them) named a shared
   // package nowhere a file-based scan could see, so the renderer emitted no
-  // consumer-tests line at all for it — reproduced live on this Issue's own
-  // write, before its Boundary named a consumer test file by path.
+  // consumer-tests line at all for it — reproduced live on a real brief's
+  // own write, before its Boundary named a consumer test file by path.
   const prelude = [createdBlock, modifyLines, outOfSurfaceLine, premisePinsBlock].join('\n')
   const uncovered: string[] = []
   const coveredDirLines: string[] = []
@@ -775,7 +785,7 @@ function renderSection12(facts: BriefFacts): string {
  * never copied from a hardcoded template string in this module.
  *
  * Refuses — `{ ok: false, missing }` — the moment a fact this renderer needs
- * is absent: never a default, per Issue #387's rule that a brief states no
+ * is absent: never a default, per this rule that a brief states no
  * fact it did not actually derive.
  */
 export function renderBrief(facts: BriefFacts, template: string): RenderResult {
@@ -795,10 +805,10 @@ export function renderBrief(facts: BriefFacts, template: string): RenderResult {
     missing.push('Objectives (Issue has no `## Objectives` section)')
   }
   // Same grandfather posture as Objectives, not the four judgment sections
-  // below: no pre-#626 Issue ever carried a `## Documentation` heading, so
-  // the renderer must not newly refuse that whole stock. `{ kind: 'sources',
-  // sources: [] }` is the absent-section sentinel; `{ kind: 'none' }` is a
-  // real, valid opt-out and never reaches this branch.
+  // below: no sufficiently old Issue ever carried a `## Documentation`
+  // heading, so the renderer must not newly refuse that whole stock.
+  // `{ kind: 'sources', sources: [] }` is the absent-section sentinel;
+  // `{ kind: 'none' }` is a real, valid opt-out and never reaches this branch.
   if (
     facts.documentation.kind === 'sources' &&
     facts.documentation.sources.length === 0 &&
@@ -806,7 +816,7 @@ export function renderBrief(facts: BriefFacts, template: string): RenderResult {
   ) {
     missing.push('Documentation (Issue has no `## Documentation` section)')
   }
-  // The four judgment sections (plan-brief-v1 task 1, Issue #426) are NOT
+  // The four judgment sections are NOT
   // grandfathered by `BRIEF_SECTIONS_SINCE_ISSUE` here, unlike Objectives
   // above: a brief genuinely needs §4's Out of surface, §6's Parts, §9's
   // Test plan and §10's Stop conditions to render regardless of which Issue
@@ -837,7 +847,7 @@ export function renderBrief(facts: BriefFacts, template: string): RenderResult {
     if (!facts.rationale[key]) missing.push(RATIONALE_FIELD_NAMES[key])
   }
 
-  // O2/O3 (task 12, Issue #469): the surface map lists only what `## Surface`
+  // O2/O3: the surface map lists only what `## Surface`
   // admits. When the Boundary named files but the Issue's own Surface admits
   // none of them, that is the Boundary and Surface genuinely disagreeing —
   // refuse at render (naming it) rather than dispatch a brief whose surface

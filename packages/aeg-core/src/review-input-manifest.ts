@@ -1,5 +1,5 @@
 /**
- * The review-input manifest (`review-validity-v1` task 4, `#478`). One typed
+ * The review-input manifest. One typed
  * snapshot of every fact a verdict is judged against — head, the frozen
  * brief's own hash, the objectives version, the newest ruling ordinal, and
  * the effective review policy's digest — built by the driver from forge
@@ -13,10 +13,10 @@
  * is used the same way `objectives.ts`/`premise-check.ts`/`claude-code-transcript.ts`
  * already do in this package: a deterministic digest is not I/O.
  *
- * Base identity (`control-store-v1` task 5, `#555`, O1). The manifest now
+ * Base identity (O1). The manifest now
  * carries `baseSha` — the base commit the round's candidate was judged
- * against — the field `review-validity-v1` task 4 deliberately deferred until
- * `control-store-v1` landed a durable home for it (that store is now built;
+ * against — a field deliberately deferred until a durable control-store
+ * landed a home for it (that store is now built;
  * see `packages/aeg-core/src/control-store/`). Its acceptance is BOUNDED, not
  * a sixth always-checked equality (Traps to avoid: "same patch text on a new
  * base is not automatically equivalent"; "preserve the existing comparison
@@ -47,8 +47,8 @@ import type { ReviewPolicy } from './review-policy'
 
 /**
  * `sha256` of the frozen brief's own text as it appears posted, below its
- * header lines — moved here from `apps/cli/src/lib/dispatch-task.ts` (task 4,
- * `#478`, O1: one implementation, not two now that a pure-package caller
+ * header lines — moved here from `apps/cli/src/lib/dispatch-task.ts` (one
+ * implementation, not two now that a pure-package caller
  * needs the identical fact). The hashed content is `brief + '\n'`, exactly
  * what `@attalabs/aeg-core`'s `frozenBriefContent`/`contentAfterNLines`
  * reconstruct from a live posted comment — computing the hash any other way
@@ -65,8 +65,7 @@ export function briefHash(brief: string): string {
  * callers resolving the identical `ReviewPolicy` value always agree on its
  * digest regardless of how they built the object literal.
  *
- * `maxRounds` — the incoming round-policy field (`control-store-v1` task 5,
- * `#555`, O1; Traps to avoid: "include the incoming round-policy field in the
+ * `maxRounds` — the incoming round-policy field (O1; Traps to avoid: "include the incoming round-policy field in the
  * relevant configuration identity") — is part of the digest so the policy
  * identity a verdict binds against is the COMPLETE effective policy, not just
  * its two severity thresholds. A run whose round cap changed under a verdict
@@ -97,11 +96,11 @@ export function policyDigest(policy: ReviewPolicy): string {
  * either configured or defaulted.
  */
 export type ReviewInputManifest = {
-  /** The candidate identity — the round's judged head (`control-store-v1` task 5, `#555`, O1: "base and candidate identity"). */
+  /** The candidate identity — the round's judged head (O1: "base and candidate identity"). */
   headSha: string
   /**
    * The base identity — the base commit the candidate was judged against
-   * (`control-store-v1` task 5, `#555`, O1). `null` exactly when no base is
+   * (O1). `null` exactly when no base is
    * resolvable to bind against (a caller with no git/base context, or a
    * pre-cutover verdict that echoed no `Judged base:` line) — the same
    * "nothing to bind against" shape `briefHash`/`objectivesVersion` already
@@ -116,7 +115,7 @@ export type ReviewInputManifest = {
 
 export type ReviewInputManifestFacts = {
   headSha: string
-  /** The base commit the candidate is judged against (`#555`, O1) — `null` when the caller cannot resolve one, never a thrown refusal. */
+  /** The base commit the candidate is judged against (O1) — `null` when the caller cannot resolve one, never a thrown refusal. */
   baseSha: string | null
   /** The frozen brief's own text (already header-stripped, e.g. `resolveNewestFrozenBrief(...).content`), or `null` when none is resolvable for this task/PR — `briefHash` is `null` in that case, never a thrown refusal. */
   briefContent: string | null
@@ -155,7 +154,7 @@ export function buildReviewInputManifest(facts: ReviewInputManifestFacts): Revie
  */
 export type EchoedManifest = {
   headSha: string | null
-  /** `null` when no `Judged base:` line was found (`#555`, O1) — pre-cutover legacy stock, or a stripped line. */
+  /** `null` when no `Judged base:` line was found (O1) — pre-cutover legacy stock, or a stripped line. */
   baseSha: string | null
   briefHash: string | null
   objectivesVersion: string | null
@@ -180,7 +179,7 @@ export function manifestAsEchoed(manifest: ReviewInputManifest): EchoedManifest 
  * `headSha` starting with `echoed.headSha` (the abbreviated-sha case).
  * `false` when `echoed.headSha` is `null` — an unbound verdict never counts
  * as covering anything. Moved here verbatim from `review-gate.ts`'s own
- * `isBoundToHead` (task 4, `#478`, O2 — one comparison, not two).
+ * `isBoundToHead` (one comparison, not two).
  */
 export function isBoundToHead(echoed: { headSha: string | null }, headSha: string): boolean {
   if (!echoed.headSha) return false
@@ -195,7 +194,7 @@ export function isBoundToHead(echoed: { headSha: string | null }, headSha: strin
  *
  * Callers that use this to decide whether a base move is TOLERATED (a
  * genuine rebase) must only consult it when the candidate is NOT already
- * an exact-head match (round 3 review, `#555` F1 BLOCKER) — see
+ * an exact-head match (a round-3 review BLOCKER finding) — see
  * `compareManifest`'s own comment on `patchHead`. Called with the SAME sha
  * on both sides (an unchanged head), `patchIdOf` trivially reports equal
  * values for any deterministic implementation, which is never evidence of
@@ -225,7 +224,7 @@ export function isBoundToPatch(
 }
 
 /**
- * True when the echoed base identity covers the current one (`#555`, O1).
+ * True when the echoed base identity covers the current one (O1).
  * `currentBase === null` skips the binding (no base resolvable to judge
  * against — the same "nothing to bind against" shape `isBoundToObjectives`/
  * `isBoundToBriefHash` use for their own current-side null, and what keeps
@@ -286,8 +285,8 @@ export function isBoundToBriefHash(echoed: { briefHash: string | null }, current
 }
 
 /**
- * True when the echoed policy digest covers the current one. `#478` round 4
- * (security MEDIUM): NEVER grandfathers a `null` echo, unlike a first read
+ * True when the echoed policy digest covers the current one. A MEDIUM
+ * security-review finding: NEVER grandfathers a `null` echo, unlike a first read
  * of "a policy is ALWAYS resolvable, so grandfather on the echoed side
  * instead" might suggest — every other field in this family grandfathers
  * only when there is a genuine sentinel for "nothing to compare" on the
@@ -314,7 +313,7 @@ export type ManifestBindingResult = {
   bound: boolean
   head: boolean
   /**
-   * The bounded base-identity result (`#555`, O1) — `true` when the base is
+   * The bounded base-identity result (O1) — `true` when the base is
    * satisfied under the acceptance rule, NOT a bare `isBoundTobase` equality:
    * a proven patch-identity rebase reports `true` here even across a base move
    * (the diff itself is what was judged), while an exact-head match across a
@@ -330,7 +329,7 @@ export type ManifestBindingResult = {
 
 /**
  * The ONE comparison behind both the merge gate (`checkReviewGate`) and the
- * loop's own publication self-check (task 4, `#478`, O2) — reported field
+ * loop's own publication self-check — reported field
  * by field so a caller can name exactly which fact drifted, the same way
  * `checkReviewGate`'s own `problems` array already does.
  */
@@ -339,8 +338,8 @@ export function compareManifest(
   current: ReviewInputManifest,
   patchIdOf?: (sha: string) => string | null
 ): ManifestBindingResult {
-  // The head/base pair, bound together under the acceptance rule (`#555`,
-  // O1). An exact head sha is the same candidate — a base move under it is a
+  // The head/base pair, bound together under the acceptance rule
+  // (O1). An exact head sha is the same candidate — a base move under it is a
   // base-only change and must fail. A patch-identity match is a proven
   // equivalent rebase — the diff itself is byte-identical, so a base move is
   // tolerated (the reviewer judged the patch, not the base; CI at the new
@@ -348,8 +347,8 @@ export function compareManifest(
   // answer (either path), unchanged for every existing caller; `base` is the
   // separately-reported, bounded verdict on the base identity.
   //
-  // `patchHead` is only ever consulted when `exactHead` is false (round 3
-  // review, `#555` F1 BLOCKER) — a genuine rebase is "different revision,
+  // `patchHead` is only ever consulted when `exactHead` is false (a round-3
+  // review BLOCKER finding) — a genuine rebase is "different revision,
   // same patch." Computing `isBoundByPatchIdentity` unconditionally and
   // gating `base`'s bypass on its bare result was wrong: on an UNCHANGED
   // head, `patchIdOf` is called with the identical sha on both sides,

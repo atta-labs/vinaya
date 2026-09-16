@@ -4,7 +4,7 @@
  * Pure data, zero I/O, zero imports beyond the type itself — same discipline
  * as `waiver-label.ts`.
  *
- * Two consumers read this one list (Issue #505): G3's "no seventh way into
+ * Two consumers read this one list: G3's "no seventh way into
  * GitHub" completeness story (`registry-checks.ts`) targets the
  * `crosses: 'into-github'` subset against `enforcement.md`'s Ring-0 gate rows;
  * task 506's DiagramModel places each action both inside a ring-0 gate (as a
@@ -12,16 +12,15 @@
  * hand-off). One list, so an `ACTIONS.length`-driven diagram edge count and
  * G3's crossing list can never drift apart.
  *
- * The set is 11 distinct actions: the 6 crossings named in Issue #505 plus 5
- * seam-only actions (4 original, plus `create-the-milestone`,
- * vinaya-milestone-model-v1 task 2). Two of the six contract seams are already
+ * The set is 11 distinct actions: 6 real crossings plus 5
+ * seam-only actions (4 original, plus `create-the-milestone`). Two of the six contract seams are already
  * accomplished by a GitHub crossing (the Planner→Brief seam's carrier is the
  * Issue body, created by `create-a-task-issue`; the Developer→Reviewer seam's
  * carrier is the PR, created by `open-a-pull-request`), so they get no
  * duplicate id — inventing one would give two ids for one real act and break
  * any `ACTIONS.length`-driven edge count.
  *
- * `crosses` is factually per-action, not a mirror of Issue #505's prose:
+ * `crosses` is factually per-action, not a mirror of a rationale's prose:
  * `commit-the-work` is `'none'` because `git commit` never leaves the local
  * machine — it is `git push` (`publish-the-branch`) that reaches the
  * GitHub-hosted remote. `enforcement.md`'s own Ring-0 table lists them as
@@ -29,7 +28,7 @@
  * reason..
  *
  * The only valid `performedBy` values are the 9 `role_id`s under
- * `aeg-root/roles/*.md` (task 2, #522) — asserted by the real-file test.
+ * `aeg-root/roles/*.md` — asserted by the real-file test.
  */
 
 export type ActionCrossing = 'into-github' | 'none'
@@ -143,8 +142,7 @@ export const ACTIONS: Action[] = [
     // reason `post-provenance-comment`/`produce-the-verdict` are 'none'
     // despite writing PR comments via the API. `vinaya milestone create`
     // is a manually-invoked CLI command with no Ring-0 hook intercepting a
-    // raw bypass, so it stays seam-only here (vinaya-milestone-model-v1
-    // task 2).
+    // raw bypass, so it stays seam-only here.
     crosses: 'none',
     performedBy: ['architect'],
     summary: 'Ever had a Milestone whose title quietly became the only place a version lived?',
@@ -154,8 +152,8 @@ export const ACTIONS: Action[] = [
 ]
 
 // A stable keyword per into-github action that must appear (case-insensitive)
-// in some real Ring-0 gate row's action text — the "feeds G3" tripwire from
-// Issue #505. If enforcement.md ever drops the gate row backing a crossing,
+// in some real Ring-0 gate row's action text — the "feeds G3" tripwire.
+// If enforcement.md ever drops the gate row backing a crossing,
 // the corresponding assertion fails. grant-a-waiver's keyword is
 // `pull request`: granting a waiver is an act on a pull request (labeling it),
 // honored at the Ring-0 PR-creation/editing gate and refused-from-agents at

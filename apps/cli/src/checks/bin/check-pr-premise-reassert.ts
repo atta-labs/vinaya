@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: pr-premise-reassert (#466). Re-asserts a pull request BODY's
+ * Core check: pr-premise-reassert. Re-asserts a pull request BODY's
  * `Premise:` pins against the real tree, so a pin the PR's own diff
  * falsifies fails CI instead of merging as decoration.
  *
@@ -13,7 +13,7 @@
  * (`parsePremiseBlock`/`checkPremises`, `@attalabs/aeg-core`) are consumed
  * unchanged; this file is wiring, not a second implementation.
  *
- * Trigger is the block's presence and nothing else (O3): a body with no
+ * Trigger is the block's presence and nothing else: a body with no
  * `Premise:` header parses to zero assertions and this check is silent —
  * there is no branch-name condition anywhere below. `reassertPremiseFile`
  * itself treats zero assertions as a hard failure ("a premise file with no

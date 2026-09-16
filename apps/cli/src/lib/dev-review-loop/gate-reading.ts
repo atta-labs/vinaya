@@ -1,6 +1,5 @@
 /**
- * `dev-review-loop`'s gate-reading concern (task 8,
- * `#506`, O8) — every forge/git read about a head's mechanical readiness:
+ * `dev-review-loop`'s gate-reading concern — every forge/git read about a head's mechanical readiness:
  * mechanical CI conclusion, mergeability, base-head staleness, and a
  * developer's own worktree head. Pure reads, no forge-write function
  * anywhere in this module — moved out of `apps/cli/src/lib/dev-review-loop.ts`
@@ -23,9 +22,8 @@ function shEnvOverride(name: string, fallback: number): number {
 /**
  * `execFileSync`'s own default `maxBuffer` (1 MiB) is what broke
  * `fetchFrozenBrief`'s `gh issue view --json comments` read once a task
- * Issue's own log-dump comments passed it (Issue #626, O3):
- * Issue #566 measured at 1,597,599 bytes, and the loop exited
- * `reason=error` at `last_decision=dispatch_developer` on every restart —
+ * Issue's own log-dump comments passed it: one measured at 1,597,599 bytes,
+ * and the loop exited
  * unable to read the very brief it needed to dispatch. Every `gh` read this
  * module makes (`fetchFrozenBrief`, `fetchIssueComments`,
  * `resolveIssueObjectives`, `fetchRulings` — all in `developer-dispatch.ts`,
@@ -76,7 +74,7 @@ function sh(cmd: string, args: string[]): string {
 
 /**
  * The branch's true head via `git ls-remote` only — `gh pr view
- * headRefOid` is refused by name (Traps to avoid; `#403` moved both gates
+ * headRefOid` is refused by name (Traps to avoid; a real fix moved both gates
  * off it because it can lag a push). Throws, never returns a placeholder,
  * on a genuine resolution failure — a caller with nothing to fall back to
  * should not be handed an empty string.
@@ -102,7 +100,7 @@ type RestCheckRun = { id: number; name: string; status: string; conclusion: stri
  * latest run per name, EXCLUDING `REVIEW_GATE_CHECK_RUN_NAME` — the same
  * exclusion `check-review-gate.ts` already applies to itself, imported from
  * the one shared constant rather than a second hardcoded name
- * (task `#488`, O1, Traps to avoid). Excluded
+ * (Traps to avoid). Excluded
  * entirely, in every status: a review gate that hasn't posted a verdict yet
  * (no check-run conclusion, or one still `in_progress`) must never read as
  * pending CI either — it is not CI at all. `null` on a genuine fetch
@@ -145,7 +143,7 @@ function fetchMechanicalCheckRuns(headSha: string): RestCheckRun[] | null {
 /**
  * The mechanical gate's own conclusion for `headSha` — never the review
  * gate's own check-run (excluded by `fetchMechanicalCheckRuns`), so a head
- * with green CI and no verdicts yet reads as green, never red (O1).
+ * with green CI and no verdicts yet reads as green, never red.
  * `'pending'` when any latest-per-name mechanical run has not completed, the
  * fetch fails, or no mechanical check-run exists at all yet — the driver is
  * expected to poll this, not treat one `'pending'` read as final.
@@ -160,15 +158,15 @@ export function fetchCiConclusion(headSha: string): 'green' | 'red' | 'pending' 
   return 'red'
 }
 
-/** One completed, non-passing mechanical check-run — the identity a pause built from it can be audited against (`#607`, O3). */
+/** One completed, non-passing mechanical check-run — the identity a pause built from it can be audited against. */
 export type FailingCheckRun = { name: string; id: number; startedAt: string | null }
 
 /**
  * Every completed, non-passing mechanical check-run for `headSha` — never
  * the review gate's own (same exclusion as `fetchCiConclusion`). Already
  * deduped to the newest run per check name (`fetchMechanicalCheckRuns`'s own
- * O3, `#595`), so a failure a later same-named run has superseded with a
- * pass is never in this list (`#607`, O1). Used to tell the developer
+ * O3), so a failure a later same-named run has superseded with a
+ * pass is never in this list. Used to tell the developer
  * exactly what to fix, and to name the run a pause was built from, instead
  * of a bare "CI is red." Empty when the fetch fails or nothing has failed
  * yet (a still-`pending` run names nothing — there is nothing to fix until
@@ -183,13 +181,13 @@ export function fetchFailingCheckRuns(headSha: string): FailingCheckRun[] {
     .map((r) => ({ name: r.name, id: r.id, startedAt: r.started_at ?? null }))
 }
 
-/** `#607` O3: the display form a pause detail (or a gate-red retry prompt) names a failing run by — the check name plus its run id, so the SAME name appearing again in a later, superseded run is never mistaken for the one a pause was actually built from. */
+/** O3: the display form a pause detail (or a gate-red retry prompt) names a failing run by — the check name plus its run id, so the SAME name appearing again in a later, superseded run is never mistaken for the one a pause was actually built from. */
 export function describeFailingCheckRun(run: FailingCheckRun): string {
   return run.startedAt ? `${run.name} (run ${run.id}, started ${run.startedAt})` : `${run.name} (run ${run.id})`
 }
-// --- mergeability (O4/O5/O7) ------------------------------------------------
+// --- mergeability ------------------------------------------------
 
-/** The forge's own three-value answer (GitHub's `mergeable` GraphQL field, read via `gh pr view --json mergeable`) — `UNKNOWN` is the forge still computing it, never read as clean and never as conflicting (O7); the caller polls. */
+/** The forge's own three-value answer (GitHub's `mergeable` GraphQL field, read via `gh pr view --json mergeable`) — `UNKNOWN` is the forge still computing it, never read as clean and never as conflicting; the caller polls. */
 export type MergeableState = 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN'
 
 export function fetchMergeableState(prNumber: number): MergeableState {
@@ -248,7 +246,7 @@ export function fetchConflictingFiles(baseBranch: string, headBranch: string): s
   }
 }
 
-// --- base-head staleness (O8) ------------------------------------------------
+// --- base-head staleness ------------------------------------------------
 
 /**
  * O8: any commit touching one of these paths between the loop's recorded
@@ -275,7 +273,7 @@ export function gitCommitsTouchingDriverPaths(oldSha: string, newSha: string): s
   }
 }
 
-// --- worktree head (O2/O3) ---------------------------------------------------
+// --- worktree head ---------------------------------------------------
 
 /** `null` when the worktree doesn't exist locally, or `git -C <path> rev-parse HEAD` otherwise fails — a fact this driver may simply not have (it runs from the repo root, not necessarily the same machine/checkout as the developer's own worktree). */
 export function readWorktreeHead(worktreePath: string): string | null {

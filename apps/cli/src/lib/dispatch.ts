@@ -76,7 +76,7 @@ import { repoRoot } from './diff-evidence.js'
 
 /**
  * Terminal colour, applied only at the point a line is written to a real
- * interactive stream (O3; Issue #491) — never where the line is produced, so
+ * interactive stream — never where the line is produced, so
  * the dispatch-output tee (`openOutputTee`, which never sees these lines at
  * all) and any piped/non-TTY consumer keep reading exactly the bytes they
  * read before this task. `NO_COLOR` (https://no-color.org) is honored by
@@ -84,7 +84,7 @@ import { repoRoot } from './diff-evidence.js'
  */
 const ANSI_RESET = '\x1b[0m'
 
-/** One fixed colour per role, never per vendor (O1) — the reader is separating who is speaking, not which binary ran. */
+/** One fixed colour per role, never per vendor — the reader is separating who is speaking, not which binary ran. */
 const ROLE_ANSI: Record<Role, string> = {
   planner: '\x1b[34m', // blue
   developer: '\x1b[36m', // cyan
@@ -95,7 +95,7 @@ const ROLE_ANSI: Record<Role, string> = {
   architect: '\x1b[93m' // bright yellow
 }
 
-/** The coordinator's own colour (O2) — distinct from every role above, so a lifecycle/loop line reads as the loop's without reading the text. */
+/** The coordinator's own colour — distinct from every role above, so a lifecycle/loop line reads as the loop's without reading the text. */
 const LOOP_ANSI = '\x1b[90m' // bright black / grey
 
 export function colourEnabled(stream: { isTTY?: boolean }): boolean {
@@ -105,7 +105,7 @@ export function colourEnabled(stream: { isTTY?: boolean }): boolean {
 /**
  * `[role] <line>` — one call per already-split physical line; a caller with
  * multi-line rendered text splits it first so every line carries its own
- * prefix (O1). Coloured only when `stream` is a live TTY and `NO_COLOR` is
+ * prefix. Coloured only when `stream` is a live TTY and `NO_COLOR` is
  * unset (`colourEnabled`); otherwise the same prefixed text with no escape
  * codes, which is what a piped consumer or a non-interactive run sees.
  */
@@ -115,7 +115,7 @@ export function colourAgentLine(role: Role, line: string, stream: { isTTY?: bool
 }
 
 /**
- * The loop/lifecycle style (O2) — no added prefix, since this family's own
+ * The loop/lifecycle style — no added prefix, since this family's own
  * text already names the role (`[vinaya dispatch <id>] <role> via <agent>:
  * …`, or the loop's own `vinaya dev-review-loop: …`); restyled, never
  * stacked with a second prefix. Same TTY/`NO_COLOR` gate as `colourAgentLine`.
@@ -154,7 +154,7 @@ export type DispatchOpts = {
   resumeId?: string
   /**
    * The model to run, passed to `agent`'s own binary through that vendor's
-   * own `--model` flag (O1) — confirmed present on all three vendors' own
+   * own `--model` flag — confirmed present on all three vendors' own
    * `--help` output, not assumed. Omitted entirely (no flag added) when the
    * caller names none: the vendor then runs whatever its own default model
    * is, exactly as before this task. The caller's choice here always wins
@@ -181,8 +181,8 @@ export type DispatchOpts = {
    */
   roleLogPath?: string
   /**
-   * (`#561`, O1/O2) The child's own working
-   * directory — never set before this task, which meant every dispatched
+   * O1/O2: the child's own working
+   * directory — never set before this, which meant every dispatched
    * role's shell ran from wherever THIS process's own `cwd` happened to be,
    * not from any content this task actually names. `dev-review-loop.ts`'s
    * reviewer dispatch is the first caller to pass one (a per-reviewer
@@ -193,7 +193,7 @@ export type DispatchOpts = {
    */
   cwd?: string
   /**
-   * O1/O3 (task 3, `#560`): marks this dispatch as an unattended start —
+   * O1/O3: marks this dispatch as an unattended start —
    * a driver launching a Developer, Reviewer or operational agent with
    * nobody watching each tool call, as opposed to an Operator running
    * `vinaya dispatch` by hand. Attribution only by itself: whether an
@@ -260,12 +260,12 @@ export type DispatchOpts = {
 }
 
 /**
- * `'signal'` (O1, Issue #605): the driver's own shutdown path terminated this
+ * `'signal'`: the driver's own shutdown path terminated this
  * launch's child on `SIGTERM`/`SIGINT` — distinct from `'crash'` (the child
  * died on its own) so recovery can read it as a cancelled attempt, never an
  * infrastructure failure of the child's own making.
  *
- * `'unbound'` (Issue #636, O5): the child exited — on a timeout kill or on
+ * `'unbound'`: the child exited — on a timeout kill or on
  * its own, any exit code — having never once bound a vendor session
  * (`launch.resumeId` stayed `null` for the whole run, and the completed
  * `stdoutBuf` still parses to no session either). Distinct from `'crash'`/
@@ -300,7 +300,7 @@ export type DispatchHandle = {
 
 /**
  * Four hours — matches `dispatch.timeoutMs`'s documented default in
- * `VinayaConfigSchema`. Raised from the original one hour (O4, Issue #450):
+ * `VinayaConfigSchema`. Raised from the original one hour:
  * a real dispatched agent turn was found live still working past the
  * thirty-minute mark, and a one-hour ceiling gives too little margin before
  * a genuinely working agent is killed mid-task. The ceiling itself stays —
@@ -317,11 +317,11 @@ export const DEFAULT_TIMEOUT_MS = 14_400_000
  */
 const SIGKILL_GRACE_MS = 5_000
 
-/** How often a still-running dispatch announces that it is alive (O1). */
+/** How often a still-running dispatch announces that it is alive. */
 export const HEARTBEAT_INTERVAL_MS = 60_000
 
 /**
- * How long before the deadline the approaching-timeout warning fires (O3).
+ * How long before the deadline the approaching-timeout warning fires.
  * Capped at 5 minutes so a short `dispatch.timeoutMs` (e.g. a test's 2500ms)
  * still gets a warning inside its own ceiling rather than one scheduled past
  * it and never firing.
@@ -332,7 +332,7 @@ export function timeoutWarningLeadMs(timeoutMs: number): number {
 
 /**
  * Tees the child's raw stdout/stderr bytes to a machine-local file so a
- * human can read what the agent is doing while it is still running (O2) —
+ * human can read what the agent is doing while it is still running —
  * never inside the repository tree (a dispatch's own worktree could be
  * mid-rebase or reviewed by someone else) and never a replacement for the
  * in-memory `stdoutBuf` the exit handler parses for outcome data. Failure to
@@ -427,7 +427,7 @@ export function openOutputTee(effectId: string): {
 }
 
 /**
- * O1 (#543): the one shell surface a dispatched agent must never use — a
+ * O1: the one shell surface a dispatched agent must never use — a
  * backgrounded command — refused before the tool call executes, not asked
  * nicely in a prompt. Confirmed live against this machine's own
  * `~/.claude/settings.json` and the installed `claude` binary itself (not
@@ -454,7 +454,7 @@ export const BACKGROUND_DENY_REASON =
   'Dispatched sessions cannot run shell commands in the background — run this command in the foreground instead.'
 
 /**
- * Round-2 HIGH (`#547`, O1): `run_in_background === true` is the SDK's own
+ * Round-2 HIGH: `run_in_background === true` is the SDK's own
  * flag for a backgrounded tool call, but a dispatched agent can background a
  * process by shell shape alone, with `run_in_background` left `false` — a
  * trailing `&` (never `&&`, a legitimate chain operator), or a command that
@@ -641,7 +641,7 @@ function documentationSourcesFromPrompt(role: Role, prompt: string): IssueDocume
 
 /**
  * The `PostToolUse` hook that records every `WebFetch` URL for this session
- * — Issue #625, O2. Appends one JSON line (`{url}`) per call to a per-run log
+ * — O2. Appends one JSON line (`{url}`) per call to a per-run log
  * file keyed by `VINAYA_RUN_ID` (never a fixed global path: two tasks
  * dispatched concurrently, an observed live pattern on this box, would
  * otherwise share one file and each would see the other's fetches). Exit
@@ -675,7 +675,7 @@ function documentationLogHookScript(dir: string): string {
 
 /**
  * The `Stop` hook that refuses to let the turn end while a `## Documentation`
- * source named in this dispatch's own brief was never fetched — Issue #625,
+ * source named in this dispatch's own brief was never fetched —
  * O2. Reads the per-run sources file `writeDispatchSettings` wrote (dormant,
  * exit 0, when absent or empty: a task whose brief carried no Documentation
  * section, or none of it URL-shaped, owes nothing here) and the log file the
@@ -757,7 +757,7 @@ const DISPATCH_BASH_MAX_TIMEOUT_MS = '1800000'
  * defaults to true, so an agent that never sets it explicitly would
  * otherwise background every subagent it spawns.
  *
- * `documentation` (Issue #625, O2) wires the second enforcement pair this
+ * `documentation` (O2) wires the second enforcement pair this
  * settings file carries: a `PostToolUse` hook that logs every `WebFetch` URL
  * and a `Stop` hook that refuses to let the turn end while a URL-shaped
  * `## Documentation` source this dispatch's own brief named was never
@@ -823,7 +823,7 @@ export function writeDispatchSettings(runId: string, documentation: IssueDocumen
 
 type UsageParser = (stdout: string) => { input: number; output: number } | null
 
-/** A vendor's own genuine receipt of which model executed (O2), or `null` when this vendor's stdout carries no such field — never guessed from the requested `--model` value. */
+/** A vendor's own genuine receipt of which model executed, or `null` when this vendor's stdout carries no such field — never guessed from the requested `--model` value. */
 type ModelParser = (stdout: string) => string | null
 
 /**
@@ -1098,19 +1098,19 @@ function parseGeminiResumeId(stdout: string): string | null {
  * attributed to — so a later, separate `vinaya dispatch` invocation (a
  * different terminal, possibly days later) can find the id needed to
  * answer a stopped agent through `--resume <id> --prompt-file <answer>`,
- * instead of the id living only in the window that printed it (O8, Issue
- * #454; Principal ruling: answer through the resume path that already
+ * instead of the id living only in the window that printed it (a
+ * Principal ruling: answer through the resume path that already
  * exists — `--resume`/`--prompt-file` are already parsed — never a live
  * channel held open on a blocking read).
  *
- * The repo segment (O5, Issue #456) — `${owner}-${repo}`, or `unresolved`
+ * The repo segment — `${owner}-${repo}`, or `unresolved`
  * when `resolveRepo()` can't (mirrors `outboxPathFor`'s own repo-null
  * convention, `log-sink.ts`) — is load-bearing, not decoration: `task` here
  * is the caller's resolved forge Issue number (`dispatchTask` passes its
  * own `issue`, never the tranche-local ordinal `n` — see its own call
  * site), and two DIFFERENT repositories can both have an Issue numbered the
- * same. Without the repo segment, tranche A's task 9 (repo X, Issue #12)
- * and tranche B's task 9 (repo Y, Issue #12) would overwrite the same
+ * same. Without the repo segment, tranche A's task 9 (repo X, some Issue)
+ * and tranche B's task 9 (repo Y, the same Issue number) would overwrite the same
  * `developer-claude-issue12.json`, handing an operator resuming one the
  * other's session.
  *
@@ -1209,7 +1209,7 @@ export type LaunchRecord = {
   dispatcherPid: number
   /** The spawned vendor child's pid, set the moment `spawn` returns — the identity recovery probes to tell a still-live launch from a finished one (O3). `null` until the child is actually spawned (a pre-spawn refusal never sets it). */
   childPid: number | null
-  /** The child's own process start time, snapshotted (`getProcessSnapshot`) the instant `spawn` returns — O3, Issue #605. Compared back against the SAME pid's current start time at recovery time so a pid the OS has since recycled for an unrelated process is never mistaken for this launch's own child. `null` when the snapshot could not be taken (never blocks the dispatch). */
+  /** The child's own process start time, snapshotted (`getProcessSnapshot`) the instant `spawn` returns — O3. Compared back against the SAME pid's current start time at recovery time so a pid the OS has since recycled for an unrelated process is never mistaken for this launch's own child. `null` when the snapshot could not be taken (never blocks the dispatch). */
   childStartedAt: string | null
   /** The child's own command name, snapshotted alongside `childStartedAt` — the second identity signal O3 asks for ("start time and/or command line"). `null` when unavailable. */
   childCommand: string | null
@@ -1354,7 +1354,7 @@ export function readLaunchRecord(
 /**
  * The bound-session view of the launch record, for the callers that only need
  * a resumable vendor session id (the loop's own round-1 attach/resume seams,
- * `#488` O4) — `null` when no launch exists, its record is corrupt, or the
+ * O4) — `null` when no launch exists, its record is corrupt, or the
  * launch was interrupted before its session was ever bound (no session to
  * resume). An interrupted-but-bound launch now yields its session id here,
  * where before this task only a cleanly-completed one did — the session
@@ -1384,7 +1384,7 @@ export function readResumeRecord(
   }
 }
 
-/** A pid's own identity facts, read fresh off the OS — never trusted from a launch record alone (O3, Issue #605): `ppid` is what tells recovery whether a still-alive child is still parented to the driver that spawned it (O2), `startedAt`/`command` are what tells it whether this pid is even the SAME process the launch record named, rather than one the OS has since recycled for something unrelated. */
+/** A pid's own identity facts, read fresh off the OS — never trusted from a launch record alone (O3): `ppid` is what tells recovery whether a still-alive child is still parented to the driver that spawned it (O2), `startedAt`/`command` are what tells it whether this pid is even the SAME process the launch record named, rather than one the OS has since recycled for something unrelated. */
 export type ProcessSnapshot = { ppid: number; startedAt: string | null; command: string | null }
 
 /** One `ps -o <format> -p <pid>` field, trimmed — `null` when `ps` refuses the pid (it doesn't exist) or prints nothing. `=` suffixes on every format string suppress the header row on both BSD (macOS) and GNU (Linux) `ps`, so a single blank/absent line unambiguously means "no such process." */
@@ -1422,7 +1422,7 @@ export function getProcessSnapshot(pid: number): ProcessSnapshot | null {
 }
 
 /**
- * O3 (Issue #605; round 4 security review, HIGH): does `snapshot` (a LIVE
+ * O3 (a HIGH security-review finding): does `snapshot` (a LIVE
  * re-read of a pid) still match the identity `record` captured for that
  * same pid at spawn time? The one identity guard both callers that ever
  * treat a pid as this launch's own child now share — `dev-review-loop/
@@ -1499,7 +1499,7 @@ const IDENTITY_SETTLE_BUDGET_MS = 1_000
 const IDENTITY_SETTLE_POLL_MS = 20
 
 /**
- * O3 (Issue #605, round N code review, MAJOR): `childCommand`/`childStartedAt`
+ * O3 (a MAJOR code-review finding): `childCommand`/`childStartedAt`
  * used to be captured from a single `getProcessSnapshot` read the instant
  * `spawn()` returned. A vendor CLI installed through a typical npm shebang
  * launcher (`#!/usr/bin/env node`) does not settle into its final image in
@@ -1532,7 +1532,7 @@ export function captureSettledChildSnapshot(pid: number): ProcessSnapshot | null
 }
 
 /**
- * O1 (Issue #605): called by the driver's own `SIGTERM`/`SIGINT` handler,
+ * O1: called by the driver's own `SIGTERM`/`SIGINT` handler,
  * before it exits. A launch record still reading `'launched'` (a dispatch
  * genuinely in flight when the signal arrived) has its child terminated —
  * on this host, best-effort — and is patched to `'interrupted'`, so the
@@ -1698,7 +1698,7 @@ export function launchRecordMatchesRun(
 }
 
 /**
- * O1 (#608): recovers a dispatched session's real usage from the
+ * O1: recovers a dispatched session's real usage from the
  * coordinator's own tee'd copy of that session's stdout (`openOutputTee`),
  * for the case its OWN transcript pointer never resolved at all — the
  * sanctioned `no-transcript-resolved` case `resolveMeteringCapability`
@@ -1752,7 +1752,7 @@ export function recoverUsageFromDispatchTee(deps: DispatchTeeRecoveryDeps): Disp
 
 type VendorSpec = {
   binary: string
-  /** `model` appended via this vendor's own `--model` flag when given, omitted entirely otherwise — never a separate switch elsewhere (O1). */
+  /** `model` appended via this vendor's own `--model` flag when given, omitted entirely otherwise — never a separate switch elsewhere. */
   args: (model?: string) => string[]
   resumeArgs: (id: string, model?: string) => string[]
   parseUsage: UsageParser
@@ -1765,8 +1765,8 @@ type VendorSpec = {
   renderEvent: (obj: Record<string, unknown>) => string | null
   /**
    * This vendor's own model for each `AgentClass`, used only when a caller
-   * names no explicit model and a task's rationale resolves to a class
-   * (O3). Deliberately partial, not a model catalogue: filled only where a
+   * names no explicit model and a task's rationale resolves to a class.
+   * Deliberately partial, not a model catalogue: filled only where a
    * real, non-stale mapping exists — Claude's own `--model` help text
    * documents these three as aliases that always track its "latest" model
    * per tier, so the mapping never goes stale as new Claude models ship.
@@ -1959,7 +1959,7 @@ export function identifyVendorFromModelShape(model: string): AgentVendor | null 
 
 /**
  * A task's suggested agent-class resolved to this vendor's own concrete
- * model (O3) — `null` when this vendor has no verified, non-stale mapping
+ * model — `null` when this vendor has no verified, non-stale mapping
  * for that class (see `VendorSpec.classModels`'s own doc comment), never a
  * guessed model name.
  */
@@ -2023,8 +2023,8 @@ export function classifyRoleAttemptOutcome(
  * (that helper is private to that file, so this is its own scoped copy),
  * matched on `run_id` + `effect_id` + `kind` + `event` — not `run_id` alone.
  *
- * **`run_id` alone is not unique to one dispatch (code-review finding,
- * PR #441).** A dispatched role's own `vinaya dispatch` call (a nested
+ * **`run_id` alone is not unique to one dispatch (a code-review finding).**
+ * A dispatched role's own `vinaya dispatch` call (a nested
  * dispatch — no loop feature required, reachable today) inherits its
  * parent's `VINAYA_RUN_ID` via the child's env (by design, so a report can
  * join every line under one run) — `createLogSink`'s own `runId = deps.env().
@@ -2128,7 +2128,7 @@ export async function dispatchRole(
   const effectId = randomUUID()
   const vendor = VENDOR_TABLE[agent]
   const start = Date.now()
-  /** Every lifecycle line this call writes goes through this one point (O2) — restyled, never re-prefixed. O6: also mirrored, plainly, to `opts.roleLogPath` when the caller named one. */
+  /** Every lifecycle line this call writes goes through this one point — restyled, never re-prefixed. O6: also mirrored, plainly, to `opts.roleLogPath` when the caller named one. */
   const writeLifecycle = (msg: string): void => {
     process.stderr.write(`${colourLoopLine(msg, process.stderr)}\n`)
     if (opts.roleLogPath) appendRoleLine(opts.roleLogPath, role, msg)
@@ -2305,19 +2305,19 @@ export async function dispatchRole(
   const requireIsolation = loadConfig()?.dispatch?.requireWorkerIsolation ?? process.platform === 'darwin'
   // O1: claude only — see `writeDispatchSettings`'s own doc comment for why
   // Codex/Gemini are not silently included. Computed here, once, before the
-  // 'dispatched' log line — moved up from inside the spawn `Promise` (this
-  // task, #560) so the SAME final `spawnArgs` (baseArgs plus `--settings`)
+  // 'dispatched' log line — moved up from inside the spawn `Promise`
+  // so the SAME final `spawnArgs` (baseArgs plus `--settings`)
   // is what an unattended start's boundary resolution wraps below, rather
   // than wrapping a pre-settings argv and reconciling the two later.
   const documentationSources = documentationSourcesFromPrompt(role, prompt)
   if (agent !== 'claude' && documentationSources.some((s) => isDocumentationUrl(s.source))) {
-    // round 2 security review, LOW (Issue #625) — the PostToolUse/Stop hook
+    // round 2 security review, LOW — the PostToolUse/Stop hook
     // pair below is Claude-only, same limitation `deny-background-bash.mjs`
     // already has; unlike that hook, an unenforced Documentation obligation
     // is silent otherwise, so this dispatch names it rather than leaving
     // the operator to discover it only by a source never actually read.
     writeLifecycle(
-      'vinaya dispatch-role: the Documentation read-gate (Issue #625, O2) is Claude-only — ' +
+      'vinaya dispatch-role: the Documentation read-gate (O2) is Claude-only — ' +
         `agent '${agent}' gets no WebFetch log/Stop hook, so this brief's URL-shaped ` +
         `'## Documentation' source(s) are not mechanically enforced for this dispatch.`
     )
@@ -2364,7 +2364,7 @@ export async function dispatchRole(
   }
   const spawnArgs = dispatchSettingsPath ? [...baseArgs, '--settings', dispatchSettingsPath] : baseArgs
 
-  // O1/O3 (task 3, #560): an unattended start must run inside the proven
+  // O1/O3: an unattended start must run inside the proven
   // boundary — refused, before the 'dispatched' event and before any spawn,
   // when it cannot be established (`DispatchOpts.unattended`'s own doc
   // comment) — but only when `dispatch.requireWorkerIsolation` (`config.ts`)
@@ -2637,7 +2637,7 @@ export async function dispatchRole(
     // after `spawn` returns it — this is what recovery probes to tell a
     // still-live launch from a finished one, so it must be durable even if
     // the driver dies in the very next tick (a crash between spawn and
-    // session binding). The snapshot (O3, Issue #605) is taken via
+    // session binding). The snapshot (O3) is taken via
     // `captureSettledChildSnapshot`, not a single immediate read: a vendor
     // CLI launched through a shebang (`#!/usr/bin/env node`) can still be
     // mid-exec the instant `spawn` returns, and a snapshot taken right then

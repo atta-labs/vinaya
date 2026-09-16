@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: changeset-coverage (Issue #258). Thin adapter over
+ * Core check: changeset-coverage. Thin adapter over
  * `changeset-coverage-logic.ts`'s pure predicate: reads `.changeset/config.json`'s
  * `fixed` group live, resolves each member's own `package.json` `files`
  * allowlist live (never a hardcoded path list), reads the diff's changed
@@ -25,14 +25,14 @@
  *
  * Release-branch exemption: reuses `@attalabs/aeg-core`'s own
  * `CHANGESET_RELEASE_BRANCH` constant — the same one `check-body-bare-digits.ts`'s
- * Changesets-release exemption is keyed on (PR #165's precedent) — rather
+ * Changesets-release exemption is keyed on (that same precedent) — rather
  * than inventing a second branch-name special-case. That check's exemption
  * ALSO live-fetches the PR author through a GitHub CLI subprocess call and
  * verifies it against a configured release actor; this one deliberately
  * doesn't reuse that half — this bin shells out to nothing at all, no gh
  * invocation anywhere in it.
  * It's a two-factor guard against a `pull_request`-triggered attacker
- * spoofing an approved PR's identity (round 5, PR #165) — a real concern for
+ * spoofing an approved PR's identity — a real concern for
  * a hard-blocking `error`-severity, `ownWorkflow`/`requiresOpenPr` check
  * reachable only from a `pull_request_target` job. This check is the
  * opposite shape on every axis that made that attack possible: ring 0,
@@ -166,8 +166,8 @@ function main(): void {
   // bare/single-commit history) is NOT the same fact as `[]` (a real,
   // resolved, genuinely empty diff) — collapsing the two into the same
   // silent pass is the exact fail-open class `diff-evidence.ts`'s own
-  // module doc documents as a real, reproduced incident (review finding,
-  // PR #290). This check has no non-diff-dependent corpus to fall back to
+  // module doc documents as a real, reproduced incident (a review finding).
+  // This check has no non-diff-dependent corpus to fall back to
   // the way `retired-vocabulary`/`reader-resolvable-prose` do (their
   // "report everything unfiltered" fallback), so the loud direction here is
   // a `warning` finding naming the ambiguity — never a bypass, and still

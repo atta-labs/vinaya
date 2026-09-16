@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: quoted-command (Issue #128). Thin adapter over
+ * Core check: quoted-command. Thin adapter over
  * `@attalabs/aeg-core`'s `findCitedQuotes`/`evaluateCitedQuotes` — a doc that
  * quotes a command/config line verbatim, in backticks, as a statement of
  * present fact goes stale silently once the thing it quotes changes.
@@ -16,7 +16,7 @@
  *
  * **Doc discovery mirrors `check-reader-resolvable-prose.ts`.** Same
  * `vinaya.config.json` `proseGates` key, same `resolveDoctrineRoot()`
- * default, same de-hardcoded reasoning (Issue #56/#232) — this check sweeps
+ * default, same de-hardcoded reasoning — this check sweeps
  * the identical governed-doc corpus for markers, never a second notion of
  * "governed doc". `findCitedQuotes` itself scopes further, via the shared
  * `classifyProseFile` (`ships`/`reader-facing` only, never `internal`).

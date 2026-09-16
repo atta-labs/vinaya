@@ -1,6 +1,5 @@
 /**
- * `dev-review-loop`'s publication concern (task 8,
- * `#506`, O8) — posting a round's already-held verdicts and summary to the
+ * `dev-review-loop`'s publication concern — posting a round's already-held verdicts and summary to the
  * forge, idempotently, with a policy self-check before either verdict counts
  * as publishable (O3: a reviewer's own APPROVE/PASS never overrides the
  * evaluator). Moved out of `apps/cli/src/lib/dev-review-loop.ts` verbatim;
@@ -130,9 +129,9 @@ function postPrComment(pr: number, body: string): string {
 
 /**
  * Attributed bodies only — a comment whose author does not resolve as a
- * principal is not evidence that THIS run's own post landed (security
- * review, PR #459: this is the same untrusted-comment class PR #445 closed
- * for `fetchRulings`/`fetchFrozenBrief`, reintroduced here). Reuses
+ * principal is not evidence that THIS run's own post landed (a security
+ * review finding: this is the same untrusted-comment class a related finding
+ * closed for `fetchRulings`/`fetchFrozenBrief`, reintroduced here). Reuses
  * `review-post.ts`'s `principalBodies` — the exact filter `checkReviewGate`
  * itself applies before calling either extractor — rather than a second,
  * parallel derivation.
@@ -149,7 +148,7 @@ export type PublishInput = {
   /** The round's judged head — every posted verdict is expected to bind to this, re-verified after each post. */
   expectedHead: string
   journal: Journal
-  /** Which severities block is repository policy (task 8, `#506`, O2/O3) — the SAME resolved value `buildVerdictFromReport` derived this round's held verdicts under. */
+  /** Which severities block is repository policy — the SAME resolved value `buildVerdictFromReport` derived this round's held verdicts under. */
   policy: ReviewPolicy
   /**
    * The manifest this round was dispatched against (task 5,

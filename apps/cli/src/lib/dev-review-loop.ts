@@ -1,5 +1,5 @@
 /**
- * `devReviewLoop` — the driver half of the loop spec (`#415`; Linear
+ * `devReviewLoop` — the driver half of the loop spec (Linear's
  * "Tech spec — Developer Review Loop" rev 4, §16).
  * `assessRound` (`@attalabs/aeg-core`, task 4) is the ENTIRE policy; this
  * file never re-implements a stop condition, a confidence rule, or a
@@ -26,8 +26,8 @@
  * `dispatchRole` fresh, every round, for every reviewer (never resumes a
  * reviewer session) — only the developer's session is ever resumed.
  *
- * `apps/cli/src/lib/dev-review-loop.ts` is the COMPOSITION ROOT
- * (task 8, `#506`, O8): the driver split into modules
+ * `apps/cli/src/lib/dev-review-loop.ts` is the COMPOSITION ROOT:
+ * the driver is split into modules
  * under `apps/cli/src/lib/dev-review-loop/`, one per concern — gate reading,
  * reviewer dispatch and report parsing, round assessment glue, publication,
  * pause and resume, developer dispatch and branch polling. `devReviewLoop`
@@ -210,7 +210,7 @@ import {
 
 // Re-exports — every name this file exported before the O8 split still
 // resolves from this exact path, either defined below or re-exported from
-// the module that now owns it (task 8, `#506`).
+// the module that now owns it.
 export {
   describeFailingCheckRun,
   fetchCiConclusion,
@@ -303,7 +303,7 @@ export type LoopDeps = {
   fetchNewestRulingAuthor: typeof fetchNewestRulingAuthor
   fetchFrozenBrief: typeof fetchFrozenBrief
   resolveIssueObjectives: typeof resolveIssueObjectives
-  /** O2 (task 4, Issue #483): the frozen brief's own source revision, named to the reviewer as a fact. */
+  /** O2: the frozen brief's own source revision, named to the reviewer as a fact. */
   fetchSourceRevision: typeof fetchSourceRevision
   developerBranchFor: (issueNumber: number) => string
   findOpenPrForBranch: typeof findOpenPrForBranch
@@ -330,7 +330,7 @@ export type LoopDeps = {
   /** O2/O3: the developer's own worktree HEAD (`.worktrees/<branch>`), or `null` when unreadable/unknown. */
   readWorktreeHead: typeof readWorktreeHead
   /**
-   * (`#543` O2) The developer's own worktree's uncommitted files (`git
+   * The developer's own worktree's uncommitted files (`git
    * status --porcelain`, one path per entry) and how many commits its local
    * `HEAD` sits ahead of its upstream — read fresh after every developer
    * turn that ends with no new head on the branch, to tell "stopped without
@@ -419,7 +419,7 @@ function defaultGitDiffShortstat(base: string, head: string): string {
 }
 
 /**
- * O2 (`#595`): the loop's own two control files — `CONFIDENCE_FILE_NAME`
+ * O2: the loop's own two control files — `CONFIDENCE_FILE_NAME`
  * and `DEVELOPER_ROUND_RESPONSE_FILE_NAME`, both written by the developer's
  * OWN turn at this driver's own instruction and read-and-cleared by
  * `readAndClearConfidence`/`readAndClearRoundResponse` before this check
@@ -484,7 +484,7 @@ export function assertValidLoopEvent(e: DevReviewLoopEventInput): void {
   )
 }
 
-/** (`#543` O2) See `LoopDeps.readUnpushedWorkDetail`'s own doc comment. */
+/** O2: see `LoopDeps.readUnpushedWorkDetail`'s own doc comment. */
 function defaultReadUnpushedWorkDetail(worktreePath: string): { dirtyFiles: string[]; aheadCount: number } {
   let dirtyFiles: string[] = []
   try {
@@ -518,7 +518,7 @@ function defaultReadUnpushedWorkDetail(worktreePath: string): { dirtyFiles: stri
 
 /**
  * Calls `flushOutbox` (`./log-flush.js`) in-process rather than spawning a
- * `vinaya log flush` subprocess (task 3, `#482`, O2) — a command calling a
+ * `vinaya log flush` subprocess — a command calling a
  * command, via a child process, which `apps/cli/specs/surface.md`'s "the
  * rule" forbids. `flushOutbox` never calls `process.exit` (unlike the old
  * `logFlushCommand` it replaced here), so this driver's long-running,
@@ -877,8 +877,8 @@ export type LoopResult = { finalDecision: Decision; prNumber: number; task: numb
 
 /**
  * The exact argv `checkStaleDriver`'s re-exec hands to a fresh `vinaya
- * dev-review-loop` process (O7) — pulled out as its own pure function
- * (task 21, `#541`, round 2 review MINOR) so the one thing that
+ * dev-review-loop` process — pulled out as its own pure function
+ * (a round-2 review MINOR finding) so the one thing that
  * actually regresses easily — a flag silently dropped across the restart —
  * is unit-testable without driving the whole re-exec/driver-lock path.
  * Carries the ORIGINAL invocation's `--json` intent through: dropping it
@@ -1061,7 +1061,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   try {
     return await runDevReviewLoopBody()
   } finally {
-    // O10 (`#541`): every explicit return path already
+    // O10: every explicit return path already
     // flushes before leaving (~19 call sites throughout the round loop
     // below) — this is the one flush that is NOT conditional on reaching
     // one of them. An uncaught error thrown from anywhere in the loop
@@ -1169,7 +1169,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // just never lands in the outbox; found live authoring this task).
       reviewers: ['code-reviewer', 'security'],
       models: { developer: input.agent, 'code-reviewer': input.agent, security: input.agent },
-      // (`#543` O4) The repo-wide default, corrected to the REAL
+      // O4: the repo-wide default, corrected to the REAL
       // `reviewPolicy()` value the moment the widened `try` below reads it
       // successfully (O6: `config` must be valid — never built from a
       // not-yet-read `policy` — before that read even runs, so a crash
@@ -1333,7 +1333,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     let devDispatchSucceededBefore = false
     let lastReviewContext: string | null = null
     // The manifest the most recent `dispatch_reviewers` round was dispatched
-    // against (`#555`, O3) — hoisted here so the sibling `publish` block can
+    // against (O3) — hoisted here so the sibling `publish` block can
     // bind the posted verdicts against it with the SAME `compareManifest` the
     // gate uses. Set the moment the manifest is built, read only at publish.
     let lastDispatchedManifest: ReviewInputManifest | undefined
@@ -1407,17 +1407,17 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * this flag changes nothing for a genuinely fresh task.
      */
     let mechanicalRetryRecoverySurvivesOneReset = gateStalledStreak > 0
-    /** (`#543` O2) True once this stall episode has already used its one unpushed-work resume — reset alongside `gateStalledStreak`, by every genuine `gate` observation, so a LATER stall gets its own resume. */
+    /** O2: true once this stall episode has already used its one unpushed-work resume — reset alongside `gateStalledStreak`, by every genuine `gate` observation, so a LATER stall gets its own resume. */
     let unpushedResumeAttempted = false
     /** O4/O6: the conflicting file(s) from the last mergeability read, consumed by the very next `dispatch_developer` prompt, then cleared — never a CI-red retry (never sets `pendingGateRedRetry`), so the head-change-wait that follows always re-checks the gate fresh rather than replaying `lastFailingChecks`. */
     let pendingConflictFiles: string[] | null = null
 
     /**
-     * O11 (`#541`): the task Issue, branch, worktree path,
+     * O11: the task Issue, branch, worktree path,
      * and current remote head — every prompt a RESUMED developer session
      * receives names all four, so a session resumed among many worktrees on
-     * the same machine never has to ask which branch is meant (Origin, task
-     * #538: exactly that, with forty stale worktrees present). Never
+     * the same machine never has to ask which branch is meant (confirmed
+     * live: exactly that, with forty stale worktrees present). Never
      * prepended to a genuinely fresh round-1 dispatch — that prompt is the
      * frozen brief itself, opening a brand-new session with no worktree to
      * be confused about yet.
@@ -1444,8 +1444,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * first developer dispatch (the ruling-resume prompt) has no durable
      * resume record either (this driver never reads one for that path,
      * only the `existingPr` attach branch does), so gating on it silently
-     * skipped the context block for exactly the prompt O11's own Origin
-     * note (task #538) was about. Every `dispatchDeveloper` call defaults
+     * skipped the context block for exactly the prompt's own Origin
+     * note was about. Every `dispatchDeveloper` call defaults
      * to carrying it; the one call site that must NOT (the genuinely fresh
      * round-1 dispatch, opening a brand-new session onto a brand-new
      * worktree the frozen brief itself already describes) passes
@@ -1554,7 +1554,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       '`bun apps/cli/src/index.ts pr create --body-file <path> --title "<title>"`.'
     ].join('\n\n')
 
-    /** (`#543` O2) Mid-round unpushed-work resume — distinct from `PUSH_AND_OPEN_PROMPT` (round-1 entry, no head at all yet): this branch already has commits on the remote, the developer's LATEST turn just didn't add a new one. */
+    /** Mid-round unpushed-work resume — distinct from `PUSH_AND_OPEN_PROMPT` (round-1 entry, no head at all yet): this branch already has commits on the remote, the developer's LATEST turn just didn't add a new one. */
     const COMMIT_AND_PUSH_PROMPT = [
       'Your last turn ended without pushing: this worktree has uncommitted changes and/or local commits ahead of the remote, but the branch has no new head.',
       'Committing and pushing are foreground steps per aeg-root/roles/developer.md — run them now, in the foreground, and wait for each to finish:',
@@ -1562,7 +1562,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       '`git push` from this task’s worktree.'
     ].join('\n\n')
 
-    /** (`#543` O2) Shared by the journal event and the PR comment below, so the two never describe the same stall differently. */
+    /** Shared by the journal event and the PR comment below, so the two never describe the same stall differently. */
     function unpushedWorkResumeDetail(unpushed: { dirtyFiles: string[]; aheadCount: number }): string {
       return unpushed.dirtyFiles.length > 0
         ? `dirty file(s): ${unpushed.dirtyFiles.join(', ')}`
@@ -1570,7 +1570,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     }
 
     /**
-     * (`#543` O2, round 2 review, MAJOR) Logs the driver's own mid-round
+     * A round-2 review MAJOR finding: logs the driver's own mid-round
      * resume as a real `dev_review_loop` journal event — `unpushed_work_resume`
      * (`schema.ts`) — not only the marked PR comment below: the objective's
      * own wording is "records the resume in the journal," and only a real
@@ -1596,7 +1596,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       await d.flushOutbox(task)
     }
 
-    /** (`#543` O2) Records the mid-round unpushed-work resume as its own marked, idempotent PR comment — the same `postForgeEffectOnce`/`postMarkedComment` mechanism `postPauseComment` already uses, keyed by round+head so a genuine re-run of the same stall posts only once. */
+    /** Records the mid-round unpushed-work resume as its own marked, idempotent PR comment — the same `postForgeEffectOnce`/`postMarkedComment` mechanism `postPauseComment` already uses, keyed by round+head so a genuine re-run of the same stall posts only once. */
     async function postUnpushedWorkResumeComment(
       roundNum: number,
       head: string,
@@ -1695,8 +1695,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * `ReviewerInfrastructureFailure`, which the caller turns into a pause
      * rather than a held or published verdict for this round.
      *
-     * Deliberately does NOT call `writeHeldVerdict` itself (round 1 review
-     * finding, BLOCKER, PR #489): both roles run inside one `Promise.all` in
+     * Deliberately does NOT call `writeHeldVerdict` itself (a round-1 review
+     * BLOCKER finding): both roles run inside one `Promise.all` in
      * the caller, so a role that finishes clean can resolve before its
      * sibling's own retry exhausts and throws — writing the held verdict file
      * here would leave one on disk for a round that pauses as infrastructure,
@@ -1705,7 +1705,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * after `Promise.all` itself resolves — i.e. only once it knows neither
      * role failed.
      */
-    /** (`#543` O3) `report.txt`'s `FINDING_IDS:` line — one id per `findings.txt` line, in order, comma-separated. `true` when there is nothing to cite (an empty findings list) or the line's ids exactly cover the findings, one each, no duplicates. */
+    /** `report.txt`'s `FINDING_IDS:` line — one id per `findings.txt` line, in order, comma-separated. `true` when there is nothing to cite (an empty findings list) or the line's ids exactly cover the findings, one each, no duplicates. */
     function findingIdsCited(workDir: string, findingCount: number): boolean {
       if (findingCount === 0) return true
       const raw = readIfExists(join(workDir, 'report.txt')) ?? ''
@@ -1727,7 +1727,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     }
 
     /**
-     * (`#543` O3) A round's own findings must carry reviewer-cited ids to be
+     * A round's own findings must carry reviewer-cited ids to be
      * comparable across rounds at all (`assessRound`'s own `no_progress`
      * derivation compares finding ids between rounds, and a fresh
      * `findings.txt` each round has no other stable identity to compare on).
@@ -1775,7 +1775,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             policyDigest: facts.manifest.policyDigest
           },
           ...(scratchDir ? { cwd: scratchDir } : {}),
-          // O1/O3 (task 3, #560): a Reviewer dispatched
+          // O1/O3: a Reviewer dispatched
           // by this driver is unattended the same way the Developer is.
           unattended: true,
           // Round 6 fix, live-reproduced: a confined reviewer writes
@@ -1954,7 +1954,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       }
     }
 
-    /** O4/O5/O7: the forge's own mergeable state, polled off `UNKNOWN` within the existing gate poll budget — never read as clean and never as conflicting (O7). A budget exhaustion is treated as `CONFLICTING`, never as clean: this gates a reviewer dispatch or a publish, and silently proceeding on an unresolved answer is the one failure mode O4/O5 exist to prevent. */
+    /** O4/O5/O7: the forge's own mergeable state, polled off `UNKNOWN` within the existing gate poll budget — never read as clean and never as conflicting. A budget exhaustion is treated as `CONFLICTING`, never as clean: this gates a reviewer dispatch or a publish, and silently proceeding on an unresolved answer is the one failure mode O4/O5 exist to prevent. */
     async function pollMergeableState(prNumber: number): Promise<MergeableState> {
       return await pollUntil(
         () => {
@@ -2004,7 +2004,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     let roundStartMs = d.now()
     let decision: Decision = { type: 'dispatch_developer' }
 
-    // O2 (`#548` v3): a driver that exits without ever recording a real
+    // A driver that exits without ever recording a real
     // `paused`/`publish` decision still leaves ONE trace — inside this
     // task's Surface, so this is the role log `task status --follow`
     // already tails, never a second journal family (Traps to avoid). A
@@ -2099,14 +2099,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       const pulled = d.pullDefaultBranch()
       let reexecFailureNote = ''
       if (pulled.ok) {
-        // O1 (`#548`): hand the lock to the child BEFORE it starts, not after
+        // O1: hand the lock to the child BEFORE it starts, not after
         // this process happens to unwind. `spawnSync` blocks synchronously
         // until the child exits, and the success path below calls
         // `exitProcess` (real `process.exit`) — which never lets this
         // function's own caller's `finally` (the driver-lock clear at the
         // top-level `devReviewLoop` entry) run at all. Left cleared only
         // there, the still-present lock refused the child outright (found
-        // live: PR #547's re-exec died to exactly this). Clearing it here,
+        // live: a re-exec died to exactly this). Clearing it here,
         // synchronously, before the spawn, means the child's own entry-gate
         // lock check (`readDriverLock`/`isDriverPidAlive`) sees no lock and
         // starts; the child then writes its own lock immediately, same as
@@ -2115,7 +2115,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         const reexecArgs = buildReexecArgs(input, task)
         const exitCode = d.reexecSelf(reexecArgs)
         if (exitCode !== null) {
-          // O2 (`#548` v3): a clean hand-off to the child is never a
+          // A clean hand-off to the child is never a
           // `paused`/`publish` decision — nothing else traces it. `finally`
           // never runs on this path (`d.exitProcess` below is real
           // `process.exit`), so this is the only chance to write it.
@@ -2532,11 +2532,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // observation call sites — never inferred from `decision` itself,
           // since `assessGate`'s red branch returns a bare `dispatch_developer`
           // with no reason tag: `Decision`/`PauseReason` live in
-          // `packages/aeg-core`, out of this task's declared Surface, Issue
-          // #488 §4) is true exactly when THIS dispatch is the driver sending
+          // `packages/aeg-core`, out of this task's declared Surface) is true
+          // exactly when THIS dispatch is the driver sending
           // the developer back for a red mechanical gate — the one case that
           // needs the head-change wait (Traps: never re-read the gate in a
-          // tight loop on an unchanged head — `#479`'s own five-re-dispatches-
+          // tight loop on an unchanged head — a real five-re-dispatches-
           // in-two-minutes failure).
           const isGateRedRetry = pendingGateRedRetry
           // O4/O6: a conflict-resolve retry — READ, never cleared here. Same
@@ -2584,8 +2584,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // review-findings retry, whose own next `dispatch_reviewers`
             // phase re-reads whatever head exists rather than waiting for
             // one to CHANGE (Traps: never re-read the gate in a tight loop
-            // on an unchanged head — `#479`'s own five-re-dispatches). O2
-            // (`#543`) adds the unpushed-work resume ONLY inside this same,
+            // on an unchanged head — that same real failure). This case
+            // adds the unpushed-work resume ONLY inside this same,
             // already-narrower scope — widening it to the review-findings
             // path would mean every existing fixture for that path (there is
             // no real push to wait for there today) would need to start
@@ -2610,7 +2610,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 : 'not-applicable'
 
             if (headBeforeDispatch !== null && changedHead === null) {
-              // (`#543` O2) Before charging this to the driver's generic
+              // Before charging this to the driver's generic
               // bounded stall counter, tell "stopped without pushing REAL
               // work" apart from a genuinely idle turn: a dirty worktree or
               // local commits ahead of the remote is real, unpushed work —
@@ -2855,11 +2855,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // O5: an infrastructure outcome from either role (after its own
           // one-retry inside `dispatchReviewer`) is a driver-decided pause —
           // there is no `Observations` kind for it (adding one would edit
-          // `packages/aeg-core`, out of this task's declared Surface, Issue
-          // #488 §4) — but `driverDecidedPauseEvents` logs the same
+          // `packages/aeg-core`, out of this task's declared Surface) — but
+          // `driverDecidedPauseEvents` logs the same
           // `stop_condition_met`/`paused`/`round_ended`/`journal_finalized`
-          // events every policy-decided pause gets (code review, PR #489 round
-          // 2, MAJOR: the driver used to build this `pause` decision by hand
+          // events every policy-decided pause gets (a round-2 code-review MAJOR
+          // finding: the driver used to build this `pause` decision by hand
           // and skip the log entirely). No verdict is held or published for
           // this round, and the round number does not advance.
           let verdicts:
@@ -2982,8 +2982,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // on a mismatch, so "the held verdicts … are discarded" holds by
             // never holding them. `compareManifest` — the SAME comparison the
             // merge gate calls — decides this, field by field, rather than a
-            // second, hand-rolled inequality check per field (task 4, `#478`,
-            // O2): the echo here is simply `facts.manifest` itself, never a
+            // second, hand-rolled inequality check per field: the echo here
+            // is simply `facts.manifest` itself, never a
             // round-trip through the rendered text (Traps to avoid — nothing
             // to trust or distrust when the value is this driver's own, still
             // in memory).
@@ -3043,7 +3043,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               heldResultIdentity = { round, head }
               lastReviewContext = `${reviewer.verdict.rendered}\n\n---\n\n${security.verdict.rendered}`
 
-              // (`#543` O3) Recorded once per round, so a Principal reading
+              // Recorded once per round, so a Principal reading
               // the PR sees WHICH role's ids the driver could not trust —
               // never silent just because the round still proceeded.
               const uncitableRoles = [
@@ -3065,7 +3065,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 kind: 'verdicts',
                 round,
                 verdicts: [reviewer.verdict.observation, security.verdict.observation],
-                // (`#543` O3) Either role's report still uncitable after its
+                // Either role's report still uncitable after its
                 // one resend — `assessRound` never derives `no_progress` for
                 // this round; every other stop condition (reappearance,
                 // confidence, max_rounds, escalation) is unaffected.

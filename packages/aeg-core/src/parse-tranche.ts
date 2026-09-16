@@ -30,7 +30,7 @@ export function parseTranche(md: string): Tranche {
 
 function parseName(md: string): string {
   // The H1 is `# Tranche: <slug> — <timeframe>`. The slug may contain
-  // hyphens (e.g. `some-tranche-name`, `another-v1`), so capture the first
+  // hyphens (e.g. `some-tranche-name`, `another-vN`), so capture the first
   // non-whitespace run — the space before the em-dash is the delimiter.
   //
   // `Iteration:` is accepted as the superseded spelling, permanently. This is

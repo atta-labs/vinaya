@@ -116,7 +116,7 @@ export async function runEject(args: string[], deps: EjectDeps): Promise<number>
   // Bounds are per-kind: a vinaya-owned file must be inside `repoRoot`, a
   // `.git/hooks/*` managed block inside the git common dir's `hooks/` subtree
   // — which, from a linked worktree, is legitimately outside `repoRoot`
-  // (#68). Saying "outside this repo" here would now be wrong for the block
+  // Saying "outside this repo" here would now be wrong for the block
   // case and would send someone hunting for corruption that isn't there.
   if (plan.escapes.length > 0) {
     console.error('Error: the ownership manifest records paths that resolve OUTSIDE the bounds vinaya may touch:')

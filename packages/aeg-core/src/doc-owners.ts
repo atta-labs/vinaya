@@ -162,7 +162,20 @@ export function readDocNeutrals(body: string): DocNeutral[] {
  * scope).
  */
 const LANGUAGE_COMMENT_PREFIXES: ReadonlyArray<{ test: RegExp; prefixes: readonly string[] }> = [
-  { test: /\.(ts|tsx|js|jsx|mjs|cjs)$/, prefixes: ['//'] },
+  // `* `/`/**`/`*/`: a JSDoc/block-comment continuation line (` * ...`
+  // inside `/** ... */`), a single-line `/** ... */` doc comment, and a
+  // standalone closing `*/` are all comment-shaped exactly like `//` is —
+  // omitting them made every neutral edit to a block-comment body (the
+  // common TS doc-comment style in this repo) register as "changes beyond
+  // comments," found live on a task whose entire surface was block-comment
+  // citation rewrites. `'* '` — WITH the trailing space — not bare `'*'`:
+  // a bare `*` would also match `*gen() {` (a generator method) or
+  // `*[Symbol.iterator]() {`, real code the original doc comment above
+  // already named as the reason a `*`-prefixed heuristic is unsafe. Every
+  // real JSDoc continuation line in this repo's own style is `* <text>`,
+  // never a bare `*` with no following space, so the space keeps the two
+  // apart.
+  { test: /\.(ts|tsx|js|jsx|mjs|cjs)$/, prefixes: ['//', '* ', '/**', '*/'] },
   { test: /(^|\/)(pre-push|pre-commit|pre-merge-commit)$/, prefixes: ['#'] },
   { test: /\.(sh|bash)$/, prefixes: ['#'] },
   { test: /\.ya?ml$/, prefixes: ['#'] },

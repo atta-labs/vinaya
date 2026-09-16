@@ -106,7 +106,7 @@ const defaultFollowLoopLogDeps: FollowLoopLogDeps = {
 }
 
 /**
- * `vinaya task status --follow`'s own read (O6) — `tail -f` semantics: prints
+ * `vinaya task status --follow`'s own read — `tail -f` semantics: prints
  * whatever `path` already holds, then polls for growth and prints only the
  * new bytes, indefinitely (until `deps.shouldStop()`, which production never
  * sets). A file that shrinks (a future rotation) is treated as restarted

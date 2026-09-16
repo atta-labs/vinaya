@@ -4,7 +4,7 @@ import { extractCodeReviewVerdict, extractSecurityReviewVerdict, VERDICT_MARKER_
 /**
  * The post-merge Archivist's real, auto-generated DANGLING placeholder text
  * (`archive-task.ts`'s `extractVerdict`, missing-comment case) — the literal
- * string that appears on real merged PRs (e.g. #471/#472) when no
+ * string that appears on real merged PRs when no
  * security-review comment exists yet. Contains the standalone word "pass"
  * ("...security-review pass was run...") — the exact bare-word-match exploit
  * this tightening closes.
@@ -104,7 +104,7 @@ describe('extractCodeReviewVerdict', () => {
     })
   })
 
-  // ---- required regression coverage (aeg-review-gate-v1 task 1 follow-up, security FAIL finding) ----
+  // ---- required regression coverage (a security FAIL finding) ----
 
   it('regression 1: the literal DANGLING placeholder string does NOT produce a clean verdict', () => {
     const result = extractCodeReviewVerdict([
@@ -154,9 +154,9 @@ describe('extractCodeReviewVerdict', () => {
     })
   })
 
-  // ---- markdown-emphasis tolerance (PR #636: reviewer emitted the bolded form) ----
+  // ---- markdown-emphasis tolerance (a real incident: reviewer emitted the bolded form) ----
 
-  it('extracts APPROVE from a markdown-bolded VERDICT: line (the #636 exact shape)', () => {
+  it('extracts APPROVE from a markdown-bolded VERDICT: line (that exact shape)', () => {
     const result = extractCodeReviewVerdict(['**VERDICT: APPROVE**'])
     expect(result).toEqual({
       value: 'APPROVE',
@@ -219,7 +219,7 @@ describe('extractCodeReviewVerdict', () => {
     expect(result.value).not.toBe('APPROVE')
   })
 
-  // ---- what the emphasis tolerance must still REJECT (#639 review, findings 1/3/4/5) ----
+  // ---- what the emphasis tolerance must still REJECT (several review findings) ----
   // Each of these is a way for prose to MENTION a verdict rather than cast one.
   // Every case below matched under the `[\s>*_#]*` char class first proposed for
   // this fix; they are the false-positive surface that class opened.
@@ -242,7 +242,7 @@ describe('extractCodeReviewVerdict', () => {
   })
 
   it('the quote-reply attack: quoting an earlier verdict does NOT override a live REQUEST CHANGES', () => {
-    // #639 review finding 1, executed end-to-end there against `checkReviewGate`:
+    // A review finding, executed end-to-end there against `checkReviewGate`:
     // under `[\s>*_#]*` this comment sequence flipped the gate from FAIL to PASS
     // with no reviewer action, because most-recent-clear-hit-wins let the quote
     // beat the live verdict.
@@ -300,7 +300,7 @@ describe('extractSecurityReviewVerdict', () => {
     expect(result.danglingNote).toBe('no security-review verdict comment found on this PR')
   })
 
-  // ---- required regression coverage (aeg-review-gate-v1 task 1 follow-up, security FAIL finding) ----
+  // ---- required regression coverage (a security FAIL finding) ----
 
   it('regression 1 (the confirmed exploit): the Archivist DANGLING placeholder\'s bare "pass" does NOT produce a clean PASS', () => {
     const result = extractSecurityReviewVerdict([
@@ -351,7 +351,7 @@ describe('extractSecurityReviewVerdict', () => {
     })
   })
 
-  // ---- markdown-emphasis tolerance (PR #636: reviewer emitted the bolded form) ----
+  // ---- markdown-emphasis tolerance (a real incident: reviewer emitted the bolded form) ----
 
   it('extracts PASS from a markdown-bolded VERDICT: line', () => {
     const result = extractSecurityReviewVerdict(['**VERDICT: PASS**'])
@@ -382,7 +382,7 @@ describe('extractSecurityReviewVerdict', () => {
     })
   })
 
-  // ---- what the emphasis tolerance must still REJECT (#639 review, findings 1/3/4/5) ----
+  // ---- what the emphasis tolerance must still REJECT (several review findings) ----
 
   it.each([
     ['> VERDICT: PASS', 'blockquote — GitHub quote-reply'],
@@ -417,7 +417,7 @@ describe('extractSecurityReviewVerdict', () => {
   })
 })
 
-// ---- reviewed-commit binding (#73, a duplicate of #71 closes this one) ----
+// ---- reviewed-commit binding ----
 // `checkReviewGate` (review-gate.test.ts) is what judges whether an extracted
 // `headSha` covers the PR's current head — these cases only prove the parser
 // itself: what it extracts, and what it correctly refuses to read as a
@@ -551,8 +551,7 @@ describe('reviewed-commit binding (Judged head:)', () => {
   })
 })
 
-// ---- five-line read window (round-4 ruling on review-convergence-v1 task 2,
-// #392; widened by dev-review-loop-v1 task 2, #412, O2) ----
+// ---- five-line read window (a ruling, later widened) ----
 // All three markers are read from a comment's first FIVE lines only. Every
 // real render (`review-post.ts`) puts VERDICT/ESCALATE on line 1, Judged
 // head on line 3, and Objectives version on line 5. A caller-supplied VALUE
@@ -663,8 +662,7 @@ describe('the VERDICT:/Judged head:/Objectives version: markers are read from th
   })
 })
 
-// ---- Ruling ordinal: read from its OWN 7-line window (review-validity-v1
-// task 3, #477, O1) ----
+// ---- Ruling ordinal: read from its OWN 7-line window ----
 // `Ruling ordinal:` renders UNCONDITIONALLY, so its worst-case position is
 // line 7 (Objectives version present: 5=version, 6=blank, 7=ruling
 // ordinal). This window is `firstSevenLines`, never `firstFiveLines`
@@ -710,7 +708,7 @@ describe('Ruling ordinal: is read from its own first-seven-line window', () => {
   })
 })
 
-// ---- round 5 (#392): candidacy is whole-body, value stays windowed ----
+// ---- round 5: candidacy is whole-body, value stays windowed ----
 // Round 4's window narrowed where the VALUE is read; it must not narrow which
 // comments even COUNT as candidates. A later comment whose VERDICT-shaped
 // line sits outside its own first five lines is still the most recent
@@ -752,7 +750,7 @@ describe('candidate selection stays whole-body — a later unclear candidate sha
   })
 })
 
-// ---- FINDINGS block severities (review-validity-v1 task 8, #506, O2/O3) ----
+// ---- FINDINGS block severities ----
 // Read from the WHOLE comment body — never firstFiveLines's window, since
 // renderFindingsSection always renders the findings list past line five.
 
@@ -809,7 +807,7 @@ describe('findingSeverities — the FINDINGS block, read whole-body', () => {
 })
 
 describe('VERDICT_MARKER_SOURCE', () => {
-  // task-run-v1 18, #525 O2: the exported marker is a presence-only test —
+  // The exported marker is a presence-only test —
   // no value alternation — so it must accept every shape the two real value
   // patterns above accept and reject every shape they reject, the same
   // anchor discipline (mention vs. cast) `extractCodeReviewVerdict`'s own
@@ -852,7 +850,7 @@ describe('VERDICT_MARKER_SOURCE', () => {
   })
 })
 
-// --- Brief hash / Policy digest binding (review-validity-v1 task 4, #478, O1/O5) ---
+// --- Brief hash / Policy digest binding ---
 
 describe('Brief hash: / Policy digest: extraction', () => {
   const HASH_A = 'a'.repeat(64)

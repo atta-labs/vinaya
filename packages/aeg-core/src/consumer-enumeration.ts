@@ -1,6 +1,6 @@
 /**
- * `checkConsumerTests`'s consumer enumeration (`brief-validation.ts`, task 10,
- * Issue #385; corrected by the round-2 ruling item 3) — every workspace
+ * `checkConsumerTests`'s consumer enumeration (`brief-validation.ts`,
+ * corrected by a later ruling) — every workspace
  * member whose own `package.json` depends on `@attalabs/<pkg>`, for "every
  * workspace package depending on `@attalabs/<pkg>`" to mean what it says.
  *

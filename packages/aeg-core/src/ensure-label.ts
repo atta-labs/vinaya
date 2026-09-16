@@ -1,5 +1,5 @@
 /**
- * Idempotent label-minting (vinaya-label-hygiene-v1 task 1, #243) — the
+ * Idempotent label-minting — the
  * decision logic three call sites (`apps/cli/src/commands/audit.ts`,
  * `bin/check-direct-main-push.ts`, `bin/dead-branch-audit.ts`) each
  * reimplemented: does this label already exist on the forge, and if not,

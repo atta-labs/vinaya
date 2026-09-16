@@ -8,8 +8,7 @@
  * `vinaya task brief <tranche> <n> [--supersede --reason <text>]`
  * — argv parsing only, around `prepareTask` (`lib/dispatch-task.ts`), the
  * one lib function it calls. Preparation only: it renders and freezes the
- * brief and starts no worker. `--supersede` (task 4, Issue
- * #483, O3) posts a new, higher-versioned frozen brief naming its
+ * brief and starts no worker. `--supersede` posts a new, higher-versioned frozen brief naming its
  * predecessor and `--reason`'s text, instead of refusing on the one that's
  * already there — always paired with `--reason`, never accepted alone.
  */
@@ -65,7 +64,7 @@ export async function taskDispatchCommand(args: string[]): Promise<void> {
   if (result.commentUrl) process.stdout.write(`\nPosted: ${result.commentUrl}\n`)
 }
 
-/** Parses `--supersede`/`--reason` — shared by the `<tranche> <n>` and `--issue <n>` (O1) forms of `task brief`. */
+/** Parses `--supersede`/`--reason` — shared by the `<tranche> <n>` and `--issue <n>` forms of `task brief`. */
 function parseSupersede(rest: string[], usage: string): { reason: string } | undefined {
   const hasSupersede = rest.includes('--supersede')
   const reasonIdx = rest.indexOf('--reason')
@@ -88,7 +87,7 @@ const TASK_BRIEF_USAGE = [
 ].join('\n')
 
 /**
- * `--issue <n>` (O1) — renders and freezes a backlog
+ * `--issue <n>` — renders and freezes a backlog
  * Issue's brief exactly as `<tranche> <n>` does for a tranche task. Mutually
  * exclusive with the `<tranche> <n>` positional form.
  */

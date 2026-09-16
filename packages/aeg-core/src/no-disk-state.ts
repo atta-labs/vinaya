@@ -1,5 +1,5 @@
 /**
- * New-on-disk-state guard (#512 Part D). Pure — no `fs`, no `git`/`gh` I/O.
+ * New-on-disk-state guard. Pure — no `fs`, no `git`/`gh` I/O.
  * Flags a diff-touched path as a disk-state offender given its change
  * status (`added` — the path didn't exist on the base ref — or `modified`
  * — it already did):
@@ -7,7 +7,7 @@
  * (a) A live tranche topology file directly under `aeg-root/tranches/`
  *     (not a subdirectory) — the residue class this task's own Part B proved
  *     unnecessary (forge derivation already covers it, see
- *     `aeg-drift-prevention-v1.md`'s deletion). Fails on `added` OR
+ *     the governing spec's deletion). Fails on `added` OR
  *     `modified`: this file class shouldn't exist at all post-cutover,
  *     whether newly created or resurrected via an edit.
  *

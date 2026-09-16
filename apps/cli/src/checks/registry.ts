@@ -48,7 +48,7 @@ function bin(name: string): string {
  * inline — a verifier re-implementing its subject's predicate is testing
  * its own copy, and any second condition added to `--all`'s selection
  * would have reached `check.ts` but not the script, which would then
- * report a divergence that was its own (the drift class #28 removed one
+ * report a divergence that was its own (the drift class removed one
  * level up, where the expectation was a hand-maintained count).
  *
  * A check with `ownWorkflow` is withheld because its dedicated workflow
@@ -86,7 +86,7 @@ export function runsUnderAll(spec: CheckSpec): boolean {
  *
  * Deliberately NOT a field on `CheckSpec` (or on the objects
  * `coreCheckRegistry()` returns): the shared contract and the adopter config
- * schema stay untouched (Issue #104's core-registry-local decision), and
+ * schema stay untouched (a core-registry-local decision), and
  * `tests/checks/no-privileged-api.test.ts` already guards that a core
  * `CheckSpec` object carries no field a config-derived one cannot — adding
  * `ring` as a real property on the spec would trip that guard, which is
@@ -104,7 +104,7 @@ export type CoreCheckRing = 0 | 1 | 2
  * extra field, no privileged flag: this IS the no-privileged-API proof, not
  * a stylistic choice. See `tests/checks/no-privileged-api.test.ts`.
  *
- * `reader-resolvable-prose`/`retired-vocabulary` (task 7, Issue #56): both
+ * `reader-resolvable-prose`/`retired-vocabulary`: both
  * used to be excluded here because they hardcoded this monorepo's own
  * doctrine layout — a scope-registration decision, not a pathing bug. Both
  * bins now read their doctrine root, reader-facing globs, and legacy-slug
@@ -130,7 +130,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // `process.env.PR_BODY ?? ''` / `process.env.BRANCH ?? ''` — both
       // plain absence-tolerant fall-throughs. Without BRANCH declared here
       // the runner strips it before the child spawns and the non-task/
-      // non-brief bypass and requireClosesN gating never fire (#870).
+      // non-brief bypass and requireClosesN gating never fire.
       // `PR_NUMBER` (task 10 round-2 ruling addendum 1) gates
       // BRIEF_RULES_SINCE_PR grandfathering — without it declared here the
       // runner strips it too, and every PR reads as "no PR number", which
@@ -224,7 +224,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
   [
     {
       // Second caller of `../premise-reassert-logic.ts`'s `reassertPremiseFile`
-      // (task 1, #466) — re-asserts a pull request BODY's `Premise:` pins,
+      // — re-asserts a pull request BODY's `Premise:` pins,
       // where `dispatch-readiness`'s `PREMISE_FILE` above re-asserts a FILE
       // handed to a dispatch. Triggered by the block's presence alone, on
       // any branch: `PR_BODY` is the same absence-tolerant fall-through
@@ -249,7 +249,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       scope: 'full',
       timeoutMs: 30_000,
       // Identical `resolveToken()` three-tier fallback to `coherence` above
-      // — same reasoning, same declaration. PREMISE_FILE (task 10, #59) is a
+      // — same reasoning, same declaration. PREMISE_FILE is a
       // local-file path, not a forge credential — optional, absent by
       // default, and the bin's own re-assertion path never reaches the
       // network on its account.
@@ -357,8 +357,8 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // The `[agent]`/structural half stays a real, blocking failure.
       principalOwed: true,
       // `process.env.PR_BODY ?? ''` / `process.env.BRANCH ?? ''` — both
-      // plain absence-tolerant fall-throughs. Body and branch only again
-      // (task 12, #387): the bin no longer shells to `gh` at all — the
+      // plain absence-tolerant fall-throughs. Body and branch only again:
+      // the bin no longer shells to `gh` at all — the
       // `[agent]` half of a Test Plan is a fenced command list `vinaya pr
       // report` grades against the AEG:EVIDENCE block, not a comment this
       // bin used to count — so no PR_NUMBER/token declaration is needed here
@@ -399,7 +399,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // GITHUB_REPOSITORY addresses the trust-anchor read
       // (`loadTrustAnchorConfig`, lib/config.ts) — a `gh api` fetch of
       // `releaseActor` from the DEFAULT BRANCH, same as `review-gate`'s own
-      // entry. Found live (code review, PR #169): omitted here, the runner
+      // entry. Found live in code review: omitted here, the runner
       // strips it before the check ever runs, and the trust-anchor read
       // silently falls to its local-dev fallback path on every CI run.
       env: {
@@ -421,8 +421,8 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       scope: 'diff',
       timeoutMs: 15_000,
       // Pre-merge-only, same reasoning as `closes-n`/`test-plan` above: the
-      // PR body it inspects doesn't exist before a PR does. Task 4, #271
-      // (Issue #271's 2026-08-29 amendment): `requiresOpenPr: true` derives
+      // PR body it inspects doesn't exist before a PR does. A 2026-08-29
+      // amendment: `requiresOpenPr: true` derives
       // this check's ring mechanically as `1` via `CoreCheckRing`'s own doc
       // comment, superseding the original brief rationale's now-retracted
       // ring-0/1 instruction.
@@ -431,14 +431,14 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // plain absence-tolerant fall-throughs, same shape as `brief-shape`'s
       // identical declaration above. Without BRANCH declared here the
       // runner strips it before the child spawns and the task-PR-only
-      // no-row refusal (task 10, #460) can never tell a task branch from a
+      // no-row refusal can never tell a task branch from a
       // release branch — it would silently fall back to treating every PR
       // as non-task, which is the exact regression this declaration
       // prevents. `CLAUDE_PROJECT_DIR`/`CLAUDE_CODE_SESSION_ID` back
       // `resolveMeteringCapability`'s own pointer resolution — undeclared,
       // the runner strips them before spawn and the probe silently
       // degrades to cwd-based/no-staleness-check resolution on every run,
-      // the same #870-shaped trap `token-collection-wired`'s identical pair
+      // the same env-stripping trap `token-collection-wired`'s identical pair
       // already documents. `TMPDIR` needs no declaration: already in the
       // runner's fixed baseline.
       env: {
@@ -494,7 +494,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // workflow re-runs when a verdict comment lands. `check --all` must not
       // evaluate it a second time: nothing re-runs `vinaya-checks.yml`, so
       // that copy freezes at push-time verdicts and stays red after an
-      // approval — measured on atta-labs/vinaya#21.
+      // approval — measured live.
       ownWorkflow: true,
       // PR_NUMBER's absence takes the explicit "no PR to evaluate yet
       // (local dev, pre-push before a PR exists)"
@@ -508,8 +508,8 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // api` fetch of `principals` from the DEFAULT BRANCH.
       //
       // Deliberately NO `BASE_SHA` here, and no other ref-shaped knob: a
-      // `BASE_SHA` declaration was tried and reverted (security finding, PR
-      // #862 round 2) because a `pull_request`-triggered workflow runs the
+      // `BASE_SHA` declaration was tried and reverted (a security-review
+      // finding) because a `pull_request`-triggered workflow runs the
       // PR's own PR-editable YAML, so any ref this check accepts as an
       // override is attacker-steerable and reopens the self-approval hole.
       // GITHUB_REPOSITORY is not the same thing: it names WHICH repo to ask
@@ -669,12 +669,12 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       run: bin('check-reader-resolvable-prose'),
       scope: 'full',
       timeoutMs: 30_000,
-      // Deliberately empty, not omitted: audited (task 7) and confirmed to
+      // Deliberately empty, not omitted: audited and confirmed to
       // need none — reads only local files (`vinaya.config.json`'s
       // `proseGates` key via `loadConfig()`, plus the doctrine/reader-facing
       // trees it names), no forge call, no PR content.
       env: {},
-      // task 12, #387: an `include` declaration on a `scope: 'full'` entry
+      // An `include` declaration on a `scope: 'full'` entry
       // is currently pinning/documentation only (`runner.ts`'s `shouldSkip`
       // returns early for any non-`'diff'` scope, before ever consulting
       // `include`) — see this task's own PR body for that known gap and why
@@ -683,7 +683,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // change that extends `--diff-only` skipping to `scope: 'full'` finds
       // this already correct.
       //
-      // The four product-code globs below (Issue #435) mirror
+      // The four product-code globs below mirror
       // `PRODUCT_SLUG_SCOPE` in `reader-resolvable-prose.ts` — the surface
       // whose tranche-slug citation is now this check's one blocking class.
       include: [
@@ -812,7 +812,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // Local-only: both facts (`symbolic-ref --short HEAD`,
       // `symbolic-ref --short refs/remotes/origin/HEAD`) read already-local
       // git state — no forge call, no PR content, same `env: {}` shape as
-      // `workspace-escape` above. `VINAYA_PUSH_REFS` (Issue #407, O2) is the
+      // `workspace-escape` above. `VINAYA_PUSH_REFS` is the
       // one exception: the generated pre-push hook sets it from git's own
       // pre-push stdin before spawning `check --all --local`, and without
       // it in this allowlist `buildCheckEnv` strips it before the check
@@ -832,8 +832,8 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       timeoutMs: 15_000,
       // `resolveMeteringCapability` (`@attalabs/aeg-core`) reads
       // `CLAUDE_PROJECT_DIR`/`CLAUDE_CODE_SESSION_ID` directly — both must be
-      // declared or the runner strips them before spawn (the same #870 trap
-      // `brief-shape`'s `BRANCH` comment above names) and the pointer-file
+      // declared or the runner strips them before spawn (the same env-stripping
+      // trap `brief-shape`'s `BRANCH` comment above names) and the pointer-file
       // resolution silently falls back to `cwd`/no-staleness-check on every
       // hook run. `TMPDIR` needs no declaration: it's already in the
       // runner's fixed baseline.
@@ -844,7 +844,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
     },
     0
   ],
-  // The six write-only rules named apart (task 17, O2) — `validates: 'issue'`
+  // The six write-only rules named apart — `validates: 'issue'`
   // means each applies only to a task Issue's own content, never a pull
   // request. `ownWorkflow: true`: nothing in `.github/workflows` ever
   // invokes these by name, so `--all` (both `vinaya-checks.yml` and

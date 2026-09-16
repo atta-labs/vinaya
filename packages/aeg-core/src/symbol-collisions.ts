@@ -6,8 +6,8 @@
  * third neighbour, and all three declare an unexported `stripBackticks`. So
  * "the registry's backtick stripper" names nothing a reader can resolve, and
  * checking a claim about it by grepping returns a confident answer about
- * whichever copy the search landed on. That happened twice while writing
- * atta-labs/vinaya#181: once in a verification pass that reached the right
+ * whichever copy the search landed on. That happened twice in real practice:
+ * once in a verification pass that reached the right
  * conclusion for the wrong reason, once in a filed Issue that sent a reader to
  * the wrong file. `parse-registry.ts` was also binary to git at the time (see
  * `no-binary-sources.test.ts`), so `git grep` could not have shown its copy.

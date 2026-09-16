@@ -154,7 +154,7 @@ describe('checkTestPlanExclusivity', () => {
     // The silent half of the same root cause: this guard's own clause never
     // matched the bolded sentinel either, so it returned an early `pass` and
     // let the self-contradictory body straight through — the exact combination
-    // #340 built it to catch, wearing the emphasis the skill documents.
+    // this guard was built to catch, wearing the emphasis the skill documents.
     const body = '**Test Plan:** unit-tests-only — pure parser.\n\n- [x] **[agent]** Regression tests pass.'
     const r = checkTestPlanExclusivity(body)
     expect(r.status).toBe('fail')
@@ -337,7 +337,7 @@ describe('checkClosesNPresence', () => {
     }
   })
 
-  // ---- indented code blocks (PR #617 review, MINOR) ----
+  // ---- indented code blocks (a MINOR review finding) ----
   it('fails a Closes #N that lives only in a 4-space indented code block', () => {
     const result = checkClosesNPresence('Summary of the change.\n\n    Closes #5\n')
     expect(result.status).toBe('fail')
@@ -367,7 +367,7 @@ describe('checkClosesNPresence', () => {
     expect(checkClosesNPresence('- item\n\nBack to prose.\n\n    Closes #5\n').status).toBe('fail')
   })
 
-  // ---- fenced blocks: character + run length (PR #617 security pass, MEDIUM) ----
+  // ---- fenced blocks: character + run length (a MEDIUM security-review finding) ----
   it('fails a Closes #N inside a tilde fence', () => {
     expect(checkClosesNPresence('~~~\nCloses #5\n~~~').status).toBe('fail')
   })
@@ -466,7 +466,7 @@ describe('checkClosesNPresence — fence matrix', () => {
 
 /**
  * Separator bound — `\s{0,8}` replaced `\s*` to kill the quadratic backtrack
- * two adjacent unbounded `\s*` groups produce (PR #617 security LOW). These
+ * two adjacent unbounded `\s*` groups produce (a LOW security-review finding). These
  * pin both halves of the trade: every realistic separator still matches, and
  * the pathological body no longer costs seconds.
  */
@@ -563,8 +563,8 @@ describe('checkBriefSections', () => {
     expect(errors[0]).toMatch(/Test Plan/)
   })
 
-  it('fails Project and For when a body carries every gated section but drops the header fields (#311 regression)', () => {
-    // PR #311's exact failure shape: the Developer satisfied every section the
+  it('fails Project and For when a body carries every gated section but drops the header fields (a real regression)', () => {
+    // That regression's exact failure shape: the Developer satisfied every section the
     // gate checked and omitted the two it didn't. Gate-contract parity means
     // this body must now fail on exactly those two.
     const gamedBody = WELL_FORMED.replace(/\*\*For:\*\*[^\n]*\n/, '').replace(/\*\*Project:\*\*[^\n]*\n/, '')
@@ -1032,8 +1032,8 @@ describe('checkNoAgentBoxes', () => {
   })
 })
 
-// Issue #411's real live `## Objectives` section, verbatim (`gh issue view 411`,
-// dev-review-loop-v1 task 1 authoring time) — the same Issue this brief itself
+// A real live Issue's `## Objectives` section, verbatim (`gh issue view <n>`,
+// captured at the cutover's own authoring time) — the same Issue this brief itself
 // closes, so these tests prove the gates accept the brief that dispatched them.
 const ISSUE_411_OBJECTIVES = `## Objectives
 
@@ -1187,7 +1187,7 @@ describe('resolveNewestFrozenBrief (task-run-v1 task 4, #483, O3) — the single
   })
 })
 
-// task-run-v1 21, #541, O2: `check-brief-shape.ts` gates its
+// `check-brief-shape.ts` gates its
 // `requireClosesN` behavior entirely on this predicate — a backlog Issue's
 // `task/issue-<n>` branch must read as a task branch exactly like a
 // tranche-shaped `task/<tranche>/<n>` one, never falling through to the

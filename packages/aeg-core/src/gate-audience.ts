@@ -94,8 +94,7 @@ export const GATE_AUDIENCE: Record<string, GateAudience> = {
  * cannot import without closing a dependency cycle, so the declaration lives
  * here and `apps/cli`'s own suite does the asserting.
  *
- * `check-reader-resolvable-prose`/`check-retired-vocabulary` (task 7, Issue
- * #56): both used to live here as `internal` — hardcoded monorepo-specific
+ * `check-reader-resolvable-prose`/`check-retired-vocabulary`: both used to live here as `internal` — hardcoded monorepo-specific
  * doctrine paths made them unreachable through an adopter's own registry.
  * Both are now config-driven (`vinaya.config.json`'s `proseGates`) and
  * registered in `coreCheckRegistry()` as `reader-resolvable-prose` /
@@ -151,7 +150,7 @@ export const CLI_CHECK_RING: Readonly<Record<string, 0 | 1 | 2>> = {
   'token-collection-wired': 0,
   'token-report': 1,
   'pr-premise-reassert': 0,
-  // The six write-only rules named apart (task 17, O2) — `ownWorkflow: true`
+  // The six write-only rules named apart — `ownWorkflow: true`
   // each, same ring reasoning as `review-gate`/`body-bare-digits` above.
   'issue-title-grammar': 1,
   'issue-objectives-numbering': 1,

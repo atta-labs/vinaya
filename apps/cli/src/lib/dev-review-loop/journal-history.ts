@@ -1,8 +1,8 @@
 /**
- * O9 (`#541`): the impure half of round-journal
+ * O9: the impure half of round-journal
  * reconstruction — gathering every `dev_review_loop` log line this task has
  * ever emitted, from the two places it can live: wherever the round-end
- * flush actually posted it (Issue #626, O1: the task's own
+ * flush actually posted it (O1: the task's own
  * Issue is no longer that place by default — `resolveRoundEndFlushTarget`,
  * `../config.js`, resolves the SAME `vinaya.config.json` `logPublish`
  * destination `defaultFlushOutbox` posts to, so this read and that write can
@@ -13,7 +13,7 @@
  * parses.
  *
  * Same trust boundary every other forge read in this directory already
- * applies (security review, PR #445): only principal-authored comments are
+ * applies (a security-review finding): only principal-authored comments are
  * trusted, so a non-principal Issue/PR commenter cannot forge a
  * `<!-- aeg:log: -->`-shaped comment to inject fabricated rounds into the
  * published journal.

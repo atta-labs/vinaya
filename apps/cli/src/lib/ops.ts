@@ -64,7 +64,7 @@ export type Op = CreateFileOp | ManagedBlockOp | CreateLabelOp | PrintOp
 
 /**
  * The managed-block marker namespace — **not a forge label**, so the `vinaya/`
- * label grammar (#614) deliberately does not apply. These bytes are written
+ * label grammar deliberately does not apply. These bytes are written
  * into an adopter's git-hook and workflow files and are matched literally by
  * `eject` to strip the block again, so changing them would orphan every block
  * already installed in the field. A label-namespace audit will match this line;
@@ -104,7 +104,7 @@ function abs(repoRoot: string, relPath: string): string {
  *     `readFileSync` on it and throws `EISDIR` instead of refusing.
  *
  * Both skip the common-dir resolution and the hooks-subtree bound alike. Both
- * are pre-existing and tracked separately (#177); neither is reachable from a
+ * are pre-existing and tracked separately; neither is reachable from a
  * vinaya-generated manifest, whose block paths are always one of three
  * lower-case literals with the separator. The fix belongs at the parse layer,
  * not here — a resolver that started accepting `.GIT/` would be inventing a
@@ -186,7 +186,7 @@ export function containedAbs(repoRoot: string, relPath: string): string | null {
 
 /**
  * The containment guarantee for a MANAGED BLOCK path, which `containedAbs`
- * cannot express (Issue #68).
+ * cannot express.
  *
  * `containedAbs` resolves a path and requires it to stay inside `repoRoot`.
  * That is exactly right for the whole files vinaya owns. It is wrong for a

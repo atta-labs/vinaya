@@ -558,10 +558,10 @@ export async function milestoneAdoptCommand(args: string[]): Promise<void> {
 // `vinaya milestone close` — replaces the raw `gh api .../milestones/<n> -X
 // PATCH -f state=closed` recipe `tranche-archivist.md` step 3 used to carry,
 // unconditionally, on faith. The one forge write in the whole lifecycle that
-// shipped with zero validation in front of it (Issue #301): step 1 verifies
+// shipped with zero validation in front of it: step 1 verifies
 // each task Issue is CLOSED and LABELED, never that it is ATTACHED (the
 // native `milestone` field) — an assumption that was live-false (`vinaya
-// issue create` never attached before #300's fix) and is checked here, on
+// issue create` never attached before a real fix) and is checked here, on
 // the write, rather than trusted. `checkMilestoneAttachment`
 // (`@attalabs/aeg-forge-state`) is the pure diff between the two forge facts;
 // this command's only job is fetching them and gating the PATCH on the
@@ -597,7 +597,7 @@ export async function milestoneCloseCommand(args: string[]): Promise<void> {
 
   // ---- resolve the target Milestone — same legacy-or-intent-declared match
   // `resolveMilestoneAttachTarget` already applies at Issue-create time
-  // (#300) — closing must find the same Milestone an Issue's auto-attach
+  // — closing must find the same Milestone an Issue's auto-attach
   // would have named, or step 3's recipe silently does nothing for any
   // intent-declared tranche, exactly the gap this task exists to close. ----
   const milestones = ghJsonOrRefuse<GhMilestoneEntry[]>(

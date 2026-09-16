@@ -29,11 +29,11 @@
  *
  * **The real-world cost, stated plainly, not hidden in a corpus number:**
  * this makes every digit-bearing identifier a PR body wants to cite —
- * `#123`, `2026-08-18`, `0.12.0`, `packages/aeg-forge-state/src/strip-code.ts`,
+ * `#NNN`, `2026-08-18`, `0.12.0`, `packages/aeg-forge-state/src/strip-code.ts`,
  * `§9` — require backtick-wrapping to pass, where the old exemption list let
  * them stand bare. That is not a defect in this rewrite; it is what "one
  * rule, no enumerable shape space" necessarily means. Real corpus bodies
- * written before this rule existed (`#126`/`#129`/`#130`/`#132`/`#136`) were
+ * written before this rule existed were
  * not written with it in mind and are re-verified against it honestly in
  * this PR's Test Plan, not silently patched to pass.
  *
@@ -47,7 +47,7 @@
  * **Layers 0–2 are no longer this module's to perform.** They live on
  * `ScanContext` (`scan-context.ts`), which is also what `check-evidence-fresh`
  * reads, because the two checks resolving the `AEG:EVIDENCE` region from
- * different text is exactly the defect of Issue #189: this side exempted the
+ * different text is exactly the defect a real regression exposed: this side exempted the
  * region's digits while the other side, reading un-normalised text, never
  * verified it. `buildScanMask` takes the context, so no caller here can
  * re-derive, skip, or wrap those layers.
@@ -59,7 +59,7 @@
  *      `maskDetailsBlocks`: a `<details>` tag quoted in a code span must
  *      already be inert filler before the details-scanner sees it, or a
  *      decoy tag could open/close a fake region (`anchoredRegionBounds`'s
- *      PR #126 fix closed the identical decoy class for the `AEG:*`
+ *      own fix closed the identical decoy class for the `AEG:*`
  *      anchors).
  *   2. `maskDetailsBlocks` — blind the collapsed `<details>` block that
  *      carries the frozen, verbatim reference-brief copy
@@ -78,10 +78,10 @@
  *      for a body's own mandatory metadata fields, same reasoning as layer
  *      4.
  *   6. Blank each `O<n>.` list-marker PREFIX (id only, never the sentence
- *      after it) inside a `## Objectives` section (Issue #494, O2) — the
+ *      after it) inside a `## Objectives` section — the
  *      same structure-not-prose treatment the Issue objectives grammar
  *      already gives it, extended to a pull-request body now that one may
- *      carry its own `## Objectives` section (Issue #494, O1/O3).
+ *      carry its own `## Objectives` section.
  *
  * What survives that pipeline is scanned for digit-bearing tokens; every
  * surviving one is a violation, full stop — no shape it could take makes it
@@ -135,7 +135,7 @@ function blankRange(text: string, start: number, end: number): string {
  * enforces, applied here too. The real-world cost is identical in kind to
  * `For:`'s own: existing PR bodies with a bare digit in Premise/Test-Plan
  * content need backtick-wrapping to keep passing, migrated the same way
- * `#129`'s `For:` line was for this task's own dogfooding.
+ * a real PR's own `For:` line was for this task's own dogfooding.
  */
 const EXEMPT_ANCHOR_FIELDS = ['CLOSES', 'TIER', 'PROJECT', 'EVIDENCE'] as const
 type ExemptAnchorField = (typeof EXEMPT_ANCHOR_FIELDS)[number]
@@ -263,7 +263,7 @@ const FIELD_CONTENT_SIGNATURE: Record<ExemptAnchorField, RegExp> = {
 }
 
 /**
- * The Premise-pin carve-out (Issue #232). A Premise pin
+ * The Premise-pin carve-out. A Premise pin
  * (`aeg-root/roles/developer.md` §"Entry gate",
  * `@attalabs/aeg-core`'s `premise-check.ts`) asserts a literal, verbatim
  * fact about a file's current byte content — `checkPremises` re-checks it
@@ -271,7 +271,7 @@ const FIELD_CONTENT_SIGNATURE: Record<ExemptAnchorField, RegExp> = {
  * to satisfy the general digit rule corrupts that exact match: the
  * backticks become characters the real file never contained, so a
  * perfectly true pin starts failing re-assertion as if the surface had
- * moved (reproduced live on `atta-labs/attalabs#988`: a pin whose value was
+ * moved (reproduced live: a pin whose value was
  * `Capability 7` had to be rewritten digit-free to pass this check, and a
  * digit-free rewrite is a materially less precise pin than the one the
  * Developer actually verified). A Premise pin's value can therefore only
@@ -403,7 +403,7 @@ function blankTokenReportSection(body: string): string {
 /**
  * Blanks the unanchored `Tier:`/`Project:` fallback forms — the
  * anchor-optional convention layer 3 doesn't reach (an older, pre-anchor
- * body like `#126` writes them bare, and `vinaya demo`'s own fixture PR
+ * body writes them bare, and `vinaya demo`'s own fixture PR
  * body writes a plain, unbolded `Tier: 1`).
  *
  * Round 6 security review, HIGH: this used to blank the WHOLE line once the
@@ -504,15 +504,15 @@ function blankUnanchoredStructuralFields(body: string): string {
 }
 
 /**
- * A pull request may now carry its own `## Objectives` section (Issue #494,
- * O1/O3 — a PR closing no Issue, or an Issue with its own section, reads its
+ * A pull request may now carry its own `## Objectives` section (a PR
+ * closing no Issue, or an Issue with its own section, reads its
  * objectives from the PR body itself). Its `O<n>.` list-marker lines already
  * count as structure, never prose, in an Issue body — the Issue objectives
  * grammar (`objectivesOf`) parses them as ids, not sentences — and the same
  * must hold in a PR body: `O1. …` under `## Objectives` is not a countable
  * claim.
  *
- * Bounded on purpose, per Issue #494's own boundary — blanks ONLY the
+ * Bounded on purpose — blanks ONLY the
  * `O<n>.` prefix (the id marker), never the sentence after it, and only
  * inside the `## Objectives` section itself (`objectivesSectionBounds` —
  * `@attalabs/aeg-core`'s own objectives-grammar module, so this check and
@@ -572,7 +572,7 @@ function blankObjectiveMarkers(body: string): string {
  * approach was tried for them too (`isPremiseHeader`/`PREMISE_LINE` and a
  * Test Plan checklist-item regex, both from `@attalabs/aeg-core`) and
  * reverted after re-verifying against the real corpus surfaced a real
- * regression: real Test Plan items in `#130`/`#136` carry indented,
+ * regression: real Test Plan items in real PRs carry indented,
  * multi-paragraph continuation prose UNDER the checklist line (fixture
  * output, byte counts, exit codes) that a first-line-only bound wrongly
  * flagged. Per the Principal's final direction for this task, PREMISE/
@@ -591,8 +591,8 @@ function blankClosesField(line: string): string {
 }
 
 /**
- * The `Summary:` line (Issue #189, the deliverable paired with the coupling
- * fix) gets **no exemption here**, deliberately — it does not need one.
+ * The `Summary:` line (the deliverable paired with the coupling
+ * fix that regression exposed) gets **no exemption here**, deliberately — it does not need one.
  *
  * `vinaya pr report --write` emits its value inside an inline code span
  * (`Summary: ` + a backticked count), so `maskCode` — layer 1, shared by every
@@ -637,7 +637,7 @@ const BOUNDED_ANCHOR_BLANK: Record<ExemptAnchorField, (line: string) => string> 
  * code and `<details>`) are already done and live on the context, so this
  * function cannot re-derive them, cannot skip one, and cannot be handed a
  * wrapped body: `buildScanMask(stripSoftHyphens(body))` — the decoupling that
- * defeated two of the twelve guards on `#188` — does not compile. That is the
+ * defeated two of the twelve guards on a real regression — does not compile. That is the
  * point. See `scan-context.ts` for what this closes and what it does not.
  */
 function buildScanMask(ctx: ScanContext): string {

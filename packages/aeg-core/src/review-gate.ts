@@ -1,5 +1,5 @@
 /**
- * Required pre-merge review gate (aeg-review-gate-v1 task 1, #474). Blocks a
+ * Required pre-merge review gate. Blocks a
  * PR from merging unless a clean code-reviewer `APPROVE` verdict
  * AND a clean security-review `PASS` verdict both exist on the PR — the same
  * `extractCodeReviewVerdict`/`extractSecurityReviewVerdict` detection
@@ -7,8 +7,8 @@
  * now gated pre-merge and blocking instead of post-merge and advisory-only.
  *
  * Verdict comments are ONLY counted when their author is on the same
- * `PRINCIPAL_ALLOWLIST` the waiver actor-check trusts (security finding,
- * PR #806): body-shape alone is never sufficient on a public repo. Unverified
+ * `PRINCIPAL_ALLOWLIST` the waiver actor-check trusts (a security finding):
+ * body-shape alone is never sufficient on a public repo. Unverified
  * comments are ignored, not fatal.
  *
  * A verified `vinaya/waiver:review` label (the exact actor-verification pattern,
@@ -17,7 +17,7 @@
  * one PR. Label presence alone is never sufficient — only an actor-verified
  * label waives the gate, mirroring exactly.
  *
- * Reviewed-commit binding (#73, a duplicate of #71 closes this one). A clean
+ * Reviewed-commit binding. A clean
  * verdict is no longer sufficient on its own — it must also cover the PR's
  * CURRENT head. Design record (the four questions this fix had to answer,
  * argued in full in the closing PR's body):
@@ -51,7 +51,7 @@
  *    `vinaya/waiver:review` actor-verified label, applied by a principal, the
  *    same mechanism that already exists for any other one-off skip.
  *
- * Ruling-freshness binding (`review-validity-v1` task 3, `#477`, O2). A
+ * Ruling-freshness binding. A
  * verdict is also bound to the newest PRINCIPAL RULING on the PR at cast
  * time, the same shape as the objectives-version binding above but with
  * `0` (never `null`) standing in for "nothing to bind against yet" — a
@@ -110,7 +110,7 @@ export type ReviewGateInput = {
    * The PR's current head commit sha (`gh pr view --json headRefOid`),
    * resolved from GitHub — never from local git, an env var, or the PR's own
    * checkout, all three of which a `pull_request`-triggered workflow's
-   * PR-editable YAML could steer (#73). REQUIRED, not optional: an omitted
+   * PR-editable YAML could steer. REQUIRED, not optional: an omitted
    * head would have to mean either skip-the-binding-check (fail-open, the
    * exact defect this field exists to close) or unconditional-fail, and a
    * required field makes that choice a compile error instead of a runtime
@@ -170,7 +170,7 @@ export type ReviewGateInput = {
   patchIdOf?: (sha: string) => string | null
   /**
    * The current `objectivesVersion` of the list the PR is judged against
-   * (dev-review-loop-v1 task 2, `#412`, O3) — the Issue's `objectivesOf`
+   * — the Issue's `objectivesOf`
    * build, or the PR body's own `## Objectives` section below the cutover,
    * resolved by the caller (never here; this stays pure). `null` means the
    * objectives binding is SKIPPED entirely — a pre-cutover Issue, no Issue at
@@ -182,8 +182,7 @@ export type ReviewGateInput = {
    */
   objectivesVersion: string | null
   /**
-   * The newest principal ruling ordinal on this PR (`review-validity-v1`
-   * task 3, `#477`, O2) — `0` when the PR carries no ruling at all, NEVER
+   * The newest principal ruling ordinal on this PR — `0` when the PR carries no ruling at all, NEVER
    * `null`: unlike `objectivesVersion`, there is no "skip this binding"
    * case here — a PR either has rulings or it doesn't, and `0` says so.
    * Resolved by the caller (never here; this stays pure) by counting
@@ -197,19 +196,17 @@ export type ReviewGateInput = {
    */
   rulingOrdinal: number
   /**
-   * Which severities block is repository policy (`review-validity-v1` task
-   * 8, `#506`, O2/O3) — resolved by the caller from the DEFAULT BRANCH's
+   * Which severities block is repository policy — resolved by the caller from the DEFAULT BRANCH's
    * `vinaya.config.json` (`resolveReviewPolicy(loadTrustAnchorConfig())`),
    * never from here (this stays pure) and never from the PR's own checkout,
-   * so a change cannot lower its own threshold (O4). Defaults to
+   * so a change cannot lower its own threshold. Defaults to
    * `DEFAULT_REVIEW_POLICY` (`BLOCKER`/`HIGH`) when omitted — every existing
    * caller that predates this field is unaffected, the same optional-with-
    * fallback shape `principalAllowlist` already uses above.
    */
   policy?: ReviewPolicy
   /**
-   * The frozen brief's own hash at evaluation time (`review-validity-v1`
-   * task 4, `#478`, O1) — resolved by the caller (never here; this stays
+   * The frozen brief's own hash at evaluation time — resolved by the caller (never here; this stays
    * pure) from the linked Issue's newest principal-authored frozen brief.
    * Optional, defaulting to `null` (skip the binding) when omitted — every
    * existing caller that predates this field is unaffected, the same
@@ -264,8 +261,8 @@ export function isReviewGateExemptBranch(_branch: string): boolean {
  * which mechanical check(s) are not green, or that none have reported at
  * all.
  *
- * A verdict's own `VERDICT:` text is not, by itself, sufficient for "clean"
- * (`review-validity-v1` task 8, `#506`, O3): the comment's own FINDINGS block
+ * A verdict's own `VERDICT:` text is not, by itself, sufficient for "clean":
+ * the comment's own FINDINGS block
  * is re-evaluated against `input.policy` (`evaluateCodeReview`/
  * `evaluateSecurityReview`, `@attalabs/aeg-core`'s pure evaluator), and an
  * `APPROVE`/`PASS` beside a finding at or above the threshold reads as not
@@ -289,11 +286,11 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
   }
 
   // A `skipping` (GitHub `conclusion: "skipped"` or `"neutral"`) check-run is
-  // ABSENT, never a failure (Issue #402 O4): a job whose own `if:` is false
+  // ABSENT, never a failure: a job whose own `if:` is false
   // for this event still reports a check-run — `vinaya-review.yml`'s
   // `retrigger-on-ci-green` job reports `skipped` on every ordinary
   // `pull_request_target` run — and counting that as "not green" blocked
-  // every PR (first seen on PR #401: "vinaya review gate (retrigger on CI
+  // every PR (first seen live: "vinaya review gate (retrigger on CI
   // green) (skipping)"). Filtered out before both the emptiness check and
   // the clean-check, so a head reporting only skipped/neutral runs reads as
   // "nothing has reported yet", not as a false pass.
@@ -303,7 +300,7 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
   const mechanicalChecksClean =
     reportedMechanicalChecks.length > 0 && reportedMechanicalChecks.every((c) => c.bucket === 'pass')
 
-  // Verdict-AUTHOR verification (security finding on PR #806): on a public
+  // Verdict-AUTHOR verification (a security finding): on a public
   // repo any GitHub account can post a `VERDICT: APPROVE`-shaped comment, and
   // most-recent-clear-hit-wins extraction would let a forged later APPROVE
   // override a real earlier REQUEST CHANGES. Only comments whose author is on
@@ -316,7 +313,7 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
   const verified = input.comments.filter((c) => isPrincipal(c.author, principalAllowlist))
   // Count only VERDICT-shaped ignored comments — deployment bots and ordinary
   // chat are also non-allowlisted, and counting them would imply forgery
-  // where there is only noise (review finding, PR #806).
+  // where there is only noise (a review finding).
   const ignoredCount = input.comments.filter(
     (c) => !isPrincipal(c.author, principalAllowlist) && c.body.includes('VERDICT')
   ).length
@@ -356,7 +353,7 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
   const securityPolicyClean = securityPolicyEvaluation.outcome === 'clean'
   const codeReviewClean = codeReviewTextClean && codeReviewPolicyClean
   const securityClean = securityTextClean && securityPolicyClean
-  // task 4 (`#478`, O2): ONE comparison — the same `compareManifest` the
+  // task 4: ONE comparison — the same `compareManifest` the
   // loop's own publication self-check calls — behind every binding below,
   // rather than four separate hand-rolled predicates. `current` is this
   // evaluation's own manifest; each verdict's own echoed fields (read by
@@ -496,7 +493,7 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
  * whatever it takes to resolve `expectedAuthor` — resolving that value is a
  * network round-trip (`resolveReleaseActor(loadTrustAnchorConfig())`) that
  * must not run on every ordinary PR just because it is one of three
- * arguments to `isChangesetsReleasePr`. Found live (code review, PR #169):
+ * arguments to `isChangesetsReleasePr`. Found live in code review:
  * evaluating it inline as a function argument runs it unconditionally,
  * regardless of branch, since JS evaluates arguments eagerly.
  */
@@ -533,7 +530,7 @@ export const DEFAULT_RELEASE_ACTOR = 'github-actions[bot]'
  * an expression evaluated from the workflow file on the DEFAULT BRANCH, a
  * pull request cannot edit that file to substitute a different literal
  * (the same `pull_request_target` boundary `vinaya-review.yml` already
- * uses). Found live (round 5, PR #165): the identical exemption on a plain
+ * uses). Found live: the identical exemption on a plain
  * `pull_request` trigger let an attacker redirect `PR_NUMBER`/`BRANCH` to
  * any already-approved PR by the configured release actor — verified no
  * env-var or git-state signal inside that trigger type is a safe anchor,

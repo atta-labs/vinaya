@@ -1,5 +1,5 @@
 /**
- * Pure decision logic for the `token-report` check (task 4, #271). No `fs`,
+ * Pure decision logic for the `token-report` check. No `fs`,
  * no `process.env` of its own — the caller (`check-token-report.ts`)
  * supplies the already-computed `MeteringCapability` (task 1's
  * `resolveMeteringCapability` probe run against real `fs`/`process.env`
@@ -35,7 +35,7 @@
  * block every real PR.
  *
  * The no-row refusal (`entries.length === 0`) applies only when `isTaskPr`
- * is true (task 10, Issue #460) — a task pull request never leaves the
+ * is true — a task pull request never leaves the
  * ledger with a silent hole, but a non-task pull request (the changesets
  * bot's release PR, chief example) never carries a "develop" turn to
  * report at all and is not refused for a row it could never satisfy.

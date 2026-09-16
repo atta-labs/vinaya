@@ -3,11 +3,11 @@ import { execFileSync } from 'node:child_process'
 /**
  * `vinaya release` — the release sequence from `apps/cli/specs/self-hosting.md`
  * ("How the published version is produced") as one command, refusing to
- * start unless every precondition holds (Issue #407, O1).
+ * start unless every precondition holds.
  *
  * Publishing stays manual and human-triggered — this command removes the
  * four-step recipe a human used to type by hand, plus the `--no-verify` the
- * tag push needed before #407's O2 fix made `main-branch-refusal` pass a
+ * tag push needed before a real fix made `main-branch-refusal` pass a
  * tag-only push on its own. No token in Actions, no workflow change.
  *
  * Preconditions run in order, each its own refusal naming the fix:
@@ -22,7 +22,7 @@ import { execFileSync } from 'node:child_process'
  * --frozen-lockfile`, `bun run build`, `bun run changeset:publish`, `git
  * push origin --tags`. That last push is a REAL push — its stdin reaches
  * the repo's own generated pre-push hook exactly as any other `git push`
- * would, which is what populates `VINAYA_PUSH_REFS` (O2) and lets
+ * would, which is what populates `VINAYA_PUSH_REFS` and lets
  * `main-branch-refusal` see this is a tag-only push. Nothing here sets that
  * env var itself, and nothing passes `--no-verify`.
  *

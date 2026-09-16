@@ -1,7 +1,6 @@
 /**
- * Test Plan checkbox-state gate evaluator (aeg-governance-hardening
- * task 25, #365; narrowed to `[principal]` boxes only by task 12, #387 —
- * the `[agent]` half stopped being a checkbox at all: it is a fenced command
+ * Test Plan checkbox-state gate evaluator (later narrowed to `[principal]`
+ * boxes only — the `[agent]` half stopped being a checkbox at all: it is a fenced command
  * list `vinaya pr report` executes and writes into the `AEG:EVIDENCE` block,
  * which IS the evidence, so there is nothing left for this gate to grade on
  * that half). Pure — no `fs`, no `gh`/`git`. The CLI shim
@@ -13,11 +12,11 @@
  * This module owns the checkbox tick-state decision built on top of it:
  *
  * - No section found, task branch → `fail` (a task PR without a
- *     Test Plan is malformed, not exempt — the exact #377 live-fire gap).
+ *     Test Plan is malformed, not exempt — a real live-fire gap).
  *   - No section found, non-task branch (or no BRANCH) → `pass` (advisory).
  *   - `Test Plan: unit-tests-only` sentinel → `pass`.
  *   - Any unticked `- [ ]` `[principal]` checkbox → `fail`, naming every
- *     unticked line. A `[agent]`-tagged checkbox (a pre-#387 body, still
+ *     unticked line. A `[agent]`-tagged checkbox (an older body, still
  *     grandfathered by `brief-shape`'s own rollout) is never graded here —
  *     see the module doc comment above.
  *   - All `[principal]` boxes ticked (or none exist at all) → `pass`.
@@ -76,7 +75,7 @@ export function evaluateTestPlanGate(body: string, branch: string): TestPlanGate
   }
 
   // `[agent]` checkboxes are never graded here — see the module doc comment.
-  // A pre-#387 body may still carry them (grandfathered by `brief-shape`'s
+  // An older body may still carry them (grandfathered by `brief-shape`'s
   // own rollout); this gate simply does not look at that tag at all any
   // more, ticked or not.
   const checkboxLines = section

@@ -1,6 +1,5 @@
 /**
- * Finding-count baseline capture + comparison (aeg-governance-hardening task
- * 11, #324). Pure — does not run `verify-docs.ts`/`verify-coherence.ts`
+ * Finding-count baseline capture + comparison. Pure — does not run `verify-docs.ts`/`verify-coherence.ts`
  * itself and never calls `Date.now()` (a pure `src/` module cannot — see
  * `packages/aeg-core/CLAUDE.md`-equivalent constraint, this repo's is the
  * Workflow-script rule of the same shape). The CLI shim runs those tools,

@@ -2,7 +2,7 @@
 
 /**
  * Core check: doctrine-portability. Thin adapter over `@attalabs/aeg-core`'s
- * `checkDoctrinePortability` (task 234, Issue #234) — the class
+ * `checkDoctrinePortability` — the class
  * `check-reader-resolvable-prose` sweeps but, by its own zero-I/O contract,
  * cannot see: a shipped-doctrine citation of a path that exists only in the
  * authoring repository, never resolvable by an adopter.
@@ -114,8 +114,8 @@ function collectAtRef(ref: string, dir: string): PortabilitySourceFile[] {
  * cites — keying on line would make every one of those unmoved citations
  * register as "new" on the very next unrelated edit, spamming false
  * positives on any non-append change (found live reviewing this same PR's
- * own diff). `kind` is included explicitly (Issue #298's `vendor-name`
- * finding kind, review round 2) rather than left to the fact that a `path`
+ * own diff). `kind` is included explicitly (a real `vendor-name`
+ * finding kind from review) rather than left to the fact that a `path`
  * finding's `cited` always contains a `/` and a `vendor-name` finding's
  * never does — that separation is real today but is an invariant of the
  * word list, not of this function, and this key should not depend on it.
@@ -164,7 +164,7 @@ function main(): void {
   const baselineFindings = checkDoctrinePortability(baselineFiles, SHIPS_PREFIX)
 
   const newFindings = findingsInThisDiff(newSince(baselineFindings, currentFindings))
-  // Line-scoped (task 8): a finding prints only when its own line falls
+  // Line-scoped: a finding prints only when its own line falls
   // inside a changed hunk of a file this diff touched. `findingsInThisDiff`
   // owns both halves — one hunk parser for the whole repo, and the same
   // "indeterminate reports everything" rule `resolveChangedFiles` already

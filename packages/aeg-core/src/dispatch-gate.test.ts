@@ -82,7 +82,7 @@ describe('checkDispatchReadiness', () => {
   })
 
   /**
-   * #196: `resolved: false` (the edge never matched any tranche/task/Issue at
+   * `resolved: false` (the edge never matched any tranche/task/Issue at
    * all) must report UNRESOLVABLE, quoting the edge text — never the "not
    * merged yet" claim, which is a fact about the forge this case never
    * observed. Still blocks (conservative default), just says why honestly.
@@ -181,7 +181,7 @@ describe('checkDispatchReadiness', () => {
     expect(result.ready).toBe(true)
   })
 
-  // ---- hand-closed dependency recognition (task vinaya-engine-v1 21, #99) --
+  // ---- hand-closed dependency recognition ----------------------------------
 
   it('passes a depends-on edge hand-closed by a recognized Principal (real incident shape: #890)', () => {
     const result = checkDispatchReadiness(
@@ -358,8 +358,8 @@ describe('checkDispatchReadiness — self-dependency guard', () => {
  * The originally-reported body phrased a CROSS-tranche reference as
  * slug-then-number in separate inline-code spans, and the trailing bare span
  * resolved against the HOST tranche — on that tranche's own task `1`, a task
- * depending on itself. Issue #347 removed that cause: bare spans are no longer
- * read as edges, so this body now declares only `#1034` and reaches the gate
+ * depending on itself. A real fix removed that cause: bare spans are no longer
+ * read as edges, so this body now declares only `#NNN` and reaches the gate
  * clean.
  *
  * The guard itself is unchanged and still needed — a body CAN still declare a

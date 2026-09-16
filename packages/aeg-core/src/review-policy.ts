@@ -1,10 +1,9 @@
 /**
- * Which severities block is repository policy (`review-validity-v1` task 8,
- * `#506`). One pure evaluator behind every site that derives, accepts, or
+ * Which severities block is repository policy. One pure evaluator behind every site that derives, accepts, or
  * judges a review verdict — `review post`'s derivation and its contradiction
  * check, the dev-review-loop's assessment of a round and its publication
  * self-check, and the merge gate — so no path applies a weaker rule than
- * another (O2).
+ * another.
  *
  * Pure — no `fs`, no `fetch`, no `process.env`, no config read, no agent
  * call. The caller resolves the effective policy once (`resolveReviewPolicy`,
@@ -23,10 +22,10 @@ export type CodeReviewSeverity = (typeof CODE_REVIEW_SEVERITY_ORDER)[number]
 export const SECURITY_SEVERITY_ORDER = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as const
 export type SecuritySeverity = (typeof SECURITY_SEVERITY_ORDER)[number]
 
-/** (`doctrine-fixes-v1` task 1, `#543`, O4) The dev-review-loop's own round cap, default — replaces the `assess-round.ts` constant this once was; overridable via `reviewPolicy.maxRounds` in `vinaya.config.json`. */
+/** The dev-review-loop's own round cap, default — replaces the `assess-round.ts` constant this once was; overridable via `reviewPolicy.maxRounds` in `vinaya.config.json`. */
 export const DEFAULT_MAX_ROUNDS = 3
 
-/** An omitted policy means today's behaviour (O1): code review at `BLOCKER`, security at `HIGH`, `DEFAULT_MAX_ROUNDS` rounds. */
+/** An omitted policy means today's behaviour: code review at `BLOCKER`, security at `HIGH`, `DEFAULT_MAX_ROUNDS` rounds. */
 export const DEFAULT_REVIEW_POLICY: ReviewPolicy = {
   codeReviewThreshold: 'BLOCKER',
   securityThreshold: 'HIGH',
@@ -36,7 +35,7 @@ export const DEFAULT_REVIEW_POLICY: ReviewPolicy = {
 export type ReviewPolicy = {
   codeReviewThreshold: CodeReviewSeverity
   securityThreshold: SecuritySeverity
-  /** (`#543` O4) The dev-review-loop's own round cap — repository policy, not a hardcoded constant. Resolved once per loop run, same trust class as the two thresholds above. */
+  /** The dev-review-loop's own round cap — repository policy, not a hardcoded constant. Resolved once per loop run, same trust class as the two thresholds above. */
   maxRounds: number
 }
 
@@ -60,11 +59,11 @@ export type PolicyFinding = { severity: string; location?: string }
 const FILE_SHAPED_LOCATION = /\.[a-zA-Z0-9]{1,10}(:\d+)?\s*$/
 
 /**
- * (`doctrine-fixes-v1` task 1, `#543`, O5) `true` when `location` names the
+ * `true` when `location` names the
  * PR body or a PR/review comment — prose surfaces this evaluator caps at
  * `MINOR` before counting a finding toward the blocking threshold, regardless
  * of the severity the reviewer actually reported. Each of these, gated on
- * `FILE_SHAPED_LOCATION` below (round-2 review, LOW, `#547`): a real file
+ * `FILE_SHAPED_LOCATION` below (a LOW round-2 review finding): a real file
  * whose own name happens to contain one of these words or phrases —
  * `apps/cli/tests/commands/pr-create-brief-comment.test.ts`, or any of the
  * repo's own `pr-body-*.md` fixtures — is a source or test file, never
@@ -86,7 +85,7 @@ export function isProseLocation(location: string): boolean {
 
 /**
  * The severity every prose-located finding is evaluated at, regardless of
- * scale (O5) — literally `'MINOR'`, not "the bottom rung of whichever scale
+ * scale — literally `'MINOR'`, not "the bottom rung of whichever scale
  * applies": on the code-review scale this is the least severe rank; on the
  * security scale `'MINOR'` is not a member at all, so `blockingSeverities`'s
  * `Set` never contains it and a prose-located security finding never blocks
@@ -118,7 +117,7 @@ export function blockingSeverities(scale: readonly string[], threshold: string):
 }
 
 /**
- * The one pure evaluator (O2). Takes validated findings and an effective
+ * The one pure evaluator. Takes validated findings and an effective
  * policy threshold on an ordered severity scale; returns the outcome and the
  * findings responsible for blocking. Throws if any finding's own severity is
  * not on `scale` — findings reaching this function are expected to already
@@ -136,7 +135,7 @@ export function evaluateReviewFindings<F extends PolicyFinding>(
     if (!scale.includes(f.severity)) {
       throw new Error(`evaluateReviewFindings: severity "${f.severity}" is not one of ${scale.join(' > ')}`)
     }
-    // (`#543` O5) Prose never blocks: a finding whose own location is the PR
+    // Prose never blocks: a finding whose own location is the PR
     // body, a comment, or a role file is evaluated at `PROSE_CAP_SEVERITY`,
     // never its own reported severity — a source or test file location is
     // never capped, and the finding's own reported severity is unchanged

@@ -38,7 +38,7 @@
         "packages/aeg-forge-state/src/parse-rationale-deps.test.ts",
         "packages/aeg-forge-state/src/amend-rationale-deps.test.ts"
       ],
-      "severity": "warning"
+      "severity": "error"
     }
   },
   "briefSchema": {

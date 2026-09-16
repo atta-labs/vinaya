@@ -29,8 +29,8 @@
  * self-verification performs after posting. This check, not the render's
  * construction, is what actually makes free caller text (a finding,
  * `--scope`, `--summary`) safe: `verdict-extraction.ts` reads only a
- * comment's first FIVE lines (round-4 ruling on `#392`, widened from three
- * by a later task, `#412`), and `renderCodeReviewComment`/
+ * comment's first FIVE lines (a ruling widened this window from three
+ * lines to five), and `renderCodeReviewComment`/
  * `renderSecurityComment`'s caller fields never OPEN one of those lines —
  * they only trail a fixed, renderer-owned label already on the line. The
  * one field this does NOT hold for is `renderEscalationComment`'s
@@ -46,8 +46,7 @@
  * mirroring `reviewer.md`/`security.md`'s templates exactly, including each
  * doc's own internal consistency rule (a finding at or above this
  * repository's policy threshold forces REQUEST CHANGES/FAIL — which
- * severities block is repository policy, task 8,
- * `#506`, O1, resolved once via `resolveReviewPolicy` and never hardcoded
+ * severities block is repository policy, resolved once via `resolveReviewPolicy` and never hardcoded
  * here; an unbacked "SECRETS: none found" is refused without
  * `--secrets-evidence-file`) — so this command catches the same category of
  * mistake at the source, not just the shape of the line.
@@ -62,7 +61,7 @@
  * Self-verification (the part that actually closes the gap): after posting,
  * this command re-fetches the PR's comments, filters them to the same
  * `PRINCIPAL_ALLOWLIST`/`principals`-derived author set `checkReviewGate`
- * itself filters to (the #806 verdict-author-verification fix — a
+ * itself filters to (a verdict-author-verification fix — a
  * non-allowlisted "VERDICT:"-shaped comment must never count, in either
  * direction), and runs the survivors through the exact gate-side extractors.
  * A single fetch-and-check, deliberately with no retry loop — a retry here
@@ -126,7 +125,7 @@ const SECURITY_SEVERITIES = SECURITY_SEVERITY_ORDER
 
 /**
  * Parses the `SEVERITY|file:line|description` findings-file grammar. Splits
- * on its first two `|` only (task 8, `#506`, O6) — the
+ * on its first two `|` only — the
  * rest of the line is the description, exactly the same tolerance
  * `parseObjectivesFile` already gives evidence, so a description that itself
  * contains a `|` (an em-dash-separated aside, a piped shell example) no
@@ -193,8 +192,8 @@ export function findingClass(description: string): string | null {
  * A `doc-correctness` finding must carry a `Search:` pattern, and that pattern
  * must carry no path filter.
  *
- * Why this is mechanical rather than trusted (Issue #434, review round 1,
- * BLOCKER): the rule exists because one false sentence had five copies and
+ * Why this is mechanical rather than trusted: a real BLOCKER finding
+ * caught that the rule exists because one false sentence had five copies and
  * seven review rounds each fixed only the copy its finding happened to anchor.
  * A rule against that failure, enforced by nothing but the next reviewer's
  * attention, is the same shape as the defect — a claim in doctrine that no
@@ -239,7 +238,7 @@ export function renderFindingsSection(findings: readonly Finding[]): string {
   return findings.map((f, i) => `${i + 1}. [${f.severity}] ${f.location} — ${f.description}`).join('\n')
 }
 
-// --- objectives grammar (`#412`, O1/O2) ---------------------------------------
+// --- objectives grammar ---------------------------------------------------
 
 export type ObjectiveStatus = 'MET' | 'NOT MET'
 export type ObjectiveResult = { id: string; status: ObjectiveStatus; evidence: string }
@@ -304,7 +303,7 @@ export function parseObjectivesFile(content: string): ObjectiveResult[] {
         `objectives file line ${idx + 1}: "${id}" is not a well-formed objective id — expected \`O<n>\`: ${line}`
       )
     }
-    // Tolerant by leading word (task 8, `#506`, O6): a
+    // Tolerant by leading word: a
     // reviewer writing `NOT MET (partial)` or `MET — see note` still parses,
     // anything after the leading MET/NOT MET word is ignored for the status
     // itself (it is not dropped; the caller's own line still carries it, and
@@ -357,7 +356,7 @@ function renderTokensLine(role: 'review' | 'security', roleLabel: 'Reviewer' | '
 /**
  * Records which role and session cast this verdict — a shared local `gh`
  * credential means the forge attributes the comment itself to the
- * Principal regardless (`atta-labs/vinaya#176`), so this line is the only
+ * Principal regardless, so this line is the only
  * place an agent-authored verdict is visibly agent-authored. It closes
  * nothing on its own; it makes the inheritance auditable.
  */
@@ -401,17 +400,17 @@ export type CodeReviewInput = TokensInput & {
   scopeEvidence: string | null
   tests: string
   docs: string
-  /** `null` when this PR's Issue predates `OBJECTIVES_SINCE_ISSUE` — no `Objectives version:` line renders at all (`#412`, O2). */
+  /** `null` when this PR's Issue predates `OBJECTIVES_SINCE_ISSUE` — no `Objectives version:` line renders at all. */
   objectivesVersion: string | null
   /** `null` alongside `objectivesVersion === null` — no `OBJECTIVES:` block renders. Non-null is always non-empty by construction (`objectivesOf` refuses an empty list). */
   objectiveResults: readonly ObjectiveResult[] | null
-  /** The newest principal ruling ordinal on this PR at cast time — `0` when none, RENDERS UNCONDITIONALLY, never omitted the way `objectivesVersion` is pre-cutover (task 3, `#477`, O1). */
+  /** The newest principal ruling ordinal on this PR at cast time — `0` when none, RENDERS UNCONDITIONALLY, never omitted the way `objectivesVersion` is pre-cutover. */
   rulingOrdinal: number
-  /** The frozen brief's own hash at cast time (task 4, `#478`, O1) — `null` when no frozen brief was resolvable for this PR. RENDERS UNCONDITIONALLY, as `(none)` when null — a non-hash placeholder the gate's extractor reads back as no binding at all. */
+  /** The frozen brief's own hash at cast time — `null` when no frozen brief was resolvable for this PR. RENDERS UNCONDITIONALLY, as `(none)` when null — a non-hash placeholder the gate's extractor reads back as no binding at all. */
   briefHash: string | null
-  /** The effective review policy's digest at cast time (task 4, `#478`, O5). Never null — a policy is always configured or defaulted. */
+  /** The effective review policy's digest at cast time. Never null — a policy is always configured or defaulted. */
   policyDigest: string
-  /** The base commit the candidate was judged against (task 5, `#555`, O1) — `null` when none was resolvable. RENDERS UNCONDITIONALLY, as `(none)` when null — a non-hash placeholder the gate's extractor reads back as no base binding at all. */
+  /** The base commit the candidate was judged against (O1) — `null` when none was resolvable. RENDERS UNCONDITIONALLY, as `(none)` when null — a non-hash placeholder the gate's extractor reads back as no base binding at all. */
   baseSha: string | null
 }
 
@@ -438,8 +437,8 @@ function isResolved(finding: Finding): boolean {
  * The command decides, not the caller. `REQUEST_CHANGES` iff a finding at or
  * above `policy.codeReviewThreshold` is present, decided by
  * `@attalabs/aeg-core`'s pure evaluator (`evaluateCodeReview`) — no literal
- * `'BLOCKER'` decision here any more (task 8, `#506`,
- * O1/O2): which severities block is repository policy, resolved once by the
+ * `'BLOCKER'` decision here any more:
+ * which severities block is repository policy, resolved once by the
  * caller and passed in. The severity vocabulary itself is unchanged — a
  * finding whose re-review state is `resolved` keeps its severity for the
  * record but never drives the verdict — a fix-claimed or reproduced blocking
@@ -457,12 +456,12 @@ export function deriveCodeReviewVerdict(findings: readonly Finding[], policy: Re
  * this function's own literal strings — there is no code path by which a
  * caller-supplied string can land in any of those positions. `Objectives
  * version:` renders as line 5 (blank line 6) only when
- * `input.objectivesVersion` is non-null (`#412`, O2) — a pre-cutover PR
+ * `input.objectivesVersion` is non-null — a pre-cutover PR
  * renders exactly as before this task. `Ruling ordinal:` renders
  * UNCONDITIONALLY right after it (line 5, or line 7 when `Objectives
- * version:` also renders) — never omitted (task 3, `#477`, O1). The
+ * version:` also renders) — never omitted. The
  * `OBJECTIVES:` block (`renderObjectivesBlock`) renders
- * after `SPEC CONFORMANCE:` (O1), only when `input.objectiveResults` is
+ * after `SPEC CONFORMANCE:`, only when `input.objectiveResults` is
  * non-null.
  */
 export function renderCodeReviewComment(input: CodeReviewInput): string {
@@ -474,7 +473,7 @@ export function renderCodeReviewComment(input: CodeReviewInput): string {
   lines.push(`Ruling ordinal: ${input.rulingOrdinal}`, '')
   lines.push(`Brief hash: ${input.briefHash ?? '(none)'}`, '')
   lines.push(`Policy digest: ${input.policyDigest}`, '')
-  // `Judged base:` renders LAST of the structural head lines (`#555`, O1) —
+  // `Judged base:` renders LAST of the structural head lines (O1) —
   // appended here rather than beside `Judged head:` so it never shifts the
   // lines above out of the exact read windows their extractors pin. Worst
   // case (objectives present) it lands on line 13, inside `firstThirteenLines`.
@@ -483,8 +482,8 @@ export function renderCodeReviewComment(input: CodeReviewInput): string {
     // AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
     // Directly below the verdict block, per `reviewer.md`'s own evidence
     // rule — safe as free multi-line text now that the gate's extractors
-    // read only a comment's first five lines (round-4 ruling, `#392`,
-    // widened by `#412`).
+    // read only a comment's first five lines (that same ruling,
+    // widened when the objectives cutover landed).
     lines.push('```', input.scopeEvidence, '```', '')
   }
   lines.push(`BRIEF CONFORMANCE: ${input.briefConformance}`, `SPEC CONFORMANCE: ${input.specConformance}`)
@@ -519,17 +518,17 @@ export type SecurityInput = TokensInput & {
   secrets: string
   /** Raw scanner output backing a `none found` claim; null when not supplied. */
   secretsEvidence: string | null
-  /** `null` when this PR's Issue predates `OBJECTIVES_SINCE_ISSUE` — no `Objectives version:` line renders at all (`#412`, O2). */
+  /** `null` when this PR's Issue predates `OBJECTIVES_SINCE_ISSUE` — no `Objectives version:` line renders at all. */
   objectivesVersion: string | null
   /** `null` alongside `objectivesVersion === null` — no `OBJECTIVES:` block renders. */
   objectiveResults: readonly ObjectiveResult[] | null
-  /** The newest principal ruling ordinal on this PR at cast time — `0` when none, RENDERS UNCONDITIONALLY, never omitted the way `objectivesVersion` is pre-cutover (task 3, `#477`, O1). */
+  /** The newest principal ruling ordinal on this PR at cast time — `0` when none, RENDERS UNCONDITIONALLY, never omitted the way `objectivesVersion` is pre-cutover. */
   rulingOrdinal: number
-  /** The frozen brief's own hash at cast time (task 4, `#478`, O1) — `null` when no frozen brief was resolvable for this PR. RENDERS UNCONDITIONALLY, as `(none)` when null. */
+  /** The frozen brief's own hash at cast time — `null` when no frozen brief was resolvable for this PR. RENDERS UNCONDITIONALLY, as `(none)` when null. */
   briefHash: string | null
-  /** The effective review policy's digest at cast time (task 4, `#478`, O5). Never null. */
+  /** The effective review policy's digest at cast time. Never null. */
   policyDigest: string
-  /** The base commit the candidate was judged against (`#555`, O1) — `null` when none resolvable. RENDERS UNCONDITIONALLY, as `(none)` when null. */
+  /** The base commit the candidate was judged against (O1) — `null` when none resolvable. RENDERS UNCONDITIONALLY, as `(none)` when null. */
   baseSha: string | null
 }
 
@@ -554,8 +553,8 @@ export function isNoneFoundClaim(value: string): boolean {
  * guarantee as `renderCodeReviewComment` for `VERDICT:`/`Judged head:`/
  * `Objectives version:`/`Ruling ordinal:` — the last renders
  * UNCONDITIONALLY, right after the (conditional) `Objectives version:`
- * block (task 3, `#477`, O1). The `OBJECTIVES:` block
- * renders BEFORE `CONFIG SCAN:` (O1), only when `input.objectiveResults`
+ * block. The `OBJECTIVES:` block
+ * renders BEFORE `CONFIG SCAN:`, only when `input.objectiveResults`
  * is non-null. When
  * `secretsEvidence` is supplied, the scanner's raw output is pasted in a
  * fenced block ABOVE the `SECRETS:` line, per `security.md`'s own rule that
@@ -596,8 +595,8 @@ export function renderSecurityComment(input: SecurityInput): string {
  * AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
  * AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function renderEscalationComment(input: EscalationInput): string {
  * AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function checkRenderedComment(body: string, expectation: RenderExpectation): RenderCheckResult {
- * Round-4 ruling on `#392`, window later widened from three to five lines
- * by a later task (`#412`): `renderCodeReviewComment`/
+ * A ruling set this window, later widened from three to five lines:
+ * `renderCodeReviewComment`/
  * `renderSecurityComment`'s caller-supplied fields never OPEN one of the
  * first five lines — they only ever trail a fixed, renderer-owned label
  * already on that line. `renderEscalationComment`'s `summary` is the one
@@ -699,14 +698,14 @@ export type EscalationInput = TokensInput & {
   summary: string
   role: 'review' | 'security'
   roleLabel: 'Reviewer' | 'Security'
-  /** Same resolution as the verdict shapes (`#412`, O2) — an escalation carries the version line but never an `OBJECTIVES:` block. */
+  /** Same resolution as the verdict shapes — an escalation carries the version line but never an `OBJECTIVES:` block. */
   objectivesVersion: string | null
-  /** Same resolution as the verdict shapes (task 3, `#477`, O1) — an escalation carries this line too, unconditionally, even though it carries no verdict at all. */
+  /** Same resolution as the verdict shapes — an escalation carries this line too, unconditionally, even though it carries no verdict at all. */
   rulingOrdinal: number
-  /** Same resolution as the verdict shapes (task 4, `#478`, O1/O5) — an escalation carries these two lines too, unconditionally. */
+  /** Same resolution as the verdict shapes — an escalation carries these two lines too, unconditionally. */
   briefHash: string | null
   policyDigest: string
-  /** Same resolution as the verdict shapes (`#555`, O1) — an escalation carries this line too, unconditionally. */
+  /** Same resolution as the verdict shapes (O1) — an escalation carries this line too, unconditionally. */
   baseSha: string | null
 }
 
@@ -718,7 +717,7 @@ export type EscalationInput = TokensInput & {
  * and an escalation must never be mistaken for "a pass ran". `input.summary`
  * is free caller text, and it is NOT reliably kept out of the extractors'
  * five-line read window by construction alone: `Ruling ordinal:` now
- * renders unconditionally ahead of it (task 3, `#477`, O1), so
+ * renders unconditionally ahead of it, so
  * `input.summary`'s minimum position moved from line 5 to line 7 —
  * past `firstFiveLines`'s own window — but no fixed label precedes it here,
  * unlike `renderCodeReviewComment`'s `BRIEF CONFORMANCE:`, so a summary
@@ -811,11 +810,11 @@ function checkExtraction(
 
 /**
  * Same author filter `checkReviewGate` applies before calling either
- * extractor (the #806 verdict-author-verification fix) — a non-allowlisted
+ * extractor (a verdict-author-verification fix) — a non-allowlisted
  * "VERDICT:"-shaped comment must never count toward self-verification either,
  * or "self-verified: clean" would not be a faithful proxy for what the real
  * merge gate concludes at CI time. Exported so `dev-review-loop.ts`'s
- * publication self-check (task 6, `#416`) can apply the SAME filter rather
+ * publication self-check can apply the SAME filter rather
  * than re-deriving one — see that file's `publishRound` doc comment.
  */
 export function principalBodies(
@@ -924,7 +923,7 @@ const JUDGED_HEAD_LINE = /^[ \t]*Judged head:\s*([0-9a-f]{7,40})\b/im
 const OBJECTIVE_ID_LINE = /^O(\d+):\s*(?:MET|NOT MET)\b/gm
 
 /**
- * Reads the prior round's finding ids, objective ids (`#412`, O1), and judged
+ * Reads the prior round's finding ids, objective ids, and judged
  * head straight out of a verdict comment's own rendered text — the same text
  * `renderFindingsSection`/`renderObjectivesBlock` and
  * `renderCodeReviewComment`/`renderSecurityComment` produced, so this is
@@ -1042,7 +1041,7 @@ export function findPriorVerdictComment(
  * un-filtered before this call, or simply a missing value) sets that flag to
  * `''` instead, so a real `requireFlag` refusal fires loudly on the flag that
  * is actually missing, rather than silently swallowing the NEXT flag's name
- * and value (review finding, PR #144: `--role` immediately before a
+ * and value (a review finding caught `--role` immediately before a
  * `--json`-like token used to eat the following `--verdict APPROVE` pair
  * whole with no error at all).
  */
@@ -1200,7 +1199,7 @@ function shaFromGhApi(branch: string): string | null {
 /**
  * The branch's true head — `git ls-remote origin refs/heads/<branch>`,
  * falling back to the forge's own ref API when git is unavailable — never
- * `gh pr view`'s `headRefOid`, which can lag a push (`#371`: after a push
+ * `gh pr view`'s `headRefOid`, which can lag a push (confirmed live: after a push
  * was pushed, `gh pr view` still reported the prior sha). `headRefOid` is
  * read only as a cross-check, logged when it disagrees with the resolved
  * true head — never used as the resolved value itself.
@@ -1229,15 +1228,15 @@ function resolveHeadSha(pr: string): string {
 }
 
 /**
- * The base commit the candidate is judged against (task 5,
- * `#555`, O1) — the PR's base branch (`baseRefName`) resolved to its current
- * tip, the same `origin/<base>` the merge gate's `patchIdAt` diffs against.
- * `null` (never a refusal) when the base branch or its sha cannot be resolved
- * — a hand-posted verdict then renders `Judged base: (none)`, which the gate's
- * extractor reads back as no base binding, the same nullable treatment
- * `resolveBriefHashForPr` gives a missing brief. A base that genuinely cannot
- * be resolved must not block a reviewer from posting; the gate's own base
- * resolution is what enforces the binding at merge time.
+ * The base commit the candidate is judged against — the PR's base branch
+ * (`baseRefName`) resolved to its current tip, the same `origin/<base>` the
+ * merge gate's `patchIdAt` diffs against. `null` (never a refusal) when the
+ * base branch or its sha cannot be resolved — a hand-posted verdict then
+ * renders `Judged base: (none)`, which the gate's extractor reads back as no
+ * base binding, the same nullable treatment `resolveBriefHashForPr` gives a
+ * missing brief. A base that genuinely cannot be resolved must not block a
+ * reviewer from posting; the gate's own base resolution is what enforces the
+ * binding at merge time.
  */
 function resolveBaseShaForPr(pr: string): string | null {
   let baseBranch: string
@@ -1250,7 +1249,7 @@ function resolveBaseShaForPr(pr: string): string | null {
   return shaFromLsRemote(baseBranch) ?? shaFromGhApi(baseBranch)
 }
 
-// --- objectives resolution (`#412`, O1/O2) ------------------------------------
+// --- objectives resolution ------------------------------------------------
 
 function fetchPrBody(pr: string): string {
   try {
@@ -1274,12 +1273,12 @@ export type ObjectivesResolution =
 /**
  * Uses `@attalabs/aeg-core`'s `resolveObjectivesSource` — the one function
  * `check-review-gate.ts`'s `resolveObjectivesVersion` also switches on
- * (Issue #494, O3) — to decide WHERE this PR's objectives come from:
+ * — to decide WHERE this PR's objectives come from:
  * `Closes #N`'s Issue when it resolves and is at/above `OBJECTIVES_SINCE_ISSUE`,
  * the PR body's own `## Objectives` section when the PR closes no Issue at
  * all, or neither. `{ kind: 'skip' }` is the non-refusing "nothing to judge
  * against" case — an Issue below the cutover, OR a PR closing no Issue with
- * no `## Objectives` section of its own (Issue #494, O1: this second case
+ * no `## Objectives` section of its own (this second case
  * used to refuse; it now renders a verdict with no objectives block, exactly
  * the case the gate already treats as binding-skipped). Every OTHER
  * "nothing resolvable" case still refuses here, never returns a silently
@@ -1331,7 +1330,7 @@ function resolveObjectivesForPr(pr: string): ObjectivesResolution {
 }
 
 /**
- * The newest principal ruling ordinal on `pr` (task 3, `#477`, O1) —
+ * The newest principal ruling ordinal on `pr` —
  * `0` when the PR carries no ruling, never a refusal: unlike
  * `resolveObjectivesForPr`, there is no "nothing to judge against" case for
  * rulings, so this never throws on a legitimate PR with none.
@@ -1351,13 +1350,13 @@ function resolveRulingOrdinalForPr(pr: string): number {
 
 /**
  * The frozen brief's own hash for the Issue `pr` closes, at the moment this
- * command runs (task 4, `#478`, O1) — `null` in exactly TWO cases: the PR
+ * command runs — `null` in exactly TWO cases: the PR
  * closes no Issue (resolved before any fetch), or that Issue's real,
  * successfully-fetched comment list carries no principal-authored frozen
  * brief yet. Every OTHER case — the fetch itself throwing (network error,
  * `gh` auth failure, malformed JSON) — refuses via `refuseCmd`, the identical
  * treatment `resolveObjectivesForPr` already gives its own fetch failure
- * (round 3 review, `#478`): the prior version caught every exception into
+ * (a round-3 review finding): the prior version caught every exception into
  * `null`, silently rendering `Brief hash: (none)` on a transient `gh` hiccup
  * instead of refusing the post — inconsistent with every sibling resolver in
  * this file, even though the gate's own independent re-check later fails
@@ -1477,7 +1476,7 @@ function refuseIfCleanVerdictHasNotMetObjective(
 }
 
 /**
- * `--print-only`'s exit (task 6, #397): the rendered, self-checked comment
+ * `--print-only`'s exit: the rendered, self-checked comment
  * already passed `checkRenderedComment` — the same gate a real post runs —
  * so there is nothing left to verify. Print it and return before
  * `postComment` ever runs; no forge write, no re-fetch to self-verify one.
@@ -1557,10 +1556,10 @@ function computeChangedRanges(
  * Silently ignoring was the old behaviour and it cost a real forge write: a
  * reviewer passed `--print-only` — a genuine flag on `vinaya waiver`, and a
  * reasonable guess here — intending a dry run, and this command posted the
- * verdict anyway (atta-labs/vinaya#184). The failure direction is the wrong
+ * verdict anyway. The failure direction is the wrong
  * one: the caller's intent was "do not post", and the outcome was a governance
  * verdict on a real PR, consumed by a blocking merge gate. `--print-only`
- * (task 6, #397) is now a real flag here too, closing that gap: it renders,
+ * is now a real flag here too, closing that gap: it renders,
  * runs the exact same `checkRenderedComment` self-check a real post would,
  * prints the result, and returns — never calling `postComment`, never
  * re-fetching the forge to self-verify a write that never happened.
@@ -1568,7 +1567,7 @@ function computeChangedRanges(
  * Declaring the VALUE-taking flags separately also retires the `--json`
  * special case rather than adding a second one beside it. The scan consumes
  * the next token as a value, so a nullary flag left in it is misread as the
- * next flag's value and the flag after that vanishes — found live in PR #144,
+ * next flag's value and the flag after that vanishes — found live in review,
  * fixed then for `--json` alone. Knowing which flags take values fixes the
  * class.
  */
@@ -1689,7 +1688,7 @@ function checkRoundTwo(
     )
   }
 
-  // `#412`, O1: every prior objective reappears in a re-review, the same rule
+  // Every prior objective reappears in a re-review, the same rule
   // `missingPriorIds` already applies to findings — never dropped silently.
   const newObjectiveIds = new Set((objectiveResults ?? []).map((r) => r.id))
   const missingObjectives = priorObjectiveIds.filter((id) => !newObjectiveIds.has(id))
@@ -1703,7 +1702,7 @@ function checkRoundTwo(
   if (judgedHead === null) return // the prior comment carries no `Judged head:` line — cannot bound a delta.
   // A carried-forward id (any state) is the record of a prior finding, never new scope — the
   // delta filter below applies only to newly-raised, id-less non-blocking findings (round 6
-  // ruling on #392, F1: missingPriorIds demands every prior id restated, and restating one at
+  // A ruling on the comment-window finding demands every prior id restated, and restating one at
   // its true location must not then be refused by the very filter that demanded it).
   const newlyRaised = findings.filter((f) => {
     const id = findingIdState(f.description)?.id
@@ -1737,8 +1736,8 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
     )
   }
 
-  // Which severities block is repository policy (task 8,
-  // `#506`, O1/O4) — resolved once, from the default branch, before any
+  // Which severities block is repository policy —
+  // resolved once, from the default branch, before any
   // derivation or contradiction check below reads it. `resolveReviewPolicy`
   // refuses (throws) on a present-but-unknown severity value; caught here so
   // that refusal reads as this command's own `refuseCmd` exit, not a raw

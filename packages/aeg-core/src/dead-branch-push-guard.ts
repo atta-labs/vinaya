@@ -1,5 +1,5 @@
 /**
- * Dead-branch push guard (aeg-governance-hardening task 18, #335). Pure — no
+ * Dead-branch push guard. Pure — no
  * `fs`, no `gh`/`git` shell-outs. The CLI shim (`bin/check-push-target.ts`)
  * makes the one batched forge call (`gh pr list --head <branch> --state all
  * --json number,state --limit 1`), maps its result to a `PrStateFact`, and

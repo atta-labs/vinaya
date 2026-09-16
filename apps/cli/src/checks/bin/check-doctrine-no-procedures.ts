@@ -2,7 +2,7 @@
 
 /**
  * Core check: doctrine-no-procedures. Thin adapter over `@attalabs/aeg-core`'s
- * `checkDoctrineNoProcedures` (task 10, Issue #385) — task 9's rule that
+ * `checkDoctrineNoProcedures` — task 9's rule that
  * doctrine describes no command sequence, made a check. Unlike its sibling
  * `doctrine-portability` (baseline mode, warning-only — task 234's corpus
  * had 200+ pre-existing findings), this is a fresh rule with an expected-zero

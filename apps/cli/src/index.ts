@@ -56,8 +56,8 @@ const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
  * Inside the author repository the tree is the CLI: an installed `vinaya`
  * re-executes `<toplevel>/apps/cli/src/index.ts` under `bun`, with the same
  * argv/env/stdio, so the checkout's own doctrine and its own CLI are governed
- * by the same tree (mirrors `resolveDoctrineRoot()`'s tree-first resolution,
- * atta-labs/vinaya#408). `resolveAuthorRepoSourceEntry` carries the detection
+ * by the same tree (mirrors `resolveDoctrineRoot()`'s tree-first resolution).
+ * `resolveAuthorRepoSourceEntry` carries the detection
  * (including the self-guard against a re-executed process deferring to
  * itself); this function carries only the process concerns the detection
  * can't be unit-tested through: the escape hatch, the CI guard, the `bun`
@@ -85,7 +85,7 @@ function maybeDeferToAuthorRepoSource(): void {
   })
   // A signal-terminated child reports `status: null` with `signal` set —
   // collapsing that to a fixed exit code would be a different exit than the
-  // child actually had (code-review finding, PR #513). Re-raising the same
+  // child actually had (a code-review finding). Re-raising the same
   // signal on this process is the closest a re-exec can get to reproducing
   // it without a real `execve`.
   if (result.signal) {

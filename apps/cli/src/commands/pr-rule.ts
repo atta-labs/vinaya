@@ -100,7 +100,7 @@ export function prRuleCommand(args: string[]): void {
   // Bare digits only: `prRef` is spliced verbatim into the marker's HTML
   // comment (`<!-- aeg:principal:ruling:<pr>-<k> -->`) and into `gh`'s own
   // argv — a URL or crafted ref could otherwise terminate the comment early
-  // or forge a differently-shaped marker (security review, PR #430, MEDIUM).
+  // or forge a differently-shaped marker (a MEDIUM security-review finding).
   if (!/^\d+$/.test(prRef)) {
     refuse([
       makeCheckError(

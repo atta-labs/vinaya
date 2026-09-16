@@ -2,7 +2,7 @@
 
 /**
  * Core check: main-branch-refusal. Thin adapter over `@attalabs/aeg-core`'s
- * `checkMainBranchRefusal` (task 9, Issue #58) — mechanizes the
+ * `checkMainBranchRefusal` — mechanizes the
  * worktree-plus-PR rule at ring 0 for adopters: refuses a commit or push
  * whose current branch IS the repo's default branch. Today this is
  * enforced only by attalabs' hand-written husky shell (which `init` never
@@ -25,7 +25,7 @@
  * refusing to do its one job. It cannot redden existing CI: CI always runs
  * on a detached HEAD, which this predicate never refuses.
  *
- * `VINAYA_PUSH_REFS` (Issue #407, O2): the generated `pre-push` hook reads
+ * `VINAYA_PUSH_REFS`: the generated `pre-push` hook reads
  * git's own pre-push stdin (`<local ref> <local sha> <remote ref> <remote
  * sha>` per line) into this env var before running `check --all --local`
  * — see `prePushBody` in `apps/cli/src/lib/artifacts.ts`. When set, it

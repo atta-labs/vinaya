@@ -1,6 +1,5 @@
 /**
- * `dev-review-loop`'s pause-and-resume concern (task 8,
- * `#506`, O8) — rendering and idempotently posting the pause comment,
+ * `dev-review-loop`'s pause-and-resume concern — rendering and idempotently posting the pause comment,
  * durable pause state for `--resume`, and the one-driver-per-task pid lock.
  * Moved out of `apps/cli/src/lib/dev-review-loop.ts` verbatim;
  * `dev-review-loop.ts` stays the composition root, re-exporting every name
@@ -87,7 +86,7 @@ export function pauseMarker(reason: PauseReason): string {
  * The pause comment's body — the reason and the exact resume command,
  * nothing verdict-shaped. `detail`, when the caller passes one, is appended
  * to the first line — unconditionally, for every `PauseReason`, not only a
- * fixed subset (Issue #631: before this task, several
+ * fixed subset (before this, several
  * reasons — `confidence`, `reappearance`, the `assessRound`-decided generic
  * `no_progress`, a reviewer's own `escalation` — simply never had a `detail`
  * computed for them at the call site, so they rendered with none in
@@ -135,7 +134,7 @@ export function renderNoPushStopComment(task: number, reason: PauseReason, detai
  * before any pull request is known to exist. Sanitizes `detail` HERE,
  * unconditionally, the same chokepoint discipline `postPauseComment` applies
  * for the PR case, so a call site never posts a raw `detail` un-redacted
- * either way. Posts through the shared `EffectExecutor` (Issue #552), the
+ * either way. Posts through the shared `EffectExecutor`, the
  * same replacement `postPauseComment` gets below — neither writer takes a
  * root-relative outbox path any more, since both store through the
  * control-store's own root (`controlStoreRoot`), not a caller-supplied one.
@@ -163,7 +162,7 @@ export function postIssuePauseComment(task: number, round: number, reason: Pause
 /**
  * Keyed by `round-head`, the pause INSTANCE — not the fixed literal `'pause'`
  * a prior version used, which keyed the idempotency record by task alone
- * (code review, PR #459, BLOCKER): a task pauses, resumes, and pauses again
+ * (a code-review BLOCKER finding): a task pauses, resumes, and pauses again
  * with a resumed loop still at the same `round` but a new `head` (the
  * resumed developer pushes fixes before pausing a second time), so `head`
  * is what tells two real pauses apart. A genuine rerun of the SAME pause —
@@ -302,7 +301,7 @@ export function recoverLoopState(
 // --- driver lock (one driver per task) --------------------------------------
 
 /**
- * `#498`: one guard at the driver's entry, so a double-paste of
+ * One guard at the driver's entry, so a double-paste of
  * `dev-review-loop --task <n>` doesn't start a second developer/reviewer
  * pair against the same outbox. Deliberately NOT a lease or a timestamp
  * expiry — those are for a future cross-machine design, not this guard's —
@@ -349,12 +348,12 @@ export function isDriverPidAlive(pid: number): boolean {
   }
 }
 
-/** O3: one loop-prefixed stderr line, the same `vinaya dev-review-loop: ` prefix the CLI shim's own argv-validation messages use — no new Vinaya Log event kind (`packages/aeg-core` is out of this task's Surface; Issue #498 objectives revision). */
+/** One loop-prefixed stderr line, the same `vinaya dev-review-loop: ` prefix the CLI shim's own argv-validation messages use — no new Vinaya Log event kind (`packages/aeg-core` is out of this module's declared Surface). */
 export function printDriverLockLine(message: string): void {
   process.stderr.write(`vinaya dev-review-loop: ${message}\n`)
 }
 
-// --- escalation and resolution (#556) ---------------------------------------
+// --- escalation and resolution -----------------------------------------
 
 /**
  * Per `PauseReason` — who a pause is addressed to, and what the driver
@@ -458,7 +457,7 @@ export type EscalationFacts = {
 /**
  * Persists O1's escalation record and its `paused` transition, together,
  * under the SAME freshly-acquired control-store epoch — "one agent holds
- * two records and two transitions" (Issue #556's own sizing note): this is
+ * two records and two transitions": this is
  * the first of the two record kinds and the first of the two transitions,
  * the pause-time half. `attemptedRecovery`/`recipient` come from
  * `PAUSE_REASON_PROFILE`, never re-typed per call site. Best-effort by
@@ -581,7 +580,7 @@ export type ResolveEscalationResult = {
  * BEFORE ever attempting consumption, then claims the resolution exclusively
  * (`consumeResolutionOnce`) and appends the SAME epoch's `paused` →
  * `resumed`/`cancelled` transition — the second record and second
- * transition Issue #556's sizing note names. Throws one of
+ * transition the sizing note above names. Throws one of
  * `StaleEscalationError`/`WrongTargetResolutionError`/
  * `ReplayedResolutionError` on any of the three refusal conditions O2
  * requires; a caller that wants a non-throwing form wraps this itself.

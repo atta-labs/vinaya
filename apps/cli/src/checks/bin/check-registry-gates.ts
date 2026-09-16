@@ -8,7 +8,7 @@
  * probe), collapsed into ONE registered check rather than five, emitting
  * the check contract instead of human text.
  *
- * DIVERGES from `verify-registry.ts`'s own glob on one point (Issue #232):
+ * DIVERGES from `verify-registry.ts`'s own glob on one point:
  * that standalone tool also globs `packages/aeg-core/bin` as a `G2`
  * candidate-file location.
  * `packages/aeg-core` is this monorepo's own package layout, not a fact any
@@ -17,25 +17,25 @@
  * itself), so it keeps that probe; this shipped adapter drops it instead of
  * carrying a repo-specific path into every `vinaya init` install.
  *
- * Collapsed, not six separate `CheckSpec`s (Developer's call, per Issue
- * #760 §4): G1–G6 share nearly all their I/O (the same `enforcement.md`
+ * Collapsed, not six separate `CheckSpec`s (a Developer's call): G1–G6
+ * share nearly all their I/O (the same `enforcement.md`
  * parse, the same candidate-file glob, the same `gh`-reachability probe) —
  * six near-identical thin scripts would each redo that work. Each finding
  * still names its own G-number in BOTH `CheckError.check` (`registry-gates.G3`,
  * not just `registry-gates`) and `CheckError.message` — the hard constraint
- * from Issue #760's own Traps-to-avoid (a Developer merging distinct
+ * from that task's own Traps-to-avoid (a Developer merging distinct
  * failure classes into one undifferentiated report is a regression, not a
  * simplification) is met by that per-finding tagging, not by the CheckSpec
  * count.
  *
- * G6 (task 8, Issue #57) is the one G-check that genuinely needs to live
+ * G6 is the one G-check that genuinely needs to live
  * here rather than in `aeg-core`'s standalone `verify-registry.ts`: it
  * validates a doctrine row's `product`-audience claim against
  * `coreCheckRegistry()`, which only this package can import without closing
  * a dependency cycle — same reasoning `gate-audience.ts` documents for
  * `GATE_AUDIENCE` itself.
  *
- * DORMANT WHEN ABSENT, EXPLICITLY (Issue #232 — same discipline
+ * DORMANT WHEN ABSENT, EXPLICITLY (the same discipline
  * `evaluateC5`/`.vinaya/doc-owners` already uses): G1–G6 validate
  * `aeg-root/enforcement.md` against THIS monorepo's
  * own `aeg-root/roles/`/`aeg-root/contracts/` doctrine-authoring tree — a

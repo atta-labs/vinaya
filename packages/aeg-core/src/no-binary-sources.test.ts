@@ -19,7 +19,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
  *     from it undercounts the change silently.
  *
  * This is not hypothetical. `parse-registry.ts` held a NUL sentinel written as a
- * literal control character from atta-labs/vinaya#461 until the commit that added
+ * literal control character for a real stretch of history until the commit that added
  * this test. For that whole period the file was invisible to `git grep`, which is
  * how a second `stripBackticks` living there survived several verification passes
  * unnoticed. Writing the sentinel as a `\\u0000` escape produces the identical
@@ -27,8 +27,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
  *
  * A `.gitattributes` `binary` marking reproduces the identical hole without a
  * NUL byte anywhere in the file: `git grep` answers `Binary file … matches`
- * with no line number purely because the attribute says so (Issue #190,
- * Finding 3) — the original NUL-only assertion never consulted it, so a file
+ * with no line number purely because the attribute says so (a real finding)
+ * — the original NUL-only assertion never consulted it, so a file
  * marked this way stayed invisible to this gate while its own docstring
  * (honestly) never claimed to catch it.
  *
@@ -57,7 +57,7 @@ function trackedFiles(repoRoot: string = REPO_ROOT): string[] {
  * Measured live against this repo's ~500 tracked files: the batched form
  * runs in single-digit milliseconds; a naive per-file `execFileSync` loop
  * over the same set takes seconds. That gap is the whole reason this widens
- * the assertion instead of only renaming it (Issue #190, Finding 3's stop
+ * the assertion instead of only renaming it (that same finding's stop
  * condition on real per-file cost).
  */
 function gitattributesBinaryOffenders(files: string[], repoRoot: string = REPO_ROOT): string[] {

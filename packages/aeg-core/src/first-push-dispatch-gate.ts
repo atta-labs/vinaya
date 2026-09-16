@@ -1,5 +1,5 @@
 /**
- * First-push dispatch gate (aeg-governance-hardening task 25, #365). Pure —
+ * First-push dispatch gate. Pure —
  * no `fs`, no `gh`/`git` shell-outs. The CLI shim (`bin/check-first-push-
  * dispatch.ts`, wired into `.husky/pre-push`) runs the UNCHANGED
  * `verify-dispatch.ts` gate mode once on a `task/<tranche>/<n>` branch's

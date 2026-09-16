@@ -1,6 +1,6 @@
 /**
- * Pure decision logic for the `token-collection-wired` check (task 5,
- * #272). No `fs`, no `process.env` of its own — the caller
+ * Pure decision logic for the `token-collection-wired` check. No `fs`,
+ * no `process.env` of its own — the caller
  * (`check-token-collection-wired.ts`) supplies the already-computed
  * `MeteringCapability`, task 1's `resolveMeteringCapability` probe run
  * against real `fs`/`process.env` deps.

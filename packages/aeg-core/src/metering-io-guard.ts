@@ -1,5 +1,5 @@
 /**
- * Hardened I/O for `MeteringCapabilityDeps` (CWE-59, `#313`). Every real
+ * Hardened I/O for `MeteringCapabilityDeps` (CWE-59). Every real
  * caller of `resolveMeteringCapability` fills `exists`/`readFile` with the
  * factory here rather than hand-rolling `existsSync`/`readFileSync`, so the
  * guard lives once at the shared seam instead of being re-derived (or

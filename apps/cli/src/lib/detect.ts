@@ -198,7 +198,7 @@ export function foreignRawHooks(repoRoot: string): string[] {
  * Otherwise the default is the TRACKED `.vinaya/hooks` directory (routed via
  * `core.hooksPath`): raw `.git/hooks` is never versioned, so a `.git/hooks`
  * install silently gives every fresh clone ZERO ring-0 enforcement
- * (atta-labs/attalabs#927). Tracked hooks travel with the repo; the one
+ * (a real migration's own motivating defect). Tracked hooks travel with the repo; the one
  * per-clone residue is arming `git config core.hooksPath .vinaya/hooks`,
  * which `doctor` reports whenever it is missing.
  *

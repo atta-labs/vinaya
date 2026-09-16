@@ -130,7 +130,7 @@ export type GhIssue = {
   title: string
   body: string | null
   /**
-   * Uppercase (aeg-review-gate-v1 task 1 follow-up correction) — `gh issue
+   * Uppercase — `gh issue
    * list --json state` returns GitHub's GraphQL enum casing (`OPEN`/
    * `CLOSED`), not the lowercase REST-style casing `fetch-milestone.ts`'s
    * `GhMilestone.state` genuinely gets from `gh api .../milestones` (a
@@ -142,7 +142,7 @@ export type GhIssue = {
    */
   state: 'OPEN' | 'CLOSED'
   labels: Array<{ name: string }>
-  /** GitHub-native milestone attachment, or `null` when unattached (aeg-review-gate-v1 task 1 follow-up). */
+  /** GitHub-native milestone attachment, or `null` when unattached. */
   milestone: { title: string } | null
   /**
    * GitHub's native close reason (`vinaya milestone status`) — optional

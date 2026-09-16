@@ -94,7 +94,7 @@ function resolveAgentOrReport(parsed: ParsedFlags): DispatchAgent | null {
   return agentRaw as DispatchAgent
 }
 
-/** The publish/pause summary — shared by the tranche-keyed and `--issue` (O1) invocations, which differ only in how `result` was obtained. */
+/** The publish/pause summary — shared by the tranche-keyed and `--issue` invocations, which differ only in how `result` was obtained. */
 function reportRunTaskResult(result: RunTaskResult): void {
   // `prUrl` is `null` only when the repo genuinely could not be resolved
   // (`lib/task-run.ts`'s own `resolvePrUrl` doc comment) — falls back to the
@@ -144,7 +144,7 @@ async function runAndReport(input: Parameters<typeof runTask>[0]): Promise<void>
 }
 
 /**
- * O1/O2 — `--background`'s own report: prints the durable run handle and
+ * `--background`'s own report: prints the durable run handle and
  * returns at once, never awaiting the loop. `startBackgroundRun` itself
  * already refuses (before spawning anything) on an unsupported host or a
  * controller conflict — both surfaced here as the same
@@ -168,7 +168,7 @@ async function runBackgroundAndReport(input: Parameters<typeof startBackgroundRu
 }
 
 /**
- * `--issue <n>` (O1) — a backlog Issue that carries no
+ * `--issue <n>` — a backlog Issue that carries no
  * `vinaya/tranche:*` label runs the same unattended path as a tranche task:
  * one frozen brief, one developer on `task/issue-<n>`, the same loop and
  * gate. Mutually exclusive with the `<tranche> <n>` positional form.

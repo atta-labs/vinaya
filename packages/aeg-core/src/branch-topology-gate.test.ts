@@ -8,7 +8,7 @@ import { parseTranche } from './parse-tranche'
 
 /**
  * Parity oracle: the EXACT grep invocation `.husky/pre-push` ran before
- * task 32 (#399) — `grep -qE "^\|[[:space:]]*${id}[[:space:]]*\|" "$topo"`.
+ * task 32 — `grep -qE "^\|[[:space:]]*${id}[[:space:]]*\|" "$topo"`.
  * Each parity case below runs the real grep against a fixture file and
  * asserts the pure evaluator reaches the same verdict.
  */

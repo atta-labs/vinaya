@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: token-report (task 4, #271). CI-only (`requiresOpenPr: true`,
+ * Core check: token-report. CI-only (`requiresOpenPr: true`,
  * ring 1 — see `CoreCheckRing`'s doc comment in `registry.ts`): enforces
  * that a PR's "Token report" section — the block `roles/developer.md`
  * requires every self-metering role to paste at turn-end — actually carries
@@ -36,7 +36,7 @@
  * scope: diff — the artifact under test is the PR body, not repo files,
  * same convention as `closes-n`/`test-plan`/`body-bare-digits`.
  *
- * The no-row refusal is task-PR-only (task 10, Issue #460): a release PR
+ * The no-row refusal is task-PR-only: a release PR
  * the changesets bot opens can never carry a "develop" turn's row, so it
  * is scoped out via `isTaskBranch(branch)` — the same shared predicate
  * `check-brief-shape.ts`/`check-branch-topology.ts`/`check-surface-scope.ts`
@@ -52,7 +52,7 @@ const CHECK_NAME = 'token-report'
 
 /**
  * Same symlink-/owner-hardened stat/read as `check-token-collection-wired.ts`
- * (task 5) — duplicated rather than imported: that file is another task's
+ * — duplicated rather than imported: that file is another task's
  * shipped surface (consume only, per this task's brief), and the threat
  * model it hardens against (a co-resident local user racing a shared
  * `TMPDIR` pointer path) applies whenever this check runs from a

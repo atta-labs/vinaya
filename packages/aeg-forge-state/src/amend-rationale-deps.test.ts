@@ -7,7 +7,7 @@ import { parseRationaleDeps } from './parse-rationale-deps'
 const FIXTURES = join(__dirname, '..', 'tests', 'fixtures')
 
 /** Real Issue bodies captured verbatim via `gh issue view <n> --json body` on
- * 2026-07-13 — the actual drifted-class bodies (#429/#388/#382) this task
+ * 2026-07-13 — the actual drifted-class bodies this task
  * exists to protect. Static fixtures, not live calls: `bun test` must not
  * depend on network/gh access. */
 function readBody(number: 429 | 388 | 382 | 383): string {
@@ -54,7 +54,7 @@ describe('amendRationaleDeps — round-trip against real drifted bodies', () => 
     const body = readBody(382)
     const out = amendRationaleDeps(body, { conflictsWith: [], note: 'Conflict cleared.', date: DATE })
     // conflicts-with cleared to the empty marker; depends-on spans untouched,
-    // so it still reads exactly its own labeled span (#347).
+    // so it still reads exactly its own labeled span.
     expect(parseRationaleDeps(out)).toEqual({
       dependsOn: ['aeg-governance-hardening #372'],
       conflictsWith: []

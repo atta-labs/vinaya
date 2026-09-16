@@ -60,7 +60,7 @@ describe('checkG2', () => {
     expect(result.status).toBe('pass')
   })
 
-  // The trap Issue #104 exists to close: a stub row that fills
+  // The trap this exists to close: a stub row that fills
   // `implementation` alone would satisfy the orphan half above and read as
   // "documented" — the placeholder scan is what keeps it flagged.
   it('reports fail for a row still carrying the scaffold placeholder marker in its summary', () => {
@@ -199,7 +199,7 @@ describe('checkG4', () => {
   })
 
   /**
-   * Vacuity demonstration (Issue #693): `enforcement.md`'s own body carries
+   * Vacuity demonstration: `enforcement.md`'s own body carries
    * zero forge citations today — G4's real scan surface, not a synthetic
    * proxy string, is empty by policy (task 3 stripped citations from
    * `aeg-root/**` as doctrine). That leaves an open question the two tests

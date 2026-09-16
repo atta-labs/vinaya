@@ -1,8 +1,7 @@
 /**
  * Shared mocked-`gh` shape for every `packages/aeg-forge-state` vitest suite
  * that needs `./gh` mocked — generalised from the `vi.mock('./gh', () => ({...}))`
- * block that used to live only in `fetch-milestone.test.ts` (`vinaya-milestone-model-v1`
- * task 1). One stub per `gh.ts` export, kept in lockstep by hand — `gh.ts` is a
+ * block that used to live only in `fetch-milestone.test.ts`. One stub per `gh.ts` export, kept in lockstep by hand — `gh.ts` is a
  * small, stable surface, so a new export there is a one-line addition here.
  *
  * Usage, in any `*.test.ts` under this package:

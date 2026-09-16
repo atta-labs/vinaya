@@ -1,6 +1,6 @@
 /**
  * The one place a PR body is turned into the text every anchored-region
- * consumer reads (Issue #189). Pure — no `fs`, no `git`/`gh`.
+ * consumer reads. Pure — no `fs`, no `git`/`gh`.
  *
  * ## What this closes
  *
@@ -23,7 +23,7 @@
  *
  * ## Why this shape, and not a guard
  *
- * Twelve rounds of review on `#188` each tightened an assertion over the
+ * Twelve rounds of review each tightened an assertion over the
  * module's own source text — a pinned entry expression, a blacklist of stage
  * names, an enumerated list of consumers — and each time the divergence was
  * rewritten one stage earlier or one stage later and every assertion stayed
@@ -93,7 +93,7 @@ import { maskCode, maskDetailsBlocks } from '@attalabs/aeg-forge-state/strip-cod
 import { EVIDENCE_SUMMARY_PREFIX } from '../lib/numstat'
 
 // Zero-width and other Unicode default-ignorable characters — security review
-// round 4 (PR #147) found one embedded inside an otherwise-recognized token
+// round 4 found one embedded inside an otherwise-recognized token
 // ("te" + U+200B + "sts") defeats regex matching regardless of what the regex
 // is looking for, and the same risk applies to the masking boundaries
 // themselves: a fence marker, an `AEG:*` tag. Stripped from the WHOLE body
@@ -126,7 +126,7 @@ export function decodeNamedEntities(body: string): string {
  * Zero-width stripping and named-entity decoding, in that order, before any
  * masking or anchor lookup. A consumer that skips this stage does not merely
  * miss a character class — it resolves a DIFFERENT region, which is the whole
- * defect of Issue #189.
+ * defect a real regression exposed.
  */
 function normalizeBody(rawBody: string): string {
   return decodeNamedEntities(rawBody.replace(ZERO_WIDTH, ''))

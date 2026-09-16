@@ -97,7 +97,7 @@ export type CheckSpec = {
    * `vinaya-review.yml` is re-run by the verdict workflow when a verdict
    * lands. Nothing re-runs `vinaya-checks.yml`, so its copy freezes at
    * whatever the verdicts were at push time and stays red forever after an
-   * approval — measured on `atta-labs/vinaya#21`: the dedicated job reported
+   * approval — measured live: the dedicated job reported
    * success at 02:32Z off the 02:31Z approval while the `--all` copy still
    * reported the 02:29Z failure, same PR, same verdict, two answers.
    *
@@ -134,7 +134,7 @@ export type CheckSpec = {
    *
    * This is the ONE taxonomy `apps/cli/src/lib/forge-write.ts`'s pre-write
    * validation and `packages/aeg-core/bin/verify-coherence.ts`'s open-Issue
-   * sweep filter the registry by (task 17, O1/O2): a check registered with
+   * sweep filter the registry by: a check registered with
    * `validates: 'body'` is picked up by every `pr`/Issue-body write with no
    * further wiring, and a check registered with `validates: 'issue'` runs at
    * Issue-write time and in the coherence sweep, but is never selected into a
@@ -166,7 +166,7 @@ export type CheckOutcome = {
   /**
    * Present only for `status: 'skipped'` when the skip reason is worth
    * naming beyond the bare status — today, only `runner.ts`'s `--skip-full`
-   * (#397 round 2): `'full-scope, pre-commit'`. Absent for the pre-existing
+   * reason: `'full-scope, pre-commit'`. Absent for the pre-existing
    * `scope: 'diff'`/`include`-mismatch skip, whose reason is already
    * self-evident from `--diff-only` + the changed-files list.
    */

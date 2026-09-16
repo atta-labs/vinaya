@@ -15,7 +15,7 @@ import { execFileSync } from 'node:child_process'
  *
  * Shared by `check-review-gate.ts` (a verdict binds to a PATCH, not a sha)
  * and `check-evidence-fresh.ts` (the freshness check's own `Head:` binding
- * uses the identical rule, `#497`) — one implementation, not two.
+ * uses the identical rule) — one implementation, not two.
  */
 export function patchIdAt(base: string, sha: string): string | null {
   try {

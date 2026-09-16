@@ -13,14 +13,14 @@ const CLEAN_CHECKS: MechanicalCheckStatus[] = [{ name: 'Vinaya CI', bucket: 'pas
  * `policy` field (it defaults to `DEFAULT_REVIEW_POLICY`) — every shared
  * "clean" comment fixture in this file that isn't itself testing the
  * policy-digest binding renders this line so it satisfies that binding too
- * (`#478` round 4, security MEDIUM: a `Policy digest:`-less comment no
+ * (a MEDIUM security-review finding: a `Policy digest:`-less comment no
  * longer binds unconditionally).
  */
 const DEFAULT_POLICY_DIGEST = policyDigest(DEFAULT_REVIEW_POLICY)
 
 /** Principal-authored comment — the allowlisted author every legitimate verdict flows through. */
 const principal = (body: string): ReviewGateComment => ({ body, author: 'daniboomerang' })
-/** Forged comment — an arbitrary GitHub account (security finding, PR #806). */
+/** Forged comment — an arbitrary GitHub account (a security finding). */
 const forged = (body: string): ReviewGateComment => ({ body, author: 'drive-by-account' })
 
 /** The PR's current head throughout this file's main test block, unless a test says otherwise. */
@@ -29,7 +29,7 @@ const HEAD_SHA = '8365ca57e9f3a1b2c4d5e6f708192a3b4c5d6e7f'
 // Judged head: sits on line 3, matching the real render shape
 // (`review-post.ts`'s templates put `VERDICT:`/`Judged head:` on lines 1/3,
 // never later) — the extractors now read the markers from a comment's
-// first five lines only (round-4 ruling, `#392`, widened by `#412`). These fixtures test
+// first five lines only (a ruling, later widened). These fixtures test
 // decoration, not marker position, so the decoration moves after the head.
 const APPROVE_COMMENT = principal(
   `VERDICT: APPROVE\n\nJudged head: ${HEAD_SHA}\n\nBRIEF CONFORMANCE: clean. Looks good.\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`
@@ -350,7 +350,7 @@ describe('checkReviewGate', () => {
       expect(result.waived).toBe(true)
     })
 
-    // Issue #402 O4: a job whose own `if:` is false for the current event
+    // A job whose own `if:` is false for the current event
     // still reports a `skipped` (bucket `skipping`, same as GitHub's
     // `neutral` conclusion) check-run — `vinaya-review.yml`'s old
     // `retrigger-on-ci-green` job did this on every ordinary
@@ -678,15 +678,14 @@ describe('checkReviewGate — configurable principalAllowlist (adopter-repo fix)
 })
 
 /**
- * FIXED, NOT CHARACTERIZED — `atta-labs/vinaya#73` (a duplicate, `#71`, was
- * filed first; #73 is the Issue this fix closes).
+ * FIXED, NOT CHARACTERIZED — a real regression (a duplicate Issue was
+ * filed first for the same root cause).
  *
  * This block used to pin the OPEN defect: `checkReviewGate` resolved verdicts
  * by recency only, with nothing in `ReviewGateInput` carrying the PR's head
  * sha, so a verdict cast against a tree that no longer existed was
  * indistinguishable from one cast against the current tree. The three cases
- * below are the same fixtures — the live instance named in this task's
- * brief, `atta-labs/attalabs#953`, whose security `PASS` named head
+ * below are the same fixtures — a real live instance, whose security `PASS` named head
  * `ab0f47c0` while the PR head was `d48236d2` — now asserting the CORRECT
  * behavior: `ReviewGateInput.headSha` is required, `verdict-extraction.ts`
  * parses a same-comment `Judged head: <sha>` line, and `checkReviewGate`
@@ -720,7 +719,7 @@ describe('checkReviewGate — verdicts are bound to the head they judged (#73, f
   })
 
   it('rejects an APPROVE + PASS pair with no machine-readable binding, after a force-push changed the head', () => {
-    // #71's reproduction, reduced: the reviewer approved head `52107b3` in
+    // A real reproduction, reduced: the reviewer approved head `52107b3` in
     // prose only (pre-fix convention, no `Judged head:` line); a rebase
     // replaced it with an unrelated `945b3af`; no new verdict was cast. The
     // comment stream is byte-identical to a genuinely-reviewed PR's — the fix
@@ -745,7 +744,7 @@ describe('checkReviewGate — verdicts are bound to the head they judged (#73, f
 
   it('an explicitly RETRACTED verdict still loses to recency (unchanged — orthogonal to binding)', () => {
     // The one thing that already worked before this fix, and still does:
-    // casting a newer verdict. #71's live instance was caught only because
+    // casting a newer verdict. That live instance was caught only because
     // the reviewer re-checked the sha itself and posted a superseding FAIL —
     // discipline substituting for a mechanism, which the binding above now
     // makes structural instead of optional.
@@ -1045,7 +1044,7 @@ describe('checkReviewGate — patch-identity binding', () => {
   })
 })
 
-// ---- Brief-hash binding (review-validity-v1 task 4, #478, O1) ------------
+// ---- Brief-hash binding ------------
 
 describe('checkReviewGate — brief-hash binding', () => {
   const HASH_A = 'a'.repeat(64)
@@ -1135,7 +1134,7 @@ describe('checkReviewGate — brief-hash binding', () => {
   })
 })
 
-// ---- Policy-digest binding (review-validity-v1 task 4, #478, O5) ---------
+// ---- Policy-digest binding ---------
 
 describe('checkReviewGate — policy-digest binding', () => {
   const boundComment = (verdict: string, digest: string) =>
@@ -1206,8 +1205,7 @@ describe('checkReviewGate — policy-digest binding', () => {
   })
 })
 
-// ---- Which severities block is repository policy (review-validity-v1 task
-// 8, #506, O2/O3/O4) — a reviewer's own APPROVE/PASS never overrides the
+// ---- Which severities block is repository policy — a reviewer's own APPROVE/PASS never overrides the
 // evaluator: a comment's FINDINGS block is re-evaluated against `policy`
 // regardless of what its VERDICT: line claims.
 

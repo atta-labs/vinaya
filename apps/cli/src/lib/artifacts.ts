@@ -2,7 +2,7 @@
 //
 // Every artifact `vinaya init` writes into an adopter repo lives here as
 // content + a typed `Op` (see lib/ops.ts). Naming and collision rules follow
-// Issue #384's 2026-07-23 MINIMAL-MANIFEST re-ruling: **init installs only
+// a 2026-07-23 MINIMAL-MANIFEST re-ruling: **init installs only
 // what a shipped check or ring-2 mechanism consumes.** The manifest is
 // `vinaya.config.json` (starter ruleset, `checks: {}` empty), the
 // `vinaya-` workflows (checks, review, and its retrigger/verdict split,
@@ -10,7 +10,7 @@
 // task-log collector that gives task-path CI evidence a credentialed
 // publisher), git-hook managed blocks, a root
 // `VINAYA.md` doctrine pointer (reading-order convention), an empty
-// `.vinaya/doc-owners` starter manifest (#665), and labels. Everything else
+// `.vinaya/doc-owners` starter manifest, and labels. Everything else
 // the earlier amendment-4 manifest carried (GitHub templates, the
 // governance/ scaffold, example check scripts) was this monorepo's own
 // operational apparatus, not product surface — no shipped check consumes
@@ -37,7 +37,7 @@ import type { VendoredVinaya } from './self-host.js'
 
 /**
  * The tracked hook directory — the default install target since
- * atta-labs/attalabs#927. Unlike `.git/hooks` (which git never versions, so a
+ * a real migration. Unlike `.git/hooks` (which git never versions, so a
  * fresh clone silently has NO ring-0 enforcement), files here are committed
  * and travel with the repo; `core.hooksPath` (relative, shared config) routes
  * git at them in the primary checkout and every linked worktree alike. The
@@ -55,7 +55,7 @@ export type InitContext = {
   hookDir: HookDir
   /**
    * The workspace member declaring `@attalabs/vinaya`, when the repo being
-   * written into vendors the CLI itself (atta-labs/attalabs#929) — `null` for the ordinary
+   * written into vendors the CLI itself — `null` for the ordinary
    * adopter, which is everyone else. Callers get it from
    * `detectVendoredVinaya(repoRoot)`; see lib/self-host.ts for why the
    * published `npx` invocation cannot work in such a repo.
@@ -70,7 +70,7 @@ export type InitContext = {
    */
   ciSetup: string | null
   /**
-   * The `--agents` vendor selection (task 5, #152) — which of the three
+   * The `--agents` vendor selection — which of the three
    * agent-native emitters (`.agents/skills/`, `.claude/commands/`,
    * `.gemini/commands/`; tasks 2/3/4) `buildInitOps` includes. `vinaya init`
    * computes this from its own `--agents` flag (default: all three);
@@ -95,7 +95,7 @@ export const REVIEW_VERDICT_WORKFLOW_PATH = '.github/workflows/vinaya-review-ver
 export const ARCHIVIST_WORKFLOW_PATH = '.github/workflows/vinaya-archivist.yml'
 export const BODY_CHECKS_WORKFLOW_PATH = '.github/workflows/vinaya-body-checks.yml'
 export const TASK_LOG_COLLECTOR_WORKFLOW_PATH = '.github/workflows/vinaya-task-log-collector.yml'
-// Empty scaffold folders (task 8, #42) — `vinaya new noop-check` writes into
+// Empty scaffold folders — `vinaya new noop-check` writes into
 // `vinaya/checks/`, `vinaya new role` writes into `vinaya/roles/`. Git does
 // not track empty directories, so each folder is represented by one
 // placeholder file — the existing whole-file manifest grammar already
@@ -165,7 +165,7 @@ export function starterConfig(): VinayaConfig {
 // The version both command emitters pin to — ONE source, shared by the four
 // workflows via `vinayaRun` and the two git hooks via `hookRun`. There is
 // deliberately no second source for a generated artifact's pin: the two
-// surfaces drifting apart is the defect atta-labs/vinaya#86 fixed (the hooks
+// surfaces drifting apart is a real defect that was fixed (the hooks
 // pinned, the workflows did not). `doctor.ts` and `quickstart.ts` read the
 // same `package.json` for display, but neither feeds a generated artifact, so
 // neither can cause that drift — nor can `index.ts`'s own `readVersion()`,
@@ -193,8 +193,8 @@ export function starterConfig(): VinayaConfig {
 //     that all hold `issues: write` (two of them `pull-requests: write`, one
 //     `pull-requests: read`), covering between them every push to main
 //     and nightly. A compromised publish of this package would have run with
-//     that token in every adopter, unreviewed. (Origin of #86: a security
-//     review of atta-labs/attalabs#944.)
+//     that token in every adopter, unreviewed. (Origin: a security
+//     review of a real published workflow.)
 //   - **`@latest` is a different product decision** (deliberately floating CI)
 //     and is not what the hooks do.
 //   - For the hooks the pin is additionally load-bearing on npx's cache key —
@@ -216,7 +216,7 @@ export function ownVersion(): string {
 // Workflow files (four, all refuse-if-foreign, all vinaya-prefixed)
 //
 // How the CI jobs reach the vinaya binary has TWO shapes, chosen at generation
-// time from `ctx.selfHost` (atta-labs/attalabs#929):
+// time from `ctx.selfHost`:
 //
 //   - ordinary adopter (`selfHost: null`) — `npx --yes
 //     @attalabs/vinaya@<exact-installed-version>`, no build step. An adopter
@@ -453,12 +453,11 @@ ${indented}
 
 /**
  * The "Fetch PR body" step body, shared verbatim by \`vinaya-checks.yml\` and
- * \`vinaya-body-checks.yml\` (task 17, O3) — one rule, not two copies. A
+ * \`vinaya-body-checks.yml\` — one rule, not two copies. A
  * single \`gh pr view\` read is a race: \`pr report --push\` (or a plain
  * \`pr edit\`) can land on the forge in the gap between this workflow's
  * trigger firing and its own \`gh pr view\` call, so the run reads a body
- * from BEFORE that write finished — measured live on atta-labs/vinaya
- * #485/#520/#523, each red on \`closes-n\` with a body the workflow's own
+ * from BEFORE that write finished — measured live, repeatedly, each red on \`closes-n\` with a body the workflow's own
  * log later showed was correct, green on the very next run with no code
  * change. Every real task PR already passed \`closes-n\` at WRITE time
  * (\`runBodyChecks\`, O1) before it could exist on the forge at all, so a
@@ -1372,8 +1371,8 @@ ${vinayaSetupSteps(selfHost)}      - name: Run vinaya audit --only=direct-push
 // local workspace member instead — npm matches the package NAME before reading
 // any version spec — and execs its unbuilt `bin`, so the hook dies on `sh:
 // vinaya: command not found` and `|| exit 1` blocks every commit and push.
-// atta-labs/attalabs#929 fixed this for the four generated workflows and left
-// the two hook emitters on the published spec; #935 is that remainder. Same
+// A real fix addressed this for the four generated workflows and left
+// the two hook emitters on the published spec; this is that remainder. Same
 // predicate, same shape: run the built file directly, never `npx`.
 // ---------------------------------------------------------------------------
 const HOOK_PREAMBLE = '#!/usr/bin/env sh\n'
@@ -1510,7 +1509,7 @@ ${hookRun(selfHost, 'check --all --local')}`
   //    folder heuristic (`lib/test-selector.ts`). Prints how many files it
   //    selected. O7: no `--concurrency=1` anywhere in this block — that
   //    guard was always a `turbo` flag bounding how many PACKAGES' own
-  //    `bun test` subprocesses it ran at once (#438); `bun test` itself has
+  //    `bun test` subprocesses it ran at once; `bun test` itself has
   //    no concurrency flag of its own (confirmed against `bun test
   //    --help` — it runs whatever files it's handed as one job). This step
   //    never asks turbo to fan out a subprocess per affected package at
@@ -1586,7 +1585,7 @@ ${hookRun(selfHost, 'commit-msg "$1" "$2"')}`
 // filesystem: teammates clone a pointer naming a directory that doesn't
 // exist for them, the installer's home directory is published into the repo,
 // and `doctor` (which diffs regenerated bytes against disk) reports drift on
-// every machine except the installer's (atta-labs/attalabs#928). The pointer
+// every machine except the installer's. The pointer
 // therefore names the PACKAGE and hands the reader `vinaya doctrine` — the
 // command that resolves the bundled doctrine at READ time, on the reader's
 // own machine.
@@ -1594,7 +1593,7 @@ ${hookRun(selfHost, 'commit-msg "$1" "$2"')}`
 export function doctrinePointer(selfHost: VendoredVinaya | null): string {
   // Same generation-time selection the workflows and hooks use: in a repo
   // that vendors the CLI, `npx @attalabs/vinaya` misresolves to the unbuilt
-  // workspace member (atta-labs/attalabs#929), so the reader is handed the
+  // workspace member, so the reader is handed the
   // built file by path instead. `selfHost` is a property of the repo, not of
   // any machine — the same repo always regenerates the same bytes.
   const resolveCmd = selfHost ? `node ${selfHost.bin} doctrine` : 'npx --yes @attalabs/vinaya doctrine'
@@ -2011,7 +2010,7 @@ export function buildInitOps(ctx: InitContext): Op[] {
     group: 'Doc-ownership manifest'
   })
 
-  // Empty scaffold folders (task 8) — `new noop-check`/`new role` write
+  // Empty scaffold folders — `new noop-check`/`new role` write
   // real content beside these placeholders later.
   ops.push({
     kind: 'create-file',
@@ -2026,7 +2025,7 @@ export function buildInitOps(ctx: InitContext): Op[] {
     group: 'Scaffold folders'
   })
 
-  // Agent-native entry points (task 5, #152) — each opt-in via `ctx.agents`,
+  // Agent-native entry points — each opt-in via `ctx.agents`,
   // absent entirely (no op, not a skipped one) for a vendor not selected, so
   // `doctor` never reports a deliberately-excluded vendor as "missing".
   if (ctx.agents.has('skills')) {
@@ -2070,7 +2069,7 @@ export function buildInitOps(ctx: InitContext): Op[] {
   // gemini-only repo (no `claude` in `ctx.agents`) never had a working
   // `/vinaya <role>` slash command to begin with, so telling it that one
   // broke names a file it doesn't have while leaving its real affected
-  // file (`.gemini/commands/vinaya.toml`) unmentioned (code review, PR #279).
+  // file (`.gemini/commands/vinaya.toml`) unmentioned (a code-review finding).
   if (ctx.agents.size > 0) {
     const affected: string[] = []
     if (ctx.agents.has('claude')) affected.push('the `/vinaya <role>` command (.claude/commands/vinaya.md)')
@@ -2105,7 +2104,7 @@ export function buildInitOps(ctx: InitContext): Op[] {
  * It writes ONE thing, and it is not an `Op`.
  *
  * There used to be a `buildInitProductOps` returning a single
- * `project:<name>` label. It is gone (#72). Project is a **field, not a
+ * `project:<name>` label. It is gone. Project is a **field, not a
  * label** — the `project:*` family was retired outright, `declaredProjects`
  * (`issue-validation.ts`) reads the Issue body's `**Project:**` field, and
  * `@attalabs/aeg-forge-state`'s `list-tasks.ts` explicitly ignores a residual

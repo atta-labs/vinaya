@@ -1,6 +1,5 @@
 /**
- * Leftover-worktree/branch classification (aeg-governance-hardening task 11,
- * #324). Pure — no `fs`, no `git` shell-outs. The CLI shim
+ * Leftover-worktree/branch classification. Pure — no `fs`, no `git` shell-outs. The CLI shim
  * (`bin/verify-dispatch.ts`) gathers the three facts (does the remote branch
  * exist, does a local worktree exist, how many commits is the branch ahead
  * of main) and passes them in.

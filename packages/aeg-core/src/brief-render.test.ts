@@ -554,7 +554,7 @@ describe('renderBrief', () => {
   // task 17, O6 — a directory-only §4 (Modify lists Surface directories, not
   // files, because the Boundary named fewer files than `## Surface` `in:`
   // declares) must never produce a brief `checkConsumerTests` itself rejects
-  // (#478's frozen brief: exactly this shape refused on `pr create`).
+  // (a real frozen brief: exactly this shape refused on `pr create`).
   it('a covered consumer names its covering test DIRECTORY, not a file, when the Boundary narrows the Surface — and the rendered §4 passes checkConsumerTests', () => {
     const result = renderBrief(
       baseFacts({
@@ -673,7 +673,7 @@ describe('renderBrief', () => {
   })
 })
 
-// plan-brief-v1 task 1, Issue #426, O2/O3: the real fixture Issue, run
+// The real fixture Issue, run
 // through the four parsers exactly as `apps/cli/src/commands/brief.ts`
 // does, must render with zero bracketed placeholders and pass every check
 // `verify-brief`/`brief-shape` run — no hand edit needed to be dispatchable.

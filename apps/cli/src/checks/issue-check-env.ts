@@ -1,5 +1,5 @@
 /**
- * Shared env-reading for every `validates: 'issue'` check bin (task 17, O2).
+ * Shared env-reading for every `validates: 'issue'` check bin.
  * `apps/cli/src/lib/forge-write.ts`'s `runIssueChecks` sets these once, from
  * facts it already resolved, rather than having each bin independently
  * re-fetch the same forge state its caller already has in hand.

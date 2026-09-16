@@ -93,7 +93,7 @@ function partsSectionBounds(body: string): { headingEnd: number; sectionEnd: num
 
 /**
  * Appends `partLine` as a new line at the end of the `## Parts` section —
- * `--add`'s own write, in the SAME edit as the Objectives change (O5).
+ * `--add`'s own write, in the SAME edit as the Objectives change.
  * Throws when there is no `## Parts` heading at all: a pre-cutover Issue
  * with no Parts section has no self-serve add path here — the same posture
  * the brief-sections cutover already takes for a Surface-less Issue.
@@ -111,7 +111,7 @@ export function appendPartLine(body: string, partLine: string): string {
 
 /**
  * Removes every `## Parts` line whose citation is EXACTLY `droppedId` (and
- * nothing else) — `--drop`'s own write (O5). A Part citing the dropped
+ * nothing else) — `--drop`'s own write. A Part citing the dropped
  * objective alongside another is left untouched, unchanged from before this
  * edit: narrowing a multi-objective citation is out of this rule's scope. If
  * that leaves a Part citing an objective no longer defined,
@@ -194,7 +194,7 @@ function parseArgs(args: string[]): { json: boolean; issueRef: string; op: EditO
       )
     ])
   }
-  // Security review (Issue #502), round 2, HIGH: this same reason is later
+  // Security review, round 2, HIGH: this same reason is later
   // handed to `prepareTask`'s own O6 supersede call, which refuses a
   // `\r`/`\n` reason for the header-corruption hazard `dispatch-task.ts`
   // documents at its own check. Checked here too, before ANY write, so a
@@ -417,7 +417,7 @@ export async function issueObjectivesEditCommand(args: string[]): Promise<void> 
       // This command IS the sanctioned Objectives-change path O3 names as
       // its own escape hatch — `## Parts` is also rewritten here, in the
       // same edit, per O5 above — and it posts its own superseding
-      // `aeg:brief:v<k+1>` comment below (O6) rather than being refused by
+      // `aeg:brief:v<k+1>` comment below rather than being refused by
       // the gate it is the sanctioned alternative to.
       skipFrozenSectionsCheck: true
     })

@@ -6,8 +6,8 @@
  *
  * Read-only, always. No writes, no labels, no comments.
  *
- * Lives in `@attalabs/aeg-forge-state`, not `@attalabs/aeg-core` (aeg-core-purity
- * fix, #521) — `@attalabs/aeg-core/src` is zero-I/O (#372, #382, #506) and this
+ * Lives in `@attalabs/aeg-forge-state`, not `@attalabs/aeg-core` (an
+ * aeg-core-purity fix) — `@attalabs/aeg-core/src` is zero-I/O and this
  * module performs `@octokit/graphql` I/O. Re-exported from `@attalabs/aeg-core`
  * for every existing call site that imports it from there.
  */

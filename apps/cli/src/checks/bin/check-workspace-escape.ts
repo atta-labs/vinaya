@@ -2,7 +2,7 @@
 
 /**
  * Core check: workspace-escape. Thin adapter over `@attalabs/aeg-core`'s
- * `findWorkspaceEscapes` (task 17, Issue #78) — the class neither the
+ * `findWorkspaceEscapes` — the class neither the
  * workspace dependency graph nor a literal-path grep can see: a constructed
  * filesystem reference (`readFileSync`, `readFile`, `new URL('…',
  * import.meta.url)`) that resolves outside the citing file's own workspace
@@ -68,7 +68,7 @@ const WORKSPACE_DIRS = ['apps', 'packages']
 const SOURCE_EXTENSIONS = ['.ts', '.tsx']
 const EXCLUDED_DIRS = new Set(['node_modules', 'dist', '.turbo', '.next', '.git'])
 
-/** `foo.test.ts`/`foo.test.tsx` — excluded from the swept surface; see this file's own module doc (O2). */
+/** `foo.test.ts`/`foo.test.tsx` — excluded from the swept surface; see this file's own module doc. */
 export function isTestFile(path: string): boolean {
   return /\.test\.tsx?$/.test(path)
 }
@@ -114,7 +114,7 @@ function main(): void {
     .map((p) => ({ path: p, content: readFileSync(p, 'utf8') }))
 
   const findings = findWorkspaceEscapes(sourceFiles, knownPaths, WORKSPACE_DIRS)
-  // Line-scoped (task 8): a finding prints only when its own line falls
+  // Line-scoped: a finding prints only when its own line falls
   // inside a changed hunk of a file this diff touched. `findingsInThisDiff`
   // owns both halves — one hunk parser for the whole repo, and the same
   // "indeterminate reports everything" rule `resolveChangedFiles` already

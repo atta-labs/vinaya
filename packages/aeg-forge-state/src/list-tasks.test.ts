@@ -77,9 +77,9 @@ describe('listTasksForSlug', () => {
   })
 
   it('reads the plain `Project: x` header form older Issues use (#614 addendum regression)', () => {
-    // The whole `vada-production-v1` cohort and the `aeg-forge-state-v1`
+    // A whole real tranche cohort and this repo's own golden-comparison
     // fixture are authored this way. Accepting only the bold form dropped
-    // their project the moment #614 deleted the `project:*` labels.
+    // their project the moment a real regression deleted the `project:*` labels.
     vi.mocked(ghIssueListByAnyLabel).mockReturnValue([
       {
         number: 431,
@@ -112,7 +112,7 @@ describe('listTasksForSlug', () => {
   })
 
   it('ignores prose in the **Project:** field rather than deriving a garbage project (#554)', () => {
-    // #554's EXACT body line. Unguarded, this split to a single "project"
+    // A real Issue's EXACT body line. Unguarded, this split to a single "project"
     // named "(none — tools/admin is unregistered; …)", which rendered as a
     // project label and built a board link that 404s — strictly worse than
     // the board-less row it replaced. Regression pin: fails without the
@@ -252,7 +252,7 @@ describe('projectFieldFromBody — absent is distinguishable from unparseable', 
   })
 
   it('reports a declared value that did not parse, rather than dropping it', () => {
-    // #554's exact body line: prose in the field. It still yields no project
+    // A real Issue's exact body line: prose in the field. It still yields no project
     // name — but the caller can now see that a value WAS declared.
     const body = '**Project:** (none — tools/admin is unregistered; see Project(s) + blast radius above)'
     expect(projectFieldFromBody(body)).toEqual({

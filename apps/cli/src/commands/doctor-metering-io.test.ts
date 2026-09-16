@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { realDeps } from './doctor'
 
 /**
- * `#313`: `vinaya doctor`'s `meteringCapability` closure calls
+ * `vinaya doctor`'s `meteringCapability` closure calls
  * `resolveMeteringCapability(hardenedMeteringDeps())` with no explicit
  * `--transcript` — its only route to a transcript is the `TMPDIR` pointer
  * file, so unlike `tokens.ts`'s test this drives the real pointer-file

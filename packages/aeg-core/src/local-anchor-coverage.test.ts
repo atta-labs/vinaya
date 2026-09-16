@@ -156,7 +156,7 @@ describe('checkLocalAnchorCoverage', () => {
    * The confirmed historical fixture (see PR body for the commit pair):
    * `0b53d460` "Docs(vinaya): Fix dangling Task 2 reference in
    * vinaya-spec.md" on this repo's own `apps/vinaya/specs/vinaya-spec.md`.
-   * The bullet's header parenthetical cites `(#722)` — a bare forge number,
+   * The bullet's header parenthetical cites `` — a bare forge number,
    * not the `(task N, #issue)` shape this check requires — so the pattern
    * must still fire pre-fix and go clean post-fix.
    */
@@ -196,7 +196,7 @@ describe('checkLocalAnchorCoverage', () => {
 
   /**
    * Co-occurrence is COUNTED, not merely detected (found live in code
-   * review, PR #766): a presence-only test lets one real citation clear
+   * review): a presence-only test lets one real citation clear
    * every other, unrelated anchor sharing the same scope. Two `Task N`
    * mentions, one citation → the uncited one must still fire.
    */

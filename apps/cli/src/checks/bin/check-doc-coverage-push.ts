@@ -9,7 +9,7 @@
  * are emitted as `severity: 'warning'` and the process always exits 0.
  *
  * Registered as a SEPARATE check from the already-registered `doc-coverage`
- * (Developer's call, per Issue #760 §4), not the same `CheckSpec` reused at
+ * (a Developer's call), not the same `CheckSpec` reused at
  * a different invocation context, for two reasons:
  *
  *   1. `CheckSpec` carries no field for "which mode" (`ALLOWED_KEYS` in
@@ -87,7 +87,7 @@ function waiverActiveFromEnv(): boolean {
     .map((s) => s.trim())
     .filter(Boolean)
   // Short-circuit before the `gh api` trust-anchor call — identical reasoning
-  // to check-doc-coverage.ts's own guard (PR #862 round 4): this runs on every
+  // to check-doc-coverage.ts's own guard: this runs on every
   // local push, where PR_LABELS is empty and no waiver can be active.
   if (!labels.includes(WAIVER_LABEL)) return false
   // GitHub-API default-branch read — see check-doc-coverage.ts's identical

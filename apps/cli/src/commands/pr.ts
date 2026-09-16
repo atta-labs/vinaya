@@ -81,8 +81,8 @@ function runGhWrite(ghCmd: string[], ghArgs: string[], bodyResult: BodyResult | 
 
 /**
  * Fetches the target PR's real state from the forge — its head branch (which
- * gate set applies is a property of the TARGET PR, never the local checkout —
- * #417) and its changed files (premise coverage). A failed fetch is a HARD
+ * gate set applies is a property of the TARGET PR, never the local checkout)
+ * and its changed files (premise coverage). A failed fetch is a HARD
  * refusal, never a fall-back to the local checkout's diff.
  */
 function fetchPrForgeContext(prRef: string): { changedFiles: string[]; branch: string } {

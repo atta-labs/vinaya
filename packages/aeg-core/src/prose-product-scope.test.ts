@@ -4,7 +4,7 @@ import { PRODUCT_SLUG_SCOPE } from './reader-resolvable-prose'
 /**
  * Pins `PRODUCT_SLUG_SCOPE` against drift. This list used to live inside
  * `retired-vocabulary.test.ts`'s `PATTERN_SCOPE[TRANCHE_SLUG_VN_PATTERN]`,
- * grepped by that suite directly; it moved here (Issue #435, O3) so the
+ * grepped by that suite directly; it moved here so the
  * scope a `bun test --affected` run for one package can no longer silently
  * diverge from the scope the check that actually runs at the push hook
  * sweeps — a scope edit is now a visible diff to this file, not a buried

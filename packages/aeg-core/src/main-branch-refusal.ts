@@ -1,5 +1,5 @@
 /**
- * Ring-0 main-branch refusal (task 9, Issue #58). Mechanizes the
+ * Ring-0 main-branch refusal. Mechanizes the
  * worktree-plus-PR rule at ring 0 for adopters: refuses a commit or push
  * whose current branch IS the repo's default branch — today enforced only
  * by attalabs' hand-written husky shell (which `init` never generates) and
@@ -23,7 +23,7 @@
  * check whose job is refusing risky actions must not itself risk refusing
  * a legitimate one it cannot actually evaluate.
  *
- * `pushRefs` (Issue #407, O2) carries git's pre-push stdin — one line per
+ * `pushRefs` carries git's pre-push stdin — one line per
  * ref being pushed, `<local ref> <local sha> <remote ref> <remote sha>` —
  * newline-joined, exactly as `VINAYA_PUSH_REFS` carries it. `null` means no
  * push is in flight at all (a commit, via `check --all --diff-only

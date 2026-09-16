@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: surface-scope (O7). A task-branch PR whose
+ * Core check: surface-scope. A task-branch PR whose
  * changed files fall inside its own Issue's declared `## Surface` `out:`
  * globs is refused, naming the file and the glob it crosses — an
  * undeclared boundary crossing caught mechanically instead of by a
@@ -25,8 +25,8 @@
  * this path as fail-open alongside three others; Principal ruling: leave
  * THIS one dormant — flipping it to a refusal would fail two branches
  * already open on the forge that predate this gate entirely
- * (`changeset-release/main` #452, `chore/vinaya-0.25.1-republish` #448,
- * neither a task branch), and deciding otherwise is the same
+ * (two real branches predating this gate, neither a task branch),
+ * and deciding otherwise is the same
  * cutover-by-number call `BRIEF_SECTIONS_SINCE_ISSUE` already is — the
  * Principal's to make, not this task's. See the PR body/comments for the
  * report.

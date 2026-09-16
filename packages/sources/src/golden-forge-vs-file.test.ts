@@ -4,15 +4,15 @@ import { parseTranche } from '@attalabs/aeg-core'
 import { describe, expect, it } from 'bun:test'
 
 /**
- * Golden comparison (brief §1 Context point 3, §9 Part C1): originally
- * proved the forge-backed and file-backed StateSource designs produce
- * equivalent `Tranche` shapes for the same real tranche (attalabs'
- * `aeg-forge-state-v1`), by `git show`-ing a pinned attalabs commit and
+ * Golden comparison: originally proved the forge-backed and file-backed
+ * StateSource designs produce equivalent `Tranche` shapes for the same
+ * real tranche (a historical tranche in attalabs' own forge-state
+ * migration work), by `git show`-ing a pinned attalabs commit and
  * comparing it against a live `deriveTrancheFromForge(...)` call against
  * attalabs' own forge.
  *
  * Neither half of that comparison can run in this repo without
- * reintroducing an attalabs dependency (vinaya-extraction-v1 task 3):
+ * reintroducing an attalabs dependency:
  *   - the pinned commit SHA does not exist after `git filter-repo` rewrote
  *     every hash, and the file's directory (`aeg-root/iterations/`) is
  *     retired vocabulary;

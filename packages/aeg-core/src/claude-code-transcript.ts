@@ -120,14 +120,14 @@ export type MeteringCapability =
  * (unchanged) as the READABLE prefix of a pointer key and as the sole
  * derivation for a pre-migration (legacy) pointer filename — see
  * `legacyTranscriptPointerPath`. On its own it is not collision-resistant:
- * `/a/b` and `/a-b` both collapse to `-a-b` (`#315`).
+ * `/a/b` and `/a-b` both collapse to `-a-b`.
  */
 function sanitizeKey(value: string): string {
   return value.replace(/[^A-Za-z0-9]+/g, '-')
 }
 
 /**
- * Collision-resistant (`#315`). `sanitizeKey` alone collapses distinct paths
+ * Collision-resistant. `sanitizeKey` alone collapses distinct paths
  * that differ only in which non-alphanumeric characters they use — a full
  * SHA-256 digest of the UNCOLLAPSED, UNTRUNCATED original `value` restores
  * distinctness: two different `value`s can share a `sanitizeKey` prefix, but
@@ -155,7 +155,7 @@ function collisionResistantKey(value: string): string {
  * published `exports` map — the whole reason this probe exists is to work
  * where that path is unreachable.
  *
- * This is the PRIMARY (post-migration, `#315`) pointer path — collision-
+ * This is the PRIMARY (post-migration) pointer path — collision-
  * resistant. `resolvePointer` also consults `legacyTranscriptPointerPath`
  * as a fallback, so a pointer the shipped Stop hook already wrote under the
  * old, collision-prone name is still found rather than orphaned.
@@ -165,12 +165,12 @@ function transcriptPointerPath(projectDir: string, tmpDir: string): string {
 }
 
 /**
- * The pre-`#315` pointer filename — `sanitizeKey` alone, collision-prone.
+ * The pre-migration pointer filename — `sanitizeKey` alone, collision-prone.
  * Never the primary read or write target going forward; consulted only when
  * `transcriptPointerPath` is absent, so a pointer a not-yet-upgraded
  * `track-transcript.sh` (or one written before this fix shipped) already has
  * on disk is still readable. Removing this fallback would orphan every such
- * pointer the moment this fix ships, which `#315`'s Acceptance forbids.
+ * pointer the moment this fix ships, which that migration's Acceptance forbids.
  */
 function legacyTranscriptPointerPath(projectDir: string, tmpDir: string): string {
   return `${tmpDir}/claude-transcript-${sanitizeKey(projectDir)}.txt`
@@ -216,11 +216,11 @@ function resolvePointer(explicitTranscriptPath: string | undefined, deps: Meteri
   // `CLAUDE_CODE_SESSION_ID` there is nothing to cross-check against, so a
   // pointer left by an earlier session is indistinguishable from our own. A
   // plain human terminal is exactly that case, and gating its commits on
-  // another session's leftovers is the false positive `#272` names as the
+  // another session's leftovers is the false positive a real regression names as the
   // expensive failure mode.
   const currentSessionId = deps.env.CLAUDE_CODE_SESSION_ID
 
-  // `#315` migration: the primary (collision-resistant) path wins when both
+  // The migration: the primary (collision-resistant) path wins when both
   // exist — it is what any Stop hook upgraded past this fix writes. The
   // legacy path is consulted ONLY when the primary is absent, so a pointer
   // written before this fix shipped (or by a not-yet-upgraded hook script)
@@ -422,7 +422,7 @@ export function resolveMeteringCapability(
 }
 
 /**
- * The one fact `token-collection-wired` (task 5, #272) gates a commit on,
+ * The one fact `token-collection-wired` gates a commit on,
  * factored out here — contract-agnostic (a plain boolean, no `CheckError`
  * shape) — so both the shipped `apps/cli` check and this repo's own
  * self-hosting `bin/check-token-collection-wired.ts` gate consume the SAME
@@ -441,7 +441,7 @@ export function resolveMeteringCapability(
  * The corroboration condition is load-bearing in BOTH directions, and an
  * earlier revision got both wrong. Without it, a pointer left in a shared
  * `TMPDIR` by an unrelated session refuses a plain human's commit (a false
- * positive `#272` names as the expensive failure mode); and folding every
+ * positive a real regression names as the expensive failure mode); and folding every
  * pointer failure into `no-transcript-resolved` let an unreadable, malformed,
  * or stale pointer pass silently — the exact wired-but-unreachable state this
  * check exists to refuse.

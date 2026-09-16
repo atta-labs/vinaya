@@ -6,8 +6,8 @@
  * input assembly (PR_BODY/BRANCH env) exactly, emitting the check contract
  * instead of human text.
  *
- * Body and branch only, again (task 12, #387) — the comment fetch and
- * `PR_NUMBER` use this bin carried between #365 and #387 existed to count
+ * Body and branch only, again — the comment fetch and
+ * `PR_NUMBER` use this bin carried existed to count
  * Developer round comments backing a ticked `[agent]` checkbox. That
  * checkbox no longer exists: the `[agent]` half of a Test Plan is a fenced
  * command list `vinaya pr report` executes and writes into the

@@ -1,6 +1,5 @@
 /**
- * Post-merge Archivist provenance assembly (aeg-governance-hardening
- * task 5d, #309). Pure — no `fs`, no `fetch`, no `process.env`. The CLI shim
+ * Post-merge Archivist provenance assembly. Pure — no `fs`, no `fetch`, no `process.env`. The CLI shim
  * (`bin/archive-task.ts`) resolves the merged PR via `gh`, gathers
  * `MergedPrFacts`, and calls these functions.
  *
@@ -9,7 +8,7 @@
  * froze — the PR body, PR metadata, or PR comments. A field whose source
  * fact is absent becomes a DANGLING entry, never an inferred or defaulted
  * value. Field/heading shapes below mirror the live provenance comments
- * posted by hand on PRs #302/#305/#306.
+ * posted by hand on real PRs.
  */
 
 import { hasLabel } from '@attalabs/aeg-forge-state'
@@ -27,8 +26,8 @@ export type MergedPrFacts = {
   mergeSha: string
   comments: string[]
   /**
-   * The task Issue's frozen `aeg:brief:v1` comment URL (`dispatchTask`,
-   * plan-brief-v1 task 2, #427) — the brief's permanent home now that it no
+   * The task Issue's frozen `aeg:brief:v1` comment URL (`dispatchTask`) —
+   * the brief's permanent home now that it no
    * longer lives in this PR body at all. `null` when the CLI shim
    * (`bin/archive-task.ts`) could not resolve one — no Issue to close, no
    * `aeg:brief:v1` comment on it (a pre-cutover task, or one dispatched by
@@ -57,8 +56,8 @@ export type MergedPrFacts = {
  * `vinaya/tranche:*` label was closed by a `fix/*`-branch PR;
  * branch-name-only detection silently skipped provenance forever.)
  *
- * `tranche: null` for a backlog Issue's `task/issue-<n>` branch (task-run-v1
- * task 15, O4) — `taskId` is the Issue number itself, so this signal alone
+ * `tranche: null` for a backlog Issue's `task/issue-<n>` branch —
+ * `taskId` is the Issue number itself, so this signal alone
  * makes a backlog task's PR eligible for provenance, with no
  * `vinaya/tranche:*` label needed at all.
  */
@@ -97,7 +96,7 @@ export function hasProvenance(comments: string[]): boolean {
  * searched ONLY in the header region (shared with `brief-validation.ts`'s
  * gate — gate and archivist read the same region, so a body that passes the
  * gate can't produce a DANGLING field here). Whole-body scanning is the
- * regression from #311's first live run, where a prose sentence *about* the
+ * regression from a real first live run, where a prose sentence *about* the
  * `Ticket:` field in a later section was extracted as the field's value.
  *
  * When `anchor` is given and the body carries that anchor pair
@@ -124,7 +123,7 @@ function closesRefs(text: string): number[] {
  * falling back to the first anywhere in the body (flagged, not lost). Extras
  * are scanned body-wide so a real second closing reference in prose is still
  * flagged — but always fence-stripped, so example text like a Test Plan's
- * `Closes #123` fixture never counts (#311 regression).
+ * `Closes #NNN` fixture never counts (a real regression).
  *
  * When the body carries an `AEG:CLOSES` anchor pair (`anchored-region.ts`,
  * task 30), the pair replaces the header block as the canonical placement:
@@ -140,8 +139,8 @@ export function extractIssue(body: string): { issue: number | null; extraIssues:
   // GitHub *does* auto-close it) but looks like a bare 4-space indented code
   // block once sliced, so stripping the region blanked the reference and
   // returned `issue: null` — the Issue then goes unclosed on merge, the exact
-  // stranding this PR exists to eliminate, reintroduced along the over-strip
-  // axis (PR #617 review MAJOR). Stripping first also subsumes the decoy
+  // stranding this exists to eliminate, reintroduced along the over-strip
+  // axis (a MAJOR review finding). Stripping first also subsumes the decoy
   // protection rather than trading against it: `AEG:*` markers are HTML
   // comments and survive the strip, while a decoy anchor inside code does not
   // survive to be sliced in the first place.

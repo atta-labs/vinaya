@@ -3,8 +3,8 @@
 // not a commit trailer, not a comment the config could parse. The ONLY
 // mechanism ring 1 honors is the actor-verified `vinaya/waiver:docs` /
 // `vinaya/waiver:review` label — `isWaiverLabelActorVerified`
-// (`packages/aeg-core/src/waiver-label.ts`, proved live in
-// `aeg-governance-hardening` #380) checks the labeling timeline event's own
+// (`packages/aeg-core/src/waiver-label.ts`, proved live in a real
+// tranche) checks the labeling timeline event's own
 // actor against a principal allowlist. This command WRAPS that already-proven
 // mechanism; it does not reimplement or relax it.
 //

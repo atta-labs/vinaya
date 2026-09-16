@@ -1,5 +1,5 @@
 /**
- * Task-branch identity (task-run-v1 task 15, O1/O2). A developer branch names
+ * Task-branch identity. A developer branch names
  * its task one of two ways: `task/<tranche>/<n>`, keyed to a tranche
  * topology row, or `task/issue-<n>`, keyed directly to a backlog Issue that
  * carries no tranche at all. This is the one parser for both shapes — every

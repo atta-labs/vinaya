@@ -14,7 +14,7 @@
  *
  * The comparison is set-equality over normalised lines, not a byte diff. Three
  * sources of false difference were observed comparing a real pull request
- * (`#304`) against its own regeneration at its own head, and every one of them
+ * against its own regeneration at its own head, and every one of them
  * would have made a byte diff useless:
  *
  *   1. Absolute paths — regenerated warnings embed the checkout root, which
