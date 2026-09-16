@@ -57,6 +57,7 @@ import { hostname, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
+  appendFinalFlushFailureNote,
   assertValidLoopEvent,
   buildReexecArgs,
   CONFIDENCE_PROMPT_LINE,
@@ -2835,6 +2836,34 @@ describe('devReviewLoop — a paused loop for reason no_progress still logs its 
       | undefined
     expect(journalFinalized).toBeDefined()
     expect(journalFinalized?.result).toBe('stopped')
+  }, 20000)
+
+  // O2 ([task-log-v1] 9, Issue #631): the SAME pause, but with a configured
+  // `logPublish` target so the driver's own final flush actually attempts a
+  // forge post — `writeFakeGh` (the default stub every scenario above this
+  // one uses) deliberately fails every `gh issue comment` call, exactly the
+  // shape a real round-end flush failure takes. Before this task the flush
+  // ran AFTER the comment was already posted, so a failure here reached
+  // only stderr; now it is flushed first, and a failure is folded into the
+  // pause's own `detail`.
+  it('a final flush that fails before this pause is folded into the posted detail, never only reaching stderr', () => {
+    const { home, cwd, path } = setUpNoProgress()
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ logPublish: { issue: TASK + 1 } }))
+    const r = runLoop(home, cwd, path)
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(no_progress\)/)
+
+    const postedFiles = postedCommentFiles(home)
+    const pauseComment = readFileSync(
+      join(home, '.fake-gh-posted-comments', postedFiles[postedFiles.length - 1] as string),
+      'utf8'
+    )
+    expect(pauseComment).toContain('the final outbox flush before this pause failed')
+
+    const pauseState = JSON.parse(
+      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
+    ) as Record<string, unknown>
+    expect(pauseState.detail).toContain('the final outbox flush before this pause failed')
   }, 20000)
 })
 
@@ -7135,6 +7164,21 @@ describe('deriveVerdictPauseDetail (pure) — [task-log-v1] 9, Issue #631, O1/O3
 
   it('returns undefined for max_rounds — that reason already carries its own detail from assessRound, so the call site never even calls this for it', () => {
     expect(deriveVerdictPauseDetail('max_rounds', [], false, false)).toBeUndefined()
+  })
+})
+
+describe('appendFinalFlushFailureNote (pure) — [task-log-v1] 9, Issue #631, O2: a failed final flush is folded into detail, never swallowed', () => {
+  it('appends the note when no detail existed yet', () => {
+    const detail = appendFinalFlushFailureNote(undefined, 'gh: rate limited')
+    expect(detail).toContain('the final outbox flush before this pause failed')
+    expect(detail).toContain('gh: rate limited')
+  })
+
+  it('appends the note onto an existing detail, never replacing it', () => {
+    const detail = appendFinalFlushFailureNote('round 4 findings delivered again', 'gh: rate limited')
+    expect(detail).toContain('round 4 findings delivered again')
+    expect(detail).toContain('the final outbox flush before this pause failed')
+    expect(detail).toContain('gh: rate limited')
   })
 })
 
