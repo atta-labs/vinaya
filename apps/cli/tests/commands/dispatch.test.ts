@@ -9,7 +9,7 @@
  */
 
 import { afterEach, describe, expect, it } from 'bun:test'
-import { execFileSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -31,19 +31,17 @@ function tempDir(prefix: string): string {
 
 type CliResult = { status: number; stdout: string; stderr: string }
 
+// `spawnSync`, not `execFileSync` — `execFileSync` discards stderr entirely
+// on a zero exit code (it only ever surfaces it via a caught error's
+// `.stderr`), so a passing run's own non-fatal stderr warnings (e.g. a
+// skipped trailing flush) were unobservable here before this fix.
 function runDispatch(args: string[], cwd: string, home: string, path: string): CliResult {
-  try {
-    const stdout = execFileSync('bun', [INDEX, 'dispatch', ...args], {
-      encoding: 'utf8',
-      cwd,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, HOME: home, PATH: path }
-    })
-    return { status: 0, stdout, stderr: '' }
-  } catch (e) {
-    const err = e as { status?: number; stdout?: string; stderr?: string }
-    return { status: err.status ?? 1, stdout: String(err.stdout ?? ''), stderr: String(err.stderr ?? '') }
-  }
+  const result = spawnSync('bun', [INDEX, 'dispatch', ...args], {
+    encoding: 'utf8',
+    cwd,
+    env: { ...process.env, HOME: home, PATH: path }
+  })
+  return { status: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' }
 }
 
 function writeFakeVendor(dir: string): void {
@@ -142,7 +140,14 @@ describe('vinaya dispatch — --task attribution', () => {
 })
 
 describe('vinaya dispatch — the flush call', () => {
-  it('fires vinaya log flush when --task is given', () => {
+  // Issue #636, O4: the trailing flush's DESTINATION is `logPublish` in
+  // `vinaya.config.json`, never `--task`/`--pr` directly — those two flags
+  // only pick which task's own local outbox to drain. Before this fix, this
+  // command posted straight onto the dispatched task's own Issue/PR
+  // unconditionally, ignoring `logPublish` (and therefore never honoring a
+  // configured `webhookUrl`, and never skipping when nothing was
+  // configured).
+  it("publishes nowhere, and says so on stderr, when no logPublish target is configured — never defaults to --task's own Issue", () => {
     const home = tempDir('vinaya-dispatch-cmd-home-')
     const cwd = tempDir('vinaya-dispatch-cmd-cwd-')
     const toolsDir = tempDir('vinaya-dispatch-cmd-tools-')
@@ -160,9 +165,92 @@ describe('vinaya dispatch — the flush call', () => {
       `${toolsDir}:${process.env.PATH}`
     )
     expect(r.status).toBe(0)
+    expect(readFileSync(callsLog, 'utf8')).toBe('')
+    expect(r.stderr).toMatch(/no logPublish target configured/)
+  })
+
+  it("routes to the configured logPublish.issue, not --task's own issue number", () => {
+    const home = tempDir('vinaya-dispatch-cmd-home-')
+    const cwd = tempDir('vinaya-dispatch-cmd-cwd-')
+    const toolsDir = tempDir('vinaya-dispatch-cmd-tools-')
+    writeFakeVendor(toolsDir)
+    const callsLog = join(cwd, 'gh-calls.log')
+    writeFileSync(callsLog, '')
+    writeFakeGh(toolsDir, callsLog)
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ logPublish: { issue: 999 } }))
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, 'p')
+
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile, '--task', '777'],
+      cwd,
+      home,
+      `${toolsDir}:${process.env.PATH}`
+    )
+    expect(r.status).toBe(0)
 
     const calls = readFileSync(callsLog, 'utf8')
-    expect(calls).toMatch(/^issue comment 777 /m)
+    expect(calls).toMatch(/^issue comment 999 /m)
+  })
+
+  it("refuses to publish back onto the dispatched task's own Issue even when logPublish configures it — same protection the round-end auto-flush already has", () => {
+    const home = tempDir('vinaya-dispatch-cmd-home-')
+    const cwd = tempDir('vinaya-dispatch-cmd-cwd-')
+    const toolsDir = tempDir('vinaya-dispatch-cmd-tools-')
+    writeFakeVendor(toolsDir)
+    const callsLog = join(cwd, 'gh-calls.log')
+    writeFileSync(callsLog, '')
+    writeFakeGh(toolsDir, callsLog)
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ logPublish: { issue: 777 } }))
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, 'p')
+
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile, '--task', '777'],
+      cwd,
+      home,
+      `${toolsDir}:${process.env.PATH}`
+    )
+    expect(r.status).toBe(0)
+    expect(readFileSync(callsLog, 'utf8')).toBe('')
+    expect(r.stderr).toMatch(/refusing to flush there/)
+  })
+
+  it('routes the trailing flush to a configured logPublish.webhookUrl instead of gh — O4/O1 interaction', () => {
+    const home = tempDir('vinaya-dispatch-cmd-home-')
+    const cwd = tempDir('vinaya-dispatch-cmd-cwd-')
+    const toolsDir = tempDir('vinaya-dispatch-cmd-tools-')
+    writeFakeVendor(toolsDir)
+    const callsLog = join(cwd, 'gh-calls.log')
+    writeFileSync(callsLog, '')
+    writeFakeGh(toolsDir, callsLog)
+    const requests: string[] = []
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        requests.push(await req.text())
+        return new Response('ok', { status: 200 })
+      }
+    })
+    writeFileSync(
+      join(cwd, 'vinaya.config.json'),
+      JSON.stringify({ logPublish: { webhookUrl: `http://127.0.0.1:${server.port}/ingest` } })
+    )
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, 'p')
+
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile, '--task', '778'],
+      cwd,
+      home,
+      `${toolsDir}:${process.env.PATH}`
+    )
+    server.stop()
+
+    expect(r.status).toBe(0)
+    expect(readFileSync(callsLog, 'utf8')).toBe('')
+    expect(requests.length).toBe(1)
+    expect(outboxLines(home, 778).length).toBe(0)
   })
 
   it('never calls gh at all when neither --task nor --pr is given', () => {
