@@ -29,7 +29,8 @@
     "maxRounds": 7
   },
   "dispatch": {
-    "agent": "claude"
+    "agent": "claude",
+    "requireWorkerIsolation": false
   },
   "briefSchema": {
     "pr": {
