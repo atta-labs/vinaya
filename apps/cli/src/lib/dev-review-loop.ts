@@ -64,6 +64,7 @@ import {
   type LoopConfig,
   type LoopState,
   type Observations,
+  type PauseReason,
   type ReconstructedJournal,
   type ReviewInputManifest,
   type ReviewPolicy,
@@ -313,7 +314,7 @@ export type LoopDeps = {
   gitRevParseOriginMain: () => string
   gitFetch: (sha: string) => void
   gitDiffShortstat: (base: string, head: string) => string
-  flushOutbox: (task: number) => Promise<void>
+  flushOutbox: (task: number) => Promise<FlushOutboxOutcome>
   /** O9: the task's complete round journal, replayed from the forge's already-flushed record plus this machine's still-unflushed outbox. */
   fetchLoopHistory: (root: string, repo: { owner: string; repo: string } | null, task: number) => ReconstructedJournal
   sleep: (ms: number) => Promise<void>
@@ -531,16 +532,27 @@ function defaultReadUnpushedWorkDetail(worktreePath: string): { dirtyFiles: stri
  * through O2's own per-flush chunk bound (`resolveLogPublishMaxChunksPerFlush`),
  * and a non-zero `deferredChunkCount` is surfaced to stderr — partial
  * coverage, made visible, never silent.
+ *
+ * **O2: the outcome is returned, never only written to stderr.** A pause
+ * exit folds a failed final flush into the pause's own `detail` (see the
+ * pause-handling call sites in `runDevReviewLoopBody`) so the failure
+ * reaches the durable pause-state/escalation record and the posted comment
+ * — a stderr line alone is not something a Principal reading the PR three
+ * days later can see. Every OTHER call site in this file (the ~25 mid-round
+ * flushes) still just awaits this and ignores the result, exactly as
+ * before — this function itself still never throws.
  */
-async function defaultFlushOutbox(task: number): Promise<void> {
+type FlushOutboxOutcome = { ok: true } | { ok: false; error: string }
+
+async function defaultFlushOutbox(task: number): Promise<FlushOutboxOutcome> {
   const config = loadConfig()
   const skipReason = describeSkippedRoundEndFlush(config, task)
   if (skipReason) {
     process.stderr.write(`${skipReason}\n`)
-    return
+    return { ok: true }
   }
   const target = resolveRoundEndFlushTarget(config, task)
-  if (target === null) return
+  if (target === null) return { ok: true }
   try {
     const outcome = await flushOutboxLib(target, {
       outboxTask: task,
@@ -551,12 +563,76 @@ async function defaultFlushOutbox(task: number): Promise<void> {
         `vinaya dev-review-loop: round-end flush bounded — ${outcome.deferredChunkCount} chunk(s) remain queued in the outbox for a later flush (non-fatal, no lines lost).\n`
       )
     }
+    return { ok: true }
   } catch (err) {
     const message = err instanceof LogFlushError || err instanceof Error ? err.message : String(err)
     process.stderr.write(
       `vinaya dev-review-loop: round-end flush failed (non-fatal, lines stay in the outbox for a later flush): ${message}\n`
     )
+    return { ok: false, error: message }
   }
+}
+
+/** O2: appends a failed final flush's own reason to a pause's `detail` — never replaces an existing detail, never invents one where none existed. */
+export function appendFinalFlushFailureNote(detail: string | undefined, error: string): string {
+  const note = `the final outbox flush before this pause failed, so some events covering the pause window may not be on the forge yet: ${error}`
+  return detail ? `${detail} (${note})` : note
+}
+
+/**
+ * O1/O3: `assessRound`'s own `'confidence'` pause (`packages/aeg-core`, out
+ * of this task's Surface — the guard itself is untouched) carries no
+ * `detail` at all for either branch that reaches it (a re-asked turn that
+ * never reported one; a reported value still under 50 after the loop's one
+ * extra turn). The driver already read the exact `Confidence` value that
+ * decided which branch fired — this only narrates that already-observed
+ * fact, never a new one `assessRound` didn't already see.
+ */
+export function describeConfidencePauseDetail(confidence: Confidence): string {
+  if (confidence === 'absent') {
+    return 'no confidence line was found on the re-asked turn — the developer never reported one a second time'
+  }
+  const reasonSuffix = confidence.reason ? ` (${confidence.reason})` : ''
+  return `confidence reported at ${confidence.value}${reasonSuffix}, below the required 50 threshold, after the loop's one extra turn was already used`
+}
+
+/**
+ * O1/O3: the `'reappearance'`/`'no_progress'`/`'escalation'` pauses
+ * `assessVerdicts` decides (`packages/aeg-core`, out of Surface) carry no
+ * `detail` either, though the round's own `findings_compared` event (Boundary:
+ * read here, never recomputed — the comparison itself stays entirely in
+ * `assessRound`) already names exactly which finding ids reappeared, and the
+ * driver already knows which role(s) returned `ESCALATE` from the same
+ * verdicts it built `Observations` from. `max_rounds` is excluded: it
+ * already carries its own `detail` from `assessRound` (`max rounds: <n>`),
+ * so this is never called for it (see the `decision.detail === undefined`
+ * guard at each call site).
+ */
+export function deriveVerdictPauseDetail(
+  reason: PauseReason,
+  events: readonly DevReviewLoopEventInput[],
+  reviewerEscalated: boolean,
+  securityEscalated: boolean
+): string | undefined {
+  if (reason === 'escalation') {
+    const roles = [reviewerEscalated ? 'reviewer' : null, securityEscalated ? 'security' : null].filter(
+      (r): r is string => r !== null
+    )
+    return roles.length > 0 ? `${roles.join(' and ')} returned ESCALATE this round` : undefined
+  }
+  const findingsCompared = events.find(
+    (e): e is Extract<DevReviewLoopEventInput, { event: 'findings_compared' }> => e.event === 'findings_compared'
+  )
+  if (!findingsCompared) return undefined
+  if (reason === 'reappearance') {
+    return findingsCompared.recurring.length > 0
+      ? `finding${findingsCompared.recurring.length > 1 ? 's' : ''} ${findingsCompared.recurring.join(', ')} reappeared after being marked resolved in an earlier round`
+      : undefined
+  }
+  if (reason === 'no_progress') {
+    return `no finding was marked resolved this round (open: ${findingsCompared.open.length}, new: ${findingsCompared.new.length}), the same as the round before it — two consecutive rounds with no forward motion`
+  }
+  return undefined
 }
 
 function defaultSleep(ms: number): Promise<void> {
@@ -2095,13 +2171,20 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 deliveredFindingsIdentity !== null &&
                 deliveredFindingsIdentity.round === held.round &&
                 deliveredFindingsIdentity.head === currentHead
-              if (existsSync(marker) || alreadyDeliveredInStore) {
+              const markerPresent = existsSync(marker)
+              if (markerPresent || alreadyDeliveredInStore) {
                 const stats = computeStats(currentHead, d.now())
                 await logEvents(driverDecidedPauseEvents(config.loopId, state, held.round + 1, stats))
+                // O3: names WHICH of the two independent guard inputs was
+                // observed true — a local marker this machine wrote
+                // earlier, a control-store identity a (possibly different)
+                // machine wrote — so a comment where neither actually held
+                // is visibly wrong, rather than reading identically to an
+                // ordinary redelivery pause.
                 decision = {
                   type: 'pause',
                   reason: 'no_progress',
-                  detail: `round ${held.round} findings delivered again on unchanged head ${currentHead}, with no developer push since the first delivery`
+                  detail: `round ${held.round} findings delivered again on unchanged head ${currentHead}, with no developer push since the first delivery (guard: local marker file ${markerPresent ? 'present' : 'absent'}, control-store delivered-findings identity ${alreadyDeliveredInStore ? 'matched' : 'absent'})`
                 }
               } else {
                 mkdirSync(dirname(marker), { recursive: true })
@@ -2140,9 +2223,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               // O9: no branch ever reached the remote, and the developer
               // posted a refusal/escalation instead — end the loop now, on the
               // Issue (there is no PR to comment on), never entering the poll.
-              postIssuePauseComment(task, round, 'escalation', err.detail)
-              await d.flushOutbox(task)
-              return { finalDecision: { type: 'pause', reason: 'escalation', detail: err.detail }, prNumber: 0, task }
+              // O2: flushed BEFORE the comment is posted, so the events
+              // covering this pause window are on the forge first, and a
+              // failed final flush is folded into the posted detail rather
+              // than only reaching stderr.
+              const finalFlush = await d.flushOutbox(task)
+              const detail = finalFlush.ok ? err.detail : appendFinalFlushFailureNote(err.detail, finalFlush.error)
+              postIssuePauseComment(task, round, 'escalation', detail)
+              return { finalDecision: { type: 'pause', reason: 'escalation', detail }, prNumber: 0, task }
             }
           }
         }
@@ -2249,6 +2337,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         detail: `an uncaught error ended round ${round}'s own processing: ${err instanceof Error ? err.message : String(err)}`
       }
       keepLockAlive = true
+      // O2: flushed BEFORE the escalation record/pause state/comment below —
+      // the events covering this pause window reach the forge before the
+      // driver exits, and a failed final flush is folded into `decision.detail`
+      // (every downstream write below reads it from there) rather than only
+      // reaching stderr.
+      const finalFlush = await d.flushOutbox(task)
+      if (!finalFlush.ok) {
+        decision = { ...decision, detail: appendFinalFlushFailureNote(decision.detail, finalFlush.error) }
+      }
       // The SAME durable snapshot every
       // other pause reason gets, best-effort like the write itself already
       // is — a genuinely uncaught error is exactly the case this record
@@ -2319,7 +2416,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // `driver_exited` trace (written above, unconditionally) is what a
         // Principal reads when even this best-effort post never lands.
       }
-      await d.flushOutbox(task)
       return { finalDecision: decision, prNumber, task }
     }
 
@@ -2545,6 +2641,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           const result = assessRound(state, obs)
           state = result.state
           decision = result.decision
+          if (decision.type === 'pause' && decision.reason === 'confidence' && decision.detail === undefined) {
+            decision = { ...decision, detail: describeConfidencePauseDetail(confidence ?? 'absent') }
+          }
           await logEvents(result.events)
           await d.flushOutbox(task)
           persistCurrentLoopState(decision.type, decision.type === 'pause' ? decision.reason : undefined)
@@ -2558,6 +2657,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           const result = assessRound(state, obs)
           state = result.state
           decision = result.decision
+          if (decision.type === 'pause' && decision.reason === 'confidence' && decision.detail === undefined) {
+            decision = { ...decision, detail: describeConfidencePauseDetail(confidence) }
+          }
           pendingGateRedRetry = false
           if (mechanicalRetryRecoverySurvivesOneReset) {
             mechanicalRetryRecoverySurvivesOneReset = false
@@ -2874,6 +2976,17 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               const result = assessRound(state, obs)
               state = result.state
               decision = result.decision
+              if (decision.type === 'pause' && decision.detail === undefined) {
+                decision = {
+                  ...decision,
+                  detail: deriveVerdictPauseDetail(
+                    decision.reason,
+                    result.events,
+                    reviewer.verdict.observation.verdict === 'ESCALATE',
+                    security.verdict.observation.verdict === 'ESCALATE'
+                  )
+                }
+              }
               const routed = routeCompletionEvents(result.events, decision.type)
               pendingCompletionEvents = routed.toDeferUntilPublish
               await logEvents(routed.toLogNow)
@@ -2973,6 +3086,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             keepLockAlive = true
           }
           const pauseHead = d.resolveHead(branch)
+          // O2: flushed BEFORE the escalation record/pause state/comment
+          // below — the events covering this pause window reach the forge
+          // before the driver exits, and a failed final flush is folded
+          // into `decision.detail` (every write below reads it from there)
+          // rather than only reaching stderr.
+          const finalFlush = await d.flushOutbox(task)
+          if (!finalFlush.ok) {
+            decision = { ...decision, detail: appendFinalFlushFailureNote(decision.detail, finalFlush.error) }
+          }
           // O1: best-effort, same discipline as the crash-catch pause site —
           // written BEFORE `pause-state.json` so its own real `escalationId`
           // (code review, round 2, MEDIUM — see `writeEscalation`'s own doc
@@ -3014,7 +3136,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // once before returning — the one call site that makes every
           // pause reason's final round/budget/held-result state durable.
           persistCurrentLoopState('pause', decision.reason)
-          await d.flushOutbox(task)
           return { finalDecision: decision, prNumber, task }
         }
       }
@@ -3041,7 +3162,7 @@ export type CancelDeps = {
     agent: AgentVendor,
     repo: { owner: string; repo: string } | null
   ) => void
-  flushOutbox: (task: number) => Promise<void>
+  flushOutbox: (task: number) => Promise<FlushOutboxOutcome>
 }
 
 function defaultCancelDeps(): CancelDeps {

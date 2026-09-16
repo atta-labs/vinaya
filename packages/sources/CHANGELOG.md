@@ -1,5 +1,42 @@
 # @atta/vinaya-sources
 
+## 0.29.0
+
+### Minor Changes
+
+- eb823c6: The developer-review loop's round-end telemetry flush no longer defaults to publishing on the task's own Issue.
+  
+  `vinaya.config.json` gains a `logPublish` key (`{issue}` or `{pr}`, plus an optional `maxChunksPerFlush`) naming where the round-end flush posts. Unconfigured — every repo's own prior default — the flush is now a no-op instead of posting unbounded comments onto the Issue the loop must itself read to dispatch the next developer round. Published volume is bounded per call, with any deferred chunks surfaced visibly rather than dropped silently, and every `gh … --json comments` read this driver makes now tolerates payloads past Node's 1 MiB default buffer.
+- 5593816: Register the task-operator tools on Claude and Codex, and start one authorized run.
+  
+  A shared, transport-agnostic MCP server (`vinaya task-tools serve`) binds the
+  task-tool catalog to its handlers and speaks newline-delimited JSON-RPC 2.0 over
+  stdio. Two runtime adapters register the same server: Claude via a generated
+  `.mcp.json`, Codex via its documented `[mcp_servers]` TOML. `task_start` wraps
+  the existing `runTask` composition — attended mode only, requiring an
+  authenticated caller from the invocation context, idempotent per request
+  identity, returning the durable run identity; there is no unattended path yet.
+
+### Patch Changes
+
+- 74a6c4a: Task-path CI evidence now survives its own job log. `vinaya init`/`upgrade` install a new generated workflow, `vinaya-task-log-collector.yml`, that runs on the default branch with its own credential: it downloads the artifact a task-path job's new "Export task-log artifact" step uploads (bounded, exported even on failure or cancellation), validates it — schema, size, redaction, and a repo-provenance cross-check — and publishes only the accepted records through the existing flush path, reporting every rejected record as a named gap. New `@attalabs/aeg-core` exports: `validateTaskLogArtifact`, `TASK_LOG_ARTIFACT_MAX_BYTES` (plus the `ArtifactExpectedProvenance`/`ArtifactGap`/`ArtifactValidationResult` types). New CLI commands: `vinaya log export-artifact` and `vinaya log collect-artifact`.
+- Updated dependencies [7c85f5d]
+- Updated dependencies [293349c]
+- Updated dependencies [e3a4775]
+- Updated dependencies [8cbb973]
+- Updated dependencies [bb403b4]
+- Updated dependencies [4065069]
+- Updated dependencies [a68d081]
+- Updated dependencies [74a6c4a]
+- Updated dependencies [8404193]
+- Updated dependencies [9cd9385]
+- Updated dependencies [5593816]
+- Updated dependencies [712b4a4]
+- Updated dependencies [d5898ab]
+  - @attalabs/aeg-core@0.29.0
+  - @attalabs/aeg-forge-state@0.29.0
+  - @attalabs/aeg-types@0.29.0
+
 ## 0.28.0
 
 ### Patch Changes

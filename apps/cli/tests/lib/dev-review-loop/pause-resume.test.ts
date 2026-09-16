@@ -18,10 +18,16 @@ import {
   acquireOwnership,
   type ControlStoreDeps,
   defaultControlStoreDeps,
+  type PauseReason,
   readEffect,
   writeEffect
 } from '@attalabs/aeg-core'
-import { fenceStartedEffectsAsUncertain } from '../../../src/lib/dev-review-loop/pause-resume'
+import {
+  fenceStartedEffectsAsUncertain,
+  PAUSE_REASON_PROFILE,
+  renderNoPushStopComment,
+  renderPauseComment
+} from '../../../src/lib/dev-review-loop/pause-resume'
 
 let dir: string
 let deps: ControlStoreDeps
@@ -83,5 +89,78 @@ describe('fenceStartedEffectsAsUncertain', () => {
     const epoch = acquired.acquired ? acquired.epoch : -1
 
     expect(fenceStartedEffectsAsUncertain(TASK, epoch, deps)).toEqual([])
+  })
+})
+
+/**
+ * `[task-log-v1] 9` (Issue #631, O1): before this task, `renderPauseComment`
+ * carried a doc comment claiming `detail` rendered for only three of
+ * `PauseReason`'s twelve members — a stale claim the function's own
+ * unconditional ternary never actually enforced, but which reflected a real
+ * gap one level up: several reasons (`confidence`, `reappearance`, the
+ * `assessRound`-decided `no_progress`, a reviewer's own `escalation`) never
+ * had a `detail` computed for them at all, so they rendered with none in
+ * practice. This locks the renderer itself — every `PauseReason` member,
+ * given a `detail`, must render it; none may render an empty body.
+ */
+const ALL_PAUSE_REASONS = Object.keys(PAUSE_REASON_PROFILE) as PauseReason[]
+
+describe('renderPauseComment (pure) — O1: every pause reason renders its detail, none renders an empty body', () => {
+  it.each(ALL_PAUSE_REASONS)('reason %s carries a passed detail into the rendered comment', (reason) => {
+    const body = renderPauseComment(42, reason, 'a concrete, observed fact about this pause')
+    expect(body).toContain(reason)
+    expect(body).toContain('a concrete, observed fact about this pause')
+    expect(body).toContain('vinaya dev-review-loop --resume 42')
+  })
+
+  it.each(ALL_PAUSE_REASONS)(
+    'reason %s still renders a non-empty body naming the reason with no detail at all',
+    (reason) => {
+      const body = renderPauseComment(42, reason)
+      expect(body.trim().length).toBeGreaterThan(0)
+      expect(body).toContain(reason)
+      expect(body).not.toContain('undefined')
+    }
+  )
+
+  it('a detail carrying an em dash does not collide with the separator between the reason and the detail', () => {
+    const body = renderPauseComment(
+      1,
+      'no_progress',
+      'round 4 findings delivered again — guard: local marker file present'
+    )
+    expect(body).toContain(
+      'The dev-review-loop paused: no_progress — round 4 findings delivered again — guard: local marker file present.'
+    )
+  })
+})
+
+describe('renderNoPushStopComment (pure) — the no-PR-yet variant carries detail the same way', () => {
+  it.each(ALL_PAUSE_REASONS)('reason %s carries a passed detail into the Issue-posted comment', (reason) => {
+    const body = renderNoPushStopComment(631, reason, 'a concrete, observed fact about this pause')
+    expect(body).toContain(reason)
+    expect(body).toContain('a concrete, observed fact about this pause')
+    expect(body).toContain('vinaya task run <tranche> 631')
+  })
+})
+
+describe('PAUSE_REASON_PROFILE — every reason whose next-action mentions `detail` presumes one is rendered (O3)', () => {
+  it('carries exactly the twelve documented PauseReason members, no more, no fewer', () => {
+    expect(ALL_PAUSE_REASONS.sort()).toEqual(
+      [
+        'escalation',
+        'max_rounds',
+        'no_progress',
+        'confidence',
+        'reappearance',
+        'infrastructure',
+        'no_push',
+        'objectives_changed',
+        'ruling_posted',
+        'stale_driver',
+        'brief_superseded',
+        'policy_changed'
+      ].sort()
+    )
   })
 })
