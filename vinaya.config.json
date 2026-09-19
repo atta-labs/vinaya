@@ -12,7 +12,8 @@
       "apps/cli/tests/import-boundary.test.ts",
       "apps/cli/tests/surface-spec-exports.test.ts",
       "apps/cli/tests/run-paths-only.test.ts",
-      "apps/cli/tests/lib/log-callers.test.ts"
+      "apps/cli/tests/lib/log-callers.test.ts",
+      "apps/cli/tests/commands/task-status.test.ts"
     ]
   },
   "checks": {

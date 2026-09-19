@@ -332,3 +332,37 @@ describe('selectAffectedTestFiles replayed against the two recorded 2026-09-19 i
     })
   }
 })
+
+// Round 2 review, BLOCKER — the a6d9640c change set above failed a SECOND
+// CI shard the first pass of this fixture never checked: GitHub Actions run
+// 35434611919, shard 3, failed 6 assertions in
+// apps/cli/tests/commands/task-status.test.ts (reproduced live at that sha).
+// This is a DIFFERENT class of gap than log-callers — O2's: that file has
+// no import edge to walk at all. It drives the real CLI end-to-end
+// (`execFileSync('bun', [INDEX, ...])` against a string path, never a
+// static `import` of any `src/` file), so reachability can never reach it
+// regardless of what changed — confirmed by grep: this file's own import
+// list is `node:child_process`/`node:fs`/`node:os`/`node:path`/`node:url`/
+// `bun:test` only. `alwaysRun` is the same escape hatch already used for
+// log-callers/ci-shards/import-boundary, applied here for a structurally
+// different reason (no edge exists to walk, rather than an edge that
+// deliberately isn't one). This fixes the ONE concrete instance this task
+// verified against a real incident — a broader audit of every CLI
+// end-to-end test sharing this same blind spot is out of this task's
+// bounded surface and is escalated separately, on the PR, rather than
+// attempted here.
+describe('a second real CI failure in the SAME task-files-v1/1 change set (Issue #660, O2, round 2 review BLOCKER)', () => {
+  const changed = INCIDENT_CHANGE_SETS['task-files-v1/1 — a6d9640c, the one-runtime-directory first push'] as string[]
+  const TASK_STATUS_E2E_TEST = join(REPO_ROOT, 'apps/cli/tests/commands/task-status.test.ts')
+
+  it("with this repo's real alwaysRun config, commands/task-status.test.ts (shard 3's real CI failure) is selected", () => {
+    const alwaysRun = loadConfig()?.prePush?.alwaysRun ?? []
+    const { selected } = selectAffectedTestFiles(REPO_ROOT, changed, { alwaysRun })
+    expect(selected).toContain(TASK_STATUS_E2E_TEST)
+  })
+
+  it('reachability ALONE (no alwaysRun) never selects it — no static import edge exists to walk, not merely one uncrossed', () => {
+    const { selected } = selectAffectedTestFiles(REPO_ROOT, changed, { alwaysRun: [] })
+    expect(selected).not.toContain(TASK_STATUS_E2E_TEST)
+  })
+})

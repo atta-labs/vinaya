@@ -76,6 +76,34 @@ function tempDir(prefix: string): string {
 
 type CliResult = { status: number; stdout: string; stderr: string }
 
+/**
+ * Round 2 review, MAJOR (Issue #660, O3) — this process's OWN environment,
+ * when it is itself a dispatched Developer/Reviewer session, carries
+ * `VINAYA_RUNTIME_DIR` (checked before `$HOME` by `resolveRuntimeDirUncached`).
+ * Spreading `...process.env` into a fixture's real subprocess hands it THIS
+ * machine's real, shared runtime directory regardless of the fixture's own
+ * isolated `$HOME` — the same leak already fixed in `dev-review-loop.test.ts`,
+ * `dispatch/reconcile-launch.test.ts` and `task-tools/cancel.test.ts`. One
+ * call site here already stripped `VINAYA_RUN_ID` alone (found live, for a
+ * narrower reason — see its own comment below); that was never enough.
+ */
+function stripVinayaEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { ...env }
+  for (const key of Object.keys(out)) {
+    if (key.startsWith('VINAYA_')) delete out[key]
+  }
+  return out
+}
+
+/**
+ * Generous on a quiet host and below `bun:test`'s own default per-test
+ * timeout, so a genuinely stuck subprocess (lock contention on a path
+ * another fixture or another concurrent task run still holds) is caught
+ * HERE, with the child's own captured output, before a bare framework
+ * timeout can kill the run with no diagnostic at all.
+ */
+const DISPATCH_SUBPROCESS_BUDGET_MS = 18_000
+
 function runDispatch(
   args: string[],
   cwd: string,
@@ -88,12 +116,52 @@ function runDispatch(
       encoding: 'utf8',
       cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, HOME: home, PATH: path, ...extraEnv }
+      // `extraEnv` merges AFTER the strip, never before it: a caller that
+      // deliberately passes its own `VINAYA_RUN_ID` (the doc-gate fixture
+      // below does, to pin the sources-file name it later reads back) must
+      // survive — only the AMBIENT, inherited `VINAYA_*` this outer test
+      // process itself carries gets stripped.
+      env: { ...stripVinayaEnv(process.env), HOME: home, PATH: path, ...extraEnv },
+      timeout: DISPATCH_SUBPROCESS_BUDGET_MS,
+      killSignal: 'SIGKILL'
     })
     return { status: 0, stdout, stderr: '' }
   } catch (e) {
-    const err = e as { status?: number; stdout?: string; stderr?: string }
+    const err = e as { status?: number; stdout?: string; stderr?: string; signal?: string | null }
+    if (err.signal) {
+      throw new Error(
+        `vinaya dispatch subprocess killed by ${err.signal} after exceeding its ${DISPATCH_SUBPROCESS_BUDGET_MS}ms budget ` +
+          `(args: ${args.join(' ')})\n--- stdout ---\n${err.stdout ?? ''}\n--- stderr ---\n${err.stderr ?? ''}`
+      )
+    }
     return { status: err.status ?? 1, stdout: String(err.stdout ?? ''), stderr: String(err.stderr ?? '') }
+  }
+}
+
+/**
+ * The shared shape several fixtures below use for a one-off `bun <script>`
+ * subprocess (never through `runDispatch`/the CLI's own `dispatch`
+ * subcommand): bounded by the same budget, and surfacing the child's own
+ * captured output on expiry rather than a bare timeout.
+ */
+function runScriptWithBudget(script: string, cwd: string, env: NodeJS.ProcessEnv): void {
+  try {
+    execFileSync('bun', [script], {
+      cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env,
+      timeout: DISPATCH_SUBPROCESS_BUDGET_MS,
+      killSignal: 'SIGKILL'
+    })
+  } catch (e) {
+    const err = e as { signal?: string | null; stdout?: unknown; stderr?: unknown }
+    if (err.signal) {
+      throw new Error(
+        `fixture script killed by ${err.signal} after exceeding its ${DISPATCH_SUBPROCESS_BUDGET_MS}ms budget ` +
+          `(script: ${script})\n--- stdout ---\n${err.stdout ?? ''}\n--- stderr ---\n${err.stderr ?? ''}`
+      )
+    }
+    throw e
   }
 }
 
@@ -509,14 +577,13 @@ describe('dispatchRole — two dispatches in the same process', () => {
     // then have both calls inherit the SAME id instead of minting two
     // distinct ones — collapsing the exact invariant this test exists to
     // prove, for a reason that has nothing to do with `dispatchRole` itself.
-    const spawnEnv: NodeJS.ProcessEnv = { ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` }
-    delete spawnEnv.VINAYA_RUN_ID
-
-    execFileSync('bun', [script], {
-      cwd,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: spawnEnv
+    const spawnEnv: NodeJS.ProcessEnv = stripVinayaEnv({
+      ...process.env,
+      HOME: home,
+      PATH: `${binDir}:${pathWithoutRealVendors()}`
     })
+
+    runScriptWithBudget(script, cwd, spawnEnv)
 
     // Each call's own `dispatched`/`role_attempt`/`usage`/`outcome_received`
     // quartet (added alongside dispatched/outcome_received) legitimately shares
@@ -581,9 +648,12 @@ describe("dispatchRole — child identity settles across the vendor's own exec h
       ].join('\n')
     )
 
-    const spawnEnv: NodeJS.ProcessEnv = { ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` }
-    delete spawnEnv.VINAYA_RUN_ID
-    execFileSync('bun', [script], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: spawnEnv })
+    const spawnEnv: NodeJS.ProcessEnv = stripVinayaEnv({
+      ...process.env,
+      HOME: home,
+      PATH: `${binDir}:${pathWithoutRealVendors()}`
+    })
+    runScriptWithBudget(script, cwd, spawnEnv)
 
     const result = JSON.parse(readFileSync(resultPath, 'utf8')) as { childCommand: string | null; groundTruth: string }
     // The launcher's own identity ('sh') must never be what gets recorded.
@@ -663,9 +733,12 @@ describe('terminateLaunchedChildOnShutdown — driver shutdown termination (O1, 
       ].join('\n')
     )
 
-    const spawnEnv: NodeJS.ProcessEnv = { ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` }
-    delete spawnEnv.VINAYA_RUN_ID
-    execFileSync('bun', [script], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: spawnEnv })
+    const spawnEnv: NodeJS.ProcessEnv = stripVinayaEnv({
+      ...process.env,
+      HOME: home,
+      PATH: `${binDir}:${pathWithoutRealVendors()}`
+    })
+    runScriptWithBudget(script, cwd, spawnEnv)
 
     const result = JSON.parse(readFileSync(resultPath, 'utf8')) as {
       before: { status: string; record: { status: string; childPid: number } }
@@ -752,9 +825,12 @@ describe('terminateLaunchedChildOnShutdown — driver shutdown termination (O1, 
       ].join('\n')
     )
 
-    const spawnEnv: NodeJS.ProcessEnv = { ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` }
-    delete spawnEnv.VINAYA_RUN_ID
-    execFileSync('bun', [script], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: spawnEnv })
+    const spawnEnv: NodeJS.ProcessEnv = stripVinayaEnv({
+      ...process.env,
+      HOME: home,
+      PATH: `${binDir}:${pathWithoutRealVendors()}`
+    })
+    runScriptWithBudget(script, cwd, spawnEnv)
 
     const result = JSON.parse(readFileSync(resultPath, 'utf8')) as {
       before: { record: { status: string; childStartedAt: string } }
@@ -819,9 +895,12 @@ describe('terminateLaunchedChildOnShutdown — driver shutdown termination (O1, 
       ].join('\n')
     )
 
-    const spawnEnv: NodeJS.ProcessEnv = { ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` }
-    delete spawnEnv.VINAYA_RUN_ID
-    execFileSync('bun', [script], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: spawnEnv })
+    const spawnEnv: NodeJS.ProcessEnv = stripVinayaEnv({
+      ...process.env,
+      HOME: home,
+      PATH: `${binDir}:${pathWithoutRealVendors()}`
+    })
+    runScriptWithBudget(script, cwd, spawnEnv)
 
     const result = JSON.parse(readFileSync(resultPath, 'utf8')) as {
       before: { record: { status: string } }
@@ -865,7 +944,7 @@ describe('terminateLaunchedChildOnShutdown — driver shutdown termination (O1, 
         `writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({ before, after }))`
       ].join('\n')
     )
-    execFileSync('bun', [script], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, HOME: home } })
+    runScriptWithBudget(script, cwd, stripVinayaEnv({ ...process.env, HOME: home }))
 
     const result = JSON.parse(readFileSync(resultPath, 'utf8')) as {
       before: { record: { status: string; finishedAt: string } }
@@ -916,11 +995,11 @@ describe('dispatchRole — a shared run_id (a nested dispatch inheriting VINAYA_
       ].join('\n')
     )
 
-    execFileSync('bun', [script], {
+    runScriptWithBudget(
+      script,
       cwd,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` }
-    })
+      stripVinayaEnv({ ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` })
+    )
 
     const lines = outboxLines(home, 'none') as Array<{
       kind: string
@@ -1533,7 +1612,8 @@ describe('dispatch observability — wired through a real run (#450)', () => {
     const r = spawnSync('bun', [INDEX, 'dispatch', 'developer', '--agent', 'claude', '--prompt-file', promptFile], {
       encoding: 'utf8',
       cwd,
-      env: { ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` }
+      env: stripVinayaEnv({ ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` }),
+      timeout: DISPATCH_SUBPROCESS_BUDGET_MS
     })
     expect(r.status).toBe(0)
 
@@ -1695,7 +1775,8 @@ describe('terminal colour — role prefix and TTY/NO_COLOR gating (#491)', () =>
     const r = spawnSync('bun', [INDEX, 'dispatch', 'developer', '--agent', 'claude', '--prompt-file', promptFile], {
       encoding: 'utf8',
       cwd,
-      env: { ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` }
+      env: stripVinayaEnv({ ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` }),
+      timeout: DISPATCH_SUBPROCESS_BUDGET_MS
     })
     expect(r.status).toBe(0)
 
@@ -2035,7 +2116,12 @@ describe('dispatchRole — model selection (O1/O2/O4, #456)', () => {
     const r = spawnSync(
       'bun',
       [INDEX, 'dispatch', 'developer', '--agent', 'codex', '--prompt-file', promptFile, '--model', 'claude-opus-5'],
-      { encoding: 'utf8', cwd, env: { ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` } }
+      {
+        encoding: 'utf8',
+        cwd,
+        env: stripVinayaEnv({ ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` }),
+        timeout: DISPATCH_SUBPROCESS_BUDGET_MS
+      }
     )
     expect(r.status).toBe(1)
     expect(existsSync(spawnedMarker)).toBe(false)
@@ -2645,7 +2731,8 @@ describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () =
       const r = spawnSync('bun', [INDEX, 'dispatch', 'developer', '--agent', agent, '--prompt-file', promptFile], {
         encoding: 'utf8',
         cwd,
-        env: { ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` }
+        env: stripVinayaEnv({ ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` }),
+        timeout: DISPATCH_SUBPROCESS_BUDGET_MS
       })
       expect(r.status).toBe(0)
       expect(r.stderr).toContain('Documentation read-gate')
@@ -2661,7 +2748,8 @@ describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () =
     const r = spawnSync('bun', [INDEX, 'dispatch', 'developer', '--agent', 'codex', '--prompt-file', promptFile], {
       encoding: 'utf8',
       cwd,
-      env: { ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` }
+      env: stripVinayaEnv({ ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` }),
+      timeout: DISPATCH_SUBPROCESS_BUDGET_MS
     })
     expect(r.status).toBe(0)
     expect(r.stderr).not.toContain('Documentation read-gate')

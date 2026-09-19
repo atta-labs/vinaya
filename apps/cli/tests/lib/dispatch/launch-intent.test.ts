@@ -38,6 +38,27 @@ function tempDir(prefix: string): string {
   return dir
 }
 
+/**
+ * Round 2 review, MAJOR (Issue #660, O3) — this process's OWN environment,
+ * when it is itself a dispatched Developer/Reviewer session, carries
+ * `VINAYA_RUNTIME_DIR` (checked before `$HOME` by `resolveRuntimeDirUncached`).
+ * Spreading `...process.env` into this fixture's real subprocess hands it
+ * THIS machine's real, shared runtime directory regardless of the fixture's
+ * own isolated `$HOME` — the same leak already fixed in
+ * `dev-review-loop.test.ts`, `dispatch.test.ts`, `dispatch/reconcile-launch.test.ts`
+ * and `task-tools/cancel.test.ts`.
+ */
+function stripVinayaEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { ...env }
+  for (const key of Object.keys(out)) {
+    if (key.startsWith('VINAYA_')) delete out[key]
+  }
+  return out
+}
+
+/** Same budget dispatch.test.ts's own DISPATCH_SUBPROCESS_BUDGET_MS uses. */
+const DISPATCH_SUBPROCESS_BUDGET_MS = 18_000
+
 describe('dispatchRole — launch intent precedes spawn (O1)', () => {
   it('the launch record exists, status launched, by the time the child starts', () => {
     const home = tempDir('vinaya-launch-home-')
@@ -73,10 +94,19 @@ describe('dispatchRole — launch intent precedes spawn (O1)', () => {
         encoding: 'utf8',
         cwd,
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` }
+        env: stripVinayaEnv({ ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` }),
+        timeout: DISPATCH_SUBPROCESS_BUDGET_MS,
+        killSignal: 'SIGKILL'
       })
     } catch (e) {
-      status = (e as { status?: number }).status ?? 1
+      const err = e as { status?: number; signal?: string | null; stdout?: unknown; stderr?: unknown }
+      if (err.signal) {
+        throw new Error(
+          `vinaya dispatch subprocess killed by ${err.signal} after exceeding its ${DISPATCH_SUBPROCESS_BUDGET_MS}ms budget\n` +
+            `--- stdout ---\n${err.stdout ?? ''}\n--- stderr ---\n${err.stderr ?? ''}`
+        )
+      }
+      status = err.status ?? 1
     }
     expect(status).toBe(0)
 
