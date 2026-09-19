@@ -5,12 +5,15 @@
  * `vinaya task brief` (preparation only, below) and `vinaya task run` (the
  * future unattended loop) — kept for a documented compatibility window.
  *
- * `vinaya task brief <tranche> <n> [--supersede --reason <text>]`
- * — argv parsing only, around `prepareTask` (`lib/dispatch-task.ts`), the
+ * `vinaya task brief <tranche> <n> [--supersede --reason <text> [--surface-in <glob,...>]]`
+ * — argv parsing only, around `prepareTaskOrIssue` (`lib/dispatch-task.ts`), the
  * one lib function it calls. Preparation only: it renders and freezes the
  * brief and starts no worker. `--supersede` posts a new, higher-versioned frozen brief naming its
  * predecessor and `--reason`'s text, instead of refusing on the one that's
  * already there — always paired with `--reason`, never accepted alone.
+ * `--surface-in`, only meaningful alongside `--supersede`, widens the
+ * frozen brief's `## Surface` `in:` list with the given globs before
+ * re-freezing — the one self-serve way to broaden a Surface once frozen.
  */
 
 import { DISPATCH_AGENTS, type DispatchAgent, dispatchTask, prepareTaskOrIssue } from '../lib/dispatch-task.js'
@@ -64,11 +67,13 @@ export async function taskDispatchCommand(args: string[]): Promise<void> {
   if (result.commentUrl) process.stdout.write(`\nPosted: ${result.commentUrl}\n`)
 }
 
-/** Parses `--supersede`/`--reason` — shared by the `<tranche> <n>` and `--issue <n>` forms of `task brief`. */
-function parseSupersede(rest: string[], usage: string): { reason: string } | undefined {
+/** Parses `--supersede`/`--reason`/`--surface-in` — shared by the `<tranche> <n>` and `--issue <n>` forms of `task brief`. */
+function parseSupersede(rest: string[], usage: string): { reason: string; surfaceIn?: string[] } | undefined {
   const hasSupersede = rest.includes('--supersede')
   const reasonIdx = rest.indexOf('--reason')
   const reason = reasonIdx !== -1 ? rest[reasonIdx + 1] : undefined
+  const surfaceInIdx = rest.indexOf('--surface-in')
+  const surfaceInArg = surfaceInIdx !== -1 ? rest[surfaceInIdx + 1] : undefined
 
   if (hasSupersede && !reason) {
     console.error(`vinaya task brief: --supersede requires --reason <text>.\n${usage}`)
@@ -78,12 +83,31 @@ function parseSupersede(rest: string[], usage: string): { reason: string } | und
     console.error(`vinaya task brief: --reason is only meaningful with --supersede.\n${usage}`)
     process.exit(2)
   }
-  return hasSupersede ? { reason: reason as string } : undefined
+  if (surfaceInIdx !== -1 && !hasSupersede) {
+    console.error(`vinaya task brief: --surface-in is only meaningful with --supersede.\n${usage}`)
+    process.exit(2)
+  }
+  if (surfaceInIdx !== -1 && !surfaceInArg) {
+    console.error(`vinaya task brief: --surface-in <glob1,glob2,...> was passed with no value.\n${usage}`)
+    process.exit(2)
+  }
+  const surfaceIn = surfaceInArg
+    ? surfaceInArg
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : undefined
+  if (surfaceInIdx !== -1 && (!surfaceIn || surfaceIn.length === 0)) {
+    console.error(`vinaya task brief: --surface-in resolved to zero globs.\n${usage}`)
+    process.exit(2)
+  }
+
+  return hasSupersede ? { reason: reason as string, surfaceIn } : undefined
 }
 
 const TASK_BRIEF_USAGE = [
-  'Usage: vinaya task brief <tranche> <n> [--supersede --reason <text>]',
-  '   or: vinaya task brief --issue <n> [--supersede --reason <text>]'
+  'Usage: vinaya task brief <tranche> <n> [--supersede --reason <text> [--surface-in <glob,...>]]',
+  '   or: vinaya task brief --issue <n> [--supersede --reason <text> [--surface-in <glob,...>]]'
 ].join('\n')
 
 /**

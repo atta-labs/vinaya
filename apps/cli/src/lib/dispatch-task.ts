@@ -35,13 +35,15 @@ import {
   briefHash,
   briefMarkerFor,
   isPrincipal,
+  parseIssueSurface,
   parseRationaleFields,
   resolveNewestFrozenBrief
 } from '@attalabs/aeg-core'
 import { dispatchRole, isAgentClass, resolveClassModel, type AgentClass } from './dispatch.js'
 import { assembleAndRenderBrief, assembleAndRenderBriefForIssue } from './brief-assembly.js'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
-import { currentGhLogin, postMarkedComment } from './forge-write.js'
+import { collectTaskIssueErrors, currentGhLogin, postMarkedComment } from './forge-write.js'
+import type { CheckError } from '../checks/contract'
 
 export { AEG_BRIEF_V1_MARKER, briefHash, contentAfterTwoLines } from '@attalabs/aeg-core'
 
@@ -113,7 +115,133 @@ function fetchIssueBody(n: number): string {
     return JSON.parse(sh('gh', ['issue', 'view', String(n), '--json', 'body'])).body as string
   } catch (err) {
     throw new DispatchTaskError(
-      `could not fetch Issue #${n}'s body (\`gh issue view\`) to resolve its suggested agent-class: ${err instanceof Error ? err.message : String(err)}`
+      `could not fetch Issue #${n}'s body (\`gh issue view\`) to resolve its suggested agent-class or run its write gate: ${err instanceof Error ? err.message : String(err)}`
+    )
+  }
+}
+
+function fetchIssueLabels(n: number): string[] {
+  let out: string
+  try {
+    out = sh('gh', ['issue', 'view', String(n), '--json', 'labels'])
+  } catch (err) {
+    throw new DispatchTaskError(
+      `could not fetch Issue #${n}'s labels (\`gh issue view\`) to run its write gate: ${err instanceof Error ? err.message : String(err)}`
+    )
+  }
+  try {
+    return (JSON.parse(out) as { labels: Array<{ name: string }> }).labels.map((l) => l.name)
+  } catch {
+    throw new DispatchTaskError(`could not parse \`gh issue view ${n} --json labels\` output.`)
+  }
+}
+
+/**
+ * O2 — grades `body` against the SAME Issue write gate `issue create`/`issue
+ * edit` already enforce (`forge-write.ts`'s `collectTaskIssueErrors`), so a
+ * defect that gate would refuse (a bad title, a blast-radius violation, a
+ * whole-suite Test plan line, a Surface glob that resolves to no tracked
+ * file, …) is refused here too, before a brief ever freezes from `body`.
+ * `milestoneSource: { kind: 'edit', issueRef }` mirrors `issueEditCommand`'s
+ * own validate-only call: grading an EXISTING Issue's current (or
+ * about-to-be-written) body against itself, never a create.
+ *
+ * A `severity: 'warning'` finding (an unmerged Depends-on, an open
+ * Conflicts-with PR) is reported but never refuses on its own — the same
+ * split `validateTaskIssue` itself applies; a real `error` finding throws,
+ * naming every finding, warnings included.
+ */
+export async function validateIssueWriteGate(
+  body: string,
+  labels: string[],
+  issue: number,
+  retryCommand: string
+): Promise<void> {
+  const errors: CheckError[] = await collectTaskIssueErrors(body, null, labels, retryCommand, issue, {
+    kind: 'edit',
+    issueRef: String(issue)
+  })
+  const blocking = errors.filter((e) => e.severity !== 'warning')
+  if (blocking.length === 0) return
+  throw new DispatchTaskError(
+    `Issue #${issue}'s write gate refused — the same findings \`vinaya issue edit\` would report:\n${blocking
+      .map((e) => `  - [${e.check}] ${e.message}`)
+      .join('\n')}`
+  )
+}
+
+/** The real, forge-reading default for `PrepareTaskDeps.runIssueWriteGate`/`PrepareIssueTaskDeps.runIssueWriteGate` — fetches Issue `issue`'s live body and labels, then grades them with `validateIssueWriteGate`. */
+async function runIssueWriteGate(issue: number, retryCommand: string): Promise<void> {
+  const body = fetchIssueBody(issue)
+  const labels = fetchIssueLabels(issue)
+  await validateIssueWriteGate(body, labels, issue, retryCommand)
+}
+
+/**
+ * O3 — the same directory-level `## Surface` grammar `parseIssueSurface`
+ * validates, spliced rather than re-parsed: only the `in:` line's own text
+ * changes, so a caller comparing `oldBody`/`newBody` with
+ * `frozenSectionsChanged` sees exactly one section move — never `##
+ * Objectives`/`## Parts`/`## Documentation`, which this function never
+ * touches. Widen-only: `addedGlobs` are unioned onto whatever `in:` already
+ * lists, never replacing or dropping an existing glob — a Planner
+ * broadening a frozen Surface can never accidentally narrow it in the same
+ * breath.
+ */
+export function widenSurfaceInLine(body: string, addedGlobs: string[]): { newBody: string; newIn: string[] } {
+  const surface = parseIssueSurface(body)
+  if (!surface.ok) {
+    throw new DispatchTaskError(`cannot widen \`## Surface\` — the section does not parse: ${surface.errors.join(' ')}`)
+  }
+  const headingMatch = /^##[ \t]*Surface[ \t]*$/im.exec(body)
+  if (!headingMatch) {
+    throw new DispatchTaskError('cannot widen `## Surface` — no `## Surface` heading found in the body.')
+  }
+  const afterHeadingStart = headingMatch.index + headingMatch[0].length
+  const afterHeading = body.slice(afterHeadingStart)
+  const nextHeading = /^##[ \t]/m.exec(afterHeading)
+  const sectionEnd = nextHeading ? afterHeadingStart + nextHeading.index : body.length
+  const section = body.slice(afterHeadingStart, sectionEnd)
+
+  const inLineMatch = /^in:\s*(.+)$/im.exec(section)
+  if (!inLineMatch) {
+    throw new DispatchTaskError('cannot widen `## Surface` — no `in:` line found in the section.')
+  }
+  const newIn = [...new Set([...surface.value.in, ...addedGlobs])]
+  const newInLine = `in: ${newIn.join(', ')}`
+  const newSection =
+    section.slice(0, inLineMatch.index) + newInLine + section.slice(inLineMatch.index + inLineMatch[0].length)
+  const newBody = body.slice(0, afterHeadingStart) + newSection + body.slice(sectionEnd)
+  return { newBody, newIn }
+}
+
+/**
+ * The real, forge-reading default for `PrepareTaskDeps.widenSurface`/
+ * `PrepareIssueTaskDeps.widenSurface` — fetches Issue `issue`'s live body and
+ * labels, widens `## Surface`'s `in:` list with `addedGlobs`
+ * (`widenSurfaceInLine`), grades the WIDENED body through the same write
+ * gate `runIssueWriteGate` runs (never the frozen-section-change refusal —
+ * this is the sanctioned, versioned-by-supersede widen `## Surface` itself
+ * has no other self-serve edit path for), then writes it.
+ */
+async function widenSurface(issue: number, addedGlobs: string[], retryCommand: string): Promise<void> {
+  const body = fetchIssueBody(issue)
+  const labels = fetchIssueLabels(issue)
+  const { newBody } = widenSurfaceInLine(body, addedGlobs)
+  await validateIssueWriteGate(newBody, labels, issue, retryCommand)
+  try {
+    const dir = mkdtempSync(join(tmpdir(), 'vinaya-surface-widen-'))
+    const tmpPath = join(dir, 'body.md')
+    try {
+      writeFileSync(tmpPath, newBody, 'utf8')
+      sh('gh', ['issue', 'edit', String(issue), '--body-file', tmpPath])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  } catch (err) {
+    if (err instanceof DispatchTaskError) throw err
+    throw new DispatchTaskError(
+      `could not write the widened \`## Surface\` to Issue #${issue} (\`gh issue edit\`): ${err instanceof Error ? err.message : String(err)}`
     )
   }
 }
@@ -269,8 +397,14 @@ export type PrepareTaskInput = {
    * frozen brief naming its predecessor and this reason, instead of
    * refusing on the existing one. Absent, `prepareTask` keeps its original
    * behavior: refuse when any frozen brief already exists.
+   *
+   * `surfaceIn`, given alongside `--surface-in <glob,...>`, widens the
+   * Issue's `## Surface` `in:` list with these globs (union, never a
+   * narrowing) before re-rendering and superseding — the one self-serve way
+   * to broaden a frozen brief's Surface. Absent, superseding changes nothing
+   * about `## Surface`.
    */
-  supersede?: { reason: string }
+  supersede?: { reason: string; surfaceIn?: string[] }
 }
 export type PrepareTaskResult = { issue: number; brief: string; commentUrl: string; version: number }
 
@@ -289,6 +423,10 @@ export type PrepareTaskDeps = {
   findExistingFrozenBrief: (n: number) => (IssueComment & { version: number }) | null
   postMarkedComment: typeof postMarkedComment
   resolveDispatchAuthorization: () => DispatchAuthorization
+  /** O2 — the same Issue write gate `issue create`/`issue edit` already run, over Issue `issue`'s live body, before any brief freezes from it. */
+  runIssueWriteGate: (issue: number, retryCommand: string) => Promise<void>
+  /** O3 — widens Issue `issue`'s `## Surface` `in:` list with `addedGlobs`, validated by `runIssueWriteGate`'s own gate, then written. */
+  widenSurface: (issue: number, addedGlobs: string[], retryCommand: string) => Promise<void>
   beforePost?: (issue: number) => void | Promise<void>
 }
 
@@ -296,7 +434,9 @@ const defaultPrepareTaskDeps: PrepareTaskDeps = {
   assembleAndRenderBrief,
   findExistingFrozenBrief,
   postMarkedComment,
-  resolveDispatchAuthorization
+  resolveDispatchAuthorization,
+  runIssueWriteGate,
+  widenSurface
 }
 
 /**
@@ -349,13 +489,21 @@ export async function prepareTask(
   // the live bug: dispatching task 3 posted its brief on Issue #3, an
   // unrelated merged Issue, because this code used to read `n` here.
   const issue = result.issue
+  const retryCommand = `vinaya task brief ${tranche} ${n}`
+
+  // O2 — the SAME Issue write gate `issue create`/`issue edit` already
+  // enforce, run over this Issue's live body before any brief freezes from
+  // it. Ahead of the existing-brief check: a defect the gate would refuse is
+  // refused here regardless of whether this is a first dispatch or a
+  // supersede.
+  await deps.runIssueWriteGate(issue, retryCommand)
 
   const existing = deps.findExistingFrozenBrief(issue)
-  const hash = briefHash(result.brief)
 
   let marker: string
   let commentBody: string
   let version: number
+  let brief = result.brief
 
   if (supersede) {
     if (!existing) {
@@ -363,20 +511,34 @@ export async function prepareTask(
         `Task ${n} in tranche \`${tranche}\` has no frozen brief yet — nothing to supersede. Run \`vinaya task brief ${tranche} ${n}\` without --supersede first.`
       )
     }
+    // O3 — widening `## Surface` changes what the brief's own Technical
+    // surface map section renders, so the brief rendered BEFORE the widen
+    // (`result.brief`, above) is stale; re-render from the now-widened Issue
+    // before this version's comment body is built.
+    if (supersede.surfaceIn && supersede.surfaceIn.length > 0) {
+      await deps.widenSurface(issue, supersede.surfaceIn, retryCommand)
+      const reRendered = await deps.assembleAndRenderBrief(tranche, String(n))
+      if (!reRendered.ok) {
+        throw new DispatchTaskError(
+          `\`## Surface\` widened, but the task no longer renders a valid brief afterward:\n${reRendered.missing.map((m) => `  - ${m}`).join('\n')}`
+        )
+      }
+      brief = reRendered.brief
+    }
     // The original v1 (and every prior version) is never edited or deleted —
     // only appended past. `Supersedes:` names the predecessor's own comment
     // URL and the reason, so history stays and the mistake stops being
     // authoritative (Traps to avoid).
     version = existing.version + 1
     marker = briefMarkerFor(version)
-    commentBody = `Brief hash: ${hash}\nSupersedes: ${existing.url} — ${supersede.reason}\n${result.brief}`
+    commentBody = `Brief hash: ${briefHash(brief)}\nSupersedes: ${existing.url} — ${supersede.reason}\n${brief}`
   } else {
     if (existing) {
       throw new DispatchTaskError(`Task ${n} in tranche \`${tranche}\` is already dispatched — see ${existing.url}`)
     }
     version = 1
     marker = AEG_BRIEF_V1_MARKER
-    commentBody = `Brief hash: ${hash}\n${result.brief}`
+    commentBody = `Brief hash: ${briefHash(brief)}\n${brief}`
   }
 
   if (deps.beforePost) {
@@ -385,13 +547,13 @@ export async function prepareTask(
 
   const url = deps.postMarkedComment('issue', String(issue), marker, commentBody)
 
-  return { issue, brief: result.brief, commentUrl: url, version }
+  return { issue, brief, commentUrl: url, version }
 }
 
 export type PrepareIssueTaskInput = {
   issue: number
   /** Same meaning as `PrepareTaskInput.supersede` — see that field's doc comment. */
-  supersede?: { reason: string }
+  supersede?: { reason: string; surfaceIn?: string[] }
 }
 
 /** Same shape as `PrepareTaskDeps`, over `assembleAndRenderBriefForIssue` instead of the tranche-keyed renderer. */
@@ -400,6 +562,8 @@ export type PrepareIssueTaskDeps = {
   findExistingFrozenBrief: (n: number) => (IssueComment & { version: number }) | null
   postMarkedComment: typeof postMarkedComment
   resolveDispatchAuthorization: () => DispatchAuthorization
+  runIssueWriteGate: (issue: number, retryCommand: string) => Promise<void>
+  widenSurface: (issue: number, addedGlobs: string[], retryCommand: string) => Promise<void>
   beforePost?: (issue: number) => void | Promise<void>
 }
 
@@ -407,7 +571,9 @@ const defaultPrepareIssueTaskDeps: PrepareIssueTaskDeps = {
   assembleAndRenderBriefForIssue,
   findExistingFrozenBrief,
   postMarkedComment,
-  resolveDispatchAuthorization
+  resolveDispatchAuthorization,
+  runIssueWriteGate,
+  widenSurface
 }
 
 /**
@@ -443,13 +609,16 @@ export async function prepareIssueTask(
     )
   }
   const issue = result.issue
+  const retryCommand = `vinaya task brief --issue ${n}`
+
+  await deps.runIssueWriteGate(issue, retryCommand)
 
   const existing = deps.findExistingFrozenBrief(issue)
-  const hash = briefHash(result.brief)
 
   let marker: string
   let commentBody: string
   let version: number
+  let brief = result.brief
 
   if (supersede) {
     if (!existing) {
@@ -457,16 +626,26 @@ export async function prepareIssueTask(
         `Issue #${n} has no frozen brief yet — nothing to supersede. Run \`vinaya task brief --issue ${n}\` without --supersede first.`
       )
     }
+    if (supersede.surfaceIn && supersede.surfaceIn.length > 0) {
+      await deps.widenSurface(issue, supersede.surfaceIn, retryCommand)
+      const reRendered = await deps.assembleAndRenderBriefForIssue(n)
+      if (!reRendered.ok) {
+        throw new DispatchTaskError(
+          `\`## Surface\` widened, but the task no longer renders a valid brief afterward:\n${reRendered.missing.map((m) => `  - ${m}`).join('\n')}`
+        )
+      }
+      brief = reRendered.brief
+    }
     version = existing.version + 1
     marker = briefMarkerFor(version)
-    commentBody = `Brief hash: ${hash}\nSupersedes: ${existing.url} — ${supersede.reason}\n${result.brief}`
+    commentBody = `Brief hash: ${briefHash(brief)}\nSupersedes: ${existing.url} — ${supersede.reason}\n${brief}`
   } else {
     if (existing) {
       throw new DispatchTaskError(`Issue #${n} is already dispatched — see ${existing.url}`)
     }
     version = 1
     marker = AEG_BRIEF_V1_MARKER
-    commentBody = `Brief hash: ${hash}\n${result.brief}`
+    commentBody = `Brief hash: ${briefHash(brief)}\n${brief}`
   }
 
   if (deps.beforePost) {
@@ -475,7 +654,7 @@ export async function prepareIssueTask(
 
   const url = deps.postMarkedComment('issue', String(issue), marker, commentBody)
 
-  return { issue, brief: result.brief, commentUrl: url, version }
+  return { issue, brief, commentUrl: url, version }
 }
 
 export type PrepareTaskOrIssueInput =
@@ -514,6 +693,8 @@ export type DispatchTaskDeps = {
     issue: number,
     explicitModel: string | undefined
   ) => string | undefined
+  runIssueWriteGate: (issue: number, retryCommand: string) => Promise<void>
+  widenSurface: (issue: number, addedGlobs: string[], retryCommand: string) => Promise<void>
 }
 
 const defaultDeps: DispatchTaskDeps = {
@@ -522,7 +703,9 @@ const defaultDeps: DispatchTaskDeps = {
   postMarkedComment,
   dispatchRole,
   resolveDispatchAuthorization,
-  resolveModelForDispatch
+  resolveModelForDispatch,
+  runIssueWriteGate,
+  widenSurface
 }
 
 /**
@@ -561,6 +744,8 @@ export async function dispatchTask(
       findExistingFrozenBrief: deps.findExistingFrozenBrief,
       postMarkedComment: deps.postMarkedComment,
       resolveDispatchAuthorization: deps.resolveDispatchAuthorization,
+      runIssueWriteGate: deps.runIssueWriteGate,
+      widenSurface: deps.widenSurface,
       beforePost: agent
         ? async (issue) => {
             // O3: an explicit `--model` always wins; absent that, resolved
