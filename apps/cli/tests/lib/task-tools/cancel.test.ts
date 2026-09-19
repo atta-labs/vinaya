@@ -36,6 +36,35 @@ const ISSUE = 558
 const PR = 900
 const ESCALATION_ID = `${ISSUE}-1-headsha1`
 
+/**
+ * issue-657, O5 — every real subprocess this file spawns overrides `HOME`
+ * to a fresh temp dir, but `run-paths.ts`'s own runtime-dir resolution
+ * checks `VINAYA_RUNTIME_DIR` FIRST, before `HOME` ever matters — a value
+ * inherited from the calling shell's own environment (set when this suite
+ * runs inside a real dispatched session's own orchestration) silently
+ * redirects the spawned subprocess to the operator's REAL, non-isolated
+ * `~/.vinaya`, where every test in this file shares the SAME hardcoded
+ * `ISSUE` (`558`): two tests, or two runs of the same test, then collide on
+ * the identical real control-store record (found live: a leftover
+ * `consumed resolution` for task `558` made a fresh, isolated-looking test
+ * fail with a stale replay it never itself produced). Stripped here,
+ * unconditionally, the same fix `dev-review-loop.test.ts` already applies
+ * to its own spawned driver's env.
+ *
+ * `AEG_REPO` is deliberately NOT stripped here, unlike that file's own
+ * helper: these subprocesses run with `cwd: repoRoot` — the real worktree,
+ * not a deliberately non-git tempdir — so an inherited `AEG_REPO` is a
+ * legitimate short-circuit for real repo-identity resolution, not a leak;
+ * removing it forces a slower, network-dependent fallback path this test
+ * never meant to exercise (found live: doing so made one of this file's own
+ * tests intermittently time out on this host).
+ */
+function hermeticSpawnEnv(home: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: home }
+  delete env.VINAYA_RUNTIME_DIR
+  return env
+}
+
 let sandbox: string
 let outbox: string
 let controlStoreDeps: ReturnType<typeof defaultControlStoreDeps>
@@ -436,7 +465,7 @@ try {
     try {
       const output = execFileSync('bun', [scriptPath], {
         cwd: repoRoot,
-        env: { ...process.env, HOME: home },
+        env: hermeticSpawnEnv(home),
         encoding: 'utf8'
       })
       expect(output).toContain('FIRST_OK')
@@ -447,7 +476,14 @@ try {
       rmSync(scriptPath, { force: true })
       rmSync(home, { recursive: true, force: true })
     }
-  })
+    // issue-657, O5 — two full `bun` subprocesses, each a real control-store
+    // round trip against a properly HOME-isolated (never VINAYA_RUNTIME_DIR-
+    // redirected) directory: legitimately slower than bun's own default
+    // per-test budget, borderline over it even before this fix (the prior
+    // leak into the operator's already-warm real `~/.vinaya` masked this by
+    // accident). Same accommodation `dev-review-loop.test.ts`'s own
+    // real-subprocess tests already carry.
+  }, 20000)
 
   it("restores process.env.VINAYA_TASK/VINAYA_RUN after returning, and never lets a later, unrelated task's own task_resume land in this run's outbox (round 2 security review, HIGH)", () => {
     // `cancelDevReviewLoop` is called IN-PROCESS from `task-tools/cancel.ts`
@@ -586,7 +622,7 @@ console.log('DONE')
     try {
       const output = execFileSync('bun', [scriptPath], {
         cwd: repoRoot,
-        env: { ...process.env, HOME: home },
+        env: hermeticSpawnEnv(home),
         encoding: 'utf8'
       })
       expect(output).toContain('TASK_AFTER:sentinel-task')
