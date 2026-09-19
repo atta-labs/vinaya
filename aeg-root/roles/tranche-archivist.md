@@ -6,6 +6,14 @@ role_id: tranche-archivist
 description: Closes out a finished tranche, so the next one starts from what is true now rather than what was true before.
 actor: either
 ack-token: 49f8adcd
+denied-tools:
+  - write-code
+  - decide-what-happens-next
+  - ratify-a-decision
+  - invent-a-retrospective-observation
+  - edit-the-plan
+  - delete-anything
+  - run-undispatched
 performs:
   - verify-forge-state
   - write-the-retrospective

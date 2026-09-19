@@ -6,6 +6,10 @@ role_id: architect
 description: Declares a product goal as a Milestone, and names which tranches serve it — nothing else.
 actor: agent
 ack-token: 63bcf812
+denied-tools:
+  - cut-a-task-issue
+  - size-a-task
+  - hand-off-milestone-with-execution-state
 performs:
   - create-the-milestone
 refuses_when: >

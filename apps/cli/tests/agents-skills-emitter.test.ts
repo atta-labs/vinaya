@@ -8,6 +8,7 @@ import {
   discoverRoleNames,
   formatRoleTitle,
   renderAgentSkill,
+  roleDeniedTools,
   staleAgentSkillPaths
 } from '../src/lib/agents-skills-emitter.js'
 
@@ -110,6 +111,58 @@ Run \`bun apps/cli/src/index.ts doctrine --role developer --print\` and follow i
 
     it('is unchanged for the ordinary adopter when selfHost is explicitly null', () => {
       expect(renderAgentSkill('developer', null)).toBe(renderAgentSkill('developer'))
+    })
+  })
+
+  describe('roleDeniedTools & the denied-tools body line (O3)', () => {
+    it('reads a YAML list from denied-tools frontmatter', () => {
+      const rolesDir = join(tempDir, 'roles')
+      mkdirSync(rolesDir, { recursive: true })
+      writeFileSync(
+        join(rolesDir, 'developer.md'),
+        '---\nactor: agent\ndenied-tools:\n  - merge\n  - write-status\n---\n# Developer\n'
+      )
+      expect(roleDeniedTools(tempDir, 'developer')).toEqual(['merge', 'write-status'])
+    })
+
+    it('returns [] for a role with no denied-tools frontmatter (the Operator)', () => {
+      const rolesDir = join(tempDir, 'roles')
+      mkdirSync(rolesDir, { recursive: true })
+      writeFileSync(join(rolesDir, 'operator.md'), '---\nactor: agent\n---\n# Operator\n')
+      expect(roleDeniedTools(tempDir, 'operator')).toEqual([])
+    })
+
+    it('renders denied tools as a body line, never a frontmatter grant — the host support is unconfirmed for this file', () => {
+      const skill = renderAgentSkill('developer', null, [], ['merge', 'write-status'])
+      expect(skill).toContain("Denied — this role's own doctrine forbids: merge, write-status.")
+      expect(skill).not.toContain('disallowed-tools:')
+    })
+
+    it('a role with no denied-tools renders the unchanged pointer (no denial line)', () => {
+      expect(renderAgentSkill('operator')).not.toContain('Denied —')
+    })
+
+    it('every real agent role but the Operator declares denied-tools against the real bundled doctrine (O3)', () => {
+      const realRoot = join(import.meta.dir, '..', '..', '..', 'aeg-root')
+      const roles = discoverRoleNames(realRoot)
+      expect(roles).toContain('developer')
+      for (const role of roles) {
+        const denied = roleDeniedTools(realRoot, role)
+        if (role === 'operator') {
+          expect(denied).toEqual([])
+        } else {
+          expect(denied.length, `${role} declares no denied-tools`).toBeGreaterThan(0)
+        }
+      }
+    })
+
+    it('buildAgentsSkillsOps carries denied-tools into the generated skill for a non-Operator role', () => {
+      const realRoot = join(import.meta.dir, '..', '..', '..', 'aeg-root')
+      const ops = buildAgentsSkillsOps(realRoot)
+      const developerOp = ops.find((op) => op.path === '.agents/skills/vinaya-developer/SKILL.md')
+      expect(developerOp?.content).toContain('Denied —')
+      const operatorOp = ops.find((op) => op.path === '.agents/skills/vinaya-operator/SKILL.md')
+      expect(operatorOp?.content).not.toContain('Denied —')
     })
   })
 

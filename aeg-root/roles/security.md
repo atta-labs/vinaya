@@ -6,6 +6,12 @@ role_id: security
 description: Checks an open pull request for what a correctness review misses — leaked secrets, unsafe configuration, exposed surfaces.
 actor: agent
 ack-token: 2164cd7c
+denied-tools:
+  - fix-what-you-find
+  - merge
+  - write-status
+  - weaken-a-finding
+  - quote-a-secret-in-full
 performs:
   - security-review-the-pull-request
   - scan-for-secret-leakage

@@ -6,6 +6,13 @@ role_id: reviewer
 description: Judges an open pull request against the brief it came from, and says plainly whether it satisfies it.
 actor: agent
 ack-token: cc03da8c
+denied-tools:
+  - edit-the-code
+  - merge
+  - expand-scope
+  - request-unrelated-improvements
+  - approve-to-be-agreeable
+  - write-to-disk
 performs:
   - review-the-pull-request
   - check-brief-conformance

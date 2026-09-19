@@ -120,25 +120,67 @@ export function roleAllowedTools(doctrineRoot: string, roleName: string): string
 }
 
 /**
+ * Read a role file's `denied-tools` frontmatter (O3) the same way
+ * `roleAllowedTools` reads `allowed-tools` — a YAML list or comma-separated
+ * inline value, `[]` when absent/malformed/empty. Every agent role but the
+ * Operator declares one: the verbs its own prose already forbids ("never
+ * merge", "never write status", …), transcribed as kebab-case entries in the
+ * same vocabulary `performs` already uses for what a role DOES.
+ */
+export function roleDeniedTools(doctrineRoot: string, roleName: string): string[] {
+  const file = join(doctrineRoot, 'roles', `${roleName}.md`)
+  if (!existsSync(file)) return []
+  const { data } = matter(readFileSync(file, 'utf8'))
+  const raw = data['denied-tools']
+  if (Array.isArray(raw))
+    return raw
+      .map(String)
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0)
+  if (typeof raw === 'string')
+    return raw
+      .split(',')
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0)
+  return []
+}
+
+/**
  * Render the pointer content for an agent skill. A role that declares an
  * `allowed-tools` grant gets that grant carried into the generated skill's
  * frontmatter, so the generated view exposes the SAME grant the role doc and
  * the router enforce; a role with no grant renders the unchanged 3-line
  * pointer.
+ *
+ * A role's `denied-tools` (O3) are carried as a plain BODY line, never a
+ * frontmatter grant, on THIS file specifically: `disallowed-tools` is a
+ * Claude-Code-only frontmatter extension, absent from the portable Agent
+ * Skills spec this generator's own target hosts (Codex, Antigravity, Grok
+ * Build — see this file's module doc) implement, and Claude Code itself
+ * never reads `.agents/skills/` at all (it gets its own generated
+ * `.claude/commands/vinaya.md` instead) — so no host this file reaches has
+ * any confirmed mechanism to enforce a tool restriction from it. The denial
+ * is real doctrine, just prose-enforced here rather than host-mechanized;
+ * the body line keeps it visible rather than silently dropped.
  */
 export function renderAgentSkill(
   roleName: string,
   selfHost: VendoredVinaya | null = null,
-  allowedTools: readonly string[] = []
+  allowedTools: readonly string[] = [],
+  deniedTools: readonly string[] = []
 ): string {
   const roleTitle = formatRoleTitle(roleName)
   const grantLine = allowedTools.length > 0 ? `allowed-tools: ${allowedTools.join(', ')}\n` : ''
+  const deniedLine =
+    deniedTools.length > 0
+      ? `\nDenied — this role's own doctrine forbids: ${deniedTools.join(', ')}. Enforced by doctrine text only: no confirmed host mechanism restricts tool availability from this file.\n`
+      : ''
   return `---
 name: vinaya-${roleName}
 description: Act as the AEG ${roleTitle} for this repo.
 ${grantLine}---
 Run \`${doctrineInvocation(selfHost)} --role ${roleName} --print\` and follow its output as your operating instructions for this session.
-`
+${deniedLine}`
 }
 
 /** Build the list of `create-file` ops for discovered roles under `.agents/skills/`. */
@@ -147,7 +189,12 @@ export function buildAgentsSkillsOps(doctrineRoot: string, selfHost: VendoredVin
   return roles.map((role) => ({
     kind: 'create-file',
     path: agentSkillPath(role),
-    content: renderAgentSkill(role, selfHost, roleAllowedTools(doctrineRoot, role)),
+    content: renderAgentSkill(
+      role,
+      selfHost,
+      roleAllowedTools(doctrineRoot, role),
+      roleDeniedTools(doctrineRoot, role)
+    ),
     group: AGENTS_SKILLS_GROUP
   }))
 }

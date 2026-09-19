@@ -6,6 +6,11 @@ role_id: archivist
 description: Closes out a merged pull request, recording what shipped and the intent it came from.
 actor: either
 ack-token: 4aef55d2
+denied-tools:
+  - write-task-status
+  - reopen-or-re-argue-the-work
+  - merge
+  - perform-found-cleanups
 performs:
   - close-the-issue
   - confirm-docs-updated

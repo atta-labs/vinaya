@@ -6,6 +6,14 @@ role_id: developer
 description: The coding agent that executes a brief — writes the change, opens the pull request, and answers for it.
 actor: agent
 ack-token: 1a2c7690
+denied-tools:
+  - author-own-brief
+  - write-status
+  - review-own-work
+  - merge
+  - settle-contested-architecture
+  - skip-verification-hook
+  - commit-report-only-file
 performs:
   - write-the-code
   - write-the-tests

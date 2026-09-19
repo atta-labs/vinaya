@@ -6,6 +6,13 @@ role_id: planner
 description: Turns an intent and a slice of tickets into a whole tranche — its tasks, and the dependencies between them.
 actor: agent
 ack-token: 8b3b50f4
+denied-tools:
+  - write-the-brief
+  - write-status
+  - execute-a-task
+  - settle-contested-architecture-alone
+  - invent-unregistered-project
+  - close-a-tranche
 performs:
   - cut-labeled-issues
   - size-tasks-via-deep-dig
