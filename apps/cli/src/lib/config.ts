@@ -581,7 +581,15 @@ export const VinayaConfigSchema = z.object({
           // the `product` class always has.
           severity: z.enum(['warning', 'error']).optional()
         })
-        .optional()
+        .optional(),
+      // issue-657, O6 — exact repo-relative paths (under any app's own
+      // `specs/**`) skipped entirely by the spec class below: stock already
+      // failing the day this sweep was extended to specs, listed here so
+      // the sweep can turn blocking on day one without failing every open
+      // PR against the existing backlog. Shrinks as later tasks rewrite
+      // each spec's prose to state its facts plainly instead of citing a
+      // tranche, an Issue, or a document outside this repository.
+      specGrandfather: z.array(z.string().min(1)).optional()
     })
     .optional(),
   // Config-native project metadata — see the `ProjectEntrySchema` comment

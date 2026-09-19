@@ -228,7 +228,7 @@ export class UnresolvableMergeBaseError extends Error {
  * that class's doc comment for why silently degrading to an empty base is
  * the wrong failure mode.
  */
-function resolveMergeBase(head: string, cwd?: string): string {
+export function resolveMergeBase(head: string, cwd?: string): string {
   const primary = process.env.BASE_SHA || 'origin/main'
   const tried = primary === 'main' ? [primary] : [primary, 'main']
   for (const ref of tried) {

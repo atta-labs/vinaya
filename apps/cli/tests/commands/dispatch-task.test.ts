@@ -60,7 +60,7 @@ None — no externally-normative source governs this task.
 
 ## Planner's rationale
 
-**Boundary** — Nothing real; a synthetic fixture Issue for a bundle test. Out: everything else.
+**Boundary** — In: \`apps/cli/src/lib/dispatch.ts\`, a stand-in real file (issue-657, O3: the render now refuses when the Surface resolves to a tracked file but the Boundary names none of them). Out: everything else.
 
 **Sizing** — n/a, synthetic fixture.
 

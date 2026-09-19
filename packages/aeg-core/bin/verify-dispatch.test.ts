@@ -675,8 +675,19 @@ describe('checkBareEdgeQualification', () => {
       { labels: [{ name: 'vinaya/tranche:tranche-a' }] },
       { labels: [{ name: 'vinaya/tranche:tranche-b' }] }
     ])
+    const result = await checkBareEdgeQualification([], ['372'], { number: 9, title: 'shared' }, REPO)
+    expect(result).toContain('`372`')
+  })
+
+  // issue-657, O1 — a hash-prefixed edge id is a forge Issue number, never
+  // ambiguous, whatever the Milestone holds.
+  it('never flags a hash-prefixed conflictsWith id, even in a multi-tranche Milestone', async () => {
+    mockMilestone9Issues([
+      { labels: [{ name: 'vinaya/tranche:tranche-a' }] },
+      { labels: [{ name: 'vinaya/tranche:tranche-b' }] }
+    ])
     const result = await checkBareEdgeQualification([], ['#372'], { number: 9, title: 'shared' }, REPO)
-    expect(result).toContain('`#372`')
+    expect(result).toBeNull()
   })
 })
 

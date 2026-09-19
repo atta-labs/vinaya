@@ -41,7 +41,14 @@
         "packages/aeg-forge-state/src/amend-rationale-deps.test.ts"
       ],
       "severity": "error"
-    }
+    },
+    "specGrandfather": [
+      "apps/cli/specs/isolation.md",
+      "apps/cli/specs/log.md",
+      "apps/cli/specs/loop.md",
+      "apps/cli/specs/self-hosting.md",
+      "apps/cli/specs/surface.md"
+    ]
   },
   "briefSchema": {
     "pr": {
