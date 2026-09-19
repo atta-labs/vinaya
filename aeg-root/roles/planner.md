@@ -88,4 +88,4 @@ Before planning, confirm:
 
 ---
 
-For the full procedure — the conversational protocol, the readiness gate, sizing and the blast-radius rule, the Planner's rationale fields and grammar, plan-integrity gates, tranche refactor, and the dispatch act — see [`roles/planner/reference.md`](planner/reference.md).
+For the full procedure — the readiness gate, sizing and the blast-radius rule, the Planner's rationale fields and grammar, plan-integrity gates, tranche refactor, and the dispatch act — see [`roles/planner/reference.md`](planner/reference.md).
