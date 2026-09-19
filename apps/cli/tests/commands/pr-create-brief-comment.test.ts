@@ -31,13 +31,43 @@ function tempDir(prefix: string): string {
 
 type CliResult = { status: number; stdout: string; stderr: string }
 
+/**
+ * `CLAUDE_PROJECT_DIR`/`CLAUDE_CODE_SESSION_ID` identify THIS test process's
+ * own real Claude Code session, and `VINAYA_RUNTIME_DIR`/`VINAYA_TASK`/
+ * `VINAYA_ROLE`/`VINAYA_RUN`/`VINAYA_RUN_ID`/`VINAYA_ROUND` identify a real
+ * `vinaya` dispatch this test process is itself running inside of —
+ * inherited into a spawned `vinaya` child by a plain `{ ...process.env }`
+ * spread, they let `resolveMeteringCapability`/`recoverUsageFromDispatchTee`
+ * (`@attalabs/aeg-core`, `lib/dispatch.ts`) find and read this real session's
+ * own Stop-hook transcript pointer or launch-record tee, regardless of the
+ * child's own throwaway `cwd` (both key off these env vars, never the
+ * caller's `cwd` — found live: a fixture repo in a fresh `mkdtempSync` dir
+ * still resolved a real, capable token report when this suite runs from
+ * inside a genuine dispatched session). Stripped here so every test in this
+ * file spawns the CLI as a host with no metering wiring of its own — the
+ * fixed point the token-report fixture below actually asserts.
+ */
 function runCli(args: string[], cwd: string, env: Record<string, string | undefined>): CliResult {
+  const childEnv = { ...process.env, ...env }
+  for (const key of [
+    'CLAUDE_PROJECT_DIR',
+    'CLAUDE_CODE_SESSION_ID',
+    'VINAYA_RUNTIME_DIR',
+    'VINAYA_TASK',
+    'VINAYA_ROLE',
+    'VINAYA_RUN',
+    'VINAYA_RUN_ID',
+    'VINAYA_ROUND',
+    'VINAYA_UNATTENDED'
+  ]) {
+    delete childEnv[key]
+  }
   try {
     const stdout = execFileSync('bun', [INDEX, ...args], {
       encoding: 'utf8',
       cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, ...env }
+      env: childEnv
     })
     return { status: 0, stdout, stderr: '' }
   } catch (e) {
