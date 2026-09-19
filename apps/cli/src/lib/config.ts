@@ -743,7 +743,28 @@ export const VinayaConfigSchema = z.object({
     .refine((v) => v.headers === undefined || v.webhookUrl !== undefined, {
       message: 'logPublish: headers requires webhookUrl'
     })
-    .optional()
+    .optional(),
+  // The one directory every file a task's RUN writes lives under
+  // (`apps/cli/src/lib/run-paths.ts`'s `runPath`, the single function that
+  // resolves all of them). Absent — the default for every repo that has
+  // never set this key — runs write under a per-repository folder of the
+  // machine's own Vinaya home instead (`defaultRuntimeDir`). Set it to move
+  // the whole tree somewhere with room, or somewhere a backup/retention
+  // policy already covers: an agent-output folder grew to 738 MB under the
+  // Vinaya home with nothing naming an owner for it, which is why the
+  // destination became configurable at all.
+  //
+  // NOT the telemetry outbox, and not any other log destination — those
+  // stay where they are, under the Vinaya home, and are the one exception
+  // `run-paths-only.test.ts` names.
+  //
+  // **Read only from the default branch by an unattended caller**
+  // (`resolveTrustAnchorRuntimeDir`, below), the same rule `webhookUrl`
+  // already carries and for the same reason: this is a filesystem
+  // destination a pull request under review could otherwise redirect in its
+  // own diff, and the loop that would honour it runs with no human
+  // watching.
+  runtimeDir: z.string().min(1).optional()
 })
 
 export type VinayaConfig = z.infer<typeof VinayaConfigSchema>
@@ -1004,6 +1025,41 @@ export function resolveTrustAnchorWebhookTarget(
   const anchorTarget = resolveLogPublishTarget(trustAnchorConfig)
   if (!anchorTarget || !('webhookUrl' in anchorTarget) || anchorTarget.webhookUrl !== localWebhookUrl) return null
   return anchorTarget
+}
+
+/**
+ * The working tree's own `runtimeDir` — `null` when unset. The value an
+ * ATTENDED caller honours directly (a human chose to run the command, the
+ * same trust level as `dispatch.agent`); an UNATTENDED one must put it
+ * through `resolveTrustAnchorRuntimeDir` first.
+ */
+export function resolveRuntimeDirSetting(config: VinayaConfig | null): string | null {
+  return config?.runtimeDir ?? null
+}
+
+/**
+ * The trust-anchor-approved `runtimeDir` for an UNATTENDED caller — `null`
+ * unless the repository's default-branch copy of `vinaya.config.json`
+ * (`trustAnchorConfig`, from `loadTrustAnchorConfig()`) declares the EXACT
+ * SAME value the working tree resolved. A `null` result means "fall back to
+ * the per-repository default," never "honour the working tree anyway."
+ *
+ * Exactly `resolveTrustAnchorWebhookTarget`'s rule, applied to the second
+ * destination a pull request could redirect in its own diff. A branch that
+ * set `runtimeDir` to the developer's own worktree would otherwise put the
+ * driver's lock, the control records and the reviewer hand-off files inside
+ * the very tree the confined developer is allowed to write — letting a
+ * brief-driven agent forge its own ownership epoch, its own held verdict,
+ * or another task's resume record. Pure: takes the already-resolved local
+ * value and an already-loaded trust-anchor config, no filesystem or network
+ * of its own.
+ */
+export function resolveTrustAnchorRuntimeDir(
+  localRuntimeDir: string,
+  trustAnchorConfig: VinayaConfig | null
+): string | null {
+  const anchored = resolveRuntimeDirSetting(trustAnchorConfig)
+  return anchored !== null && anchored === localRuntimeDir ? anchored : null
 }
 
 /** `log-flush.ts`'s own default when a caller passes no `maxChunksPerFlush` at all — kept here, next to the config field it backs, so the schema comment and the default never drift apart. */
