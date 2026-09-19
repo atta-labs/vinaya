@@ -84,8 +84,33 @@ function roundStartedEvent(state: LoopState, round: number, baseHead: string): D
   return { ...loopEventEnvelope(state), event: 'round_started', round, base_head: baseHead }
 }
 
-function gateResultReadEvent(state: LoopState, round: number, head: string, green: boolean): DevReviewLoopEventInput {
-  return { ...loopEventEnvelope(state), event: 'gate_result_read', round, head, green }
+/**
+ * `confidence` is exactly what this round's own first confidence read
+ * returned — `undefined` for round 1 or a red gate (neither ever reads the
+ * file), `'absent'` for a missing or malformed statement, or the parsed
+ * value/reason otherwise. `state.extraTurnUsed` is read here, before this
+ * call's own branch in `assessGate` can set it — so it reports whether the
+ * confidence rule's one extra turn was already spent BEFORE this read, never
+ * whether this round's own outcome later spends it.
+ */
+function gateResultReadEvent(
+  state: LoopState,
+  round: number,
+  head: string,
+  green: boolean,
+  confidence: Confidence | undefined
+): DevReviewLoopEventInput {
+  const confidenceFields =
+    confidence === undefined
+      ? {}
+      : confidence === 'absent'
+        ? { confidence_unavailable: true as const, extra_turn_spent: state.extraTurnUsed }
+        : {
+            confidence_value: confidence.value,
+            ...(confidence.reason !== undefined ? { confidence_reason: confidence.reason } : {}),
+            extra_turn_spent: state.extraTurnUsed
+          }
+  return { ...loopEventEnvelope(state), event: 'gate_result_read', round, head, green, ...confidenceFields }
 }
 
 /**
@@ -269,7 +294,7 @@ function assessGate(
   if (isNewRound) {
     if (state.rounds.length === 0 && state.pending === null) events.push(loopStartedEvent(state))
     events.push(roundStartedEvent(state, obs.round, obs.stats.baseHead))
-    events.push(gateResultReadEvent(state, obs.round, obs.stats.head, obs.green))
+    events.push(gateResultReadEvent(state, obs.round, obs.stats.head, obs.green, obs.confidence))
   }
 
   if (!obs.green) {
