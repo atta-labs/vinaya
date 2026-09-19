@@ -180,7 +180,7 @@ import {
   sizeOfSafe,
   waitForOwnLoopLine
 } from './dev-review-loop/round-assess.js'
-import { buildReport, gh, runReportForOpenPr } from './pr-report-engine.js'
+import { buildReport, gh, resolveMergeBase, runReportForOpenPr } from './pr-report-engine.js'
 import { reassertPrBodyPremise } from '../checks/bin/check-pr-premise-reassert.js'
 import type { PremiseReassertResult } from '../checks/premise-reassert-logic.js'
 import { postForgeEffectOnce, publishRound } from './dev-review-loop/publication.js'
@@ -330,6 +330,23 @@ export type LoopDeps = {
   telemetryOutboxRoot: () => string
   repoRoot: () => string
   gitRevParseOriginMain: () => string
+  /**
+   * issue-657, O4 — the review-input manifest's own base identity: the
+   * merge base of `head` and the default branch, never the default branch's
+   * raw tip (`gitRevParseOriginMain`, above) — a base that moved past the
+   * candidate's branch point is never part of the pull request's own diff,
+   * and a two-dot diff against the raw tip attributes that drift to the PR.
+   * Reuses `pr-report-engine.ts`'s own `resolveMergeBase` (the same
+   * `origin/main`-then-`main` fallback the Evidence block's Group A diff
+   * already resolves through) rather than a second, ad hoc `git`
+   * invocation — one capability, one function. Throws
+   * `UnresolvableMergeBaseError` when no candidate ref yields a base that is
+   * a real common ancestor of `head` (unrelated histories, or neither ref
+   * resolves) — the same fail-loud posture every other git dependency here
+   * already takes; the caller never falls back to a value that is not
+   * actually an ancestor of the head it is judging.
+   */
+  gitMergeBase: (head: string) => string
   gitFetch: (sha: string) => void
   gitDiffShortstat: (base: string, head: string) => string
   flushOutbox: (task: number) => Promise<FlushOutboxOutcome>
@@ -414,6 +431,10 @@ function defaultRepoRoot(): string {
 
 function defaultGitRevParseOriginMain(): string {
   return sh('git', ['rev-parse', 'origin/main'])
+}
+
+function defaultGitMergeBase(head: string): string {
+  return resolveMergeBase(head)
 }
 
 function defaultGitFetch(sha: string): void {
@@ -856,6 +877,7 @@ function defaultDeps(): LoopDeps {
     telemetryOutboxRoot,
     repoRoot: defaultRepoRoot,
     gitRevParseOriginMain: defaultGitRevParseOriginMain,
+    gitMergeBase: defaultGitMergeBase,
     gitFetch: defaultGitFetch,
     gitDiffShortstat: defaultGitDiffShortstat,
     flushOutbox: defaultFlushOutbox,
@@ -2826,15 +2848,18 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           const revision = d.fetchSourceRevision(task)
           const briefContentAtDispatch = d.fetchFrozenBrief(task)
           // The base identity this round's candidate is judged against
-          // (task 5, O1) — origin/main's tip, the
-          // same base the merge gate binds against. Resolved ONCE here and
-          // reused in the self-check below, so it never drifts within a single
-          // round: the same treatment the policy already gets (`loop.md`, "the
-          // policy is resolved once per loop run and so never drifts within a
-          // single run"). A base move across rounds is caught by the gate and
-          // by the existing `stale_driver` guard, not by manufacturing a new
-          // mid-round pause reason.
-          const baseSha = d.gitRevParseOriginMain()
+          // (task 5, O1; issue-657, O4) — the merge base of `head` and the
+          // default branch, never the default branch's raw tip: a commit
+          // that landed on the default branch after this candidate branched
+          // is never part of the pull request's own diff, and judging
+          // against the raw tip attributed that drift to the PR. Resolved
+          // ONCE here and reused in the self-check below, so it never drifts
+          // within a single round: the same treatment the policy already
+          // gets (`loop.md`, "the policy is resolved once per loop run and
+          // so never drifts within a single run"). A base move across
+          // rounds is caught by the gate and by the existing `stale_driver`
+          // guard, not by manufacturing a new mid-round pause reason.
+          const baseSha = d.gitMergeBase(head)
           const manifest: ReviewInputManifest = buildReviewInputManifest({
             headSha: head,
             baseSha,
@@ -3182,7 +3207,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               lastDispatchedManifest ??
               buildReviewInputManifest({
                 headSha: d.resolveHead(branch),
-                baseSha: d.gitRevParseOriginMain(),
+                baseSha: d.gitMergeBase(d.resolveHead(branch)),
                 briefContent: d.fetchFrozenBrief(task),
                 objectivesVersion: d.resolveIssueObjectives(task).version,
                 rulingOrdinal: d.fetchNewestRulingOrdinal(prNumber),
