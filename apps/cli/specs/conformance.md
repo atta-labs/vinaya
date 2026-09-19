@@ -1,5 +1,7 @@
 # Conformance matrix — the task path against the course study index and primary documentation
 
+Status: draft
+
 Scope: `task-operator-v1` #5 (Issue #571). This matrix names, for every applicable
 study-index item and every primary-documentation requirement named on that
 Issue, the Vinaya decision, the file that actually owns the behavior today,
