@@ -129,6 +129,31 @@ describe('vinaya doctrine', () => {
     expect(stderr).toContain('--role planner')
   })
 
+  it("--print emits the resolved file's body (frontmatter stripped), not its path", () => {
+    const root = resolveDoctrineRoot()
+    if (root === null) throw new Error('no doctrine root on this machine')
+    const printed = captureStdout(() => doctrineCommand(['--role', 'developer', '--print']))
+    const path = captureStdout(() => doctrineCommand(['--role', 'developer'])).trim()
+    expect(printed).not.toContain(path)
+    expect(printed).toContain('Developer')
+    // Frontmatter's opening fence is never in the printed output.
+    expect(printed.trimStart().startsWith('---')).toBe(false)
+  })
+
+  it('--role <name> without --print stays byte-identical to the path-only output — a flag, never a default', () => {
+    const withoutFlag = captureStdout(() => doctrineCommand(['--role', 'developer']))
+    // Re-running the exact same call is the byte-identical proof: nothing
+    // about resolving `--print`'s presence/absence touches this branch.
+    expect(captureStdout(() => doctrineCommand(['--role', 'developer']))).toBe(withoutFlag)
+    expect(withoutFlag.trim().endsWith(join('roles', 'developer.md'))).toBe(true)
+  })
+
+  it("bare (no --role) --print emits the front door's body, not its path", () => {
+    const printed = captureStdout(() => doctrineCommand(['--print']))
+    const path = captureStdout(() => doctrineCommand([])).trim()
+    expect(printed).not.toContain(path)
+  })
+
   it('actor: agent and actor: either roles both still resolve — the exclusion is actor-specific, not a blanket narrowing', () => {
     const root = resolveDoctrineRoot()
     if (root === null) throw new Error('no doctrine root on this machine')

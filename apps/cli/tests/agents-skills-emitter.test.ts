@@ -75,7 +75,7 @@ describe('agents-skills-emitter', () => {
 name: vinaya-developer
 description: Act as the AEG Developer for this repo.
 ---
-Run \`vinaya doctrine --role developer\` and follow its output as your operating instructions for this session.
+Run \`vinaya doctrine --role developer --print\` and follow its output as your operating instructions for this session.
 `
       expect(renderAgentSkill('developer')).toBe(expected)
       expect(agentSkillPath('developer')).toBe('.agents/skills/vinaya-developer/SKILL.md')
@@ -90,7 +90,7 @@ Run \`vinaya doctrine --role developer\` and follow its output as your operating
 name: vinaya-brief-author
 description: Act as the AEG Brief Author for this repo.
 ---
-Run \`vinaya doctrine --role brief-author\` and follow its output as your operating instructions for this session.
+Run \`vinaya doctrine --role brief-author --print\` and follow its output as your operating instructions for this session.
 `
       expect(renderAgentSkill('brief-author')).toBe(expected)
       expect(agentSkillPath('brief-author')).toBe('.agents/skills/vinaya-brief-author/SKILL.md')
@@ -103,7 +103,7 @@ Run \`vinaya doctrine --role brief-author\` and follow its output as your operat
 name: vinaya-developer
 description: Act as the AEG Developer for this repo.
 ---
-Run \`bun apps/cli/src/index.ts doctrine --role developer\` and follow its output as your operating instructions for this session.
+Run \`bun apps/cli/src/index.ts doctrine --role developer --print\` and follow its output as your operating instructions for this session.
 `
       expect(renderAgentSkill('developer', { dir: 'apps/cli', bin: 'apps/cli/dist/index.js' })).toBe(expected)
     })

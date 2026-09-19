@@ -2,7 +2,9 @@
 //
 // Generates the shared agent-skill surface read natively by Codex, Antigravity,
 // and Grok Build. Each emitted file is a 3-line pointer delegating to
-// `vinaya doctrine --role <role>` at read time.
+// `vinaya doctrine --role <role> --print` at read time — one hop: the
+// pointer's own output IS the role's operating instructions, not a second
+// path the agent must read again.
 //
 // Role discovery is live-scanned from the package's resolved `aeg-root/roles/*.md`,
 // never hardcoded, so additions to doctrine surface automatically in future upgrades.
@@ -135,7 +137,7 @@ export function renderAgentSkill(
 name: vinaya-${roleName}
 description: Act as the AEG ${roleTitle} for this repo.
 ${grantLine}---
-Run \`${doctrineInvocation(selfHost)} --role ${roleName}\` and follow its output as your operating instructions for this session.
+Run \`${doctrineInvocation(selfHost)} --role ${roleName} --print\` and follow its output as your operating instructions for this session.
 `
 }
 

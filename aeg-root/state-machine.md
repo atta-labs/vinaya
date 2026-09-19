@@ -13,6 +13,8 @@ If you are unsure whether an action is permitted, the answer is here. If a role 
 
 For the prose walkthrough (thirteen phases), see `process.md`. For the tranche/task model, see `tranche-model.md`. For role-specific instructions, see `roles/`. For the role-seam contracts, see `contracts/`.
 
+**`vinaya doctrine --role <name> --print` is a seat's one-hop entry.** An agent's generated skill or slash command shells out to this exact invocation and treats its output as the session's own operating instructions — no second file to read. For an agent role (every `actor: agent`/`either` role, `principal` excluded — it is `actor: human` and never resolves through `--role` at all), that output's first line is a fixed, per-role acknowledgement token declared in the role file's own frontmatter; the role's text requires the agent's first session message to echo that token verbatim, so a transcript proves the doctrine was actually read with one search. Every agent role but the Operator — whose grant is already the mechanical `allowed-tools` list checked at `roles/operator.md` §"you never invent authority" — also declares the verbs its prose forbids as denied tools in its frontmatter; the generated skill carries that list forward as a disallowed-tools grant where the host enforces one, and as a plain body line naming the denial where it does not.
+
 ---
 
 ## Section 1: Purpose
