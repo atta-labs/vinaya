@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test'
+import { beforeAll, describe, expect, it } from 'bun:test'
 import { type ChildProcess, spawn } from 'node:child_process'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -50,7 +50,28 @@ import {
 // --- repo/bin resolution (same shape protocol.test.ts already uses) --------
 
 export const REPO_ROOT = join(import.meta.dir, '..', '..', '..', '..')
-export const ABS_BIN = join(REPO_ROOT, 'apps', 'cli', 'dist', 'index.js')
+export const CLI_ROOT = join(REPO_ROOT, 'apps', 'cli')
+export const ABS_BIN = join(CLI_ROOT, 'dist', 'index.js')
+
+/**
+ * `dist/index.js` is never built by the `test-cli` CI job itself — no shard
+ * downloads the `build` job's artifact or reruns the build; a spawn-mode
+ * scenario here only ever sees it because SOME other file in the SAME shard
+ * happens to build it as its own fixture side effect first (the ONLY
+ * existing precedent, `tests/commands/dispatch-task.test.ts`'s own
+ * `beforeAll`). Since a shard's file list is an explicit, hand-edited
+ * assignment (`ci-shards/shard-<n>.txt`) with no guarantee that file and this
+ * one ever land in the same shard again, this suite builds its OWN copy
+ * before spawning anything — the same `Bun.spawnSync` call that file uses,
+ * not a second build mechanism. Idempotent and cheap (a few seconds) rather
+ * than "assume a shard-mate already did it."
+ */
+export function ensureCliBuilt(): void {
+  const build = Bun.spawnSync(['bun', 'run', '--cwd', CLI_ROOT, 'build'], { stdout: 'pipe', stderr: 'pipe' })
+  if (build.exitCode !== 0) {
+    throw new Error(`apps/cli build failed:\n${build.stderr.toString()}`)
+  }
+}
 
 export type ServerInvocation = { command: string; args: string[] }
 
@@ -282,6 +303,10 @@ async function handleOne(
 
 export function defineConformanceSuite(runtime: 'claude' | 'codex', invocation: ServerInvocation): void {
   describe(`task-tools conformance — ${runtime} adapter, nine scenarios`, () => {
+    beforeAll(() => {
+      ensureCliBuilt()
+    }, 120_000)
+
     it('Clean result — task_start launches exactly once and returns the durable run identity', async () => {
       const sb = buildSandbox()
       try {
