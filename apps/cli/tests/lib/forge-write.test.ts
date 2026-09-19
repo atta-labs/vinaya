@@ -350,7 +350,13 @@ describe('an unmerged Depends-on folds into the write gate as informational, nev
   const RATIONALE_WITH_OPEN_DEPENDENCY = [
     "## Task Issue — Planner's rationale",
     '',
-    '**Boundary** — In: nothing real. Out: nothing.',
+    // issue-657, O3 — the render now refuses when the Surface resolves to a
+    // tracked file but the Boundary names none of them; this fixture's own
+    // `## Surface` `in: aeg-root` resolves to the fixture's own committed
+    // `aeg-root/templates/brief-template.md`, so the Boundary must name a
+    // real file to keep this fixture isolating the ONE dependency-not-merged
+    // blocker, not a premise-pins one.
+    "**Boundary** — In: `aeg-root/templates/brief-template.md`, the fixture's own committed doctrine file. Out: nothing.",
     '',
     '**Sizing** — n/a, test fixture.',
     '',

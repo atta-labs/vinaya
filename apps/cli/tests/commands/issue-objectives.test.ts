@@ -647,7 +647,11 @@ exit 1
   const RATIONALE = [
     "## Task Issue \u2014 Planner's rationale",
     '',
-    '**Boundary** \u2014 In: nothing real. Out: nothing.',
+    // issue-657, O3 \u2014 the render now refuses when the Surface resolves to
+    // a tracked file but the Boundary names none of them; this shared
+    // fixture's own `## Surface` `in: aeg-root` resolves to real tracked
+    // files, so the Boundary must name one.
+    '**Boundary** \u2014 In: `aeg-root/templates/brief-template.md`, the fixture\u2019s own committed doctrine file. Out: nothing.',
     '',
     '**Sizing** \u2014 n/a, test fixture.',
     '',

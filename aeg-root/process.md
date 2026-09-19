@@ -37,7 +37,7 @@ Every piece of work moves through some subset of these. Trivial work (Tier 0) sk
 13. Tranche Close
 ```
 
-> **Doctrine: CI green ≠ app boots ≠ feature works.** Phase 11 (Verification) exists because four consecutive features merged CI-green and were broken at runtime. The static gates of Phase 8 and the diff-reading reviews of Phase 10 cannot exercise an auth-gated / key-dependent / browser-rendered path. Phase 11 closes that gap with a tagged, executed test plan (see `roles/developer.md` § Verification and).
+> **Doctrine: CI green ≠ app boots ≠ feature works.** Phase 11 (Verification) exists because four consecutive features merged CI-green and were broken at runtime. The static gates of Phase 8 and the diff-reading reviews of Phase 10 cannot exercise an auth-gated / key-dependent / browser-rendered path. Phase 11 closes that gap with a tagged, executed test plan (see `roles/developer/reference.md` § Verification and).
 
 After merge, the **Archivist** runs close-out (`roles/archivist.md`). That's the final step of the flow.
 
@@ -77,11 +77,11 @@ This phase pressure-tests an *idea*; Phase 10 reviews *shipped code*. Different 
 
 ## Phase 3: Dispatch (brief authoring + validation + dispatch)
 
-**Who:** Planner, in its dispatch act (`roles/planner.md` § The dispatch act).
+**Who:** Planner, in its dispatch act (`roles/planner/reference.md` § The dispatch act).
 
-**Formerly three phases (brief authoring, brief validation, dispatch); now one.** The brief is no longer hand-authored just-in-time by a separate Brief Author role — its judgment content (the eight-field rationale, `## Objectives`, and the four judgment sections `## Surface`/`## Parts`/`## Test plan`/`## Stop conditions`) was already written onto the task Issue at plan time (Phase 1), and validated then, by the same ring-0 creation gate and R1 continuous check that grade every open task Issue (`roles/planner.md` § Rationale grammar). What used to be three sequential human/CI steps is now one mechanical render plus one gate check, both performed by a single command.
+**Formerly three phases (brief authoring, brief validation, dispatch); now one.** The brief is no longer hand-authored just-in-time by a separate Brief Author role — its judgment content (the eight-field rationale, `## Objectives`, and the four judgment sections `## Surface`/`## Parts`/`## Test plan`/`## Stop conditions`) was already written onto the task Issue at plan time (Phase 1), and validated then, by the same ring-0 creation gate and R1 continuous check that grade every open task Issue (`roles/planner/reference.md` § Rationale grammar). What used to be three sequential human/CI steps is now one mechanical render plus one gate check, both performed by a single command.
 
-Before dispatching a task, the Planner checks four gates (`roles/planner.md` § The dispatch act):
+Before dispatching a task, the Planner checks four gates (`roles/planner/reference.md` § The dispatch act):
 1. **Issue exists** — a real forge Issue number, not `#TBD`, not blank.
 2. **Dependencies merged** — every `depends-on` task's PR is on `main`.
 3. **No open conflicting sibling** — no `conflicts-with` task has an open PR.
@@ -219,9 +219,9 @@ If both pass (and agent verdicts are APPROVE and PASS, and surfaced findings hav
 
 ## Phase 11: Verification (runtime test plan)
 
-**Who:** the Developer-agent (for `[agent]` items) and the Principal (for `[principal]` items). Verification is a *phase*, not a new actor — see `roles/developer.md` § Verification.
+**Who:** the Developer-agent (for `[agent]` items) and the Principal (for `[principal]` items). Verification is a *phase*, not a new actor — see `roles/developer/reference.md` § Verification.
 
-A PR that has passed code review and security review still has not been run. The reviews read the diff; the static gates of Phase 8 prove the code compiles and types and tests; CI does not boot the app. Phase 11 boots it, executes the brief's **Test Plan** (a required brief field, rendered from the Issue's `## Test plan` section — see `roles/planner.md` § The Planner's rationale), and posts the results onto the PR. Doctrine: **CI green ≠ app boots ≠ feature works** — runtime verification is its own gate.
+A PR that has passed code review and security review still has not been run. The reviews read the diff; the static gates of Phase 8 prove the code compiles and types and tests; CI does not boot the app. Phase 11 boots it, executes the brief's **Test Plan** (a required brief field, rendered from the Issue's `## Test plan` section — see `roles/planner/reference.md` § The Planner's rationale), and posts the results onto the PR. Doctrine: **CI green ≠ app boots ≠ feature works** — runtime verification is its own gate.
 
 The test plan is split by who can structurally execute each item:
 
@@ -323,7 +323,7 @@ A rollback is its own task with its own brief. The decision to roll back is a Ty
 
 ## How this process maps to file artifacts
 
-For which files get mutated in which phase by which actor, see `state-machine.md` (the artifact + mutation matrix). For the roles, see `roles/principal.md`, `roles/planner.md`, `developer.md`, `reviewer.md`, `security.md`, `archivist.md`. For the tranche/task model, see `tranche-model.md` and `roles/planner.md`. For dispatching a task, see `roles/planner.md` § The dispatch act.
+For which files get mutated in which phase by which actor, see `state-machine.md` (the artifact + mutation matrix). For the roles, see `roles/principal.md`, `roles/planner.md`, `developer.md`, `reviewer.md`, `security.md`, `archivist.md`. For the tranche/task model, see `tranche-model.md` and `roles/planner.md`. For dispatching a task, see `roles/planner/reference.md` § The dispatch act.
 
 ---
 

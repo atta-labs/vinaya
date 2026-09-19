@@ -1652,15 +1652,19 @@ export type TaskIssueFacts = {
  * naming a qualified one back. Structural on `{ ref, conflictsWith }` so
  * both `TaskIssueFacts` and `TaskSurfaceFacts` satisfy it without a cast.
  */
+function normalizeEdgeId(s: string): string {
+  const qualified = splitSlugQualifiedEdge(s)
+  return (qualified ? qualified.bareId : s).replace(/^#/, '').trim()
+}
+
 export function edgesNameEachOther(
   a: { ref: string; conflictsWith: string[] },
   b: { ref: string; conflictsWith: string[] }
 ): boolean {
-  const norm = (s: string) => {
-    const qualified = splitSlugQualifiedEdge(s)
-    return (qualified ? qualified.bareId : s).replace(/^#/, '').trim()
-  }
-  return a.conflictsWith.map(norm).includes(norm(b.ref)) || b.conflictsWith.map(norm).includes(norm(a.ref))
+  return (
+    a.conflictsWith.map(normalizeEdgeId).includes(normalizeEdgeId(b.ref)) ||
+    b.conflictsWith.map(normalizeEdgeId).includes(normalizeEdgeId(a.ref))
+  )
 }
 
 /**
@@ -1712,12 +1716,14 @@ export function checkConflictCompleteness(
 
 /** One open task Issue, reduced to what O5's cross-task Surface-overlap check needs. */
 export type TaskSurfaceFacts = {
-  /** How the Issue is referred to in a `Conflicts-with` edge — its number, or its task id (mirrors `TaskIssueFacts.ref`). */
+  /** How the Issue is referred to in a `Conflicts-with`/`Depends-on` edge — its number, or its task id (mirrors `TaskIssueFacts.ref`). */
   ref: string
   /** `## Surface` `in:` globs (`parseIssueSurface`) — `[]` when the Issue carries no parseable Surface (nothing to overlap). */
   surfaceIn: string[]
   /** Already-parsed `Conflicts-with` ids (`parseRationaleDeps`). */
   conflictsWith: string[]
+  /** Already-parsed `Depends-on` ids (`parseRationaleDeps`) — issue-657 O2's serialization exemption. */
+  dependsOn: string[]
 }
 
 /**
@@ -1769,11 +1775,56 @@ function isSharedByConstruction(glob: string, subject: TaskSurfaceFacts, sibling
   return cohort.every((entry) => entry.surfaceIn.includes(glob))
 }
 
+/**
+ * issue-657, O2 — two tasks sharing a Milestone can never run at the same
+ * time when one depends on the other, directly or through a chain of
+ * `Depends-on` edges: A depends on B and B depends on A are both
+ * serialization (the direction is never load-bearing here, only that an
+ * edge exists), and a chain A -> B -> C serializes A and C too even though
+ * neither names the other directly. Union-find-by-BFS over the `dependsOn`
+ * edges of `group` (the subject plus every sibling the caller resolved,
+ * i.e. the same Milestone cohort `checkSurfaceOverlap` already scopes to —
+ * the closure never reaches past that set because `group` never contains
+ * anything outside it).
+ */
+function dependencyChainSerializes(subjectRef: string, siblingRef: string, group: TaskSurfaceFacts[]): boolean {
+  const target = normalizeEdgeId(siblingRef)
+  const adjacency = new Map<string, Set<string>>()
+  const link = (a: string, b: string) => {
+    if (!adjacency.has(a)) adjacency.set(a, new Set())
+    adjacency.get(a)?.add(b)
+  }
+  for (const entry of group) {
+    const ref = normalizeEdgeId(entry.ref)
+    for (const dep of entry.dependsOn) {
+      const depRef = normalizeEdgeId(dep)
+      link(ref, depRef)
+      link(depRef, ref)
+    }
+  }
+
+  const start = normalizeEdgeId(subjectRef)
+  const seen = new Set<string>([start])
+  const queue: string[] = [start]
+  while (queue.length > 0) {
+    const current = queue.shift() as string
+    if (current === target) return true
+    for (const next of adjacency.get(current) ?? []) {
+      if (seen.has(next)) continue
+      seen.add(next)
+      queue.push(next)
+    }
+  }
+  return false
+}
+
 export function checkSurfaceOverlap(subject: TaskSurfaceFacts, siblings: TaskSurfaceFacts[]): IssueSectionResult {
   const errors: string[] = []
+  const group = [subject, ...siblings]
   for (const sibling of siblings) {
     if (sibling.ref === subject.ref) continue
     if (edgesNameEachOther(subject, sibling)) continue
+    if (dependencyChainSerializes(subject.ref, sibling.ref, group)) continue
     for (const mine of subject.surfaceIn) {
       if (isSharedByConstruction(mine, subject, siblings)) continue
       for (const theirs of sibling.surfaceIn) {

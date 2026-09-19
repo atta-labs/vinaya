@@ -204,25 +204,30 @@ export class AmbiguousBareEdgeError extends Error {
 }
 
 /**
- * A bare edge id (`1`, `#NNN` — `splitSlugQualifiedEdge` returns `null`)
- * resolves unambiguously against "this tranche" only while its Issue's
- * Milestone holds exactly one tranche. Once a Milestone holds two or more
- * (a real tranche's shared Milestone), the same bare token
- * could belong to any of them, and silently resolving it against whichever
- * tranche happens to be parsing it is a real misattribution risk — a real
- * Issue body already needed a slug qualifier for exactly this reason
- * (see `resolveIds`'s doc comment) once a second tranche entered the
- * picture.
+ * A bare task number (`1`, `7a` — no `#`) resolves unambiguously against
+ * "this tranche" only while its Issue's Milestone holds exactly one tranche.
+ * Once a Milestone holds two or more (a real tranche's shared Milestone), the
+ * same bare token could belong to any of them, and silently resolving it
+ * against whichever tranche happens to be parsing it is a real
+ * misattribution risk — a real Issue body already needed a slug qualifier
+ * for exactly this reason (see `resolveIds`'s doc comment) once a second
+ * tranche entered the picture.
+ *
+ * A bare `#NNN` is different: the hash sign makes it a forge Issue number,
+ * globally unique by construction regardless of how many tranches its
+ * Milestone holds — it is never ambiguous and is skipped here.
  *
  * Call after `parseRationaleDeps` with the Issue's own Milestone's full
- * tranche-label list; throws `AmbiguousBareEdgeError` on the FIRST bare id
- * found once that list has two or more entries. A single-tranche (or
- * tranche-less) Milestone is the ordinary case and this is a no-op for it —
- * every id parsed today keeps resolving exactly as it always has.
+ * tranche-label list; throws `AmbiguousBareEdgeError` on the FIRST bare,
+ * hash-less task number found once that list has two or more entries. A
+ * single-tranche (or tranche-less) Milestone is the ordinary case and this
+ * is a no-op for it — every id parsed today keeps resolving exactly as it
+ * always has.
  */
 export function requireTrancheQualifiedEdges(ids: readonly string[], milestoneTranches: readonly string[]): void {
   if (milestoneTranches.length < 2) return
   for (const id of ids) {
+    if (id.trim().startsWith('#')) continue
     if (splitSlugQualifiedEdge(id) === null) {
       throw new AmbiguousBareEdgeError(id, [...milestoneTranches])
     }

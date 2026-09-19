@@ -35,7 +35,7 @@
  * `RegExp`, not `grep -E`, keeping them portable to either.
  */
 
-export type ProseFileClass = 'ships' | 'reader-facing' | 'internal' | 'product'
+export type ProseFileClass = 'ships' | 'reader-facing' | 'internal' | 'product' | 'spec'
 
 export type ProseSourceFile = { path: string; content: string }
 
@@ -83,7 +83,17 @@ function shipsArchivePrefix(shipsPrefix: string): string {
   return `${shipsPrefix}tranches/completed/`
 }
 
-/** A per-product specs file (`apps/<product>/specs/**`) — this reader has this forge; references are legitimate here. */
+/**
+ * A per-product specs file (`apps/<product>/specs/**`) — issue-657, O6:
+ * swept with the SAME rules `ships`/doctrine pages already carry (a spec is
+ * as reader-facing as a doctrine page; a fork or an export reads it with no
+ * forge to resolve a citation against, same as `aeg-root/**`). Formerly
+ * classified `internal` (exempt) on the theory that "this reader has this
+ * forge" — the wrong reader: a spec ships to the SAME audience doctrine
+ * does, and a spec that opened with a tranche name, an Issue number, and
+ * external documents as its authority reached a pull request unflagged
+ * under the old exemption (found live, 2026-09-19).
+ */
 function isSpecFile(path: string): boolean {
   return path.startsWith('apps/') && path.includes('/specs/') && path.endsWith('.md')
 }
@@ -120,7 +130,8 @@ export function classifyProseFile(
   if (path.startsWith(readerFacingPrefix) && path.endsWith(readerFacingSuffix)) {
     return 'reader-facing'
   }
-  if (isSpecFile(path) || isClaudeMdFile(path)) return 'internal'
+  if (isClaudeMdFile(path)) return 'internal'
+  if (isSpecFile(path)) return 'spec'
   if (isProductScopeFile(path)) return 'product'
   return null
 }
@@ -218,10 +229,12 @@ export function checkUnresolvableReferences(
   readerFacingPrefix: string,
   readerFacingSuffix: string,
   legacySlugs: readonly string[] = [],
-  shipsPrefix: string = SHIPS_PREFIX
+  shipsPrefix: string = SHIPS_PREFIX,
+  specGrandfather: readonly string[] = []
 ): ProseFinding[] {
   const findings: ProseFinding[] = []
   const legacyPattern = legacySlugPattern(legacySlugs)
+  const grandfathered = new Set(specGrandfather)
   // `group` names the capture holding the actual cited text — the plain
   // patterns have none (report the whole match), the boundary-checked
   // legacy-slug pattern reports its group 2 so the boundary chars around it
@@ -239,12 +252,18 @@ export function checkUnresolvableReferences(
   for (const file of files) {
     const cls = classifyProseFile(file.path, readerFacingPrefix, readerFacingSuffix, shipsPrefix)
     if (!cls || cls === 'internal') continue
-    if (cls !== 'product' && !SWEPT_CLASSES.has(cls)) continue
-    const blocking = cls === 'product'
-    const scrubbed = blocking
-      ? stripNonProseForProduct(file.path, file.content)
-      : stripNonProse(file.path, file.content)
-    const patternsToRun = blocking ? productPatterns : patterns
+    if (cls !== 'product' && cls !== 'spec' && !SWEPT_CLASSES.has(cls)) continue
+    // issue-657, O6 — a spec explicitly listed by path is grandfathered
+    // stock (already failing when this sweep was extended to specs) and is
+    // skipped entirely, not merely down-graded: the list shrinks as later
+    // tasks rewrite each spec's prose, never grows.
+    if (cls === 'spec' && grandfathered.has(file.path)) continue
+    const blocking = cls === 'product' || cls === 'spec'
+    const scrubbed =
+      cls === 'product' ? stripNonProseForProduct(file.path, file.content) : stripNonProse(file.path, file.content)
+    // A spec is checked with the SAME rules a doctrine page is (O6) — the
+    // full reference pattern set, never the narrower product-code list.
+    const patternsToRun = cls === 'product' ? productPatterns : patterns
     for (const { pattern, what, group } of patternsToRun) {
       pattern.lastIndex = 0
       let match: RegExpExecArray | null = pattern.exec(scrubbed)
@@ -520,10 +539,18 @@ export function checkReaderResolvableProse(
   readerFacingPrefix: string,
   readerFacingSuffix: string,
   legacySlugs: readonly string[] = [],
-  shipsPrefix: string = SHIPS_PREFIX
+  shipsPrefix: string = SHIPS_PREFIX,
+  specGrandfather: readonly string[] = []
 ): ProseFinding[] {
   return [
-    ...checkUnresolvableReferences(files, readerFacingPrefix, readerFacingSuffix, legacySlugs, shipsPrefix),
+    ...checkUnresolvableReferences(
+      files,
+      readerFacingPrefix,
+      readerFacingSuffix,
+      legacySlugs,
+      shipsPrefix,
+      specGrandfather
+    ),
     ...checkUndefinedVocabulary(files, glossaryTerms, readerFacingPrefix, readerFacingSuffix, shipsPrefix)
   ]
 }

@@ -165,6 +165,7 @@ export function doctrineCommand(args: string[]): void {
     process.exit(1)
   }
 
+  let entry: string
   const roleFlagIndex = args.indexOf('--role')
   if (roleFlagIndex !== -1) {
     const requested = args[roleFlagIndex + 1]
@@ -191,22 +192,33 @@ export function doctrineCommand(args: string[]): void {
       )
       process.exit(1)
     }
-    const entry = join(root, 'roles', `${roleName}.md`)
-    if (args.includes('--json')) {
-      printJson({ root, entry })
-      return
-    }
-    process.stdout.write(`${entry}\n`)
+    entry = join(root, 'roles', `${roleName}.md`)
+  } else {
+    entry = join(root, ...ENTRY_SEGMENTS)
+  }
+
+  // `--print` is the one-hop mode: it emits the resolved file's BODY (its
+  // frontmatter stripped) instead of the path a caller would otherwise have
+  // to read a second time. A role file whose frontmatter carries an
+  // `ack-token` gets that token emitted as the output's own first line — the
+  // read-receipt each agent role's own text requires its first session
+  // message to echo back verbatim. Bare (no `--role`) and `--json` never
+  // combine with `--print`: it is its own terminal mode.
+  if (args.includes('--print')) {
+    const { data, content } = matter(readFileSync(entry, 'utf8'))
+    const ackToken = typeof data['ack-token'] === 'string' ? data['ack-token'] : null
+    process.stdout.write(ackToken ? `${ackToken}\n${content}` : content)
     return
   }
 
-  const entry = join(root, ...ENTRY_SEGMENTS)
   if (args.includes('--json')) {
     printJson({ root, entry })
     return
   }
   // Bare output is the entry path alone, so it composes:
-  // `cat "$(vinaya doctrine)"` opens the front door directly.
+  // `cat "$(vinaya doctrine)"` opens the front door directly. Unchanged by
+  // `--print`'s addition — a shell composing this path still works exactly
+  // as before.
   process.stdout.write(`${entry}\n`)
 }
 

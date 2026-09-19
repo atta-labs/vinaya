@@ -487,6 +487,12 @@ try {
 `
     writeFileSync(scriptPath, script)
     try {
+      // `stripVinayaEnv` (below) supersedes `hermeticSpawnEnv`'s narrower
+      // `VINAYA_RUNTIME_DIR`-only delete — merged from origin/main's
+      // independent issue-657 O5 fix, same root cause. Both agree `AEG_REPO`
+      // must survive: `stripVinayaEnv` only ever strips `VINAYA_*`-prefixed
+      // keys, so it already preserves the real, legitimate `AEG_REPO`
+      // short-circuit these `cwd: repoRoot` subprocesses depend on.
       const output = runFixtureScript(scriptPath, repoRoot, stripVinayaEnv({ ...process.env, HOME: home }))
       expect(output).toContain('FIRST_OK')
       expect(output).toContain('SECOND_IS_REPLAYED:true')
@@ -496,7 +502,14 @@ try {
       rmSync(scriptPath, { force: true })
       rmSync(home, { recursive: true, force: true })
     }
-  })
+    // issue-657, O5 — two full `bun` subprocesses, each a real control-store
+    // round trip against a properly HOME-isolated (never VINAYA_RUNTIME_DIR-
+    // redirected) directory: legitimately slower than bun's own default
+    // per-test budget, borderline over it even before this fix (the prior
+    // leak into the operator's already-warm real `~/.vinaya` masked this by
+    // accident). Same accommodation `dev-review-loop.test.ts`'s own
+    // real-subprocess tests already carry.
+  }, 20000)
 
   it("restores process.env.VINAYA_TASK/VINAYA_RUN after returning, and never lets a later, unrelated task's own task_resume land in this run's outbox (round 2 security review, HIGH)", () => {
     // `cancelDevReviewLoop` is called IN-PROCESS from `task-tools/cancel.ts`

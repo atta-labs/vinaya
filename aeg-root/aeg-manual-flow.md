@@ -86,7 +86,7 @@ When invoked, an agent does not trust that you called it correctly. It checks tw
 
 Self-location (§4) is *what* an agent verifies before acting. The **conversational protocol** is *how* it speaks while it works. It applies to **every conversational role** (the Principal-facing Planner, in both its acts, and the Developer, Reviewer, Security passes), so that across the whole flow the human always knows **who is speaking, what stage they're in, what just happened, and what comes next.** A governed flow that runs silently is illegible; legibility is itself a governance property (it is the same "make the invisible visible" that §1 calls the point of manual mode).
 
-This is a **shared, model-level protocol**. Each role specializes it in its own role doc (the Planner's specialization is in `roles/planner.md`, covering both its plan and dispatch acts — the first written; Developer and Reviewer specializations follow as each is modeled). The shared spine, which no role overrides:
+This is a **shared, model-level protocol**. Each role specializes it in its own role doc (the Planner's specialization is in `roles/planner.md` and `roles/planner/reference.md`, covering both its plan and dispatch acts — the first written; Developer and Reviewer specializations follow as each is modeled). The shared spine, which no role overrides:
 
 1. **Announce the role on entry.** Open by naming who you are and what you're about to do. The Principal should never be unsure which role/mode they're talking to. *"I'm the Planner. I'll turn this intent into a tranche — readiness gate first, then sizing, then the topology and the Issues."*
 
@@ -126,7 +126,7 @@ Keep all of this **light** — a sentence at each seam, not paragraphs. The goal
 
 Each agent finds the task's PR via the branch convention `task/<tranche>/<n>` and self-locates from forge state. Nobody writes status — the forge already reflects every transition. Every conversational role in this table follows the conversational protocol (§4.5): it announces itself, signposts its stage, and closes out clearly.
 
-> **Verification is a phase, not a new actor.** Steps 7a and 7b are different halves of the **Verification phase** (`roles/developer.md` § Verification), split by who can structurally execute each test-plan item: the Developer-agent runs `[agent]` items because they don't require auth/keys/eyes-on-render; the Principal runs `[principal]` items because they do. Mirror of the chat-vs-terminal token-capture asymmetry. **Doctrine: CI green ≠ app boots ≠ feature works** — a passed review is not a green light to merge; a ticked-checkbox Test Plan is. A brief whose §4 surface is pure-logic declares `Test Plan: unit-tests-only` (a first-class allowed value) and Phase 11 is satisfied by the CI unit-test gate alone — no runtime execution needed.
+> **Verification is a phase, not a new actor.** Steps 7a and 7b are different halves of the **Verification phase** (`roles/developer/reference.md` § Verification), split by who can structurally execute each test-plan item: the Developer-agent runs `[agent]` items because they don't require auth/keys/eyes-on-render; the Principal runs `[principal]` items because they do. Mirror of the chat-vs-terminal token-capture asymmetry. **Doctrine: CI green ≠ app boots ≠ feature works** — a passed review is not a green light to merge; a ticked-checkbox Test Plan is. A brief whose §4 surface is pure-logic declares `Test Plan: unit-tests-only` (a first-class allowed value) and Phase 11 is satisfied by the CI unit-test gate alone — no runtime execution needed.
 
 ### Tranche-close trigger
 
@@ -158,7 +158,7 @@ If any fails: post a comment listing the exact items missing. The Principal deci
 
 **Planner (plan act)** — see `roles/planner.md` (split-vs-combine by verification coupling; plan-integrity gates; the conversational protocol specialization). Refuses single-brief / implement requests; refuses execution metadata in the file or Issue; refuses planning metadata on Issues; refuses to build a conflict scanner; validates every `Project:` against the registry.
 
-**Planner (dispatch act)** — see `roles/planner.md` § The dispatch act. Requires the task's Issue to exist and pass its rationale gate. Refuses to hand-write brief prose: *"There's nothing to author — the render is mechanical. I check the gates, then dispatch."* Checks Issue-existence, dependencies merged, no open conflicting sibling, and render-completeness, then runs `vinaya task dispatch`.
+**Planner (dispatch act)** — see `roles/planner/reference.md` § The dispatch act. Requires the task's Issue to exist and pass its rationale gate. Refuses to hand-write brief prose: *"There's nothing to author — the render is mechanical. I check the gates, then dispatch."* Checks Issue-existence, dependencies merged, no open conflicting sibling, and render-completeness, then runs `vinaya task dispatch`.
 
 **Developer**
 - Requires a well-formed brief. If handed a loose prompt → *"This isn't a brief — missing tier / scope / stop-conditions. Get one dispatched from the Planner."*
@@ -171,7 +171,7 @@ If any fails: post a comment listing the exact items missing. The Principal deci
 
 **Security** — same gate as Reviewer; produces PASS | FAIL (per `roles/security.md`).
 
-**Verification** (the phase, two halves, `roles/developer.md` § Verification)
+**Verification** (the phase, two halves, `roles/developer/reference.md` § Verification)
 - Requires an open PR AND the frozen `aeg:brief:v1` comment on the task Issue, with a §9 Test Plan in that comment. Refuses if either is missing — *"This PR has no Test Plan; without one I cannot judge what 'verified' means. Flag the brief malformed (`needs:brief-correction`)."*
 - **Agent half:** the Developer-agent boots the relevant dev server(s) from the PR's branch, runs each `[agent]` item in the Test Plan, and posts the actual command output as evidence on the PR (paraphrase is not evidence). Re-runs after a fix append a new comment; they do not edit the previous one.
 - **Principal half:** the Principal runs each `[principal]` item in a real signed-in browser and ticks the checkbox on the PR. The agent does not tick `[principal]` boxes; the Principal does not tick `[agent]` boxes — the asymmetry is the gate's whole shape.

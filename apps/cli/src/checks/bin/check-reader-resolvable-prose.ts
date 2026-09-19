@@ -146,6 +146,9 @@ const SOURCE_COMMENTS_GLOBS = proseGates?.sourceComments?.globs ?? []
 const SOURCE_COMMENTS_ALLOWLIST = proseGates?.sourceComments?.allowlist ?? []
 const SOURCE_COMMENTS_SEVERITY: 'warning' | 'error' = proseGates?.sourceComments?.severity ?? 'warning'
 
+/** issue-657, O6 — exact repo-relative spec paths skipped entirely by the spec class (below), same "declared, not silent" discipline every other exemption list in this file already uses. */
+const SPEC_GRANDFATHER = proseGates?.specGrandfather ?? []
+
 /** Recursively collects repo-relative paths under `dir`. Missing/unreadable `dir` degrades to `[]`, never throws — the same dormancy discipline `legacySlugs()` below documents. */
 function collect(dir: string, out: string[] = []): string[] {
   let entries: string[]
@@ -211,6 +214,48 @@ function collectProductScopeFiles(root: string): string[] {
 
 function readProductFiles(root: string, relPaths: string[]): ProseSourceFile[] {
   return relPaths.map((rel) => ({ path: rel, content: readFileSync(join(root, rel), 'utf8') }))
+}
+
+/**
+ * issue-657, O6 — every `apps/<app>/specs/**\/*.md` file, across EVERY app
+ * directory (never hardcoded to `apps/cli`, since the same exemption gap
+ * applies wherever a future app grows its own `specs/`), returned
+ * repo-relative to `root` — the same coordinate system `isSpecFile`
+ * (`@attalabs/aeg-core`) compares against. A repo with no `apps/` directory
+ * at all (an adopter whose product tree lives elsewhere) degrades to `[]`,
+ * never a thrown error — the same dormancy discipline `collect` itself
+ * already uses for a missing directory.
+ */
+function collectSpecFiles(root: string): string[] {
+  const out: string[] = []
+  const appsDir = join(root, 'apps')
+  let appNames: string[]
+  try {
+    appNames = readdirSync(appsDir).filter((name) => {
+      try {
+        return statSync(join(appsDir, name)).isDirectory()
+      } catch {
+        return false
+      }
+    })
+  } catch {
+    return out
+  }
+  for (const app of appNames) {
+    const specsDir = join(appsDir, app, 'specs')
+    let isDir: boolean
+    try {
+      isDir = statSync(specsDir).isDirectory()
+    } catch {
+      continue
+    }
+    if (!isDir) continue
+    for (const f of collect(specsDir)) {
+      const rel = f.slice(root.length + 1)
+      if (rel.endsWith('.md')) out.push(rel)
+    }
+  }
+  return out
 }
 
 /**
@@ -315,7 +360,10 @@ function main(): void {
   const sourceCommentRelPaths = collectSourceCommentFiles(productRoot, SOURCE_COMMENTS_GLOBS)
   const sourceCommentFiles = readProductFiles(productRoot, sourceCommentRelPaths)
 
-  const files = [...readAll([...shipsPaths, ...readerFacingPaths]), ...productFiles]
+  const specRelPaths = collectSpecFiles(productRoot)
+  const specFiles = readProductFiles(productRoot, specRelPaths)
+
+  const files = [...readAll([...shipsPaths, ...readerFacingPaths]), ...productFiles, ...specFiles]
   const glossaryPath = join(DOCTRINE_ROOT, 'glossary.md')
   const glossaryTerms = existsSync(glossaryPath) ? parseGlossaryTerms(readFileSync(glossaryPath, 'utf8')) : []
   const legacySlugDir = LEGACY_SLUG_DIR ?? `${DOCTRINE_ROOT}/tranches/completed`
@@ -331,7 +379,8 @@ function main(): void {
     readerFacingPrefix,
     readerFacingSuffix,
     slugs,
-    shipsPrefix
+    shipsPrefix,
+    SPEC_GRANDFATHER
   )
 
   // `resolveChangedFiles()` returns absolute paths, resolved against the
@@ -375,6 +424,7 @@ function main(): void {
     `${CHECK_NAME}: doctrine root "${DOCTRINE_ROOT}"; reader-facing class ${READER_FACING_ACTIVE ? 'ran' : 'dormant — proseGates.readerFacingPrefix/readerFacingSuffix not both set'}; ` +
       `legacy-slug class ${legacySlugsDormant ? `dormant — ${legacySlugDir} is absent` : `ran (${slugs.length} slug(s))`}; ` +
       `product class ran (${productRelPaths.length} file(s) swept); ` +
+      `spec class ran (${specRelPaths.length} file(s) swept, ${SPEC_GRANDFATHER.length} grandfathered); ` +
       `source-comment class ${SOURCE_COMMENTS_GLOBS.length === 0 ? 'dormant — proseGates.sourceComments.globs not set' : `ran (${sourceCommentRelPaths.length} file(s) swept, severity: ${SOURCE_COMMENTS_SEVERITY})`}; ` +
       `${findings.length + sourceCommentFindings.length} finding(s) swept, ${reportable.length + reportableSourceComments.length} in this diff`
   )
@@ -393,13 +443,20 @@ function main(): void {
         ? 'This page uses AEG/Vinaya-internal vocabulary a first-time reader cannot resolve. Either define the term ' +
           'inline (the same "Term — one-sentence definition" shape the glossary uses) at its first use on this page, ' +
           'or link to the glossary. Do not simply delete the word if the sentence needs it.'
-        : finding.blocking
-          ? 'This product-code file cites an internal tranche slug a reader outside this repo cannot resolve ' +
-            '(the reader-resolvable-prose product class). Remove the citation or rewrite the comment/doc to state ' +
-            'the fact plainly instead of pointing at the tranche that did it. This finding blocks the push and CI.'
-          : 'This doctrine or page cites a forge number or an internal tranche slug the reader has no tracker to ' +
-            'resolve. Rewrite the sentence to state the fact plainly instead of pointing at the citation — say what ' +
-            'was learned/decided, not where it was logged.'
+        : finding.blocking && finding.file.includes('/specs/')
+          ? 'This product spec cites a tranche, an Issue/PR number, or names a document outside this repository as ' +
+            'its authority — a reader with no forge to resolve it against (a fork, an export, someone reading this ' +
+            'spec after the Issue is closed) gets nothing from the citation. Rewrite the sentence to state the fact ' +
+            'plainly instead. If this spec is pre-existing backlog, list its path in ' +
+            '`proseGates.specGrandfather` rather than fixing it as a drive-by in an unrelated PR — do not add a ' +
+            'NEW citation to a spec even while it is grandfathered.'
+          : finding.blocking
+            ? 'This product-code file cites an internal tranche slug a reader outside this repo cannot resolve ' +
+              '(the reader-resolvable-prose product class). Remove the citation or rewrite the comment/doc to state ' +
+              'the fact plainly instead of pointing at the tranche that did it. This finding blocks the push and CI.'
+            : 'This doctrine or page cites a forge number or an internal tranche slug the reader has no tracker to ' +
+              'resolve. Rewrite the sentence to state the fact plainly instead of pointing at the citation — say ' +
+              'what was learned/decided, not where it was logged.'
     })
   }
 

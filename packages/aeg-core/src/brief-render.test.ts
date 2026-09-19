@@ -344,10 +344,42 @@ describe('renderBrief', () => {
       expect(result.missing.some((m) => /Surface map/.test(m))).toBe(true)
     })
 
-    it('does not refuse when the Boundary legitimately named zero files (an administrative-only task)', () => {
+    // issue-657, O3 — a Surface that resolves to a real tracked file always
+    // carries at least one premise pin; refuse, naming the surface, rather
+    // than render an empty `**Premise:**` block when nothing can be pinned.
+    it('refuses, naming the surface, when the Boundary names zero files even though the Surface resolves to real tracked files', () => {
       const facts = baseFacts({ surface: { in: ['aeg-root'], out: [] }, surfaceFiles: [] })
       const result = renderBrief(facts, TEMPLATE)
+      expect(result.ok).toBe(false)
+      if (result.ok) return
+      expect(result.missing.some((m) => /Premise pins/.test(m))).toBe(true)
+      expect(result.missing.some((m) => /aeg-root/.test(m))).toBe(true)
+    })
+
+    it('refuses, naming the surface, when every Boundary-named file is a not-yet-created entry with no sha256 to pin', () => {
+      const facts = baseFacts({
+        surface: { in: ['packages/aeg-core/src'], out: [] },
+        surfaceFiles: [{ path: 'packages/aeg-core/src/new-file.ts', sha256: null, packageName: '@attalabs/aeg-core' }]
+      })
+      const result = renderBrief(facts, TEMPLATE)
+      expect(result.ok).toBe(false)
+      if (result.ok) return
+      expect(result.missing.some((m) => /Premise pins/.test(m))).toBe(true)
+    })
+
+    it('renders at least one premise pin when the surface resolves to a real, admitted tracked file', () => {
+      const facts = baseFacts({
+        surface: { in: ['packages/aeg-core/src'], out: [] },
+        surfaceFiles: [
+          { path: 'packages/aeg-core/src/fixture.ts', sha256: 'a'.repeat(64), packageName: '@attalabs/aeg-core' }
+        ]
+      })
+      const result = renderBrief(facts, TEMPLATE)
       expect(result.ok).toBe(true)
+      if (!result.ok) return
+      const premiseBlock = /\*\*Premise:\*\*\n([\s\S]*?)(\n##|\n\n##|$)/.exec(result.brief)?.[1]?.trim() ?? ''
+      expect(premiseBlock.length).toBeGreaterThan(0)
+      expect(premiseBlock).toContain('packages/aeg-core/src/fixture.ts')
     })
   })
 

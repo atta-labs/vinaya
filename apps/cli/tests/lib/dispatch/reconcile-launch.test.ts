@@ -6,7 +6,7 @@ import {
 } from '../../../src/lib/dev-review-loop/developer-dispatch'
 import type { LaunchRecord, ParsedLaunch, ProcessSnapshot } from '../../../src/lib/dispatch'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -403,13 +403,27 @@ describe("recoverDeveloperLaunch (O2, Issue #605, code review, MAJOR) — the re
       orphanScript,
       [
         `import { dispatchRole, readLaunchRecord } from ${JSON.stringify(dispatchLib)}`,
+        `import { writeFileSync as writeFileSyncOrphan } from 'node:fs'`,
         `const opts = { promptFile: ${JSON.stringify(promptFile)}, task: 44 }`,
         `void dispatchRole('developer', 'claude', 'p', opts)`,
+        // Round 2 review, MINOR — records the observed pid to the outer
+        // test's pid file the INSTANT the launch record carries one, inside
+        // the poll loop itself, rather than only after `waitForChildPid`
+        // returns. A genuinely raced record write (the real child already
+        // spawned, but the record naming its pid lands just past the poll
+        // window) can still make the whole wait throw with no pid ever
+        // observed here — a fixture-level race no poll loop closes for
+        // free — but this at least captures the pid the moment it becomes
+        // visible, never only after the function's own return.
+        `const pidFile = ${JSON.stringify(join(cwd, 'orphan-pid.txt'))}`,
         'async function waitForChildPid(timeoutMs) {',
         '  const start = Date.now()',
         '  while (Date.now() - start < timeoutMs) {',
         `    const parsed = readLaunchRecord('developer', 'claude', null, 44)`,
-        `    if (parsed.status === 'ok' && parsed.record.childPid !== null) return`,
+        "    if (parsed.status === 'ok' && parsed.record.childPid !== null) {",
+        '      writeFileSyncOrphan(pidFile, String(parsed.record.childPid))',
+        '      return',
+        '    }',
         '    await new Promise((r) => setTimeout(r, 50))',
         '  }',
         `  throw new Error('timed out waiting for the launch record to carry a childPid')`,
@@ -420,64 +434,121 @@ describe("recoverDeveloperLaunch (O2, Issue #605, code review, MAJOR) — the re
         'process.exit(0)'
       ].join('\n')
     )
+    // `stripVinayaEnv` (this file's own O3 fix, above) supersedes the
+    // narrower `VINAYA_RUN_ID`/`VINAYA_RUNTIME_DIR`-only deletes an earlier
+    // version of this fixture used — merged from origin/main's independent
+    // issue-657 O5 fix, same root cause (a `VINAYA_RUNTIME_DIR` inherited
+    // from the calling shell silently redirects this fixture's real launch
+    // record to the operator's actual, non-isolated `~/.vinaya`).
     const spawnEnv: NodeJS.ProcessEnv = stripVinayaEnv({
       ...process.env,
       HOME: home,
       PATH: `${binDir}:${process.env.PATH ?? ''}`
     })
-    runFixtureScript(orphanScript, cwd, spawnEnv)
-
-    const developerDispatchLib = join(CLI_ROOT, 'src', 'lib', 'dev-review-loop', 'developer-dispatch.ts')
-    const reaperScript = join(cwd, 'reap-attempt.ts')
-    const resultPath = join(cwd, 'result.json')
-    writeFileSync(
-      reaperScript,
-      [
-        `import { writeFileSync } from 'node:fs'`,
-        `import { execFileSync } from 'node:child_process'`,
-        `import { hostname } from 'node:os'`,
-        `import { recoverDeveloperLaunch } from ${JSON.stringify(developerDispatchLib)}`,
-        `import { readLaunchRecord, getProcessSnapshot } from ${JSON.stringify(dispatchLib)}`,
-        `const before = readLaunchRecord('developer', 'claude', null, 44)`,
-        `const childPid = before.status === 'ok' ? before.record.childPid : null`,
-        'let spyCalledWith = null',
-        'const deps = {',
-        '  isPidAlive: (pid) => { try { process.kill(pid, 0); return true } catch { return false } },',
-        '  hostname: () => hostname(),',
-        '  getProcessSnapshot,',
-        '  terminateChild: (pid) => { spyCalledWith = pid }',
-        '}',
-        `const out = recoverDeveloperLaunch(44, 'claude', null, {}, deps)`,
-        'let stillAlive = false',
-        'if (childPid !== null) {',
-        `  try { execFileSync('ps', ['-p', String(childPid)], { stdio: ['ignore', 'ignore', 'ignore'] }); stillAlive = true } catch { stillAlive = false }`,
-        '}',
-        // Real cleanup — the spy never actually killed it.
-        "if (childPid !== null) { try { process.kill(childPid, 'SIGKILL') } catch {} }",
-        `writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({ childPid, spyCalledWith, stillAlive, kind: out.kind }))`,
-        'process.exit(0)'
-      ].join('\n')
-    )
-    runFixtureScript(reaperScript, cwd, spawnEnv)
-
-    const result = JSON.parse(readFileSync(resultPath, 'utf8')) as {
-      childPid: number
-      spyCalledWith: number | null
-      stillAlive: boolean
-      kind: string
+    const orphanPidPath = join(cwd, 'orphan-pid.txt')
+    // Round 2 review, MINOR — this call itself is now wrapped: the script
+    // writes `orphanPidPath` the moment it observes a childPid (above), so
+    // even a non-zero exit here (the in-script 5s wait throwing) does not
+    // skip reading whatever pid the script already captured before dying.
+    // Only the genuine race where NO pid was ever observed within the
+    // window (the real child spawned, but the launch record's own write
+    // landed even later than that) still has nothing to read here — a
+    // fixture-level race, not a swallowed error. Issue #660, O3 round 3
+    // (reviewer F2) — the budget/timeout/diagnostic is layered on top of
+    // that pre-existing swallow: only a genuine `SIGKILL`-by-budget (real
+    // lock contention) throws here; a plain non-zero exit (the in-script
+    // timeout) still falls through to the pid-file read below, unchanged.
+    try {
+      execFileSync('bun', [orphanScript], {
+        cwd,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: spawnEnv,
+        timeout: SUBPROCESS_BUDGET_MS,
+        killSignal: 'SIGKILL'
+      })
+    } catch (e) {
+      const err = e as { signal?: string | null; stdout?: Buffer | string; stderr?: Buffer | string }
+      if (err.signal) {
+        throw new Error(
+          `reconcile-launch.test.ts orphan-script subprocess killed by ${err.signal} after exceeding its ${SUBPROCESS_BUDGET_MS}ms budget\n` +
+            `--- stdout ---\n${err.stdout ?? ''}\n--- stderr ---\n${err.stderr ?? ''}`
+        )
+      }
+      // Non-zero exit is expected on a timeout throw; the pid file (if the
+      // script got far enough to write one) is still read below.
     }
-    // The injected spy — not a real signal — is what actually reaped it.
-    expect(result.spyCalledWith).toBe(result.childPid)
-    // Because the spy is a no-op, the real process must still be alive: proof
-    // the call was routed through `deps.terminateChild`, not a hardcoded
-    // `terminateChildWithGrace` the test's own spy could never intercept.
-    expect(result.stillAlive).toBe(true)
-    // With no session ever bound, continuity required, and the record still
-    // reading 'launched': pause explicitly once the (fake) reap has run.
-    expect(result.kind).toBe('pause')
 
-    rmSync(home, { recursive: true, force: true })
-    rmSync(cwd, { recursive: true, force: true })
-    rmSync(binDir, { recursive: true, force: true })
+    // issue-657, O5 — a real, deliberately-orphaned process now exists
+    // (the whole point of this test). Everything from here on is wrapped in
+    // `try`/`finally` so a genuinely alive `orphanPid` is killed no matter
+    // what happens next — an assertion failure, a throw inside the reaper
+    // script, `execFileSync` itself throwing on a non-zero exit — never left
+    // to survive this test the way this file's own #605 incident did before
+    // this fix (found live: a confined agent for a fake task left running
+    // for two hours after a test like this one failed mid-way through).
+    const orphanPidRaw = existsSync(orphanPidPath) ? readFileSync(orphanPidPath, 'utf8').trim() : ''
+    const orphanPid = orphanPidRaw.length > 0 ? Number(orphanPidRaw) : null
+
+    try {
+      const developerDispatchLib = join(CLI_ROOT, 'src', 'lib', 'dev-review-loop', 'developer-dispatch.ts')
+      const reaperScript = join(cwd, 'reap-attempt.ts')
+      const resultPath = join(cwd, 'result.json')
+      writeFileSync(
+        reaperScript,
+        [
+          `import { writeFileSync } from 'node:fs'`,
+          `import { execFileSync } from 'node:child_process'`,
+          `import { hostname } from 'node:os'`,
+          `import { recoverDeveloperLaunch } from ${JSON.stringify(developerDispatchLib)}`,
+          `import { readLaunchRecord, getProcessSnapshot } from ${JSON.stringify(dispatchLib)}`,
+          `const before = readLaunchRecord('developer', 'claude', null, 44)`,
+          `const childPid = before.status === 'ok' ? before.record.childPid : null`,
+          'let spyCalledWith = null',
+          'const deps = {',
+          '  isPidAlive: (pid) => { try { process.kill(pid, 0); return true } catch { return false } },',
+          '  hostname: () => hostname(),',
+          '  getProcessSnapshot,',
+          '  terminateChild: (pid) => { spyCalledWith = pid }',
+          '}',
+          `const out = recoverDeveloperLaunch(44, 'claude', null, {}, deps)`,
+          'let stillAlive = false',
+          'if (childPid !== null) {',
+          `  try { execFileSync('ps', ['-p', String(childPid)], { stdio: ['ignore', 'ignore', 'ignore'] }); stillAlive = true } catch { stillAlive = false }`,
+          '}',
+          `writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({ childPid, spyCalledWith, stillAlive, kind: out.kind }))`,
+          'process.exit(0)'
+        ].join('\n')
+      )
+      runFixtureScript(reaperScript, cwd, spawnEnv)
+
+      const result = JSON.parse(readFileSync(resultPath, 'utf8')) as {
+        childPid: number
+        spyCalledWith: number | null
+        stillAlive: boolean
+        kind: string
+      }
+      // The injected spy — not a real signal — is what actually reaped it.
+      expect(result.spyCalledWith).toBe(result.childPid)
+      // Because the spy is a no-op, the real process must still be alive: proof
+      // the call was routed through `deps.terminateChild`, not a hardcoded
+      // `terminateChildWithGrace` the test's own spy could never intercept.
+      expect(result.stillAlive).toBe(true)
+      // With no session ever bound, continuity required, and the record still
+      // reading 'launched': pause explicitly once the (fake) reap has run.
+      expect(result.kind).toBe('pause')
+    } finally {
+      // The one real kill this test performs — unconditional, regardless of
+      // how the `try` block above exited.
+      if (orphanPid !== null) {
+        try {
+          process.kill(orphanPid, 'SIGKILL')
+        } catch {
+          // ESRCH — already gone.
+        }
+      }
+      rmSync(home, { recursive: true, force: true })
+      rmSync(cwd, { recursive: true, force: true })
+      rmSync(binDir, { recursive: true, force: true })
+    }
   }, 15_000)
 })

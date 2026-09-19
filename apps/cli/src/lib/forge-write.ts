@@ -982,10 +982,12 @@ export type IssueContentInput = {
 export function validateIssueContent(input: IssueContentInput): CheckError[] {
   const surfaceResult = parseIssueSurface(input.body)
   const subjectSurfaceIn = surfaceResult.ok ? surfaceResult.value.in : []
+  const subjectDeps = parseRationaleDeps(input.body)
   const subject: TaskSurfaceFacts = {
     ref: input.subjectRef,
     surfaceIn: subjectSurfaceIn,
-    conflictsWith: parseRationaleDeps(input.body).conflictsWith
+    conflictsWith: subjectDeps.conflictsWith,
+    dependsOn: subjectDeps.dependsOn
   }
 
   const findings: Array<[string[], keyof typeof ISSUE_CONTENT_RECOVERY]> = [
@@ -1392,10 +1394,12 @@ function fetchOpenTaskSurfaceSiblings(
       .filter((i) => isTaskIssueLabelSet(i.labels.map((l) => l.name)))
       .map((i) => {
         const surface = parseIssueSurface(i.body)
+        const deps = parseRationaleDeps(i.body)
         return {
           ref: String(i.number),
           surfaceIn: surface.ok ? surface.value.in : [],
-          conflictsWith: parseRationaleDeps(i.body).conflictsWith
+          conflictsWith: deps.conflictsWith,
+          dependsOn: deps.dependsOn
         }
       })
   }

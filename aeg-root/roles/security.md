@@ -5,6 +5,13 @@ order: 5
 role_id: security
 description: Checks an open pull request for what a correctness review misses — leaked secrets, unsafe configuration, exposed surfaces.
 actor: agent
+ack-token: 2164cd7c
+denied-tools:
+  - fix-what-you-find
+  - merge
+  - write-status
+  - weaken-a-finding
+  - quote-a-secret-in-full
 performs:
   - security-review-the-pull-request
   - scan-for-secret-leakage
@@ -20,6 +27,8 @@ refuses_when: >
 summary: Ever shipped a change nobody checked for leaked secrets?
 ---
 # Security Reviewer — Role Reference
+
+**Read receipt — do this first.** `vinaya doctrine --role security --print`'s output begins with a fixed acknowledgement token, one line, before anything else. Your first message in this session must repeat that exact token verbatim — e.g. `ACK: <token>` — so a transcript proves this doctrine was read, checked with one grep. The token lives only in this file's frontmatter, never in this paragraph, so editing this paragraph never invalidates a past session's proof.
 
 ## The short version
 

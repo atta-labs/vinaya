@@ -876,6 +876,24 @@ describe('R3: cross-task-surface-overlap', () => {
     ])
     passesWithNoFailures(checkR3(issuesBySlug))
   })
+
+  // issue-657, O2 — a Depends-on edge serializes overlapping siblings, same as Conflicts-with.
+  it('pass — the same overlap, but one task depends on the other', () => {
+    const a = makeGhIssue({
+      number: 313,
+      body: surfaceBody('apps/cli/src/lib', '**Dependency rationale** — `Depends-on: 314`')
+    })
+    const b = makeGhIssue({
+      number: 314,
+      body: surfaceBody('apps/cli/src/lib'),
+      labels: ['vinaya/tranche:iter-2']
+    })
+    const issuesBySlug = new Map([
+      ['iter-1', [a]],
+      ['iter-2', [b]]
+    ])
+    passesWithNoFailures(checkR3(issuesBySlug))
+  })
 })
 
 // ---------- T3: tbd-in-active-tranche --------------------------------------
