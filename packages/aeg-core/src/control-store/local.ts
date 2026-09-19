@@ -162,8 +162,8 @@ function readRecord<T>(path: string, parse: (raw: string | undefined) => ParsedR
  * operates inside whatever real directory that symlink resolves to. Before
  * `runtimeDir` became a repo-configurable absolute path shared with other
  * local accounts (`apps/cli/src/lib/run-paths.ts`'s own doc comment names
- * `/var/lib/vinaya/runs`), the whole tree sat under the fixed, user-owned
- * `~/.vinaya/outbox` and a co-tenant able to pre-plant a symlink was out of
+ * `/var/lib/vinaya/runs`), this whole tree sat under a fixed, per-repository,
+ * user-owned default and a co-tenant able to pre-plant a symlink was out of
  * scope; a shared, configurable tree makes that co-tenant a real adversary
  * for every path this store writes.
  *
