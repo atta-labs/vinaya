@@ -1,5 +1,21 @@
 # @attalabs/vinaya
 
+## 0.30.0
+
+### Minor Changes
+
+- d24a823: `reader-resolvable-prose` gains a source-comment class: it scans comment lines of `.ts` files under `proseGates.sourceComments.globs` in `vinaya.config.json` for a tranche-slug or forge-number citation, honours `proseGates.sourceComments.allowlist`, and reports at `warning` severity until `proseGates.sourceComments.severity` is set to `error`. `tranchesAttachedToMilestone` and `vinaya archive tranche`'s Issue fetch now paginate past the first 100-item page instead of silently truncating a large Milestone.
+
+### Patch Changes
+
+- bae5ba6: Task operations, loop transitions and handoffs emit one correlated history. The shared effect executor (`EffectExecutor`) emits `effect` log events (`attempted`/`observed`/`verified`) around every real write and every idempotent replay, keyed by the same control-store key used for retry identity; the broker's `authenticate*Invocation`/`requestEffect` emit `operation` events for invocation and authorization outcomes before delegating to the executor. `devReviewLoop` now logs a `resumed` event on `--resume` (`by: 'driver'` for a bare infrastructure recovery, `'principal'` otherwise — a new, additive `resumed.by` member) and `cancelDevReviewLoop` logs a new `cancelled` `dev_review_loop` event, both previously invisible to the Vinaya Log. Every event one driver process emits now shares `meta.lineage.run`: `VINAYA_RUN` is set to the run's own `loop_id`, and the log sink defaults `lineage.run` to the process's own `run_id` when unset, so `effect`/`operation`/`dev_review_loop` events from one run are provably one correlated history rather than independently-correlated streams.
+- 03c3f6c: The Vinaya Log's flush (`vinaya log flush`, the developer-review loop's round-end auto-flush, and `vinaya dispatch`'s own trailing flush) can now publish to a plain HTTP endpoint instead of a GitHub Issue/PR comment. Set `logPublish.webhookUrl` (optionally with `headers`) in `vinaya.config.json`, mutually exclusive with `logPublish.issue`/`pr` — no GitHub account or `gh` auth required on the receiving end. A failed POST leaves the outbox untouched and refuses; a successful one truncates exactly the posted lines. The round-end auto-flush and `vinaya dispatch`'s own trailing flush both only honor a `webhookUrl` that is also present on the repository's default branch, so a PR under review cannot redirect telemetry to its own endpoint — including through a dispatched role's own nested `vinaya dispatch` call, which reaches the same trailing flush with no human approving that inner run.
+  
+  **Behavior change:** `vinaya dispatch`'s trailing flush no longer posts straight onto the dispatched task's own Issue/PR by default — it now follows `logPublish` the same way the round-end flush already did, publishing nowhere (reported on stderr) when nothing is configured.
+  
+  Separately, a dispatch whose child process exits without ever binding a vendor session is now classified with its own `failureReason: 'unbound'` (distinct from `'crash'`/`'timeout'`), and the dispatch heartbeat no longer reports elapsed time about a child that has already exited.
+- c296f2b: An unattended dispatch (the automated `task run`/`dev-review-loop` driver, or `vinaya dispatch --unattended`) can now run inside an OS-level confinement boundary (Seatbelt on macOS: a named environment allowlist, a scoped working directory, no parent credentials) instead of inheriting the full operator environment. `dispatch.requireWorkerIsolation` defaults to `true` on macOS (the only currently supported host) and `false` elsewhere; set it explicitly in `vinaya.config.json` to override either default. With it on, a dispatch refuses before spawning rather than running unconfined when the boundary cannot be established.
+
 ## 0.29.0
 
 ### Minor Changes
