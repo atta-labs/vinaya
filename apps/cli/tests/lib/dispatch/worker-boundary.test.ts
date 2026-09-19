@@ -10,7 +10,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { createServer } from 'node:net'
-import { execFileSync, spawnSync } from 'node:child_process'
+import { execFileSync, spawnSync, type SpawnSyncOptionsWithStringEncoding } from 'node:child_process'
 import { homedir, tmpdir } from 'node:os'
 import { chmodSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -38,6 +38,53 @@ import {
  * `skipIf(!isSandboxSupported())` precedent for the parts that genuinely do
  * need one).
  */
+
+/**
+ * issue-657, O5 — every live spawn in this file runs a REAL confined child
+ * (`bwrap`/`sandbox-exec` wrapping a probe script or `bun`), and a hang
+ * anywhere in that chain — a probe waiting on stdin, a confinement wrapper
+ * itself stalling — used to burn a core indefinitely: `spawnSync` with no
+ * `timeout` blocks forever, and found live, once, on a Linux host running
+ * exactly this suite. Every call site here now goes through this wrapper
+ * instead of `spawnSync` directly: `detached: true` makes the child the
+ * leader of its OWN process group (never the test runner's), and the
+ * `finally` below kills that whole group unconditionally once `spawnSync`
+ * returns — whether it returned because the child exited on its own, or
+ * because the bounded `timeout` fired and `spawnSync`'s own `killSignal`
+ * only reached the immediate child, potentially leaving a confinement
+ * wrapper's own grandchildren behind. The explicit group kill is a no-op
+ * (`ESRCH`) in the ordinary case where nothing survives the child's own
+ * exit; it is the actual cleanup in the hang case. A caller-supplied
+ * `timeout` (e.g. a probe expected to need longer) overrides the default.
+ */
+function spawnConfinedSync(
+  command: string,
+  args: string[],
+  opts: { cwd?: string; env?: NodeJS.ProcessEnv; timeout?: number; encoding?: 'utf8' } = {}
+): { status: number | null; stdout: string; stderr: string; pid?: number } {
+  const spawnOpts: SpawnSyncOptionsWithStringEncoding & { detached: boolean } = {
+    timeout: 10_000,
+    killSignal: 'SIGKILL',
+    ...opts,
+    encoding: 'utf8',
+    // `detached` is a real, honored `spawnSync` option at runtime (the
+    // child becomes the leader of its own process group) even though
+    // `@types/node`'s `SpawnSyncOptions` does not declare it for the sync
+    // variant — the extended type above reflects a type-declaration gap,
+    // not an unsupported feature (verified live: the child's own pgid
+    // equals its pid with this option set).
+    detached: true
+  }
+  const result = spawnSync(command, args, spawnOpts)
+  if (typeof result.pid === 'number') {
+    try {
+      process.kill(-result.pid, 'SIGKILL')
+    } catch {
+      // ESRCH — the group is already gone, the ordinary case.
+    }
+  }
+  return result
+}
 
 function tempDir(prefix: string): string {
   // `realpathSync`: on macOS `tmpdir()` is `/var/...`, a symlink to
@@ -767,7 +814,7 @@ describe('resolveWorkerBoundaryLaunch — extraReadOnlyDirs (round 4 review, BLO
       expect(result.ok).toBe(true)
       if (!result.ok) return
       try {
-        const spawnResult = spawnSync(result.launch.command, result.launch.args, {
+        const spawnResult = spawnConfinedSync(result.launch.command, result.launch.args, {
           cwd: allowedDir,
           encoding: 'utf8'
         })
@@ -826,7 +873,7 @@ describe('resolveWorkerBoundaryLaunch — extraReadOnlyDirs (round 4 review, BLO
       expect(result.ok).toBe(true)
       if (!result.ok) return
       try {
-        const spawnResult = spawnSync(result.launch.command, result.launch.args, {
+        const spawnResult = spawnConfinedSync(result.launch.command, result.launch.args, {
           cwd: allowedDir,
           encoding: 'utf8'
         })
@@ -873,7 +920,7 @@ describe('resolveWorkerBoundaryLaunch — extraReadOnlyDirs (round 4 review, BLO
       expect(result.ok).toBe(true)
       if (!result.ok) return
       try {
-        const spawnResult = spawnSync(result.launch.command, result.launch.args, {
+        const spawnResult = spawnConfinedSync(result.launch.command, result.launch.args, {
           cwd: allowedDir,
           encoding: 'utf8',
           timeout: 5000
@@ -1025,7 +1072,7 @@ describe('resolveWorkerBoundaryLaunch — live sandbox-exec enforcement (round 3
       )
       writeFileSync(profilePath, liveProfile)
       try {
-        const spawnResult = spawnSync(result.launch.command, result.launch.args, {
+        const spawnResult = spawnConfinedSync(result.launch.command, result.launch.args, {
           cwd: allowedDir,
           encoding: 'utf8'
         })
@@ -1093,7 +1140,7 @@ describe('resolveWorkerBoundaryLaunch — live sandbox-exec enforcement (round 3
           TMP: result.launch.tmpDir,
           TEMP: result.launch.tmpDir
         })
-        const withOverride = spawnSync(result.launch.command, result.launch.args, {
+        const withOverride = spawnConfinedSync(result.launch.command, result.launch.args, {
           cwd: allowedDir,
           env: overriddenEnv,
           encoding: 'utf8'
@@ -1106,7 +1153,7 @@ describe('resolveWorkerBoundaryLaunch — live sandbox-exec enforcement (round 3
         // the boundary and not merely `launch.tmpDir` happening to be
         // writable for an unrelated reason.
         const unoverriddenEnv = buildWorkerEnv(process.env, {})
-        const withoutOverride = spawnSync(result.launch.command, result.launch.args, {
+        const withoutOverride = spawnConfinedSync(result.launch.command, result.launch.args, {
           cwd: allowedDir,
           env: unoverriddenEnv,
           encoding: 'utf8'
@@ -1150,7 +1197,7 @@ describe('resolveWorkerBoundaryLaunch — live sandbox-exec enforcement (round 3
         // caught `readdirSync` under the same profile, verified separately,
         // still throws EPERM). `/bin/ls` is a plain binary with no such
         // exception-reporting layer and reliably reflects its own exit code.
-        const spawnResult = spawnSync(
+        const spawnResult = spawnConfinedSync(
           '/usr/bin/sandbox-exec',
           ['-f', result.launch.args[1] as string, '/bin/ls', join(homedir(), 'Library', 'Keychains')],
           {
@@ -1212,7 +1259,7 @@ describe('resolveWorkerBoundaryLaunch — OAuth credential staging, live sandbox
       expect(result.launch.oauthConfigDir).not.toBeNull()
       try {
         const env = buildWorkerEnv(process.env, { CLAUDE_CONFIG_DIR: result.launch.oauthConfigDir as string })
-        const spawnResult = spawnSync(result.launch.command, result.launch.args, {
+        const spawnResult = spawnConfinedSync(result.launch.command, result.launch.args, {
           cwd: allowedDir,
           encoding: 'utf8',
           env
@@ -1263,7 +1310,7 @@ describe('resolveWorkerBoundaryLaunch — OAuth credential staging, live sandbox
       expect(result.launch.oauthConfigDir, 'no staging was requested on this path').toBeNull()
       try {
         const env = buildWorkerEnv(process.env, {}, RUNTIME_CREDENTIAL_ENV_KEYS.claude)
-        const spawnResult = spawnSync(result.launch.command, result.launch.args, {
+        const spawnResult = spawnConfinedSync(result.launch.command, result.launch.args, {
           cwd: allowedDir,
           encoding: 'utf8',
           env
@@ -1304,7 +1351,7 @@ describe('resolveWorkerBoundaryLaunch — bun toolchain reachable (round 5 revie
       expect(result.ok).toBe(true)
       if (!result.ok) return
       try {
-        const spawnResult = spawnSync(
+        const spawnResult = spawnConfinedSync(
           '/usr/bin/sandbox-exec',
           ['-f', result.launch.args[1] as string, 'bun', '--version'],
           {
@@ -1385,7 +1432,7 @@ describe('resolveWorkerBoundaryLaunch — repo-segment scoping (round 4 review, 
       expect(result.ok).toBe(true)
       if (!result.ok) return
       try {
-        const spawnResult = spawnSync(result.launch.command, result.launch.args, {
+        const spawnResult = spawnConfinedSync(result.launch.command, result.launch.args, {
           cwd: allowedDir,
           encoding: 'utf8'
         })
@@ -1461,7 +1508,7 @@ describe('resolveWorkerBoundaryLaunch — cross-task/role scoping (round 5 revie
       expect(result.ok).toBe(true)
       if (!result.ok) return
       try {
-        const spawnResult = spawnSync(result.launch.command, result.launch.args, {
+        const spawnResult = spawnConfinedSync(result.launch.command, result.launch.args, {
           cwd: allowedDir,
           encoding: 'utf8'
         })
@@ -1529,7 +1576,7 @@ describe('resolveBunExecDir — independent of the DISPATCHER process own runtim
       expect(result.ok).toBe(true)
       if (!result.ok) return
       try {
-        const spawnResult = spawnSync(
+        const spawnResult = spawnConfinedSync(
           '/usr/bin/sandbox-exec',
           ['-f', result.launch.args[1] as string, 'bun', '--version'],
           { cwd: allowedDir, encoding: 'utf8', env: { PATH: process.env.PATH ?? '' } }
@@ -1586,7 +1633,7 @@ describe('resolveWorkerBoundaryLaunch — file-read-metadata for Node.js-hosted 
         // resolution walking every ancestor directory up to the filesystem
         // root) — never reaching `STARTED` at all, live-reproduced on this
         // host with the un-fixed profile.
-        const spawnResult = spawnSync(result.launch.command, result.launch.args, {
+        const spawnResult = spawnConfinedSync(result.launch.command, result.launch.args, {
           cwd: allowedDir,
           encoding: 'utf8'
         })
@@ -1636,7 +1683,7 @@ describe('resolveWorkerBoundaryLaunch — symlinked binaryPath exec target (secu
         // REALPATH'd target directory — a mismatch that denied the launch
         // outright (`execvp() ... Operation not permitted`), live-verified
         // by the security reviewer against exactly this installer layout.
-        const spawnResult = spawnSync(result.launch.command, result.launch.args, {
+        const spawnResult = spawnConfinedSync(result.launch.command, result.launch.args, {
           cwd: allowedDir,
           encoding: 'utf8'
         })

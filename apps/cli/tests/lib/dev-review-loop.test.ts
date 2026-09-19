@@ -1692,6 +1692,10 @@ if [ "$1" = "rev-parse" ] && [ "$2" = "origin/main" ]; then
   echo "${BASE_SHA}"
   exit 0
 fi
+if [ "$1" = "merge-base" ]; then
+  echo "${BASE_SHA}"
+  exit 0
+fi
 if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
   echo "$PWD"
   exit 0
@@ -1725,6 +1729,10 @@ if [ "$1" = "ls-remote" ]; then
   exit 0
 fi
 if [ "$1" = "rev-parse" ] && [ "$2" = "origin/main" ]; then
+  echo "${BASE_SHA}"
+  exit 0
+fi
+if [ "$1" = "merge-base" ]; then
   echo "${BASE_SHA}"
   exit 0
 fi
@@ -1793,6 +1801,31 @@ function disableIsolationForFixture(cwd: string): void {
   )
 }
 
+/**
+ * issue-657, O5 — every fixture in this file relies on the driver resolving
+ * its runtime directory (`run-paths.ts`'s `defaultRuntimeDir`) from the
+ * OVERRIDDEN `HOME` above, under the `unresolved` repo segment (the fake
+ * `git` binary answers no real remote, so `resolveRepoSync` finds none) —
+ * `writeFakeClaude`'s own `$HOME/.vinaya/runtime/unresolved/tasks-execution/…`
+ * path, and this file's own `taskRunDir` helper, both hardcode that
+ * assumption. `runtimeDirForRepo`'s OWN resolution order checks
+ * `VINAYA_RUNTIME_DIR` FIRST, before any of that — a real value inherited
+ * from the CALLING shell's own environment (set when this file's own suite
+ * runs inside a real dispatched session, which sets it for its own
+ * orchestration) silently redirects every spawned test driver to that REAL,
+ * shared, non-isolated directory instead: a live process there is genuinely
+ * running and genuinely writing real files under the caller's actual
+ * `~/.vinaya`, invisible to this file's own cleanup and colliding with any
+ * sibling run (another test in this same suite, another task's dispatch)
+ * that resolves the identical path. Found live: a driver leaked exactly
+ * this way blocked a later run in this same suite with "a driver is already
+ * running", and left real files under the operator's own home directory
+ * that this suite never created a temp dir for and therefore never cleans
+ * up. Stripped here, unconditionally, so this suite's own isolation can
+ * never depend on the calling shell happening to leave it unset.
+ */
+const HOST_RUNTIME_ENV_KEYS = ['VINAYA_RUNTIME_DIR', 'AEG_REPO']
+
 function runDevReviewLoopArgs(
   home: string,
   cwd: string,
@@ -1801,6 +1834,8 @@ function runDevReviewLoopArgs(
   extraEnv: Record<string, string> = {}
 ): CliResult {
   disableIsolationForFixture(cwd)
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, PATH: path, ...extraEnv }
+  for (const key of HOST_RUNTIME_ENV_KEYS) delete env[key]
   // `spawnSync` (never `execFileSync`) — it hands back stdout AND stderr on
   // BOTH the success and the non-zero-exit path; `execFileSync` only
   // surfaces piped stderr via the thrown error, so a passing run's own
@@ -1809,7 +1844,7 @@ function runDevReviewLoopArgs(
   const r = spawnSync('bun', [INDEX, 'dev-review-loop', ...args], {
     encoding: 'utf8',
     cwd,
-    env: { ...process.env, HOME: home, PATH: path, ...extraEnv }
+    env
   })
   return { status: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' }
 }
@@ -2064,6 +2099,162 @@ describe('devReviewLoop — round 1 clean, ends on publish', () => {
   }, 20000)
 })
 
+// --- issue-657, O4: the review-input manifest's base identity is a merge
+// base, never the default branch's raw tip ---
+
+const MERGED_BASE_SHA = 'd'.repeat(40)
+
+/** Same as `writeFakeGit`, except `merge-base` answers `MERGED_BASE_SHA` — a real ancestor OLDER than `origin/main`'s own tip (`BASE_SHA`), simulating a candidate branched before commits the default branch has since gained. */
+function writeFakeGitMergeBaseBehindTip(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'git',
+    `#!/bin/sh
+if [ "$1" = "ls-remote" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo "${HEAD_SHA}	refs/heads/${BRANCH}"
+  fi
+  exit 0
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "origin/main" ]; then
+  echo "${BASE_SHA}"
+  exit 0
+fi
+if [ "$1" = "merge-base" ]; then
+  echo "${MERGED_BASE_SHA}"
+  exit 0
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
+  echo "$PWD"
+  exit 0
+fi
+if [ "$1" = "-C" ] && [ "$3" = "rev-parse" ] && [ "$4" = "HEAD" ]; then
+  echo "${HEAD_SHA}"
+  exit 0
+fi
+if [ "$1" = "fetch" ]; then
+  exit 0
+fi
+if [ "$1" = "diff" ]; then
+  echo " 2 files changed, 10 insertions(+), 3 deletions(-)"
+  exit 0
+fi
+exit 1
+`
+  )
+}
+
+/** Same as `writeFakeGit`, except `merge-base` always fails (no candidate ref yields one) — simulates unrelated histories, or a default branch this fixture cannot resolve any real ancestor against. */
+function writeFakeGitUnresolvableMergeBase(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'git',
+    `#!/bin/sh
+if [ "$1" = "ls-remote" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo "${HEAD_SHA}	refs/heads/${BRANCH}"
+  fi
+  exit 0
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "origin/main" ]; then
+  echo "${BASE_SHA}"
+  exit 0
+fi
+if [ "$1" = "merge-base" ]; then
+  exit 1
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
+  echo "$PWD"
+  exit 0
+fi
+if [ "$1" = "-C" ] && [ "$3" = "rev-parse" ] && [ "$4" = "HEAD" ]; then
+  echo "${HEAD_SHA}"
+  exit 0
+fi
+if [ "$1" = "fetch" ]; then
+  exit 0
+fi
+if [ "$1" = "diff" ]; then
+  echo " 2 files changed, 10 insertions(+), 3 deletions(-)"
+  exit 0
+fi
+exit 1
+`
+  )
+}
+
+describe('devReviewLoop — O4 (issue-657): the review-input manifest binds a merge base, never the raw default-branch tip', () => {
+  // The control-store manifest snapshot is only ever persisted once a real
+  // repository resolves (`if (repo) persistManifestRecord(...)` in
+  // `dev-review-loop.ts`) — never true in this file's own fixtures, which
+  // run from a deliberately non-git `cwd` (`writeFakeGit`'s own doc
+  // comment). `d.gitMergeBase(head)` itself, though, is called
+  // unconditionally to BUILD the manifest, before that repo check ever
+  // runs — so these fixtures still exercise the real call site; what they
+  // can observe is the round's own OUTCOME, not the persisted byte value.
+
+  it('a clean branch: the merge base equals the default branch tip, and the round still completes normally', () => {
+    const { home, cwd, path } = setUp()
+    const r = runLoop(home, cwd, path)
+    expect(r.status).toBe(0)
+    expect(r.stdout).toMatch(/publish/)
+  }, 20000)
+
+  it('a branch behind a moved default branch: the round still completes normally off the resolved merge base, never erroring on the mismatch between it and the tip', () => {
+    const home = tempDir('vinaya-drl-home-')
+    const cwd = tempDir('vinaya-drl-cwd-')
+    const binDir = tempDir('vinaya-drl-bin-')
+    writeFakeClaude(binDir)
+    writeFakeGh(binDir)
+    writeFakeGitMergeBaseBehindTip(binDir)
+    const path = `${binDir}:${pathWithoutRealVendors()}`
+
+    const r = runLoop(home, cwd, path)
+    expect(r.status).toBe(0)
+    expect(r.stdout).toMatch(/publish/)
+  }, 20000)
+
+  it('a non-ancestor / unresolvable merge base: the round pauses as infrastructure rather than binding a base that was never proven an ancestor of the head', () => {
+    const home = tempDir('vinaya-drl-home-')
+    const cwd = tempDir('vinaya-drl-cwd-')
+    const binDir = tempDir('vinaya-drl-bin-')
+    writeFakeClaude(binDir)
+    writeFakeGh(binDir)
+    writeFakeGitUnresolvableMergeBase(binDir)
+    const path = `${binDir}:${pathWithoutRealVendors()}`
+
+    const r = runLoop(home, cwd, path)
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+  }, 20000)
+})
+
+// issue-657, O4 — source-wiring proof, the same convention this file's own
+// "O3 wiring reaches both gate modes" describe block already uses: the
+// subprocess fixtures above prove the round-level OUTCOME (a normal publish,
+// or a decided pause), but cannot observe the exact `baseSha` byte value the
+// manifest binds (the control-store snapshot is never persisted without a
+// real, resolvable repository — see the describe block's own comment,
+// above). This proves the call sites themselves reach the real merge-base
+// resolver, never the raw default-branch tip.
+describe('devReviewLoop — O4 (issue-657) wiring: the manifest builder reads a merge base, never the raw tip', () => {
+  const src = readFileSync(join(import.meta.dirname, '..', '..', 'src', 'lib', 'dev-review-loop.ts'), 'utf8')
+
+  it('the round-1 dispatch builds baseSha from d.gitMergeBase(head), not d.gitRevParseOriginMain()', () => {
+    expect(src).toContain('const baseSha = d.gitMergeBase(head)')
+  })
+
+  it('the publish-time fallback manifest rebuild resolves baseSha the same way', () => {
+    expect(src).toContain('baseSha: d.gitMergeBase(d.resolveHead(branch))')
+  })
+
+  it('gitMergeBase is a real Deps field, defaulting to resolveMergeBase — never an ad hoc shell pipeline in the driver', () => {
+    expect(src).toContain('gitMergeBase: (head: string) => string')
+    expect(src).toContain('gitMergeBase: defaultGitMergeBase')
+    expect(src).toMatch(/function defaultGitMergeBase\(head: string\): string \{\s*return resolveMergeBase\(head\)/)
+  })
+})
+
 // --- task-log-v1 task 6, O3: restart fixtures ---
 //
 // A genuine restart here is a second, independent `dev-review-loop` process
@@ -2300,6 +2491,10 @@ if [ "$1" = "rev-parse" ] && [ "$2" = "origin/main" ]; then
   echo "${BASE_SHA}"
   exit 0
 fi
+if [ "$1" = "merge-base" ]; then
+  echo "${BASE_SHA}"
+  exit 0
+fi
 if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
   echo "$PWD"
   exit 0
@@ -2310,10 +2505,6 @@ if [ "$1" = "rev-parse" ] && [ "$2" = "HEAD" ]; then
 fi
 if [ "$1" = "-C" ] && [ "$3" = "rev-parse" ] && [ "$4" = "HEAD" ]; then
   echo "${HEAD_SHA}"
-  exit 0
-fi
-if [ "$1" = "merge-base" ]; then
-  echo "${BASE_SHA}"
   exit 0
 fi
 if [ "$1" = "fetch" ]; then
@@ -2972,6 +3163,10 @@ if [ "$1" = "ls-remote" ]; then
   exit 0
 fi
 if [ "$1" = "rev-parse" ] && [ "$2" = "origin/main" ]; then
+  echo "${BASE_SHA}"
+  exit 0
+fi
+if [ "$1" = "merge-base" ]; then
   echo "${BASE_SHA}"
   exit 0
 fi
@@ -4631,6 +4826,10 @@ if [ "$1" = "rev-parse" ] && [ "$2" = "origin/main" ]; then
   echo "${BASE_SHA}"
   exit 0
 fi
+if [ "$1" = "merge-base" ]; then
+  echo "${BASE_SHA}"
+  exit 0
+fi
 if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
   echo "$PWD"
   exit 0
@@ -4980,6 +5179,10 @@ if [ "$1" = "rev-parse" ] && [ "$2" = "origin/main" ]; then
   echo "${BASE_SHA}"
   exit 0
 fi
+if [ "$1" = "merge-base" ]; then
+  echo "${BASE_SHA}"
+  exit 0
+fi
 if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
   echo "$PWD"
   exit 0
@@ -5083,6 +5286,10 @@ if [ "$1" = "rev-parse" ] && [ "$2" = "origin/main" ]; then
   echo "${BASE_SHA}"
   exit 0
 fi
+if [ "$1" = "merge-base" ]; then
+  echo "${BASE_SHA}"
+  exit 0
+fi
 if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
   echo "$PWD"
   exit 0
@@ -5121,6 +5328,10 @@ if [ "$1" = "ls-remote" ]; then
   exit 0
 fi
 if [ "$1" = "rev-parse" ] && [ "$2" = "origin/main" ]; then
+  echo "${BASE_SHA}"
+  exit 0
+fi
+if [ "$1" = "merge-base" ]; then
   echo "${BASE_SHA}"
   exit 0
 fi
@@ -5436,6 +5647,10 @@ if [ "$1" = "ls-remote" ]; then
   exit 0
 fi
 if [ "$1" = "rev-parse" ] && [ "$2" = "origin/main" ]; then
+  echo "${BASE_SHA}"
+  exit 0
+fi
+if [ "$1" = "merge-base" ]; then
   echo "${BASE_SHA}"
   exit 0
 fi
@@ -6310,6 +6525,10 @@ if [ "$1" = "rev-parse" ] && [ "$2" = "origin/main" ]; then
   echo "${BASE_SHA}"
   exit 0
 fi
+if [ "$1" = "merge-base" ]; then
+  echo "${BASE_SHA}"
+  exit 0
+fi
 if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
   echo "$PWD"
   exit 0
@@ -6420,6 +6639,10 @@ if [ "$1" = "rev-parse" ] && [ "$2" = "origin/main" ]; then
   fi
   exit 0
 fi
+if [ "$1" = "merge-base" ]; then
+  echo "${BASE_SHA}"
+  exit 0
+fi
 if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
   echo "$PWD"
   exit 0
@@ -6483,6 +6706,10 @@ if [ "$1" = "rev-parse" ] && [ "$2" = "origin/main" ]; then
   else
     echo "${BASE_SHA}"
   fi
+  exit 0
+fi
+if [ "$1" = "merge-base" ]; then
+  echo "${BASE_SHA}"
   exit 0
 fi
 if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
@@ -6558,6 +6785,10 @@ if [ "$1" = "rev-parse" ] && [ "$2" = "origin/main" ]; then
   else
     echo "${BASE_SHA}"
   fi
+  exit 0
+fi
+if [ "$1" = "merge-base" ]; then
+  echo "${BASE_SHA}"
   exit 0
 fi
 if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then

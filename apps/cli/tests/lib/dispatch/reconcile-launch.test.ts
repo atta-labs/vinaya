@@ -351,6 +351,7 @@ describe("recoverDeveloperLaunch (O2, Issue #605, code review, MAJOR) — the re
       orphanScript,
       [
         `import { dispatchRole, readLaunchRecord } from ${JSON.stringify(dispatchLib)}`,
+        `import { writeFileSync as writeFileSyncOrphan } from 'node:fs'`,
         `const opts = { promptFile: ${JSON.stringify(promptFile)}, task: 44 }`,
         `void dispatchRole('developer', 'claude', 'p', opts)`,
         'async function waitForChildPid(timeoutMs) {',
@@ -363,6 +364,13 @@ describe("recoverDeveloperLaunch (O2, Issue #605, code review, MAJOR) — the re
         `  throw new Error('timed out waiting for the launch record to carry a childPid')`,
         '}',
         'await waitForChildPid(5000)',
+        // The outer test process needs this pid too, to guarantee cleanup
+        // regardless of what happens next (issue-657, O5) — written to a
+        // plain file in `cwd` rather than re-reading the launch record from
+        // the outer process, which runs under a DIFFERENT `HOME` than this
+        // orphan-creating child and would resolve the wrong path.
+        `const created = readLaunchRecord('developer', 'claude', null, 44)`,
+        `writeFileSyncOrphan(${JSON.stringify(join(cwd, 'orphan-pid.txt'))}, String(created.status === 'ok' ? created.record.childPid : ''))`,
         // Exit WITHOUT terminating the child — this process's own death is
         // what reparents it to init, the orphan condition under test.
         'process.exit(0)'
@@ -370,59 +378,86 @@ describe("recoverDeveloperLaunch (O2, Issue #605, code review, MAJOR) — the re
     )
     const spawnEnv: NodeJS.ProcessEnv = { ...process.env, HOME: home, PATH: `${binDir}:${process.env.PATH ?? ''}` }
     delete spawnEnv.VINAYA_RUN_ID
+    // issue-657, O5 — a `VINAYA_RUNTIME_DIR` inherited from the calling
+    // shell (a real dispatched session's own orchestration variable) takes
+    // priority over the `HOME` override above and silently redirects this
+    // fixture's real launch record to the operator's actual, non-isolated
+    // `~/.vinaya` — the same class of leak `dev-review-loop.test.ts` hit
+    // live on this same host.
+    delete spawnEnv.VINAYA_RUNTIME_DIR
     execFileSync('bun', [orphanScript], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: spawnEnv })
 
-    const developerDispatchLib = join(CLI_ROOT, 'src', 'lib', 'dev-review-loop', 'developer-dispatch.ts')
-    const reaperScript = join(cwd, 'reap-attempt.ts')
-    const resultPath = join(cwd, 'result.json')
-    writeFileSync(
-      reaperScript,
-      [
-        `import { writeFileSync } from 'node:fs'`,
-        `import { execFileSync } from 'node:child_process'`,
-        `import { hostname } from 'node:os'`,
-        `import { recoverDeveloperLaunch } from ${JSON.stringify(developerDispatchLib)}`,
-        `import { readLaunchRecord, getProcessSnapshot } from ${JSON.stringify(dispatchLib)}`,
-        `const before = readLaunchRecord('developer', 'claude', null, 44)`,
-        `const childPid = before.status === 'ok' ? before.record.childPid : null`,
-        'let spyCalledWith = null',
-        'const deps = {',
-        '  isPidAlive: (pid) => { try { process.kill(pid, 0); return true } catch { return false } },',
-        '  hostname: () => hostname(),',
-        '  getProcessSnapshot,',
-        '  terminateChild: (pid) => { spyCalledWith = pid }',
-        '}',
-        `const out = recoverDeveloperLaunch(44, 'claude', null, {}, deps)`,
-        'let stillAlive = false',
-        'if (childPid !== null) {',
-        `  try { execFileSync('ps', ['-p', String(childPid)], { stdio: ['ignore', 'ignore', 'ignore'] }); stillAlive = true } catch { stillAlive = false }`,
-        '}',
-        // Real cleanup — the spy never actually killed it.
-        "if (childPid !== null) { try { process.kill(childPid, 'SIGKILL') } catch {} }",
-        `writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({ childPid, spyCalledWith, stillAlive, kind: out.kind }))`,
-        'process.exit(0)'
-      ].join('\n')
-    )
-    execFileSync('bun', [reaperScript], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: spawnEnv })
+    // issue-657, O5 — a real, deliberately-orphaned process now exists
+    // (the whole point of this test). Everything from here on is wrapped in
+    // `try`/`finally` so a genuinely alive `orphanPid` is killed no matter
+    // what happens next — an assertion failure, a throw inside the reaper
+    // script, `execFileSync` itself throwing on a non-zero exit — never left
+    // to survive this test the way this file's own #605 incident did before
+    // this fix (found live: a confined agent for a fake task left running
+    // for two hours after a test like this one failed mid-way through).
+    const orphanPidRaw = readFileSync(join(cwd, 'orphan-pid.txt'), 'utf8').trim()
+    const orphanPid = orphanPidRaw.length > 0 ? Number(orphanPidRaw) : null
 
-    const result = JSON.parse(readFileSync(resultPath, 'utf8')) as {
-      childPid: number
-      spyCalledWith: number | null
-      stillAlive: boolean
-      kind: string
+    try {
+      const developerDispatchLib = join(CLI_ROOT, 'src', 'lib', 'dev-review-loop', 'developer-dispatch.ts')
+      const reaperScript = join(cwd, 'reap-attempt.ts')
+      const resultPath = join(cwd, 'result.json')
+      writeFileSync(
+        reaperScript,
+        [
+          `import { writeFileSync } from 'node:fs'`,
+          `import { execFileSync } from 'node:child_process'`,
+          `import { hostname } from 'node:os'`,
+          `import { recoverDeveloperLaunch } from ${JSON.stringify(developerDispatchLib)}`,
+          `import { readLaunchRecord, getProcessSnapshot } from ${JSON.stringify(dispatchLib)}`,
+          `const before = readLaunchRecord('developer', 'claude', null, 44)`,
+          `const childPid = before.status === 'ok' ? before.record.childPid : null`,
+          'let spyCalledWith = null',
+          'const deps = {',
+          '  isPidAlive: (pid) => { try { process.kill(pid, 0); return true } catch { return false } },',
+          '  hostname: () => hostname(),',
+          '  getProcessSnapshot,',
+          '  terminateChild: (pid) => { spyCalledWith = pid }',
+          '}',
+          `const out = recoverDeveloperLaunch(44, 'claude', null, {}, deps)`,
+          'let stillAlive = false',
+          'if (childPid !== null) {',
+          `  try { execFileSync('ps', ['-p', String(childPid)], { stdio: ['ignore', 'ignore', 'ignore'] }); stillAlive = true } catch { stillAlive = false }`,
+          '}',
+          `writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({ childPid, spyCalledWith, stillAlive, kind: out.kind }))`,
+          'process.exit(0)'
+        ].join('\n')
+      )
+      execFileSync('bun', [reaperScript], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: spawnEnv })
+
+      const result = JSON.parse(readFileSync(resultPath, 'utf8')) as {
+        childPid: number
+        spyCalledWith: number | null
+        stillAlive: boolean
+        kind: string
+      }
+      // The injected spy — not a real signal — is what actually reaped it.
+      expect(result.spyCalledWith).toBe(result.childPid)
+      // Because the spy is a no-op, the real process must still be alive: proof
+      // the call was routed through `deps.terminateChild`, not a hardcoded
+      // `terminateChildWithGrace` the test's own spy could never intercept.
+      expect(result.stillAlive).toBe(true)
+      // With no session ever bound, continuity required, and the record still
+      // reading 'launched': pause explicitly once the (fake) reap has run.
+      expect(result.kind).toBe('pause')
+    } finally {
+      // The one real kill this test performs — unconditional, regardless of
+      // how the `try` block above exited.
+      if (orphanPid !== null) {
+        try {
+          process.kill(orphanPid, 'SIGKILL')
+        } catch {
+          // ESRCH — already gone.
+        }
+      }
+      rmSync(home, { recursive: true, force: true })
+      rmSync(cwd, { recursive: true, force: true })
+      rmSync(binDir, { recursive: true, force: true })
     }
-    // The injected spy — not a real signal — is what actually reaped it.
-    expect(result.spyCalledWith).toBe(result.childPid)
-    // Because the spy is a no-op, the real process must still be alive: proof
-    // the call was routed through `deps.terminateChild`, not a hardcoded
-    // `terminateChildWithGrace` the test's own spy could never intercept.
-    expect(result.stillAlive).toBe(true)
-    // With no session ever bound, continuity required, and the record still
-    // reading 'launched': pause explicitly once the (fake) reap has run.
-    expect(result.kind).toBe('pause')
-
-    rmSync(home, { recursive: true, force: true })
-    rmSync(cwd, { recursive: true, force: true })
-    rmSync(binDir, { recursive: true, force: true })
   }, 15_000)
 })
