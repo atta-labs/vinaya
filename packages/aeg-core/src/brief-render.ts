@@ -858,6 +858,17 @@ export function renderBrief(facts: BriefFacts, template: string): RenderResult {
     missing.push(
       "Surface map (every file the Boundary named is excluded by the Issue's own `## Surface` `in:`/`out:` globs — Boundary and Surface disagree; fix the Issue rather than render an empty surface map)"
     )
+  } else if (facts.surface.in.length > 0 && filteredSurfaceFiles.filter((f) => f.sha256 !== null).length === 0) {
+    // issue-657, O3 — the caller already guarantees every `## Surface` `in:`
+    // glob resolves to at least one real tracked file before `renderBrief`
+    // is ever called; if nothing the Boundary named survives to a premise
+    // pin (nothing was named at all, or every named file is a not-yet-
+    // created "Create" entry with no sha256 to pin), refuse naming the
+    // surface rather than render an empty `**Premise:**` block the brief's
+    // own `checkBriefSections` validator then rejects.
+    missing.push(
+      `Premise pins (the Issue's \`## Surface\` \`in:\` — ${facts.surface.in.join(', ')} — resolves to at least one tracked file, but the Boundary names none of them to pin; name a real in-scope file in the Boundary rationale)`
+    )
   }
 
   if (missing.length > 0) return { ok: false, missing }
