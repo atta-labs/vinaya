@@ -19,6 +19,25 @@ function tempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix))
 }
 
+/**
+ * Issue #660, O3 — this process's OWN environment, when it is itself a
+ * dispatched Developer/Reviewer session, carries `VINAYA_RUNTIME_DIR`
+ * (checked before `$HOME` by `resolveRuntimeDirUncached`). Spreading
+ * `...process.env` into a fixture's real subprocess hands it THIS machine's
+ * real, shared runtime directory regardless of the fixture's own isolated
+ * `$HOME` — confirmed live: this file's own hardcoded task `44` collided
+ * with a stale launch record from an earlier leaked run of this exact file.
+ * Same fix `dev-review-loop.test.ts`'s `fixtureChildEnv` already applies;
+ * `VINAYA_RUN_ID` alone (the prior, narrower strip) was not enough.
+ */
+function stripVinayaEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { ...env }
+  for (const key of Object.keys(out)) {
+    if (key.startsWith('VINAYA_')) delete out[key]
+  }
+  return out
+}
+
 const PROMPT_FILE_CONTENT = 'do the thing'
 
 /** A launch record with sensible defaults; individual cases override only what they exercise. */
@@ -368,8 +387,11 @@ describe("recoverDeveloperLaunch (O2, Issue #605, code review, MAJOR) — the re
         'process.exit(0)'
       ].join('\n')
     )
-    const spawnEnv: NodeJS.ProcessEnv = { ...process.env, HOME: home, PATH: `${binDir}:${process.env.PATH ?? ''}` }
-    delete spawnEnv.VINAYA_RUN_ID
+    const spawnEnv: NodeJS.ProcessEnv = stripVinayaEnv({
+      ...process.env,
+      HOME: home,
+      PATH: `${binDir}:${process.env.PATH ?? ''}`
+    })
     execFileSync('bun', [orphanScript], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: spawnEnv })
 
     const developerDispatchLib = join(CLI_ROOT, 'src', 'lib', 'dev-review-loop', 'developer-dispatch.ts')

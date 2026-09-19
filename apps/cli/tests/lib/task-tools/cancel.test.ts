@@ -30,6 +30,25 @@ import { writePauseState } from '../../../src/lib/dev-review-loop/pause-resume.j
  * continuation at all).
  */
 
+/**
+ * Issue #660, O3 — this process's OWN environment, when it is itself a
+ * dispatched Developer/Reviewer session, carries `VINAYA_RUNTIME_DIR`
+ * (checked before `$HOME` by `resolveRuntimeDirUncached`). Spreading
+ * `...process.env` into these fixtures' real subprocesses hands them THIS
+ * machine's real, shared runtime directory regardless of the fixture's own
+ * isolated `$HOME` — confirmed live: task `558` (this file's own `ISSUE`)
+ * collided with a stale record from an earlier leaked run of this exact
+ * file. Same fix `dev-review-loop.test.ts`'s `fixtureChildEnv` already
+ * applies.
+ */
+function stripVinayaEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { ...env }
+  for (const key of Object.keys(out)) {
+    if (key.startsWith('VINAYA_')) delete out[key]
+  }
+  return out
+}
+
 const CALLER: CallerContext = { caller: { id: 'operator-1' } }
 const NO_CALLER: CallerContext = { caller: null }
 const ISSUE = 558
@@ -436,7 +455,7 @@ try {
     try {
       const output = execFileSync('bun', [scriptPath], {
         cwd: repoRoot,
-        env: { ...process.env, HOME: home },
+        env: stripVinayaEnv({ ...process.env, HOME: home }),
         encoding: 'utf8'
       })
       expect(output).toContain('FIRST_OK')
@@ -586,7 +605,7 @@ console.log('DONE')
     try {
       const output = execFileSync('bun', [scriptPath], {
         cwd: repoRoot,
-        env: { ...process.env, HOME: home },
+        env: stripVinayaEnv({ ...process.env, HOME: home }),
         encoding: 'utf8'
       })
       expect(output).toContain('TASK_AFTER:sentinel-task')
