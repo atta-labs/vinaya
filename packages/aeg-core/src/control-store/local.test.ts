@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -10,6 +10,7 @@ import {
   InvalidEffectKeyError,
   InvalidEscalationIdError,
   InvalidRunIdError,
+  isTrustedDirStat,
   listStartedEffectKeys,
   markEffectUncertain,
   readCurrentOwnership,
@@ -385,6 +386,52 @@ describe('a pre-planted symlink at a run directory is refused, never followed (s
     expect(() =>
       writeRun(deps, 555, epoch, { runId: 'run-a', pid: 1, host: 'box', startedAt: clock.toISOString() })
     ).not.toThrow()
+  })
+
+  it('a pre-existing REAL directory left world-writable with no sticky bit is refused (security review, round 3)', () => {
+    const acquired = acquireOwnership(deps, 556, 'run-a')
+    expect(acquired.acquired).toBe(true)
+    const epoch = acquired.acquired ? acquired.epoch : -1
+    const runDir = join(dir, '556', 'control', 'run')
+    // Owned by this same test process — only the mode is wrong — so this
+    // isolates the mode check from the (untestable-in-CI) foreign-owner one.
+    mkdirSync(runDir, { recursive: true, mode: 0o700 })
+    chmodSync(runDir, 0o707)
+
+    expect(() =>
+      writeRun(deps, 556, epoch, { runId: 'run-a', pid: 1, host: 'box', startedAt: clock.toISOString() })
+    ).toThrow(/neither this process's own user nor a safe shared mode/)
+  })
+})
+
+describe('isTrustedDirStat', () => {
+  it('trusts a directory owned by the current user with a restrictive mode', () => {
+    expect(isTrustedDirStat({ uid: 1000, mode: 0o700 }, 1000)).toBe(true)
+  })
+
+  it("trusts a root-owned directory regardless of caller uid (a system ancestor like `/tmp`'s own parent)", () => {
+    expect(isTrustedDirStat({ uid: 0, mode: 0o755 }, 1000)).toBe(true)
+  })
+
+  it('refuses a directory owned by neither the caller nor root', () => {
+    // Not constructible as a real fixture in CI without a second local user
+    // — exercised here via a faked stat instead, the same convention
+    // `metering-io-guard.test.ts`'s `isTrustedMeteringStat` suite already
+    // uses for its own foreign-owner case.
+    expect(isTrustedDirStat({ uid: 1000, mode: 0o700 }, 1)).toBe(false)
+  })
+
+  it('trusts a world-writable directory only when the sticky bit is also set — the `/tmp` shape', () => {
+    expect(isTrustedDirStat({ uid: 0, mode: 0o1777 }, 1000)).toBe(true)
+    expect(isTrustedDirStat({ uid: 0, mode: 0o777 }, 1000)).toBe(false)
+  })
+
+  it('trusts a group-writable-but-not-world-writable directory owned by the caller — an ordinary shared-group umask, not the co-tenant threat', () => {
+    expect(isTrustedDirStat({ uid: 1000, mode: 0o775 }, 1000)).toBe(true)
+  })
+
+  it('trusts any owner or mode when the platform reports no uid at all (e.g. Windows)', () => {
+    expect(isTrustedDirStat({ uid: 1000, mode: 0o777 }, undefined)).toBe(true)
   })
 })
 
