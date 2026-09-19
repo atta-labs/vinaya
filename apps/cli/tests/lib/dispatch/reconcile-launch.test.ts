@@ -38,6 +38,39 @@ function stripVinayaEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return out
 }
 
+/**
+ * Issue #660, O3 round 3 (reviewer F2) — this file's own doc comment above
+ * claimed "the same fix `dev-review-loop.test.ts`'s `fixtureChildEnv`
+ * already applies", but only the env-stripping half was ported: both real
+ * `execFileSync` fixtures below (the orphan and reaper scripts) ran with no
+ * timeout, so a genuine lock/epoch collision with another fixture or task
+ * run hung synchronously forever with zero diagnostic. Kept below this
+ * file's own `it(..., 15_000)` bound so a real hang is caught here, with the
+ * child's own captured output, before the test framework's bare timeout.
+ */
+const SUBPROCESS_BUDGET_MS = 6_000
+
+function runFixtureScript(scriptPath: string, cwd: string, env: NodeJS.ProcessEnv): void {
+  try {
+    execFileSync('bun', [scriptPath], {
+      cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env,
+      timeout: SUBPROCESS_BUDGET_MS,
+      killSignal: 'SIGKILL'
+    })
+  } catch (e) {
+    const err = e as { signal?: string | null; stdout?: Buffer | string; stderr?: Buffer | string }
+    if (err.signal) {
+      throw new Error(
+        `reconcile-launch.test.ts subprocess killed by ${err.signal} after exceeding its ${SUBPROCESS_BUDGET_MS}ms budget ` +
+          `(script: ${scriptPath})\n--- stdout ---\n${err.stdout ?? ''}\n--- stderr ---\n${err.stderr ?? ''}`
+      )
+    }
+    throw e
+  }
+}
+
 const PROMPT_FILE_CONTENT = 'do the thing'
 
 /** A launch record with sensible defaults; individual cases override only what they exercise. */
@@ -392,7 +425,7 @@ describe("recoverDeveloperLaunch (O2, Issue #605, code review, MAJOR) — the re
       HOME: home,
       PATH: `${binDir}:${process.env.PATH ?? ''}`
     })
-    execFileSync('bun', [orphanScript], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: spawnEnv })
+    runFixtureScript(orphanScript, cwd, spawnEnv)
 
     const developerDispatchLib = join(CLI_ROOT, 'src', 'lib', 'dev-review-loop', 'developer-dispatch.ts')
     const reaperScript = join(cwd, 'reap-attempt.ts')
@@ -425,7 +458,7 @@ describe("recoverDeveloperLaunch (O2, Issue #605, code review, MAJOR) — the re
         'process.exit(0)'
       ].join('\n')
     )
-    execFileSync('bun', [reaperScript], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: spawnEnv })
+    runFixtureScript(reaperScript, cwd, spawnEnv)
 
     const result = JSON.parse(readFileSync(resultPath, 'utf8')) as {
       childPid: number

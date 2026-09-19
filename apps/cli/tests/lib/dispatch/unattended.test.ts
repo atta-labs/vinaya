@@ -83,23 +83,57 @@ function buildFixture(opts: { requireWorkerIsolation?: boolean } = {}): Fixture 
   return { home, cwd, binDir, promptFile, markerFile }
 }
 
-function runDispatch(fixture: Fixture, extraArgs: string[]): { status: number; stdout: string; stderr: string } {
+/**
+ * Issue #660, O3 round 3 (security review, HIGH) — all three real `vinaya
+ * dispatch --unattended` fixtures below spread `...process.env` straight
+ * into the spawned child with no `VINAYA_*` stripping and no
+ * `execFileSync` timeout: the same `VINAYA_RUNTIME_DIR` leak/no-budget
+ * pattern already fixed in `apps/cli/tests/lib/dispatch.test.ts`'s own
+ * `stripVinayaEnv` + budget.
+ */
+function stripVinayaEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { ...env }
+  for (const key of Object.keys(out)) {
+    if (key.startsWith('VINAYA_')) delete out[key]
+  }
+  return out
+}
+
+const SUBPROCESS_BUDGET_MS = 18_000
+
+function runVinayaDispatch(
+  cwd: string,
+  args: string[],
+  env: NodeJS.ProcessEnv
+): { status: number; stdout: string; stderr: string } {
   try {
-    const stdout = execFileSync(
-      'bun',
-      [INDEX, 'dispatch', 'developer', '--agent', 'claude', '--prompt-file', fixture.promptFile, ...extraArgs],
-      {
-        encoding: 'utf8',
-        cwd: fixture.cwd,
-        stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env, HOME: fixture.home, PATH: `${fixture.binDir}:${pathWithoutRealVendors()}` }
-      }
-    )
+    const stdout = execFileSync('bun', [INDEX, 'dispatch', ...args], {
+      encoding: 'utf8',
+      cwd,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env,
+      timeout: SUBPROCESS_BUDGET_MS,
+      killSignal: 'SIGKILL'
+    })
     return { status: 0, stdout, stderr: '' }
   } catch (e) {
-    const err = e as { status?: number; stdout?: string; stderr?: string }
+    const err = e as { status?: number; stdout?: string; stderr?: string; signal?: string | null }
+    if (err.signal) {
+      throw new Error(
+        `vinaya dispatch --unattended subprocess killed by ${err.signal} after exceeding its ${SUBPROCESS_BUDGET_MS}ms budget ` +
+          `(args: ${args.join(' ')})\n--- stdout ---\n${err.stdout ?? ''}\n--- stderr ---\n${err.stderr ?? ''}`
+      )
+    }
     return { status: err.status ?? 1, stdout: String(err.stdout ?? ''), stderr: String(err.stderr ?? '') }
   }
+}
+
+function runDispatch(fixture: Fixture, extraArgs: string[]): { status: number; stdout: string; stderr: string } {
+  return runVinayaDispatch(
+    fixture.cwd,
+    ['developer', '--agent', 'claude', '--prompt-file', fixture.promptFile, ...extraArgs],
+    { ...stripVinayaEnv(process.env), HOME: fixture.home, PATH: `${fixture.binDir}:${pathWithoutRealVendors()}` }
+  )
 }
 
 function outboxLines(home: string): unknown[] {
@@ -231,22 +265,15 @@ function runDispatchNoApiKey(
   extraArgs: string[]
 ): { status: number; stdout: string; stderr: string } {
   const { ANTHROPIC_API_KEY: _drop, ...envWithoutApiKey } = process.env
-  try {
-    const stdout = execFileSync(
-      'bun',
-      [INDEX, 'dispatch', 'developer', '--agent', 'claude', '--prompt-file', fixture.promptFile, ...extraArgs],
-      {
-        encoding: 'utf8',
-        cwd: fixture.cwd,
-        stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...envWithoutApiKey, HOME: fixture.home, PATH: `${fixture.binDir}:${pathWithoutRealVendors()}` }
-      }
-    )
-    return { status: 0, stdout, stderr: '' }
-  } catch (e) {
-    const err = e as { status?: number; stdout?: string; stderr?: string }
-    return { status: err.status ?? 1, stdout: String(err.stdout ?? ''), stderr: String(err.stderr ?? '') }
-  }
+  return runVinayaDispatch(
+    fixture.cwd,
+    ['developer', '--agent', 'claude', '--prompt-file', fixture.promptFile, ...extraArgs],
+    {
+      ...stripVinayaEnv(envWithoutApiKey),
+      HOME: fixture.home,
+      PATH: `${fixture.binDir}:${pathWithoutRealVendors()}`
+    }
+  )
 }
 
 describe('vinaya dispatch --unattended — O2 fail-closed refusal (Issue #640, no resolvable credential)', () => {
@@ -296,29 +323,16 @@ describe('vinaya dispatch --unattended — O2 fail-closed refusal (Issue #640, n
     () => {
       const fixture = buildGitFixture({ requireWorkerIsolation: true })
       const { ANTHROPIC_API_KEY: _drop, ...envWithoutApiKey } = process.env
-      const result = (() => {
-        try {
-          const stdout = execFileSync(
-            'bun',
-            [INDEX, 'dispatch', 'developer', '--agent', 'claude', '--prompt-file', fixture.promptFile, '--unattended'],
-            {
-              encoding: 'utf8',
-              cwd: fixture.cwd,
-              stdio: ['pipe', 'pipe', 'pipe'],
-              env: {
-                ...envWithoutApiKey,
-                HOME: fixture.home,
-                PATH: `${fixture.binDir}:${pathWithoutRealVendors()}`,
-                ANTHROPIC_API_KEY: 'sk-ant-fixture-not-real'
-              }
-            }
-          )
-          return { status: 0, stdout, stderr: '' }
-        } catch (e) {
-          const err = e as { status?: number; stdout?: string; stderr?: string }
-          return { status: err.status ?? 1, stdout: String(err.stdout ?? ''), stderr: String(err.stderr ?? '') }
+      const result = runVinayaDispatch(
+        fixture.cwd,
+        ['developer', '--agent', 'claude', '--prompt-file', fixture.promptFile, '--unattended'],
+        {
+          ...stripVinayaEnv(envWithoutApiKey),
+          HOME: fixture.home,
+          PATH: `${fixture.binDir}:${pathWithoutRealVendors()}`,
+          ANTHROPIC_API_KEY: 'sk-ant-fixture-not-real'
         }
-      })()
+      )
 
       expect(result.status, `stderr: ${result.stderr}`).toBe(0)
       expect(existsSync(fixture.markerFile)).toBe(true)

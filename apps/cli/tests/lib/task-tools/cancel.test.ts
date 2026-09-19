@@ -49,6 +49,40 @@ function stripVinayaEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return out
 }
 
+/**
+ * Issue #660, O3 round 3 (reviewer F1) — this file's own doc comment above
+ * claimed "the same fix `dev-review-loop.test.ts`'s `fixtureChildEnv`
+ * already applies", but only the env-stripping half was ported: both
+ * `execFileSync` calls below ran with no timeout, so the exact lock-
+ * contention scenario O3 describes (another fixture or task run still
+ * holding this file's epoch/outbox path) hung synchronously forever with
+ * zero diagnostic output rather than failing on a bounded budget with the
+ * child's own stdout/stderr. Below the smallest `it(...)` timeout this file
+ * uses, same as `dev-review-loop.test.ts`'s own `SUBPROCESS_BUDGET_MS`.
+ */
+const SUBPROCESS_BUDGET_MS = 18_000
+
+function runFixtureScript(scriptPath: string, cwd: string, env: NodeJS.ProcessEnv): string {
+  try {
+    return execFileSync('bun', [scriptPath], {
+      cwd,
+      env,
+      encoding: 'utf8',
+      timeout: SUBPROCESS_BUDGET_MS,
+      killSignal: 'SIGKILL'
+    })
+  } catch (e) {
+    const err = e as { signal?: string | null; stdout?: string; stderr?: string }
+    if (err.signal) {
+      throw new Error(
+        `cancel.test.ts subprocess killed by ${err.signal} after exceeding its ${SUBPROCESS_BUDGET_MS}ms budget ` +
+          `(script: ${scriptPath})\n--- stdout ---\n${err.stdout ?? ''}\n--- stderr ---\n${err.stderr ?? ''}`
+      )
+    }
+    throw e
+  }
+}
+
 const CALLER: CallerContext = { caller: { id: 'operator-1' } }
 const NO_CALLER: CallerContext = { caller: null }
 const ISSUE = 558
@@ -453,11 +487,7 @@ try {
 `
     writeFileSync(scriptPath, script)
     try {
-      const output = execFileSync('bun', [scriptPath], {
-        cwd: repoRoot,
-        env: stripVinayaEnv({ ...process.env, HOME: home }),
-        encoding: 'utf8'
-      })
+      const output = runFixtureScript(scriptPath, repoRoot, stripVinayaEnv({ ...process.env, HOME: home }))
       expect(output).toContain('FIRST_OK')
       expect(output).toContain('SECOND_IS_REPLAYED:true')
       expect(output).toContain('SECOND_MESSAGE:devReviewLoop --cancel:')
@@ -603,11 +633,7 @@ console.log('DONE')
 `
     writeFileSync(scriptPath, script)
     try {
-      const output = execFileSync('bun', [scriptPath], {
-        cwd: repoRoot,
-        env: stripVinayaEnv({ ...process.env, HOME: home }),
-        encoding: 'utf8'
-      })
+      const output = runFixtureScript(scriptPath, repoRoot, stripVinayaEnv({ ...process.env, HOME: home }))
       expect(output).toContain('TASK_AFTER:sentinel-task')
       expect(output).toContain('RUN_AFTER:sentinel-run')
       expect(output).toContain('RESUME_REFUSED:true')
