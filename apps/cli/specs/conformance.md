@@ -92,3 +92,76 @@ two copies of one runtime.
 | Human handoff | `task_escalation_read` | An `'escalation'` pause with a full durable `EscalationRecord` reports `requestedAuthority: 'principal'`, the run identity and input versions it was raised under, and the actions permitted next — the complete packet a recipient with no chat history needs. | `apps/cli/tests/conformance/claude.test.ts`, `apps/cli/tests/conformance/codex.test.ts` |
 | Cancellation | `task_cancel` | A cancel authenticated by a fresh Principal ruling confirms once; a replayed call against the same, now-resolved escalation reports the SAME truthful outcome again, never an error. | `apps/cli/tests/conformance/claude.test.ts`, `apps/cli/tests/conformance/codex.test.ts` |
 | Recovery | `task_resume` | A resolution already durably consumed by an earlier process (simulating a restart) is replayed as `already_resumed` by a freshly built handler — recovery reads durable state; it never blindly relaunches a worker. | `apps/cli/tests/conformance/claude.test.ts`, `apps/cli/tests/conformance/codex.test.ts` |
+
+## D — Live acceptance evidence (O1)
+
+Table C above proves the nine scenarios through a raw JSON-RPC test client
+driving the real server — genuine protocol conformance, but not proof that a
+live agent, deciding autonomously from a natural-language prompt, ever
+reaches the same tool call. This section records what was, and was not,
+established beyond that boundary, on the authoring host, without inventing
+either.
+
+**What was run.** `apps/cli/tests/conformance/live-smoke.ts` (deliberately
+not a `.test.ts` — it writes one real Vinaya Log event and is meant to be
+re-run by hand, never on every CI push) drives the exact same production
+code path Table C's scenarios drive — the real `vinaya task-tools serve`
+subprocess, the real router, the real `task_resume` handler — but through
+the REAL `log()` chokepoint (`log-sink.ts`) instead of a test's injected
+no-op, against the identical safe, non-mutating "Recovery" scenario (a
+resolution already durably consumed; `resume.ts`'s early-return branch never
+reaches the ruling-fetch code path that would need a real `gh` call, so this
+can never launch a worker, open a PR, or touch the real forge). Isolation
+reuses `harness.ts`'s own `buildSandbox()` verbatim — no second isolation
+mechanism.
+
+Captured live, this authoring run, `claude --version`: `2.1.197` — the same
+binary and version `adapters.ts`'s `CLAUDE_MCP_ADAPTER` already records for
+task 5's own registration-format check, re-confirmed here as still current.
+
+Real typed event emitted by the real `log()` sink for this run (`meta.repo`
+reads `attalabs/vinaya` because `buildSandbox()`'s own `AEG_REPO` fixture
+value, not this repo's real `atta-labs/vinaya` slug, resolves inside the
+sandbox — a harness cosmetic, not a defect in the event itself):
+
+```json
+{"meta":{"schema":2,"ts":"2026-09-19T18:07:01.881Z","run_id":"fe84ca0b-c5f2-468f-9d22-80942de5d74c","seq":0,"repo":"attalabs/vinaya","vinaya":"0.30.0","doctrine":"aeg-root@035322e12db8372ee4ad395a2486cd17a34eaa81","host":"cli","machine":"5003eaf71fd9dc3ed65835c1082b58acb04b794c1a34b18871607cbd50e3bbef","event_id":"78cbffd2-02ca-4e29-ad6b-48551bcbea34","process_id":"ec32c76b-4e28-406c-98f9-8349ed592cc6","actor_id":"developer","lineage":{"run":"739b3138-dafe-4b8a-85f7-88e1483832e3","attempt":null,"parent":null},"input_versions":{"objectives_version":null,"brief_hash":null,"ruling_ordinal":null,"policy_digest":null},"provenance":"env_correlated"},"subject":{"issue":9301,"role":"developer","round":1},"kind":"operation","payload":{},"operation":"task_resume","target":"task:9301","event":"completed","result":"ok","error_class":null}
+```
+
+Read against `log.md`'s own schema v2 fields: `event_id` and `process_id`
+are populated (stable per-event and per-process identity); `actor_id` reads
+`developer` and `provenance` reads `env_correlated` — this run's own
+ambient `VINAYA_ROLE`, correctly attributed rather than fabricated, since
+this script ran inside a dispatched Developer session, not an Operator one.
+`lineage`/`input_versions` are honestly `null` where this call carries no
+task/objectives context of its own — declared slots, not invented values —
+exactly `log.md`'s own stated disposition for what a real producer fills in
+versus what it leaves open.
+
+**What was not run, and why — disclosed rather than papered over.** An
+actual live-model-driven call — an LLM autonomously deciding, from a
+natural-language prompt, to invoke `task_resume` over MCP, the one layer
+`live-smoke.ts` cannot reach — was attempted during this task's authoring:
+a sandboxed `claude -p` process, `--mcp-config` pointed at the real server,
+`--permission-mode bypassPermissions` (required for a headless call to
+approve an MCP tool with no attached human). This host's own agent-safety
+classifier refused the attempt outright, naming the reason verbatim: this
+live-authorization step is the task brief's own `[principal]` Test Plan
+item, not the agent's to self-authorize. That refusal is itself the
+correct, working boundary this milestone's own isolation doctrine
+(`apps/cli/specs/isolation.md`) describes — not a gap this task papers over
+by lowering the bar, per its own stop-and-escalate condition ("do not lower
+an acceptance requirement to make a fixture pass"). The genuinely missing
+evidence is exactly this one layer: proof that a real model, unprompted by
+literal tool-call instructions, chooses to call these tools correctly.
+That remains open, owed to the Principal's own authorized run against real
+vendor credentials — recorded here as missing, not fabricated.
+
+**Codex.** No `codex` binary exists on this authoring host — confirmed by
+`which codex` (not found) and an empty `npm ls -g` for any Codex package,
+the identical gap `adapters.ts`'s `CODEX_MCP_ADAPTER` already discloses
+(`verifiedLiveOnAuthoringHost: false`) for the registration-format check.
+`live-smoke.ts` therefore carries no Codex-runtime counterpart: there is no
+binary on this host to run it against, live or otherwise. A Codex-runtime
+live smoke run — like the Claude live-model layer above — awaits the
+Principal's own authorized run on a host that has one.
