@@ -1,6 +1,6 @@
 {
   "name": "@attalabs/aeg-core",
-  "version": "0.30.0",
+  "version": "0.30.1",
   "publishConfig": {
     "access": "public"
   },
@@ -27,8 +27,8 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "@attalabs/aeg-forge-state": "0.30.0",
-    "@attalabs/aeg-types": "0.30.0",
+    "@attalabs/aeg-forge-state": "0.30.1",
+    "@attalabs/aeg-types": "0.30.1",
     "gray-matter": "^4.0.3",
     "zod": "3.25.76"
   },

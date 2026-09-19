@@ -1,5 +1,17 @@
 # @atta/aeg-core
 
+## 0.30.1
+
+### Patch Changes
+
+- a8b077b: A `Depends-on`/`Conflicts-with` edge written with a `#` prefix is a forge Issue number and is never ambiguous, whatever tranches its Milestone holds — only a bare, hash-less task number on a multi-tranche Milestone still refuses.
+  
+  The cross-task Surface-overlap check now exempts two open task Issues sharing a Milestone when either depends on the other, directly or through a chain of `Depends-on` edges within that same Milestone cohort — such tasks can never run at the same time, so an overlapping Surface between them is no longer a false positive.
+- f6dc754: Every writer that creates a run-file directory (the control store's own atomic writes, and `apps/cli`'s `ensureRunDir` — the one chokepoint every task-execution directory under a configured `runtimeDir` goes through) now refuses a pre-existing symlink, or a pre-existing real directory it cannot trust the owner or mode of, at any missing ancestor instead of silently writing through it. `mkdirNoSymlinks` (new, exported from `@attalabs/aeg-core`) creates each missing directory level individually and verifies it — never following a symlink, and, for a directory already there, refusing one owned by neither this process nor root, or one left world-writable with no sticky bit — before proceeding. A co-tenant on a shared, multi-account `runtimeDir` (the documented `/var/lib/vinaya/runs` shape) can no longer pre-plant a symlink, nor a real directory it owns or leaves open, to redirect a task's driver lock, ownership-epoch files, effects, resolutions, escalation records, or an unpublished reviewer's findings into a directory it controls.
+- Updated dependencies [a8b077b]
+  - @attalabs/aeg-forge-state@0.30.1
+  - @attalabs/aeg-types@0.30.1
+
 ## 0.30.0
 
 ### Minor Changes
