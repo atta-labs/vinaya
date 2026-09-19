@@ -9,7 +9,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
@@ -33,7 +33,7 @@ import { reconcileGhComment } from '../forge-write.js'
 import { sh } from './gate-reading.js'
 import { markerComments, principalAllowlist } from './developer-dispatch.js'
 import { heldVerdictPath, readIfExists } from './reviewer-dispatch.js'
-import { runPath } from '../run-paths.js'
+import { ensureRunDir, runPath } from '../run-paths.js'
 
 type ForgeEffectRecord = { effectId: string; status: 'started' | 'posted'; url?: string }
 
@@ -52,7 +52,7 @@ function readForgeEffect(path: string): ForgeEffectRecord | null {
 }
 
 function writeForgeEffect(path: string, record: ForgeEffectRecord): void {
-  mkdirSync(dirname(path), { recursive: true })
+  ensureRunDir(dirname(path))
   writeFileSync(path, JSON.stringify(record), 'utf8')
 }
 

@@ -29,6 +29,7 @@ import {
 } from './dev-review-loop.js'
 import { isDriverPidAlive, readDriverLock } from './dev-review-loop/pause-resume.js'
 import { runtimeDir } from './dev-review-loop/reviewer-dispatch.js'
+import { markProcessUnattended } from './run-paths.js'
 import {
   DispatchTaskError,
   prepareIssueTask as realPrepareIssueTask,
@@ -186,6 +187,13 @@ export async function resolveIssueForRunTask(
 }
 
 export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRunTaskDeps): Promise<RunTaskResult> {
+  // Round 2 review (MAJOR) / security review (MEDIUM): a driver runs with no
+  // human watching, so it must resolve `runtimeDir` through the
+  // default-branch gate rather than trusting the working tree. Marked FIRST,
+  // before any path is resolved and before anything is dispatched, so the
+  // classification is already true for this process and for every child that
+  // inherits its environment.
+  markProcessUnattended()
   const { agent } = input
   const taskLabel = taskLabelFor(input)
   const issue = await resolveIssueForRunTask(input, deps)

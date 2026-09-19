@@ -49,11 +49,35 @@ configured directory, laid out by task and by round:
                       read-only `candidate` and per-role scratch copies
 ```
 
-`runtimeDir` is a `vinaya.config.json` setting; absent, it defaults to
-`~/.vinaya/runtime/<owner>-<repo>`. An unattended caller honours a configured
-value only when the DEFAULT BRANCH declares the same one — a pull request
-cannot redirect this driver's own lock, control records or held verdicts
-into a tree its own agent is allowed to write. `apps/cli/src/lib/run-paths.ts`'s
+`runtimeDir` is a **repo-local** `vinaya.config.json` setting; absent, it
+defaults to `~/.vinaya/runtime/<owner>-<repo>`. Four rules keep a configured
+value from becoming a way into this driver's own files:
+
+- **Repo-local only.** It is stripped from the machine-global
+  `~/.vinaya/config.json` with a loud warning, exactly like `checks`,
+  `roles`, `principals`, `releaseActor` and `tokens`. Only
+  `defaultRuntimeDir` adds the `<owner>-<repo>` segment, so a machine-wide
+  value would collapse every repository into one tree and hand two
+  repositories' identically-numbered tasks the same driver lock, the same
+  ownership epochs, and the same `sessions/<role>-<agent>.json` — the file a
+  confined dispatch holds an exact-file write grant on.
+- **Absolute, and outside the repository.** A relative value would resolve
+  against each process's own cwd, so the driver and a `vinaya` subcommand run
+  from elsewhere would disagree about where the control store is; a value
+  inside the working tree would put the lock, the epochs and the held
+  verdicts somewhere a confined role can write.
+- **Default branch only, for an unattended caller.** Every driver marks
+  itself unattended before it resolves anything (`markProcessUnattended`), so
+  a configured value is honoured only when the DEFAULT BRANCH declares the
+  same one — a pull request cannot redirect this driver's own files by
+  editing its own diff.
+- **Resolved once, then handed down.** The controller passes its resolved
+  value to every dispatched child (`VINAYA_RUNTIME_DIR`), so a child never
+  re-derives one and the two can never disagree — which they could, whenever
+  the default-branch read came back empty because `gh` was offline.
+
+Every directory here is created `0700` (`ensureRunDir`), whichever writer
+gets there first. `apps/cli/src/lib/run-paths.ts`'s
 `runPath` is the only function that names a location in here, and
 `apps/cli/tests/run-paths-only.test.ts` fails the build if anything else
 assembles one.

@@ -43,7 +43,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
 import {
@@ -83,7 +83,7 @@ import {
 } from './dispatch.js'
 import { postMarkedComment } from './forge-write.js'
 import { createLogSink, currentRunId, log, outboxPathFor, telemetryOutboxRoot } from './log-sink.js'
-import { runPath } from './run-paths.js'
+import { ensureRunDir, markProcessUnattended, runPath } from './run-paths.js'
 import { appendRoleLine, appendRunStartMarker, loopLogPathFor } from './loop-log.js'
 import { flushOutbox as flushOutboxLib, LogFlushError } from './log-flush.js'
 import { flushOutboxToWebhook, WebhookFlushError } from './log-webhook-flush.js'
@@ -399,7 +399,7 @@ export type LoopDeps = {
    * role's own launch record is checked independently, and a role with
    * nothing in flight is a safe no-op. Injected so a test can observe "the
    * driver would clean up here" without touching a real process or the
-   * real `~/.vinaya/dispatch-resume/` home.
+   * real session-record home, this task's own `sessions/` folder.
    */
   terminateInFlightLaunchesOnShutdown: (
     task: number,
@@ -911,6 +911,13 @@ export function buildReexecArgs(input: LoopInput, task: number): string[] {
 }
 
 export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = {}): Promise<LoopResult> {
+  // Round 2 review (MAJOR) / security review (MEDIUM): a driver runs with no
+  // human watching, so it must resolve `runtimeDir` through the
+  // default-branch gate rather than trusting the working tree. Marked FIRST,
+  // before any path is resolved and before anything is dispatched, so the
+  // classification is already true for this process and for every child that
+  // inherits its environment.
+  markProcessUnattended()
   const d: LoopDeps = { ...defaultDeps(), ...deps }
   const root = d.runtimeDir()
 
@@ -1772,7 +1779,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       const hasObjectives = hasObjectivesFacts(facts)
       const dispatchRoleName = role === 'reviewer' ? ('code-reviewer' as const) : ('security' as const)
       const workDir = reviewerWorkDir(root, task, roundNum, role, 3)
-      mkdirSync(workDir, { recursive: true })
+      ensureRunDir(workDir)
       const prompt = citeFindingIdsPrompt(workDir)
       // O2/O3: a fresh scratch copy for this resend attempt — never
       // the first attempt's own, matching this function's own fresh-dispatch
@@ -1798,11 +1805,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           unattended: true,
           // Round 6 fix, live-reproduced: a confined reviewer writes
           // findings.txt/report.txt/objectives.txt into workDir — see
-          // `extraVinayaWritableSubdirs`'s own doc comment (dispatch.ts).
+          // `extraWritableDirs`'s own doc comment (dispatch.ts).
           // The absolute directory, never one relative to a root: this sits
           // under the configurable runtime directory, which need not be
           // under the Vinaya home at all.
-          extraVinayaWritableSubdirs: [workDir]
+          extraWritableDirs: [workDir]
         })
       )
       await assertDispatchOrEscalate(handle, input.agent, false, false)
@@ -1844,7 +1851,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       let lastHandle: DispatchHandle | null = null
       for (let attempt = 1; attempt <= 2; attempt++) {
         const workDir = reviewerWorkDir(root, task, roundNum, role, attempt)
-        mkdirSync(workDir, { recursive: true })
+        ensureRunDir(workDir)
         const prompt = renderReviewerDispatchPrompt(role, facts, workDir)
         // O1/O2: a fresh, writable copy of this round's shared,
         // read-only candidate (built once, below, before both roles
@@ -1874,11 +1881,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             unattended: true,
             // Round 6 fix, live-reproduced: a confined reviewer writes
             // findings.txt/report.txt/objectives.txt into workDir — see
-            // `extraVinayaWritableSubdirs`'s own doc comment (dispatch.ts).
+            // `extraWritableDirs`'s own doc comment (dispatch.ts).
             // The absolute directory, never one relative to a root: this
             // sits under the configurable runtime directory, which need not
             // be under the Vinaya home at all.
-            extraVinayaWritableSubdirs: [workDir]
+            extraWritableDirs: [workDir]
           })
         )
         await assertDispatchOrEscalate(handle, input.agent, false, false)
@@ -2309,7 +2316,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                   detail: `round ${held.round} findings delivered again on unchanged head ${currentHead}, with no developer push since the first delivery (guard: local marker file ${markerPresent ? 'present' : 'absent'}, control-store delivered-findings identity ${alreadyDeliveredInStore ? 'matched' : 'absent'})`
                 }
               } else {
-                mkdirSync(dirname(marker), { recursive: true })
+                ensureRunDir(dirname(marker))
                 writeFileSync(marker, new Date().toISOString(), 'utf8')
                 round = held.round + 1
                 lastReviewContext = held.rendered
@@ -3324,6 +3331,13 @@ function defaultCancelDeps(): CancelDeps {
  * instant it tries, never silently landing after cancellation.
  */
 export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<CancelDeps> = {}): Promise<CancelResult> {
+  // Round 2 review (MAJOR) / security review (MEDIUM): a driver runs with no
+  // human watching, so it must resolve `runtimeDir` through the
+  // default-branch gate rather than trusting the working tree. Marked FIRST,
+  // before any path is resolved and before anything is dispatched, so the
+  // classification is already true for this process and for every child that
+  // inherits its environment.
+  markProcessUnattended()
   const d: CancelDeps = { ...defaultCancelDeps(), ...deps }
   const task = d.taskFromPrBody(d.fetchPrBody(input.cancelPr))
   if (task === null) {

@@ -47,6 +47,7 @@ import {
   writeRun
 } from '@attalabs/aeg-core'
 import { controlStoreRoot } from './effects.js'
+import { markProcessUnattended } from './run-paths.js'
 import {
   type AgentVendor,
   captureSettledChildSnapshot,
@@ -331,6 +332,13 @@ export async function startBackgroundRun(
   input: RunTaskInput,
   deps: StartBackgroundRunDeps = defaultStartBackgroundRunDeps()
 ): Promise<BackgroundRunHandle> {
+  // Round 2 review (MAJOR) / security review (MEDIUM): a driver runs with no
+  // human watching, so it must resolve `runtimeDir` through the
+  // default-branch gate rather than trusting the working tree. Marked FIRST,
+  // before any path is resolved and before anything is dispatched, so the
+  // classification is already true for this process and for every child that
+  // inherits its environment.
+  markProcessUnattended()
   const capability = deps.checkHostSupervisionCapability()
   if (!capability.supported) {
     throw new BackgroundUnsupportedError(`vinaya task run --background: ${capability.reason}`)

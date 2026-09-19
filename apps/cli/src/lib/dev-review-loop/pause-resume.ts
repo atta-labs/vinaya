@@ -6,7 +6,7 @@
  * below under the same path it always had.
  */
 
-import { mkdirSync, unlinkSync, writeFileSync } from 'node:fs'
+import { unlinkSync, writeFileSync } from 'node:fs'
 import { hostname } from 'node:os'
 import { dirname } from 'node:path'
 import {
@@ -32,7 +32,7 @@ import { controlStoreRoot, createEffectExecutor, sha256Hex } from '../effects.js
 import { markedCommentBody, postMarkedComment, reconcileGhComment } from '../forge-write.js'
 import { loadLoopState } from './round-assess.js'
 import { readIfExists } from './reviewer-dispatch.js'
-import { DRIVER_LOCK_FILENAME, runPath } from '../run-paths.js'
+import { DRIVER_LOCK_FILENAME, ensureRunDir, runPath } from '../run-paths.js'
 
 /** `sanitizePublicPauseDetail` truncates to this — long enough to stay informative, short enough that a runaway stack trace or subprocess dump never balloons a public PR comment. */
 const PUBLIC_PAUSE_DETAIL_MAX_LENGTH = 300
@@ -247,7 +247,7 @@ function pauseStatePath(root: string, task: number): string {
 
 export function writePauseState(root: string, state: PauseState): void {
   const path = pauseStatePath(root, state.task)
-  mkdirSync(dirname(path), { recursive: true })
+  ensureRunDir(dirname(path))
   writeFileSync(path, JSON.stringify(state), 'utf8')
 }
 
@@ -327,7 +327,7 @@ export function readDriverLock(root: string, task: number): DriverLock | null {
 
 export function writeDriverLock(root: string, task: number, lock: DriverLock): void {
   const path = driverLockPath(root, task)
-  mkdirSync(dirname(path), { recursive: true })
+  ensureRunDir(dirname(path))
   writeFileSync(path, JSON.stringify(lock), 'utf8')
 }
 

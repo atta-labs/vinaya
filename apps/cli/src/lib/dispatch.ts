@@ -72,6 +72,7 @@ import { appendRoleLine } from './loop-log.js'
 import { loadConfig } from './config.js'
 import {
   runPath,
+  RUNTIME_DIR_ENV_KEY,
   runtimeDirForRepo,
   runtimeDirForThisRepo,
   type RunScope,
@@ -249,7 +250,7 @@ export type DispatchOpts = {
    * level (`subpath`) grant here — not the narrower per-file `literal` one —
    * carries no cross-task/cross-role exposure.
    */
-  extraVinayaWritableSubdirs?: readonly string[]
+  extraWritableDirs?: readonly string[]
   /**
    * The objectives/brief/ruling/policy identity
    * this attempt is being judged against, when the caller already resolved
@@ -2506,12 +2507,12 @@ export async function dispatchRole(
               }
               return files
             })(),
-            // Round 6 fix, live-reproduced: `extraVinayaWritableSubdirs`'s
+            // Round 6 fix, live-reproduced: `extraWritableDirs`'s
             // own doc comment (above, on `DispatchOpts`) has the finding —
             // `dev-review-loop.ts`'s reviewer/security dispatch is the one
             // caller today, naming its own `reviewerWorkDir`, already
             // uniquely scoped per task/round/role/attempt.
-            extraWritableDirs: opts.extraVinayaWritableSubdirs ?? [],
+            extraWritableDirs: opts.extraWritableDirs ?? [],
             // Round 4 review, BLOCKER: the confined child's own `--settings
             // <path>` argv (added above, before this resolution) points at
             // `writeDispatchSettings`'s `dispatch-settings` directory, which
@@ -2625,7 +2626,15 @@ export async function dispatchRole(
       VINAYA_RUN_ID: runId,
       VINAYA_ROLE: role,
       VINAYA_TASK: opts.task !== undefined ? String(opts.task) : undefined,
-      VINAYA_ROUND: opts.round !== undefined ? String(opts.round) : undefined
+      VINAYA_ROUND: opts.round !== undefined ? String(opts.round) : undefined,
+      // Round 2 review, MAJOR: the runtime directory THIS trusted controller
+      // already resolved, so the child never resolves one of its own and the
+      // two can never disagree. A child that re-derived it would reach a
+      // different answer whenever `loadTrustAnchorConfig()` came back null
+      // (gh offline or unauthenticated) — falling back to the default while
+      // the controller honoured a configured value, and so reading a tree
+      // nobody wrote to. It also saves the child a network round trip.
+      [RUNTIME_DIR_ENV_KEY]: runtimeDirForRepo(repo)
     }
     const child = spawn(spawnCommand, spawnCommandArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],

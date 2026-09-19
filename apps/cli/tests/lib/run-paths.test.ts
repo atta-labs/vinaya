@@ -4,14 +4,20 @@
  * caller puts a configured `runtimeDir` through.
  */
 import { describe, expect, it } from 'bun:test'
+import { mkdtempSync, rmSync, statSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   DRIVER_LOCK_FILENAME,
   defaultRuntimeDir,
+  ensureRunDir,
+  isInsideRepo,
   isUnattendedProcess,
+  markProcessUnattended,
   repoSegment,
   resolveRuntimeDir,
   runPath,
+  UNATTENDED_ENV_KEY,
   type RunPathsRepo
 } from '../../src/lib/run-paths'
 import type { VinayaConfig } from '../../src/lib/config'
@@ -135,5 +141,94 @@ describe('runPath — every run file resolves through this one function', () => 
     const a = runPath(defaultRuntimeDir({ owner: 'o', repo: 'a' }, '/h'), 12, { area: 'control' })
     const b = runPath(defaultRuntimeDir({ owner: 'o', repo: 'b' }, '/h'), 12, { area: 'control' })
     expect(a).not.toBe(b)
+  })
+})
+
+describe('resolveRuntimeDir — a value inside the repository is refused (security review, LOW)', () => {
+  it('refuses a configured value naming a directory in the working tree, for an ATTENDED caller too', () => {
+    expect(
+      resolveRuntimeDir({
+        repo: REPO,
+        localConfig: withRuntimeDir('/w/repo/.vinaya-runs'),
+        unattended: false,
+        home: '/h',
+        repoRoot: '/w/repo'
+      })
+    ).toBe('/h/runtime/atta-labs-vinaya')
+  })
+
+  it('refuses the repository root itself', () => {
+    expect(
+      resolveRuntimeDir({
+        repo: REPO,
+        localConfig: withRuntimeDir('/w/repo'),
+        unattended: false,
+        home: '/h',
+        repoRoot: '/w/repo'
+      })
+    ).toBe('/h/runtime/atta-labs-vinaya')
+  })
+
+  it('still honours a value outside the repository', () => {
+    expect(
+      resolveRuntimeDir({
+        repo: REPO,
+        localConfig: withRuntimeDir('/srv/runs'),
+        unattended: false,
+        home: '/h',
+        repoRoot: '/w/repo'
+      })
+    ).toBe('/srv/runs')
+  })
+
+  it('never mistakes a sibling whose name merely starts with the repo root for one inside it', () => {
+    expect(isInsideRepo('/w/repo-backup/runs', '/w/repo')).toBe(false)
+    expect(isInsideRepo('/w/repo/runs', '/w/repo')).toBe(true)
+    expect(isInsideRepo('/w/repo', '/w/repo')).toBe(true)
+    expect(isInsideRepo('/srv/runs', null)).toBe(false)
+  })
+})
+
+describe('markProcessUnattended — the marker actually gets written (round 2 review, MAJOR)', () => {
+  it('flips an environment this function was handed from attended to unattended', () => {
+    const env: NodeJS.ProcessEnv = {}
+    expect(isUnattendedProcess(env)).toBe(false)
+    markProcessUnattended(env)
+    expect(env[UNATTENDED_ENV_KEY]).toBe('1')
+    expect(isUnattendedProcess(env)).toBe(true)
+  })
+
+  it('is idempotent', () => {
+    const env: NodeJS.ProcessEnv = {}
+    markProcessUnattended(env)
+    markProcessUnattended(env)
+    expect(env[UNATTENDED_ENV_KEY]).toBe('1')
+  })
+})
+
+describe('ensureRunDir — run-file directories are owner-only (security review, MEDIUM)', () => {
+  it('creates the whole chain 0700, whatever the umask, and re-asserts it on an existing directory', () => {
+    const base = mkdtempSync(join(tmpdir(), 'vinaya-ensure-run-dir-'))
+    try {
+      const deep = runPath(join(base, 'runs'), 648, { area: 'round', round: 2, file: 'reviewer-work' })
+      ensureRunDir(deep)
+      // Every ancestor this call created, not just the leaf — which writer
+      // got there first must not decide the mode.
+      for (const dir of [
+        join(base, 'runs'),
+        join(base, 'runs', 'tasks-execution'),
+        join(base, 'runs', 'tasks-execution', '648'),
+        join(base, 'runs', 'tasks-execution', '648', 'rounds'),
+        join(base, 'runs', 'tasks-execution', '648', 'rounds', '2'),
+        deep
+      ]) {
+        expect(statSync(dir).mode & 0o777, `${dir} should be owner-only`).toBe(0o700)
+      }
+      // A second call over the same tree stays 0700 and does not throw.
+      ensureRunDir(deep)
+      expect(statSync(deep).mode & 0o777).toBe(0o700)
+    } finally {
+      rmSync(base, { recursive: true, force: true })
+    }
   })
 })

@@ -7090,9 +7090,12 @@ describe('devReviewLoop — an objectives edit lands between reviewer dispatch a
     expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:objectives_changed -->$/m)
     expect(pauseComment).not.toMatch(/^VERDICT:/m)
 
-    const roundDir = taskRunDir(home)
-    expect(existsSync(join(roundDir, 'round-1-reviewer.md'))).toBe(false)
-    expect(existsSync(join(roundDir, 'round-1-security.md'))).toBe(false)
+    // The module-level `roundDir(home, n)` helper, NOT a local shadow: round 2
+    // review (MAJOR) found these three sites binding `taskRunDir(home)` to the
+    // same name and asserting the pre-move filenames, so all six assertions
+    // named a path production never writes and the guard was vacuously true.
+    expect(existsSync(join(roundDir(home, 1), 'reviewer.md'))).toBe(false)
+    expect(existsSync(join(roundDir(home, 1), 'security.md'))).toBe(false)
   }, 20000)
 })
 
@@ -7134,9 +7137,12 @@ describe('devReviewLoop — a ruling lands between reviewer dispatch and assessm
     expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:ruling_posted -->$/m)
     expect(pauseComment).not.toMatch(/^VERDICT:/m)
 
-    const roundDir = taskRunDir(home)
-    expect(existsSync(join(roundDir, 'round-1-reviewer.md'))).toBe(false)
-    expect(existsSync(join(roundDir, 'round-1-security.md'))).toBe(false)
+    // The module-level `roundDir(home, n)` helper, NOT a local shadow: round 2
+    // review (MAJOR) found these three sites binding `taskRunDir(home)` to the
+    // same name and asserting the pre-move filenames, so all six assertions
+    // named a path production never writes and the guard was vacuously true.
+    expect(existsSync(join(roundDir(home, 1), 'reviewer.md'))).toBe(false)
+    expect(existsSync(join(roundDir(home, 1), 'security.md'))).toBe(false)
   }, 20000)
 })
 
@@ -7278,9 +7284,12 @@ describe('devReviewLoop — a frozen-brief supersede lands between reviewer disp
     expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:brief_superseded -->$/m)
     expect(pauseComment).not.toMatch(/^VERDICT:/m)
 
-    const roundDir = taskRunDir(home)
-    expect(existsSync(join(roundDir, 'round-1-reviewer.md'))).toBe(false)
-    expect(existsSync(join(roundDir, 'round-1-security.md'))).toBe(false)
+    // The module-level `roundDir(home, n)` helper, NOT a local shadow: round 2
+    // review (MAJOR) found these three sites binding `taskRunDir(home)` to the
+    // same name and asserting the pre-move filenames, so all six assertions
+    // named a path production never writes and the guard was vacuously true.
+    expect(existsSync(join(roundDir(home, 1), 'reviewer.md'))).toBe(false)
+    expect(existsSync(join(roundDir(home, 1), 'security.md'))).toBe(false)
   }, 20000)
 })
 

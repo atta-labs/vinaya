@@ -14,7 +14,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { homedir, tmpdir } from 'node:os'
 import { chmodSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { runPath, tasksExecutionRoot } from '../../../src/lib/run-paths'
+import { runPath } from '../../../src/lib/run-paths'
 import {
   buildWorkerEnv,
   buildWorkerSandboxProfile,
@@ -181,7 +181,6 @@ describe('stageOAuthCredential — O1 (Issue #640)', () => {
 describe('resolveWorkerBoundaryLaunch — OAuth credential staging (O1, Issue #640, injected deps)', () => {
   it('stageOAuthCredential: true with a credential present resolves a non-null oauthConfigDir readable inside the launch', () => {
     const allowedDir = tempDir('vinaya-wb-oauth-launch-allowed-')
-    const _homeDir = tempDir('vinaya-wb-oauth-launch-home-')
     const fixtureContents = JSON.stringify({ accessToken: 'fixture-not-a-real-oauth-token' })
     const result = resolveWorkerBoundaryLaunch(
       {
@@ -206,7 +205,6 @@ describe('resolveWorkerBoundaryLaunch — OAuth credential staging (O1, Issue #6
 
   it('stageOAuthCredential: true with no credential present resolves oauthConfigDir: null, never throws', () => {
     const allowedDir = tempDir('vinaya-wb-oauth-launch-missing-allowed-')
-    const _homeDir = tempDir('vinaya-wb-oauth-launch-missing-home-')
     const result = resolveWorkerBoundaryLaunch(
       {
         binaryPath: '/usr/bin/env',
@@ -225,7 +223,6 @@ describe('resolveWorkerBoundaryLaunch — OAuth credential staging (O1, Issue #6
 
   it('stageOAuthCredential omitted never attempts staging, even when a credential would be found', () => {
     const allowedDir = tempDir('vinaya-wb-oauth-launch-disabled-allowed-')
-    const _homeDir = tempDir('vinaya-wb-oauth-launch-disabled-home-')
     const result = resolveWorkerBoundaryLaunch(
       { binaryPath: '/usr/bin/env', args: [], allowedDir, extraWritableDirs: [] },
       { ...AVAILABLE_DEPS, readOAuthCredentialFile: () => '{"accessToken":"should-never-be-staged"}' }
@@ -717,7 +714,6 @@ describe('resolveWorkerBoundaryLaunch — extraReadOnlyDirs (round 4 review, BLO
 
   it('an absent extraReadOnlyDirs (undefined) behaves exactly like an empty array — no crash, nothing extra granted', () => {
     const allowedDir = tempDir('vinaya-wb-ro-absent-allowed-')
-    const _homeDir = tempDir('vinaya-wb-ro-absent-home-')
     const binDir = tempDir('vinaya-wb-ro-absent-bin-')
     const fakeBinary = fakeBinaryIn(binDir)
 
@@ -851,7 +847,6 @@ describe('resolveWorkerBoundaryLaunch — extraReadOnlyDirs (round 4 review, BLO
     'a confined child can reach the mDNSResponder unix socket — Seatbelt does not report EPERM/EACCES',
     () => {
       const allowedDir = tempDir('vinaya-wb-live-dns-allowed-')
-      const _homeDir = tempDir('vinaya-wb-live-dns-home-')
 
       const probeScript = join(allowedDir, 'dns-route-probe.js')
       writeFileSync(
@@ -980,7 +975,6 @@ describe('resolveWorkerBoundaryLaunch — live sandbox-exec enforcement (round 3
     'a real confined child can write only inside its allowed dir, cannot read the real HOME, and can reach only the allowed port',
     async () => {
       const allowedDir = tempDir('vinaya-wb-live-allowed-')
-      const _homeDir = tempDir('vinaya-wb-live-home-')
       const binDir = tempDir('vinaya-wb-live-bin-')
       const probeBinary = join(binDir, 'probe.sh')
       writeFileSync(probeBinary, CONFINEMENT_PROBE_SCRIPT)
@@ -1075,7 +1069,6 @@ describe('resolveWorkerBoundaryLaunch — live sandbox-exec enforcement (round 3
     'a real confined child can only use $TMPDIR for scratch writes once TMPDIR is overridden to launch.tmpDir',
     () => {
       const allowedDir = tempDir('vinaya-wb-live-tmpdir-allowed-')
-      const _homeDir = tempDir('vinaya-wb-live-tmpdir-home-')
       const binDir = tempDir('vinaya-wb-live-tmpdir-bin-')
       const probeBinary = join(binDir, 'tmpdir-probe.sh')
       writeFileSync(probeBinary, '#!/bin/bash\nmkdir "$TMPDIR/child-test-dir" 2>/dev/null && echo ok || echo blocked\n')
@@ -1129,7 +1122,6 @@ describe('resolveWorkerBoundaryLaunch — live sandbox-exec enforcement (round 3
     'a real confined child cannot read the real Keychain directory',
     () => {
       const allowedDir = tempDir('vinaya-wb-live-keychain-')
-      const _homeDir = tempDir('vinaya-wb-live-keychain-home-')
       const binDir = tempDir('vinaya-wb-live-keychain-bin-')
       const fakeBinary = fakeBinaryIn(binDir)
 
@@ -1180,7 +1172,6 @@ describe('resolveWorkerBoundaryLaunch — OAuth credential staging, live sandbox
     'an OAuth-only host resolves a working staged credential path into the confined session; the real credentials file and Keychain remain denied',
     () => {
       const allowedDir = tempDir('vinaya-wb-live-oauth-allowed-')
-      const _homeDir = tempDir('vinaya-wb-live-oauth-home-')
       const fixtureContents = JSON.stringify({ accessToken: 'fixture-not-a-real-oauth-token' })
       const realCredentialPath = join(homedir(), '.claude', '.credentials.json')
 
@@ -1246,7 +1237,6 @@ describe('resolveWorkerBoundaryLaunch — OAuth credential staging, live sandbox
     'O3: the real credentials file and Keychain stay denied on the ANTHROPIC_API_KEY credential path too, not only the staged-OAuth path proven above',
     () => {
       const allowedDir = tempDir('vinaya-wb-live-oauth-o3-allowed-')
-      const _homeDir = tempDir('vinaya-wb-live-oauth-o3-home-')
       const realCredentialPath = join(homedir(), '.claude', '.credentials.json')
 
       const probeScript = join(allowedDir, 'o3-probe.sh')
@@ -1294,7 +1284,6 @@ describe('resolveWorkerBoundaryLaunch — bun toolchain reachable (round 5 revie
     'a confined child can still exec bun for its own build/test subprocesses when binaryPath is a non-bun vendor binary (the real production shape)',
     () => {
       const allowedDir = tempDir('vinaya-wb-live-bun-')
-      const _homeDir = tempDir('vinaya-wb-live-bun-home-')
       const binDir = tempDir('vinaya-wb-live-bun-bin-')
       // The real production shape the round 5 finding named: the vendor
       // binary (`binaryPath`) lives OUTSIDE `~/.bun/bin` — every prior live
@@ -1519,7 +1508,6 @@ describe('resolveBunExecDir — independent of the DISPATCHER process own runtim
       // dispatcher process. Fails under the prior `dirname(process.execPath)`
       // implementation; passes under the current one.
       const allowedDir = tempDir('vinaya-wb-live-execpath-allowed-')
-      const _homeDir = tempDir('vinaya-wb-live-execpath-home-')
       const binDir = tempDir('vinaya-wb-live-execpath-bin-')
       const fakeVendorBinary = fakeBinaryIn(binDir)
       const originalExecPath = process.execPath
@@ -1569,7 +1557,6 @@ describe('resolveWorkerBoundaryLaunch — file-read-metadata for Node.js-hosted 
     'a real node binary no longer crashes at startup on an ancestor lstat EPERM, while the real credentials file stays content-denied',
     () => {
       const allowedDir = tempDir('vinaya-wb-live-node-allowed-')
-      const _homeDir = tempDir('vinaya-wb-live-node-home-')
       const realCredentialPath = join(homedir(), '.claude', '.credentials.json')
 
       const probeScript = join(allowedDir, 'node-probe.js')
@@ -1622,7 +1609,6 @@ describe('resolveWorkerBoundaryLaunch — symlinked binaryPath exec target (secu
     'a binaryPath that is a symlink into a different directory (the official installer layout) still execs successfully',
     () => {
       const allowedDir = tempDir('vinaya-wb-live-symlink-allowed-')
-      const _homeDir = tempDir('vinaya-wb-live-symlink-home-')
       const targetDir = tempDir('vinaya-wb-live-symlink-target-')
       const binDir = tempDir('vinaya-wb-live-symlink-bin-')
       const realVendor = join(targetDir, 'real-vendor')
@@ -1664,73 +1650,158 @@ describe('resolveWorkerBoundaryLaunch — symlinked binaryPath exec target (secu
 })
 
 describe('the confined role reaches only its OWN task folder under the new layout (O4)', () => {
-  const RUNTIME = '/srv/vinaya-runs'
   const OWN_TASK = 648
   const SIBLING_TASK = 649
 
-  /** Exactly the grants `dispatch.ts`/`dev-review-loop.ts` compute for one confined dispatch. */
-  function profileForOwnTask(): string {
-    return buildWorkerSandboxProfile({
-      realHome: '/Users/marker',
-      readOnlyDirs: [runPath(RUNTIME, OWN_TASK, { area: 'hooks' })],
-      readWriteDirs: ['/tmp/own-worktree'],
-      metadataOnlyDirs: [runPath(RUNTIME, OWN_TASK, { area: 'sessions' })],
-      writableFiles: [runPath(RUNTIME, OWN_TASK, { area: 'sessions', file: 'developer-claude.json' })],
-      execAllowDirs: ['/usr/bin'],
-      runtimeDir: '/usr/bin',
-      sshSockCanon: '/nonexistent',
-      credentialHelperDenyLiterals: []
-    })
+  /**
+   * Goes through `resolveWorkerBoundaryLaunch` with paths built by `runPath`,
+   * not `buildWorkerSandboxProfile` with hand-written literals (round 2
+   * review, MINOR): the seam this task actually changed is the caller
+   * computing ABSOLUTE grants and the launcher consuming them, and four
+   * earlier assertions here named strings the test itself never passed in,
+   * so they could not fail. `runtimeDir` is a real temp directory so the
+   * canonicalisation the launcher performs is exercised too.
+   */
+  function resolveForOwnTask(runtimeDir: string): { profile: string; cleanup: () => void } | null {
+    const allowedDir = tempDir('vinaya-wb-o4-allowed-')
+    const binDir = tempDir('vinaya-wb-o4-bin-')
+    const result = resolveWorkerBoundaryLaunch(
+      {
+        binaryPath: fakeBinaryIn(binDir),
+        args: [],
+        allowedDir,
+        // Exactly what `dispatch.ts` computes for one confined dispatch.
+        extraWritableFiles: [runPath(runtimeDir, OWN_TASK, { area: 'sessions', file: 'developer-claude.json' })],
+        extraReadOnlyDirs: [runPath(runtimeDir, OWN_TASK, { area: 'hooks' })],
+        extraWritableDirs: [runPath(runtimeDir, OWN_TASK, { area: 'round', round: 2, file: 'reviewer-work' })]
+      },
+      AVAILABLE_DEPS
+    )
+    if (!result.ok) return null
+    return { profile: readFileSync(result.launch.args[1] as string, 'utf8'), cleanup: result.launch.cleanup }
   }
 
   it("grants this dispatch's own session record as an exact file, never its containing directory", () => {
-    const profile = profileForOwnTask()
-    const ownRecord = runPath(RUNTIME, OWN_TASK, { area: 'sessions', file: 'developer-claude.json' })
-    expect(profile).toContain(`(literal "${ownRecord}")`)
-    // A subpath grant on `sessions/` would expose every OTHER role's record
-    // for this task — the exact widening the exact-file grant exists to stop.
-    expect(profile).not.toContain(`(subpath "${runPath(RUNTIME, OWN_TASK, { area: 'sessions' })}")`)
+    const runtimeDir = tempDir('vinaya-wb-o4-runtime-')
+    const resolved = resolveForOwnTask(runtimeDir)
+    expect(resolved).not.toBeNull()
+    if (!resolved) return
+    try {
+      const ownRecord = realpathSync(runtimeDir)
+      expect(resolved.profile).toContain(
+        `(literal "${join(ownRecord, 'tasks-execution', String(OWN_TASK), 'sessions', 'developer-claude.json')}")`
+      )
+      // A subpath grant on `sessions/` would expose every OTHER role's record
+      // for this task — the widening the exact-file grant exists to stop.
+      expect(resolved.profile).not.toContain(
+        `(subpath "${join(ownRecord, 'tasks-execution', String(OWN_TASK), 'sessions')}")`
+      )
+    } finally {
+      resolved.cleanup()
+    }
   })
 
-  it("never names another task's folder, in any rule", () => {
-    const profile = profileForOwnTask()
-    const siblingDir = runPath(RUNTIME, SIBLING_TASK, { area: 'task' })
-    expect(profile).not.toContain(siblingDir)
-    expect(profile).not.toContain(runPath(RUNTIME, SIBLING_TASK, { area: 'sessions', file: 'developer-claude.json' }))
-    // Nor the whole tasks directory, which would reach every task at once.
-    expect(profile).not.toContain(`(subpath "${tasksExecutionRoot(RUNTIME)}")`)
-    expect(profile).not.toContain(`(subpath "${RUNTIME}")`)
+  it("never names another task's folder, the tasks root, or the runtime directory itself", () => {
+    const runtimeDir = tempDir('vinaya-wb-o4-runtime-')
+    // Create the sibling task's own files, so the strings below are real
+    // paths on disk that a widened grant could plausibly have canonicalised
+    // and emitted — not names nothing ever produced.
+    const siblingSessions = runPath(runtimeDir, SIBLING_TASK, { area: 'sessions' })
+    mkdirSync(siblingSessions, { recursive: true })
+    writeFileSync(join(siblingSessions, 'developer-claude.json'), '{}')
+    const resolved = resolveForOwnTask(runtimeDir)
+    expect(resolved).not.toBeNull()
+    if (!resolved) return
+    try {
+      const real = realpathSync(runtimeDir)
+      const siblingDir = join(real, 'tasks-execution', String(SIBLING_TASK))
+      expect(resolved.profile).not.toContain(siblingDir)
+      expect(resolved.profile).not.toContain(`(subpath "${join(real, 'tasks-execution')}")`)
+      expect(resolved.profile).not.toContain(`(subpath "${real}")`)
+    } finally {
+      resolved.cleanup()
+    }
   })
 
-  it('never names the configuration file, and grants no write inside the task folder beyond its own named paths', () => {
-    const profile = profileForOwnTask()
-    expect(profile).not.toContain('config.json')
-    const rwRuleIdx = profile.indexOf('(allow file-read* file-write*')
-    const rwRuleEnd = profile.indexOf('))', rwRuleIdx) + 2
-    const rwBody = profile.slice(rwRuleIdx, rwRuleEnd)
-    // The hooks directory is read-only: the trusted controller writes the
-    // settings file and the hook scripts before the child starts, and a
-    // confined child that could rewrite them would strip its own hooks.
-    expect(rwBody).not.toContain(runPath(RUNTIME, OWN_TASK, { area: 'hooks' }))
-    expect(profile).toContain(`(allow file-read*\n    (subpath "${runPath(RUNTIME, OWN_TASK, { area: 'hooks' })}")`)
+  it('never names the configuration file, and keeps the hooks directory out of the read-write rule', () => {
+    const runtimeDir = tempDir('vinaya-wb-o4-runtime-')
+    const resolved = resolveForOwnTask(runtimeDir)
+    expect(resolved).not.toBeNull()
+    if (!resolved) return
+    try {
+      expect(resolved.profile).not.toContain('config.json')
+      const real = realpathSync(runtimeDir)
+      const hooksDir = join(real, 'tasks-execution', String(OWN_TASK), 'hooks')
+      const rwRuleIdx = resolved.profile.indexOf('(allow file-read* file-write*')
+      const rwRuleEnd = resolved.profile.indexOf('))', rwRuleIdx) + 2
+      // Read-only: the trusted controller writes the settings file and the
+      // hook scripts before the child starts, and a confined child that could
+      // rewrite them would strip its own hooks.
+      expect(resolved.profile.slice(rwRuleIdx, rwRuleEnd)).not.toContain(hooksDir)
+      expect(resolved.profile).toContain(`(subpath "${hooksDir}")`)
+    } finally {
+      resolved.cleanup()
+    }
   })
 
   it("grants a reviewer only its own round's work directory, never the round folder or a sibling round", () => {
-    const workDir = runPath(RUNTIME, OWN_TASK, { area: 'round', round: 2, file: 'reviewer-work' })
-    const profile = buildWorkerSandboxProfile({
-      realHome: '/Users/marker',
-      readOnlyDirs: [],
-      readWriteDirs: [runPath(RUNTIME, OWN_TASK, { area: 'round', round: 2, file: 'reviewer-scratch' }), workDir],
-      execAllowDirs: ['/usr/bin'],
-      runtimeDir: '/usr/bin',
-      sshSockCanon: '/nonexistent',
-      credentialHelperDenyLiterals: []
-    })
-    expect(profile).toContain(`(subpath "${workDir}")`)
-    // Not the round folder itself — that holds both roles' held verdicts and
-    // the shared read-only candidate every reviewer this round is judging.
-    expect(profile).not.toContain(`(subpath "${runPath(RUNTIME, OWN_TASK, { area: 'round', round: 2 })}")`)
-    expect(profile).not.toContain(runPath(RUNTIME, OWN_TASK, { area: 'round', round: 2, file: 'security-work' }))
-    expect(profile).not.toContain(runPath(RUNTIME, OWN_TASK, { area: 'round', round: 1 }))
+    const runtimeDir = tempDir('vinaya-wb-o4-runtime-')
+    const resolved = resolveForOwnTask(runtimeDir)
+    expect(resolved).not.toBeNull()
+    if (!resolved) return
+    try {
+      const real = realpathSync(runtimeDir)
+      const roundTwo = join(real, 'tasks-execution', String(OWN_TASK), 'rounds', '2')
+      expect(resolved.profile).toContain(`(subpath "${join(roundTwo, 'reviewer-work')}")`)
+      // Not the round folder itself — that holds both roles' held verdicts
+      // and the shared read-only candidate every reviewer this round judges.
+      expect(resolved.profile).not.toContain(`(subpath "${roundTwo}")`)
+      expect(resolved.profile).not.toContain(join(roundTwo, 'security-work'))
+      expect(resolved.profile).not.toContain(join(real, 'tasks-execution', String(OWN_TASK), 'rounds', '1'))
+    } finally {
+      resolved.cleanup()
+    }
+  })
+
+  it('canonicalises a grant whose path does not exist yet, through a symlinked runtime directory', () => {
+    // The documentation-log file `dispatch.ts` grants never exists at
+    // resolution time, and the reference's own documented example runtimeDir
+    // (`/var/lib/vinaya/runs`) traverses a symlink on the one host with a
+    // boundary. A grant left non-canonical would never match what the kernel
+    // resolves (round 2 review, MAJOR).
+    const realRuntime = tempDir('vinaya-wb-o4-realruntime-')
+    const linkParent = tempDir('vinaya-wb-o4-link-')
+    const linkedRuntime = join(linkParent, 'runs')
+    symlinkSync(realRuntime, linkedRuntime)
+
+    const allowedDir = tempDir('vinaya-wb-o4-allowed-')
+    const binDir = tempDir('vinaya-wb-o4-bin-')
+    const notYetCreated = runPath(linkedRuntime, OWN_TASK, { area: 'hooks', file: 'documentation-log-run1.jsonl' })
+    const result = resolveWorkerBoundaryLaunch(
+      {
+        binaryPath: fakeBinaryIn(binDir),
+        args: [],
+        allowedDir,
+        extraWritableFiles: [notYetCreated],
+        extraWritableDirs: []
+      },
+      AVAILABLE_DEPS
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    try {
+      const profile = readFileSync(result.launch.args[1] as string, 'utf8')
+      const canonical = join(
+        realpathSync(realRuntime),
+        'tasks-execution',
+        String(OWN_TASK),
+        'hooks',
+        'documentation-log-run1.jsonl'
+      )
+      expect(profile).toContain(`(literal "${canonical}")`)
+      expect(profile).not.toContain(linkedRuntime)
+    } finally {
+      result.launch.cleanup()
+    }
   })
 })

@@ -11,7 +11,7 @@
  * below under the same path it always had.
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   CODE_REVIEW_SEVERITY_ORDER,
@@ -48,7 +48,7 @@ import {
   renderSecurityComment
 } from '../../commands/review-post.js'
 import type { AgentVendor, DispatchHandle } from '../dispatch.js'
-import { runPath, runtimeDirForThisRepo, tasksExecutionRoot } from '../run-paths.js'
+import { ensureRunDir, runPath, runtimeDirForThisRepo, tasksExecutionRoot } from '../run-paths.js'
 
 // --- reviewer prompt (facts only) -----------------------------------------
 
@@ -221,7 +221,7 @@ export function writeHeldVerdict(
   role: 'reviewer' | 'security',
   renderedComment: string
 ): void {
-  mkdirSync(runPath(root, task, { area: 'round', round }), { recursive: true })
+  ensureRunDir(runPath(root, task, { area: 'round', round }))
   writeFileSync(heldVerdictPath(root, task, round, role), renderedComment, 'utf8')
 }
 

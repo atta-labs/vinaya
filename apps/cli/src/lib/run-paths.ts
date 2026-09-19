@@ -44,7 +44,9 @@
  * the repo.
  */
 import { execFileSync } from 'node:child_process'
-import { join } from 'node:path'
+import { chmodSync, mkdirSync } from 'node:fs'
+import { join, resolve as resolvePath } from 'node:path'
+import { CONTROL_AREA_DIRNAME } from '@attalabs/aeg-core'
 import {
   GLOBAL_VINAYA_HOME,
   loadConfig,
@@ -66,7 +68,10 @@ export const TASKS_EXECUTION_DIRNAME = 'tasks-execution'
 
 /** The four classified subdirectories of a task folder, plus the per-round tree. `driver.pid.json` deliberately has none — the lock is the task folder's own, not a member of any class. */
 export const RUN_AREA_DIRNAMES = {
-  control: 'control',
+  // Imported, never repeated: the control store appends this same segment
+  // itself (`packages/aeg-core/src/control-store/local.ts`'s `taskRoot`), so
+  // a change on either side moves both.
+  control: CONTROL_AREA_DIRNAME,
   sessions: 'sessions',
   hooks: 'hooks',
   output: 'output',
@@ -155,6 +160,14 @@ export function defaultRuntimeDir(repo: RunPathsRepo, home: string = GLOBAL_VINA
  * An unattended caller that passes no `trustAnchorConfig` at all gets the
  * default — fail-closed, never "trust the local file because the anchor was
  * unavailable."
+ *
+ * **A value inside the repository is refused outright, for either caller.**
+ * An absolute path can still name a directory in the working tree, and the
+ * run files this directory holds — the driver lock, the ownership epochs,
+ * the held verdicts — must never sit somewhere a confined role is granted
+ * write access to. `repoRoot` is passed in rather than resolved here so this
+ * stays pure; omitting it skips the check, which is what a caller with no
+ * repository to compare against wants.
  */
 export function resolveRuntimeDir(input: {
   repo: RunPathsRepo
@@ -162,12 +175,27 @@ export function resolveRuntimeDir(input: {
   trustAnchorConfig?: VinayaConfig | null
   unattended: boolean
   home?: string
+  repoRoot?: string | null
 }): string {
   const local = resolveRuntimeDirSetting(input.localConfig)
   if (local === null) return defaultRuntimeDir(input.repo, input.home)
+  if (isInsideRepo(local, input.repoRoot)) return defaultRuntimeDir(input.repo, input.home)
   if (!input.unattended) return local
   const anchored = resolveTrustAnchorRuntimeDir(local, input.trustAnchorConfig ?? null)
   return anchored ?? defaultRuntimeDir(input.repo, input.home)
+}
+
+/**
+ * Does `candidate` name the repository itself, or anything inside it?
+ * Compared on resolved, separator-terminated paths, so a sibling directory
+ * whose name merely starts with the repo root's (`/w/repo-backup` beside
+ * `/w/repo`) is not mistaken for one inside it.
+ */
+export function isInsideRepo(candidate: string, repoRoot: string | null | undefined): boolean {
+  if (!repoRoot) return false
+  const root = resolvePath(repoRoot)
+  const target = resolvePath(candidate)
+  return target === root || target.startsWith(`${root}/`)
 }
 
 /**
@@ -236,21 +264,65 @@ export function scopeFromSegment(segment: string): RunScope {
 }
 
 /**
+ * Set by every driver on ITSELF, first thing, before it resolves a single
+ * path — `markProcessUnattended` below is the one writer, and
+ * `devReviewLoop`/`cancelDevReviewLoop`/`runTask`/`startBackgroundRun` are
+ * its callers. Round 2 review (MAJOR) and security review (MEDIUM) both
+ * found this key exported with no writer at all, which left the driver —
+ * the one caller the default-branch rule exists to protect — classified
+ * ATTENDED and honouring the working tree's `runtimeDir` unchecked.
+ */
+export const UNATTENDED_ENV_KEY = 'VINAYA_UNATTENDED'
+
+/**
+ * The runtime directory a TRUSTED controller already resolved, handed to a
+ * dispatched child so the child never resolves one of its own.
+ *
+ * Without it, a child re-ran the whole resolution and could legitimately
+ * reach a DIFFERENT answer than the parent that created its files — most
+ * obviously when `loadTrustAnchorConfig()` returns null because `gh` is
+ * offline or unauthenticated, where the child falls back to the default
+ * while the parent honoured a configured value. The child then reads a tree
+ * nobody wrote to. Passing the resolved value removes the disagreement by
+ * construction, and costs the child its own network read.
+ *
+ * Trusted because the CONTROLLER put it there: the value came from the
+ * controller's own gated resolution, never from the working tree the child
+ * can edit.
+ */
+export const RUNTIME_DIR_ENV_KEY = 'VINAYA_RUNTIME_DIR'
+
+/**
+ * Marks this process unattended, for itself and for every child it later
+ * spawns with an inherited environment. Idempotent; safe to call more than
+ * once.
+ */
+export function markProcessUnattended(env: NodeJS.ProcessEnv = process.env): void {
+  env[UNATTENDED_ENV_KEY] = '1'
+  memoized = null
+}
+
+/**
  * Is this process one no human is watching? An unattended caller reads
  * `runtimeDir` from the default branch only (`resolveRuntimeDir`).
  *
- * Two signals, both already set by the time any run file is written: the
- * driver marks itself before it dispatches anything, and every dispatched
- * role's child carries `VINAYA_ROLE` from `dispatchRole`'s own attribution
- * environment. A human typing `vinaya task status` in their own shell
- * carries neither.
+ * Two signals, both genuinely set by the time any run file is written: a
+ * driver marks itself (`markProcessUnattended`) before it resolves
+ * anything, and every dispatched role's child carries `VINAYA_ROLE` from
+ * `dispatchRole`'s own attribution environment. A human typing `vinaya task
+ * status` in their own shell carries neither.
+ *
+ * **What this does not defend against.** A confined role can strip either
+ * variable from a `vinaya` subprocess it runs itself, reclassifying that
+ * subprocess as attended. That buys it nothing: the resolution only decides
+ * where that subprocess LOOKS, never where the driver writes, and the
+ * OS-level boundary (`apps/cli/specs/isolation.md`) grants write access to
+ * this dispatch's own files by absolute path — a subprocess that resolves
+ * somewhere else is denied by the profile, not by this function.
  */
 export function isUnattendedProcess(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.VINAYA_UNATTENDED === '1' || (env.VINAYA_ROLE ?? '') !== ''
+  return env[UNATTENDED_ENV_KEY] === '1' || (env.VINAYA_ROLE ?? '') !== ''
 }
-
-/** Set by the driver on itself, and threaded to every child it dispatches, so both sides of a dispatch resolve the identical runtime directory. */
-export const UNATTENDED_ENV_KEY = 'VINAYA_UNATTENDED'
 
 let memoized: { key: string; value: string } | null = null
 
@@ -269,17 +341,40 @@ let memoized: { key: string; value: string } | null = null
 export function runtimeDirForRepo(repo: RunPathsRepo): string {
   const key = repoSegment(repo)
   if (memoized?.key === key) return memoized.value
+  const value = resolveRuntimeDirUncached(repo)
+  memoized = { key, value }
+  return value
+}
+
+function resolveRuntimeDirUncached(repo: RunPathsRepo): string {
+  // A trusted controller already decided this — use it verbatim rather than
+  // re-deriving an answer that could differ from the one that created the
+  // files this process is about to read.
+  const handedDown = process.env[RUNTIME_DIR_ENV_KEY]
+  if (handedDown) return handedDown
+
   const localConfig = loadConfig()
   const unattended = isUnattendedProcess()
   const needsAnchor = unattended && resolveRuntimeDirSetting(localConfig) !== null
-  const value = resolveRuntimeDir({
+  return resolveRuntimeDir({
     repo,
     localConfig,
     trustAnchorConfig: needsAnchor ? loadTrustAnchorConfig() : null,
-    unattended
+    unattended,
+    repoRoot: repoRootSync()
   })
-  memoized = { key, value }
-  return value
+}
+
+/** The enclosing repository's root, or `null` outside one — used only to refuse a `runtimeDir` that points inside the working tree. */
+function repoRootSync(): string | null {
+  try {
+    return execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    }).trim()
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -314,12 +409,56 @@ export function resolveRepoSync(): RunPathsRepo {
   return null
 }
 
-/** The effective runtime directory for the repository this process is running against — the production entry point every seam that has no repo in hand already reaches for. Memoized through `runtimeDirForRepo`. */
+let memoizedThisRepo: string | null = null
+
+/**
+ * The effective runtime directory for the repository this process is running
+ * against — the production entry point every seam that has no repo in hand
+ * already reaches for.
+ *
+ * Memoized in its OWN right, not just through `runtimeDirForRepo` (round 2
+ * review, MAJOR). Resolving the repo is itself a `git` fork, and this
+ * function is handed to `defaultControlStoreDeps` as a CALLBACK: the control
+ * store invokes `deps.root()` at twenty separate sites — twice per
+ * `writeEffect`, twice per `acquireOwnership` attempt — so evaluating the
+ * repo before reaching the cache turned what used to be a pure string join
+ * into several subprocess forks per control-store operation, and hundreds
+ * per loop round. Worse, a transient fork failure yields the `unresolved`
+ * segment, so an epoch check and the write it guards could resolve two
+ * different trees inside one `writeEffect`. Caching the answer removes both:
+ * the fork happens at most once per process, and every later call returns
+ * the identical string.
+ */
 export function runtimeDirForThisRepo(): string {
-  return runtimeDirForRepo(resolveRepoSync())
+  if (memoizedThisRepo !== null) return memoizedThisRepo
+  memoizedThisRepo = runtimeDirForRepo(resolveRepoSync())
+  return memoizedThisRepo
+}
+
+/**
+ * Creates a run-file directory owner-only, and re-asserts the mode on one
+ * that already exists.
+ *
+ * Every run-file directory goes through here rather than a bare
+ * `mkdirSync(..., { recursive: true })` (security review, MEDIUM). While
+ * these paths all sat under `~/.vinaya/outbox` — itself `0700` — a lax mode
+ * on a child was moot; under a configurable `runtimeDir` whose documented
+ * example is `/var/lib/vinaya/runs` it is not. With a `umask` of `002` a
+ * no-mode `mkdirSync` produces `0775`, which would let any other local
+ * account read an unpublished security `findings.txt`, replace a
+ * `rounds/<n>/reviewer.md` that `publishRound` later posts verbatim, or
+ * plant a `driver.pid.json`. `recursive: true` applies `mode` only to
+ * directories it CREATES, so which writer got there first decided the
+ * ancestors' mode — the explicit `chmodSync` is what makes the result
+ * independent of writer order.
+ */
+export function ensureRunDir(dir: string): void {
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  chmodSync(dir, 0o700)
 }
 
 /** Test-only: drops the memoized resolution so a test can change the environment and resolve again. */
 export function resetRuntimeDirCache(): void {
   memoized = null
+  memoizedThisRepo = null
 }

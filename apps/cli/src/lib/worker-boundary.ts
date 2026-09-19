@@ -42,7 +42,7 @@ import {
 } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { homedir, tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
 /** The same allowlist discipline `apps/cli/src/checks/runner.ts`'s `buildCheckEnv` already applies to a custom check's child — named here again, deliberately, rather than imported: `checks/runner.ts` sits outside this task's surface (`apps/cli/src/checks` is explicitly named `out:` in the dispatched brief), and this list is small enough that naming it twice costs less than reaching across that boundary. `apps/cli/specs/isolation.md` §2 documents this precedent as the pattern this module extends to the Worker/Reviewer dispatch path. */
 export const WORKER_ENV_ALLOWLIST_KEYS = [
@@ -675,36 +675,34 @@ export type WorkerBoundaryLaunchOpts = {
    */
   extraWritableDirs: readonly string[]
   /**
-   * Round 5 review, CRITICAL fix: exact FILE paths, relative to
-   * `vinayaHomeDir`, a Worker's own later `vinaya` subcommand genuinely
-   * needs to READ and WRITE — supersedes `vinayaHomeWritableSubdirs` for
-   * the log-queue line and resume record THIS dispatch owns. The round-4
-   * fix above scoped those grants to the repo-scoped DIRECTORY containing
-   * them, but that directory is shared by every OTHER task's and role's
-   * own outbox line / resume record for the same repo (neither path's own
-   * naming convention nests one directory per task or role) — a confined
-   * Worker could therefore still read a sibling task's audit log or steal
-   * a sibling role's live vendor `resumeId` and resume that session
-   * directly. Naming the exact file closes that: see `writableFiles` on
-   * `buildWorkerSandboxProfile`. The caller still names the file's
-   * containing directory in `vinayaHomeWritableSubdirs`'s array ONLY for
-   * generic directory-scoped uses this module also supports — the two
-   * production writes this dispatch performs pass their file here instead
-   * and leave `vinayaHomeWritableSubdirs` for them empty.
+   * Round 5 review, CRITICAL fix: ABSOLUTE, exact FILE paths a confined
+   * role's own later `vinaya` subcommand genuinely needs to READ and WRITE
+   * — today its telemetry outbox line, its own session record, and the
+   * documentation-gate log.
+   *
+   * Exact files, never their containing directory. The round-4 fix scoped
+   * those grants to the directory holding them, but that directory was
+   * shared by every OTHER task's and role's own records, so a confined
+   * Worker could still read a sibling task's audit log or steal a sibling
+   * role's live vendor `resumeId` and resume that session directly. Naming
+   * the exact file closes that — see `writableFiles` on
+   * `buildWorkerSandboxProfile`, which renders these as `(literal ...)`.
+   * Use `extraWritableDirs` above for the genuinely directory-scoped case
+   * (a reviewer's own work directory); this field is for a single file.
    */
   extraWritableFiles?: readonly string[]
   /**
-   * Round 4 review, BLOCKER fix: subpaths, relative to `vinayaHomeDir`, a
-   * confined dispatch must be able to READ but never write — today, exactly
-   * `writeDispatchSettings`'s own `dispatch-settings` directory
+   * Round 4 review, BLOCKER fix: ABSOLUTE directories a confined dispatch
+   * must be able to READ but never write — today, exactly
+   * `writeDispatchSettings`'s own output, this task's own `hooks/` directory
    * (`dispatch.ts`), which the TRUSTED controller writes BEFORE resolving
    * this launch and which the confined child then loads via its own
-   * `--settings <path>` flag. Found live: `vinayaHomeDir` itself carries no
-   * grant at all (the round-4 HIGH fix, above) and `dispatch-settings` was
-   * never a member of `vinayaHomeWritableSubdirs` either, so a confined
-   * Claude dispatch could not read the settings file it was handed on its
-   * own argv — the PreToolUse background-deny hook this task's own brief
-   * named a trap to preserve never actually loaded inside the boundary.
+   * `--settings <path>` flag. Found live: no directory carries a grant
+   * unless the caller names it here or in `extraWritableDirs`, and the hooks
+   * directory was named in neither, so a confined Claude dispatch could not
+   * read the settings file it was handed on its own argv — the PreToolUse
+   * background-deny hook this task's own brief named a trap to preserve
+   * never actually loaded inside the boundary.
    * Read-only, not read+write, deliberately: nothing inside the sandbox
    * ever needs to rewrite this file, and granting write here would reopen
    * the same persistent-tampering class of gap the round-2 CRITICAL fix
@@ -807,12 +805,43 @@ export function resolveWorkerBoundaryLaunch(
       }
     }
 
-    /** Canonicalises an already-absolute caller-supplied path, leaving a not-yet-existing one exactly as given — a task folder the trusted controller has not created yet still compiles into a valid rule. */
+    /**
+     * Canonicalises an already-absolute caller-supplied path, INCLUDING one
+     * that does not exist yet.
+     *
+     * Round 2 review, MAJOR: returning a non-existent path verbatim is a
+     * regression. The `vinayaHomeDir` this replaced was realpath'd once, so
+     * every path derived from it came out canonical whether or not the leaf
+     * existed. Seatbelt matches the path the kernel resolves, not the one the
+     * profile spells — and the documentation-log file `dispatch.ts` names in
+     * `extraWritableFiles` NEVER exists at resolution time. With a
+     * `runtimeDir` that traverses a symlink — the reference's own documented
+     * example `/var/lib/vinaya/runs`, on macOS, where `/var` is a symlink to
+     * `/private/var`, and macOS is the only host with a boundary at all —
+     * its `(literal ...)` grant would never match, and the PostToolUse
+     * documentation-gate append would be silently denied inside an otherwise
+     * read-only hooks directory.
+     *
+     * Walks up to the nearest ancestor that DOES exist, canonicalises that,
+     * and re-joins the remainder: the existing part is resolved exactly as
+     * the kernel would, and the not-yet-created tail is exact by
+     * construction.
+     */
     const canonical = (abs: string): string => {
-      try {
-        return realpathSync(abs)
-      } catch {
-        return abs
+      const tail: string[] = []
+      let cursor = abs
+      for (;;) {
+        try {
+          return tail.length === 0 ? realpathSync(cursor) : join(realpathSync(cursor), ...tail)
+        } catch {
+          const parent = dirname(cursor)
+          // Reached the filesystem root without finding anything that
+          // exists — nothing to canonicalise against, so the caller's own
+          // absolute path is already the best answer available.
+          if (parent === cursor) return abs
+          tail.unshift(basename(cursor))
+          cursor = parent
+        }
       }
     }
 
