@@ -19,6 +19,58 @@ function tempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix))
 }
 
+/**
+ * Issue #660, O3 — this process's OWN environment, when it is itself a
+ * dispatched Developer/Reviewer session, carries `VINAYA_RUNTIME_DIR`
+ * (checked before `$HOME` by `resolveRuntimeDirUncached`). Spreading
+ * `...process.env` into a fixture's real subprocess hands it THIS machine's
+ * real, shared runtime directory regardless of the fixture's own isolated
+ * `$HOME` — confirmed live: this file's own hardcoded task `44` collided
+ * with a stale launch record from an earlier leaked run of this exact file.
+ * Same fix `dev-review-loop.test.ts`'s `fixtureChildEnv` already applies;
+ * `VINAYA_RUN_ID` alone (the prior, narrower strip) was not enough.
+ */
+function stripVinayaEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { ...env }
+  for (const key of Object.keys(out)) {
+    if (key.startsWith('VINAYA_')) delete out[key]
+  }
+  return out
+}
+
+/**
+ * Issue #660, O3 round 3 (reviewer F2) — this file's own doc comment above
+ * claimed "the same fix `dev-review-loop.test.ts`'s `fixtureChildEnv`
+ * already applies", but only the env-stripping half was ported: both real
+ * `execFileSync` fixtures below (the orphan and reaper scripts) ran with no
+ * timeout, so a genuine lock/epoch collision with another fixture or task
+ * run hung synchronously forever with zero diagnostic. Kept below this
+ * file's own `it(..., 15_000)` bound so a real hang is caught here, with the
+ * child's own captured output, before the test framework's bare timeout.
+ */
+const SUBPROCESS_BUDGET_MS = 6_000
+
+function runFixtureScript(scriptPath: string, cwd: string, env: NodeJS.ProcessEnv): void {
+  try {
+    execFileSync('bun', [scriptPath], {
+      cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env,
+      timeout: SUBPROCESS_BUDGET_MS,
+      killSignal: 'SIGKILL'
+    })
+  } catch (e) {
+    const err = e as { signal?: string | null; stdout?: Buffer | string; stderr?: Buffer | string }
+    if (err.signal) {
+      throw new Error(
+        `reconcile-launch.test.ts subprocess killed by ${err.signal} after exceeding its ${SUBPROCESS_BUDGET_MS}ms budget ` +
+          `(script: ${scriptPath})\n--- stdout ---\n${err.stdout ?? ''}\n--- stderr ---\n${err.stderr ?? ''}`
+      )
+    }
+    throw e
+  }
+}
+
 const PROMPT_FILE_CONTENT = 'do the thing'
 
 /** A launch record with sensible defaults; individual cases override only what they exercise. */
@@ -382,15 +434,17 @@ describe("recoverDeveloperLaunch (O2, Issue #605, code review, MAJOR) — the re
         'process.exit(0)'
       ].join('\n')
     )
-    const spawnEnv: NodeJS.ProcessEnv = { ...process.env, HOME: home, PATH: `${binDir}:${process.env.PATH ?? ''}` }
-    delete spawnEnv.VINAYA_RUN_ID
-    // issue-657, O5 — a `VINAYA_RUNTIME_DIR` inherited from the calling
-    // shell (a real dispatched session's own orchestration variable) takes
-    // priority over the `HOME` override above and silently redirects this
-    // fixture's real launch record to the operator's actual, non-isolated
-    // `~/.vinaya` — the same class of leak `dev-review-loop.test.ts` hit
-    // live on this same host.
-    delete spawnEnv.VINAYA_RUNTIME_DIR
+    // `stripVinayaEnv` (this file's own O3 fix, above) supersedes the
+    // narrower `VINAYA_RUN_ID`/`VINAYA_RUNTIME_DIR`-only deletes an earlier
+    // version of this fixture used — merged from origin/main's independent
+    // issue-657 O5 fix, same root cause (a `VINAYA_RUNTIME_DIR` inherited
+    // from the calling shell silently redirects this fixture's real launch
+    // record to the operator's actual, non-isolated `~/.vinaya`).
+    const spawnEnv: NodeJS.ProcessEnv = stripVinayaEnv({
+      ...process.env,
+      HOME: home,
+      PATH: `${binDir}:${process.env.PATH ?? ''}`
+    })
     const orphanPidPath = join(cwd, 'orphan-pid.txt')
     // Round 2 review, MINOR — this call itself is now wrapped: the script
     // writes `orphanPidPath` the moment it observes a childPid (above), so
@@ -399,10 +453,27 @@ describe("recoverDeveloperLaunch (O2, Issue #605, code review, MAJOR) — the re
     // Only the genuine race where NO pid was ever observed within the
     // window (the real child spawned, but the launch record's own write
     // landed even later than that) still has nothing to read here — a
-    // fixture-level race, not a swallowed error.
+    // fixture-level race, not a swallowed error. Issue #660, O3 round 3
+    // (reviewer F2) — the budget/timeout/diagnostic is layered on top of
+    // that pre-existing swallow: only a genuine `SIGKILL`-by-budget (real
+    // lock contention) throws here; a plain non-zero exit (the in-script
+    // timeout) still falls through to the pid-file read below, unchanged.
     try {
-      execFileSync('bun', [orphanScript], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: spawnEnv })
-    } catch {
+      execFileSync('bun', [orphanScript], {
+        cwd,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: spawnEnv,
+        timeout: SUBPROCESS_BUDGET_MS,
+        killSignal: 'SIGKILL'
+      })
+    } catch (e) {
+      const err = e as { signal?: string | null; stdout?: Buffer | string; stderr?: Buffer | string }
+      if (err.signal) {
+        throw new Error(
+          `reconcile-launch.test.ts orphan-script subprocess killed by ${err.signal} after exceeding its ${SUBPROCESS_BUDGET_MS}ms budget\n` +
+            `--- stdout ---\n${err.stdout ?? ''}\n--- stderr ---\n${err.stderr ?? ''}`
+        )
+      }
       // Non-zero exit is expected on a timeout throw; the pid file (if the
       // script got far enough to write one) is still read below.
     }
@@ -448,7 +519,7 @@ describe("recoverDeveloperLaunch (O2, Issue #605, code review, MAJOR) — the re
           'process.exit(0)'
         ].join('\n')
       )
-      execFileSync('bun', [reaperScript], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: spawnEnv })
+      runFixtureScript(reaperScript, cwd, spawnEnv)
 
       const result = JSON.parse(readFileSync(resultPath, 'utf8')) as {
         childPid: number

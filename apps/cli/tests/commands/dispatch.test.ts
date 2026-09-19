@@ -31,6 +31,27 @@ function tempDir(prefix: string): string {
 
 type CliResult = { status: number; stdout: string; stderr: string }
 
+/**
+ * Issue #660, O3 round 3 (security review, HIGH) — unlike the sibling
+ * `apps/cli/tests/lib/dispatch.test.ts` (fixed with a `stripVinayaEnv`
+ * helper and an explicit budget), this file spread `...process.env`
+ * straight into its own real `vinaya dispatch` subprocess: a leaked
+ * `VINAYA_RUNTIME_DIR` from a dispatched session's own environment survives
+ * past this fixture's `HOME` override (`resolveRuntimeDirUncached` checks it
+ * first), redirecting this fixture's writes into the real, shared runtime
+ * directory; and with no `spawnSync` timeout, a stuck child was only ever
+ * caught by bun:test's bare default, with no captured output.
+ */
+function stripVinayaEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { ...env }
+  for (const key of Object.keys(out)) {
+    if (key.startsWith('VINAYA_')) delete out[key]
+  }
+  return out
+}
+
+const SUBPROCESS_BUDGET_MS = 18_000
+
 // `spawnSync`, not `execFileSync` — `execFileSync` discards stderr entirely
 // on a zero exit code (it only ever surfaces it via a caught error's
 // `.stderr`), so a passing run's own non-fatal stderr warnings (e.g. a
@@ -45,8 +66,16 @@ function runDispatch(
   const result = spawnSync('bun', [INDEX, 'dispatch', ...args], {
     encoding: 'utf8',
     cwd,
-    env: { ...process.env, HOME: home, PATH: path, ...extraEnv }
+    env: { ...stripVinayaEnv(process.env), HOME: home, PATH: path, ...extraEnv },
+    timeout: SUBPROCESS_BUDGET_MS,
+    killSignal: 'SIGKILL'
   })
+  if (result.signal) {
+    throw new Error(
+      `vinaya dispatch subprocess killed by ${result.signal} after exceeding its ${SUBPROCESS_BUDGET_MS}ms budget ` +
+        `(args: ${args.join(' ')})\n--- stdout ---\n${result.stdout ?? ''}\n--- stderr ---\n${result.stderr ?? ''}`
+    )
+  }
   return { status: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' }
 }
 

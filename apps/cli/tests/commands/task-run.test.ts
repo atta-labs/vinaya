@@ -18,17 +18,44 @@ type CliResult = { status: number; stdout: string; stderr: string }
  * isolated `cwd` carrying no such file, same as `O10`'s own fallback test
  * below passes one that deliberately does.
  */
+/**
+ * Issue #660, O3 round 3 — `task run` reaches `task-run-background.ts`'s
+ * `acquireOwnership`, the same driver-lock/control-store surface
+ * `apps/cli/tests/lib/dispatch.test.ts`'s own `stripVinayaEnv` + budget
+ * already guards: a leaked `VINAYA_RUNTIME_DIR` from a dispatched session's
+ * own environment survives past this fixture's `HOME` override
+ * (`resolveRuntimeDirUncached` checks it first), and an unbounded
+ * `execFileSync` call hangs with zero diagnostic under lock contention.
+ */
+function stripVinayaEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { ...env }
+  for (const key of Object.keys(out)) {
+    if (key.startsWith('VINAYA_')) delete out[key]
+  }
+  return out
+}
+
+const SUBPROCESS_BUDGET_MS = 18_000
+
 function runCli(args: string[], opts?: { cwd?: string; home?: string }): CliResult {
   try {
     const stdout = execFileSync('bun', [INDEX, ...args], {
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
       ...(opts?.cwd ? { cwd: opts.cwd } : {}),
-      ...(opts?.home ? { env: { ...process.env, HOME: opts.home } } : {})
+      env: { ...stripVinayaEnv(process.env), ...(opts?.home ? { HOME: opts.home } : {}) },
+      timeout: SUBPROCESS_BUDGET_MS,
+      killSignal: 'SIGKILL'
     })
     return { status: 0, stdout, stderr: '' }
   } catch (e) {
-    const err = e as { status?: number; stdout?: string; stderr?: string }
+    const err = e as { status?: number; stdout?: string; stderr?: string; signal?: string | null }
+    if (err.signal) {
+      throw new Error(
+        `vinaya task run subprocess killed by ${err.signal} after exceeding its ${SUBPROCESS_BUDGET_MS}ms budget ` +
+          `(args: ${args.join(' ')})\n--- stdout ---\n${err.stdout ?? ''}\n--- stderr ---\n${err.stderr ?? ''}`
+      )
+    }
     return { status: err.status ?? 1, stdout: String(err.stdout ?? ''), stderr: String(err.stderr ?? '') }
   }
 }

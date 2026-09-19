@@ -24,7 +24,8 @@
     },
     "test": {
       "dependsOn": ["typecheck"],
-      "env": ["GH_TOKEN", "GITHUB_TOKEN"]
+      "env": ["GH_TOKEN", "GITHUB_TOKEN"],
+      "cache": false
     },
     "clean": {
       "cache": false
