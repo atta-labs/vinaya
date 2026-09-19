@@ -1,5 +1,17 @@
 # @atta/vinaya-sources
 
+## 0.30.0
+
+### Patch Changes
+
+- d24a823: `reader-resolvable-prose` gains a source-comment class: it scans comment lines of `.ts` files under `proseGates.sourceComments.globs` in `vinaya.config.json` for a tranche-slug or forge-number citation, honours `proseGates.sourceComments.allowlist`, and reports at `warning` severity until `proseGates.sourceComments.severity` is set to `error`. `tranchesAttachedToMilestone` and `vinaya archive tranche`'s Issue fetch now paginate past the first 100-item page instead of silently truncating a large Milestone.
+- c296f2b: An unattended dispatch (the automated `task run`/`dev-review-loop` driver, or `vinaya dispatch --unattended`) can now run inside an OS-level confinement boundary (Seatbelt on macOS: a named environment allowlist, a scoped working directory, no parent credentials) instead of inheriting the full operator environment. `dispatch.requireWorkerIsolation` defaults to `true` on macOS (the only currently supported host) and `false` elsewhere; set it explicitly in `vinaya.config.json` to override either default. With it on, a dispatch refuses before spawning rather than running unconfined when the boundary cannot be established.
+- Updated dependencies [d24a823]
+- Updated dependencies [bae5ba6]
+  - @attalabs/aeg-core@0.30.0
+  - @attalabs/aeg-forge-state@0.30.0
+  - @attalabs/aeg-types@0.30.0
+
 ## 0.29.0
 
 ### Minor Changes
