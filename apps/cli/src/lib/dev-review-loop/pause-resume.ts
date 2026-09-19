@@ -29,10 +29,67 @@ import {
   writeEscalation
 } from '@attalabs/aeg-core'
 import { controlStoreRoot, createEffectExecutor, sha256Hex } from '../effects.js'
-import { markedCommentBody, postMarkedComment, reconcileGhComment } from '../forge-write.js'
+import { markedCommentBody, postMarkedCommentOrThrow, reconcileGhComment } from '../forge-write.js'
 import { loadLoopState } from './round-assess.js'
 import { readIfExists } from './reviewer-dispatch.js'
 import { DRIVER_LOCK_FILENAME, ensureRunDir, runPath } from '../run-paths.js'
+
+/** O1 (`[task-operator-v1]`/Issue #662) — the bound `postWithRetry`, below, retries a failed pause/escalation comment post against, in real usage; env-overridable for a fixture that wants sub-millisecond backoff. */
+export const PAUSE_COMMENT_RETRY_ATTEMPTS = 5
+/** O1 — the per-attempt backoff base (multiplied by the attempt number, the same `backoffMs * attempt` shape `gate-reading.ts`'s own `gh`-read retry already uses) — real usage spaces five attempts across roughly 30s, never hammering the forge on a genuinely down network. */
+export const PAUSE_COMMENT_RETRY_BACKOFF_MS = 3000
+
+/** Env-overridable, same idiom `dev-review-loop/gate-reading.ts`'s own `shEnvOverride` uses — a fixture needs sub-millisecond backoff, real usage needs real spacing between retries. */
+function pauseRetryEnvOverride(name: string, fallback: number): number {
+  const raw = process.env[name]
+  if (!raw) return fallback
+  const n = Number(raw)
+  return Number.isFinite(n) && n >= 0 ? n : fallback
+}
+
+/** Blocking, in-process sleep — the same `Atomics.wait` idiom `dev-review-loop/gate-reading.ts`'s own `sleepSyncMs` (and `dispatch.ts`'s) already use, restated here rather than imported across a module boundary (this file's own module doc: moved out of `dev-review-loop.ts` verbatim, kept self-contained). */
+function sleepSyncMs(ms: number): void {
+  if (ms <= 0) return
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+}
+
+/**
+ * O1 — retries `poster` with backoff for a bounded number of attempts
+ * before giving up: a `gh` write that fails once during a network drop
+ * gets a bounded chance to recover in-process, rather than the whole
+ * driver dying to `postMarkedComment`'s own exit-on-failure (this module
+ * calls `postMarkedCommentOrThrow` instead, specifically so a failure here
+ * is catchable). `onAttempts` reports the real attempt count reached — 1
+ * on an ordinary first-try success, more once a retry actually ran — so
+ * the caller can log a durable `infrastructure_retry` event (O3) only for
+ * a genuinely notable episode, never for the common case. Never applied to
+ * a READ (`gate-reading.ts`'s own `sh()` already retries every `gh` read
+ * this driver makes) — this is the write-side counterpart, new here
+ * because no write in this driver retried at all before this task.
+ */
+function postWithRetry(poster: () => string, onAttempts: (n: number) => void): string {
+  const attempts = pauseRetryEnvOverride(
+    'VINAYA_DEV_REVIEW_LOOP_PAUSE_COMMENT_RETRY_ATTEMPTS',
+    PAUSE_COMMENT_RETRY_ATTEMPTS
+  )
+  const backoffMs = pauseRetryEnvOverride(
+    'VINAYA_DEV_REVIEW_LOOP_PAUSE_COMMENT_RETRY_BACKOFF_MS',
+    PAUSE_COMMENT_RETRY_BACKOFF_MS
+  )
+  let lastErr: unknown
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const result = poster()
+      onAttempts(attempt)
+      return result
+    } catch (err) {
+      lastErr = err
+      if (attempt < attempts) sleepSyncMs(backoffMs * attempt)
+    }
+  }
+  onAttempts(attempts)
+  throw lastErr
+}
 
 /** `sanitizePublicPauseDetail` truncates to this — long enough to stay informative, short enough that a runaway stack trace or subprocess dump never balloons a public PR comment. */
 const PUBLIC_PAUSE_DETAIL_MAX_LENGTH = 300
@@ -131,6 +188,21 @@ export function renderNoPushStopComment(task: number, reason: PauseReason, detai
 }
 
 /**
+ * O1 (`[task-operator-v1]`/Issue #662) — the outcome of one pause/escalation
+ * comment post: `attempts` is `0` when an already-`'verified'` idempotent
+ * record let `EffectExecutor` skip posting entirely (still `posted: true` —
+ * the comment already exists), `1` on an ordinary first-try success, and
+ * more once `postWithRetry` actually retried. `posted` is `false` only once
+ * every retry attempt was exhausted with no success. The caller
+ * (`dev-review-loop.ts`) logs a durable `infrastructure_retry` event only
+ * when `attempts > 1` — a genuinely notable episode, never the common case
+ * — and never lets a `posted: false` outcome crash the driver: the local
+ * pause state, written before this is ever called, is what stays
+ * authoritative regardless of whether the comment itself ever lands.
+ */
+export type PauseCommentPostResult = { attempts: number; posted: boolean }
+
+/**
  * The Issue-posted counterpart to `postPauseComment` — for a pause recorded
  * before any pull request is known to exist. Sanitizes `detail` HERE,
  * unconditionally, the same chokepoint discipline `postPauseComment` applies
@@ -139,25 +211,51 @@ export function renderNoPushStopComment(task: number, reason: PauseReason, detai
  * same replacement `postPauseComment` gets below — neither writer takes a
  * root-relative outbox path any more, since both store through the
  * control-store's own root (`controlStoreRoot`), not a caller-supplied one.
+ *
+ * O1: the post itself retries with backoff (`postWithRetry`) for a bounded
+ * period, and this function itself never throws — a network drop that
+ * outlasts the bound (or any other `EffectExecutor` failure, e.g. a stale
+ * epoch) is caught HERE and reported through the returned
+ * `PauseCommentPostResult` instead, so no call site needs its own
+ * try/catch to stay resumable. This function's own local record (the
+ * caller's `writePauseState`/`writeEscalationRecord`, already written
+ * before this is ever called) is what stays authoritative regardless.
  */
-export function postIssuePauseComment(task: number, round: number, reason: PauseReason, detail?: string): void {
+export function postIssuePauseComment(
+  task: number,
+  round: number,
+  reason: PauseReason,
+  detail?: string
+): PauseCommentPostResult {
   const publicDetail = detail === undefined ? undefined : sanitizePublicPauseDetail(detail)
   const marker = pauseMarker(reason)
   const body = renderNoPushStopComment(task, reason, publicDetail)
   const key = `pause-issue-${round}-${reason}`
   const deps = defaultControlStoreDeps(controlStoreRoot)
   const executor = createEffectExecutor(deps, task, `dev-review-loop:${task}:${key}`)
-  executor.execute({
-    key,
-    identity: {
-      operation: 'issue-comment',
-      target: `issue:${task}`,
-      inputVersion: round,
-      payloadDigest: sha256Hex(markedCommentBody(marker, body))
-    },
-    poster: () => postMarkedComment('issue', String(task), marker, body),
-    reconcile: reconcileGhComment('issue', String(task))
-  })
+  let attempts = 0
+  try {
+    executor.execute({
+      key,
+      identity: {
+        operation: 'issue-comment',
+        target: `issue:${task}`,
+        inputVersion: round,
+        payloadDigest: sha256Hex(markedCommentBody(marker, body))
+      },
+      poster: () =>
+        postWithRetry(
+          () => postMarkedCommentOrThrow('issue', String(task), marker, body),
+          (n) => {
+            attempts = n
+          }
+        ),
+      reconcile: reconcileGhComment('issue', String(task))
+    })
+    return { attempts, posted: true }
+  } catch {
+    return { attempts, posted: false }
+  }
 }
 
 /**
@@ -170,6 +268,13 @@ export function postIssuePauseComment(task: number, round: number, reason: Pause
  * same round, same head, nothing changed — still resolves to the same key
  * and so still posts only once, preserving the original idempotency
  * requirement; only the key changed, not the once-only guarantee.
+ *
+ * O1 (`[task-operator-v1]`/Issue #662): the post itself retries with backoff
+ * (`postWithRetry`) for a bounded period, and this function itself never
+ * throws — see `postIssuePauseComment`'s identical doc comment for why.
+ * Returns the real attempt count and whether the comment actually landed,
+ * so the caller can log a durable `infrastructure_retry` event (O3) for a
+ * genuinely notable episode without needing its own try/catch.
  */
 export function postPauseComment(
   task: number,
@@ -178,7 +283,7 @@ export function postPauseComment(
   prNumber: number,
   reason: PauseReason,
   detail?: string
-): void {
+): PauseCommentPostResult {
   // Sanitized HERE, unconditionally — the caller's `detail` may be the raw machine-local
   // string a `decision.detail` field carries (a subprocess's stderr, a
   // reviewer-authored file's own text), never pre-sanitized by convention.
@@ -189,17 +294,29 @@ export function postPauseComment(
   const key = `pause-${round}-${head}`
   const deps = defaultControlStoreDeps(controlStoreRoot)
   const executor = createEffectExecutor(deps, task, `dev-review-loop:${task}:${key}`)
-  executor.execute({
-    key,
-    identity: {
-      operation: 'pr-comment',
-      target: `pr:${prNumber}`,
-      inputVersion: round,
-      payloadDigest: sha256Hex(markedCommentBody(marker, body))
-    },
-    poster: () => postMarkedComment('pr', String(prNumber), marker, body),
-    reconcile: reconcileGhComment('pr', String(prNumber))
-  })
+  let attempts = 0
+  try {
+    executor.execute({
+      key,
+      identity: {
+        operation: 'pr-comment',
+        target: `pr:${prNumber}`,
+        inputVersion: round,
+        payloadDigest: sha256Hex(markedCommentBody(marker, body))
+      },
+      poster: () =>
+        postWithRetry(
+          () => postMarkedCommentOrThrow('pr', String(prNumber), marker, body),
+          (n) => {
+            attempts = n
+          }
+        ),
+      reconcile: reconcileGhComment('pr', String(prNumber))
+    })
+    return { attempts, posted: true }
+  } catch {
+    return { attempts, posted: false }
+  }
 }
 
 export type PauseState = {

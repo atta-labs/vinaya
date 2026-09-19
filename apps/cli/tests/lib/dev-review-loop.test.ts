@@ -1225,10 +1225,32 @@ function setUpCrashMidPublishFlushSucceeds(): { home: string; cwd: string; path:
   return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
 }
 
+/**
+ * `[task-operator-v1]`/Issue #662, O1: every fixture below whose own `gh
+ * pr comment` fails PERSISTENTLY (never recovers) now also fails the
+ * driver's own eventual pause-comment post — retried with backoff
+ * (`pause-resume.ts`'s `postWithRetry`) for up to `PAUSE_COMMENT_RETRY_ATTEMPTS`
+ * real-time attempts before giving up. `VINAYA_DEV_REVIEW_LOOP_PAUSE_COMMENT_RETRY_ATTEMPTS: '1'`
+ * restores the pre-O1 single-attempt timing these crash-scenario tests were
+ * written against — the retry behavior itself is covered by its own
+ * dedicated fixtures, below.
+ */
+const NO_PAUSE_COMMENT_RETRY_ENV = { VINAYA_DEV_REVIEW_LOOP_PAUSE_COMMENT_RETRY_ATTEMPTS: '1' }
+
+function runLoopNoPauseCommentRetry(home: string, cwd: string, path: string): CliResult {
+  return runDevReviewLoopArgs(
+    home,
+    cwd,
+    path,
+    ['--task', String(TASK), '--agent', 'claude'],
+    NO_PAUSE_COMMENT_RETRY_ENV
+  )
+}
+
 describe('devReviewLoop — a crash mid-publish never logs merged_ready (regression, PR #459 MAJOR)', () => {
   it('posts the reviewer verdict, crashes on the security verdict, and the outbox never claims merged_ready', () => {
     const { home, cwd, path } = setUpCrashMidPublish()
-    const r = runLoop(home, cwd, path)
+    const r = runLoopNoPauseCommentRetry(home, cwd, path)
     expect(r.status).not.toBe(0)
 
     // Exactly one post landed — the crash hit the second, before the third
@@ -1256,7 +1278,7 @@ describe('devReviewLoop — a crash mid-publish never logs merged_ready (regress
     // doesn't discriminate by issue number, so any distinct number proves
     // the same crash-survival guarantee at its new, configured home.
     writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ logPublish: { issue: TASK + 1 } }))
-    const r = runLoop(home, cwd, path)
+    const r = runLoopNoPauseCommentRetry(home, cwd, path)
     expect(r.status).not.toBe(0)
 
     // Every explicit `d.flushOutbox(task)` call site inside the round loop
@@ -1274,7 +1296,7 @@ describe('devReviewLoop — a crash mid-publish never logs merged_ready (regress
 
   it('task-log-v1 8 (Issue #626, O1): with no logPublish configured, the round-end flush posts nowhere, even on the same uncaught-throw exit path O10 guarantees for a configured target', () => {
     const { home, cwd, path } = setUpCrashMidPublishFlushSucceeds()
-    const r = runLoop(home, cwd, path)
+    const r = runLoopNoPauseCommentRetry(home, cwd, path)
     expect(r.status).not.toBe(0)
 
     const issueDir = join(home, '.fake-gh-posted-issue-comments')
@@ -1289,7 +1311,7 @@ describe('devReviewLoop — a crash mid-publish never logs merged_ready (regress
   // and belongs to task-log-v1 instead, per the Principal's ruling on #548).
   it('O2 (#548 v3): an uncaught error mid-loop leaves a driver_exited trace in the role log', () => {
     const { home, cwd, path } = setUpCrashMidPublish()
-    const r = runLoop(home, cwd, path)
+    const r = runLoopNoPauseCommentRetry(home, cwd, path)
     expect(r.status).not.toBe(0)
 
     const roleLog = readFileSync(join(taskRunDir(home), 'output', 'driver.log'), 'utf8')
@@ -1306,10 +1328,10 @@ describe('devReviewLoop — a crash mid-publish never logs merged_ready (regress
   // dead-lock takeover exists to resolve for whichever of the two actually
   // happened. Uses the "crashes once, then recovers" gh fixture rather than
   // the persistent one above — the driver's OWN pause-comment post, moments
-  // later, must land on a healthy `gh`, not re-trigger the same fault a
-  // second time (that second fault is real too, but it is `forge-write.ts`'s
-  // own `refuse`-hard-exits-the-process design, a separate gap outside this
-  // task's Surface).
+  // later, lands on a healthy `gh` on its very first attempt; `[task-operator-v1]`/
+  // Issue #662, O1 means a SECOND fault there is no longer fatal either —
+  // it would simply retry with backoff — but this fixture still exercises
+  // the common, first-attempt-succeeds path.
   it('O6: the SAME crash is a decided pause(infrastructure) — the lock stays in place, a real pause-state and PR comment exist, nothing is thrown', () => {
     const { home, cwd, path } = setUpCrashMidPublishThenHealthy()
     const r = runLoop(home, cwd, path)
@@ -1746,7 +1768,7 @@ describe('devReviewLoop — O9 (task-run-v1 21, #541, round 2 review BLOCKER): a
     // file), so both lines have already left the local outbox by the time
     // `runLoop` returns — read them back from what was flushed to the
     // Issue instead of the local file.
-    const r1 = runLoop(home, cwd, path)
+    const r1 = runLoopNoPauseCommentRetry(home, cwd, path)
     expect(r1.status).not.toBe(0)
     const issueDir = join(home, '.fake-gh-posted-issue-comments')
     const flushedAfterCrash = readdirSync(issueDir)
@@ -3170,6 +3192,285 @@ describe('devReviewLoop — escalation pauses, --resume continues after a ruling
     const lineageRuns = new Set(resumedRunLines.map((l) => (l.meta as { lineage: { run: string | null } }).lineage.run))
     expect(lineageRuns.size).toBe(1)
     expect([...lineageRuns][0]).not.toBeNull()
+  }, 20000)
+})
+
+// --- O1 (`[task-operator-v1]`/Issue #662): the pause comment post itself is retried with backoff, and a run that exhausts every attempt still exits cleanly, resumable ---
+
+/** Same as `writeFakeGh`, except the PAUSE comment's own post (the second `pr comment` call — the first is the round marker) fails exactly ONCE, then succeeds on retry. */
+function writeFakeGhPauseCommentFailsOnce(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'gh',
+    `#!/bin/sh
+STATE_DIR="$HOME/.fake-gh-posted-comments"
+mkdir -p "$STATE_DIR"
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n\\n## Planner rationale\\n\\nOut of scope for facts.\\n","author":{"login":"daniboomerang"}}]}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
+  printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo '[{"number":123,"headRefName":"${BRANCH}"}]'
+  else
+    echo '[]'
+  fi
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
+  N=$(ls "$STATE_DIR"/comment-*.md 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$N" = "1" ] && [ ! -f "$HOME/.pause-comment-failed-once" ]; then
+    touch "$HOME/.pause-comment-failed-once" 2>/dev/null
+    echo "fake gh: simulated transient failure on the pause comment post" >&2
+    exit 1
+  fi
+  BODY_FILE="$5"
+  cp "$BODY_FILE" "$STATE_DIR/comment-$((N + 1)).md"
+  echo "https://github.com/example/repo/pull/$3#issuecomment-$((N + 1))"
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "body" ]; then
+  echo '{"body":"Closes #${TASK}"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "mergeable" ]; then
+  echo '{"mergeable":"MERGEABLE"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  FAKE_GH_STATE="$STATE_DIR" bun -e '
+    const fs = require("fs")
+    const dir = process.env.FAKE_GH_STATE
+    const files = fs
+      .readdirSync(dir)
+      .filter((f) => f.startsWith("comment-"))
+      .sort((a, b) => Number(a.match(/\\d+/)[0]) - Number(b.match(/\\d+/)[0]))
+    const bodies = files.map((f) => fs.readFileSync(dir + "/" + f, "utf8"))
+    console.log(JSON.stringify({ comments: bodies.map((body) => ({ body, author: { login: "daniboomerang" } })) }))
+  '
+  exit 0
+fi
+if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
+  echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
+  echo "fake gh: refusing issue comment (log flush not under test)" >&2
+  exit 1
+fi
+echo "unhandled fake gh call: $*" >&2
+exit 1
+`
+  )
+}
+
+/** Same as \`writeFakeGhPauseCommentFailsOnce\`, except the pause comment's own post NEVER succeeds — every attempt fails, exhausting the retry bound. */
+function writeFakeGhPauseCommentNeverSucceeds(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'gh',
+    `#!/bin/sh
+STATE_DIR="$HOME/.fake-gh-posted-comments"
+mkdir -p "$STATE_DIR"
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n\\n## Planner rationale\\n\\nOut of scope for facts.\\n","author":{"login":"daniboomerang"}}]}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
+  printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo '[{"number":123,"headRefName":"${BRANCH}"}]'
+  else
+    echo '[]'
+  fi
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
+  N=$(ls "$STATE_DIR"/comment-*.md 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$N" = "1" ]; then
+    echo "fake gh: simulated persistent failure on the pause comment post" >&2
+    exit 1
+  fi
+  BODY_FILE="$5"
+  cp "$BODY_FILE" "$STATE_DIR/comment-$((N + 1)).md"
+  echo "https://github.com/example/repo/pull/$3#issuecomment-$((N + 1))"
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "body" ]; then
+  echo '{"body":"Closes #${TASK}"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "mergeable" ]; then
+  echo '{"mergeable":"MERGEABLE"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  FAKE_GH_STATE="$STATE_DIR" bun -e '
+    const fs = require("fs")
+    const dir = process.env.FAKE_GH_STATE
+    const files = fs
+      .readdirSync(dir)
+      .filter((f) => f.startsWith("comment-"))
+      .sort((a, b) => Number(a.match(/\\d+/)[0]) - Number(b.match(/\\d+/)[0]))
+    const bodies = files.map((f) => fs.readFileSync(dir + "/" + f, "utf8"))
+    console.log(JSON.stringify({ comments: bodies.map((body) => ({ body, author: { login: "daniboomerang" } })) }))
+  '
+  exit 0
+fi
+if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
+  echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
+  echo "fake gh: refusing issue comment (log flush not under test)" >&2
+  exit 1
+fi
+echo "unhandled fake gh call: $*" >&2
+exit 1
+`
+  )
+}
+
+const FAST_PAUSE_RETRY_ENV = {
+  VINAYA_DEV_REVIEW_LOOP_PAUSE_COMMENT_RETRY_ATTEMPTS: '3',
+  VINAYA_DEV_REVIEW_LOOP_PAUSE_COMMENT_RETRY_BACKOFF_MS: '5'
+}
+
+describe('devReviewLoop — O1 (`[task-operator-v1]`/Issue #662): the pause comment post itself retries with backoff, and this function itself never crashes the driver', () => {
+  it('a post that fails once then succeeds recovers in-process: the pause is posted, the reason is intact, and one recovered infrastructure_retry event is logged', () => {
+    const home = tempDir('vinaya-drl-home-')
+    const cwd = tempDir('vinaya-drl-cwd-')
+    const binDir = tempDir('vinaya-drl-bin-')
+    writeFakeClaudePauseThenResumeScenario(binDir)
+    writeFakeGhPauseCommentFailsOnce(binDir)
+    writeFakeGit(binDir)
+    const path = `${binDir}:${pathWithoutRealVendors()}`
+
+    const r = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], FAST_PAUSE_RETRY_ENV)
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(escalation\)/)
+
+    // The pause comment DID land, despite the one transient failure.
+    const pausedFiles = postedCommentFiles(home)
+    expect(pausedFiles).toHaveLength(2)
+    const pauseComment = readFileSync(join(home, '.fake-gh-posted-comments', pausedFiles[1] as string), 'utf8')
+    expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:escalation -->$/m)
+
+    // The local pause state — the authoritative record — carries the REAL
+    // reason (escalation), never clobbered into a synthetic 'infrastructure'
+    // one by the retry episode.
+    const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
+    expect(pauseState.reason).toBe('escalation')
+
+    const retryEvent = outboxLines(home).find((l) => l.event === 'infrastructure_retry') as
+      | Record<string, unknown>
+      | undefined
+    expect(retryEvent).toBeDefined()
+    expect(retryEvent?.failure_kind).toBe('pause_comment_post')
+    expect(retryEvent?.attempts).toBe(2)
+    expect(retryEvent?.outcome).toBe('recovered')
+  }, 20000)
+
+  it('a post that never succeeds exhausts its bound WITHOUT crashing — the driver exits resumable, the pause reason is intact, and one exhausted infrastructure_retry event is logged', () => {
+    const home = tempDir('vinaya-drl-home-')
+    const cwd = tempDir('vinaya-drl-cwd-')
+    const binDir = tempDir('vinaya-drl-bin-')
+    writeFakeClaudePauseThenResumeScenario(binDir)
+    writeFakeGhPauseCommentNeverSucceeds(binDir)
+    writeFakeGit(binDir)
+    const path = `${binDir}:${pathWithoutRealVendors()}`
+
+    const r = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], FAST_PAUSE_RETRY_ENV)
+    expect(r.status).not.toBe(0)
+    // The ORIGINAL reason — never a generic uncaught-error crash, and never
+    // reported through the synthetic 'infrastructure' path a thrown post
+    // failure used to fall into.
+    expect(r.stdout).toMatch(/paused \(escalation\)/)
+
+    // The pause comment never landed — only the round marker comment (the
+    // FIRST `pr comment` call) is on disk.
+    expect(postedCommentFiles(home)).toHaveLength(1)
+
+    // The local pause state is still the authoritative, correct record —
+    // this is the "pause intact" O1 asks for.
+    const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
+    expect(pauseState.reason).toBe('escalation')
+    expect(pauseState.round).toBe(1)
+
+    const retryEvent = outboxLines(home).find((l) => l.event === 'infrastructure_retry') as
+      | Record<string, unknown>
+      | undefined
+    expect(retryEvent).toBeDefined()
+    expect(retryEvent?.failure_kind).toBe('pause_comment_post')
+    expect(retryEvent?.attempts).toBe(3)
+    expect(retryEvent?.outcome).toBe('exhausted')
+  }, 20000)
+
+  it('the next --resume posts the missing comment first, once, and continues — never a second copy once it lands', () => {
+    const home = tempDir('vinaya-drl-home-')
+    const cwd = tempDir('vinaya-drl-cwd-')
+    const binDir = tempDir('vinaya-drl-bin-')
+    writeFakeClaudePauseThenResumeScenario(binDir)
+    writeFakeGhPauseCommentNeverSucceeds(binDir)
+    writeFakeGit(binDir)
+    const path = `${binDir}:${pathWithoutRealVendors()}`
+
+    const paused = runDevReviewLoopArgs(
+      home,
+      cwd,
+      path,
+      ['--task', String(TASK), '--agent', 'claude'],
+      FAST_PAUSE_RETRY_ENV
+    )
+    expect(paused.status).not.toBe(0)
+    expect(postedCommentFiles(home)).toHaveLength(1)
+
+    // Seed a Principal ruling — --resume's own authentication needs one —
+    // and swap to a healthy gh before resuming.
+    writeFileSync(
+      join(home, '.fake-gh-posted-comments', 'comment-2.md'),
+      `<!-- aeg:principal:ruling:${TASK}-1 -->\nGo ahead and fix it.\n`
+    )
+    writeFakeGh(binDir)
+
+    const resumed = runDevReviewLoopArgs(
+      home,
+      cwd,
+      path,
+      ['--resume', '123', '--agent', 'claude'],
+      FAST_PAUSE_RETRY_ENV
+    )
+    expect(resumed.status).toBe(0)
+    expect(resumed.stdout).toMatch(/publish/)
+
+    // The missing pause comment was posted first, exactly once — never
+    // duplicated on a later idempotent re-check within the same run.
+    const allComments = postedCommentFiles(home).map((f) =>
+      readFileSync(join(home, '.fake-gh-posted-comments', f), 'utf8')
+    )
+    const pausedComments = allComments.filter((body) => /^<!-- aeg:loop:paused:escalation -->$/m.test(body))
+    expect(pausedComments).toHaveLength(1)
   }, 20000)
 })
 
@@ -4636,6 +4937,146 @@ describe('devReviewLoop — a red gate the developer never fixes pauses, bounded
     expect(gateRedPrompt).toMatch(/^Remote head: [0-9a-f]{40}$/m)
     expect(gateRedPrompt).toMatch(/CI is red on the last head/)
     expect(gateRedPrompt).toMatch(/`git push`/)
+  }, 20000)
+})
+
+// --- O2 (`[task-operator-v1]`/Issue #662): a developer session ending on a connection failure is waited-and-re-dispatched, never a decided stop the developer itself never made ---
+
+/** The developer's FIRST invocation binds a session, then emits Claude's own confirmed-live `api_retry` marker and exits non-zero — the launcher classifies this `'connection-failed'`. Its SECOND invocation (the driver's own re-dispatch) succeeds cleanly. Reviewers are always clean. */
+function writeFakeClaudeDeveloperConnectionRecovers(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'claude',
+    `#!/bin/sh
+touch "$HOME/.fake-dev-invoked" 2>/dev/null
+cat > /dev/null
+WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
+case "$VINAYA_ROLE" in
+  code-reviewer)
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
+    mkdir -p "$WD"
+    : > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
+    printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n' > "$WD/report.txt"
+    echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  security)
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work"
+    mkdir -p "$WD"
+    : > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
+    printf 'CONFIG_SCAN: clean\\nSECRETS: none found\\n' > "$WD/report.txt"
+    echo '{"session_id":"sec-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  *)
+    if [ ! -f "$HOME/.dev-attempt-1" ]; then
+      touch "$HOME/.dev-attempt-1" 2>/dev/null
+      printf '%s\\n' '{"type":"system","subtype":"init","session_id":"dev-session-1"}'
+      printf '%s\\n' '{"type":"system","subtype":"api_retry","attempt":1,"max_retries":10,"retry_delay_ms":500,"error_status":null,"error":"unknown","session_id":"dev-session-1"}'
+      exit 7
+    fi
+    touch "$HOME/.dev-attempt-2" 2>/dev/null
+    echo '{"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5}}'
+    ;;
+esac
+exit 0
+`
+  )
+}
+
+/** Same as \`writeFakeClaudeDeveloperConnectionRecovers\`, except the developer NEVER recovers — every invocation binds the same session, emits \`api_retry\`, then exits non-zero. */
+function writeFakeClaudeDeveloperConnectionNeverRecovers(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'claude',
+    `#!/bin/sh
+touch "$HOME/.fake-dev-invoked" 2>/dev/null
+cat > /dev/null
+N_FILE="$HOME/.dev-attempts"
+N=0
+if [ -f "$N_FILE" ]; then N=$(cat "$N_FILE"); fi
+N=$((N + 1))
+echo "$N" > "$N_FILE"
+printf '%s\\n' '{"type":"system","subtype":"init","session_id":"dev-session-1"}'
+printf '%s\\n' '{"type":"system","subtype":"api_retry","attempt":1,"max_retries":10,"retry_delay_ms":500,"error_status":null,"error":"unknown","session_id":"dev-session-1"}'
+exit 7
+`
+  )
+}
+
+function setUpDeveloperConnectionRecovers(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaudeDeveloperConnectionRecovers(binDir)
+  writeFakeGh(binDir)
+  writeFakeGit(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+function setUpDeveloperConnectionNeverRecovers(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaudeDeveloperConnectionNeverRecovers(binDir)
+  // Round 1's developer never succeeds, so no PR is ever opened — the
+  // eventual infrastructure pause posts on the task Issue, not a PR, the
+  // same O9 "before any push" path `writeFakeGh`'s own `gh issue comment`
+  // deliberately fails (it models the round-end log flush's best-effort
+  // write, allowed to fail). This fixture needs that write to succeed.
+  writeFakeGhWithWorkingIssueComment(binDir)
+  writeFakeGit(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+describe("devReviewLoop — O2 (`[task-operator-v1]`/Issue #662): a developer dispatch classified 'connection-failed' is waited-and-re-dispatched, never an immediate decided stop", () => {
+  it('recovers on the second attempt: the SAME session resumes, the round completes and publishes, and one recovered infrastructure_retry event is logged', () => {
+    const { home, cwd, path } = setUpDeveloperConnectionRecovers()
+    const r = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
+      VINAYA_DEV_REVIEW_LOOP_CONNECTION_RETRY_BACKOFF_MS: '5'
+    })
+
+    expect(existsSync(join(home, '.dev-attempt-1'))).toBe(true)
+    expect(existsSync(join(home, '.dev-attempt-2'))).toBe(true)
+    expect(r.status).toBe(0)
+    expect(r.stdout).toMatch(/publish/)
+
+    const retryEvent = outboxLines(home).find((l) => l.event === 'infrastructure_retry') as
+      | Record<string, unknown>
+      | undefined
+    expect(retryEvent).toBeDefined()
+    expect(retryEvent?.failure_kind).toBe('developer_connection')
+    expect(retryEvent?.attempts).toBe(2)
+    expect(retryEvent?.outcome).toBe('recovered')
+    // Never a decided stop the developer itself never made — every posted
+    // comment is part of the ordinary clean-round publish, never a pause.
+    for (const f of postedCommentFiles(home)) {
+      expect(readFileSync(join(home, '.fake-gh-posted-comments', f), 'utf8')).not.toMatch(/aeg:loop:paused/)
+    }
+  }, 20000)
+
+  it('exhausts the shared infrastructure-retry bound, then pauses infrastructure — never a crash, never blamed on the developer', () => {
+    const { home, cwd, path } = setUpDeveloperConnectionNeverRecovers()
+    const r = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
+      VINAYA_DEV_REVIEW_LOOP_CONNECTION_RETRY_BACKOFF_MS: '5'
+    })
+
+    expect(r.status).not.toBe(0)
+    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+
+    // One initial attempt plus every retry the shared bound allows.
+    expect(readFileSync(join(home, '.dev-attempts'), 'utf8').trim()).toBe('6')
+
+    const retryEvent = outboxLines(home).find((l) => l.event === 'infrastructure_retry') as
+      | Record<string, unknown>
+      | undefined
+    expect(retryEvent).toBeDefined()
+    expect(retryEvent?.failure_kind).toBe('developer_connection')
+    expect(retryEvent?.attempts).toBe(6)
+    expect(retryEvent?.outcome).toBe('exhausted')
+
+    const pauseComment = readFileSync(join(home, '.fake-gh-posted-comments', 'comment-1.md'), 'utf8')
+    expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:infrastructure -->$/m)
   }, 20000)
 })
 
@@ -7349,6 +7790,178 @@ describe('devReviewLoop — O1 (#548): the re-exec hands its lock to the child i
   }, 30000)
 })
 
+// --- O4 (Issue #662): a --resume-started run's own stale-driver re-exec never re-authenticates the ruling it already consumed ---
+
+/**
+ * Combines three scenarios already covered separately elsewhere in this
+ * file — `writeFakeClaudePauseThenResumeScenario` (escalate, then `--resume`
+ * past a Principal ruling), `writeFakeClaudeResumeScenario` (a real round 2,
+ * forced by a round-1 BLOCKER), and `writeFakeClaudeBaseMovesAfterFirstTurn`
+ * (touch a marker so the git fake reports a moved base) — into the one
+ * sequence the origin incident actually hit: `--resume` authenticates a
+ * ruling once, round 1 (the ruling round) redispatches the developer and
+ * gets reviewed, and ONLY THEN — between round 1 concluding
+ * `changes_requested` and round 2's own developer dispatch — does the base
+ * move past this driver's own code. `$HOME/.round1-reviewed` is touched by
+ * the code-reviewer's SECOND invocation (the post-resume one), so the base
+ * only moves once round 1 has a held REQUEST-CHANGES verdict to recover
+ * from — not before, which would re-litigate round 1 itself rather than
+ * proving the driver reaches its NEXT developer turn.
+ */
+function writeFakeClaudeResumeThenStaleDriverScenario(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'claude',
+    `#!/bin/sh
+touch "$HOME/.fake-dev-invoked" 2>/dev/null
+cat > /dev/null
+WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
+case "$VINAYA_ROLE" in
+  code-reviewer)
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
+    mkdir -p "$WD"
+    if [ ! -f "$HOME/.escalated-once" ]; then
+      touch "$HOME/.escalated-once" 2>/dev/null
+      : > "$WD/findings.txt"
+      printf 'ESCALATE: authority\\nSUMMARY: needs a call nobody made.\\n' > "$WD/report.txt"
+      echo '{"session_id":"rev-session-'"$VINAYA_ROUND"'","usage":{"input_tokens":8,"output_tokens":4}}'
+      exit 0
+    fi
+    if [ ! -f "$HOME/.round1-reviewed" ]; then
+      touch "$HOME/.round1-reviewed" 2>/dev/null
+      printf '%s\\n' 'BLOCKER|smoke.ts:1|deliberate round-1 blocker to force round 2' > "$WD/findings.txt"
+    else
+      : > "$WD/findings.txt"
+    fi
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
+    printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n' > "$WD/report.txt"
+    echo '{"session_id":"rev-session-'"$VINAYA_ROUND"'","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  security)
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work"
+    mkdir -p "$WD"
+    : > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
+    printf 'CONFIG_SCAN: clean\\nSECRETS: none found\\n' > "$WD/report.txt"
+    echo '{"session_id":"sec-session-'"$VINAYA_ROUND"'","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  *)
+    if [ "$VINAYA_ROUND" = "2" ]; then
+      mkdir -p "$PWD/.worktrees/${BRANCH}"
+      echo "CONFIDENCE: 90 — addressed the round 1 blocker" > "$PWD/.worktrees/${BRANCH}/.vinaya-confidence"
+    fi
+    echo '{"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5}}'
+    ;;
+esac
+exit 0
+`
+  )
+}
+
+/** Same as \`writeFakeGitBaseMovesWithSuccessfulPull\`, except keyed on \`$HOME/.round1-reviewed\` (round 1's own held verdict exists) rather than \`$HOME/.fake-dev-invoked\` (the developer's bare first turn) — the base must move only once there is a real prior round to recover, not before. */
+function writeFakeGitResumeStaleDriverPull(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'git',
+    `#!/bin/sh
+if [ "$1" = "pull" ]; then
+  touch "$HOME/.git-pull-called" 2>/dev/null
+  exit 0
+fi
+if [ "$1" = "ls-remote" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo "${HEAD_SHA}	refs/heads/${BRANCH}"
+  fi
+  exit 0
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "origin/main" ]; then
+  if [ -f "$HOME/.round1-reviewed" ]; then
+    echo "${'c'.repeat(40)}"
+  else
+    echo "${BASE_SHA}"
+  fi
+  exit 0
+fi
+if [ "$1" = "merge-base" ]; then
+  echo "${BASE_SHA}"
+  exit 0
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
+  echo "$PWD"
+  exit 0
+fi
+if [ "$1" = "-C" ] && [ "$3" = "rev-parse" ] && [ "$4" = "HEAD" ]; then
+  echo "${HEAD_SHA}"
+  exit 0
+fi
+if [ "$1" = "fetch" ]; then
+  exit 0
+fi
+if [ "$1" = "diff" ]; then
+  echo " 2 files changed, 10 insertions(+), 3 deletions(-)"
+  exit 0
+fi
+if [ "$1" = "log" ]; then
+  echo "dddddddddd Fix(cli): something touching the driver"
+  exit 0
+fi
+exit 1
+`
+  )
+}
+
+function setUpResumeThenStaleDriver(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaudeResumeThenStaleDriverScenario(binDir)
+  writeFakeGh(binDir)
+  writeFakeGitResumeStaleDriverPull(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
+const FAST_POLL_ENV = {
+  VINAYA_DEV_REVIEW_LOOP_PR_POLL_MAX_ATTEMPTS: '5',
+  VINAYA_DEV_REVIEW_LOOP_PR_POLL_INTERVAL_MS: '5',
+  VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '5',
+  VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '5'
+}
+
+describe('devReviewLoop — O4 (Issue #662): a resumed loop that hits a stale-driver restart before its next developer turn continues, never refusing the ruling it already consumed', () => {
+  it('runs two rounds across the --resume process and its own re-exec’d child, publishing rather than crashing on a replayed resolution', () => {
+    const { home, cwd, path } = setUpResumeThenStaleDriver()
+
+    const paused = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], FAST_POLL_ENV)
+    expect(paused.status).not.toBe(0)
+    expect(paused.stdout).toMatch(/paused \(escalation\)/)
+
+    writeFileSync(
+      join(home, '.fake-gh-posted-comments', 'comment-2.md'),
+      `<!-- aeg:principal:ruling:${TASK}-1 -->\nGo ahead and fix it.\n`
+    )
+
+    const resumed = runDevReviewLoopArgs(home, cwd, path, ['--resume', '123', '--agent', 'claude'], FAST_POLL_ENV)
+
+    // Before the fix, the re-exec'd child rebuilt `--resume 123`, re-ran the
+    // top-of-function resume gate, and `resolveEscalation` threw
+    // `ReplayedResolutionError` against the SAME resolution this process had
+    // already consumed at its own start — uncaught, before this process's
+    // outer `try`/`finally` even begins, so nothing traced it: the run died
+    // with no pause and no publish. The fix (`buildReexecArgs` always
+    // `--task`) means the child instead attaches to the open PR and
+    // continues round 2 itself.
+    expect(resumed.stderr).not.toMatch(/ReplayedResolutionError|already consumed|nothing to resume from/)
+    expect(existsSync(join(home, '.git-pull-called'))).toBe(true)
+    expect(resumed.status).toBe(0)
+    expect(resumed.stdout).toMatch(/publish/)
+
+    // Both rounds genuinely ran — round 1's held BLOCKER verdict (recovered
+    // by the re-exec'd child from disk) and round 2's clean one.
+    expect(readFileSync(join(roundDir(home, 1), 'reviewer.md'), 'utf8')).toMatch(/^VERDICT: REQUEST CHANGES$/m)
+    expect(readFileSync(join(roundDir(home, 2), 'reviewer.md'), 'utf8')).toMatch(/^VERDICT: APPROVE$/m)
+  }, 30000)
+})
+
 describe('buildReexecArgs (pure) — O7 re-exec carries the original --json intent through the restart (task-run-v1 21, #541, round 2 review MINOR)', () => {
   it('carries --json through a --task re-exec when the original invocation had it', () => {
     expect(buildReexecArgs({ task: 9001, agent: 'claude', json: true }, 9001)).toEqual([
@@ -7371,11 +7984,11 @@ describe('buildReexecArgs (pure) — O7 re-exec carries the original --json inte
     ])
   })
 
-  it('carries --json through a --resume re-exec too, same as --task', () => {
+  it('O4 (#662): a re-exec of a --resume-started run is still --task, never --resume — a re-exec must never re-run the resume gate against an already-consumed resolution', () => {
     expect(buildReexecArgs({ resumePr: 42, agent: 'codex', json: true }, 9001)).toEqual([
       'dev-review-loop',
-      '--resume',
-      '42',
+      '--task',
+      '9001',
       '--agent',
       'codex',
       '--json'
