@@ -248,3 +248,21 @@ describe('vinaya pr create — refuses a body still carrying the retired brief s
     expect(sentBody).toContain('retires the')
   })
 })
+
+describe('vinaya pr create — refuses once with the union of every failing finding (O1)', () => {
+  it('a body failing a title rule and a body check is refused once with both findings', () => {
+    const repo = initRepo()
+    const bodyPath = join(repo, 'pr-body.md')
+    writeFileSync(bodyPath, `${newShapedBody()}\nThis change touches 3 files directly.\n`)
+    const { path, callLogPath } = stubGh('https://github.com/acme/widget/pull/44')
+
+    const r = runCli(['pr', 'create', '--body-file', bodyPath, '--title', 'not a valid title at all'], repo, path)
+    expect(r.status).toBe(1)
+    // Both findings printed from the ONE refusal — never a title-only
+    // refusal that would have hidden the body-bare-digits finding behind a
+    // second re-run, or vice versa.
+    expect(r.stderr).toContain('forge-title')
+    expect(r.stderr).toContain('body-bare-digits')
+    expect(readFileSync(callLogPath, 'utf-8')).toBe('')
+  })
+})
