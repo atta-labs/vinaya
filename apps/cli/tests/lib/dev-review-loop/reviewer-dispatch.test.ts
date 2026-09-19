@@ -12,7 +12,7 @@ import type { DispatchHandle } from '../../../src/lib/dispatch'
 import {
   buildManifestRecord,
   buildVerdictFromReport,
-  controlStoreRoot,
+  controlStoreRootFor,
   persistManifestRecord,
   ReviewerReportParseFailure
 } from '../../../src/lib/dev-review-loop/reviewer-dispatch'
@@ -272,7 +272,7 @@ describe('buildManifestRecord / persistManifestRecord — the parent-built store
       const written = persistManifestRecord(outbox, 555, manifest, identity)
       expect(written).not.toBeNull()
       const read = readManifest(
-        defaultControlStoreDeps(() => controlStoreRoot(outbox)),
+        defaultControlStoreDeps(() => controlStoreRootFor(outbox)),
         555,
         3
       )

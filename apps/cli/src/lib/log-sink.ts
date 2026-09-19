@@ -127,6 +127,26 @@ function isSafeRepoSegment(segment: string): boolean {
 }
 
 /**
+ * The telemetry outbox's own root, under the machine's Vinaya home.
+ *
+ * Deliberately NOT under `runtimeDir` (`run-paths.ts`), and named here so
+ * that stays a decision rather than an accident: telemetry is the one class
+ * of file a task's run writes that did NOT move into the task folder,
+ * because where log events are delivered is itself changing and moving the
+ * outbox first would mean moving it twice.
+ * `apps/cli/tests/run-paths-only.test.ts` names this module as the single
+ * exception to "no file outside `run-paths.ts` assembles a run-file path."
+ *
+ * The driver used to thread ONE root for both this and its own per-task
+ * files, so a test redirecting one silently redirected the other; the two
+ * are separate deps now (`LoopDeps.telemetryOutboxRoot` vs
+ * `LoopDeps.runtimeDir`).
+ */
+export function telemetryOutboxRoot(): string {
+  return join(GLOBAL_VINAYA_HOME, 'outbox')
+}
+
+/**
  * The outbox path `log()` writes to and `vinaya log flush` reads from —
  * keyed by repo (or `unresolved`, never a value from an unvalidated
  * `resolveRepo()` result) and by Issue (or `none`), never by PR (task 2,

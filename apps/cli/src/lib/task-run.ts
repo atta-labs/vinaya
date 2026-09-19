@@ -28,7 +28,7 @@ import {
   type LoopResult
 } from './dev-review-loop.js'
 import { isDriverPidAlive, readDriverLock } from './dev-review-loop/pause-resume.js'
-import { outboxRoot } from './dev-review-loop/reviewer-dispatch.js'
+import { runtimeDir } from './dev-review-loop/reviewer-dispatch.js'
 import {
   DispatchTaskError,
   prepareIssueTask as realPrepareIssueTask,
@@ -102,7 +102,7 @@ export type RunTaskDeps = {
 
 /** The real production check — a dead or absent lock reads `false`, exactly like `devReviewLoop`'s own entry-gate takeover check (`dev-review-loop.ts`'s `existingDriverLock`/`isDriverPidAlive`), read here from the SAME on-disk shape rather than a second one. */
 function realIsDriverAlive(task: number): boolean {
-  const lock = readDriverLock(outboxRoot(), task)
+  const lock = readDriverLock(runtimeDir(), task)
   return lock !== null && isDriverPidAlive(lock.pid)
 }
 

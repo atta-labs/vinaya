@@ -44,7 +44,7 @@
 import { randomUUID } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs'
-import { dirname, join, relative } from 'node:path'
+import { dirname, join } from 'node:path'
 import { z } from 'zod'
 import {
   assessRound,
@@ -82,7 +82,8 @@ import {
   terminateLaunchedChildOnShutdown as realTerminateLaunchedChildOnShutdown
 } from './dispatch.js'
 import { postMarkedComment } from './forge-write.js'
-import { createLogSink, currentRunId, log, outboxPathFor } from './log-sink.js'
+import { createLogSink, currentRunId, log, outboxPathFor, telemetryOutboxRoot } from './log-sink.js'
+import { runPath } from './run-paths.js'
 import { appendRoleLine, appendRunStartMarker, loopLogPathFor } from './loop-log.js'
 import { flushOutbox as flushOutboxLib, LogFlushError } from './log-flush.js'
 import { flushOutboxToWebhook, WebhookFlushError } from './log-webhook-flush.js'
@@ -141,10 +142,10 @@ import {
   hasObjectivesFacts,
   latestHeldRequestChanges,
   missingReviewerArtifacts,
-  outboxRoot,
   persistManifestRecord,
   readIfExists,
   renderReviewerDispatchPrompt,
+  runtimeDir,
   type ReviewerPromptFacts,
   ReviewerInfrastructureFailure,
   ReviewerReportParseFailure,
@@ -253,8 +254,8 @@ export type {
 } from './dev-review-loop/developer-dispatch.js'
 export {
   lintReviewerPrompt,
-  outboxRoot,
   reclassifyProseOnlyNotMet,
+  runtimeDir,
   renderReviewerPrompt,
   ReviewerInfrastructureFailure,
   ReviewerReportParseFailure,
@@ -313,7 +314,20 @@ export type LoopDeps = {
     agent: AgentVendor,
     repo: { owner: string; repo: string } | null
   ) => ResumeRecord | null
-  outboxRoot: () => string
+  /**
+   * The one directory this task's run writes under (`run-paths.ts`) — the
+   * driver lock, the control records, the held verdicts, every round's
+   * reviewer hand-off files and isolation copies.
+   *
+   * Split from `telemetryOutboxRoot` below, which used to be the same dep.
+   * One root meant two things — where log events queue, and where the
+   * driver's own per-task files live — so the driver's files sat inside the
+   * telemetry outbox and no test could redirect one without redirecting the
+   * other.
+   */
+  runtimeDir: () => string
+  /** Where log events queue (`log-sink.ts`) — unchanged by the run-file relocation, and the one exception to it. */
+  telemetryOutboxRoot: () => string
   repoRoot: () => string
   gitRevParseOriginMain: () => string
   gitFetch: (sha: string) => void
@@ -838,7 +852,8 @@ function defaultDeps(): LoopDeps {
     developerBranchFor: (n) => developerBranchFor(n),
     findOpenPrForBranch,
     readResumeRecord: (task, agent, repo) => realReadResumeRecord('developer', agent, repo, task),
-    outboxRoot,
+    runtimeDir,
+    telemetryOutboxRoot,
     repoRoot: defaultRepoRoot,
     gitRevParseOriginMain: defaultGitRevParseOriginMain,
     gitFetch: defaultGitFetch,
@@ -897,7 +912,7 @@ export function buildReexecArgs(input: LoopInput, task: number): string[] {
 
 export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = {}): Promise<LoopResult> {
   const d: LoopDeps = { ...defaultDeps(), ...deps }
-  const root = d.outboxRoot()
+  const root = d.runtimeDir()
 
   let task: number
   let branch: string
@@ -1115,7 +1130,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     let roundResponseFilePath!: string
     /** O8: recorded once, at loop start — never re-derived. Re-read at every round entry (top of the `while(true)` below) and compared against this fixed watermark for commits touching `DRIVER_OWNED_PATHS`. */
     let baseHeadAtStart!: string
-    const loopOutboxPath = outboxPathFor({ outboxRoot: () => root }, repo, task)
+    const loopOutboxPath = outboxPathFor({ outboxRoot: d.telemetryOutboxRoot }, repo, task)
     /**
      * O6: the one file this run's own role-prefixed stream tees to,
      * regardless of where it was launched — `vinaya task status --follow`
@@ -1246,7 +1261,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     /** Whether `seedLoopHistory` actually applied — the round-bump below reuses this instead of re-deriving the same "already published?" check a second time. */
     let historyApplies = false
     function seedLoopHistory(): void {
-      loopHistory = d.fetchLoopHistory(root, repo, task)
+      // The TELEMETRY outbox, never `root` — this reads back log events
+      // this machine has not flushed yet, which is the one class of run file
+      // that did not move into the task folder.
+      loopHistory = d.fetchLoopHistory(d.telemetryOutboxRoot(), repo, task)
       const newest = loopHistory.rounds[loopHistory.rounds.length - 1]
       const actuallyPublished = loopHistory.journalFinalized?.result === 'merged_ready'
       historyApplies = newest !== undefined && !actuallyPublished
@@ -1781,7 +1799,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // Round 6 fix, live-reproduced: a confined reviewer writes
           // findings.txt/report.txt/objectives.txt into workDir — see
           // `extraVinayaWritableSubdirs`'s own doc comment (dispatch.ts).
-          extraVinayaWritableSubdirs: [join('outbox', relative(root, workDir))]
+          // The absolute directory, never one relative to a root: this sits
+          // under the configurable runtime directory, which need not be
+          // under the Vinaya home at all.
+          extraVinayaWritableSubdirs: [workDir]
         })
       )
       await assertDispatchOrEscalate(handle, input.agent, false, false)
@@ -1854,7 +1875,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // Round 6 fix, live-reproduced: a confined reviewer writes
             // findings.txt/report.txt/objectives.txt into workDir — see
             // `extraVinayaWritableSubdirs`'s own doc comment (dispatch.ts).
-            extraVinayaWritableSubdirs: [join('outbox', relative(root, workDir))]
+            // The absolute directory, never one relative to a root: this
+            // sits under the configurable runtime directory, which need not
+            // be under the Vinaya home at all.
+            extraVinayaWritableSubdirs: [workDir]
           })
         )
         await assertDispatchOrEscalate(handle, input.agent, false, false)
@@ -2257,7 +2281,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               // SAME head with no push in between: the second one reads as
               // `no_progress`, not another redelivery drifting toward a
               // confidence collapse.
-              const marker = join(root, 'dev-review-loop', String(task), `round-${held.round}-attach-redelivered`)
+              const marker = runPath(root, task, { area: 'round', round: held.round, file: 'attach-redelivered' })
               // The control-store
               // `deliveredFindings` identity backs up the SAME "already
               // delivered" fact the local marker file records — checked
@@ -3253,7 +3277,8 @@ export type CancelDeps = {
   fetchRulings: typeof fetchRulings
   fetchNewestRulingOrdinal: typeof fetchNewestRulingOrdinal
   fetchNewestRulingAuthor: typeof fetchNewestRulingAuthor
-  outboxRoot: () => string
+  runtimeDir: () => string
+  telemetryOutboxRoot: () => string
   resolveRepo: () => Promise<{ owner: string; repo: string } | null>
   terminateInFlightLaunchesOnShutdown: (
     task: number,
@@ -3272,7 +3297,8 @@ function defaultCancelDeps(): CancelDeps {
     fetchRulings,
     fetchNewestRulingOrdinal,
     fetchNewestRulingAuthor,
-    outboxRoot,
+    runtimeDir,
+    telemetryOutboxRoot,
     resolveRepo: () => resolveRepo().catch(() => null),
     sleep: defaultSleep,
     terminateInFlightLaunchesOnShutdown: defaultTerminateInFlightLaunchesOnShutdown,
@@ -3305,7 +3331,7 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
       `devReviewLoop --cancel: PR #${input.cancelPr}'s body carries no \`Closes #N\` reference — cannot derive its task.`
     )
   }
-  const root = d.outboxRoot()
+  const root = d.runtimeDir()
   const held = d.readPauseState(root, task)
   if (!held) {
     throw new Error(
@@ -3404,7 +3430,7 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
     round: held.round,
     by: 'principal'
   }
-  const cancelOutboxPath = outboxPathFor({ outboxRoot: () => root }, repo, task)
+  const cancelOutboxPath = outboxPathFor({ outboxRoot: d.telemetryOutboxRoot }, repo, task)
   const priorSize = sizeOfSafe(cancelOutboxPath)
   try {
     log(cancelEvent)

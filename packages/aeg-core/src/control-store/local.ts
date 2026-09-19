@@ -263,8 +263,21 @@ function assertSafeEscalationId(escalationId: string): void {
   }
 }
 
+/**
+ * A task's own control records: `<root>/<task>/control/`.
+ *
+ * `root` is the directory holding one folder per task — the CLI passes
+ * `<runtimeDir>/tasks-execution` (`apps/cli/src/lib/run-paths.ts`), so a
+ * task's control records sit in the `control/` subdirectory of the same
+ * folder that holds its session records, its raw output and its per-round
+ * reviewer files. The `control/` segment is what keeps those four classes
+ * from sharing one flat directory, and is why a caller passes the tasks
+ * root rather than a control-store root of its own: there is no longer a
+ * separate control-store tree to point at. No record's own filename,
+ * content or version changes — only which directory holds it.
+ */
 function taskRoot(root: string, task: number): string {
-  return join(root, String(task))
+  return join(root, String(task), 'control')
 }
 
 function ownershipDir(root: string, task: number): string {

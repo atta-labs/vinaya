@@ -48,7 +48,7 @@ import {
   renderSecurityComment
 } from '../../commands/review-post.js'
 import type { AgentVendor, DispatchHandle } from '../dispatch.js'
-import { GLOBAL_VINAYA_HOME } from '../config.js'
+import { runPath, runtimeDirForThisRepo, tasksExecutionRoot } from '../run-paths.js'
 
 // --- reviewer prompt (facts only) -----------------------------------------
 
@@ -111,22 +111,37 @@ export function renderReviewerPrompt(facts: ReviewerPromptFacts): string {
 
 // --- held-verdict outbox ---------------------------------------------------
 
-/** `join(GLOBAL_VINAYA_HOME, 'outbox')` — the same root `log-sink.ts`'s own `outboxPathFor` resolves, never a second hardcoded path. */
-export function outboxRoot(): string {
-  return join(GLOBAL_VINAYA_HOME, 'outbox')
+/**
+ * The runtime directory every file this task's run writes lives under
+ * (`run-paths.ts`). Threaded through the driver as `d.runtimeDir()` so a
+ * test points the whole loop at a temporary tree with one dep, exactly as
+ * it used to point `d.outboxRoot()` at one.
+ *
+ * This replaces an `outboxRoot()` that meant two different things at once:
+ * the telemetry outbox `log-sink.ts` writes to, AND a `dev-review-loop/<task>/`
+ * tree of driver files that had no business living inside it. The telemetry
+ * outbox keeps its own home and its own resolution; only the driver files
+ * moved.
+ */
+export function runtimeDir(): string {
+  return runtimeDirForThisRepo()
 }
 
 // --- parent-built manifest record (task 5, O1) ---
 
 /**
- * The control-store root, derived from the loop's own outbox root so it is the
- * SAME test-controlled path the driver already threads for its held verdicts
- * and effect records (`d.outboxRoot()`), never a second global constant a test
- * cannot redirect. A sibling namespace under that root keeps the manifest
- * records out of the outbox's own `dev-review-loop/` subtree.
+ * The control-store root, derived from the same runtime directory the
+ * driver already threads for its held verdicts and effect records
+ * (`d.runtimeDir()`), never a global constant a test cannot redirect.
+ *
+ * This and `effects.ts`'s own `controlStoreRoot()` used to resolve two
+ * DIFFERENT directories — a manifest record and an ownership epoch for one
+ * task landed in separate trees. Both now resolve the one directory holding
+ * that task's folder, and the store puts its records in the folder's own
+ * `control/` subdirectory.
  */
-export function controlStoreRoot(outbox: string): string {
-  return join(outbox, 'control-store')
+export function controlStoreRootFor(runtime: string): string {
+  return tasksExecutionRoot(runtime)
 }
 
 /** What the parent must supply beyond the manifest itself to persist a record — the repository and work identity a manifest snapshot carries but the `ReviewInputManifest` binding type does not (O1). */
@@ -168,8 +183,8 @@ export function buildManifestRecord(manifest: ReviewInputManifest, identity: Man
 /**
  * Persists the round's manifest snapshot to the control store (O1),
  * built by the parent from the manifest it dispatched reviewers against.
- * `outbox` is the driver's own `d.outboxRoot()`; the record lands under
- * `controlStoreRoot(outbox)`. Best-effort by design: a failed write is
+ * `runtime` is the driver's own `d.runtimeDir()`; the record lands under
+ * `controlStoreRootFor(runtime)`. Best-effort by design: a failed write is
  * returned as `null`, never thrown — the loop's own binding (`compareManifest`
  * over the echoed comment) is what actually gates a verdict, and a durable
  * snapshot that could not be written must never be able to fail a round the
@@ -177,14 +192,14 @@ export function buildManifestRecord(manifest: ReviewInputManifest, identity: Man
  * follows.
  */
 export function persistManifestRecord(
-  outbox: string,
+  runtime: string,
   task: number,
   manifest: ReviewInputManifest,
   identity: ManifestRecordIdentity
 ): ManifestRecord | null {
   try {
     return writeManifest(
-      defaultControlStoreDeps(() => controlStoreRoot(outbox)),
+      defaultControlStoreDeps(() => controlStoreRootFor(runtime)),
       task,
       identity.round,
       buildManifestRecord(manifest, identity)
@@ -195,10 +210,10 @@ export function persistManifestRecord(
 }
 
 export function heldVerdictPath(root: string, task: number, round: number, role: 'reviewer' | 'security'): string {
-  return join(root, 'dev-review-loop', String(task), `round-${round}-${role}.md`)
+  return runPath(root, task, { area: 'round', round, file: `${role}.md` })
 }
 
-/** One file per verdict: `<outboxRoot>/dev-review-loop/<task>/round-<round>-<role>.md`. Real `fs.writeFileSync`, never `gh pr comment` — the held verdict lives here until publication (`publishRound`, below) posts it. */
+/** One file per verdict, in that round's own folder: `<runtimeDir>/tasks-execution/<task>/rounds/<round>/<role>.md`. Real `fs.writeFileSync`, never `gh pr comment` — the held verdict lives here until publication (`publishRound`, below) posts it. */
 export function writeHeldVerdict(
   root: string,
   task: number,
@@ -206,8 +221,7 @@ export function writeHeldVerdict(
   role: 'reviewer' | 'security',
   renderedComment: string
 ): void {
-  const dir = join(root, 'dev-review-loop', String(task))
-  mkdirSync(dir, { recursive: true })
+  mkdirSync(runPath(root, task, { area: 'round', round }), { recursive: true })
   writeFileSync(heldVerdictPath(root, task, round, role), renderedComment, 'utf8')
 }
 
@@ -242,17 +256,17 @@ export type HeldRequestChanges = { round: number; head: string; rendered: string
  * state that doesn't read clean.
  */
 export function latestHeldRequestChanges(root: string, task: number): HeldRequestChanges | null {
-  const dir = join(root, 'dev-review-loop', String(task))
   let entries: string[]
   try {
-    entries = readdirSync(dir)
+    entries = readdirSync(runPath(root, task, { area: 'rounds' }))
   } catch {
     return null
   }
   let highest = -1
   for (const name of entries) {
-    const m = /^round-(\d+)-reviewer\.md$/.exec(name)
-    if (m) highest = Math.max(highest, Number(m[1] as string))
+    if (!/^\d+$/.test(name)) continue
+    const round = Number(name)
+    if (existsSync(heldVerdictPath(root, task, round, 'reviewer'))) highest = Math.max(highest, round)
   }
   if (highest < 0) return null
 
@@ -282,7 +296,7 @@ export function reviewerWorkDir(
   attempt = 1
 ): string {
   const suffix = attempt > 1 ? `-retry${attempt - 1}` : ''
-  return join(root, 'dev-review-loop', String(task), `round-${round}-${role}-work${suffix}`)
+  return runPath(root, task, { area: 'round', round, file: `${role}-work${suffix}` })
 }
 
 /**

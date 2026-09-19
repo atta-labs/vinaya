@@ -44,7 +44,7 @@ beforeEach(() => {
   sandbox = mkdtempSync(join(tmpdir(), 'vinaya-task-cancel-'))
   outbox = join(sandbox, 'outbox')
   mkdirSync(outbox, { recursive: true })
-  controlStoreDeps = defaultControlStoreDeps(() => join(sandbox, 'control-store'))
+  controlStoreDeps = defaultControlStoreDeps(() => join(outbox, 'tasks-execution'))
 })
 
 afterEach(() => {
@@ -102,7 +102,7 @@ function harness(
   const calls: Array<{ cancelPr: number; agent: string }> = []
   const events: Array<{ operation: string; target: string; result: string; error_class: string | null }> = []
   const handler = createTaskCancelHandler({
-    outboxRoot: () => outbox,
+    runtimeDir: () => outbox,
     resolveIssueForRef: () => ISSUE,
     fetchRulings: () => overrides.rulings ?? ['LGTM, cancel.'],
     fetchNewestRulingOrdinal: () => overrides.newestRulingOrdinal ?? 1,
@@ -369,14 +369,14 @@ describe('cancelDevReviewLoop — real subprocess, real control store (security 
 import { acquireOwnership, defaultControlStoreDeps, writeEscalation } from '@attalabs/aeg-core'
 import { writePauseState } from '../../../src/lib/dev-review-loop/pause-resume.js'
 import { cancelDevReviewLoop, ReplayedResolutionError } from '../../../src/lib/dev-review-loop.js'
-import { outboxRoot } from '../../../src/lib/dev-review-loop/reviewer-dispatch.js'
+import { runtimeDir } from '../../../src/lib/dev-review-loop/reviewer-dispatch.js'
 import { controlStoreRoot } from '../../../src/lib/effects.js'
 
 const ISSUE = 558
 const PR = 900
 const ESCALATION_ID = \`\${ISSUE}-1-headsha1\`
 
-writePauseState(outboxRoot(), {
+writePauseState(runtimeDir(), {
   task: ISSUE,
   round: 1,
   head: 'headsha1',
@@ -472,7 +472,7 @@ import { join } from 'node:path'
 import { acquireOwnership, defaultControlStoreDeps, writeEscalation } from '@attalabs/aeg-core'
 import { writePauseState } from '../../../src/lib/dev-review-loop/pause-resume.js'
 import { cancelDevReviewLoop } from '../../../src/lib/dev-review-loop.js'
-import { outboxRoot } from '../../../src/lib/dev-review-loop/reviewer-dispatch.js'
+import { runtimeDir } from '../../../src/lib/dev-review-loop/reviewer-dispatch.js'
 import { controlStoreRoot } from '../../../src/lib/effects.js'
 import { log } from '../../../src/lib/log-sink.js'
 import { createTaskResumeHandler } from '../../../src/lib/task-tools/resume.js'
@@ -482,7 +482,7 @@ const OTHER_ISSUE = 991
 const PR = 900
 const ESCALATION_ID = \`\${ISSUE}-1-headsha1\`
 
-writePauseState(outboxRoot(), {
+writePauseState(runtimeDir(), {
   task: ISSUE,
   round: 1,
   head: 'headsha1',
@@ -547,7 +547,7 @@ console.log('RUN_AFTER:' + process.env.VINAYA_RUN)
 // \`cancelDevReviewLoop\` left behind, and the ambient sentinel set above is
 // never touched by this call.
 const resumeHandler = createTaskResumeHandler({
-  outboxRoot,
+  runtimeDir,
   resolveIssueForRef: () => OTHER_ISSUE,
   fetchRulings: () => [],
   fetchNewestRulingAuthor: () => null,

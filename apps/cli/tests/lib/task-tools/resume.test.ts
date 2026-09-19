@@ -35,7 +35,7 @@ beforeEach(() => {
   sandbox = mkdtempSync(join(tmpdir(), 'vinaya-task-resume-'))
   outbox = join(sandbox, 'outbox')
   mkdirSync(outbox, { recursive: true })
-  controlStoreDeps = defaultControlStoreDeps(() => join(sandbox, 'control-store'))
+  controlStoreDeps = defaultControlStoreDeps(() => join(outbox, 'tasks-execution'))
 })
 
 afterEach(() => {
@@ -83,7 +83,7 @@ function writeEscalationFixture(overrides: Partial<EscalationInput> = {}) {
 }
 
 function markRoundPublished(round: number) {
-  const dir = join(outbox, 'dev-review-loop', String(ISSUE))
+  const dir = join(outbox, 'tasks-execution', String(ISSUE), 'control')
   mkdirSync(dir, { recursive: true })
   writeFileSync(join(dir, `effect-${round}-reviewer-verdict.json`), JSON.stringify({ effectId: 'r', status: 'posted' }))
   writeFileSync(join(dir, `effect-${round}-security-verdict.json`), JSON.stringify({ effectId: 's', status: 'posted' }))
@@ -119,7 +119,7 @@ function harness(
   const events: Array<{ operation: string; target: string; result: string; error_class: string | null }> = []
   const { store, map } = memClaimStore()
   const handler = createTaskResumeHandler({
-    outboxRoot: () => outbox,
+    runtimeDir: () => outbox,
     resolveIssueForRef: (overrides.resolveIssue as never) ?? (() => ISSUE),
     fetchRulings: () => overrides.rulings ?? ['LGTM, resume.'],
     fetchNewestRulingAuthor: () => 'principal-1',
@@ -262,7 +262,7 @@ describe('task_resume handler', () => {
   it('refuses when the run already has a live driver — never starts a second worker', async () => {
     writePause()
     writeEscalationFixture()
-    const lockDir = join(outbox, 'dev-review-loop', String(ISSUE))
+    const lockDir = join(outbox, 'tasks-execution', String(ISSUE))
     mkdirSync(lockDir, { recursive: true })
     writeFileSync(
       join(lockDir, 'driver.pid.json'),

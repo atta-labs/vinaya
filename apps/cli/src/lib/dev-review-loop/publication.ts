@@ -33,11 +33,12 @@ import { reconcileGhComment } from '../forge-write.js'
 import { sh } from './gate-reading.js'
 import { markerComments, principalAllowlist } from './developer-dispatch.js'
 import { heldVerdictPath, readIfExists } from './reviewer-dispatch.js'
+import { runPath } from '../run-paths.js'
 
 type ForgeEffectRecord = { effectId: string; status: 'started' | 'posted'; url?: string }
 
 function forgeEffectPath(root: string, task: number, key: string): string {
-  return join(root, 'dev-review-loop', String(task), `effect-${key}.json`)
+  return runPath(root, task, { area: 'control', file: `effect-${key}.json` })
 }
 
 function readForgeEffect(path: string): ForgeEffectRecord | null {

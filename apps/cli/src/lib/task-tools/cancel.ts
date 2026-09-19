@@ -15,7 +15,6 @@
  */
 
 import { hostname as osHostname } from 'node:os'
-import { dirname, join } from 'node:path'
 import {
   type ControlStoreDeps,
   defaultControlStoreDeps,
@@ -28,7 +27,8 @@ import {
   type TaskToolRef
 } from '@attalabs/aeg-core'
 import { type AgentVendor, isAgentVendor } from '../dispatch.js'
-import { cancelDevReviewLoop, type CancelResult, outboxRoot } from '../dev-review-loop.js'
+import { cancelDevReviewLoop, type CancelResult, runtimeDir } from '../dev-review-loop.js'
+import { tasksExecutionRoot } from '../run-paths.js'
 import { fetchNewestRulingOrdinal, fetchRulings } from '../dev-review-loop/developer-dispatch.js'
 import { appendRoleLine, loopLogPathFor } from '../loop-log.js'
 import {
@@ -53,7 +53,7 @@ function fail<T>(error: ReturnType<typeof taskToolError>): TaskToolCallResult<T>
 }
 
 export type TaskCancelDeps = {
-  outboxRoot: () => string
+  runtimeDir: () => string
   resolveIssueForRef: (ref: TaskToolRef) => number | null
   fetchRulings: (pr: number) => string[]
   fetchNewestRulingOrdinal: (pr: number) => number
@@ -64,7 +64,7 @@ export type TaskCancelDeps = {
 }
 
 export const defaultTaskCancelDeps: TaskCancelDeps = {
-  outboxRoot,
+  runtimeDir,
   resolveIssueForRef,
   fetchRulings,
   fetchNewestRulingOrdinal,
@@ -134,11 +134,11 @@ export function createTaskCancelHandler(
     }
     const target = `task:${issue}`
 
-    const root = deps.outboxRoot()
+    const root = deps.runtimeDir()
     // Same control-store-root-from-outbox-root derivation `resume.ts` and
     // `read.ts`'s own `readEscalationPacket` use — never the real global
-    // default, so a fixture's injected `outboxRoot` fully isolates every read.
-    const controlStoreDeps: ControlStoreDeps = defaultControlStoreDeps(() => join(dirname(root), 'control-store'))
+    // default, so a fixture's injected `runtimeDir` fully isolates every read.
+    const controlStoreDeps: ControlStoreDeps = defaultControlStoreDeps(() => tasksExecutionRoot(root))
     const packet = readEscalationPacket(root, issue)
     if (packet === null || packet.inputs === null || packet.inputs.prNumber === null) {
       emitOperationEvent(deps.log, issue, target, 'refused', 'precondition')

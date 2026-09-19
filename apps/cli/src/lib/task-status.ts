@@ -16,11 +16,11 @@
 
 import { execFileSync } from 'node:child_process'
 import { readFileSync, readdirSync } from 'node:fs'
-import { join } from 'node:path'
 import { resolveNewestFrozenBrief, type PauseReason } from '@attalabs/aeg-core'
 import { resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
-import { findOpenPrForBranch, outboxRoot } from './dev-review-loop.js'
+import { findOpenPrForBranch, runtimeDir } from './dev-review-loop.js'
+import { DRIVER_LOCK_FILENAME, runPath } from './run-paths.js'
 import { loopLogPathFor, loopsRoot, type LoopLogRepo } from './loop-log.js'
 import { findRecordedControllerRun } from './task-run-background.js'
 
@@ -142,13 +142,13 @@ function findPrForRef(ref: TaskRef): { number: number } | null {
 // --- outbox reads --------------------------------------------------------
 
 function taskOutboxDir(root: string, task: number): string {
-  return join(root, 'dev-review-loop', String(task))
+  return runPath(root, task, { area: 'task' })
 }
 
 type DriverLock = { pid: number; startedAt: string }
 
 function readDriverLock(root: string, task: number): DriverLock | null {
-  const raw = readIfExists(join(taskOutboxDir(root, task), 'driver.pid.json'))
+  const raw = readIfExists(runPath(root, task, { area: 'task', file: DRIVER_LOCK_FILENAME }))
   if (!raw) return null
   try {
     return JSON.parse(raw) as DriverLock
@@ -251,7 +251,7 @@ type PauseState = {
 }
 
 function readPauseState(root: string, task: number): PauseState | null {
-  const raw = readIfExists(join(taskOutboxDir(root, task), 'pause-state.json'))
+  const raw = readIfExists(runPath(root, task, { area: 'control', file: 'pause-state.json' }))
   if (!raw) return null
   try {
     return JSON.parse(raw) as PauseState
@@ -263,7 +263,7 @@ function readPauseState(root: string, task: number): PauseState | null {
 type ForgeEffectRecord = { effectId: string; status: 'started' | 'posted'; url?: string }
 
 function readEffect(root: string, task: number, key: string): ForgeEffectRecord | null {
-  const raw = readIfExists(join(taskOutboxDir(root, task), `effect-${key}.json`))
+  const raw = readIfExists(runPath(root, task, { area: 'control', file: `effect-${key}.json` }))
   if (!raw) return null
   try {
     return JSON.parse(raw) as ForgeEffectRecord
@@ -282,7 +282,7 @@ function readEffect(root: string, task: number, key: string): ForgeEffectRecord 
 function newestPublishedRound(root: string, task: number): number | null {
   let entries: string[]
   try {
-    entries = readdirSync(taskOutboxDir(root, task))
+    entries = readdirSync(runPath(root, task, { area: 'control' }))
   } catch {
     return null
   }
@@ -371,8 +371,8 @@ function firstLine(text: string): string {
 }
 
 /**
- * The last round this task's outbox carries a verdict file for —
- * `round-<n>-reviewer.md` / `round-<n>-security.md`, whichever is highest —
+ * The last round this task's folder carries a verdict file for —
+ * `rounds/<n>/reviewer.md` / `rounds/<n>/security.md`, whichever is highest —
  * read regardless of whether that round has since published: `publishRound`
  * only ever reads these files, it never moves or deletes them, so held and
  * published verdicts are the same file, told apart only by
@@ -381,21 +381,22 @@ function firstLine(text: string): string {
 export function lastRoundVerdictLines(root: string, task: number): RoundVerdictLines | null {
   let entries: string[]
   try {
-    entries = readdirSync(taskOutboxDir(root, task))
+    entries = readdirSync(runPath(root, task, { area: 'rounds' }))
   } catch {
     return null
   }
   let round: number | null = null
   for (const name of entries) {
-    const m = /^round-(\d+)-(?:reviewer|security)\.md$/.exec(name)
-    if (m) {
-      const n = Number(m[1])
-      if (round === null || n > round) round = n
-    }
+    if (!/^\d+$/.test(name)) continue
+    const n = Number(name)
+    const hasVerdict =
+      readIfExists(runPath(root, task, { area: 'round', round: n, file: 'reviewer.md' })) !== null ||
+      readIfExists(runPath(root, task, { area: 'round', round: n, file: 'security.md' })) !== null
+    if (hasVerdict && (round === null || n > round)) round = n
   }
   if (round === null) return null
-  const reviewerText = readIfExists(join(taskOutboxDir(root, task), `round-${round}-reviewer.md`))
-  const securityText = readIfExists(join(taskOutboxDir(root, task), `round-${round}-security.md`))
+  const reviewerText = readIfExists(runPath(root, task, { area: 'round', round, file: 'reviewer.md' }))
+  const securityText = readIfExists(runPath(root, task, { area: 'round', round, file: 'security.md' }))
   return {
     round,
     reviewer: reviewerText ? firstLine(reviewerText) : null,
@@ -442,7 +443,7 @@ function buildRow(ref: TaskRef, allowlist: readonly string[]): TaskStatusRow | n
     id: ref.kind === 'tranche' ? ref.id : String(ref.issue),
     issue: ref.issue,
     pr: findPrForRef(ref),
-    state: deriveLoopState(outboxRoot(), ref.issue)
+    state: deriveLoopState(runtimeDir(), ref.issue)
   }
 }
 
@@ -459,7 +460,7 @@ export type TaskStatusListRow = { row: TaskStatusRow; line: string }
  */
 export function gatherTaskStatusList(): TaskStatusListRow[] {
   const allowlist = principalAllowlist()
-  const root = outboxRoot()
+  const root = runtimeDir()
   const rows: TaskStatusListRow[] = []
   for (const ref of listOpenTaskIssues()) {
     // A backlog ref only ever becomes a candidate once the loop has
@@ -491,7 +492,7 @@ export function gatherSingleTaskStatus(tranche: string, id: string): SingleTaskS
   const row = buildRow(ref, principalAllowlist())
   if (!row) return { kind: 'no_brief' }
 
-  const root = outboxRoot()
+  const root = runtimeDir()
   const verdictLines = lastRoundVerdictLines(root, ref.issue)
   const resumeCommand = row.state.kind === 'paused' && row.pr ? resumeCommandFor(row.pr.number) : null
   return { kind: 'ok', row, line: renderTaskStatusRow(row), verdictLines, resumeCommand }

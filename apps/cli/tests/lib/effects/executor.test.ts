@@ -292,7 +292,7 @@ describe('EffectExecutor', () => {
       poster: () => 'https://example.com/comment/1',
       reconcile: neverReconcile
     })
-    writeFileSync(join(dir, '1', 'effect', 'k1.json'), 'not json', 'utf8')
+    writeFileSync(join(dir, '1', 'control', 'effect', 'k1.json'), 'not json', 'utf8')
 
     expect(() =>
       executor.execute({
@@ -431,7 +431,7 @@ describe('EffectExecutor — effect log events (task-log-v1 task 6, O1/O3)', () 
       poster: () => 'https://example.com/comment/1',
       reconcile: neverReconcile
     })
-    writeFileSync(join(dir, '1', 'effect', 'k1.json'), 'not json', 'utf8')
+    writeFileSync(join(dir, '1', 'control', 'effect', 'k1.json'), 'not json', 'utf8')
     events.length = 0
     expect(() =>
       executor.execute({

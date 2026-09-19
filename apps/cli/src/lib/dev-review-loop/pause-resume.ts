@@ -8,7 +8,7 @@
 
 import { mkdirSync, unlinkSync, writeFileSync } from 'node:fs'
 import { hostname } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname } from 'node:path'
 import {
   acquireOwnership,
   appendTransition,
@@ -32,6 +32,7 @@ import { controlStoreRoot, createEffectExecutor, sha256Hex } from '../effects.js
 import { markedCommentBody, postMarkedComment, reconcileGhComment } from '../forge-write.js'
 import { loadLoopState } from './round-assess.js'
 import { readIfExists } from './reviewer-dispatch.js'
+import { DRIVER_LOCK_FILENAME, runPath } from '../run-paths.js'
 
 /** `sanitizePublicPauseDetail` truncates to this — long enough to stay informative, short enough that a runaway stack trace or subprocess dump never balloons a public PR comment. */
 const PUBLIC_PAUSE_DETAIL_MAX_LENGTH = 300
@@ -241,7 +242,7 @@ export type PauseState = {
 }
 
 function pauseStatePath(root: string, task: number): string {
-  return join(root, 'dev-review-loop', String(task), 'pause-state.json')
+  return runPath(root, task, { area: 'control', file: 'pause-state.json' })
 }
 
 export function writePauseState(root: string, state: PauseState): void {
@@ -311,7 +312,7 @@ export function recoverLoopState(
 type DriverLock = { pid: number; startedAt: string }
 
 function driverLockPath(root: string, task: number): string {
-  return join(root, 'dev-review-loop', String(task), 'driver.pid.json')
+  return runPath(root, task, { area: 'task', file: DRIVER_LOCK_FILENAME })
 }
 
 export function readDriverLock(root: string, task: number): DriverLock | null {
@@ -435,6 +436,19 @@ export const PAUSE_REASON_PROFILE: Record<
 /** `<task>-<round>-<head>` — the same round+head granularity `postPauseComment`'s own idempotency key already uses to tell two real pauses apart, reused here as the escalation/resolution storage key so a resume/cancel and the pause it targets are always addressing the identical instance. */
 export function escalationIdFor(task: number, round: number, head: string): string {
   return `${task}-${round}-${head}`
+}
+
+/**
+ * `escalationIdFor`'s leading segment — the task an escalation id belongs
+ * to. Read by the task tools, which are handed only the id (a `release`
+ * call has nothing else) but must still resolve the task folder the
+ * resolution record lives in. `null` when the id does not carry one, in
+ * which case the caller falls back to the unscoped folder rather than
+ * inventing a directory of its own.
+ */
+export function taskFromEscalationId(escalationId: string): number | null {
+  const m = /^(\d+)-/.exec(escalationId)
+  return m ? Number(m[1]) : null
 }
 
 export type EscalationFacts = {

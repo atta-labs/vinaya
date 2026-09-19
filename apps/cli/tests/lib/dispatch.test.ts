@@ -21,7 +21,6 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
-import { homedir } from 'node:os'
 import { readdirSync, statSync } from 'node:fs'
 import {
   DEFAULT_TIMEOUT_MS,
@@ -702,7 +701,16 @@ describe('terminateLaunchedChildOnShutdown — driver shutdown termination (O1, 
     const dispatchLib = join(CLI_ROOT, 'src', 'lib', 'dispatch.ts')
     const script = join(cwd, 'shutdown-terminate-identity-mismatch.ts')
     const resultPath = join(cwd, 'result-identity-mismatch.json')
-    const recordPath = join(home, '.vinaya', 'dispatch-resume', 'unresolved', 'developer-claude-issue42.json')
+    const recordPath = join(
+      home,
+      '.vinaya',
+      'runtime',
+      'unresolved',
+      'tasks-execution',
+      '42',
+      'sessions',
+      'developer-claude.json'
+    )
     writeFileSync(
       script,
       [
@@ -1065,7 +1073,16 @@ describe('dispatchRole — resume state durably recorded (O8)', () => {
     const promptFile = join(cwd, 'prompt.txt')
     writeFileSync(promptFile, PROMPT_FILE_CONTENT)
     const path = `${binDir}:${pathWithoutRealVendors()}`
-    const recordPath = join(home, '.vinaya', 'dispatch-resume', 'unresolved', 'developer-claude-issue454.json')
+    const recordPath = join(
+      home,
+      '.vinaya',
+      'runtime',
+      'unresolved',
+      'tasks-execution',
+      '454',
+      'sessions',
+      'developer-claude.json'
+    )
 
     writeFakeBinary(
       binDir,
@@ -1137,7 +1154,16 @@ describe('dispatchRole — resume state durably recorded (O8)', () => {
     const result = runDispatch(['developer', '--agent', 'claude', '--prompt-file', promptFile], cwd, home, path)
     expect(result.status).toBe(0)
 
-    const recordPath = join(home, '.vinaya', 'dispatch-resume', 'unresolved', 'developer-claude-unscoped.json')
+    const recordPath = join(
+      home,
+      '.vinaya',
+      'runtime',
+      'unresolved',
+      'tasks-execution',
+      'unscoped',
+      'sessions',
+      'developer-claude.json'
+    )
     const record = JSON.parse(readFileSync(recordPath, 'utf8')) as { resumeId: string; task: number | null }
     expect(record.resumeId).toBe(synthId)
     expect(record.task).toBeNull()
@@ -1175,10 +1201,16 @@ describe('dispatchRole — resume state durably recorded (O8)', () => {
     // this is the live bug O5 closes: before the repo segment existed, the
     // second dispatch's record would have overwritten the first's.
     const recordA = JSON.parse(
-      readFileSync(join(home, '.vinaya', 'dispatch-resume', 'acme-tranche-a', 'developer-claude-issue9.json'), 'utf8')
+      readFileSync(
+        join(home, '.vinaya', 'runtime', 'acme-tranche-a', 'tasks-execution', '9', 'sessions', 'developer-claude.json'),
+        'utf8'
+      )
     ) as { resumeId: string }
     const recordB = JSON.parse(
-      readFileSync(join(home, '.vinaya', 'dispatch-resume', 'acme-tranche-b', 'developer-claude-issue9.json'), 'utf8')
+      readFileSync(
+        join(home, '.vinaya', 'runtime', 'acme-tranche-b', 'tasks-execution', '9', 'sessions', 'developer-claude.json'),
+        'utf8'
+      )
     ) as { resumeId: string }
     expect(recordA.resumeId).toBe(synthIdA)
     expect(recordB.resumeId).toBe(synthIdB)
@@ -1202,10 +1234,19 @@ describe('dispatchRole — resume state durably recorded (O8)', () => {
       AEG_REPO: 'acme/../../../etc'
     })
 
-    const recordPath = join(home, '.vinaya', 'dispatch-resume', 'unresolved', 'developer-claude-issue9.json')
+    const recordPath = join(
+      home,
+      '.vinaya',
+      'runtime',
+      'unresolved',
+      'tasks-execution',
+      '9',
+      'sessions',
+      'developer-claude.json'
+    )
     const record = JSON.parse(readFileSync(recordPath, 'utf8')) as { resumeId: string }
     expect(record.resumeId).toBe(synthId)
-    expect(existsSync(join(home, '.vinaya', 'dispatch-resume', 'etc'))).toBe(false)
+    expect(existsSync(join(home, '.vinaya', 'runtime', 'etc'))).toBe(false)
   })
 
   it('a crashing child that never reported a session keeps its interrupted intent record, with no session to resume (O1) — named unbound, not crash (Issue #636, O5)', () => {
@@ -1231,7 +1272,16 @@ describe('dispatchRole — resume state durably recorded (O8)', () => {
     const result = runDispatch(['developer', '--agent', 'claude', '--prompt-file', promptFile], cwd, home, path)
     expect(result.status).toBe(1)
 
-    const recordPath = join(home, '.vinaya', 'dispatch-resume', 'unresolved', 'developer-claude-unscoped.json')
+    const recordPath = join(
+      home,
+      '.vinaya',
+      'runtime',
+      'unresolved',
+      'tasks-execution',
+      'unscoped',
+      'sessions',
+      'developer-claude.json'
+    )
     const record = JSON.parse(readFileSync(recordPath, 'utf8')) as {
       status: string
       failureReason: string | null
@@ -1266,7 +1316,16 @@ describe('dispatchRole — resume state durably recorded (O8)', () => {
     const result = runDispatch(['developer', '--agent', 'claude', '--prompt-file', promptFile], cwd, home, path)
     expect(result.status).toBe(1)
 
-    const recordPath = join(home, '.vinaya', 'dispatch-resume', 'unresolved', 'developer-claude-unscoped.json')
+    const recordPath = join(
+      home,
+      '.vinaya',
+      'runtime',
+      'unresolved',
+      'tasks-execution',
+      'unscoped',
+      'sessions',
+      'developer-claude.json'
+    )
     const record = JSON.parse(readFileSync(recordPath, 'utf8')) as {
       status: string
       failureReason: string | null
@@ -1286,8 +1345,15 @@ describe('dispatchRole — resume state durably recorded (O8)', () => {
  * `dispatchRole` cases above, which must go through the real CLI entry point
  * for the reason that file's own header records.
  */
-/** Where `openOutputTee` writes. Derived, never hardcoded, so a moved home moves the test with it. */
-const TEE_DIR = join(homedir(), '.vinaya', 'dispatch-output')
+/**
+ * Where `openOutputTee` writes. Read off the tee's own returned path rather
+ * than rebuilt here: this block runs IN-PROCESS, so the runtime directory
+ * resolves against the real repository this checkout belongs to, and a
+ * hardcoded repo segment would bind the test to whatever clone it ran in.
+ */
+function teeDirOf(path: string): string {
+  return dirname(path)
+}
 
 /**
  * Read a teed file once the expected marker has landed. `createWriteStream`
@@ -1373,14 +1439,22 @@ describe('dispatch observability (#450)', () => {
     // The previous version of this test passed a traversal string and asserted
     // only that it did not throw — which is true of a function that happily
     // writes outside its directory. Assert the containment the name claims.
-    const before = existsSync(TEE_DIR) ? readdirSync(TEE_DIR) : []
+    // One real tee first, purely to learn where this process's own output
+    // directory actually is (it resolves against the real repository this
+    // checkout belongs to — see `teeDirOf`).
+    const probe = openOutputTee(`test-${randomUUID()}`)
+    probe.end()
+    const teeDir = teeDirOf(probe.path as string)
+    rmSync(probe.path as string, { force: true })
+
+    const before = existsSync(teeDir) ? readdirSync(teeDir) : []
     for (const bad of ['nested/../../escape-attempt', '../escape', 'a/b', '', '.']) {
       const tee = openOutputTee(bad)
       expect(tee.path).toBeNull()
       tee.write(Buffer.from('must not be written'))
       tee.end()
     }
-    const after = existsSync(TEE_DIR) ? readdirSync(TEE_DIR) : []
+    const after = existsSync(teeDir) ? readdirSync(teeDir) : []
     expect(after).toEqual(before)
   })
 
@@ -1407,7 +1481,7 @@ describe('dispatch observability (#450)', () => {
     tee.end()
     await readWhenReady(tee.path as string, 'x')
     expect(statSync(tee.path as string).mode & 0o777).toBe(0o600)
-    expect(statSync(TEE_DIR).mode & 0o777).toBe(0o700)
+    expect(statSync(teeDirOf(tee.path as string)).mode & 0o777).toBe(0o700)
     rmSync(tee.path as string, { force: true })
   })
 
@@ -1467,7 +1541,7 @@ describe('dispatch observability — wired through a real run (#450)', () => {
     expect(r.stderr).toContain('output teed to')
     expect(r.stderr).toMatch(/\[vinaya dispatch [0-9a-f-]{36}\]/)
 
-    const teeDir = join(home, '.vinaya', 'dispatch-output')
+    const teeDir = join(home, '.vinaya', 'runtime', 'unresolved', 'tasks-execution', 'unscoped', 'output')
     const logs = readdirSync(teeDir)
     expect(logs).toHaveLength(1)
     const contents = readFileSync(join(teeDir, logs[0] as string), 'utf8')
@@ -1639,7 +1713,7 @@ describe('terminal colour — role prefix and TTY/NO_COLOR gating (#491)', () =>
     // O3: the tee file never sees the rendered/prefixed stderr lines at
     // all — it tees the child's raw stdout/stderr chunks — so it carries the
     // exact bytes the fake agent printed, byte-identical to before this task.
-    const teeDir = join(home, '.vinaya', 'dispatch-output')
+    const teeDir = join(home, '.vinaya', 'runtime', 'unresolved', 'tasks-execution', 'unscoped', 'output')
     const logs = readdirSync(teeDir)
     expect(logs).toHaveLength(1)
     const teeContents = readFileSync(join(teeDir, logs[0] as string), 'utf8')
@@ -2356,7 +2430,16 @@ describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () =
     const logScript = settings.hooks.PostToolUse[0]?.hooks[0]?.command.slice('bun "'.length, -1) as string
     const stopScript = settings.hooks.Stop[0]?.hooks[0]?.command.slice('bun "'.length, -1) as string
 
-    const sourcesPath = join(home, '.vinaya', 'dispatch-settings', `documentation-sources-${runId}.json`)
+    const sourcesPath = join(
+      home,
+      '.vinaya',
+      'runtime',
+      'unresolved',
+      'tasks-execution',
+      'unscoped',
+      'hooks',
+      `documentation-sources-${runId}.json`
+    )
     expect(JSON.parse(readFileSync(sourcesPath, 'utf8'))).toEqual([
       { source: 'https://example.com/docs/fixture', mechanism: 'the mechanism this fixture governs', objectiveIds: [] }
     ])
@@ -2442,7 +2525,16 @@ describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () =
       }
     ).hooks.PostToolUse[0]?.hooks[0]?.command.slice('bun "'.length, -1) as string
 
-    const sourcesPath = join(home, '.vinaya', 'dispatch-settings', `documentation-sources-${runId}.json`)
+    const sourcesPath = join(
+      home,
+      '.vinaya',
+      'runtime',
+      'unresolved',
+      'tasks-execution',
+      'unscoped',
+      'hooks',
+      `documentation-sources-${runId}.json`
+    )
     expect(JSON.parse(readFileSync(sourcesPath, 'utf8'))).toEqual([
       { source: hyphenatedUrl, mechanism: 'the mechanism this fixture governs', objectiveIds: [] }
     ])
@@ -2489,7 +2581,16 @@ describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () =
     )
     expect(r.status).toBe(0)
 
-    const sourcesPath = join(home, '.vinaya', 'dispatch-settings', `documentation-sources-${runId}.json`)
+    const sourcesPath = join(
+      home,
+      '.vinaya',
+      'runtime',
+      'unresolved',
+      'tasks-execution',
+      'unscoped',
+      'hooks',
+      `documentation-sources-${runId}.json`
+    )
     expect(existsSync(sourcesPath)).toBe(false)
   })
 
@@ -2573,7 +2674,7 @@ describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () =
  * files, and fake tee bytes, never this machine's real `~/.vinaya/`.
  */
 describe('recoverUsageFromDispatchTee (O1, #608)', () => {
-  const LAUNCH_RECORD_PATH = '/fake/dispatch-resume/owner-repo/developer-claude-issue608.json'
+  const LAUNCH_RECORD_PATH = '/fake/tasks-execution/608/sessions/developer-claude.json'
 
   function launchRecordJson(overrides: Record<string, unknown> = {}): string {
     return JSON.stringify({

@@ -57,12 +57,13 @@
 import { basename, join, relative } from 'node:path'
 import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
+import { runPath } from '../run-paths.js'
 
 export type ReviewerRole = 'reviewer' | 'security'
 
 /** One shared, read-only checkout per round — both reviewer roles are dispatched against the SAME directory content (O1). */
 export function reviewerCandidateDir(root: string, task: number, round: number): string {
-  return join(root, 'dev-review-loop', String(task), `round-${round}-candidate`)
+  return runPath(root, task, { area: 'round', round, file: 'candidate' })
 }
 
 /**
@@ -73,7 +74,7 @@ export function reviewerCandidateDir(root: string, task: number, round: number):
  */
 export function reviewerScratchDir(root: string, task: number, round: number, role: ReviewerRole, attempt = 1): string {
   const suffix = attempt > 1 ? `-retry${attempt - 1}` : ''
-  return join(root, 'dev-review-loop', String(task), `round-${round}-${role}-scratch${suffix}`)
+  return runPath(root, task, { area: 'round', round, file: `${role}-scratch${suffix}` })
 }
 
 /** Never copied into a candidate or scratch tree: version-control internals and installed dependencies a reviewer never needs to read, and — for `.worktrees` specifically — every OTHER task's own worktree, were a stray one ever nested under the source directory. */
@@ -352,8 +353,29 @@ export function buildReviewerScratch(
   }
 }
 
-const CANDIDATE_NAME_RE = /^round-(\d+)-candidate$/
-const SCRATCH_NAME_RE = /^round-(\d+)-(reviewer|security)-scratch(?:-retry\d+)?$/
+/**
+ * An isolation artifact's own name INSIDE a round's folder. The round
+ * number used to be part of the filename (`round-<n>-candidate`) because
+ * every round's files shared one flat task directory; now the round is the
+ * folder, so only the artifact's own kind is left to match — and matching
+ * by name is still what keeps cleanup from touching the round's held
+ * verdicts or its reviewer work directories, which outlive the round's
+ * isolation copies.
+ */
+const ISOLATION_ARTIFACT_NAME_RE = /^(?:candidate|(?:reviewer|security)-scratch(?:-retry\d+)?)$/
+
+/** Removes every isolation artifact in one already-resolved round folder. Best-effort; never throws. */
+function removeIsolationArtifactsIn(roundDir: string): void {
+  let entries: string[]
+  try {
+    entries = readdirSync(roundDir)
+  } catch {
+    return
+  }
+  for (const name of entries) {
+    if (ISOLATION_ARTIFACT_NAME_RE.test(name)) removeIfPresent(join(roundDir, name))
+  }
+}
 
 /**
  * O3: removes this round's shared candidate and every scratch copy any
@@ -362,21 +384,7 @@ const SCRATCH_NAME_RE = /^round-(\d+)-(reviewer|security)-scratch(?:-retry\d+)?$
  * artifacts never outlive the round itself. Best-effort; never throws.
  */
 export function cleanupReviewerIsolationForRound(root: string, task: number, round: number): void {
-  const taskDir = join(root, 'dev-review-loop', String(task))
-  let entries: string[]
-  try {
-    entries = readdirSync(taskDir)
-  } catch {
-    return
-  }
-  for (const name of entries) {
-    const candidateMatch = CANDIDATE_NAME_RE.exec(name)
-    const scratchMatch = SCRATCH_NAME_RE.exec(name)
-    const matchedRound = candidateMatch?.[1] ?? scratchMatch?.[1]
-    if (matchedRound !== undefined && Number(matchedRound) === round) {
-      removeIfPresent(join(taskDir, name))
-    }
-  }
+  removeIsolationArtifactsIn(runPath(root, task, { area: 'round', round }))
 }
 
 /**
@@ -388,16 +396,14 @@ export function cleanupReviewerIsolationForRound(root: string, task: number, rou
  * human) to find. Best-effort; never throws.
  */
 export function cleanupAllReviewerIsolationArtifacts(root: string, task: number): void {
-  const taskDir = join(root, 'dev-review-loop', String(task))
-  let entries: string[]
+  const roundsDir = runPath(root, task, { area: 'rounds' })
+  let rounds: string[]
   try {
-    entries = readdirSync(taskDir)
+    rounds = readdirSync(roundsDir)
   } catch {
     return
   }
-  for (const name of entries) {
-    if (CANDIDATE_NAME_RE.test(name) || SCRATCH_NAME_RE.test(name)) {
-      removeIfPresent(join(taskDir, name))
-    }
+  for (const name of rounds) {
+    if (/^\d+$/.test(name)) removeIsolationArtifactsIn(join(roundsDir, name))
   }
 }

@@ -43,6 +43,7 @@
  * function callers reach for once, at the seam where they already resolve
  * the repo.
  */
+import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
 import {
   GLOBAL_VINAYA_HOME,
@@ -89,11 +90,13 @@ export type RunScope = number | { pr: number } | 'unscoped'
 export type RunFileLocation =
   /** The task folder itself, or a file sitting at its root (today, only the driver lock). */
   | { area: 'task'; file?: string }
-  /** The control store's root for this task — the store nests its own record kinds below this. */
-  | { area: 'control' }
+  /** The control store's root for this task — the store nests its own record kinds below this — or a control-plane side file sitting directly in it. */
+  | { area: 'control'; file?: string }
   | { area: 'sessions'; file?: string }
   | { area: 'hooks'; file?: string }
   | { area: 'output'; file?: string }
+  /** The directory holding one folder per round — what a caller lists to find which rounds this task has on disk. */
+  | { area: 'rounds' }
   | { area: 'round'; round: number; file?: string }
 
 /**
@@ -168,6 +171,18 @@ export function resolveRuntimeDir(input: {
 }
 
 /**
+ * The directory holding one folder per task — `<runtimeDir>/tasks-execution`.
+ * This is what the control store takes as its own root: it appends the task
+ * and its own `control/` segment itself
+ * (`packages/aeg-core/src/control-store/local.ts`'s `taskRoot`), so the two
+ * roots that used to disagree about where a record lived are now the same
+ * directory every other run file resolves under.
+ */
+export function tasksExecutionRoot(runtimeDir: string): string {
+  return join(runtimeDir, TASKS_EXECUTION_DIRNAME)
+}
+
+/**
  * The one function that names a location under a task's folder. Nothing
  * else in this repository joins a run-file path — `run-paths-only.test.ts`
  * fails the build if anything does.
@@ -177,8 +192,12 @@ export function runPath(runtimeDir: string, scope: RunScope, location: RunFileLo
   switch (location.area) {
     case 'task':
       return location.file ? join(dir, location.file) : dir
-    case 'control':
-      return join(dir, RUN_AREA_DIRNAMES.control)
+    case 'control': {
+      const controlDir = join(dir, RUN_AREA_DIRNAMES.control)
+      return location.file ? join(controlDir, location.file) : controlDir
+    }
+    case 'rounds':
+      return join(dir, RUN_AREA_DIRNAMES.rounds)
     case 'round': {
       const roundDir = join(dir, RUN_AREA_DIRNAMES.rounds, String(location.round))
       return location.file ? join(roundDir, location.file) : roundDir
@@ -199,6 +218,21 @@ function scopeSegment(scope: RunScope): string {
   if (scope === 'unscoped') return 'unscoped'
   if (typeof scope === 'number') return String(scope)
   return `pr-${scope.pr}`
+}
+
+/**
+ * `scopeSegment`'s inverse — for the one caller that walks the tasks
+ * directory and has only folder names to go on. Kept here, beside the
+ * grammar it reverses, so the two can never disagree about what `pr-12`
+ * means. Anything neither all-digits nor `pr-<digits>` reads as
+ * `'unscoped'`, which is also the folder such a segment would have been
+ * written under.
+ */
+export function scopeFromSegment(segment: string): RunScope {
+  if (/^\d+$/.test(segment)) return Number(segment)
+  const pr = /^pr-(\d+)$/.exec(segment)
+  if (pr) return { pr: Number(pr[1]) }
+  return 'unscoped'
 }
 
 /**
@@ -246,6 +280,43 @@ export function runtimeDirForRepo(repo: RunPathsRepo): string {
   })
   memoized = { key, value }
   return value
+}
+
+/**
+ * The repository this process is running against, resolved synchronously.
+ *
+ * `@attalabs/aeg-forge-state`'s own `resolveRepo` is `async`, and the
+ * production seams that resolve a run path are synchronous all the way down
+ * to a `writeFileSync` — making them `async` would ripple into the command
+ * files this task's Surface excludes. Same resolution order and the same
+ * URL shapes that resolver parses: `AEG_REPO` first, then `git remote
+ * get-url origin`.
+ */
+export function resolveRepoSync(): RunPathsRepo {
+  const fromEnv = process.env.AEG_REPO
+  if (fromEnv) {
+    const m = /^([^/]+)\/(.+)$/.exec(fromEnv)
+    if (m?.[1] && m[2]) return { owner: m[1], repo: m[2] }
+  }
+  let url: string
+  try {
+    url = execFileSync('git', ['remote', 'get-url', 'origin'], {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    }).trim()
+  } catch {
+    return null
+  }
+  const ssh = /^git@github\.com:([^/]+)\/(.+?)(?:\.git)?$/.exec(url)
+  if (ssh?.[1] && ssh[2]) return { owner: ssh[1], repo: ssh[2] }
+  const https = /^https?:\/\/(?:[^@]+@)?github\.com\/([^/]+)\/(.+?)(?:\.git)?\/?$/.exec(url)
+  if (https?.[1] && https[2]) return { owner: https[1], repo: https[2] }
+  return null
+}
+
+/** The effective runtime directory for the repository this process is running against — the production entry point every seam that has no repo in hand already reaches for. Memoized through `runtimeDirForRepo`. */
+export function runtimeDirForThisRepo(): string {
+  return runtimeDirForRepo(resolveRepoSync())
 }
 
 /** Test-only: drops the memoized resolution so a test can change the environment and resolve again. */

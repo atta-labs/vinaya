@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import { spawnSync } from 'node:child_process'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { paginate, readEscalationPacket, readTaskLoopStateObserved } from '../../../src/lib/task-tools/read.js'
@@ -29,14 +29,31 @@ function tempDir(): string {
   return join(parent, 'outbox')
 }
 
+/**
+ * The task's own folder under an injected runtime directory — the same
+ * layout `run-paths.ts` builds, written out by hand here so these fixtures
+ * assert against literal strings rather than the function under test.
+ */
 function taskDir(root: string, task: number): string {
-  return join(root, 'dev-review-loop', String(task))
+  return join(root, 'tasks-execution', String(task))
 }
 
-function writeOutboxFile(root: string, task: number, name: string, content: string): void {
-  const dir = taskDir(root, task)
+/**
+ * Places a fixture file by the same classification production uses: the
+ * driver lock at the task folder's root, a held verdict in its round's own
+ * folder, and everything else (pause state, the legacy effect records) in
+ * `control/`.
+ */
+function writeRunFile(root: string, task: number, name: string, content: string): void {
+  const held = /^round-(\d+)-(reviewer|security)\.md$/.exec(name)
+  const dir = held
+    ? join(taskDir(root, task), 'rounds', held[1] as string)
+    : name === 'driver.pid.json'
+      ? taskDir(root, task)
+      : join(taskDir(root, task), 'control')
+  const file = held ? `${held[2]}.md` : name
   mkdirSync(dir, { recursive: true })
-  writeFileSync(join(dir, name), content, 'utf8')
+  writeFileSync(join(dir, file), content, 'utf8')
 }
 
 /**
@@ -52,7 +69,7 @@ function writeEscalationFixture(
   escalationId: string,
   record: Record<string, unknown>
 ): void {
-  const dir = join(dirname(root), 'control-store', String(task), 'escalation')
+  const dir = join(taskDir(root, task), 'control', 'escalation')
   mkdirSync(dir, { recursive: true })
   writeFileSync(join(dir, `${escalationId}.json`), JSON.stringify(record), 'utf8')
 }
@@ -68,7 +85,7 @@ function writePause(
   task: number,
   overrides: Partial<{ round: number; reason: string; detail: string; prNumber: number }> = {}
 ): void {
-  writeOutboxFile(
+  writeRunFile(
     root,
     task,
     'pause-state.json',
@@ -96,7 +113,7 @@ describe('readTaskLoopStateObserved', () => {
 
   it('reports fresh for a run mid-round (a live driver lock)', () => {
     const root = tempDir()
-    writeOutboxFile(
+    writeRunFile(
       root,
       TASK,
       'driver.pid.json',
@@ -145,8 +162,8 @@ describe('readEscalationPacket', () => {
   it('marks a pause record stale once the outbox shows a later round already published', () => {
     const root = tempDir()
     writePause(root, TASK, { round: 1, reason: 'max_rounds' })
-    writeOutboxFile(root, TASK, 'effect-2-reviewer-verdict.json', JSON.stringify({ effectId: 'a', status: 'posted' }))
-    writeOutboxFile(root, TASK, 'effect-2-security-verdict.json', JSON.stringify({ effectId: 'b', status: 'posted' }))
+    writeRunFile(root, TASK, 'effect-2-reviewer-verdict.json', JSON.stringify({ effectId: 'a', status: 'posted' }))
+    writeRunFile(root, TASK, 'effect-2-security-verdict.json', JSON.stringify({ effectId: 'b', status: 'posted' }))
     const packet = readEscalationPacket(root, TASK)
     expect(packet?.freshness).toBe('stale')
   })
@@ -154,8 +171,8 @@ describe('readEscalationPacket', () => {
   it('carries the last round’s held verdict lines as evidence when present', () => {
     const root = tempDir()
     writePause(root, TASK, { round: 4, reason: 'no_progress' })
-    writeOutboxFile(root, TASK, 'round-4-reviewer.md', 'VERDICT: REQUEST_CHANGES\nsome finding')
-    writeOutboxFile(root, TASK, 'round-4-security.md', 'VERDICT: APPROVE\nno findings')
+    writeRunFile(root, TASK, 'round-4-reviewer.md', 'VERDICT: REQUEST_CHANGES\nsome finding')
+    writeRunFile(root, TASK, 'round-4-security.md', 'VERDICT: APPROVE\nno findings')
     const packet = readEscalationPacket(root, TASK)
     expect(packet?.evidence).toEqual({
       round: 4,
@@ -222,12 +239,12 @@ describe('readEscalationPacket', () => {
     // Simulate a `PauseState` whose own escalation collided and was written
     // to a suffixed slot — write the fixture there, not at the natural key.
     const suffixedId = `${TASK}-3-abc123-2`
-    const raw = JSON.parse(readFileSync(join(taskDir(root, TASK), 'pause-state.json'), 'utf8')) as Record<
+    const raw = JSON.parse(readFileSync(join(taskDir(root, TASK), 'control', 'pause-state.json'), 'utf8')) as Record<
       string,
       unknown
     >
     writeFileSync(
-      join(taskDir(root, TASK), 'pause-state.json'),
+      join(taskDir(root, TASK), 'control', 'pause-state.json'),
       JSON.stringify({ ...raw, escalationId: suffixedId }),
       'utf8'
     )
@@ -261,7 +278,7 @@ describe('readEscalationPacket', () => {
 
   it('a dead driver lock never turns a genuinely fresh pause into a mid-round read', () => {
     const root = tempDir()
-    writeOutboxFile(
+    writeRunFile(
       root,
       TASK,
       'driver.pid.json',
