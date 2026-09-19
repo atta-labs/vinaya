@@ -3,6 +3,7 @@ import { formatTokenReportRow, type MeteringCapability, parsePremiseBlock } from
 import { printJson } from '../lib/envelope'
 import {
   type BodyResult,
+  collectBodyCheckErrors,
   ForgeArgError,
   extractTitle,
   locateBody,
@@ -11,10 +12,10 @@ import {
   refuse,
   resolveSections,
   resolveShippableArgs,
-  runBodyChecks,
   validateForgeWrite
 } from '../lib/forge-write'
 import { checkBareDigits } from '../checks/body-bare-digits-logic'
+import type { CheckError } from '../checks/contract'
 import { derivePhase, isoToday, resolveTokenReportCapability, writeTokensBlock } from '../lib/pr-report-engine'
 
 const RETRY_CREATE = 'vinaya pr create --validate-only …'
@@ -156,22 +157,25 @@ function hasLegacyBriefMarkerLine(body: string, marker: string): boolean {
   return new RegExp(`^\\s*${escaped}\\s*$`, 'm').test(body)
 }
 
-function refuseOnLegacyBriefMarkers(body: string, retryCommand: string): void {
+function legacyBriefMarkerErrors(body: string, retryCommand: string): CheckError[] {
   const found = LEGACY_BRIEF_MARKERS.filter((marker) => hasLegacyBriefMarkerLine(body, marker))
-  if (found.length === 0) return
-  refuse([
+  if (found.length === 0) return []
+  return [
     makeCheckError(
       'pr-brief-comment',
       `body carries the retired brief-split marker(s) (${found.join(', ')}) — the brief lives on the Issue's \`aeg:brief:v1\` comment now, never split out of the PR body.`,
       `Remove the \`## Reference\` section and its markers from the body (see \`aeg-root/templates/pr-report-template.md\`), then re-run \`${retryCommand}\`.`
     )
-  ])
+  ]
 }
 
 // --- commands ----------------------------------------------------------------
 
 /**
- * Every check CI will run against this body, run here first.
+ * Every check CI will run against this body, graded here first — O1: this
+ * group's findings, never `refuse()`d on their own, fold into the SAME union
+ * `pr create`/`pr edit` refuse once with, alongside `validateForgeWrite`'s
+ * and the PR-body registry's own groups.
  *
  * `body-bare-digits` is `requiresOpenPr`, so the ring-0 hooks skip it — there is
  * no PR body at commit time. But there IS one here, at the moment the body is
@@ -193,16 +197,13 @@ function refuseOnLegacyBriefMarkers(body: string, retryCommand: string): void {
  * grant the exemption here. It costs nothing: the real release PR is opened by
  * `changesets/action` directly and never passes through this command.
  */
-function refuseOnBareDigits(body: string, retryCommand: string): void {
+function bareDigitsErrors(body: string, retryCommand: string): CheckError[] {
   const { violations } = checkBareDigits(body)
-  if (violations.length === 0) return
-  refuse(
-    violations.map((v) =>
-      makeCheckError(
-        'body-bare-digits',
-        `body-bare-digits: bare digit outside a fenced block, line ${v.line}: ${v.text}`,
-        `Backtick the digit, move it into a fenced block, or state it as a symbol, then re-run \`${retryCommand}\`.`
-      )
+  return violations.map((v) =>
+    makeCheckError(
+      'body-bare-digits',
+      `body-bare-digits: bare digit outside a fenced block, line ${v.line}: ${v.text}`,
+      `Backtick the digit, move it into a fenced block, or state it as a symbol, then re-run \`${retryCommand}\`.`
     )
   )
 }
@@ -245,11 +246,11 @@ function baseBranchFileReader(baseBranch: string): (path: string) => string | nu
  * `absent`/`sha256` pins ask a different question this objective doesn't
  * cover.
  */
-function refuseOnPremiseAboutOwnAdditions(body: string, baseBranch: string, retryCommand: string): void {
+function premiseOwnAdditionsErrors(body: string, baseBranch: string, retryCommand: string): CheckError[] {
   const contains = parsePremiseBlock(body).filter((a) => a.kind === 'contains')
-  if (contains.length === 0) return
+  if (contains.length === 0) return []
   const readBase = baseBranchFileReader(baseBranch)
-  const errors = contains
+  return contains
     .filter((a) => {
       const content = readBase(a.path)
       return content === null || !content.includes(a.value)
@@ -261,7 +262,6 @@ function refuseOnPremiseAboutOwnAdditions(body: string, baseBranch: string, retr
         `Drop the pin, rephrase it to describe what \`${baseBranch}\` already has, or move the claim out of \`Premise:\` entirely, then re-run \`${retryCommand}\`.`
       )
     )
-  if (errors.length > 0) refuse(errors)
 }
 
 /**
@@ -299,6 +299,49 @@ function tokenRowForOpen(): string {
   return tokenReportRowForCapability(resolveTokenReportCapability(), derivePhase(), isoToday())
 }
 
+/**
+ * O1 — the ONE aggregation point `pr create`/`pr edit` both run: the
+ * forge-write gates (legacy brief markers, `validateForgeWrite`'s configured
+ * sections, bare digits, a Premise pin about this PR's own additions) and
+ * the PR-body registry checks (`collectBodyCheckErrors`, the same
+ * `validates: 'body'` run every push-hook/CI run already applies), all over
+ * the same bytes, folded into one union — matching how `collectTaskIssueErrors`
+ * already aggregates every group for an Issue write before refusing once.
+ * `premiseBaseBranch: null` skips the Premise-own-additions group entirely
+ * (`pr edit`'s title-only shape, where there is no body to check a Premise
+ * pin against).
+ */
+async function collectPrWriteErrors(input: {
+  body: string
+  title: string | null
+  sections: ReturnType<typeof resolveSections>
+  changedFiles: string[]
+  branch: string
+  premiseBaseBranch: string | null
+  prNumber: number | undefined
+  retryCommand: string
+  checkLegacyBriefMarkers: boolean
+}): Promise<CheckError[]> {
+  const errors: CheckError[] = []
+  if (input.checkLegacyBriefMarkers) errors.push(...legacyBriefMarkerErrors(input.body, input.retryCommand))
+  errors.push(
+    ...validateForgeWrite({
+      body: input.body,
+      title: input.title,
+      sections: input.sections,
+      changedFiles: input.changedFiles,
+      retryCommand: input.retryCommand,
+      branch: input.branch
+    })
+  )
+  errors.push(...bareDigitsErrors(input.body, input.retryCommand))
+  if (input.premiseBaseBranch !== null) {
+    errors.push(...premiseOwnAdditionsErrors(input.body, input.premiseBaseBranch, input.retryCommand))
+  }
+  errors.push(...(await collectBodyCheckErrors(input.body, input.branch, input.prNumber)))
+  return errors
+}
+
 export async function prCreateCommand(args: string[]): Promise<void> {
   const json = args.includes('--json')
   const validateOnly = args.includes('--validate-only')
@@ -322,7 +365,6 @@ export async function prCreateCommand(args: string[]): Promise<void> {
   // comment, never riding along inside the PR body — `body` is simply the
   // raw body every gate below grades and `gh` receives.
   const body = rawBody
-  refuseOnLegacyBriefMarkers(body, RETRY_CREATE)
 
   const sections = resolveSections('pr', RETRY_CREATE)
   const changedFiles = localChangedFiles()
@@ -350,18 +392,18 @@ export async function prCreateCommand(args: string[]): Promise<void> {
   const headCommit = git(['rev-parse', '--verify', '--quiet', 'HEAD'])
   const branch = headCommit === '' ? '' : git(['symbolic-ref', '--quiet', '--short', 'HEAD'])
 
-  const errors = validateForgeWrite({
+  const errors = await collectPrWriteErrors({
     body,
     title,
     sections,
     changedFiles,
+    branch,
+    premiseBaseBranch: extractBaseBranch(ghArgs),
+    prNumber: undefined,
     retryCommand: RETRY_CREATE,
-    branch
+    checkLegacyBriefMarkers: true
   })
   if (errors.length > 0) refuse(errors)
-  refuseOnBareDigits(body, RETRY_CREATE)
-  refuseOnPremiseAboutOwnAdditions(body, extractBaseBranch(ghArgs), RETRY_CREATE)
-  await runBodyChecks(body, branch, undefined, RETRY_CREATE)
 
   if (validateOnly) {
     reportPass(json, 'pr create')
@@ -412,19 +454,21 @@ export async function prEditCommand(args: string[]): Promise<void> {
     branch = ctx.branch
   }
 
-  const errors = validateForgeWrite({
-    body: body ?? '',
-    title,
-    sections: body === null ? [] : sections,
-    changedFiles,
-    retryCommand: RETRY_EDIT,
-    branch
-  })
+  const errors =
+    body === null
+      ? validateForgeWrite({ body: '', title, sections: [], changedFiles, retryCommand: RETRY_EDIT, branch })
+      : await collectPrWriteErrors({
+          body,
+          title,
+          sections,
+          changedFiles,
+          branch,
+          premiseBaseBranch: null,
+          prNumber: parseIssueNumberFromRef(prRef) ?? undefined,
+          retryCommand: RETRY_EDIT,
+          checkLegacyBriefMarkers: false
+        })
   if (errors.length > 0) refuse(errors)
-  if (body !== null) {
-    refuseOnBareDigits(body, RETRY_EDIT)
-    await runBodyChecks(body, branch, parseIssueNumberFromRef(prRef) ?? undefined, RETRY_EDIT)
-  }
 
   if (validateOnly) {
     reportPass(json, 'pr edit')

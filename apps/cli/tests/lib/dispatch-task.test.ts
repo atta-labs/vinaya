@@ -1,4 +1,8 @@
-import { describe, expect, it } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { execFileSync } from 'node:child_process'
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   AEG_BRIEF_V1_MARKER,
   briefHash,
@@ -9,10 +13,14 @@ import {
   extractAgentClass,
   type PrepareTaskDeps,
   prepareTask,
-  resolveModelFromRationale
+  resolveModelFromRationale,
+  validateIssueWriteGate,
+  widenSurfaceInLine
 } from '../../src/lib/dispatch-task.js'
 
 const BRIEF_TEXT = '**For:** Sonnet\n**Tier:** 1\n\nCloses #427\n\nYou are the AEG Developer.'
+const CLI_ROOT = join(import.meta.dir, '..', '..')
+const REPO_ROOT = join(CLI_ROOT, '..', '..')
 
 /**
  * `contentAfterTwoLines` and `AEG_BRIEF_V1_MARKER` are the promoted
@@ -69,6 +77,8 @@ function deps(overrides: Partial<DispatchTaskDeps> = {}): DispatchTaskDeps {
     dispatchRole: neverCalled('dispatchRole') as unknown as DispatchTaskDeps['dispatchRole'],
     resolveDispatchAuthorization: () => ({ authorized: true, login: 'a-principal' }),
     resolveModelForDispatch: () => undefined,
+    runIssueWriteGate: async () => {},
+    widenSurface: neverCalled('widenSurface') as unknown as DispatchTaskDeps['widenSurface'],
     ...overrides
   }
 }
@@ -343,6 +353,8 @@ function prepareDeps(overrides: Partial<PrepareTaskDeps> = {}): PrepareTaskDeps 
     ) as unknown as PrepareTaskDeps['findExistingFrozenBrief'],
     postMarkedComment: neverCalled('postMarkedComment') as unknown as PrepareTaskDeps['postMarkedComment'],
     resolveDispatchAuthorization: () => ({ authorized: true, login: 'a-principal' }),
+    runIssueWriteGate: async () => {},
+    widenSurface: neverCalled('widenSurface') as unknown as PrepareTaskDeps['widenSurface'],
     ...overrides
   }
 }
@@ -505,6 +517,56 @@ describe('prepareTask (O1, task-run-v1 task 1)', () => {
   })
 })
 
+describe('prepareTask — the Issue write gate runs before freezing (O2)', () => {
+  it('calls runIssueWriteGate with the resolved Issue number, after the render, before the existing-comment check', async () => {
+    const order: string[] = []
+    await prepareTask(
+      { tranche: 'task-run-v1', n: 1 },
+      preparePostingDeps({
+        runIssueWriteGate: async (issue) => {
+          order.push(`write-gate:${issue}`)
+        },
+        findExistingFrozenBrief: () => {
+          order.push('existing-check')
+          return null
+        },
+        postMarkedComment: () => {
+          order.push('post')
+          return 'https://github.com/acme/widget/issues/427#issuecomment-1'
+        }
+      })
+    )
+    expect(order).toEqual(['write-gate:427', 'existing-check', 'post'])
+  })
+
+  it('refuses before ever checking for an existing comment or posting when the write gate refuses — same findings, nothing frozen', async () => {
+    let existingCheckCalled = false
+    let postCalled = false
+    await expect(
+      prepareTask(
+        { tranche: 'task-run-v1', n: 1 },
+        preparePostingDeps({
+          runIssueWriteGate: async () => {
+            throw new DispatchTaskError(
+              "Issue #427's write gate refused — the same findings `vinaya issue edit` would report:\n  - [body-bare-digits] a whole-suite Test plan line"
+            )
+          },
+          findExistingFrozenBrief: () => {
+            existingCheckCalled = true
+            return null
+          },
+          postMarkedComment: () => {
+            postCalled = true
+            return 'unused'
+          }
+        })
+      )
+    ).rejects.toThrow(/write gate refused/)
+    expect(existingCheckCalled).toBe(false)
+    expect(postCalled).toBe(false)
+  })
+})
+
 describe('prepareTask --supersede (O3, task-run-v1 task 4, #483)', () => {
   it('appends a v2 comment naming the v1 predecessor url and the reason, never editing v1', async () => {
     let posted: { kind: string; ref: string; marker: string; body: string } | null = null
@@ -625,6 +687,113 @@ describe('prepareTask --supersede (O3, task-run-v1 task 4, #483)', () => {
   })
 })
 
+describe('prepareTask --supersede --surface-in (O3) — widens a frozen Surface and re-freezes in one call', () => {
+  const WIDENED_BRIEF_TEXT = '**For:** Sonnet\n**Tier:** 1\n\nCloses #427\n\nWidened Surface now covers commands.'
+
+  it('widens the Surface, re-renders, and posts the RE-RENDERED brief — never the stale pre-widen one', async () => {
+    const order: string[] = []
+    let renderCalls = 0
+    const result = await prepareTask(
+      {
+        tranche: 'task-run-v1',
+        n: 1,
+        supersede: { reason: 'widen for commands', surfaceIn: ['apps/cli/src/commands'] }
+      },
+      preparePostingDeps({
+        assembleAndRenderBrief: async () => {
+          renderCalls += 1
+          return renderCalls === 1
+            ? { ok: true, brief: BRIEF_TEXT, issue: 427 }
+            : { ok: true, brief: WIDENED_BRIEF_TEXT, issue: 427 }
+        },
+        findExistingFrozenBrief: () => ({
+          body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nold brief',
+          url: 'https://github.com/acme/widget/issues/427#issuecomment-1',
+          author: 'a-principal',
+          version: 1
+        }),
+        widenSurface: async (issue, addedGlobs) => {
+          order.push(`widen:${issue}:${addedGlobs.join(',')}`)
+        },
+        postMarkedComment: (_kind, _ref, _marker, _body) => {
+          order.push('post')
+          return 'https://github.com/acme/widget/issues/427#issuecomment-2'
+        }
+      })
+    )
+    expect(order).toEqual(['widen:427:apps/cli/src/commands', 'post'])
+    expect(renderCalls).toBe(2)
+    expect(result.brief).toBe(WIDENED_BRIEF_TEXT)
+    expect(result.brief).not.toContain(BRIEF_TEXT)
+  })
+
+  it('never widens when --surface-in is absent — supersede works exactly as before', async () => {
+    let widenCalled = false
+    await prepareTask(
+      { tranche: 'task-run-v1', n: 1, supersede: { reason: 'wrong tier' } },
+      preparePostingDeps({
+        findExistingFrozenBrief: () => ({
+          body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nold brief',
+          url: 'https://github.com/acme/widget/issues/427#issuecomment-1',
+          author: 'a-principal',
+          version: 1
+        }),
+        widenSurface: async () => {
+          widenCalled = true
+        },
+        postMarkedComment: () => 'https://github.com/acme/widget/issues/427#issuecomment-2'
+      })
+    )
+    expect(widenCalled).toBe(false)
+  })
+
+  it('refuses, never calling widenSurface, when there is no frozen brief to supersede yet', async () => {
+    let widenCalled = false
+    await expect(
+      prepareTask(
+        { tranche: 'task-run-v1', n: 1, supersede: { reason: 'widen', surfaceIn: ['apps/cli/src/commands'] } },
+        preparePostingDeps({
+          findExistingFrozenBrief: () => null,
+          widenSurface: async () => {
+            widenCalled = true
+          }
+        })
+      )
+    ).rejects.toThrow(/nothing to supersede/)
+    expect(widenCalled).toBe(false)
+  })
+
+  it('refuses, posting nothing, when the widened Issue no longer renders a valid brief', async () => {
+    let postCalled = false
+    let renderCalls = 0
+    await expect(
+      prepareTask(
+        { tranche: 'task-run-v1', n: 1, supersede: { reason: 'widen', surfaceIn: ['apps/cli/src/commands'] } },
+        preparePostingDeps({
+          assembleAndRenderBrief: async () => {
+            renderCalls += 1
+            return renderCalls === 1
+              ? { ok: true, brief: BRIEF_TEXT, issue: 427 }
+              : { ok: false, missing: ['a genuine post-widen render gap'] }
+          },
+          findExistingFrozenBrief: () => ({
+            body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nold brief',
+            url: 'https://github.com/acme/widget/issues/427#issuecomment-1',
+            author: 'a-principal',
+            version: 1
+          }),
+          widenSurface: async () => {},
+          postMarkedComment: () => {
+            postCalled = true
+            return 'unused'
+          }
+        })
+      )
+    ).rejects.toThrow(/no longer renders a valid brief/)
+    expect(postCalled).toBe(false)
+  })
+})
+
 describe('contentAfterTwoLines', () => {
   for (const { name, input, expected } of CONTENT_AFTER_TWO_LINES_VECTORS) {
     it(name, () => {
@@ -682,5 +851,133 @@ describe('resolveModelFromRationale (O3/MAJOR 2, #456 round 1) — the real reso
     // passes through exactly as given, never quietly corrected or dropped
     // just because it looks wrong for the vendor.
     expect(resolveModelFromRationale('codex', MID_RATIONALE, 'claude-opus-5')).toBe('claude-opus-5')
+  })
+})
+
+describe('widenSurfaceInLine (O3) — pure splice, only the `in:` line moves', () => {
+  const BODY = [
+    '## Objectives',
+    '',
+    'O1. Something.',
+    '',
+    '## Surface',
+    '',
+    'in: apps/cli/src/lib',
+    'out: apps/cli/src/commands',
+    '',
+    '## Parts',
+    '',
+    'Part 1 (O1) — the only part.'
+  ].join('\n')
+
+  it('unions the added globs onto the existing `in:` list, leaving `out:` and every other section untouched', () => {
+    const { newBody, newIn } = widenSurfaceInLine(BODY, ['apps/cli/src/commands'])
+    expect(newIn).toEqual(['apps/cli/src/lib', 'apps/cli/src/commands'])
+    expect(newBody).toContain('in: apps/cli/src/lib, apps/cli/src/commands')
+    expect(newBody).toContain('out: apps/cli/src/commands')
+    expect(newBody).toContain('## Parts')
+    expect(newBody).toContain('Part 1 (O1) — the only part.')
+  })
+
+  it('never duplicates a glob already present in `in:`', () => {
+    const { newIn } = widenSurfaceInLine(BODY, ['apps/cli/src/lib'])
+    expect(newIn).toEqual(['apps/cli/src/lib'])
+  })
+
+  it('throws, naming the parse gap, when the body has no `## Surface` heading', () => {
+    expect(() => widenSurfaceInLine('## Objectives\n\nO1. Something.', ['apps/cli/src/commands'])).toThrow(
+      /does not parse|no `## Surface` heading/
+    )
+  })
+})
+
+describe('validateIssueWriteGate (O2) — the real Issue write gate, exercised against a genuine fixture', () => {
+  let cwd: string
+  let originalCwd: string
+  let originalAegRepo: string | undefined
+
+  const RATIONALE = [
+    "## Task Issue — Planner's rationale",
+    '',
+    '**Boundary** — In: nothing real. Out: nothing.',
+    '',
+    '**Sizing** — n/a, test fixture.',
+    '',
+    '**Project(s) + blast radius** — `Project: cli`. No shared-primitive fan-out.',
+    '',
+    '**Dependency rationale** — `Depends-on: —`; `Conflicts-with: —`.',
+    '',
+    '**Traps to avoid** — n/a.',
+    '',
+    '**Suggested agent-class** — fast — test fixture.',
+    '',
+    '**Stop-and-escalate** — n/a.',
+    '',
+    '**Docs to keep coherent** — no-doc-surface.'
+  ].join('\n')
+
+  // Otherwise well-formed — every section a genuine dispatchable backlog
+  // Issue needs — except its `## Test plan` names a bare `bun test` with no
+  // test-file argument, which can run the whole suite once dispatched.
+  const bodyWithWholeSuiteTestPlan = [
+    '**Project:** cli',
+    '',
+    '## Objectives',
+    '',
+    'O1. The fixture exercises the real Issue write gate.',
+    '',
+    '## Surface',
+    '',
+    'in: aeg-root',
+    'out: —',
+    '',
+    '## Parts',
+    '',
+    'Part 1 (O1) — the only part, citing the only objective.',
+    '',
+    '## Test plan',
+    '',
+    '```',
+    'bun test',
+    '```',
+    '',
+    RATIONALE
+  ].join('\n')
+
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-write-gate-'))
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ briefSchema: { issue: { sections: [] } } }), 'utf8')
+    execFileSync('git', ['init', '-q'], { cwd })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd })
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd })
+    mkdirSync(join(cwd, 'aeg-root', 'templates'), { recursive: true })
+    cpSync(
+      join(REPO_ROOT, 'aeg-root', 'templates', 'brief-template.md'),
+      join(cwd, 'aeg-root', 'templates', 'brief-template.md')
+    )
+    execFileSync('git', ['add', '.'], { cwd })
+    execFileSync('git', ['commit', '-q', '-m', 'seed'], { cwd })
+    // `resolveRemoteDefaultBranch`'s staleness guarantee needs a real
+    // `origin` remote whose `ls-remote HEAD` matches the local checkout's
+    // own HEAD — pointing `origin` at this same working copy satisfies that
+    // with no network and no second checkout.
+    execFileSync('git', ['remote', 'add', 'origin', cwd], { cwd })
+
+    originalAegRepo = process.env.AEG_REPO
+    process.env.AEG_REPO = 'test-owner/test-repo'
+    originalCwd = process.cwd()
+    process.chdir(cwd)
+  })
+
+  afterEach(() => {
+    process.chdir(originalCwd)
+    process.env.AEG_REPO = originalAegRepo
+    rmSync(cwd, { recursive: true, force: true })
+  })
+
+  it('refuses a whole-suite `## Test plan` line — the same finding `issue create`/`issue edit` would report', async () => {
+    await expect(
+      validateIssueWriteGate(bodyWithWholeSuiteTestPlan, [], 427, 'vinaya task brief backlog --issue 427')
+    ).rejects.toThrow(/runs a test runner with no test-file argument/)
   })
 })

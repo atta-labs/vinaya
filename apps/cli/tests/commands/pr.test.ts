@@ -80,11 +80,16 @@ describe('vinaya pr create --validate-only', () => {
       { cwd }
     )
     expect(r.status).toBe(1)
+    // O1 — this fixture's missing `Tier:` is now refused ALONGSIDE every
+    // other real defect the union finds in the same body (bare digits, the
+    // fixture's own checkbox-shaped Test Plan) in one refusal, never alone —
+    // find the Tier finding among every printed line rather than assuming
+    // it is the only one.
     const lines = r.stderr.trim().split('\n').filter(Boolean)
-    expect(lines.length).toBe(1)
-    const finding = JSON.parse(lines[0] as string)
+    const findings = lines.map((l) => JSON.parse(l))
+    const finding = findings.find((f) => f.check === 'brief-schema' && f.message.includes('Tier'))
+    expect(finding).toBeDefined()
     expect(finding.schema).toBe(1)
-    expect(finding.check).toBe('brief-schema')
     expect(finding.agent_recovery_prompt).toContain('vinaya pr create')
     expect(finding.agent_recovery_prompt).not.toBe(finding.message)
   })
@@ -174,10 +179,13 @@ describe('vinaya pr create --validate-only', () => {
       { cwd }
     )
     expect(r.status).toBe(1)
+    // O1 — this fixture's bare digit is refused ALONGSIDE the fixture's own
+    // checkbox-shaped Test Plan finding in one refusal, never alone — find
+    // the bare-digit finding among every printed line rather than assuming
+    // it is the only one.
     const lines = r.stderr.trim().split('\n').filter(Boolean)
-    expect(lines.length).toBe(1)
-    const finding = JSON.parse(lines[0] as string)
-    expect(finding.check).toBe('body-bare-digits')
+    const findings = lines.map((l) => JSON.parse(l))
+    expect(findings.some((f) => f.check === 'body-bare-digits')).toBe(true)
   })
 
   it('has no branch-name exemption — a bare-digit body refuses even on a branch literally named changeset-release/main', () => {

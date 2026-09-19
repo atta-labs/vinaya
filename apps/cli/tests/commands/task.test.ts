@@ -123,3 +123,45 @@ describe('vinaya task brief --issue — argv parsing (task-run-v1 task 15, O1)',
     expect(r.stderr).toContain('--supersede requires --reason')
   })
 })
+
+describe('vinaya task brief --supersede --surface-in — argv parsing (O3)', () => {
+  it('refuses --surface-in with no --supersede', () => {
+    const r = runCli(['task', 'brief', 'plan-brief-v1', '427', '--surface-in', 'apps/cli/src/commands'])
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('--surface-in is only meaningful with --supersede')
+  })
+
+  it('refuses --surface-in with no value', () => {
+    const r = runCli(['task', 'brief', 'plan-brief-v1', '427', '--supersede', '--reason', 'widen', '--surface-in'])
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('--surface-in <glob1,glob2,...> was passed with no value')
+  })
+
+  it('refuses --surface-in resolving to zero globs (a bare comma)', () => {
+    const r = runCli([
+      'task',
+      'brief',
+      'plan-brief-v1',
+      '427',
+      '--supersede',
+      '--reason',
+      'widen',
+      '--surface-in',
+      ' , '
+    ])
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('--surface-in resolved to zero globs')
+  })
+
+  it('mentions --surface-in in the usage line', () => {
+    const r = runCli(['task', 'brief'])
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('--surface-in')
+  })
+
+  it('refuses --surface-in with no --supersede under --issue too', () => {
+    const r = runCli(['task', 'brief', '--issue', '521', '--surface-in', 'apps/cli/src/commands'])
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('--surface-in is only meaningful with --supersede')
+  })
+})
