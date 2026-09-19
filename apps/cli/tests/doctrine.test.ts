@@ -186,6 +186,31 @@ describe('vinaya doctrine', () => {
     expect(stderr).toContain("'principal' is not a known role")
   })
 
+  it('--role developer/reference is refused — a role name is never a subdirectory path (O4)', async () => {
+    const proc = Bun.spawn(['bun', CLI_ENTRY, 'doctrine', '--role', 'developer/reference'], {
+      stdout: 'pipe',
+      stderr: 'pipe'
+    })
+    const exitCode = await proc.exited
+    const stderr = await new Response(proc.stderr).text()
+    expect(exitCode).toBe(1)
+    expect(stderr).toContain("'developer/reference' is not a known role")
+  })
+
+  it('the developer and planner seat files stay within the O4 120-line budget, and role discovery ignores their sibling reference directories', () => {
+    const root = resolveDoctrineRoot()
+    if (root === null) throw new Error('no doctrine root on this machine')
+    for (const role of ['developer', 'planner']) {
+      const lineCount = readFileSync(join(root, 'roles', `${role}.md`), 'utf8').split('\n').length
+      expect(lineCount, `${role}.md is ${lineCount} lines, over the 120-line seat budget`).toBeLessThanOrEqual(120)
+    }
+    const roleNames = readdirSync(join(root, 'roles')).filter((f) => f.endsWith('.md'))
+    expect(roleNames).not.toContain('developer')
+    expect(roleNames).not.toContain('planner')
+    expect(existsSync(join(root, 'roles', 'developer', 'reference.md'))).toBe(true)
+    expect(existsSync(join(root, 'roles', 'planner', 'reference.md'))).toBe(true)
+  })
+
   it('actor: agent and actor: either roles both still resolve — the exclusion is actor-specific, not a blanket narrowing', () => {
     const root = resolveDoctrineRoot()
     if (root === null) throw new Error('no doctrine root on this machine')

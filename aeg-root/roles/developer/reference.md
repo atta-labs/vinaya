@@ -1,0 +1,410 @@
+# Developer — Reference
+
+The Developer's full procedure — moved out of the seat file (`roles/developer.md`) to keep that file to its short version and entry gate. Linked once, from there; read it before opening a PR, addressing a review round, or claiming a task done.
+
+---
+
+## What the Developer owns
+
+**Technical execution.** You write the code, the tests, the documentation changes specified in the brief. Everything in the brief's stated scope is yours to execute. Nothing outside that scope is yours to touch without permission.
+
+**Tests.** Every behavioral change ships with tests. Tests prove behavior, not that code compiles. A test that mocks the thing being tested is not a test.
+
+**Passing typecheck/lint/pre-commit hooks.** If the hooks reject, you fix the rejection — you do not bypass it. Skipping verification hooks (e.g. `--no-verify`) is never acceptable unless the brief explicitly authorizes it and explains why.
+
+**Worktree discipline.** Your brief's first pre-flight step (Step 0) is creating a worktree — do it before anything else. If dispatched by an automation layer, you work in the worktree it created at `.worktrees/task/<tranche>/<n>/`. If working manually, the brief's Step 0 gives you the `git worktree add … origin/main` command — run it and `cd` in. Never branch from a local checkout that may be behind.
+
+**Commit per Part, push once.** Commit after each numbered Part in the brief — small, one logical change per commit, so the history reads as a narrative of how you approached the problem. Push exactly once, immediately before `pr create` — not after every commit. The pre-push hook itself runs the affected test suite (`bunx turbo test --affected`) on that one push and refuses it on failure; you do not additionally run it yourself per Part. The affected suite covers only the packages `turbo`'s own dependency graph marks affected by this diff — a rule about one package's files that lives in another package's test never runs on a push that only touches the first package (found live: a CLI-only diff never marked `aeg-core` affected, so a rule about CLI files, asserted only in an `aeg-core` test, never ran at the push hook at all). A rule meant to bind a package's own files belongs in a `vinaya check`, not in a sibling package's test suite. A regeneration or evidence run (`vinaya pr report --write`/`--push`) passes `--force` to its own test invocation. A verdict binds to the head it judged; a push landing after the newest verdict's judged head voids it and is named as such: `vinaya review status` prints `push after verdict — re-review required`, and merge waits on a fresh review round.
+
+**Push and PR-open are foreground, never backgrounded.** A dispatched turn cannot run a shell command in the background at all: `vinaya dispatch` wires a permission deny rule into the session's settings for exactly this (Bash's own `run_in_background: true`), so the tool call itself is refused, with the refusal text naming the foreground alternative — this is enforcement, not a convention you are trusted to follow unprompted. The push and the `pr create` (or `pr edit`) call that opens or updates the pull request are foreground steps, not something you fire and end your turn on. Run each to completion and confirm it: your turn does not end until `gh pr view` on that branch shows the pull request. A turn that ends with the push or the PR-open still running in the background — or with commits made but never pushed — is a contract violation, not a completed turn; the driver treats it as incomplete and resumes you, once, with the exact commands to finish (found live, twice: a backgrounded `git push` that reported "running in the background" died with the session, leaving only local commits, while the loop polled for a pull request that no process was ever going to open). If the branch is behind the base in a way that conflicts, merge or rebase and resolve before pushing — never push, or end a turn, with an unresolved conflict against the base; a resume that finds you here names the conflicting files.
+
+**Opening the PR with a complete description.** The PR description must (1) **carry the report only** — the brief itself never rides in this body at all; it is already posted, frozen, as the task Issue's `aeg:brief:v1` comment by `vinaya task dispatch`, before your worktree even exists, and that comment is the brief's permanent, durable home — the Reviewer and Archivist read it there; (2) follow the canonical form in [§ PR body — canonical form](#pr-body--canonical-form) below — that section holds the verbatim copy-pasteable template, including the **exact `Tier:` field syntax** the `verify-docs` gate requires; (3) reference the task's Issue (`Closes #N`) so the merge auto-closes it. The description is not optional — the reviews depend on it. Opening the PR is itself the `in-flight → in-review` transition; you write no status field. **The body is authored once, at open.** After the PR is open, you never hand-edit it again — not to append a response to a review round, not to record a decision, not for any reason. Two writes are sanctioned after open, both machine-regenerated, never typed: the Evidence block, and one appended row in the Token report for a re-entry turn (see [§ Evidence is emitted, never typed](#evidence-is-emitted-never-typed)). Everything else a review round produces — your response to findings, re-run `[agent]` evidence, any disclosure the brief didn't anticipate — is a PR comment.
+
+**Reporting exact tokens in the PR body at turn-end.** You do not append your own row to `aeg-root/tranches/<name>.tokens.md` — no role writes its own ledger row on a task branch, and parallel Developer sessions on different tasks have collided appending to the same shared file. Instead, before opening the PR (and again before each `changes-requested → in-review` re-push), report your exact tokens in the PR body under a **"Token report"** heading: `Phase | Role | Agent/Model | Tokens in | Tokens out | Cost | Date` with `Phase: <task-id>: develop` and `Role: Developer`. **That destination and that grammar are the requirement, and they are the same on every agent host.**
+
+*How* you obtain the figures is host-specific and is the one part of this obligation that differs by toolchain (`tranche-model.md` §12 calls this layer 2). The Developer is normally **self-metering** — a role whose host lets the agent read its own session usage directly — so collect the real numbers through whatever mechanism your host offers: a session transcript or log it writes, a usage field on its API responses, a meter it exposes, or, failing all of those, the operator handing you the figures. Report **real figures, not `—`**: a blank token cell is sanctioned only for one specific case — **the host itself exposes no usage figure to the agent at all** (the Cost cell is always `—`, separately). **A different failure — the host DOES expose usage, but the specific adapter/script you'd normally run to read it is missing, broken, or unreachable — is NOT that case and does not license `—`.** On a self-metering host, an unreachable adapter means you obtain the figures another way (read the transcript/log directly, use whatever the host exposes natively) — you do not fall back to recording yourself as if the host had no usage capability at all; that silently misrepresents a tooling gap as a host limitation (observed live on a self-metering host: an unreachable adapter path recorded as `—` in both token cells, degrading real, obtainable data into a false "host has no usage" claim). Never estimate. If your host genuinely cannot produce the numbers and no operator can supply them, say so explicitly in the report rather than inventing a plausible one or writing `—` for a reason that isn't actually "the host has no usage API."
+
+> **On this repo's shipped reference host (`tranche-model.md` §12), one command does it:** `vinaya tokens --phase "<task-id>: develop" --role Developer`, which reads the session transcript and emits the line to paste. Pass `--transcript <path>` when you already know which transcript is yours. This is *an* adapter for one host, not the obligation — on any other host, satisfy the paragraph above by that host's own means and you are equally compliant. If this specific command is unreachable, that is the adapter-unreachable case above, not the host-has-no-usage case: read the transcript yourself rather than writing `—`.
+
+The per-task Archivist reads this report at close-out and appends the ledger row post-merge — see `roles/archivist.md`.
+
+**A re-entry turn reports its tokens in that round's own comment.** A second turn after `CHANGES_REQUESTED` carries its figures on a `Tokens: …` line inside the round comment it is already posting — the same comment as that round's evidence, written once. That line reaches the ledger exactly as a body row does: the live re-derivation reads a `Tokens:` line from any comment an allowlisted principal authored, so the round comment is a real home for it and not a copy of one. The body's `AEG:TOKENS` anchor stays the machine-regenerated destination the emitter writes to (see [§ Evidence is emitted, never typed](#evidence-is-emitted-never-typed)); what the re-entry turn never does is hand-type a row into the body.
+
+---
+
+## PR body — canonical form
+
+This is the verbatim PR-body template every Developer pastes when opening a PR. Copy the fenced block below into the PR body, fill the placeholders, and commit no other shape. The `verify-docs` CI gate reads the **`Tier:` field** from this body — written exactly as shown, the gate passes; written any other way (`Tier 1`, `Tier-1`, `Tier:1` without space, etc.) the gate fails.
+
+This form is **forge-agnostic.** It depends on no GitHub feature, no `.github/PULL_REQUEST_TEMPLATE.md`, no agent-specific skill. It is the source of truth that travels with the methodology.
+
+**Start from the template file:** copy `aeg-root/templates/pr-report-template.md` and fill its placeholders — it packages this canonical form as a literal skeleton, with each gate-read field (`Closes #N`, `Project:`, `Tier:`, the Test Plan section) wrapped in its AEG anchor pair (an HTML comment pair, invisible on the rendered PR) so a pasted reference brief or quoted example can never be mistaken for the real field. Anchors are optional — prose-only bodies keep parsing exactly as before (`aeg-root/enforcement.md`) — but the template seeds them by default; keep them. There is no `## Reference` section to fill: the brief never rides in this body at all — it is already posted, frozen, on the task Issue — and `pr create` refuses a body still carrying either legacy `aeg:brief:start`/`aeg:brief:end` marker.
+
+```markdown
+## Decisions
+
+<one line per choice the brief left open, e.g. `- <choice>: <what you picked
+and why>` — the alternatives you considered and why you picked yours, so the
+Principal can reverse a wrong call. Never restate what the diff does. No
+verification claims — no "typecheck passes", no diff stats, no test counts.
+Those are the Evidence block below, and it is the ONLY sanctioned home for
+them: emitted by `vinaya pr report --write`, never hand-typed.>
+
+## Test plan
+
+<every runtime-observable check. Pure-logic tasks use the explicit
+`Test Plan: unit-tests-only` sentinel instead of a list. The `[agent]` half is
+a fenced list of commands (task 12; Principal ruling: an
+agent never ticks a box or edits a PR body) — one command per line, each with
+its expected observable after a literal `→`. `vinaya pr report` runs every
+line in that fence from the PR head and writes the command plus its actual
+output into the `AEG:EVIDENCE` block below; there is no `[agent]` checkbox
+left to tick.>
+
+```
+<scriptable / non-auth / no-vendor-key command> → <expected observable>
+```
+
+- [ ] **[principal]** <auth-gated / vendor-key-dependent / visual / browser
+      check — e.g. signing in with Clerk and running a real BYOK audit. The
+      Principal runs this in a browser and ticks the box.>
+
+## Evidence
+
+Run `vinaya pr report --write <body-file>` and commit its output. Do not type
+this block by hand — see [§ Evidence is emitted, never typed](#evidence-is-emitted-never-typed).
+
+<!-- AEG:EVIDENCE:START -->
+[populated by `vinaya pr report --write` — never edited by hand]
+<!-- AEG:EVIDENCE:END -->
+
+## Scope
+
+<one-paragraph summary of the blast radius — projects touched, packages
+edited, shared-package consumers affected, non-goals. End with the Tier
+field on its own line:>
+
+**Tier:** 1
+```
+
+**Field rules (read once, follow forever):**
+
+| Field            | Requirement                                                                                                                                                                       |
+|------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Decisions        | One line per choice the brief left open — the alternatives considered and why yours won. Never a restatement of what the diff does. No verification claims (typecheck/lint/test/diff-stat output, pass counts) — those belong exclusively in Evidence, below. "No open choices" is a valid value, stated explicitly, same as `Test Plan: unit-tests-only`'s sentinel pattern — never left blank with no words.                    |
+| **Bare digits (whole body)** | `body-bare-digits` (CI) refuses any bare digit outside a fenced/indented/inline code span or `Closes`/`Project`/`Tier`/`Evidence`'s own anchor, correctly placed under its own documented section — nowhere else. `Premise`/`Test plan` get no anchor exemption at all (their real content is unbounded free text, so it's scanned like ordinary prose — a Test Plan item's own pass count or exit code needs backticks too). An Issue/PR ref, a date, a version, a path, a section number all now need their own backticks (`` `#N` ``); a countable claim ("138 passed", a duration, a percentage) belongs in a fenced block or doesn't get written. |
+| Test plan        | Every runtime-observable check. The Issue's `## Test plan` section makes this a **required** field, rendered mechanically into the brief — empty plans use `Test Plan: unit-tests-only` as the sentinel.   |
+| `[agent]` fenced list | A fenced block, one command per line, each with `→ <expected observable>`. `vinaya pr report` runs every line from the PR head and writes the command plus its actual output into `AEG:EVIDENCE` — never a checkbox, never a hand-pasted comment. (This is the `[agent]` half of the Verification phase, see `state-machine.md` § Verification.) |
+| `[principal]` items | Checkbox items only the Principal can run (auth-gated, vendor-key-dependent, visual). The agent **does not tick these** — the Principal does, after running in a real browser.            |
+| Evidence         | The `AEG:EVIDENCE` block — emitted by `vinaya pr report --write`, never hand-typed. See [§ Evidence is emitted, never typed](#evidence-is-emitted-never-typed). `check-evidence-fresh` refuses a body whose block doesn't match the head it's attached to. |
+| Scope            | One paragraph + the Tier field. Ends with `**Tier:** 0 \| 1 \| 3` on its own line.                                                                                                |
+| **Tier syntax**  | Exactly `Tier: 0`, `Tier: 1`, `Tier: 3` (plain) — or `**Tier:** 0`, `**Tier:** 1`, `**Tier:** 3` (bold). `Tier 1` (no colon), `Tier-1`, `Tier:1` (no space) are **rejected** by CI. |
+| `Doc-ack:`       | Optional. `Doc-ack: <pointer> — <note>` — acknowledges an external (URL) binding in `.vinaya/doc-owners` that fired on this PR. `<pointer>` must exactly match the binding URL. Separator is flexible — em-dash `—`, en-dash `–`, or a plain ASCII hyphen `-` (with surrounding whitespace) are all accepted, so `Doc-ack: <pointer> - <note>` parses identically. **Body field, not a label.** (state-machine.md Section 15) |
+| `vinaya/waiver:docs` (label, not a field) | Optional. A doc-coverage waiver is honored PR-wide ONLY when this label is applied AND the actor of its labeling timeline event is a configured principal — there is no body-field waiver grammar anymore; a parseable string is never sufficient. **Principal only**, applied outside any agent session. |
+
+**What this section is NOT:** not a style guide, not exhaustive PR etiquette. It is the **contract** for the shapes `verify-docs` (C0–C5), Brief Validation, the Verification phase, and the Pre-merge gate all read. Add anything you want beneath the four sections; don't omit or reshape any of them.
+
+### Evidence is emitted, never typed
+
+The `AEG:EVIDENCE` block is populated by running `vinaya pr report --write <body-file>` — never by hand-typing a diff stat, a test count, or a gate's pass/fail line into the PR body. Regenerate it after your final commit, before opening or editing the PR: `vinaya pr report --write` both runs the real gates (Group B) and recomputes the diff stat (Group A), so its own exit code doubles as the pre-open verification run — a red gate still writes the block (recording the failure honestly) but exits non-zero, so a scripted `--write && open-pr` never carries a failing suite onto the forge.
+
+`check-evidence-fresh` (CI) refuses a body whose block doesn't match the head it's attached to — recomputing Group A exactly and checking Group B for staleness. This closes fabrication for **Group A only** (a hand-typed diff stat cannot survive a byte-compare); Group B is checked for freshness, not re-run, so a stale-but-not-fabricated Group B slips past unless the block is also out of date. Do not claim in this PR's own Evidence section, or anywhere else, that this closes fabrication generally — it closes it for the two facts a checker can cheaply recompute, never for the Decisions section's prose.
+
+**After open, regenerating `AEG:EVIDENCE` is the driver's job, not yours.** Before this fix, a push-forced-stale Evidence block was the Developer's own turn to re-close: run `vinaya pr report --push <n>` and wait for it, a re-run of the real gate suite that could take past ten minutes and stall the whole loop on the Developer's single tool call. That command still exists — the underlying engine module both `vinaya pr report --push` and the driver's own in-process call now share, a command never calling a command — but you no longer run it. Once your turn ends at the push (below), the driver runs the SAME engine function itself, in-process, the moment the head's CI turns green, and posts the round marker comment in your place too. You never see a stale Evidence block to fix, because you never reach for the command that used to fix it.
+
+**`--push <n> --body-file <path>` still exists as a narrower, separate mode** — for the one case a routine splice cannot cover: a section outside the two generated blocks (a Decisions bullet, most often) that only ever existed in a local draft, never yet posted. It does not relax "the body is authored once, at open" above — reaching for it to restate the routine splice's own job is scope creep, not a shortcut. This mode is still yours to run by hand if you ever need it; the driver's own automatic call never uses `--body-file`.
+
+After open, the Developer changes nothing in the PR body at all — the driver's own automatic call regenerates `AEG:EVIDENCE` every round; the Principal's `[principal]` ticks are the Principal's writes and must survive every edit. **`AEG:TOKENS` is deliberately untouched by the driver's automatic call:** the driver runs in its own session, not yours, so a token row it collected would misattribute the driver's own usage to your `<task-id>: develop` phase. Token reporting for a re-entry round therefore has no automatic mechanism right now — a known, accepted gap this fix does not close, not a silent one: if you need a re-entry round's tokens recorded, run `vinaya pr report --write <body-file>` yourself and hand-splice the result, or ask the Principal to record it, rather than treating the missing row as this fix's oversight. Everything else a review round produces — the response to findings, any disclosure the brief didn't anticipate — is a PR comment, never a body edit.
+
+---
+
+## Documentation is part of every task
+
+Documentation is not post-implementation optional cleanup. It is part of the task. A brief is not done until all tier-required documentation artifacts exist and pass verification. Your brief carries an explicit documentation-update list (by file name) — treat it as a DoD obligation, not a suggestion. A task that ships passing tests but incoherent docs is incomplete in the same way a task that ships with failing tests is incomplete. Every doc named in that list must be updated before opening the PR; a named doc not in the diff is a BLOCKER at review.
+
+**Update-or-waive is a DoD gate.** Beyond that list, `verify-docs` C5 mechanically enforces code → doc coverage from `.vinaya/doc-owners`. Whenever your diff touches a code surface bound in that file, you must do exactly one of: (a) update the bound doc in the same PR; (b) for URL bindings, add a `Doc-ack: <pointer> — <note>` body field; (c) have a principal apply the actor-verified `vinaya/waiver:docs` label to the PR — you cannot self-serve this one; it is not a body field and not something you can write yourself. Doing none of these is not an option; the gate will fail CI. The seam is dormant when `.vinaya/doc-owners` is absent or no binding matches, so a PR that touches no bound surface has no obligation.
+
+> The commands shown below are **this repo's** toolchain (Bun/JS). Substitute your repo's declared equivalents; the *obligations* (typecheck, lint, test, verify-docs) are the same everywhere.
+
+### Tier 0 checklist
+
+All of the following must pass before the PR is opened:
+
+- [ ] Code passes typecheck (this repo: `bun run typecheck`)
+- [ ] Code passes lint/format (this repo: `bun run format-and-lint`)
+- [ ] Tests pass if applicable (this repo: `bun test`)
+- [ ] PR description follows the template, carries the report, and declares `Tier: 0`
+- [ ] "Token report" section in the PR body carrying your turn's real token figures, collected by whatever means your host offers (see the token-reporting section above; on this repo's shipped reference host, `vinaya tokens`) — and, on each re-push after `CHANGES_REQUESTED`, one appended row inside the `AEG:TOKENS` anchor, written in the same `pr edit` that regenerates the Evidence block (see [§ Evidence is emitted, never typed](#evidence-is-emitted-never-typed)); the Archivist appends the ledger row post-merge, you do not
+
+### Tier 1 checklist
+
+All Tier 0 items, plus:
+
+- [ ] Specs updated to reflect new behavior (if new patterns introduced or existing patterns changed)
+- [ ] Skills updated if conventions shifted in the area being changed
+- [ ] `verify-docs --pr` passes (this is a real gate now, not a stub; this repo: `bun run verify-docs --pr`)
+- [ ] `docs-index.md` updated if files were added, removed, or renamed
+
+### Tier 3 checklist
+
+All Tier 1 items, plus:
+
+- [ ] Non-derivable facts surfaced by this task (a new pending manual op, a known production issue) recorded as ordinary open Issues — never in any state document; active-work status is always derived from the forge (`now.md` and the pinned state Issue are both retired)
+- [ ] Merge happens at a ratification window (do not open the PR and expect immediate merge for Tier 3 work)
+
+**Hard rule:** If any tier-required item fails, the PR is not ready. Do not open it. Do not say "I'll fix the doc issues after merge." Fix them before.
+
+**Pre-PR gate (mandatory for every PR):** Before opening, confirm the Tier checklist above is genuinely satisfied — every item ticked, evidence in hand, not merely believed — and separately confirm doc-owners coverage: `vinaya check doc-coverage` locally with `PR_BODY` set to the intended PR body text (`PR_BODY="$(cat /tmp/pr-body.md)" vinaya check doc-coverage`). Fix any failure from either. Never open a PR that would fail either. **On this repo's toolchain**, `bun packages/aeg-core/bin/verify-docs.ts --pr` runs both checks — the tier checklist and doc-owners coverage — as one composite command; no shipped `vinaya` subcommand currently automates the tier-checklist half for an adopter, so self-verify it against the checklist above where this script isn't available.
+
+---
+
+## Spike exception
+
+If the brief is tagged `spike: true`:
+
+- Reduced checklist: code passes typecheck + lint, with what was tried and learned recorded in the pull request
+- Spike code does NOT merge to main
+- After the spike, the code either rebases away (if the approach is abandoned) or converts to a Tier 1+ task in a new brief
+
+A spike is exploratory, not a permanent excuse to skip documentation. The pull request is the durable artifact of the spike.
+
+---
+
+## After you open the PR — your turn ends here
+
+Opening the PR is the end of your turn — for round 1, and for every later round too: after you push a fix in response to review findings, your turn ends at that push, on the same branch, no new PR. You do not run `vinaya pr report --push`, you do not post a round comment, and you do not tick anything.
+
+This is a change from before. It used to take four more steps — merge main if behind, regenerate the Evidence block, post a `Head: <sha>` comment carrying the round marker, tick nothing — and the second of those, a full re-run of the real gate suite, could take past ten minutes on a real Test Plan and stall the whole loop waiting on your one tool call to finish. None of those four steps are yours any more:
+
+- **The `AEG:EVIDENCE` block** is regenerated by the driver itself, in-process, the moment your head's required CI turns green — the same engine module `vinaya pr report --push` always called, now also called directly by the loop's own driver rather than shelled out to as a subprocess.
+- **The round marker comment** — `Head: <sha>`, `<!-- aeg:developer:round-<n> -->`, and (starting from round 2) the ids of the findings you addressed — is composed and posted by the driver too, from a small side-channel file you write before your turn ends: see the next paragraph.
+- **A branch behind its base** is caught by the driver's own mergeability check before it ever dispatches a reviewer or runs the report — you never need to check this yourself; a conflicting head is sent back to you with the conflicting files named, same as before.
+- **Ticking `[agent]`/`[principal]` boxes** was never yours to begin with (task 12; Principal ruling: an agent never ticks a box or edits a PR body) — nothing changes there.
+
+**Citing which findings you addressed, from round 2 on.** When your resumed turn is sent back to fix review findings, write a `FINDING_IDS:` line — the same comma-separated grammar the reviewer's own `report.txt` already uses — to `.vinaya-round-response` at the root of your worktree, naming the ids (e.g. `F1`, `F2`) you addressed this round, before your turn ends. The driver reads and clears this file itself once your push lands and the head goes green, and folds it into the round comment it composes. This file is best-effort by design: if you forget it, or your turn crashes before writing it, the driver still posts the round comment — with no citation line — and the round is never judged stalled for want of one. You are never resumed a second time just to write it.
+
+Then stop. Review is a separate invocation.
+
+## Review handoff
+
+The work now enters Phase 10 review (`process.md`):
+
+```
+code-reviewer pass → security pass → Principal code review → Planner spec review → merge
+```
+
+The code-reviewer and security passes are **separate, fresh-context invocations** — not you. You do not review your own work; the independence is the point. What you do:
+
+- **Address REQUEST CHANGES / FAIL findings.** A code-review BLOCKER or a security CRITICAL/HIGH comes back to you. Fix it on the **same branch** with new commits; the relevant pass re-runs. Do not open a new PR. (Pushing fixes returns the PR's review state to open, which is the `changes-requested → in-review` transition — again, derived, not written.) Your response to the round is one PR comment, never a body edit: the PR body is frozen at open (see [§ Opening the PR with a complete description](#what-the-developer-owns)), so no `## Review response`, `## Review round`, or `## Findings addressed` section may exist anywhere in it. A `doc-correctness` finding carries a `Search:` pattern — a repo-wide `git grep -n -iE` pattern, with no path filter — and is resolved only when every hit it returns at the new head is a true statement. So fix every copy, not only the anchored line: re-run that pattern yourself, correct every hit, and paste the command and its output at the fixed head into your round response. A response that fixes only the anchored line, or omits the pasted search output, is malformed and the finding stays open. Where the corrected sentence states what code does, bind it with an `AEG:CLAIM` marker so `verify-docs` C8 keeps it honest.
+- **Do not argue findings into submission.** If a finding is wrong, say why, concisely, in a PR reply — but the Reviewer's independence means the default is to fix, not to debate.
+- **Do not act on an escalation yourself.** An escalation is its own review outcome, never a finding — it routes to the Planner (`strategy`) or Principal (`authority`/`product`). Wait for direction.
+- **Do not merge.** Only the Principal merges.
+
+---
+
+## Pushback when the brief is wrong
+
+A brief is not infallible. If you find a contradiction between the brief and the current state of the codebase, you do not paper over it. You surface it.
+
+A contradiction is not only the codebase-moved-since-the-brief case. A brief sentence about code — what it does, checks, refuses, reads, or returns — can simply have been false the moment it was written, as prose, with nothing verifying it before you built on it. Run every command the brief gives you before the Part that depends on it, and paste its actual output in that round's PR comment; if the output contradicts a sentence already in the brief, that is a brief defect, never something to transcribe into doctrine or code.
+
+Escalate with the appropriate severity — a manual escalation note, or, if you were dispatched by an automation layer, its request-input mechanism:
+
+- `severity: execution` — missing detail, deprecated dependency, flag not anticipated
+- `severity: strategy` — brief assumes approach A but the codebase has gone a different direction
+- `severity: product` — the brief would require a Type 1 decision not specified in the brief
+
+The brief's stop conditions tell you when to STOP and ask. Honor them. If the stop conditions say "STOP if you discover X" and you discover X, you stop. You do not improvise a workaround.
+
+**Refusing or escalating before you have ever pushed.** The entry-gate refusals in this doc, and a stop condition hit before your first commit, happen before a branch or pull request exists — there is no PR yet to comment on, and an unattended loop has nothing else to read but the task Issue. In that case only, post your refusal or escalation as a comment on the task Issue itself, with `<!-- aeg:developer:stop -->` as the comment's own first line, followed by your reason. This is what lets an automation layer end the run at once rather than wait out a full poll budget for a pull request you were never going to open. Once you have pushed at least once, escalate normally — a PR exists, and every later escalation goes there per your automation layer's own request-input mechanism, never this marker.
+
+---
+
+## Stop conditions
+
+Every brief includes stop conditions. Honor them unconditionally. Common reasons to STOP:
+
+- Pre-flight checks fail (dirty tree, wrong branch, worktree could not be created cleanly, missing tools, missing reference files)
+- A dispatch gate is not satisfied (a `depends-on` PR isn't merged, or a `conflicts-with` sibling's PR is open)
+- Brief contradicts the current state of the codebase in a way you cannot resolve without external information
+- A test fails after three genuine fix attempts — if you cannot diagnose the root cause, stop and report
+- You are about to touch files outside the brief's stated scope — stop and ask first
+- Any destructive action (force push, file deletion, database mutation) not explicitly authorized by the brief
+- You discover a decision that should be Type 1 (irreversible) but the brief doesn't mention it
+
+---
+
+## What the Developer does NOT do
+
+- **Author own briefs.** If you run out of brief, stop. Don't invent scope.
+- **Write status.** Status is derived from the forge. You never edit a status field or the tranche file — opening the branch/PR and merging are the transitions.
+- **Decide on contested architectural questions.** Escalate.
+- **Review your own work.** The Phase 10 code-reviewer and security passes are separate fresh-context invocations. Do not self-approve.
+- **Merge PRs.** Open the PR; the Principal merges.
+- **Modify files outside the brief's stated scope** without asking first. Adjacent cleanups, "while I'm here" improvements — all of these require escalation.
+- **Skip verification hooks** (e.g. `--no-verify`) unless the brief explicitly authorizes it with a reason.
+- **Skip permission prompts** (e.g. a "dangerously skip permissions" flag) unless the brief authorizes it.
+- **Modify another Developer's in-progress worktree.** Each task has its own worktree; cross-worktree changes create conflicts that are hard to untangle.
+- **Commit a new file whose sole purpose is a report, finding, or audit summary.** A one-off deliverable — a coverage report, an audit result, a findings writeup — goes in the PR body or an Issue/PR comment, never a new repo file. This has already broken AEG Studio once (a committed audit deliverable was silently parsed as a broken tranche by the Studio loader).
+
+---
+
+## Worktree discipline
+
+When dispatched by an automation layer, you work in the worktree it created at `.worktrees/task/<tranche>/<n>/` on branch `task/<tranche>/<n>` — your isolated workspace, branched from `origin/main`.
+
+When working manually, the brief's pre-flight Step 0 gives you the worktree command. Run it first:
+- `git worktree add .worktrees/task/<tranche>/<n> -b task/<tranche>/<n> --no-track origin/main && cd .worktrees/task/<tranche>/<n> && git config push.autoSetupRemote true`
+- Then `git worktree list` to confirm you're not accidentally working in another task's worktree
+- Branch from `origin/main`, never from `HEAD` of the current local checkout (which may be behind)
+- Confirm the branch was created correctly: `git log --oneline -3` should show the expected parent
+
+The `task/<tranche>/<n>` branch name is the convention that lets any role find this task's branch and PR (and therefore its derived status) with one forge query. Use it exactly.
+
+After every commit: `git log --oneline -3` to confirm the new commit is a direct child of the expected parent. A mixed reset between sessions can leave HEAD at an older ancestor silently — the only reliable check is ancestry verification.
+
+**Stash is off-limits in a shared-repo worktree.** Never `git stash` while working in `.worktrees/task/<tranche>/<n>/`. Stash refs are global across every worktree of a shared repo clone — a stray `stash pop` run in one task's worktree can pop a *different* task's in-progress stash, silently corrupting its uncommitted work. This is not hypothetical: a near-miss surfaced live on a task branch's own PR. If you need to set aside in-progress changes, commit a WIP commit on your own branch instead (`git commit -m "Chore: WIP checkpoint"` — amend or squash it away before opening the PR) — a commit is branch-scoped and cannot collide with another worktree.
+
+---
+
+## Commit conventions
+
+- Format: `Type(scope): Brief description` — start-case type, optional lower-case scope in parens, colon, space, description
+- Types: `Feat`, `Fix`, `Refactor`, `Style`, `Docs`, `Chore`, `Test`, `Perf`, `Build`, `Revert`
+- **Header line MUST be ≤72 characters** (type + scope + description combined). Count before committing: `echo -n "Feat(scope): your message here" | wc -c`. CI rejects anything over 72 — this is the single most common CI failure.
+- Scope must be lower-case, naming the surface touched (e.g. `ui`, `api`, `cli`)
+- Subject must be sentence-case (not ALL CAPS, not all lowercase)
+- No trailing period on the subject line
+- Reference the task's Issue in the PR body (`Closes #N`), not necessarily in every commit message
+- Do not include agent self-attribution / "generated by" trailers in commit messages
+- Never skip verification hooks on commits unless the brief explicitly authorizes it
+- A change to a published package's shipped files carries its `.changeset/*.md` entry in the same PR — the `changeset-coverage` check (`aeg-root/enforcement.md`) reports, but does not yet block, a diff that misses this
+
+---
+
+## Prose is self-contained
+
+A code comment, a pull-request body, and a doctrine page each describe the thing itself — what the code does, what changed, what a reader needs in order to act — never an internal batch-of-work label or a forge number standing in for that description. A citation is a pointer only this repository's own history can resolve; a reader without that history (a fork, an export, someone reading the file in five years after the Issue is closed) gets nothing from it. Where the fact is worth recording, write the fact — what was learned, decided, or fixed — not where it was logged. `reader-resolvable-prose`'s source-comment class enforces this mechanically over `.ts` comment lines under the configured source globs (`packages/aeg-core/src/reader-resolvable-prose.ts`); treat a citation it flags the same as a failing test, not a style nit to defer.
+
+## When to escalate
+
+| Situation | Action |
+|-----------|--------|
+| Brief contradicts codebase reality | Escalate, severity: execution |
+| Architectural choice not specified in brief | Escalate, severity: strategy |
+| Scope expansion feels warranted ("while I'm here...") | STOP — ask before touching anything outside scope |
+| Pre-commit hook fails | Fix the underlying issue — do not bypass |
+| Test fails after three genuine diagnosis attempts | STOP — report what you tried and what the failure is |
+| Type 1 decision discovered during execution | Escalate, severity: product |
+| A dispatch gate isn't satisfied | STOP — the task serializes behind its dependency/conflict |
+| `pre-push` prints a C5 doc-owners warning on a branch's **first** push (no PR open yet) | NOT an escalation — the push always succeeds (ring 0 is warn-only, never a hard block). If the doc is genuinely stale, update it in this branch. If you believe it genuinely does not need updating, say so in the PR body when you open the PR and note that ring 1 will stay red until a principal applies the `vinaya/waiver:docs` label — you cannot self-serve this waiver (the earlier commit-trailer self-service is superseded; there is no body-field waiver grammar anymore). Escalate to the Principal only if you are unsure whether the doc is actually stale. |
+
+---
+
+## Verification before reporting done
+
+Before you say you are done or open a PR, run all of the following (substitute your repo's toolchain commands — shown here in this repo's Bun/JS form). Paste the actual output when reporting — not a summary.
+
+0. **Commit message length** — for every commit on this branch: `git log origin/main..HEAD --format="%s" | awk '{ if (length > 72) print NR": "length" chars (OVER LIMIT): "$0 }'` — must return nothing. If any commit header exceeds 72 chars, amend it before opening the PR.
+1. `typecheck` (this repo: `bun run typecheck`) — paste the result line ("X successful, X total" or the error)
+2. `lint/format` (this repo: `bun run format-and-lint`) — paste "No fixes applied" or the violations
+3. `test` (this repo: `bun test`) — paste "X pass, 0 fail" or the failures
+4. `verify-docs --pr` (this repo: `bun run verify-docs --pr`) — paste the result (real gate now — pass, or the specific failure to fix)
+5. `git status` — must be clean (everything committed) or explain what's uncommitted and why
+6. `git log --oneline -3` — confirm commit ancestry is correct (new commit is direct child of expected parent)
+7. `git diff main --stat` — paste the full change list; confirm only expected files changed
+
+If any of these fail: fix the failure, then re-verify. Do not report done until all pass. Do not say "tests pass" without running the test command and seeing the output.
+
+Items 1–4 are also composed into one command, `bun packages/aeg-core/bin/verify-task.ts` (plus a build step and the premise coverage/recheck pair) — **`open-pr.ts` now runs this composite itself** for task branches (task 25), so it also runs mechanically at PR-open time. Running it yourself first remains the cheaper, earlier catch.
+
+---
+
+## Verification — the phase between review and merge
+
+The checks above are **static**: they prove the change compiles, lints, types and matches its declared surface. They do not prove the feature works. Verification is the separate, mandatory phase that runs the brief's Test Plan against a booted app, after the review passes and before the Principal merges.
+
+**It is a phase, not an actor.** There is no Verifier to dispatch. The plan splits by who can structurally execute it: `vinaya pr report` runs the `[agent]` half's fenced command list from the PR head and writes it into `AEG:EVIDENCE`; the Principal runs the `[principal]` half in a real signed-in browser and ticks its boxes. Both halves must be satisfied before a merge is allowed — the `[agent]` half by the Evidence block existing and matching a fresh recompute (`evidence-fresh`), the `[principal]` half by every unticked `[principal]` box in the PR body, which `review-gate` refuses a merge while any remain unticked — `test-plan` grades the `[agent]` half and the plan's structure only; it is `principalOwed`, so its own `pending` failure never blocks the loop's mechanical gate, and enforcement of the unticked box lives at `review-gate` instead.
+
+**Why it exists:** four consecutive features once merged with green CI and were broken at runtime — a missing migration, a missing environment variable, a missing provider, an unexecuted test plan. The static gates ran and passed; the reviews read the diff; nobody booted the app. Verification is the phase that closes that gap.
+
+### Refuse if it isn't your turn
+
+- **No open PR** — nothing to verify; come back when one is open.
+- **No `aeg:brief:v1` comment on the task Issue** — without a Test Plan there is no definition of "verified"; `vinaya task dispatch` must post the frozen brief comment first.
+- **No Test Plan section in the brief** — the brief is malformed; flag it for correction and stop rather than inventing a plan at verification time.
+- **The plan declares `unit-tests-only` but the diff touches a runtime surface** (a route, a page, a server action) — the brief was mis-declared; flag it for correction. This is the failsafe against quietly downgrading verification.
+
+If the brief declares `unit-tests-only` and the diff really is pure logic, the phase is satisfied by the unit-test gate; record that as the outcome.
+
+### The `[agent]` half — under the loop, the driver's; standalone, yours
+
+**Under the automated dev-review loop, this already ran.** The driver's own per-round evidence report (see [§ After you open the PR — your turn ends here](#after-you-open-the-pr--your-turn-ends-here)) executes the SAME §9 fenced command list, from the SAME PR head, into the SAME `AEG:EVIDENCE` block, the moment your head's CI turns green — every round, automatically. You do not separately run this phase; by the time review finishes, it has already run.
+
+**If you are working outside the loop** — dispatched by hand, with no driver watching this PR — the phase is still yours to run explicitly:
+
+1. **Boot the app(s)** named in the brief from the worktree, and wait until each is reachable, if your §9 fenced commands need one running. If it does not boot, that is the failure — the plan never gets a chance to run.
+2. **Run `vinaya pr report --push <n>`.** It executes every line in your §9 fenced command list from the PR head and writes each command plus its actual output into `AEG:EVIDENCE` — never a hand-pasted comment, never a checkbox tick. Round-tripping through prose is how falsely-passing claims slip through; a command this tool did not run is not evidence. **Accepted risk, Principal default:** `pr report --push` executes the PR's own §9 commands on the machine running it, with no check of who is running it — only the PR's author runs it; nothing enforces that today.
+3. **Stop there.** Do not execute `[principal]` items; you structurally cannot. Mark them as awaiting the Principal.
+
+A failed `[agent]` command makes the PR unmergeable (`vinaya pr report`'s own exit code reflects it, and `evidence-fresh` binds the recorded output to the PR head). Fix on the same branch — under the loop, the next round's own automatic report overwrites the block with fresh output; standalone, re-run `vinaya pr report --push <n>` yourself — either way it overwrites, never appends a second copy.
+
+### The `[principal]` half — not yours
+
+The Principal executes the auth-gated, key-dependent and visual items in a browser and ticks those boxes. Never tick one because the `[agent]` items passed: they prove different properties. Never re-tag a `[principal]` item as `[agent]` to complete your half — that asymmetry is the whole point of the split, and erasing it is the failure this phase exists to prevent.
+
+### What this phase does not do
+
+It does not edit code (failures go back to you as the Developer), does not author tests (the plan comes from the brief), does not merge (only the Principal does), does not write status anywhere, and does not replace the code review or the security pass — a change can pass both and still be broken at runtime.
+
+---
+
+## Pre-merge gate
+
+Before any merge-adjacent action (commenting "MERGE", helping the Principal merge, or pushing a "fix CI" commit after review), run this check on the open PR. If any item fails, post a comment on the PR listing exactly what's missing, and **block and report** — do not proceed with any merge-adjacent action.
+
+The check is tool-agnostic — "reviewer approved" means any reviewer with `state: APPROVED`, whether human, an installed review-bot GitHub App, or another agent.
+
+**Tool:** `gh pr view <n> --json reviews,statusCheckRollup,body`
+
+**Check items (all three must pass):**
+
+1. **Reviewer approved?** The JSON `reviews` array contains at least one entry with `state: APPROVED`.
+2. **`[agent]` evidence fresh?** The `AEG:EVIDENCE` block's third group (the §9 fenced command list, run by `vinaya pr report`) matches a fresh recompute at the PR head — there is no `[agent]` checkbox to tick any more.
+3. **Principal confirmation?** The PR body's Test Plan section contains no unchecked `- [ ] **[principal]**` lines.
+
+If any fails: post a comment listing the exact items missing, and STOP. The Principal decides what to do next.
+
+---
+
+## Anti-patterns
+
+These are failures the Developer must actively avoid. Several come from real incidents.
+
+**Trusting your own self-report without diff inspection.** Run `git diff main --stat` and read it before reporting done.
+
+**Reviewing your own work instead of handing off.** The code-reviewer and security passes are separate invocations for a reason — fresh eyes catch what the author's context hides.
+
+**Writing status into a file "for convenience."** Status is derived from the forge. Editing the tranche file to record state recreates the racing status store the model eliminated. Never do it.
+
+**Fallback approaches without proving the preferred approach is impossible.** If the brief says "use Library X," you must demonstrate X is impossible before switching to Y. Don't silently choose Y because it was easier.
+
+**Editing docs to match broken implementations.** The implementation is broken; the doc is correct. Fix the implementation.
+
+**Force-pushing without verifying merge will work.** Test with `git merge --dry-run` or open the PR first to see if there are conflicts.
+
+**Pre-push verification that omits production build.** A dev-mode typecheck can pass while the production build fails under stricter resolution (e.g. a frozen-lockfile install). Run the production build too, where the repo has one.
+
+**Adding "small improvements" outside scope.** "While I'm here, I'll clean this up." Stop. That's scope creep. Finish the brief, open the PR, create a new Issue for the cleanup.
+
+**Closing the PR before running the Task Done checklist.** The checklist is not a formality. Run it; paste the output.
+
+**Reporting "all green" when you ran a subset of checks.** If you ran typecheck but not tests, say so. Don't round up. Partial verification plus a confident summary is how bugs reach main.
+
+**Fabricating verification output.** This has happened. Run the actual command; paste the actual output. If the output is long, paste the relevant portion and indicate you've elided the rest. Do not paraphrase verification results.
+
+**Marking items complete on a checklist without verification evidence.** A check means you ran the command and saw the expected output — not that you believe it should pass.
+
+**Starting on the wrong branch.** Check `git branch` and `git log --oneline -3` before writing any code. Fix the branch before proceeding.
+
+**Starting before the gates are clear.** Check that dependencies are merged and no conflicting PR is open before the first commit — not after you've done the work.

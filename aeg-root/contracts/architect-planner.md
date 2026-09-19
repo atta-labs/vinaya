@@ -45,21 +45,21 @@ A Milestone that names tranche intents is a claim about *why several tranches ma
 |---|---|---|
 | **`### Tranche intents` bullet** (`- <slug>: <intent text>`) | The tranche's derived **goal** (read via `intentGoalForSlug`, never stored) | The Planner does nothing to consume this — it is automatic, the same read path that gives an unmilestoned tranche its empty goal. The Planner never copies the intent text onto the Issue or into the rationale; the goal is derived at read time from the Milestone, always. |
 
-That is the entire table. Compare `roles/planner.md`'s eight-field rationale — this seam is one field because the Architect's whole output is one field. Adding a second field to what the Architect emits is a Type 1 decision (`roles/architect.md`'s "one role, one job" constraint) and changes this contract, not a workaround inside it.
+That is the entire table. Compare `roles/planner/reference.md`'s eight-field rationale — this seam is one field because the Architect's whole output is one field. Adding a second field to what the Architect emits is a Type 1 decision (`roles/architect.md`'s "one role, one job" constraint) and changes this contract, not a workaround inside it.
 
 ---
 
 ## Producer obligations (the Architect)
 
 - Write an intent line for a slug only when the goal genuinely names that tranche — not speculatively, and not to reserve a name. An intent naming a slug the Planner never plans just sits there, `planned` forever, misleading a reader of the Milestone.
-- Never write sizing, dependency edges, traps, agent class, or stop conditions into the Milestone. Those are entirely the Planner's, per `roles/planner.md`, whether or not this contract's seam is in play.
+- Never write sizing, dependency edges, traps, agent class, or stop conditions into the Milestone. Those are entirely the Planner's, per `roles/planner/reference.md`, whether or not this contract's seam is in play.
 - Never write status. A Milestone's own lifecycle, like a tranche's, is derived — never a field either role sets by hand (`milestone-model.md` §4).
 
 ## Consumer obligations (the Planner)
 
-- Read a tranche's derived goal (if any) at planning time as context, the same way an unmilestoned tranche's empty goal is context — never as a directive that changes sizing, boundary, or dependency edges. Those come from reading the code, always, per `roles/planner.md`'s mandatory deep-dig.
+- Read a tranche's derived goal (if any) at planning time as context, the same way an unmilestoned tranche's empty goal is context — never as a directive that changes sizing, boundary, or dependency edges. Those come from reading the code, always, per `roles/planner/reference.md`'s mandatory deep-dig.
 - Never edit a Milestone's description to add, correct, or remove an intent line. If an intent line is wrong or stale, that is escalated to whoever the Architect's output goes to next — not silently fixed mid-plan.
-- Never treat an intent line as a substitute for the Planner's own rationale. The Issue still carries all eight of `roles/planner.md`'s rationale fields regardless of whether this Milestone-level seam is in play.
+- Never treat an intent line as a substitute for the Planner's own rationale. The Issue still carries all eight of `roles/planner/reference.md`'s rationale fields regardless of whether this Milestone-level seam is in play.
 
 ---
 

@@ -31,7 +31,7 @@ This seam sits between the brief and the agent that executes it. It exists to cl
 
 **Status:** active
 **Seam:** the hand-off from the Planner's dispatch act (producer) to the Developer (consumer).
-**Single source of truth for this seam.** The Planner's role doc does **not** redefine what crosses this boundary — it points here. `aeg-root/roles/planner.md`'s dispatch act (producer side) and `aeg-root/roles/developer.md` (consumer side) each reference this file; this file is where the field-by-field hand-off lives, once.
+**Single source of truth for this seam.** The Planner's role doc does **not** redefine what crosses this boundary — it points here. `aeg-root/roles/planner/reference.md`'s dispatch act (producer side) and `aeg-root/roles/developer.md` (consumer side) each reference this file; this file is where the field-by-field hand-off lives, once.
 
 ---
 
@@ -82,7 +82,7 @@ Every field below has exactly one named obligation for the Developer (right colu
 - The worktree Step 0 command must be exact — branch name, base ref (`origin/main`), and destination path must all be present. The branch name's suffix must literal-match the task's forge-derived id — character for character, no added prefix, no case change, no truncation.
 - Stop conditions must be explicit, not inferred. Every known failure mode for this task belongs in the Issue's `## Stop conditions` section — the Developer will not invent stop conditions that aren't stated.
 - The surface map must be bounded and named. "Wherever else turns out to need it" is not a surface map.
-- **The documentation-update list must be populated from reading, not memory.** The Planner's Dig (`roles/planner.md`) must identify and read any relevant specs/skills/docs before cutting the Issue. The list for Tier 1+ must be non-empty unless the surface map genuinely touches no documented surface (state "No doc updates required" explicitly in that case).
+- **The documentation-update list must be populated from reading, not memory.** The Planner's Dig (`roles/planner/reference.md`) must identify and read any relevant specs/skills/docs before cutting the Issue. The list for Tier 1+ must be non-empty unless the surface map genuinely touches no documented surface (state "No doc updates required" explicitly in that case).
 - **A brief with a real code surface must carry a `Premise:` block pinning at least one checkable fact inside that surface.** A Tier 0 brief with zero code/runtime surface has nothing to pin.
 - **`## Documentation` names normative sources, never internal doc-owners pointers.** Distinct from the documentation-update list above (which names this repo's OWN doctrine to keep coherent): `## Documentation` names the OUTSIDE sources the implementation must match — an SDK/protocol page, a certification guide — against the mechanism each governs, sourced from the same Dig, never invented at render time. A task with no such source states the explicit `None` sentinel; a task that does have one names at least one Objective it feeds (a trailing `(O<n>)` citation) so the obligation is graded by the Reviewer's ordinary Objectives pass rather than left as prose nobody checks — `checkDocumentationCitesObjective` refuses a real source with no citation.
 
@@ -108,7 +108,7 @@ Every field below has exactly one named obligation for the Developer (right colu
 
 **Accepted-backfill never bypasses this gate.** Deferring backfill of historical provenance on **already-closed tranches** is a permitted debt record; proceeding with a new task on an **unarchived active prior** is not. The accepted-gap clause is strictly limited to closed historical tranches; it cannot be cited to bypass the coherence precondition for tasks in an active tranche. An accepted historical backlog is a debt record, not a gate bypass. The coherence precondition applies to active prior tasks; it cannot be waived by citing accepted historical gaps.
 
-The dispatch act's enforcement is the same forge-derived check the Developer runs (`vinaya check dispatch-readiness`) — see `aeg-root/roles/planner.md`'s dispatch act. The Developer's enforcement is at entry gate items 3–5 (see `aeg-root/roles/developer.md`). The dispatch-act gate fires one stage earlier than the Developer gate — catching the gap before a brief the Developer will immediately refuse is posted.
+The dispatch act's enforcement is the same forge-derived check the Developer runs (`vinaya check dispatch-readiness`) — see `aeg-root/roles/planner/reference.md`'s dispatch act. The Developer's enforcement is at entry gate items 3–5 (see `aeg-root/roles/developer.md`). The dispatch-act gate fires one stage earlier than the Developer gate — catching the gap before a brief the Developer will immediately refuse is posted.
 
 ---
 
@@ -128,7 +128,7 @@ The dispatch act's enforcement is the same forge-derived check the Developer run
 - Stay within the surface map. Files outside it are a stop-and-escalate, not a judgment call.
 - Run every `[agent]` Test Plan item and post the actual command output as evidence. Do not paraphrase verification results.
 - Stop on any stop condition — post a blocker comment, do not improvise.
-- Report tokens in the PR body at turn-end, per `aeg-root/roles/developer.md` — never append your own row to a ledger file.
+- Report tokens in the PR body at turn-end, per `aeg-root/roles/developer/reference.md` — never append your own row to a ledger file.
 
 ---
 
@@ -137,7 +137,7 @@ The dispatch act's enforcement is the same forge-derived check the Developer run
 A contract changes **as a unit**. You may not change what the Issue's sections and the dispatch act render without, in the same change, updating what the Developer consumes — because the property that makes the seam sound is that the producer's output side is *identical* to the consumer's input side. Concretely:
 
 - A change to this file is a **Tier 3** change: it alters a cross-role contract, so the reasoning belongs in the pull request that makes it, where the reviewer and the close-out both read it.
-- The same PR that edits this contract must verify both `aeg-root/roles/planner.md` (dispatch act) and `aeg-root/roles/developer.md` still point here and still match the table.
+- The same PR that edits this contract must verify both `aeg-root/roles/planner/reference.md` (dispatch act) and `aeg-root/roles/developer.md` still point here and still match the table.
 - Never edit one side's role doc to add/drop a hand-off field directly. Add/drop it **here**; the role docs inherit it by reference.
 
 ---

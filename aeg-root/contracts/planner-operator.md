@@ -32,7 +32,7 @@ This seam sits between the seat that **decides what a task is** (the Planner, ac
 
 **Status:** active
 **Seam:** the hand-off between the Planner (producer of dispatchable tasks and re-plans) and the Operator (consumer, running them).
-**Single source of truth for this seam.** `roles/planner.md`'s delegation section and `roles/operator.md` point to this file; neither redefines the boundary alone. AEG terms (seam, tranche, brief, dispatch, gate) are defined in the [glossary](../glossary.md).
+**Single source of truth for this seam.** `roles/planner/reference.md`'s delegation section and `roles/operator.md` point to this file; neither redefines the boundary alone. AEG terms (seam, tranche, brief, dispatch, gate) are defined in the [glossary](../glossary.md).
 
 ---
 
@@ -68,7 +68,7 @@ Two carriers, one per direction:
 
 ## Producer obligations (the Planner)
 
-- Hand the Operator only a **dispatchable** task — Issue cut, dependencies merged, no open conflicting sibling, brief renderable. Name the Operator as the seat that runs what the dispatch act cut (see `roles/planner.md`'s delegation section).
+- Hand the Operator only a **dispatchable** task — Issue cut, dependencies merged, no open conflicting sibling, brief renderable. Name the Operator as the seat that runs what the dispatch act cut (see `roles/planner/reference.md`'s delegation section).
 - Receive a scope or strategy escalation and re-plan or redispatch, rather than expecting the Operator to work around a wrong plan.
 
 ## Consumer obligations (the Operator)
@@ -81,6 +81,6 @@ Two carriers, one per direction:
 
 ## Changing this contract
 
-This file is the seam. Change it and both role docs' references as one unit; `roles/planner.md`'s delegation section and `roles/operator.md` point here rather than each restating the boundary.
+This file is the seam. Change it and both role docs' references as one unit; `roles/planner/reference.md`'s delegation section and `roles/operator.md` point here rather than each restating the boundary.
 
 *This contract is the seam. The Planner fills the left column with dispatchable work; the Operator drains it and raises scope changes on the right. One source of truth, changed as a unit.*
