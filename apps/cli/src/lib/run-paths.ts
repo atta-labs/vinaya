@@ -44,9 +44,9 @@
  * the repo.
  */
 import { execFileSync } from 'node:child_process'
-import { chmodSync, mkdirSync } from 'node:fs'
+import { chmodSync } from 'node:fs'
 import { join, resolve as resolvePath } from 'node:path'
-import { CONTROL_AREA_DIRNAME } from '@attalabs/aeg-core'
+import { CONTROL_AREA_DIRNAME, mkdirNoSymlinks } from '@attalabs/aeg-core'
 import {
   GLOBAL_VINAYA_HOME,
   loadConfig,
@@ -451,9 +451,18 @@ export function runtimeDirForThisRepo(): string {
  * directories it CREATES, so which writer got there first decided the
  * ancestors' mode — the explicit `chmodSync` is what makes the result
  * independent of writer order.
+ *
+ * `mkdirNoSymlinks` (`@attalabs/aeg-core`, shared with that package's own
+ * control-store writers) is what actually creates the tree — the SAME
+ * co-tenant able to plant a low-mode child under a shared `runtimeDir` can
+ * instead pre-plant a symlink at any missing ancestor, which a bare
+ * `mkdirSync(..., { recursive: true })` treats as already-present and
+ * silently follows (security review, CRITICAL); every writer that reaches
+ * this directory next then operates inside whatever real directory that
+ * symlink resolves to. `mkdirNoSymlinks` refuses instead of following.
  */
 export function ensureRunDir(dir: string): void {
-  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  mkdirNoSymlinks(dir, 0o700)
   chmodSync(dir, 0o700)
 }
 

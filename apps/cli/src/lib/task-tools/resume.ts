@@ -21,7 +21,7 @@
  */
 
 import { spawn } from 'node:child_process'
-import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import {
   type ControlStoreDeps,
@@ -47,7 +47,7 @@ import {
   readPauseState
 } from '../dev-review-loop/pause-resume.js'
 import { runtimeDir } from '../dev-review-loop.js'
-import { runPath, runtimeDirForThisRepo, tasksExecutionRoot } from '../run-paths.js'
+import { ensureRunDir, runPath, runtimeDirForThisRepo, tasksExecutionRoot } from '../run-paths.js'
 import { taskFromEscalationId } from '../dev-review-loop/pause-resume.js'
 import { log } from '../log-sink.js'
 import type { TaskToolCallResult } from './handlers.js'
@@ -96,8 +96,7 @@ export const defaultResumeClaimStore: ResumeClaimStore = {
   claim(record) {
     const path = resumeRecordPath(record.escalationId)
     try {
-      mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
-      chmodSync(dirname(path), 0o700)
+      ensureRunDir(dirname(path))
       writeFileSync(path, `${JSON.stringify(record, null, 2)}\n`, { flag: 'wx', mode: 0o600 })
       return { claimed: true, record }
     } catch {

@@ -38,6 +38,7 @@ export {
   InvalidRunIdError,
   listStartedEffectKeys,
   markEffectUncertain,
+  mkdirNoSymlinks,
   readCurrentOwnership,
   readEffect,
   readEscalation,

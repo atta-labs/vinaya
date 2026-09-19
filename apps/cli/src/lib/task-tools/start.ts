@@ -43,10 +43,10 @@
 
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { TaskStartInputSchema, type TaskStartResult, taskStartRequestIdentity, taskToolError } from '@attalabs/aeg-core'
-import { runPath, runtimeDirForThisRepo } from '../run-paths.js'
+import { ensureRunDir, runPath, runtimeDirForThisRepo } from '../run-paths.js'
 import { repoRoot as gitRepoRoot } from '../diff-evidence.js'
 import type { TaskToolCallResult } from './handlers.js'
 import type { CallerContext } from './server.js'
@@ -119,8 +119,7 @@ export const defaultRequestStore: RequestStore = {
   claim(record) {
     const path = startRecordPath(record.requestId)
     try {
-      mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
-      chmodSync(dirname(path), 0o700)
+      ensureRunDir(dirname(path))
       // `wx` is the atomic claim: it creates the file only if it does not exist,
       // so two racing starts for the same identity cannot both succeed here.
       writeFileSync(path, `${JSON.stringify(record, null, 2)}\n`, { flag: 'wx', mode: 0o600 })
