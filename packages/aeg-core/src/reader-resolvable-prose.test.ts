@@ -72,9 +72,12 @@ describe('classifyProseFile — the three-class map', () => {
     ).toBeNull()
   })
 
-  it('classifies apps/*/specs/** as internal', () => {
+  // issue-657, O6 — a spec is swept with the doctrine-page rules, never
+  // exempt: a fork or an export reads it with no forge to resolve a
+  // citation against, the same reader `ships` already accounts for.
+  it('classifies apps/*/specs/** as spec, not internal', () => {
     expect(classifyProseFile('apps/vinaya/specs/vinaya-spec.md', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBe(
-      'internal'
+      'spec'
     )
   })
 
@@ -186,14 +189,37 @@ describe('class 1 — unresolvable references — the gate can see what it bans'
     expect(findings).toEqual([])
   })
 
-  it('never sweeps apps/*/specs/** or CLAUDE.md — references are legitimate there', () => {
+  it('never sweeps CLAUDE.md — this reader already has this forge', () => {
     const findings = checkUnresolvableReferences(
-      [
-        { path: 'apps/vinaya/specs/vinaya-spec.md', content: 'closed by (#365), see aeg-coherence-v1' },
-        { path: 'apps/vinaya/CLAUDE.md', content: 'closed by (#365), see aeg-coherence-v1' }
-      ],
+      [{ path: 'apps/vinaya/CLAUDE.md', content: 'closed by (#365), see aeg-coherence-v1' }],
       READER_FACING_PREFIX,
       READER_FACING_SUFFIX
+    )
+    expect(findings).toEqual([])
+  })
+
+  // issue-657, O6 — a spec DOES sweep now, with the same rules as a
+  // doctrine page, and the finding blocks (like the `product` class).
+  it('sweeps apps/*/specs/** with the doctrine-page rules, blocking', () => {
+    const findings = checkUnresolvableReferences(
+      [{ path: 'apps/vinaya/specs/vinaya-spec.md', content: 'closed by (#365), see aeg-coherence-v1' }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings).toHaveLength(2)
+    expect(findings.every((f) => f.blocking)).toBe(true)
+    expect(findings.map((f) => f.message).join(' ')).toMatch(/a forge number/)
+    expect(findings.map((f) => f.message).join(' ')).toMatch(/an internal tranche slug/)
+  })
+
+  it('a spec explicitly grandfathered by path is skipped entirely, even with a real citation', () => {
+    const findings = checkUnresolvableReferences(
+      [{ path: 'apps/vinaya/specs/vinaya-spec.md', content: 'closed by (#365), see aeg-coherence-v1' }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX,
+      [],
+      undefined,
+      ['apps/vinaya/specs/vinaya-spec.md']
     )
     expect(findings).toEqual([])
   })
