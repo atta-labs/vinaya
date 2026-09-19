@@ -75,6 +75,22 @@ export function ensureCliBuilt(): void {
 
 export type ServerInvocation = { command: string; args: string[] }
 
+/**
+ * Issue #660, O3 round 4 (security MEDIUM) — same fix as
+ * `apps/cli/tests/lib/dev-review-loop.test.ts`'s `fixtureChildEnv`: a leaked
+ * `VINAYA_*` variable from a dispatched session's own environment (not just
+ * `VINAYA_RUNTIME_DIR`, which `buildSandbox` below already overrides
+ * explicitly) can steer this fixture's real subprocess away from its own
+ * isolated sandbox.
+ */
+function stripVinayaEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { ...env }
+  for (const key of Object.keys(out)) {
+    if (key.startsWith('VINAYA_')) delete out[key]
+  }
+  return out
+}
+
 // --- a minimal real JSON-RPC stdio client (spawn mode) ----------------------
 
 type RpcResult = { result?: Record<string, unknown>; error?: { code: number; message: string } }
@@ -83,11 +99,15 @@ export class SpawnRpcClient {
   private proc: ChildProcess
   private stdin: NodeJS.WritableStream
   private buffer = ''
+  private stderrBuf = ''
   private pending = new Map<number, (value: RpcResult) => void>()
   private nextId = 1
 
   constructor(invocation: ServerInvocation, env: Record<string, string>, cwd: string) {
-    this.proc = spawn(invocation.command, invocation.args, { cwd, env, stdio: ['pipe', 'pipe', 'ignore'] })
+    // `pipe`, not `ignore` (Issue #660, O3 round 4, security MEDIUM) — a
+    // hung/crashed server's own stderr is the diagnostic a bare request
+    // timeout otherwise discards entirely.
+    this.proc = spawn(invocation.command, invocation.args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] })
     this.stdin = this.proc.stdin!
     const stdout = this.proc.stdout!
     stdout.setEncoding('utf8')
@@ -110,13 +130,32 @@ export class SpawnRpcClient {
         idx = this.buffer.indexOf('\n')
       }
     })
+    const stderr = this.proc.stderr!
+    stderr.setEncoding('utf8')
+    stderr.on('data', (chunk: string) => {
+      this.stderrBuf += chunk
+    })
   }
 
   request(method: string, params?: unknown): Promise<RpcResult> {
     const id = this.nextId++
     const line = `${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`
     return new Promise<RpcResult>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`timeout waiting for ${method} (id ${id})`)), 15_000)
+      const timer = setTimeout(() => {
+        this.pending.delete(id)
+        // A stuck server under real lock contention (the exact O3 collision
+        // this fixture's own env-strip fix above closes) never answers — kill
+        // it rather than leaving a dangling process, and surface its own
+        // captured output rather than a bare "timeout" with nothing to
+        // diagnose it by.
+        this.proc.kill('SIGKILL')
+        reject(
+          new Error(
+            `timeout waiting for ${method} (id ${id}) after 15000ms\n` +
+              `--- stdout (unconsumed buffer) ---\n${this.buffer}\n--- stderr ---\n${this.stderrBuf}`
+          )
+        )
+      }, 15_000)
       this.pending.set(id, (value) => {
         clearTimeout(timer)
         resolve(value)
@@ -170,7 +209,7 @@ export function buildSandbox(): Sandbox {
   chmodSync(launcher, 0o755)
 
   const env: Record<string, string> = {
-    ...process.env,
+    ...stripVinayaEnv(process.env),
     HOME: home,
     PATH: `${binDir}:${process.env.PATH ?? ''}`,
     AEG_REPO: 'attalabs/vinaya',
