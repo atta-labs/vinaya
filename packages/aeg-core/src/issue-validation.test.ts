@@ -764,10 +764,16 @@ describe('checkConflictCompleteness (C, warn-only)', () => {
 })
 
 describe('checkSurfaceOverlap (task-run-v1 11, O5)', () => {
-  const mk = (ref: string, surfaceIn: string[], conflictsWith: string[] = []): TaskSurfaceFacts => ({
+  const mk = (
+    ref: string,
+    surfaceIn: string[],
+    conflictsWith: string[] = [],
+    dependsOn: string[] = []
+  ): TaskSurfaceFacts => ({
     ref,
     surfaceIn,
-    conflictsWith
+    conflictsWith,
+    dependsOn
   })
 
   it('refuses, naming both overlapping globs and the other task, when two tasks overlap with no Conflicts-with edge', () => {
@@ -870,6 +876,37 @@ describe('checkSurfaceOverlap (task-run-v1 11, O5)', () => {
     const sibling1 = mk('43', ['aeg-root/roles/**'])
     const sibling2 = mk('44', ['unrelated/**']) // does not declare aeg-root/roles at all
     const r = checkSurfaceOverlap(subject, [sibling1, sibling2])
+    expect(r.status).toBe('fail')
+    expect(r.errors.length).toBe(1)
+    expect(r.errors[0]).toMatch(/43/)
+  })
+
+  // issue-657, O2 — a Depends-on edge serializes overlapping siblings, same as Conflicts-with.
+  it('passes an overlap when the subject depends on the sibling directly', () => {
+    const subject = mk('42', ['packages/aeg-core/src/**'], [], ['43'])
+    const sibling = mk('43', ['packages/aeg-core/src/issue-validation.ts'])
+    expect(checkSurfaceOverlap(subject, [sibling]).status).toBe('pass')
+  })
+
+  it('passes an overlap when the sibling depends on the subject (reversed direction)', () => {
+    const subject = mk('42', ['packages/aeg-core/src/**'])
+    const sibling = mk('43', ['packages/aeg-core/src/issue-validation.ts'], [], ['42'])
+    expect(checkSurfaceOverlap(subject, [sibling]).status).toBe('pass')
+  })
+
+  it('passes an overlap between two tasks joined only through a chain of Depends-on edges', () => {
+    const subject = mk('42', ['packages/aeg-core/src/**'], [], ['44'])
+    const middle = mk('44', [], [], ['43'])
+    const sibling = mk('43', ['packages/aeg-core/src/issue-validation.ts'])
+    const r = checkSurfaceOverlap(subject, [middle, sibling])
+    expect(r.status).toBe('pass')
+  })
+
+  it('still refuses an overlap between two tasks with no dependency relation, direct or chained', () => {
+    const subject = mk('42', ['packages/aeg-core/src/**'], [], ['45'])
+    const unrelated = mk('45', [])
+    const sibling = mk('43', ['packages/aeg-core/src/issue-validation.ts'])
+    const r = checkSurfaceOverlap(subject, [unrelated, sibling])
     expect(r.status).toBe('fail')
     expect(r.errors.length).toBe(1)
     expect(r.errors[0]).toMatch(/43/)

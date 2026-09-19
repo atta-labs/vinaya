@@ -623,10 +623,12 @@ export function checkR3(issuesBySlug: Map<string, GhIssue[]>): CheckResult {
       const surface = parseIssueSurface(body)
       if (!surface.ok) continue
 
+      const deps = parseRationaleDeps(body)
       const facts: TaskSurfaceFacts = {
         ref: String(issue.number),
         surfaceIn: surface.value.in,
-        conflictsWith: parseRationaleDeps(body).conflictsWith
+        conflictsWith: deps.conflictsWith,
+        dependsOn: deps.dependsOn
       }
       const group = byMilestone.get(milestoneTitle) ?? []
       group.push({ slug, issue, facts })
