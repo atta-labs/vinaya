@@ -188,6 +188,18 @@ describe('pre-task-log-v1 fixtures — dev_review_loop family', () => {
     }
     expect(LogEventSchema.safeParse(line).success).toBe(true)
   })
+
+  it('infrastructure_retry (O3, `[task-operator-v1]`/Issue #662) — a new event, never a required field on an old one', () => {
+    const line = {
+      ...loopBase,
+      event: 'infrastructure_retry' as const,
+      round: 2,
+      failure_kind: 'developer_connection' as const,
+      attempts: 2,
+      outcome: 'recovered' as const
+    }
+    expect(LogEventSchema.safeParse(line).success).toBe(true)
+  })
 })
 
 const forgeBase = {
