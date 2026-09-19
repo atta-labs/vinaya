@@ -326,16 +326,15 @@ export const DevReviewLoopEventSchema = z.discriminatedUnion('event', [
       round: z.number().int(),
       head: z.string(),
       green: z.boolean(),
-      // The developer's stated confidence (task-log-v1 confidence task, O1/O2)
-      // — read from round 2 on, on a green gate only; round 1 and a red gate
-      // set none of the four fields below. `confidence_value`/`confidence_reason`
-      // are the whole-number value and one-line reason as stated at the read;
-      // `confidence_unavailable: true` records a missing or malformed
-      // statement explicitly — never a fabricated `confidence_value` of 0.
-      // `extra_turn_spent` tells a first statement apart from one made after
-      // the confidence rule's one extra developer turn, whichever way the
-      // statement itself reads. All four optional, so a `gate_result_read`
-      // line logged before this field set existed still parses (O3).
+      // The developer's stated confidence — read from round 2 on, on a
+      // green gate only; round 1 and a red gate set none of the four fields
+      // below. `confidence_value`/`confidence_reason` are the whole-number
+      // value and one-line reason as stated at the read; `confidence_unavailable:
+      // true` records a missing or malformed statement explicitly — never a
+      // fabricated `confidence_value` of 0. `extra_turn_spent` tells a first
+      // statement apart from one made after the confidence rule's one extra
+      // developer turn. All four optional, so a `gate_result_read` line
+      // logged before this field set existed still parses.
       confidence_value: z.number().int().min(0).max(100).optional(),
       confidence_reason: z.string().max(280).optional(),
       confidence_unavailable: z.boolean().optional(),
