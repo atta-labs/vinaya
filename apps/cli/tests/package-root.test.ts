@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { packageRoot } from '../src/lib/package-root'
 import { resolveAuthorRepoSourceEntry } from '../src/lib/self-host'
+import { spawnSyncBudgeted } from './lib/process-fixture'
 
 describe('packageRoot', () => {
   let tmpDir: string
@@ -157,7 +158,16 @@ describe('vinaya: an installed build defers to this repo’s own source (Issue #
   }
 
   it('an installed dist build, run from this repo, prints the same stdout as running the source directly, via exactly one stderr deferral line', () => {
-    const buildResult = spawnSync('bun', ['run', 'build'], { cwd: CLI_ROOT, encoding: 'utf8' })
+    // Issue #660, O3 — bounded by an explicit budget (60s, generous for a
+    // ~1s build on a quiet host) that throws with the child's own captured
+    // stdout/stderr on expiry, rather than a bare test-framework timeout.
+    const buildResult = spawnSyncBudgeted(
+      'bun',
+      ['run', 'build'],
+      { cwd: CLI_ROOT, encoding: 'utf8' },
+      60_000,
+      'apps/cli build'
+    )
     expect(buildResult.status, `apps/cli build failed:\n${buildResult.stdout}\n${buildResult.stderr}`).toBe(0)
 
     // Nested inside THIS repo's own real `node_modules` (rather than an

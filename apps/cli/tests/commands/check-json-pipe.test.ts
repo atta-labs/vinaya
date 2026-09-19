@@ -3,6 +3,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { spawnSyncBudgeted } from '../lib/process-fixture'
 
 /**
  * Regression for the pipe-vs-file stdout-flush defect (Issue #127):
@@ -65,10 +66,18 @@ function writeFixtureRepo(): string {
 
 beforeAll(async () => {
   // Always rebuild rather than trusting a possibly-stale dist/ from a prior
-  // session — a stale bundle would silently test the WRONG code.
-  const build = Bun.spawnSync(['bun', 'run', '--cwd', CLI_ROOT, 'build'], { stdout: 'pipe', stderr: 'pipe' })
-  if (build.exitCode !== 0) {
-    throw new Error(`apps/cli build failed:\n${build.stderr.toString()}`)
+  // session — a stale bundle would silently test the WRONG code. Issue
+  // #660, O3 — bounded by an explicit budget that throws with the child's
+  // own captured stdout/stderr on expiry, rather than a bare timeout.
+  const build = spawnSyncBudgeted(
+    'bun',
+    ['run', '--cwd', CLI_ROOT, 'build'],
+    { encoding: 'utf8' },
+    100_000,
+    'apps/cli build'
+  )
+  if (build.status !== 0) {
+    throw new Error(`apps/cli build failed:\n${build.stderr}`)
   }
 }, 120_000)
 
