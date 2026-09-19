@@ -34,7 +34,7 @@ import { loadLoopState } from './round-assess.js'
 import { readIfExists } from './reviewer-dispatch.js'
 import { DRIVER_LOCK_FILENAME, ensureRunDir, runPath } from '../run-paths.js'
 
-/** O1 (`[task-operator-v1]`/Issue #662) — the bound `postWithRetry`, below, retries a failed pause/escalation comment post against, in real usage; env-overridable for a fixture that wants sub-millisecond backoff. */
+/** O1 — the bound `postWithRetry`, below, retries a failed pause/escalation comment post against, in real usage; env-overridable for a fixture that wants sub-millisecond backoff. */
 export const PAUSE_COMMENT_RETRY_ATTEMPTS = 5
 /** O1 — the per-attempt backoff base (multiplied by the attempt number, the same `backoffMs * attempt` shape `gate-reading.ts`'s own `gh`-read retry already uses) — real usage spaces five attempts across roughly 30s, never hammering the forge on a genuinely down network. */
 export const PAUSE_COMMENT_RETRY_BACKOFF_MS = 3000
@@ -188,7 +188,7 @@ export function renderNoPushStopComment(task: number, reason: PauseReason, detai
 }
 
 /**
- * O1 (`[task-operator-v1]`/Issue #662) — the outcome of one pause/escalation
+ * O1 — the outcome of one pause/escalation
  * comment post: `attempts` is `0` when an already-`'verified'` idempotent
  * record let `EffectExecutor` skip posting entirely (still `posted: true` —
  * the comment already exists), `1` on an ordinary first-try success, and
@@ -269,7 +269,7 @@ export function postIssuePauseComment(
  * and so still posts only once, preserving the original idempotency
  * requirement; only the key changed, not the once-only guarantee.
  *
- * O1 (`[task-operator-v1]`/Issue #662): the post itself retries with backoff
+ * O1: the post itself retries with backoff
  * (`postWithRetry`) for a bounded period, and this function itself never
  * throws — see `postIssuePauseComment`'s identical doc comment for why.
  * Returns the real attempt count and whether the comment actually landed,

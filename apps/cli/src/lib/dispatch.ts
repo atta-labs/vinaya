@@ -285,7 +285,7 @@ export type DispatchOpts = {
  * recovery should not treat it the same as an ordinary crash mid-session.
  */
 /**
- * `'connection-failed'` (`[task-operator-v1]`/Issue #662, O2) — the vendor's
+ * `'connection-failed'` (O2) — the vendor's
  * own stdout carried at least one connection-retry signal
  * (`sawVendorConnectionRetry`, below) before the child ended non-zero or
  * timed out, AND a session was already bound: the vendor could not reach
@@ -1090,7 +1090,7 @@ export function parseGeminiUsageUnits(_stdout: string): UsageObservation {
 }
 
 /**
- * `[task-operator-v1]`/Issue #662, O2 — true when `stdout` carries at least
+ * O2 — true when `stdout` carries at least
  * one `{"type":"system","subtype":"api_retry",...}` line: the vendor's own
  * signal that it could not reach its backend and was retrying internally
  * before this process ever saw the child exit or time out. Confirmed live
@@ -3058,7 +3058,7 @@ export async function dispatchRole(
         // task's surface, and keeps reporting the real event class —
         // `'timeout'` — unchanged).
         //
-        // [task-operator-v1]/Issue #662, O2: `'connection-failed'` only when
+        // O2: `'connection-failed'` only when
         // a session WAS bound — a re-dispatch needs an exact session to
         // resume, and `'unbound'` already covers the no-session case with
         // its own, more specific meaning.
@@ -3131,7 +3131,7 @@ export async function dispatchRole(
         // session names that failure specifically, rather than the generic
         // `'crash'` every other non-zero exit gets.
         //
-        // [task-operator-v1]/Issue #662, O2: same `'connection-failed'`
+        // O2: same `'connection-failed'`
         // classification as the timeout branch above.
         const failureReason = neverBoundSession
           ? 'unbound'

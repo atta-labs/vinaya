@@ -484,7 +484,7 @@ export const DevReviewLoopEventSchema = z.discriminatedUnion('event', [
       result: z.enum(['merged_ready', 'stopped'])
     })
     .strict(),
-  // (O3, `[task-operator-v1]`/Issue #662) A retry episode around one of the
+  // (O3) A retry episode around one of the
   // driver's own infrastructure-class hiccups — a pause/escalation comment
   // post that failed at least once (O1), or a developer dispatch that ended
   // on the launcher's own `'connection-failed'` classification (O2) — named

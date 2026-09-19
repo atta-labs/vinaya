@@ -936,7 +936,7 @@ export type LoopResult = { finalDecision: Decision; prNumber: number; task: numb
  * human-readable output the moment a moved base restarts this same driver
  * underneath it.
  *
- * O4 (Issue #662): ALWAYS `--task <n>`, never `--resume <pr>`, even when
+ * O4: ALWAYS `--task <n>`, never `--resume <pr>`, even when
  * `input` itself carries a `resumePr` — a re-exec is this SAME run
  * continuing, not a fresh `--resume` invocation, and `--resume`'s own
  * top-of-function gate authenticates the Principal's ruling by CONSUMING
@@ -1591,7 +1591,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           })
         )
       let handle = await attemptDispatch()
-      // O2 (`[task-operator-v1]`/Issue #662): the launcher's own
+      // O2: the launcher's own
       // `'connection-failed'` classification means the vendor could not be
       // reached — never a developer decision. Wait and re-dispatch the SAME
       // session, bounded by the existing infrastructure-retry budget
@@ -1752,7 +1752,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     }
 
     /**
-     * O1/O3 (`[task-operator-v1]`/Issue #662): every pause/escalation
+     * O1/O3: every pause/escalation
      * comment post site calls THIS, never `postPauseComment`/
      * `postIssuePauseComment` directly followed by its own error handling —
      * both functions already never throw (they retry with backoff, then
@@ -2398,7 +2398,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // `resumedDispatch` (below) labels the prompt accordingly, once.
         const rulings = d.fetchRulings(prNumber)
         lastReviewContext = rulings.map((r, i) => `${i + 1}. ${r}`).join('\n')
-        // O1 (`[task-operator-v1]`/Issue #662): the pause comment this run
+        // O1: the pause comment this run
         // is resuming from may never have reached the forge (a network
         // drop mid-post, or the pause path's own exhausted retry) — the
         // local record (`resumeFrom`) is what is authoritative; the
@@ -3441,7 +3441,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             escalationId: escalationRecord?.escalationId,
             infrastructureRetries
           })
-          // O1 (`[task-operator-v1]`/Issue #662): `postPauseComment` never
+          // O1: `postPauseComment` never
           // throws — a post that fails even after its own bounded retry
           // reports `posted: false` rather than escaping to crash the
           // driver or reach the outer catch, which would otherwise

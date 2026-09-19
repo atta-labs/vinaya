@@ -1838,7 +1838,7 @@ export function markedCommentBody(marker: string, body: string): string {
  * `pr.ts`'s `postBriefComment` uses, generalised over `kind`. Returns the
  * URL `gh` printed. A failed post throws the raw error — never
  * `process.exit` — so a caller that must survive a post failure and retry
- * it (`[task-operator-v1]`/Issue #662, O1: the dev-review-loop driver's own
+ * it (O1: the dev-review-loop driver's own
  * pause-comment retry, `pause-resume.ts`) can catch it. `postMarkedComment`,
  * below, is the exit-on-failure wrapper every other caller in this repo
  * (a one-shot CLI command, where a hard refusal IS the right behavior)
