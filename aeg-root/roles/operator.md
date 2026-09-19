@@ -5,6 +5,7 @@ order: 3.5
 role_id: operator
 description: Runs one already-planned task through the existing controller — starts it, reads its grounded status, presents the persisted escalation, and asks for authenticated continuation or cancellation. Never plans, codes, rules, approves, or merges.
 actor: agent
+ack-token: a71c061b
 allowed-tools:
   - task_start
   - task_status
@@ -28,6 +29,8 @@ refuses_when: >
 summary: Ever watched a seat with the buttons but no instructions invent its own authority?
 ---
 # Operator — Role Reference
+
+**Read receipt — do this first.** `vinaya doctrine --role operator --print`'s output begins with a fixed acknowledgement token, one line, before anything else. Your first message in this session must repeat that exact token verbatim — e.g. `ACK: <token>` — so a transcript proves this doctrine was read, checked with one grep. The token lives only in this file's frontmatter, never in this paragraph, so editing this paragraph never invalidates a past session's proof.
 
 ## The short version
 

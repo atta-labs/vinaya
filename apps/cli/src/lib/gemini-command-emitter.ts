@@ -40,7 +40,7 @@ function doctrineInvocation(selfHost: VendoredVinaya | null): string {
 /** Render the parameterized `.gemini/commands/vinaya.toml` content. */
 export function renderGeminiCommand(selfHost: VendoredVinaya | null = null): string {
   return `description = "Act as an AEG role for this repo."
-prompt = "!{${doctrineInvocation(selfHost)} --role {{args}}}"
+prompt = "!{${doctrineInvocation(selfHost)} --role {{args}} --print}"
 `
 }
 

@@ -84,7 +84,7 @@ export function renderClaudeCommand(selfHost: VendoredVinaya | null = null): str
 description: Act as an AEG role for this repo.
 allowed-tools: Bash(${invocation} *)
 ---
-!\`${invocation} --role "$ARGUMENTS"\`
+!\`${invocation} --role "$ARGUMENTS" --print\`
 `
 }
 

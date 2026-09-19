@@ -31,7 +31,7 @@ This seam sits between the end of one tranche and the planning of the next. It e
 
 **Status:** active
 **Seam:** the hand-off from the Tranche Archivist (producer) to the Planner (consumer).
-**Single source of truth for this seam.** The two role docs do **not** redefine what crosses this boundary — they point here. `aeg-root/roles/tranche-archivist.md` (producer side) and `aeg-root/roles/planner.md` (consumer side) each reference this file; this file is where the field-by-field hand-off lives, once.
+**Single source of truth for this seam.** The two role docs do **not** redefine what crosses this boundary — they point here. `aeg-root/roles/tranche-archivist.md` (producer side) and `aeg-root/roles/planner/reference.md` (consumer side) each reference this file; this file is where the field-by-field hand-off lives, once.
 
 ---
 
@@ -109,7 +109,7 @@ The Planner's readiness-gate item 8 is **carved out** for this one superseded so
 A contract changes **as a unit**. You may not change what the Tranche Archivist produces without, in the same change, updating what the Planner consumes — because the property that makes the seam sound is that the producer's output side is *identical* to the consumer's input side. Concretely:
 
 - A change to this file is a **Tier 3** change: it alters a cross-role contract, so the reasoning belongs in the pull request that makes it, where the reviewer and the close-out both read it.
-- The same PR that edits this contract must verify both `aeg-root/roles/tranche-archivist.md` and `aeg-root/roles/planner.md` still point here and still match the table. In particular, readiness gate item 8 in `planner.md` must reference this file explicitly — that reference is the enforcement hook.
+- The same PR that edits this contract must verify both `aeg-root/roles/tranche-archivist.md` and `aeg-root/roles/planner/reference.md` still point here and still match the table. In particular, readiness gate item 8 in `roles/planner/reference.md` must reference this file explicitly — that reference is the enforcement hook.
 - Never edit one side's role doc to add/drop a hand-off field directly. Add/drop it **here**; the role docs inherit it by reference.
 
 ---

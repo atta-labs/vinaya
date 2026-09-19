@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
+import matter from 'gray-matter'
 import { doctrineCommand, ENTRY_SEGMENTS, resolveDoctrineRoot } from '../src/commands/doctrine.js'
 
 const CLI_ENTRY = join(import.meta.dir, '..', 'src', 'index.ts')
@@ -127,6 +128,87 @@ describe('vinaya doctrine', () => {
     expect(exitCode).toBe(1)
     expect(stderr).toContain("'brief-author' has been retired")
     expect(stderr).toContain('--role planner')
+  })
+
+  it("--print emits the resolved file's body (frontmatter stripped), not its path", () => {
+    const root = resolveDoctrineRoot()
+    if (root === null) throw new Error('no doctrine root on this machine')
+    const printed = captureStdout(() => doctrineCommand(['--role', 'developer', '--print']))
+    const path = captureStdout(() => doctrineCommand(['--role', 'developer'])).trim()
+    expect(printed).not.toContain(path)
+    expect(printed).toContain('Developer')
+    // Frontmatter's opening fence is never in the printed output.
+    expect(printed.trimStart().startsWith('---')).toBe(false)
+  })
+
+  it('--role <name> without --print stays byte-identical to the path-only output — a flag, never a default', () => {
+    const withoutFlag = captureStdout(() => doctrineCommand(['--role', 'developer']))
+    // Re-running the exact same call is the byte-identical proof: nothing
+    // about resolving `--print`'s presence/absence touches this branch.
+    expect(captureStdout(() => doctrineCommand(['--role', 'developer']))).toBe(withoutFlag)
+    expect(withoutFlag.trim().endsWith(join('roles', 'developer.md'))).toBe(true)
+  })
+
+  it("bare (no --role) --print emits the front door's body, not its path", () => {
+    const printed = captureStdout(() => doctrineCommand(['--print']))
+    const path = captureStdout(() => doctrineCommand([])).trim()
+    expect(printed).not.toContain(path)
+  })
+
+  it("--print --role <name> emits every agent role's ack-token as its own first line (O2)", () => {
+    const root = resolveDoctrineRoot()
+    if (root === null) throw new Error('no doctrine root on this machine')
+    const roleNames = readdirSync(join(root, 'roles'))
+      .filter((f) => f.endsWith('.md'))
+      .map((f) => f.slice(0, -3))
+      .filter((name) => {
+        const { data } = matter(readFileSync(join(root, 'roles', `${name}.md`), 'utf8'))
+        return data.actor !== 'human'
+      })
+    expect(roleNames.length).toBeGreaterThan(0)
+    for (const role of roleNames) {
+      const { data } = matter(readFileSync(join(root, 'roles', `${role}.md`), 'utf8'))
+      const ackToken = data['ack-token']
+      expect(typeof ackToken, `${role}.md carries no ack-token frontmatter`).toBe('string')
+      const printed = captureStdout(() => doctrineCommand(['--role', role, '--print']))
+      expect(printed.split('\n')[0]).toBe(ackToken)
+    }
+  })
+
+  it('principal still refuses under --role, even combined with --print (O2 — not an agent role, gains no token)', async () => {
+    const proc = Bun.spawn(['bun', CLI_ENTRY, 'doctrine', '--role', 'principal', '--print'], {
+      stdout: 'pipe',
+      stderr: 'pipe'
+    })
+    const exitCode = await proc.exited
+    const stderr = await new Response(proc.stderr).text()
+    expect(exitCode).toBe(1)
+    expect(stderr).toContain("'principal' is not a known role")
+  })
+
+  it('--role developer/reference is refused — a role name is never a subdirectory path (O4)', async () => {
+    const proc = Bun.spawn(['bun', CLI_ENTRY, 'doctrine', '--role', 'developer/reference'], {
+      stdout: 'pipe',
+      stderr: 'pipe'
+    })
+    const exitCode = await proc.exited
+    const stderr = await new Response(proc.stderr).text()
+    expect(exitCode).toBe(1)
+    expect(stderr).toContain("'developer/reference' is not a known role")
+  })
+
+  it('the developer and planner seat files stay within the O4 120-line budget, and role discovery ignores their sibling reference directories', () => {
+    const root = resolveDoctrineRoot()
+    if (root === null) throw new Error('no doctrine root on this machine')
+    for (const role of ['developer', 'planner']) {
+      const lineCount = readFileSync(join(root, 'roles', `${role}.md`), 'utf8').split('\n').length
+      expect(lineCount, `${role}.md is ${lineCount} lines, over the 120-line seat budget`).toBeLessThanOrEqual(120)
+    }
+    const roleNames = readdirSync(join(root, 'roles')).filter((f) => f.endsWith('.md'))
+    expect(roleNames).not.toContain('developer')
+    expect(roleNames).not.toContain('planner')
+    expect(existsSync(join(root, 'roles', 'developer', 'reference.md'))).toBe(true)
+    expect(existsSync(join(root, 'roles', 'planner', 'reference.md'))).toBe(true)
   })
 
   it('actor: agent and actor: either roles both still resolve — the exclusion is actor-specific, not a blanket narrowing', () => {

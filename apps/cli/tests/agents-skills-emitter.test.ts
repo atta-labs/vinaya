@@ -8,6 +8,7 @@ import {
   discoverRoleNames,
   formatRoleTitle,
   renderAgentSkill,
+  roleDeniedTools,
   staleAgentSkillPaths
 } from '../src/lib/agents-skills-emitter.js'
 
@@ -75,7 +76,7 @@ describe('agents-skills-emitter', () => {
 name: vinaya-developer
 description: Act as the AEG Developer for this repo.
 ---
-Run \`vinaya doctrine --role developer\` and follow its output as your operating instructions for this session.
+Run \`vinaya doctrine --role developer --print\` and follow its output as your operating instructions for this session.
 `
       expect(renderAgentSkill('developer')).toBe(expected)
       expect(agentSkillPath('developer')).toBe('.agents/skills/vinaya-developer/SKILL.md')
@@ -90,7 +91,7 @@ Run \`vinaya doctrine --role developer\` and follow its output as your operating
 name: vinaya-brief-author
 description: Act as the AEG Brief Author for this repo.
 ---
-Run \`vinaya doctrine --role brief-author\` and follow its output as your operating instructions for this session.
+Run \`vinaya doctrine --role brief-author --print\` and follow its output as your operating instructions for this session.
 `
       expect(renderAgentSkill('brief-author')).toBe(expected)
       expect(agentSkillPath('brief-author')).toBe('.agents/skills/vinaya-brief-author/SKILL.md')
@@ -103,13 +104,65 @@ Run \`vinaya doctrine --role brief-author\` and follow its output as your operat
 name: vinaya-developer
 description: Act as the AEG Developer for this repo.
 ---
-Run \`bun apps/cli/src/index.ts doctrine --role developer\` and follow its output as your operating instructions for this session.
+Run \`bun apps/cli/src/index.ts doctrine --role developer --print\` and follow its output as your operating instructions for this session.
 `
       expect(renderAgentSkill('developer', { dir: 'apps/cli', bin: 'apps/cli/dist/index.js' })).toBe(expected)
     })
 
     it('is unchanged for the ordinary adopter when selfHost is explicitly null', () => {
       expect(renderAgentSkill('developer', null)).toBe(renderAgentSkill('developer'))
+    })
+  })
+
+  describe('roleDeniedTools & the denied-tools body line (O3)', () => {
+    it('reads a YAML list from denied-tools frontmatter', () => {
+      const rolesDir = join(tempDir, 'roles')
+      mkdirSync(rolesDir, { recursive: true })
+      writeFileSync(
+        join(rolesDir, 'developer.md'),
+        '---\nactor: agent\ndenied-tools:\n  - merge\n  - write-status\n---\n# Developer\n'
+      )
+      expect(roleDeniedTools(tempDir, 'developer')).toEqual(['merge', 'write-status'])
+    })
+
+    it('returns [] for a role with no denied-tools frontmatter (the Operator)', () => {
+      const rolesDir = join(tempDir, 'roles')
+      mkdirSync(rolesDir, { recursive: true })
+      writeFileSync(join(rolesDir, 'operator.md'), '---\nactor: agent\n---\n# Operator\n')
+      expect(roleDeniedTools(tempDir, 'operator')).toEqual([])
+    })
+
+    it('renders denied tools as a body line, never a frontmatter grant — the host support is unconfirmed for this file', () => {
+      const skill = renderAgentSkill('developer', null, [], ['merge', 'write-status'])
+      expect(skill).toContain("Denied — this role's own doctrine forbids: merge, write-status.")
+      expect(skill).not.toContain('disallowed-tools:')
+    })
+
+    it('a role with no denied-tools renders the unchanged pointer (no denial line)', () => {
+      expect(renderAgentSkill('operator')).not.toContain('Denied —')
+    })
+
+    it('every real agent role but the Operator declares denied-tools against the real bundled doctrine (O3)', () => {
+      const realRoot = join(import.meta.dir, '..', '..', '..', 'aeg-root')
+      const roles = discoverRoleNames(realRoot)
+      expect(roles).toContain('developer')
+      for (const role of roles) {
+        const denied = roleDeniedTools(realRoot, role)
+        if (role === 'operator') {
+          expect(denied).toEqual([])
+        } else {
+          expect(denied.length, `${role} declares no denied-tools`).toBeGreaterThan(0)
+        }
+      }
+    })
+
+    it('buildAgentsSkillsOps carries denied-tools into the generated skill for a non-Operator role', () => {
+      const realRoot = join(import.meta.dir, '..', '..', '..', 'aeg-root')
+      const ops = buildAgentsSkillsOps(realRoot)
+      const developerOp = ops.find((op) => op.path === '.agents/skills/vinaya-developer/SKILL.md')
+      expect(developerOp?.content).toContain('Denied —')
+      const operatorOp = ops.find((op) => op.path === '.agents/skills/vinaya-operator/SKILL.md')
+      expect(operatorOp?.content).not.toContain('Denied —')
     })
   })
 

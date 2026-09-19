@@ -18,7 +18,7 @@ describe('claude-command-emitter', () => {
 description: Act as an AEG role for this repo.
 allowed-tools: Bash(vinaya doctrine *)
 ---
-!\`vinaya doctrine --role "$ARGUMENTS"\`
+!\`vinaya doctrine --role "$ARGUMENTS" --print\`
 `
       expect(renderClaudeCommand()).toBe(expected)
     })
@@ -63,7 +63,7 @@ allowed-tools: Bash(vinaya doctrine *)
 description: Act as an AEG role for this repo.
 allowed-tools: Bash(bun apps/cli/src/index.ts doctrine *)
 ---
-!\`bun apps/cli/src/index.ts doctrine --role "$ARGUMENTS"\`
+!\`bun apps/cli/src/index.ts doctrine --role "$ARGUMENTS" --print\`
 `
       expect(renderClaudeCommand({ dir: 'apps/cli', bin: 'apps/cli/dist/index.js' })).toBe(expected)
     })
