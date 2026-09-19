@@ -48,6 +48,20 @@
  *
  * Burning this list down is a later task, not this round's — see the
  * changeset for this round's own count.
+ *
+ * Round 7 Principal ruling — "a shell is not a utility": `sh` and `bash`
+ * were in `SAFE_UTILITY_COMMANDS` alongside `git`/`chmod`/`mkdir`, but a
+ * shell doesn't do one fixed thing the way those do — it runs whatever
+ * string it's handed, so `spawnSync('bash', ['-c', 'bun ...'])` (or the
+ * `sh` equivalent) hid an arbitrary command, including the `vinaya` CLI or
+ * a build, behind a "safe" wrapper the scan never looked past. Round 7
+ * removes both from the safe list, which reclassified three files
+ * (`claude-command-emitter.test.ts`, `claude-stop-hook-emitter.test.ts`,
+ * `init.test.ts`) from silently-safe to real offenders; none of the three
+ * already routed through the shared helper, so all three were added to
+ * `GRANDFATHERED_FILES` below rather than hardened inline — that inline
+ * work is the same later task the list's burn-down already is, not this
+ * round's.
  */
 
 import { describe, expect, it } from 'bun:test'
@@ -145,6 +159,13 @@ const HAS_KILL_BUDGET = /killSignal|SIGKILL/
  * name this category explicitly as out of scope for this round ("git, gh,
  * ln, chmod, a fake vendor binary"). `bun`/`node`/`vinaya` are deliberately
  * NEVER in this set — those are the exact risk-bearing invocations.
+ *
+ * Round 7 review — `sh`/`bash` do NOT belong here and are deliberately
+ * absent. Unlike `git`/`chmod`/`mkdir`, a shell doesn't do one fixed thing:
+ * it runs whatever string it's handed, so a `spawnSync('bash', ['-c', 'bun
+ * ...'])` (or the same via `sh -c`) hid an arbitrary — possibly
+ * risk-bearing — command from this scan behind a "safe" wrapper. A shell
+ * spawn is now classified exactly like any other real process.
  */
 const SAFE_UTILITY_COMMANDS = new Set([
   'git',
@@ -157,9 +178,7 @@ const SAFE_UTILITY_COMMANDS = new Set([
   'ln',
   'kill',
   'jq',
-  'sh',
   'ps',
-  'bash',
   'rm',
   'cp',
   'touch',
@@ -296,6 +315,13 @@ function isNonCompliant(content: string): boolean {
  * about) without the shared helper's pattern at that call's own scope.
  * Found by search — `bun apps/cli/tests/process-fixture-coverage.test.ts`'s
  * own scan — never by memory, per round 3's ruling.
+ *
+ * Round 7 adds exactly three entries — `claude-command-emitter.test.ts`,
+ * `claude-stop-hook-emitter.test.ts`, `init.test.ts` — the files
+ * reclassified by removing `sh`/`bash` from `SAFE_UTILITY_COMMANDS`. The
+ * list holds 55 entries as of round 7 (52 carried over from round 5 plus
+ * these three); round 5's own list of names above this comment is
+ * unchanged and still accurate for what it describes.
  */
 const GRANDFATHERED_FILES: readonly string[] = [
   'apps/cli/tests/checks/body-bare-digits-changeset-exempt.test.ts',
@@ -318,6 +344,8 @@ const GRANDFATHERED_FILES: readonly string[] = [
   'apps/cli/tests/checks/runner/cancelled.test.ts',
   'apps/cli/tests/checks/surface-scope.test.ts',
   'apps/cli/tests/checks/token-collection-pointer-hardening.test.ts',
+  'apps/cli/tests/claude-command-emitter.test.ts',
+  'apps/cli/tests/claude-stop-hook-emitter.test.ts',
   'apps/cli/tests/commands/brief-render.test.ts',
   'apps/cli/tests/commands/check-flip.test.ts',
   'apps/cli/tests/commands/check-roles-plan.test.ts',
@@ -336,6 +364,7 @@ const GRANDFATHERED_FILES: readonly string[] = [
   'apps/cli/tests/doctrine.test.ts',
   'apps/cli/tests/fixtures/checks/spawns-grandchild.ts',
   'apps/cli/tests/fixtures/checks/spawns-stubborn-grandchild.ts',
+  'apps/cli/tests/init.test.ts',
   'apps/cli/tests/isolation/isolation-probe.test.ts',
   'apps/cli/tests/lib/artifacts/collect.test.ts',
   'apps/cli/tests/lib/artifacts/export.test.ts',
