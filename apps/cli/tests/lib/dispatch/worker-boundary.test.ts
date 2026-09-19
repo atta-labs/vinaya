@@ -76,7 +76,14 @@ function spawnConfinedSync(
     detached: true
   }
   const result = spawnSync(command, args, spawnOpts)
-  if (typeof result.pid === 'number') {
+  // Round 2 review, BLOCKER: `spawnSync` sets `pid` to the NUMBER `0` (not
+  // `undefined`) when the child never actually spawned (e.g. ENOENT) — a
+  // bare `typeof result.pid === 'number'` check passes for that case too,
+  // and `-result.pid` becomes `-0`, which `process.kill` treats identically
+  // to `0`: "every process in THIS process's own group," not a harmless
+  // no-op. Guarding on `> 0` is the fix; a real child's pid is always
+  // positive.
+  if (typeof result.pid === 'number' && result.pid > 0) {
     try {
       process.kill(-result.pid, 'SIGKILL')
     } catch {

@@ -6,7 +6,7 @@ import {
 } from '../../../src/lib/dev-review-loop/developer-dispatch'
 import type { LaunchRecord, ParsedLaunch, ProcessSnapshot } from '../../../src/lib/dispatch'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -354,23 +354,29 @@ describe("recoverDeveloperLaunch (O2, Issue #605, code review, MAJOR) — the re
         `import { writeFileSync as writeFileSyncOrphan } from 'node:fs'`,
         `const opts = { promptFile: ${JSON.stringify(promptFile)}, task: 44 }`,
         `void dispatchRole('developer', 'claude', 'p', opts)`,
+        // Round 2 review, MINOR — records the observed pid to the outer
+        // test's pid file the INSTANT the launch record carries one, inside
+        // the poll loop itself, rather than only after `waitForChildPid`
+        // returns. A genuinely raced record write (the real child already
+        // spawned, but the record naming its pid lands just past the poll
+        // window) can still make the whole wait throw with no pid ever
+        // observed here — a fixture-level race no poll loop closes for
+        // free — but this at least captures the pid the moment it becomes
+        // visible, never only after the function's own return.
+        `const pidFile = ${JSON.stringify(join(cwd, 'orphan-pid.txt'))}`,
         'async function waitForChildPid(timeoutMs) {',
         '  const start = Date.now()',
         '  while (Date.now() - start < timeoutMs) {',
         `    const parsed = readLaunchRecord('developer', 'claude', null, 44)`,
-        `    if (parsed.status === 'ok' && parsed.record.childPid !== null) return`,
+        "    if (parsed.status === 'ok' && parsed.record.childPid !== null) {",
+        '      writeFileSyncOrphan(pidFile, String(parsed.record.childPid))',
+        '      return',
+        '    }',
         '    await new Promise((r) => setTimeout(r, 50))',
         '  }',
         `  throw new Error('timed out waiting for the launch record to carry a childPid')`,
         '}',
         'await waitForChildPid(5000)',
-        // The outer test process needs this pid too, to guarantee cleanup
-        // regardless of what happens next (issue-657, O5) — written to a
-        // plain file in `cwd` rather than re-reading the launch record from
-        // the outer process, which runs under a DIFFERENT `HOME` than this
-        // orphan-creating child and would resolve the wrong path.
-        `const created = readLaunchRecord('developer', 'claude', null, 44)`,
-        `writeFileSyncOrphan(${JSON.stringify(join(cwd, 'orphan-pid.txt'))}, String(created.status === 'ok' ? created.record.childPid : ''))`,
         // Exit WITHOUT terminating the child — this process's own death is
         // what reparents it to init, the orphan condition under test.
         'process.exit(0)'
@@ -385,7 +391,21 @@ describe("recoverDeveloperLaunch (O2, Issue #605, code review, MAJOR) — the re
     // `~/.vinaya` — the same class of leak `dev-review-loop.test.ts` hit
     // live on this same host.
     delete spawnEnv.VINAYA_RUNTIME_DIR
-    execFileSync('bun', [orphanScript], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: spawnEnv })
+    const orphanPidPath = join(cwd, 'orphan-pid.txt')
+    // Round 2 review, MINOR — this call itself is now wrapped: the script
+    // writes `orphanPidPath` the moment it observes a childPid (above), so
+    // even a non-zero exit here (the in-script 5s wait throwing) does not
+    // skip reading whatever pid the script already captured before dying.
+    // Only the genuine race where NO pid was ever observed within the
+    // window (the real child spawned, but the launch record's own write
+    // landed even later than that) still has nothing to read here — a
+    // fixture-level race, not a swallowed error.
+    try {
+      execFileSync('bun', [orphanScript], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: spawnEnv })
+    } catch {
+      // Non-zero exit is expected on a timeout throw; the pid file (if the
+      // script got far enough to write one) is still read below.
+    }
 
     // issue-657, O5 — a real, deliberately-orphaned process now exists
     // (the whole point of this test). Everything from here on is wrapped in
@@ -395,7 +415,7 @@ describe("recoverDeveloperLaunch (O2, Issue #605, code review, MAJOR) — the re
     // to survive this test the way this file's own #605 incident did before
     // this fix (found live: a confined agent for a fake task left running
     // for two hours after a test like this one failed mid-way through).
-    const orphanPidRaw = readFileSync(join(cwd, 'orphan-pid.txt'), 'utf8').trim()
+    const orphanPidRaw = existsSync(orphanPidPath) ? readFileSync(orphanPidPath, 'utf8').trim() : ''
     const orphanPid = orphanPidRaw.length > 0 ? Number(orphanPidRaw) : null
 
     try {
