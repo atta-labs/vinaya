@@ -44,9 +44,9 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname } from 'node:path'
 import { TaskStartInputSchema, type TaskStartResult, taskStartRequestIdentity, taskToolError } from '@attalabs/aeg-core'
-import { GLOBAL_VINAYA_HOME } from '../config.js'
+import { runPath, runtimeDirForThisRepo } from '../run-paths.js'
 import { repoRoot as gitRepoRoot } from '../diff-evidence.js'
 import type { TaskToolCallResult } from './handlers.js'
 import type { CallerContext } from './server.js'
@@ -95,9 +95,24 @@ export type TaskStartDeps = {
 
 // --- default durable file store ---------------------------------------------
 
-/** `~/.vinaya/task-start/<requestId>.json` — the request-identity already folds in caller, repo and target, so a flat per-id file is unambiguous. Owner-only, same hardening posture as `dispatch.ts`'s own machine-local records. */
+/**
+ * `.../unscoped/control/start-request-<requestId>.json` — the request
+ * identity already folds in caller, repo and target, so a flat per-id file
+ * is unambiguous.
+ *
+ * The UNSCOPED folder, deliberately: a start request names a tranche and an
+ * ordinal, not a forge Issue, so at claim time there is no task number to
+ * key a folder by — resolving one is the very thing the launch it claims
+ * goes on to do. The scope grammar already reserves this folder for exactly
+ * that case (`run-paths.ts`'s `RunScope`), so the record stays inside the
+ * layout instead of keeping a machine-wide directory of its own. Owner-only,
+ * same hardening posture as `dispatch.ts`'s own machine-local records.
+ */
 function startRecordPath(requestId: string): string {
-  return join(GLOBAL_VINAYA_HOME, 'task-start', `${requestId}.json`)
+  return runPath(runtimeDirForThisRepo(), 'unscoped', {
+    area: 'control',
+    file: `start-request-${requestId}.json`
+  })
 }
 
 export const defaultRequestStore: RequestStore = {

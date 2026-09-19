@@ -196,7 +196,27 @@ const WORKER_BOUNDARY_PATH = 'apps/cli/src/lib/worker-boundary.ts'
  * write its OWN generated Seatbelt profile to a scratch temp dir, never to
  * the outbox itself. Same shape as `OUTBOX_RESUME_RECORD_ALLOWLIST`, above.
  */
-const OUTBOX_PROSE_MENTION_ALLOWLIST = new Set([CONFIG_PATH, WORKER_BOUNDARY_PATH])
+const RUN_PATHS_PATH = 'apps/cli/src/lib/run-paths.ts'
+const LOOP_LOG_PATH = 'apps/cli/src/lib/loop-log.ts'
+/**
+ * Amended by task-files-v1 task 1 (`#648`), which moved every run file into
+ * one configured directory and left the telemetry outbox exactly where it
+ * was. Both additions name the outbox in prose precisely to record that they
+ * do NOT write there:
+ *
+ *   - `run-paths.ts` writes nothing at all — it is a pure path module. Its
+ *     only match on this check's own write-call list is the word
+ *     `writeFileSync` inside a doc comment explaining why the repo resolver
+ *     is synchronous.
+ *   - `loop-log.ts` really does `openSync`, but onto the task's own
+ *     `output/driver.log`; its single mention of the outbox is the sentence
+ *     saying the driver log deliberately lives nowhere near it.
+ *
+ * Same shape as `OUTBOX_RESUME_RECORD_ALLOWLIST` and the two entries above:
+ * the check cannot tell where a write points, so the exemption is stated
+ * here rather than the check silently widened.
+ */
+const OUTBOX_PROSE_MENTION_ALLOWLIST = new Set([CONFIG_PATH, WORKER_BOUNDARY_PATH, RUN_PATHS_PATH, LOOP_LOG_PATH])
 
 function sourceFiles(dir: string, prefix: string): [string, string][] {
   const out: [string, string][] = []

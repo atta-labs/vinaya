@@ -138,8 +138,8 @@ describe('writeLoopState / readLoopState (control-store-v1 task 4, O1)', () => {
   })
 
   it('a corrupt record is refused as corrupt, never silently read as absent — refusing to reset budgets past it', () => {
-    const path = join(dir, '554', 'loop-state.json')
-    mkdirSync(join(dir, '554'), { recursive: true })
+    const path = join(dir, '554', 'control', 'loop-state.json')
+    mkdirSync(join(dir, '554', 'control'), { recursive: true })
     writeFileSync(path, '{"version":1,"kind":"loop_state"')
     expect(readLoopState(deps, 554).status).toBe('corrupt')
   })
@@ -153,7 +153,7 @@ describe('writeLoopState / readLoopState (control-store-v1 task 4, O1)', () => {
     // `dev-review-loop.ts` included, before that function's own try block
     // even starts — reproducing round 1's "escapes uncaught instead of a
     // decided pause" failure class through a different trigger.
-    const path = join(dir, '554', 'loop-state.json')
+    const path = join(dir, '554', 'control', 'loop-state.json')
     mkdirSync(path, { recursive: true })
     const result = readLoopState(deps, 554)
     expect(result.status).toBe('corrupt')
@@ -196,8 +196,8 @@ describe('acquireOwnership', () => {
     // Simulate a crash that left a torn write in the exact epoch-1 slot a
     // fresh acquisition would try next: not valid JSON, so the strict
     // parser reads it as corrupt, never as a live owner.
-    mkdirSync(join(dir, '551', 'ownership'), { recursive: true })
-    writeFileSync(join(dir, '551', 'ownership', 'epoch-000001.json'), '{"version":1,"kind":"ow', 'utf8')
+    mkdirSync(join(dir, '551', 'control', 'ownership'), { recursive: true })
+    writeFileSync(join(dir, '551', 'control', 'ownership', 'epoch-000001.json'), '{"version":1,"kind":"ow', 'utf8')
 
     const result = acquireOwnership(deps, 551, 'run-a')
     expect(result).toMatchObject({ acquired: true, epoch: 1 })
@@ -207,16 +207,16 @@ describe('acquireOwnership', () => {
 describe('interrupted write — a torn record is refused as corrupt, never read as absent', () => {
   it('for a run record', () => {
     acquireOwnership(deps, 551, 'run-a')
-    mkdirSync(join(dir, '551', 'run'), { recursive: true })
-    writeFileSync(join(dir, '551', 'run', 'run-a.json'), '{"version":1,"kind":"run","task":551,', 'utf8')
+    mkdirSync(join(dir, '551', 'control', 'run'), { recursive: true })
+    writeFileSync(join(dir, '551', 'control', 'run', 'run-a.json'), '{"version":1,"kind":"run","task":551,', 'utf8')
 
     const result = readRun(deps, 551, 'run-a')
     expect(result.status).toBe('corrupt')
   })
 
   it('for an ownership record read back directly', () => {
-    mkdirSync(join(dir, '551', 'ownership'), { recursive: true })
-    writeFileSync(join(dir, '551', 'ownership', 'epoch-000001.json'), 'not json at all', 'utf8')
+    mkdirSync(join(dir, '551', 'control', 'ownership'), { recursive: true })
+    writeFileSync(join(dir, '551', 'control', 'ownership', 'epoch-000001.json'), 'not json at all', 'utf8')
 
     const current = readCurrentOwnership(deps, 551)
     expect(current.epoch).toBe(0)

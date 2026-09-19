@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { z } from 'zod'
 import {
   CODE_REVIEW_SEVERITY_ORDER,
@@ -743,6 +743,40 @@ export const VinayaConfigSchema = z.object({
     .refine((v) => v.headers === undefined || v.webhookUrl !== undefined, {
       message: 'logPublish: headers requires webhookUrl'
     })
+    .optional(),
+  // The one directory every file a task's RUN writes lives under
+  // (`apps/cli/src/lib/run-paths.ts`'s `runPath`, the single function that
+  // resolves all of them). Absent — the default for every repo that has
+  // never set this key — runs write under a per-repository folder of the
+  // machine's own Vinaya home instead (`defaultRuntimeDir`). Set it to move
+  // the whole tree somewhere with room, or somewhere a backup/retention
+  // policy already covers: an agent-output folder grew to 738 MB under the
+  // Vinaya home with nothing naming an owner for it, which is why the
+  // destination became configurable at all.
+  //
+  // NOT the telemetry outbox, and not any other log destination — those
+  // stay where they are, under the Vinaya home, and are the one exception
+  // `run-paths-only.test.ts` names.
+  //
+  // **Read only from the default branch by an unattended caller**
+  // (`resolveTrustAnchorRuntimeDir`, below), the same rule `webhookUrl`
+  // already carries and for the same reason: this is a filesystem
+  // destination a pull request under review could otherwise redirect in its
+  // own diff, and the loop that would honour it runs with no human
+  // watching.
+  //
+  // **Must be absolute.** A relative value is resolved against each
+  // process's own cwd at `fs` call time, so the driver and a `vinaya`
+  // subcommand run from a different directory would silently disagree about
+  // where the control store lives — and a value naming a path inside the
+  // repository would put the driver lock, the ownership epochs and the held
+  // verdicts somewhere a confined role can write. `resolveRuntimeDir`
+  // additionally refuses a value that resolves inside the repository, which
+  // an absolute path can still do.
+  runtimeDir: z
+    .string()
+    .min(1)
+    .refine((v) => isAbsolute(v), { message: 'runtimeDir: must be an absolute path' })
     .optional()
 })
 
@@ -825,6 +859,26 @@ export function globalTokensCollectIgnoredWarning(path: string): string {
 }
 
 /**
+ * `runtimeDir` is scope-sensitive in a way the other global-only keys are
+ * not: it is a DIRECTORY, and the per-repository segment that keeps two
+ * repositories' identically-numbered tasks apart is added only by
+ * `defaultRuntimeDir` (`run-paths.ts`). A configured value carries no such
+ * segment, because a repo-local `vinaya.config.json` already belongs to one
+ * repository — an assumption the machine-global file breaks outright.
+ *
+ * Set globally, every repository on the machine would collapse into one
+ * tree: repo A's Issue `12` and repo B's Issue `12` would share a driver
+ * lock, one set of ownership epochs and transitions, and — worst — one
+ * `sessions/<role>-<agent>.json`, the file a confined dispatch is granted
+ * exact-file read+write on. That is the cross-dispatch session-theft path
+ * `apps/cli/specs/isolation.md` §3 item 5 records as closed; honouring this
+ * key globally would reopen it.
+ */
+export function globalRuntimeDirIgnoredWarning(path: string): string {
+  return `${path}: "runtimeDir" in the global config is ignored — it carries no repository segment, so a machine-wide value would collapse every repository's task folders into one tree. Declare it from a repo-local vinaya.config.json.`
+}
+
+/**
  * `checks` and `principals` from the global config are both explicitly out
  * of scope for it (`checks`: spec chapter, "Explicitly out of scope for this
  * design"; `principals`: a trust decision, same reasoning as
@@ -863,6 +917,10 @@ function stripGlobalOnlyKeys(config: VinayaConfig, path: string): VinayaConfig {
   if (result.tokens) {
     console.error(`⚠ ${globalTokensCollectIgnoredWarning(path)}`)
     result = { ...result, tokens: undefined }
+  }
+  if (result.runtimeDir) {
+    console.error(`⚠ ${globalRuntimeDirIgnoredWarning(path)}`)
+    result = { ...result, runtimeDir: undefined }
   }
   return result
 }
@@ -1004,6 +1062,41 @@ export function resolveTrustAnchorWebhookTarget(
   const anchorTarget = resolveLogPublishTarget(trustAnchorConfig)
   if (!anchorTarget || !('webhookUrl' in anchorTarget) || anchorTarget.webhookUrl !== localWebhookUrl) return null
   return anchorTarget
+}
+
+/**
+ * The working tree's own `runtimeDir` — `null` when unset. The value an
+ * ATTENDED caller honours directly (a human chose to run the command, the
+ * same trust level as `dispatch.agent`); an UNATTENDED one must put it
+ * through `resolveTrustAnchorRuntimeDir` first.
+ */
+export function resolveRuntimeDirSetting(config: VinayaConfig | null): string | null {
+  return config?.runtimeDir ?? null
+}
+
+/**
+ * The trust-anchor-approved `runtimeDir` for an UNATTENDED caller — `null`
+ * unless the repository's default-branch copy of `vinaya.config.json`
+ * (`trustAnchorConfig`, from `loadTrustAnchorConfig()`) declares the EXACT
+ * SAME value the working tree resolved. A `null` result means "fall back to
+ * the per-repository default," never "honour the working tree anyway."
+ *
+ * Exactly `resolveTrustAnchorWebhookTarget`'s rule, applied to the second
+ * destination a pull request could redirect in its own diff. A branch that
+ * set `runtimeDir` to the developer's own worktree would otherwise put the
+ * driver's lock, the control records and the reviewer hand-off files inside
+ * the very tree the confined developer is allowed to write — letting a
+ * brief-driven agent forge its own ownership epoch, its own held verdict,
+ * or another task's resume record. Pure: takes the already-resolved local
+ * value and an already-loaded trust-anchor config, no filesystem or network
+ * of its own.
+ */
+export function resolveTrustAnchorRuntimeDir(
+  localRuntimeDir: string,
+  trustAnchorConfig: VinayaConfig | null
+): string | null {
+  const anchored = resolveRuntimeDirSetting(trustAnchorConfig)
+  return anchored !== null && anchored === localRuntimeDir ? anchored : null
 }
 
 /** `log-flush.ts`'s own default when a caller passes no `maxChunksPerFlush` at all — kept here, next to the config field it backs, so the schema comment and the default never drift apart. */

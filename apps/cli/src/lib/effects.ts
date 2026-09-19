@@ -33,14 +33,25 @@
  */
 
 import { createHash } from 'node:crypto'
-import { join } from 'node:path'
 import { acquireOwnership, type ControlStoreDeps, readEffect, writeEffect } from '@attalabs/aeg-core'
-import { GLOBAL_VINAYA_HOME } from './config.js'
 import { log as logEvent, type LogEventInput } from './log-sink.js'
+import { runtimeDirForThisRepo, tasksExecutionRoot } from './run-paths.js'
 
-/** `join(GLOBAL_VINAYA_HOME, 'control-store')` — a sibling of `outboxRoot()` (`dev-review-loop/reviewer-dispatch.ts`), never nested inside the legacy outbox tree this store replaces. */
+/**
+ * The control store's one root: the directory holding one folder per task
+ * (`run-paths.ts`'s `tasksExecutionRoot`). The store appends the task and
+ * its own `control/` segment itself, so a task's records land beside its
+ * session records, its raw output and its per-round reviewer files rather
+ * than in a tree of their own.
+ *
+ * There used to be TWO roots — this one, and a second that
+ * `dev-review-loop/reviewer-dispatch.ts` derived from the telemetry outbox
+ * — so a manifest record and an ownership epoch for the same task could sit
+ * in different places on disk. They are one root now; no record's own
+ * filename, content or version changed in the process.
+ */
 export function controlStoreRoot(): string {
-  return join(GLOBAL_VINAYA_HOME, 'control-store')
+  return tasksExecutionRoot(runtimeDirForThisRepo())
 }
 
 export function sha256Hex(value: string): string {

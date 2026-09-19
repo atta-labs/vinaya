@@ -24,7 +24,6 @@
  */
 
 import { readdirSync, readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
 import { defaultControlStoreDeps, type Freshness, type TaskEscalationPacket } from '@attalabs/aeg-core'
 import {
   escalationIdFor,
@@ -40,6 +39,7 @@ import {
   type RoundVerdictLines,
   type TaskLoopState
 } from '../task-status.js'
+import { runPath, tasksExecutionRoot } from '../run-paths.js'
 
 // --- Observed<T> -------------------------------------------------------------
 
@@ -70,10 +70,6 @@ export function paginate<T>(items: readonly T[], cursor: string | undefined, lim
 // convention: publication.ts's effect-marker shape is not exported, and
 // widening its Surface for one more reader is out of this task's Surface) --
 
-function taskOutboxDir(root: string, task: number): string {
-  return join(root, 'dev-review-loop', String(task))
-}
-
 function readIfExists(path: string): string | null {
   try {
     return readFileSync(path, 'utf8')
@@ -85,7 +81,7 @@ function readIfExists(path: string): string | null {
 type ForgeEffectRecord = { effectId: string; status: 'started' | 'posted'; url?: string }
 
 function readEffectMarker(root: string, task: number, key: string): ForgeEffectRecord | null {
-  const raw = readIfExists(join(taskOutboxDir(root, task), `effect-${key}.json`))
+  const raw = readIfExists(runPath(root, task, { area: 'control', file: `effect-${key}.json` }))
   if (!raw) return null
   try {
     return JSON.parse(raw) as ForgeEffectRecord
@@ -98,7 +94,7 @@ function readEffectMarker(root: string, task: number, key: string): ForgeEffectR
 function newestPublishedRound(root: string, task: number): number | null {
   let entries: string[]
   try {
-    entries = readdirSync(taskOutboxDir(root, task))
+    entries = readdirSync(runPath(root, task, { area: 'control' }))
   } catch {
     return null
   }
@@ -197,7 +193,7 @@ export function readEscalationPacket(root: string, task: number): TaskEscalation
   const verdictLines: RoundVerdictLines | null = lastRoundVerdictLines(root, task)
   const profile = PAUSE_REASON_PROFILE[pause.reason]
   const escalationId = pause.escalationId ?? escalationIdFor(pause.task, pause.round, pause.head)
-  const controlStoreDeps = defaultControlStoreDeps(() => join(dirname(root), 'control-store'))
+  const controlStoreDeps = defaultControlStoreDeps(() => tasksExecutionRoot(root))
   const escalation = readEscalationRecord(pause.task, escalationId, controlStoreDeps)
 
   return {

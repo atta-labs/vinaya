@@ -133,20 +133,43 @@ exit 1
   return dir
 }
 
+/**
+ * Pinned so the runtime directory these fixtures write into is deterministic.
+ * Without it, `run-paths.ts` resolves the repo from `git remote get-url
+ * origin` in whatever checkout the test runs from, and the fixture and the
+ * CLI under test would disagree about the directory on a fork or a rename.
+ */
+const FIXTURE_REPO_SEGMENT = 'acme-widget'
+
 function setUp(): { home: string; env: Record<string, string> } {
   const home = tempDir('vinaya-task-status-home-')
   const forgeDir = stubGh(home)
-  return { home, env: { HOME: home, PATH: `${forgeDir}:${process.env.PATH ?? ''}` } }
+  return {
+    home,
+    env: { HOME: home, PATH: `${forgeDir}:${process.env.PATH ?? ''}`, AEG_REPO: 'acme/widget' }
+  }
 }
 
-function outboxTaskDir(home: string, task: number): string {
-  return join(home, '.vinaya', 'outbox', 'dev-review-loop', String(task))
+/** The task's own run folder — `run-paths.ts`'s layout, written out by hand so these fixtures assert against literal strings rather than the code under test. */
+function taskRunDir(home: string, task: number): string {
+  return join(home, '.vinaya', 'runtime', FIXTURE_REPO_SEGMENT, 'tasks-execution', String(task))
 }
 
-function writeOutbox(home: string, task: number, name: string, content: unknown): void {
-  const dir = outboxTaskDir(home, task)
+/**
+ * Places a fixture file by the same classification production uses: the
+ * driver lock at the task folder's root, a held verdict in its own round's
+ * folder, and the pause state and effect markers in `control/`.
+ */
+function writeRunFile(home: string, task: number, name: string, content: unknown): void {
+  const held = /^round-(\d+)-(reviewer|security)\.md$/.exec(name)
+  const dir = held
+    ? join(taskRunDir(home, task), 'rounds', held[1] as string)
+    : name === 'driver.pid.json'
+      ? taskRunDir(home, task)
+      : join(taskRunDir(home, task), 'control')
+  const file = held ? `${held[2]}.md` : name
   mkdirSync(dir, { recursive: true })
-  writeFileSync(join(dir, name), typeof content === 'string' ? content : JSON.stringify(content), 'utf8')
+  writeFileSync(join(dir, file), typeof content === 'string' ? content : JSON.stringify(content), 'utf8')
 }
 
 describe('vinaya task status — router wiring', () => {
@@ -161,8 +184,8 @@ describe('vinaya task status — router wiring', () => {
 describe('vinaya task status (O1/O3 — the list form)', () => {
   it('prints one line per open task with a frozen brief, each in its derived state', () => {
     const { home, env } = setUp()
-    writeOutbox(home, 601, 'driver.pid.json', { pid: process.pid, startedAt: '2026-09-10T00:00:00.000Z' })
-    writeOutbox(home, 602, 'pause-state.json', {
+    writeRunFile(home, 601, 'driver.pid.json', { pid: process.pid, startedAt: '2026-09-10T00:00:00.000Z' })
+    writeRunFile(home, 602, 'pause-state.json', {
       task: 602,
       round: 1,
       head: 'abc123',
@@ -171,8 +194,8 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
       reason: 'escalation',
       pausedAt: '2026-09-10T00:00:00.000Z'
     })
-    writeOutbox(home, 603, 'effect-1-reviewer-verdict.json', { effectId: 'a', status: 'posted' })
-    writeOutbox(home, 603, 'effect-1-security-verdict.json', { effectId: 'b', status: 'posted' })
+    writeRunFile(home, 603, 'effect-1-reviewer-verdict.json', { effectId: 'a', status: 'posted' })
+    writeRunFile(home, 603, 'effect-1-security-verdict.json', { effectId: 'b', status: 'posted' })
 
     const r = runCli(['task', 'status'], env)
 
@@ -202,8 +225,8 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
   // even asks the forge about it (the stub fails loudly if it does).
   it('lists a frozen backlog task beside tranche tasks — one row like a tranche task, in its derived state', () => {
     const { home, env } = setUp()
-    writeOutbox(home, 601, 'driver.pid.json', { pid: process.pid, startedAt: '2026-09-10T00:00:00.000Z' })
-    writeOutbox(home, 602, 'pause-state.json', {
+    writeRunFile(home, 601, 'driver.pid.json', { pid: process.pid, startedAt: '2026-09-10T00:00:00.000Z' })
+    writeRunFile(home, 602, 'pause-state.json', {
       task: 602,
       round: 1,
       head: 'abc123',
@@ -212,9 +235,9 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
       reason: 'escalation',
       pausedAt: '2026-09-10T00:00:00.000Z'
     })
-    writeOutbox(home, 603, 'effect-1-reviewer-verdict.json', { effectId: 'a', status: 'posted' })
-    writeOutbox(home, 603, 'effect-1-security-verdict.json', { effectId: 'b', status: 'posted' })
-    writeOutbox(home, 604, 'driver.pid.json', { pid: process.pid, startedAt: '2026-09-10T00:00:00.000Z' })
+    writeRunFile(home, 603, 'effect-1-reviewer-verdict.json', { effectId: 'a', status: 'posted' })
+    writeRunFile(home, 603, 'effect-1-security-verdict.json', { effectId: 'b', status: 'posted' })
+    writeRunFile(home, 604, 'driver.pid.json', { pid: process.pid, startedAt: '2026-09-10T00:00:00.000Z' })
 
     const r = runCli(['task', 'status'], env)
 
@@ -229,7 +252,7 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
 
   it('--json returns the same fields in the schema-1 envelope', () => {
     const { home, env } = setUp()
-    writeOutbox(home, 601, 'driver.pid.json', { pid: process.pid, startedAt: '2026-09-10T00:00:00.000Z' })
+    writeRunFile(home, 601, 'driver.pid.json', { pid: process.pid, startedAt: '2026-09-10T00:00:00.000Z' })
 
     const r = runCli(['task', 'status', '--json'], env)
     const parsed = JSON.parse(withoutTrustAnchorWarning(r.stdout)) as {
@@ -253,7 +276,7 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
 describe('vinaya task status <tranche> <n> (O2 — the single-task form)', () => {
   it('prints the resume command for a paused task', () => {
     const { home, env } = setUp()
-    writeOutbox(home, 602, 'pause-state.json', {
+    writeRunFile(home, 602, 'pause-state.json', {
       task: 602,
       round: 1,
       head: 'abc123',
@@ -262,8 +285,8 @@ describe('vinaya task status <tranche> <n> (O2 — the single-task form)', () =>
       reason: 'escalation',
       pausedAt: '2026-09-10T00:00:00.000Z'
     })
-    writeOutbox(home, 602, 'round-1-reviewer.md', 'VERDICT: REQUEST CHANGES\n\nJudged head: abc123\n')
-    writeOutbox(home, 602, 'round-1-security.md', 'VERDICT: PASS\n\nJudged head: abc123\n')
+    writeRunFile(home, 602, 'round-1-reviewer.md', 'VERDICT: REQUEST CHANGES\n\nJudged head: abc123\n')
+    writeRunFile(home, 602, 'round-1-security.md', 'VERDICT: PASS\n\nJudged head: abc123\n')
 
     const r = runCli(['task', 'status', 'demo', '2'], env)
 
@@ -278,8 +301,8 @@ describe('vinaya task status <tranche> <n> (O2 — the single-task form)', () =>
 
   it('prints no resume line for a published task', () => {
     const { home, env } = setUp()
-    writeOutbox(home, 603, 'effect-1-reviewer-verdict.json', { effectId: 'a', status: 'posted' })
-    writeOutbox(home, 603, 'effect-1-security-verdict.json', { effectId: 'b', status: 'posted' })
+    writeRunFile(home, 603, 'effect-1-reviewer-verdict.json', { effectId: 'a', status: 'posted' })
+    writeRunFile(home, 603, 'effect-1-security-verdict.json', { effectId: 'b', status: 'posted' })
 
     const r = runCli(['task', 'status', 'demo', '3'], env)
 
@@ -329,7 +352,7 @@ describe('vinaya task status --follow (task-run-v1 task 15, O6)', () => {
 
   it("--issue <n> --follow prints the log file's existing content, then keeps running (killed by timeout, same as a real tail -f)", () => {
     const { home, env } = setUp()
-    const logPath = join(home, '.vinaya', 'loops', 'acme-widget', '521.log')
+    const logPath = join(taskRunDir(home, 521), 'output', 'driver.log')
     mkdirSync(dirname(logPath), { recursive: true })
     writeFileSync(
       logPath,
@@ -342,7 +365,7 @@ describe('vinaya task status --follow (task-run-v1 task 15, O6)', () => {
         cwd: CLI_ROOT,
         encoding: 'utf8',
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env, ...env, AEG_REPO: 'acme/widget' },
+        env: { ...process.env, ...env },
         timeout: 1500
       })
     } catch (e) {

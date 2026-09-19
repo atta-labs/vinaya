@@ -115,6 +115,31 @@ const INDEX = join(CLI_ROOT, 'src', 'index.ts')
 const DEFAULT_POLICY_DIGEST = policyDigest(DEFAULT_REVIEW_POLICY)
 
 const TASK = 9001
+
+/**
+ * Where a fixture's driver writes every file this task's run produces.
+ *
+ * `unresolved` is the repo segment `run-paths.ts`'s `defaultRuntimeDir`
+ * falls back to, and these fixtures run in a temporary directory with no
+ * git origin to resolve — the same reason the outbox helper below already
+ * reads from an `unresolved` directory. Built by hand here, never by
+ * importing `runPath`, so the layout this task establishes is asserted
+ * against literal strings rather than against the function under test.
+ */
+function taskRunDir(home: string, task: number = TASK): string {
+  return join(home, '.vinaya', 'runtime', 'unresolved', 'tasks-execution', String(task))
+}
+
+/** The task's control records — the ownership epochs, escalations, resolutions, loop state and pause state. */
+function controlDir(home: string, task: number = TASK): string {
+  return join(taskRunDir(home, task), 'control')
+}
+
+/** One round's own folder: its held verdicts, reviewer work directories, and its read-only candidate and scratch copies. */
+function roundDir(home: string, round: number, task: number = TASK): string {
+  return join(taskRunDir(home, task), 'rounds', String(round))
+}
+
 const BRANCH = `task/dev-review-loop-v1/${TASK}`
 const HEAD_SHA = 'a'.repeat(40)
 const BASE_SHA = 'b'.repeat(40)
@@ -151,10 +176,10 @@ function writeFakeClaude(dir: string): void {
     `#!/bin/sh
 touch "$HOME/.fake-dev-invoked" 2>/dev/null
 cat > /dev/null
-WORKROOT="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK"
+WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
 case "$VINAYA_ROLE" in
   code-reviewer)
-    WD="$WORKROOT/round-$VINAYA_ROUND-reviewer-work"
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -162,7 +187,7 @@ case "$VINAYA_ROLE" in
     echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
   security)
-    WD="$WORKROOT/round-$VINAYA_ROUND-security-work"
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -186,10 +211,10 @@ function writeFakeClaudeCountingDevInvocations(dir: string): void {
     `#!/bin/sh
 touch "$HOME/.fake-dev-invoked" 2>/dev/null
 cat > /dev/null
-WORKROOT="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK"
+WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
 case "$VINAYA_ROLE" in
   code-reviewer)
-    WD="$WORKROOT/round-$VINAYA_ROUND-reviewer-work"
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -197,7 +222,7 @@ case "$VINAYA_ROLE" in
     echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
   security)
-    WD="$WORKROOT/round-$VINAYA_ROUND-security-work"
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -222,11 +247,11 @@ function writeFakeClaudeMarkingReviewerDispatchStart(dir: string): void {
     `#!/bin/sh
 touch "$HOME/.fake-dev-invoked" 2>/dev/null
 cat > /dev/null
-WORKROOT="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK"
+WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
 case "$VINAYA_ROLE" in
   code-reviewer)
     touch "$HOME/.reviewer-dispatch-started"
-    WD="$WORKROOT/round-$VINAYA_ROUND-reviewer-work"
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -235,7 +260,7 @@ case "$VINAYA_ROLE" in
     ;;
   security)
     touch "$HOME/.reviewer-dispatch-started"
-    WD="$WORKROOT/round-$VINAYA_ROUND-security-work"
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -1166,7 +1191,7 @@ describe('devReviewLoop — a crash mid-publish never logs merged_ready (regress
     const r = runLoop(home, cwd, path)
     expect(r.status).not.toBe(0)
 
-    const roleLog = readFileSync(join(home, '.vinaya', 'loops', 'unresolved', `${TASK}.log`), 'utf8')
+    const roleLog = readFileSync(join(taskRunDir(home), 'output', 'driver.log'), 'utf8')
     expect(roleLog).toMatch(/^\[dev-review-loop\] driver_exited: reason=error last_decision=\S+$/m)
   }, 20000)
 
@@ -1198,9 +1223,10 @@ describe('devReviewLoop — a crash mid-publish never logs merged_ready (regress
     const lock = JSON.parse(readFileSync(driverLockPath(home), 'utf8')) as { pid: number; startedAt: string }
     expect(typeof lock.pid).toBe('number')
 
-    const pauseState = JSON.parse(
-      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
-    ) as Record<string, unknown>
+    const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
     expect(pauseState.reason).toBe('infrastructure')
 
     const posted = postedCommentFiles(home).map((f) => readFileSync(join(home, '.fake-gh-posted-comments', f), 'utf8'))
@@ -1317,9 +1343,10 @@ exit 1
     expect(r.stdout).toMatch(/paused \(infrastructure\)/)
     expect(existsSync(join(home, '.fake-dev-invoked'))).toBe(false)
 
-    const pauseState = JSON.parse(
-      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
-    ) as Record<string, unknown>
+    const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
     expect(pauseState.reason).toBe('infrastructure')
     expect(String(pauseState.detail)).toMatch(/carries no principal-authored, frozen/)
 
@@ -1370,9 +1397,10 @@ exit 1
     expect(r.stdout).toMatch(/paused \(infrastructure\)/)
     expect(existsSync(join(home, '.fake-dev-invoked'))).toBe(false)
 
-    const pauseState = JSON.parse(
-      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
-    ) as Record<string, unknown>
+    const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
     expect(pauseState.reason).toBe('infrastructure')
 
     // O6: the lock stays in place — the process is alive, holding it,
@@ -1622,9 +1650,8 @@ describe('devReviewLoop — O9 (task-run-v1 21, #541, round 2 review BLOCKER): a
     // code, never round 1 redone. `writeFakeClaude` organizes reviewer
     // work directories by `$VINAYA_ROUND` — round 2's own directories only
     // exist if the driver genuinely advanced past round 1's own numbering.
-    const drlRoot = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
-    expect(existsSync(join(drlRoot, 'round-2-reviewer-work'))).toBe(true)
-    expect(existsSync(join(drlRoot, 'round-2-security-work'))).toBe(true)
+    expect(existsSync(join(roundDir(home, 2), 'reviewer-work'))).toBe(true)
+    expect(existsSync(join(roundDir(home, 2), 'security-work'))).toBe(true)
 
     // The published summary — round 2's real, live computation — still
     // names round 1, reconstructed from what round 1 actually flushed
@@ -1822,20 +1849,14 @@ describe('devReviewLoop — round 1 clean, ends on publish', () => {
     expect(r.status).toBe(0)
     expect(r.stdout).toMatch(/publish/)
 
-    const reviewerVerdict = readFileSync(
-      join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'round-1-reviewer.md'),
-      'utf8'
-    )
+    const reviewerVerdict = readFileSync(join(roundDir(home, 1), 'reviewer.md'), 'utf8')
     expect(reviewerVerdict).toMatch(/^VERDICT: APPROVE$/m)
     // O2: the held verdict carries the version it judged and a MET/NOT MET
     // line per objective — no more hardcoded `objectivesVersion: null`.
     const expectedVersion = objectivesVersion([{ id: 'O1', text: 'Do the thing.' }])
     expect(reviewerVerdict).toMatch(new RegExp(`^Objectives version: ${expectedVersion}$`, 'm'))
     expect(reviewerVerdict).toMatch(/^O1: MET — done\.$/m)
-    const securityVerdict = readFileSync(
-      join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'round-1-security.md'),
-      'utf8'
-    )
+    const securityVerdict = readFileSync(join(roundDir(home, 1), 'security.md'), 'utf8')
     expect(securityVerdict).toMatch(/^VERDICT: PASS$/m)
     expect(securityVerdict).toMatch(new RegExp(`^Objectives version: ${expectedVersion}$`, 'm'))
     expect(securityVerdict).toMatch(/^O1: MET — done\.$/m)
@@ -2037,7 +2058,7 @@ describe('devReviewLoop — round 1 clean, ends on publish', () => {
     expect(r.status).toBe(0)
     expect(r.stdout).toMatch(/publish/)
 
-    const roleLog = readFileSync(join(home, '.vinaya', 'loops', 'unresolved', `${TASK}.log`), 'utf8')
+    const roleLog = readFileSync(join(taskRunDir(home), 'output', 'driver.log'), 'utf8')
     expect(roleLog).toMatch(/evidence_report_failed: round=1 head=\S+ reason=/)
     expect(roleLog).toContain('fake-always-refuse-body: fixture forces a body-check refusal')
   }, 20000)
@@ -2325,10 +2346,10 @@ function writeFakeClaudeCapturingReviewerCwd(dir: string): void {
     `#!/bin/sh
 touch "$HOME/.fake-dev-invoked" 2>/dev/null
 cat > /dev/null
-WORKROOT="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK"
+WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
 case "$VINAYA_ROLE" in
   code-reviewer)
-    WD="$WORKROOT/round-$VINAYA_ROUND-reviewer-work"
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
     mkdir -p "$WD"
     pwd > "$WD/cwd.txt"
     cat "$(pwd)/candidate-marker.txt" > "$WD/candidate-marker-seen.txt" 2>/dev/null || true
@@ -2338,7 +2359,7 @@ case "$VINAYA_ROLE" in
     echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
   security)
-    WD="$WORKROOT/round-$VINAYA_ROUND-security-work"
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work"
     mkdir -p "$WD"
     pwd > "$WD/cwd.txt"
     cat "$(pwd)/candidate-marker.txt" > "$WD/candidate-marker-seen.txt" 2>/dev/null || true
@@ -2379,39 +2400,37 @@ describe('devReviewLoop — reviewers inspect one immutable candidate with isola
     expect(r.status).toBe(0)
     expect(r.stdout).toMatch(/publish/)
 
-    const taskDir = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
-    const reviewerCwd = readFileSync(join(taskDir, 'round-1-reviewer-work', 'cwd.txt'), 'utf8').trim()
-    const securityCwd = readFileSync(join(taskDir, 'round-1-security-work', 'cwd.txt'), 'utf8').trim()
+    const reviewerCwd = readFileSync(join(roundDir(home, 1), 'reviewer-work', 'cwd.txt'), 'utf8').trim()
+    const securityCwd = readFileSync(join(roundDir(home, 1), 'security-work', 'cwd.txt'), 'utf8').trim()
 
     // O1/O2: distinct scratch directories, never the shared candidate
     // itself and never each other's.
     expect(reviewerCwd).not.toBe(securityCwd)
-    expect(reviewerCwd).toMatch(/round-1-reviewer-scratch$/)
-    expect(securityCwd).toMatch(/round-1-security-scratch$/)
+    expect(reviewerCwd).toMatch(new RegExp(`${roundDir(home, 1)}/reviewer-scratch$`))
+    expect(securityCwd).toMatch(new RegExp(`${roundDir(home, 1)}/security-scratch$`))
 
     // O1: both reviewers read the identical candidate content.
-    expect(readFileSync(join(taskDir, 'round-1-reviewer-work', 'candidate-marker-seen.txt'), 'utf8')).toBe(
+    expect(readFileSync(join(roundDir(home, 1), 'reviewer-work', 'candidate-marker-seen.txt'), 'utf8')).toBe(
       'candidate content for round 1\n'
     )
-    expect(readFileSync(join(taskDir, 'round-1-security-work', 'candidate-marker-seen.txt'), 'utf8')).toBe(
+    expect(readFileSync(join(roundDir(home, 1), 'security-work', 'candidate-marker-seen.txt'), 'utf8')).toBe(
       'candidate content for round 1\n'
     )
 
     // O3: the round's candidate and both scratch copies are gone once the
     // round published — nothing left over for a human, or the next round,
     // to find.
-    expect(existsSync(join(taskDir, 'round-1-candidate'))).toBe(false)
+    expect(existsSync(join(roundDir(home, 1), 'candidate'))).toBe(false)
     expect(existsSync(reviewerCwd)).toBe(false)
     expect(existsSync(securityCwd)).toBe(false)
   }, 20000)
 
   it('restart cleanliness: a candidate/scratch directory left by a crashed prior run is gone before this run dispatches anything (O3)', () => {
     const { home, cwd, path } = setUp()
-    const taskDir = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
-    const staleCandidate = join(taskDir, 'round-9-candidate')
+    const staleCandidate = join(roundDir(home, 9), 'candidate')
     mkdirSync(staleCandidate, { recursive: true })
     writeFileSync(join(staleCandidate, 'leftover.txt'), 'from a crashed prior run')
-    const staleScratch = join(taskDir, 'round-9-reviewer-scratch')
+    const staleScratch = join(roundDir(home, 9), 'reviewer-scratch')
     mkdirSync(staleScratch, { recursive: true })
 
     const r = runLoop(home, cwd, path)
@@ -2440,19 +2459,18 @@ describe('devReviewLoop — reviewers inspect one immutable candidate with isola
     expect(r.status).toBe(0)
     expect(r.stdout).toMatch(/publish/)
 
-    const taskDir = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
     // No candidate was ever built from the diverged worktree.
-    expect(existsSync(join(taskDir, 'round-1-candidate'))).toBe(false)
-    expect(existsSync(join(taskDir, 'round-1-reviewer-scratch'))).toBe(false)
-    expect(existsSync(join(taskDir, 'round-1-security-scratch'))).toBe(false)
+    expect(existsSync(join(roundDir(home, 1), 'candidate'))).toBe(false)
+    expect(existsSync(join(roundDir(home, 1), 'reviewer-scratch'))).toBe(false)
+    expect(existsSync(join(roundDir(home, 1), 'security-scratch'))).toBe(false)
     // Reviewers dispatched with no `cwd` override at all — never handed the
     // stale worktree's own content as a substitute.
-    const reviewerCwd = readFileSync(join(taskDir, 'round-1-reviewer-work', 'cwd.txt'), 'utf8').trim()
-    expect(reviewerCwd).not.toMatch(/round-1-reviewer-scratch$/)
+    const reviewerCwd = readFileSync(join(roundDir(home, 1), 'reviewer-work', 'cwd.txt'), 'utf8').trim()
+    expect(reviewerCwd).not.toMatch(new RegExp(`${roundDir(home, 1)}/reviewer-scratch$`))
     // The fake reviewer's `cat "$(pwd)/candidate-marker.txt" > ... || true`
     // still creates its target file via shell redirection even when `cat`
     // itself fails — so the assertion is an EMPTY file, never a missing one.
-    expect(readFileSync(join(taskDir, 'round-1-reviewer-work', 'candidate-marker-seen.txt'), 'utf8')).toBe('')
+    expect(readFileSync(join(roundDir(home, 1), 'reviewer-work', 'candidate-marker-seen.txt'), 'utf8')).toBe('')
   }, 20000)
 })
 
@@ -2473,10 +2491,10 @@ function writeFakeClaudePauseThenResumeScenario(dir: string): void {
     `#!/bin/sh
 touch "$HOME/.fake-dev-invoked" 2>/dev/null
 PROMPT="$(cat)"
-WORKROOT="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK"
+WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
 case "$VINAYA_ROLE" in
   code-reviewer)
-    WD="$WORKROOT/round-$VINAYA_ROUND-reviewer-work"
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
     mkdir -p "$WD"
     if [ -f "$HOME/.escalated-once" ]; then
       : > "$WD/findings.txt"
@@ -2490,7 +2508,7 @@ case "$VINAYA_ROLE" in
     echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
   security)
-    WD="$WORKROOT/round-$VINAYA_ROUND-security-work"
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -2509,7 +2527,7 @@ exit 0
 }
 
 function driverLockPath(home: string): string {
-  return join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'driver.pid.json')
+  return join(taskRunDir(home), 'driver.pid.json')
 }
 
 function writeDriverLockFixture(home: string, lock: { pid: number; startedAt: string }): void {
@@ -2597,9 +2615,10 @@ describe('devReviewLoop — escalation pauses, --resume continues after a ruling
     // naming WHICH role escalated, so the comment alone states what fired.
     expect(pauseComment).toContain('reviewer returned ESCALATE this round')
 
-    const pauseState = JSON.parse(
-      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
-    ) as Record<string, unknown>
+    const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
     expect(pauseState.round).toBe(1)
     expect(pauseState.reason).toBe('escalation')
     expect(pauseState.detail).toContain('reviewer returned ESCALATE this round')
@@ -2617,10 +2636,7 @@ describe('devReviewLoop — escalation pauses, --resume continues after a ruling
     expect(resumed.status).toBe(0)
     expect(resumed.stdout).toMatch(/publish/)
 
-    const devPrompts = readFileSync(
-      join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'dev-prompts.txt'),
-      'utf8'
-    )
+    const devPrompts = readFileSync(join(taskRunDir(home), 'dev-prompts.txt'), 'utf8')
     expect(devPrompts).toMatch(/Principal ruling on this pause/)
     expect(devPrompts).toMatch(/Go ahead and fix it\./)
 
@@ -2709,16 +2725,16 @@ describe('devReviewLoop — escalation pauses, --resume continues after a ruling
 // --- control-store-v1 task 6, #556: escalation record, resolution replay, cancel ---
 
 function escalationRecordPath(home: string, task: number, round: number, head: string): string {
-  return join(home, '.vinaya', 'control-store', String(task), 'escalation', `${task}-${round}-${head}.json`)
+  return join(controlDir(home, task), 'escalation', `${task}-${round}-${head}.json`)
 }
 
 function resolutionRecordPath(home: string, task: number, round: number, head: string): string {
-  return join(home, '.vinaya', 'control-store', String(task), 'resolution', `${task}-${round}-${head}.json`)
+  return join(controlDir(home, task), 'resolution', `${task}-${round}-${head}.json`)
 }
 
 /** Every `epoch-NNNNNN.json` ownership claim on disk for `task`, sorted — used to prove a replayed/refused resolution attempt never bumps the shared epoch (code review, round 2, HIGH). */
 function ownershipEpochFiles(home: string, task: number): string[] {
-  const dir = join(home, '.vinaya', 'control-store', String(task), 'ownership')
+  const dir = join(controlDir(home, task), 'ownership')
   if (!existsSync(dir)) return []
   return readdirSync(dir)
     .filter((f) => /^epoch-\d+\.json$/.test(f))
@@ -3010,7 +3026,7 @@ describe('devReviewLoop — O8 (task-run-v1 task 15): --resume accepts a moved h
     // only round 1's original brief prompt (written before the pause),
     // never a "Principal ruling on this pause" entry, which only the
     // SAME-head resume path (the sibling describe block above) ever writes.
-    const devPromptsPath = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'dev-prompts.txt')
+    const devPromptsPath = join(taskRunDir(home), 'dev-prompts.txt')
     if (existsSync(devPromptsPath)) {
       expect(readFileSync(devPromptsPath, 'utf8')).not.toMatch(/Principal ruling on this pause/)
     }
@@ -3039,7 +3055,7 @@ function writeFakeClaudeResumeScenario(dir: string): void {
     `#!/bin/sh
 touch "$HOME/.fake-dev-invoked" 2>/dev/null
 PROMPT="$(cat)"
-WORKROOT="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK"
+WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
 HAS_RESUME=0
 prev=""
 for a in "$@"; do
@@ -3048,7 +3064,7 @@ for a in "$@"; do
 done
 case "$VINAYA_ROLE" in
   code-reviewer)
-    WD="$WORKROOT/round-$VINAYA_ROUND-reviewer-work"
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
     mkdir -p "$WD"
     if [ "$VINAYA_ROUND" = "1" ]; then
       printf '%s\\n' 'BLOCKER|smoke.ts:1|deliberate round-1 blocker to force a real round 2' > "$WD/findings.txt"
@@ -3060,7 +3076,7 @@ case "$VINAYA_ROLE" in
     echo '{"session_id":"rev-session-'"$VINAYA_ROUND"'","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
   security)
-    WD="$WORKROOT/round-$VINAYA_ROUND-security-work"
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -3069,7 +3085,8 @@ case "$VINAYA_ROLE" in
     ;;
   *)
     mkdir -p "$WORKROOT"
-    printf '%s' "$PROMPT" > "$WORKROOT/round-$VINAYA_ROUND-dev-prompt.txt"
+    mkdir -p "$WORKROOT/rounds/$VINAYA_ROUND"
+    printf '%s' "$PROMPT" > "$WORKROOT/rounds/$VINAYA_ROUND/dev-prompt.txt"
     if [ "$VINAYA_ROUND" = "1" ] && [ "$HAS_RESUME" = "1" ]; then
       echo "test fixture: developer round 1 unexpectedly carried -r" >&2
       exit 9
@@ -3115,10 +3132,7 @@ describe('devReviewLoop — round 1 blocked, round 2 genuinely resumes', () => {
     // The clearest proof: round 2's own prompt, captured verbatim by the
     // fake binary, actually contains round 1's review content — not a
     // resume in name only.
-    const round2Prompt = readFileSync(
-      join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'round-2-dev-prompt.txt'),
-      'utf8'
-    )
+    const round2Prompt = readFileSync(join(roundDir(home, 2), 'dev-prompt.txt'), 'utf8')
     expect(round2Prompt).toMatch(/BLOCKER/)
     expect(round2Prompt).toMatch(/deliberate round-1 blocker/)
 
@@ -3131,15 +3145,9 @@ describe('devReviewLoop — round 1 blocked, round 2 genuinely resumes', () => {
     expect(round2Prompt).toMatch(/^Remote head: [0-9a-f]{40}$/m)
     expect(round2Prompt).toMatch(/`git push`/)
 
-    const round1Verdict = readFileSync(
-      join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'round-1-reviewer.md'),
-      'utf8'
-    )
+    const round1Verdict = readFileSync(join(roundDir(home, 1), 'reviewer.md'), 'utf8')
     expect(round1Verdict).toMatch(/^VERDICT: REQUEST CHANGES$/m)
-    const round2Verdict = readFileSync(
-      join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'round-2-reviewer.md'),
-      'utf8'
-    )
+    const round2Verdict = readFileSync(join(roundDir(home, 2), 'reviewer.md'), 'utf8')
     expect(round2Verdict).toMatch(/^VERDICT: APPROVE$/m)
 
     // The round's real BLOCKER survives into the
@@ -3193,10 +3201,10 @@ function writeFakeClaudeNoProgressScenario(dir: string): void {
     `#!/bin/sh
 touch "$HOME/.fake-dev-invoked" 2>/dev/null
 cat > /dev/null
-WORKROOT="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK"
+WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
 case "$VINAYA_ROLE" in
   code-reviewer)
-    WD="$WORKROOT/round-$VINAYA_ROUND-reviewer-work"
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
     mkdir -p "$WD"
     printf 'BLOCKER|smoke.ts:1|persistent blocker, never resolved\\n' > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -3204,7 +3212,7 @@ case "$VINAYA_ROLE" in
     echo '{"session_id":"rev-session-'"$VINAYA_ROUND"'","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
   security)
-    WD="$WORKROOT/round-$VINAYA_ROUND-security-work"
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -3292,9 +3300,10 @@ describe('devReviewLoop — a paused loop for reason no_progress still logs its 
     )
     expect(pauseComment).toContain('the final outbox flush before this pause failed')
 
-    const pauseState = JSON.parse(
-      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
-    ) as Record<string, unknown>
+    const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
     expect(pauseState.detail).toContain('the final outbox flush before this pause failed')
   }, 20000)
 })
@@ -3320,10 +3329,10 @@ function writeFakeClaudeReviewerWritesNothingScenario(dir: string): void {
     `#!/bin/sh
 touch "$HOME/.fake-dev-invoked" 2>/dev/null
 cat > /dev/null
-WORKROOT="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK"
+WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
 case "$VINAYA_ROLE" in
   code-reviewer)
-    WD="$WORKROOT/round-$VINAYA_ROUND-reviewer-work"
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -3367,9 +3376,8 @@ describe('devReviewLoop — a reviewer that wrote nothing cast no verdict (O1/O2
 
     // The retry used a genuinely fresh directory — the first attempt's own
     // directory is never reused or resumed.
-    const drlRoot = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
-    expect(existsSync(join(drlRoot, 'round-1-security-work'))).toBe(true)
-    expect(existsSync(join(drlRoot, 'round-1-security-work-retry1'))).toBe(true)
+    expect(existsSync(join(roundDir(home, 1), 'security-work'))).toBe(true)
+    expect(existsSync(join(roundDir(home, 1), 'security-work-retry1'))).toBe(true)
 
     // Nothing held or published for this round: no security verdict file
     // ever got written, and the round never advanced past 1. The code-review
@@ -3378,9 +3386,12 @@ describe('devReviewLoop — a reviewer that wrote nothing cast no verdict (O1/O2
     // BLOCKER, PR #489: `writeHeldVerdict` used to run inside `dispatchReviewer`
     // itself, so the succeeding role's file was already written by the time
     // `Promise.all` rejected on its sibling).
-    expect(existsSync(join(drlRoot, 'round-1-reviewer.md'))).toBe(false)
-    expect(existsSync(join(drlRoot, 'round-1-security.md'))).toBe(false)
-    const pauseState = JSON.parse(readFileSync(join(drlRoot, 'pause-state.json'), 'utf8')) as Record<string, unknown>
+    expect(existsSync(join(roundDir(home, 1), 'reviewer.md'))).toBe(false)
+    expect(existsSync(join(roundDir(home, 1), 'security.md'))).toBe(false)
+    const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
     expect(pauseState.round).toBe(1)
     expect(pauseState.reason).toBe('infrastructure')
 
@@ -3526,9 +3537,10 @@ describe('devReviewLoop — a superseded check-run failure never pauses a health
     // a "CI is red" prompt and never reach this point.
     expect(existsSync(join(home, '.dev-prompt-2.txt'))).toBe(false)
 
-    const pauseState = JSON.parse(
-      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
-    ) as Record<string, unknown>
+    const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
     expect(pauseState.round).toBe(1)
     expect(pauseState.reason).toBe('infrastructure')
     expect(pauseState.detail).toMatch(/security/)
@@ -3556,10 +3568,10 @@ function writeFakeClaudeReviewerWritesGarbageFindingsScenario(dir: string): void
     `#!/bin/sh
 touch "$HOME/.fake-dev-invoked" 2>/dev/null
 cat > /dev/null
-WORKROOT="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK"
+WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
 case "$VINAYA_ROLE" in
   code-reviewer)
-    WD="$WORKROOT/round-$VINAYA_ROUND-reviewer-work"
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -3568,9 +3580,9 @@ case "$VINAYA_ROLE" in
     ;;
   security)
     ATTEMPT=$(cat "$HOME/.security-invocations" 2>/dev/null | wc -l | tr -d ' ')
-    WD="$WORKROOT/round-$VINAYA_ROUND-security-work"
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work"
     if [ "$ATTEMPT" != "0" ]; then
-      WD="$WORKROOT/round-$VINAYA_ROUND-security-work-retry1"
+      WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work-retry1"
     fi
     mkdir -p "$WD"
     printf 'this is not a valid finding line at all, token=ghp_abcdefghijklmnopqrstuvwxyz012345\\n' > "$WD/findings.txt"
@@ -3609,8 +3621,10 @@ describe('devReviewLoop — a findings.txt line that still does not parse is an 
     const invocations = readFileSync(join(home, '.security-invocations'), 'utf8').trim().split('\n').filter(Boolean)
     expect(invocations).toHaveLength(2)
 
-    const drlRoot = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
-    const pauseState = JSON.parse(readFileSync(join(drlRoot, 'pause-state.json'), 'utf8')) as Record<string, unknown>
+    const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
     expect(pauseState.round).toBe(1)
     expect(pauseState.reason).toBe('infrastructure')
 
@@ -3685,10 +3699,10 @@ function writeFakeClaudeSecurityOmitsSecretsScenario(dir: string): void {
     `#!/bin/sh
 touch "$HOME/.fake-dev-invoked" 2>/dev/null
 cat > /dev/null
-WORKROOT="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK"
+WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
 case "$VINAYA_ROLE" in
   code-reviewer)
-    WD="$WORKROOT/round-$VINAYA_ROUND-reviewer-work"
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -3697,9 +3711,9 @@ case "$VINAYA_ROLE" in
     ;;
   security)
     ATTEMPT=$(cat "$HOME/.security-invocations" 2>/dev/null | wc -l | tr -d ' ')
-    WD="$WORKROOT/round-$VINAYA_ROUND-security-work"
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work"
     if [ "$ATTEMPT" != "0" ]; then
-      WD="$WORKROOT/round-$VINAYA_ROUND-security-work-retry1"
+      WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work-retry1"
     fi
     mkdir -p "$WD"
     : > "$WD/findings.txt"
@@ -3777,19 +3791,20 @@ function writeFakeClaudeMissingObjectivesScenario(dir: string): void {
     `#!/bin/sh
 touch "$HOME/.fake-dev-invoked" 2>/dev/null
 PROMPT="$(cat)"
-WORKROOT="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK"
+WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
 case "$VINAYA_ROLE" in
   code-reviewer)
-    WD="$WORKROOT/round-$VINAYA_ROUND-reviewer-work"
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
     mkdir -p "$WD"
-    printf '%s' "$PROMPT" > "$WORKROOT/round-$VINAYA_ROUND-reviewer-prompt.txt"
+    mkdir -p "$WORKROOT/rounds/$VINAYA_ROUND"
+    printf '%s' "$PROMPT" > "$WORKROOT/rounds/$VINAYA_ROUND/reviewer-prompt.txt"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
     printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n' > "$WD/report.txt"
     echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
   security)
-    WD="$WORKROOT/round-$VINAYA_ROUND-security-work"
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'CONFIG_SCAN: clean\\nSECRETS: none found\\n' > "$WD/report.txt"
@@ -3822,10 +3837,7 @@ describe('devReviewLoop — the reviewer prompt names the objectives file, and o
     expect(r.status).not.toBe(0)
     expect(r.stdout).toMatch(/paused \(infrastructure\)/)
 
-    const reviewerPrompt = readFileSync(
-      join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'round-1-reviewer-prompt.txt'),
-      'utf8'
-    )
+    const reviewerPrompt = readFileSync(join(roundDir(home, 1), 'reviewer-prompt.txt'), 'utf8')
     expect(reviewerPrompt).toMatch(/objectives\.txt/)
     expect(reviewerPrompt).toMatch(/O<n>\|MET\|<evidence>/)
     // O6 (review-validity-v1 task 8, #506): the prompt states the bare-word
@@ -3852,9 +3864,8 @@ describe('devReviewLoop — the reviewer prompt names the objectives file, and o
     // The code-reviewer half finishes clean, well before security's own
     // retry exhausts — its held verdict must not survive on disk either
     // (round 1 review finding, BLOCKER, PR #489).
-    const drlRoot = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
-    expect(existsSync(join(drlRoot, 'round-1-reviewer.md'))).toBe(false)
-    expect(existsSync(join(drlRoot, 'round-1-security.md'))).toBe(false)
+    expect(existsSync(join(roundDir(home, 1), 'reviewer.md'))).toBe(false)
+    expect(existsSync(join(roundDir(home, 1), 'security.md'))).toBe(false)
   }, 20000)
 })
 
@@ -4054,9 +4065,10 @@ describe('devReviewLoop — a red gate the developer never fixes pauses, bounded
     const stop = outboxLines(home).find((l) => l.event === 'stop_condition_met') as Record<string, unknown>
     expect(stop.condition).toBe('principal_stop')
 
-    const pauseState = JSON.parse(
-      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
-    ) as Record<string, unknown>
+    const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
     expect(pauseState.reason).toBe('infrastructure')
     expect(pauseState.detail).toMatch(/head .* unchanged/)
     expect(pauseState.detail).toMatch(/Vinaya CI \(run 1\)/)
@@ -4079,7 +4091,7 @@ describe('devReviewLoop — a red gate the developer never fixes pauses, bounded
 // results from control state, not from optional event history -------------
 
 function controlStoreLoopStatePath(home: string): string {
-  return join(home, '.vinaya', 'control-store', String(TASK), 'loop-state.json')
+  return join(controlDir(home), 'loop-state.json')
 }
 
 function writeControlStoreLoopState(home: string, record: Record<string, unknown>): void {
@@ -4141,13 +4153,12 @@ describe('devReviewLoop — control-store-v1 task 4 (#554, O3): a delivered-find
   it('reads as no_progress and dispatches nobody, purely from the control-store record — the local round-<k>-attach-redelivered marker never exists in this fixture', () => {
     const { home, cwd, path } = setUpAttachRecoversHeldRound()
 
-    const heldDir = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
-    mkdirSync(heldDir, { recursive: true })
+    mkdirSync(roundDir(home, 1), { recursive: true })
     writeFileSync(
-      join(heldDir, 'round-1-reviewer.md'),
+      join(roundDir(home, 1), 'reviewer.md'),
       `VERDICT: REQUEST CHANGES\n\nJudged head: ${HEAD_SHA}\n\nStill there.\n`
     )
-    writeFileSync(join(heldDir, 'round-1-security.md'), `VERDICT: FAIL\n\nJudged head: ${HEAD_SHA}\n\nStill there.\n`)
+    writeFileSync(join(roundDir(home, 1), 'security.md'), `VERDICT: FAIL\n\nJudged head: ${HEAD_SHA}\n\nStill there.\n`)
 
     // No `round-1-attach-redelivered` marker on disk — this machine's local
     // side file is exactly what a different host, or a cleaned outbox,
@@ -4171,11 +4182,9 @@ describe('devReviewLoop — control-store-v1 task 4 (#554, O3): a delivered-find
     expect(r.stdout).toMatch(/paused \(no_progress\)/)
 
     expect(existsSync(join(home, '.dev-invocations'))).toBe(false)
-    expect(existsSync(join(heldDir, 'round-2-reviewer-work'))).toBe(false)
-    expect(existsSync(join(heldDir, 'round-2-security-work'))).toBe(false)
-    expect(
-      existsSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'round-1-attach-redelivered'))
-    ).toBe(false)
+    expect(existsSync(join(roundDir(home, 2), 'reviewer-work'))).toBe(false)
+    expect(existsSync(join(roundDir(home, 2), 'security-work'))).toBe(false)
+    expect(existsSync(join(roundDir(home, 1), 'attach-redelivered'))).toBe(false)
 
     // O3 ([task-log-v1] 9, Issue #631): the mirror of the sibling fixture
     // above — here the CONTROL STORE is what actually held, and the local
@@ -4226,10 +4235,9 @@ describe('devReviewLoop — control-store-v1 task 4 (#554, O1/O3): round numberi
     // Reviewers ran at round 2 — never a reset to round 1 for want of the
     // held files or the journal this task's optional telemetry would
     // otherwise have supplied.
-    const heldDir = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
-    expect(existsSync(join(heldDir, 'round-2-reviewer-work'))).toBe(true)
-    expect(existsSync(join(heldDir, 'round-2-security-work'))).toBe(true)
-    expect(existsSync(join(heldDir, 'round-1-reviewer-work'))).toBe(false)
+    expect(existsSync(join(roundDir(home, 2), 'reviewer-work'))).toBe(true)
+    expect(existsSync(join(roundDir(home, 2), 'security-work'))).toBe(true)
+    expect(existsSync(join(roundDir(home, 1), 'reviewer-work'))).toBe(false)
     expect(existsSync(join(home, '.dev-invocations'))).toBe(false)
   }, 20000)
 })
@@ -4349,9 +4357,9 @@ describe('devReviewLoop — control-store-v1 task 4 (round 2 review, security HI
     }
     expect(persisted.budgets.infrastructureRetries).toBeGreaterThanOrEqual(MAX_INFRASTRUCTURE_RETRIES)
 
-    const pauseState = JSON.parse(
-      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
-    ) as { infrastructureRetries: number }
+    const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as {
+      infrastructureRetries: number
+    }
     expect(pauseState.infrastructureRetries).toBeGreaterThanOrEqual(MAX_INFRASTRUCTURE_RETRIES)
   }, 20000)
 })
@@ -4373,7 +4381,7 @@ describe('devReviewLoop — control-store-v1 task 4 (round 2 review, security HI
     // — a different write path — kept landing: the control store reads
     // `'absent'`, but the pause-state file alone already carries a count at
     // the bound.
-    const pauseStatePath = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json')
+    const pauseStatePath = join(controlDir(home), 'pause-state.json')
     const pauseState = JSON.parse(readFileSync(pauseStatePath, 'utf8')) as Record<string, unknown>
     pauseState.infrastructureRetries = MAX_INFRASTRUCTURE_RETRIES
     writeFileSync(pauseStatePath, JSON.stringify(pauseState), 'utf8')
@@ -4423,7 +4431,7 @@ describe('devReviewLoop — control-store-v1 task 4 (round 3 review, MAJOR): a r
     // since the security-HIGH fix) grants the bare-command resume cleanly —
     // this test is entirely about what happens to the IN-PROCESS seed once
     // that resumed process actually starts running, not about the gate.
-    const pauseStatePath = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json')
+    const pauseStatePath = join(controlDir(home), 'pause-state.json')
     const pauseState = JSON.parse(readFileSync(pauseStatePath, 'utf8')) as Record<string, unknown>
     pauseState.infrastructureRetries = 3
     writeFileSync(pauseStatePath, JSON.stringify(pauseState), 'utf8')
@@ -4537,9 +4545,10 @@ describe('devReviewLoop — a genuinely failing current check-run still pauses, 
     expect(r.status).not.toBe(0)
     expect(r.stdout).toMatch(/paused \(infrastructure\)/)
 
-    const pauseState = JSON.parse(
-      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
-    ) as Record<string, unknown>
+    const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
     expect(pauseState.reason).toBe('infrastructure')
     expect(pauseState.detail).toMatch(/head .* unchanged/)
     // Same shape as the single-failing-run case above: the surviving,
@@ -4571,10 +4580,10 @@ function writeFakeClaudeTokenReportFix(dir: string): void {
     `#!/bin/sh
 touch "$HOME/.fake-dev-invoked" 2>/dev/null
 PROMPT="$(cat)"
-WORKROOT="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK"
+WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
 case "$VINAYA_ROLE" in
   code-reviewer)
-    WD="$WORKROOT/round-$VINAYA_ROUND-reviewer-work"
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -4582,7 +4591,7 @@ case "$VINAYA_ROLE" in
     echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
   security)
-    WD="$WORKROOT/round-$VINAYA_ROUND-security-work"
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -4746,7 +4755,7 @@ describe('devReviewLoop — O1 (#595): a blank/dash-only token-report row never 
     expect(resumePrompt).toMatch(/`git push`/)
 
     // Never a pause of any kind — this run reaches a clean publish.
-    expect(existsSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'))).toBe(false)
+    expect(existsSync(join(controlDir(home), 'pause-state.json'))).toBe(false)
   }, 20000)
 })
 
@@ -4782,9 +4791,10 @@ describe('devReviewLoop — O4 (#595): a re-exec child whose own first gate read
     // itself; what pauses the CHILD is its own red gate, a different fact.
     expect(r.stdout).not.toMatch(/paused \(stale_driver\)/)
 
-    const pauseState = JSON.parse(
-      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
-    ) as Record<string, unknown>
+    const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
     expect(pauseState.reason).toBe('infrastructure')
   }, 30000)
 })
@@ -4800,9 +4810,10 @@ describe('devReviewLoop — O5 (#595): an infrastructure pause resumes on the ba
     expect(paused.status).not.toBe(0)
     expect(paused.stdout).toMatch(/paused \(infrastructure\)/)
 
-    const pauseState = JSON.parse(
-      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
-    ) as Record<string, unknown>
+    const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
     expect(pauseState.reason).toBe('infrastructure')
 
     // Every other pause reason requires a Principal ruling comment before
@@ -4933,9 +4944,10 @@ describe('devReviewLoop — a stale Premise pin pauses like a red gate, never a 
     expect(premisePrompt).toMatch(/OLD_SYMBOL/)
     expect(premisePrompt).toMatch(/`git push`/)
 
-    const pauseState = JSON.parse(
-      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
-    ) as Record<string, unknown>
+    const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
     expect(pauseState.reason).toBe('infrastructure')
 
     const pauseComment = readFileSync(join(home, '.fake-gh-posted-comments', 'comment-1.md'), 'utf8')
@@ -5012,9 +5024,10 @@ describe('devReviewLoop — O2 (#543): unpushed real work is resumed once, then 
     expect(r.status).not.toBe(0)
     expect(r.stdout).toMatch(/paused \(no_push\)/)
 
-    const pauseState = JSON.parse(
-      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
-    ) as Record<string, unknown>
+    const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
     expect(pauseState.reason).toBe('no_push')
     expect(pauseState.detail).toMatch(new RegExp(`branch ${BRANCH}`))
     expect(pauseState.detail).toMatch(/smoke\.ts/)
@@ -5171,9 +5184,10 @@ describe("devReviewLoop — O2 (#595): the loop's own control files are never un
     expect(r.stdout).toMatch(/paused \(infrastructure\)/)
     expect(r.stdout).not.toMatch(/paused \(no_push\)/)
 
-    const pauseState = JSON.parse(
-      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
-    ) as Record<string, unknown>
+    const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
     expect(pauseState.reason).toBe('infrastructure')
 
     const commentsDir = join(home, '.fake-gh-posted-comments')
@@ -5191,9 +5205,10 @@ describe("devReviewLoop — O2 (#595): the loop's own control files are never un
     expect(r.status).not.toBe(0)
     expect(r.stdout).toMatch(/paused \(no_push\)/)
 
-    const pauseState = JSON.parse(
-      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
-    ) as Record<string, unknown>
+    const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
     expect(pauseState.reason).toBe('no_push')
     expect(pauseState.detail).toMatch(/smoke\.ts/)
     expect(pauseState.detail).not.toMatch(/\.vinaya-confidence/)
@@ -5232,7 +5247,7 @@ case "$VINAYA_ROLE" in
     echo '{"session_id":"rev-session-'"$N"'","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
   security)
-    WD="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK/round-$VINAYA_ROUND-security-work"
+    WD="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK/rounds/$VINAYA_ROUND/security-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -5300,7 +5315,7 @@ function writeFakeClaudeAttachScenario(dir: string): void {
     'claude',
     `#!/bin/sh
 cat > /dev/null
-WORKROOT="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK"
+WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
 HAS_RESUME=0
 RESUME_ID=""
 prev=""
@@ -5310,7 +5325,7 @@ for a in "$@"; do
 done
 case "$VINAYA_ROLE" in
   code-reviewer)
-    WD="$WORKROOT/round-$VINAYA_ROUND-reviewer-work"
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
     mkdir -p "$WD"
     if [ "$VINAYA_ROUND" = "1" ]; then
       printf '%s\\n' 'BLOCKER|smoke.ts:1|deliberate round-1 blocker to force round 2' > "$WD/findings.txt"
@@ -5322,7 +5337,7 @@ case "$VINAYA_ROLE" in
     echo '{"session_id":"rev-session-'"$VINAYA_ROUND"'","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
   security)
-    WD="$WORKROOT/round-$VINAYA_ROUND-security-work"
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -5458,12 +5473,12 @@ describe('devReviewLoop — round 1 entry attaches to an open PR, resuming the r
     // attach — the loop never dispatches a developer of its own on round 1
     // to produce one; it has to come from a prior, already-recorded session.
     // `resolveRepo()` resolves `null` in this non-git scratch `cwd`, so the
-    // record lives under the deterministic `unresolved` repo segment
+    // record lives in this task's own folder, under `sessions/`
     // (`dispatch.ts`'s own `resumeRecordPathFor`).
-    const resumeDir = join(home, '.vinaya', 'dispatch-resume', 'unresolved')
+    const resumeDir = join(taskRunDir(home), 'sessions')
     mkdirSync(resumeDir, { recursive: true })
     writeFileSync(
-      join(resumeDir, `developer-claude-issue${TASK}.json`),
+      join(resumeDir, 'developer-claude.json'),
       JSON.stringify({
         resumeId: 'seeded-session-42',
         role: 'developer',
@@ -5504,7 +5519,7 @@ function writeFakeClaudeRemoteBranchNoPrScenario(dir: string): void {
     'claude',
     `#!/bin/sh
 PROMPT="$(cat)"
-WORKROOT="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK"
+WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
 HAS_RESUME=0
 RESUME_ID=""
 prev=""
@@ -5514,7 +5529,7 @@ for a in "$@"; do
 done
 case "$VINAYA_ROLE" in
   code-reviewer)
-    WD="$WORKROOT/round-$VINAYA_ROUND-reviewer-work"
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -5522,7 +5537,7 @@ case "$VINAYA_ROLE" in
     echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
   security)
-    WD="$WORKROOT/round-$VINAYA_ROUND-security-work"
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -5556,10 +5571,10 @@ describe('devReviewLoop — a remote branch with no open PR resumes the recorded
   it('never starts a fresh developer — resumes the pre-recorded session with the pr-create instruction, then waits for the PR', () => {
     const { home, cwd, path } = setUpRemoteBranchNoPr()
 
-    const resumeDir = join(home, '.vinaya', 'dispatch-resume', 'unresolved')
+    const resumeDir = join(taskRunDir(home), 'sessions')
     mkdirSync(resumeDir, { recursive: true })
     writeFileSync(
-      join(resumeDir, `developer-claude-issue${TASK}.json`),
+      join(resumeDir, 'developer-claude.json'),
       JSON.stringify({
         resumeId: 'seeded-session-7',
         role: 'developer',
@@ -5619,10 +5634,10 @@ function writeFakeClaudeAttachRecoversHeldRound(dir: string): void {
     'claude',
     `#!/bin/sh
 cat > /dev/null
-WORKROOT="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK"
+WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
 case "$VINAYA_ROLE" in
   code-reviewer)
-    WD="$WORKROOT/round-$VINAYA_ROUND-reviewer-work"
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -5630,7 +5645,7 @@ case "$VINAYA_ROLE" in
     echo '{"session_id":"rev-session-'"$VINAYA_ROUND"'","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
   security)
-    WD="$WORKROOT/round-$VINAYA_ROUND-security-work"
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -5665,10 +5680,9 @@ describe('devReviewLoop — attach recovers a held REQUEST-CHANGES round from di
     // CHANGES/FAIL never reach `publishRound`) — judged against a head
     // this fixture's `git` fake no longer answers as the branch's current
     // one (`HEAD_SHA`, from `writeFakeGitAttach`'s `ls-remote`).
-    const heldDir = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
-    mkdirSync(heldDir, { recursive: true })
-    writeFileSync(join(heldDir, 'round-1-reviewer.md'), heldVerdictText('VERDICT: REQUEST CHANGES'))
-    writeFileSync(join(heldDir, 'round-1-security.md'), heldVerdictText('VERDICT: FAIL'))
+    mkdirSync(roundDir(home, 1), { recursive: true })
+    writeFileSync(join(roundDir(home, 1), 'reviewer.md'), heldVerdictText('VERDICT: REQUEST CHANGES'))
+    writeFileSync(join(roundDir(home, 1), 'security.md'), heldVerdictText('VERDICT: FAIL'))
 
     // The developer's own last turn — the one that pushed the fix moving
     // the head away from round 1's judged sha — is what would realistically
@@ -5690,8 +5704,8 @@ describe('devReviewLoop — attach recovers a held REQUEST-CHANGES round from di
 
     // Reviewers really did run, at round 2 — the recovered round, not a
     // reset-to-round-1 re-review of the exact same (already-fixed) head.
-    expect(existsSync(join(heldDir, 'round-2-reviewer-work'))).toBe(true)
-    expect(existsSync(join(heldDir, 'round-2-security-work'))).toBe(true)
+    expect(existsSync(join(roundDir(home, 2), 'reviewer-work'))).toBe(true)
+    expect(existsSync(join(roundDir(home, 2), 'security-work'))).toBe(true)
   }, 20000)
 })
 
@@ -5701,26 +5715,25 @@ describe('devReviewLoop — a second attach on the same unchanged head reads as 
 
     // Head UNCHANGED this time — round 1's judged sha matches the fake
     // git's own current head (`writeFakeGitAttach`'s `ls-remote`).
-    const heldDir = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
-    mkdirSync(heldDir, { recursive: true })
+    mkdirSync(roundDir(home, 1), { recursive: true })
     writeFileSync(
-      join(heldDir, 'round-1-reviewer.md'),
+      join(roundDir(home, 1), 'reviewer.md'),
       `VERDICT: REQUEST CHANGES\n\nJudged head: ${HEAD_SHA}\n\nStill there.\n`
     )
-    writeFileSync(join(heldDir, 'round-1-security.md'), `VERDICT: FAIL\n\nJudged head: ${HEAD_SHA}\n\nStill there.\n`)
+    writeFileSync(join(roundDir(home, 1), 'security.md'), `VERDICT: FAIL\n\nJudged head: ${HEAD_SHA}\n\nStill there.\n`)
     // A prior attach already redelivered round 1's findings once, on this
     // exact head, with no developer push in between — this run is the
     // second one in a row, which O4 reads as no_progress rather than
     // trying a third time.
-    writeFileSync(join(heldDir, 'round-1-attach-redelivered'), new Date().toISOString())
+    writeFileSync(join(roundDir(home, 1), 'attach-redelivered'), new Date().toISOString())
 
     const r = runLoop(home, cwd, path)
     expect(r.status).not.toBe(0)
     expect(r.stdout).toMatch(/paused \(no_progress\)/)
 
     expect(existsSync(join(home, '.dev-invocations'))).toBe(false)
-    expect(existsSync(join(heldDir, 'round-2-reviewer-work'))).toBe(false)
-    expect(existsSync(join(heldDir, 'round-2-security-work'))).toBe(false)
+    expect(existsSync(join(roundDir(home, 2), 'reviewer-work'))).toBe(false)
+    expect(existsSync(join(roundDir(home, 2), 'security-work'))).toBe(false)
 
     // O3 ([task-log-v1] 9, Issue #631): this pause is decided by an OR of
     // two independent guard inputs (the local marker file this fixture
@@ -5744,10 +5757,9 @@ describe('devReviewLoop — the driver composes the round comment from a citatio
     // Round 1's held findings, same shape the sibling fixture above seeds —
     // this attach resumes straight to round 2 without dispatching a fresh
     // developer turn of its own.
-    const heldDir = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
-    mkdirSync(heldDir, { recursive: true })
-    writeFileSync(join(heldDir, 'round-1-reviewer.md'), heldVerdictText('VERDICT: REQUEST CHANGES'))
-    writeFileSync(join(heldDir, 'round-1-security.md'), heldVerdictText('VERDICT: FAIL'))
+    mkdirSync(roundDir(home, 1), { recursive: true })
+    writeFileSync(join(roundDir(home, 1), 'reviewer.md'), heldVerdictText('VERDICT: REQUEST CHANGES'))
+    writeFileSync(join(roundDir(home, 1), 'security.md'), heldVerdictText('VERDICT: FAIL'))
 
     // The Developer's own last turn (the one that pushed the fix, ending at
     // the push per O1) is what would realistically leave both of these
@@ -5867,9 +5879,8 @@ describe('devReviewLoop — O9 (task-run-v1 21, #541): attach reconstructs round
 
     // Round advanced to 2 from the outbox's own round_ended alone — no
     // held-verdict file ever existed for this attach to read instead.
-    const heldDir = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
-    expect(existsSync(join(heldDir, 'round-2-reviewer-work'))).toBe(true)
-    expect(existsSync(join(heldDir, 'round-2-security-work'))).toBe(true)
+    expect(existsSync(join(roundDir(home, 2), 'reviewer-work'))).toBe(true)
+    expect(existsSync(join(roundDir(home, 2), 'security-work'))).toBe(true)
     expect(existsSync(join(home, '.dev-invocations'))).toBe(false)
 
     // The published summary names both rounds — round 1's reconstructed
@@ -5910,7 +5921,7 @@ for a in "$@"; do
 done
 case "$VINAYA_ROLE" in
   code-reviewer)
-    WD="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK/round-$VINAYA_ROUND-reviewer-work"
+    WD="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK/rounds/$VINAYA_ROUND/reviewer-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -5918,7 +5929,7 @@ case "$VINAYA_ROLE" in
     echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
   security)
-    WD="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK/round-$VINAYA_ROUND-security-work"
+    WD="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK/rounds/$VINAYA_ROUND/security-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -6011,9 +6022,10 @@ describe('devReviewLoop — the pull-request poll gives up naming what it waited
     // anywhere — machine-local outbox only).
     expect(r.stdout).toMatch(/paused \(infrastructure\)/)
 
-    const pauseState = JSON.parse(
-      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
-    ) as Record<string, unknown>
+    const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
     expect(pauseState.reason).toBe('infrastructure')
     const detail = String(pauseState.detail)
     expect(detail).toMatch(new RegExp(`branch: ${BRANCH.replace(/\//g, '\\/')}`))
@@ -6208,7 +6220,7 @@ done
 case "$VINAYA_ROLE" in
   code-reviewer|security)
     touch "$HOME/.reviewer-invoked"
-    WD="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK/round-$VINAYA_ROUND-$VINAYA_ROLE-work"
+    WD="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK/rounds/$VINAYA_ROUND/$VINAYA_ROLE-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -6621,10 +6633,10 @@ function writeFakeClaudeBaseMovesThenCleanReview(dir: string): void {
     `#!/bin/sh
 touch "$HOME/.fake-dev-invoked" 2>/dev/null
 cat > /dev/null
-WORKROOT="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK"
+WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
 case "$VINAYA_ROLE" in
   code-reviewer)
-    WD="$WORKROOT/round-$VINAYA_ROUND-reviewer-work"
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -6632,7 +6644,7 @@ case "$VINAYA_ROLE" in
     echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
   security)
-    WD="$WORKROOT/round-$VINAYA_ROUND-security-work"
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -6749,7 +6761,7 @@ for a in "$@"; do
 done
 case "$VINAYA_ROLE" in
   code-reviewer)
-    WD="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK/round-$VINAYA_ROUND-reviewer-work"
+    WD="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK/rounds/$VINAYA_ROUND/reviewer-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -6758,7 +6770,7 @@ case "$VINAYA_ROLE" in
     echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
   security)
-    WD="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK/round-$VINAYA_ROUND-security-work"
+    WD="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK/rounds/$VINAYA_ROUND/security-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -6878,9 +6890,8 @@ describe('devReviewLoop — a clean head falls into conflict while reviewers wor
     // Both reviewers genuinely ran (mergeability was clean when THEY were
     // dispatched) — but their held verdicts must not survive the conflict
     // discovered right before publish.
-    const drlRoot = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
-    expect(existsSync(join(drlRoot, 'round-1-reviewer.md'))).toBe(false)
-    expect(existsSync(join(drlRoot, 'round-1-security.md'))).toBe(false)
+    expect(existsSync(join(roundDir(home, 1), 'reviewer.md'))).toBe(false)
+    expect(existsSync(join(roundDir(home, 1), 'security.md'))).toBe(false)
 
     const conflictPrompt = readFileSync(join(home, '.dev-prompt-2.txt'), 'utf8')
     expect(conflictPrompt).toMatch(/behind the base in a way that conflicts/)
@@ -6909,7 +6920,7 @@ cat > /dev/null
 touch "$HOME/.fake-dev-invoked" 2>/dev/null
 case "$VINAYA_ROLE" in
   code-reviewer)
-    WD="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK/round-$VINAYA_ROUND-reviewer-work"
+    WD="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK/rounds/$VINAYA_ROUND/reviewer-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -6917,7 +6928,7 @@ case "$VINAYA_ROLE" in
     echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
   security)
-    WD="$HOME/.vinaya/outbox/dev-review-loop/$VINAYA_TASK/round-$VINAYA_ROUND-security-work"
+    WD="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK/rounds/$VINAYA_ROUND/security-work"
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
@@ -7059,9 +7070,10 @@ describe('devReviewLoop — an objectives edit lands between reviewer dispatch a
     expect(r.status).not.toBe(0)
     expect(r.stdout).toMatch(/paused \(objectives_changed\)/)
 
-    const pauseState = JSON.parse(
-      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
-    ) as Record<string, unknown>
+    const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
     expect(pauseState.reason).toBe('objectives_changed')
     expect(pauseState.detail).toMatch(/objectives moved from .+ to midroundversion/)
     expect(pauseState.detail).toMatch(
@@ -7078,9 +7090,12 @@ describe('devReviewLoop — an objectives edit lands between reviewer dispatch a
     expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:objectives_changed -->$/m)
     expect(pauseComment).not.toMatch(/^VERDICT:/m)
 
-    const roundDir = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
-    expect(existsSync(join(roundDir, 'round-1-reviewer.md'))).toBe(false)
-    expect(existsSync(join(roundDir, 'round-1-security.md'))).toBe(false)
+    // The module-level `roundDir(home, n)` helper, NOT a local shadow: round 2
+    // review (MAJOR) found these three sites binding `taskRunDir(home)` to the
+    // same name and asserting the pre-move filenames, so all six assertions
+    // named a path production never writes and the guard was vacuously true.
+    expect(existsSync(join(roundDir(home, 1), 'reviewer.md'))).toBe(false)
+    expect(existsSync(join(roundDir(home, 1), 'security.md'))).toBe(false)
   }, 20000)
 })
 
@@ -7104,9 +7119,10 @@ describe('devReviewLoop — a ruling lands between reviewer dispatch and assessm
     expect(r.status).not.toBe(0)
     expect(r.stdout).toMatch(/paused \(ruling_posted\)/)
 
-    const pauseState = JSON.parse(
-      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
-    ) as Record<string, unknown>
+    const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
     expect(pauseState.reason).toBe('ruling_posted')
     expect(pauseState.detail).toMatch(/ruling ordinal moved from 0 to 1/)
     expect(pauseState.detail).toMatch(/ruling 123-1/)
@@ -7121,9 +7137,12 @@ describe('devReviewLoop — a ruling lands between reviewer dispatch and assessm
     expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:ruling_posted -->$/m)
     expect(pauseComment).not.toMatch(/^VERDICT:/m)
 
-    const roundDir = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
-    expect(existsSync(join(roundDir, 'round-1-reviewer.md'))).toBe(false)
-    expect(existsSync(join(roundDir, 'round-1-security.md'))).toBe(false)
+    // The module-level `roundDir(home, n)` helper, NOT a local shadow: round 2
+    // review (MAJOR) found these three sites binding `taskRunDir(home)` to the
+    // same name and asserting the pre-move filenames, so all six assertions
+    // named a path production never writes and the guard was vacuously true.
+    expect(existsSync(join(roundDir(home, 1), 'reviewer.md'))).toBe(false)
+    expect(existsSync(join(roundDir(home, 1), 'security.md'))).toBe(false)
   }, 20000)
 })
 
@@ -7248,9 +7267,10 @@ describe('devReviewLoop — a frozen-brief supersede lands between reviewer disp
     expect(r.status).not.toBe(0)
     expect(r.stdout).toMatch(/paused \(brief_superseded\)/)
 
-    const pauseState = JSON.parse(
-      readFileSync(join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'pause-state.json'), 'utf8')
-    ) as Record<string, unknown>
+    const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
     expect(pauseState.reason).toBe('brief_superseded')
     expect(pauseState.detail).toMatch(/brief hash moved from [0-9a-f]+ to [0-9a-f]+/)
 
@@ -7264,9 +7284,12 @@ describe('devReviewLoop — a frozen-brief supersede lands between reviewer disp
     expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:brief_superseded -->$/m)
     expect(pauseComment).not.toMatch(/^VERDICT:/m)
 
-    const roundDir = join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK))
-    expect(existsSync(join(roundDir, 'round-1-reviewer.md'))).toBe(false)
-    expect(existsSync(join(roundDir, 'round-1-security.md'))).toBe(false)
+    // The module-level `roundDir(home, n)` helper, NOT a local shadow: round 2
+    // review (MAJOR) found these three sites binding `taskRunDir(home)` to the
+    // same name and asserting the pre-move filenames, so all six assertions
+    // named a path production never writes and the guard was vacuously true.
+    expect(existsSync(join(roundDir(home, 1), 'reviewer.md'))).toBe(false)
+    expect(existsSync(join(roundDir(home, 1), 'security.md'))).toBe(false)
   }, 20000)
 })
 
@@ -8361,15 +8384,9 @@ describe('devReviewLoop — a principal-owed red never redispatches the develope
 
     // Proof reviewers (not the developer) were dispatched off round 1: the
     // held-verdict files only the dispatch_reviewers branch writes exist.
-    const reviewerVerdict = readFileSync(
-      join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'round-1-reviewer.md'),
-      'utf8'
-    )
+    const reviewerVerdict = readFileSync(join(roundDir(home, 1), 'reviewer.md'), 'utf8')
     expect(reviewerVerdict).toMatch(/^VERDICT: APPROVE$/m)
-    const securityVerdict = readFileSync(
-      join(home, '.vinaya', 'outbox', 'dev-review-loop', String(TASK), 'round-1-security.md'),
-      'utf8'
-    )
+    const securityVerdict = readFileSync(join(roundDir(home, 1), 'security.md'), 'utf8')
     expect(securityVerdict).toMatch(/^VERDICT: PASS$/m)
 
     // Proof the gate itself read green, and no second gate/developer round

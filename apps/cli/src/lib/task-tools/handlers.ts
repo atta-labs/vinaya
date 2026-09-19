@@ -26,7 +26,7 @@ import {
   type TaskToolError,
   type TaskToolRef
 } from '@attalabs/aeg-core'
-import { outboxRoot } from '../dev-review-loop.js'
+import { runtimeDir } from '../dev-review-loop.js'
 import { gatherTaskStatusList, type TaskStatusRow } from '../task-status.js'
 import { classifyStateFreshness, describeTaskLoopState, paginate, readEscalationPacket } from './read.js'
 
@@ -107,7 +107,7 @@ export function taskEscalationReadHandler(input: unknown): TaskToolCallResult<Ta
 
   // A task with no pause record ever written is not an error (the catalog's
   // own boundary note) — it answers with an empty, unknown-freshness page.
-  const packet = readEscalationPacket(outboxRoot(), issue)
+  const packet = readEscalationPacket(runtimeDir(), issue)
   const items = packet ? [packet] : []
   const page = paginate(items, cursor, limit ?? DEFAULT_PAGE_LIMIT)
   return ok({

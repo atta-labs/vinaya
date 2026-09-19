@@ -890,6 +890,39 @@ describe('VinayaConfigSchema.tokens — additive-only', () => {
   })
 })
 
+/**
+ * Security review, HIGH: `runtimeDir` carries no repository segment — only
+ * `defaultRuntimeDir` adds one — so honouring it from the machine-global
+ * config would collapse every repository on the host into one tree, and two
+ * repositories' identically-numbered tasks would share a driver lock,
+ * ownership epochs, and the `sessions/<role>-<agent>.json` file a confined
+ * dispatch is granted exact-file write on.
+ */
+describe('runtimeDir — scope and shape (security review)', () => {
+  it('is stripped from the machine-global config, like every other scope-sensitive key', async () => {
+    const { globalRuntimeDirIgnoredWarning } = await import('../src/lib/config.js')
+    const message = globalRuntimeDirIgnoredWarning('/home/x/.vinaya/config.json')
+    expect(message).toContain('/home/x/.vinaya/config.json')
+    expect(message).toContain('runtimeDir')
+    // The reason, not just the fact — an operator reading this needs to know
+    // why a repo-local file is the only place it can live.
+    expect(message).toContain('repository')
+  })
+
+  it('accepts an absolute path', () => {
+    expect(VinayaConfigSchema.safeParse({ runtimeDir: '/var/lib/vinaya/runs' }).success).toBe(true)
+  })
+
+  it('refuses a relative path — two processes with different cwds would disagree about where the store is', () => {
+    expect(VinayaConfigSchema.safeParse({ runtimeDir: '.vinaya-runs' }).success).toBe(false)
+    expect(VinayaConfigSchema.safeParse({ runtimeDir: '../runs' }).success).toBe(false)
+  })
+
+  it('refuses an empty value', () => {
+    expect(VinayaConfigSchema.safeParse({ runtimeDir: '' }).success).toBe(false)
+  })
+})
+
 // task-15 (issue-545), O1/O5 — the two additive config keys this task adds.
 describe('VinayaConfigSchema.prePush / .report — additive-only', () => {
   it("this repo's own vinaya.config.json declares prePush.alwaysRun and still validates", () => {

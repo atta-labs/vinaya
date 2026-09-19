@@ -22,7 +22,7 @@
 
 import { spawn } from 'node:child_process'
 import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname } from 'node:path'
 import {
   type ControlStoreDeps,
   defaultControlStoreDeps,
@@ -34,7 +34,6 @@ import {
   type TaskToolRef
 } from '@attalabs/aeg-core'
 import { type AgentVendor, isAgentVendor } from '../dispatch.js'
-import { GLOBAL_VINAYA_HOME } from '../config.js'
 import {
   fetchNewestRulingAuthor,
   fetchNewestRulingOrdinal,
@@ -47,7 +46,9 @@ import {
   readEscalationRecord,
   readPauseState
 } from '../dev-review-loop/pause-resume.js'
-import { outboxRoot } from '../dev-review-loop.js'
+import { runtimeDir } from '../dev-review-loop.js'
+import { runPath, runtimeDirForThisRepo, tasksExecutionRoot } from '../run-paths.js'
+import { taskFromEscalationId } from '../dev-review-loop/pause-resume.js'
 import { log } from '../log-sink.js'
 import type { TaskToolCallResult } from './handlers.js'
 import { resolveIssueForRef } from './handlers.js'
@@ -72,8 +73,23 @@ export type ResumeClaimStore = {
   release: (escalationId: string) => void
 }
 
+/**
+ * The durable resume claim, in the task folder of the escalation it
+ * resolves: `.../<task>/control/resume-claim-<escalationId>.json`. A
+ * resolution is a control-plane record, so it sits beside the escalation
+ * record it answers rather than in a flat machine-wide directory where one
+ * task's claim sat next to every other task's.
+ *
+ * An id that carries no task falls back to the unscoped folder — the same
+ * folder the scope grammar already reserves for a run file with no
+ * resolvable task, never a directory of this module's own.
+ */
 function resumeRecordPath(escalationId: string): string {
-  return join(GLOBAL_VINAYA_HOME, 'task-resume', `${escalationId}.json`)
+  const task = taskFromEscalationId(escalationId)
+  return runPath(runtimeDirForThisRepo(), task ?? 'unscoped', {
+    area: 'control',
+    file: `resume-claim-${escalationId}.json`
+  })
 }
 
 export const defaultResumeClaimStore: ResumeClaimStore = {
@@ -124,7 +140,7 @@ export function defaultResumeLaunch(
 // --- deps ---------------------------------------------------------------------
 
 export type TaskResumeDeps = {
-  outboxRoot: () => string
+  runtimeDir: () => string
   resolveIssueForRef: (ref: TaskToolRef) => number | null
   fetchRulings: (pr: number) => string[]
   fetchNewestRulingAuthor: (pr: number) => string | null
@@ -141,7 +157,7 @@ export type TaskResumeDeps = {
 }
 
 export const defaultTaskResumeDeps: TaskResumeDeps = {
-  outboxRoot,
+  runtimeDir,
   resolveIssueForRef,
   fetchRulings,
   fetchNewestRulingAuthor,
@@ -215,11 +231,11 @@ export function createTaskResumeHandler(
     }
     const target = `task:${issue}`
 
-    const root = deps.outboxRoot()
+    const root = deps.runtimeDir()
     // The SAME control-store-root-from-outbox-root derivation `read.ts`'s own
     // `readEscalationPacket` uses internally — never the real global default,
-    // so a fixture's injected `outboxRoot` fully isolates both reads.
-    const controlStoreDeps: ControlStoreDeps = defaultControlStoreDeps(() => join(dirname(root), 'control-store'))
+    // so a fixture's injected `runtimeDir` fully isolates both reads.
+    const controlStoreDeps: ControlStoreDeps = defaultControlStoreDeps(() => tasksExecutionRoot(root))
     const packet = readEscalationPacket(root, issue)
     if (packet === null) {
       emitOperationEvent(deps.log, issue, target, 'refused', 'precondition')

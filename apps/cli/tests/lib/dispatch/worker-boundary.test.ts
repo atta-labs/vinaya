@@ -14,6 +14,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { homedir, tmpdir } from 'node:os'
 import { chmodSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { runPath } from '../../../src/lib/run-paths'
 import {
   buildWorkerEnv,
   buildWorkerSandboxProfile,
@@ -180,15 +181,13 @@ describe('stageOAuthCredential — O1 (Issue #640)', () => {
 describe('resolveWorkerBoundaryLaunch — OAuth credential staging (O1, Issue #640, injected deps)', () => {
   it('stageOAuthCredential: true with a credential present resolves a non-null oauthConfigDir readable inside the launch', () => {
     const allowedDir = tempDir('vinaya-wb-oauth-launch-allowed-')
-    const homeDir = tempDir('vinaya-wb-oauth-launch-home-')
     const fixtureContents = JSON.stringify({ accessToken: 'fixture-not-a-real-oauth-token' })
     const result = resolveWorkerBoundaryLaunch(
       {
         binaryPath: '/usr/bin/env',
         args: [],
         allowedDir,
-        vinayaHomeDir: homeDir,
-        vinayaHomeWritableSubdirs: [],
+        extraWritableDirs: [],
         stageOAuthCredential: true
       },
       { ...AVAILABLE_DEPS, readOAuthCredentialFile: () => fixtureContents }
@@ -206,14 +205,12 @@ describe('resolveWorkerBoundaryLaunch — OAuth credential staging (O1, Issue #6
 
   it('stageOAuthCredential: true with no credential present resolves oauthConfigDir: null, never throws', () => {
     const allowedDir = tempDir('vinaya-wb-oauth-launch-missing-allowed-')
-    const homeDir = tempDir('vinaya-wb-oauth-launch-missing-home-')
     const result = resolveWorkerBoundaryLaunch(
       {
         binaryPath: '/usr/bin/env',
         args: [],
         allowedDir,
-        vinayaHomeDir: homeDir,
-        vinayaHomeWritableSubdirs: [],
+        extraWritableDirs: [],
         stageOAuthCredential: true
       },
       { ...AVAILABLE_DEPS, readOAuthCredentialFile: () => null }
@@ -226,9 +223,8 @@ describe('resolveWorkerBoundaryLaunch — OAuth credential staging (O1, Issue #6
 
   it('stageOAuthCredential omitted never attempts staging, even when a credential would be found', () => {
     const allowedDir = tempDir('vinaya-wb-oauth-launch-disabled-allowed-')
-    const homeDir = tempDir('vinaya-wb-oauth-launch-disabled-home-')
     const result = resolveWorkerBoundaryLaunch(
-      { binaryPath: '/usr/bin/env', args: [], allowedDir, vinayaHomeDir: homeDir, vinayaHomeWritableSubdirs: [] },
+      { binaryPath: '/usr/bin/env', args: [], allowedDir, extraWritableDirs: [] },
       { ...AVAILABLE_DEPS, readOAuthCredentialFile: () => '{"accessToken":"should-never-be-staged"}' }
     )
     expect(result.ok).toBe(true)
@@ -267,8 +263,7 @@ describe('resolveWorkerBoundaryLaunch — O3 fail-closed refusal', () => {
         binaryPath: '/usr/bin/env',
         args: [],
         allowedDir: tempDir('vinaya-wb-'),
-        vinayaHomeDir: tempDir('vinaya-wb-home-'),
-        vinayaHomeWritableSubdirs: ['outbox', 'dispatch-resume']
+        extraWritableDirs: []
       },
       { detectHost: () => ({ platform: 'linux', sandboxExecExecutable: false }) }
     )
@@ -285,8 +280,7 @@ describe('resolveWorkerBoundaryLaunch — O3 fail-closed refusal', () => {
         binaryPath: '/usr/bin/env',
         args: [],
         allowedDir: tempDir('vinaya-wb-'),
-        vinayaHomeDir: tempDir('vinaya-wb-home-'),
-        vinayaHomeWritableSubdirs: ['outbox', 'dispatch-resume']
+        extraWritableDirs: []
       },
       { detectHost: () => ({ platform: 'linux', sandboxExecExecutable: false }) }
     )
@@ -306,8 +300,7 @@ describe('resolveWorkerBoundaryLaunch — O1/O2 resolved launch (available bound
         binaryPath: fakeBinary,
         args: ['--foo', 'bar'],
         allowedDir,
-        vinayaHomeDir: homeDir,
-        vinayaHomeWritableSubdirs: ['outbox', 'dispatch-resume']
+        extraWritableDirs: [join(homeDir, 'outbox'), join(homeDir, 'dispatch-resume')]
       },
       AVAILABLE_DEPS
     )
@@ -349,8 +342,7 @@ describe('resolveWorkerBoundaryLaunch — O1/O2 resolved launch (available bound
         binaryPath: fakeBinary,
         args: [],
         allowedDir,
-        vinayaHomeDir: homeDir,
-        vinayaHomeWritableSubdirs: ['outbox', 'dispatch-resume']
+        extraWritableDirs: [join(homeDir, 'outbox'), join(homeDir, 'dispatch-resume')]
       },
       AVAILABLE_DEPS
     )
@@ -380,8 +372,7 @@ describe('resolveWorkerBoundaryLaunch — O1/O2 resolved launch (available bound
         binaryPath: fakeBinary,
         args: [],
         allowedDir,
-        vinayaHomeDir: homeDir,
-        vinayaHomeWritableSubdirs: ['outbox', 'dispatch-resume']
+        extraWritableDirs: [join(homeDir, 'outbox'), join(homeDir, 'dispatch-resume')]
       },
       AVAILABLE_DEPS
     )
@@ -399,8 +390,7 @@ describe('resolveWorkerBoundaryLaunch — O1/O2 resolved launch (available bound
         binaryPath: '/usr/bin/env',
         args: [],
         allowedDir: join(tmpdir(), `vinaya-wb-does-not-exist-${Math.random().toString(36).slice(2)}`),
-        vinayaHomeDir: tempDir('vinaya-wb-home-'),
-        vinayaHomeWritableSubdirs: ['outbox', 'dispatch-resume']
+        extraWritableDirs: []
       },
       AVAILABLE_DEPS
     )
@@ -423,8 +413,7 @@ describe('resolveWorkerBoundaryLaunch — bootstrapWritableSubpaths (round 2 rev
         binaryPath: fakeBinary,
         args: [],
         allowedDir,
-        vinayaHomeDir: homeDir,
-        vinayaHomeWritableSubdirs: ['outbox', 'dispatch-resume'],
+        extraWritableDirs: [join(homeDir, 'outbox'), join(homeDir, 'dispatch-resume')],
         bootstrapWritableSubpaths: ['.git', '.worktrees']
       },
       AVAILABLE_DEPS
@@ -468,8 +457,7 @@ describe('resolveWorkerBoundaryLaunch — bootstrapWritableSubpaths (round 2 rev
         binaryPath: fakeBinary,
         args: [],
         allowedDir,
-        vinayaHomeDir: homeDir,
-        vinayaHomeWritableSubdirs: ['outbox', 'dispatch-resume'],
+        extraWritableDirs: [join(homeDir, 'outbox'), join(homeDir, 'dispatch-resume')],
         bootstrapWritableSubpaths: ['.git', '.worktrees']
       },
       AVAILABLE_DEPS
@@ -502,8 +490,7 @@ describe('resolveWorkerBoundaryLaunch — bootstrapWritableSubpaths (round 2 rev
         binaryPath: fakeBinary,
         args: [],
         allowedDir,
-        vinayaHomeDir: homeDir,
-        vinayaHomeWritableSubdirs: ['outbox', 'dispatch-resume'],
+        extraWritableDirs: [join(homeDir, 'outbox'), join(homeDir, 'dispatch-resume')],
         bootstrapWritableSubpaths: ['.git', '.worktrees']
       },
       AVAILABLE_DEPS
@@ -530,8 +517,7 @@ describe('resolveWorkerBoundaryLaunch — bootstrapWritableSubpaths (round 2 rev
         binaryPath: fakeBinary,
         args: [],
         allowedDir,
-        vinayaHomeDir: homeDir,
-        vinayaHomeWritableSubdirs: ['outbox', 'dispatch-resume'],
+        extraWritableDirs: [join(homeDir, 'outbox'), join(homeDir, 'dispatch-resume')],
         bootstrapWritableSubpaths: []
       },
       AVAILABLE_DEPS
@@ -551,7 +537,7 @@ describe('resolveWorkerBoundaryLaunch — bootstrapWritableSubpaths (round 2 rev
 })
 
 describe('resolveWorkerBoundaryLaunch — GLOBAL_VINAYA_HOME narrowed (round 2 review, MAJOR; round 4 review, HIGH)', () => {
-  it("vinayaHomeDir itself is NOT exposed at all — a confined Worker cannot read or rewrite ~/.vinaya's own config.json", () => {
+  it("an unnamed parent directory is NOT exposed at all — a confined Worker cannot read or rewrite ~/.vinaya's own config.json", () => {
     const allowedDir = tempDir('vinaya-wb-allowed-')
     const homeDir = tempDir('vinaya-wb-home-')
     writeFileSync(join(homeDir, 'config.json'), '{}')
@@ -563,8 +549,7 @@ describe('resolveWorkerBoundaryLaunch — GLOBAL_VINAYA_HOME narrowed (round 2 r
         binaryPath: fakeBinary,
         args: [],
         allowedDir,
-        vinayaHomeDir: homeDir,
-        vinayaHomeWritableSubdirs: ['outbox', 'dispatch-resume']
+        extraWritableDirs: [join(homeDir, 'outbox'), join(homeDir, 'dispatch-resume')]
       },
       AVAILABLE_DEPS
     )
@@ -590,7 +575,7 @@ describe('resolveWorkerBoundaryLaunch — GLOBAL_VINAYA_HOME narrowed (round 2 r
     }
   })
 
-  it('only outbox/ and dispatch-resume/ under vinayaHomeDir get read+write, even when they do not exist yet', () => {
+  it("only the caller's own named directories get read+write, even when they do not exist yet", () => {
     const allowedDir = tempDir('vinaya-wb-allowed-')
     const homeDir = tempDir('vinaya-wb-home-')
     const binDir = tempDir('vinaya-wb-bin-')
@@ -601,8 +586,7 @@ describe('resolveWorkerBoundaryLaunch — GLOBAL_VINAYA_HOME narrowed (round 2 r
         binaryPath: fakeBinary,
         args: [],
         allowedDir,
-        vinayaHomeDir: homeDir,
-        vinayaHomeWritableSubdirs: ['outbox', 'dispatch-resume']
+        extraWritableDirs: [join(homeDir, 'outbox'), join(homeDir, 'dispatch-resume')]
       },
       AVAILABLE_DEPS
     )
@@ -688,7 +672,7 @@ describe('buildWorkerSandboxProfile — DNS resolution (round 4 review, BLOCKER)
   })
 })
 
-describe('resolveWorkerBoundaryLaunch — vinayaHomeReadOnlySubdirs (round 4 review, BLOCKER: --settings file readable)', () => {
+describe('resolveWorkerBoundaryLaunch — extraReadOnlyDirs (round 4 review, BLOCKER: --settings file readable)', () => {
   it('a readOnlySubdir is read-allowed but excluded from the read-write rule, distinct from a writable subdir', () => {
     const allowedDir = tempDir('vinaya-wb-ro-allowed-')
     const homeDir = tempDir('vinaya-wb-ro-home-')
@@ -700,9 +684,8 @@ describe('resolveWorkerBoundaryLaunch — vinayaHomeReadOnlySubdirs (round 4 rev
         binaryPath: fakeBinary,
         args: [],
         allowedDir,
-        vinayaHomeDir: homeDir,
-        vinayaHomeWritableSubdirs: ['outbox'],
-        vinayaHomeReadOnlySubdirs: ['dispatch-settings']
+        extraWritableDirs: [join(homeDir, 'outbox')],
+        extraReadOnlyDirs: [join(homeDir, 'dispatch-settings')]
       },
       AVAILABLE_DEPS
     )
@@ -718,7 +701,7 @@ describe('resolveWorkerBoundaryLaunch — vinayaHomeReadOnlySubdirs (round 4 rev
       // preceding the read-write one — the same `sbSubpathAllows` call site
       // `readOnlyDirs` tests above assert against, distinct from the
       // process-exec/runtime `file-read*`-only allow much earlier in the
-      // profile (which never names anything under `vinayaHomeDir`).
+      // profile (which never names an unrequested directory).
       const readOnlyIdx = profile.lastIndexOf('(allow file-read*\n    (subpath', rwRuleIdx)
       const readOnlyEnd = profile.indexOf('))', readOnlyIdx) + 2
       expect(profile.slice(readOnlyIdx, readOnlyEnd)).toContain(join(homeDir, 'dispatch-settings'))
@@ -729,9 +712,8 @@ describe('resolveWorkerBoundaryLaunch — vinayaHomeReadOnlySubdirs (round 4 rev
     }
   })
 
-  it('an absent vinayaHomeReadOnlySubdirs (undefined) behaves exactly like an empty array — no crash, nothing extra granted', () => {
+  it('an absent extraReadOnlyDirs (undefined) behaves exactly like an empty array — no crash, nothing extra granted', () => {
     const allowedDir = tempDir('vinaya-wb-ro-absent-allowed-')
-    const homeDir = tempDir('vinaya-wb-ro-absent-home-')
     const binDir = tempDir('vinaya-wb-ro-absent-bin-')
     const fakeBinary = fakeBinaryIn(binDir)
 
@@ -740,8 +722,7 @@ describe('resolveWorkerBoundaryLaunch — vinayaHomeReadOnlySubdirs (round 4 rev
         binaryPath: fakeBinary,
         args: [],
         allowedDir,
-        vinayaHomeDir: homeDir,
-        vinayaHomeWritableSubdirs: []
+        extraWritableDirs: []
       },
       AVAILABLE_DEPS
     )
@@ -778,9 +759,8 @@ describe('resolveWorkerBoundaryLaunch — vinayaHomeReadOnlySubdirs (round 4 rev
           binaryPath: process.execPath,
           args: [probeScript, settingsFile],
           allowedDir,
-          vinayaHomeDir: homeDir,
-          vinayaHomeWritableSubdirs: [],
-          vinayaHomeReadOnlySubdirs: ['dispatch-settings']
+          extraWritableDirs: [],
+          extraReadOnlyDirs: [join(homeDir, 'dispatch-settings')]
         },
         REAL_WORKER_BOUNDARY_DEPS
       )
@@ -802,12 +782,12 @@ describe('resolveWorkerBoundaryLaunch — vinayaHomeReadOnlySubdirs (round 4 rev
   )
 
   it.skipIf(!isWorkerBoundaryAvailable(REAL_WORKER_BOUNDARY_DEPS))(
-    'round 6 review, security CRITICAL: a confined child can append to its own named file inside an otherwise read-only vinayaHomeReadOnlySubdirs directory, but still cannot write a sibling file there',
+    'round 6 review, security CRITICAL: a confined child can append to its own named file inside an otherwise read-only extraReadOnlyDirs directory, but still cannot write a sibling file there',
     () => {
       // Reproduces `documentationLogHookScript`'s own shape live: the
       // `PostToolUse` WebFetch hook appends to `documentation-log-<runId>
       // .jsonl` inside `dispatch-settings`, a directory otherwise granted
-      // read-only (`vinayaHomeReadOnlySubdirs`, above) because nothing else
+      // read-only (`extraReadOnlyDirs`, above) because nothing else
       // in it is ever rewritten by the confined child — `settings.json`
       // itself, and every hook script, are written once by the trusted
       // controller and must stay unwritable from inside the sandbox.
@@ -837,10 +817,9 @@ describe('resolveWorkerBoundaryLaunch — vinayaHomeReadOnlySubdirs (round 4 rev
           binaryPath: process.execPath,
           args: [probeScript, settingsFile, logFile],
           allowedDir,
-          vinayaHomeDir: homeDir,
-          vinayaHomeWritableSubdirs: [],
-          vinayaHomeReadOnlySubdirs: ['dispatch-settings'],
-          vinayaHomeWritableFiles: [join('dispatch-settings', 'documentation-log-run1.jsonl')]
+          extraWritableDirs: [],
+          extraReadOnlyDirs: [join(homeDir, 'dispatch-settings')],
+          extraWritableFiles: [join(homeDir, 'dispatch-settings', 'documentation-log-run1.jsonl')]
         },
         REAL_WORKER_BOUNDARY_DEPS
       )
@@ -868,7 +847,6 @@ describe('resolveWorkerBoundaryLaunch — vinayaHomeReadOnlySubdirs (round 4 rev
     'a confined child can reach the mDNSResponder unix socket — Seatbelt does not report EPERM/EACCES',
     () => {
       const allowedDir = tempDir('vinaya-wb-live-dns-allowed-')
-      const homeDir = tempDir('vinaya-wb-live-dns-home-')
 
       const probeScript = join(allowedDir, 'dns-route-probe.js')
       writeFileSync(
@@ -888,8 +866,7 @@ describe('resolveWorkerBoundaryLaunch — vinayaHomeReadOnlySubdirs (round 4 rev
           binaryPath: process.execPath,
           args: [probeScript],
           allowedDir,
-          vinayaHomeDir: homeDir,
-          vinayaHomeWritableSubdirs: []
+          extraWritableDirs: []
         },
         REAL_WORKER_BOUNDARY_DEPS
       )
@@ -998,7 +975,6 @@ describe('resolveWorkerBoundaryLaunch — live sandbox-exec enforcement (round 3
     'a real confined child can write only inside its allowed dir, cannot read the real HOME, and can reach only the allowed port',
     async () => {
       const allowedDir = tempDir('vinaya-wb-live-allowed-')
-      const homeDir = tempDir('vinaya-wb-live-home-')
       const binDir = tempDir('vinaya-wb-live-bin-')
       const probeBinary = join(binDir, 'probe.sh')
       writeFileSync(probeBinary, CONFINEMENT_PROBE_SCRIPT)
@@ -1006,7 +982,7 @@ describe('resolveWorkerBoundaryLaunch — live sandbox-exec enforcement (round 3
       const insidePath = join(allowedDir, 'inside.txt')
       const outsidePath = join(tmpdir(), `vinaya-wb-live-outside-${process.pid}-${Date.now()}`)
       // The REAL account home (`os.homedir()`, never this test's own scratch
-      // `homeDir` — that is only `vinayaHomeDir`, an unrelated parameter) is
+      // `homeDir` — an unrelated fixture directory) is
       // what `resolveWorkerBoundaryLaunch` denies internally as `realHome`.
       // Listing it (never writing into it) proves the profile's HOME-wide
       // deny reaches a confined role, independent of Keychain's own
@@ -1031,8 +1007,7 @@ describe('resolveWorkerBoundaryLaunch — live sandbox-exec enforcement (round 3
           binaryPath: probeBinary,
           args: [insidePath, outsidePath, deniedHomeDir, String(allowedPort), String(deniedPort)],
           allowedDir,
-          vinayaHomeDir: homeDir,
-          vinayaHomeWritableSubdirs: []
+          extraWritableDirs: []
         },
         REAL_WORKER_BOUNDARY_DEPS
       )
@@ -1094,7 +1069,6 @@ describe('resolveWorkerBoundaryLaunch — live sandbox-exec enforcement (round 3
     'a real confined child can only use $TMPDIR for scratch writes once TMPDIR is overridden to launch.tmpDir',
     () => {
       const allowedDir = tempDir('vinaya-wb-live-tmpdir-allowed-')
-      const homeDir = tempDir('vinaya-wb-live-tmpdir-home-')
       const binDir = tempDir('vinaya-wb-live-tmpdir-bin-')
       const probeBinary = join(binDir, 'tmpdir-probe.sh')
       writeFileSync(probeBinary, '#!/bin/bash\nmkdir "$TMPDIR/child-test-dir" 2>/dev/null && echo ok || echo blocked\n')
@@ -1105,8 +1079,7 @@ describe('resolveWorkerBoundaryLaunch — live sandbox-exec enforcement (round 3
           binaryPath: probeBinary,
           args: [],
           allowedDir,
-          vinayaHomeDir: homeDir,
-          vinayaHomeWritableSubdirs: []
+          extraWritableDirs: []
         },
         REAL_WORKER_BOUNDARY_DEPS
       )
@@ -1149,7 +1122,6 @@ describe('resolveWorkerBoundaryLaunch — live sandbox-exec enforcement (round 3
     'a real confined child cannot read the real Keychain directory',
     () => {
       const allowedDir = tempDir('vinaya-wb-live-keychain-')
-      const homeDir = tempDir('vinaya-wb-live-keychain-home-')
       const binDir = tempDir('vinaya-wb-live-keychain-bin-')
       const fakeBinary = fakeBinaryIn(binDir)
 
@@ -1158,8 +1130,7 @@ describe('resolveWorkerBoundaryLaunch — live sandbox-exec enforcement (round 3
           binaryPath: fakeBinary,
           args: [],
           allowedDir,
-          vinayaHomeDir: homeDir,
-          vinayaHomeWritableSubdirs: []
+          extraWritableDirs: []
         },
         REAL_WORKER_BOUNDARY_DEPS
       )
@@ -1201,7 +1172,6 @@ describe('resolveWorkerBoundaryLaunch — OAuth credential staging, live sandbox
     'an OAuth-only host resolves a working staged credential path into the confined session; the real credentials file and Keychain remain denied',
     () => {
       const allowedDir = tempDir('vinaya-wb-live-oauth-allowed-')
-      const homeDir = tempDir('vinaya-wb-live-oauth-home-')
       const fixtureContents = JSON.stringify({ accessToken: 'fixture-not-a-real-oauth-token' })
       const realCredentialPath = join(homedir(), '.claude', '.credentials.json')
 
@@ -1232,8 +1202,7 @@ describe('resolveWorkerBoundaryLaunch — OAuth credential staging, live sandbox
           binaryPath: probeScript,
           args: [],
           allowedDir,
-          vinayaHomeDir: homeDir,
-          vinayaHomeWritableSubdirs: [],
+          extraWritableDirs: [],
           stageOAuthCredential: true
         },
         { ...REAL_WORKER_BOUNDARY_DEPS, readOAuthCredentialFile: () => fixtureContents }
@@ -1268,7 +1237,6 @@ describe('resolveWorkerBoundaryLaunch — OAuth credential staging, live sandbox
     'O3: the real credentials file and Keychain stay denied on the ANTHROPIC_API_KEY credential path too, not only the staged-OAuth path proven above',
     () => {
       const allowedDir = tempDir('vinaya-wb-live-oauth-o3-allowed-')
-      const homeDir = tempDir('vinaya-wb-live-oauth-o3-home-')
       const realCredentialPath = join(homedir(), '.claude', '.credentials.json')
 
       const probeScript = join(allowedDir, 'o3-probe.sh')
@@ -1287,7 +1255,7 @@ describe('resolveWorkerBoundaryLaunch — OAuth credential staging, live sandbox
       // `ANTHROPIC_API_KEY` is also present, so this launch resolves
       // exactly as an API-key-authenticated dispatch's boundary does.
       const result = resolveWorkerBoundaryLaunch(
-        { binaryPath: probeScript, args: [], allowedDir, vinayaHomeDir: homeDir, vinayaHomeWritableSubdirs: [] },
+        { binaryPath: probeScript, args: [], allowedDir, extraWritableDirs: [] },
         REAL_WORKER_BOUNDARY_DEPS
       )
       expect(result.ok).toBe(true)
@@ -1316,7 +1284,6 @@ describe('resolveWorkerBoundaryLaunch — bun toolchain reachable (round 5 revie
     'a confined child can still exec bun for its own build/test subprocesses when binaryPath is a non-bun vendor binary (the real production shape)',
     () => {
       const allowedDir = tempDir('vinaya-wb-live-bun-')
-      const homeDir = tempDir('vinaya-wb-live-bun-home-')
       const binDir = tempDir('vinaya-wb-live-bun-bin-')
       // The real production shape the round 5 finding named: the vendor
       // binary (`binaryPath`) lives OUTSIDE `~/.bun/bin` — every prior live
@@ -1330,8 +1297,7 @@ describe('resolveWorkerBoundaryLaunch — bun toolchain reachable (round 5 revie
           binaryPath: fakeVendorBinary,
           args: [],
           allowedDir,
-          vinayaHomeDir: homeDir,
-          vinayaHomeWritableSubdirs: []
+          extraWritableDirs: []
         },
         REAL_WORKER_BOUNDARY_DEPS
       )
@@ -1409,10 +1375,10 @@ describe('resolveWorkerBoundaryLaunch — repo-segment scoping (round 4 review, 
           binaryPath: process.execPath,
           args: [probeScript, ownRepoFile, siblingRepoFile],
           allowedDir,
-          vinayaHomeDir: homeDir,
+
           // Exactly what `dispatch.ts` now computes: `dirname(outboxPath)`
           // and `dirname(resumeRecordPathFor(...))`, scoped to ONE repo.
-          vinayaHomeWritableSubdirs: [join('outbox', 'owner-repoA'), join('dispatch-resume', 'owner-repoA')]
+          extraWritableDirs: [join(homeDir, 'outbox', 'owner-repoA'), join(homeDir, 'dispatch-resume', 'owner-repoA')]
         },
         REAL_WORKER_BOUNDARY_DEPS
       )
@@ -1439,7 +1405,7 @@ describe('resolveWorkerBoundaryLaunch — repo-segment scoping (round 4 review, 
 
 describe('resolveWorkerBoundaryLaunch — cross-task/role scoping (round 5 review, CRITICAL)', () => {
   it.skipIf(!isWorkerBoundaryAvailable(REAL_WORKER_BOUNDARY_DEPS))(
-    'a confined dispatch granted vinayaHomeWritableFiles can write its OWN outbox/resume file but not a SIBLING task/role file in the SAME repo-segment directory',
+    'a confined dispatch granted extraWritableFiles can write its OWN outbox/resume file but not a SIBLING task/role file in the SAME repo-segment directory',
     () => {
       const allowedDir = tempDir('vinaya-wb-live-file-scope-allowed-')
       const homeDir = tempDir('vinaya-wb-live-file-scope-home-')
@@ -1485,11 +1451,10 @@ describe('resolveWorkerBoundaryLaunch — cross-task/role scoping (round 5 revie
           binaryPath: process.execPath,
           args: [probeScript, ownFile, siblingFile],
           allowedDir,
-          vinayaHomeDir: homeDir,
-          vinayaHomeWritableSubdirs: [],
+          extraWritableDirs: [],
           // Exactly what `dispatch.ts` now computes for its own outbox
           // line: the exact FILE, never the shared directory it lives in.
-          vinayaHomeWritableFiles: [join('outbox', 'owner-repo', '560.ndjson')]
+          extraWritableFiles: [join(homeDir, 'outbox', 'owner-repo', '560.ndjson')]
         },
         REAL_WORKER_BOUNDARY_DEPS
       )
@@ -1543,7 +1508,6 @@ describe('resolveBunExecDir — independent of the DISPATCHER process own runtim
       // dispatcher process. Fails under the prior `dirname(process.execPath)`
       // implementation; passes under the current one.
       const allowedDir = tempDir('vinaya-wb-live-execpath-allowed-')
-      const homeDir = tempDir('vinaya-wb-live-execpath-home-')
       const binDir = tempDir('vinaya-wb-live-execpath-bin-')
       const fakeVendorBinary = fakeBinaryIn(binDir)
       const originalExecPath = process.execPath
@@ -1555,8 +1519,7 @@ describe('resolveBunExecDir — independent of the DISPATCHER process own runtim
             binaryPath: fakeVendorBinary,
             args: [],
             allowedDir,
-            vinayaHomeDir: homeDir,
-            vinayaHomeWritableSubdirs: []
+            extraWritableDirs: []
           },
           REAL_WORKER_BOUNDARY_DEPS
         )
@@ -1594,7 +1557,6 @@ describe('resolveWorkerBoundaryLaunch — file-read-metadata for Node.js-hosted 
     'a real node binary no longer crashes at startup on an ancestor lstat EPERM, while the real credentials file stays content-denied',
     () => {
       const allowedDir = tempDir('vinaya-wb-live-node-allowed-')
-      const homeDir = tempDir('vinaya-wb-live-node-home-')
       const realCredentialPath = join(homedir(), '.claude', '.credentials.json')
 
       const probeScript = join(allowedDir, 'node-probe.js')
@@ -1612,8 +1574,7 @@ describe('resolveWorkerBoundaryLaunch — file-read-metadata for Node.js-hosted 
           binaryPath: REAL_NODE_PATH as string,
           args: [probeScript],
           allowedDir,
-          vinayaHomeDir: homeDir,
-          vinayaHomeWritableSubdirs: []
+          extraWritableDirs: []
         },
         REAL_WORKER_BOUNDARY_DEPS
       )
@@ -1648,7 +1609,6 @@ describe('resolveWorkerBoundaryLaunch — symlinked binaryPath exec target (secu
     'a binaryPath that is a symlink into a different directory (the official installer layout) still execs successfully',
     () => {
       const allowedDir = tempDir('vinaya-wb-live-symlink-allowed-')
-      const homeDir = tempDir('vinaya-wb-live-symlink-home-')
       const targetDir = tempDir('vinaya-wb-live-symlink-target-')
       const binDir = tempDir('vinaya-wb-live-symlink-bin-')
       const realVendor = join(targetDir, 'real-vendor')
@@ -1664,7 +1624,7 @@ describe('resolveWorkerBoundaryLaunch — symlinked binaryPath exec target (secu
       symlinkSync(realVendor, symlinkPath)
 
       const result = resolveWorkerBoundaryLaunch(
-        { binaryPath: symlinkPath, args: [], allowedDir, vinayaHomeDir: homeDir, vinayaHomeWritableSubdirs: [] },
+        { binaryPath: symlinkPath, args: [], allowedDir, extraWritableDirs: [] },
         REAL_WORKER_BOUNDARY_DEPS
       )
       expect(result.ok).toBe(true)
@@ -1687,4 +1647,161 @@ describe('resolveWorkerBoundaryLaunch — symlinked binaryPath exec target (secu
       }
     }
   )
+})
+
+describe('the confined role reaches only its OWN task folder under the new layout (O4)', () => {
+  const OWN_TASK = 648
+  const SIBLING_TASK = 649
+
+  /**
+   * Goes through `resolveWorkerBoundaryLaunch` with paths built by `runPath`,
+   * not `buildWorkerSandboxProfile` with hand-written literals (round 2
+   * review, MINOR): the seam this task actually changed is the caller
+   * computing ABSOLUTE grants and the launcher consuming them, and four
+   * earlier assertions here named strings the test itself never passed in,
+   * so they could not fail. `runtimeDir` is a real temp directory so the
+   * canonicalisation the launcher performs is exercised too.
+   */
+  function resolveForOwnTask(runtimeDir: string): { profile: string; cleanup: () => void } | null {
+    const allowedDir = tempDir('vinaya-wb-o4-allowed-')
+    const binDir = tempDir('vinaya-wb-o4-bin-')
+    const result = resolveWorkerBoundaryLaunch(
+      {
+        binaryPath: fakeBinaryIn(binDir),
+        args: [],
+        allowedDir,
+        // Exactly what `dispatch.ts` computes for one confined dispatch.
+        extraWritableFiles: [runPath(runtimeDir, OWN_TASK, { area: 'sessions', file: 'developer-claude.json' })],
+        extraReadOnlyDirs: [runPath(runtimeDir, OWN_TASK, { area: 'hooks' })],
+        extraWritableDirs: [runPath(runtimeDir, OWN_TASK, { area: 'round', round: 2, file: 'reviewer-work' })]
+      },
+      AVAILABLE_DEPS
+    )
+    if (!result.ok) return null
+    return { profile: readFileSync(result.launch.args[1] as string, 'utf8'), cleanup: result.launch.cleanup }
+  }
+
+  it("grants this dispatch's own session record as an exact file, never its containing directory", () => {
+    const runtimeDir = tempDir('vinaya-wb-o4-runtime-')
+    const resolved = resolveForOwnTask(runtimeDir)
+    expect(resolved).not.toBeNull()
+    if (!resolved) return
+    try {
+      const ownRecord = realpathSync(runtimeDir)
+      expect(resolved.profile).toContain(
+        `(literal "${join(ownRecord, 'tasks-execution', String(OWN_TASK), 'sessions', 'developer-claude.json')}")`
+      )
+      // A subpath grant on `sessions/` would expose every OTHER role's record
+      // for this task — the widening the exact-file grant exists to stop.
+      expect(resolved.profile).not.toContain(
+        `(subpath "${join(ownRecord, 'tasks-execution', String(OWN_TASK), 'sessions')}")`
+      )
+    } finally {
+      resolved.cleanup()
+    }
+  })
+
+  it("never names another task's folder, the tasks root, or the runtime directory itself", () => {
+    const runtimeDir = tempDir('vinaya-wb-o4-runtime-')
+    // Create the sibling task's own files, so the strings below are real
+    // paths on disk that a widened grant could plausibly have canonicalised
+    // and emitted — not names nothing ever produced.
+    const siblingSessions = runPath(runtimeDir, SIBLING_TASK, { area: 'sessions' })
+    mkdirSync(siblingSessions, { recursive: true })
+    writeFileSync(join(siblingSessions, 'developer-claude.json'), '{}')
+    const resolved = resolveForOwnTask(runtimeDir)
+    expect(resolved).not.toBeNull()
+    if (!resolved) return
+    try {
+      const real = realpathSync(runtimeDir)
+      const siblingDir = join(real, 'tasks-execution', String(SIBLING_TASK))
+      expect(resolved.profile).not.toContain(siblingDir)
+      expect(resolved.profile).not.toContain(`(subpath "${join(real, 'tasks-execution')}")`)
+      expect(resolved.profile).not.toContain(`(subpath "${real}")`)
+    } finally {
+      resolved.cleanup()
+    }
+  })
+
+  it('never names the configuration file, and keeps the hooks directory out of the read-write rule', () => {
+    const runtimeDir = tempDir('vinaya-wb-o4-runtime-')
+    const resolved = resolveForOwnTask(runtimeDir)
+    expect(resolved).not.toBeNull()
+    if (!resolved) return
+    try {
+      expect(resolved.profile).not.toContain('config.json')
+      const real = realpathSync(runtimeDir)
+      const hooksDir = join(real, 'tasks-execution', String(OWN_TASK), 'hooks')
+      const rwRuleIdx = resolved.profile.indexOf('(allow file-read* file-write*')
+      const rwRuleEnd = resolved.profile.indexOf('))', rwRuleIdx) + 2
+      // Read-only: the trusted controller writes the settings file and the
+      // hook scripts before the child starts, and a confined child that could
+      // rewrite them would strip its own hooks.
+      expect(resolved.profile.slice(rwRuleIdx, rwRuleEnd)).not.toContain(hooksDir)
+      expect(resolved.profile).toContain(`(subpath "${hooksDir}")`)
+    } finally {
+      resolved.cleanup()
+    }
+  })
+
+  it("grants a reviewer only its own round's work directory, never the round folder or a sibling round", () => {
+    const runtimeDir = tempDir('vinaya-wb-o4-runtime-')
+    const resolved = resolveForOwnTask(runtimeDir)
+    expect(resolved).not.toBeNull()
+    if (!resolved) return
+    try {
+      const real = realpathSync(runtimeDir)
+      const roundTwo = join(real, 'tasks-execution', String(OWN_TASK), 'rounds', '2')
+      expect(resolved.profile).toContain(`(subpath "${join(roundTwo, 'reviewer-work')}")`)
+      // Not the round folder itself — that holds both roles' held verdicts
+      // and the shared read-only candidate every reviewer this round judges.
+      expect(resolved.profile).not.toContain(`(subpath "${roundTwo}")`)
+      expect(resolved.profile).not.toContain(join(roundTwo, 'security-work'))
+      expect(resolved.profile).not.toContain(join(real, 'tasks-execution', String(OWN_TASK), 'rounds', '1'))
+    } finally {
+      resolved.cleanup()
+    }
+  })
+
+  it('canonicalises a grant whose path does not exist yet, through a symlinked runtime directory', () => {
+    // The documentation-log file `dispatch.ts` grants never exists at
+    // resolution time, and the reference's own documented example runtimeDir
+    // (`/var/lib/vinaya/runs`) traverses a symlink on the one host with a
+    // boundary. A grant left non-canonical would never match what the kernel
+    // resolves (round 2 review, MAJOR).
+    const realRuntime = tempDir('vinaya-wb-o4-realruntime-')
+    const linkParent = tempDir('vinaya-wb-o4-link-')
+    const linkedRuntime = join(linkParent, 'runs')
+    symlinkSync(realRuntime, linkedRuntime)
+
+    const allowedDir = tempDir('vinaya-wb-o4-allowed-')
+    const binDir = tempDir('vinaya-wb-o4-bin-')
+    const notYetCreated = runPath(linkedRuntime, OWN_TASK, { area: 'hooks', file: 'documentation-log-run1.jsonl' })
+    const result = resolveWorkerBoundaryLaunch(
+      {
+        binaryPath: fakeBinaryIn(binDir),
+        args: [],
+        allowedDir,
+        extraWritableFiles: [notYetCreated],
+        extraWritableDirs: []
+      },
+      AVAILABLE_DEPS
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    try {
+      const profile = readFileSync(result.launch.args[1] as string, 'utf8')
+      const canonical = join(
+        realpathSync(realRuntime),
+        'tasks-execution',
+        String(OWN_TASK),
+        'hooks',
+        'documentation-log-run1.jsonl'
+      )
+      expect(profile).toContain(`(literal "${canonical}")`)
+      expect(profile).not.toContain(linkedRuntime)
+    } finally {
+      result.launch.cleanup()
+    }
+  })
 })

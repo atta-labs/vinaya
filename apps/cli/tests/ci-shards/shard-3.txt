@@ -54,3 +54,4 @@ tests/lib/broker/request-effect.test.ts
 tests/lib/dispatch/worker-boundary.test.ts
 tests/checks/runner/correlation.test.ts
 tests/lib/artifacts/workflow.test.ts
+tests/lib/run-paths.test.ts

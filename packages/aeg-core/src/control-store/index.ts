@@ -31,6 +31,7 @@ export {
   appendTransition,
   attemptEpochClaim,
   consumeResolutionOnce,
+  CONTROL_AREA_DIRNAME,
   defaultControlStoreDeps,
   InvalidEffectKeyError,
   InvalidEscalationIdError,

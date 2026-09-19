@@ -652,6 +652,7 @@ export {
   readRun,
   readTransitions,
   StaleEpochWriteError,
+  CONTROL_AREA_DIRNAME,
   writeEffect,
   writeEscalation,
   writeInput,

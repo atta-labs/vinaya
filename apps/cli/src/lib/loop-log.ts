@@ -1,12 +1,16 @@
 /**
  * O6 — the one text log every driver (`task run`,
  * `dev-review-loop`) tees its own role-prefixed stream to, regardless of
- * where it was launched: `~/.vinaya/loops/<owner>-<repo>/<issue>.log`. Same
- * repo-directory convention `log-sink.ts`'s own per-task path builder already
- * uses (`<owner>-<repo>`, or `unresolved`), a separate root (`loops/`, not
- * that other log's own root) and a plain, human-readable `.log` text file —
- * never ndjson; this is narration for `vinaya task status --follow` to
- * tail, not a structured event the forge or a check reads.
+ * where it was launched: the task's own `output/driver.log`
+ * (`run-paths.ts`). A plain, human-readable `.log` text file — never
+ * ndjson; this is narration for `vinaya task status --follow` to tail, not
+ * a structured event the forge or a check reads, which is why it sits in
+ * `output/` beside the raw agent output rather than anywhere near the
+ * telemetry outbox.
+ *
+ * It used to live in a `loops/<owner>-<repo>/<issue>.log` tree of its own,
+ * keyed by repo and issue; the task folder already carries both, so the
+ * filename no longer has to.
  *
  * Appends across relaunches: nothing here ever truncates or overwrites an
  * existing file, and `appendRunStartMarker` names each new process's start
@@ -26,19 +30,29 @@ import {
   statSync,
   writeSync
 } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { GLOBAL_VINAYA_HOME } from './config.js'
+import { dirname } from 'node:path'
+import { runPath, runtimeDirForThisRepo } from './run-paths.js'
 
 export type LoopLogRepo = { owner: string; repo: string } | null
 
+/** The runtime directory this driver log lives under — the same one every other file this task's run writes resolves through. */
 export function loopsRoot(): string {
-  return join(GLOBAL_VINAYA_HOME, 'loops')
+  return runtimeDirForThisRepo()
 }
 
-/** `~/.vinaya/loops/<owner>-<repo>/<issue>.log`, or `.../unresolved/<issue>.log` when `repo` could not be resolved — the same fallback the other per-task log's own path builder takes, never a value spliced from an unvalidated source (callers pass the same already-resolved `repo` `log()`/`dispatchRole` themselves trust). */
-export function loopLogPathFor(repo: LoopLogRepo, issue: number, root: string = loopsRoot()): string {
-  const dirName = repo ? `${repo.owner}-${repo.repo}` : 'unresolved'
-  return join(root, dirName, `${issue}.log`)
+/**
+ * `<runtimeDir>/tasks-execution/<issue>/output/driver.log`.
+ *
+ * `repo` is no longer part of the path: the runtime directory itself is
+ * already per-repository (`run-paths.ts`'s `defaultRuntimeDir` keeps the
+ * segment; a configured one belongs to one repo), so two repositories
+ * sharing an Issue number still get two files. The parameter stays on the
+ * signature because callers pass the repo they already resolved and
+ * dropping it would ripple through the status command this task's Surface
+ * excludes.
+ */
+export function loopLogPathFor(_repo: LoopLogRepo, issue: number, root: string = loopsRoot()): string {
+  return runPath(root, issue, { area: 'output', file: 'driver.log' })
 }
 
 /** Matches `dispatch.ts`'s own `openOutputTee` cap — past this, further lines are silently dropped rather than growing the file unbounded. Narration, not evidence: losing the tail of a very long run is an acceptable cost for never blocking or crashing the driver over disk growth. */

@@ -39,14 +39,31 @@ function tempDir(): string {
   return dir
 }
 
+/**
+ * The task's own folder under an injected runtime directory — the same
+ * layout `run-paths.ts` builds, written out by hand here so these fixtures
+ * assert against literal strings rather than the function under test.
+ */
 function taskDir(root: string, task: number): string {
-  return join(root, 'dev-review-loop', String(task))
+  return join(root, 'tasks-execution', String(task))
 }
 
-function writeOutboxFile(root: string, task: number, name: string, content: string): void {
-  const dir = taskDir(root, task)
+/**
+ * Places a fixture file by the same classification production uses: the
+ * driver lock at the task folder's root, a held verdict in its round's own
+ * folder, and everything else (pause state, the legacy effect records) in
+ * `control/`.
+ */
+function writeRunFile(root: string, task: number, name: string, content: string): void {
+  const held = /^round-(\d+)-(reviewer|security)\.md$/.exec(name)
+  const dir = held
+    ? join(taskDir(root, task), 'rounds', held[1] as string)
+    : name === 'driver.pid.json'
+      ? taskDir(root, task)
+      : join(taskDir(root, task), 'control')
+  const file = held ? `${held[2]}.md` : name
   mkdirSync(dir, { recursive: true })
-  writeFileSync(join(dir, name), content, 'utf8')
+  writeFileSync(join(dir, file), content, 'utf8')
 }
 
 /** A pid that has definitely already exited — `spawnSync` blocks until the child is gone before returning its pid (`dev-review-loop.test.ts`'s own `deadPid`). */
@@ -64,7 +81,7 @@ describe('deriveLoopState', () => {
 
   it('reports running with the driver pid when the lock names a live process', () => {
     const root = tempDir()
-    writeOutboxFile(
+    writeRunFile(
       root,
       TASK,
       'driver.pid.json',
@@ -79,7 +96,7 @@ describe('deriveLoopState', () => {
 
   it('treats a dead pid record as absent, never as running', () => {
     const root = tempDir()
-    writeOutboxFile(
+    writeRunFile(
       root,
       TASK,
       'driver.pid.json',
@@ -90,7 +107,7 @@ describe('deriveLoopState', () => {
 
   it('reports paused with the reason from the pause record when no driver is running', () => {
     const root = tempDir()
-    writeOutboxFile(
+    writeRunFile(
       root,
       TASK,
       'pause-state.json',
@@ -114,15 +131,15 @@ describe('deriveLoopState', () => {
 
   it('reports published when the newest round posted both verdict effect markers', () => {
     const root = tempDir()
-    writeOutboxFile(root, TASK, 'effect-1-reviewer-verdict.json', JSON.stringify({ effectId: 'a', status: 'posted' }))
-    writeOutboxFile(root, TASK, 'effect-1-security-verdict.json', JSON.stringify({ effectId: 'b', status: 'posted' }))
+    writeRunFile(root, TASK, 'effect-1-reviewer-verdict.json', JSON.stringify({ effectId: 'a', status: 'posted' }))
+    writeRunFile(root, TASK, 'effect-1-security-verdict.json', JSON.stringify({ effectId: 'b', status: 'posted' }))
     expect(deriveLoopState(root, TASK, { repo: null, loopsRoot: root })).toEqual({ kind: 'published', round: 1 })
   })
 
   it("does not report published when only one of the round's two markers posted", () => {
     const root = tempDir()
-    writeOutboxFile(root, TASK, 'effect-1-reviewer-verdict.json', JSON.stringify({ effectId: 'a', status: 'posted' }))
-    writeOutboxFile(root, TASK, 'effect-1-security-verdict.json', JSON.stringify({ effectId: 'b', status: 'started' }))
+    writeRunFile(root, TASK, 'effect-1-reviewer-verdict.json', JSON.stringify({ effectId: 'a', status: 'posted' }))
+    writeRunFile(root, TASK, 'effect-1-security-verdict.json', JSON.stringify({ effectId: 'b', status: 'started' }))
     expect(deriveLoopState(root, TASK, { repo: null, loopsRoot: root })).toEqual({ kind: 'no_driver' })
   })
 
@@ -132,7 +149,7 @@ describe('deriveLoopState', () => {
     // pause-state.json file is never cleared on resume (today's outbox
     // shape), so this is the exact staleness `deriveLoopState`'s own doc
     // comment names.
-    writeOutboxFile(
+    writeRunFile(
       root,
       TASK,
       'pause-state.json',
@@ -146,16 +163,16 @@ describe('deriveLoopState', () => {
         pausedAt: '2026-09-10T00:00:00.000Z'
       })
     )
-    writeOutboxFile(root, TASK, 'effect-3-reviewer-verdict.json', JSON.stringify({ effectId: 'a', status: 'posted' }))
-    writeOutboxFile(root, TASK, 'effect-3-security-verdict.json', JSON.stringify({ effectId: 'b', status: 'posted' }))
+    writeRunFile(root, TASK, 'effect-3-reviewer-verdict.json', JSON.stringify({ effectId: 'a', status: 'posted' }))
+    writeRunFile(root, TASK, 'effect-3-security-verdict.json', JSON.stringify({ effectId: 'b', status: 'posted' }))
     expect(deriveLoopState(root, TASK, { repo: null, loopsRoot: root })).toEqual({ kind: 'published', round: 3 })
   })
 
   it('still reports the pause when it is newer than the latest publish', () => {
     const root = tempDir()
-    writeOutboxFile(root, TASK, 'effect-1-reviewer-verdict.json', JSON.stringify({ effectId: 'a', status: 'posted' }))
-    writeOutboxFile(root, TASK, 'effect-1-security-verdict.json', JSON.stringify({ effectId: 'b', status: 'posted' }))
-    writeOutboxFile(
+    writeRunFile(root, TASK, 'effect-1-reviewer-verdict.json', JSON.stringify({ effectId: 'a', status: 'posted' }))
+    writeRunFile(root, TASK, 'effect-1-security-verdict.json', JSON.stringify({ effectId: 'b', status: 'posted' }))
+    writeRunFile(
       root,
       TASK,
       'pause-state.json',
@@ -182,7 +199,7 @@ describe('deriveLoopState', () => {
   // `recordDriverExited` appends exactly this line shape to the role log.
   it('reports exited, naming the reason and last decision, when the lock is dead and the role log carries a driver_exited trace', () => {
     const root = tempDir()
-    writeOutboxFile(
+    writeRunFile(
       root,
       TASK,
       'driver.pid.json',
@@ -210,8 +227,8 @@ describe('deriveLoopState', () => {
       'dev-review-loop',
       'driver_exited: reason=error last_decision=dispatch_developer'
     )
-    writeOutboxFile(root, TASK, 'effect-1-reviewer-verdict.json', JSON.stringify({ effectId: 'a', status: 'posted' }))
-    writeOutboxFile(root, TASK, 'effect-1-security-verdict.json', JSON.stringify({ effectId: 'b', status: 'posted' }))
+    writeRunFile(root, TASK, 'effect-1-reviewer-verdict.json', JSON.stringify({ effectId: 'a', status: 'posted' }))
+    writeRunFile(root, TASK, 'effect-1-security-verdict.json', JSON.stringify({ effectId: 'b', status: 'posted' }))
     expect(deriveLoopState(root, TASK, { repo: null, loopsRoot: root })).toEqual({ kind: 'published', round: 1 })
   })
 })
@@ -224,10 +241,10 @@ describe('lastRoundVerdictLines', () => {
 
   it("reads the highest round's two verdict files, first line only", () => {
     const root = tempDir()
-    writeOutboxFile(root, TASK, 'round-1-reviewer.md', 'VERDICT: APPROVE\n\nJudged head: abc\n')
-    writeOutboxFile(root, TASK, 'round-1-security.md', 'VERDICT: PASS\n\nJudged head: abc\n')
-    writeOutboxFile(root, TASK, 'round-2-reviewer.md', 'VERDICT: REQUEST CHANGES\n\nJudged head: def\n')
-    writeOutboxFile(root, TASK, 'round-2-security.md', 'VERDICT: PASS\n\nJudged head: def\n')
+    writeRunFile(root, TASK, 'round-1-reviewer.md', 'VERDICT: APPROVE\n\nJudged head: abc\n')
+    writeRunFile(root, TASK, 'round-1-security.md', 'VERDICT: PASS\n\nJudged head: abc\n')
+    writeRunFile(root, TASK, 'round-2-reviewer.md', 'VERDICT: REQUEST CHANGES\n\nJudged head: def\n')
+    writeRunFile(root, TASK, 'round-2-security.md', 'VERDICT: PASS\n\nJudged head: def\n')
     expect(lastRoundVerdictLines(root, TASK)).toEqual({
       round: 2,
       reviewer: 'VERDICT: REQUEST CHANGES',

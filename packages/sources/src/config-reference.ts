@@ -632,6 +632,18 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
       'Caps how many NEW comments one round-end flush call posts to the configured target — the rest stay queued, untouched, in the outbox for a later flush. Absent defaults to `DEFAULT_MAX_CHUNKS_PER_FLUSH` (`apps/cli/src/lib/config.ts`). A non-zero deferred count is always surfaced visibly (stderr for the round-end flush, stdout for `vinaya log flush`), never silently reported as a complete flush.'
     ],
     example: `{ "logPublish": { "maxChunksPerFlush": 10 } }`
+  },
+  {
+    key: 'runtimeDir',
+    type: 'string (optional)',
+    semantics: [
+      "The one directory every file a task's run writes lives under, laid out as `<runtimeDir>/tasks-execution/<task>/` with the task's files classified by nature: `control/` for the control-store records, `sessions/` for vendor session ids, `hooks/` for the per-run documentation-check files, `output/` for raw agent output and the driver's own log, `rounds/<n>/` for that round's reviewer hand-off files and its read-only candidate, and the driver lock at the task folder's root. Absent — this key's own default — runs write under `~/.vinaya/runtime/<owner>-<repo>` instead; the repository segment is kept there because task numbers repeat across repositories.",
+      'Set it to put the tree on a disk with room, or somewhere an existing backup and retention policy already covers. Nothing here changes where TELEMETRY goes: the outbox keeps its own home under the Vinaya home.',
+      "Repo-local only, and absolute. It is stripped from the machine-global `~/.vinaya/config.json` with a warning, the same as `checks`/`roles`/`principals`/`releaseActor`/`tokens`: only the DEFAULT carries the `<owner>-<repo>` segment, so a machine-wide value would collapse every repository into one tree and give two repositories' identically-numbered tasks the same driver lock, ownership epochs and session records. A relative path is refused (each process would resolve it against its own working directory), and so is one naming a directory inside the repository (a confined role can write there).",
+      "Read from the default branch only by an unattended caller, the same rule `logPublish.webhookUrl` carries: a value the working tree declares but the default branch does not is refused and the per-repository default is used instead, so a pull request under review cannot redirect the driver's own lock, control records and reviewer hand-off files into a tree its own agent is allowed to write. An interactively-run command honours the working tree directly.",
+      'Changing it does not move what earlier runs left behind — nothing reads or migrates the old folders, so let a run in flight finish, or cancel it, before changing this key.'
+    ],
+    example: `{ "runtimeDir": "/var/lib/vinaya/runs" }`
   }
 ] as const
 

@@ -21,14 +21,21 @@ function tempDir(prefix: string): string {
 }
 
 describe('loopLogPathFor', () => {
-  it('builds <root>/<owner>-<repo>/<issue>.log for a resolved repo', () => {
+  it("builds the task's own output/driver.log under the runtime directory", () => {
     const root = tempDir('loop-log-root-')
-    expect(loopLogPathFor({ owner: 'acme', repo: 'widget' }, 521, root)).toBe(join(root, 'acme-widget', '521.log'))
+    expect(loopLogPathFor({ owner: 'acme', repo: 'widget' }, 521, root)).toBe(
+      join(root, 'tasks-execution', '521', 'output', 'driver.log')
+    )
   })
 
-  it('falls back to unresolved/<issue>.log when repo is null', () => {
+  it('ignores the repo, which the runtime directory already carries', () => {
+    // The log used to sit in a `<owner>-<repo>/` directory of its own. The
+    // runtime directory is already per-repository — a configured one belongs
+    // to one repo, and the default keeps the segment — so two repositories
+    // sharing an Issue number still get two files without the filename
+    // repeating what the root already says.
     const root = tempDir('loop-log-root-')
-    expect(loopLogPathFor(null, 521, root)).toBe(join(root, 'unresolved', '521.log'))
+    expect(loopLogPathFor(null, 521, root)).toBe(loopLogPathFor({ owner: 'acme', repo: 'widget' }, 521, root))
   })
 })
 

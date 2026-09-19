@@ -51,7 +51,16 @@ describe('dispatchRole — launch intent precedes spawn (O1)', () => {
     // with no `--task`/`--pr` the scope is `unscoped`. The fake copies its own
     // launch record — written before this child was spawned — to a file the
     // test reads back.
-    const recordPath = join(home, '.vinaya', 'dispatch-resume', 'unresolved', 'developer-claude-unscoped.json')
+    const recordPath = join(
+      home,
+      '.vinaya',
+      'runtime',
+      'unresolved',
+      'tasks-execution',
+      'unscoped',
+      'sessions',
+      'developer-claude.json'
+    )
     writeFileSync(
       join(binDir, 'claude'),
       `#!/bin/sh\ncat "${recordPath}" > "${seenRecordFile}" 2>/dev/null\ncat > /dev/null\nprintf '%s' '{"session_id":"sess-x","usage":{"input_tokens":1,"output_tokens":1}}'\nexit 0\n`
