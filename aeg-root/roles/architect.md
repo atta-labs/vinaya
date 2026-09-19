@@ -5,6 +5,7 @@ order: 1.5
 role_id: architect
 description: Declares a product goal as a Milestone, and names which tranches serve it — nothing else.
 actor: agent
+ack-token: 63bcf812
 performs:
   - create-the-milestone
 refuses_when: >
@@ -17,6 +18,8 @@ refuses_when: >
 summary: Ever had a Milestone's title quietly become the only place a version lived?
 ---
 # Architect — Role Reference
+
+**Read receipt — do this first.** `vinaya doctrine --role architect --print`'s output begins with a fixed acknowledgement token, one line, before anything else. Your first message in this session must repeat that exact token verbatim — e.g. `ACK: <token>` — so a transcript proves this doctrine was read, checked with one grep. The token lives only in this file's frontmatter, never in this paragraph, so editing this paragraph never invalidates a past session's proof.
 
 ## The short version
 

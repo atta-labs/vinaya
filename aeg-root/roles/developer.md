@@ -5,6 +5,7 @@ order: 3
 role_id: developer
 description: The coding agent that executes a brief — writes the change, opens the pull request, and answers for it.
 actor: agent
+ack-token: 1a2c7690
 performs:
   - write-the-code
   - write-the-tests
@@ -23,6 +24,8 @@ refuses_when: >
 summary: Ever had someone review their own work?
 ---
 # Developer — Role Reference
+
+**Read receipt — do this first.** `vinaya doctrine --role developer --print`'s output begins with a fixed acknowledgement token, one line, before anything else. Your first message in this session must repeat that exact token verbatim — e.g. `ACK: <token>` — so a transcript proves this doctrine was read, checked with one grep. The token lives only in this file's frontmatter, never in this paragraph, so editing this paragraph never invalidates a past session's proof.
 
 ## The short version
 

@@ -5,6 +5,7 @@ order: 1
 role_id: planner
 description: Turns an intent and a slice of tickets into a whole tranche — its tasks, and the dependencies between them.
 actor: agent
+ack-token: 8b3b50f4
 performs:
   - cut-labeled-issues
   - size-tasks-via-deep-dig
@@ -21,6 +22,8 @@ refuses_when: >
 summary: Ever had a project start with no real plan, just vibes?
 ---
 # Role: Planner
+
+**Read receipt — do this first.** `vinaya doctrine --role planner --print`'s output begins with a fixed acknowledgement token, one line, before anything else. Your first message in this session must repeat that exact token verbatim — e.g. `ACK: <token>` — so a transcript proves this doctrine was read, checked with one grep. The token lives only in this file's frontmatter, never in this paragraph, so editing this paragraph never invalidates a past session's proof.
 
 ## The short version
 

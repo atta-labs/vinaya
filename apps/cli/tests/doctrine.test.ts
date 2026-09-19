@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
+import matter from 'gray-matter'
 import { doctrineCommand, ENTRY_SEGMENTS, resolveDoctrineRoot } from '../src/commands/doctrine.js'
 
 const CLI_ENTRY = join(import.meta.dir, '..', 'src', 'index.ts')
@@ -152,6 +153,37 @@ describe('vinaya doctrine', () => {
     const printed = captureStdout(() => doctrineCommand(['--print']))
     const path = captureStdout(() => doctrineCommand([])).trim()
     expect(printed).not.toContain(path)
+  })
+
+  it("--print --role <name> emits every agent role's ack-token as its own first line (O2)", () => {
+    const root = resolveDoctrineRoot()
+    if (root === null) throw new Error('no doctrine root on this machine')
+    const roleNames = readdirSync(join(root, 'roles'))
+      .filter((f) => f.endsWith('.md'))
+      .map((f) => f.slice(0, -3))
+      .filter((name) => {
+        const { data } = matter(readFileSync(join(root, 'roles', `${name}.md`), 'utf8'))
+        return data.actor !== 'human'
+      })
+    expect(roleNames.length).toBeGreaterThan(0)
+    for (const role of roleNames) {
+      const { data } = matter(readFileSync(join(root, 'roles', `${role}.md`), 'utf8'))
+      const ackToken = data['ack-token']
+      expect(typeof ackToken, `${role}.md carries no ack-token frontmatter`).toBe('string')
+      const printed = captureStdout(() => doctrineCommand(['--role', role, '--print']))
+      expect(printed.split('\n')[0]).toBe(ackToken)
+    }
+  })
+
+  it('principal still refuses under --role, even combined with --print (O2 — not an agent role, gains no token)', async () => {
+    const proc = Bun.spawn(['bun', CLI_ENTRY, 'doctrine', '--role', 'principal', '--print'], {
+      stdout: 'pipe',
+      stderr: 'pipe'
+    })
+    const exitCode = await proc.exited
+    const stderr = await new Response(proc.stderr).text()
+    expect(exitCode).toBe(1)
+    expect(stderr).toContain("'principal' is not a known role")
   })
 
   it('actor: agent and actor: either roles both still resolve — the exclusion is actor-specific, not a blanket narrowing', () => {

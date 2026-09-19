@@ -5,6 +5,7 @@ order: 6
 role_id: archivist
 description: Closes out a merged pull request, recording what shipped and the intent it came from.
 actor: either
+ack-token: 4aef55d2
 performs:
   - close-the-issue
   - confirm-docs-updated
@@ -17,6 +18,8 @@ refuses_when: >
 summary: Ever lost track of why a decision was made, months later?
 ---
 # Archivist — Role Reference
+
+**Read receipt — do this first.** `vinaya doctrine --role archivist --print`'s output begins with a fixed acknowledgement token, one line, before anything else. Your first message in this session must repeat that exact token verbatim — e.g. `ACK: <token>` — so a transcript proves this doctrine was read, checked with one grep. The token lives only in this file's frontmatter, never in this paragraph, so editing this paragraph never invalidates a past session's proof.
 
 ## The short version
 
