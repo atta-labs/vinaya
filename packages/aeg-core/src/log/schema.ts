@@ -483,6 +483,34 @@ export const DevReviewLoopEventSchema = z.discriminatedUnion('event', [
       final_head: z.string(),
       result: z.enum(['merged_ready', 'stopped'])
     })
+    .strict(),
+  // (O3, `[task-operator-v1]`/Issue #662) A retry episode around one of the
+  // driver's own infrastructure-class hiccups — a pause/escalation comment
+  // post that failed at least once (O1), or a developer dispatch that ended
+  // on the launcher's own `'connection-failed'` classification (O2) — named
+  // by `kind`, so a run that survived a network drop can be told apart from
+  // one that did not. A NEW event, additive to the family: a pre-change
+  // line carries none of these, and parses exactly as it always did (no
+  // existing event's own required fields changed). Logged ONCE per episode,
+  // after the last attempt concludes — `'recovered'` when a later attempt
+  // eventually succeeded (whether or not a pause is ever reached: O2's own
+  // re-dispatch often lets the round continue to publish with no pause at
+  // all), `'exhausted'` once the shared `MAX_INFRASTRUCTURE_RETRIES` bound
+  // is reached with no success — never one line per attempt, which would
+  // make `attempts` redundant with the line count itself.
+  z
+    .object({
+      ...loopShared,
+      event: z.literal('infrastructure_retry'),
+      round: z.number().int(),
+      // Named `failure_kind`, never bare `kind` — `loopShared` already
+      // fixes THIS object's own `kind` at the literal `'dev_review_loop'`
+      // (the family discriminator every `LogEventSchema` union member
+      // carries); a second `kind` field here would silently shadow it.
+      failure_kind: z.enum(['pause_comment_post', 'developer_connection']),
+      attempts: z.number().int().positive(),
+      outcome: z.enum(['recovered', 'exhausted'])
+    })
     .strict()
 ])
 export type DevReviewLoopEvent = z.infer<typeof DevReviewLoopEventSchema>
