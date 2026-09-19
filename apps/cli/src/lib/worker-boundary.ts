@@ -654,26 +654,26 @@ export type WorkerBoundaryLaunchOpts = {
   args: readonly string[]
   /** The role's own confined workspace — the target worktree (developer/operator) or the reviewer's own scratch copy (`reviewer-isolation.ts`). Read-only when `bootstrapWritableSubpaths` is given (see that field's own doc); otherwise read+write, the steady-state case. */
   allowedDir: string
-  /** `GLOBAL_VINAYA_HOME` (`config.ts`) — NOT exposed to the confined role at all except through `vinayaHomeWritableSubdirs` (round 4 review, HIGH: this directory previously sat in `readOnlyDirs` wholesale, letting a confined Worker read `config.json` plus every other repo's and task's state under it — removed, not narrowed, since nothing inside the sandbox needs to read it: `loadConfig()`'s own global-fallback branch runs only in the TRUSTED, unsandboxed controller, never inside a dispatched child). */
-  vinayaHomeDir: string
   /**
-   * Subpaths, relative to `vinayaHomeDir`, a Worker's own later `vinaya`
-   * subcommand genuinely needs to READ and WRITE — its own log queue and
-   * its per-dispatch resume records. Scoping these to exactly THIS
-   * dispatch's own repo is the CALLER's job (round 4 review, BLOCKER: a
-   * bare top-level directory name previously granted read+write over the
-   * ENTIRE log-queue/resume-record tree, spanning every repo and every task
-   * ever dispatched on the machine — a confined Worker could forge another
-   * task's audit-log line, or steal another task's live vendor `resumeId`
-   * and resume its session directly, since the vendor binary sits in this
-   * same profile's own exec-allow list). This module stays a generic,
-   * reusable confinement primitive with no hardcoded opinion about
-   * `GLOBAL_VINAYA_HOME`'s own internal layout — the caller (`dispatch.ts`)
-   * derives the repo-scoped subpath from the SAME naming convention it
-   * already uses to locate its own files. Never `config.json`, never a bare
-   * top-level directory name.
+   * ABSOLUTE directory paths a confined role's own later `vinaya`
+   * subcommand genuinely needs to READ and WRITE — today, a reviewer's own
+   * per-attempt work directory.
+   *
+   * Absolute, not relative to a single machine-wide root: the directory a
+   * task's run writes under is configurable (`runtimeDir`,
+   * `apps/cli/src/lib/run-paths.ts`) and can sit anywhere on disk, while
+   * the telemetry outbox stays under the Vinaya home — two roots, so one
+   * base to resolve against can no longer express both. The caller still
+   * owns the scoping (round 4 review, BLOCKER: a bare top-level directory
+   * name once granted read+write over every repo's and task's records on
+   * the machine, letting a confined Worker forge another task's audit-log
+   * line or steal another task's live vendor session id, since the vendor
+   * binary sits in this same profile's own exec-allow list). This module
+   * stays a generic confinement primitive with no opinion about any
+   * directory's internal layout. Never `config.json`, never a whole
+   * top-level directory.
    */
-  vinayaHomeWritableSubdirs: readonly string[]
+  extraWritableDirs: readonly string[]
   /**
    * Round 5 review, CRITICAL fix: exact FILE paths, relative to
    * `vinayaHomeDir`, a Worker's own later `vinaya` subcommand genuinely
@@ -692,7 +692,7 @@ export type WorkerBoundaryLaunchOpts = {
    * production writes this dispatch performs pass their file here instead
    * and leave `vinayaHomeWritableSubdirs` for them empty.
    */
-  vinayaHomeWritableFiles?: readonly string[]
+  extraWritableFiles?: readonly string[]
   /**
    * Round 4 review, BLOCKER fix: subpaths, relative to `vinayaHomeDir`, a
    * confined dispatch must be able to READ but never write — today, exactly
@@ -712,7 +712,7 @@ export type WorkerBoundaryLaunchOpts = {
    * overwrite its own settings file to strip the hook for every later
    * dispatch that reuses this shared, unscoped directory.
    */
-  vinayaHomeReadOnlySubdirs?: readonly string[]
+  extraReadOnlyDirs?: readonly string[]
   /**
    * Round-1 Developer bootstrap only (round 2 review, CRITICAL): when given
    * (as directory names relative to `allowedDir`, e.g. `['.git', '.worktrees']`),
@@ -797,18 +797,7 @@ export function resolveWorkerBoundaryLaunch(
       ? (stageOAuthCredential(process.env, realHome, scratchTmpDir, deps)?.configDir ?? null)
       : null
 
-    let vinayaHomeDirReal: string | null = null
-    try {
-      vinayaHomeDirReal = realpathSync(opts.vinayaHomeDir)
-    } catch {
-      // GLOBAL_VINAYA_HOME may not exist yet on a fresh machine — the profile
-      // simply carves out nothing for it; a Worker's own later `vinaya`
-      // subcommand that needs to CREATE it for the first time would fail
-      // confined, which is a real, disclosed narrowing, not a silent one.
-      vinayaHomeDirReal = null
-    }
-
-    /** Resolves a subpath of an already-realpath'd parent — realpath'd itself when it already exists (closing the same symlink-alias gap every other path here closes), or left as a plain `join()` when it does not yet exist (`.worktrees` on a fresh clone, a log/resume subdirectory on a fresh machine): the PARENT is already canonical, so a not-yet-existing child's constructed path is exact, and Seatbelt subpath rules need no existing target to compile. */
+    /** Resolves a subpath of an already-realpath'd parent — realpath'd itself when it already exists (closing the same symlink-alias gap every other path here closes), or left as a plain `join()` when it does not yet exist (`.worktrees` on a fresh clone): the PARENT is already canonical, so a not-yet-existing child's constructed path is exact, and Seatbelt subpath rules need no existing target to compile. */
     const resolveExistingOrJoined = (parentReal: string, rel: string): string => {
       const joined = join(parentReal, rel)
       try {
@@ -818,26 +807,31 @@ export function resolveWorkerBoundaryLaunch(
       }
     }
 
+    /** Canonicalises an already-absolute caller-supplied path, leaving a not-yet-existing one exactly as given — a task folder the trusted controller has not created yet still compiles into a valid rule. */
+    const canonical = (abs: string): string => {
+      try {
+        return realpathSync(abs)
+      } catch {
+        return abs
+      }
+    }
+
     const bootstrapWriteDirs = (opts.bootstrapWritableSubpaths ?? []).map((rel) =>
       resolveExistingOrJoined(allowedDirReal, rel)
     )
-    const vinayaWritableDirs = vinayaHomeDirReal
-      ? opts.vinayaHomeWritableSubdirs.map((rel) => resolveExistingOrJoined(vinayaHomeDirReal as string, rel))
-      : []
-    const vinayaWritableFiles = vinayaHomeDirReal
-      ? (opts.vinayaHomeWritableFiles ?? []).map((rel) => resolveExistingOrJoined(vinayaHomeDirReal as string, rel))
-      : []
-    const vinayaReadOnlyDirs = vinayaHomeDirReal
-      ? (opts.vinayaHomeReadOnlySubdirs ?? []).map((rel) => resolveExistingOrJoined(vinayaHomeDirReal as string, rel))
-      : []
+    const vinayaWritableDirs = opts.extraWritableDirs.map(canonical)
+    const vinayaWritableFiles = (opts.extraWritableFiles ?? []).map(canonical)
+    const vinayaReadOnlyDirs = (opts.extraReadOnlyDirs ?? []).map(canonical)
 
-    // Round 4 review, HIGH: `vinayaHomeDirReal` is NEVER added here — only
-    // its caller-scoped `vinayaWritableDirs`/`vinayaReadOnlyDirs` (below) are
-    // exposed. This previously granted blanket `file-read*` over the whole
-    // `vinayaHomeDir`, letting a confined role read `config.json` plus every
-    // other repo's/task's state; nothing inside the sandbox needs that (the
+    // Round 4 review, HIGH: no machine-wide root is ever added here — only
+    // the caller's own narrowly-scoped `vinayaWritableDirs`/
+    // `vinayaReadOnlyDirs` (below). A blanket `file-read*` over the Vinaya
+    // home once let a confined role read `config.json` plus every other
+    // repo's and task's state; nothing inside the sandbox needs that (the
     // controller's own global-config fallback runs unsandboxed, before any
-    // child is ever spawned).
+    // child is ever spawned). Taking absolute paths rather than a root plus
+    // subpaths keeps that true now that a task's run files and the
+    // telemetry outbox live under two different roots.
     const readOnlyDirs = Array.from(
       new Set([...(opts.bootstrapWritableSubpaths ? [allowedDirReal] : []), ...vinayaReadOnlyDirs])
     )

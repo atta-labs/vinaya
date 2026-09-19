@@ -67,10 +67,18 @@ import { resolveRepo } from '@attalabs/aeg-forge-state'
 import { homedir, hostname as osHostname } from 'node:os'
 import { parseIssueDocumentation, redact, summarizeTranscript } from '@attalabs/aeg-core'
 import type { IssueDocumentationSource, Role, RoleAttemptOutcome, TranscriptSummary } from '@attalabs/aeg-core'
-import { createLogSink, outboxPathFor } from './log-sink.js'
+import { createLogSink, outboxPathFor, telemetryOutboxRoot } from './log-sink.js'
 import { appendRoleLine } from './loop-log.js'
-import { loadConfig, GLOBAL_VINAYA_HOME } from './config.js'
-import { dirname, join, relative } from 'node:path'
+import { loadConfig } from './config.js'
+import {
+  runPath,
+  runtimeDirForRepo,
+  runtimeDirForThisRepo,
+  type RunScope,
+  scopeFromSegment,
+  tasksExecutionRoot
+} from './run-paths.js'
+import { dirname, join } from 'node:path'
 import { buildWorkerEnv, resolveWorkerBoundaryLaunch, RUNTIME_CREDENTIAL_ENV_KEYS } from './worker-boundary.js'
 import { repoRoot } from './diff-evidence.js'
 
@@ -220,18 +228,18 @@ export type DispatchOpts = {
    */
   unattended?: boolean
   /**
-   * Round 6 fix, live-reproduced: additional subpaths, relative to
-   * `GLOBAL_VINAYA_HOME`, this dispatch's own confined child needs to
-   * READ+WRITE beyond the outbox/resume-record files every unattended
-   * dispatch already gets — `dev-review-loop.ts`'s own reviewer/security
-   * dispatch is the one caller with a need today: it tells a reviewer,
-   * via its OWN prompt text, to write `findings.txt`/`report.txt`/
-   * `objectives.txt` into `reviewerWorkDir`'s own
-   * `outbox/dev-review-loop/<task>/round-<n>-<role>-work[-retry<n>]`
+   * Round 6 fix, live-reproduced: additional ABSOLUTE directories this
+   * dispatch's own confined child needs to READ+WRITE beyond the
+   * outbox/resume-record files every unattended dispatch already gets —
+   * `dev-review-loop.ts`'s own reviewer/security dispatch is the one caller
+   * with a need today: it tells a reviewer, via its OWN prompt text, to
+   * write `findings.txt`/`report.txt`/`objectives.txt` into
+   * `reviewerWorkDir`'s own
+   * `tasks-execution/<task>/rounds/<n>/<role>-work[-retry<n>]`
    * directory (`reviewer-dispatch.ts`) — a path this module has no
    * hardcoded opinion about, so the caller names it directly, the same
    * "generic primitive, caller supplies the repo/dispatch-specific shape"
-   * posture `vinayaHomeWritableFiles` already takes. Found live: with no
+   * posture `extraWritableFiles` already takes. Found live: with no
    * grant here, a confined reviewer/security dispatch on the declared
    * supported host could not write its own findings — `dev-review-loop`'s
    * own real fixture test hung waiting for a report file no confined
@@ -367,7 +375,10 @@ export const MAX_TEE_BYTES = 8 * 1024 * 1024
  *     instead of throwing: an async `stream.write` error would otherwise be
  *     unhandled and take down the dispatch this tee only observes.
  */
-export function openOutputTee(effectId: string): {
+export function openOutputTee(
+  effectId: string,
+  scope: RunScope = 'unscoped'
+): {
   write: (chunk: Buffer) => void
   end: () => void
   path: string | null
@@ -377,7 +388,7 @@ export function openOutputTee(effectId: string): {
   // traversal string can never resolve outside the intended directory.
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(effectId)) return inert
   try {
-    const dir = join(GLOBAL_VINAYA_HOME, 'dispatch-output')
+    const dir = runPath(runtimeDirForThisRepo(), scope, { area: 'output' })
     mkdirSync(dir, { recursive: true, mode: 0o700 })
     // `mkdirSync`'s mode applies only when it creates the directory — an
     // existing one keeps whatever permissions it already had, which for a
@@ -773,9 +784,13 @@ const DISPATCH_BASH_MAX_TIMEOUT_MS = '1800000'
  * blocks, the same seam-is-dormant-when-absent posture `doc-owners.ts`
  * already uses.
  */
-export function writeDispatchSettings(runId: string, documentation: IssueDocumentationSource[] = []): string | null {
+export function writeDispatchSettings(
+  runId: string,
+  documentation: IssueDocumentationSource[] = [],
+  scope: RunScope = 'unscoped'
+): string | null {
   try {
-    const dir = join(GLOBAL_VINAYA_HOME, 'dispatch-settings')
+    const dir = runPath(runtimeDirForThisRepo(), scope, { area: 'hooks' })
     mkdirSync(dir, { recursive: true, mode: 0o700 })
     chmodSync(dir, 0o700)
     const scriptPath = join(dir, 'deny-background-bash.mjs')
@@ -1133,12 +1148,30 @@ function parseGeminiResumeId(stdout: string): string | null {
  * segment failing this check is treated exactly like a null `resolveRepo()`
  * result (`unresolved`), never spliced unchecked into a filesystem path.
  */
-const SAFE_REPO_SEGMENT = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/
-
-function isSafeRepoSegment(segment: string): boolean {
-  return SAFE_REPO_SEGMENT.test(segment) && !segment.includes('..')
+/**
+ * Which task folder this dispatch's own files belong in. The scope used to
+ * be part of a FILENAME in one flat per-repository directory
+ * (`<role>-<agent>-issue<n>.json`), which is why a confined role's write
+ * grant on that directory exposed every sibling task's and role's record;
+ * it is the folder now, so a grant on this dispatch's own file reaches
+ * nothing else.
+ */
+function scopeOf(task?: number, pr?: number): RunScope {
+  if (task !== undefined) return task
+  if (pr !== undefined) return { pr }
+  return 'unscoped'
 }
 
+/**
+ * This dispatch's own vendor session record:
+ * `<runtimeDir>/tasks-execution/<scope>/sessions/<role>-<agent>.json`.
+ *
+ * The repository segment the old path carried is gone from the filename
+ * because the runtime directory itself is already per-repository (a
+ * configured one belongs to one repo; the default one keeps the segment) —
+ * so two repositories sharing an Issue number still get two records, for
+ * the same reason as before.
+ */
 function resumeRecordPathFor(
   role: Role,
   agent: AgentVendor,
@@ -1146,10 +1179,10 @@ function resumeRecordPathFor(
   task?: number,
   pr?: number
 ): string {
-  const repoSegment =
-    repo && isSafeRepoSegment(repo.owner) && isSafeRepoSegment(repo.repo) ? `${repo.owner}-${repo.repo}` : 'unresolved'
-  const scope = task !== undefined ? `issue${task}` : pr !== undefined ? `pr${pr}` : 'unscoped'
-  return join(GLOBAL_VINAYA_HOME, 'dispatch-resume', repoSegment, `${role}-${agent}-${scope}.json`)
+  return runPath(runtimeDirForRepo(repo), scopeOf(task, pr), {
+    area: 'sessions',
+    file: `${role}-${agent}.json`
+  })
 }
 
 export type ResumeRecord = {
@@ -1604,33 +1637,33 @@ function nextAttempt(
  */
 export type DispatchTeeRecoveryDeps = {
   env: Record<string, string | undefined>
-  /** Every launch-record JSON file path this machine currently holds, across every repo/agent/scope — `dispatch-resume`'s own two-level (repo segment, then filename) layout, already walked. */
+  /** Every session-record JSON file path this run's runtime directory currently holds, across every task folder, role and agent — the `tasks-execution/<scope>/sessions/` layout, already walked. */
   listLaunchRecordPaths: () => string[]
   readFile: (path: string) => string
 }
 
-/** Real `~/.vinaya/`-backed deps for production use — never throws; an unreadable/absent `dispatch-resume` directory degrades to an empty list, matching this module's "never throws" posture. */
+/** Real, runtime-directory-backed deps for production use — never throws; an unreadable/absent task folder degrades to an empty list, matching this module's "never throws" posture. */
 export function realDispatchTeeRecoveryDeps(): DispatchTeeRecoveryDeps {
   return {
     env: process.env,
     listLaunchRecordPaths: () => {
-      const root = join(GLOBAL_VINAYA_HOME, 'dispatch-resume')
+      const runtime = runtimeDirForThisRepo()
       const out: string[] = []
-      let segments: string[]
+      let scopes: string[]
       try {
-        segments = readdirSync(root)
+        scopes = readdirSync(tasksExecutionRoot(runtime))
       } catch {
         return out
       }
-      for (const seg of segments) {
-        const segDir = join(root, seg)
+      for (const scope of scopes) {
+        const sessionsDir = runPath(runtime, scopeFromSegment(scope), { area: 'sessions' })
         let files: string[]
         try {
-          files = readdirSync(segDir)
+          files = readdirSync(sessionsDir)
         } catch {
           continue
         }
-        for (const f of files) if (f.endsWith('.json')) out.push(join(segDir, f))
+        for (const f of files) if (f.endsWith('.json')) out.push(join(sessionsDir, f))
       }
       return out
     },
@@ -1738,7 +1771,7 @@ export function recoverUsageFromDispatchTee(deps: DispatchTeeRecoveryDeps): Disp
   // join, on principle.
   if (!effectId || !/^[A-Za-z0-9_-]{1,128}$/.test(effectId)) return null
 
-  const teePath = join(GLOBAL_VINAYA_HOME, 'dispatch-output', `${effectId}.log`)
+  const teePath = runPath(runtimeDirForThisRepo(), scopeOf(task), { area: 'output', file: `${effectId}.log` })
   let teeText: string
   try {
     teeText = deps.readFile(teePath)
@@ -2123,7 +2156,7 @@ export async function dispatchRole(
   // harmlessly rather than mis-locating the file.
   const repo = await resolveRepo().catch(() => null)
   const issue = opts.task ?? null
-  const outboxPath = outboxPathFor({ outboxRoot: () => join(GLOBAL_VINAYA_HOME, 'outbox') }, repo, issue)
+  const outboxPath = outboxPathFor({ outboxRoot: telemetryOutboxRoot }, repo, issue)
 
   const effectId = randomUUID()
   const vendor = VENDOR_TABLE[agent]
@@ -2322,10 +2355,11 @@ export async function dispatchRole(
         `'## Documentation' source(s) are not mechanically enforced for this dispatch.`
     )
   }
-  const dispatchSettingsPath = agent === 'claude' ? writeDispatchSettings(runId, documentationSources) : null
+  const dispatchSettingsPath =
+    agent === 'claude' ? writeDispatchSettings(runId, documentationSources, scopeOf(opts.task, opts.pr)) : null
   // Round 5 review, MEDIUM: an unattended, isolation-required Claude dispatch
-  // whose settings write failed (disk/permission fault under
-  // `GLOBAL_VINAYA_HOME/dispatch-settings`) previously dropped `--settings`
+  // whose settings write failed (a disk/permission fault under this task's
+  // own hooks directory) previously dropped `--settings`
   // silently and launched anyway — the PreToolUse background-deny hook the
   // brief names a trap to preserve would never load, with no refusal and no
   // surfaced error, unlike O3's own boundary-unavailable path. Fail closed
@@ -2348,7 +2382,7 @@ export async function dispatchRole(
     })
     writeLifecycle(
       `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended start requires the PreToolUse ` +
-        `background-deny hook's settings file, which could not be written under ${GLOBAL_VINAYA_HOME}/dispatch-settings`
+        "background-deny hook's settings file, which could not be written into this task's own hooks directory"
     )
     patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason: 'refused' })
     await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
@@ -2402,7 +2436,7 @@ export async function dispatchRole(
             binaryPath,
             args: spawnArgs,
             allowedDir: boundaryAllowedDir,
-            vinayaHomeDir: GLOBAL_VINAYA_HOME,
+
             // O1: claude only — the one vendor whose OAuth
             // credential shape `stageOAuthCredential` knows how to stage;
             // Codex/Gemini get no staging attempt (`oauthConfigDir` stays
@@ -2431,22 +2465,27 @@ export async function dispatchRole(
             // directory needs only the `metadataOnlyDirs` traversal grant
             // this same resolution already derives from these paths' own
             // parents.
-            vinayaHomeWritableFiles: (() => {
+            extraWritableFiles: (() => {
               const resumePath = resumeRecordPathFor(role, agent, repo, opts.task, opts.pr)
               try {
                 mkdirSync(dirname(outboxPath), { recursive: true })
               } catch {
-                // best-effort — an unwritable GLOBAL_VINAYA_HOME is a
-                // pre-existing condition this resolution's own later steps
-                // already handle by narrowing what gets exposed, never by
-                // widening the grant to compensate.
+                // best-effort — an unwritable destination is a pre-existing
+                // condition this resolution's own later steps already handle
+                // by narrowing what gets exposed, never by widening the
+                // grant to compensate.
               }
               try {
                 mkdirSync(dirname(resumePath), { recursive: true })
               } catch {
                 // best-effort, same reasoning as above.
               }
-              const files = [relative(GLOBAL_VINAYA_HOME, outboxPath), relative(GLOBAL_VINAYA_HOME, resumePath)]
+              // Absolute, not relative to one root: the session record now
+              // lives in this task's own folder under `runtimeDir`, which a
+              // repository can configure anywhere, while the telemetry
+              // outbox line stays under the Vinaya home. Two roots, so a
+              // single base to resolve against can no longer name both.
+              const files = [outboxPath, resumePath]
               // Round 6 review, security CRITICAL fix: `documentationLogHookScript`'s
               // own `PostToolUse` hook (`writeDispatchSettings`, above) appends one
               // line per `WebFetch` call to `documentation-log-<runId>.jsonl` inside
@@ -2463,8 +2502,7 @@ export async function dispatchRole(
               // the outbox/resume-record files, as the one file in that otherwise
               // read-only directory the confined child genuinely writes.
               if (dispatchSettingsPath) {
-                const docLogPath = join(dirname(dispatchSettingsPath), `documentation-log-${runId}.jsonl`)
-                files.push(relative(GLOBAL_VINAYA_HOME, docLogPath))
+                files.push(join(dirname(dispatchSettingsPath), `documentation-log-${runId}.jsonl`))
               }
               return files
             })(),
@@ -2473,7 +2511,7 @@ export async function dispatchRole(
             // `dev-review-loop.ts`'s reviewer/security dispatch is the one
             // caller today, naming its own `reviewerWorkDir`, already
             // uniquely scoped per task/round/role/attempt.
-            vinayaHomeWritableSubdirs: opts.extraVinayaWritableSubdirs ?? [],
+            extraWritableDirs: opts.extraVinayaWritableSubdirs ?? [],
             // Round 4 review, BLOCKER: the confined child's own `--settings
             // <path>` argv (added above, before this resolution) points at
             // `writeDispatchSettings`'s `dispatch-settings` directory, which
@@ -2482,9 +2520,7 @@ export async function dispatchRole(
             // this directory is written by the trusted controller before
             // this resolution runs, and nothing inside the sandbox ever
             // needs to rewrite it.
-            vinayaHomeReadOnlySubdirs: dispatchSettingsPath
-              ? [relative(GLOBAL_VINAYA_HOME, dirname(dispatchSettingsPath))]
-              : [],
+            extraReadOnlyDirs: dispatchSettingsPath ? [dirname(dispatchSettingsPath)] : [],
             ...(usingRepoRootFallback
               ? { bootstrapWritableSubpaths: role === 'developer' ? ['.git', '.worktrees'] : [] }
               : {})
@@ -2696,7 +2732,7 @@ export async function dispatchRole(
       })
     }
 
-    const outputTee = openOutputTee(effectId)
+    const outputTee = openOutputTee(effectId, scopeOf(opts.task, opts.pr))
     if (outputTee.path !== null) {
       writeLifecycle(`[vinaya dispatch ${effectId}] ${role} via ${agent}: output teed to ${outputTee.path}`)
     }
