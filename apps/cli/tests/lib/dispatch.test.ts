@@ -16,6 +16,7 @@
 
 import { afterEach, describe, expect, it } from 'bun:test'
 import { execFileSync, spawnSync } from 'node:child_process'
+import type { SpawnSyncOptionsWithStringEncoding, SpawnSyncReturns } from 'node:child_process'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -163,6 +164,36 @@ function runScriptWithBudget(script: string, cwd: string, env: NodeJS.ProcessEnv
     }
     throw e
   }
+}
+
+/**
+ * Issue #660, O3 round 5 (reviewer BLOCKER F1 / security HIGH F1) — every
+ * remaining direct `spawnSync` call below bypasses `runDispatch`/
+ * `runScriptWithBudget` for a return-shape reason each call site's own
+ * comment explains (raw `stderr`, a raw `SpawnSyncReturns` a test reads
+ * `.status`/`.signal` off directly, or a `bun <script>` invocation that
+ * isn't the `dispatch` subcommand at all). Several of those direct calls
+ * carried a `timeout` with no `killSignal` and no signal-checked diagnostic
+ * throw; the hook-script call sites carried no budget at all. This wraps
+ * every one of them in the identical budget-plus-diagnostic discipline
+ * those two helpers already apply, without changing any call site's own
+ * return shape — `r.status`/`r.stdout`/`r.stderr` still read exactly as
+ * before; only a genuine budget-exceeded kill now throws instead of
+ * returning a bare, undiagnosable non-zero/timed-out result.
+ */
+function spawnBudgeted(
+  args: string[],
+  opts: SpawnSyncOptionsWithStringEncoding,
+  label: string
+): SpawnSyncReturns<string> {
+  const r = spawnSync('bun', args, { ...opts, timeout: DISPATCH_SUBPROCESS_BUDGET_MS, killSignal: 'SIGKILL' })
+  if (r.signal) {
+    throw new Error(
+      `${label} subprocess killed by ${r.signal} after exceeding its ${DISPATCH_SUBPROCESS_BUDGET_MS}ms budget\n` +
+        `--- stdout ---\n${r.stdout ?? ''}\n--- stderr ---\n${r.stderr ?? ''}`
+    )
+  }
+  return r
 }
 
 function writeFakeBinary(dir: string, name: string, script: string): string {
@@ -1609,12 +1640,15 @@ describe('dispatch observability — wired through a real run (#450)', () => {
     // `spawnSync`, not the `runDispatch` helper above: that helper returns
     // `stderr: ''` on a successful run (`execFileSync` yields stdout only),
     // and the operator lines this test is about are written to stderr.
-    const r = spawnSync('bun', [INDEX, 'dispatch', 'developer', '--agent', 'claude', '--prompt-file', promptFile], {
-      encoding: 'utf8',
-      cwd,
-      env: stripVinayaEnv({ ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` }),
-      timeout: DISPATCH_SUBPROCESS_BUDGET_MS
-    })
+    const r = spawnBudgeted(
+      [INDEX, 'dispatch', 'developer', '--agent', 'claude', '--prompt-file', promptFile],
+      {
+        encoding: 'utf8',
+        cwd,
+        env: stripVinayaEnv({ ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` })
+      },
+      'vinaya dispatch'
+    )
     expect(r.status).toBe(0)
 
     // The path is announced once, correlated with the run's effect id.
@@ -1772,12 +1806,15 @@ describe('terminal colour — role prefix and TTY/NO_COLOR gating (#491)', () =>
     const promptFile = join(cwd, 'prompt.txt')
     writeFileSync(promptFile, PROMPT_FILE_CONTENT)
 
-    const r = spawnSync('bun', [INDEX, 'dispatch', 'developer', '--agent', 'claude', '--prompt-file', promptFile], {
-      encoding: 'utf8',
-      cwd,
-      env: stripVinayaEnv({ ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` }),
-      timeout: DISPATCH_SUBPROCESS_BUDGET_MS
-    })
+    const r = spawnBudgeted(
+      [INDEX, 'dispatch', 'developer', '--agent', 'claude', '--prompt-file', promptFile],
+      {
+        encoding: 'utf8',
+        cwd,
+        env: stripVinayaEnv({ ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` })
+      },
+      'vinaya dispatch'
+    )
     expect(r.status).toBe(0)
 
     // O1: the rendered line carries the role prefix even off a TTY (only
@@ -2113,15 +2150,14 @@ describe('dispatchRole — model selection (O1/O2/O4, #456)', () => {
     const spawnedMarker = join(cwd, 'spawned')
     writeFakeBinary(binDir, 'codex', `#!/bin/sh\ntouch "${spawnedMarker}"\ncat > /dev/null\necho '{}'\nexit 0\n`)
 
-    const r = spawnSync(
-      'bun',
+    const r = spawnBudgeted(
       [INDEX, 'dispatch', 'developer', '--agent', 'codex', '--prompt-file', promptFile, '--model', 'claude-opus-5'],
       {
         encoding: 'utf8',
         cwd,
-        env: stripVinayaEnv({ ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` }),
-        timeout: DISPATCH_SUBPROCESS_BUDGET_MS
-      }
+        env: stripVinayaEnv({ ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` })
+      },
+      'vinaya dispatch'
     )
     expect(r.status).toBe(1)
     expect(existsSync(spawnedMarker)).toBe(false)
@@ -2227,10 +2263,14 @@ describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
     // Behavioral proof, not just structural: actually run the referenced
     // hook script both ways.
     const scriptPath = hookCommand.slice('bun "'.length, -1)
-    const denied = spawnSync('bun', [scriptPath], {
-      input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'sleep 100', run_in_background: true } }),
-      encoding: 'utf8'
-    })
+    const denied = spawnBudgeted(
+      [scriptPath],
+      {
+        input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'sleep 100', run_in_background: true } }),
+        encoding: 'utf8'
+      },
+      'PreToolUse hook'
+    )
     expect(denied.status).toBe(0)
     const deniedOut = JSON.parse(denied.stdout) as {
       hookSpecificOutput: { hookEventName: string; permissionDecision: string; permissionDecisionReason: string }
@@ -2239,17 +2279,25 @@ describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
     expect(deniedOut.hookSpecificOutput.permissionDecision).toBe('deny')
     expect(deniedOut.hookSpecificOutput.permissionDecisionReason).toMatch(/foreground/)
 
-    const allowed = spawnSync('bun', [scriptPath], {
-      input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'echo hi', run_in_background: false } }),
-      encoding: 'utf8'
-    })
+    const allowed = spawnBudgeted(
+      [scriptPath],
+      {
+        input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'echo hi', run_in_background: false } }),
+        encoding: 'utf8'
+      },
+      'PreToolUse hook'
+    )
     expect(allowed.status).toBe(0)
     expect(allowed.stdout.trim()).toBe('')
 
-    const nonBash = spawnSync('bun', [scriptPath], {
-      input: JSON.stringify({ tool_name: 'Read', tool_input: { file_path: '/tmp/x' } }),
-      encoding: 'utf8'
-    })
+    const nonBash = spawnBudgeted(
+      [scriptPath],
+      {
+        input: JSON.stringify({ tool_name: 'Read', tool_input: { file_path: '/tmp/x' } }),
+        encoding: 'utf8'
+      },
+      'PreToolUse hook'
+    )
     expect(nonBash.status).toBe(0)
     expect(nonBash.stdout.trim()).toBe('')
   })
@@ -2285,10 +2333,14 @@ describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
     const scriptPath = hookCommand.slice('bun "'.length, -1)
 
     const run = (command: string) => {
-      const result = spawnSync('bun', [scriptPath], {
-        input: JSON.stringify({ tool_name: 'Bash', tool_input: { command, run_in_background: false } }),
-        encoding: 'utf8'
-      })
+      const result = spawnBudgeted(
+        [scriptPath],
+        {
+          input: JSON.stringify({ tool_name: 'Bash', tool_input: { command, run_in_background: false } }),
+          encoding: 'utf8'
+        },
+        'PreToolUse hook'
+      )
       expect(result.status).toBe(0)
       return result.stdout.trim()
     }
@@ -2347,10 +2399,14 @@ describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
     const scriptPath = hookCommand.slice('bun "'.length, -1)
 
     for (const toolName of ['Agent', 'Task']) {
-      const denied = spawnSync('bun', [scriptPath], {
-        input: JSON.stringify({ tool_name: toolName, tool_input: { run_in_background: true } }),
-        encoding: 'utf8'
-      })
+      const denied = spawnBudgeted(
+        [scriptPath],
+        {
+          input: JSON.stringify({ tool_name: toolName, tool_input: { run_in_background: true } }),
+          encoding: 'utf8'
+        },
+        'PreToolUse hook'
+      )
       expect(denied.status).toBe(0)
       const deniedOut = JSON.parse(denied.stdout) as {
         hookSpecificOutput: { permissionDecision: string; permissionDecisionReason: string }
@@ -2358,10 +2414,14 @@ describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
       expect(deniedOut.hookSpecificOutput.permissionDecision).toBe('deny')
       expect(deniedOut.hookSpecificOutput.permissionDecisionReason).toMatch(/foreground/)
 
-      const allowed = spawnSync('bun', [scriptPath], {
-        input: JSON.stringify({ tool_name: toolName, tool_input: { run_in_background: false } }),
-        encoding: 'utf8'
-      })
+      const allowed = spawnBudgeted(
+        [scriptPath],
+        {
+          input: JSON.stringify({ tool_name: toolName, tool_input: { run_in_background: false } }),
+          encoding: 'utf8'
+        },
+        'PreToolUse hook'
+      )
       expect(allowed.status).toBe(0)
       expect(allowed.stdout.trim()).toBe('')
     }
@@ -2398,10 +2458,14 @@ describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
     const scriptPath = hookCommand.slice('bun "'.length, -1)
 
     const run = (command: string) => {
-      const result = spawnSync('bun', [scriptPath], {
-        input: JSON.stringify({ tool_name: 'Bash', tool_input: { command, run_in_background: false } }),
-        encoding: 'utf8'
-      })
+      const result = spawnBudgeted(
+        [scriptPath],
+        {
+          input: JSON.stringify({ tool_name: 'Bash', tool_input: { command, run_in_background: false } }),
+          encoding: 'utf8'
+        },
+        'PreToolUse hook'
+      )
       expect(result.status).toBe(0)
       return result.stdout.trim()
     }
@@ -2532,28 +2596,40 @@ describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () =
 
     // Behavioral proof: Stop refuses (exit 2, naming the source) before any
     // fetch is logged...
-    const beforeFetch = spawnSync('bun', [stopScript], {
-      input: JSON.stringify({ hook_event_name: 'Stop' }),
-      encoding: 'utf8',
-      env: { ...process.env, VINAYA_RUN_ID: runId }
-    })
+    const beforeFetch = spawnBudgeted(
+      [stopScript],
+      {
+        input: JSON.stringify({ hook_event_name: 'Stop' }),
+        encoding: 'utf8',
+        env: { ...process.env, VINAYA_RUN_ID: runId }
+      },
+      'Stop hook'
+    )
     expect(beforeFetch.status).toBe(2)
     expect(beforeFetch.stderr).toMatch(/example\.com\/docs\/fixture/)
 
     // ...the PostToolUse hook records a WebFetch call to that exact URL...
-    const logged = spawnSync('bun', [logScript], {
-      input: JSON.stringify({ tool_name: 'WebFetch', tool_input: { url: 'https://example.com/docs/fixture' } }),
-      encoding: 'utf8',
-      env: { ...process.env, VINAYA_RUN_ID: runId }
-    })
+    const logged = spawnBudgeted(
+      [logScript],
+      {
+        input: JSON.stringify({ tool_name: 'WebFetch', tool_input: { url: 'https://example.com/docs/fixture' } }),
+        encoding: 'utf8',
+        env: { ...process.env, VINAYA_RUN_ID: runId }
+      },
+      'PostToolUse hook'
+    )
     expect(logged.status).toBe(0)
 
     // ...and Stop now passes.
-    const afterFetch = spawnSync('bun', [stopScript], {
-      input: JSON.stringify({ hook_event_name: 'Stop' }),
-      encoding: 'utf8',
-      env: { ...process.env, VINAYA_RUN_ID: runId }
-    })
+    const afterFetch = spawnBudgeted(
+      [stopScript],
+      {
+        input: JSON.stringify({ hook_event_name: 'Stop' }),
+        encoding: 'utf8',
+        env: { ...process.env, VINAYA_RUN_ID: runId }
+      },
+      'Stop hook'
+    )
     expect(afterFetch.status).toBe(0)
     expect(afterFetch.stderr.trim()).toBe('')
   })
@@ -2625,26 +2701,38 @@ describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () =
       { source: hyphenatedUrl, mechanism: 'the mechanism this fixture governs', objectiveIds: [] }
     ])
 
-    const beforeFetch = spawnSync('bun', [stopScript], {
-      input: JSON.stringify({ hook_event_name: 'Stop' }),
-      encoding: 'utf8',
-      env: { ...process.env, VINAYA_RUN_ID: runId }
-    })
+    const beforeFetch = spawnBudgeted(
+      [stopScript],
+      {
+        input: JSON.stringify({ hook_event_name: 'Stop' }),
+        encoding: 'utf8',
+        env: { ...process.env, VINAYA_RUN_ID: runId }
+      },
+      'Stop hook'
+    )
     expect(beforeFetch.status).toBe(2)
     expect(beforeFetch.stderr).toContain(hyphenatedUrl)
 
-    const logged = spawnSync('bun', [logScript], {
-      input: JSON.stringify({ tool_name: 'WebFetch', tool_input: { url: hyphenatedUrl } }),
-      encoding: 'utf8',
-      env: { ...process.env, VINAYA_RUN_ID: runId }
-    })
+    const logged = spawnBudgeted(
+      [logScript],
+      {
+        input: JSON.stringify({ tool_name: 'WebFetch', tool_input: { url: hyphenatedUrl } }),
+        encoding: 'utf8',
+        env: { ...process.env, VINAYA_RUN_ID: runId }
+      },
+      'PostToolUse hook'
+    )
     expect(logged.status).toBe(0)
 
-    const afterFetch = spawnSync('bun', [stopScript], {
-      input: JSON.stringify({ hook_event_name: 'Stop' }),
-      encoding: 'utf8',
-      env: { ...process.env, VINAYA_RUN_ID: runId }
-    })
+    const afterFetch = spawnBudgeted(
+      [stopScript],
+      {
+        input: JSON.stringify({ hook_event_name: 'Stop' }),
+        encoding: 'utf8',
+        env: { ...process.env, VINAYA_RUN_ID: runId }
+      },
+      'Stop hook'
+    )
     expect(afterFetch.status).toBe(0)
     expect(afterFetch.stderr.trim()).toBe('')
   })
@@ -2707,11 +2795,15 @@ describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () =
       hooks: { Stop: Array<{ hooks: Array<{ command: string }> }> }
     }
     const stopScript = settings.hooks.Stop[0]?.hooks[0]?.command.slice('bun "'.length, -1) as string
-    const result = spawnSync('bun', [stopScript], {
-      input: JSON.stringify({ hook_event_name: 'Stop' }),
-      encoding: 'utf8',
-      env: { ...process.env, VINAYA_RUN_ID: 'some-run-id-with-no-sources-file' }
-    })
+    const result = spawnBudgeted(
+      [stopScript],
+      {
+        input: JSON.stringify({ hook_event_name: 'Stop' }),
+        encoding: 'utf8',
+        env: { ...process.env, VINAYA_RUN_ID: 'some-run-id-with-no-sources-file' }
+      },
+      'Stop hook'
+    )
     expect(result.status).toBe(0)
   })
 
@@ -2728,12 +2820,15 @@ describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () =
       const promptFile = join(cwd, 'prompt.txt')
       writeFileSync(promptFile, DOC_PROMPT)
 
-      const r = spawnSync('bun', [INDEX, 'dispatch', 'developer', '--agent', agent, '--prompt-file', promptFile], {
-        encoding: 'utf8',
-        cwd,
-        env: stripVinayaEnv({ ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` }),
-        timeout: DISPATCH_SUBPROCESS_BUDGET_MS
-      })
+      const r = spawnBudgeted(
+        [INDEX, 'dispatch', 'developer', '--agent', agent, '--prompt-file', promptFile],
+        {
+          encoding: 'utf8',
+          cwd,
+          env: stripVinayaEnv({ ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` })
+        },
+        'vinaya dispatch'
+      )
       expect(r.status).toBe(0)
       expect(r.stderr).toContain('Documentation read-gate')
       expect(r.stderr).toContain(agent)
@@ -2745,12 +2840,15 @@ describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () =
     writeFakeBinary(binDir, 'codex', `#!/bin/sh\ncat > /dev/null\necho '{}'\nexit 0\n`)
     const promptFile = join(cwd, 'prompt.txt')
     writeFileSync(promptFile, PROMPT_FILE_CONTENT)
-    const r = spawnSync('bun', [INDEX, 'dispatch', 'developer', '--agent', 'codex', '--prompt-file', promptFile], {
-      encoding: 'utf8',
-      cwd,
-      env: stripVinayaEnv({ ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` }),
-      timeout: DISPATCH_SUBPROCESS_BUDGET_MS
-    })
+    const r = spawnBudgeted(
+      [INDEX, 'dispatch', 'developer', '--agent', 'codex', '--prompt-file', promptFile],
+      {
+        encoding: 'utf8',
+        cwd,
+        env: stripVinayaEnv({ ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` })
+      },
+      'vinaya dispatch'
+    )
     expect(r.status).toBe(0)
     expect(r.stderr).not.toContain('Documentation read-gate')
   })

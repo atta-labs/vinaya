@@ -38,12 +38,22 @@ type CliResult = { status: number; stdout: string; stderr: string }
  * pattern already fixed in the sibling
  * `apps/cli/tests/lib/dev-review-loop.test.ts` (`fixtureChildEnv`) was left
  * unfixed here even though this file exercises the same call path.
+ *
+ * `AEG_REPO` is stripped alongside every `VINAYA_*` key (round 5, security
+ * LOW) for the same reason `fixtureChildEnv` strips it there: a real value
+ * inherited from a dispatched session's own environment would steer this
+ * fixture's repo-segment resolution away from the `unresolved` bucket this
+ * scratch, non-git `cwd` assumes. `PATH` is deliberately left untouched,
+ * unlike that reference helper — one case below (`does not require --task
+ * when --resume is given`) explicitly depends on the REAL ambient `PATH` so
+ * `devReviewLoop` reaches a real `git`/`gh` failure past argv parsing.
  */
 function stripVinayaEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = { ...env }
   for (const key of Object.keys(out)) {
     if (key.startsWith('VINAYA_')) delete out[key]
   }
+  delete out.AEG_REPO
   return out
 }
 
