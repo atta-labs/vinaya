@@ -3,7 +3,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { spawnSyncBudgeted } from '../lib/process-fixture'
+import { spawnBudgetedAsync, spawnSyncBudgeted, stripVinayaEnv } from '../lib/process-fixture'
 
 /**
  * Regression for the pipe-vs-file stdout-flush defect (Issue #127):
@@ -85,13 +85,16 @@ describe('vinaya check --json — pipe flush (Issue #127)', () => {
   it('emits the complete JSON payload through a real node subprocess pipe, above the pipe buffer', async () => {
     const repoDir = writeFixtureRepo()
     try {
-      const proc = Bun.spawn(['node', DIST_INDEX, 'check', 'myteam/bigcheck', '--json'], {
-        cwd: repoDir,
-        stdout: 'pipe',
-        stderr: 'pipe'
-      })
-      const stdout = await new Response(proc.stdout).text()
-      await proc.exited
+      // Issue #660, O3 (round 5 review, MAJOR) — this process's own
+      // VINAYA_* environment is stripped, and the subprocess is bounded by
+      // an explicit budget that throws with its own captured stdout/stderr
+      // on expiry, rather than falling through to bun:test's bare timeout.
+      const { stdout } = await spawnBudgetedAsync(
+        ['node', DIST_INDEX, 'check', 'myteam/bigcheck', '--json'],
+        { cwd: repoDir, env: stripVinayaEnv() },
+        25_000,
+        'vinaya check --json'
+      )
 
       expect(stdout.length).toBeGreaterThan(MIN_PAYLOAD_BYTES)
 

@@ -17,7 +17,7 @@
  * First landed inline, duplicated per file (`dev-review-loop.test.ts`,
  * `dispatch.test.ts`, and siblings); this is the one shared module those
  * duplicates were always meant to become. Round 5's architecture test
- * (`architecture/process-fixture-coverage.test.ts`) is the mechanical
+ * (`apps/cli/tests/process-fixture-coverage.test.ts`) is the mechanical
  * backstop: a file that spawns a real process and neither imports from here
  * nor appears on that test's grandfather list fails the build.
  */
@@ -65,4 +65,35 @@ export function spawnSyncBudgeted(
     )
   }
   return { status: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' }
+}
+
+/**
+ * The `Bun.spawn` (async) equivalent of `spawnSyncBudgeted` — `Bun.spawn`
+ * has no built-in `timeout`/`killSignal`, so the budget is a manual timer
+ * that kills the child and marks it timed-out; the child's stdout/stderr
+ * are always drained through `Response` before the diagnostic is thrown, so
+ * a genuine timeout still surfaces whatever the child had already written.
+ */
+export async function spawnBudgetedAsync(
+  command: string[],
+  options: { cwd?: string; env?: Record<string, string | undefined> },
+  budgetMs: number = PROCESS_FIXTURE_BUDGET_MS,
+  label: string = command[0] ?? 'spawn'
+): Promise<BudgetedSpawnResult> {
+  const proc = Bun.spawn(command, { ...options, stdout: 'pipe', stderr: 'pipe' })
+  const timedOut = { value: false }
+  const timer = setTimeout(() => {
+    timedOut.value = true
+    proc.kill('SIGKILL')
+  }, budgetMs)
+  const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()])
+  const status = await proc.exited
+  clearTimeout(timer)
+  if (timedOut.value) {
+    throw new Error(
+      `${label} subprocess killed by SIGKILL after exceeding its ${budgetMs}ms budget ` +
+        `(command: ${command.join(' ')})\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}`
+    )
+  }
+  return { status, stdout, stderr }
 }

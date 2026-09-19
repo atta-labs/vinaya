@@ -396,7 +396,8 @@ describe('vinaya task status --follow (task-run-v1 task 15, O6)', () => {
         encoding: 'utf8',
         stdio: ['pipe', 'pipe', 'pipe'],
         env: { ...stripVinayaEnv(process.env), ...env },
-        timeout: 1500
+        timeout: 1500,
+        killSignal: 'SIGKILL'
       })
     } catch (e) {
       caught = e as { stdout?: string }

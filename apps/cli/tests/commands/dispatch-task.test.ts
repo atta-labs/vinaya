@@ -4,6 +4,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { spawnSyncBudgeted } from '../lib/process-fixture'
 
 /**
  * `vinaya task dispatch <tranche> <n> --agent <vendor>` reaching the real
@@ -387,10 +388,18 @@ async function runTaskDispatch(runtime: 'bun' | 'node', entry: string, fixture: 
 beforeAll(async () => {
   // Always rebuild rather than trusting a possibly-stale dist/ from a prior
   // session — a stale bundle would silently test the WRONG code, and this
-  // file's entire point is the BUILT artifact, not the TS source.
-  const build = Bun.spawnSync(['bun', 'run', '--cwd', CLI_ROOT, 'build'], { stdout: 'pipe', stderr: 'pipe' })
-  if (build.exitCode !== 0) {
-    throw new Error(`apps/cli build failed:\n${build.stderr.toString()}`)
+  // file's entire point is the BUILT artifact, not the TS source. Issue
+  // #660, O3 (round 5 review, BLOCKER) — bounded by an explicit budget
+  // that throws with the child's own captured stdout/stderr on expiry.
+  const build = spawnSyncBudgeted(
+    'bun',
+    ['run', '--cwd', CLI_ROOT, 'build'],
+    { encoding: 'utf8' },
+    100_000,
+    'apps/cli build'
+  )
+  if (build.status !== 0) {
+    throw new Error(`apps/cli build failed:\n${build.stderr}`)
   }
 }, 120_000)
 

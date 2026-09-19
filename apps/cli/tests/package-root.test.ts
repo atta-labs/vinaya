@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { execFileSync, spawnSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { dirname, join } from 'node:path'
 import { copyFileSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { packageRoot } from '../src/lib/package-root'
 import { resolveAuthorRepoSourceEntry } from '../src/lib/self-host'
-import { spawnSyncBudgeted } from './lib/process-fixture'
+import { spawnSyncBudgeted, stripVinayaEnv } from './lib/process-fixture'
 
 describe('packageRoot', () => {
   let tmpDir: string
@@ -152,9 +152,18 @@ describe('vinaya: an installed build defers to this repo’s own source (Issue #
   const SRC_INDEX = join(CLI_ROOT, 'src', 'index.ts')
   const DIST_INDEX = join(CLI_ROOT, 'dist', 'index.js')
 
-  function run(cmd: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv) {
-    const result = spawnSync(cmd, args, { cwd, encoding: 'utf8', env: env ?? process.env })
-    return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' }
+  // Issue #660, O3 (round 5 review, MAJOR) — this process's own VINAYA_*
+  // environment is stripped before `extraEnv` is applied, and the
+  // subprocess is bounded by an explicit budget that throws with its own
+  // captured stdout/stderr on expiry, rather than a bare timeout.
+  function run(cmd: string, args: string[], cwd: string, extraEnv: Record<string, string> = {}) {
+    return spawnSyncBudgeted(
+      cmd,
+      args,
+      { cwd, encoding: 'utf8', env: { ...stripVinayaEnv(), ...extraEnv } },
+      undefined,
+      cmd
+    )
   }
 
   it('an installed dist build, run from this repo, prints the same stdout as running the source directly, via exactly one stderr deferral line', () => {
@@ -187,9 +196,8 @@ describe('vinaya: an installed build defers to this repo’s own source (Issue #
     copyFileSync(DIST_INDEX, join(installedPkgDir, 'dist', 'index.js'))
 
     try {
-      const direct = run('bun', [SRC_INDEX, 'version'], REPO_ROOT, { ...process.env, VINAYA_NO_DEFER: '1' })
+      const direct = run('bun', [SRC_INDEX, 'version'], REPO_ROOT, { VINAYA_NO_DEFER: '1' })
       const deferred = run('node', [join(installedPkgDir, 'dist', 'index.js'), 'version'], REPO_ROOT, {
-        ...process.env,
         GITHUB_ACTIONS: ''
       })
 

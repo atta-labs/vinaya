@@ -20,6 +20,7 @@ import {
   dispatchToolCall,
   type TaskToolHandlers
 } from '../../src/lib/task-tools/server.js'
+import { spawnSyncBudgeted, stripVinayaEnv } from '../lib/process-fixture'
 
 /**
  * Part 2 (O2): the nine two-runtime fixture scenarios shared verbatim by
@@ -67,29 +68,22 @@ export const ABS_BIN = join(CLI_ROOT, 'dist', 'index.js')
  * than "assume a shard-mate already did it."
  */
 export function ensureCliBuilt(): void {
-  const build = Bun.spawnSync(['bun', 'run', '--cwd', CLI_ROOT, 'build'], { stdout: 'pipe', stderr: 'pipe' })
-  if (build.exitCode !== 0) {
-    throw new Error(`apps/cli build failed:\n${build.stderr.toString()}`)
+  // Issue #660, O3 (round 5 review, BLOCKER) — bounded by an explicit
+  // budget that throws with the child's own captured stdout/stderr on
+  // expiry, rather than a bare timeout.
+  const build = spawnSyncBudgeted(
+    'bun',
+    ['run', '--cwd', CLI_ROOT, 'build'],
+    { encoding: 'utf8' },
+    100_000,
+    'apps/cli build'
+  )
+  if (build.status !== 0) {
+    throw new Error(`apps/cli build failed:\n${build.stderr}`)
   }
 }
 
 export type ServerInvocation = { command: string; args: string[] }
-
-/**
- * Issue #660, O3 round 4 (security MEDIUM) — same fix as
- * `apps/cli/tests/lib/dev-review-loop.test.ts`'s `fixtureChildEnv`: a leaked
- * `VINAYA_*` variable from a dispatched session's own environment (not just
- * `VINAYA_RUNTIME_DIR`, which `buildSandbox` below already overrides
- * explicitly) can steer this fixture's real subprocess away from its own
- * isolated sandbox.
- */
-function stripVinayaEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const out: NodeJS.ProcessEnv = { ...env }
-  for (const key of Object.keys(out)) {
-    if (key.startsWith('VINAYA_')) delete out[key]
-  }
-  return out
-}
 
 // --- a minimal real JSON-RPC stdio client (spawn mode) ----------------------
 
@@ -106,7 +100,12 @@ export class SpawnRpcClient {
   constructor(invocation: ServerInvocation, env: Record<string, string>, cwd: string) {
     // `pipe`, not `ignore` (Issue #660, O3 round 4, security MEDIUM) — a
     // hung/crashed server's own stderr is the diagnostic a bare request
-    // timeout otherwise discards entirely.
+    // timeout otherwise discards entirely. `env` arrives already stripped
+    // AND deliberately re-populated by the caller (`buildSandbox` strips
+    // ambient VINAYA_* first, then sets its own VINAYA_RUNTIME_DIR/
+    // VINAYA_MCP_CALLER/etc. on top) — stripping again here would remove
+    // those deliberate overrides right back out, so this constructor
+    // trusts its caller rather than re-stripping.
     this.proc = spawn(invocation.command, invocation.args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] })
     this.stdin = this.proc.stdin!
     const stdout = this.proc.stdout!
