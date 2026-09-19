@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -337,6 +337,53 @@ describe('a runId cannot escape the task directory', () => {
     const epoch = acquired.acquired ? acquired.epoch : -1
     expect(() =>
       writeRun(deps, 551, epoch, { runId: 'run-a.1_ok', pid: 1, host: 'box', startedAt: clock.toISOString() })
+    ).not.toThrow()
+  })
+})
+
+describe('a pre-planted symlink at a run directory is refused, never followed (security review, CRITICAL)', () => {
+  let attackerDir: string
+
+  beforeEach(() => {
+    attackerDir = mkdtempSync(join(tmpdir(), 'control-store-attacker-'))
+  })
+
+  afterEach(() => {
+    rmSync(attackerDir, { recursive: true, force: true })
+  })
+
+  it('atomicWriteFile (writeRun) refuses to write through a symlinked run directory', () => {
+    const acquired = acquireOwnership(deps, 553, 'run-a')
+    expect(acquired.acquired).toBe(true)
+    const epoch = acquired.acquired ? acquired.epoch : -1
+
+    mkdirSync(join(dir, '553', 'control'), { recursive: true })
+    symlinkSync(attackerDir, join(dir, '553', 'control', 'run'))
+
+    expect(() =>
+      writeRun(deps, 553, epoch, { runId: 'run-a', pid: 1, host: 'box', startedAt: clock.toISOString() })
+    ).toThrow(/refusing to create a run directory/)
+    expect(readdirSync(attackerDir)).toEqual([])
+  })
+
+  it('exclusiveCreateFile (acquireOwnership) refuses to write through a symlinked ownership directory', () => {
+    mkdirSync(join(dir, '554', 'control'), { recursive: true })
+    symlinkSync(attackerDir, join(dir, '554', 'control', 'ownership'))
+
+    expect(() => acquireOwnership(deps, 554, 'run-a')).toThrow(/refusing to create a run directory/)
+    expect(readdirSync(attackerDir)).toEqual([])
+  })
+
+  it('a pre-existing REAL directory at that same depth is unaffected — only a non-directory refuses', () => {
+    const acquired = acquireOwnership(deps, 555, 'run-a')
+    expect(acquired.acquired).toBe(true)
+    const epoch = acquired.acquired ? acquired.epoch : -1
+    // The real `run` directory this call itself would create, pre-created by
+    // hand — a legitimate concurrent writer's ordinary case, not an attack.
+    mkdirSync(join(dir, '555', 'control', 'run'), { recursive: true, mode: 0o700 })
+
+    expect(() =>
+      writeRun(deps, 555, epoch, { runId: 'run-a', pid: 1, host: 'box', startedAt: clock.toISOString() })
     ).not.toThrow()
   })
 })

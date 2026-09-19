@@ -50,6 +50,7 @@ import {
   existsSync,
   fsyncSync,
   linkSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readdirSync,
@@ -59,7 +60,7 @@ import {
   writeSync
 } from 'node:fs'
 import { hostname as osHostname } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 import {
   type EffectRecord,
   type EscalationRecord,
@@ -152,9 +153,55 @@ function readRecord<T>(path: string, parse: (raw: string | undefined) => ParsedR
   }
 }
 
+/**
+ * Creates `dir` and every missing ancestor, refusing to traverse through a
+ * pre-existing symlink at any level (security review, CRITICAL).
+ * `mkdirSync(dir, { recursive: true })` treats an existing symlink-to-directory
+ * as already present and silently follows it — every writer that reaches
+ * this store's own `openSync`/`writeSync`/`renameSync`/`linkSync` next then
+ * operates inside whatever real directory that symlink resolves to. Before
+ * `runtimeDir` became a repo-configurable absolute path shared with other
+ * local accounts (`apps/cli/src/lib/run-paths.ts`'s own doc comment names
+ * `/var/lib/vinaya/runs`), the whole tree sat under the fixed, user-owned
+ * `~/.vinaya/outbox` and a co-tenant able to pre-plant a symlink was out of
+ * scope; a shared, configurable tree makes that co-tenant a real adversary
+ * for every path this store writes.
+ *
+ * Each path segment is created with a plain, non-recursive `mkdirSync` —
+ * one this call itself creates cannot be a pre-planted symlink, since it did
+ * not exist a moment before — then `lstatSync`-verified without following
+ * symlinks, the identical check applied to a segment that already existed.
+ * A non-directory at any level (a symlink, a plain file) refuses the whole
+ * operation rather than writing through it.
+ *
+ * Exported (not just this module's own use) so `apps/cli`'s own run-file
+ * writers — `run-paths.ts`'s `ensureRunDir`, the one chokepoint every other
+ * run-file directory in that package already goes through — share this
+ * exact check rather than a second, independently-maintained copy of it.
+ */
+export function mkdirNoSymlinks(dir: string, mode: number): void {
+  const absolute = resolve(dir)
+  const segments = absolute.split(sep).filter((s) => s.length > 0)
+  let current = absolute.startsWith(sep) ? sep : ''
+  for (const segment of segments) {
+    current = current === '' || current === sep ? `${current}${segment}` : `${current}${sep}${segment}`
+    try {
+      mkdirSync(current, { mode })
+    } catch (err) {
+      if (!isErrnoException(err, 'EEXIST')) throw err
+    }
+    const stat = lstatSync(current)
+    if (!stat.isDirectory()) {
+      throw new Error(
+        `control-store: refusing to create a run directory through ${current} — it already exists and is not a real directory (a symlink or a file)`
+      )
+    }
+  }
+}
+
 /** Whole-file write via temp-then-rename, `fsync`ed before the rename so the bytes are durable, not just visible. */
 function atomicWriteFile(path: string, contents: string): void {
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+  mkdirNoSymlinks(dirname(path), 0o700)
   const tmp = `${path}.tmp-${process.pid}-${randomUUID()}`
   const fd = openSync(tmp, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC, 0o600)
   try {
@@ -178,7 +225,7 @@ function atomicWriteFile(path: string, contents: string): void {
  * used here.
  */
 function exclusiveCreateFile(path: string, contents: string): { created: true } | { created: false } {
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+  mkdirNoSymlinks(dirname(path), 0o700)
   const tmp = `${path}.claim-${process.pid}-${randomUUID()}`
   const fd = openSync(tmp, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL, 0o600)
   try {
