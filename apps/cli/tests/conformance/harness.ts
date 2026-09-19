@@ -1,0 +1,555 @@
+import { describe, expect, it } from 'bun:test'
+import { type ChildProcess, spawn } from 'node:child_process'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import {
+  acquireOwnership,
+  consumeResolutionOnce,
+  defaultControlStoreDeps,
+  type EscalationInput,
+  writeEscalation
+} from '@attalabs/aeg-core'
+import { ReplayedResolutionError, writePauseState } from '../../src/lib/dev-review-loop/pause-resume.js'
+import { tasksExecutionRoot } from '../../src/lib/run-paths.js'
+import { createTaskCancelHandler } from '../../src/lib/task-tools/cancel.js'
+import { createTaskResumeHandler, type ResumeClaimStore, type ResumeRecord } from '../../src/lib/task-tools/resume.js'
+import {
+  createTaskToolsMcpServer,
+  defaultTaskToolHandlers,
+  dispatchToolCall,
+  type TaskToolHandlers
+} from '../../src/lib/task-tools/server.js'
+
+/**
+ * Part 2 (O2): the nine two-runtime fixture scenarios shared verbatim by
+ * `claude.test.ts` and `codex.test.ts` — the SAME assertions run against
+ * each adapter's own registered invocation, so "same expectations on both
+ * adapters" is a property of shared code, not two hand-copied files that
+ * could silently drift apart.
+ *
+ * Two drive modes, both genuinely "through the registered tools":
+ *  - spawn: a REAL child process, the exact command the calling adapter
+ *    registers, driven over real stdio JSON-RPC (`SpawnRpcClient`) — used
+ *    for `task_start` and every `task_escalation_read` scenario, neither of
+ *    which needs a forge credential (`task_escalation_read`'s `{ issue }`
+ *    ref resolves with no `gh` call at all — `handlers.ts`'s own
+ *    `resolveIssueForRef` doc comment).
+ *  - in-process: the real `createTaskToolsMcpServer`/`handleLine` (real
+ *    JSON-RPC framing, the real router and catalog validation), with
+ *    `task_resume`/`task_cancel` substituted for the SAME dependency-
+ *    injected handlers `resume.test.ts`/`cancel.test.ts` already prove
+ *    correct in isolation — this suite proves they behave identically when
+ *    reached through the shared protocol surface, not their own internals
+ *    again. `runtimeDir()`/`gh` are not overridable without either a real
+ *    subprocess (spawn mode) or dependency injection (this module's own
+ *    established repo convention — no test mutates `process.env.HOME`
+ *    in-process anywhere in this codebase).
+ */
+
+// --- repo/bin resolution (same shape protocol.test.ts already uses) --------
+
+export const REPO_ROOT = join(import.meta.dir, '..', '..', '..', '..')
+export const ABS_BIN = join(REPO_ROOT, 'apps', 'cli', 'dist', 'index.js')
+
+export type ServerInvocation = { command: string; args: string[] }
+
+// --- a minimal real JSON-RPC stdio client (spawn mode) ----------------------
+
+type RpcResult = { result?: Record<string, unknown>; error?: { code: number; message: string } }
+
+export class SpawnRpcClient {
+  private proc: ChildProcess
+  private stdin: NodeJS.WritableStream
+  private buffer = ''
+  private pending = new Map<number, (value: RpcResult) => void>()
+  private nextId = 1
+
+  constructor(invocation: ServerInvocation, env: Record<string, string>, cwd: string) {
+    this.proc = spawn(invocation.command, invocation.args, { cwd, env, stdio: ['pipe', 'pipe', 'ignore'] })
+    this.stdin = this.proc.stdin!
+    const stdout = this.proc.stdout!
+    stdout.setEncoding('utf8')
+    stdout.on('data', (chunk: string) => {
+      this.buffer += chunk
+      let idx = this.buffer.indexOf('\n')
+      while (idx !== -1) {
+        const line = this.buffer.slice(0, idx).trim()
+        this.buffer = this.buffer.slice(idx + 1)
+        if (line.length > 0) {
+          const msg = JSON.parse(line) as { id?: number } & RpcResult
+          if (typeof msg.id === 'number') {
+            const resolve = this.pending.get(msg.id)
+            if (resolve) {
+              this.pending.delete(msg.id)
+              resolve({ result: msg.result, error: msg.error })
+            }
+          }
+        }
+        idx = this.buffer.indexOf('\n')
+      }
+    })
+  }
+
+  request(method: string, params?: unknown): Promise<RpcResult> {
+    const id = this.nextId++
+    const line = `${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`
+    return new Promise<RpcResult>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`timeout waiting for ${method} (id ${id})`)), 15_000)
+      this.pending.set(id, (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      })
+      this.stdin.write(line)
+    })
+  }
+
+  async callTool(name: string, args: unknown): Promise<{ isError: boolean; structured: Record<string, unknown> }> {
+    const res = await this.request('tools/call', { name, arguments: args })
+    const result = res.result as { isError?: boolean; structuredContent?: Record<string, unknown> }
+    return { isError: Boolean(result?.isError), structured: result?.structuredContent ?? {} }
+  }
+
+  close(): void {
+    try {
+      this.stdin.end()
+    } catch {
+      // ignore
+    }
+    this.proc.kill('SIGKILL')
+  }
+}
+
+// --- sandbox: HOME, fake gh, recording launcher, isolated runtime dir ------
+
+export type Sandbox = {
+  sandbox: string
+  runtimeDir: string
+  launchFile: string
+  env: Record<string, string>
+  cleanup: () => void
+}
+
+export function buildSandbox(): Sandbox {
+  const sandbox = mkdtempSync(join(tmpdir(), 'vinaya-conformance-'))
+  const binDir = join(sandbox, 'bin')
+  const home = join(sandbox, 'home')
+  const runtimeDir = join(sandbox, 'runtime')
+  mkdirSync(binDir, { recursive: true })
+  mkdirSync(home, { recursive: true })
+  mkdirSync(runtimeDir, { recursive: true })
+  const launchFile = join(sandbox, 'launches.log')
+
+  const gh = join(binDir, 'gh')
+  writeFileSync(gh, "#!/bin/sh\necho '[]'\n", { mode: 0o755 })
+  chmodSync(gh, 0o755)
+
+  const launcher = join(binDir, 'record-launch')
+  writeFileSync(launcher, '#!/bin/sh\necho "launch $*" >> "$VINAYA_TEST_LAUNCH_FILE"\n', { mode: 0o755 })
+  chmodSync(launcher, 0o755)
+
+  const env: Record<string, string> = {
+    ...process.env,
+    HOME: home,
+    PATH: `${binDir}:${process.env.PATH ?? ''}`,
+    AEG_REPO: 'attalabs/vinaya',
+    VINAYA_MCP_CALLER: 'operator-1',
+    VINAYA_RUNTIME_DIR: runtimeDir,
+    VINAYA_TASK_RUN_COMMAND: launcher,
+    VINAYA_TEST_LAUNCH_FILE: launchFile
+  }
+
+  return {
+    sandbox,
+    runtimeDir,
+    launchFile,
+    env,
+    cleanup: () => rmSync(sandbox, { recursive: true, force: true })
+  }
+}
+
+export async function launchCountFor(launchFile: string, id: string): Promise<number> {
+  for (let i = 0; i < 40; i++) {
+    try {
+      const lines = readFileSync(launchFile, 'utf8')
+        .split('\n')
+        .filter((l) => l.includes(`serve ${id}`) || l.endsWith(` ${id}`))
+      if (lines.length > 0) return lines.length
+    } catch {
+      // not written yet
+    }
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  return 0
+}
+
+// --- disk fixtures: pause state + durable escalation records ---------------
+
+export const ISSUE_MECHANICAL = 9101
+export const ISSUE_RETRIES = 9102
+export const ISSUE_FRESH = 9103
+export const ISSUE_INPUT_CHANGE = 9104
+export const ISSUE_HANDOFF = 9105
+export const PR = 9500
+
+export function writePauseFixture(
+  runtimeDir: string,
+  overrides: Partial<Parameters<typeof writePauseState>[1]> & { task: number }
+): void {
+  writePauseState(runtimeDir, {
+    round: 1,
+    head: 'headsha1',
+    branch: 'task/conformance/1',
+    prNumber: PR,
+    reason: 'escalation',
+    pausedAt: '2026-01-01T00:00:00.000Z',
+    escalationId: `${overrides.task}-1-headsha1`,
+    ...overrides
+  })
+}
+
+export function writeEscalationFixture(
+  runtimeDir: string,
+  task: number,
+  overrides: Partial<EscalationInput> = {}
+): void {
+  const controlStoreDeps = defaultControlStoreDeps(() => tasksExecutionRoot(runtimeDir))
+  const acquired = acquireOwnership(controlStoreDeps, task, 'test-fixture')
+  if (!acquired.acquired) throw new Error('fixture: could not acquire epoch')
+  writeEscalation(controlStoreDeps, task, acquired.epoch, {
+    escalationId: `${task}-1-headsha1`,
+    round: 1,
+    head: 'headsha1',
+    branch: 'task/conformance/1',
+    pr: PR,
+    runId: 'run-1',
+    pid: 12345,
+    host: 'test-host',
+    agent: 'claude',
+    reason: 'escalation',
+    attemptedRecovery: 'none',
+    requestedDecision: 'resume or cancel',
+    recipient: 'principal',
+    briefHash: 'brief-hash-1',
+    objectivesVersion: 'objectives-v1',
+    rulingOrdinal: 0,
+    policyDigest: 'digest-1',
+    recordedAt: '2026-01-01T00:00:00.000Z',
+    ...overrides
+  })
+}
+
+// --- in-process server (task_resume/task_cancel, dependency-injected) ------
+
+function memClaimStore(): { store: ResumeClaimStore; map: Map<string, ResumeRecord> } {
+  const map = new Map<string, ResumeRecord>()
+  return {
+    map,
+    store: {
+      claim(record) {
+        const existing = map.get(record.escalationId)
+        if (existing) return { claimed: false, record: existing }
+        map.set(record.escalationId, record)
+        return { claimed: true, record }
+      },
+      release(escalationId) {
+        map.delete(escalationId)
+      }
+    }
+  }
+}
+
+async function handleOne(
+  handlers: TaskToolHandlers,
+  name: string,
+  args: unknown
+): Promise<{ isError: boolean; structured: Record<string, unknown> }> {
+  const server = createTaskToolsMcpServer({
+    serverVersion: 'conformance-test',
+    handlers,
+    callerContext: { caller: { id: 'operator-1' } }
+  })
+  const response = await server.handleLine(
+    JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } })
+  )
+  const parsed = JSON.parse(response ?? '{}') as {
+    result?: { isError?: boolean; structuredContent?: Record<string, unknown> }
+  }
+  return { isError: Boolean(parsed.result?.isError), structured: parsed.result?.structuredContent ?? {} }
+}
+
+// --- the nine scenarios, shared verbatim by both adapters -------------------
+
+export function defineConformanceSuite(runtime: 'claude' | 'codex', invocation: ServerInvocation): void {
+  describe(`task-tools conformance — ${runtime} adapter, nine scenarios`, () => {
+    it('Clean result — task_start launches exactly once and returns the durable run identity', async () => {
+      const sb = buildSandbox()
+      try {
+        const client = new SpawnRpcClient(invocation, sb.env, REPO_ROOT)
+        await client.request('initialize', {})
+        const { isError, structured } = await client.callTool('task_start', { tranche: 'conformance', id: '1' })
+        expect(isError).toBe(false)
+        expect(structured.started).toBe(true)
+        expect(structured.mode).toBe('attended')
+        expect(structured.run).toEqual({ tranche: 'conformance', id: '1' })
+        expect(typeof structured.requestId).toBe('string')
+        expect(await launchCountFor(sb.launchFile, '1')).toBe(1)
+        client.close()
+      } finally {
+        sb.cleanup()
+      }
+    })
+
+    it('Invalid result — malformed input to every registered tool is refused before any effect', async () => {
+      const CALLER = { caller: { id: 'operator-1' } }
+      const cases: Array<[string, unknown]> = [
+        ['task_status', { limit: -1 }],
+        ['task_escalation_read', {}],
+        ['task_resume', {}],
+        ['task_cancel', { task: { issue: 1 } }],
+        ['task_start', {}]
+      ]
+      for (const [name, input] of cases) {
+        const result = await dispatchToolCall(defaultTaskToolHandlers, name, input, CALLER)
+        expect(result.ok).toBe(false)
+        if (!result.ok) expect(result.error.kind).toBe('validation')
+      }
+    })
+
+    it('Mechanical rejection — an infrastructure pause names the operator, never a review dispute', async () => {
+      const sb = buildSandbox()
+      try {
+        writePauseFixture(sb.runtimeDir, {
+          task: ISSUE_MECHANICAL,
+          reason: 'infrastructure',
+          detail: 'reviewer.md was never written for round 1'
+        })
+        const client = new SpawnRpcClient(invocation, sb.env, REPO_ROOT)
+        await client.request('initialize', {})
+        const { isError, structured } = await client.callTool('task_escalation_read', {
+          task: { issue: ISSUE_MECHANICAL }
+        })
+        expect(isError).toBe(false)
+        const items = structured.items as Array<Record<string, unknown>>
+        expect(items).toHaveLength(1)
+        expect(items[0]?.reason).toBe('infrastructure')
+        expect(items[0]?.requestedAuthority).toBe('operator')
+        expect(items[0]?.runIdentity).toBeNull()
+        client.close()
+      } finally {
+        sb.cleanup()
+      }
+    })
+
+    it('Bounded retries — a no_push pause reports the already-exhausted single bounded attempt', async () => {
+      const sb = buildSandbox()
+      try {
+        writePauseFixture(sb.runtimeDir, {
+          task: ISSUE_RETRIES,
+          reason: 'no_push',
+          detail: 'worktree task/conformance/1'
+        })
+        const client = new SpawnRpcClient(invocation, sb.env, REPO_ROOT)
+        await client.request('initialize', {})
+        const { isError, structured } = await client.callTool('task_escalation_read', {
+          task: { issue: ISSUE_RETRIES }
+        })
+        expect(isError).toBe(false)
+        const items = structured.items as Array<Record<string, unknown>>
+        expect(items[0]?.reason).toBe('no_push')
+        expect(items[0]?.requestedAuthority).toBe('operator')
+        expect(items[0]?.attemptedRecovery).toContain('one foreground resume')
+        client.close()
+      } finally {
+        sb.cleanup()
+      }
+    })
+
+    it('Fresh reviews — every read is re-derived from current state, never a cached prior response', async () => {
+      const sb = buildSandbox()
+      try {
+        writePauseFixture(sb.runtimeDir, {
+          task: ISSUE_FRESH,
+          round: 1,
+          head: 'headsha1',
+          escalationId: `${ISSUE_FRESH}-1-headsha1`
+        })
+        const client = new SpawnRpcClient(invocation, sb.env, REPO_ROOT)
+        await client.request('initialize', {})
+
+        const first = await client.callTool('task_escalation_read', { task: { issue: ISSUE_FRESH } })
+        const firstItems = first.structured.items as Array<Record<string, unknown>>
+        expect((firstItems[0]?.inputs as Record<string, unknown>)?.round).toBe(1)
+
+        // The SAME live connection; the on-disk pause advances underneath it.
+        writePauseFixture(sb.runtimeDir, {
+          task: ISSUE_FRESH,
+          round: 2,
+          head: 'headsha2',
+          escalationId: `${ISSUE_FRESH}-2-headsha2`
+        })
+        const second = await client.callTool('task_escalation_read', { task: { issue: ISSUE_FRESH } })
+        const secondItems = second.structured.items as Array<Record<string, unknown>>
+        expect((secondItems[0]?.inputs as Record<string, unknown>)?.round).toBe(2)
+
+        client.close()
+      } finally {
+        sb.cleanup()
+      }
+    })
+
+    it('Input change — an objectives_changed pause reports self-detected, safe-to-resume', async () => {
+      const sb = buildSandbox()
+      try {
+        writePauseFixture(sb.runtimeDir, { task: ISSUE_INPUT_CHANGE, reason: 'objectives_changed' })
+        const client = new SpawnRpcClient(invocation, sb.env, REPO_ROOT)
+        await client.request('initialize', {})
+        const { structured } = await client.callTool('task_escalation_read', { task: { issue: ISSUE_INPUT_CHANGE } })
+        const items = structured.items as Array<Record<string, unknown>>
+        const item = items[0] as Record<string, unknown>
+        expect(item.reason).toBe('objectives_changed')
+        expect(item.requestedAuthority).toBe('self')
+        expect((item.permittedNextActions as string[]).some((a) => a.includes('re-read the current objectives'))).toBe(
+          true
+        )
+        client.close()
+      } finally {
+        sb.cleanup()
+      }
+    })
+
+    it('Human handoff — an escalation pause with a durable record names the principal, run identity and input versions', async () => {
+      const sb = buildSandbox()
+      try {
+        writePauseFixture(sb.runtimeDir, {
+          task: ISSUE_HANDOFF,
+          reason: 'escalation',
+          detail: 'security reviewer raised ESCALATE'
+        })
+        writeEscalationFixture(sb.runtimeDir, ISSUE_HANDOFF, { rulingOrdinal: 0 })
+        const client = new SpawnRpcClient(invocation, sb.env, REPO_ROOT)
+        await client.request('initialize', {})
+        const { structured } = await client.callTool('task_escalation_read', { task: { issue: ISSUE_HANDOFF } })
+        const items = structured.items as Array<Record<string, unknown>>
+        expect(items[0]?.reason).toBe('escalation')
+        expect(items[0]?.requestedAuthority).toBe('principal')
+        expect(items[0]?.runIdentity).toEqual({ runId: 'run-1', pid: 12345, host: 'test-host' })
+        expect(items[0]?.inputVersions).toEqual({
+          briefHash: 'brief-hash-1',
+          objectivesVersion: 'objectives-v1',
+          rulingOrdinal: 0,
+          policyDigest: 'digest-1'
+        })
+        client.close()
+      } finally {
+        sb.cleanup()
+      }
+    })
+
+    it('Cancellation — an authenticated cancel confirms once; a replay reports the same truthful outcome, never an error', async () => {
+      const sb = buildSandbox()
+      const ISSUE = 9201
+      const ESCALATION_ID = `${ISSUE}-1-headsha1`
+      try {
+        writePauseFixture(sb.runtimeDir, { task: ISSUE, escalationId: ESCALATION_ID })
+        writeEscalationFixture(sb.runtimeDir, ISSUE, { host: 'test-host' })
+
+        let calls = 0
+        const cancelHandler = createTaskCancelHandler({
+          runtimeDir: () => sb.runtimeDir,
+          resolveIssueForRef: () => ISSUE,
+          fetchRulings: () => ['LGTM, cancel.'],
+          fetchNewestRulingOrdinal: () => 1,
+          hostname: () => 'test-host',
+          cancelDevReviewLoop: async () => {
+            calls += 1
+            if (calls === 1) return { task: ISSUE, escalationId: ESCALATION_ID, fencedEffectKeys: [] }
+            throw new ReplayedResolutionError(ISSUE, ESCALATION_ID, {
+              version: 1,
+              kind: 'resolution',
+              task: ISSUE,
+              escalationId: ESCALATION_ID,
+              decision: 'cancel',
+              authenticatedBy: 'principal-1',
+              authenticatedFrom: `${PR}-1`,
+              consumedAt: '2026-01-01T00:00:00.000Z'
+            })
+          },
+          log: () => {}
+        })
+        const handlers: TaskToolHandlers = {
+          ...defaultTaskToolHandlers,
+          task_cancel: (input, ctx) => cancelHandler(input, ctx)
+        }
+
+        const first = await handleOne(handlers, 'task_cancel', { task: { issue: ISSUE }, reason: 'superseded' })
+        expect(first.isError).toBe(false)
+        expect(first.structured.outcome).toBe('confirmed')
+
+        const second = await handleOne(handlers, 'task_cancel', { task: { issue: ISSUE }, reason: 'superseded' })
+        expect(second.isError).toBe(false)
+        expect(second.structured.outcome).toBe('confirmed')
+        expect(second.structured.authenticatedBy).toBe('principal-1')
+      } finally {
+        sb.cleanup()
+      }
+    })
+
+    it('Recovery — a resolution already durably consumed replays as already_resumed, never a blind relaunch', async () => {
+      const sb = buildSandbox()
+      const ISSUE = 9202
+      const ESCALATION_ID = `${ISSUE}-1-headsha1`
+      try {
+        writePauseFixture(sb.runtimeDir, { task: ISSUE, escalationId: ESCALATION_ID })
+        writeEscalationFixture(sb.runtimeDir, ISSUE, { host: 'test-host' })
+
+        // Simulate an EARLIER process's own successful resume: the durable
+        // resolution is consumed before this scenario's own, freshly built
+        // handler ever runs — the same durable record a real restart would
+        // find on disk.
+        const controlStoreDeps = defaultControlStoreDeps(() => tasksExecutionRoot(sb.runtimeDir))
+        const acquired = acquireOwnership(controlStoreDeps, ISSUE, 'earlier-process')
+        if (!acquired.acquired) throw new Error('fixture: could not acquire epoch')
+        const consumed = consumeResolutionOnce(controlStoreDeps, ISSUE, acquired.epoch, {
+          escalationId: ESCALATION_ID,
+          decision: 'resume',
+          authenticatedBy: 'principal-1',
+          authenticatedFrom: `${PR}-1`,
+          consumedAt: '2026-01-01T00:00:00.000Z'
+        })
+        expect(consumed.outcome).toBe('consumed')
+
+        // A FRESH handler and claim store — no in-memory state carried over
+        // from whatever process wrote the resolution above, the same as a
+        // real process restart.
+        const { store: freshStore } = memClaimStore()
+        const launches: Array<{ pr: number; agent: string }> = []
+        const resumeHandler = createTaskResumeHandler({
+          runtimeDir: () => sb.runtimeDir,
+          resolveIssueForRef: () => ISSUE,
+          fetchRulings: () => ['LGTM, resume.'],
+          fetchNewestRulingAuthor: () => 'principal-1',
+          fetchNewestRulingOrdinal: () => 1,
+          store: freshStore,
+          launch: (target) => {
+            launches.push(target)
+          },
+          now: () => '2026-01-01T00:01:00.000Z',
+          log: () => {}
+        })
+        const handlers: TaskToolHandlers = {
+          ...defaultTaskToolHandlers,
+          task_resume: (input, ctx) => resumeHandler(input, ctx)
+        }
+
+        const result = await handleOne(handlers, 'task_resume', { task: { issue: ISSUE } })
+        expect(result.isError).toBe(false)
+        expect(result.structured.outcome).toBe('already_resumed')
+        expect(result.structured.authenticatedBy).toBe('principal-1')
+        expect(launches).toHaveLength(0)
+      } finally {
+        sb.cleanup()
+      }
+    })
+  })
+}
