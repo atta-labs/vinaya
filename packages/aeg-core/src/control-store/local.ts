@@ -50,6 +50,7 @@ import {
   existsSync,
   fsyncSync,
   linkSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readdirSync,
@@ -59,7 +60,7 @@ import {
   writeSync
 } from 'node:fs'
 import { hostname as osHostname } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 import {
   type EffectRecord,
   type EscalationRecord,
@@ -152,9 +153,116 @@ function readRecord<T>(path: string, parse: (raw: string | undefined) => ParsedR
   }
 }
 
+/**
+ * Whether a directory segment already sitting on disk is safe to write
+ * through — a pre-existing REAL directory (never a symlink; that is
+ * `mkdirNoSymlinks`'s own `isDirectory()` check, applied before this one)
+ * can still be a co-tenant's plant: owning it, or leaving it world-writable,
+ * hands that co-tenant the same control over its contents a symlink would
+ * (security review, round 3 — the type check alone "never followed a
+ * symlink" but said nothing about who could still tamper with a directory
+ * of the right type).
+ *
+ * Two independent properties, both required:
+ *
+ * **Owner.** Trusted when it is this process's own effective user, or root
+ * (uid `0`) — a root-owned ancestor (`/`, `/tmp` itself) predates this store
+ * and sits outside any co-tenant's control, the same trust boundary every
+ * process on the box already accepts by running at all. Any other owner
+ * sitting exactly on this store's own path is the co-tenant-plant case this
+ * check exists to catch. Skipped entirely on a platform reporting no uid at
+ * all (e.g. Windows) — the same fallback `metering-io-guard.ts`'s
+ * `isTrustedMeteringStat` already uses for the same reason.
+ *
+ * **Mode.** Refused when world-writable UNLESS the sticky bit is also set —
+ * the exact shape `/tmp` itself relies on: shared write access, but only an
+ * entry's own owner may remove or rename it, so the world-write bit alone
+ * never lets another local account delete or replace a file this store
+ * already wrote. Without that allowance, `/tmp`'s own standard `1777` would
+ * fail this check the moment a test (or a real deployment) resolves a path
+ * underneath it. Deliberately narrower than group-writable: this repo's own
+ * fixtures routinely create ancestor directories with no explicit mode at
+ * all, landing on whatever a shared-group development umask (e.g. `002`)
+ * produces — group-writable-but-still-owned-by-us is that ordinary case, not
+ * the co-tenant threat (a genuinely different account) this function exists
+ * to catch, and group is not the bit `/tmp`'s own convention polices either.
+ *
+ * Split out from `mkdirNoSymlinks` so the foreign-owner branch — not
+ * constructible as a real fixture in CI without a second local user — stays
+ * unit-testable against a faked stat, the same convention
+ * `metering-io-guard.test.ts`'s `isTrustedMeteringStat` suite already uses;
+ * the mode branch is a real, constructible fixture (`local.test.ts`).
+ */
+export function isTrustedDirStat(stat: { uid: number; mode: number }, ownUid: number | undefined): boolean {
+  if (typeof ownUid !== 'number') return true
+  if (stat.uid !== ownUid && stat.uid !== 0) return false
+  const worldWritable = (stat.mode & 0o002) !== 0
+  const sticky = (stat.mode & 0o1000) !== 0
+  return !worldWritable || sticky
+}
+
+function currentUid(): number | undefined {
+  return typeof process.getuid === 'function' ? process.getuid() : undefined
+}
+
+/**
+ * Creates `dir` and every missing ancestor, refusing to traverse through a
+ * pre-existing symlink — or a pre-existing real directory with an untrusted
+ * owner or mode — at any level (security review, CRITICAL then round 3).
+ * `mkdirSync(dir, { recursive: true })` treats an existing symlink-to-directory
+ * as already present and silently follows it — every writer that reaches
+ * this store's own `openSync`/`writeSync`/`renameSync`/`linkSync` next then
+ * operates inside whatever real directory that symlink resolves to. Before
+ * `runtimeDir` became a repo-configurable absolute path shared with other
+ * local accounts (`apps/cli/src/lib/run-paths.ts`'s own doc comment names
+ * `/var/lib/vinaya/runs`), this whole tree sat under a fixed, per-repository,
+ * user-owned default and a co-tenant able to pre-plant a symlink was out of
+ * scope; a shared, configurable tree makes that co-tenant a real adversary
+ * for every path this store writes.
+ *
+ * Each path segment is created with a plain, non-recursive `mkdirSync` —
+ * one this call itself creates cannot be a pre-planted symlink, since it did
+ * not exist a moment before — then `lstatSync`-verified without following
+ * symlinks, the identical check applied to a segment that already existed.
+ * A non-directory at any level (a symlink, a plain file) refuses the whole
+ * operation rather than writing through it; so does a real directory this
+ * process cannot trust — see `isTrustedDirStat` above for what "trust" means
+ * here.
+ *
+ * Exported (not just this module's own use) so `apps/cli`'s own run-file
+ * writers — `run-paths.ts`'s `ensureRunDir`, the one chokepoint every other
+ * run-file directory in that package already goes through — share this
+ * exact check rather than a second, independently-maintained copy of it.
+ */
+export function mkdirNoSymlinks(dir: string, mode: number): void {
+  const absolute = resolve(dir)
+  const segments = absolute.split(sep).filter((s) => s.length > 0)
+  const ownUid = currentUid()
+  let current = absolute.startsWith(sep) ? sep : ''
+  for (const segment of segments) {
+    current = current === '' || current === sep ? `${current}${segment}` : `${current}${sep}${segment}`
+    try {
+      mkdirSync(current, { mode })
+    } catch (err) {
+      if (!isErrnoException(err, 'EEXIST')) throw err
+    }
+    const stat = lstatSync(current)
+    if (!stat.isDirectory()) {
+      throw new Error(
+        `control-store: refusing to create a run directory through ${current} — it already exists and is not a real directory (a symlink or a file)`
+      )
+    }
+    if (!isTrustedDirStat(stat, ownUid)) {
+      throw new Error(
+        `control-store: refusing to create a run directory through ${current} — it already exists, owned by uid ${stat.uid} with mode ${(stat.mode & 0o7777).toString(8)}, neither this process's own user nor a safe shared mode`
+      )
+    }
+  }
+}
+
 /** Whole-file write via temp-then-rename, `fsync`ed before the rename so the bytes are durable, not just visible. */
 function atomicWriteFile(path: string, contents: string): void {
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+  mkdirNoSymlinks(dirname(path), 0o700)
   const tmp = `${path}.tmp-${process.pid}-${randomUUID()}`
   const fd = openSync(tmp, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC, 0o600)
   try {
@@ -178,7 +286,7 @@ function atomicWriteFile(path: string, contents: string): void {
  * used here.
  */
 function exclusiveCreateFile(path: string, contents: string): { created: true } | { created: false } {
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+  mkdirNoSymlinks(dirname(path), 0o700)
   const tmp = `${path}.claim-${process.pid}-${randomUUID()}`
   const fd = openSync(tmp, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL, 0o600)
   try {

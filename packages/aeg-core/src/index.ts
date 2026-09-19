@@ -632,6 +632,7 @@ export {
   listStartedEffectKeys,
   markEffectUncertain,
   migrateLegacyTask,
+  mkdirNoSymlinks,
   normalizeOutcome,
   parseEffectRecord,
   parseEscalationRecord,

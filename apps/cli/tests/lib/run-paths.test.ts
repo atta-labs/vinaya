@@ -4,7 +4,7 @@
  * caller puts a configured `runtimeDir` through.
  */
 import { describe, expect, it } from 'bun:test'
-import { mkdtempSync, rmSync, statSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -229,6 +229,25 @@ describe('ensureRunDir — run-file directories are owner-only (security review,
       expect(statSync(deep).mode & 0o777).toBe(0o700)
     } finally {
       rmSync(base, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses a pre-planted symlink at a missing ancestor, never writing through it (security review, CRITICAL)', () => {
+    const base = mkdtempSync(join(tmpdir(), 'vinaya-ensure-run-dir-symlink-'))
+    const attackerDir = mkdtempSync(join(tmpdir(), 'vinaya-ensure-run-dir-attacker-'))
+    try {
+      const runsRoot = join(base, 'runs', 'tasks-execution', '649')
+      mkdirSync(runsRoot, { recursive: true })
+      // A co-tenant on a shared `runtimeDir` pre-plants a symlink where the
+      // real `rounds` directory would otherwise be created next.
+      symlinkSync(attackerDir, join(runsRoot, 'rounds'))
+
+      const deep = runPath(join(base, 'runs'), 649, { area: 'round', round: 2, file: 'reviewer-work' })
+      expect(() => ensureRunDir(deep)).toThrow()
+      expect(readdirSync(attackerDir)).toEqual([])
+    } finally {
+      rmSync(base, { recursive: true, force: true })
+      rmSync(attackerDir, { recursive: true, force: true })
     }
   })
 })
