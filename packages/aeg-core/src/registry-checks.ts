@@ -66,7 +66,7 @@ export function checkG1(rows: GateRow[], existsFn: (path: string) => boolean): R
  * duplicated here rather than imported to keep this module's zero-import
  * shape — the two are asserted equal by `registry-checks.test.ts`). A stub
  * that filled `implementation` alone would silence G2 outright (the whole
- * defect Issue #104 exists to close): this marker is what keeps a row G2
+ * defect this exists to close): this marker is what keeps a row G2
  * still flags loud until a human replaces it with the real "why". */
 const SCAFFOLD_PLACEHOLDER = '[undocumented — fill in why]'
 
@@ -118,7 +118,7 @@ const NON_GATE_HOOK_SCRIPTS: readonly string[] = ['.claude/hooks/track-transcrip
  * `candidateFiles` is already-globbed by the caller (`.husky/*`,
  * `.claude/hooks/*.sh`, `packages/aeg-core/bin/*.ts`, excluding `.husky/_`).
  *
- * **Twin-form recognition (O14).** The same enforcement
+ * **Twin-form recognition.** The same enforcement
  * mechanism routinely ships as two physical files — a `packages/aeg-core/
  * bin/*.ts` standalone form and an `apps/cli/src/checks/bin/check-*.ts`
  * CLI-registered form — but a row's `implementation` cell holds exactly one

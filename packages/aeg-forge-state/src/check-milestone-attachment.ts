@@ -3,7 +3,7 @@
  * Milestone" and "which Issues GitHub's own `milestone` field actually
  * attaches to it" — the precondition `tranche-archivist.md` step 3 asserted
  * as fact ("stay attached… that attachment is the durable historical
- * record") without ever checking it (Issue #301). No network inside this
+ * record") without ever checking it. No network inside this
  * function: both lists are fetched and injected by the caller
  * (`milestoneCloseCommand`), exactly the discipline `resolveMilestoneAttachTarget`
  * already applies to its own `milestones` input.

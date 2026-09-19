@@ -11,12 +11,13 @@ const OWNER = 'daniboomerang'
 const REPO = 'attalabs'
 
 /**
- * Integration coverage for the seam `#205` fixed: `apps/cli`'s `milestone
- * adopt` (the write side) versus `fetch-milestone.ts`'s four readers (the
- * read side). `#205`'s root cause was that both sides shipped with their
- * own passing unit tests, in isolation, and nobody exercised the sequence
- * that actually happens live — `adopt` runs, then a reader is asked about
- * that slug. This file is that sequence, once, against every reader.
+ * Integration coverage for the seam a real regression fixed: `apps/cli`'s
+ * `milestone adopt` (the write side) versus `fetch-milestone.ts`'s four
+ * readers (the read side). That regression's root cause was that both sides
+ * shipped with their own passing unit tests, in isolation, and nobody
+ * exercised the sequence that actually happens live — `adopt` runs, then a
+ * reader is asked about that slug. This file is that sequence, once,
+ * against every reader.
  *
  * Not a re-test of `resolveLegacyFacts` in isolation — `fetch-milestone.test.ts`
  * already covers that exhaustively. This file never imports or re-implements

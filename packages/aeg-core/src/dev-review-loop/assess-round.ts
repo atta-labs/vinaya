@@ -1,5 +1,5 @@
 /**
- * The dev-review-loop's policy half (dev-review-loop-v1 task 4, `#414`) —
+ * The dev-review-loop's policy half —
  * `assessRound`, the loop spec's state machine (Linear "Tech spec —
  * Developer Review Loop", rev 4, §5, §10.4, §13, §16) reduced to one pure
  * function. No `fs`, no `fetch`, no `process.env`, no subprocess, no vendor
@@ -8,8 +8,7 @@
  * A round is up to two calls: a `gate` observation (the mechanical check for
  * the round's new head, carrying the developer's confidence from round 2
  * on), then, once the gate passes and confidence clears, a `verdicts`
- * observation. `#414` O2/O3 (Principal ruling 2026-09-04, Issue amendment
- * 2026-09-06):
+ * observation. A Principal ruling (2026-09-04, amended 2026-09-06):
  *
  * - Round 1 never asks for confidence.
  * - From round 2 on, a `gate` observation's confidence gates whether
@@ -24,7 +23,7 @@
  *   two consecutive rounds resolving no id (`condition: 'no_progress'`), a
  *   confidence collapse per the rule above (`condition: 'confidence'`), and
  *   rounds over 3 (`condition: 'max_rounds'`) — the widened, additive values
- *   Issue #414's 2026-09-06 amendment adds to `stop_condition_met.condition`
+ *   a 2026-09-06 amendment adds to `stop_condition_met.condition`
  *   so a reader tells a confidence collapse and a finding reappearance apart
  *   from each other and from a generic stall, rather than collapsing all
  *   three onto `no_progress` (superseding this task's own brief §2, which
@@ -72,7 +71,7 @@ function loopStartedEvent(state: LoopState): DevReviewLoopEventInput {
     event: 'loop_started',
     task: state.config.task,
     policy: {
-      // (`#543` O4) Repository policy, resolved once by the driver into
+      // Repository policy, resolved once by the driver into
       // `LoopConfig.maxRounds` — never a hardcoded constant here.
       max_rounds: state.config.maxRounds,
       reviewers: state.config.reviewers as never,
@@ -432,7 +431,7 @@ function assessVerdicts(
   }
 
   const resolvedEmptyThisRound = fc.resolved.length === 0
-  // (`#543` O3) `findingsUncitable` means this round's own ids are not
+  // `findingsUncitable` means this round's own ids are not
   // trustworthy — never counted toward `no_progress`, which is exactly the
   // id-comparison this flag is warning about. Every other stop condition
   // above (escalation, green, reappearance) is decided before this line and
@@ -466,7 +465,7 @@ function assessVerdicts(
       ...withRoundStats(state, pending.stats)
     }
     events.push(journalFinalizedEvent(preFinalize, pending.stats.head, 'stopped'))
-    // (`#543` O4) The pause names the configured cap, not a bare "max_rounds".
+    // The pause names the configured cap, not a bare "max_rounds".
     return {
       decision: { type: 'pause', reason: 'max_rounds', detail: `max rounds: ${state.config.maxRounds}` },
       state: preFinalize,
@@ -481,7 +480,7 @@ function assessVerdicts(
     rounds: [...state.rounds, record],
     pending: null,
     lastIds: carriedIds,
-    // (`#543` O3) An uncitable round neither starts nor extends the
+    // An uncitable round neither starts nor extends the
     // no-progress streak — it carries the PRIOR value forward unchanged,
     // so a real two-consecutive-round stall either side of it is still
     // caught, but this round itself is never counted as either half of it.
@@ -494,7 +493,7 @@ function assessVerdicts(
 /**
  * `assessRound(state, observations) → { decision, state, events }` — pure,
  * no I/O. `events` is the `DevReviewLoopEventInput[]` the caller passes,
- * unchanged, to the injected `log()` (O5); `assessRound` itself never calls
+ * unchanged, to the injected `log()`; `assessRound` itself never calls
  * it.
  */
 export function assessRound(

@@ -97,8 +97,8 @@ describe('anchoredRegion — grammar', () => {
 
 // ---------- round-trip: freeform (no-anchor) bodies parse identically ---------
 //
-// The fixture is the verbatim body of merged PR #407 (task 31 — a real,
-// recent, anchor-free task PR). The expected values below were captured by
+// The fixture is the verbatim body of a real, merged,
+// recent, anchor-free task PR. The expected values below were captured by
 // running the UNMODIFIED pre-task-30 parsers over this exact fixture
 // (scratch capture, 2026-07-05) — so equality here proves the anchor change
 // is a byte-identical no-op for every already-merged freeform body.
@@ -162,7 +162,7 @@ describe('anchor recognition is additive — PR #407 freeform round-trip', () =>
     // rendered change is its task label: `task 31 (iteration <slug>)` became
     // `task 31 (tranche <slug>)`.
     //
-    // Re-pinned again (plan-brief-v1 task 2, #427): the `- Brief:` line now
+    // Re-pinned again: the `- Brief:` line now
     // names the Issue's `aeg:brief:v1` comment URL (DANGLING here — this
     // fixture's `makeFacts` carries no `briefCommentUrl`) instead of the
     // retired "in this PR body" text. Assembly is otherwise untouched.
@@ -175,7 +175,7 @@ describe('anchor recognition is additive — PR #407 freeform round-trip', () =>
 // Each body below carries BOTH an anchored real value and a decoy that the
 // legacy first-match/header-block recognition would have picked (the decoy
 // sits earlier in the body, or inside the header block, deliberately). The
-// PR #392 incident shape: a pasted reference brief whose own Tier / Test
+// real incident shape: a pasted reference brief whose own Tier / Test
 // Plan / Closes text collides with the PR's real fields.
 
 describe('anchor vs decoy — Tier', () => {
@@ -365,7 +365,7 @@ describe('template-shaped body — anchored report above a <details>-wrapped bri
  * before any consumer strips it — so a decoy anchor the mask cannot see wins
  * outright, and the gate resolves a **wrong** Issue number rather than none.
  * `maskCode` sat on the naive fence/inline regexes for the whole life of this
- * PR while `stripCode` was hardened three times (PR #617 review BLOCKER). These
+ * PR while `stripCode` was hardened three times (a BLOCKER review finding). These
  * cases pin the mask to the same grammar, across every anchor field, and pin
  * the over-strip direction too: a real anchor must survive every shape below.
  */
@@ -395,7 +395,7 @@ describe('maskCode / stripCode grammar parity (PR #617 review BLOCKER)', () => {
     ].join(eol)
 
   // The same shared enumeration `brief-validation.test.ts` runs against
-  // `stripCode` — one matrix, both consumers (PR #617 review finding 3). The
+  // `stripCode` — one matrix, both consumers (a review finding). The
   // BLOCKER existed precisely because this file's fence coverage was
   // backtick-only while the other file's had grown three more dimensions.
   for (const { name, open, close, eol } of fenceShapes()) {
@@ -448,8 +448,8 @@ describe('maskCode / stripCode grammar parity (PR #617 review BLOCKER)', () => {
  * from the same text inside its body. Stripping the *sliced* anchor region
  * blanked an anchor indented inside a list item — list content in the full
  * body, which GitHub does auto-close — and `extractIssue` returned
- * `issue: null`, stranding the Issue on merge: the failure this PR exists to
- * eliminate, reintroduced along the over-strip axis (PR #617 review MAJOR).
+ * `issue: null`, stranding the Issue on merge: the failure this exists to
+ * eliminate, reintroduced along the over-strip axis (a MAJOR review finding).
  *
  * The load-bearing case is the *pass* direction, which is the easy one to
  * forget: these assert a real reference survives, and that the two parsers

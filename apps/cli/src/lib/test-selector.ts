@@ -205,7 +205,7 @@ export type SelectionOptions = {
    * `globToRegex`'s own grammar) naming test files whose own INPUT is the
    * repository itself — a rule about the repo's own generated/managed
    * state, which no import ever names. Reachability can never select one of
-   * these on the merits; they run on every push regardless (O1).
+   * these on the merits; they run on every push regardless.
    */
   alwaysRun?: readonly string[]
   /**
@@ -213,7 +213,7 @@ export type SelectionOptions = {
    * diff (`addedOrRenamedFilesSinceRemoteBase`). A brand-new or renamed test
    * file has nothing importing it yet, so it can never satisfy reachability
    * on its own first push — every one of these that IS a test file is
-   * selected unconditionally (O1).
+   * selected unconditionally.
    */
   addedOrRenamed?: readonly string[]
 }

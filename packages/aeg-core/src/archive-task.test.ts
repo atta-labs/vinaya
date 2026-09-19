@@ -67,7 +67,7 @@ describe('taskRefFromBranch', () => {
     expect(taskRefFromBranch('task/aeg-governance-hardening/5d/extra')).toBeNull()
   })
 
-  // task-run-v1 task 15, O4: a backlog Issue's branch — `tranche: null`, the
+  // A backlog Issue's branch — `tranche: null`, the
   // Issue number as `taskId` — is eligible for provenance on this signal
   // alone, no `vinaya/tranche:*` label needed.
   it('parses a backlog-Issue branch as { tranche: null, taskId: <issue> }', () => {
@@ -75,7 +75,7 @@ describe('taskRefFromBranch', () => {
   })
 })
 
-// #524/#530 regression: a task PR can close a tranche-labeled Issue from a
+// A real regression: a task PR can close a tranche-labeled Issue from a
 // non-task branch. `extractIssue` is the bin shim's second eligibility signal
 // (alongside `taskRefFromBranch`) — it must find the closing Issue number so
 // the shim can check that Issue's own `vinaya/tranche:*` label.
@@ -129,7 +129,7 @@ describe('extractIssue', () => {
   })
 })
 
-// #524/#530 regression, the actual shipped decision (not just its inputs):
+// That same regression, the actual shipped decision (not just its inputs):
 // a task-branch `ref` is sufficient on its own; a non-task branch needs the
 // closed Issue's own labels to carry `vinaya/tranche:*`.
 describe('isEligibleForProvenance', () => {
@@ -294,7 +294,7 @@ describe('buildProvenanceBlock', () => {
     expect(block.split('\n')[0]).toBe('### AEG provenance — task (branch fix/some-branch)')
   })
 
-  // task-run-v1 task 15, O4: a backlog Issue's `task/issue-<n>` branch labels
+  // A backlog Issue's `task/issue-<n>` branch labels
   // as its own Issue, not a tranche/task-id pair.
   it('labels a backlog-Issue branch as its own Issue, not a tranche/task-id pair', () => {
     const { block } = buildProvenanceBlock(

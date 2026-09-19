@@ -2,7 +2,7 @@
 
 /**
  * Core check: retired-vocabulary. Thin adapter over `@attalabs/aeg-core`'s
- * `scanRetiredVocabulary` (task 7, Issue #56) — the genuinely-retired half
+ * `scanRetiredVocabulary` — the genuinely-retired half
  * of `retired-vocabulary.test.ts`'s original scan, "today only a vitest
  * test inside `packages/aeg-core`, executed by no adopter ever."
  *
@@ -32,8 +32,8 @@
  *
  * Report-only, same rollout precedent as `reader-resolvable-prose`
  * (`aeg-root/enforcement.md`'s G1/G2 period): findings print as `warning`
- * severity, exit code stays 0 for that class. Orthogonal exception (Issue
- * #314): a genuinely unresolvable doctrine root is not a backlog finding —
+ * severity, exit code stays 0 for that class. Orthogonal exception:
+ * a genuinely unresolvable doctrine root is not a backlog finding —
  * `main()` exits non-`0`/non-`1` for that case, so it reads as a distinct
  * `status: 'error'`, never a clean pass.
  *
@@ -41,7 +41,7 @@
  * leak can sit in any doctrine file regardless of what a given PR touches).
  * Which findings get REPORTED is diff-scoped (`resolveChangedFiles`,
  * lib/diff-evidence.ts) — same fix, same reason, as `reader-resolvable-prose`
- * (atta-labs/vinaya#289): without it, every PR reprinted this package's
+ * (a real regression): without it, every PR reprinted this package's
  * entire shipped-doctrine backlog regardless of what changed.
  */
 
@@ -57,7 +57,7 @@ const CHECK_NAME = 'retired-vocabulary'
 
 /**
  * Same default, same config key, and same fix as `reader-resolvable-prose`
- * (Issue #314) — see that file's `resolveCheckDoctrineRoot()` for the full
+ * — see that file's `resolveCheckDoctrineRoot()` for the full
  * reasoning: `resolveDoctrineRoot()`'s own default resolves relative to
  * wherever ITS OWN calling module physically sits on disk, which makes
  * whether it finds this repo's `aeg-root/` depend on checkout-path shape
@@ -65,7 +65,7 @@ const CHECK_NAME = 'retired-vocabulary'
  * rev-parse --show-toplevel`) is the deterministic anchor instead; falling
  * back to `resolveDoctrineRoot()`'s package-relative "my own shipped copy"
  * resolution only when the repo under check has no local `aeg-root/` of its
- * own (a `vinaya init` adopter, Issue #232). `null` — a genuinely
+ * own (a `vinaya init` adopter). `null` — a genuinely
  * unresolvable root — is reported by `main()` as its own distinct outcome,
  * never silently as a clean zero-finding pass.
  */
@@ -123,7 +123,7 @@ function main(): void {
   // non-{0,1} exit code (never `'warning'`, which the reportable-findings
   // loop below uses) make the runner mark this run `status: 'error'`, never
   // `'pass'` with zero findings — structurally indistinguishable, before
-  // this fix, from "swept the real tree and found nothing" (Issue #314).
+  // this fix, from "swept the real tree and found nothing".
   if (DOCTRINE_ROOT === null) {
     console.log(`${CHECK_NAME}: doctrine root unresolvable — sweep did not run.`)
     emitCheckError({
@@ -150,15 +150,15 @@ function main(): void {
   // `collect(DOCTRINE_ROOT)`, usually already absolute but not always
   // (`DOCTRINE_ROOT` can be a relative `proseGates.doctrineRoot` config
   // value). Anchor to the SAME real repo
-  // root `resolveChangedFiles()` used (`repoRoot()`, review finding, PR #290
-  // MINOR) rather than a second, independent `process.cwd()` assumption that
+  // root `resolveChangedFiles()` used (`repoRoot()`, a MINOR review finding)
+  // rather than a second, independent `process.cwd()` assumption that
   // could diverge from it outside the common invocation shape; and
   // `resolveChangedFiles()` returns `null` — never `[]` — when no diff
   // boundary could be established at all (a bare/single-commit fixture, or a
-  // shallow clone/orphan history with no merge base, review finding PR #290
-  // BLOCKER), so that case reports every finding unfiltered instead of
+  // shallow clone/orphan history with no merge base, a BLOCKER review
+  // finding), so that case reports every finding unfiltered instead of
   // silencing a real sweep.
-  // Line-scoped, not merely file-scoped (task 8): a finding prints only when
+  // Line-scoped, not merely file-scoped: a finding prints only when
   // its own line falls inside a changed hunk of a file this diff touched.
   // `findingsInThisDiff` owns both halves — one hunk parser for the whole
   // repo, and the same "indeterminate reports everything" rule

@@ -120,7 +120,7 @@ export async function prReportCommand(args: string[], testOverrides?: { gateRunn
   const writePath = writeIdx !== -1 ? args[writeIdx + 1] : undefined
   const pushIdx = args.indexOf('--push')
   const pushPr = pushIdx !== -1 ? args[pushIdx + 1] : undefined
-  // (`#543`, O6) `--body-file <path>` names the
+  // `--body-file <path>` names the
   // local file that IS the whole body source for this push — every byte of
   // it, not only the freshly regenerated AEG:EVIDENCE/AEG:TOKENS blocks,
   // reaches the forge (`composeWrittenBody`, the SAME whole-body composer
@@ -191,7 +191,7 @@ export async function prReportCommand(args: string[], testOverrides?: { gateRunn
     process.env.BRANCH = git(['rev-parse', '--abbrev-ref', 'HEAD'])
   }
 
-  // (`#543` O6) `--body-file` names the actual source this push grades and
+  // `--body-file` names the actual source this push grades and
   // sends — never the stale live body fetched just above, which exists
   // here only so the live-splice branch (no `--body-file`) has something to
   // splice into.
@@ -249,7 +249,7 @@ export async function prReportCommand(args: string[], testOverrides?: { gateRunn
   // would leave every unwired host unable to populate Evidence at all.
   let tokensRefused = false
   if (pushPr && bodyFileSource !== undefined) {
-    // (`#543` O6) The whole local body — every byte of it, never only the
+    // O6: the whole local body — every byte of it, never only the
     // regenerated blocks — replaces the live body outright. `composeWrittenBody`
     // is the SAME whole-body composer `--write` alone already uses (source +
     // freshly regenerated Evidence/Tokens); the only difference here is the

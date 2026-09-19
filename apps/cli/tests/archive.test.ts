@@ -7,6 +7,8 @@ import { join } from 'node:path'
 import type { ArchiveDeps } from '../src/commands/archive.js'
 import {
   appendRetrospectiveSection,
+  fetchMilestoneIssueStates,
+  fetchTrancheIssuesByLabel,
   renderArchiveTokensLine,
   renderRetrospectiveSection,
   resolveTaskMilestone,
@@ -327,8 +329,163 @@ describe('trancheArchivalStatus', () => {
   })
 })
 
-// issue-545, O4 — the retrospective `archive tranche` appends to the
-// Milestone description once a tranche is complete.
+/**
+ * Fakes `gh api repos/<repo>/issues?...` as a paginated REST endpoint —
+ * one JSON file per page under `dir`, keyed by the `page=<n>` value in the
+ * invoked URL, mirroring `withFakeGh`'s PATH-injection technique above but
+ * shaped for a multi-page walk rather than a single canned response.
+ */
+function withPaginatedFakeGh<T>(pages: unknown[][], fn: (calls: () => string[]) => Promise<T> | T): Promise<T> {
+  const dir = mkdtempSync(join(tmpdir(), 'vinaya-archive-paginated-fakegh-'))
+  const logPath = join(dir, 'calls.log')
+  writeFileSync(logPath, '')
+  pages.forEach((page, i) => {
+    writeFileSync(join(dir, `page-${i + 1}.json`), JSON.stringify(page))
+  })
+  const script = `#!/usr/bin/env bash
+echo "$*" >> "${logPath}"
+url="$2"
+# Split on '&'/'?' so the exact "page=" segment is matched — a plain
+# substring grep for "page=" also matches "per_page=", GitHub's own
+# page-SIZE parameter this same query string always carries.
+page=$(echo "$url" | tr '&?' '\\n\\n' | grep '^page=' | cut -d= -f2)
+file="${dir}/page-$page.json"
+if [ -f "$file" ]; then
+  cat "$file"
+else
+  echo '[]'
+fi
+`
+  const ghPath = join(dir, 'gh')
+  writeFileSync(ghPath, script)
+  chmodSync(ghPath, 0o755)
+  const originalPath = process.env.PATH
+  process.env.PATH = `${dir}:${originalPath}`
+  return Promise.resolve(
+    fn(() =>
+      readFileSync(logPath, 'utf8')
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean)
+    )
+  ).finally(() => {
+    process.env.PATH = originalPath
+    rmSync(dir, { recursive: true, force: true })
+  })
+}
+
+function restIssue(number: number, state: 'open' | 'closed', pullRequest = false) {
+  return { number, title: `task ${number}`, state, milestone: null, ...(pullRequest ? { pull_request: {} } : {}) }
+}
+
+describe('fetchTrancheIssuesByLabel — pagination (task 4)', () => {
+  it('walks every page of a Milestone with 250 Issues, never truncating at the first 100-item page', async () => {
+    // 250 Issues split across three REST pages (100, 100, 50) — the exact
+    // shape a single `per_page=100` call used to drop everything past.
+    const page1 = Array.from({ length: 100 }, (_, i) => restIssue(i + 1, 'closed'))
+    const page2 = Array.from({ length: 100 }, (_, i) => restIssue(i + 101, 'closed'))
+    // The 250th Issue is open — proves the tail past two full pages is
+    // actually read, not merely counted.
+    const page3 = [...Array.from({ length: 49 }, (_, i) => restIssue(i + 201, 'closed')), restIssue(250, 'open')]
+    const issues = await withPaginatedFakeGh([page1, page2, page3], () =>
+      fetchTrancheIssuesByLabel('acme/widget', 'vinaya/tranche:big-tranche')
+    )
+    expect(issues).toHaveLength(250)
+    expect(issues.filter((i) => i.state === 'OPEN')).toHaveLength(1)
+    expect(issues.find((i) => i.number === 250)?.state).toBe('OPEN')
+  })
+
+  it('excludes pull requests carrying the same label — the REST endpoint returns both', async () => {
+    const page1 = [restIssue(1, 'closed'), restIssue(2, 'open', true)]
+    const issues = await withPaginatedFakeGh([page1], () =>
+      fetchTrancheIssuesByLabel('acme/widget', 'vinaya/tranche:small-tranche')
+    )
+    expect(issues).toEqual([{ number: 1, title: 'task 1', state: 'CLOSED', milestone: null }])
+  })
+
+  it('stops at the first short page rather than requesting a page beyond the last one', async () => {
+    const page1 = [restIssue(1, 'closed'), restIssue(2, 'closed')]
+    const issues = await withPaginatedFakeGh([page1], (calls) => {
+      const result = fetchTrancheIssuesByLabel('acme/widget', 'vinaya/tranche:tiny-tranche')
+      expect(calls().filter((c) => c.includes('page=2'))).toHaveLength(0)
+      return result
+    })
+    expect(issues).toHaveLength(2)
+  })
+
+  it("maps each REST issue's own milestone into the returned ref, or null when unattached", async () => {
+    const page1 = [{ ...restIssue(1, 'open'), milestone: { number: 9, title: 'Beta' } }, restIssue(2, 'closed')]
+    const issues = await withPaginatedFakeGh([page1], () =>
+      fetchTrancheIssuesByLabel('acme/widget', 'vinaya/tranche:milestone-tranche')
+    )
+    expect(issues.find((i) => i.number === 1)?.milestone).toEqual({ number: 9, title: 'Beta' })
+    expect(issues.find((i) => i.number === 2)?.milestone).toBeNull()
+  })
+})
+
+/**
+ * Fakes `gh issue list --milestone <n> --json state --limit <n>` the way
+ * the real CLI behaves: a single canned Issue-state array, sliced to
+ * whatever `--limit` the call under test asked for — so a fixture proves
+ * `fetchMilestoneIssueStates` actually grows its `--limit` across rounds
+ * rather than trusting one arbitrary cap.
+ */
+function withGrowingLimitFakeGh<T>(
+  states: Array<'OPEN' | 'CLOSED'>,
+  fn: (calls: () => string[]) => Promise<T> | T
+): Promise<T> {
+  const dir = mkdtempSync(join(tmpdir(), 'vinaya-archive-milestone-fakegh-'))
+  const dataPath = join(dir, 'states.json')
+  const logPath = join(dir, 'calls.log')
+  writeFileSync(dataPath, JSON.stringify(states.map((state) => ({ state }))))
+  writeFileSync(logPath, '')
+  const script = `#!/usr/bin/env bash
+echo "$*" >> "${logPath}"
+limit="\${@: -1}"
+node -e "const fs=require('fs'); const a=JSON.parse(fs.readFileSync('${dataPath}','utf8')); process.stdout.write(JSON.stringify(a.slice(0, \${limit})))"
+`
+  const ghPath = join(dir, 'gh')
+  writeFileSync(ghPath, script)
+  chmodSync(ghPath, 0o755)
+  const originalPath = process.env.PATH
+  process.env.PATH = `${dir}:${originalPath}`
+  return Promise.resolve(
+    fn(() =>
+      readFileSync(logPath, 'utf8')
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean)
+    )
+  ).finally(() => {
+    process.env.PATH = originalPath
+    rmSync(dir, { recursive: true, force: true })
+  })
+}
+
+describe('fetchMilestoneIssueStates — pagination (O4)', () => {
+  it('walks every round of a Milestone with 250 Issues, never truncating at the first 100-item `--limit`', async () => {
+    // 250 Issues, all closed except the 250th — the exact tail a single
+    // `--limit 500`-style cap that happened to undershoot would drop.
+    const states: Array<'OPEN' | 'CLOSED'> = [...Array.from({ length: 249 }, () => 'CLOSED' as const), 'OPEN']
+    const result = await withGrowingLimitFakeGh(states, () => fetchMilestoneIssueStates('acme/widget', 15))
+    expect(result).toHaveLength(250)
+    expect(result.filter((i) => i.state === 'OPEN')).toHaveLength(1)
+    expect(result.at(-1)?.state).toBe('OPEN')
+  })
+
+  it('stops after the first round short of its own `--limit`, never requesting a round beyond the last one', async () => {
+    const states: Array<'OPEN' | 'CLOSED'> = ['CLOSED', 'CLOSED']
+    const result = await withGrowingLimitFakeGh(states, (calls) => {
+      const r = fetchMilestoneIssueStates('acme/widget', 15)
+      expect(calls()).toHaveLength(1)
+      return r
+    })
+    expect(result).toHaveLength(2)
+  })
+})
+
+// The retrospective `archive tranche` appends to the Milestone description
+// once a tranche is complete.
 describe('roundsForTaskPr', () => {
   it("takes the HIGHEST round marker across a PR's comments", () => {
     const pr = {
@@ -450,10 +607,14 @@ function withFakeGhForTranche<T>(
 ): Promise<T> {
   const dir = mkdtempSync(join(tmpdir(), 'vinaya-archive-tranche-fakegh-'))
   const issuesPath = join(dir, 'issues.json')
+  const restIssuesPath = join(dir, 'rest-issues.json')
   const milestonePath = join(dir, 'milestone.json')
   const milestoneIssuesPath = join(dir, 'milestone-issues.json')
   const patchedPath = join(dir, 'patched.json')
   writeFileSync(issuesPath, JSON.stringify(opts.issues))
+  // `fetchTrancheIssuesByLabel` reads the REST `issues?labels=` endpoint, not
+  // `gh issue list` — lowercase `state`, same `milestone` shape.
+  writeFileSync(restIssuesPath, JSON.stringify(opts.issues.map((i) => ({ ...i, state: i.state.toLowerCase() }))))
   writeFileSync(milestonePath, JSON.stringify(opts.milestone))
   writeFileSync(milestoneIssuesPath, JSON.stringify(opts.milestoneIssueStates.map((state) => ({ state }))))
   const script = `#!/usr/bin/env bash
@@ -462,10 +623,14 @@ case "$*" in
     cat > "${patchedPath}"
     ;;
   "issue list"*"--milestone"*)
-    cat "${milestoneIssuesPath}"
+    limit="\${@: -1}"
+    node -e "const fs=require('fs'); const a=JSON.parse(fs.readFileSync('${milestoneIssuesPath}','utf8')); process.stdout.write(JSON.stringify(a.slice(0, \${limit})))"
     ;;
   *"/milestones/"*)
     cat "${milestonePath}"
+    ;;
+  "api "*"/issues?"*"labels="*)
+    cat "${restIssuesPath}"
     ;;
   "issue list"*)
     cat "${issuesPath}"

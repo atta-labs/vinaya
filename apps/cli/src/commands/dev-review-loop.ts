@@ -1,8 +1,7 @@
 /**
- * `vinaya dev-review-loop --task <n> --agent claude|codex|gemini`, or
+ * `vinaya dev-review-loop --task <n> --agent claude|codex|gemini`,
  * `vinaya dev-review-loop --resume <pr> --agent …`, or `vinaya
- * dev-review-loop --cancel <pr> --agent …` (`#415`, `#416` O2;
- * `--cancel` added by `#556`, O3). A thin
+ * dev-review-loop --cancel <pr> --agent …`. A thin
  * argv-parsing shim over `devReviewLoop`/`cancelDevReviewLoop`
  * (`../lib/dev-review-loop.js`) — the real logic, including `--resume`'s and
  * `--cancel`'s held-state/ruling/escalation checks, lives there; `--task`
@@ -38,13 +37,13 @@ function parseArgs(args: string[]): ParsedArgs {
   let json = false
   for (let i = 0; i < args.length; i++) {
     const a = args[i]
-    // `--issue` is `--task`'s exact synonym (O1): the
+    // `--issue` is `--task`'s exact synonym: the
     // loop's `task` field is already the Issue number, tranche or not, so a
     // backlog Issue needs no new input shape here — only the naming that
     // matches `task run --issue <n>` / `task brief --issue <n>`.
     if (a === '--task' || a === '--issue') task = Number(args[++i])
     else if (a === '--resume') resumePr = Number(args[++i])
-    // O3 (`#556`): the mirror of `--resume <pr>` — cancels the SAME held
+    // The mirror of `--resume <pr>` — cancels the SAME held
     // pause a `--resume` would otherwise continue, rather than dispatching
     // anything.
     else if (a === '--cancel') cancelPr = Number(args[++i])

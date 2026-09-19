@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { realDeps } from './quickstart'
 
 /**
- * `#313`: `vinaya quickstart`'s wrapped `doctorDeps.meteringCapability`
+ * `vinaya quickstart`'s wrapped `doctorDeps.meteringCapability`
  * closure calls `resolveMeteringCapability(hardenedMeteringDeps())`, the
  * same zero-argument, pointer-file-only route `doctor.ts` uses — see
  * `doctor-metering-io.test.ts` for why `TMPDIR`/`CLAUDE_PROJECT_DIR` are

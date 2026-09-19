@@ -1,19 +1,18 @@
 /**
- * Shared code-reviewer / security-review verdict extraction (aeg-review-gate-v1
- * task 1, #474). Originally private to `archive-task.ts`'s post-merge
+ * Shared code-reviewer / security-review verdict extraction. Originally private to `archive-task.ts`'s post-merge
  * provenance assembly (advisory-only, DANGLING on a missing/unclear verdict).
  * Extracted so the pre-merge `review-gate.ts` blocking check calls the
  * IDENTICAL regex/parsing logic — a future drift between two copies of the
- * same pattern would silently reopen the gap this task exists to close (one
- * implementation per fact, §11 constraint). Pure — no `fs`, no `fetch`.
+ * same pattern would silently reopen the gap this exists to close (one
+ * implementation per fact). Pure — no `fs`, no `fetch`.
  *
  * Picks the MOST RECENT comment carrying a clear value, not the first comment
- * merely matching the pattern (aeg-review-gate-v1 task 1 fix — the original
+ * merely matching the pattern (a real fix — the original
  * single-comment `.find()` broke on real multi-comment PRs: a REQUEST_CHANGES
  * verdict followed by fixes and a later clean APPROVE).
  *
  * Line-anchored `VERDICT:` marker only — NOT a bare word search anywhere in
- * the comment (aeg-review-gate-v1 task 1 follow-up, security-review FAIL
+ * the comment (a security-review FAIL
  * finding, confirmed by direct execution: the old bare `\b(PASS|FAIL)\b`
  * pattern matched the post-merge Archivist's own auto-generated DANGLING
  * placeholder text — "no security-review pass was run before merge —
@@ -27,8 +26,7 @@
  *
  * AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
  * The VALUE is windowed to the comment's first FIVE lines only
- * (review-convergence-v1 task 2, round 4, `#392`; widened by dev-review-loop-v1
- * task 2, `#412`, when `Objectives version:` became a third head line) —
+ * (widened, when `Objectives version:` became a third head line) —
  * never a line anywhere else in the body. Every shape this package's own
  * callers render puts the `VERDICT:`/`ESCALATE:` line first and `Judged
  * head:` third; `Objectives version:` fifth WHEN it renders at all (it is
@@ -52,8 +50,7 @@
  * contribution, not a claim that no render can still collide.
  *
  * AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
- * The CANDIDATE SET stays whole-body (review-convergence-v1 task 2, round 5,
- * `#392`) — round 4 windowed where a verdict's value is read, not which
+ * The CANDIDATE SET stays whole-body — an earlier round windowed where a verdict's value is read, not which
  * comments count as a candidate at all. A comment whose only VERDICT-shaped
  * line sits outside its first five lines is still the most recent
  * candidate if it is the most recent comment; it reads as DANGLING rather
@@ -62,14 +59,14 @@
  *
  * The anchor tolerates a leading markdown EMPHASIS run — one to three `*` or
  * `_`, immediately abutting the token — so `**VERDICT: APPROVE**` and
- * `_VERDICT: APPROVE_` match (PR #636: the reviewer subagent emitted the
+ * `_VERDICT: APPROVE_` match (a real incident: the reviewer subagent emitted the
  * bolded form and the gate read the PR as carrying no code-review verdict at
  * all). The spec still mandates the bare line; this only stops an agent's
  * markdown drift from silently DANGLING a real verdict.
  *
  * Emphasis ONLY — the following are deliberately NOT tolerated, because each
  * is a way for prose to *mention* a verdict rather than *cast* one, and this
- * gate blocks merges (#639 review, findings 1/3/5):
+ * gate blocks merges (several review findings):
  *   `> VERDICT: APPROVE`   blockquote — GitHub's quote-reply syntax. A
  *                          Developer quoting the reviewer's earlier text
  *                          would otherwise become the PR's own verdict, and
@@ -105,10 +102,10 @@
  * identical to no comment existing — which is also what the DANGLING
  * placeholder case above requires.
  *
- * Reviewed-commit binding (#73, a duplicate of #71 closes this one). The
+ * Reviewed-commit binding. The
  * winning comment (the one whose `VERDICT:` line matched) is also searched
- * for a `Judged head: <sha>` line — the exact phrase reviewers on
- * atta-labs/attalabs#664 were already hand-typing before this existed as a
+ * for a `Judged head: <sha>` line — the exact phrase reviewers were
+ * already hand-typing before this existed as a
  * mechanism, formalized rather than invented. Same anchor discipline as
  * `VERDICT:` itself: line-start, optional leading emphasis run, no
  * blockquote/list-item/heading/code-span tolerance — a sha mentioned in
@@ -119,7 +116,7 @@
  * produced the winning verdict — a sha mentioned in a different comment is
  * not this verdict's binding.
  *
- * Ruling-freshness binding (`review-validity-v1` task 3, `#477`, O1). A
+ * Ruling-freshness binding. A
  * fifth field, `rulingOrdinal`, is read from the SAME winning comment via
  * `extractRulingOrdinal`/`firstSevenLines` — its OWN window, not
  * `firstFiveLines` widened in place (see that function's doc comment for
@@ -133,7 +130,7 @@
 const HEAD_SHA_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?Judged head:\s*([0-9a-f]{7,40})(?![A-Za-z0-9])/im
 
 /**
- * dev-review-loop-v1 task 2 (`#412`, O2): the render grows a third head
+ * The render grows a third head
  * line — `Objectives version: <hash>` on line 5, blank line 6 — ONLY when a
  * non-null version exists; pre-cutover PRs omit it, and line 5 is then free
  * for the next fixed label instead (code-review's `BRIEF CONFORMANCE:`),
@@ -147,7 +144,7 @@ const HEAD_SHA_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?Judged head:\s*([0-9a-f]{7,4
 const OBJECTIVES_VERSION_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?Objectives version:\s*([0-9a-f]{64})(?![A-Za-z0-9])/im
 
 /**
- * review-validity-v1 task 3 (`#477`, O1): a fourth head line, `Ruling
+ * A fourth head line, `Ruling
  * ordinal: <k>`, renders UNCONDITIONALLY on every post-cutover verdict —
  * `0` when no principal ruling existed on the PR at cast time, never
  * omitted the way `Objectives version:` is pre-cutover. Read from its OWN
@@ -162,7 +159,7 @@ const OBJECTIVES_VERSION_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?Objectives version
 const RULING_ORDINAL_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?Ruling ordinal:\s*(\d+)(?!\d)/im
 
 /**
- * `review-validity-v1` task 4 (`#478`, O1): a fifth head line, `Brief hash:
+ * A fifth head line, `Brief hash:
  * <sha256>`, renders UNCONDITIONALLY on every post-cutover verdict right
  * after `Ruling ordinal:` — the frozen brief's own hash at dispatch time.
  * `null` means no such line at all — legacy stock from before this task, or
@@ -174,12 +171,12 @@ const RULING_ORDINAL_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?Ruling ordinal:\s*(\d+
 const BRIEF_HASH_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?Brief hash:\s*([0-9a-f]{64})(?![A-Za-z0-9])/im
 
 /**
- * `review-validity-v1` task 4 (`#478`, O5): a sixth head line, `Policy
+ * A sixth head line, `Policy
  * digest: <sha256>`, renders UNCONDITIONALLY right after `Brief hash:` —
  * the effective review policy's digest at cast time. `null` means no such
  * line at all — legacy stock from before this task, or a stripped/malformed
  * line. Unlike the other fields this package extracts, a `null` echo here
- * is NEVER grandfathered (round 4 security MEDIUM): a policy is always
+ * is NEVER grandfathered (a MEDIUM security-review finding): a policy is always
  * resolvable, so there is no genuine "nothing to bind against" case on the
  * current side to key forgiveness on the way brief-hash/objectives/ruling
  * each have — `review-input-manifest.ts`'s `isBoundToPolicy` requires an
@@ -188,10 +185,10 @@ const BRIEF_HASH_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?Brief hash:\s*([0-9a-f]{64
 const POLICY_DIGEST_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?Policy digest:\s*([0-9a-f]{64})(?![A-Za-z0-9])/im
 
 /**
- * `control-store-v1` task 5 (`#555`, O1): a seventh head line, `Judged base:
+ * O1: a seventh head line, `Judged base:
  * <sha>`, renders UNCONDITIONALLY on every verdict from this task forward,
  * right after `Policy digest:` — the base commit the candidate was judged
- * against (the base identity `review-validity-v1` task 4 deferred). Appended
+ * against (a base identity a prior task deliberately deferred). Appended
  * LAST rather than beside `Judged head:` on purpose: inserting it earlier
  * would shift `Objectives version:`/`Ruling ordinal:`/`Brief hash:`/`Policy
  * digest:` down and out of the exact read windows those extractors already
@@ -209,7 +206,7 @@ const BASE_SHA_PATTERN = /^[ \t]*(?:\*{1,3}|_{1,3})?Judged base:\s*([0-9a-f]{7,4
  * AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
  * AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function renderEscalationComment(input: EscalationInput): string {
  * AEG:CLAIM: apps/cli/src/commands/review-post.ts contains:export function checkRenderedComment(body: string, expectation: RenderExpectation): RenderCheckResult {
- * Round-4 ruling on `#392`, widened by dev-review-loop-v1 task 2 (`#412`):
+ * A ruling, later widened:
  * all three markers are read from a comment's first FIVE lines only, never
  * anywhere else in the body. Every shape this package itself renders
  * (`review-post.ts`'s `renderCodeReviewComment`/`renderSecurityComment`/
@@ -248,7 +245,7 @@ function extractObjectivesVersion(comment: string): string | null {
 }
 
 /**
- * `review-validity-v1` task 3 (`#477`, O1): its own 7-line window, wider
+ * Its own 7-line window, wider
  * than `firstFiveLines` by exactly the two lines `Ruling ordinal:` and its
  * preceding blank line add when `Objectives version:` also renders (worst
  * case: line 7). `null` means no `Ruling ordinal:` line at all — the
@@ -267,7 +264,7 @@ function extractRulingOrdinal(comment: string): number | null {
 }
 
 /**
- * `review-validity-v1` task 4 (`#478`, O1): its own 11-line window — worst
+ * Its own 11-line window — worst
  * case, `Objectives version:`/blank (lines 5-6), `Ruling ordinal:`/blank
  * (7-8), `Brief hash:`/blank (9-10) all render ahead of `Policy digest:`,
  * which then lands on line 11. `null` means no `Brief hash:`/`Policy
@@ -288,7 +285,7 @@ function extractPolicyDigest(comment: string): string | null {
 }
 
 /**
- * `control-store-v1` task 5 (`#555`, O1): its own 13-line window — worst
+ * O1: its own 13-line window — worst
  * case, `Objectives version:`/blank, `Ruling ordinal:`/blank, `Brief hash:`/
  * blank, `Policy digest:`/blank all render ahead of `Judged base:`, which
  * then lands on line 13. `null` means no `Judged base:` line within that
@@ -304,14 +301,14 @@ function extractBaseSha(comment: string): string | null {
 }
 
 /**
- * `review-validity-v1` task 8 (`#506`, O2/O3): the FINDINGS block's own
+ * O2/O3: the FINDINGS block's own
  * severities, read from the WHOLE comment body — never `firstFiveLines`'s
  * window, since `renderFindingsSection` (`review-post.ts`) always renders
  * the findings list well past line five. This is what lets the merge gate
  * (`checkReviewGate`) and the loop's publication self-check evaluate the
  * SAME findings a reviewer's own `VERDICT:` line claims to summarize,
  * against repository policy, rather than trusting that line alone — a
- * reviewer's own `APPROVE` never overrides the evaluator (O3).
+ * reviewer's own `APPROVE` never overrides the evaluator.
  *
  * `renderFindingsSection`'s exact numbered-bracket form —
  * `<n>. [SEVERITY] file:line — description` — is the only shape read here;
@@ -320,7 +317,7 @@ function extractBaseSha(comment: string): string | null {
  * contributes no severities, the same fail-safe direction `extractVerdict`
  * already takes for anything outside its own known shapes.
  *
- * Location is captured too (`doctrine-fixes-v1` task 1, `#543`, O5) — non-
+ * Location is captured too — non-
  * greedy up to the ` — ` separator, so a location containing its own space
  * (`PR body`) is still captured whole rather than truncated at the first
  * space — this is what lets `evaluateReviewFindings`'s prose cap apply to a
@@ -345,33 +342,32 @@ function extractFindingSeverities(comment: string): { severity: string; location
  * carried no `Judged head:` line (`danglingNote` is `null` — the verdict
  * itself is real, only the binding is missing). `review-gate.ts` treats both
  * as unbound; only their `danglingNote`/`value` differ. `objectivesVersion`
- * follows the same null-means-unbound rule (dev-review-loop-v1 task 2,
- * `#412`, O2): no version line in the winning comment's first five lines
+ * follows the same null-means-unbound rule: no version line in the winning comment's first five lines
  * reads as `null`, identical in shape to a missing `Judged head:` line.
  */
 export type VerdictExtraction = {
   value: string
   headSha: string | null
   objectivesVersion: string | null
-  /** `null` on the pre-cutover stock (no `Ruling ordinal:` line at all) — never conflated with a rendered `0` (`review-validity-v1` task 3, `#477`, O1). */
+  /** `null` on the pre-cutover stock (no `Ruling ordinal:` line at all) — never conflated with a rendered `0`. */
   rulingOrdinal: number | null
-  /** `null` when no `Brief hash:` line was found (`review-validity-v1` task 4, `#478`, O1) — legacy stock, or no frozen brief resolvable at cast time. */
+  /** `null` when no `Brief hash:` line was found — legacy stock, or no frozen brief resolvable at cast time. */
   briefHash: string | null
-  /** `null` when no `Policy digest:` line was found (`review-validity-v1` task 4, `#478`, O5) — legacy stock only; every comment rendered from this task forward carries it unconditionally. */
+  /** `null` when no `Policy digest:` line was found — legacy stock only; every comment rendered from this task forward carries it unconditionally. */
   policyDigest: string | null
-  /** `null` when no `Judged base:` line was found (`control-store-v1` task 5, `#555`, O1) — legacy stock, or no base resolvable at cast time; every comment rendered from this task forward carries it unconditionally. */
+  /** `null` when no `Judged base:` line was found (O1) — legacy stock, or no base resolvable at cast time; every comment rendered from this task forward carries it unconditionally. */
   baseSha: string | null
-  /** The winning comment's own FINDINGS block severities and locations, whole-body read (`review-validity-v1` task 8, `#506`, O2/O3; location added `#543` O5) — `[]` on a DANGLING extraction (`danglingNote` set) or a comment with no findings at all. */
+  /** The winning comment's own FINDINGS block severities and locations, whole-body read (O2/O3; location added O5) — `[]` on a DANGLING extraction (`danglingNote` set) or a comment with no findings at all. */
   findingSeverities: { severity: string; location: string }[]
   danglingNote: string | null
 }
 
 /**
  * AEG:CLAIM: packages/aeg-core/src/verdict-extraction.ts contains:function firstFiveLines(comment: string): string {
- * Round 5 (`#392`): the candidate set — which comments even ATTEMPTED a
- * verdict — is a whole-body test, the pre-round-4 pattern. Only the VALUE is
- * read from the first five lines (round 4, widened by task 2 `#412`). Round
- * 4's own change built `clearHits` from the windowed text directly, which
+ * The candidate set — which comments even ATTEMPTED a
+ * verdict — is a whole-body test, an earlier pattern. Only the VALUE is
+ * read from the first five lines (widened by a later change). An earlier
+ * change built `clearHits` from the windowed text directly, which
  * made a comment whose marker sits below the window vanish from
  * consideration entirely rather than counting as present-but-unclear —
  * "most recent clear hit wins" then silently fell through to an OLDER
@@ -432,11 +428,11 @@ function extractVerdict(comments: string[], valuePattern: RegExp, missingLabel: 
 /**
  * The line-anchored `VERDICT:` marker prefix both value patterns below open
  * with — exported standalone, unchanged, character for character (a move,
- * not a rewrite: `#525` Stop-and-escalate; neither pattern below is edited)
+ * not a rewrite; neither pattern below is edited)
  * so a second consumer can build the identical presence-only test without
  * hand-copying a third literal of the same fact. The generated review-gate
- * pre-check job (`apps/cli/src/lib/artifacts.ts`, task-run-v1 16/18, `#525`
- * O2) is that consumer: it runs before any checkout, so it cannot import
+ * pre-check job (`apps/cli/src/lib/artifacts.ts`)
+ * is that consumer: it runs before any checkout, so it cannot import
  * this module at workflow run time, and instead imports this source string
  * at CLI-generation time to build its own jq `test()` regex.
  */

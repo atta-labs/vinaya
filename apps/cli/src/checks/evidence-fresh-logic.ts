@@ -26,7 +26,7 @@
  * outright (never actually run) is NOT detected by this function; only a
  * STALE or MISMATCHED one is.
  *
- * Group B's `Head:` comparison (`#497`) accepts a stored sha that differs
+ * Group B's `Head:` comparison accepts a stored sha that differs
  * from the PR's real head when the caller's `patchIdOf` reports the same
  * patch identity for both — the identical rule `check-review-gate.ts` binds
  * a verdict by. A rebase, a merge from the base, or a whitespace-only push
@@ -61,7 +61,7 @@ export const EVIDENCE_PLACEHOLDER_TEXT = '[run `vinaya pr report --write` to pop
  * line is selected from the region's MASKED view (`summaryLineIndex`), so a
  * `Summary:` inside the Group B fence or a `<details>` block is never the one
  * compared. Passing the pair whole is what keeps the located line and the
- * sliced text at the same offsets (Issue #189).
+ * sliced text at the same offsets.
  *
  * `expectedGroupCCommandLines` (task 12, Principal rulings PR
  * `open-1`/`open-2`) is the caller's own command list read STRAIGHT OFF the
@@ -147,7 +147,7 @@ export function compareEvidenceBlock(
   if (storedHead !== resolvedHead) {
     // A verdict binds to a PATCH, not a sha (`check-review-gate.ts`'s own
     // `patchIdOf` binding) — the freshness check binds by the identical
-    // rule (`#497`). A clean rebase, a merge from the base, or a
+    // rule. A clean rebase, a merge from the base, or a
     // whitespace-only push changes the sha without changing the patch, and
     // must keep this block green. `patchIdOf` is supplied by the caller
     // (`check-evidence-fresh.ts`), never computed here — this module stays

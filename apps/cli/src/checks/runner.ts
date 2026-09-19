@@ -28,7 +28,7 @@ export type RunOptions = {
    */
   localOnly?: boolean
   /**
-   * Post-tranche hygiene item 2, #397 round 2. Set by the generated
+   * Set by the generated
    * `pre-commit` hook only — never pre-push, never CI, both of which need
    * every `scope: 'full'` check to genuinely run. `--diff-only` cannot be
    * that switch: CI passes it too (`vinaya check --all --diff-only`), and
@@ -137,7 +137,7 @@ function inputFingerprintFor(spec: CheckSpec, opts: RunOptions, callerEnv: NodeJ
  * files are known, the check declares `include` globs, and none match. A
  * check with no `include` globs declares no scoping preference and is never
  * skipped on that basis alone. `scope: 'full'` checks always run — UNLESS
- * `opts.skipFull` is set (pre-commit only, #397 round 2), which skips every
+ * `opts.skipFull` is set (pre-commit only), which skips every
  * `scope: 'full'` check unconditionally, independent of `include`: a
  * full-scope check's own `include` (where declared) stays exactly what it
  * was before this flag existed — pinning/documentation only, never consulted
@@ -241,7 +241,7 @@ const ENV_BASELINE_KEYS = ['PATH', 'LANG', 'HOME', 'HTTPS_PROXY', 'HTTP_PROXY', 
 /**
  * Builds the env object a check's child process actually receives —
  * `runOne` below passes this as `spawn()`'s `env` option, the spawn default
- * since the flip (task 3, #776). Exported and unit-tested independently of
+ * since the flip. Exported and unit-tested independently of
  * the spawn path itself.
  *
  * Expansion, never spread: the baseline keys above are forwarded from
@@ -364,7 +364,7 @@ async function runOne(
   }
 
   // `env` is the constructed baseline+allowlist object (`buildCheckEnv`),
-  // the spawn default since the flip (task 3, #776) — the child no longer
+  // the spawn default since the flip — the child no longer
   // inherits the full parent environment. `detached: true` puts the child
   // in its OWN process group (pid becomes the group's pgid on POSIX) so the
   // timeout handler below can kill the whole tree, not just this direct
@@ -662,7 +662,7 @@ async function runOne(
  * itself logs each as a `gate` `cancelled` observation and forwards the
  * signal to all of them before the CLI exits.
  *
- * Env allowlist, live since the flip (task 3, #776): a spawned check's
+ * Env allowlist, live since the flip: a spawned check's
  * child process sees only the fixed baseline plus its own declared `env`
  * keys (`buildCheckEnv`), never the full parent environment. A `true` or
  * unsatisfied `anyOf` declaration missing from the caller's environment

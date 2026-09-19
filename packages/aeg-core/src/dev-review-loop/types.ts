@@ -1,5 +1,5 @@
 /**
- * The dev-review-loop's own types (dev-review-loop-v1 task 4, `#414`) — the
+ * The dev-review-loop's own types — the
  * policy half of the loop spec (Linear "Tech spec — Developer Review Loop",
  * rev 4, §16). Pure — no `fs`, no `fetch`, no `process.env`, no vendor name,
  * no prompt anywhere in this directory.
@@ -82,7 +82,7 @@ export type Observations =
       round: number
       verdicts: VerdictObservation[]
       /**
-       * (`doctrine-fixes-v1` task 1, `#543`, O3) Set when a reviewer's report
+       * Set when a reviewer's report
        * still carried no citable finding ids after the driver's one resend
        * (`report_uncitable`) — this round's `open`/`resolved` id comparison
        * is untrustworthy, so it is excluded from the `no_progress` check
@@ -94,7 +94,7 @@ export type Observations =
     })
 
 /**
- * `'infrastructure'` (task `review-validity-v1` 1, `#475`, O2): a review
+ * `'infrastructure'`: a review
  * role's work directory carried no `findings.txt`/`report.txt` (or, on a
  * task with objectives, no `objectives.txt`) on two consecutive fresh
  * dispatches — never a verdict, a mechanical-gate stall, or an escalation.
@@ -103,7 +103,7 @@ export type Observations =
  * failure shares the same vocabulary and rendering path every other pause
  * reason already uses, rather than a second, parallel pause shape.
  *
- * `'objectives_changed'` (task `review-validity-v1` 2, `#476`, O3): the
+ * `'objectives_changed'`: the
  * objectives version the driver resolved when it dispatched this round's
  * reviewers no longer matches the version it resolves once their verdicts
  * are back — a principal posted an objectives edit mid-round. Like
@@ -112,7 +112,7 @@ export type Observations =
  * `Observations` value); this member exists so that pause shares the same
  * vocabulary and rendering path every other pause reason already uses.
  *
- * `'ruling_posted'` (task `review-validity-v1` 3, `#477`, O3): the newest
+ * `'ruling_posted'`: the newest
  * principal ruling ordinal the driver resolved when it dispatched this
  * round's reviewers no longer matches the ordinal it resolves once their
  * verdicts are back — a principal posted a ruling mid-round. Same shape as
@@ -120,7 +120,7 @@ export type Observations =
  * it itself, and this member exists only so the pause shares the same
  * vocabulary and rendering path every other pause reason already uses.
  *
- * `'stale_driver'` (task `task-run-v1` 13, `#508`, O8): the base branch
+ * `'stale_driver'`: the base branch
  * moved past a commit touching the driver's own code
  * (`apps/cli/src/lib/dev-review-loop.ts`, `apps/cli/src/commands/
  * review-post.ts`, or this package) since the loop started — same shape
@@ -128,7 +128,7 @@ export type Observations =
  * freshly re-read one and decides this itself, so a running driver never
  * publishes verdicts an updated gate would refuse.
  *
- * `'brief_superseded'` (`review-validity-v1` task 4, `#478`, O2): the
+ * `'brief_superseded'`: the
  * frozen brief's own hash the driver resolved when it dispatched this
  * round's reviewers no longer matches the hash it resolves once their
  * verdicts are back — a Planner superseded the frozen brief mid-round.
@@ -137,7 +137,7 @@ export type Observations =
  * hand-rolled inequality), and this member exists only so the pause shares
  * the same vocabulary and rendering path every other pause reason uses.
  *
- * `'policy_changed'` (task 4, `#478`, O5): the effective review policy's
+ * `'policy_changed'`: the effective review policy's
  * digest the driver resolved at dispatch time no longer matches the one it
  * resolves once verdicts are back — same shape again. In practice a single
  * loop run resolves its policy once and never re-reads it, so this branch
@@ -146,7 +146,7 @@ export type Observations =
  * what the merge gate (which DOES re-resolve policy fresh on every run)
  * already checks.
  *
- * `'no_push'` (`doctrine-fixes-v1` task 1, `#543`, O2): a developer turn
+ * `'no_push'`: a developer turn
  * ended with a dirty worktree or local commits ahead of the remote, and no
  * new head appeared on the branch even after one foreground resume asking
  * it to commit and push. Same shape as the driver-decided reasons above:
@@ -184,7 +184,7 @@ export type Decision =
     }
 
 /**
- * The summary's own outcome vocabulary (O4) — wider than `round_ended`'s
+ * The summary's own outcome vocabulary — wider than `round_ended`'s
  * schema-constrained `green | changes_requested | escalated`: a round whose
  * processing triggered one of the four O2 exits (max_rounds, no_progress,
  * confidence, reappearance) records `'stopped'` here, even though the log
@@ -210,7 +210,7 @@ export type LoopConfig = {
   task: number
   reviewers: string[]
   models: Record<string, string>
-  /** (`#543` O4) The round cap — resolved by the driver from `ReviewPolicy.maxRounds` (repository config), never read here: this module has no config read of its own. */
+  /** The round cap — resolved by the driver from `ReviewPolicy.maxRounds` (repository config), never read here: this module has no config read of its own. */
   maxRounds: number
 }
 

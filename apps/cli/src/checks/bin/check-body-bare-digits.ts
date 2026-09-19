@@ -19,7 +19,7 @@
  * PR's real author, keyed on `PR_NUMBER`. On a `pull_request` trigger the
  * PR's own workflow YAML controls that env value, so an attacker's PR could
  * redirect it to any already-approved PR by the configured release actor —
- * found live (round 5, security review, PR #165), reproduced, and verified
+ * found live in a security review, reproduced, and verified
  * that no env-var or git-state signal inside that trigger type closes it.
  * `pull_request_target` closes it: the workflow text assigning `PR_NUMBER`
  * comes from the DEFAULT BRANCH, which a pull request cannot edit — see
@@ -71,8 +71,8 @@ function isExemptChangesetsReleasePr(prNumberStr: string | undefined): boolean {
   // Only reached once the branch already matches — `resolveReleaseActor`
   // triggers a SECOND network round-trip (the trust-anchor `vinaya.config.json`
   // fetch), which must not run on every ordinary PR just because it is one
-  // of `isChangesetsReleasePr`'s three arguments. Found live (code review,
-  // PR #169): JS evaluates function arguments eagerly, so inlining it there
+  // of `isChangesetsReleasePr`'s three arguments. Found live in code review:
+  // JS evaluates function arguments eagerly, so inlining it there
   // paid that fetch unconditionally, regardless of branch.
   return isChangesetsReleasePr(pr.headRefName, pr.author?.login ?? null, resolveReleaseActor(loadTrustAnchorConfig()))
 }

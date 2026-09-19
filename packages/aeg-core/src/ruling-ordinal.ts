@@ -1,6 +1,6 @@
 /**
- * The newest principal-authored ruling ordinal on a pull request
- * (`review-validity-v1` task 3, `#477`). One implementation, shared by
+ * The newest principal-authored ruling ordinal on a pull request.
+ * One implementation, shared by
  * every caller that needs it — `apps/cli/src/lib/dev-review-loop.ts` (the
  * loop's own `fetchRulings`, which this duplicates the marker regex for,
  * predates this package's involvement and stays local; this is the
@@ -49,8 +49,8 @@ export function newestPrincipalRulingOrdinal(comments: readonly RulingComment[],
 /**
  * The AUTHOR of the newest principal-authored ruling comment — `null` when
  * none matches (`newestPrincipalRulingOrdinal` returning `0` for the
- * identical reason). `control-store-v1` task 6 (`#556`, O2)'s own need: an
- * authenticated resolution record's `authenticatedBy` field names WHO
+ * identical reason). An authenticated resolution record's own need (O2): its
+ * `authenticatedBy` field names WHO
  * authorized a `--resume`/`--cancel`, not just that an authorization
  * existed. Same scan, same ordinal-wins rule, so the two functions can never
  * disagree about which ruling is newest.

@@ -28,7 +28,7 @@ describe('parseTranche: herald-onto-engine', () => {
 
   it('parses all 8 topology rows in source order — and excludes prose-only ids', () => {
     expect(iter.tasks.map((t) => t.id)).toEqual(['1', '2', '3b', '4', '5', '6', '7a', '7b'])
-    // The file's narrative references dropped task 3a ("Task 3a — removed; #87 closed not-planned").
+    // The file's narrative references dropped task 3a ("Task 3a — removed; closed not-planned").
     expect(iter.tasks.find((t) => t.id === '3a')).toBeUndefined()
   })
 

@@ -1,5 +1,5 @@
 /**
- * Quoted-command staleness (Issue #128). Pure — no `fs`, no `git`/`gh`.
+ * Quoted-command staleness. Pure — no `fs`, no `git`/`gh`.
  *
  * **The defect this closes.** A doc quotes a command, config line, or file
  * content verbatim, in backticks, as a statement of present fact — "what

@@ -3,13 +3,13 @@
  * pull request, and whether its dev-review-loop is running, paused,
  * published, or has no driver at all. `vinaya task status <tranche> <n>`
  * narrows to one task and adds the last round's verdict lines plus the
- * exact resume command when paused. `--follow` (O6),
+ * exact resume command when paused. `--follow`,
  * on either the `<tranche> <n>` form or `--issue <n>`, tails that task's
  * driver log — `~/.vinaya/loops/<owner>-<repo>/<issue>.log` — live,
  * `tail -f` style, so the state of any run is one command away regardless
  * of where it was launched.
  *
- * Origin (`#515`): the Principal, running seven loops in seven terminals,
+ * Origin: the Principal, running seven loops in seven terminals,
  * asked "Can I list the current sessions?" and the honest answer was a
  * `ps | grep`. This command answers from the outbox and the forge instead.
  *
@@ -80,7 +80,7 @@ function runSingle(tranche: string, id: string, json: boolean): void {
   if (result.resumeCommand) process.stdout.write(`Resume with: ${result.resumeCommand}\n`)
 }
 
-/** `--follow`'s own issue-number resolution (O6): `--issue <n>` names it directly; the `<tranche> <n>` form resolves it through the same read the ordinary single-task view already uses. Prints a usage/not-found refusal and exits, never returning, on any failure to resolve. */
+/** `--follow`'s own issue-number resolution: `--issue <n>` names it directly; the `<tranche> <n>` form resolves it through the same read the ordinary single-task view already uses. Prints a usage/not-found refusal and exits, never returning, on any failure to resolve. */
 function resolveFollowIssue(parsed: ParsedArgs): number {
   if (parsed.issue !== undefined) {
     const n = Number.parseInt(parsed.issue, 10)

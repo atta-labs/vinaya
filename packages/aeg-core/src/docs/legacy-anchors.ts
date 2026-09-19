@@ -10,7 +10,7 @@
  * Derived, not hand-listed: the failure mode this replaces is exactly the
  * one `node-route.ts`'s own header comment warns against for a second slug
  * source. Zero I/O, additive export — takes an already-derived node, returns
- * data, never reads a file (aeg-core purity, #372/#382/#506).
+ * data, never reads a file (an aeg-core purity fix).
  */
 
 import type { DiagramNode } from '../diagram-model'

@@ -25,7 +25,7 @@
  * Purity: this module imports only the `DiagramModel` **type** from the
  * diagram layer — no runtime coupling, no I/O. The doctrine is read (and the
  * model derived) by the caller, which passes the derived path set in; aeg-core
- * stays zero-I/O (#372/#382/#506).
+ * stays zero-I/O.
  *
  * Paths are relative to `aeg-root/` (e.g. `roles/developer.md`), matching
  * `DocFrontmatter`'s existing convention.

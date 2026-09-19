@@ -13,7 +13,7 @@
  * reference) and `aeg-root/enforcement.md`'s `vinaya check` row. The former
  * pointer here — a Configuration architecture chapter in
  * `apps/vinaya/specs/vinaya-spec.md` — named a path that exists in no
- * checkout of this repo (review finding, PR #120).
+ * checkout of this repo (a review finding).
  */
 import type { CheckEntry } from '../lib/config'
 import type { CheckSpec } from './contract'
@@ -114,7 +114,7 @@ export function resolveChecks(core: CheckSpec[], configChecks: Record<string, Ch
  * interpolate into a `CheckError.message` — emitted as a JSON line for agent
  * consumption and written raw to stdout. Left verbatim, a crafted key can
  * inject instruction-shaped text into an agent's error-handling context or
- * newline-flood a CI log (security pass, PR #120, finding 3), so control
+ * newline-flood a CI log (a security-review finding), so control
  * characters are stripped and the key is truncated before it ever reaches a
  * message. Display only — no classification ever compares against the
  * sanitized form.

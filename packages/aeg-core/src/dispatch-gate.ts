@@ -1,6 +1,5 @@
 /**
- * Dispatch-readiness composition (aeg-governance-hardening task 11, #324).
- * Pure — no `fs`, no `fetch`. Composes the forge/rationale/provenance/
+ * Dispatch-readiness composition. Pure — no `fs`, no `fetch`. Composes the forge/rationale/provenance/
  * archival facts the CLI shim (`bin/verify-dispatch.ts`) gathers (reusing
  * `parseTranche`, `hasProvenance`, `taskRefFromBranch`,
  * `checkIssueRationale`, `fetchProvenance` — never re-implementing any of
@@ -37,9 +36,9 @@ export type DispatchDependsOnFact = DispatchEdgeFact & {
    * `false` when the resolver could not find any tranche/task/Issue matching
    * this edge at all — a fact distinct from `merged: false`, which means the
    * edge resolved to a real target that just hasn't merged yet. Conflating
-   * the two produced a false "not merged yet" claim for #193's
-   * `vinaya-milestone-model-v1 2` edge, which had genuinely already merged
-   * (#196) — the message this distinction exists to correct. Absent or
+   * the two produced a false "not merged yet" claim for a real dependency
+   * edge, which had genuinely already merged
+   * — the message this distinction exists to correct. Absent or
    * `true` for every edge the resolver actually matched to a target,
    * including one whose target lookup itself then failed (an outage), which
    * stays under the existing conservative `merged: false` default rather
@@ -47,7 +46,7 @@ export type DispatchDependsOnFact = DispatchEdgeFact & {
    */
   resolved?: boolean
   /**
-   * Hand-close recognition facts (task `vinaya-engine-v1` 21, #99) — a
+   * Hand-close recognition facts — a
    * second, narrower path alongside `merged` for a dependency Issue closed
    * directly by a recognized Principal, with a stated `COMPLETED` reason,
    * rather than via a merged PR. All three are `null`/absent when the edge
@@ -145,13 +144,13 @@ export type DispatchGateInput = {
 
 /**
  * Every distinct dispatch-readiness blocker shape `checkDispatchReadiness`
- * can produce, named apart from its human `message` string (Issue #355) —
+ * can produce, named apart from its human `message` string —
  * the recovery-prompt switch in `check-dispatch-readiness.ts` matches on
  * THIS, never on parsing `message`'s text. Closed deliberately: a new
  * blocker kind that reuses an existing member here silently inherits that
  * member's (possibly wrong) recovery prompt, while adding a genuinely new
  * member without a matching `case` in the consumer's switch fails typecheck
- * via that switch's exhaustiveness check — the trap `#350` fell into (a new
+ * via that switch's exhaustiveness check — the trap a real regression fell into (a new
  * self-dependency class read as depends-on, whose stock prompt said "close
  * the dependency" for a dependency that can never close) is now a compile
  * error, not a live incident.
@@ -185,10 +184,10 @@ export type DispatchResult = { ready: boolean; blockers: string[]; blockerDetail
  * gate state — its presence is proof of a defect in the edge text or in its
  * resolution. `parseRationaleDeps` (`@attalabs/aeg-forge-state`) reads only
  * a labeled `Depends-on:`/`Conflicts-with:` field's own comma-separated,
- * id-shaped tokens; since Issue #347 an unlabeled/bare span elsewhere in the
+ * id-shaped tokens; an unlabeled/bare span elsewhere in the
  * "Dependency rationale" section is never read as an edge, whatever its
  * shape (`parse-rationale-deps.ts`'s own module comment states the rule). A
- * slug-qualified token in that list (`aeg-governance-hardening #368`) still
+ * slug-qualified token in that list (`aeg-governance-hardening #NNN`) still
  * resolves its trailing bare number against the NAMED tranche, not the host
  * — a resolver bug there is what would land a task depending on itself, on
  * that tranche's own task `1`.
@@ -242,8 +241,8 @@ export function checkDispatchReadiness(input: DispatchGateInput): DispatchResult
     )
   }
 
-  // Depends-on merged — OR hand-closed by a recognized Principal (task
-  // `vinaya-engine-v1` 21, #99): a second, narrower path for a dependency
+  // Depends-on merged — OR hand-closed by a recognized Principal: a
+  // second, narrower path for a dependency
   // Issue closed directly rather than via a merged PR.
   for (const dep of input.dependsOn) {
     // Evaluated BEFORE the unresolvable branch: a self-reference that also
@@ -259,7 +258,7 @@ export function checkDispatchReadiness(input: DispatchGateInput): DispatchResult
       continue
     }
     if (dep.resolved === false) {
-      // Distinct from the "not merged yet" branch below (#196): this edge
+      // Distinct from the "not merged yet" branch below: this edge
       // never resolved to any tranche/task/Issue at all, so a "not merged"
       // claim would misattribute the failure to the forge rather than to
       // the edge text. Still blocks — the conservative default is correct

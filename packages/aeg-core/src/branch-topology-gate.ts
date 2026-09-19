@@ -1,10 +1,10 @@
 import type { Tranche } from './types'
 
 /**
- * Branch↔topology gate (aeg-governance-hardening task 32, #399). Pure — no
+ * Branch↔topology gate. Pure — no
  * `fs`, no shell-outs. The CLI shim (`bin/check-branch-topology.ts`) derives
- * the tranche from the forge (`@attalabs/aeg-forge-state`, task
- * aeg-forge-state-v1 3a) and passes the result (or `null` when no tranche
+ * the tranche from the forge (`@attalabs/aeg-forge-state`)
+ * and passes the result (or `null` when no tranche
  * data could be derived) in here.
  *
  * Closes the logic fork: `.husky/pre-push` used to answer "does this

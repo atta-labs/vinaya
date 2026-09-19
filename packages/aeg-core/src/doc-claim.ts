@@ -1,5 +1,5 @@
 /**
- * Doc-claim binding (Issue #434). Pure — no `fs`; cited-file content is
+ * Doc-claim binding. Pure — no `fs`; cited-file content is
  * injected via `fileReader`, the same discipline `premise-check.ts` and
  * `quoted-command.ts` keep.
  *

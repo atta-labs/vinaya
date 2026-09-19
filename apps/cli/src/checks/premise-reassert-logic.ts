@@ -1,6 +1,6 @@
 /**
  * Pure wiring for the `dispatch-readiness` check's optional `PREMISE_FILE`
- * re-assertion path (task 10, #59). No `fs` of its own — `body` (the
+ * re-assertion path. No `fs` of its own — `body` (the
  * already-read file content, or `null` when the path could not be read) and
  * `fileReader` (the per-pin on-disk-content lookup `checkPremises` needs) are
  * both supplied by the caller, so this is unit-testable with plain string

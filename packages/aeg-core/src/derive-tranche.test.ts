@@ -255,8 +255,8 @@ describe('deriveTranche: unknown edge references', () => {
 })
 
 // Integration test required by the brief: parse the real herald-onto-engine.md
-// + apply a forge snapshot reflecting today's truth — task 1 merged via PR
-// #104 (see the recent commit log), all other tasks still backlog (open,
+// + apply a forge snapshot reflecting today's truth — task 1 merged
+// (see the recent commit log), all other tasks still backlog (open,
 // unassigned). This exercises the whole pipeline end-to-end on the live
 // artifact that proved the string-id + missing-Lifecycle edge cases.
 const FIXTURES = join(__dirname, '..', 'tests', 'fixtures')
@@ -265,7 +265,7 @@ const heraldMd = readFileSync(join(FIXTURES, 'herald-onto-engine.md'), 'utf8')
 describe('deriveTranche: live herald-onto-engine.md + today’s forge snapshot', () => {
   const iter = parseTranche(heraldMd)
 
-  // Today's snapshot: task 1 merged (#104), nothing else started.
+  // Today's snapshot: task 1 merged, nothing else started.
   const snapshot = new Map<string, ForgeFacts>([
     [
       '1',

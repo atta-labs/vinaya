@@ -571,3 +571,104 @@ describe('reader-resolvable-prose: a product-code slug citation is a blocking fi
     }
   })
 })
+
+// The source-comment class: config-driven globs, warning-by-default
+// severity, an opt-in error severity, and an allowlist that skips a named
+// file entirely. Distinct fixtures per case (rather than reusing the ones
+// above) since `proseGates.sourceComments.globs` must point at a directory
+// that actually exists in each fixture's own tree.
+describe('reader-resolvable-prose: the source-comment class', () => {
+  function fixtureWithSourceComments(name: string, config: Record<string, unknown>): string {
+    const root = initFixture(name)
+    writeFileSync(join(root, 'vinaya.config.json'), JSON.stringify({ checks: {}, ...config }, null, 2))
+    return root
+  }
+
+  it('a tranche-slug citation in a comment is a report-only warning by default (exit 0)', () => {
+    const root = fixtureWithSourceComments('source-comments-slug-warning', {
+      proseGates: { sourceComments: { globs: ['lib'] } }
+    })
+    try {
+      mkdirSync(join(root, 'lib'), { recursive: true })
+      writeFileSync(join(root, 'lib', 'x.ts'), '// landed in review-convergence-v1\nexport const a = 1\n')
+      execFileSync('git', ['add', '-A'], { cwd: root })
+      execFileSync('git', ['commit', '-q', '-m', 'Chore: add a lib file with a tranche-slug comment citation'], {
+        cwd: root
+      })
+
+      const result = Bun.spawnSync(['bun', READER_BIN], {
+        cwd: root,
+        env: { ...process.env, PR_BODY: undefined, BASE_SHA: undefined }
+      })
+      expect(result.exitCode).toBe(0)
+      expect(result.stderr.toString()).toContain('lib/x.ts')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a forge-number citation fails the run once severity is configured to "error"', () => {
+    const root = fixtureWithSourceComments('source-comments-number-error', {
+      proseGates: { sourceComments: { globs: ['lib'], severity: 'error' } }
+    })
+    try {
+      mkdirSync(join(root, 'lib'), { recursive: true })
+      writeFileSync(join(root, 'lib', 'x.ts'), '/**\n * fixed the gap (#4213)\n */\nexport const a = 1\n')
+      execFileSync('git', ['add', '-A'], { cwd: root })
+      execFileSync('git', ['commit', '-q', '-m', 'Chore: add a lib file with a forge-number comment citation'], {
+        cwd: root
+      })
+
+      const result = Bun.spawnSync(['bun', READER_BIN], {
+        cwd: root,
+        env: { ...process.env, PR_BODY: undefined, BASE_SHA: undefined }
+      })
+      expect(result.exitCode).toBe(1)
+      expect(result.stderr.toString()).toContain('forge-number')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('an allowlisted file is skipped entirely, even at "error" severity', () => {
+    const root = fixtureWithSourceComments('source-comments-allowlist', {
+      proseGates: { sourceComments: { globs: ['lib'], allowlist: ['lib/pinned.ts'], severity: 'error' } }
+    })
+    try {
+      mkdirSync(join(root, 'lib'), { recursive: true })
+      writeFileSync(join(root, 'lib', 'pinned.ts'), '// deliberately pins review-convergence-v1 (#4213)\n')
+      execFileSync('git', ['add', '-A'], { cwd: root })
+      execFileSync('git', ['commit', '-q', '-m', 'Chore: add an allowlisted fixture file'], { cwd: root })
+
+      const result = Bun.spawnSync(['bun', READER_BIN], {
+        cwd: root,
+        env: { ...process.env, PR_BODY: undefined, BASE_SHA: undefined }
+      })
+      expect(result.exitCode).toBe(0)
+      expect(result.stderr.toString()).not.toContain('pinned.ts')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('with no proseGates.sourceComments configured, the class is dormant — no finding, even on a real citation', () => {
+    const root = initFixture('source-comments-dormant')
+    try {
+      mkdirSync(join(root, 'lib'), { recursive: true })
+      writeFileSync(join(root, 'lib', 'x.ts'), '// landed in review-convergence-v1 (#4213)\n')
+      execFileSync('git', ['add', '-A'], { cwd: root })
+      execFileSync('git', ['commit', '-q', '-m', 'Chore: add a lib file with a citation, unconfigured globs'], {
+        cwd: root
+      })
+
+      const result = Bun.spawnSync(['bun', READER_BIN], {
+        cwd: root,
+        env: { ...process.env, PR_BODY: undefined, BASE_SHA: undefined }
+      })
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout.toString()).toContain('source-comment class dormant')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})

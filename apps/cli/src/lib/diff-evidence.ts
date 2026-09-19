@@ -1,6 +1,6 @@
 /**
  * The per-file diff `evaluateC5` reads to verify a `Doc-neutral:` declaration
- * (atta-labs/vinaya#122). Shared by both doc-coverage check bins so the two
+ * Shared by both doc-coverage check bins so the two
  * cannot drift; `packages/aeg-core/bin/verify-docs.ts` carries its own copy
  * because it lives in a different package and aeg-core's `src/` is zero-I/O
  * by charter — that boundary, not an oversight, is why there are two.
@@ -47,7 +47,7 @@ function revParse(ref: string): string | null {
  * wrong base. `null` only when this process is not inside a git worktree at
  * all, which every other function here already treats as "cannot answer."
  *
- * Exported (review finding, PR #290 MINOR): a caller that ALSO builds
+ * Exported (a MINOR review finding): a caller that ALSO builds
  * cwd-relative paths of its own — `check-reader-resolvable-prose.ts`/
  * `check-retired-vocabulary.ts` do, when `DOCTRINE_ROOT` is a relative
  * `proseGates.doctrineRoot` config value or the bare `'aeg-root'` fallback —
@@ -75,8 +75,8 @@ export function repoRoot(): string | null {
  * same as "succeeded with zero files"). `git diff --name-only base...HEAD`
  * throws when `base` and `HEAD` share no merge base — a shallow clone (CI's
  * default `fetch-depth: 1`), or a genuinely orphaned/unrelated-history
- * commit — which is a REAL, reproduced failure mode (review finding, PR
- * #290): the previous version of this function caught that throw and
+ * commit — which is a REAL, reproduced failure mode (a review finding):
+ * the previous version of this function caught that throw and
  * returned `[]`, which every caller read as "confirmed: nothing changed,"
  * silently dropping a real 169-finding backlog to zero. A thrown diff must
  * propagate as "I don't know," never collapse into "I checked and it's
@@ -108,7 +108,7 @@ function changedFiles(base: string): string[] | null {
  * against its own already-absolute paths (e.g. a doctrine-tree sweep whose
  * `finding.file` comes from `resolveDoctrineRoot()`) must not additionally
  * assume its own `process.cwd()` equals the repo root to make a relative
- * comparison work — that assumption breaks (review finding, PR #290 MAJOR)
+ * comparison work — that assumption breaks (a MAJOR review finding)
  * the instant a check bin runs from any other cwd. Resolving against the
  * real repo root (`git rev-parse --show-toplevel`) sidesteps the assumption
  * entirely rather than documenting around it.

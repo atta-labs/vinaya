@@ -6,12 +6,12 @@
  * input assembly (PR comments/labels/waiver-label-actor/head sha via `gh`)
  * exactly, emitting the check contract instead of human text.
  *
- * The head sha (#73, `#402` O1) is the branch's TRUE head: `gh pr view`
+ * The head sha is the branch's TRUE head: `gh pr view`
  * resolves only the branch NAME (`headRefName`), and the sha itself comes
  * from `git ls-remote origin refs/heads/<branch>` (this gate runs in CI
  * with a checkout, so `git` is available) — never from a caller-suppliable
  * env var, and never from `gh pr view`'s own `headRefOid` field, which can
- * lag a push (`#371`: after a push, `gh pr view` still reported the prior
+ * lag a push (confirmed live: after a push, `gh pr view` still reported the prior
  * sha). `headRefOid` is read only as a cross-check, logged when it
  * disagrees — see `checkReviewGate`'s own module comment for why an
  * env-sourced head would reopen the self-approval hole a `BASE_SHA` env var
@@ -19,7 +19,7 @@
  * check's entry states the same prohibition; `git ls-remote` queries the
  * remote live and is not that env var).
  *
- * Second documented divergence (`#412`, O3, `#433` security review): this
+ * Second documented divergence: this
  * adapter resolves a real `objectivesVersion` (Issue-then-body, fail-closed
  * on every unresolvable case) via `resolveObjectivesVersion` below.
  * `verify-review-gate.ts` does not — it always passes `objectivesVersion:
@@ -38,14 +38,14 @@
  * 0), the same "nothing to evaluate yet" shape `brief-shape`/`test-plan`
  * already use for a missing `PR_BODY`.
  *
- * Mechanical-check status (#337) is resolved via the REST "list check-runs
+ * Mechanical-check status is resolved via the REST "list check-runs
  * for a ref" endpoint (`gh api repos/{owner}/{repo}/commits/{sha}/check-runs`),
  * filtering out this repo's own review-gate check-run name before handing
  * the result to `checkReviewGate` — that exclusion is repo-specific and
  * belongs here, never inside `aeg-core`'s pure logic, which ships to every
  * adopter.
  *
- * NOT `gh pr checks --json name,bucket` (#341's original shape, #345):
+ * NOT `gh pr checks --json name,bucket` (a real regression's original shape):
  * that command's GraphQL query asks for `checkSuite.workflowRun` on every
  * check context, and the ephemeral `GITHUB_TOKEN` a workflow run receives
  * is structurally forbidden from resolving `workflowRun` for a check suite
@@ -55,8 +55,8 @@
  * refused; the REST endpoint below, which never touches `workflowRun`,
  * succeeded with the identical token in the same job). A personal PAT has no
  * such restriction, which is why every local repro of this check always
- * passed and masked the bug through #341's original review and #346's first
- * (incomplete) fix pass.
+ * passed and masked the bug through its original review and a first,
+ * incomplete fix pass.
  *
  * scope: full — a review verdict is a property of the PR, not the diff.
  */
@@ -91,7 +91,7 @@ const CHECK_NAME = 'review-gate'
 // too — there is only ever one review-gate check-run name to exclude. The
 // exclusion lives HERE, never inside `checkReviewGate` itself: `aeg-core`
 // ships to every adopter, and an adopter's workflow will not be named this.
-// Promoted to `../../lib/review-gate-check-name` (`#488`, O1) so
+// Promoted to `../../lib/review-gate-check-name` so
 // `dev-review-loop.ts`'s mechanical gate reads the identical constant
 // rather than a second hardcoded copy.
 
@@ -139,8 +139,8 @@ function fetchIssueCommentsForBrief(issueNumber: number): { body: string; author
 }
 
 /**
- * The frozen brief's own hash this PR is judged against (task 4, `#478`,
- * O1) — `null` in exactly TWO cases: the PR closes no Issue (`extractIssue`,
+ * The frozen brief's own hash this PR is judged against — `null` in
+ * exactly TWO cases: the PR closes no Issue (`extractIssue`,
  * resolved before any fetch), or that Issue's real, successfully-fetched
  * comment list carries no principal-authored frozen brief yet
  * (`resolveNewestFrozenBrief` returning `null` on genuine data, not on an
@@ -148,7 +148,7 @@ function fetchIssueCommentsForBrief(issueNumber: number): { body: string; author
  * auth failure, malformed JSON) — fails this check outright
  * (`severity:infra`, exit `1`), the identical fail-closed treatment
  * `resolveObjectivesVersion` already gives its own fetch failure, and for
- * the identical reason (round 3 review, `#478`): the prior version caught
+ * the identical reason (a round-3 review finding): the prior version caught
  * every exception into `null`, and `isBoundToBriefHash` treats a `null`
  * current hash as "skip the binding" — collapsing "the fetch failed" and
  * "no brief was ever posted" into the same permissive skip let a transient
@@ -156,7 +156,7 @@ function fetchIssueCommentsForBrief(issueNumber: number): { body: string; author
  * check, passing a PR whose frozen brief was actually superseded. Callers
  * must guard this the same way `resolveObjectivesVersion` is guarded: never
  * invoke it when `waived` is `true`, so the waiver's own escape hatch stays
- * reachable even though this now fails closed (`#433`'s MAJOR finding,
+ * reachable even though this now fails closed (a MAJOR finding,
  * reapplied here).
  */
 function resolveBriefHash(pr: PrView, principalAllowlist: readonly string[]): string | null {
@@ -191,7 +191,7 @@ function resolveBriefHash(pr: PrView, principalAllowlist: readonly string[]): st
 }
 
 /**
- * The current `objectivesVersion` this PR is judged against (`#412`, O3).
+ * The current `objectivesVersion` this PR is judged against.
  * `null` is returned in exactly ONE case: this PR was never subject to the
  * objectives obligation at all — an Issue genuinely below
  * `OBJECTIVES_SINCE_ISSUE` (checked first, unconditionally, before any fetch
@@ -202,7 +202,7 @@ function resolveBriefHash(pr: PrView, principalAllowlist: readonly string[]): st
  * Every OTHER case — an Issue at/above the cutover that no longer resolves,
  * a fetch failure, or objectives text that exists but no longer PARSES
  * (Issue's or body's) — fails this check outright (`severity:infra`, exit
- * `1`). A security review on this task (`#433`) found the prior version
+ * `1`). A security review on this task found the prior version
  * returning a silent `null` for the first two of those: falling through to
  * the body's own section (or straight to `null`) whenever the linked Issue
  * came back "not found", and swallowing a parse failure into `null` in both
@@ -227,7 +227,7 @@ function resolveBriefHash(pr: PrView, principalAllowlist: readonly string[]): st
  * so it is evaluated first. `main()` never calls this function at all when
  * an actor-verified `vinaya/waiver:review` label is present, precisely so
  * that fail-closed path cannot make the waiver's own escape hatch
- * unreachable (`#433`, security review MAJOR). Do not inline a call to this
+ * unreachable (a security-review MAJOR finding). Do not inline a call to this
  * function directly into `checkReviewGate({...})` again without keeping
  * that waiver pre-check in front of it.
  */
@@ -352,8 +352,8 @@ function shaFromGhApi(branch: string): string | null {
  * with the resolved true head.
  */
 /**
- * The base commit the PR's candidate is judged against (task 5, `#555`, O1)
- * — the PR's base branch (`baseRefName`) resolved to its
+ * The base commit the PR's candidate is judged against — the PR's base
+ * branch (`baseRefName`) resolved to its
  * current tip via the same `git ls-remote`/forge-ref path `resolveTrueHeadSha`
  * uses for the head. `null` on a genuine resolution failure, which
  * `checkReviewGate` reads as "skip the base binding" — never a fallback to a
@@ -412,7 +412,7 @@ function bucketFor(run: RestCheckRun): string {
  * not "current state" the way the PR's own Checks tab or `gh pr checks`
  * renders it. Without the dedup below, one stale failed/cancelled attempt
  * under a name that has since gone green permanently poisons the verdict,
- * even though the PR's UI shows every check green (confirmed live: PR #343
+ * even though the PR's UI shows every check green (confirmed live: a real PR
  * carried both a failed and a passing `vinaya check body-bare-digits` run
  * for the same head, from before and after a mid-flight fix). Check-run ids
  * are monotonically increasing, so the highest id per name is the latest.
@@ -530,7 +530,7 @@ function main(): void {
   // as `baseSha: null` would make `compareManifest`'s own "nothing to bind
   // against" skip (`isBoundToBase`) silently revert this check to its
   // pre-task, base-blind behavior on a transient `gh`/`git` hiccup — the
-  // exact bug `#433`'s MAJOR finding already closed for
+  // same base-blind-fallback bug a prior MAJOR finding already closed for
   // `resolveObjectivesVersion`, reapplied here (round 2 review, security
   // MEDIUM). Fails closed the same way `resolveTrueHeadSha`'s own `null`
   // does, above.
@@ -556,11 +556,11 @@ function main(): void {
   const trustAnchorConfig = loadTrustAnchorConfig()
   const principalAllowlist = resolvePrincipalAllowlist(trustAnchorConfig)
 
-  // Which severities block is repository policy (task
-  // 8, `#506`, O4) — resolved from the SAME default-branch trust-anchor read
+  // Which severities block is repository policy — resolved from the SAME
+  // default-branch trust-anchor read
   // as `principals`, never from the PR's own checkout, so a change cannot
   // lower its own threshold. `resolveReviewPolicy` refuses (throws) on a
-  // present-but-unknown severity value (O1) — caught here and reported as an
+  // present-but-unknown severity value — caught here and reported as an
   // infra-severity check error, the same shape every other unresolvable
   // trust-anchor fact in this file already uses.
   let reviewPolicy: ReturnType<typeof resolveReviewPolicy>
@@ -578,8 +578,8 @@ function main(): void {
     process.exit(1)
   }
 
-  // A verified waiver skips objectives resolution entirely (#433, security
-  // review MAJOR) — `resolveObjectivesVersion` fails closed (`process.exit(1)`)
+  // A verified waiver skips objectives resolution entirely (a security-review
+  // MAJOR finding) — `resolveObjectivesVersion` fails closed (`process.exit(1)`)
   // on an unresolvable Issue, which runs BEFORE `checkReviewGate` is ever
   // called (it is an inline argument expression) and would make `checkReviewGate`'s
   // own waiver short-circuit unreachable for exactly the case the waiver
@@ -606,14 +606,14 @@ function main(): void {
     // from `main` or a rebase that leaves the patch untouched must not void
     // a review that already read exactly those changes.
     patchIdOf: (sha: string) => patchIdAt(pr.baseRefName, sha),
-    // The base identity the verdict is bound to (task 5, `#555`, O1) — the
-    // PR's base branch tip, resolved the same fail-safe way as the head. A
+    // The base identity the verdict is bound to — the PR's base branch tip,
+    // resolved the same fail-safe way as the head. A
     // base-only change under an unchanged candidate now invalidates; an
     // equivalent rebase (patchIdOf above proving the diff identical) still
     // keeps, unchanged.
     baseSha,
     objectivesVersion: waived ? null : resolveObjectivesVersion(pr),
-    // The newest principal ruling ordinal on this PR (task 3, #477, O2) —
+    // The newest principal ruling ordinal on this PR —
     // a pure count over `pr.comments`, already fetched
     // above, so unlike `resolveObjectivesVersion` this never fetches
     // anything and never fails closed; it is computed unconditionally, even
@@ -624,13 +624,13 @@ function main(): void {
       principalAllowlist
     ),
     policy: reviewPolicy,
-    // The frozen brief's own hash at evaluation time (task 4, `#478`, O1) —
+    // The frozen brief's own hash at evaluation time —
     // never fetched under a waiver, the identical `objectivesVersion`
-    // treatment above and for the identical reason (round 3 review,
-    // `#478`): `resolveBriefHash` now fails closed on a genuine fetch
+    // treatment above and for the identical reason (a round-3 review
+    // finding): `resolveBriefHash` now fails closed on a genuine fetch
     // error, so calling it unconditionally would make a `gh` hiccup able to
     // block an actor-verified waiver's own escape hatch — the exact bug
-    // `#433`'s MAJOR finding closed for `resolveObjectivesVersion`.
+    // a MAJOR finding closed for `resolveObjectivesVersion`.
     briefHash: waived ? null : resolveBriefHash(pr, principalAllowlist)
   })
 

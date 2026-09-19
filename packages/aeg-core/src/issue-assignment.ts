@@ -1,17 +1,16 @@
 import { parseTaskBranch } from './first-push-dispatch-gate'
 
 /**
- * First-push Issue self-assignment (aeg-governance-hardening task 33, #401).
- * Pure — no `fs`, no `gh`/`git` shell-outs. The CLI shim
+ * First-push Issue self-assignment. Pure — no `fs`, no `gh`/`git` shell-outs. The CLI shim
  * (`bin/assign-task-issue.ts`, wired into `.husky/pre-push`) gathers the
  * facts — does the remote ref already exist, which Issue does the topology
  * row name, who is currently assigned, who is the authenticated pusher —
  * and this evaluator decides whether to assign.
  *
- * Produces the signal Studio's dispatch-visibility chip (task 26, #368)
+ * Produces the signal Studio's dispatch-visibility chip
  * renders: `facts.assigned = assigneesCount > 0`. Assignment had never been
  * mechanized anywhere — it happened only when the Principal remembered to
- * assign by hand, so a genuinely in-flight task (task 28, #372: two real
+ * assign by hand, so a genuinely in-flight task (a real task: two real
  * commits pushed) looked identical to an untouched one. The task branch's
  * FIRST real push is the earliest genuine "in flight" evidence (assigning
  * at brief-authoring time would reintroduce the false positive task 26 was

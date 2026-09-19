@@ -1,6 +1,5 @@
 /**
- * `renderSummary(journal)` — the publication comment (dev-review-loop-v1
- * task 4, `#414`, O4). One markdown table, rows per round, counts and the
+ * `renderSummary(journal)` — the publication comment. One markdown table, rows per round, counts and the
  * outcome only — no finding prose, and no line either verdict extractor
  * (`../verdict-extraction`) would read as a real verdict: no `VERDICT:`,
  * `Judged head:`, or `Objectives version:` label anywhere in the output.

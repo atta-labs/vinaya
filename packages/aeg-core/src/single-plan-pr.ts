@@ -1,6 +1,6 @@
 /**
- * Single-plan-PR guard predicate (task 19 / #336). Extracted from
- * `bin/open-pr.ts` (aeg-governance-hardening task 24, #364, Part 1) so the
+ * Single-plan-PR guard predicate. Extracted from
+ * `bin/open-pr.ts` so the
  * exact same implementation can be consumed by both the ring-0 local wrapper
  * (`open-pr.ts`, prevention) and a ring-1 CI check (detection, for PRs opened
  * via the web UI that bypass the wrapper entirely) — one implementation per
@@ -27,11 +27,11 @@ export function trancheSlugFromTopologyPath(path: string): string | null {
 export type OpenPrFiles = { number: number; files: string[] }
 
 /**
- * Single-plan-PR guard (task 19 / #336): refuses a plan-branch diff
+ * Single-plan-PR guard: refuses a plan-branch diff
  * that touches a tranche's topology file when another OPEN PR's diff
  * already touches that SAME tranche's topology file. Ends the plan-PR
  * race that produced two concurrent plan PRs for `aeg-governance-hardening`
- * itself (#352/#354) — each cut from `origin/main` unaware of the other's
+ * itself — each cut from `origin/main` unaware of the other's
  * newly-cut Issue.
  *
  * `branchFiles` is this branch's diff vs `origin/main` (or vs the PR's

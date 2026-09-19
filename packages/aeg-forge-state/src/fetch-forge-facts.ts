@@ -18,8 +18,8 @@
  * SERVER-ONLY. Pulls `node:child_process` transitively via
  * `resolveGithubToken`.
  *
- * Lives in `@attalabs/aeg-forge-state`, not `@attalabs/aeg-core` (aeg-core-purity
- * fix, #521) — `@attalabs/aeg-core/src` is zero-I/O (#372, #382, #506) and this
+ * Lives in `@attalabs/aeg-forge-state`, not `@attalabs/aeg-core` (an
+ * aeg-core-purity fix) — `@attalabs/aeg-core/src` is zero-I/O and this
  * module performs `@octokit/graphql` I/O. Re-exported from `@attalabs/aeg-core`
  * for every existing call site that imports it from there.
  */
@@ -185,14 +185,15 @@ export async function fetchForgeFacts(input: FetchForgeFactsInput): Promise<Forg
  * that actually closed the issue — this is the primary source for prState/merged.
  * It queries `last: 1`, not `first: 1`: an issue closed once (e.g. manually,
  * `closer: null`), reopened, then closed again by a real merged PR has two
- * ClosedEvents, and only the last one reflects reality (#524 regression).
- * The branch-based _prs query is kept as a fallback for in-flight tasks whose
- * PR is on the conventionally-named branch but the issue is still open.
+ * ClosedEvents, and only the last one reflects reality (confirmed live as a
+ * real regression). The branch-based _prs query is kept as a fallback for
+ * in-flight tasks whose PR is on the conventionally-named branch but the
+ * issue is still open.
  *
  * The same ClosedEvent node also carries `actor { login }` — the GitHub user
  * who performed the close, independent of `closer` (which is null on a
  * manual close). This is the sole anchor for recognizing a hand-closed
- * dependency as a resolved one (task `vinaya-engine-v1` 21, #99); fetched in
+ * dependency as a resolved one; fetched in
  * the same batched query rather than a second round-trip per task, same
  * discipline as every other fact here.
  *

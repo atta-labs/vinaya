@@ -1,6 +1,6 @@
 /**
  * Brief assembly — the forge/tree shim over `@attalabs/aeg-core`'s pure
- * `renderBrief`, extracted out of `commands/brief.ts` (task 12, #387) so a
+ * `renderBrief`, extracted out of `commands/brief.ts` so a
  * second caller (`dispatchTask`) can render the exact same brief without a
  * second copy of this assembly. `briefRenderCommand`
  * itself is now argv-parsing plus this one call — see that file.
@@ -125,8 +125,8 @@ export function sha256OfFile(path: string): string {
  * and the sha it currently points at, in one network round trip that
  * touches no local ref (no `git fetch`). `null` when the remote cannot be
  * reached (offline) — `assembleAndRenderBrief` refuses preparation rather
- * than rendering from a checkout of unknown freshness (task 4,
- * Issue #483, O1; Stop condition: "The remote default branch cannot be
+ * than rendering from a checkout of unknown freshness (Stop condition:
+ * "The remote default branch cannot be
  * resolved — refuse preparation").
  */
 export function resolveRemoteDefaultBranch(cwd?: string): { branch: string; sha: string } | null {
@@ -150,7 +150,7 @@ export function resolveRemoteDefaultBranch(cwd?: string): { branch: string; sha:
 
 /**
  * A frozen brief always states the revision its facts were read at
- * (task 4, Issue #483, O1) — the first of the two guarantees:
+ * — the first of the two guarantees:
  * `headSha` must equal the remote default branch's current tip, "compare
  * HEAD to the fetched remote default branch" per the Boundary. `resolveRemote`
  * is injected so this is testable against a fixture repo with no real
@@ -176,7 +176,7 @@ export function checkStaleAgainstRemote(
 }
 
 /**
- * The second of the two guarantees (task 4, Issue #483, O1): a
+ * The second of the two guarantees: a
  * checkout can equal the remote default branch's tip and still carry
  * uncommitted edits to a file the brief pins — exactly the case that froze a
  * wrong tier and a forbidden file in a prior task (Traps to avoid). Scoped
@@ -218,10 +218,9 @@ export function checkDirtyPinnedFiles(pinnedPaths: string[], cwd?: string): stri
  * against `allTrackedFiles` (a `git ls-files` snapshot, injected rather than
  * read here so this stays testable without a real repo) — an exact match, or
  * a UNIQUE suffix match for a bare filename elided from a shared directory
- * prefix in the Boundary prose (e.g. Issue #447's own "aeg-root/
+ * prefix in the Boundary prose (e.g. a real brief's own "aeg-root/
  * aeg-manual-flow.md, process.md, roles/developer.md"). A token matching
- * zero or more-than-one tracked file is dropped, never guessed — task 5,
- * Issue #447, O3.
+ * zero or more-than-one tracked file is dropped, never guessed.
  */
 export function resolveBoundaryPaths(tokens: string[], allTrackedFiles: string[]): string[] {
   const trackedSet = new Set(allTrackedFiles)
@@ -292,9 +291,9 @@ export function buildWorkspaceConsumersOf(): (pkg: string) => string[] {
  * task list, never the raw task id a caller passed in as `taskId`. Returned
  * rather than discarded so a caller that only has the task id (`dispatchTask`)
  * can still post to and read from the Issue this brief actually belongs to,
- * instead of reusing the task id as if it were an Issue number (task 5,
- * Issue #447, O1) — live evidence: dispatching task 3 with this field
- * discarded posted its brief on Issue #3, an unrelated merged Issue.
+ * instead of reusing the task id as if it were an Issue number — live
+ * evidence: dispatching a real task with this field discarded posted its
+ * brief on an unrelated, already-merged Issue that happened to share its number.
  *
  * `dispatchBlockerDetails`, on the `ok: false` branch, is the dispatch
  * gate's own classified verdict (`checkDispatchReadiness`'s
@@ -314,7 +313,7 @@ export type AssembleAndRenderBriefResult =
   | { ok: false; missing: string[]; dispatchBlockerDetails?: DispatchBlocker[] }
 
 /**
- * **O2 (Issue #502) — names what dispatch looked for.** A bare "not
+ * **O2 — names what dispatch looked for.** A bare "not
  * present in the forge-derived task list" message leaves the operator
  * guessing whether the Issue was never cut, mislabeled, or the title doesn't
  * match — this names the exact title form `vinaya task dispatch` expects,
@@ -367,7 +366,7 @@ export async function assembleAndRenderBrief(
     }
   }
 
-  // O1 (task 4, Issue #483) — the first of the two guarantees on
+  // O1 — the first of the two guarantees on
   // the instruction version: a frozen brief is rendered from a known tree.
   // Checked here, before any forge read, so a stale checkout never pays for
   // a Tranche/Issue fetch it is about to refuse anyway.
@@ -466,7 +465,7 @@ export async function assembleAndRenderBrief(
   // tracked file — a sanity check on the Issue's own `## Surface` `in:`
   // list, catching a typo'd/empty directory — but the MATCHES themselves are
   // no longer what §4's file list is built from (see below): a directory-
-  // level glob is never a file-level change set (task 5, Issue #447, O3).
+  // level glob is never a file-level change set.
   const globs = surfaceGlobsOverride ?? surface.in
   for (const glob of globs) {
     if (expandGlob(glob).length === 0) {

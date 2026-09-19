@@ -116,7 +116,7 @@ const HIGH_ENTROPY_MIN_LENGTH = 20
 // The upper bound `VinayaConfigSchema`'s `superRefine` enforces on
 // `report.commandTimeoutMs` — 1 hour. A misconfigured value above this could
 // otherwise leave `pr report`'s evidence runner hanging on a stuck
-// subprocess for arbitrarily long (round-2 security ruling, PR #546).
+// subprocess for arbitrarily long (a round-2 security ruling).
 const MAX_REPORT_COMMAND_TIMEOUT_MS = 3_600_000
 
 /** Loose heuristic, not a secret scanner: a long literal mixing char classes with no whitespace reads more like a pasted token than a hand-typed config value. */
@@ -215,7 +215,7 @@ const BriefSchemaSchema = z.object({
   // acking a builtin that is still present in `sections` changes no
   // behaviour anywhere. `briefSchema` is adopter-owned and `upgrade` never
   // rewrites it, which is correct; before this key existed, that ownership
-  // also meant a dropped builtin was permanently invisible (#70). The report
+  // also meant a dropped builtin was permanently invisible. The report
   // makes the divergence visible; this makes a considered choice quiet while
   // an accidental one keeps surfacing.
   ack: z.array(z.enum(BRIEF_BUILTINS)).optional()
@@ -236,7 +236,7 @@ export type BriefSchema = z.infer<typeof BriefSchemaSchema>
 // Version history:
 //   1 — original shape; hooks recorded at `.husky/*` or `.git/hooks/*`.
 //   2 — written by a package that understands the tracked-hooks layout
-//       (atta-labs/attalabs#927: non-husky installs record hooks at
+//       (confirmed live: non-husky installs record hooks at
 //       `.vinaya/hooks/*`, routed via `core.hooksPath`). The SHAPE is
 //       unchanged, and 2 does NOT attest that THIS repo uses tracked hooks —
 //       `upgrade` also writes 2 for husky installs and for installs whose
@@ -279,7 +279,7 @@ const SafeRepoRelPath = z.string().refine(isSafeRepoRelPath, {
 // The managed-block path spellings `buildInitOps` ever generates.
 // `startsWith('.git/')` (lib/ops.ts's runtime discriminator) is a
 // case-sensitive prefix test, and `.git` alone (no trailing slash) resolves
-// to a real directory rather than a file — issue #177's amendment found both
+// to a real directory rather than a file — a later amendment found both
 // escape it, one via a case-insensitive filesystem, one on every filesystem.
 // Rejecting any spelling that isn't byte-exactly one of these prefixes here,
 // before a `ManagedManifest` can even exist, means lib/ops.ts's resolvers
@@ -287,7 +287,7 @@ const SafeRepoRelPath = z.string().refine(isSafeRepoRelPath, {
 // that fix; lib/ops.ts's own discriminators are deliberately unchanged
 // (belt-and-suspenders, not a second fix).
 //
-// `.claude/hooks/` (task 10, #278) is the fourth: the Claude Code Stop-hook
+// `.claude/hooks/` is the fourth: the Claude Code Stop-hook
 // script (`claude-stop-hook-emitter.ts`) is a marker-delimited managed block
 // exactly like the three git-hook directories, just never `.git/`-prefixed —
 // `containedManagedBlockAbs` (lib/ops.ts) only special-cases a `.git/`
@@ -321,7 +321,7 @@ const ManagedManifestSchema = z.object({
   files: z.array(SafeRepoRelPath),
   blocks: z.array(ManagedBlockRecordSchema),
   labels: z.array(z.string()),
-  // The `vinaya init --agents` vendor selection (task 5, #152) — which of the
+  // The `vinaya init --agents` vendor selection — which of the
   // three agent-native emitters (tasks 2/3/4) this repo opted into. Persisted
   // so `upgrade`/`doctor` read an EXPLICIT selection back rather than
   // re-deriving a default: a repo initialized with `--agents=claude` must not
@@ -402,7 +402,7 @@ export type TokensCollectDeclaration = { interpreter: string; script: string }
  * below) rigorous rather than heuristic: there is exactly one file this
  * declaration can ever mean, identified by parsing alone, never by
  * guessing which whitespace-delimited token of an otherwise-arbitrary
- * shell string "looks like a path" (security review, PR #303, round 3 —
+ * shell string "looks like a path" (a security-review finding —
  * that guessing was the earlier design this one replaces).
  *
  * The script segment must additionally satisfy `isSafeRepoRelPath` — no
@@ -481,7 +481,7 @@ export const VinayaConfigSchema = z.object({
   // personal config — stripped from a global config below with a loud
   // warning, never resolved.
   //
-  // GRAMMAR (round 3, security review PR #303): exactly
+  // GRAMMAR: exactly
   // `"<interpreter> <repo-relative-script-path>"` — two whitespace-
   // delimited tokens, nothing else. `parseTokensCollectDeclaration`
   // (above) is the one parser; no flags, no shell syntax (`&&`/`|`/`;`),
@@ -532,7 +532,7 @@ export const VinayaConfigSchema = z.object({
   // declares it here.
   blastRadius: z.object({ extraDomains: z.array(z.string()).optional() }).optional(),
   // De-hardcodes `reader-resolvable-prose`/`retired-vocabulary`'s repo-specific
-  // inputs (task 7, Issue #56) — the two prose/vocabulary core checks read
+  // inputs — the two prose/vocabulary core checks read
   // this key at check-run time (`check-reader-resolvable-prose.ts`,
   // `check-retired-vocabulary.ts`), never at generation time, so editing it
   // takes effect on the very next `vinaya check` with no `upgrade` needed.
@@ -557,7 +557,31 @@ export const VinayaConfigSchema = z.object({
       // legacy-slug list is derived from (filenames, not content). Defaults
       // to `<doctrineRoot>/tranches/completed`; absent-on-disk degrades to
       // an explicitly dormant legacy-slug class, never an error.
-      legacySlugDir: z.string().min(1).optional()
+      legacySlugDir: z.string().min(1).optional(),
+      // The source-comment class — scans `.ts` comment lines
+      // under these directory roots for a tranche-slug or forge-number
+      // citation. Unset entirely (the default) leaves the class dormant, the
+      // same "declared no-op, not a silent gap" discipline `readerFacingPrefix`/
+      // `readerFacingSuffix` use above. Each entry is a repo-relative
+      // directory (or file) path swept recursively for `.ts` files — a
+      // prefix, like `PRODUCT_SLUG_SCOPE`, not a shell glob pattern, despite
+      // the field's name (chosen to match the brief's own vocabulary for
+      // this key).
+      sourceComments: z
+        .object({
+          globs: z.array(z.string().min(1)).optional(),
+          // Exact repo-relative file paths to skip entirely — a test fixture
+          // that deliberately pins a historical tranche name or forge number
+          // in a comment, where rewriting the citation away would break the
+          // thing the fixture exists to prove.
+          allowlist: z.array(z.string().min(1)).optional(),
+          // `'warning'` (the default) reports without failing the run —
+          // the rollout precedent every class in this file follows. `'error'`
+          // makes a reportable finding fail the check's exit code, same as
+          // the `product` class always has.
+          severity: z.enum(['warning', 'error']).optional()
+        })
+        .optional()
     })
     .optional(),
   // Config-native project metadata — see the `ProjectEntrySchema` comment
@@ -585,7 +609,7 @@ export const VinayaConfigSchema = z.object({
   // test config can set this to a few milliseconds and assert the same
   // behavior in a fraction of the wall time, without faking the process
   // signalling it exercises.
-  // `requireWorkerIsolation` (task 3, `#560`, O3): the "declared, visible
+  // `requireWorkerIsolation` (task 3, O3): the "declared, visible
   // setting that refuses when isolation is absent" this tranche's own
   // milestone names. An unattended dispatch (`DispatchOpts.unattended`) only
   // refuses for lack of `apps/cli/specs/isolation.md`'s OS-level boundary
@@ -611,8 +635,8 @@ export const VinayaConfigSchema = z.object({
       requireWorkerIsolation: z.boolean().optional()
     })
     .optional(),
-  // Which severities block is repository policy (task 8,
-  // `#506`, O1) — two separate thresholds, one per review role's own ordered
+  // Which severities block is repository policy — two separate thresholds,
+  // one per review role's own ordered
   // severity scale (`@attalabs/aeg-core`'s `CODE_REVIEW_SEVERITY_ORDER`/
   // `SECURITY_SEVERITY_ORDER`). Typed as a bare string here, deliberately NOT
   // `z.enum(...)`: a `z.enum` failure fails the WHOLE config's schema parse,
@@ -622,12 +646,12 @@ export const VinayaConfigSchema = z.object({
   // actually refuses, so a typo here is a loud, review-policy-specific error,
   // never a silent whole-config fallback. Same trust class as `principals` —
   // read only via `loadTrustAnchorConfig` (the default branch), never the PR
-  // checkout, so a change cannot lower its own threshold (O4).
+  // checkout, so a change cannot lower its own threshold.
   reviewPolicy: z
     .object({
       codeReviewThreshold: z.string().min(1).optional(),
       securityThreshold: z.string().min(1).optional(),
-      // (`#543` O4) Same deliberately-loose typing as the two thresholds
+      // Same deliberately-loose typing as the two thresholds
       // above, for the same reason: a `z.number().int().positive()` failure
       // here would fail the WHOLE config's schema parse (silently falling
       // back to null everywhere) rather than this field's own loud refusal
@@ -640,7 +664,7 @@ export const VinayaConfigSchema = z.object({
   // own INPUT is the repository itself (scans `.github/workflows`, walks
   // `package.json` exec bits, re-derives the changeset/CI-shard manifests)
   // is never reached by that graph; nothing imports it, so it never ran at
-  // push time at all (O1). `alwaysRun` names test files (glob, matched
+  // push time at all. `alwaysRun` names test files (glob, matched
   // against the repo-root-relative path) that run on every push regardless
   // of reachability — additive only, on top of whatever the import graph
   // already selects, never a narrowing of it.
@@ -657,7 +681,7 @@ export const VinayaConfigSchema = z.object({
   // `DEFAULT_COMMAND_TIMEOUT_MS` in `commands/pr-report.ts`). Capped by the
   // `superRefine` below at `3600000` (1 hour) so a misconfigured value cannot
   // leave `pr report` hanging on a stuck subprocess for arbitrarily long
-  // (round-2 security ruling, PR #546) — checked there, not inline on the
+  // (a round-2 security ruling) — checked there, not inline on the
   // field itself, so this field's own type stays exactly what it always was.
   report: z
     .object({
@@ -675,7 +699,7 @@ export const VinayaConfigSchema = z.object({
     })
     .optional(),
   // Where the developer-review loop's own round-end flush publishes telemetry
-  // (Issue #626, O1/O2) — `apps/cli/src/lib/log-flush.ts`'s
+  // (O1/O2) — `apps/cli/src/lib/log-flush.ts`'s
   // `flushOutbox`, called in-process at every round end. Absent (the default
   // for every repo that has never set this key): the round-end flush is a
   // no-op — telemetry stays in the local, already-bounded/rotated outbox
@@ -684,9 +708,9 @@ export const VinayaConfigSchema = z.object({
   // task's own Issue — that Issue is precisely the surface
   // `fetchFrozenBrief` must read to dispatch the next developer round, and
   // publishing unbounded telemetry there is the defect this key exists to
-  // stop (Issue #626: Issue #566's comment payload reached 1,597,599 bytes
-  // and broke `fetchFrozenBrief`'s own `gh issue view --json comments`
-  // read). `resolveLogPublishTarget`/`resolveLogPublishMaxChunksPerFlush`
+  // stop (a prior task's own tracker comment payload once reached
+  // 1,597,599 bytes and broke `fetchFrozenBrief`'s own `gh issue view
+  // --json comments` read). `resolveLogPublishTarget`/`resolveLogPublishMaxChunksPerFlush`
   // (below) are the two read sides; `dev-review-loop.ts`'s own
   // `resolveRoundEndFlushTarget` additionally refuses a configured `issue`
   // equal to the task being flushed, for the same reason.
@@ -739,7 +763,7 @@ const LOCAL_CONFIG_FILENAME = 'vinaya.config.json'
  * unbounded walk didn't enforce it: a planted vinaya.config.json in a
  * world-writable ancestor (`/tmp`) would register `checks.*.run` commands
  * that the check engine then executes, in every generated pre-commit hook
- * (security review, PR #94, same class as studio.ts's walk). Outside any
+ * (a security-review finding, the same class as studio.ts's walk). Outside any
  * git repository the walk still reaches the filesystem root, unchanged —
  * that keeps `vinaya check` usable in non-git trees; the bound bites only
  * where a repository boundary exists to honor. A config that sits ABOVE the
@@ -875,8 +899,8 @@ export function resolveReleaseActor(config: VinayaConfig | null): string {
 }
 
 /**
- * Resolves the effective review policy (task 8, `#506`,
- * O1): `config?.reviewPolicy` when set, else `DEFAULT_REVIEW_POLICY`
+ * Resolves the effective review policy:
+ * `config?.reviewPolicy` when set, else `DEFAULT_REVIEW_POLICY`
  * (`BLOCKER`/`HIGH` — today's behaviour, unchanged for a repo that never sets
  * this key). Per-field: an omitted `codeReviewThreshold`/`securityThreshold`
  * defaults; a PRESENT one that is not a real severity on its role's own scale
@@ -885,7 +909,7 @@ export function resolveReleaseActor(config: VinayaConfig | null): string {
  * rule as `resolvePrincipalAllowlist`/`resolveReleaseActor`: callers MUST
  * pass `loadTrustAnchorConfig()` (the default branch), never `loadConfig()`
  * or anything PR-checkout-derived, so a change cannot lower its own
- * threshold (O4) — the gate and the loop read the identical source.
+ * threshold — the gate and the loop read the identical source.
  */
 export function resolveReviewPolicy(config: VinayaConfig | null): ReviewPolicy {
   const raw = config?.reviewPolicy
@@ -903,7 +927,7 @@ export function resolveReviewPolicy(config: VinayaConfig | null): ReviewPolicy {
       `vinaya.config.json: reviewPolicy.securityThreshold "${securityThreshold}" is not one of ${SECURITY_SEVERITY_ORDER.join(' > ')} — fix the config, this never falls back to a default.`
     )
   }
-  // (`#543`, O4) The dev-review-loop's own round
+  // The dev-review-loop's own round
   // cap, replacing `assess-round.ts`'s hardcoded constant. Same refuse-never-
   // downgrade discipline as the two thresholds above: a present-but-invalid
   // value (non-integer, zero, negative) is a config defect to fix.
@@ -927,15 +951,15 @@ export type LogPublishTarget =
   | { webhookUrl: string; headers?: Record<string, string> }
 
 /**
- * The round-end flush's configured destination (Issue #626,
- * O1) — `config?.logPublish`'s `issue`/`pr`/`webhookUrl`, or `null` when the
+ * The round-end flush's configured destination
+ * (O1) — `config?.logPublish`'s `issue`/`pr`/`webhookUrl`, or `null` when the
  * key is absent, which means "publish nowhere automatically." This is an
  * operational choice, not a trust decision (unlike `principals`/
  * `reviewPolicy`), so callers pass `loadConfig()` (the local, repo-walking
  * resolution), the same sourcing `dispatch.timeoutMs`/`prePush.alwaysRun`/
  * `report.commandTimeoutMs` already use — never `loadTrustAnchorConfig()`.
  *
- * **`webhookUrl` is the one exception (Issue #636; round-2 security review,
+ * **`webhookUrl` is the one exception (round-2 security review,
  * HIGH).** An `issue`/`pr` destination stays inside the same forge repo this
  * process is already running against; a `webhookUrl` is an arbitrary
  * outbound HTTP destination, so an UNATTENDED caller (the dev-review-loop's
@@ -960,7 +984,7 @@ export function resolveLogPublishTarget(config: VinayaConfig | null): LogPublish
 
 /**
  * The trust-anchor-approved webhook target for an UNATTENDED flush caller
- * (Issue #636; round-2 security review, HIGH) — `null` unless the
+ * (round-2 security review, HIGH) — `null` unless the
  * repository's default-branch copy of `vinaya.config.json`
  * (`trustAnchorConfig`, from `loadTrustAnchorConfig()`) configures the
  * EXACT SAME `webhookUrl` the working tree resolved via
@@ -992,8 +1016,8 @@ export function resolveLogPublishMaxChunksPerFlush(config: VinayaConfig | null):
 }
 
 /**
- * The round-end flush's own destination for `task` (Issue
- * #626, O1) — `resolveLogPublishTarget`'s result, or `null` when either
+ * The round-end flush's own destination for `task`
+ * (O1) — `resolveLogPublishTarget`'s result, or `null` when either
  * unconfigured or configured to the very Issue being flushed. That second
  * case is refused, not merely discouraged: it would silently recreate the
  * exact defect this task fixes — telemetry published straight onto the
@@ -1035,8 +1059,8 @@ export function describeSkippedRoundEndFlush(config: VinayaConfig | null, task: 
 /**
  * ⚠️ **Read this before changing anything about how `principals` is
  * resolved.** Three consecutive attempts at this got it wrong, each fixing
- * the previous one's lever while leaving the same class open (PR #862's own
- * review rounds 1-3):
+ * the previous one's lever while leaving the same class open (across
+ * several review rounds):
  *
  *   1. `loadConfig()` — read the PR's own working tree. A PR added its author
  *      to `principals` and self-approved.
@@ -1106,7 +1130,7 @@ export function trustAnchorRepo(): string | null {
   // One shape gate both sources pass through — the remote path used to skip
   // it, and its own `(.+?)` group can capture slashes, so a crafted remote
   // could have produced an `owner/a/b`-shaped value that lands somewhere
-  // other than the intended contents endpoint (review finding, PR #862).
+  // other than the intended contents endpoint (a review finding).
   const wellFormed = (slug: string): string | null => (/^[^/\s]+\/[^/\s]+$/.test(slug) ? slug : null)
 
   const fromRunner = process.env.GITHUB_REPOSITORY?.trim()
@@ -1156,8 +1180,8 @@ function ghFetchTrustAnchorConfig(): string {
  * That fallback announces itself rather than degrading silently: an adopter
  * whose `principals` failed to resolve would otherwise see their own
  * reviewers' verdicts ignored for no visible reason — precisely the baffling
- * gate failure this field exists to eliminate (review finding, PR #862 round
- * 4). Two deliberate constraints on that message:
+ * gate failure this field exists to eliminate (a review finding). Two
+ * deliberate constraints on that message:
  *
  *   - It goes to **stdout, never stderr.** A check bin's stderr IS the
  *     `CheckError` JSON channel (`checks/runner.ts` parses every non-blank
@@ -1188,7 +1212,7 @@ function firstLine(err: unknown): string {
  * suppress. The bug survived four review rounds because the test threw a
  * hand-built single-line `Error('gh: HTTP 404 Not Found')` that no real
  * `execFileSync` ever produces — the test passed while production did the
- * opposite (review finding, PR #862). `stderr` is read directly too, since
+ * opposite (a review finding). `stderr` is read directly too, since
  * that is where `gh` actually writes it and it is the more reliable signal.
  */
 function isMissingFileError(err: unknown): boolean {
@@ -1313,9 +1337,9 @@ export function writeConfig(scope: 'local' | 'global', config: VinayaConfig, rep
 }
 
 // ---------------------------------------------------------------------------
-// tokens.collect trust cache (security review, PR #303, rounds 2-3).
+// tokens.collect trust cache (a security review).
 //
-// The problem the printed pre-exec warning (round 1) did NOT solve: a
+// The problem the printed pre-exec warning did NOT solve: a
 // declared `tokens.collect` command executes IN-PROCESS, unsandboxed,
 // automatically, the first time anyone (human or unattended Developer/
 // Archivist agent) runs the ordinary `vinaya tokens` command against a repo
@@ -1391,7 +1415,7 @@ function writeTokensCollectTrustStore(storePath: string, store: TokensCollectTru
   writeFileSync(storePath, JSON.stringify(store, null, 2), 'utf-8')
 }
 
-/** Plumbing (`git rev-parse`/`git hash-object`) is expected instant; a hang past this is a stuck/hostile `git`, not a slow legitimate answer — never block the caller indefinitely (code review, PR #303, round 2 follow-up: neither exec call site in this file previously bounded its own runtime). */
+/** Plumbing (`git rev-parse`/`git hash-object`) is expected instant; a hang past this is a stuck/hostile `git`, not a slow legitimate answer — never block the caller indefinitely (a code-review finding: neither exec call site in this file previously bounded its own runtime). */
 const GIT_IDENTITY_TIMEOUT_MS = 5_000
 
 /**

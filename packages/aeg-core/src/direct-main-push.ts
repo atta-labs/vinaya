@@ -1,6 +1,5 @@
 /**
- * Direct-main-push detection (aeg-governance-hardening task 24, #364,
- * Part 3 — item 1). Pure — no `fs`, no `gh`/`git` shell-outs. The CLI shim
+ * Direct-main-push detection. Pure — no `fs`, no `gh`/`git` shell-outs. The CLI shim
  * (`bin/check-direct-main-push.ts`) makes the one forge call (the
  * commits→pulls association API: `GET /repos/{owner}/{repo}/commits/{sha}/pulls`,
  * which GitHub documents as returning "the merged Pull Request that

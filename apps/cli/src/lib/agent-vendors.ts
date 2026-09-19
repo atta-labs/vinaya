@@ -1,6 +1,6 @@
 // The vendor keys `vinaya init --agents` selects among — one per
 // agent-native entry point (tasks 2/3/4: `.agents/skills/`, `.claude/commands/`,
-// `.gemini/commands/`), wired into the install lifecycle by task 5 (#152).
+// `.gemini/commands/`), wired into the install lifecycle by task 5.
 //
 // A single source so `artifacts.ts` (op generation), `config.ts` (the
 // persisted `managed.agents` selection), and every command that reads or

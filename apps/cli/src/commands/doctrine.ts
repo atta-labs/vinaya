@@ -2,7 +2,7 @@
 //
 // The committed root `VINAYA.md` pointer deliberately carries no filesystem
 // path: the package's install location is a property of each machine, and
-// that file is committed for every clone (atta-labs/attalabs#928). This
+// that file is committed for every clone. This
 // command is the resolution step the pointer hands the reader — it resolves
 // the installed package's own `aeg-root/` at READ time, wherever the CLI
 // physically sits, so the pointer's bytes stay machine-independent while the
@@ -72,7 +72,7 @@ function gitToplevel(cwd: string): string | null {
  * whatever bundled copy happens to sit next to the CLI binary that's
  * running: a globally-installed `vinaya` invoked from inside such a repo
  * previously resolved the bundle it shipped with, silently serving doctrine
- * up to two releases stale (atta-labs/vinaya#408). The `<packageRoot>`-based
+ * up to two releases stale (a real regression). The `<packageRoot>`-based
  * candidates above remain the fallback — the ONLY candidate for a repo (or
  * subtree) with no `aeg-root/roles/` of its own, e.g. every ordinary
  * adopter reading the published bundle.

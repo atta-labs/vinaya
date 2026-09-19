@@ -1,6 +1,6 @@
 /**
- * Scripted fakes for the developer, both reviewers, and CI (dev-review-loop-v1
- * task 4, `#414`, O5) — zero network, zero subprocesses. Each fake produces a
+ * Scripted fakes for the developer, both reviewers, and CI — zero network,
+ * zero subprocesses. Each fake produces a
  * typed `Observations`/`VerdictObservation` value exactly as the real driver
  * would once it has decoded the real actor's output; nothing here reaches a
  * process, a file, or the forge.

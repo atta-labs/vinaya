@@ -35,8 +35,8 @@ export type IssueSectionResult = { status: 'pass' | 'fail'; errors: string[] }
 
 /**
  * Tolerant field detector: accepts the two live rationale styles —
- * `**Field** — …` bold-inline (e.g. Issue #309) and `### Field` headings
- * (e.g. Issue #219). Case-insensitive.
+ * `**Field** — …` bold-inline (e.g. Issue #NNN) and `### Field` headings
+ * (e.g. Issue #MMM). Case-insensitive.
  */
 function hasRationaleField(body: string, labelPattern: string): boolean {
   // `labelPattern` is grouped. Ungrouped, its own top-level `|` (present in
@@ -102,11 +102,11 @@ export function checkIssueRationale(body: string): IssueSectionResult {
 }
 
 /**
- * The Issue number from which `## Objectives` becomes mandatory (dev-review-
- * loop-v1 task 1, Issue #411's Origin: PR #398 merged with two brief Parts
+ * The Issue number from which `## Objectives` becomes mandatory (a real
+ * incident: a merged PR left two brief Parts
  * undelivered and nothing named what the work had to do in a form a machine
- * could compare). The newest Issue at authoring time was #418; every task
- * Issue from #404 up already carries the section by hand. Same shape as
+ * could compare). Every task
+ * Issue at or above this cutover number already carries the section by hand. Same shape as
  * `BRIEF_RULES_SINCE_PR` (`brief-validation.ts`) — a cutover by Issue number,
  * never a retroactive requirement on the pre-gate stock.
  */
@@ -134,11 +134,11 @@ export function checkIssueObjectives(body: string, issueNumber: number | null): 
 }
 
 // ---------------------------------------------------------------------------
-// Judgment sections as data (plan-brief-v1 task 1, Issue #426). Four more
+// Judgment sections as data. Four more
 // task-Issue sections, each parsed by its own pure function: `## Surface`,
 // `## Parts`, `## Test plan`, `## Stop conditions`. `brief-render.ts` reads
 // their parsed values to fill a brief's §4/§6/§9/§10 mechanically, so `vinaya
-// brief render` needs no hand edit to become dispatchable (O2/O3). Gated by
+// brief render` needs no hand edit to become dispatchable. Gated by
 // `BRIEF_SECTIONS_SINCE_ISSUE`, the same cutover-by-Issue-number shape as
 // `OBJECTIVES_SINCE_ISSUE` above — an Issue below the cutover legitimately
 // carries none of the four, and `checkIssueBriefSections` passes it
@@ -274,7 +274,7 @@ export function globCoversPath(glob: string, path: string): boolean {
  * this module stays pure, no `git`/`fs` — and the caller
  * (`forge-write.ts`) passes the SAME `expandGlob` predicate
  * `brief-assembly.ts` already uses to render, so the gate and the renderer
- * can never disagree about whether a glob resolves (O3).
+ * can never disagree about whether a glob resolves.
  *
  * A backtick-wrapped glob (`` `packages/foo/**` ``) is not stripped or
  * specially refused here: the literal backticks are part of the string
@@ -573,14 +573,14 @@ const NO_DOCUMENTATION_SENTINEL_RE = /^none\b/i
  * routinely contains an unspaced hyphen (`agent-sdk`, `cost-tracking`);
  * against the old `\s*[-—–]\s*` shape, the lazy source capture stopped at
  * the FIRST such in-URL hyphen, truncating the source and corrupting the
- * mechanism text (round 2 review, BLOCKER, Issue #625 O1/O2 — verified live:
+ * mechanism text (round 2 review, BLOCKER, O1/O2 — verified live:
  * `https://code.claude.com/docs/en/agent-sdk/cost-tracking` split at
  * `.../agent`). Requiring `\s+-\s+` for the hyphen form specifically closes
  * that gap: no URL contains a literal space, so an in-path hyphen can never
  * satisfy it, while a real Planner-written ` - ` separator still does. An
  * OPTIONAL trailing `(O<n>[, O<m>])` citation follows — same grammar Parts
  * cites Objectives with, moved to the end here since a source/mechanism pair
- * reads naturally before the citation that grades it (O3, Issue #625). The
+ * reads naturally before the citation that grades it (O3). The
  * citation group only ever matches a real `O<digits>` list, so a mechanism
  * whose own prose ends in an ordinary parenthetical (never shaped like
  * `(O2)`) is never mistaken for one — it stays part of the mechanism capture
@@ -593,7 +593,7 @@ const ISSUE_DOCUMENTATION_LINE_RE = /^[-*]\s+(.+?)(?:\s+-\s+|\s*[—–]\s*)(.+?
  * in-repo path) against the mechanism it governs: `- <source> — <mechanism>
  * (O<n>)`. A task with no externally-documented mechanism states the
  * explicit `None` sentinel instead of an empty section — silence is never
- * read as "nothing to cite" (Issue #625: the failure this section closes is
+ * read as "nothing to cite" (the failure this section closes is
  * a source assumed read, never verified). `topLevelSectionText`/the
  * dash-split grammar mirror `parseIssueParts`'s own shape, so this reads as
  * one more judgment section, not a bespoke grammar.
@@ -650,7 +650,7 @@ export function parseIssueDocumentation(body: string): ParsedIssueSection<IssueD
  * ordinary `O<n>: MET | NOT MET` grading (already run on every task) cover
  * whether the cited source's mechanism/version was actually incorporated,
  * rather than leaving the obligation to compete on salience alone with
- * nothing checking it (Issue #625's own finding). The review-gate stays the
+ * nothing checking it. The review-gate stays the
  * backstop that catches a wrong `MET`; this check only proves a graded home
  * for the obligation exists at all.
  *
@@ -685,8 +685,8 @@ export const BRIEF_SECTIONS_SINCE_ISSUE = 426
 
 /**
  * The Issue number from which `## Documentation` becomes mandatory alongside
- * the four sections above — deliberately one past #625 (this requirement's
- * own Issue, and the highest Issue number in existence when it was authored),
+ * the four sections above — deliberately one past this requirement's own
+ * Issue (the highest Issue number in existence when it was authored),
  * so no open or historical Issue is invalidated by the new requirement and
  * `issue edit` on one never starts refusing a body it could not have carried
  * the section in. Never grandfathered further back than that: unlike
@@ -704,7 +704,7 @@ export const DOCUMENTATION_SINCE_ISSUE = 626
  * `checkIssueObjectives` takes for an Issue with no number yet.
  *
  * A fifth section, `## Documentation`, is folded into this same gate rather
- * than a new builtin (Issue #625, O1) — it is graded on its own, later
+ * than a new builtin (O1) — it is graded on its own, later
  * cutover (`DOCUMENTATION_SINCE_ISSUE`), since no pre-existing Issue ever
  * carried it and requiring it retroactively on an `issue edit` would refuse a
  * body no author had reason to write that way.
@@ -740,7 +740,7 @@ export function isTaskIssueLabelSet(labels: string[]): boolean {
 const OBJECTIVES_HEADING_RE = /^##[ \t]*Objectives[ \t]*$/im
 
 /**
- * **O1 (task-run-v1 task 11) — is this body task-Issue-shaped at all?** The
+ * **O1 — is this body task-Issue-shaped at all?** The
  * forge-write label gate (`forge-write.ts`'s `refuseUnlabeledTaskShapedBody`,
  * and `bin/open-issue.ts`'s mirrored inline check) uses this to catch a
  * Planner's mistake `isTaskIssueLabelSet`-gated validation cannot see: a body
@@ -776,7 +776,7 @@ export function isTaskIssueBodyShaped(body: string): boolean {
  * `issue`-scope check and the coherence sweep can both call the SAME
  * function instead of re-deriving the same two-line condition.
  *
- * **Retired to an always-pass check (task-run-v1 task 15, O3).** A task-
+ * **Retired to an always-pass check.** A task-
  * shaped body reaching the forge with no `vinaya/tranche:*` label is no
  * longer, by itself, evidence of a mistake — it is the exact shape of a
  * legitimate backlog Issue (`task run --issue <n>`'s own dispatch target),
@@ -860,7 +860,7 @@ export function checkIssueType(_body: string, labels: string[]): IssueSectionRes
 //
 // `checkIssueRationale` above checks the eight fields are PRESENT and
 // well-formed. It never checks what they SAY against the surface the task
-// touches — and three task Issues in `vinaya-pages-v2` (#621/#622/#626) passed
+// touches — and three real task Issues passed
 // it while being wrong in three distinct ways: a `packages/ui` edit declared
 // `Project: vinaya` only (blast radius under-declared, so the review fans out
 // through one product's lens instead of every consumer's); a `## References`
@@ -871,7 +871,7 @@ export function checkIssueType(_body: string, labels: string[]): IssueSectionRes
 // deterministic functions on the surface they happened on.
 //
 // EVERY ONE OF THEM READS BLOCK-STRIPPED TEXT, via the single exported
-// `stripCode` — never a second regex (PR #617's rule). A rationale that quotes
+// `stripCode` — never a second regex. A rationale that quotes
 // `## References`, `Premise:`, or a `packages/ui` path inside a **fence** is
 // documenting, not leaking, and must not trip anything; GitHub's own parsers
 // ignore code the same way.
@@ -881,14 +881,14 @@ export function checkIssueType(_body: string, labels: string[]): IssueSectionRes
 //   - B looks for brief-shaped *headings*, which never live in a span, so it
 //     takes the full default strip.
 //   - A/C/D look for *paths*, and prose writes paths in backticks by
-//     convention — #621 declares its own surface as "edits `packages/ui`". Run
+//     convention — a real task declares its own surface as "edits `packages/ui`". Run
 //     span-blind, A matches nothing on the very Issues it was built from and
 //     ships as a gate that always passes, which is worse than no gate. So they
 //     read `PATH_TEXT`: fences and indented blocks gone, spans intact.
 //
 // Accepted cost: brief content that leaks *entirely inside* a fence is
 // invisible to B. Same trade every code-aware gate here makes; the alternative
-// is the fence-blind false-positive machine #617 removed.
+// is the fence-blind false-positive machine a real fix removed.
 // ---------------------------------------------------------------------------
 
 /**
@@ -1000,7 +1000,7 @@ function forMessage(value: string): string {
 
 /**
  * The projects a task Issue declares — its body's `**Project:**` field, and
- * only that. Project is a **field, not a label** (doctrine): #614 dropped the
+ * only that. Project is a **field, not a label** (doctrine): a real migration dropped the
  * `project:*` labels outright, and `@attalabs/aeg-forge-state`'s `list-tasks.ts`
  * derives a task's project from the same field, so the two agree by
  * construction. `labels` stays in the signature because callers pass it and
@@ -1187,7 +1187,7 @@ export function checkProjectsRegistered(
  * **A cited document is not a touched domain.** Every rationale points at docs
  * for provenance — "the registry row in `.vinaya/projects.md`",
  * "per `packages/ui/README.md`" — and counting those as edits fails correct
- * plans wholesale (it fired on all three of #621/#622/#626 for a projects.md
+ * plans wholesale (it fired on three real tasks for a projects.md
  * citation none of them edits). So an occurrence whose full path token ends in
  * a doc extension does not count; a bare domain reference, or any non-doc path
  * under it, does. Citing `packages/ui/README.md` *and* editing
@@ -1215,7 +1215,7 @@ const BLAST_RADIUS_ACK_RE = /(?:\*\*)?blast-radius-ack(?:\*\*)?\s*[:—–-]/i
  * review fan-out ("more projects = more review lenses = proportionally more
  * rigor"), so a shared-primitive change carrying one product's label is
  * reviewed through one lens and under-governs the regression its own prose
- * usually admits in the same breath (#621: "**BUT edits `packages/ui`** … any
+ * usually admits in the same breath (a real task: "**BUT edits `packages/ui`** … any
  * topbar change is seen by every product").
  *
  * Two ways to satisfy it, both deliberate: list the other consumers in the
@@ -1244,7 +1244,7 @@ const BLAST_RADIUS_ACK_RE = /(?:\*\*)?blast-radius-ack(?:\*\*)?\s*[:—–-]/i
  * project field and only that. The previous body-wide read took the first
  * field-shaped token *anywhere* in the body, which is routinely prose in Sizing
  * or Boundary rather than the declaration: prose carries file paths, and a path
- * fragment parses as an invented project name (#870's own blast-radius line
+ * fragment parses as an invented project name (a real blast-radius line
  * yielded a project called `src`). Two parsers for one field is how the gate and
  * the derivation come to disagree about what a task even declares — so do not
  * add a second regex here, nor a pre-clean step that makes one "usually" agree.
@@ -1295,7 +1295,7 @@ export function checkBlastRadiusScope(
     // Scoped to the two fields that declare the task's OWN surface. Scanning
     // the whole body fails correct plans in bulk: a rationale names packages
     // for many reasons that are not edits — a dependency it imports unchanged
-    // (#591/#599 name `packages/aeg-core` because Vinaya's CLI imports it), a
+    // (real tasks name `packages/aeg-core` because Vinaya's CLI imports it), a
     // trap to avoid, an Origin note. A full-body scan flagged 46 of 166
     // historical task Issues, nearly all of them correctly-scoped work.
     // Boundary and Project(s) + blast radius are where a task states what it
@@ -1349,7 +1349,7 @@ const BRIEF_MARKERS: Array<{ name: string; pattern: RegExp }> = [
   { name: 'Technical surface map', pattern: /(?:^#{1,6}\s*|\*\*)\s*Technical surface map\b/im },
   { name: 'Premise', pattern: /(?:^#{1,6}\s*|\*\*)\s*Premise(?:\*\*)?\s*[:—–]/im },
   { name: 'Step 0', pattern: /(?:^#{1,6}\s*|\*\*)\s*Step 0\b/im },
-  // Heading form removed (plan-brief-v1 task 1, Issue #426): `## Test plan` is
+  // Heading form removed: `## Test plan` is
   // now an Issue-native section since `BRIEF_SECTIONS_SINCE_ISSUE`, parsed by
   // `parseIssueTestPlan` above — a heading is not a marker any more. The bold
   // inline form (`**Test Plan:** …`) is unaffected and still catches a brief's
@@ -1383,11 +1383,11 @@ function rationaleFieldText(text: string, labelPattern: string): string {
   // instead of just the label — `Docs to keep coherent|§7` compiled as
   // "(**|#) Docs to keep coherent" OR "§7[^\n]*…", so the Docs branch matched
   // the bare label and captured nothing, and D silently graded every Issue on
-  // its Traps field alone (#622 failed on exactly this).
+  // its Traps field alone (a real task failed on exactly this).
   // The terminator is `(?![\s\S])` — a real end-of-INPUT assertion — not `$`.
   // The `m` flag is required for the `^#{1,4}` heading form, and under `m` a
   // `$` matches end-of-LINE, so the lazy body satisfied the lookahead
-  // immediately and every heading-style field (`### §7`, #219) sliced to its
+  // immediately and every heading-style field (`### §7`) sliced to its
   // own label with zero content. D then saw an empty field and failed Issues
   // that name their docs perfectly well, one line further down.
   const re = new RegExp(
@@ -1532,7 +1532,7 @@ function nearestInGlob(path: string, inGlobs: string[]): string {
 }
 
 /**
- * **O4 (task-run-v1 task 11) — a Boundary path must fall inside the task's
+ * **O4 — a Boundary path must fall inside the task's
  * own declared Surface.** The Boundary field is where a Planner names what a
  * task touches (and, in the same breath, what it deliberately excludes —
  * `checkBlastRadiusScope`'s own doc comment records Boundary prose naming a
@@ -1594,10 +1594,9 @@ export function checkRationaleSurfaceCoverage(body: string, issueNumber: number 
  * pointer coherent; if that pointer also falls inside an `out:` glob
  * (`globCoversPath`, this module's own Surface-vs-path matcher —
  * `checkDocsWithinSurface` above uses the same one), the task cannot satisfy
- * both `doc-coverage` (C5) and `surface-scope` (O7) at once, and the
+ * both `doc-coverage` (C5) and `surface-scope` at once, and the
  * Developer discovers the contradiction only at the first commit. Refusing
- * here catches it at authoring time instead (Issue #491, task-run-v1 9's own
- * origin).
+ * here catches it at authoring time instead.
  *
  * No second glob matcher is introduced: `globsOverlap` and `globCoversPath`
  * are the two the product already has, reused verbatim.
@@ -1605,7 +1604,7 @@ export function checkRationaleSurfaceCoverage(body: string, issueNumber: number 
  * A URL pointer is never a repo path an `out:` glob could cover, so it is
  * skipped (`isUrlPointer`) — this gate is about the tree, not external docs.
  * Absence of a binding for any `in:` path, or a bound pointer that simply
- * isn't excluded, both pass (O3): only an explicit `out:` exclusion of a
+ * isn't excluded, both pass: only an explicit `out:` exclusion of a
  * bound pointer is a contradiction.
  *
  * `docOwnersContent === null` (repo has no manifest) or a `## Surface` that
@@ -1645,9 +1644,9 @@ export type TaskIssueFacts = {
 }
 
 /**
- * True when either side's declared edges name the other — `#621`, `621` and
- * `8` all count, and so does a slug-qualified edge (`<slug> #621`,
- * `<slug> 621`): `splitSlugQualifiedEdge` (`@attalabs/aeg-forge-state`, the
+ * True when either side's declared edges name the other — `#NNN`, `NNN` and
+ * a bare task id all count, and so does a slug-qualified edge (`<slug> #NNN`,
+ * `<slug> NNN`): `splitSlugQualifiedEdge` (`@attalabs/aeg-forge-state`, the
  * same split the dispatch gate's own edge resolver uses) reduces it to its
  * bare id first, one direction only — a bare id is never treated as
  * naming a qualified one back. Structural on `{ ref, conflictsWith }` so
@@ -1701,7 +1700,7 @@ export function checkConflictCompleteness(
 }
 
 // ---------------------------------------------------------------------------
-// O5 (task-run-v1 task 11) — cross-task Surface overlap. Same shape as
+// O5 — cross-task Surface overlap. Same shape as
 // `checkConflictCompleteness` above (a subject checked against sibling task
 // Issues, `edgesNameEachOther` the same mutual-declaration bypass), but a
 // HARD refusal rather than a warning: `## Surface` `in:` is a structured,
@@ -2001,13 +2000,13 @@ export function checkPartsCoverageAndSequence(body: string): IssueSectionResult 
 }
 
 // ---------------------------------------------------------------------------
-// O3 (task-run-v1 task 11, review round 1) — an edit that changes
+// O3 — an edit that changes
 // `## Objectives`, `## Surface`, or `## Parts` on a task Issue whose brief is
 // already frozen is refused. Design: compare the LIVE Issue body before and
 // after the edit (never the frozen comment's own rendered text — the brief
 // render is lossy for `## Surface`'s `in:` glob list and interleaves
 // `## Parts` with computed file groupings, so it cannot serve as the
-// comparison target; see task-run-v1 11's own PR discussion). The frozen
+// comparison target). The frozen
 // comment's existence is the gate condition and is named in the refusal
 // message; the pre-edit live body is the comparison basis.
 // ---------------------------------------------------------------------------
@@ -2022,7 +2021,7 @@ function surfacesEqual(a: IssueSurface, b: IssueSurface): boolean {
 
 /**
  * True when two `## Documentation` sections carry the same sources, in the
- * same order (round 2 security review, HIGH, Issue #625) — order-significant
+ * same order (a round-2 HIGH security-review finding) — order-significant
  * like `## Parts`, since a source's own position has no independent meaning
  * to render but a reordering is still an edit a Planner made, not a no-op.
  * `{ kind: 'none' }` only ever equals another `{ kind: 'none' }`.

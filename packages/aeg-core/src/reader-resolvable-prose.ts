@@ -1,7 +1,6 @@
 /**
- * Reader-resolvable prose — classes 1 and 2 of the three-class analysis in
- * Issue #694: the two mechanizable classes of "words a reader cannot
- * resolve." Class 3 (register/slop — padding adjectives, first person,
+ * Reader-resolvable prose — classes 1 and 2 of a three-class analysis of
+ * "words a reader cannot resolve." Class 3 (register/slop — padding adjectives, first person,
  * narrating the work episode) is NOT here; it stays with the review role,
  * per the measurement below.
  *
@@ -75,8 +74,7 @@ function isProductScopeFile(path: string): boolean {
  * `aeg-root/**` by default — what this repo's own package carries and
  * `/docs` publishes. Every caller below takes `shipsPrefix` as its LAST,
  * defaulted parameter so an adopter whose installed doctrine tree lives
- * somewhere else (task 7, Issue #56 — de-hardcoding `doctrineRoot`) can
- * override it without breaking any existing positional call.
+ * somewhere else can override it without breaking any existing positional call.
  */
 const SHIPS_PREFIX = 'aeg-root/'
 
@@ -163,9 +161,9 @@ export function stripNonProse(path: string, content: string): string {
  * Product-class scrubbing: still skips fenced/inline markdown code (a slug
  * shown as a usage example in a README must not fire), but does NOT strip
  * `.ts`/`.tsx` comments the way `stripNonProse` does for `ships`/
- * `reader-facing` files — the motivating case (Issue #435) is a tranche slug
- * written into a CLI source *comment*, which reached CI specifically because
- * nothing scanned comments in product code.
+ * `reader-facing` files — the motivating case is a tranche slug written into
+ * a CLI source *comment*, which reached CI specifically because nothing
+ * scanned comments in product code.
  */
 function stripNonProseForProduct(path: string, content: string): string {
   return path.endsWith('.md') ? stripNonProse(path, content) : content
@@ -179,10 +177,10 @@ function lineAt(content: string, index: number): number {
   return line
 }
 
-/** `#294`-shaped — a PR/Issue number cited bare, resolvable only inside this repo's own tracker. */
+/** `#NNN`-shaped — a PR/Issue number cited bare, resolvable only inside this repo's own tracker. */
 export const FORGE_NUMBER_PATTERN = /#[0-9]{2,4}/g
 
-/** `aeg-forge-state-v1`-shaped — an internal tranche slug ending `-vN`. */
+/** `example-tranche-vN`-shaped — an internal tranche slug ending `-vN`. */
 export const TRANCHE_SLUG_VN_PATTERN = /[a-z][a-z-]+-v[0-9]/g
 
 /**
@@ -338,6 +336,178 @@ export function checkUndefinedVocabulary(
         message: `uses coined term "${term}" without defining it inline or linking the glossary`,
         blocking: false
       })
+    }
+  }
+  return findings
+}
+
+/**
+ * `<slug>-vN`-shaped, source-comment class — deliberately
+ * looser than `TRANCHE_SLUG_VN_PATTERN` above (which requires at least two
+ * letters before the version suffix): this class's caller is a `.ts`
+ * comment, not doctrine prose, so a shorter coined identifier
+ * (`x-vN`) is still exactly the kind of internal citation a reader outside
+ * this repo cannot resolve.
+ */
+export const SOURCE_COMMENT_TRANCHE_SLUG_PATTERN = /[a-z0-9]+(?:-[a-z0-9]+)*-v[0-9]+/g
+
+/** `#NNN`-shaped, source-comment class — no upper digit-count bound (unlike `FORGE_NUMBER_PATTERN`'s `{2,4}`), since a forge's issue/PR numbering has no fixed ceiling. */
+export const SOURCE_COMMENT_FORGE_NUMBER_PATTERN = /#[0-9]{2,}/g
+
+/**
+ * The inverse of `stripNonProse`'s `.ts`/`.tsx` half: keeps ONLY the text
+ * inside `//` line comments and `/* *‍/` block comments, blanking code and
+ * string/template-literal content (so a URL or a slug-shaped identifier
+ * living in a string literal, not a comment, never reads as a citation),
+ * while preserving line count so reported line numbers stay accurate.
+ *
+ * A real tokenizer (not `stripNonProse`'s regex-based approach) because the
+ * source-comment class runs over this repo's *own* `.ts` source at `error`
+ * severity — a false positive from a `//` inside a string literal
+ * (`"https://…"`) would fail real pushes, not just print a warning.
+ */
+export function extractComments(path: string, content: string): string {
+  if (!path.endsWith('.ts') && !path.endsWith('.tsx')) return content.replace(/[^\n]/g, '')
+
+  type State = 'code' | 'line-comment' | 'block-comment' | 'single-quote' | 'double-quote' | 'template'
+  let state: State = 'code'
+  let out = ''
+  const n = content.length
+  let i = 0
+
+  const blank = (ch: string): string => (ch === '\n' ? '\n' : ' ')
+
+  while (i < n) {
+    const c = content[i] as string
+    const next = i + 1 < n ? content[i + 1] : ''
+
+    if (state === 'code') {
+      if (c === '/' && next === '/') {
+        state = 'line-comment'
+        out += c
+        i++
+        continue
+      }
+      if (c === '/' && next === '*') {
+        state = 'block-comment'
+        out += c
+        i++
+        continue
+      }
+      if (c === "'") {
+        state = 'single-quote'
+        out += blank(c)
+        i++
+        continue
+      }
+      if (c === '"') {
+        state = 'double-quote'
+        out += blank(c)
+        i++
+        continue
+      }
+      if (c === '`') {
+        state = 'template'
+        out += blank(c)
+        i++
+        continue
+      }
+      out += blank(c)
+      i++
+      continue
+    }
+
+    if (state === 'line-comment') {
+      if (c === '\n') {
+        state = 'code'
+        out += '\n'
+        i++
+        continue
+      }
+      out += c
+      i++
+      continue
+    }
+
+    if (state === 'block-comment') {
+      if (c === '*' && next === '/') {
+        out += c
+        out += next
+        state = 'code'
+        i += 2
+        continue
+      }
+      out += c === '\n' ? '\n' : c
+      i++
+      continue
+    }
+
+    // single-quote / double-quote / template: blank everything, honouring a
+    // backslash escape so an escaped quote/backtick never ends the literal
+    // early (which would otherwise flip the scanner back to 'code' mid-string
+    // and risk reading the string's remainder as real source).
+    const closer = state === 'single-quote' ? "'" : state === 'double-quote' ? '"' : '`'
+    if (c === '\\') {
+      out += blank(c)
+      i++
+      if (i < n) {
+        out += blank(content[i] as string)
+        i++
+      }
+      continue
+    }
+    if (c === closer) {
+      state = 'code'
+      out += blank(c)
+      i++
+      continue
+    }
+    out += blank(c)
+    i++
+  }
+
+  return out
+}
+
+/**
+ * The source-comment class — scans comment lines of `.ts`
+ * files for a tranche-slug or forge-number citation. Unlike the `product`
+ * class above (a fixed, aeg-core-internal `PRODUCT_SLUG_SCOPE`), the file
+ * SET here is entirely the caller's choice: the bin resolves
+ * `proseGates.sourceComments.globs` into concrete files and passes them in,
+ * so this stays zero-I/O and adopter-configurable rather than hardcoded to
+ * this repo's own trees. `allowlist` is a set of exact repo-relative file
+ * paths a caller has decided deliberately/legitimately cite a slug or
+ * number in a comment (e.g. a test fixture pinning a historical tranche
+ * name) — skipped entirely, not merely down-graded.
+ */
+export function checkSourceComments(
+  files: readonly ProseSourceFile[],
+  allowlist: readonly string[] = []
+): ProseFinding[] {
+  const findings: ProseFinding[] = []
+  const allowed = new Set(allowlist)
+  const patterns: { pattern: RegExp; what: string }[] = [
+    { pattern: SOURCE_COMMENT_TRANCHE_SLUG_PATTERN, what: 'a tranche-slug citation' },
+    { pattern: SOURCE_COMMENT_FORGE_NUMBER_PATTERN, what: 'a forge-number citation' }
+  ]
+
+  for (const file of files) {
+    if (!file.path.endsWith('.ts')) continue
+    if (allowed.has(file.path)) continue
+    const comments = extractComments(file.path, file.content)
+    for (const { pattern, what } of patterns) {
+      pattern.lastIndex = 0
+      let match: RegExpExecArray | null = pattern.exec(comments)
+      while (match !== null) {
+        findings.push({
+          file: file.path,
+          line: lineAt(comments, match.index),
+          message: `comment cites ${what} ("${match[0]}") a reader outside this repo's tracker cannot resolve`,
+          blocking: false
+        })
+        match = pattern.exec(comments)
+      }
     }
   }
   return findings

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: token-collection-wired (task 5, #272). Thin I/O adapter over
+ * Core check: token-collection-wired. Thin I/O adapter over
  * `@attalabs/aeg-core`'s
  * `resolveMeteringCapability` (task 1's probe) and this directory's own
  * `evaluateTokenCollectionWiring` (the pure predicate, tested independently).

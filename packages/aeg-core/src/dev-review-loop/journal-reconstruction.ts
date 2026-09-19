@@ -1,11 +1,11 @@
 /**
- * O9 (`task-run-v1` 21, `#541`): the round journal is the task's, not the
+ * The round journal is the task's, not the
  * driver's. `state.rounds` (`types.ts`) starts empty on every process start
  * (`initialLoopState`) and is appended to only by THIS process's own
  * `assessRound` calls — a driver that attaches to a PR mid-loop, or resumes
  * after a pause, published a table that only ever showed its own rounds,
  * even when the task's outbox and the forge already carried a longer real
- * history (Origin, PR #536: "five real rounds, the published table shows
+ * history (confirmed live: "five real rounds, the published table shows
  * one, because the last driver journals only its own rounds").
  *
  * This module is the pure half of the fix: given every `dev_review_loop`

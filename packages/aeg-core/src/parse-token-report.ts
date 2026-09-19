@@ -4,7 +4,7 @@ import type { LedgerRow } from './types'
 import { isPrincipal } from './waiver-label'
 
 /**
- * Live-source token parsing (aeg-forge-state-v1 task 4b, #445). Where
+ * Live-source token parsing. Where
  * `parse-ledger.ts` reads the Archivist's hand-assembled `<name>.tokens.md`
  * ledger, this file extracts the same `LedgerRow` shape directly from the
  * artifacts says every role already produces on its own turn — the
@@ -23,14 +23,14 @@ import { isPrincipal } from './waiver-label'
 
 // A "Token report" heading, alone on its line: `## Token report`,
 // `### Token report`, or the bold-inline `**Token report**` form seen in the
-// wild (real PRs use both — #412 uses `## Token report`, #454 uses the bold
+// wild (real PRs use both forms
 // form). A PR re-pushed after `CHANGES_REQUESTED` carries this heading more
 // than once — every occurrence is parsed as its own entry (roles/developer.md:
 // re-entry appends a new "Token report" entry, never edits the first).
 const TOKEN_REPORT_HEADING = /^\s*(?:#{1,6}\s*Token report\s*|\*\*Token report\*\*)\s*$/i
 
 // Inline field-list form, a real drift already present in this repo's own
-// history (PR #374, #362) alongside the table form: one line reading
+// history alongside the table form: one line reading
 // `Phase: … | Role: … | Agent/Model: … | Tokens in: … | Tokens out: … |
 // Cost: … | Date: …`. Tolerated as a second recognized shape rather than
 // treated as malformed, since both are real, current, human-authored output.

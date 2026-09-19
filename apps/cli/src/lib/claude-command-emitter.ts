@@ -8,7 +8,7 @@
 // so there is nothing to discover from `aeg-root/roles/*.md` here.
 //
 // Security note: `$ARGUMENTS` substitutes into the shell command as a raw,
-// PRE-SHELL text splice (github.com/anthropics/claude-code issue #16163) —
+// PRE-SHELL text splice (a documented Claude Code issue) —
 // the substitution happens before bash ever parses the line, so the role
 // token can contain live shell syntax, not just an inert string.
 //
@@ -61,7 +61,7 @@ export const CLAUDE_COMMAND_PATH = '.claude/commands/vinaya.md'
  * (`bun <dir>/src/index.ts doctrine`) in a repo that vendors `vinaya` as a
  * workspace member, the global binary otherwise. A self-hosting repo's own
  * `/vinaya` command must invoke the CLI it is actually editing, never
- * whatever release the global install happens to be at (atta-labs/vinaya#408).
+ * whatever release the global install happens to be at.
  * Also the literal prefix `allowed-tools` below matches — both must change
  * together, or the permission matcher stops recognizing the emitted command.
  */

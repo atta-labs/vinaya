@@ -265,8 +265,8 @@ function resolveForRun(configResult: ConfigLoadResult): { result: ResolveResult;
  * shows — `vinaya-checks.yml` runs `check --all --diff-only` and tees that
  * to the step summary; no generated workflow runs `doctor` or `--plan`,
  * so without this a substituted gate reads `✓ <core-id>: pass`,
- * byte-indistinguishable from the real gate (security pass, PR #120,
- * finding 2). Detection is the doctrine's declared backstop for a
+ * byte-indistinguishable from the real gate (a security-review finding).
+ * Detection is the doctrine's declared backstop for a
  * config-authored gate substitution, so it has to live where the gate runs.
  *
  * `severity: 'warning'`, never `error`: an override is a supported,

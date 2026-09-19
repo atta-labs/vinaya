@@ -10,16 +10,16 @@
  * aeg-core-local data table — see its own doc comment for why aeg-core
  * cannot instead import `apps/cli`'s `CORE_CHECK_RING` directly).
  *
- * Three derivation classes, per Issue #104's Principal decision (extended
- * by Issue #307 for the second registry-backed location):
+ * Three derivation classes, per a Principal decision (extended
+ * later for the second registry-backed location):
  *   - a `packages/aeg-core/bin/*.ts` candidate that IS a registered check
  *     (its basename resolves in `GATE_AUDIENCE` to a `ShippedGate`) gets a
  *     stub in the ring `GATE_AUDIENCE` names for it;
  *   - an `apps/cli/src/checks/bin/*.ts` candidate that IS a registered check
  *     (its `check-`-stripped basename resolves in `CLI_CHECK_RING`) gets a
  *     stub in the ring `CLI_CHECK_RING` names for it — most core check bins
- *     live here, not under `packages/aeg-core/bin/` (Issue #307: 22 of 27 at
- *     the time it was filed);
+ *     live here, not under `packages/aeg-core/bin/` (the large majority did,
+ *     at the time this was filed);
  *   - a `.husky/*` or `.claude/hooks/*.sh` candidate is a managed hook by
  *     construction — ring 0, no registry lookup needed.
  * Anything else (a bin with no registry entry — `internal`, `NON_GATE_BINS`,
@@ -30,7 +30,7 @@
  * Never touches an existing row: stubs are computed only for candidates
  * whose path is absent from every parsed row's `implementation` — the
  * identical predicate `checkG2` itself uses — so a candidate already
- * documented (including every row `#67` wrote by hand) is left alone, and
+ * documented (including every hand-written row) is left alone, and
  * running the scaffold twice inserts nothing the second time (the first
  * run's own stubs are now present, so the same predicate excludes them).
  *
@@ -175,7 +175,7 @@ function formatRow(cells: string[]): string {
  * Rewrites `content` to append the plan's stub rows to their ring tables.
  * Only ever APPENDS new lines after a ring table's last existing row —
  * never edits, reorders, or removes an existing line, so a hand-written row
- * (including every row task `#67` wrote) is untouched byte-for-byte.
+ * is untouched byte-for-byte.
  *
  * Rings are processed from the bottom of the file upward (ring 2 first,
  * then ring 1, then ring 0) so an earlier insertion's line numbers, computed

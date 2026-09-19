@@ -33,7 +33,7 @@ export type ResolvedEdge = {
    * slug-qualified edge) either the slug or the task id doesn't resolve on
    * the forge. Distinct from every other field staying at its unmerged/
    * not-open default, which also covers a resolvable edge whose target
-   * lookup itself failed (an outage) — that case is `resolved: true` (#196).
+   * lookup itself failed (an outage) — that case is `resolved: true`.
    */
   resolved: boolean
 }
@@ -55,10 +55,10 @@ export type EdgeRepo = { owner: string; repo: string }
  * `#NNN`". An anchored `^#(\d+)$` looks equivalent and is not — it misses the
  * slug-qualified form `<slug> #NNN`, which the edge grammar sanctions
  * (`SLUG_QUALIFIED_ID` in `@attalabs/aeg-forge-state`, whose own example is
- * `aeg-governance-hardening #368`) and which a labeled `Depends-on:`/
+ * `aeg-governance-hardening #NNN`) and which a labeled `Depends-on:`/
  * `Conflicts-with:` field's own comma list carries as a single literal
  * token — `parseRationaleDeps` never synthesizes it from a separate span
- * (Issue #347 removed that mechanism; only a labeled field's own
+ * (a real fix removed that mechanism; only a labeled field's own
  * comma-separated, id-shaped tokens are read at all). Anchoring here
  * reintroduced the exact divergence this module exists to remove, in the
  * more common form.
@@ -203,7 +203,7 @@ export function edgeFromIssueJson(num: number, json: IssueStateJson | null): Res
 /**
  * Resolve one edge: a same-tranche task id from already-fetched facts, a
  * `#NNN` reference by looking the Issue up, or a slug-qualified bare task id
- * (`<slug> <n>`) by looking the sibling tranche up (#196) — the same
+ * (`<slug> <n>`) by looking the sibling tranche up — the same
  * `SLUG_QUALIFIED_ID` form `@attalabs/aeg-forge-state`'s grammar sanctions
  * and `packages/aeg-core/bin/verify-dispatch.ts`'s resolver already handles.
  */

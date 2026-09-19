@@ -85,7 +85,7 @@ export function agentSkillPath(roleName: string): string {
  * (`bun <dir>/src/index.ts doctrine`) in a repo that vendors `vinaya` as a
  * workspace member, the global binary otherwise. A self-hosting repo's own
  * `.agents/skills/` must invoke the CLI it is actually editing, never
- * whatever release the global install happens to be at (atta-labs/vinaya#408).
+ * whatever release the global install happens to be at.
  */
 function doctrineInvocation(selfHost: VendoredVinaya | null): string {
   return selfHost ? `bun ${selfHost.dir}/src/index.ts doctrine` : 'vinaya doctrine'

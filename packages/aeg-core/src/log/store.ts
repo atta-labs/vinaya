@@ -1,6 +1,6 @@
 /**
- * The Vinaya Log's typed storage contract (`task-log-v1` task 2, Issue #562,
- * O1–O3). One interface — `append`, `readPage`, `acknowledge` — that both the
+ * The Vinaya Log's typed storage contract (O1–O3). One interface —
+ * `append`, `readPage`, `acknowledge` — that both the
  * real GitHub adapter behind `vinaya log flush`
  * (`apps/cli/src/lib/log-flush.ts`) and the deterministic in-memory fixture
  * backend below implement. This module is the policy layer: pure, no
@@ -10,7 +10,7 @@
  * both boundaries — are provable against the fixture backend with no I/O at
  * all.
  *
- * What the contract fixes, in the language of the Boundary (Issue #562):
+ * What the contract fixes, in the language of the Boundary:
  * "the outbox rotates into one overwritten backup and flush retries can
  * repeat remotely accepted batches." A record's identity is stable
  * (`recordIdentity`), so re-appending an already-stored batch after a lost

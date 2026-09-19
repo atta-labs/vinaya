@@ -35,7 +35,7 @@
  *
  * One deviation from the spec, decided in a prior task's brief: the spec's
  * `subject.objectives_version` is `number`; the built form
- * (`vinaya-log-v1`'s own task 1, PR #423) hashes it to a `sha256` hex
+ * hashes it to a `sha256` hex
  * string, so this schema types it `string`, superseding the spec.
  *
  * Every object here is `.strict()` — an extra key anywhere (including
@@ -66,8 +66,8 @@ export type Host = z.infer<typeof HostSchema>
  * Letters, digits, dot, underscore, hyphen — deliberately excludes `<`, `>`,
  * `/`, whitespace and newlines. `run_id` is spliced raw into a flush's
  * `<!-- aeg:log:<run_id>:<seq_from>-<seq_to> -->` marker (`apps/cli/specs/log.md`
- * § The flush) and is attacker-reachable via `VINAYA_RUN_ID` (security
- * review, PR #439) — a value carrying `-->` or a newline would close the
+ * § The flush) and is attacker-reachable via `VINAYA_RUN_ID` (a security
+ * review finding) — a value carrying `-->` or a newline would close the
  * HTML comment early or break the fenced block once posted publicly.
  * Refusing it here, at write time, means an unsafe value never reaches the
  * outbox at all, rather than relying on a later reader to catch it.
@@ -262,7 +262,7 @@ const dispatchShared = {
   effect_id: z.string()
 }
 
-/** Shared by `outcome_received` and `dispatch_failed` (O10) — a run's token record survives the manner of its death, so the same nullable shape applies whether the run exited cleanly or was killed. */
+/** Shared by `outcome_received` and `dispatch_failed` — a run's token record survives the manner of its death, so the same nullable shape applies whether the run exited cleanly or was killed. */
 const dispatchUsageField = z
   .object({ input: z.number().nonnegative(), output: z.number().nonnegative() })
   .strict()
@@ -290,7 +290,7 @@ export const DispatchEventSchema = z.discriminatedUnion('event', [
 export type DispatchEvent = z.infer<typeof DispatchEventSchema>
 
 // ---------------------------------------------------------------------------
-// `dev_review_loop` family (§5.2) — twelve events (task-log-v1 task 6 adds
+// `dev_review_loop` family (§5.2) — twelve events (a later addition added
 // `cancelled`), `loop_id` shared on each.
 
 const loopShared = {
@@ -367,7 +367,7 @@ export const DevReviewLoopEventSchema = z.discriminatedUnion('event', [
       event: z.literal('stop_condition_met'),
       round: z.number().int(),
       // `confidence` and `reappearance` widen this enum additively
-      // (dev-review-loop-v1 task 4, `#414`, O2 amendment 2026-09-06): a
+      // (a 2026-09-06 amendment): a
       // confidence collapse and a finding-id reappearance are each their own
       // condition, distinguished from the generic `no_progress` stall and
       // from each other, rather than collapsing all three into one value.
@@ -396,7 +396,7 @@ export const DevReviewLoopEventSchema = z.discriminatedUnion('event', [
       event: z.literal('resumed'),
       round: z.number().int(),
       // `'principal'` — an authenticated ruling resolved the pause.
-      // `'driver'` (task-log-v1 task 6, O2) — a bare `'infrastructure'`
+      // `'driver'` (O2) — a bare `'infrastructure'`
       // recoverable-hiccup resume, authenticated as the driver's own
       // recovery rather than a Principal decision (`resolveEscalation`'s
       // `authenticatedBy: 'driver-self'` path, `dev-review-loop.ts`) — never
@@ -404,7 +404,7 @@ export const DevReviewLoopEventSchema = z.discriminatedUnion('event', [
       by: z.enum(['principal', 'driver'])
     })
     .strict(),
-  // (task-log-v1 task 6, O2) The cancellation twin of `resumed` above — a
+  // (O2) The cancellation twin of `resumed` above — a
   // paused escalation's OTHER resolution (`resolveEscalation`'s
   // `decision: 'cancel'` path, `cancelDevReviewLoop`). Always
   // principal-authenticated (a cancel always requires a posted ruling,
@@ -417,7 +417,7 @@ export const DevReviewLoopEventSchema = z.discriminatedUnion('event', [
       by: z.literal('principal')
     })
     .strict(),
-  // (`doctrine-fixes-v1` task 1, `#543`, O2, round 2 review, MAJOR) The
+  // A round-2 review MAJOR finding: the
   // driver's own mid-round resume of a developer who stopped without
   // pushing — distinct from `resumed` above, which is `by: 'principal'`
   // only (a Principal resuming a PAUSED loop). This is the driver acting on

@@ -35,7 +35,7 @@ export {
 } from './claude-code-transcript'
 export type { MeteringCapability, MeteringCapabilityDeps, MeteringIncapableReason } from './claude-code-transcript'
 // The hardened deps every real caller of `resolveMeteringCapability` should
-// build from (`#313`) — a sibling module, not part of the pure adapter above.
+// build from — a sibling module, not part of the pure adapter above.
 export { hardenedMeteringDeps, isTrustedMeteringStat } from './metering-io-guard'
 export { declarationsIn, findCollisions } from './symbol-collisions'
 export type { SymbolCollision, SymbolDeclaration } from './symbol-collisions'
@@ -321,9 +321,11 @@ export { checkDoctrinePortability } from './doctrine-portability'
 export type { PortabilityFinding, PortabilitySourceFile } from './doctrine-portability'
 export {
   checkReaderResolvableProse,
+  checkSourceComments,
   checkUndefinedVocabulary,
   checkUnresolvableReferences,
   classifyProseFile,
+  extractComments,
   legacySlugPattern,
   parseGlossaryTerms,
   PRODUCT_SLUG_SCOPE,

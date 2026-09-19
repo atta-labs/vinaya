@@ -1,6 +1,6 @@
 /**
  * `dev-review-loop`'s developer-dispatch-and-branch-polling concern
- * (task 8, `#506`, O8) — every forge read that resolves
+ * — every forge read that resolves
  * WHAT the loop is working on and WHO said so with authority: the task
  * Issue's title/branch/objectives/rulings, principal-authored markers
  * (rulings, developer stops, objectives edits), and open-PR/branch lookup.
@@ -73,7 +73,7 @@ export function markerComments(raw: string): MarkerComment[] {
 }
 
 /**
- * Security review, PR #445 round 1, HIGH: `fetchRulings`/`fetchFrozenBrief`
+ * A security-review HIGH finding: `fetchRulings`/`fetchFrozenBrief`
  * trusted ANY comment matching their marker regex, author unchecked — a
  * non-principal PR/Issue commenter could post a fake `aeg:principal:ruling`-
  * or `aeg:brief:v1`-shaped comment and have its content concatenated
@@ -89,8 +89,8 @@ export function principalAllowlist(): string[] {
 }
 
 /**
- * Which severities block is repository policy (task 8,
- * `#506`, O1/O4) — resolved from the SAME default-branch trust-anchor source
+ * Which severities block is repository policy — resolved from the SAME
+ * default-branch trust-anchor source
  * `principalAllowlist()` already reads, never from the PR's own checkout, so
  * a change cannot lower its own threshold. `resolveReviewPolicy` refuses
  * (throws) on a present-but-unknown severity value; this loop has no
@@ -119,7 +119,7 @@ const DEVELOPER_STOP_MARKER = /^<!-- aeg:developer:stop -->$/
  * gate) or hits a stop condition before ever pushing has nowhere to post
  * but the task Issue — no PR exists yet. `aeg-root/roles/developer.md`
  * names this exact marker for that one case. Same trust boundary as
- * `filterPrincipalRulings` (security review, PR #445, HIGH): a non-
+ * `filterPrincipalRulings` (that same security-review HIGH finding): a non-
  * principal Issue commenter could otherwise post a fake stop marker and
  * end an unattended loop early.
  */
@@ -139,7 +139,7 @@ export function fetchDeveloperStop(issueNumber: number): string | null {
 /**
  * Pure: the NEWEST principal-authored `aeg:brief:v<k>` comment among
  * `comments`, or `null` — unit-testable with no `gh` call. task
- * 4 (Issue #483, O3) widened this from a `v1`-only lookup to
+ * 4 widened this from a `v1`-only lookup to
  * `@attalabs/aeg-core`'s `resolveNewestFrozenBrief`, the single resolver
  * every frozen-brief reader (this loop, `resolveIssueObjectives` below, and
  * `check-brief-shape.ts`'s own Issue-comment read) now shares — a
@@ -167,8 +167,8 @@ export function fetchRulings(prNumber: number): string[] {
 }
 
 /**
- * The newest principal ruling ordinal on PR `prNumber` — `0` when none
- * (task 3, `#477`, O1/O3). A separate `gh pr view`
+ * The newest principal ruling ordinal on PR `prNumber` — `0` when none.
+ * A separate `gh pr view`
  * call from `fetchRulings`' own, the same tolerated-redundancy shape this
  * file's `fetchFrozenBrief`/`resolveIssueObjectives` pair already uses for
  * Issue comments — never a shared cache, so each call reflects the forge at
@@ -188,7 +188,7 @@ export function fetchNewestRulingOrdinal(prNumber: number): number {
 
 /**
  * The GitHub login that authored PR `prNumber`'s newest principal ruling, or
- * `null` when none exists — `#556` (O2)'s own need: a resolution record's
+ * `null` when none exists — O2's own need: a resolution record's
  * `authenticatedBy` field names WHO authorized a `--resume`/`--cancel`,
  * distinct from `fetchNewestRulingOrdinal`'s WHICH.
  */
@@ -219,8 +219,8 @@ function fetchIssueComments(issueNumber: number, caller: string): MarkerComment[
 /**
  * The Issue's frozen brief comment's text — the NEWEST principal-authored
  * `aeg:brief:v<k>` version, content already stripped of its header lines
- * (`resolveNewestFrozenBrief`'s own `.content`, task 4, Issue
- * #483, O3). Refuses (throws) rather than inventing a brief when none
+ * (`resolveNewestFrozenBrief`'s own `.content`). Refuses (throws) rather
+ * than inventing a brief when none
  * exists yet.
  */
 export function fetchFrozenBrief(issueNumber: number): string {
@@ -237,8 +237,8 @@ export function fetchFrozenBrief(issueNumber: number): string {
 export const NO_SOURCE_REVISION = '(none — pre-task-4 frozen brief)'
 
 /**
- * The revision the frozen brief's facts were read at (task 4,
- * Issue #483, O2) — read back out of the brief text itself
+ * The revision the frozen brief's facts were read at — read back out of
+ * the brief text itself
  * (`extractSourceRevision`), never re-derived fresh from `git`: the loop
  * judges the developer's work against the facts the brief actually stated,
  * not a revision the tree has since moved past. `NO_SOURCE_REVISION` on a
@@ -261,7 +261,7 @@ export function fetchIssueLabels(issueNumber: number): string[] {
 }
 
 /**
- * Code review, PR #445 round 1, BLOCKER: the reviewer prompt's `OBJECTIVES:`
+ * A code-review BLOCKER finding: the reviewer prompt's `OBJECTIVES:`
  * fact was `fetchFrozenBrief`'s ENTIRE brief text (every section — Context,
  * Technical dependencies, stop conditions, all of it), not "objectives from
  * the Issue" as O2 actually says and `renderReviewerPrompt`'s own doc
@@ -350,7 +350,7 @@ export function parseObjectivesEditComment(body: string): ObjectivesEditParse | 
   }
 }
 
-/** The `Objective[]` diff `parseObjectivesEditComment` recorded, kept alongside the resolved text/version so a mid-round change can name what caused it (O3). */
+/** The `Objective[]` diff `parseObjectivesEditComment` recorded, kept alongside the resolved text/version so a mid-round change can name what caused it. */
 export type ObjectivesEditSource = { previous: Objective[]; now: Objective[]; reason: string }
 
 export type ObjectivesResolution = {
@@ -360,7 +360,7 @@ export type ObjectivesResolution = {
   version: string | null
   /** Present only when `text`/`version` came from an objectives-edit comment, not the frozen brief. */
   edit: ObjectivesEditSource | null
-  /** The parsed `id`/`text` list `text` resolves to — `[]` exactly when `text` is empty. task 4 (`#478`, O4) threads this through to `buildVerdictFromReport`'s own `checkObjectiveIdCoverage` call, the same coverage rule `review post` already applies. */
+  /** The parsed `id`/`text` list `text` resolves to — `[]` exactly when `text` is empty. task 4 threads this through to `buildVerdictFromReport`'s own `checkObjectiveIdCoverage` call, the same coverage rule `review post` already applies. */
   objectives: readonly Objective[]
 }
 
@@ -375,7 +375,7 @@ export type ObjectivesResolution = {
  * Issue's `## Objectives` section (same trust boundary `fetchFrozenBrief`
  * already enforces), with the version computed from it via the same
  * `objectivesOf`/`objectivesVersion` pair the gate calls. Never the live
- * Issue body directly (Traps to avoid; PR #445's security round).
+ * Issue body directly (Traps to avoid; that same security-review finding).
  *
  * One `gh issue view --json comments` call serves both sources.
  */
@@ -459,7 +459,7 @@ const ISSUE_TITLE_SHAPE = /^\[([^\]]+)\]\s+(\d+)\s+[—-]/
 /**
  * `task/<tranche>/<n>`, derived from the Issue's own `[<tranche>] <n> — …`
  * title — never guessed or configured separately. The LABEL decides which
- * shape applies, never the title (`#548` v3, O3): an Issue with no
+ * shape applies, never the title: an Issue with no
  * `vinaya/tranche:*` label is a backlog Issue and derives `task/issue-<n>`
  * regardless of what its title happens to look like — a backlog Issue
  * titled coincidentally (or by copy-paste) like a tranche task's must never
@@ -524,7 +524,7 @@ export function withPromptFile<T>(prompt: string, fn: (promptFile: string) => T)
 
 /**
  * Dispatches the developer through `dispatchRole`, with the brief text read
- * from the Issue's frozen `aeg:brief:v1` comment (O1), waits for the PR the
+ * from the Issue's frozen `aeg:brief:v1` comment, waits for the PR the
  * developer opens, then runs rounds by calling `assessRound` with
  * observations read from the forge and from held reviewer outcomes, until
  * a `publish` or `pause` decision.
@@ -574,14 +574,14 @@ export type ReconcileLaunchDeps = {
   isPidAlive: (pid: number) => boolean
   /** This machine's hostname — a launch recorded on a DIFFERENT host can never be probed for liveness here, so it is treated as not-live. */
   hostname: () => string
-  /** O3, Issue #605: a live snapshot of `pid`'s current identity (parent pid, start time, command), or `null` when no process answers there at all. Injected so the pure reconciler stays testable without a real process — `classifyChildLiveness` is the pure logic that reads it. */
+  /** O3: a live snapshot of `pid`'s current identity (parent pid, start time, command), or `null` when no process answers there at all. Injected so the pure reconciler stays testable without a real process — `classifyChildLiveness` is the pure logic that reads it. */
   getProcessSnapshot: (pid: number) => ProcessSnapshot | null
-  /** O2, Issue #605 (code review, MAJOR): terminates an abandoned child by pid — `recoverDeveloperLaunch`'s reap step calls THIS, never `dispatch.ts`'s `terminateChildWithGrace` directly, so the reap step itself has a test seam: a test can inject a spy here and assert the orphan was actually reaped, without sending a real OS signal. */
+  /** O2 (found by code review, MAJOR): terminates an abandoned child by pid — `recoverDeveloperLaunch`'s reap step calls THIS, never `dispatch.ts`'s `terminateChildWithGrace` directly, so the reap step itself has a test seam: a test can inject a spy here and assert the orphan was actually reaped, without sending a real OS signal. */
   terminateChild: (pid: number) => void
 }
 
 /**
- * O2/O3 (Issue #605), pure: is `record.childPid` genuinely still this
+ * O2/O3, pure: is `record.childPid` genuinely still this
  * launch's own child — and, if so, still parented to the driver that
  * spawned it?
  *
@@ -650,7 +650,7 @@ function outcomeSignalsFor(record: LaunchRecord, artifactsPresent: boolean): Out
   return {
     exitCode: null,
     timedOut: record.failureReason === 'timeout',
-    // O1 (Issue #605): a driver-terminated child (`'signal'`) is a cancelled
+    // O1: a driver-terminated child (`'signal'`) is a cancelled
     // attempt, never an infrastructure failure of its own making — the same
     // distinction `'crash'` (the child's own doing) already draws.
     cancelled: record.failureReason === 'signal',
@@ -755,7 +755,7 @@ export function recoverDeveloperLaunch(
   deps: ReconcileLaunchDeps = defaultReconcileLaunchDeps()
 ): LaunchReconciliation {
   const parsed = readLaunchRecord('developer', agent, repo, task)
-  // O2 (Issue #605): an abandoned child — still alive, confirmed by
+  // O2: an abandoned child — still alive, confirmed by
   // identity, but no longer parented to the driver that spawned it — is
   // reaped HERE, before the disposition below is computed, so it never
   // survives to race whatever worker this reconciliation is about to hand

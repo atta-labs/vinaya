@@ -1,6 +1,5 @@
 /**
- * `dev-review-loop`'s round-assessment-glue concern (task 8,
- * `#506`, O8) — the generic wait/detect/route helpers a round uses
+ * `dev-review-loop`'s round-assessment-glue concern — the generic wait/detect/route helpers a round uses
  * around `@attalabs/aeg-core`'s `assessRound` (the ENTIRE policy; this
  * module never re-implements a stop condition or a round-outcome decision):
  * confidence-reply parsing, diff-stat parsing, dispatch/resume escalation,
@@ -144,7 +143,7 @@ export async function assertDispatchOrEscalate(
 }
 
 /**
- * `timeoutMessage` may be a plain string or a thunk — the thunk form (O3)
+ * `timeoutMessage` may be a plain string or a thunk — the thunk form
  * is evaluated ONLY on the timeout path, never on
  * every attempt: a message that itself reads the forge (branch/local/remote
  * head, PR existence) must not cost an extra round of shell calls on the
@@ -260,13 +259,13 @@ export function routeCompletionEvents(
 }
 
 /**
- * Task `#488`, O2: the bound on consecutive
+ * The bound on consecutive
  * gate-red developer turns that produce no push on one head — small and
- * strict, since the failure mode this bounds (`#479`: five re-dispatches in
+ * strict, since the failure mode this bounds (a real incident: five re-dispatches in
  * two minutes on one head) is a developer making no progress at all, not
  * one that needs several genuine attempts. Driver-owned rather than a
- * `packages/aeg-core` constant: this task's own Surface (Issue #488 §4)
- * declares `packages` out of scope.
+ * `packages/aeg-core` constant: this module's own declared Surface
+ * puts `packages` out of scope.
  */
 export const MAX_GATE_STALLED_TURNS = 2
 
@@ -343,14 +342,14 @@ export function loadLoopState(task: number): ParsedRecord<LoopStateRecord> {
  * pause the DRIVER decides itself — O2's gate-stalled bound and O5's
  * reviewer-infrastructure failure, neither of which corresponds to an
  * `Observations` kind `assessRound` accepts (adding one would edit
- * `packages/aeg-core`, out of this task's declared Surface, Issue #488 §4;
+ * `packages/aeg-core`, out of this module's declared Surface;
  * `Decision`/`PauseReason` themselves are unchanged). Reuses
  * `stop_condition_met`'s existing, otherwise-unused `'principal_stop'`
  * condition and `paused`'s existing generic `'principal_item'` reason —
  * the SAME schema enum members every policy-decided bounded pause already
  * reuses for confidence/reappearance/no_progress/max_rounds — never a new
  * schema value, so these events validate and land in the outbox exactly
- * like a policy-decided pause's do (regression, PR #489 round 2, MAJOR:
+ * like a policy-decided pause's do (a round-2 review MAJOR finding:
  * this pause used to skip the log entirely). `state` is read only for its
  * running totals; it is never written back, since the loop returns
  * immediately after this — a resume starts a fresh `LoopState` regardless
@@ -396,7 +395,7 @@ export function driverDecidedPauseEvents(
 /**
  * `paused`/`journal_finalized` for a genuinely UNCAUGHT error — the
  * `finally`-adjacent catch wrapping the whole round loop in
- * `dev-review-loop.ts` (task 21, `#541`, O10, round 2 review BLOCKER).
+ * `dev-review-loop.ts` (a round-2 review BLOCKER finding).
  * Deliberately NOT `driverDecidedPauseEvents`: that helper also logs its
  * own `round_ended` with a hardcoded `outcome: 'changes_requested'` and
  * bumps `journal_finalized.rounds` by one, both correct only when the

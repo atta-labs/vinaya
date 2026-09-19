@@ -1,6 +1,6 @@
 /**
  * A command that does not yet call exactly one `apps/cli/src/lib/**` chokepoint
- * (per Principal ruling, Issue #418) declares this, in its own file, instead of
+ * (per Principal ruling) declares this, in its own file, instead of
  * a row in a shared spec. `apps/cli/tests/surface-index.test.ts` reads it via a
  * dynamic import of the command's own file — never from a hand-maintained table.
  *

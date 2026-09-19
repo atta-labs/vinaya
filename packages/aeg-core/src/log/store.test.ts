@@ -5,9 +5,9 @@ import { describe, expect, it } from 'vitest'
 import { classifyStoredLine, createFixtureStore, KNOWN_SCHEMA_VERSIONS, readPageFrom, recordIdentity } from './store'
 
 /**
- * The storage contract's adversarial fault cases (`task-log-v1` task 2,
- * Issue #562, O1–O3), all provable against the pure fixture backend with no
- * I/O: concurrent append, a retry after a lost acknowledgement collapsing to
+ * The storage contract's adversarial fault cases (O1–O3), all provable
+ * against the pure fixture backend with no I/O: concurrent append, a retry
+ * after a lost acknowledgement collapsing to
  * one record, an overflow that is reported rather than silent, an
  * unknown-version record kept for diagnosis, and redaction applied at both
  * the sink and the transport boundary.
@@ -249,7 +249,7 @@ describe('redaction at both the sink and the transport boundary (O3)', () => {
 })
 
 /**
- * Fault-driven scenario fixtures (task-log-v1 7, Issue #567, O2). Each
+ * Fault-driven scenario fixtures (O2). Each
  * scenario is the ordered sequence of raw events a real producer boundary
  * (`apps/cli/specs/log.md`) would append to one task's outbox for that
  * exit — built from the same field shapes those producers actually emit,

@@ -91,7 +91,7 @@ function readVersion(): string {
   return pkg.version
 }
 
-/** Exported so `#313`'s per-call-site hardening proof can invoke this exact wiring, not a reimplementation of it. */
+/** Exported so a per-call-site hardening proof can invoke this exact wiring, not a reimplementation of it. */
 export function realDeps(): DoctorDeps {
   return {
     detectRepo: detectGitRepo,
@@ -396,8 +396,8 @@ function diagnoseDocOwnersHealth(repoRoot: string): Finding[] {
   // tests a binding's glob against `changed.filter(isCodeFile)`, so a binding
   // whose glob matches only non-code files is exactly as unfireable, from
   // C5's point of view, as one matching nothing at all. Skipping this filter
-  // would report "healthy" on a binding just as dead as the one Issue #77
-  // measured.
+  // would report "healthy" on a binding just as dead as the one a real
+  // regression measured.
   const codeFiles = listTrackedFiles(repoRoot).filter(isCodeFile)
 
   const findings: Finding[] = []
@@ -532,7 +532,7 @@ function diagnoseBlastRadiusDeprecation(repoRoot: string, config: VinayaConfig |
 }
 
 // ---------------------------------------------------------------------------
-// brief-schema divergence — REPORT, never mutate (#70).
+// brief-schema divergence — REPORT, never mutate.
 //
 // `briefSchema` is adopter-owned, so `upgrade` correctly never rewrites it.
 // Before this diagnostic, nothing else looked at it either, and the two
@@ -613,8 +613,8 @@ export function diagnoseBriefSchemaDrift(config: VinayaConfig | null): Finding[]
 function diagnoseEnvDeclarations(repoRoot: string, config: VinayaConfig | null): Finding[] {
   // The RESOLVED set, not the pre-flip `[...core, ...custom]` concat: after
   // the execution flip an overriding entry's core counterpart never runs, so
-  // linting it would diagnose a spec that cannot execute (review finding,
-  // PR #120). Paths are re-rooted for config-sourced specs only — a core
+  // linting it would diagnose a spec that cannot execute (a review
+  // finding). Paths are re-rooted for config-sourced specs only — a core
   // spec's `run` is already absolute.
   const resolved = resolveChecks(coreCheckRegistry(), config?.checks).resolved
   const specs: CheckSpec[] = resolved.map((entry) =>
@@ -768,7 +768,7 @@ async function diagnoseBranchProtection(deps: DoctorDeps, owner: string, repo: s
  * True only when `pattern` IS the workflows directory itself (however the
  * trailing glob/slash is spelled) — never merely a path that mentions it.
  * `/.github/workflows/deploy.yml` names one file inside the directory and
- * must NOT count: found live (code review, PR #168) — a bare substring
+ * must NOT count: found live in code review — a bare substring
  * check (`line.includes('.github/workflows/')`) reported full coverage for
  * exactly that narrower pattern, a false positive on this diagnostic's own
  * reason for existing (protecting `vinaya-review.yml`, not one file in it).
@@ -875,7 +875,7 @@ function diagnosePrincipals(config: VinayaConfig): Finding {
 // ---------------------------------------------------------------------------
 // Projects coherence — `.vinaya/projects.md` (the registry) and
 // `vinaya.config.json`'s `projects` array are two independent, coexisting
-// homes for the same declared fact (task 15/#44) — `init product` writes
+// homes for the same declared fact — `init product` writes
 // both, but either can drift: hand-edited, one file reverted, or written by
 // an older package version that only knew one of the two. `info` severity,
 // always: an adopter who keeps only the registry (the common case — no
@@ -885,7 +885,7 @@ function diagnosePrincipals(config: VinayaConfig): Finding {
 //
 // The Issue's original text also named a third shape — a `project:<name>`
 // label with no config entry — inherited from before `init product` stopped
-// creating that label (#72: the label is retired outright, replaced by the
+// creating that label (the label is retired outright, replaced by the
 // registry row as the non-config source of truth). No label exists to check
 // against any more, so that third shape has no live analogue here; the two
 // shapes below (registry-only, config-only) are what remain.

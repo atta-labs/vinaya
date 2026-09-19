@@ -129,7 +129,7 @@ describe('symbol-collision detection', () => {
  * Baselined rather than emptied. Each entry below is either a confirmed
  * byte-identical harmless duplicate, or a real hazard needing a behaviour-
  * affecting consolidation that does not belong in the same change as the
- * detector. `bin/` joined the scan (Issue #190) and surfaced everything from
+ * detector. `bin/` joined the scan and surfaced everything from
  * `AssociatedPr` through `shJson` below — every one individually diffed, not
  * bulk-accepted:
  *
@@ -202,7 +202,7 @@ describe('symbol-collision detection', () => {
  *                        reads a workspace `package.json`, while
  *                        `src/control-store/local.ts`'s exported
  *                        `readManifest(deps, task, round)` reads a control-store
- *                        `manifest` record (`#555`). Same `read<Kind>` verb, no
+ *                        `manifest` record. Same `read<Kind>` verb, no
  *                        shared code. Not renamed: `read<Kind>` is the control
  *                        store's own API convention (`readRun`/`readInput`/
  *                        `readTransitions`), so the src/ export is correctly
@@ -232,7 +232,7 @@ describe('symbol-collision detection', () => {
  *                        catches and returns `T | null` from `cmd, args`.
  *                        Unfixed.
  *   - `stripBackticks` — three copies, see the test above.
- *   - `TASK_BRANCH_PATTERN` — now four regexes (Issue #190): the three
+ *   - `TASK_BRANCH_PATTERN` — now four regexes: the three
  *                        already known, plus `bin/verify-brief.ts:60`, which
  *                        `bin/` joining the scan now also reaches.
  *                        `archive-task.ts`'s has capture groups, the other
@@ -247,9 +247,9 @@ describe('symbol-collision detection', () => {
  * `bin/report-tokens.ts`'s copies without inverting that direction — see the
  * doc comment on `transcriptPointerPath` in `claude-code-transcript.ts` for
  * the full reasoning. `sanitizeKey`/`transcriptPointerPath` introduced by
- * #284; omitted from this list by that PR, which is why this gate went red
+ * a real PR; omitted from this list by that PR, which is why this gate went red
  * the first time the full (non-diff-scoped) suite ran against it.
- * `collisionResistantKey`/`legacyTranscriptPointerPath` added by `#315`,
+ * `collisionResistantKey`/`legacyTranscriptPointerPath` added by a later migration,
  * which gave `transcriptPointerPath` a collision-resistant key while keeping
  * `sanitizeKey` as the (still collision-prone) legacy derivation, so a
  * pointer already on disk under the old name stays readable.

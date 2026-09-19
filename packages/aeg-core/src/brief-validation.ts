@@ -27,7 +27,7 @@ export type BriefSectionResult = { status: 'pass' | 'fail'; errors: string[] }
  * Anchoring field extraction here — shared with `archive-task.ts` — is what
  * stops prose in later sections that merely *mentions* a field name (e.g. a
  * "Decisions made" paragraph discussing the `Ticket:` field) from being
- * parsed as the field itself. Regression from #311's first live archivist
+ * parsed as the field itself. A regression from the first live archivist
  * run, where exactly that happened.
  */
 export function headerRegion(prBody: string): string {
@@ -95,7 +95,7 @@ export function checkTierField(prBody: string, readTier: (body: string) => 0 | 1
  * `checkTestPlanExclusivity` silently false-PASSED a self-contradictory one (a
  * bolded `unit-tests-only` **plus** tagged checkboxes never tripped it, because
  * its own guard clause never matched either) — the exact combination that guard
- * was built for in #340. Fixing the doc instead of the pattern was rejected:
+ * was built for. Fixing the doc instead of the pattern was rejected:
  * bold is the house convention for brief fields, so an unbolded Test Plan is the
  * odd one out and drifts back the moment someone tidies it.
  */
@@ -130,9 +130,9 @@ function testPlanRegion(prBody: string): string {
  */
 /**
  * Presence-only Test Plan detector — three acceptable shapes since task 12
- * (#387) rendered the `[agent]` half of a Test Plan as a fenced command list
+ * rendered the `[agent]` half of a Test Plan as a fenced command list
  * rather than a checkbox: the `unit-tests-only` sentinel; a
- * `**[agent]**`/`**[principal]**`-tagged checkbox line (the pre-#387 shape,
+ * `**[agent]**`/`**[principal]**`-tagged checkbox line (the older checkbox shape,
  * still valid on a PR below `AGENT_BOXES_REFUSED_SINCE_PR` and for
  * `[principal]` items on every PR); or a fenced code block anywhere in the
  * Test Plan region (the fenced-command-list shape). This gate does not judge
@@ -164,12 +164,12 @@ export function checkTestPlan(prBody: string): BriefSectionResult {
 }
 
 /**
- * Test Plan shape guard (aeg-governance-hardening task 20 follow-up, #340) —
+ * Test Plan shape guard —
  * `Test Plan: unit-tests-only` and a tagged checkbox item are mutually
  * exclusive per brief-authoring §9 ("The two fields are coupled; Brief
  * Validation cross-checks them"): `unit-tests-only` declares there is no
  * checklist because there is nothing runtime to check off, so a body
- * carrying both is self-contradictory. Regression source: PR #363's own
+ * carrying both is self-contradictory. Regression source: a real
  * original brief declared `unit-tests-only` while its Test Plan also listed
  * `- [x]`/`- [ ]` `[agent]`/`[principal]` items — a combination this gate
  * previously let through.
@@ -189,8 +189,7 @@ export function checkTestPlanExclusivity(prBody: string): BriefSectionResult {
 }
 
 /**
- * Principal-placeholder guard (aeg-governance-hardening task 20 follow-up,
- * #340) — a `**[principal]**` checkbox item whose content is a
+ * Principal-placeholder guard — a `**[principal]**` checkbox item whose content is a
  * none-placeholder ("None — …") is untickable by construction: nobody can
  * check a box asserting there is nothing to verify, so it blocks the merge
  * gate forever. If a brief genuinely has no principal-runnable surface, the
@@ -221,7 +220,7 @@ export function checkPrincipalPlaceholder(prBody: string): BriefSectionResult {
 }
 
 /**
- * Premise coverage (this task, aeg-governance-hardening 11, #324) — pass iff
+ * Premise coverage — pass iff
  * either (a) at least one `Premise:` assertion's path matches a file in
  * `surfaceFiles` (the §4 surface map's file list — in practice, the PR's
  * actual changed-file list, the same diff-derived-truth philosophy
@@ -285,8 +284,8 @@ export function checkAutonomyClause(prBody: string): BriefSectionResult {
  * and tells the Reviewer whose behavior to verify). Must appear in the header
  * block, where the Archivist's provenance assembly also reads it — gate and
  * archivist share `headerRegion`, so a body that passes this gate can never
- * produce a DANGLING Project field in provenance. Added after #311 merged
- * without it: the Developer satisfied exactly the sections this gate checked
+ * produce a DANGLING Project field in provenance. Added after a real gap
+ * merged without it: the Developer satisfied exactly the sections this gate checked
  * and dropped everything it didn't — whatever the gate doesn't enforce, agents
  * will eventually omit (contract-gate parity is the fix, not discipline).
  */
@@ -322,8 +321,8 @@ export function checkForField(prBody: string): BriefSectionResult {
  * blocks + inline spans removed via `stripCode`), so it agrees byte-for-byte
  * with GitHub's own auto-close parser, which also ignores `Closes #N` inside
  * code. Without the strip, a body whose only closing reference is backticked
- * (`` `Closes #600` ``) passed this gate green yet merged **without** closing
- * its Issue — stranding #600 (PR #608) and #601 (PR #611) and reddening every
+ * (`` `Closes #NNN` ``) passed this gate green yet merged **without** closing
+ * its Issue — stranding real Issues and reddening every
  * open PR via the A3 `auto-close-misfire` oracle. "verify-docs green" must
  * imply "GitHub will auto-close"; stripping code here is what makes it so.
  *
@@ -331,7 +330,7 @@ export function checkForField(prBody: string): BriefSectionResult {
  * unbounded `\s*` around an optional `:` backtrack quadratically on a body of
  * the shape `closes` + long whitespace + no `#` — ~2.65 s at GitHub's
  * 65,536-char body cap, and this function runs the pattern twice on the fail
- * path (PR #617 security pass). A constant bound makes the work per start
+ * path (a security-review finding). A constant bound makes the work per start
  * position constant, so the scan is linear in body length. Eight is far past
  * any real separator; a body needing more is malformed by the brief's own
  * convention (a bare ref inside the `AEG:CLOSES` anchor) and fails with an
@@ -404,8 +403,8 @@ export function checkForgeTitle(title: string): BriefSectionResult {
 
 /**
  * Plan-PR Closes guard — a `plan/*` PR body must never carry a
- * `Closes #N` reference. Three confirmed live incidents (#294→#293,
- * #298→#297, #288→#287) show a plan PR's `Closes #N` prematurely closing
+ * `Closes #N` reference. Three confirmed live incidents
+ * show a plan PR's `Closes #N` prematurely closing
  * the task Issue when the *plan* merged — before the task itself ever ran.
  * `roles/planner.md`'s Plan-PR close-out section already forbids this in
  * prose ("a plan PR creates Issues; it does not resolve one"); this is the
@@ -443,12 +442,12 @@ const BRIEF_SHAPE_MARKERS = [checkSurfaceMap, checkDocUpdateList, checkStopCondi
 
 /**
  * A task branch, per the topology naming convention (`task/<tranche>/<n>`)
- * OR the tranche-less backlog-Issue convention (`task/issue-<n>`,
- * task-run-v1 task 15, O1/O2) — a task whose Issue is `<n>` with no tranche.
+ * OR the tranche-less backlog-Issue convention (`task/issue-<n>`) —
+ * a task whose Issue is `<n>` with no tranche.
  * The one shared copy — `bin/verify-brief.ts`, `test-plan-gate.ts`, and
  * `archive-task.ts` each still define this pattern locally (out of this
  * export's blast radius; not deduped onto it here), but a new consumer
- * (`check-brief-shape.ts`, #870) reuses this one rather than adding a
+ * (`check-brief-shape.ts`) reuses this one rather than adding a
  * fourth copy.
  */
 const TASK_BRANCH_PATTERN = /^task\/[^/]+\/[^/]+$/
@@ -472,7 +471,7 @@ export function isTaskBranch(branch: string): boolean {
  * a brief, it must be a complete brief, whatever the branch is called.*
  *
  * Detection runs on `stripCode(prBody)` (the single shared stripper from
- * `anchored-region`, per #617's "one stripper, never a duplicated regex"). A PR
+ * `anchored-region`, per this codebase's "one stripper, never a duplicated regex" rule). A PR
  * that *quotes* a brief inside a fence — "here's a sample brief: ``` …Technical
  * surface map… ```" — is discussing a brief, not carrying one, and must stay
  * exempt; matching on raw text would force-validate it. Note this also rules out
@@ -525,9 +524,9 @@ export const BRIEF_RULES_SINCE_PR = 394
 /**
  * Rollout PR number for `checkNoAgentBoxes`, below — a second, distinct
  * cutover from `BRIEF_RULES_SINCE_PR` above, per the Principal's ruling
- * (2026-09-03, after PR #395): an agent never ticks a box or edits a PR
+ * (2026-09-03): an agent never ticks a box or edits a PR
  * body, so the `[agent]` half of a Test Plan stops being checkboxes and
- * becomes a fenced command list (task 12, #387). A PR numbered below this
+ * becomes a fenced command list. A PR numbered below this
  * is grandfathered — its checkbox `[agent]` items were written before the
  * ruling and are reported informationally, never a failure. `verify-brief.ts`
  * (authoring time, pre-dispatch) has no PR number and applies the rule
@@ -540,7 +539,7 @@ const AGENT_BOX_LINE_RE = /^-\s*\[[ xX]\]\s*\*{2}\[agent\]\*{2}/im
 
 /**
  * Refuses a Test Plan whose `[agent]` half is still a checkbox item — the
- * shape the fenced-command-list rule (task 12, #387) replaces. Presence-only
+ * shape the fenced-command-list rule replaces. Presence-only
  * within the Test Plan region (`testPlanRegion`), like every sibling check
  * in this file: whether the fenced list a body carries instead is any GOOD
  * is a Reviewer/Verification judgment, not this gate's.
@@ -727,7 +726,7 @@ function isStep0Block(content: string): boolean {
 }
 
 /**
- * Rule (ii) (task 10, Issue #385; tightened by the round-2 ruling item 1) —
+ * Rule (ii) (tightened by a later ruling) —
  * in a brief's `§5` (Pre-flight checks) or `§6` (Numbered parts), a fenced
  * block that opens with a shell command must be immediately followed by
  * another fenced block that does NOT itself open with a shell command — its
@@ -813,7 +812,7 @@ function hasTestPathForConsumer(text: string, consumerDir: string): boolean {
 }
 
 /**
- * Rule (iii) (task 10, Issue #385) — a brief whose `§4` names a path under a
+ * Rule (iii) — a brief whose `§4` names a path under a
  * shared `packages/<pkg>/` must also name, for every workspace package that
  * depends on `@attalabs/<pkg>`, a test path proving that consumer still
  * works, or the sentinel `consumer-tests: none — <reason>` opting out with a
@@ -857,7 +856,7 @@ const FORGE_WRITE_COMMAND_RE =
 const DEFEAT_CASES_RE = /defeat cases\s*:/i
 
 /**
- * Rule (v) — Principal ruling amending Issue #385: a brief whose `§4`
+ * Rule (v) — a Principal ruling: a brief whose `§4`
  * names a check (a `check-<slug>.ts` bin, or its registry entry) or a
  * forge-writing command (`gh pr create`, `git push`, `vinaya pr create`, …)
  * must carry a `Defeat cases:` line in `§6` — the inputs that would defeat
@@ -903,7 +902,7 @@ function citedObjectiveIds(section6: string): Set<number> {
 }
 
 /**
- * Objectives copy (dev-review-loop-v1 task 1, Issue #411, O3) — the brief's
+ * Objectives copy — the brief's
  * own `## Objectives` section must match the Issue's, compared via
  * `objectivesVersion` (normalised — an editor's whitespace must not fail
  * this gate; one changed word must). `issueObjectives` is injected: the
@@ -928,7 +927,7 @@ export function checkObjectivesCopy(prBody: string, issueObjectives: Objective[]
 }
 
 /**
- * Objectives coverage (dev-review-loop-v1 task 1, Issue #411, O3) — every
+ * Objectives coverage — every
  * `O<n>` the brief's own `## Objectives` section declares must be cited by
  * at least one `Part <n> (O<k>[, O<j>...])` line in §6, and a Part that DOES
  * cite one must cite an objective that actually exists. Self-contained
@@ -978,7 +977,7 @@ export type BriefSectionsOptions = {
    */
   requireClosesN?: boolean
   /**
-   * Consumer enumeration for `checkConsumerTests` (task 10) — workspace
+   * Consumer enumeration for `checkConsumerTests` — workspace
    * directories (e.g. `apps/cli`) whose `package.json` depends on
    * `@attalabs/<pkg>`. Defaults to `() => []`, which makes rule (iii) a
    * no-op — the callers that don't wire a real dependency graph (tests,
@@ -1036,7 +1035,7 @@ export function checkBriefSections(
 /**
  * The marker line a dispatched task's frozen `aeg:brief:v1` Issue comment
  * starts with (`dispatch-task.ts`'s `dispatchTask`, `apps/cli`). Promoted
- * here (plan-brief-v1 task 3, #428) so the comment-resolution logic that
+ * here so the comment-resolution logic that
  * needs it — `packages/aeg-core/bin/verify-brief.ts` (this package, cannot
  * import `apps/cli`) and `apps/cli`'s own `dispatch-task.ts`/
  * `check-brief-shape.ts` — read the SAME constant rather than four copies of
@@ -1048,8 +1047,8 @@ export const AEG_BRIEF_V1_MARKER = '<!-- aeg:brief:v1 -->'
  * Everything in a posted comment after its first `n` lines, as a raw
  * substring — never a line-split-then-rejoin, which would silently
  * renormalize whatever separates the header lines from the body beneath
- * them. The one canonical implementation (plan-brief-v1 task 3, #428, widened
- * task-run-v1 task 4, #483 O3 to a variable header length): `dispatch-task.ts`,
+ * them. The one canonical implementation (later widened to a variable
+ * header length): `dispatch-task.ts`,
  * `verify-dispatch.ts` and `archive-task.ts` each carried their own
  * fixed-two-line copy before the first promotion — found live (code review),
  * the exact "N copies of hash-contract-critical logic with nothing proving
@@ -1108,8 +1107,7 @@ export type FrozenBriefCandidate = { body: string; author: string | null }
 export type ResolvedFrozenBrief<C extends FrozenBriefCandidate> = C & { version: number; content: string }
 
 /**
- * The single resolver every reader of "the frozen brief" uses (task-run-v1
- * task 4, Issue #483, O3): the loop (`dev-review-loop.ts`'s
+ * The single resolver every reader of "the frozen brief" uses: the loop (`dev-review-loop.ts`'s
  * `fetchFrozenBrief`), the objectives reader built on top of it, and
  * `check-brief-shape.ts`'s own Issue-comment read all call this instead of
  * each independently re-deriving "which comment is the frozen brief" — a

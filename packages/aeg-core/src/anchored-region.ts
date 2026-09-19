@@ -1,5 +1,5 @@
 /**
- * AEG anchored-region grammar (aeg-governance-hardening task 30, #393). Pure —
+ * AEG anchored-region grammar. Pure —
  * no `fs`, no `gh`/`git`.
  *
  * One anchor syntax for every gate-read field: an HTML comment pair
@@ -7,8 +7,8 @@
  * field's one canonical home inside a PR/Issue body. HTML comments render
  * invisibly on the forge, survive inside `<details>` blocks, and can never be
  * produced accidentally by freeform prose — which is exactly the failure class
- * this closes (PR #392's pasted reference brief duplicated its own Test Plan
- * inside the PR body; #363/#377 were the same shape as real bugs).
+ * this closes (a real pasted reference brief duplicated its own Test Plan
+ * inside the PR body; other real PRs hit the same shape of bug).
  *
  * Recognition semantics, shared by every consumer
  * (`pr-tier.ts`, `test-plan-section.ts`, `premise-check.ts`,
@@ -31,7 +31,7 @@
  *   - **Markers inside fenced code blocks or inline code spans do not count**
  *     — example/quoted anchor syntax in documentation or evidence output is
  *     never mistaken for a real anchor (same code-stripping philosophy as
- *     `archive-task.ts`'s `stripCode`, #311 regression).
+ *     `archive-task.ts`'s `stripCode`, after a real regression).
  *
  * The field line/block goes on its own line(s) INSIDE the pair — e.g.
  *
@@ -52,7 +52,7 @@
 import { maskCode } from '@attalabs/aeg-forge-state/strip-code'
 
 /**
- * The seven gate-read fields with an anchored home. `TOKENS` (task 5, #378)
+ * The seven gate-read fields with an anchored home. `TOKENS`
  * joined here rather than through a second, parallel field list —
  * `pr-report.ts`'s own `AEG:TOKENS:START`/`:END` markers already use this
  * exact grammar, so the registry is the fix, not a workaround beside it.

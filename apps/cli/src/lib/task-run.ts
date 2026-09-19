@@ -52,7 +52,7 @@ export class RunTaskError extends Error {}
  * `apps/cli/tests/lib/dispatch-task.test.ts`, so it is stable, not a new
  * coupling this task introduces. Every other `DispatchTaskError` (a render
  * refusal, an authorization refusal) means preparation itself refused and
- * `runTask` propagates it unchanged — nothing started (O3).
+ * `runTask` propagates it unchanged — nothing started.
  */
 const ALREADY_DISPATCHED_PATTERN = /is already dispatched/
 
@@ -64,7 +64,7 @@ export function isAlreadyDispatchedError(err: unknown): boolean {
 export type RunTaskInput = ({ tranche: string; n: number } | { issue: number }) & { agent: AgentVendor }
 /**
  * `prUrl` — the published/paused PR's real `https://github.com/<owner>/<repo>/pull/<n>`
- * URL, per Issue #480's own Sizing story ("...runs the loop to publish and
+ * URL, per this module's own Sizing story ("...runs the loop to publish and
  * exits zero printing the PR URL"). `LoopResult` itself carries no URL field
  * (`dev-review-loop.ts` is unmodified — out of this task's Surface), so it is
  * constructed here from `resolveRepo()` plus the loop's own `prNumber`.
@@ -131,7 +131,7 @@ async function resolvePrUrl(resolveRepo: () => Promise<RepoRef | null>, prNumber
  * 1. `deps.prepareTask` — renders, refuses on any gap (propagated as-is:
  *    "refused before any agent starts", O3), and posts the frozen brief on a
  *    fresh task. Its ONE other refusal shape — the brief is already frozen —
- *    is caught and treated as "reuse, don't re-post" (O3): the Issue number
+ *    is caught and treated as "reuse, don't re-post": the Issue number
  *    is re-resolved via the same read-only render `prepareTask` itself just
  *    ran, never by writing anything a second time.
  * 2. The developer's branch (`developerBranchFor`, never guessed) is checked

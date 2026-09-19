@@ -105,7 +105,7 @@ describe('checkClosesNTopology', () => {
     expect(r.message).toMatch(/no topology file found/)
   })
 
-  // task-run-v1 21, #541, O2: a backlog Issue's task/issue-<n> branch — no
+  // A backlog Issue's task/issue-<n> branch — no
   // tranche, no topology file, ever — resolves entirely off the branch's
   // own issue number, never falling into the "no topology file found"
   // failure a tranche-shaped branch with an unresolvable slug would hit.
@@ -164,7 +164,7 @@ describe('checkClosesNTopology', () => {
   })
 
   // ---------- reverse direction: task-closing PR on a mismatched branch ------
-  // (the `feat/vinaya-landing-v3` + Issue #509 live gap this brief closes)
+  // (a real feature-branch + Issue live gap this closes)
 
   it('fail — non-task branch closes a real task Issue (reverse gate)', () => {
     const taskIssueRefs = new Map([[509, { trancheSlug: 'vinaya-pages-v1', taskId: '2' }]])
@@ -285,7 +285,7 @@ describe('A1: closed-without-merge', () => {
     expect(r.failures).toHaveLength(1)
   })
 
-  // ---- hand-closed dependency recognition (task vinaya-engine-v1 21, #99) --
+  // ---- hand-closed dependency recognition ----------------------------------
 
   it('pass — closed COMPLETED, no merged PR, but hand-closed by a recognized Principal', () => {
     const entries = [
@@ -567,8 +567,8 @@ describe('T2: orphan-task', () => {
   })
 
   it('pass — ciTrancheSlug scopes check: gap in OTHER tranche is not reported', () => {
-    // Reproduces the #358/#359 incident: a PR against aeg-governance-hardening
-    // must not fail T2 because herald-hardening-v1 has an unrelated gap.
+    // Reproduces a real incident: a PR against one tranche
+    // must not fail T2 because a different tranche has an unrelated gap.
     const openIssues = new Map([
       ['aeg-governance-hardening', [19]],
       ['herald-hardening-v1', [355, 356]]
@@ -602,7 +602,7 @@ describe('T2: orphan-task', () => {
 describe('scopeT2ToPlanPr — T2 relocation (aeg-governance-hardening task 24)', () => {
   it('reproduces the #363 incident, then shows the fix: a failing T2 is demoted to info for a non-plan (task) PR', () => {
     const openIssues = new Map([['aeg-governance-hardening', [364, 365]]])
-    const topology = new Map([['aeg-governance-hardening', new Set([19])]]) // #364/#365 not yet in topology
+    const topology = new Map([['aeg-governance-hardening', new Set([19])]]) // the two open Issues are not yet in topology
     const raw = checkT2(openIssues, topology, 'aeg-governance-hardening')
     expect(raw.status).toBe('fail') // checkT2 itself is untouched — still detects the gap
 
@@ -745,7 +745,7 @@ describe('R1: missing-rationale-field', () => {
   })
 })
 
-// ---------- R2: surface-excludes-bound-doc (task-run-v1 9, O2) -------------
+// ---------- R2: surface-excludes-bound-doc -------------------------------
 
 const CONTRADICTING_SURFACE_BODY = '## Surface\n\nin: apps/cli/src/lib\nout: apps/cli/specs\n'
 const NON_CONTRADICTING_SURFACE_BODY = '## Surface\n\nin: apps/cli/src/lib, apps/cli/specs\nout: —\n'
@@ -777,7 +777,7 @@ describe('R2: surface-excludes-bound-doc', () => {
   })
 })
 
-// ---------- R3: cross-task-surface-overlap (Issue #502, O5's coherence half) ----------
+// ---------- R3: cross-task-surface-overlap --------------------------------
 
 function surfaceBody(inGlob: string, extra = ''): string {
   return `## Surface\n\nin: ${inGlob}\nout: —\n\n${extra}`
@@ -901,7 +901,7 @@ describe('T3: tbd-in-active-tranche', () => {
 
   it('pass — ciTrancheSlug scopes check: null issue in OTHER tranche is skipped', () => {
     const entries = [makeEntry('vada-production-v1', '6a', null, undefined, false)]
-    // Running CI gate for aeg-coherence-v1 → only aeg-coherence-v1 T3 matters
+    // Running CI gate for this tranche → only this tranche's T3 matters
     passesWithNoFailures(checkT3(entries, 'aeg-coherence-v1'))
   })
 
@@ -970,7 +970,7 @@ describe('T3: tbd-in-active-tranche', () => {
     // in the same tranche has a pre-cutoff date — even if the #TBD task
     // itself was added long after COHERENCE_ENFORCED_FROM. This is the
     // "branch-scoping proxy" the brief calls out as a known bug to preserve,
-    // not fix (that's Task 3 / #220's job).
+    // not fix (a separate task's job).
     const freshTbd = makeEntry('mixed-iter', 'new-task', null, undefined, false)
     const oldResolved = makeEntry(
       'mixed-iter',

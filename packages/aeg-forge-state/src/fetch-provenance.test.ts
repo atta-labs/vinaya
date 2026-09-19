@@ -97,7 +97,7 @@ describe('fetchProvenance', () => {
           i_42: {
             timelineItems: {
               nodes: [
-                // Mentions #42 but its own provenance targets a different issue — must not match.
+                // Mentions this issue but its own provenance targets a different issue — must not match.
                 { source: { number: 200, body: '### AEG provenance\n- Issue:        #99\n', comments: { nodes: [] } } },
                 { source: { number: 201, body: PROVENANCE_BODY, comments: { nodes: [] } } }
               ]

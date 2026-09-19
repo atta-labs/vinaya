@@ -5,7 +5,7 @@
  * The pattern this generalizes: `reader-resolvable-prose.ts`'s Class 1
  * (`checkUnresolvableReferences`) flags a reference a reader cannot resolve
  * at all — the pattern (a forge number, a tranche slug) IS the finding, full
- * stop. This module handles the one-step-further case Issue #730 names: a
+ * stop. This module handles the one-step-further case: a
  * reference that is FINE as long as something else nearby resolves it — an
  * ordinal task mention ("Task 2") is fine beside a citation shaped
  * `(task N, #issue)`, and only a finding when that citation is missing from
@@ -182,7 +182,7 @@ function splitIntoBlocks(content: string): Block[] {
  * them — checking "does a citation exist anywhere in this scope" lets a
  * SINGLE real citation silently clear every other, unrelated anchor sharing
  * the same block (found live in review: `"Task 2 did X, and Task 5 (task 5,
- * #999) wrapped it up."` reported zero findings under a presence-only test,
+ * #NNN) wrapped it up."` reported zero findings under a presence-only test,
  * because "Task 5"'s citation cleared the unrelated "Task 2" anchor too).
  * Each scope's citation matches are a fixed SUPPLY; each pattern match in
  * that scope, in document order, consumes one — the first `N` matches (`N` =

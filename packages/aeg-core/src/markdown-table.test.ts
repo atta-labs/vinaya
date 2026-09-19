@@ -59,33 +59,33 @@ describe('enforcement.md Ring 0/1/2 tables (implementation column)', () => {
 
   it('parses one record per gate row, matching the known row count per ring', async () => {
     const { ring0, ring1, ring2 } = await loadRingTables()
-    // fix/true-head-and-stale-sites (Issue #402) moved the "Writing to pull
+    // fix/true-head-and-stale-sites moved the "Writing to pull
     // requests or Issues through the raw API" row from ring 0 to ring 1 —
     // its real enforcement is the ring-1 CI re-run, not anything at ring 0.
     expect(ring0.rows).toHaveLength(18)
-    // task 7 (Issue 56) added the `retired-vocabulary` row alongside the
-    // existing `reader-resolvable-prose` one. task 8 (Issue 57) added the
+    // task 7 added the `retired-vocabulary` row alongside the
+    // existing `reader-resolvable-prose` one. task 8 added the
     // G6 doctrine-registry-parity row. task 234 added the
-    // `doctrine-portability` row alongside them. task 17 (Issue #78) added
-    // the `workspace-escape` row. task 9 (Issue #58) added the
-    // `main-branch-refusal` row. fix/changeset-coverage-check (Issue #258)
+    // `doctrine-portability` row alongside them. task 17 added
+    // the `workspace-escape` row. task 9 added the
+    // `main-branch-refusal` row. fix/changeset-coverage-check
     // added the `changeset-coverage` row. fix/quoted-command-staleness
-    // (Issue #128) added the `quoted-command` row.
-    // vinaya-token-determinism-v1 task 4 added the `token-report` row.
-    // fix/pr-body-density-check (Issue #357) added the `PR-report density` row.
-    // review-convergence-v1 task 10 added the `doctrine-no-procedures` row.
-    // fix/unfreeze-and-rerun (Issue #399) removed the `pr-body-frozen` row
+    // added the `quoted-command` row.
+    // A later task added the `token-report` row.
+    // fix/pr-body-density-check added the `PR-report density` row.
+    // A later task added the `doctrine-no-procedures` row.
+    // fix/unfreeze-and-rerun removed the `pr-body-frozen` row
     // (ring 1) and the `pr refreeze` row (ring 0).
-    // fix/true-head-and-stale-sites (Issue #402) moved the raw-API row in
+    // fix/true-head-and-stale-sites moved the raw-API row in
     // from ring 0. This same wave added four rows: body-bare-digits,
-    // evidence-fresh, doc-coverage (PR open/edit), and surface-scope (O7).
-    // premise-gate-v1 task 1 (Issue #466) added the `PR-body premise
+    // evidence-fresh, doc-coverage (PR open/edit), and surface-scope.
+    // A later task added the `PR-body premise
     // reassertion` row.
     expect(ring1.rows).toHaveLength(32)
 
     // (2026-07-13) removed the "Daily drift check — stuck row-adjacent
     // blockers" ring-2 row (its subject matter, stale-blocker.ts, was retired).
-    // vinaya-verification-v1 task 8 (Issue 36) added the "Published
+    // A later task added the "Published
     // lifecycle audit" row.
     expect(ring2.rows).toHaveLength(8)
   })

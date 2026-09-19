@@ -65,7 +65,7 @@ export const R1_GRANDFATHERED_ISSUES: ReadonlySet<number> = new Set([279, 280, 2
 
 /**
  * Every distinct coherence-failure shape this module's checks can produce,
- * named apart from `CheckFailure.reason`'s human string (Issue #355) — the
+ * named apart from `CheckFailure.reason`'s human string — the
  * recovery-prompt switch in `check-coherence.ts` matches on THIS, never on
  * parsing `reason`'s text or `CheckResult.check`'s code alone. Closed
  * deliberately, and split finer than the `check` code where one check code
@@ -133,7 +133,7 @@ export type TrancheFile = {
 
 /**
  * A1: Every closed task-Issue has a merged closing PR — OR was hand-closed
- * directly by a recognized Principal (task `vinaya-engine-v1` 21, #99): a
+ * directly by a recognized Principal: a
  * second, narrower "done" path for a dependency Issue whose technical
  * premise dissolved, closed with a stated `COMPLETED` reason rather than via
  * a merge. Every condition is a real forge fact (who performed the
@@ -219,7 +219,7 @@ export function checkA2(entries: TaskEntry[], hasProvenanceByKey: Map<string, bo
 
 /**
  * A3: Every Issue whose closing PR merged is itself closed.
- * Fail class: `auto-close-misfire` — the headline check (#174 class).
+ * Fail class: `auto-close-misfire` — the headline check.
  * Terminal event date: `prMergedAt` — grandfathered when before `COHERENCE_ENFORCED_FROM`.
  */
 export function checkA3(entries: TaskEntry[]): CheckResult {
@@ -312,11 +312,10 @@ export function checkT2(
 }
 
 /**
- * T2 point-of-power relocation (aeg-governance-hardening task 24, #364,
- * Part 2; supersedes half of task 19's T2-in-task-PR-CI placement).
+ * T2 point-of-power relocation (supersedes half of an earlier task's T2-in-task-PR-CI placement).
  * A gate may only red a PR that could cause or cure the violation it
- * reports — live incident #363 (2026-07-04): registering Issues #364/#365
- * correctly reddened same-tranche task PR #363's CI, which could neither
+ * reports — a live incident (2026-07-04): registering sibling Issues
+ * correctly reddened a same-tranche task PR's CI, which could neither
  * have caused nor fixed the topology gap. `checkT2`'s own assertion logic
  * (above) is untouched; this only demotes its CI-blocking status when the
  * current PR is NOT a plan PR (i.e. its diff doesn't touch a tranche
@@ -484,7 +483,7 @@ function resolveDepEntry(
 }
 
 /**
- * `ForgeIssue` lives in `@attalabs/aeg-types` (aeg-core-purity fix, #521) —
+ * `ForgeIssue` lives in `@attalabs/aeg-types` (an aeg-core-purity fix) —
  * re-exported here since every existing call site imports it from
  * `@attalabs/aeg-core`.
  */
@@ -554,8 +553,8 @@ export function checkR1(
 }
 
 /**
- * R2: The same `checkSurfaceExcludesBoundDoc` predicate (O1/task-run-v1 9),
- * run over every open task Issue in an active tranche. This is O2's own
+ * R2: The same `checkSurfaceExcludesBoundDoc` predicate,
+ * run over every open task Issue in an active tranche. This is a related
  * obligation: a task Issue whose `## Surface` `out:` list excludes a
  * `.vinaya/doc-owners`-bound document its `in:` list otherwise covers must be
  * reported, not silently left to fail at the Developer's first commit — the
@@ -589,7 +588,7 @@ export function checkR2(issuesBySlug: Map<string, ForgeIssue[]>, docOwnersConten
 }
 
 /**
- * R3: The same `checkSurfaceOverlap` predicate (O5, task-run-v1 task 11) run
+ * R3: The same `checkSurfaceOverlap` predicate run
  * pairwise over every open task Issue sharing a Milestone — the coherence
  * half of O5's own obligation ("the same predicate runs in the coherence
  * check over open task Issues"). The write-time gate
@@ -657,7 +656,7 @@ export function checkR3(issuesBySlug: Map<string, GhIssue[]>): CheckResult {
  * L1: Active tranche with zero open task-Issues → should be archived.
  * **Advisory (info-only)** per `state-machine.md` §12 (L1/L2 are lifecycle-hygiene
  * signals, not the done-lifecycle gate). Findings are surfaced for a human to
- * investigate; they never fail CI. Only A1/A2/A3/M1/M3/L5 block (L5 promoted, vinaya-milestone-model-v1 task 1).
+ * investigate; they never fail CI. Only A1/A2/A3/M1/M3/L5 block (L5 later promoted from advisory).
  *
  * An active tranche (file not in completed/) where every task with a
  * known issue has `issueState === 'closed'`.
@@ -693,7 +692,7 @@ export function checkL1(files: TrancheFile[], entriesBySlug: Map<string, TaskEnt
  * L2: Archived tranche with any open task-Issue → premature archive.
  * **Advisory (info-only)** per `state-machine.md` §12 (L1/L2 are lifecycle-hygiene
  * signals, not the done-lifecycle gate). Findings are surfaced for a human to
- * investigate; they never fail CI. Only A1/A2/A3/M1/M3/L5 block (L5 promoted, vinaya-milestone-model-v1 task 1).
+ * investigate; they never fail CI. Only A1/A2/A3/M1/M3/L5 block (L5 later promoted from advisory).
  */
 export function checkL2(files: TrancheFile[], entriesBySlug: Map<string, TaskEntry[]>): CheckResult {
   const failures: CheckFailure[] = []
@@ -738,12 +737,11 @@ export function checkL3(files: TrancheFile[]): CheckResult {
 }
 
 /**
- * L4: Issue-level Milestone-attachment drift (aeg-review-gate-v1 task 1
- * follow-up). An open task-Issue carrying `vinaya/tranche:<slug>` for an ACTIVE
+ * L4: Issue-level Milestone-attachment drift. An open task-Issue carrying `vinaya/tranche:<slug>` for an ACTIVE
  * tranche (open Milestone titled the slug) whose GitHub-native
  * `milestone` field doesn't match that same Milestone.
  *
- * **Scope changed (vinaya-milestone-model-v1 task 1): the exact-title-match
+ * **Scope changed: the exact-title-match
  * invariant this check evaluates is only meaningful for LEGACY tranches** —
  * a Milestone titled exactly the tranche slug, the 1:1 regime that predates
  * the label model. Once one Milestone can legitimately hold several
@@ -798,8 +796,8 @@ export function checkL4(
 
 /**
  * L5: an active tranche whose every task Issue is closed → the tranche is
- * effectively complete but was never archived (Issue #481, drift class #2;
- * 1 live incident this session — `aeg-forge-state-v1`'s Milestone left open
+ * effectively complete but was never archived (a real drift class;
+ * confirmed live — a real tranche's Milestone left open
  * after full archive).
  *
  * This is the FORGE-NATIVE analogue of file-based L1: L1 reads `TrancheFile[]`
@@ -808,8 +806,8 @@ export function checkL4(
  * L5 keys off `activeTrancheSlugs` (the derived-active population — the
  * authority) instead, so it sees exactly the tranches L1 no longer can.
  *
- * **Promoted from advisory to authoritative (vinaya-milestone-model-v1 task
- * 1): `status` is now `'fail'`, joining A1/A2/A3/M1/M3 as CI-blocking.**
+ * **Promoted from advisory to authoritative: `status` is now `'fail'`,
+ * joining A1/A2/A3/M1/M3 as CI-blocking.**
  * Before this task, "the tranche is complete" meant "its Milestone is
  * closed" — a fact a Milestone shared by several tranches can no longer
  * carry reliably (closing it would close every tranche it holds, not just
@@ -875,7 +873,7 @@ export function extractClosesReferences(prBody: string): Set<number> {
   // the strip's rules read (list vs indented-code, fence pairing), so an
   // anchor indented inside a list item was blanked as if it were code, and
   // this parser silently disagreed with the whole-body path in the same call
-  // (PR #617 review MAJOR). See `archive-task.ts`'s `extractIssue`.
+  // (a MAJOR review finding). See `archive-task.ts`'s `extractIssue`.
   const stripped = stripCode(prBody)
   const searchIn = anchoredRegion(stripped, 'CLOSES') ?? stripped
   const referenced = new Set<number>()
@@ -894,7 +892,7 @@ export function extractClosesReferences(prBody: string): Set<number> {
  *
  * Reverse direction (added: a branch NOT named `task/<tranche>/<n>` that
  * nonetheless closes a real AEG task Issue must be named after that task —
- * the gap that let `feat/vinaya-landing-v3` implement Issue #509 with zero
+ * the gap that let a real feature branch implement a real Issue with zero
  * forge-visible status. Runs for ANY branch, gated on `taskIssueRefs` being
  * supplied: each `Closes #N` the body references is looked up in the map;
  * an entry resolving to a task's `{trancheSlug, taskId}` requires
@@ -933,7 +931,7 @@ export function checkClosesNTopology(
   const ref = parseTaskBranchIdentity(branch)
   if (!ref) return { ok: true } // non-task branch — forward direction bypass
 
-  // task-run-v1 task 15, O2: a backlog Issue's task IS its Issue — the
+  // A backlog Issue's task IS its Issue — the
   // expected `Closes #N` is the branch's own issue number, no topology
   // lookup needed at all.
   if (ref.kind === 'issue') {

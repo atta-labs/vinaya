@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: exec-bits (task 8, #381). Refuses a staged executable whose
+ * Core check: exec-bits. Refuses a staged executable whose
  * INDEX mode is not `100755`, before it leaves the machine.
  *
  * Why this is a check and not a convention: the runner spawns a check bin

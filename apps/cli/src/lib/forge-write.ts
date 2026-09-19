@@ -3,7 +3,7 @@
  * `issue create/edit`). Two concerns live here:
  *
  *  1. **Same-bytes body plumbing** (`locateBody` / `resolveShippableArgs`) —
- *     adapted from `packages/aeg-core/bin/open-pr.ts`'s #333 fix, NEVER
+ *     adapted from `packages/aeg-core/bin/open-pr.ts`'s own fix, NEVER
  *     imported (those bins `process.chdir(REPO_ROOT)` and shell out to this
  *     repo's `bin/*` gate scripts; dragging them into a distributable CLI
  *     drags this repo's layout in). A stream/heredoc body is empty on a
@@ -121,7 +121,7 @@ import { sha256Hex } from './effects.js'
 export class ForgeArgError extends Error {}
 
 // ---------------------------------------------------------------------------
-// Same-bytes body plumbing (adapted from open-pr.ts / open-issue.ts, #333).
+// Same-bytes body plumbing (adapted from open-pr.ts / open-issue.ts).
 // ---------------------------------------------------------------------------
 
 /** Where a validated body's bytes came from — a file/stream path, or an inline arg value. */
@@ -237,7 +237,7 @@ export function refuse(errors: CheckError[]): never {
 
 // ---------------------------------------------------------------------------
 // Tranche label — the real creation path the `vinaya/tranche:<slug>` prefix
-// family lacked (Issue #54's Origin): its suffix is open-ended by design, so
+// family lacked: its suffix is open-ended by design, so
 // no fixed install-time list can seed it, and until now nothing created it
 // either — cutting a tranche's first task Issue failed outright at `gh` with
 // `not found`, worked around by hand-running `gh label create`. This is the
@@ -316,7 +316,7 @@ export function resolveMilestoneAttachArgs(ghArgs: string[], labels: string[]): 
 const CHECK_ISSUE_LABEL = 'issue-label'
 
 /**
- * **Retired (O3).** Used to refuse a task-shaped body
+ * **Retired.** Used to refuse a task-shaped body
  * with no `vinaya/tranche:*` label — that invariant no longer holds: a task-
  * shaped, unlabeled body is now the exact shape of a legitimate backlog
  * Issue (see `checkTrancheLabelPresence`'s own doc comment, `@attalabs/aeg-core`,
@@ -616,7 +616,7 @@ export function validateForgeWrite(input: ForgeValidationInput): CheckError[] {
 }
 
 // ---------------------------------------------------------------------------
-// O1/O2 (task 17) — the ONE registry-runner call every forge-write path
+// O1/O2 — the ONE registry-runner call every forge-write path
 // shares. `resolvedRegistry()` merges the core registry with whatever an
 // adopter's own `vinaya.config.json` adds (`resolveChecks`, the same merge
 // `commands/check.ts`/`commands/doctor.ts` already apply) — a config-
@@ -636,7 +636,7 @@ function resolvedRegistry(): CheckSpec[] {
  * `vinaya check <name>`/`--all` spawns, so a body this refuses is, by
  * construction, a body CI's `vinaya-checks.yml`/`vinaya-body-checks.yml`
  * would also refuse, and a check registered `validates: 'body'` LATER is
- * enforced here with zero further wiring (O1).
+ * enforced here with zero further wiring.
  *
  * `prNumber` distinguishes the two shapes every body write actually has:
  * `undefined` (no PR exists yet — `pr create`, before the write) sets
@@ -733,7 +733,7 @@ export async function collectBodyCheckErrors(
 /**
  * Runs every registered check whose `validates` is `'issue'` over a task
  * Issue's own content — title grammar, Objectives numbering, Parts coverage,
- * Surface glob resolution, tranche-label presence, Milestone attach (O2).
+ * Surface glob resolution, tranche-label presence, Milestone attach.
  * These never apply to a pull request (a PR body has no Milestone, no
  * `## Objectives` numbering of its own to grade), so they run ONLY from an
  * Issue write path and from the coherence sweep over open Issues
@@ -975,7 +975,7 @@ export type IssueContentInput = {
  * `CheckError`. Pure over its inputs, same discipline as `validateForgeWrite`
  * — the caller (a command file) resolves `sharedPackages`/`projectPaths` from
  * disk/forge and passes them in. `resolvesToFile` is the injected Surface-
- * glob predicate (O3) — the caller passes the SAME `expandGlob` implementation
+ * glob predicate — the caller passes the SAME `expandGlob` implementation
  * `brief-assembly.ts`'s render path already uses, so the gate and the
  * renderer can never disagree about whether a glob resolves.
  */
@@ -1020,7 +1020,7 @@ export function validateIssueContent(input: IssueContentInput): CheckError[] {
 }
 
 // ---------------------------------------------------------------------------
-// The validated `issue edit` write path (task 3, #413) — extracted verbatim
+// The validated `issue edit` write path — extracted verbatim
 // out of `commands/issue.ts` so a second command (`issue objectives edit`)
 // can drive the same validated write without importing another command file
 // (`commands/*.ts` never imports `commands/*.ts` — shared logic lives here).
@@ -1056,7 +1056,7 @@ export function runGhWrite(
 /**
  * Fetches the target Issue's actual current labels from the forge. `edit`
  * invocations don't re-pass `--label`, so argv says nothing about whether the
- * target is a task Issue — the forge is the only truthful source (#417). A
+ * target is a task Issue — the forge is the only truthful source. A
  * failed fetch is a HARD refusal, never treated as "no tranche label".
  */
 export function fetchForgeLabels(issueRef: string, retryCommand: string): string[] {
@@ -1154,7 +1154,7 @@ export function fetchForgeIssueContext(
  * `skipCheck`, when true, is `issue objectives edit`'s own escape hatch: that
  * command IS the sanctioned way to change `## Objectives` on a frozen task
  * (its own write goes through `writeValidatedIssueEdit`, below), and it posts
- * its own superseding `aeg:brief:v<k+1>` comment after writing (O6) — this
+ * its own superseding `aeg:brief:v<k+1>` comment after writing — this
  * gate must not refuse the very command it names as the sanctioned escape.
  */
 export function refuseFrozenSectionChange(
@@ -1250,7 +1250,7 @@ function fetchForgeMilestoneBestEffort(issueRef: string): string | null {
  * label, no explicit flag) still resolves a real target instead of leaving
  * O5 dormant.
  *
- * Security review (Issue #502), round 2, HIGH: the prior version only ever
+ * Security review, round 2, HIGH: the prior version only ever
  * read the explicit flag, so a normal `issue create --label
  * vinaya/tranche:<slug>` — the label-driven auto-attach path
  * `resolveMilestoneAttachArgs` itself resolves at write time — left
@@ -1304,7 +1304,7 @@ function resolveMilestoneTitleForCreate(ghArgs: string[], labels: string[]): str
  * outside it, so the query itself (not just a client-side filter afterward)
  * only ever returns candidates that could actually matter.
  *
- * Security review (Issue #502), round 2, MEDIUM: the prior version queried
+ * Security review, round 2, MEDIUM: the prior version queried
  * `gh issue list` repo-wide with a flat `--limit 200` and filtered by
  * Milestone client-side — a genuinely overlapping sibling past the 200th
  * open Issue repo-wide was silently missed. Scoping the query itself to the
@@ -1691,7 +1691,7 @@ export async function validateTaskIssue(
   retryCommand: string,
   issueNumber: number | null,
   // Optional — every call site in `apps/cli/src/commands/issue.ts` now
-  // passes it (Issue #502 v3 Surface). Left optional rather than required so
+  // passes it. Left optional rather than required so
   // an omission degrades to O5 dormant (`milestoneTitle` stays `null`)
   // exactly like a Milestone this process could not determine — never a
   // crash, never a silently-wrong Milestone guess.
@@ -1722,7 +1722,7 @@ export async function validateTaskIssue(
  * The validate-then-write core `issueEditCommand` runs for every non-
  * `--validate-only` edit: union the forge's real labels with argv, run
  * `validateTaskIssue` when the target is a task Issue, ensure the tranche
- * label exists, then write. `issue objectives edit` (task 3) drives this
+ * label exists, then write. `issue objectives edit` drives this
  * same path with a temp `--body-file` it wrote itself — one validated write
  * path for every Issue-edit caller, never a second hand-rolled one.
  */
@@ -1764,12 +1764,12 @@ export async function writeValidatedIssueEdit(input: {
 }
 
 // ---------------------------------------------------------------------------
-// Principal-only gate — `issue objectives edit` and `pr rule` (task 3) are
+// Principal-only gate — `issue objectives edit` and `pr rule` are
 // Principal-only actions per `aeg-root/roles/principal.md`, but `gh`
 // authenticates as "whoever is logged in": without this, any collaborator's
 // (or co-resident agent session's) token can post a comment indistinguishable
 // from a genuine Principal ruling, or silently rewrite a task's Objectives —
-// zero gate (security review, PR #430, CRITICAL). `isPrincipal` itself is
+// zero gate (a CRITICAL security-review finding). `isPrincipal` itself is
 // pre-existing (`review-status.ts`/`review-gate.ts` etc. already use it to
 // classify the AUTHOR of an existing comment); what was missing is checking
 // it against the CURRENT actor before a Principal-only write, which is what
@@ -1814,7 +1814,7 @@ export function refuseUnlessPrincipal(retryCommand: string): void {
 // ---------------------------------------------------------------------------
 // Marked comments — the `<!-- aeg:… -->`-prefixed comment shape `pr.ts`'s
 // `postBriefComment` established for the brief comment, generalised so
-// `issue objectives edit` and `pr rule` (task 3) can post their own marked
+// `issue objectives edit` and `pr rule` can post their own marked
 // comments without duplicating the temp-file-then-`gh comment` dance.
 // ---------------------------------------------------------------------------
 

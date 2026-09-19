@@ -1,5 +1,5 @@
 /**
- * Objectives grammar (dev-review-loop-v1 task 1, Issue #411). Pure — no `fs`,
+ * Objectives grammar. Pure — no `fs`,
  * no `fetch`, no `process.env`.
  *
  * A task Issue's `## Objectives` section: numbered `O<n>. <sentence>` lines,
@@ -56,7 +56,7 @@ function maskedForHeadingSearch(body: string): string {
  * `` /`[^`\n]*\/[^`\n]*`/ ``, is two unanchored wildcards separated by a
  * literal — quadratic on a line dense with backticks and no closing pair,
  * since the engine restarts the inner scan from every backtick position
- * (security review, PR #423, MEDIUM). This scan advances past each
+ * (a MEDIUM security-review finding). This scan advances past each
  * checked span exactly once, so it stays linear in `text`'s length
  * regardless of how many backtick-shaped characters an attacker packs in.
  */
@@ -77,8 +77,8 @@ function hasBacktickedPath(text: string): boolean {
  * How many non-path words an objective needs to count as a real sentence
  * rather than a dressed-up path reference. Mentioning a runtime path as
  * supporting detail inside an otherwise complete observable sentence is
- * fine — live task Issues do this routinely (Issue #404's own O1 names an
- * outbox path, O2 and O3 each name a source/spec path) — what the grammar
+ * fine — live task Issues do this routinely (a real Issue's own first
+ * objective names an outbox path, later ones each name a source/spec path) — what the grammar
  * refuses is an objective that, once its backticked spans are removed, is
  * left with next to nothing: a path standing in for a sentence.
  */
@@ -218,7 +218,7 @@ export function renderObjectives(objectives: Objective[]): string {
 
 /**
  * Is a `gh issue view` failure just "the Issue number doesn't resolve" — a
- * fixture's placeholder `Closes #999`, a deleted Issue — as opposed to a
+ * fixture's placeholder `Closes #NNN`, a deleted Issue — as opposed to a
  * real network/auth/rate-limit failure? Only the first is safe for a
  * caller to treat as "nothing to compare"; the second means the comparison
  * was SKIPPED, not that it passed, and a caller that conflates the two
@@ -250,12 +250,12 @@ export function isIssueNotFoundError(err: unknown): boolean {
 
 /**
  * WHERE a pull request's objectives come from — before anything is fetched
- * or parsed (task-run-v1, O3, Issue #494). `check-review-gate.ts`'s
+ * or parsed. `check-review-gate.ts`'s
  * `resolveObjectivesVersion` and `review-post.ts`'s `resolveObjectivesForPr`
  * had each hand-rolled this identical three-way branch — an Issue at/above
  * the cutover wins, then the PR body's own `## Objectives` heading, then
  * neither — with the Issue-vs-cutover branch order kept in sync by hand
- * between the two files (`#412`'s own history: a missing early pre-cutover
+ * between the two files (a real history: a missing early pre-cutover
  * return in one of them let a pre-cutover Issue fall through to the body's
  * section). One function, one place the three-way decision is made; both
  * callers switch on its result instead of re-deriving it.
@@ -264,10 +264,9 @@ export function isIssueNotFoundError(err: unknown): boolean {
  * and the PR body text, never fetches either. Fetching the Issue body,
  * parsing it, and turning a parse failure into a refusal are each caller's
  * OWN concern (a check-run emits `emitCheckError`+`process.exit`, the CLI
- * command calls `refuseCmd`) and stay out of this function on purpose — see
- * `aeg-root/tranches/task-run-v1.md` task 10's boundary: this resolver
+ * command calls `refuseCmd`) and stay out of this function on purpose: this resolver
  * decides the SOURCE, not what the gate requires once a source exists, and
- * the loop's own principal-gated Issue read (`review-validity-v1` task 2)
+ * the loop's own principal-gated Issue read
  * substitutes its own fetcher for the `'issue'` case rather than this
  * function reading anything itself.
  *

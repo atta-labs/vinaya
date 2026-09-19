@@ -1,7 +1,7 @@
 // Self-hosting detection — "does the repo we are writing into vendor the
 // vinaya CLI itself?"
 //
-// The failure this exists for (atta-labs/attalabs#929): in a repo whose root
+// The failure this exists for: in a repo whose root
 // `package.json`
 // `workspaces` glob reaches a member declaring the name `@attalabs/vinaya`,
 // `npx --yes @attalabs/vinaya <cmd>` never contacts the registry. npm sees the
@@ -273,7 +273,7 @@ export function detectVendoredVinaya(repoRoot: string): VendoredVinaya | null {
 
 /**
  * The re-exec target for "inside the author repository the tree is the
- * CLI" (Issue #505) — the opposite direction from `detectVendoredVinaya`
+ * CLI" — the opposite direction from `detectVendoredVinaya`
  * above, but the same question in spirit: does the checkout at `cwd` own a
  * copy of this CLI's own source that an installed `vinaya` should defer to?
  *
@@ -286,7 +286,7 @@ export function detectVendoredVinaya(repoRoot: string): VendoredVinaya | null {
  * already treats as this CLI's own identity, so a directory shape alone
  * (any repo that merely happens to carry an `aeg-root/roles/` and an
  * `apps/cli/src/index.ts`, e.g. a shared sample/tutorial/fork) cannot make
- * an installed `vinaya` re-exec arbitrary code (security review, PR #513)
+ * an installed `vinaya` re-exec arbitrary code (a security-review finding)
  * — returns that toplevel's own `apps/cli/src/index.ts`. Returns `null`
  * otherwise — including when that file doesn't exist, and, load-bearingly,
  * when `ownPackageRoot` shows this call is already running from source: a

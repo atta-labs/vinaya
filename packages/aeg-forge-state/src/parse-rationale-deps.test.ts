@@ -58,7 +58,7 @@ describe('parseRationaleDeps', () => {
 
   it("ignores the bare continuation spans in Issue #383's real body", () => {
     // #383 wrote its second edge as a separate bare span (`2`) with prose
-    // between. That convention is no longer read (#347): only the labeled
+    // between. That convention is no longer read: only the labeled
     // span declares. A body needing both edges states them comma-separated in
     // the labeled span, which is what `amendRationaleDeps` emits.
     const body = readIssueBodyFixture(383)

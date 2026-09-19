@@ -7,8 +7,7 @@
  * `Doc-waiver:` grammar). Pure — no env reads here; I/O stays in the CLI
  * shim, same discipline as `pr-tier.ts`.
  *
- * `isWaiverLabelActorVerified` is parameterized by `label` (aeg-review-gate-v1
- * task 1, #474) so a second waiver label (`vinaya/waiver:review`) can reuse the exact
+ * `isWaiverLabelActorVerified` is parameterized by `label` so a second waiver label (`vinaya/waiver:review`) can reuse the exact
  * same actor-verification predicate rather than a copy-pasted duplicate that
  * could drift out of sync.
  *
@@ -30,7 +29,7 @@ export const PRINCIPAL_ALLOWLIST = ['daniboomerang']
  * test fails closed, but it fails closed *invisibly*: an adopter who wrote
  * `"principals": ["Alice"]` would watch Alice's genuine verdicts land as
  * DANGLING with no stated reason — precisely the baffling symptom the
- * `principals` field exists to remove (review finding, PR #862).
+ * `principals` field exists to remove (a review finding).
  *
  * Shared by every allowlist consumer so the waiver check and the review gate
  * can never disagree about whether a given login is a principal.

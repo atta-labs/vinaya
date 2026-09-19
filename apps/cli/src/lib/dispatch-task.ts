@@ -11,8 +11,8 @@
  * of `task brief` (`prepareTask` alone) and `task run` (the future
  * unattended loop).
  *
- * The frozen comment is never edited or deleted (task 4, Issue
- * #483, O3): a plain call refuses a second post on the same Issue, naming
+ * The frozen comment is never edited or deleted: a plain call refuses a
+ * second post on the same Issue, naming
  * the existing frozen brief; `--supersede` is the one sanctioned way to
  * correct a wrong one — it APPENDS a new, higher-versioned comment naming
  * its predecessor and a reason, never touching the original. Every reader of
@@ -66,10 +66,10 @@ export type DispatchTaskResult = { posted: boolean; commentUrl: string | null; b
 export class DispatchTaskError extends Error {}
 
 // `execFileSync`'s own default `maxBuffer` (1 MiB) is the same ceiling that
-// broke `gate-reading.ts`'s `gh` reads at Issue #566 (1,597,599 bytes) —
-// bounded here, once, generously (64 MiB), for the identical reason: an
-// Issue's comment payload is adopter-influenced content this process
-// should not buffer with no ceiling at all (Issue #626, O3).
+// broke `gate-reading.ts`'s `gh` reads once a tracker comment payload
+// reached 1,597,599 bytes — bounded here, once, generously (64 MiB), for
+// the identical reason: an Issue's comment payload is adopter-influenced
+// content this process should not buffer with no ceiling at all (O3).
 const MAX_GH_OUTPUT_BYTES = 64 * 1024 * 1024
 
 function sh(cmd: string, args: string[]): string {
@@ -135,7 +135,7 @@ export function extractAgentClass(rawRationaleField: string): AgentClass | null 
 
 /**
  * O3 — the pure resolution core, exported so it is directly testable with no
- * forge I/O (MAJOR 2, #456 round 1: every existing `dispatchTask` test fakes
+ * forge I/O (a real review finding: every existing `dispatchTask` test fakes
  * this decision out entirely, so this real logic was never exercised). An
  * explicit `--model` always wins (never re-derived or overridden) — that
  * includes an "unacceptable" one: this function never refuses or sanitizes a
@@ -182,8 +182,8 @@ function resolveModelForDispatch(
 
 /**
  * The NEWEST principal-authored frozen-brief comment on Issue `n`, or
- * `null` — `@attalabs/aeg-core`'s `resolveNewestFrozenBrief` (task 4,
- * Issue #483, O3), never a v1-only scan: a supersession is an
+ * `null` — `@attalabs/aeg-core`'s `resolveNewestFrozenBrief`, never a
+ * v1-only scan: a supersession is an
  * APPENDED comment, so the guard below (and `--supersede`'s own predecessor
  * lookup) must see the highest version posted, not the first.
  */
@@ -221,7 +221,7 @@ export type DispatchAuthorization = { authorized: boolean; login: string | null 
  * gating the whole command costs no real automation path. Found live
  * (security review, round `1`): the first cut gated only `--agent`, leaving
  * plain posting open to any actor with `gh` write access — precisely the
- * gap this task's own by-hand recovery on Issue `#427` exploited, posting
+ * gap a real by-hand recovery once exploited, posting
  * a comment `dispatchTask` never authorized. Checked BEFORE anything
  * else — no render, no forge read, no post — mirroring
  * `refuseUnlessPrincipal`'s own fail-closed posture (`lib/forge-write.ts`,
@@ -239,7 +239,7 @@ function resolveDispatchAuthorization(): DispatchAuthorization {
  * must be non-empty and single-line regardless of which path is preparing
  * the task, same authorization/corruption reasoning either way.
  *
- * Security review, PR #503 round 2, MEDIUM: the reason is spliced into a
+ * A security-review MEDIUM finding: the reason is spliced into a
  * SINGLE header line (`Supersedes: <url> — <reason>`) that every reader
  * (`frozenBriefContent`/`contentAfterNLines`) counts as exactly one of the
  * fixed three header lines for a v2+ comment. A `\n`/`\r` in the reason
@@ -265,7 +265,7 @@ export type PrepareTaskInput = {
   n: number
   /**
    * `vinaya task brief <tranche> <n> --supersede --reason <text>`
-   * (task 4, Issue #483, O3) — posts a new, higher-versioned
+   * — posts a new, higher-versioned
    * frozen brief naming its predecessor and this reason, instead of
    * refusing on the existing one. Absent, `prepareTask` keeps its original
    * behavior: refuse when any frozen brief already exists.
@@ -278,7 +278,7 @@ export type PrepareTaskResult = { issue: number; brief: string; commentUrl: stri
  * Injection seam for `apps/cli/tests/lib/dispatch-task.test.ts`. `beforePost`
  * is an opaque hook, not an agent-shaped one — this type carries no
  * `DispatchAgent`, no model, nothing about starting a developer. `dispatchTask`
- * (O3) is the only caller that ever supplies it, closing over its own
+ * is the only caller that ever supplies it, closing over its own
  * `agent`/`model` to resolve and validate the model there; `prepareTask`
  * itself never learns what the hook does, which is what keeps it agent-free —
  * a preparation function that had to know about agents to keep `dispatchTask`
@@ -303,16 +303,16 @@ const defaultPrepareTaskDeps: PrepareTaskDeps = {
  * O1 — the preparation half extracted from what used to be all of
  * `dispatchTask`: resolves the task's Issue, renders the brief, refuses on
  * any gap, and posts the brief as a frozen `aeg:brief:v<k>` Issue comment —
- * `v1` on a first post, or `predecessor.version + 1` under `--supersede`
- * (O3). Starts no agent under any circumstances — that is `dispatchTask`'s
- * job (O3, developer-start half), composed from this function plus the
+ * `v1` on a first post, or `predecessor.version + 1` under `--supersede`.
+ * Starts no agent under any circumstances — that is `dispatchTask`'s
+ * developer-start job, composed from this function plus the
  * existing developer-start half below.
  *
  * `beforePost`, when given, runs after the existing-brief guard passes but
  * before the comment is posted — `dispatchTask` uses this to resolve and
- * validate `--agent`'s model BEFORE the frozen post exists, preserving MAJOR
- * 1's ordering guarantee (#456 round 1: a bad model must never leave a
- * permanently-dispatched task) without this function itself needing to know
+ * validate `--agent`'s model BEFORE the frozen post exists, preserving the
+ * ordering guarantee a real review finding established (a bad model must
+ * never leave a permanently-dispatched task) without this function itself needing to know
  * why the hook exists.
  */
 export async function prepareTask(
@@ -411,7 +411,7 @@ const defaultPrepareIssueTaskDeps: PrepareIssueTaskDeps = {
 }
 
 /**
- * `prepareTask`'s tranche-less twin (O1) — renders the
+ * `prepareTask`'s tranche-less twin — renders the
  * brief from a backlog Issue's own body (`assembleAndRenderBriefForIssue`)
  * and posts it as the same frozen `aeg:brief:v<k>` Issue comment, with the
  * same authorization, existing-brief and supersede rules. Starts no agent,
@@ -543,7 +543,7 @@ export async function dispatchTask(
 ): Promise<DispatchTaskResult> {
   const { tranche, n, agent, model } = input
 
-  // MAJOR 1 (#456 round 1, related to #465, not fixed here): resolved and
+  // A related review finding, not fixed here: resolved and
   // validated BEFORE the brief is posted, not after, via `prepareTask`'s
   // `beforePost` hook — `resolveModelForDispatch` can throw (a `gh issue
   // view` failure fetching this task's own rationale) and if that happened
@@ -575,7 +575,7 @@ export async function dispatchTask(
   )
 
   if (agent) {
-    // O5, Issue #456: `prep.issue`, never `n` — `dispatchRole`'s own `task`
+    // `prep.issue`, never `n` — `dispatchRole`'s own `task`
     // opt is the resolved forge Issue number end to end (`VINAYA_TASK`
     // parses to `subject.issue`, `packages/aeg-core/src/log/envelope.ts`;
     // its resume-record key is `issue<n>`, `dispatch.ts`'s own
@@ -587,7 +587,7 @@ export async function dispatchTask(
         task: prep.issue,
         promptFile,
         model: resolvedModel,
-        // O1/O3 (task 3, #560): this call is `vinaya
+        // O1/O3 (task 3): this call is `vinaya
         // task run`'s own unattended loop starting the Developer — nobody is
         // watching each tool call, so it must run inside the proven boundary
         // (`DispatchOpts.unattended`'s own doc comment).

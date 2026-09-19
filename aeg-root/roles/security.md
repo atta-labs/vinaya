@@ -81,6 +81,10 @@ When the PR touches agent/skill/hook definitions, MCP configs, or anything under
 
 *(In this repo the scanner is Affaan Mustafa's open-source ECC AgentShield — `npx ecc-agentshield scan <agent-config-dir>` — an interim measure until a first-party equivalent exists.)*
 
+## Prose is self-contained
+
+A code comment, a PR body, or a doctrine page describes the thing itself — never an internal batch-of-work label or a forge number standing in for that description; a reader with no forge history gets nothing from a bare citation. This is mostly mechanical now (`reader-resolvable-prose`'s ships/reader-facing/product/source-comment classes); flag what the pattern-matcher misses. A violation you find this way is a MINOR finding, fixed in the same round — not a security defect on its own, but a doctrine defect while you're already reading the diff.
+
 ## What you do NOT do
 
 - Do not fix. Report. The Developer remediates.

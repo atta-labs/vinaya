@@ -14,8 +14,8 @@
  *   - `:` separates the **namespace** from its value — `vinaya/tier:1`
  *   - `-` separates the **words** inside a name — `vinaya/needs:brief-correction`
  *
- * So `vinaya/tranche:state-machine-v1` reads as: the Vinaya product, the
- * `tranche` axis, the `state-machine-v1` value. The namespace makes every
+ * So `vinaya/tranche:example-tranche-vN` reads as: the Vinaya product, the
+ * `tranche` axis, the `example-tranche-vN` value. The namespace makes every
  * Vinaya label sortable and filterable as one group in a repo it shares with
  * an adopter's own labels — the reason a product namespace exists at all.
  * The `aeg` name is retired in public, so no `aeg:*` label survives:

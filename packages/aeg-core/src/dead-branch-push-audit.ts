@@ -1,6 +1,5 @@
 /**
- * Dead-branch-push AUDIT (aeg-governance-hardening task 24, #364, Part 4 —
- * item 2). Distinct from the ring-0 `dead-branch-push-guard.ts` (task 18):
+ * Dead-branch-push AUDIT. Distinct from the ring-0 `dead-branch-push-guard.ts`:
  * that predicate answers "should THIS push be allowed right now?" at push
  * time; this one answers "did commits land on a branch AFTER its PR already
  * resolved?" retrospectively, across every remote `task/*` branch — the

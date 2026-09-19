@@ -157,7 +157,7 @@ describe('applyScaffoldPlan + round-trip', () => {
     expect(inserted?.summary).toBe(PLACEHOLDER)
 
     // Every original row's implementation still resolves, byte-identically
-    // present (existing-row preservation, including the #67-style hand
+    // present (existing-row preservation, including hand-
     // written rows this stands in for).
     for (const original of rows) {
       const stillThere = reparsed.find(

@@ -3,7 +3,7 @@
  * examples". Pure — no `fs`, no `gh`/`git`.
  *
  * **Why it lives here and not in `@attalabs/aeg-core`.** It was written there
- * (`anchored-region.ts`, #617), and `aeg-core` is still where `anchoredRegion`
+ * (`anchored-region.ts`, in an earlier consolidation pass), and `aeg-core` is still where `anchoredRegion`
  * and every anchored-field consumer live — `anchored-region.ts` re-exports
  * `stripCode` so those call sites are unchanged. But the grammar itself had to
  * come down one layer: `list-tasks.ts`'s `projectFieldFromBody` reads the same
@@ -11,7 +11,7 @@
  * depends on this package (`issue-validation.ts` imports `projectsFromBody`),
  * so importing upward would close a cycle. Duplicating the scanners here would
  * be worse still — two code-recognition grammars for one body is the exact
- * defect class #617 removed. Moving them down is the only shape that leaves
+ * defect class that consolidation removed. Moving them down is the only shape that leaves
  * **one** implementation with the dependency arrow pointing the way it already
  * points. This package is the repo's pure forge-body parsing layer
  * (`parse-rationale-deps.ts`, `list-tasks.ts`), which is what this grammar is.
@@ -29,7 +29,7 @@
  * decoy `AEG:CLOSES` anchor inside a tilde fence, a ≥4-backtick fence, or a
  * double-backtick span was invisible to the mask, won `anchoredRegion`, and
  * `extractClosesReferences`/`extractIssue` then resolved a *wrong* Issue number
- * (PR #617 review). That is worse than the strandings that PR exists to fix: the
+ * (caught in review). That is worse than the strandings that fix exists for: the
  * post-merge Archivist reads `extractIssue` to explicitly close the Issue, so
  * the failure mode is closing an unrelated Issue, not failing to close one. The
  * two functions differ **only** in what they emit for a code line — filler here,
@@ -82,7 +82,7 @@ const DETAILS_CLOSE = /<\/details\s*>/gi
  * fenced block or an inline code span is already inert same-length filler
  * by the time this runs, so it can never be mistaken for a real region
  * boundary. Reversing the order reopens the exact decoy class
- * `anchoredRegionBounds` closed for the `AEG:*` anchors (PR #126 review): a
+ * `anchoredRegionBounds` closed for the `AEG:*` anchors (caught in review): a
  * real narrative digit could sit between a quoted `` `<details>` `` and a
  * real `</details>`, and this scanner would mask it by mistake, believing a
  * real block was open when only a code-quoted example was.
@@ -122,11 +122,11 @@ export function maskDetailsBlocks(body: string): string {
 
 /**
  * Removes fenced code blocks and inline code spans entirely, so example/quoted
- * text (a Test Plan's `Closes #123` fixture, a pasted reference brief, a
+ * text (a Test Plan's `Closes #NNN` fixture, a pasted reference brief, a
  * rationale's fenced `**Project:**` example) is never parsed as a real field.
  * This mirrors GitHub's own auto-close parser, which ignores `Closes #N` inside
  * code — a gate that strips the same way can never pass a body GitHub then
- * refuses to auto-close (#311 regression, #608/#611 strandings). Unlike
+ * refuses to auto-close (a real regression, and real stranded Issues). Unlike
  * `maskCode`, indices are NOT preserved: use this when you only test/scan the
  * stripped text, `maskCode` when you must map positions back onto the original
  * body. Shared by `archive-task.ts` (provenance Issue read), `brief-validation.ts`
@@ -143,7 +143,7 @@ export function maskDetailsBlocks(body: string): string {
  * unit — an earlier `` `[^`\n]*` `` form instead peeled the outer backticks
  * as two empty spans and left the inner `Closes #5` surviving as bare text (a
  * false-green: passed the gate, but GitHub, seeing a code span, refused to
- * auto-close — PR #617 review). Fenced blocks are stripped first (see
+ * auto-close — caught in review). Fenced blocks are stripped first (see
  * `maskFencedCode`) so a fence line is never mis-read as an inline span;
  * 4-space **indented** code blocks are stripped in between (see
  * `maskIndentedCode`).
@@ -156,7 +156,7 @@ export function maskDetailsBlocks(body: string): string {
  * second silently changes the answer: an anchor indented inside a list item is
  * list content in the full body (kept; GitHub auto-closes it) and a bare
  * indented code block once sliced (blanked), which reintroduced a stranded
- * Issue through `extractIssue` (PR #617 review MAJOR). Strip, then slice — the
+ * Issue through `extractIssue` (caught in review as a MAJOR finding). Strip, then slice — the
  * `AEG:*` markers are HTML comments and survive the strip, so region selection
  * works on stripped text, and a decoy anchor inside code never survives to be
  * sliced at all.
@@ -166,7 +166,7 @@ export function maskDetailsBlocks(body: string): string {
  * blocks) is always stripped — that is the quoted-example case every caller
  * wants blinded.
  *
- * - `'strip'` (default) — the/#617 shape: spans go too, because a
+ * - `'strip'` (default) — spans go too, because a
  *   `` `Closes #5` `` is code to GitHub's auto-close parser and must be to this
  *   one. Every existing caller relies on it; the default never changes.
  * - `'keep'` — block-blind, span-aware. For checks whose subject *is* a path or
@@ -188,7 +188,7 @@ export type StripCodeOptions = { inlineSpans?: 'strip' | 'keep' }
 export function stripCode(body: string, options: StripCodeOptions = {}): string {
   // Normalise line endings FIRST. The line scanners below anchor per line, and
   // JS's `.`/`[ \t]` never match `\r`, so a CRLF body would open no fence at all
-  // and let a fenced `Closes #N` walk free (PR #617 security re-pass). Doing it
+  // and let a fenced `Closes #N` walk free (caught in a security re-pass). Doing it
   // once here keeps every sub-stripper line-ending agnostic, rather than
   // teaching each individual regex about `\r` and missing the next one. (The
   // fence patterns tolerate a trailing `\r` anyway, for `maskCode`, which cannot
@@ -219,7 +219,7 @@ export function stripCode(body: string, options: StripCodeOptions = {}): string 
  * bare digit inside a mismatched-length backtick pair mask as "code" — and
  * therefore escape `body-bare-digits`'s scan — while GitHub renders the
  * exact same text as plain, fully visible prose with literal stray
- * backticks (security re-review, PR #147, round 9-10).
+ * backticks (caught in a security re-review).
  *
  * This scans backtick runs explicitly instead: an opening run's length is
  * counted in full (so it can never be a partial run to begin with), and a
@@ -296,7 +296,7 @@ const FENCE_CLOSE = /^ {0,3}(`+|~+)[ \t]*\r?$/
  * by character *and* run length.
  *
  * Replaces an earlier `` /```[\s\S]*?```/g `` regex that got three cases wrong
- * (PR #617 security pass):
+ * (caught in a security pass):
  *
  *   - **Tilde fences** (`~~~`) were not recognised at all. GFM fences with `~`
  *     exactly as with backticks.
@@ -325,7 +325,7 @@ function maskFencedCode(body: string, fill: LineFill): string {
  * Both facts come out of the SAME scan on purpose. `hasUnterminatedFence` is a
  * question about the fence grammar, and this file's whole reason to exist is
  * that the grammar has exactly one implementation — answering it with a
- * separate backtick-counting regex is how the two drift and how #617's decoy
+ * separate backtick-counting regex is how the two drift and how that decoy
  * class comes back.
  */
 function scanFencedCode(body: string): { lines: Array<{ line: string; inCode: boolean }>; unterminated: boolean } {

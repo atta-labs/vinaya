@@ -252,7 +252,7 @@ describe('resolveMeteringCapability', () => {
 })
 
 /**
- * `#315`: `sanitizeKey` (unexported, still collision-prone by design — see
+ * `sanitizeKey` (unexported, still collision-prone by design — see
  * its own doc comment) collapses `/a/b` and `/a-b` to the same string, so
  * two repos checked out at colliding paths shared one pointer file, and a
  * pointer legitimately written by a session in the OTHER project could be
@@ -296,8 +296,8 @@ describe('resolveMeteringCapability — pointer-key collision resistance (#315)'
 })
 
 /**
- * `#315` migration: a pointer the shipped Stop hook wrote under the
- * PRE-#315 (legacy) filename — `sanitizeKey` alone, no digest — must stay
+ * The migration: a pointer the shipped Stop hook wrote under the
+ * pre-migration (legacy) filename — `sanitizeKey` alone, no digest — must stay
  * readable once this fix ships, never orphaned. `resolvePointer` falls back
  * to that legacy name only when the new, collision-resistant name is
  * absent.
@@ -475,7 +475,7 @@ describe('reason ↔ probe condition, and what each means for the wiring gate', 
 
   // The false positive: a plain human terminal has no session id, so a pointer
   // left by an earlier session cannot be shown to be theirs. Refusing their
-  // commit over it is the expensive failure `#272` names.
+  // commit over it is the expensive failure a real regression names.
   it('UNCORROBORATED pointer (no session id) naming a missing transcript — PASSES, not the human’s problem', () => {
     const r = probe(world({ pointer: `s1\t${TRANSCRIPT}`, transcript: 'missing' }))
     if (r.capable) throw new Error('unreachable')

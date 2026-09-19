@@ -1,9 +1,9 @@
 // Interactive stdin reader ported from Cetana's `apps/cetana-ai/cli/src/
-// commands/init.ts` (deleted with apps/cetana-ai in #638; recovered from git
+// commands/init.ts` (deleted with apps/cetana-ai; recovered from git
 // history). The abort discipline is the point: when the user declines a
 // confirmation the command MUST call `closeStdin()` (which runs
 // `process.stdin.destroy()`), or the resumed stdin stream keeps the event
-// loop alive and the process hangs — Cetana PR #43's regression.
+// loop alive and the process hangs — a real regression in that Cetana port.
 //
 // The shared line buffer survives across `prompt()` calls so piped input
 // (`printf 'y\n' | vinaya init`) is not lost between reads.
@@ -70,7 +70,7 @@ export async function promptYesNo(question: string, defaultYes = false): Promise
 /**
  * Release stdin so the process can exit cleanly. MUST be called on every exit
  * path that opened a prompt — including the abort path — or the resumed stream
- * keeps the event loop alive and the CLI hangs (Cetana PR #43).
+ * keeps the event loop alive and the CLI hangs (that same real regression).
  */
 export function closeStdin(): void {
   if (reading) {

@@ -4,14 +4,14 @@
  * Core check: brief-shape. Thin adapter over `@attalabs/aeg-core`'s
  * `checkBriefSections` — mirrors `packages/aeg-core/bin/verify-brief.ts`'s
  * input assembly (PR_BODY/BRANCH env, tier via `readTierFromPrBody`, the
- * non-task/non-brief-shaped bypass, `requireClosesN: isTaskBranch(branch)`
- * — #870), but emits the check contract (JSON lines on stderr, exit 0/1)
+ * non-task/non-brief-shaped bypass, `requireClosesN: isTaskBranch(branch)`),
+ * but emits the check contract (JSON lines on stderr, exit 0/1)
  * instead of human text — the reason this is a new executable rather than a
  * wrapper around `bin/*` (`packages/aeg-core/bin/*` is out of this task's
  * boundary to edit).
  *
  * scope: diff — the PR body is what's graded; the one filesystem read added
- * here (task 10, Issue #385) is the workspace `package.json` manifests, read
+ * here is the workspace `package.json` manifests, read
  * once to build `checkConsumerTests`'s consumer enumeration — not a diff of
  * the repo's own content, so the "diff" scope is otherwise unchanged.
  */
@@ -68,7 +68,7 @@ type GradedBodyResolution = { ok: true; body: string } | { ok: false; message: s
  * directly into the PR body.
  *
  * Resolved through `@attalabs/aeg-core`'s `resolveNewestFrozenBrief`
- * (task 4, Issue #483, O3) — the same single resolver the review
+ * — the same single resolver the review
  * loop uses, so a supersession is picked up here too rather than this
  * check grading a stale, since-corrected version.
  */
@@ -86,7 +86,7 @@ function resolveGradedBody(prBody: string, taskBranch: boolean): GradedBodyResol
   } catch (err) {
     // Same treatment `resolveObjectivesApplicability` already gives an
     // unresolvable Issue number just below (a fixture's placeholder
-    // `Closes #999`, a deleted Issue): additive exemption, never a new
+    // `Closes #NNN`, a deleted Issue): additive exemption, never a new
     // hard-failure mode for a resource nothing required before this task.
     // A DIFFERENT fetch failure (network, auth, rate-limit) still hard-fails.
     if (isIssueNotFoundError(err)) {
@@ -132,8 +132,8 @@ function readManifest(dir: string): PackageManifest | null {
 }
 
 /**
- * `checkConsumerTests`'s consumer enumeration (task 10, Issue #385; round-2
- * ruling items 3/4) — `@attalabs/aeg-core`'s `buildConsumersOf`, the SAME
+ * `checkConsumerTests`'s consumer enumeration (a round-2 ruling) —
+ * `@attalabs/aeg-core`'s `buildConsumersOf`, the SAME
  * enumeration `packages/aeg-core/bin/verify-brief.ts` wires for the
  * authoring-time entry point, so CI and pre-dispatch can never disagree
  * about which workspace members count as consumers.
@@ -162,7 +162,7 @@ type ObjectivesResolution =
  * branch whose `Closes #N` is missing/malformed, an Issue below
  * `OBJECTIVES_SINCE_ISSUE`, a standalone brief with no `## Objectives`
  * section at all, or an Issue number that does not resolve (a fixture's
- * placeholder `Closes #999`, a deleted Issue) — additive exemptions, never
+ * placeholder `Closes #NNN`, a deleted Issue) — additive exemptions, never
  * a new hard-failure mode for a resource nothing required before this
  * task. A DIFFERENT fetch failure (network, `gh` auth, rate-limit) is its
  * own named finding (`fetchError`) instead: it means the comparison could

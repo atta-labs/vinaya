@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest'
 /**
  * The doctrine sweep, as a check instead of a habit.
  *
- * `retired-vocabulary.ts` (task 7, Issue #56) gives this suite's `RETIRED`
+ * `retired-vocabulary.ts` gives this suite's `RETIRED`
  * array, plus `RETIRED_IN_PRODUCT`'s non-citation members, a CheckSpec
  * adapter (`apps/cli/src/checks/bin/check-retired-vocabulary.ts`) — a
  * deliberate copy of the pattern/exempt content here, not an import, so this
@@ -39,7 +39,7 @@ import { describe, expect, it } from 'vitest'
  * failure with the file and line printed.
  *
  * A second, related class joined this suite later: `RETIRED_IN_PRODUCT` also
- * bans a forge number (`#294`) cited bare in the doctrine `aeg-root/**`
+ * bans a forge number cited bare in the doctrine `aeg-root/**`
  * publishes. It is not retired — it is the product's live vocabulary — but
  * citing one as an unexplained doctrine reference is exactly the residue the
  * ruling that ended the decision log already named: "a decision id, a
@@ -55,7 +55,7 @@ import { describe, expect, it } from 'vitest'
  * scoped wider than `aeg-root` to also reach product code
  * (`apps/cli/src`/`.github/workflows`/`.vinaya`/two READMEs) — that wider
  * reach, and the pattern itself, now belong entirely to
- * `reader-resolvable-prose.ts`'s `PRODUCT_SLUG_SCOPE` (Issue #435): this
+ * `reader-resolvable-prose.ts`'s `PRODUCT_SLUG_SCOPE`: this
  * suite grepping another package's files let a CLI-only push slip past the
  * rule, since the push hook's affected-test-suite run never touches
  * `aeg-core` for a CLI-only diff.
@@ -65,7 +65,7 @@ import { describe, expect, it } from 'vitest'
  * Four of this repo's own archived tranches — `aeg-governance-hardening`,
  * `aeg-consolidation`, `aeg-studio-cleanup`, `herald-onto-engine` — predate
  * that suffix convention, and the shape-based pattern is structurally blind
- * to them; its self-guard sample (`aeg-coherence-v1`) happened to be drawn
+ * to them; its self-guard sample happened to be drawn
  * from the class the pattern already covers, so it proved non-vacuity
  * without ever proving coverage. `LEGACY_SLUG_PATTERN` below closes that:
  * derived from `aeg-root/tranches/completed/*.md` filenames — the
@@ -144,7 +144,7 @@ const RETIRED_IN_PRODUCT = [
   'CONTRADICTION',
   'assumes Tier 3',
   // A pull-request or Issue number cited as an unexplained parenthetical —
-  // `#294`, `(#365)` — inside the doctrine `aeg-root/**` publishes. It
+  // `#NNN` — inside the doctrine `aeg-root/**` publishes. It
   // resolves only inside this repo's own tracker; an adopter reading the
   // installed doc has no forge to look it up in. Scoped to `aeg-root` only
   // via `PATTERN_SCOPE` below, not the full `PRODUCT` surface: the same
@@ -317,7 +317,7 @@ const EXEMPT = [
  * a 7-path array (`aeg-root`, `packages/aeg-core`, `packages/aeg-forge-state`,
  * `apps/vinaya`, `.vinaya`, and 2 of 22 `.claude/skills`) — but an enumerated
  * list has the exact blind-spot shape that let a `D-###` citation sit
- * unwatched in root `CLAUDE.md` and a dangling reference survive PR #725's
+ * unwatched in root `CLAUDE.md` and a dangling reference survive a real
  * manual citation-strip: a new package/app lands and nobody remembers to add
  * it here. `['.']` is self-maintaining — every current and future surface is
  * covered by construction. `SCOPE` below (for the separate `RETIRED`

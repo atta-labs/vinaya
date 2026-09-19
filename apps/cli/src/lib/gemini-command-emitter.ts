@@ -31,7 +31,7 @@ export const GEMINI_COMMAND_PATH = '.gemini/commands/vinaya.toml'
 /**
  * The doctrine invocation this command shells out to — the source CLI
  * (`bun <dir>/src/index.ts doctrine`) in a repo that vendors `vinaya` as a
- * workspace member, the global binary otherwise (atta-labs/vinaya#408).
+ * workspace member, the global binary otherwise.
  */
 function doctrineInvocation(selfHost: VendoredVinaya | null): string {
   return selfHost ? `bun ${selfHost.dir}/src/index.ts doctrine` : 'vinaya doctrine'

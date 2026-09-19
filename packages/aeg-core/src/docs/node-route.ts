@@ -27,7 +27,7 @@
  * same slug it always did, since stripping/cutting are no-ops on it.
  *
  * Zero I/O, additive export — takes an already-derived node, returns data,
- * never reads a file (aeg-core purity, #372/#382/#506).
+ * never reads a file (an aeg-core purity fix).
  */
 
 import type { DiagramNode } from '../diagram-model'

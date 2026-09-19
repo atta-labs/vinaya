@@ -23,10 +23,10 @@ export function issueMilestonesFromIssues(issues: GhIssue[]): IssueMilestoneFact
 
 /**
  * For OPEN Issues carrying `vinaya/tranche:<slug>`, each Issue's GitHub-native
- * milestone title (or `null` when unattached) — fetching the list itself
- * (aeg-review-gate-v1 task 1 follow-up: the L4 coherence check).
+ * milestone title (or `null` when unattached) — fetching the list itself,
+ * the input the L4 coherence check needs.
  *
- * Unchanged by vinaya-milestone-model-v1 task 1: this reader still reports
+ * Unchanged by the later Milestone-model change: this reader still reports
  * the raw attachment fact for every slug it is asked about, legacy or not.
  * The meaning of that fact changed — a Milestone may now legitimately hold
  * several tranches, so "the attached Milestone's title differs from this

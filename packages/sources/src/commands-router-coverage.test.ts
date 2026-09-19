@@ -17,7 +17,7 @@ const INDEX_SOURCE = readFileSync(INDEX_PATH, 'utf-8')
  * pre-switch, see index.ts's own comment), each single-word `case` label,
  * and `"<label> <sub>"` for each `subcommand === '<sub>'` check inside that
  * case's block — `<sub>` itself may be multiple words (`issue objectives
- * edit`, task 3, #413, joins its second argv token into one literal,
+ * edit` joins its second argv token into one literal,
  * `'objectives edit'`, rather than nesting a second dispatch level). A case
  * WITH subcommand branches (`init`, e.g.) still also dispatches its bare
  * label when the `else` branch is a real command call rather than an

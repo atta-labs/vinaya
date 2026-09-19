@@ -18,7 +18,7 @@
  * fact — they're the same small env-or-git-remote / env-or-`gh` recipe
  * `@attalabs/aeg-forge-state`'s `resolveRepo`/`resolveGithubToken` use, kept
  * local because those two functions are not re-exported from `@attalabs/aeg-core`
- * (aeg-core-purity, #521) and this task's dependency boundary is
+ * (an aeg-core-purity fix) and this module's dependency boundary is
  * `@attalabs/aeg-core` + `@attalabs/vinaya-sources` only.
  *
  * Known scope gap (recorded in the PR body): `priorTrancheArchival` is
@@ -29,7 +29,7 @@
  * re-typing the fact via a second implementation; it is a real (if narrow)
  * parity gap versus `bin/verify-dispatch.ts`, not silently equivalent to it.
  *
- * Optional `PREMISE_FILE` (task 10, #59): when set, names a local brief/PR
+ * Optional `PREMISE_FILE`: when set, names a local brief/PR
  * body file whose `Premise:` block is re-asserted against current on-disk
  * state, mirroring `packages/aeg-core/bin/verify-dispatch.ts --premise`'s
  * file-read + assertion semantics (same `parsePremiseBlock`/`checkPremises`
@@ -466,10 +466,10 @@ async function main(): Promise<void> {
 
 /**
  * Never a wildcard `default: return 'generic advice'` — the trap this task
- * (#355) exists to close. `default` calls `assertNeverBlockerClass`, so
+ * exists to close. `default` calls `assertNeverBlockerClass`, so
  * `DispatchBlockerClass` gaining a member with no `case` here fails
  * typecheck instead of silently routing that new blocker to the wrong
- * advice (the live #350 incident: a new self-dependency class fell through
+ * advice (a live incident: a new self-dependency class fell through
  * to "close the dependency," which is impossible for a self-edge).
  */
 export function recoveryPromptFor(blockerClass: DispatchBlockerClass): string {

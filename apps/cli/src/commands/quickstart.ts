@@ -219,7 +219,7 @@ function readPackageVersion(): string {
   return pkg.version
 }
 
-/** Exported so `#313`'s per-call-site hardening proof can invoke this exact wiring, not a reimplementation of it. */
+/** Exported so a per-call-site hardening proof can invoke this exact wiring, not a reimplementation of it. */
 export function realDeps(): QuickstartDeps {
   return {
     detectRepo: detectGitRepo,
@@ -262,7 +262,7 @@ function errorDetail(err: unknown): string {
 
 /**
  * `git status --short` of the FULL working tree, before anything is staged —
- * printed ahead of the commit (review finding, PR #838): `quickstart` targets
+ * printed ahead of the commit (a review finding): `quickstart` targets
  * a bare/first-run repo, exactly the profile most likely to still carry an
  * ungitignored secret file, and `git add -A` below stages everything with no
  * per-file review. `vinaya init`'s own diff-and-confirm only covers Vinaya's

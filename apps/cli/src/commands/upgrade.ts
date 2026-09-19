@@ -216,7 +216,7 @@ function writeManifestVersion(
 // ---------------------------------------------------------------------------
 // Hook routing — where this upgrade regenerates hooks, and what that implies.
 //
-// A `.git/hooks` install is the atta-labs/attalabs#927 defect: git never
+// A `.git/hooks` install has a real defect: git never
 // versions `.git/`, so the manifest survives every clone while the hooks do
 // not — the installing machine has ring 0, everyone who clones has none,
 // silently. Upgrade is the sanctioned migration path, so it is where a legacy
@@ -232,7 +232,7 @@ function writeManifestVersion(
 // The already-migrated branch carries the SAME arm guard: the manifest saying
 // "tracked" records the migrating machine's situation, not this machine's,
 // and raw hooks never travel with a clone — so arming here still refuses
-// while `foreignRawHooks` is non-empty (reviewer finding, PR #24 round 1).
+// while `foreignRawHooks` is non-empty (a reviewer finding).
 // ---------------------------------------------------------------------------
 type HookStrip = { path: string; marker: string; comment: CommentStyle; present: boolean; removesHost: boolean }
 
@@ -425,7 +425,7 @@ export function planUpgrade(
         // on the path check made the `!exists` branch below unreachable for
         // these two paths, so `doctor`'s "run `vinaya upgrade`" remedy for a
         // missing-but-manifest-owned `.vinaya/doc-owners` provably could not
-        // work (`#182`) — three consecutive `upgrade --yes` runs left the
+        // work — three consecutive `upgrade --yes` runs left the
         // file absent and `doctor` still erroring. A missing file falls
         // through to the ordinary `!exists` → `recreate` handling instead,
         // which restores the pristine starter doctor promised.
@@ -446,7 +446,7 @@ export function planUpgrade(
         // scope; the guard above is what keeps it out of reach.
         action = 'keep'
       } else if (op.path === CLAUDE_SETTINGS_PATH && !owned && !exists) {
-        // Retrofit (task 3, #397): a repo that ran `init` before the Claude
+        // Retrofit: a repo that ran `init` before the Claude
         // Stop hook existed never recorded this path, so the generic `!owned`
         // branch below would skip it forever as `not-installed`. Strict JSON
         // has no comment syntax, so — unlike the managed-block artifact
@@ -491,7 +491,7 @@ export function planUpgrade(
       entries.push({ kind: 'create-file', op, action, ...(triggerChange ? { triggerChange } : {}) })
     } else if (op.kind === 'managed-block') {
       const abs = resolveManagedBlockPath(repoRoot, op.path)
-      // Retrofit (task 3, #397): same reasoning as the settings.json branch
+      // Retrofit: same reasoning as the settings.json branch
       // above, but this artifact IS a managed block — the append/regenerate
       // machinery just below already never clobbers foreign content, so
       // there is no narrower `!exists` guard needed here.
@@ -528,7 +528,7 @@ export function planUpgrade(
 }
 
 /**
- * Merges the two Claude Stop-hook artifacts (task 3, #397) into the manifest
+ * Merges the two Claude Stop-hook artifacts into the manifest
  * actually written to disk, once this run genuinely took ownership of them —
  * `.claude/settings.json` only on `recreate` (never on `refuse-foreign`,
  * which means an adopter's own file was left untouched and must NOT be

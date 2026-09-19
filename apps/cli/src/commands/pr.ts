@@ -81,8 +81,8 @@ function runGhWrite(ghCmd: string[], ghArgs: string[], bodyResult: BodyResult | 
 
 /**
  * Fetches the target PR's real state from the forge — its head branch (which
- * gate set applies is a property of the TARGET PR, never the local checkout —
- * #417) and its changed files (premise coverage). A failed fetch is a HARD
+ * gate set applies is a property of the TARGET PR, never the local checkout)
+ * and its changed files (premise coverage). A failed fetch is a HARD
  * refusal, never a fall-back to the local checkout's diff.
  */
 function fetchPrForgeContext(prRef: string): { changedFiles: string[]; branch: string } {
@@ -235,7 +235,7 @@ function baseBranchFileReader(baseBranch: string): (path: string) => string | nu
 }
 
 /**
- * O8 (`#595`): a `Premise:` pin is supposed to name a pre-existing fact —
+ * A `Premise:` pin is supposed to name a pre-existing fact —
  * something already true when the brief was authored. A `contains:` pin
  * whose target string is absent from the base branch can only be true
  * because THIS PR's own diff adds it — a self-referential premise that
@@ -265,7 +265,7 @@ function refuseOnPremiseAboutOwnAdditions(body: string, baseBranch: string, retr
 }
 
 /**
- * O7 (`#595`): the `AEG:TOKENS` row `pr create` splices into the body at
+ * The `AEG:TOKENS` row `pr create` splices into the body at
  * open — real figures on a metering-capable host, the same accepted
  * unavailable form `collectTokensAddition`'s own "any other incapable
  * reason" branch already writes (`— (${reason})` in the Agent/Model cell)

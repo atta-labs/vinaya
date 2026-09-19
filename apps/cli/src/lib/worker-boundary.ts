@@ -1,9 +1,9 @@
 /**
  * Wires an unattended `dispatchRole` launch (`dispatch.ts`, O1) to the
  * OS-level confinement `apps/cli/specs/isolation.md` specifies and
- * `apps/cli/scripts/isolation-probe.ts` proves (task 1, `#549`) — the
+ * `apps/cli/scripts/isolation-probe.ts` proves (task 1) — the
  * surface that file's own "What this task does not change" section named
- * as a later task's job. This module (task 3, `#560`) is that later task.
+ * as a later task's job. This module (task 3) is that later task.
  *
  * Deliberately does NOT import `apps/cli/scripts/isolation-probe.ts`: that
  * directory is a dev-only script tree, excluded from the published package
@@ -94,7 +94,7 @@ export const RUNTIME_CREDENTIAL_ENV_KEYS: Readonly<Record<string, readonly strin
 }
 
 /**
- * O1 (Issue #640): the file name Claude's own `CLAUDE_CONFIG_DIR` (default
+ * O1: the file name Claude's own `CLAUDE_CONFIG_DIR` (default
  * `<realHome>/.claude`, verified live via `strings` on this authoring
  * host's installed `claude` binary — no `--help`-documented flag exists for
  * it, so it is confirmed the same way a prior task in this file already
@@ -102,8 +102,8 @@ export const RUNTIME_CREDENTIAL_ENV_KEYS: Readonly<Record<string, readonly strin
  * `--help` text: read directly off the vendor's own shipped artifact) holds
  * an OAuth-authenticated session's credential. `isolation.md` §1's HOME deny
  * rule denies this path unconditionally (it is a subpath of the real
- * `HOME`) — exactly the boundary this task must NOT widen (Issue #640's own
- * Traps) — so a confined `claude` session that authenticates by
+ * `HOME`) — exactly the boundary this task must NOT widen (per this task's
+ * own Traps section) — so a confined `claude` session that authenticates by
  * subscription rather than `ANTHROPIC_API_KEY` needs a scoped COPY staged
  * somewhere the profile already grants access to, never a new grant onto
  * this real path.
@@ -580,7 +580,7 @@ export function buildWorkerSandboxProfile(opts: {
  * `resolveWorkerBoundaryLaunch` has no env-construction role of its own.
  */
 /**
- * `oauthConfigDir` (O1, Issue #640): non-`null` only when `stageOAuthCredential`
+ * `oauthConfigDir` (O1): non-`null` only when `stageOAuthCredential`
  * was requested AND a real OAuth session credential was found to stage —
  * the caller (`dispatch.ts`) sets the confined child's `CLAUDE_CONFIG_DIR`
  * to this value so it authenticates against the staged copy, never the real
@@ -728,7 +728,7 @@ export type WorkerBoundaryLaunchOpts = {
    */
   bootstrapWritableSubpaths?: readonly string[]
   /**
-   * O1 (Issue #640): when `true`, this resolution attempts
+   * O1: when `true`, this resolution attempts
    * `stageOAuthCredential` — reading the real, unconfined
    * `resolveOAuthConfigSourceDir(process.env, realHome)/.credentials.json`
    * and, if it exists, staging a scoped COPY into `scratchTmpDir` (already
@@ -787,7 +787,7 @@ export function resolveWorkerBoundaryLaunch(
     const runtimeDir = dirname(resolvedBinaryPath)
     const scratchTmpDir = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-worker-boundary-')))
 
-    // O1 (Issue #640): staged into `scratchTmpDir` — a directory already
+    // O1: staged into `scratchTmpDir` — a directory already
     // granted read+write below (`readWriteDirs`) — so this never widens the
     // profile beyond what the steady-state grant already covers. Resolved
     // here, before `readWriteDirs`/`execAllowDirs` are built, purely so the

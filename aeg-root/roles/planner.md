@@ -288,6 +288,10 @@ When you raise a warning, state the specific signal, give your recommendation (u
 
 ---
 
+## Prose is self-contained
+
+The rationale you write onto an Issue, and any doctrine page you edit, describes the thing itself — the boundary, the trap, the reason for an edge — never an internal batch-of-work label or a forge number standing in for that description. A future reader of that Issue (a Developer dispatched against it, a Reviewer months later, someone auditing why a decision was made) has no forge history to resolve a bare citation against; write what you concluded, not where you concluded it. `reader-resolvable-prose` enforces this mechanically for doctrine pages and, via its source-comment class, for `.ts` comments — treat a flagged citation the same as any other gate failure, not a style nit.
+
 ## Naming the tranche
 
 Name the tranche (its `vinaya/tranche:<slug>` label) after its **center of gravity — the durable, highest-leverage work — not its narrowest downstream feature.** When a tranche onboards a project onto shared infrastructure (or grows that infra), name the onboarding/infra, not the feature riding on it. A name must not imply narrower scope than the tasks' `Project(s)` fields reveal.

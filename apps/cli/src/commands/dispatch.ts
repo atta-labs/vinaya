@@ -1,6 +1,6 @@
 /**
- * `vinaya dispatch <role> --agent claude|codex|gemini --prompt-file <path>`
- * (Issue #406). Thin argv-parsing shim over
+ * `vinaya dispatch <role> --agent claude|codex|gemini --prompt-file <path>`.
+ * Thin argv-parsing shim over
  * `dispatchRole` (`../lib/dispatch.js`) — the real spawn/timeout/attribution
  * logic lives there. Calls `flushOutbox`/`flushOutboxToWebhook`
  * (`../lib/log-flush.js`/`../lib/log-webhook-flush.js`) directly when
@@ -9,8 +9,8 @@
  * (`apps/cli/specs/surface.md`) — no shared `flushLog` extraction here, that
  * is `sharedCommandShell`'s own future task.
  *
- * **The trailing flush's destination is `logPublish` (Issue #636,
- * O4), never `--task`/`--pr` directly.** `--task`/`--pr` only pick WHICH
+ * **The trailing flush's destination is `logPublish`,
+ * never `--task`/`--pr` directly.** `--task`/`--pr` only pick WHICH
  * task's own local outbox to drain — same as `vinaya log flush`'s own
  * `--issue`/`--pr` for that half. Before this fix, this command posted the
  * outbox straight onto the dispatched task's own Issue/PR unconditionally,
@@ -35,10 +35,10 @@
  * `webhookUrl` is never honored on its own — only the repository's
  * default-branch copy of the SAME `webhookUrl` authorizes the POST.
  *
- * `flushOutbox`/`flushOutboxToWebhook` never call `process.exit` (task 3,
- * `#482`, O1) — unlike the `logFlushCommand` this used to call directly, a
- * real command-calling-command case `surface.md`'s Exemptions table used to
- * carry for this row (retired by that same task). A thrown
+ * `flushOutbox`/`flushOutboxToWebhook` never call `process.exit` — unlike
+ * the `logFlushCommand` this used to call directly, a real command-calling-
+ * command case `surface.md`'s Exemptions table used to carry for this row
+ * (retired by that same task). A thrown
  * `LogFlushError`/`WebhookFlushError` is caught and logged to stderr, never
  * fatal: a flush failure does not undo the dispatch's own effect (the child
  * already ran, and its log lines are already durably written to the local
@@ -72,7 +72,7 @@ type ParsedArgs = {
   resume: string | undefined
   roleLogPath: string | undefined
   json: boolean
-  /** O3 (task 3, `#560`): threads `DispatchOpts.unattended` — see that field's own doc comment. Off by default: a manual `vinaya dispatch` invocation is attended unless this flag says otherwise. */
+  /** Threads `DispatchOpts.unattended` — see that field's own doc comment. Off by default: a manual `vinaya dispatch` invocation is attended unless this flag says otherwise. */
   unattended: boolean
   /** Any `--flag`-shaped or stray positional token this parser does not
    * recognize — `dispatchCommand` refuses rather than silently dropping it.

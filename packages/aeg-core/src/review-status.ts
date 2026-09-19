@@ -1,5 +1,5 @@
 /**
- * The review loop's own state, derived (review-convergence-v1 task 8, #381).
+ * The review loop's own state, derived.
  * Pure — no `fs`, no `fetch`, no `process.env`; the CLI shim
  * (`apps/cli/src/commands/review-status.ts`) fetches the PR's comments, head
  * and base through `gh` and hands them here.
@@ -55,7 +55,7 @@ export type ReviewStatusInput = {
   principalAllowlist: string[]
   maxRounds: number
   /**
-   * The current `objectivesVersion` this PR is judged against (`#412`, O3) —
+   * The current `objectivesVersion` this PR is judged against —
    * same resolution `checkReviewGate`'s caller supplies. `null` (or the field
    * omitted entirely — the CLI command wiring is a separate task's surface,
    * so an existing caller that does not supply it yet must keep compiling
@@ -120,8 +120,7 @@ export type Round = { judgedHead: string | null; objectivesVersion: string | nul
  * are one round, not two — which is why the grouping key is the judged head
  * and not the comment count.
  *
- * Exported for `dev-review-loop/assess-round.ts` (dev-review-loop-v1 task 4,
- * `#414`) to reuse the same id-state merge semantics (first non-null state
+ * Exported for `dev-review-loop/assess-round.ts` to reuse the same id-state merge semantics (first non-null state
  * wins on a duplicate id) when it combines a round's reviewer and security
  * `VerdictObservation`s into one id-state map — no behaviour change, no
  * second copy of the merge rule.
@@ -210,7 +209,7 @@ export function deriveReviewStatus(input: ReviewStatusInput): ReviewStatus {
     return { state: 'PAUSE', reason: 'stale', round: rounds.length }
   }
 
-  // objectives-moved (`#412`, O3) — the head is unchanged (the `stale` check
+  // objectives-moved — the head is unchanged (the `stale` check
   // above already passed), but the objectives list the PR is judged against
   // has moved since the newest verdict. `input.objectivesVersion === null`
   // skips this entirely (the same fail-open-on-`null` rule `checkReviewGate`
@@ -236,7 +235,7 @@ export function deriveReviewStatus(input: ReviewStatusInput): ReviewStatus {
  * newest verdict's judged head is no longer the PR's, and no Developer round
  * comment has answered it since) is exactly "a commit landed after the
  * newest verdict, unacknowledged": `push after verdict — re-review required`.
- * `objectives-moved`'s condition (`#412`, O3) is the same shape for the
+ * `objectives-moved`'s condition is the same shape for the
  * objectives list instead of the head: `objectives moved — re-review
  * required`.
  */

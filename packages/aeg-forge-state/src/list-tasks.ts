@@ -9,16 +9,16 @@ import { hasUnterminatedFence, stripCode } from './strip-code'
 export const TITLE_PATTERN = /^\[([^\]]+)]\s*(\S+)\s*—\s*(.+)$/
 
 /** Reads the `**Project:**` field from a task Issue's rationale body (the
- * Planner-rationale grammar). Project is a **field, not a label** (doctrine): `state-machine-v1`
- * task 2 / #614 dropped the `project:*` labels outright, so the field is the
+ * Planner-rationale grammar). Project is a **field, not a label** (doctrine): a
+ * real migration dropped the `project:*` labels outright, so the field is the
  * only source. It also resolves a forge-native task Issue that carries only the
- * field and never got a label (the `state-machine-v1` dead-board case). Matches
+ * field and never got a label (the dead-board case that migration exposed). Matches
  * the bold field line only; the prose `**Project(s) + blast radius**` heading
  * and a backticked inline `Project: x` never match (no `:**` right after).
  *
  * Values are shape-guarded, not registry-checked: the field is free prose and
- * authors write real sentences in it (#554: `**Project:** (none — tools/admin
- * is unregistered; …)`), which without a guard becomes a "project" that builds
+ * authors write real sentences in it (a real Issue read `**Project:** (none —
+ * tools/admin is unregistered; …)`), which without a guard becomes a "project" that builds
  * a 404 board link — strictly worse than the board-less row it replaces. The
  * guard stays a slug shape rather than a registry lookup on purpose: this
  * package is pure, repo-parameterized forge derivation and must not couple to
@@ -45,8 +45,9 @@ export const PROJECT_SLUG = /^[a-z0-9][a-z0-9-]*$/i
  * older Issues were authored with (an entire early cohort, plus the fixtures
  * derived from it). Accepting only the bold form made this
  * parser disagree with `issue-validation.ts`'s `declaredProjects`, which has
- * always been tolerant — and once #614 deleted the `project:*` labels, that
- * disagreement silently dropped the project of every plain-form Issue.
+ * always been tolerant — and once a real migration deleted the `project:*`
+ * labels, that disagreement silently dropped the project of every
+ * plain-form Issue.
  *
  * The optional `**` are matched independently on each side rather than as a
  * required pair, which is what keeps the prose heading `**Project(s) + blast
@@ -91,11 +92,12 @@ const PROJECT_FIELD = /^\s*(?:\*\*)?Project(?:\(s\))?(?:\*\*)?\s*:\s*(?:\*\*)?\s
  * something and the parser dropped it". A registry gate reading only `names`
  * therefore passes **vacuously** on a value it never received — it cannot
  * refuse a name that was filtered away before it arrived. The instance that
- * made this concrete: #104 named its project only in the `Project(s) + blast
- * radius` prose heading, which this parser deliberately does not read, so no
- * gate fired on it and it sat invisible until someone counted the corpus by
- * hand. (#104 has carried a real field since the #112 registry migration; the
- * defect class is what this type exists for, not that one Issue.)
+ * made this concrete: a real Issue named its project only in the
+ * `Project(s) + blast radius` prose heading, which this parser deliberately
+ * does not read, so no gate fired on it and it sat invisible until someone
+ * counted the corpus by hand. (That Issue has carried a real field since a
+ * later registry migration; the defect class is what this type exists for,
+ * not that one Issue.)
  *
  * `unparsed` carries those dropped values verbatim (comma-split, trimmed) so a
  * caller can report what it could not check. It is deliberately raw and

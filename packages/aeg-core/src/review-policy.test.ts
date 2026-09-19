@@ -173,9 +173,9 @@ describe('evaluateReviewFindings — prose cap (#543 O5)', () => {
     expect(result.outcome).toBe('clean')
   })
 
-  // REGRESSION — policy mismatch surfaced by task-operator-v1 3, NOT resolved here.
-  // `aeg-root/roles/operator.md` (shipped by this task) is prose by path, so the
-  // path-based role-file prose cap treats it exactly like `security.md` above: a
+  // REGRESSION — a policy mismatch surfaced when this task shipped
+  // `aeg-root/roles/operator.md`, NOT resolved here. The file is prose by
+  // path, so the path-based role-file prose cap treats it exactly like `security.md` above: a
   // CRITICAL finding located in it is capped to MINOR and never blocks. But this role file's own
   // content IS a security boundary — it declares the Operator's authority grant
   // (never merge, approve, rule, or edit an Issue). So a genuine CRITICAL flaw in

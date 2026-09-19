@@ -7,8 +7,8 @@
  * `ps` scan (Traps to avoid), never a re-parse of posted verdict comments to
  * decide `published` (same).
  *
- * The driver pid record (`#498`, merged as `a52619e9`) and the pause/
- * effect-marker shapes (`#415`) both live as private state in
+ * The driver pid record (merged as `a52619e9`) and the pause/
+ * effect-marker shapes both live as private state in
  * `dev-review-loop.ts` — this file re-reads those exact same on-disk paths
  * and JSON shapes rather than exporting new surface from that file (out of
  * this task's Surface).
@@ -167,7 +167,7 @@ function isDriverPidAlive(pid: number): boolean {
   }
 }
 
-// --- O2 (`#548` v3): the role log's own `driver_exited` trace ------------
+// --- The role log's own `driver_exited` trace ------------------------------
 
 /**
  * The `{owner,repo}` `loopLogPathFor` needs, resolved synchronously and
@@ -318,7 +318,7 @@ export type TaskLoopState =
  * `published` (derived from the effect markers alone) wins over a stale
  * `paused` reading in that case.
  *
- * O2 (`#548` v3): a DEAD driver lock is itself the signal that the last run
+ * A DEAD driver lock is itself the signal that the last run
  * exited abnormally — every normal exit path (a decided `pause`, a
  * `publish`, or a clean `no_driver`-since-never-run) either clears the lock
  * (the outer `finally`) or never wrote one crediting the current run. So a
@@ -428,7 +428,7 @@ function renderStateText(state: TaskLoopState): string {
   }
 }
 
-/** One stable line per task (O3): `[<tranche>] <id> — Issue #<n> — PR #<n>|— — <state>`. */
+/** One stable line per task: `[<tranche>] <id> — Issue #<n> — PR #<n>|— — <state>`. */
 export function renderTaskStatusRow(row: TaskStatusRow): string {
   const prText = row.pr ? `PR #${row.pr.number}` : 'PR —'
   return `[${row.tranche}] ${row.id} — Issue #${row.issue} — ${prText} — ${renderStateText(row.state)}`

@@ -11,7 +11,7 @@
  * to inject `PR_LABELS`/`WAIVER_LABEL_ACTOR` env vars; no generated
  * `vinaya-checks.yml` — old or current — ever set them, so an applied
  * `vinaya/waiver:docs` label was silently unreachable by this check in every
- * adopter's CI (caught live on atta-labs/attalabs#948). Self-resolving here
+ * adopter's CI (caught live on a real adopter repo). Self-resolving here
  * needs no workflow template change and fixes every already-generated
  * `vinaya-checks.yml` in place.
  *

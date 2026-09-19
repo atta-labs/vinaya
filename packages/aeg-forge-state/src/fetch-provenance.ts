@@ -2,8 +2,8 @@
  * Provenance fetch — the single implementation of the "does this Issue's
  * closing PR carry an `### AEG provenance` block?" fact.
  *
- * Moved here from `packages/aeg-core/bin/verify-coherence.ts` (task 28, #372
- * bundled finding) so Studio's server components can call it without pulling
+ * Moved here from `packages/aeg-core/bin/verify-coherence.ts` so Studio's
+ * server components can call it without pulling
  * in that CLI's top-level `process.chdir` side effect. The CLIs
  * (`verify-coherence.ts`, `verify-dispatch.ts`) import it from here — same
  * direction as their existing `fetchForgeFacts`/`resolveRepo` imports. One
@@ -21,8 +21,9 @@ const PROVENANCE_PATTERN = /^###\s+AEG provenance\b/im
  * names `issueNum`. Required by the cross-reference fallback below: an
  * unrelated PR can legitimately mention `#<issueNum>` in passing while
  * carrying a genuine provenance block for a *different* task (confirmed
- * live — PR #193 mentions #170 but its provenance targets #171; PR #321
- * mentions #168 but targets #282). Matches `buildProvenanceBlock`'s fixed
+ * live, twice: a citing PR's own provenance block named a different issue
+ * entirely than the one it merely mentioned in passing). Matches
+ * `buildProvenanceBlock`'s fixed
  * `- Issue:        #<N>` line (`archive-task.ts`).
  */
 function provenanceMatchesIssue(text: string, issueNum: number): boolean {
@@ -51,14 +52,14 @@ type CrossRefResponse = {
 /**
  * Fallback for issues whose most-recent `ClosedEvent` has no PR `closer` —
  * the confirmed case for Issues closed via an explicit `gh issue close`
- * (the manual-close path, live case: Issue #170), where the primary
+ * (the manual-close path, confirmed live on a real Issue), where the primary
  * fallback would return `false` for all three.
  *
  * Instead this searches `CROSS_REFERENCED_EVENT` timeline items, which
  * GitHub populates for *any* PR that mentions `#<issueNum>` anywhere (not
  * only an unresolved `Closes #N` link) — covering both the "PR body never
  * linked the issue" case and the "link was present but native auto-close
- * didn't fire" case (#170 → PR #191) with one mechanism. Candidates are
+ * didn't fire" case with one mechanism. Candidates are
  * verified with `provenanceMatchesIssue` so an unrelated cross-referenced PR
  * carrying someone else's provenance can't produce a false positive.
  */
@@ -130,8 +131,8 @@ async function fetchProvenanceViaCrossReferences(
  *
  * Fetches the most recent `ClosedEvent` (`last: 1`, not `first: 1`) — a
  * reopened-then-reclosed issue's real closer is the *last* `ClosedEvent`, not
- * the first (confirmed live: Issue #287 was closed by PR #288, reopened,
- * then really closed by PR #313 — the PR carrying provenance). `timelineItems`
+ * the first (confirmed live: a real issue was closed by one PR, reopened,
+ * then really closed by a second PR — the one carrying provenance). `timelineItems`
  * supports `last` combined with `itemTypes` filtering directly, so no
  * client-side bounded-window workaround is needed.
  *

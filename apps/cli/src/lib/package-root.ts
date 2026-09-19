@@ -26,7 +26,7 @@ export function packageRoot(moduleUrl: string): string {
     // package) finds its `package.json` well before any `.git`; only the
     // pathological no-package.json walk ever reached ancestors outside the
     // repo, where a planted `package.json` could redirect the resolved
-    // install root (security review, PR #94 — same class as studio.ts's and
+    // install root (a security-review finding — same class as studio.ts's and
     // config.ts's walks).
     if (existsSync(join(dir, '.git'))) break
     const parent = dirname(dir)

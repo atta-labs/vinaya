@@ -1,6 +1,5 @@
 /**
- * `dev-review-loop`'s publication concern (task 8,
- * `#506`, O8) — posting a round's already-held verdicts and summary to the
+ * `dev-review-loop`'s publication concern — posting a round's already-held verdicts and summary to the
  * forge, idempotently, with a policy self-check before either verdict counts
  * as publishable (O3: a reviewer's own APPROVE/PASS never overrides the
  * evaluator). Moved out of `apps/cli/src/lib/dev-review-loop.ts` verbatim;
@@ -79,8 +78,8 @@ export function postForgeEffectOnce(root: string, task: number, key: string, pos
 }
 
 /**
- * Posts `body` on `prNumber` through the shared `EffectExecutor` (Issue
- * #552), keyed by `key` — O1's "persist the effect identity before the
+ * Posts `body` on `prNumber` through the shared `EffectExecutor`,
+ * keyed by `key` — O1's "persist the effect identity before the
  * write," O2's "reconcile against the remote before a retry," in place of
  * `postForgeEffectOnce`'s own local `'posted'` flag, which cannot tell a
  * confirmed post apart from one whose confirmation was lost to a crash.
@@ -130,9 +129,9 @@ function postPrComment(pr: number, body: string): string {
 
 /**
  * Attributed bodies only — a comment whose author does not resolve as a
- * principal is not evidence that THIS run's own post landed (security
- * review, PR #459: this is the same untrusted-comment class PR #445 closed
- * for `fetchRulings`/`fetchFrozenBrief`, reintroduced here). Reuses
+ * principal is not evidence that THIS run's own post landed (a security
+ * review finding: this is the same untrusted-comment class a related finding
+ * closed for `fetchRulings`/`fetchFrozenBrief`, reintroduced here). Reuses
  * `review-post.ts`'s `principalBodies` — the exact filter `checkReviewGate`
  * itself applies before calling either extractor — rather than a second,
  * parallel derivation.
@@ -149,11 +148,11 @@ export type PublishInput = {
   /** The round's judged head — every posted verdict is expected to bind to this, re-verified after each post. */
   expectedHead: string
   journal: Journal
-  /** Which severities block is repository policy (task 8, `#506`, O2/O3) — the SAME resolved value `buildVerdictFromReport` derived this round's held verdicts under. */
+  /** Which severities block is repository policy — the SAME resolved value `buildVerdictFromReport` derived this round's held verdicts under. */
   policy: ReviewPolicy
   /**
    * The manifest this round was dispatched against (task 5,
-   * `#555`, O3) — `compareManifest`, the SAME comparison the merge gate and
+   * O3) — `compareManifest`, the SAME comparison the merge gate and
    * the driver's own pre-hold self-check call, is applied here too against
    * each posted verdict's echoed lines, so publication binds on EVERY field
    * (base, brief, objectives, ruling, policy), not just the head it already
@@ -178,8 +177,8 @@ export function unboundFields(binding: ManifestBindingResult): string[] {
 
 /**
  * The echoed manifest a posted verdict re-parses to, compared against the
- * round's own manifest with the SAME `compareManifest` the gate uses (`#555`,
- * O3). Never trusts the echo as provenance — it is read back from the posted
+ * round's own manifest with the SAME `compareManifest` the gate uses
+ * (O3). Never trusts the echo as provenance — it is read back from the posted
  * text only to confirm the comment still covers the manifest the round was
  * dispatched with (`patchIdOf` is deliberately not supplied here: a
  * just-posted verdict must bind by exact identity, never rely on a rebase

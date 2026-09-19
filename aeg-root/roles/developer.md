@@ -376,6 +376,10 @@ After every commit: `git log --oneline -3` to confirm the new commit is a direct
 
 ---
 
+## Prose is self-contained
+
+A code comment, a pull-request body, and a doctrine page each describe the thing itself — what the code does, what changed, what a reader needs in order to act — never an internal batch-of-work label or a forge number standing in for that description. A citation is a pointer only this repository's own history can resolve; a reader without that history (a fork, an export, someone reading the file in five years after the Issue is closed) gets nothing from it. Where the fact is worth recording, write the fact — what was learned, decided, or fixed — not where it was logged. `reader-resolvable-prose`'s source-comment class enforces this mechanically over `.ts` comment lines under the configured source globs (`packages/aeg-core/src/reader-resolvable-prose.ts`); treat a citation it flags the same as a failing test, not a style nit to defer.
+
 ## When to escalate
 
 | Situation | Action |

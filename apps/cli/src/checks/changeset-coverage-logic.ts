@@ -1,5 +1,5 @@
 /**
- * Pure predicate for the `changeset-coverage` check (Issue #258). No `fs`,
+ * Pure predicate for the `changeset-coverage` check. No `fs`,
  * no `git` — every fact this needs (the fixed group's members and their
  * `package.json` `files` allowlists, the diff's changed paths, whether this
  * run is against the Changesets-release branch) is supplied by the caller,

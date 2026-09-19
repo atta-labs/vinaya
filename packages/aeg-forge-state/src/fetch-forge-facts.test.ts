@@ -10,9 +10,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
  *    `<!-- AEG:CLOSES:START -->` convention produces exactly this shape).
  *    When that happens, the `... on PullRequest { ... }` inline fragment
  *    matches nothing and GraphQL returns `{}` — an empty object, not `null`
- *    — so `extractRawFromResponse` must not treat it as a valid PR (PR #529).
+ *    — so `extractRawFromResponse` must not treat it as a valid PR.
  *
- * 2. Stale ClosedEvent after reopen (#524): an issue closed once (e.g.
+ * 2. Stale ClosedEvent after reopen: an issue closed once (e.g.
  *    manually, `closer: null`), reopened, then closed again by a real merged
  *    PR has two `ClosedEvent`s on its timeline. `timelineItems(first: 1, ...)`
  *    returned the stale first event; the fix queries `last: 1` instead. The
@@ -61,7 +61,7 @@ vi.mock('@octokit/graphql', () => ({
       // exercise `buildBatchQuery`'s `first`/`last` choice: if the source
       // regresses to `timelineItems(first: 1, ...)`, `usesLast` goes false
       // and the mock hands back the FIRST fixture entry (the stale one),
-      // which fails the #524 regression test below. Mirrors the pattern in
+      // which fails the reopen-regression test below. Mirrors the pattern in
       // `packages/aeg-core/bin/verify-coherence.test.ts`.
       const usesLast = /timelineItems\(last:\s*1/.test(query)
       const repository: Record<string, unknown> = {}
@@ -167,7 +167,7 @@ describe('fetchForgeFacts — squash-merge closer fact loss', () => {
 
 describe('fetchForgeFacts — stale ClosedEvent after reopen (#524)', () => {
   it('resolves prState from the real closing PR, not a stale earlier ClosedEvent with a null closer', async () => {
-    // Reproduces Issue #524 exactly: closed once manually (closer: null),
+    // Reproduces a real regression exactly: closed once manually (closer: null),
     // reopened, then closed again by a real merged PR. `first: 1` on
     // timelineItems used to return the stale first event (closer: null),
     // resolving prState to 'none' even though a PR really merged and closed
@@ -210,7 +210,7 @@ describe('fetchForgeFacts — stale ClosedEvent after reopen (#524)', () => {
 
 describe('fetchForgeFacts — closedByActor (task vinaya-engine-v1 21, #99)', () => {
   it('resolves closedByActor from a manual close (closer null, actor populated) — reproduces attalabs#890', async () => {
-    // Reproduces the incident exactly: `atta-labs/attalabs#890` was closed
+    // Reproduces a real incident exactly: a real Issue was closed
     // directly (`gh issue close` / the web UI), no PR — `closer` is null but
     // `actor` records who performed the close.
     fixtures.t_1 = {

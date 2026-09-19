@@ -1,5 +1,5 @@
 /**
- * Workspace-escape detection (task 17, Issue #78). Neither the module
+ * Workspace-escape detection. Neither the module
  * dependency graph nor a literal-path grep sees a filesystem reference built
  * at runtime from a relative string — measured 2026-08-16 during attalabs'
  * adoption of the published CLI: deleting the vendored CLI workspace looked
@@ -10,7 +10,7 @@
  * relative specifier with no literal `apps/vinaya/cli` substring for the
  * grep to hit.
  *
- * This covers the three idioms Issue #78 names: `readFileSync`/`readFile`
+ * This covers three idioms: `readFileSync`/`readFile`
  * with a literal relative-path first argument, and `new URL('…',
  * import.meta.url)`. It does NOT follow `import`/`require` module
  * specifiers — the dependency graph already owns those, and duplicating it
@@ -19,7 +19,7 @@
  * Deliberately static-string-only: a literal containing `${…}` (a template
  * with interpolation) is a dynamically computed path and stays out of
  * scope, same as any non-literal argument — resolving those needs data-flow
- * analysis, a different and much larger job than this file (Issue #78's own
+ * analysis, a different and much larger job than this file (this module's own
  * stated boundary).
  *
  * Zero I/O: every input (file paths + contents, `knownPaths`) is read by the

@@ -46,8 +46,8 @@ import type { TokensCollectTrustEntry, VinayaConfig } from '../lib/config.js'
  *     `model`). Wins outright when declared — never silently falls through
  *     to the transcript route on a run/parse failure, since that would risk
  *     masking a real collection bug behind a plausible-looking
- *     transcript-route result. **Gated on trust** (security review, PR
- *     #303, rounds 2-3): never runs until a human has explicitly approved
+ *     transcript-route result. **Gated on trust** (a security review):
+ *     never runs until a human has explicitly approved
  *     this exact interpreter/script declaration AT this exact script
  *     content, for this repo, on this machine, via
  *     `vinaya tokens --trust-collect` — see `config.ts`'s
@@ -158,7 +158,7 @@ export type TokensDeps = MeteringCapabilityDeps & {
   runScript: (interpreter: string, scriptAbsolutePath: string, cwd: string) => string
   /**
    * Announces the exact interpreter/script about to run, to stderr,
-   * immediately before it runs. Round 1 of security review, PR #303 — kept
+   * immediately before it runs. An early round of security review — kept
    * as a per-run audit trail even now that trust (below) is what actually
    * gates execution.
    */
@@ -175,9 +175,9 @@ export type TokensDeps = MeteringCapabilityDeps & {
   /**
    * The recorded trust entry for this exact (repo, interpreter, script)
    * triple, or `null` if never approved — `config.ts`'s
-   * `getTokensCollectTrust`. Security review, PR #303, rounds 2-3: round 2
-   * (HIGH) closed "runs with no real window to react" by gating on approval
-   * at all; round 3 (BLOCKER) closed "approval covers the STRING, not the
+   * `getTokensCollectTrust`. A security review, across rounds: one HIGH
+   * finding closed "runs with no real window to react" by gating on approval
+   * at all; a later BLOCKER finding closed "approval covers the STRING, not the
    * script's CONTENT" by pinning `entry.scriptBlobHash` alongside it —
    * `runDeclaredCollect` compares that hash against `scriptContentHash`'s
    * CURRENT answer itself, refusing on either "never approved" or "approved,
@@ -293,8 +293,8 @@ function resolveDeclaredCollect(
  * masking a real collection bug behind a different, plausible-looking
  * result).
  *
- * Gated on trust before anything runs (security review, PR #303, rounds
- * 2-3): refuses outright unless a human has already approved this exact
+ * Gated on trust before anything runs (a security review):
+ * refuses outright unless a human has already approved this exact
  * (interpreter, script) declaration, AT the script's exact current content,
  * for this repo, on this machine, via `vinaya tokens --trust-collect`. Two
  * distinguishable refusals — "never approved" vs. "approved, but the
@@ -343,7 +343,7 @@ function runDeclaredCollect(command: string, deps: TokensDeps): TranscriptSummar
   return parseDeclaredCollectOutput(raw, command)
 }
 
-/** A declared script may legitimately do real work (hit an API, read a log) — longer than `config.ts`'s plumbing-only `GIT_IDENTITY_TIMEOUT_MS` — but a stuck or hostile process must not block `vinaya tokens` forever either (code review, PR #303, round 2 follow-up). */
+/** A declared script may legitimately do real work (hit an API, read a log) — longer than `config.ts`'s plumbing-only `GIT_IDENTITY_TIMEOUT_MS` — but a stuck or hostile process must not block `vinaya tokens` forever either (a code-review finding). */
 const COLLECT_COMMAND_TIMEOUT_MS = 30_000
 
 /** Exported so other commands collecting real usage figures (`pr-report.ts`'s `AEG:TOKENS` writer) share this exact I/O shim rather than a second copy of it. */

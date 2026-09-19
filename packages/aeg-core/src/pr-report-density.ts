@@ -4,24 +4,24 @@
  *
  * `aeg-root/roles/developer.md` § "PR body — canonical form" and
  * `aeg-root/templates/pr-report-template.md` both require `## Decisions`
- * (`## Summary` before the plan-brief-v1 rename — see below) and `## Scope`
+ * (`## Summary` before an earlier rename — see below) and `## Scope`
  * to hold exactly one blank-line-delimited block — narrative root-cause
  * detail belongs in a section of its own below the canonical four, a commit
  * message, or the changeset, never padded into the report itself and never
  * hand-typed into the AEG:EVIDENCE block. Nothing enforced that rule
  * mechanically:
- * confirmed live, three real PRs (`atta-labs/vinaya#343`, `#346`, `#354`)
+ * confirmed live, three real PRs
  * shipped multi-paragraph Summary/Scope sections and nothing caught it,
  * neither at `vinaya pr create`/`pr edit` time nor in CI. Longer, denser
  * prose is also strictly more surface for every other body-text gate
  * (`body-bare-digits`, `reader-resolvable-prose`'s glossary rule) — the same
- * class of gap `#341` hit in code, just in prose instead.
+ * class of gap a real issue hit in code, just in prose instead.
  *
- * Re-pointed at `## Decisions` (plan-brief-v1, dogfooding finding): the
+ * Re-pointed at `## Decisions` (a dogfooding finding): the
  * canonical template renamed `## Summary` to `## Decisions` — a heading this
  * name-matched check cannot see under its old name — and reviewing that
  * same task caught the gap live: a heading rename silently retiring a
- * mechanical check is the same regression class `#341`/`#358` already named
+ * mechanical check is the same regression class already named
  * for this file, just in the check's own target this time. `Decisions`'
  * shape differs from `Summary`'s (a bullet list, one line per open choice,
  * not a prose paragraph) but the enforced property is unchanged either way:
@@ -35,8 +35,8 @@
  *
  * The rule is literal — one block, full stop — so a `### subsection` or a
  * markdown table under Decisions/Scope fails too, same as a second
- * blank-line-separated paragraph would (confirmed by probe, PR review on
- * `#358`, back when this section was still named `Summary`). That is
+ * blank-line-separated paragraph would (confirmed by probe in review,
+ * back when this section was still named `Summary`). That is
  * intentional, not an oversight: `developer.md`'s own escape hatch for
  * exactly this case is "Add anything you want beneath the four sections" —
  * structured detail belongs in a section of its own below
@@ -46,7 +46,7 @@
  * blockquote IS the section, start to finish: prose before or after it is
  * still a separate blank-line-delimited block, so "intro sentence, then a
  * blockquote aside, then a closing sentence" is three blocks and still
- * fails (confirmed by probe, PR review on `#358` — this is not the
+ * fails (confirmed by probe in review — this is not the
  * "structured aside alongside prose" shape it can look like at a glance).
  * The exemption only covers a section whose entire content, quoted in
  * full, is the one thing being said.

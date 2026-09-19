@@ -66,7 +66,7 @@ function flags(args: string[]): Flags {
 
 /**
  * `--agents=<comma-list|all|none>` (default `all`) — which agent-native
- * emitters (task 5, #152) `vinaya init` writes. No interactive prompt: `init`
+ * emitters `vinaya init` writes. No interactive prompt: `init`
  * is scriptable/CI-safe today (spec D3's remoteless graceful-skip depends on
  * that), and prompting would break it. `upgrade`/`doctor` never take this
  * flag — they read the selection back from `managed.agents` instead (see
@@ -249,7 +249,7 @@ function pathFlag(args: string[]): string {
  * cell on read — that's the registry's own convention, not a bug in the
  * parser. A declared path containing a literal backtick is therefore
  * written verbatim and read back as a different path, silently, with
- * nothing reporting the difference (Issue `#181`). Refusing it here keeps
+ * nothing reporting the difference. Refusing it here keeps
  * every accepted path round-trip-safe without touching the parser or its
  * stripping convention.
  */

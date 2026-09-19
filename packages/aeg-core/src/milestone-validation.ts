@@ -1,6 +1,5 @@
 /**
- * Milestone-shape validation for `vinaya milestone create` (vinaya-milestone-model-v1
- * task 2). Pure — no `fs`, no `gh`. The command calls `checkMilestoneShape` before
+ * Milestone-shape validation for `vinaya milestone create`. Pure — no `fs`, no `gh`. The command calls `checkMilestoneShape` before
  * any forge write, so a malformed body never reaches GitHub.
  *
  * A Milestone's description carries three independent things, each parsed and
@@ -155,7 +154,7 @@ export function checkMilestoneShape(body: string): MilestoneShapeResult {
 }
 
 // ---------------------------------------------------------------------------
-// `vinaya milestone adopt` (vinaya-milestone-migration-v1 task 1) — checkAdoptable
+// `vinaya milestone adopt` — checkAdoptable
 // ---------------------------------------------------------------------------
 
 /**

@@ -1,6 +1,6 @@
 /**
  * Doctrine portability — the class `check-reader-resolvable-prose` sweeps
- * but cannot see (task 234, Issue #234). That check's own module header
+ * but cannot see. That check's own module header
  * declares zero I/O, so it never resolves a cited path against a
  * filesystem — and if it tried, it would resolve against the authoring
  * repo, the one environment where every author-repo-internal path in
@@ -17,7 +17,7 @@
  * from), where a deny-list of "known author-repo prefixes" would fail open
  * on the next unlisted one instead.
  *
- * **A second, additive dimension (Issue #298): a portable path is not the
+ * **A second, additive dimension: a portable path is not the
  * only way doctrine couples itself to one vendor.** Prose can name a
  * specific AI company, product, or agent directly — "Claude Code", "GPT",
  * "Anthropic" — with no path shape for the path-based predicate above to
@@ -49,7 +49,7 @@ export type PortabilityFinding = {
   line: number
   cited: string
   message: string
-  /** `'path'` — the original non-portable-path predicate. `'vendor-name'` — Issue #298's word-list predicate. */
+  /** `'path'` — the original non-portable-path predicate. `'vendor-name'` — a later word-list predicate. */
   kind: 'path' | 'vendor-name'
 }
 
@@ -129,7 +129,7 @@ const CITED_PATH_PATTERN = /^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]*)+$/
 export const NON_PATH_TOP_SEGMENTS: ReadonlySet<string> = new Set(['origin', 'refs', 'HEAD', 'vinaya', 'fix'])
 
 /**
- * The vendor-name word list (Issue #298's re-count, live at authoring):
+ * The vendor-name word list (a live re-count at authoring time):
  * every AI company/product/agent name this doctrine's own prose has
  * actually used, as either the shipped reference host or a peer example —
  * a real, hardcoded list for this repo's own corpus, not a growable
@@ -140,7 +140,7 @@ export const NON_PATH_TOP_SEGMENTS: ReadonlySet<string> = new Set(['origin', 're
  * by a dangling "code".
  *
  * Includes model-TIER names (`opus`/`sonnet`/`haiku`), not just
- * company/product names — a review round on this task's own PR (#338)
+ * company/product names — a review round on this task's own PR
  * found the first cut missed exactly this class: `brief-authoring/SKILL.md`
  * and `brief-template.md` named a specific model tier bare, in prose, in
  * three places the path-shape predicate could never see either. `sonnet`

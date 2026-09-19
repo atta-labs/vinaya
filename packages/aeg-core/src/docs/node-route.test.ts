@@ -145,7 +145,7 @@ describe('nodeDocRoute: against the real model', () => {
 
   it('every ring-0 gate resolves onto /docs/rings/ring-0, incl. the git-commit anchor', () => {
     const ring0 = model.nodes.filter((n) => n.kind === 'gate' && n.ringIndex === 0)
-    // fix/true-head-and-stale-sites (Issue #402) moved the raw-API row to
+    // fix/true-head-and-stale-sites moved the raw-API row to
     // ring 1 — its real enforcement is the ring-1 CI re-run.
     expect(ring0.length).toBe(18)
     for (const g of ring0) expect(nodeDocRoute(g)?.route).toBe('/docs/rings/ring-0')

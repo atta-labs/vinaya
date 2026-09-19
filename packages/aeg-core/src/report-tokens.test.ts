@@ -216,8 +216,8 @@ describe('pipe/newline injection — phase, role, and model are untrusted (CLI f
   })
 
   it("formatTokensLine: an attacker-shaped `model` field (`#313`'s own reproduction) never carries a real `|` out", () => {
-    // The exact string a security reviewer's live reproduction produced at
-    // `#313`'s authoring: a transcript's `message.model` read
+    // The exact string a security reviewer's live reproduction produced:
+    // a transcript's `message.model` read
     // `attacker-injected | evil-injected-cell | extra`, and the resulting
     // `Tokens: …` line carried the raw `|` characters straight through.
     // `formatTokenReportRow`'s own table cell already escaped `|` (tested
