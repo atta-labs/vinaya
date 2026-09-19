@@ -140,10 +140,8 @@ describe('requireTrancheQualifiedEdges', () => {
     }
   })
 
-  it('refuses a bare #NNN Issue ref the same way', () => {
-    expect(() => requireTrancheQualifiedEdges(['#372'], ['tranche-a', 'tranche-b', 'tranche-c'])).toThrow(
-      AmbiguousBareEdgeError
-    )
+  it('never refuses a bare #NNN Issue ref, whatever the Milestone holds — the hash sign makes it unique', () => {
+    expect(() => requireTrancheQualifiedEdges(['#372'], ['tranche-a', 'tranche-b', 'tranche-c'])).not.toThrow()
   })
 
   it('reports the FIRST bare id, not a later qualified one that happens to sit beside it', () => {
