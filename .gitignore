@@ -42,3 +42,8 @@ yarn-error.log*
 # Worktrees
 .worktrees/
 .claude/worktrees/
+
+# Developer's side channel to the review-loop driver: written at the root of
+# a task worktree, read once and deleted by the driver. Never tracked.
+.vinaya-confidence
+.vinaya-round-response
