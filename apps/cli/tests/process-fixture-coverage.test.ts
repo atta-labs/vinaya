@@ -62,6 +62,24 @@
  * `GRANDFATHERED_FILES` below rather than hardened inline — that inline
  * work is the same later task the list's burn-down already is, not this
  * round's.
+ *
+ * Round 8 review closed two gaps the mechanism itself had, both in the
+ * scan rather than in any one fixture:
+ *   - HIGH (security) — `SPAWNS_REAL_PROCESS` matched neither `execSync`
+ *     nor `exec`, though both run their argument through a shell exactly
+ *     like the `sh -c`/`bash -c` case round 7 just closed; an
+ *     `execSync('some command')` was completely invisible to the scan.
+ *     Both are now matched. A bare `exec(` needed its own carve-out
+ *     (`(?<!\.)`, see `SPAWNS_REAL_PROCESS`'s own comment) so it doesn't
+ *     collide with the unrelated `RegExp.prototype.exec` idiom this very
+ *     file (and six others) use for pattern matching.
+ *   - MEDIUM (security) — `isSafeCommand`'s identifier fallback matched
+ *     any hint merely containing "git" by NAME (`gitLikeWrapper` would
+ *     have scored safe regardless of what it resolves to at runtime); it
+ *     now requires the file to prove the identifier resolves to the real
+ *     git binary by assignment (see `identifierResolvesToGit`).
+ * Re-running the scan with both fixes found no new offender and no stale
+ * grandfather entry — `GRANDFATHERED_FILES` is unchanged at 55 entries.
  */
 
 import { describe, expect, it } from 'bun:test'
@@ -143,8 +161,22 @@ function stripNonCode(content: string): string {
   return out.join('')
 }
 
-/** A real call — matched against `stripNonCode`'s output, never raw content. */
-const SPAWNS_REAL_PROCESS = /\b(?:spawnSync|execFileSync|fork|spawn)\s*\(|Bun\.spawn(?:Sync)?\s*\(/g
+/**
+ * A real call — matched against `stripNonCode`'s output, never raw content.
+ *
+ * Round 8 security review, HIGH — `execSync`/`exec` were absent, despite
+ * running their argument through a shell exactly like the `sh -c`/`bash -c`
+ * case round 7 just closed; an `execSync('some command')` was completely
+ * invisible to this scan. Both are now matched like every other real spawn.
+ * A bare `exec(` needs its own negative lookbehind (`(?<!\.)`) — unlike
+ * `execSync`/`execFileSync`, the plain word `exec` collides with
+ * `RegExp.prototype.exec`, e.g. this very file's own `re.exec(codeOnly)`
+ * loop, which is never a child-process spawn; excluding a preceding `.`
+ * keeps that member-call idiom out while still catching a bare imported
+ * `exec(cmd, cb)`.
+ */
+const SPAWNS_REAL_PROCESS =
+  /\b(?:spawnSync|execFileSync|execSync|fork|spawn)\s*\(|(?<!\.)\bexec\s*\(|Bun\.spawn(?:Sync)?\s*\(/g
 
 /** `lib/process-fixture.ts`'s own `stripVinayaEnv` — imported, or reimplemented inline, anywhere in the file. */
 const HAS_VINAYA_ENV_STRIP = /startsWith\(\s*['"]VINAYA_['"]\s*\)|stripVinayaEnv/
@@ -195,15 +227,31 @@ function commandHint(content: string, matchEnd: number): string | null {
   return identifier ? (identifier[1] as string) : null
 }
 
-function isSafeCommand(hint: string | null): boolean {
+/**
+ * `hint` is only treated as a safe `git` invocation if the file itself
+ * PROVES, by assignment, that it resolves to the real git binary — either
+ * `= 'git'` directly, or the `which git` idiom this codebase's own
+ * `writeFakeGit`-style helpers use (`execFileSync('which', ['git']...)`).
+ *
+ * Round 8 security review, MEDIUM — the prior version matched on the
+ * identifier's NAME alone (anything containing "git", case-insensitively,
+ * short of "bun"/"node"/"vinaya"), so `spawnSync(gitLikeWrapper, ...)`
+ * would score safe regardless of what `gitLikeWrapper` actually resolved to
+ * at runtime — nothing tied the name to the value. This traces the
+ * identifier to its real assignment instead of trusting its spelling.
+ */
+function identifierResolvesToGit(content: string, hint: string): boolean {
+  const escaped = hint.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const assignment = new RegExp(
+    `\\b${escaped}\\b\\s*=\\s*(?:execFileSync\\(\\s*['"]which['"]\\s*,\\s*\\[\\s*['"]git['"]|['"]git['"])`
+  )
+  return assignment.test(content)
+}
+
+function isSafeCommand(content: string, hint: string | null): boolean {
   if (!hint) return false
   if (SAFE_UTILITY_COMMANDS.has(hint)) return true
-  // An identifier NAMED for a safe utility (`realGit`, `gitBin`) resolved
-  // through a function parameter or `which` call rather than a literal —
-  // common in these fixtures' own `write­Fake*` helpers. Never matches
-  // `bun`/`node`/`vinaya`-named identifiers, which must still prove the
-  // real pattern.
-  return /git/i.test(hint) && !/bun|node|vinaya/i.test(hint)
+  return identifierResolvesToGit(content, hint)
 }
 
 /**
@@ -281,7 +329,7 @@ function nonCompliantCallSites(content: string): string[] {
   // biome-ignore lint/suspicious/noAssignInExpressions: standard exec-loop idiom
   while ((match = re.exec(codeOnly)) !== null) {
     const hint = commandHint(content, match.index + match[0].length)
-    if (isSafeCommand(hint)) continue
+    if (isSafeCommand(content, hint)) continue
     const span = spanFor(spans, match.index)
     const scope = span ? content.slice(span[0], span[1]) : content
     if (!(fileHasVinayaStrip && HAS_KILL_BUDGET.test(scope))) {
@@ -464,5 +512,52 @@ describe('process-fixture coverage — O3 (#660, round 5): every real-process fi
 
     const offenses = nonCompliantCallSites(twoFunctionsOneHardenedOneRaw)
     expect(offenses).toEqual(['line 11: spawnSync('])
+  })
+
+  it('an execSync/exec call is caught exactly like any other real spawn — the round 8 security BLOCKER', () => {
+    const raw = [
+      "import { execSync } from 'node:child_process'",
+      'function rawExecSync() {',
+      "  return execSync('ps -eo pid,command')",
+      '}'
+    ].join('\n')
+    expect(nonCompliantCallSites(raw)).toEqual(['line 3: execSync('])
+
+    const hardened = [
+      "import { execSync } from 'node:child_process'",
+      'function stripVinayaEnv(env) {',
+      '  const out = { ...env }',
+      "  for (const k of Object.keys(out)) if (k.startsWith('VINAYA_')) delete out[k]",
+      '  return out',
+      '}',
+      'function hardenedExecSync() {',
+      "  return execSync('ps -eo pid,command', { env: stripVinayaEnv(process.env), timeout: 1000, killSignal: 'SIGKILL' })",
+      '}'
+    ].join('\n')
+    expect(nonCompliantCallSites(hardened)).toEqual([])
+  })
+
+  it("a bare `exec(` is never confused with `RegExp.prototype.exec` — the round 8 false-positive this file's own `re.exec(codeOnly)` loop would otherwise trip", () => {
+    const regexpExec = ['function findMatch(pattern, text) {', '  return pattern.exec(text)', '}'].join('\n')
+    expect(nonCompliantCallSites(regexpExec)).toEqual([])
+  })
+
+  it('isSafeCommand\'s git identifier fallback requires a real `which git`/literal resolution, not just a name containing "git" — the round 8 security MEDIUM', () => {
+    const namedButUnresolved = [
+      "import { execFileSync } from 'node:child_process'",
+      'function run(gitLikeWrapper) {',
+      "  return execFileSync(gitLikeWrapper, ['status'])",
+      '}'
+    ].join('\n')
+    expect(nonCompliantCallSites(namedButUnresolved)).toEqual(['line 3: execFileSync('])
+
+    const namedAndResolved = [
+      "import { execFileSync } from 'node:child_process'",
+      "const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim()",
+      'function run() {',
+      "  return execFileSync(realGit, ['status'])",
+      '}'
+    ].join('\n')
+    expect(nonCompliantCallSites(namedAndResolved)).toEqual([])
   })
 })
