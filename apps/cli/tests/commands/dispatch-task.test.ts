@@ -74,7 +74,7 @@ None — no externally-normative source governs this task.
 
 **Stop-and-escalate** — n/a.
 
-**Docs to keep coherent** — none.
+**Docs to keep coherent** — no-doc-surface.
 
 ## Surface
 
@@ -136,8 +136,13 @@ function worktreeScratchDir(prefix: string): string {
  * — everything else `assembleAndRenderBrief`/`prepareTask`/`dispatchTask`
  * need is either read from `AEG_REPO`/`GITHUB_TOKEN` (set in the child's
  * env, below) or from the intercepted `fetch` (the two real GraphQL reads).
+ *
+ * `issue view ${ISSUE_NUMBER} --json body`/`--json labels` answer the Issue
+ * write gate `prepareTask` now runs before ever freezing a brief — the same
+ * synthetic body and tranche label every other read in this fixture already
+ * uses, `cat`-ed from a file for the same reason `issue list`'s answer is.
  */
-function writeFakeGh(dir: string, issueListPath: string): void {
+function writeFakeGh(dir: string, issueListPath: string, issueBodyPath: string, issueLabelsPath: string): void {
   const gh = join(dir, 'gh')
   writeFileSync(
     gh,
@@ -159,6 +164,12 @@ case "$ARGS" in
     ;;
   "issue view ${ISSUE_NUMBER} --json comments")
     echo '{"comments":[]}'
+    ;;
+  "issue view ${ISSUE_NUMBER} --json body")
+    cat "${issueBodyPath}"
+    ;;
+  "issue view ${ISSUE_NUMBER} --json labels")
+    cat "${issueLabelsPath}"
     ;;
   *"issue comment ${ISSUE_NUMBER}"*)
     echo "https://github.com/${OWNER}/${REPO}/issues/${ISSUE_NUMBER}#issuecomment-1"
@@ -268,6 +279,20 @@ function writeIssueList(dir: string): string {
   return p
 }
 
+/** `gh issue view <n> --json body`'s answer — the Issue write gate's own body fetch. */
+function writeIssueBody(dir: string): string {
+  const p = join(dir, 'issue-body.json')
+  writeFileSync(p, JSON.stringify({ body: ISSUE_BODY }))
+  return p
+}
+
+/** `gh issue view <n> --json labels`'s answer — the Issue write gate's own labels fetch. */
+function writeIssueLabels(dir: string): string {
+  const p = join(dir, 'issue-labels.json')
+  writeFileSync(p, JSON.stringify({ labels: [{ name: TRANCHE_LABEL }] }))
+  return p
+}
+
 type Fixture = { binDir: string; home: string; callLog: string; preload: string; path: string }
 
 function buildFixture(): Fixture {
@@ -275,7 +300,9 @@ function buildFixture(): Fixture {
   const home = tempDir('vinaya-dispatch-task-home-')
   const dataDir = tempDir('vinaya-dispatch-task-data-')
   const issueListPath = writeIssueList(dataDir)
-  writeFakeGh(binDir, issueListPath)
+  const issueBodyPath = writeIssueBody(dataDir)
+  const issueLabelsPath = writeIssueLabels(dataDir)
+  writeFakeGh(binDir, issueListPath, issueBodyPath, issueLabelsPath)
   const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim()
   writeFakeGit(binDir, realGit)
   const callLog = join(worktreeScratchDir('vinaya-dispatch-task-call-'), 'vendor-call.log')
