@@ -107,34 +107,34 @@ describe('compareManifest', () => {
     expect(result.bound).toBe(true)
   })
 
-  it('base: a base-only change (identical candidate, moved base) invalidates (#555, O1)', () => {
-    // Exact head match, but the base moved under it — no patchIdOf equivalence
-    // to certify the diff was re-judged against the new base. This is the one
-    // narrowed acceptance this task documents.
+  it('base: a base-only change (identical candidate, moved base) is tolerated (#680, O1)', () => {
+    // Exact head match, and the base moved under it. A verdict judges the
+    // pull request; the base is still recorded for audit, but moving it alone
+    // does not invalidate. CI at the new head is the guard for any semantic
+    // conflict a base move could hide.
     const echoed: EchoedManifest = { ...manifestAsEchoed(manifest()), baseSha: 'd'.repeat(40) }
     const current = manifest({ baseSha: 'e'.repeat(40) })
     const result = compareManifest(echoed, current)
     expect(result.head).toBe(true)
-    expect(result.base).toBe(false)
-    expect(result.bound).toBe(false)
+    expect(result.base).toBe(true)
+    expect(result.bound).toBe(true)
   })
 
-  it('base: a base-only change STILL invalidates when a real patchIdOf is wired in (round 3 review, #555 F1 BLOCKER)', () => {
+  it('base: a base-only change is tolerated even when a real patchIdOf is wired in (#680, O1)', () => {
     // The exact production configuration `check-review-gate.ts` always
     // uses: patchIdOf is a real function, never undefined. Calling it with
     // the SAME sha on both sides (an unchanged head) must never be read as
     // "a proven rebase" — a deterministic patchIdOf trivially agrees with
-    // itself, which is not evidence the base was re-judged. Before the
-    // fix, this trivial self-agreement made `patchHead` true whenever
-    // `exactHead` already was, silently bypassing the base check on every
-    // real exact-head evaluation.
+    // itself, which is not evidence of anything. What matters is the exact
+    // head match itself: when the candidate head binds exactly, a moved base
+    // is tolerated.
     const echoed: EchoedManifest = { ...manifestAsEchoed(manifest()), baseSha: 'd'.repeat(40) }
     const current = manifest({ baseSha: 'e'.repeat(40) })
     const patchIdOf = (sha: string) => `patch-for-${sha}`
     const result = compareManifest(echoed, current, patchIdOf)
     expect(result.head).toBe(true)
-    expect(result.base).toBe(false)
-    expect(result.bound).toBe(false)
+    expect(result.base).toBe(true)
+    expect(result.bound).toBe(true)
   })
 
   it('base: a null current base (none resolvable) skips the binding — every pre-base caller/fixture is unaffected', () => {

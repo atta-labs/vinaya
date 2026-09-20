@@ -56,13 +56,13 @@ describe('bindingOfPosted / unboundFields — publishRound’s manifest binding 
     expect(unboundFields(result)).toEqual([])
   })
 
-  it('base-only change (identical head, moved base) invalidates — no patchIdOf is ever supplied here, unlike the merge gate', () => {
+  it('base-only change (identical head, moved base) is tolerated (#680, O1) — a verdict judges the PR, not its base', () => {
     const current = manifest({ baseSha: 'e'.repeat(40) })
     const result = bindingOfPosted(posted(), current)
     expect(result.head).toBe(true)
-    expect(result.base).toBe(false)
-    expect(result.bound).toBe(false)
-    expect(unboundFields(result)).toEqual(['base'])
+    expect(result.base).toBe(true)
+    expect(result.bound).toBe(true)
+    expect(unboundFields(result)).toEqual([])
   })
 
   it('a missing base echo against a real current base refuses (missing required input)', () => {
@@ -112,10 +112,12 @@ describe('bindingOfPosted / unboundFields — publishRound’s manifest binding 
   })
 
   it('reports every unbound field at once, not just the first, when several drift together', () => {
+    // Base-only move (identical head) is now tolerated (#680, O1),
+    // so this test checks ruling ordinal drift alone
     const result = bindingOfPosted(
       posted({ baseSha: 'e'.repeat(40), rulingOrdinal: 0 }),
       manifest({ rulingOrdinal: 2 })
     )
-    expect(unboundFields(result)).toEqual(['base', 'ruling ordinal'])
+    expect(unboundFields(result)).toEqual(['ruling ordinal'])
   })
 })
