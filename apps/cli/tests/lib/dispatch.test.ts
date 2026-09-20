@@ -15,7 +15,7 @@
  */
 
 import { afterEach, describe, expect, it } from 'bun:test'
-import { execFileSync, spawnSync } from 'node:child_process'
+import { execFileSync, execSync, spawnSync } from 'node:child_process'
 import type { SpawnSyncOptionsWithStringEncoding, SpawnSyncReturns } from 'node:child_process'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -3056,5 +3056,33 @@ describe('recoverUsageFromDispatchTee (O1, #608)', () => {
 
   it('a corrupt (non-JSON) launch record file: null, never throws', () => {
     expect(recoverUsageFromDispatchTee(fakeDeps({ launchRecord: 'not json' }))).toBeNull()
+  })
+})
+
+/**
+ * O2 (Issue #670) — the host-wide proof, run last so it observes every
+ * fixture above's own teardown, not just the one test it happens to follow.
+ * Same idiom `checks/runner.test.ts` already established for its own
+ * process-group tests (`ps -eo pid,command | grep … | grep -v grep || true`,
+ * asserted empty) — `-eo` lists every process on the host, not just this
+ * test process's own children, so a vendor that reparented to the service
+ * manager after its own script died is still caught here. Every fake vendor
+ * binary in this file lives under a `tempDir('vinaya-dispatch-bin-')`
+ * directory, so its own path — and therefore its `ps` command line — always
+ * carries that literal substring; a `--settings <path>` flag
+ * (`writeDispatchSettings`) on an unattended fixture additionally carries the
+ * fake task's own run folder, on the SAME command line, for the same reason.
+ * Bounded (`timeout`/`killSignal`) so a hung `ps`/`grep` cannot itself hang
+ * this file's own run — matching this file's own `stripVinayaEnv`+kill-budget
+ * discipline (`process-fixture-coverage.test.ts`).
+ */
+describe('process hygiene (Issue #670) — the file leaves no fake vendor process behind', () => {
+  it('no process on the host still carries a vinaya-dispatch-bin- path in its command line', () => {
+    const survivors = execSync('ps -eo pid,command | grep "vinaya-dispatch-bin-" | grep -v grep || true', {
+      encoding: 'utf8',
+      timeout: 5_000,
+      killSignal: 'SIGKILL'
+    }).trim()
+    expect(survivors).toBe('')
   })
 })
