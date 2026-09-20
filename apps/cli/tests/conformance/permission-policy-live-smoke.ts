@@ -47,10 +47,19 @@
  *   4. A forge read (`gh issue view`, against a fake `gh` on `PATH` that
  *      never reaches the real network) resolves the same way.
  *   5. A forbidden shape doctrine names (`git commit --no-verify`) is
- *      REFUSED — `permission_denials` populated — even though a BROADER
- *      allow rule (`Bash(git commit:*)`) also matches the same command text,
- *      proving the deny rule's own precedence, not mere absence from the
- *      allow list.
+ *      REFUSED — `permission_denials` populated, AND the denied tool call's
+ *      own `command` is checked to actually BE the `--no-verify` commit
+ *      (round 2 security review, LOW: a bare non-empty check alone would not
+ *      catch a regression that denied a DIFFERENT command instead) — even
+ *      though a BROADER allow rule (`Bash(git commit:*)`) also matches the
+ *      same command text, proving the deny rule's own precedence, not mere
+ *      absence from the allow list.
+ *   6. A real `Write` call INSIDE the granted directory actually creates the
+ *      file (round 2 code review, BLOCKER: the settings-file `Write(<path>/
+ *      **)` rule this task originally shipped never worked live — see
+ *      `buildRolePermissions`'s own doc comment in `dispatch.ts` for the full
+ *      live-verified failure and the `PreToolUse`-hook fix this script now
+ *      proves instead).
  *
  * Manually verified against this exact mechanism, on this authoring host,
  * during this task's own authoring (claude 2.1.258, model
@@ -73,9 +82,9 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -126,21 +135,30 @@ function stripVinayaEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
  * `developer` dispatch, extracted via the REAL CLI against a FAKE `claude`
  * binary (never a hand-built JSON stand-in) — see this file's own module doc
  * for why this cannot be an in-process import.
+ *
+ * **Extracted with `cwd: repoDir` — the SAME directory the live `claude`
+ * calls below actually run in.** Round 2 found this live, the hard way:
+ * extracting the settings file from a SEPARATE scratch directory (never the
+ * sandbox repo the live Write/Bash checks run against) resolves the
+ * developer's own `allowedDir` (`opts.cwd ?? repoRoot() ?? process.cwd()`,
+ * `dispatch.ts`) to that scratch directory, not `repoDir` — so the Write
+ * grant this script goes on to test was correctly SCOPED, just scoped to a
+ * directory the live session never touches. `writeDispatchSettings`'s own
+ * code was never at fault; this script's own two-directory setup was.
  */
-function extractRealDeveloperSettingsFile(): string {
+function extractRealDeveloperSettingsFile(cwd: string): string {
   const home = tempDir('vinaya-live-perm-home-')
-  const scratchCwd = tempDir('vinaya-live-perm-scratch-')
   const binDir = tempDir('vinaya-live-perm-bin-')
-  const argvOut = join(scratchCwd, 'argv.out')
+  const argvOut = join(cwd, 'argv.out')
   writeFakeBinary(
     binDir,
     'claude',
     `#!/bin/sh\nfor a in "$@"; do echo "$a"; done > "${argvOut}"\ncat > /dev/null\necho '{}'\nexit 0\n`
   )
-  const promptFile = join(scratchCwd, 'prompt.txt')
+  const promptFile = join(cwd, 'prompt.txt')
   writeFileSync(promptFile, 'do the thing')
   execFileSync('bun', [INDEX, 'dispatch', 'developer', '--agent', 'claude', '--prompt-file', promptFile], {
-    cwd: scratchCwd,
+    cwd,
     encoding: 'utf8',
     env: { ...stripVinayaEnv(process.env), HOME: home, PATH: `${binDir}:${process.env.PATH ?? ''}` },
     timeout: 30_000,
@@ -171,9 +189,26 @@ function buildSandboxRepo(): string {
   return repoDir
 }
 
-type ClaudeResult = { permissionDenials: unknown[]; result: string }
+type PermissionDenial = { tool_name: string; tool_input: { command?: string; file_path?: string } }
+type ClaudeResult = { permissionDenials: PermissionDenial[]; result: string }
 
-function runClaude(cwd: string, settingsPath: string, path: string, prompt: string): ClaudeResult {
+/**
+ * The `write-access.mjs` hook (and the pre-existing documentation hooks)
+ * only ever look up their own per-run file under `process.env.VINAYA_RUN_ID`
+ * — round 2 found this live: the Write check below denied even a genuinely
+ * in-scope path until this env var was threaded through, since `runClaude`'s
+ * own env has no reason to carry the extraction dispatch's `runId` unless
+ * told to. Read back from the write-access scope file's own name (the one
+ * file `writeDispatchSettings` wrote for this dispatch), rather than
+ * assumed — the same discipline `dispatch.test.ts`'s own wiring test uses.
+ */
+function runIdFromSettingsDir(settingsPath: string): string {
+  const scopeFile = readdirSync(dirname(settingsPath)).find((f) => f.startsWith('write-access-'))
+  if (!scopeFile) throw new Error(`no write-access-*.json found beside ${settingsPath}`)
+  return scopeFile.slice('write-access-'.length, -'.json'.length)
+}
+
+function runClaude(cwd: string, settingsPath: string, path: string, runId: string, prompt: string): ClaudeResult {
   const stdout = execFileSync(
     'claude',
     ['-p', '--model', LIVE_MODEL, '--max-turns', '2', '--output-format', 'json', '--settings', settingsPath, prompt],
@@ -181,22 +216,24 @@ function runClaude(cwd: string, settingsPath: string, path: string, prompt: stri
       cwd,
       encoding: 'utf8',
       input: '',
-      env: { ...stripVinayaEnv(process.env), PATH: path },
+      env: { ...stripVinayaEnv(process.env), PATH: path, VINAYA_RUN_ID: runId },
       timeout: 60_000,
       killSignal: 'SIGKILL'
     }
   )
-  const parsed = JSON.parse(stdout) as { permission_denials: unknown[]; result: string }
+  const parsed = JSON.parse(stdout) as { permission_denials: PermissionDenial[]; result: string }
   return { permissionDenials: parsed.permission_denials, result: parsed.result }
 }
 
 async function main(): Promise<void> {
+  const repoDir = buildSandboxRepo()
+
   console.log('permission-policy-live-smoke: extracting the real settings file...')
-  const settingsPath = extractRealDeveloperSettingsFile()
+  const settingsPath = extractRealDeveloperSettingsFile(repoDir)
   console.log(`permission-policy-live-smoke: settings file at ${settingsPath}`)
   console.log(readFileSync(settingsPath, 'utf8'))
+  const runId = runIdFromSettingsDir(settingsPath)
 
-  const repoDir = buildSandboxRepo()
   const ghBinDir = tempDir('vinaya-live-perm-ghbin-')
   writeFakeBinary(ghBinDir, 'gh', '#!/bin/sh\necho \'{"number":663,"title":"fixture issue"}\'\nexit 0\n')
   const path = `${ghBinDir}:${process.env.PATH ?? ''}`
@@ -214,13 +251,18 @@ async function main(): Promise<void> {
     if (r.permissionDenials.length === 0) failures.push(`${label}: expected a permission_denials entry, got none`)
   }
 
+  // A path unique to this run's own `repoDir` — every temp dir this script
+  // creates shares one OS tmp root, so a fixed sibling name collided with a
+  // PRIOR run's own leftover worktree the first time this script ran twice.
+  const worktreeName = `${basename(repoDir)}-wt`
   expectAllowed(
     'worktree creation',
     runClaude(
       repoDir,
       settingsPath,
       path,
-      'Use the Bash tool to run exactly this command, do not ask for confirmation, do not explain: git worktree add ../fixture-wt -b fixture-wt-branch'
+      runId,
+      `Use the Bash tool to run exactly this command, do not ask for confirmation, do not explain: git worktree add ../${worktreeName} -b ${worktreeName}-branch`
     )
   )
   expectAllowed(
@@ -229,6 +271,7 @@ async function main(): Promise<void> {
       repoDir,
       settingsPath,
       path,
+      runId,
       'Use the Bash tool to run exactly this command, do not ask for confirmation, do not explain: git fetch origin'
     )
   )
@@ -238,6 +281,7 @@ async function main(): Promise<void> {
       repoDir,
       settingsPath,
       path,
+      runId,
       'Use the Bash tool to run exactly this command, do not ask for confirmation, do not explain: bun test fixture.test.ts'
     )
   )
@@ -247,18 +291,40 @@ async function main(): Promise<void> {
       repoDir,
       settingsPath,
       path,
+      runId,
       'Use the Bash tool to run exactly this command, do not ask for confirmation, do not explain: gh issue view 663'
     )
   )
-  expectDenied(
-    'forbidden: --no-verify commit',
-    runClaude(
-      repoDir,
-      settingsPath,
-      path,
-      'Use the Bash tool to run exactly this command, do not ask for confirmation, do not explain, just call the tool: git commit --no-verify -am test-commit'
-    )
+  const forbiddenResult = runClaude(
+    repoDir,
+    settingsPath,
+    path,
+    runId,
+    'Use the Bash tool to run exactly this command, do not ask for confirmation, do not explain, just call the tool: git commit --no-verify -am test-commit'
   )
+  expectDenied('forbidden: --no-verify commit', forbiddenResult)
+  const deniedCommand = forbiddenResult.permissionDenials[0]?.tool_input?.command ?? ''
+  if (!deniedCommand.includes('--no-verify')) {
+    failures.push(
+      `forbidden: --no-verify commit: expected the denied call's own command to include --no-verify, got ${JSON.stringify(deniedCommand)}`
+    )
+  }
+
+  const writeResult = runClaude(
+    repoDir,
+    settingsPath,
+    path,
+    runId,
+    'Use the Write tool to create a file named policy-check.txt (relative path) with content ok. Do not ask.'
+  )
+  expectAllowed('write inside the granted worktree', writeResult)
+  try {
+    if (readFileSync(join(repoDir, 'policy-check.txt'), 'utf8').trim() !== 'ok') {
+      failures.push('write inside the granted worktree: policy-check.txt exists but has the wrong content')
+    }
+  } catch {
+    failures.push('write inside the granted worktree: policy-check.txt was never actually created')
+  }
 
   if (failures.length > 0) {
     console.error('permission-policy-live-smoke: FAILED —')
@@ -266,7 +332,7 @@ async function main(): Promise<void> {
     process.exitCode = 1
     return
   }
-  console.log('permission-policy-live-smoke: all five checks passed against a real, non-interactive claude session.')
+  console.log('permission-policy-live-smoke: all six checks passed against a real, non-interactive claude session.')
 }
 
 main().catch((err) => {

@@ -46,6 +46,7 @@ import {
   getProcessSnapshot,
   matchesCapturedIdentity,
   buildRolePermissions,
+  buildWriteAccessScope,
   PERMISSION_POLICY_VERSION,
   type DispatchTeeRecoveryDeps
 } from '../../src/lib/dispatch.js'
@@ -2370,7 +2371,10 @@ describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
     expect(Number(settings.env.BASH_MAX_TIMEOUT_MS)).toBeGreaterThan(600000)
 
     const preToolUse = settings.hooks.PreToolUse
-    expect(preToolUse).toHaveLength(1)
+    // Issue #663 adds a second entry (`Write|Edit`, the write-access grant) —
+    // a developer dispatch always carries one, since a directory scope is
+    // never null for this role. This block only cares about the first.
+    expect(preToolUse.length).toBeGreaterThanOrEqual(1)
     expect(preToolUse[0]?.matcher).toBe('Bash|Agent|Task')
     expect(preToolUse[0]?.hooks[0]?.type).toBe('command')
     const hookCommand = preToolUse[0]?.hooks[0]?.command as string
@@ -2628,12 +2632,9 @@ describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
   })
 })
 
-describe('buildRolePermissions — Issue #663, O1: an explicit per-role permission policy', () => {
-  it('developer: Write/Edit scoped to its own worktree, doctrine-named version-control/forge/package/test commands allowed', () => {
-    const dir = '/tmp/vinaya-dispatch-worktree-fixture'
-    const perms = buildRolePermissions('developer', dir)
-    expect(perms.allow).toContain(`Write(${dir}/**)`)
-    expect(perms.allow).toContain(`Edit(${dir}/**)`)
+describe('buildRolePermissions — Issue #663, O1: an explicit per-role Bash allow/deny policy', () => {
+  it('developer: doctrine-named version-control/forge/package/test Bash commands allowed, never a Write/Edit entry (round 2 review, BLOCKER: those never worked)', () => {
+    const perms = buildRolePermissions('developer')
     for (const rule of [
       'Bash(git worktree add:*)',
       'Bash(git fetch:*)',
@@ -2647,10 +2648,11 @@ describe('buildRolePermissions — Issue #663, O1: an explicit per-role permissi
     ]) {
       expect(perms.allow).toContain(rule)
     }
+    expect(perms.allow.some((r) => r.startsWith('Write(') || r.startsWith('Edit('))).toBe(false)
   })
 
   it('developer: forbidden shapes doctrine names are denied, narrower than the broader allow rule that would otherwise cover them', () => {
-    const perms = buildRolePermissions('developer', '/tmp/x')
+    const perms = buildRolePermissions('developer')
     for (const rule of [
       'Bash(git push --force*)',
       'Bash(git push -f*)',
@@ -2670,8 +2672,8 @@ describe('buildRolePermissions — Issue #663, O1: an explicit per-role permissi
   })
 
   for (const role of ['code-reviewer', 'security'] as const) {
-    it(`${role}: read-only git/gh commands allowed, no blanket Write/Edit grant, forge-write/package/test commands denied`, () => {
-      const perms = buildRolePermissions(role, '/tmp/x')
+    it(`${role}: read-only git/gh commands allowed, no Write/Edit entry at all, forge-write/package/test commands denied`, () => {
+      const perms = buildRolePermissions(role)
       for (const rule of ['Bash(git diff:*)', 'Bash(git log:*)', 'Bash(gh pr view:*)', 'Bash(gh issue view:*)']) {
         expect(perms.allow).toContain(rule)
       }
@@ -2688,24 +2690,53 @@ describe('buildRolePermissions — Issue #663, O1: an explicit per-role permissi
         expect(perms.deny).toContain(rule)
       }
     })
-
-    it(`${role}: gets Write access to exactly its own hand-off files in each of extraWritableDirs, nothing else`, () => {
-      const perms = buildRolePermissions(role, '/tmp/x', ['/tmp/work-a', '/tmp/work-b'])
-      for (const dir of ['/tmp/work-a', '/tmp/work-b']) {
-        expect(perms.allow).toContain(`Write(${dir}/findings.txt)`)
-        expect(perms.allow).toContain(`Write(${dir}/report.txt)`)
-        expect(perms.allow).toContain(`Write(${dir}/objectives.txt)`)
-      }
-      const writeRules = perms.allow.filter((r) => r.startsWith('Write('))
-      expect(writeRules).toHaveLength(6)
-    })
   }
 
   it('a role outside this task’s three (e.g. planner) gets no rules at all — never a silent new restriction', () => {
-    expect(buildRolePermissions('planner', '/tmp/x')).toEqual({ allow: [], deny: [] })
-    expect(buildRolePermissions('principal', '/tmp/x')).toEqual({ allow: [], deny: [] })
-    expect(buildRolePermissions('archivist', '/tmp/x')).toEqual({ allow: [], deny: [] })
-    expect(buildRolePermissions('architect', '/tmp/x')).toEqual({ allow: [], deny: [] })
+    expect(buildRolePermissions('planner')).toEqual({ allow: [], deny: [] })
+    expect(buildRolePermissions('principal')).toEqual({ allow: [], deny: [] })
+    expect(buildRolePermissions('archivist')).toEqual({ allow: [], deny: [] })
+    expect(buildRolePermissions('architect')).toEqual({ allow: [], deny: [] })
+  })
+})
+
+describe('buildWriteAccessScope — Issue #663, O1 round 2 fix: the real Write/Edit grant', () => {
+  it('developer: a directory scope, realpath-resolved', () => {
+    const dir = tempDir('vinaya-write-scope-')
+    const scope = buildWriteAccessScope('developer', dir, [])
+    expect(scope).toEqual({ kind: 'directory', allowedDir: realpathSync(dir) })
+  })
+
+  for (const role of ['code-reviewer', 'security'] as const) {
+    it(`${role}: exact hand-off files across every extraWritableDirs entry, realpath-resolved`, () => {
+      const a = tempDir('vinaya-write-scope-a-')
+      const b = tempDir('vinaya-write-scope-b-')
+      const scope = buildWriteAccessScope(role, '/unused', [a, b])
+      expect(scope).toEqual({
+        kind: 'exact-files',
+        paths: [
+          join(realpathSync(a), 'findings.txt'),
+          join(realpathSync(a), 'report.txt'),
+          join(realpathSync(a), 'objectives.txt'),
+          join(realpathSync(b), 'findings.txt'),
+          join(realpathSync(b), 'report.txt'),
+          join(realpathSync(b), 'objectives.txt')
+        ]
+      })
+    })
+
+    it(`${role}: no extraWritableDirs at all — null, no hook to wire`, () => {
+      expect(buildWriteAccessScope(role, '/unused', [])).toBeNull()
+    })
+  }
+
+  it('a role outside the three named — null', () => {
+    expect(buildWriteAccessScope('planner', tempDir('vinaya-write-scope-'), [])).toBeNull()
+  })
+
+  it('a directory that does not exist yet degrades to its own raw form rather than throwing', () => {
+    const scope = buildWriteAccessScope('developer', '/tmp/does-not-exist-vinaya-663', [])
+    expect(scope).toEqual({ kind: 'directory', allowedDir: '/tmp/does-not-exist-vinaya-663' })
   })
 })
 
@@ -2738,13 +2769,76 @@ describe('writeDispatchSettings — Issue #663, O1/O3: the permission policy is 
       permissions: { allow: string[]; deny: string[] }
     }
 
-    // `cwd` is a non-git scratch directory, so `repoRoot()` resolves null
-    // inside the dispatched subprocess and `permissionAllowedDir` falls back
-    // to `process.cwd()` — the SAME `cwd` this fixture launched the
-    // subprocess from, up to realpath: `tmpdir()` on this host resolves
-    // through a symlink (`/var` → `/private/var`) that `mkdtempSync` itself
-    // never follows but a child's own `process.cwd()` does.
-    expect(settings.permissions).toEqual(buildRolePermissions('developer', realpathSync(cwd)))
+    expect(settings.permissions).toEqual(buildRolePermissions('developer'))
+  })
+
+  it('a developer dispatch also wires a Write|Edit hook granting real access inside its own cwd, denying (falling through, no decision) outside it', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const argvOut = join(cwd, 'argv.out')
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\nfor a in "$@"; do echo "$a"; done > "${argvOut}"\ncat > /dev/null\necho '{}'\nexit 0\n`
+    )
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(0)
+
+    const argv = readFileSync(argvOut, 'utf8').trim().split('\n')
+    const settingsIdx = argv.indexOf('--settings')
+    const settingsPath = argv[settingsIdx + 1] as string
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as {
+      hooks: { PreToolUse: Array<{ matcher: string; hooks: Array<{ command: string }> }> }
+    }
+    const writeEntry = settings.hooks.PreToolUse.find((h) => h.matcher === 'Write|Edit')
+    expect(writeEntry).toBeDefined()
+    const hookCommand = writeEntry?.hooks[0]?.command as string
+    expect(hookCommand).toMatch(/^bun "/)
+    const scriptPath = hookCommand.slice('bun "'.length, -1)
+
+    // The run_id this dispatch actually used — read back from the scope
+    // file's own name (the one file `writeDispatchSettings` wrote for this
+    // run), rather than assumed, since both the script and its scope file
+    // are keyed by it.
+    const scopeFiles = readdirSync(dirname(scriptPath)).filter((f) => f.startsWith('write-access-'))
+    expect(scopeFiles).toHaveLength(1)
+    const runId = (scopeFiles[0] as string).slice('write-access-'.length, -'.json'.length)
+
+    const insideCwd = spawnBudgeted(
+      [scriptPath],
+      {
+        input: JSON.stringify({ tool_name: 'Write', tool_input: { file_path: join(cwd, 'new-file.txt') } }),
+        encoding: 'utf8',
+        env: { ...process.env, VINAYA_RUN_ID: runId }
+      },
+      'write-access hook'
+    )
+    expect(insideCwd.status).toBe(0)
+    const insideOut = JSON.parse(insideCwd.stdout) as {
+      hookSpecificOutput: { permissionDecision: string }
+    }
+    expect(insideOut.hookSpecificOutput.permissionDecision).toBe('allow')
+
+    const outsideCwd = spawnBudgeted(
+      [scriptPath],
+      {
+        input: JSON.stringify({ tool_name: 'Write', tool_input: { file_path: '/etc/vinaya-should-never-write-here' } }),
+        encoding: 'utf8',
+        env: { ...process.env, VINAYA_RUN_ID: runId }
+      },
+      'write-access hook'
+    )
+    expect(outsideCwd.status).toBe(0)
+    expect(outsideCwd.stdout.trim()).toBe('')
   })
 
   it('a code-reviewer dispatch writes the read-only policy, never the developer one', () => {
@@ -2773,9 +2867,52 @@ describe('writeDispatchSettings — Issue #663, O1/O3: the permission policy is 
     const settingsPath = argv[settingsIdx + 1] as string
     const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as {
       permissions: { allow: string[]; deny: string[] }
+      hooks: { PreToolUse: Array<{ matcher: string }> }
     }
-    expect(settings.permissions).toEqual(buildRolePermissions('code-reviewer', cwd))
+    expect(settings.permissions).toEqual(buildRolePermissions('code-reviewer'))
     expect(settings.permissions.allow).not.toContain('Bash(git commit:*)')
+    // No extraWritableDirs on a plain CLI dispatch (the CLI has no flag for
+    // it — only `dev-review-loop.ts`'s own internal call site ever supplies
+    // one) — `buildWriteAccessScope` returns null, so no Write|Edit hook is
+    // wired at all: never a blanket grant a Reviewer's own doctrine forbids.
+    expect(settings.hooks.PreToolUse.some((h) => h.matcher === 'Write|Edit')).toBe(false)
+  })
+
+  it('round 2 security review, CRITICAL fix: developer and code-reviewer dispatched for the same task scope get DIFFERENT settings files, never a shared path to race on', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+
+    const dispatchOne = (role: string): string => {
+      const cwd = tempDir(`vinaya-dispatch-cwd-${role}-`)
+      const binDir = tempDir(`vinaya-dispatch-bin-${role}-`)
+      const argvOut = join(cwd, 'argv.out')
+      writeFakeBinary(
+        binDir,
+        'claude',
+        `#!/bin/sh\nfor a in "$@"; do echo "$a"; done > "${argvOut}"\ncat > /dev/null\necho '{}'\nexit 0\n`
+      )
+      const promptFile = join(cwd, 'prompt.txt')
+      writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+      const r = runDispatch(
+        [role, '--agent', 'claude', '--prompt-file', promptFile],
+        cwd,
+        home,
+        `${binDir}:${pathWithoutRealVendors()}`
+      )
+      expect(r.status).toBe(0)
+      const argv = readFileSync(argvOut, 'utf8').trim().split('\n')
+      const settingsIdx = argv.indexOf('--settings')
+      return argv[settingsIdx + 1] as string
+    }
+
+    const devSettingsPath = dispatchOne('developer')
+    const revSettingsPath = dispatchOne('code-reviewer')
+
+    expect(devSettingsPath).not.toBe(revSettingsPath)
+    expect(dirname(devSettingsPath)).not.toBe(dirname(revSettingsPath))
+    const devSettings = JSON.parse(readFileSync(devSettingsPath, 'utf8')) as { permissions: { allow: string[] } }
+    const revSettings = JSON.parse(readFileSync(revSettingsPath, 'utf8')) as { permissions: { allow: string[] } }
+    expect(devSettings.permissions.allow).toContain('Bash(git commit:*)')
+    expect(revSettings.permissions.allow).not.toContain('Bash(git commit:*)')
   })
 
   it("O3: the role's first lifecycle line names the permission policy version it wrote", () => {
@@ -2883,6 +3020,7 @@ describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () =
       'tasks-execution',
       'unscoped',
       'hooks',
+      'developer',
       `documentation-sources-${runId}.json`
     )
     expect(JSON.parse(readFileSync(sourcesPath, 'utf8'))).toEqual([
@@ -2990,6 +3128,7 @@ describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () =
       'tasks-execution',
       'unscoped',
       'hooks',
+      'developer',
       `documentation-sources-${runId}.json`
     )
     expect(JSON.parse(readFileSync(sourcesPath, 'utf8'))).toEqual([
@@ -3058,6 +3197,7 @@ describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () =
       'tasks-execution',
       'unscoped',
       'hooks',
+      'code-reviewer',
       `documentation-sources-${runId}.json`
     )
     expect(existsSync(sourcesPath)).toBe(false)

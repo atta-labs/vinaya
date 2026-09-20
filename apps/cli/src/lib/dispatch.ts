@@ -60,7 +60,15 @@
  */
 
 import { randomUUID, createHash } from 'node:crypto'
-import { accessSync, constants as fsConstants, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  accessSync,
+  constants as fsConstants,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync
+} from 'node:fs'
 import { chmodSync, createWriteStream } from 'node:fs'
 import { execFileSync, spawn } from 'node:child_process'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
@@ -575,6 +583,16 @@ function denyOutput(reason: string): string {
   )
 }
 
+/** `denyOutput`'s counterpart — used only by `writeAccessHookScript`, which grants rather than refuses. */
+function allowOutput(reason: string): string {
+  return (
+    '      process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: ' +
+    "'PreToolUse', permissionDecision: 'allow', permissionDecisionReason: " +
+    JSON.stringify(reason) +
+    ' } }));'
+  )
+}
+
 function backgroundDenyHookScript(): string {
   return [
     "let d = '';",
@@ -785,13 +803,25 @@ const EMPTY_ROLE_PERMISSIONS: RolePermissions = { allow: [], deny: [] }
  * classifier exactly as before this task; only a role's own doctrine-named
  * commands get an explicit answer.
  *
+ * **This function covers Bash only — never `Write`/`Edit`.** A round-2 review
+ * live-verified that `permissions.allow` entries shaped `Write(<path>/**)` /
+ * `Edit(<path>/**)` / `Write(<exact/file>)` do NOT grant a real, non-interactive
+ * `Write`/`Edit` call on the installed binary (2.1.258): every path-scoped
+ * variant tried (a trailing `/**`, `/*`, a bare directory, a `//`-prefixed
+ * absolute form, an exact relative filename) still left the call denied; only
+ * the degenerate `Write(*)` (equivalent to no scoping at all) or a bare
+ * `Write`/`Edit` with no parenthesized argument ever came back with an empty
+ * `permission_denials` array. So a real Write/Edit grant, scoped to a
+ * directory or an exact file, is expressed a different way entirely — see
+ * `buildWriteAccessScope` and `writeAccessHookScript`, below, which use the
+ * SAME `PreToolUse` hook mechanism `backgroundDenyHookScript` already proves
+ * live for Bash/Agent/Task, matched on `Write|Edit` instead.
+ *
  * `developer` gets the version-control/forge/package/test commands
  * `roles/developer.md`/`roles/developer/reference.md` name it running
  * (worktree creation, fetch, add/commit/push, `gh pr`/`issue` read+write, the
  * package manager, the test runner, this repo's own `verify-*` bin scripts
- * and its `vinaya` CLI entry point), scoped to `Write`/`Edit` on its own
- * worktree only (`allowedDir` — the one variable this policy takes, resolved
- * per task, never a host-specific path) — plus a deny list for exactly what
+ * and its `vinaya` CLI entry point) — plus a deny list for exactly what
  * `roles/developer.md`/`reference.md` forbid: a force push in any of its
  * spellings, `--no-verify` on a commit or push, `git stash` (worktree
  * discipline — stash refs are shared across a repo's worktrees), a hard
@@ -799,14 +829,10 @@ const EMPTY_ROLE_PERMISSIONS: RolePermissions = { allow: [], deny: [] }
  *
  * `code-reviewer`/`security` get read-only git/`gh` commands
  * (`roles/reviewer.md`: "CI is your input, never your job — read it, don't
- * reproduce it: no `bun install`, no re-running tests or checks") plus
- * `Write` on exactly the hand-off files (`findings.txt`/`report.txt`/
- * `objectives.txt`) inside each of `extraWritableDirs` — never a blanket
- * `Write`/`Edit` grant, matching "read access ... and their own hand-off
- * files and nothing more." A forge-write/package/test command a Reviewer has
- * no doctrine reason to run is explicitly denied, the same defense-in-depth
- * posture the Developer's own deny list takes, rather than left to fall
- * through as merely unlisted.
+ * reproduce it: no `bun install`, no re-running tests or checks"). A
+ * forge-write/package/test command a Reviewer has no doctrine reason to run
+ * is explicitly denied, the same defense-in-depth posture the Developer's own
+ * deny list takes, rather than left to fall through as merely unlisted.
  *
  * Every other role (`planner`/`principal`/`archivist`/`architect`) gets no
  * rules at all — this task's own Objectives name only these three roles, and
@@ -814,16 +840,10 @@ const EMPTY_ROLE_PERMISSIONS: RolePermissions = { allow: [], deny: [] }
  * before this task, never a silent new restriction on a role this brief
  * never asked to scope.
  */
-export function buildRolePermissions(
-  role: Role,
-  allowedDir: string,
-  extraWritableDirs: readonly string[] = []
-): RolePermissions {
+export function buildRolePermissions(role: Role): RolePermissions {
   if (role === 'developer') {
     return {
       allow: [
-        `Write(${allowedDir}/**)`,
-        `Edit(${allowedDir}/**)`,
         'Bash(git worktree add:*)',
         'Bash(git worktree list:*)',
         'Bash(git fetch:*)',
@@ -879,12 +899,7 @@ export function buildRolePermissions(
         'Bash(git fetch:*)',
         'Bash(gh pr view:*)',
         'Bash(gh pr diff:*)',
-        'Bash(gh issue view:*)',
-        ...extraWritableDirs.flatMap((dir) => [
-          `Write(${dir}/findings.txt)`,
-          `Write(${dir}/report.txt)`,
-          `Write(${dir}/objectives.txt)`
-        ])
+        'Bash(gh issue view:*)'
       ],
       deny: [
         'Bash(git push:*)',
@@ -900,6 +915,110 @@ export function buildRolePermissions(
     }
   }
   return EMPTY_ROLE_PERMISSIONS
+}
+
+export type WriteAccessScope = { kind: 'directory'; allowedDir: string } | { kind: 'exact-files'; paths: string[] }
+
+/**
+ * The real grant behind O1's Write/Edit half, now that `buildRolePermissions`'s
+ * own doc comment records that a `permissions.allow` path pattern never
+ * actually grants one — a directory for the developer (its own worktree), or
+ * the three hand-off files for a reviewer/security dispatch, each inside its
+ * own `extraWritableDirs` entry. Every role outside these three (or a role
+ * whose reviewer dispatch carries no `extraWritableDirs` at all) gets `null`
+ * — no hook wiring, no file written, matching `buildRolePermissions`'s own
+ * "no rules at all" posture for a role this task's Objectives never named.
+ *
+ * Paths are realpath'd here, once, before they are ever written to disk or
+ * compared against — the same "every substituted path must be canonicalized"
+ * discipline `isolation.md` §3 already states for its own Seatbelt profile:
+ * a worktree or work directory that resolves through a symlinked alias (this
+ * host's own `/tmp` → `/private/tmp` is the standing example) would otherwise
+ * make every real Write/Edit call's own resolved path fail to match the
+ * unresolved directory this function was handed. A path that does not exist
+ * yet degrades to its own raw, unresolved form rather than throwing — never
+ * fatal to the dispatch this scope is only ever a defense-in-depth layer for.
+ */
+export function buildWriteAccessScope(
+  role: Role,
+  allowedDir: string,
+  extraWritableDirs: readonly string[]
+): WriteAccessScope | null {
+  const real = (p: string): string => {
+    try {
+      return realpathSync(p)
+    } catch {
+      return p
+    }
+  }
+  if (role === 'developer') return { kind: 'directory', allowedDir: real(allowedDir) }
+  if (role === 'code-reviewer' || role === 'security') {
+    if (extraWritableDirs.length === 0) return null
+    const paths = extraWritableDirs.flatMap((dir) => {
+      const realDir = real(dir)
+      return ['findings.txt', 'report.txt', 'objectives.txt'].map((f) => join(realDir, f))
+    })
+    return { kind: 'exact-files', paths }
+  }
+  return null
+}
+
+/**
+ * The `PreToolUse` hook that grants a real `Write`/`Edit` call — matched on
+ * `Write|Edit`, never folded into `backgroundDenyHookScript`'s own
+ * `Bash|Agent|Task` matcher, since the two check entirely different tool
+ * shapes. Reads the per-run scope file `writeDispatchSettings` wrote (keyed
+ * by `runId`, same reasoning `documentationLogHookScript`'s own doc comment
+ * gives: two tasks dispatched concurrently on this box must never share one
+ * file) and resolves `tool_input.file_path`'s own containing directory via
+ * `fs.realpathSync` before comparing — a target file that does not exist yet
+ * (the normal case for a fresh `Write`) still has a real, existing parent
+ * directory to resolve through. A path outside the written scope emits no
+ * `hookSpecificOutput` at all, exactly like `backgroundDenyHookScript`'s own
+ * "silent otherwise" posture — it falls through to whatever the host's own
+ * classifier would have decided anyway, never a synthesized `deny`, since
+ * this hook's job is to grant a real capability the built-in engine cannot
+ * express, not to add a NEW restriction beyond what already existed.
+ */
+function writeAccessHookScript(dir: string): string {
+  return [
+    "const fs = require('fs');",
+    "const path = require('path');",
+    "let d = '';",
+    "process.stdin.on('data', (c) => { d += c });",
+    "process.stdin.on('end', () => {",
+    '  try {',
+    '    const e = JSON.parse(d);',
+    "    if (e.tool_name !== 'Write' && e.tool_name !== 'Edit') { process.exit(0); }",
+    "    const runId = process.env.VINAYA_RUN_ID || '';",
+    '    if (!runId) { process.exit(0); }',
+    `    const scopePath = ${JSON.stringify(join(dir, 'write-access-'))} + runId + '.json';`,
+    '    let scope;',
+    "    try { scope = JSON.parse(fs.readFileSync(scopePath, 'utf8')); } catch { process.exit(0); }",
+    '    const filePath = e.tool_input && e.tool_input.file_path;',
+    "    if (typeof filePath !== 'string') { process.exit(0); }",
+    '    let real;',
+    '    try {',
+    '      const realParent = fs.realpathSync(path.dirname(filePath));',
+    '      real = path.join(realParent, path.basename(filePath));',
+    '    } catch { real = filePath; }',
+    '    let allowed = false;',
+    "    if (scope.kind === 'directory') {",
+    '      const base = scope.allowedDir.endsWith(path.sep) ? scope.allowedDir : scope.allowedDir + path.sep;',
+    '      allowed = real === scope.allowedDir || real.startsWith(base);',
+    "    } else if (scope.kind === 'exact-files' && Array.isArray(scope.paths)) {",
+    '      allowed = scope.paths.includes(real);',
+    '    }',
+    '    if (allowed) {',
+    allowOutput("in-scope for this role's written write-access policy"),
+    '    }',
+    '  } catch {',
+    '    // an unreadable/malformed hook payload never blocks a call this hook cannot evaluate',
+    '  }',
+    '  process.exit(0);',
+    '});',
+    ''
+  ].join('\n')
 }
 
 /**
@@ -937,10 +1056,30 @@ export function buildRolePermissions(
  * blocks, the same seam-is-dormant-when-absent posture `doc-owners.ts`
  * already uses.
  *
- * `role`/`allowedDir`/`extraWritableDirs` feed
- * `buildRolePermissions` to add this same file's third enforcement block,
- * `permissions.allow`/`deny` — see that function's own doc comment for the
- * per-role shape and the live proof behind it.
+ * `role` feeds `buildRolePermissions` to add this same file's third
+ * enforcement block, `permissions.allow`/`deny` — see that function's own
+ * doc comment for the per-role shape and the live proof behind it.
+ * `role`/`allowedDir`/`extraWritableDirs` together feed `buildWriteAccessScope`
+ * to wire a FOURTH block, the `Write|Edit` `PreToolUse` hook — see that
+ * function's own doc comment for why a settings-file path pattern could not
+ * carry this grant instead.
+ *
+ * **This call's own directory is scoped by `role` (round-2 security review,
+ * CRITICAL fix).** Before this fix, `dir` was keyed by task/PR scope alone —
+ * a single `settings.json` (and the hook scripts and per-run files beside
+ * it) shared by EVERY role dispatched for the same task. `dev-review-loop.ts`
+ * dispatches its code-reviewer and security roles CONCURRENTLY
+ * (`Promise.all`), each calling this function with a DIFFERENT `role` and
+ * `extraWritableDirs` — whichever call's `writeFileSync` landed last won for
+ * BOTH already-spawned `claude --settings <path>` processes, since both
+ * pointed at the identical path and the vendor process reads it at its own
+ * startup, not at the moment this function returns. That race could hand
+ * one role the other's own Bash allow/deny list and Write/Edit hand-off-file
+ * scope — exactly the "keep read access and their own hand-off files and
+ * nothing more" boundary O1 exists to hold. Nesting `role` as this
+ * directory's own final path segment gives every concurrently-dispatched
+ * role its own exclusive settings file and hook scripts — no shared
+ * mutable path for two roles to race on at all.
  */
 export function writeDispatchSettings(
   runId: string,
@@ -951,7 +1090,7 @@ export function writeDispatchSettings(
   extraWritableDirs: readonly string[] = []
 ): string | null {
   try {
-    const dir = runPath(runtimeDirForThisRepo(), scope, { area: 'hooks' })
+    const dir = join(runPath(runtimeDirForThisRepo(), scope, { area: 'hooks' }), role)
     mkdirSync(dir, { recursive: true, mode: 0o700 })
     chmodSync(dir, 0o700)
     const scriptPath = join(dir, 'deny-background-bash.mjs')
@@ -964,20 +1103,32 @@ export function writeDispatchSettings(
       const sourcesPath = join(dir, `documentation-sources-${runId}.json`)
       writeFileSync(sourcesPath, JSON.stringify(documentation), { mode: 0o600 })
     }
+    const writeAccessScope = buildWriteAccessScope(role, allowedDir, extraWritableDirs)
+    const writeAccessScriptPath = join(dir, 'write-access.mjs')
+    const preToolUseHooks = [
+      {
+        matcher: 'Bash|Agent|Task',
+        hooks: [{ type: 'command', command: `bun "${scriptPath}"` }]
+      }
+    ]
+    if (writeAccessScope !== null) {
+      writeFileSync(writeAccessScriptPath, writeAccessHookScript(dir), { mode: 0o600 })
+      const writeAccessPath = join(dir, `write-access-${runId}.json`)
+      writeFileSync(writeAccessPath, JSON.stringify(writeAccessScope), { mode: 0o600 })
+      preToolUseHooks.push({
+        matcher: 'Write|Edit',
+        hooks: [{ type: 'command', command: `bun "${writeAccessScriptPath}"` }]
+      })
+    }
     const settingsPath = join(dir, 'settings.json')
     const settings = {
       env: {
         CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1',
         BASH_MAX_TIMEOUT_MS: DISPATCH_BASH_MAX_TIMEOUT_MS
       },
-      permissions: buildRolePermissions(role, allowedDir, extraWritableDirs),
+      permissions: buildRolePermissions(role),
       hooks: {
-        PreToolUse: [
-          {
-            matcher: 'Bash|Agent|Task',
-            hooks: [{ type: 'command', command: `bun "${scriptPath}"` }]
-          }
-        ],
+        PreToolUse: preToolUseHooks,
         PostToolUse: [
           {
             matcher: 'WebFetch',
