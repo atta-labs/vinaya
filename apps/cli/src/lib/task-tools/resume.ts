@@ -96,7 +96,7 @@ export const defaultResumeClaimStore: ResumeClaimStore = {
   claim(record) {
     const path = resumeRecordPath(record.escalationId)
     try {
-      ensureRunDir(dirname(path))
+      ensureRunDir(dirname(path), runtimeDirForThisRepo())
       writeFileSync(path, `${JSON.stringify(record, null, 2)}\n`, { flag: 'wx', mode: 0o600 })
       return { claimed: true, record }
     } catch {

@@ -1801,7 +1801,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       const hasObjectives = hasObjectivesFacts(facts)
       const dispatchRoleName = role === 'reviewer' ? ('code-reviewer' as const) : ('security' as const)
       const workDir = reviewerWorkDir(root, task, roundNum, role, 3)
-      ensureRunDir(workDir)
+      ensureRunDir(workDir, root)
       const prompt = citeFindingIdsPrompt(workDir)
       // O2/O3: a fresh scratch copy for this resend attempt — never
       // the first attempt's own, matching this function's own fresh-dispatch
@@ -1873,7 +1873,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       let lastHandle: DispatchHandle | null = null
       for (let attempt = 1; attempt <= 2; attempt++) {
         const workDir = reviewerWorkDir(root, task, roundNum, role, attempt)
-        ensureRunDir(workDir)
+        ensureRunDir(workDir, root)
         const prompt = renderReviewerDispatchPrompt(role, facts, workDir)
         // O1/O2: a fresh, writable copy of this round's shared,
         // read-only candidate (built once, below, before both roles
@@ -2338,7 +2338,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                   detail: `round ${held.round} findings delivered again on unchanged head ${currentHead}, with no developer push since the first delivery (guard: local marker file ${markerPresent ? 'present' : 'absent'}, control-store delivered-findings identity ${alreadyDeliveredInStore ? 'matched' : 'absent'})`
                 }
               } else {
-                ensureRunDir(dirname(marker))
+                ensureRunDir(dirname(marker), root)
                 writeFileSync(marker, new Date().toISOString(), 'utf8')
                 round = held.round + 1
                 lastReviewContext = held.rendered

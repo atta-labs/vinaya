@@ -51,8 +51,8 @@ function readForgeEffect(path: string): ForgeEffectRecord | null {
   }
 }
 
-function writeForgeEffect(path: string, record: ForgeEffectRecord): void {
-  ensureRunDir(dirname(path))
+function writeForgeEffect(root: string, path: string, record: ForgeEffectRecord): void {
+  ensureRunDir(dirname(path), root)
   writeFileSync(path, JSON.stringify(record), 'utf8')
 }
 
@@ -72,9 +72,9 @@ export function postForgeEffectOnce(root: string, task: number, key: string, pos
   const existing = readForgeEffect(path)
   if (existing?.status === 'posted' && existing.url) return existing.url
   const effectId = existing?.effectId ?? randomUUID()
-  writeForgeEffect(path, { effectId, status: 'started' })
+  writeForgeEffect(root, path, { effectId, status: 'started' })
   const url = poster()
-  writeForgeEffect(path, { effectId, status: 'posted', url })
+  writeForgeEffect(root, path, { effectId, status: 'posted', url })
   return url
 }
 

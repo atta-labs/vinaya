@@ -247,7 +247,7 @@ function pauseStatePath(root: string, task: number): string {
 
 export function writePauseState(root: string, state: PauseState): void {
   const path = pauseStatePath(root, state.task)
-  ensureRunDir(dirname(path))
+  ensureRunDir(dirname(path), root)
   writeFileSync(path, JSON.stringify(state), 'utf8')
 }
 
@@ -327,7 +327,7 @@ export function readDriverLock(root: string, task: number): DriverLock | null {
 
 export function writeDriverLock(root: string, task: number, lock: DriverLock): void {
   const path = driverLockPath(root, task)
-  ensureRunDir(dirname(path))
+  ensureRunDir(dirname(path), root)
   writeFileSync(path, JSON.stringify(lock), 'utf8')
 }
 
