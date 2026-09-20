@@ -564,6 +564,74 @@ export const SUITE_RUN_DENY_REASON =
   'Dispatched sessions cannot run a test runner with no test-file argument — name the specific *.test.*/*.spec.* file(s) this Part proves. The pre-push hook’s selected-tests run and CI are the only sanctioned whole-suite runs.'
 
 /**
+ * Round 3 security review, HIGH — found live: `buildRolePermissions`'s own
+ * `deny` entries (`Bash(git push --force*)`, `Bash(git commit --no-verify*)`,
+ * etc.) are literal command-string-PREFIX matches, exactly like every other
+ * entry the settings-file engine supports (this file's own doc comment on
+ * `buildRolePermissions` already cites the confirmed-live `Bash(<prefix>)`/
+ * `Bash(<prefix>:*)`/`Bash(<glob> *)` grammar) — so an ordinary alternate
+ * spelling never matches ANY deny entry at all and resolves through the
+ * broader `Bash(git push:*)`/`Bash(git commit:*)` allow with an empty
+ * `permission_denials` array: `git push origin --force` (the flag after the
+ * remote/branch, not right after `push`), `git push origin +feature:main`
+ * (git's own force-refspec syntax — no `--force`/`-f` flag exists at all),
+ * `git commit -am fix --no-verify` (the flag after other short options).
+ * A prefix-matched string can never generalize over argument ORDER the way
+ * this needs to. Detected here instead — the SAME `PreToolUse` hook
+ * mechanism `commandRunsWholeSuite` (above) already proves live for exactly
+ * this class of check (a whole-suite test run has the identical
+ * argument-order problem: `bun test --coverage <file>` is fine, `bun test`
+ * alone is not, and no fixed prefix distinguishes them) — real token
+ * inspection in JS, not a settings-file pattern. Reuses `commandStatements`/
+ * `stripLineComment` from `wholeSuiteTestCommandDetectorSource`'s own
+ * embedded copy (both already land in the SAME generated script), rather
+ * than a second inline reimplementation.
+ */
+function gitForceOrSkipVerifyDetectorSource(): string {
+  return [
+    'function statementTokens(stmt) {',
+    '  return stmt.trim().split(/\\s+/).filter(Boolean);',
+    '}',
+    'function commandForcesGitOrSkipsVerify(command) {',
+    "  if (typeof command !== 'string') return false;",
+    '  for (const raw of commandStatements(command)) {',
+    '    const stmt = stripLineComment(raw);',
+    '    const tokens = statementTokens(stmt);',
+    "    if (tokens[0] !== 'git') continue;",
+    '    const sub = tokens[1];',
+    "    if (sub === 'push') {",
+    '      for (let i = 2; i < tokens.length; i++) {',
+    '        const t = tokens[i];',
+    "        if (t === '-f' || t === '--force') return true;",
+    "        if (t === '--force-with-lease' || t.indexOf('--force-with-lease=') === 0) return true;",
+    "        if (t === '--no-verify') return true;",
+    // A push refspec argument starting with `+` (e.g. `+feature:main`,
+    // `+HEAD:main`) is git's OWN force-push syntax — no `--force`/`-f` flag
+    // is present at all in this shape, confirmed against git's own
+    // `git-push` documentation ("a plus sign ... has the same effect as
+    // --force").
+    "        if (t.charAt(0) === '+' && t.length > 1) return true;",
+    '      }',
+    "    } else if (sub === 'commit') {",
+    '      for (let i = 2; i < tokens.length; i++) {',
+    '        const t = tokens[i];',
+    "        if (t === '--no-verify' || t === '-n') return true;",
+    // A combined short-flag cluster (`-an`, `-na`, …) containing `n` — git
+    // commit's own short options never use `n` for anything else, so any
+    // cluster carrying it is `-n`/`--no-verify` combined with other flags.
+    "        if (/^-[a-zA-Z]+$/.test(t) && t.slice(1).indexOf('n') !== -1) return true;",
+    '      }',
+    '    }',
+    '  }',
+    '  return false;',
+    '}'
+  ].join('\n')
+}
+
+export const GIT_FORCE_OR_SKIP_VERIFY_DENY_REASON =
+  'Dispatched sessions cannot force-push (in any spelling, including a `+refspec`) or skip commit/push hooks (`--no-verify`/`-n`) — this is enforced by argument inspection, not a settings-file pattern, so no flag ordering or alternate spelling defeats it.'
+
+/**
  * The subagent tool (`Agent`/`Task` — both names are checked, as a
  * dispatched session may see either) defaults `run_in_background` to true,
  * so an unattended developer session that never sets it explicitly would
@@ -602,11 +670,14 @@ function backgroundDenyHookScript(): string {
     '    const e = JSON.parse(d);',
     backgroundShapeDetectorSource(),
     wholeSuiteTestCommandDetectorSource(),
+    gitForceOrSkipVerifyDetectorSource(),
     '    const input = e.tool_input || {};',
     "    if (e.tool_name === 'Bash' && (input.run_in_background === true || commandBackgrounds(input.command))) {",
     denyOutput(BACKGROUND_DENY_REASON),
     "    } else if (e.tool_name === 'Bash' && commandRunsWholeSuite(input.command)) {",
     denyOutput(SUITE_RUN_DENY_REASON),
+    "    } else if (e.tool_name === 'Bash' && commandForcesGitOrSkipsVerify(input.command)) {",
+    denyOutput(GIT_FORCE_OR_SKIP_VERIFY_DENY_REASON),
     "    } else if ((e.tool_name === 'Agent' || e.tool_name === 'Task') && input.run_in_background === true) {",
     denyOutput(SUBAGENT_BACKGROUND_DENY_REASON),
     '    }',

@@ -2488,6 +2488,83 @@ describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
     expect(decision(run('bun test; echo apps/cli/tests/lib/dispatch.test.ts'))?.permissionDecision).toBe('deny')
   })
 
+  it('round 3 security review, HIGH: denies a force push or a --no-verify commit/push regardless of flag order or spelling, never only the fixed-prefix shapes a settings-file pattern can express', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const argvOut = join(cwd, 'argv.out')
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\nfor a in "$@"; do echo "$a"; done > "${argvOut}"\ncat > /dev/null\necho '{}'\nexit 0\n`
+    )
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(0)
+
+    const argv = readFileSync(argvOut, 'utf8').trim().split('\n')
+    const settingsIdx = argv.indexOf('--settings')
+    const settingsPath = argv[settingsIdx + 1] as string
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as {
+      hooks: { PreToolUse: Array<{ hooks: Array<{ command: string }> }> }
+    }
+    const hookCommand = settings.hooks.PreToolUse[0]?.hooks[0]?.command as string
+    const scriptPath = hookCommand.slice('bun "'.length, -1)
+
+    const run = (command: string) => {
+      const result = spawnBudgeted(
+        [scriptPath],
+        {
+          input: JSON.stringify({ tool_name: 'Bash', tool_input: { command, run_in_background: false } }),
+          encoding: 'utf8'
+        },
+        'PreToolUse hook'
+      )
+      expect(result.status).toBe(0)
+      return result.stdout.trim()
+    }
+    const decision = (out: string): { permissionDecision: string; permissionDecisionReason: string } | null =>
+      out === '' ? null : (JSON.parse(out).hookSpecificOutput as never)
+
+    // Every alternate spelling round 3 security review found live, none of
+    // which any fixed-prefix `Bash(git push --force*)`-style settings-file
+    // pattern can express: a flag after the remote/branch, git's own
+    // `+refspec` force syntax with no `--force`/`-f` flag at all, and a
+    // `--no-verify` after other short flags on a commit.
+    expect(decision(run('git push origin --force'))?.permissionDecision).toBe('deny')
+    expect(decision(run('git push origin +feature:main'))?.permissionDecision).toBe('deny')
+    expect(decision(run('git push origin +HEAD:main'))?.permissionDecision).toBe('deny')
+    expect(decision(run('git commit -am fix --no-verify'))?.permissionDecision).toBe('deny')
+    expect(decision(run('git commit -an -m fix'))?.permissionDecision).toBe('deny')
+    expect(decision(run('git push origin --force-with-lease=main'))?.permissionDecision).toBe('deny')
+
+    // The fixed-prefix shapes still deny too — this is additive, not a
+    // replacement of the settings-file deny list.
+    expect(decision(run('git push --force'))?.permissionDecision).toBe('deny')
+    expect(decision(run('git commit --no-verify -am x'))?.permissionDecision).toBe('deny')
+
+    const denyReason = decision(run('git push origin --force'))?.permissionDecisionReason
+    expect(denyReason).toMatch(/force-push|refspec/)
+
+    // A genuinely ordinary push/commit is never caught by this check.
+    expect(decision(run('git push origin main'))).toBeNull()
+    expect(decision(run('git commit -am "a real change"'))).toBeNull()
+    expect(decision(run('git commit -m "a plus sign +not-a-refspec in the message"'))).toBeNull()
+
+    // Chained statements and shell comments cannot smuggle the forbidden
+    // shape past the check either — same discipline the whole-suite check
+    // (above) already holds to.
+    expect(decision(run('git push origin main; git push origin +feature:main'))?.permissionDecision).toBe('deny')
+    expect(decision(run('git commit -am fix # --no-verify'))).toBeNull()
+  })
+
   it('denies the subagent tool (Agent/Task) when its background flag is set, allows it in the foreground', () => {
     const home = tempDir('vinaya-dispatch-home-')
     const cwd = tempDir('vinaya-dispatch-cwd-')
