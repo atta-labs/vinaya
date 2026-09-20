@@ -42,6 +42,7 @@ import {
   colourEnabled,
   colourLoopLine,
   recoverUsageFromDispatchTee,
+  sawVendorConnectionRetry,
   unreadDocumentationSources,
   getProcessSnapshot,
   matchesCapturedIdentity,
@@ -483,6 +484,68 @@ describe("dispatchRole — Issue #636, O5: a child that exits without ever bindi
 
     const parsed = JSON.parse(r.stdout) as { data: { failureReason: string | null } }
     expect(parsed.data.failureReason).toBe('crash')
+  })
+})
+
+describe("dispatchRole — [task-operator-v1]/Issue #662, O2: a child that could not reach the vendor's backend is named 'connection-failed'", () => {
+  it("a non-zero exit after a bound session AND a confirmed-live api_retry marker reports failureReason 'connection-failed', never 'crash'", () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    // The exact shape confirmed live against claude CLI 2.1.197 with
+    // ANTHROPIC_BASE_URL pointed at an unreachable host — a bound session,
+    // one or more api_retry lines, then the process gives up non-zero.
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh
+cat > /dev/null
+printf '%s\\n' '{"type":"system","subtype":"init","session_id":"bound-session-1"}'
+printf '%s\\n' '{"type":"system","subtype":"api_retry","attempt":1,"max_retries":10,"retry_delay_ms":500,"error_status":null,"error":"unknown","session_id":"bound-session-1"}'
+exit 7
+`
+    )
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile, '--json'],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(1)
+
+    const parsed = JSON.parse(r.stdout) as { data: { failureReason: string | null } }
+    expect(parsed.data.failureReason).toBe('connection-failed')
+  })
+
+  it('a non-zero exit with an api_retry marker but NO bound session still reports "unbound" — there is no exact session to resume', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh
+cat > /dev/null
+printf '%s\\n' '{"type":"system","subtype":"api_retry","attempt":1,"max_retries":10,"retry_delay_ms":500,"error_status":null,"error":"unknown","session_id":null}'
+exit 7
+`
+    )
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile, '--json'],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(1)
+
+    const parsed = JSON.parse(r.stdout) as { data: { failureReason: string | null } }
+    expect(parsed.data.failureReason).toBe('unbound')
   })
 })
 
@@ -2090,6 +2153,43 @@ describe('dispatch streaming output (#447 O5)', () => {
     expect(parseClaudeResumeId(stream)).toBe('the-real-one')
     expect(parseClaudeResumeId(JSON.stringify({ session_id: 'single-blob' }))).toBe('single-blob')
     expect(parseClaudeResumeId('')).toBeNull()
+  })
+})
+
+describe('sawVendorConnectionRetry (pure) — [task-operator-v1]/Issue #662, O2', () => {
+  it('true for a real api_retry line, confirmed-live shape (claude CLI 2.1.197)', () => {
+    const stream = [
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 's1' }),
+      JSON.stringify({
+        type: 'system',
+        subtype: 'api_retry',
+        attempt: 1,
+        max_retries: 10,
+        retry_delay_ms: 504.3,
+        error_status: null,
+        error: 'unknown',
+        session_id: 's1'
+      })
+    ].join('\n')
+    expect(sawVendorConnectionRetry(stream)).toBe(true)
+  })
+
+  it('false for an ordinary stream with no retry marker', () => {
+    const stream = [
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 's1' }),
+      JSON.stringify({ stop_reason: 'end_turn', session_id: 's1' })
+    ].join('\n')
+    expect(sawVendorConnectionRetry(stream)).toBe(false)
+  })
+
+  it('false for empty output, and never throws on non-JSON lines', () => {
+    expect(sawVendorConnectionRetry('')).toBe(false)
+    expect(sawVendorConnectionRetry('not json\nalso not json')).toBe(false)
+  })
+
+  it('false for a subtype: api_retry on a DIFFERENT type — the exact shape, not a loose substring match', () => {
+    const stream = JSON.stringify({ type: 'assistant', subtype: 'api_retry' })
+    expect(sawVendorConnectionRetry(stream)).toBe(false)
   })
 })
 

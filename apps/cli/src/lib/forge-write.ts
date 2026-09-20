@@ -1833,12 +1833,18 @@ export function markedCommentBody(marker: string, body: string): string {
 }
 
 /**
- * Posts `body`, prefixed with `marker` on its own first line, as a comment on
- * an Issue or PR — the same buffered-temp-file shape `pr.ts`'s
- * `postBriefComment` uses, generalised over `kind`. Returns the URL `gh`
- * printed. A failed post is a hard refusal: nothing durable was recorded.
+ * The throwing core: posts `body`, prefixed with `marker` on its own first
+ * line, as a comment on an Issue or PR — the same buffered-temp-file shape
+ * `pr.ts`'s `postBriefComment` uses, generalised over `kind`. Returns the
+ * URL `gh` printed. A failed post throws the raw error — never
+ * `process.exit` — so a caller that must survive a post failure and retry
+ * it (O1: the dev-review-loop driver's own
+ * pause-comment retry, `pause-resume.ts`) can catch it. `postMarkedComment`,
+ * below, is the exit-on-failure wrapper every other caller in this repo
+ * (a one-shot CLI command, where a hard refusal IS the right behavior)
+ * keeps using, unchanged.
  */
-export function postMarkedComment(kind: 'issue' | 'pr', ref: string, marker: string, body: string): string {
+export function postMarkedCommentOrThrow(kind: 'issue' | 'pr', ref: string, marker: string, body: string): string {
   const commentBody = markedCommentBody(marker, body)
   const dir = mkdtempSync(join(tmpdir(), 'vinaya-marked-comment-'))
   const tmp = join(dir, 'comment.md')
@@ -1849,6 +1855,20 @@ export function postMarkedComment(kind: 'issue' | 'pr', ref: string, marker: str
       stdio: ['ignore', 'pipe', 'pipe']
     })
     return out.trim()
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+/**
+ * Posts through `postMarkedCommentOrThrow`, above, and turns a failure into
+ * this repo's ordinary hard refusal (emit the finding, `process.exit(1)`) —
+ * unchanged behavior for every existing caller. A failed post is a hard
+ * refusal: nothing durable was recorded.
+ */
+export function postMarkedComment(kind: 'issue' | 'pr', ref: string, marker: string, body: string): string {
+  try {
+    return postMarkedCommentOrThrow(kind, ref, marker, body)
   } catch (err) {
     refuse([
       makeCheckError(
@@ -1857,8 +1877,6 @@ export function postMarkedComment(kind: 'issue' | 'pr', ref: string, marker: str
         'Check `gh auth status` and network, then retry.'
       )
     ])
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
   }
 }
 

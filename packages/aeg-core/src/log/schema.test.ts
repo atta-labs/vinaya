@@ -247,6 +247,70 @@ describe('LogEventSchema — dev_review_loop family', () => {
     }
     expect(LogEventSchema.safeParse(line).success).toBe(false)
   })
+
+  it('parses a valid infrastructure_retry line for a recovered pause-comment-post retry (O1/O3, `[task-operator-v1]`/Issue #662)', () => {
+    const line = {
+      meta,
+      subject,
+      kind: 'dev_review_loop' as const,
+      event: 'infrastructure_retry' as const,
+      payload: {},
+      loop_id: 'loop-1',
+      round: 2,
+      failure_kind: 'pause_comment_post' as const,
+      attempts: 3,
+      outcome: 'recovered' as const
+    }
+    expect(LogEventSchema.safeParse(line).success).toBe(true)
+  })
+
+  it('parses a valid infrastructure_retry line for an exhausted developer-connection retry (O2/O3)', () => {
+    const line = {
+      meta,
+      subject,
+      kind: 'dev_review_loop' as const,
+      event: 'infrastructure_retry' as const,
+      payload: {},
+      loop_id: 'loop-1',
+      round: 4,
+      failure_kind: 'developer_connection' as const,
+      attempts: 5,
+      outcome: 'exhausted' as const
+    }
+    expect(LogEventSchema.safeParse(line).success).toBe(true)
+  })
+
+  it('refuses an infrastructure_retry line with a zero attempts count — an episode always made at least one attempt', () => {
+    const line = {
+      meta,
+      subject,
+      kind: 'dev_review_loop' as const,
+      event: 'infrastructure_retry' as const,
+      payload: {},
+      loop_id: 'loop-1',
+      round: 2,
+      failure_kind: 'pause_comment_post' as const,
+      attempts: 0,
+      outcome: 'exhausted' as const
+    }
+    expect(LogEventSchema.safeParse(line).success).toBe(false)
+  })
+
+  it('refuses an infrastructure_retry line with an unrecognized failure_kind', () => {
+    const line = {
+      meta,
+      subject,
+      kind: 'dev_review_loop' as const,
+      event: 'infrastructure_retry' as const,
+      payload: {},
+      loop_id: 'loop-1',
+      round: 2,
+      failure_kind: 'something_else',
+      attempts: 1,
+      outcome: 'recovered' as const
+    }
+    expect(LogEventSchema.safeParse(line).success).toBe(false)
+  })
 })
 
 const validForgeWrite = {

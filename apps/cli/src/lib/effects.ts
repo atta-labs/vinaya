@@ -93,6 +93,33 @@ export class EffectRetryRefusedError extends Error {
   }
 }
 
+/**
+ * Opt-in, bounded retry-with-backoff around a `reconcile` call that comes
+ * back `'ambiguous'` — round 2/round 4 review, MAJOR/MEDIUM (`effects.ts:240`):
+ * a prior `'started'` record's own reconciliation used to be consulted
+ * EXACTLY ONCE, so a crash mid-post followed by a still-unreachable remote
+ * on the very next attempt marked the record `'uncertain'` and refused
+ * immediately — skipping `poster`'s own bounded retry loop entirely for
+ * this one reachable double-failure combination (the exact gap `O1`'s
+ * "retried with backoff for a bounded period" promises against). Absent by
+ * default, preserving every OTHER `EffectExecutor` caller's existing
+ * single-attempt-then-`'uncertain'` behavior unchanged (`publishRound`,
+ * `broker.ts`) — only a caller that explicitly opts in (`pause-resume.ts`'s
+ * pause/escalation posts) gets this widened retry window, so this fix
+ * never silently changes what a verdict-post's own idempotency already
+ * guarantees. `sleep` is injectable so a test can force zero-backoff
+ * retries rather than actually waiting `attempts - 1` real backoff
+ * intervals; defaults to the same blocking `Atomics.wait` idiom this file's
+ * own callers already use elsewhere in this driver.
+ */
+export type ReconcileRetryPolicy = {
+  attempts: number
+  backoffMs: number
+  /** Reports the real number of `reconcile` calls made once the loop stops — 1 on an ordinary first-try resolution, more once a retry actually ran. Mirrors `postWithRetry`'s own `onAttempts` convention so a caller can combine both into one accurate total. */
+  onAttempts?: (n: number) => void
+  sleep?: (ms: number) => void
+}
+
 export type EffectExecuteInput = {
   /** One control-store file per key — the same key on a rerun is what lets this executor find (and reconcile) a prior attempt at all. */
   key: string
@@ -101,6 +128,14 @@ export type EffectExecuteInput = {
   poster: () => string
   /** Consulted only when a prior `'started'` record at the SAME identity is found — never on a fresh key, never on a changed identity. */
   reconcile: EffectReconciler
+  /** See `ReconcileRetryPolicy`'s own doc comment — absent means the original, single-attempt behavior. */
+  reconcileRetry?: ReconcileRetryPolicy
+}
+
+/** Blocking, in-process sleep — the same `Atomics.wait` idiom `dev-review-loop/pause-resume.ts`'s own `sleepSyncMs` (and `gate-reading.ts`'s, and `dispatch.ts`'s) already use, restated here rather than imported across a module boundary — this file has no dependency on the driver modules that call into it. */
+function sleepSyncMs(ms: number): void {
+  if (ms <= 0) return
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
 }
 
 function sameIdentity(a: EffectIdentity, b: EffectIdentity): boolean {
@@ -145,12 +180,12 @@ export class EffectExecutor {
   ) {}
 
   execute(input: EffectExecuteInput): string {
-    const { key, identity, poster, reconcile } = input
+    const { key, identity, poster, reconcile, reconcileRetry } = input
     const existing = readEffect(this.deps, this.task, key)
 
     if (existing.status === 'ok') {
       if (sameIdentity(existing.value, identity)) {
-        return this.reconcileExisting(key, existing.value, poster, reconcile)
+        return this.reconcileExisting(key, existing.value, poster, reconcile, reconcileRetry)
       }
       // A different operation/target/inputVersion/payloadDigest recorded
       // under this key: a changed intent, not a retry of the old one —
@@ -192,7 +227,8 @@ export class EffectExecutor {
       url?: string
     },
     poster: () => string,
-    reconcile: EffectReconciler
+    reconcile: EffectReconciler,
+    reconcileRetry?: ReconcileRetryPolicy
   ): string {
     if (recorded.status === 'verified') {
       if (!recorded.url) {
@@ -237,7 +273,28 @@ export class EffectExecutor {
       inputVersion: recorded.inputVersion,
       payloadDigest: recorded.payloadDigest
     }
-    const result = reconcile(identity)
+    // round 2/round 4 review, MAJOR/MEDIUM: `reconcile` used to be
+    // consulted exactly once here — a crash mid-post (this branch) followed
+    // by a still-unreachable remote on the very next attempt read
+    // 'ambiguous' and refused immediately, never giving `poster`'s own
+    // bounded retry loop a chance to run. When the caller opts in
+    // (`reconcileRetry`), an 'ambiguous' outcome is retried with backoff up
+    // to `attempts` times before falling through to the SAME
+    // `'uncertain'`/refuse handling below — absent, this loop runs exactly
+    // once, identical to the pre-fix behavior every other caller still gets.
+    const retryAttempts = reconcileRetry?.attempts ?? 1
+    const retryBackoffMs = reconcileRetry?.backoffMs ?? 0
+    const sleep = reconcileRetry?.sleep ?? sleepSyncMs
+    let result: EffectReconcileResult = { outcome: 'ambiguous', reason: 'reconcile never called' }
+    for (let attempt = 1; attempt <= retryAttempts; attempt++) {
+      result = reconcile(identity)
+      if (result.outcome !== 'ambiguous') {
+        reconcileRetry?.onAttempts?.(attempt)
+        break
+      }
+      if (attempt < retryAttempts) sleep(retryBackoffMs * attempt)
+      else reconcileRetry?.onAttempts?.(attempt)
+    }
     const now = this.deps.now().toISOString()
     if (result.outcome === 'confirmed') {
       writeEffect(this.deps, this.task, this.epoch, key, {

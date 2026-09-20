@@ -190,6 +190,7 @@ import {
   escalationIdFor,
   fenceStartedEffectsAsUncertain,
   isDriverPidAlive,
+  type PauseCommentPostResult,
   type PauseState,
   postIssuePauseComment,
   postPauseComment,
@@ -934,14 +935,30 @@ export type LoopResult = { finalDecision: Decision; prNumber: number; task: numb
  * would silently switch an unattended, machine-parsed caller over to
  * human-readable output the moment a moved base restarts this same driver
  * underneath it.
+ *
+ * O4: ALWAYS `--task <n>`, never `--resume <pr>`, even when
+ * `input` itself carries a `resumePr` — a re-exec is this SAME run
+ * continuing, not a fresh `--resume` invocation, and `--resume`'s own
+ * top-of-function gate authenticates the Principal's ruling by CONSUMING
+ * its resolution exactly once (`resolveEscalation`/`consumeResolutionOnce`,
+ * `pause-resume.ts`), durably, in the control store. A re-exec that
+ * rebuilt `--resume <pr>` re-entered that SAME gate a second time against
+ * the SAME already-consumed resolution — `ReplayedResolutionError`, thrown
+ * before this process's own outer `try`/`finally` even starts, so nothing
+ * traces it: a resumed loop that ran a full round, took the developer's
+ * next push, then hit a stale-driver restart mid-round exited with no
+ * pause and no reviewers (origin: live, 2026-09-19). `--task <n>`'s own
+ * round-1 entry already attaches to the open PR with no ruling required
+ * (`loop.md` § Rounds — "an already-open pull request… means ATTACH") and
+ * recovers the round number from the durable journal/held-verdict state,
+ * exactly the position a mid-loop restart needs — never from a stale
+ * `pause-state.json` a completed resume has already moved past. A
+ * genuinely fresh, human-invoked `--resume <pr>` past an already-consumed
+ * resolution must still refuse (Traps to avoid) — this function is never
+ * in that path; it only shapes the driver's OWN internal re-exec.
  */
 export function buildReexecArgs(input: LoopInput, task: number): string[] {
-  return [
-    ...('resumePr' in input
-      ? ['dev-review-loop', '--resume', String(input.resumePr), '--agent', input.agent]
-      : ['dev-review-loop', '--task', String(task), '--agent', input.agent]),
-    ...(input.json ? ['--json'] : [])
-  ]
+  return ['dev-review-loop', '--task', String(task), '--agent', input.agent, ...(input.json ? ['--json'] : [])]
 }
 
 export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = {}): Promise<LoopResult> {
@@ -1556,22 +1573,75 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // instead (its own doc comment on `unattended`) rather than refusing
       // a round-1 dispatch whose own Step 0 is creating that worktree.
       const devWorktreeDir = existsSync(worktreePathForBranch()) ? worktreePathForBranch() : null
-      const handle = await withPromptFile(fullPrompt, (promptFile) =>
-        d.dispatchRole('developer', input.agent, fullPrompt, {
-          task: task,
-          round: roundNum,
-          resumeId: devResumeId ?? undefined,
-          promptFile,
-          roleLogPath: loopLogPath,
-          ...(devWorktreeDir ? { cwd: devWorktreeDir } : {}),
-          // issue-661, O1: `runTask`'s own resolved model, spent here and
-          // only here — `dispatchRole`'s own `resolvedModel` log line
-          // already reports `requested:<model>` vs `'default'`, so no
-          // separate log line is needed on this side.
-          ...(input.model ? { model: input.model } : {}),
-          unattended: true
-        })
-      )
+      const attemptDispatch = (): Promise<DispatchHandle> =>
+        withPromptFile(fullPrompt, (promptFile) =>
+          d.dispatchRole('developer', input.agent, fullPrompt, {
+            task: task,
+            round: roundNum,
+            resumeId: devResumeId ?? undefined,
+            promptFile,
+            roleLogPath: loopLogPath,
+            ...(devWorktreeDir ? { cwd: devWorktreeDir } : {}),
+            // issue-661, O1: `runTask`'s own resolved model, spent here and
+            // only here — `dispatchRole`'s own `resolvedModel` log line
+            // already reports `requested:<model>` vs `'default'`, so no
+            // separate log line is needed on this side.
+            ...(input.model ? { model: input.model } : {}),
+            unattended: true
+          })
+        )
+      let handle = await attemptDispatch()
+      // O2: the launcher's own
+      // `'connection-failed'` classification means the vendor could not be
+      // reached — never a developer decision. Wait and re-dispatch the SAME
+      // session, bounded by the existing infrastructure-retry budget
+      // (`MAX_INFRASTRUCTURE_RETRIES`, shared with every other
+      // infrastructure-class hiccup this task hits), before this ever
+      // reaches `assertDispatchOrEscalate`'s stop-and-escalate/pause path —
+      // a network drop that recovers on retry must never become a decided
+      // stop the developer itself never made. `reconcileDeveloperResume`
+      // picks the exact session back up from the durable launch record,
+      // which binds one the instant the vendor stream reports it, even on
+      // an attempt this connection failure interrupted mid-turn — the
+      // returned `handle` itself always carries `resumeId: null` on a
+      // failure path (`dispatch.ts`), so this is the only way to recover it.
+      let connectionRetryAttempts = 0
+      while (handle.failureReason === 'connection-failed' && infrastructureRetries < MAX_INFRASTRUCTURE_RETRIES) {
+        infrastructureRetries += 1
+        connectionRetryAttempts += 1
+        await d.sleep(gatePollEnvOverride('VINAYA_DEV_REVIEW_LOOP_CONNECTION_RETRY_BACKOFF_MS', 5_000))
+        reconcileDeveloperResume(false)
+        handle = await attemptDispatch()
+      }
+      // O3: one typed event per retry episode, naming the failure kind, the
+      // total attempts made, and whether a later attempt eventually
+      // recovered — never one line per attempt, and never logged at all for
+      // the common case (no connection failure this dispatch).
+      //
+      // round 2 review, MAJOR: `outcome` reads off whether the LAST attempt
+      // still carries ANY `failureReason`, never specifically
+      // `'connection-failed'` — the retry loop's own condition only re-enters
+      // on `'connection-failed'`, so its exit can land on a genuine success
+      // (`handle.failureReason` undefined: `'recovered'`) OR on the bound
+      // being exhausted while still `'connection-failed'` OR on a retried
+      // attempt that failed for a DIFFERENT reason (crash/timeout/refused/
+      // signal/unbound) — every one of those non-success cases is
+      // `'exhausted'`, never silently reported as `'recovered'`.
+      if (connectionRetryAttempts > 0) {
+        await logEvents([
+          {
+            kind: 'dev_review_loop' as const,
+            payload: {},
+            loop_id: config.loopId,
+            event: 'infrastructure_retry' as const,
+            round: roundNum,
+            failure_kind: 'developer_connection' as const,
+            attempts: connectionRetryAttempts + 1,
+            outcome: handle.failureReason ? 'exhausted' : 'recovered'
+          }
+        ])
+        await d.flushOutbox(task)
+      }
       await assertDispatchOrEscalate(handle, input.agent, isResume, devDispatchSucceededBefore)
       if (!handle.failureReason) {
         devDispatchSucceededBefore = true
@@ -1686,6 +1756,41 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           round: roundNum,
           branch,
           detail
+        }
+      ])
+      await d.flushOutbox(task)
+    }
+
+    /**
+     * O1/O3: every pause/escalation
+     * comment post site calls THIS, never `postPauseComment`/
+     * `postIssuePauseComment` directly followed by its own error handling —
+     * both functions already never throw (they retry with backoff, then
+     * report the outcome), so there is nothing to catch here; this
+     * function's only job is the ONE thing every call site would otherwise
+     * duplicate: logging a durable `infrastructure_retry` event whenever
+     * `result` shows something notable — a retry genuinely happened
+     * (`attempts > 1`), OR the post never landed at all (`posted: false`,
+     * regardless of `attempts` — round 5 review, MINOR: a corrupt-record
+     * refusal or an epoch-acquisition failure reports `attempts: 1` with
+     * `posted: false`, and used to be silently dropped by an `attempts <=
+     * 1` check that could not tell that apart from an ordinary first-try
+     * success). The truly common case — a boring first-try success,
+     * `posted: true` with `attempts` `0` (idempotent no-op) or `1` — is the
+     * only one that stays silent, exactly as O3 intends.
+     */
+    async function logPauseCommentRetryIfNotable(roundNum: number, result: PauseCommentPostResult): Promise<void> {
+      if (result.posted && result.attempts <= 1) return
+      await logEvents([
+        {
+          kind: 'dev_review_loop' as const,
+          payload: {},
+          loop_id: config.loopId,
+          event: 'infrastructure_retry' as const,
+          round: roundNum,
+          failure_kind: 'pause_comment_post' as const,
+          attempts: result.attempts,
+          outcome: result.posted ? ('recovered' as const) : ('exhausted' as const)
         }
       ])
       await d.flushOutbox(task)
@@ -2309,6 +2414,26 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // `resumedDispatch` (below) labels the prompt accordingly, once.
         const rulings = d.fetchRulings(prNumber)
         lastReviewContext = rulings.map((r, i) => `${i + 1}. ${r}`).join('\n')
+        // O1: the pause comment this run
+        // is resuming from may never have reached the forge (a network
+        // drop mid-post, or the pause path's own exhausted retry) — the
+        // local record (`resumeFrom`) is what is authoritative; the
+        // comment is only ever a projection of it. Re-posting here is a
+        // no-op when it already landed (`postPauseComment`'s own
+        // idempotent identity check reads the SAME `pause-<round>-<head>`
+        // key its original post used) and posts the missing copy, once,
+        // when it didn't — before this run does anything else. Skipped
+        // once the head has already moved past the held pause (O8): that
+        // identity is superseded by the fix already pushed, and reposting
+        // here would build a DIFFERENT key (`resumeFrom.round` widened to
+        // the ruling's own ordinal) than the one the original post ever
+        // used, never actually completing it.
+        if (!resumeHeadAlreadyMoved) {
+          await logPauseCommentRetryIfNotable(
+            resumeFrom.round,
+            postPauseComment(task, resumeFrom.round, resumeFrom.head, prNumber, resumeFrom.reason, resumeFrom.detail)
+          )
+        }
       } else {
         // O4: round-1 entry — attach to an existing open PR, resume once to open
         // one on a remote branch that has none, or dispatch fresh. Checked in
@@ -2428,7 +2553,48 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               // than only reaching stderr.
               const finalFlush = await d.flushOutbox(task)
               const detail = finalFlush.ok ? err.detail : appendFinalFlushFailureNote(err.detail, finalFlush.error)
-              postIssuePauseComment(task, round, 'escalation', detail)
+              // O1 (round 2 review, security MEDIUM): the local record is
+              // written BEFORE the post here too — this is the one pause/
+              // escalation call site in this file that used to post straight
+              // to the forge with no prior `writeEscalationRecord`/
+              // `writePauseState`, unlike every other one. `head: 'unknown'`
+              // mirrors the crash-handler's own sentinel (above) — no branch
+              // ever reached the remote here, so there is no real head to
+              // resolve. Best-effort exactly like the general pause branch:
+              // a control-store write failure here never blocks the post.
+              let escalationRecord: EscalationRecord | null = null
+              try {
+                escalationRecord = writeEscalationRecord({
+                  task,
+                  round,
+                  head: 'unknown',
+                  branch,
+                  pr: null,
+                  runId,
+                  agent: input.agent,
+                  reason: 'escalation',
+                  detail,
+                  evidence: lastReviewContext ?? undefined,
+                  ...bestEffortInputVersions()
+                })
+              } catch {
+                // Best-effort — the pause state and comment below are the
+                // authoritative record; a control-store write failure here
+                // never undoes them.
+              }
+              writePauseState(root, {
+                task,
+                round,
+                head: 'unknown',
+                branch,
+                prNumber: -1,
+                reason: 'escalation',
+                detail,
+                pausedAt: new Date().toISOString(),
+                escalationId: escalationRecord?.escalationId,
+                infrastructureRetries
+              })
+              await logPauseCommentRetryIfNotable(round, postIssuePauseComment(task, round, 'escalation', detail))
               return { finalDecision: { type: 'pause', reason: 'escalation', detail }, prNumber: 0, task }
             }
           }
@@ -2605,11 +2771,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // nothing was ever opened against. Recorded on the task Issue
         // instead, the one forge location that is always addressable for a
         // task with no open PR yet.
-        if (prNumber < 0) {
-          postIssuePauseComment(task, round, decision.reason, decision.detail)
-        } else {
-          postPauseComment(task, round, head, prNumber, decision.reason, decision.detail)
-        }
+        const postResult =
+          prNumber < 0
+            ? postIssuePauseComment(task, round, decision.reason, decision.detail)
+            : postPauseComment(task, round, head, prNumber, decision.reason, decision.detail)
+        await logPauseCommentRetryIfNotable(round, postResult)
       } catch {
         // Swallowed deliberately — see above. The role log's own
         // `driver_exited` trace (written above, unconditionally) is what a
@@ -3332,7 +3498,16 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             escalationId: escalationRecord?.escalationId,
             infrastructureRetries
           })
-          postPauseComment(task, round, pauseHead, prNumber, decision.reason, decision.detail)
+          // O1: `postPauseComment` never
+          // throws — a post that fails even after its own bounded retry
+          // reports `posted: false` rather than escaping to crash the
+          // driver or reach the outer catch, which would otherwise
+          // overwrite `writePauseState`'s already-correct reason, above,
+          // with a synthetic 'infrastructure' one.
+          await logPauseCommentRetryIfNotable(
+            round,
+            postPauseComment(task, round, pauseHead, prNumber, decision.reason, decision.detail)
+          )
           // Every pause, regardless of
           // which branch above decided it, funnels through here exactly
           // once before returning — the one call site that makes every

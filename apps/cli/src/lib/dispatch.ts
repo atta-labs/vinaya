@@ -284,7 +284,27 @@ export type DispatchOpts = {
  * 0 bytes for its entire life) is a different, more actionable failure —
  * recovery should not treat it the same as an ordinary crash mid-session.
  */
-export type DispatchFailureReason = 'timeout' | 'crash' | 'refused' | 'signal' | 'unbound'
+/**
+ * `'connection-failed'` (O2) — the vendor's
+ * own stdout carried at least one connection-retry signal
+ * (`sawVendorConnectionRetry`, below) before the child ended non-zero or
+ * timed out, AND a session was already bound: the vendor could not reach
+ * its backend, never a developer decision, and the session it bound is
+ * still resumable. Classified from a launch that DID bind a session only —
+ * one that never bound at all keeps reading `'unbound'`, since there is no
+ * exact session for the driver's own re-dispatch (O2's whole point) to
+ * resume. Confirmed live, `claude` CLI 2.1.197: pointing `ANTHROPIC_BASE_URL`
+ * at an unreachable host produces
+ * `{"type":"system","subtype":"api_retry","attempt":1,"max_retries":10,...}`
+ * lines on stdout — never stderr, so this reads the SAME buffer
+ * `parseUsage`/`parseResumeId` already scan, never violating this file's own
+ * "stderr content never decides success or failure" rule (`handleChildExit`'s
+ * own doc comment, above). Vendor-agnostic by construction — Codex/Gemini's
+ * own stream shapes never emit this marker, so the scan is always a no-op
+ * for them, never a guessed classification for an unconfirmed vendor's own
+ * shape (the vendor tables themselves are unchanged).
+ */
+export type DispatchFailureReason = 'timeout' | 'crash' | 'refused' | 'signal' | 'unbound' | 'connection-failed'
 
 export type DispatchHandle = {
   exitCode: number | null
@@ -1067,6 +1087,31 @@ export function parseGeminiUsageUnits(_stdout: string): UsageObservation {
     unknownReason:
       'gemini reports token usage per-model under stats.models.<model>.tokens, confirmed live to carry no single input/output pair — this launcher does not yet read that per-model shape'
   }
+}
+
+/**
+ * O2 — true when `stdout` carries at least
+ * one `{"type":"system","subtype":"api_retry",...}` line: the vendor's own
+ * signal that it could not reach its backend and was retrying internally
+ * before this process ever saw the child exit or time out. Confirmed live
+ * (claude CLI 2.1.197, `ANTHROPIC_BASE_URL` pointed at an unreachable host).
+ * Scans the SAME `stdoutBuf` every other vendor-output reader here already
+ * does — never stderr (this file's own "stderr content never decides
+ * success or failure" rule, `handleChildExit`'s doc comment) — and is
+ * vendor-agnostic: Codex/Gemini never emit this shape, so it is always
+ * `false` for them, never a guess about a vendor's own unconfirmed output.
+ */
+export function sawVendorConnectionRetry(stdout: string): boolean {
+  for (const line of stdout.split('\n')) {
+    if (!line.includes('"api_retry"')) continue
+    try {
+      const obj = JSON.parse(line) as { type?: unknown; subtype?: unknown }
+      if (obj.type === 'system' && obj.subtype === 'api_retry') return true
+    } catch {
+      // not a JSON line — keep scanning
+    }
+  }
+  return false
 }
 
 export function parseClaudeResumeId(stdout: string): string | null {
@@ -3012,7 +3057,16 @@ export async function dispatchRole(
         // (that field's schema lives in `@attalabs/aeg-core`, out of this
         // task's surface, and keeps reporting the real event class —
         // `'timeout'` — unchanged).
-        const failureReason = neverBoundSession ? 'unbound' : 'timeout'
+        //
+        // O2: `'connection-failed'` only when
+        // a session WAS bound — a re-dispatch needs an exact session to
+        // resume, and `'unbound'` already covers the no-session case with
+        // its own, more specific meaning.
+        const failureReason = neverBoundSession
+          ? 'unbound'
+          : sawVendorConnectionRetry(stdoutBuf)
+            ? 'connection-failed'
+            : 'timeout'
         if (neverBoundSession) {
           writeLifecycle(
             `[vinaya dispatch ${effectId}] ${role} via ${agent}: never produced a working vendor session before the ceiling was reached — failing now as 'unbound', not reporting further elapsed time`
@@ -3076,7 +3130,14 @@ export async function dispatchRole(
         // above — a child that exited on its own without ever binding a
         // session names that failure specifically, rather than the generic
         // `'crash'` every other non-zero exit gets.
-        const failureReason = neverBoundSession ? 'unbound' : 'crash'
+        //
+        // O2: same `'connection-failed'`
+        // classification as the timeout branch above.
+        const failureReason = neverBoundSession
+          ? 'unbound'
+          : sawVendorConnectionRetry(stdoutBuf)
+            ? 'connection-failed'
+            : 'crash'
         if (neverBoundSession) {
           writeLifecycle(
             `[vinaya dispatch ${effectId}] ${role} via ${agent}: exited (code ${code}) without ever producing a working vendor session — failing now as 'unbound'`
