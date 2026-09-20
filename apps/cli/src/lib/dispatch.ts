@@ -751,7 +751,7 @@ function documentationStopHookScript(dir: string): string {
 const DISPATCH_BASH_MAX_TIMEOUT_MS = '1800000'
 
 /**
- * Issue #663, O1/O3: bump this whenever the allow/deny shape below changes —
+ * Bump this whenever the allow/deny shape below changes —
  * `writeDispatchSettings`'s own first lifecycle line for a role names it, so
  * a run's own log says which policy shape it started under without needing
  * to diff `dispatch.ts` against the run's own timestamp.
@@ -763,7 +763,7 @@ type RolePermissions = { allow: string[]; deny: string[] }
 const EMPTY_ROLE_PERMISSIONS: RolePermissions = { allow: [], deny: [] }
 
 /**
- * Issue #663, O1: the settings-file counterpart to `writeDispatchSettings`'s
+ * The settings-file counterpart to `writeDispatchSettings`'s
  * existing hooks — an explicit, per-role `permissions.allow`/`deny` block, so
  * a dispatched role's Bash calls resolve against a WRITTEN policy rather than
  * falling through to whatever permission mode the host process happens to
@@ -937,7 +937,7 @@ export function buildRolePermissions(
  * blocks, the same seam-is-dormant-when-absent posture `doc-owners.ts`
  * already uses.
  *
- * `role`/`allowedDir`/`extraWritableDirs` (Issue #663, O1) feed
+ * `role`/`allowedDir`/`extraWritableDirs` feed
  * `buildRolePermissions` to add this same file's third enforcement block,
  * `permissions.allow`/`deny` — see that function's own doc comment for the
  * per-role shape and the live proof behind it.
@@ -2517,7 +2517,7 @@ export async function dispatchRole(
         `'## Documentation' source(s) are not mechanically enforced for this dispatch.`
     )
   }
-  // Issue #663, O1: the directory a Developer's `Write`/`Edit` rules are
+  // The directory a Developer's `Write`/`Edit` rules are
   // scoped to — the same `opts.cwd` precedence `boundaryAllowedDir` (below)
   // resolves from, but this policy is written on EVERY host and EVERY run
   // (unlike the Darwin/unattended-only OS boundary), so it needs a value even
@@ -2537,7 +2537,7 @@ export async function dispatchRole(
           opts.extraWritableDirs ?? []
         )
       : null
-  // Issue #663, O3: the first lifecycle line this role's dispatch writes —
+  // The first lifecycle line this role's dispatch writes —
   // every earlier `writeLifecycle` call in this function sits behind an
   // early-return refusal branch (binary not resolvable, non-Claude
   // Documentation degrade) that a normal Claude dispatch never reaches.
