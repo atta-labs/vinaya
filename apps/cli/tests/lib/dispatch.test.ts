@@ -2563,6 +2563,13 @@ describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
     // (above) already holds to.
     expect(decision(run('git push origin main; git push origin +feature:main'))?.permissionDecision).toBe('deny')
     expect(decision(run('git commit -am fix # --no-verify'))).toBeNull()
+
+    // Round 4 security review, HIGH, found live: a newline was never treated
+    // as a statement separator, so a forbidden git command on its own line,
+    // after an innocuous first line, ran as one un-split statement and
+    // matched neither subcommand's token scan.
+    expect(decision(run('echo build ok\ngit push origin --force'))?.permissionDecision).toBe('deny')
+    expect(decision(run('echo build ok\ngit commit -am fix --no-verify'))?.permissionDecision).toBe('deny')
   })
 
   it('denies the subagent tool (Agent/Task) when its background flag is set, allows it in the foreground', () => {

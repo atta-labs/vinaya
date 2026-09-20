@@ -522,13 +522,17 @@ export function wholeSuiteTestCommandDetectorSource(): string {
     'function maskQuoted(s) {',
     "  return s.replace(/'[^']*'/g, (m) => 'x'.repeat(m.length)).replace(/\"[^\"]*\"/g, (m) => 'x'.repeat(m.length));",
     '}',
-    // A shell comment or a chained `;`/`&&`/`||` statement can plant a real
-    // test-file path AFTER (or beside) the runner invocation it never
+    // A shell comment or a chained `;`/`&&`/`||`/newline statement can plant
+    // a real test-file path AFTER (or beside) the runner invocation it never
     // actually reaches — `bun test # apps/cli/foo.test.ts` and
     // `bun test; echo apps/cli/foo.test.ts` both still run a bare `bun test`
     // as their effective first command. Judging the whole raw string let
     // both through (security review, found live); judging one statement at
-    // a time, comments stripped, does not.
+    // a time, comments stripped, does not. A newline is a statement
+    // separator here too (round 4 security review, HIGH, found live): a
+    // command whose text embeds `\n` followed by a forbidden git subcommand
+    // otherwise passes as one un-split statement, since `;`/`&&`/`||` never
+    // appear in it at all.
     'function stripLineComment(s) {',
     '  const idx = maskQuoted(s).indexOf("#");',
     '  return idx === -1 ? s : s.slice(0, idx);',
@@ -537,7 +541,7 @@ export function wholeSuiteTestCommandDetectorSource(): string {
     '  const masked = maskQuoted(command);',
     '  const statements = [];',
     '  let last = 0;',
-    '  const re = /;|&&|\\|\\|/g;',
+    '  const re = /;|&&|\\|\\||\\n/g;',
     '  let m;',
     '  while ((m = re.exec(masked)) !== null) {',
     '    statements.push(command.slice(last, m.index));',
