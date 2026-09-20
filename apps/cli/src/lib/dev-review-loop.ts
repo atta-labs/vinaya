@@ -909,7 +909,19 @@ function defaultDeps(): LoopDeps {
 
 // --- the loop -----------------------------------------------------------------
 
-export type LoopInput = { agent: AgentVendor; json?: boolean } & ({ task: number } | { resumePr: number })
+/**
+ * `model` (issue-661, O1) — resolved once by `task-run.ts`'s `runTask`
+ * (explicit `--model`, then the Issue's own suggested-agent-class mapping,
+ * then this vendor's default) and spent in exactly one place: the
+ * developer's own `dispatchRole` call in `dispatchDeveloper` below.
+ * `undefined` on the deprecated `task dispatch` path and on every direct
+ * `devReviewLoop` caller that never resolved one — `dispatchRole` already
+ * treats an absent `model` as "run this vendor's own default," unchanged.
+ */
+export type LoopInput = { agent: AgentVendor; json?: boolean; model?: string } & (
+  | { task: number }
+  | { resumePr: number }
+)
 export type LoopResult = { finalDecision: Decision; prNumber: number; task: number }
 
 /**
@@ -1212,7 +1224,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // fails schema validation silently (`log()` never throws — `loop_started`
       // just never lands in the outbox; found live authoring this task).
       reviewers: ['code-reviewer', 'security'],
-      models: { developer: input.agent, 'code-reviewer': input.agent, security: input.agent },
+      // issue-661, O1: the developer's own resolved model when `runTask`
+      // resolved one, else the vendor name unchanged — reviewer/security
+      // model resolution is out of this task's boundary.
+      models: { developer: input.model ?? input.agent, 'code-reviewer': input.agent, security: input.agent },
       // O4: the repo-wide default, corrected to the REAL
       // `reviewPolicy()` value the moment the widened `try` below reads it
       // successfully (O6: `config` must be valid — never built from a
@@ -1521,6 +1536,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           promptFile,
           roleLogPath: loopLogPath,
           ...(devWorktreeDir ? { cwd: devWorktreeDir } : {}),
+          // issue-661, O1: `runTask`'s own resolved model, spent here and
+          // only here — `dispatchRole`'s own `resolvedModel` log line
+          // already reports `requested:<model>` vs `'default'`, so no
+          // separate log line is needed on this side.
+          ...(input.model ? { model: input.model } : {}),
           unattended: true
         })
       )

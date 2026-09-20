@@ -137,6 +137,33 @@ describe('startBackgroundRun', () => {
     expect(liveness.get(handle.pid)).toBe(true)
   })
 
+  // issue-661, round 3 (O1 BLOCKER): the detached child re-parses argv from
+  // scratch — an explicit --model given to startBackgroundRun must reach
+  // that argv, or the operator's choice is silently lost to the
+  // class-mapped/vendor-default model the child resolves on its own.
+  it('forwards an explicit --model into the detached child argv', async () => {
+    const deps = makeDeps()
+    await startBackgroundRun({ tranche: 'control-store-v1', n: 7, agent: 'codex', model: 'claude-opus-5' }, deps)
+
+    expect(spawnCalls[0]?.argv).toEqual([
+      'task',
+      'run',
+      '--issue',
+      '42',
+      '--agent',
+      'codex',
+      '--model',
+      'claude-opus-5'
+    ])
+  })
+
+  it('omits --model from the detached child argv when none was given', async () => {
+    const deps = makeDeps()
+    await startBackgroundRun({ issue: 42, agent: 'claude' }, deps)
+
+    expect(spawnCalls[0]?.argv).toEqual(['task', 'run', '--issue', '42', '--agent', 'claude'])
+  })
+
   it('a repeated background start while the controller is still live reattaches to the SAME run rather than starting another', async () => {
     const deps = makeDeps()
     const first = await startBackgroundRun({ issue: 42, agent: 'claude' }, deps)
