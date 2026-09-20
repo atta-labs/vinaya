@@ -14,8 +14,7 @@
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
 import {
   buildConsumersOf,
   checkDispatchReadiness,
@@ -50,10 +49,15 @@ import { parseRationaleDeps } from '@attalabs/aeg-forge-state'
 import { createForgeSource } from '@attalabs/vinaya-sources'
 import { type EdgeFactsSubset, type EdgeTaskRef, resolveEdge } from '../checks/edge-resolve.js'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
+import { packageRoot } from './package-root.js'
 
 const DOC_OWNERS_PATH = '.vinaya/doc-owners'
 const WORKSPACE_TEMPLATE_PATH = 'aeg-root/templates/brief-template.md'
-const TEMPLATE_PATH = join(dirname(fileURLToPath(import.meta.url)), '../../../../aeg-root/templates/brief-template.md')
+const PACKAGE_ROOT = packageRoot(import.meta.url)
+const PACKAGED_TEMPLATE_PATH = join(PACKAGE_ROOT, 'aeg-root', 'templates', 'brief-template.md')
+const TEMPLATE_PATH = existsSync(PACKAGED_TEMPLATE_PATH)
+  ? PACKAGED_TEMPLATE_PATH
+  : join(PACKAGE_ROOT, '..', '..', 'aeg-root', 'templates', 'brief-template.md')
 
 function git(args: string[]): string {
   try {
