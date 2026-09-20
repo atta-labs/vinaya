@@ -1402,6 +1402,24 @@ describe('devReviewLoop — the loop’s exit sites (O6)', () => {
     expect(body).toMatch(/return \{ finalDecision: decision, prNumber, task \}/)
   })
 
+  // Round 5 review, MINOR: `logPauseCommentRetryIfNotable`'s own guard used
+  // to read `if (result.attempts <= 1) return` — indistinguishable from a
+  // genuine `{attempts: 0/1, posted: false}` failure (a corrupt
+  // control-store record, an epoch-acquisition throw — see
+  // `pause-resume.test.ts`'s own structural tests for that fix) and the
+  // harmless `{attempts: 0/1, posted: true}` no-op/first-try-success case.
+  // The fixed guard only skips logging when `posted` is true — asserted
+  // directly here since a genuine reproduction needs the same real,
+  // process-memoized control store `pause-resume.test.ts`'s own tests
+  // avoid touching in-process for the identical reason.
+  it("logPauseCommentRetryIfNotable's own guard only stays silent on a genuinely boring outcome (posted, attempts <= 1) — never a real posted:false failure", () => {
+    const source = readFileSync(join(import.meta.dir, '..', '..', 'src', 'lib', 'dev-review-loop.ts'), 'utf8')
+    const markerIndex = source.indexOf('async function logPauseCommentRetryIfNotable(')
+    expect(markerIndex).toBeGreaterThan(-1)
+    const guardLine = source.slice(markerIndex, source.indexOf('\n', markerIndex + 1) + 200)
+    expect(guardLine).toMatch(/if \(result\.posted && result\.attempts <= 1\) return/)
+  })
+
   // Round 2 review, BLOCKER: the outer catch used to wrap only the
   // `runRoundLoop()` call — round 1's own fresh-dispatch entry (a real forge
   // read, `fetchFrozenBrief`, sitting BEFORE that call) still crashed

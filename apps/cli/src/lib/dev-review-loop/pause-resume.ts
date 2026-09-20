@@ -229,14 +229,22 @@ export function renderNoPushStopComment(task: number, reason: PauseReason, detai
  * O1 — the outcome of one pause/escalation
  * comment post: `attempts` is `0` when an already-`'verified'` idempotent
  * record let `EffectExecutor` skip posting entirely (still `posted: true` —
- * the comment already exists), `1` on an ordinary first-try success, and
- * more once `postWithRetry` actually retried. `posted` is `false` only once
- * every retry attempt was exhausted with no success. The caller
- * (`dev-review-loop.ts`) logs a durable `infrastructure_retry` event only
- * when `attempts > 1` — a genuinely notable episode, never the common case
- * — and never lets a `posted: false` outcome crash the driver: the local
- * pause state, written before this is ever called, is what stays
- * authoritative regardless of whether the comment itself ever lands.
+ * the comment already exists), `1` on an ordinary first-try success or on a
+ * failure that never reached `postWithRetry`/`reconcileRetry` at all (a
+ * corrupt existing record, an epoch-acquisition failure — round 5 review,
+ * MAJOR/MINOR: `attempts` is normalized to `1` rather than left at `0` for
+ * these, since the `infrastructure_retry` schema requires a positive count
+ * and `0` would otherwise be indistinguishable from the idempotent-skip
+ * case above), and more once `postWithRetry`/`reconcileRetry` actually
+ * retried. `posted` is `false` whenever the comment never landed — whether
+ * every retry attempt was exhausted, or the failure happened before any
+ * retry loop ran at all. The caller (`dev-review-loop.ts`'s
+ * `logPauseCommentRetryIfNotable`) logs a durable `infrastructure_retry`
+ * event whenever `posted` is `false`, or `attempts > 1` — never for the
+ * genuinely boring case (`posted: true`, `attempts <= 1`) — and never lets
+ * a `posted: false` outcome crash the driver: the local pause state,
+ * written before this is ever called, is what stays authoritative
+ * regardless of whether the comment itself ever lands.
  */
 export type PauseCommentPostResult = { attempts: number; posted: boolean }
 
@@ -269,8 +277,6 @@ export function postIssuePauseComment(
   const marker = pauseMarker(reason)
   const body = renderNoPushStopComment(task, reason, publicDetail)
   const key = `pause-issue-${round}-${reason}`
-  const deps = defaultControlStoreDeps(controlStoreRoot)
-  const executor = createEffectExecutor(deps, task, `dev-review-loop:${task}:${key}`)
   const identity: EffectIdentity = {
     operation: 'issue-comment',
     target: `issue:${task}`,
@@ -288,6 +294,17 @@ export function postIssuePauseComment(
   )
   let attempts = 0
   try {
+    // round 5 review, MAJOR: `createEffectExecutor` (which can itself throw
+    // — a contended control-store epoch, e.g. two driver processes around a
+    // stale-driver re-exec handoff) used to be called BEFORE this `try`,
+    // so that throw escaped this function entirely, reaching the outer
+    // crash handler and clobbering `writePauseState`'s already-correct
+    // reason with a synthetic `'infrastructure'` one — the exact
+    // reason-clobbering failure O1 exists to eliminate. Now inside the try,
+    // exactly like every other `EffectExecutor` failure this function
+    // already catches.
+    const deps = defaultControlStoreDeps(controlStoreRoot)
+    const executor = createEffectExecutor(deps, task, `dev-review-loop:${task}:${key}`)
     executor.execute({
       key,
       identity,
@@ -319,7 +336,20 @@ export function postIssuePauseComment(
     })
     return { attempts, posted: true }
   } catch {
-    return { attempts, posted: false }
+    // round 5 review, MINOR: a failure that never reaches `postWithRetry`
+    // or `reconcileRetry` at all (a corrupt existing record,
+    // `createEffectExecutor`'s own epoch-acquisition throw above, or any
+    // other setup-time error) leaves `attempts` at its initial `0` —
+    // indistinguishable, to `logPauseCommentRetryIfNotable`'s own
+    // `attempts <= 1` guard, from the identical-looking `{attempts: 0,
+    // posted: true}` an already-verified idempotent skip returns. `posted`
+    // is what actually distinguishes them; `attempts` only needs to stay a
+    // POSITIVE count (the schema's own `infrastructure_retry.attempts`
+    // constraint) so a genuine failure can still be logged at all — `1`
+    // here means exactly what it says: one whole attempt at this post was
+    // made, and it failed outright, before any retry loop had a chance to
+    // run.
+    return { attempts: attempts || 1, posted: false }
   }
 }
 
@@ -357,8 +387,6 @@ export function postPauseComment(
   const marker = pauseMarker(reason)
   const body = renderPauseComment(prNumber, reason, publicDetail)
   const key = `pause-${round}-${head}`
-  const deps = defaultControlStoreDeps(controlStoreRoot)
-  const executor = createEffectExecutor(deps, task, `dev-review-loop:${task}:${key}`)
   const identity: EffectIdentity = {
     operation: 'pr-comment',
     target: `pr:${prNumber}`,
@@ -376,6 +404,10 @@ export function postPauseComment(
   )
   let attempts = 0
   try {
+    // round 5 review, MAJOR: see `postIssuePauseComment`'s identical doc
+    // comment — `createEffectExecutor` moved inside this `try` too.
+    const deps = defaultControlStoreDeps(controlStoreRoot)
+    const executor = createEffectExecutor(deps, task, `dev-review-loop:${task}:${key}`)
     executor.execute({
       key,
       identity,
@@ -402,7 +434,12 @@ export function postPauseComment(
     })
     return { attempts, posted: true }
   } catch {
-    return { attempts, posted: false }
+    // round 5 review, MINOR: see `postIssuePauseComment`'s identical doc
+    // comment — a failure this early leaves `attempts` at `0`, which the
+    // `infrastructure_retry` schema's own `positive()` constraint forbids
+    // logging; `1` here is honest (one whole attempt was made and failed
+    // outright) and lets `logPauseCommentRetryIfNotable` actually see it.
+    return { attempts: attempts || 1, posted: false }
   }
 }
 

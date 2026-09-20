@@ -11,7 +11,7 @@
  * already uses for the identical reason.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -201,6 +201,69 @@ describe('postWithRetry (round 2/round 4 review, MINOR — carried over unaddres
     expect(url).toBe('https://example.com/comment/posted-on-retry')
     expect(posts).toBe(2)
     expect(reconciles).toBe(1)
+  })
+})
+
+describe('round 5 review, MAJOR — createEffectExecutor is called from INSIDE the try block in both post functions', () => {
+  // `createEffectExecutor` itself can throw (a contended control-store
+  // epoch — `acquireOwnership` returning `acquired: false`), and a throw
+  // from outside the `try` a function's own doc comment promises never
+  // throws is exactly the reason-clobbering bug this fix closes: the
+  // outer crash handler would catch it, log a synthetic
+  // `pause{reason:'infrastructure'}`, and overwrite `writePauseState`'s
+  // already-correct reason. A behavioral reproduction needs a genuine
+  // control-store epoch race against the real, process-memoized runtime
+  // directory these functions resolve internally (`controlStoreRoot()`),
+  // which every OTHER test manipulating that state does from a spawned
+  // subprocess, never in-process, for exactly that reason — this asserts
+  // the code SHAPE directly instead: `createEffectExecutor` must appear
+  // strictly after the function's own `try {` token, never before it.
+  const source = readFileSync(
+    join(import.meta.dir, '..', '..', '..', 'src', 'lib', 'dev-review-loop', 'pause-resume.ts'),
+    'utf8'
+  )
+
+  function bodyOf(fnSignature: string): string {
+    const start = source.indexOf(fnSignature)
+    expect(start).toBeGreaterThan(-1)
+    const end = source.indexOf('\nexport function ', start + fnSignature.length)
+    expect(end).toBeGreaterThan(start)
+    return source.slice(start, end)
+  }
+
+  it('postIssuePauseComment never calls createEffectExecutor before its own try block', () => {
+    const body = bodyOf('export function postIssuePauseComment(')
+    const tryIndex = body.indexOf('try {')
+    const executorIndex = body.indexOf('createEffectExecutor(')
+    expect(tryIndex).toBeGreaterThan(-1)
+    expect(executorIndex).toBeGreaterThan(tryIndex)
+  })
+
+  it('postPauseComment never calls createEffectExecutor before its own try block', () => {
+    const body = bodyOf('export function postPauseComment(')
+    const tryIndex = body.indexOf('try {')
+    const executorIndex = body.indexOf('createEffectExecutor(')
+    expect(tryIndex).toBeGreaterThan(-1)
+    expect(executorIndex).toBeGreaterThan(tryIndex)
+  })
+})
+
+describe('round 5 review, MINOR — a failure that never reaches postWithRetry/reconcileRetry still reports a loggable, positive attempts count', () => {
+  // Same in-process-vs-real-control-store constraint as the describe block
+  // above — a genuine `'corrupt'`-record reproduction needs the real,
+  // process-memoized `controlStoreRoot()`. Asserts the code shape instead:
+  // neither catch block returns the raw `attempts` variable un-normalized
+  // (which would still be `0` — the `infrastructure_retry` schema's
+  // `positive()` constraint would refuse to log it, and `0` reads
+  // identically to the harmless already-verified-skip case either way).
+  const source = readFileSync(
+    join(import.meta.dir, '..', '..', '..', 'src', 'lib', 'dev-review-loop', 'pause-resume.ts'),
+    'utf8'
+  )
+
+  it('both catch blocks normalize a zero attempts count to a loggable positive one', () => {
+    const matches = source.match(/attempts:\s*attempts\s*\|\|\s*1/g) ?? []
+    expect(matches).toHaveLength(2)
   })
 })
 

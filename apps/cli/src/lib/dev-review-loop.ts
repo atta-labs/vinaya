@@ -1768,13 +1768,19 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * both functions already never throw (they retry with backoff, then
      * report the outcome), so there is nothing to catch here; this
      * function's only job is the ONE thing every call site would otherwise
-     * duplicate: logging a durable `infrastructure_retry` event when, and
-     * only when, `result.attempts` shows a retry genuinely happened. The
-     * common case (`attempts` `0` or `1`) logs nothing — a run with no
-     * hiccup stays silent on this, exactly as O3 intends.
+     * duplicate: logging a durable `infrastructure_retry` event whenever
+     * `result` shows something notable — a retry genuinely happened
+     * (`attempts > 1`), OR the post never landed at all (`posted: false`,
+     * regardless of `attempts` — round 5 review, MINOR: a corrupt-record
+     * refusal or an epoch-acquisition failure reports `attempts: 1` with
+     * `posted: false`, and used to be silently dropped by an `attempts <=
+     * 1` check that could not tell that apart from an ordinary first-try
+     * success). The truly common case — a boring first-try success,
+     * `posted: true` with `attempts` `0` (idempotent no-op) or `1` — is the
+     * only one that stays silent, exactly as O3 intends.
      */
     async function logPauseCommentRetryIfNotable(roundNum: number, result: PauseCommentPostResult): Promise<void> {
-      if (result.attempts <= 1) return
+      if (result.posted && result.attempts <= 1) return
       await logEvents([
         {
           kind: 'dev_review_loop' as const,
