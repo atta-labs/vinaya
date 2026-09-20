@@ -142,7 +142,9 @@ function extractRealDeveloperSettingsFile(): string {
   execFileSync('bun', [INDEX, 'dispatch', 'developer', '--agent', 'claude', '--prompt-file', promptFile], {
     cwd: scratchCwd,
     encoding: 'utf8',
-    env: { ...stripVinayaEnv(process.env), HOME: home, PATH: `${binDir}:${process.env.PATH ?? ''}` }
+    env: { ...stripVinayaEnv(process.env), HOME: home, PATH: `${binDir}:${process.env.PATH ?? ''}` },
+    timeout: 30_000,
+    killSignal: 'SIGKILL'
   })
   const argv = readFileSync(argvOut, 'utf8').trim().split('\n')
   const settingsPath = argv[argv.indexOf('--settings') + 1] as string
@@ -175,7 +177,14 @@ function runClaude(cwd: string, settingsPath: string, path: string, prompt: stri
   const stdout = execFileSync(
     'claude',
     ['-p', '--model', LIVE_MODEL, '--max-turns', '2', '--output-format', 'json', '--settings', settingsPath, prompt],
-    { cwd, encoding: 'utf8', input: '', env: { ...stripVinayaEnv(process.env), PATH: path } }
+    {
+      cwd,
+      encoding: 'utf8',
+      input: '',
+      env: { ...stripVinayaEnv(process.env), PATH: path },
+      timeout: 60_000,
+      killSignal: 'SIGKILL'
+    }
   )
   const parsed = JSON.parse(stdout) as { permission_denials: unknown[]; result: string }
   return { permissionDenials: parsed.permission_denials, result: parsed.result }
