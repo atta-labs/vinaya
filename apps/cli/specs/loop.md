@@ -80,7 +80,14 @@ Every directory here is created `0700` (`ensureRunDir`), whichever writer
 gets there first. `apps/cli/src/lib/run-paths.ts`'s
 `runPath` is the only function that names a location in here, and
 `apps/cli/tests/run-paths-only.test.ts` fails the build if anything else
-assembles one.
+assembles one. Every one of this driver's own `ensureRunDir` calls — the
+reviewer work directories, held-verdict markers, pause state, driver lock,
+forge-effect records — passes this task's own `runtimeDir` as the second
+argument, the boundary below which `mkdirNoSymlinks` refuses a symlinked
+ancestor unconditionally; above it, an operating-system-owned symlink (the
+declared-supported host's own default temp root) is tolerated once its real
+target passes the same ownership/mode check (`apps/cli/specs/isolation.md`
+§5 has the full guard).
 
 **The telemetry outbox is the one exception** — log events still queue under
 the Vinaya home (`log-sink.ts`'s `telemetryOutboxRoot`), because where they
