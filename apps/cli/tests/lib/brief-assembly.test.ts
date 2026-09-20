@@ -201,6 +201,8 @@ describe('assembleAndRenderBriefForIssue — pre-write override', () => {
       join(REPO_ROOT, 'aeg-root', 'templates', 'brief-template.md'),
       join(remoteDir, 'aeg-root', 'templates', 'brief-template.md')
     )
+    mkdirSync(join(remoteDir, 'src'), { recursive: true })
+    writeFileSync(join(remoteDir, 'src', 'fixture.ts'), 'export const fixture = true\n')
     git(remoteDir, ['add', '.'])
     git(remoteDir, ['commit', '-q', '-m', 'seed'])
     git(tmpDir, ['clone', '-q', remoteDir, localDir])
@@ -224,9 +226,9 @@ describe('assembleAndRenderBriefForIssue — pre-write override', () => {
     expect(canRenderBriefFromHere()).toBe(true)
   })
 
-  it('uses the bundled template when the adopter has no aeg-root directory', () => {
+  it('keeps the local issue-validation probe dormant when the adopter has no aeg-root directory', () => {
     rmSync(join(localDir, 'aeg-root'), { recursive: true, force: true })
-    expect(canRenderBriefFromHere()).toBe(true)
+    expect(canRenderBriefFromHere()).toBe(false)
   })
 
   it('canRenderBriefFromHere is false with no resolvable repo, even with the template present', () => {
@@ -241,7 +243,7 @@ describe('assembleAndRenderBriefForIssue — pre-write override', () => {
     // tracked file but the Boundary names none of them; this shared
     // fixture's own `## Surface` `in: aeg-root` resolves to real tracked
     // files, so the Boundary must name one.
-    "**Boundary** — In: `aeg-root/templates/brief-template.md`, the fixture's own committed doctrine file. Out: nothing.",
+    "**Boundary** — In: `src/fixture.ts`, the fixture's own committed source file. Out: nothing.",
     '',
     '**Sizing** — n/a, test fixture.',
     '',
@@ -259,6 +261,7 @@ describe('assembleAndRenderBriefForIssue — pre-write override', () => {
   ].join('\n')
 
   it('renders from the SUPPLIED override body, never fetching the (nonexistent) live Issue', () => {
+    rmSync(join(localDir, 'aeg-root'), { recursive: true, force: true })
     const body = [
       '**Project:** cli',
       '',
@@ -272,7 +275,7 @@ describe('assembleAndRenderBriefForIssue — pre-write override', () => {
       '',
       '## Surface',
       '',
-      'in: aeg-root',
+      'in: src',
       'out: —',
       '',
       '## Parts',
@@ -296,7 +299,7 @@ describe('assembleAndRenderBriefForIssue — pre-write override', () => {
       labels: []
     })
     return result.then((r) => {
-      expect(r.ok).toBe(true)
+      expect(r.ok, JSON.stringify(r)).toBe(true)
       if (r.ok) {
         expect(r.brief).toContain('O1. The fixture renders without a live forge fetch.')
         expect(r.brief).toContain('Part 1 (O1)')

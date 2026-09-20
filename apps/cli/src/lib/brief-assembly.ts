@@ -52,6 +52,7 @@ import { type EdgeFactsSubset, type EdgeTaskRef, resolveEdge } from '../checks/e
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
 
 const DOC_OWNERS_PATH = '.vinaya/doc-owners'
+const WORKSPACE_TEMPLATE_PATH = 'aeg-root/templates/brief-template.md'
 const TEMPLATE_PATH = join(dirname(fileURLToPath(import.meta.url)), '../../../../aeg-root/templates/brief-template.md')
 
 function git(args: string[]): string {
@@ -93,7 +94,7 @@ function resolveRepo(): { owner: string; repo: string } | null {
  * fail-closed gate this pre-write validation requires.
  */
 export function canRenderBriefFromHere(): boolean {
-  return existsSync(TEMPLATE_PATH) && resolveRepo() !== null
+  return existsSync(WORKSPACE_TEMPLATE_PATH) && resolveRepo() !== null
 }
 
 async function resolveToken(): Promise<string | null> {
