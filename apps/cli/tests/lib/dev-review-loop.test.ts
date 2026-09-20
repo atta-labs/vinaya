@@ -66,6 +66,7 @@ import {
   deriveVerdictPauseDetail,
   developerRoundMarker,
   DRIVER_OWNED_PATHS,
+  escalationIdFor,
   extractObjectivesSection,
   filterPrincipalRulings,
   findLatestPrincipalObjectivesEdit,
@@ -2910,6 +2911,72 @@ exit 0
   )
 }
 
+/**
+ * O1 (#674): the code-reviewer escalates with the IDENTICAL reason/detail on
+ * its first TWO invocations — round and head never move across a resume with
+ * no fix push, so this reproduces `sameEscalationInstance`'s own collision
+ * (`control-store/local.ts`): a second pause that looks like a rerun of the
+ * first, still-consumed one, landing back on the SAME natural escalation id.
+ * Comes back clean on the third invocation, so a fixed `--resume` that
+ * continues past the collision has something to actually publish.
+ */
+function writeFakeClaudeEscalatesTwiceThenCleanScenario(dir: string): void {
+  writeFakeBinary(
+    dir,
+    'claude',
+    `#!/bin/sh
+touch "$HOME/.fake-dev-invoked" 2>/dev/null
+PROMPT="$(cat)"
+WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
+case "$VINAYA_ROLE" in
+  code-reviewer)
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
+    mkdir -p "$WD"
+    COUNT_FILE="$HOME/.escalate-count"
+    COUNT=0
+    if [ -f "$COUNT_FILE" ]; then COUNT="$(cat "$COUNT_FILE")"; fi
+    if [ "$COUNT" -lt 2 ]; then
+      echo $((COUNT + 1)) > "$COUNT_FILE"
+      : > "$WD/findings.txt"
+      printf 'ESCALATE: authority\\nSUMMARY: needs a call nobody made.\\n' > "$WD/report.txt"
+    else
+      : > "$WD/findings.txt"
+      printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
+      printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n' > "$WD/report.txt"
+    fi
+    echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  security)
+    WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work"
+    mkdir -p "$WD"
+    : > "$WD/findings.txt"
+    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
+    printf 'CONFIG_SCAN: clean\\nSECRETS: none found\\n' > "$WD/report.txt"
+    echo '{"session_id":"sec-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
+    ;;
+  *)
+    mkdir -p "$WORKROOT"
+    printf '%s\\n---\\n' "$PROMPT" >> "$WORKROOT/dev-prompts.txt"
+    mkdir -p "$PWD/.worktrees/task/dev-review-loop-v1/$VINAYA_TASK"
+    echo "CONFIDENCE: 90 -- go ahead per the ruling" > "$PWD/.worktrees/task/dev-review-loop-v1/$VINAYA_TASK/.vinaya-confidence"
+    echo '{"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5}}'
+    ;;
+esac
+exit 0
+`
+  )
+}
+
+function setUpPauseResumeEscalatesTwice(): { home: string; cwd: string; path: string } {
+  const home = tempDir('vinaya-drl-home-')
+  const cwd = tempDir('vinaya-drl-cwd-')
+  const binDir = tempDir('vinaya-drl-bin-')
+  writeFakeClaudeEscalatesTwiceThenCleanScenario(binDir)
+  writeFakeGh(binDir)
+  writeFakeGit(binDir)
+  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
+}
+
 function driverLockPath(home: string): string {
   return join(taskRunDir(home), 'driver.pid.json')
 }
@@ -3182,6 +3249,73 @@ describe('devReviewLoop — resolution consumed once, replay refused (O2)', () =
     const replayed = runResume(home, cwd, path, 123)
     expect(replayed.status).not.toBe(0)
     expect(replayed.stderr).toMatch(/already has a consumed resolution|replay refused/)
+  }, 20000)
+})
+
+describe("devReviewLoop — O1 (#674): a resume continues from the pull request's current state once its newest escalation is already resolved and no driver is running", () => {
+  it('a resumed round that collides back onto the SAME already-consumed escalation still continues on the next --resume, instead of exiting with a replay refusal', () => {
+    const { home, cwd, path } = setUpPauseResumeEscalatesTwice()
+
+    const paused = runLoop(home, cwd, path)
+    expect(paused.status).not.toBe(0)
+    expect(paused.stdout).toMatch(/paused \(escalation\)/)
+
+    seedRuling(home, 'comment-3.md')
+
+    // First --resume: consumes the escalation's resolution and dispatches
+    // the developer and reviewers fresh on the ruling — the SAME reviewer
+    // escalates again, with the identical reason/detail (the ruling never
+    // touched the underlying disagreement), on the SAME round and head.
+    // `sameEscalationInstance` (`control-store/local.ts`) reads this as a
+    // rerun of the identical pause instance, so it lands back on the exact
+    // escalation id `--resume` already consumed — this machine's own
+    // `pause-state.json` never advances past it, the same shape a genuine
+    // crash right after the resolve would leave behind.
+    const firstResume = runResume(home, cwd, path, 123)
+    expect(firstResume.status).not.toBe(0)
+    expect(firstResume.stdout).toMatch(/paused \(escalation\)/)
+
+    const resolutionPath = resolutionRecordPath(home, TASK, 1, HEAD_SHA)
+    expect(existsSync(resolutionPath)).toBe(true)
+
+    const heldAfterFirstResume = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
+    expect(heldAfterFirstResume.escalationId).toBe(escalationIdFor(TASK, 1, HEAD_SHA))
+
+    // Second --resume: no driver owns the task any more (the first resume's
+    // own process already exited and cleared its lock), and the task's own
+    // durable journal never shows a `merged_ready` conclusion — so this
+    // continues from the pull request's current state, dispatching
+    // reviewers fresh a third time, where the fake reviewer finally comes
+    // back clean, and the loop publishes. The pre-existing replay refusal
+    // never fires.
+    const secondResume = runResume(home, cwd, path, 123)
+    expect(secondResume.stderr).not.toMatch(/already has a consumed resolution|replay refused/)
+    expect(secondResume.status).toBe(0)
+    expect(secondResume.stdout).toMatch(/publish/)
+  }, 20000)
+
+  it('the SAME already-resolved escalation is still refused while a driver genuinely still owns the task (Traps to avoid: the storage guarantee is never weakened)', () => {
+    const { home, cwd, path } = setUpPauseResumeEscalatesTwice()
+
+    const paused = runLoop(home, cwd, path)
+    expect(paused.status).not.toBe(0)
+
+    seedRuling(home, 'comment-3.md')
+
+    const firstResume = runResume(home, cwd, path, 123)
+    expect(firstResume.status).not.toBe(0)
+
+    // Simulate a driver that still owns the task at the moment of the next
+    // --resume — a live pid (this test process's own) on the task's driver
+    // lock, exactly as "one driver per task"'s own fixtures do above.
+    writeDriverLockFixture(home, { pid: process.pid, startedAt: new Date(0).toISOString() })
+
+    const secondResume = runResume(home, cwd, path, 123)
+    expect(secondResume.status).not.toBe(0)
+    expect(secondResume.stderr).toMatch(/already has a consumed resolution|replay refused/)
   }, 20000)
 })
 
