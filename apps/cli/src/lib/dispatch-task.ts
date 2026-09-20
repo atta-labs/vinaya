@@ -188,7 +188,7 @@ function normalizeSurfaceGlob(glob: string): string {
 }
 
 /**
- * O2 (#674) — an `out:` glob equal to, or nested inside (covered by), an
+ * An `out:` glob equal to, or nested inside (covered by), an
  * added glob is dropped: the widen itself now subsumes it, so keeping it
  * would leave the newly-widened directory partly shadowed by an exclusion
  * the Planner's own edit just made redundant (Origin: a directory moved
@@ -240,8 +240,8 @@ function spliceLines(text: string, splices: { match: RegExpExecArray; newLine: s
  * touches. Widen-only for `in:`: `addedGlobs` are unioned onto whatever
  * `in:` already lists, never replacing or dropping an existing glob — a
  * Planner broadening a frozen Surface can never accidentally narrow it in
- * the same breath. `out:` is narrow-only, in the opposite direction (O2,
- * #674): a glob the widen itself subsumes is dropped from `out:`
+ * the same breath. `out:` is narrow-only, in the opposite direction: a
+ * glob the widen itself subsumes is dropped from `out:`
  * (`spliceOutGlobs`, above); an `out:` glob broader than an added glob
  * still excludes it, and that refuses the whole widen rather than
  * proceeding with a Surface the pre-push scope check would still reject.

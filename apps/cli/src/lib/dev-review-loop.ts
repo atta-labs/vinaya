@@ -1054,7 +1054,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         throw new Error(`devReviewLoop --resume: ${err.message}`)
       }
       if (!(err instanceof ReplayedResolutionError)) throw err
-      // O1 (#674): an escalation that already carries a consumed resolution
+      // An escalation that already carries a consumed resolution
       // is not necessarily a replay attempt to refuse — the run that
       // consumed it may itself have ended (a crash, or a later pause that
       // collided back onto the SAME natural key — `sameEscalationInstance`,
