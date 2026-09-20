@@ -751,6 +751,158 @@ function documentationStopHookScript(dir: string): string {
 const DISPATCH_BASH_MAX_TIMEOUT_MS = '1800000'
 
 /**
+ * Issue #663, O1/O3: bump this whenever the allow/deny shape below changes —
+ * `writeDispatchSettings`'s own first lifecycle line for a role names it, so
+ * a run's own log says which policy shape it started under without needing
+ * to diff `dispatch.ts` against the run's own timestamp.
+ */
+export const PERMISSION_POLICY_VERSION = 'v1'
+
+type RolePermissions = { allow: string[]; deny: string[] }
+
+const EMPTY_ROLE_PERMISSIONS: RolePermissions = { allow: [], deny: [] }
+
+/**
+ * Issue #663, O1: the settings-file counterpart to `writeDispatchSettings`'s
+ * existing hooks — an explicit, per-role `permissions.allow`/`deny` block, so
+ * a dispatched role's Bash calls resolve against a WRITTEN policy rather than
+ * falling through to whatever permission mode the host process happens to
+ * default to (`isolation.md` §2's "second, narrower precedent" — this is a
+ * third). Confirmed live against the installed `claude` binary (2.1.258):
+ * `permissions.allow`/`deny` entries use the SAME `Bash(<prefix>)`/
+ * `Bash(<prefix>:*)`/`Bash(<glob> *)` grammar `denyOutput`'s own doc comment
+ * already cites for `~/.claude/settings.json`, and a `deny` entry wins over a
+ * broader `allow` entry that also matches — verified live in an isolated
+ * fixture repo: `{"allow":["Bash(git commit:*)"],"deny":["Bash(git commit
+ * --no-verify*)"]}` let a plain `git commit` through with an empty
+ * `permission_denials` array, and refused `git commit --no-verify -am …`
+ * with a populated one, from the SAME settings file, under the SAME (default,
+ * non-interactive `-p`) permission mode — proving the narrower deny overrides
+ * the broader allow rather than the command merely falling through to
+ * "unlisted." A command this fixture never runs through this mechanism at
+ * all — no `--permission-mode` flag on record here either — is why an
+ * UNLISTED command still resolves through the host's own interactive
+ * classifier exactly as before this task; only a role's own doctrine-named
+ * commands get an explicit answer.
+ *
+ * `developer` gets the version-control/forge/package/test commands
+ * `roles/developer.md`/`roles/developer/reference.md` name it running
+ * (worktree creation, fetch, add/commit/push, `gh pr`/`issue` read+write, the
+ * package manager, the test runner, this repo's own `verify-*` bin scripts
+ * and its `vinaya` CLI entry point), scoped to `Write`/`Edit` on its own
+ * worktree only (`allowedDir` — the one variable this policy takes, resolved
+ * per task, never a host-specific path) — plus a deny list for exactly what
+ * `roles/developer.md`/`reference.md` forbid: a force push in any of its
+ * spellings, `--no-verify` on a commit or push, `git stash` (worktree
+ * discipline — stash refs are shared across a repo's worktrees), a hard
+ * reset, and `rm -rf`/`sudo`, neither of which any doctrine command needs.
+ *
+ * `code-reviewer`/`security` get read-only git/`gh` commands
+ * (`roles/reviewer.md`: "CI is your input, never your job — read it, don't
+ * reproduce it: no `bun install`, no re-running tests or checks") plus
+ * `Write` on exactly the hand-off files (`findings.txt`/`report.txt`/
+ * `objectives.txt`) inside each of `extraWritableDirs` — never a blanket
+ * `Write`/`Edit` grant, matching "read access ... and their own hand-off
+ * files and nothing more." A forge-write/package/test command a Reviewer has
+ * no doctrine reason to run is explicitly denied, the same defense-in-depth
+ * posture the Developer's own deny list takes, rather than left to fall
+ * through as merely unlisted.
+ *
+ * Every other role (`planner`/`principal`/`archivist`/`architect`) gets no
+ * rules at all — this task's own Objectives name only these three roles, and
+ * an empty policy leaves an unlisted command resolving exactly as it did
+ * before this task, never a silent new restriction on a role this brief
+ * never asked to scope.
+ */
+export function buildRolePermissions(
+  role: Role,
+  allowedDir: string,
+  extraWritableDirs: readonly string[] = []
+): RolePermissions {
+  if (role === 'developer') {
+    return {
+      allow: [
+        `Write(${allowedDir}/**)`,
+        `Edit(${allowedDir}/**)`,
+        'Bash(git worktree add:*)',
+        'Bash(git worktree list:*)',
+        'Bash(git fetch:*)',
+        'Bash(git status:*)',
+        'Bash(git diff:*)',
+        'Bash(git log:*)',
+        'Bash(git show:*)',
+        'Bash(git add:*)',
+        'Bash(git commit:*)',
+        'Bash(git push:*)',
+        'Bash(git config:*)',
+        'Bash(git branch:*)',
+        'Bash(git checkout:*)',
+        'Bash(git merge:*)',
+        'Bash(git rebase:*)',
+        'Bash(gh pr create:*)',
+        'Bash(gh pr edit:*)',
+        'Bash(gh pr view:*)',
+        'Bash(gh pr comment:*)',
+        'Bash(gh pr diff:*)',
+        'Bash(gh issue view:*)',
+        'Bash(gh issue comment:*)',
+        'Bash(bun install:*)',
+        'Bash(bun run:*)',
+        'Bash(bun test:*)',
+        'Bash(bun packages/aeg-core/bin/verify-dispatch.ts:*)',
+        'Bash(bun packages/aeg-core/bin/verify-docs.ts:*)',
+        'Bash(bun packages/aeg-core/bin/verify-task.ts:*)',
+        'Bash(bun apps/cli/src/index.ts:*)'
+      ],
+      deny: [
+        'Bash(git push --force*)',
+        'Bash(git push -f*)',
+        'Bash(git push --force-with-lease*)',
+        'Bash(git push --no-verify*)',
+        'Bash(git commit --no-verify*)',
+        'Bash(git commit -n*)',
+        'Bash(git stash*)',
+        'Bash(git reset --hard*)',
+        'Bash(rm -rf*)',
+        'Bash(sudo*)'
+      ]
+    }
+  }
+  if (role === 'code-reviewer' || role === 'security') {
+    return {
+      allow: [
+        'Bash(git diff:*)',
+        'Bash(git log:*)',
+        'Bash(git show:*)',
+        'Bash(git grep:*)',
+        'Bash(git status:*)',
+        'Bash(git fetch:*)',
+        'Bash(gh pr view:*)',
+        'Bash(gh pr diff:*)',
+        'Bash(gh issue view:*)',
+        ...extraWritableDirs.flatMap((dir) => [
+          `Write(${dir}/findings.txt)`,
+          `Write(${dir}/report.txt)`,
+          `Write(${dir}/objectives.txt)`
+        ])
+      ],
+      deny: [
+        'Bash(git push:*)',
+        'Bash(git commit:*)',
+        'Bash(git add:*)',
+        'Bash(gh pr create:*)',
+        'Bash(gh pr edit:*)',
+        'Bash(gh pr merge:*)',
+        'Bash(bun install:*)',
+        'Bash(bun test:*)',
+        'Bash(bun run:*)'
+      ]
+    }
+  }
+  return EMPTY_ROLE_PERMISSIONS
+}
+
+/**
  * Writes this dispatch's settings file and the hook script it references,
  * owner-only inside an owner-only directory (same hardening posture as
  * `openOutputTee`'s tee file). Never throws: an unwritable home degrades to
@@ -784,11 +936,19 @@ const DISPATCH_BASH_MAX_TIMEOUT_MS = '1800000'
  * sources file at all — the Stop hook reads that as "nothing owed" and never
  * blocks, the same seam-is-dormant-when-absent posture `doc-owners.ts`
  * already uses.
+ *
+ * `role`/`allowedDir`/`extraWritableDirs` (Issue #663, O1) feed
+ * `buildRolePermissions` to add this same file's third enforcement block,
+ * `permissions.allow`/`deny` — see that function's own doc comment for the
+ * per-role shape and the live proof behind it.
  */
 export function writeDispatchSettings(
   runId: string,
   documentation: IssueDocumentationSource[] = [],
-  scope: RunScope = 'unscoped'
+  scope: RunScope = 'unscoped',
+  role: Role = 'developer',
+  allowedDir = '.',
+  extraWritableDirs: readonly string[] = []
 ): string | null {
   try {
     const dir = runPath(runtimeDirForThisRepo(), scope, { area: 'hooks' })
@@ -810,6 +970,7 @@ export function writeDispatchSettings(
         CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1',
         BASH_MAX_TIMEOUT_MS: DISPATCH_BASH_MAX_TIMEOUT_MS
       },
+      permissions: buildRolePermissions(role, allowedDir, extraWritableDirs),
       hooks: {
         PreToolUse: [
           {
@@ -2356,8 +2517,35 @@ export async function dispatchRole(
         `'## Documentation' source(s) are not mechanically enforced for this dispatch.`
     )
   }
+  // Issue #663, O1: the directory a Developer's `Write`/`Edit` rules are
+  // scoped to — the same `opts.cwd` precedence `boundaryAllowedDir` (below)
+  // resolves from, but this policy is written on EVERY host and EVERY run
+  // (unlike the Darwin/unattended-only OS boundary), so it needs a value even
+  // when neither `opts.cwd` nor `repoRoot()` resolves — `process.cwd()` is
+  // never wrong for a settings-file glob the way it would be for the OS
+  // boundary's own hard refusal-on-unresolvable semantics (left untouched,
+  // below, out of this task's own surface).
+  const permissionAllowedDir = opts.cwd ?? repoRoot() ?? process.cwd()
   const dispatchSettingsPath =
-    agent === 'claude' ? writeDispatchSettings(runId, documentationSources, scopeOf(opts.task, opts.pr)) : null
+    agent === 'claude'
+      ? writeDispatchSettings(
+          runId,
+          documentationSources,
+          scopeOf(opts.task, opts.pr),
+          role,
+          permissionAllowedDir,
+          opts.extraWritableDirs ?? []
+        )
+      : null
+  // Issue #663, O3: the first lifecycle line this role's dispatch writes —
+  // every earlier `writeLifecycle` call in this function sits behind an
+  // early-return refusal branch (binary not resolvable, non-Claude
+  // Documentation degrade) that a normal Claude dispatch never reaches.
+  if (dispatchSettingsPath !== null) {
+    writeLifecycle(
+      `[vinaya dispatch ${effectId}] ${role} via ${agent}: permission policy ${PERMISSION_POLICY_VERSION} written to ${dispatchSettingsPath}`
+    )
+  }
   // Round 5 review, MEDIUM: an unattended, isolation-required Claude dispatch
   // whose settings write failed (a disk/permission fault under this task's
   // own hooks directory) previously dropped `--settings`
