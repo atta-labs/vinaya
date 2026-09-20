@@ -44,6 +44,16 @@
 
 import { z } from 'zod'
 
+/**
+ * The one bound shared by `gate_result_read.confidence_reason` below and the
+ * parser that captures it (`parseConfidenceReply`,
+ * `apps/cli/src/lib/dev-review-loop/round-assess.ts`) — exported so the
+ * capture side can truncate to the exact same length rather than only
+ * bounding it here: a reason captured longer than this would fail this
+ * schema at write time and drop the whole event, round/head/green included.
+ */
+export const CONFIDENCE_REASON_MAX_LENGTH = 280
+
 /** Every dispatchable doctrine role, spelled exactly as the spec's Role union (§5.1) — the doctrine-facing name (`code-reviewer`), not the `reviewer.md` filename `resolveDoctrineRootInfo` resolves it to. */
 export const ROLE_VALUES = [
   'planner',
@@ -325,7 +335,20 @@ export const DevReviewLoopEventSchema = z.discriminatedUnion('event', [
       event: z.literal('gate_result_read'),
       round: z.number().int(),
       head: z.string(),
-      green: z.boolean()
+      green: z.boolean(),
+      // The developer's stated confidence — read from round 2 on, on a
+      // green gate only; round 1 and a red gate set none of the four fields
+      // below. `confidence_value`/`confidence_reason` are the whole-number
+      // value and one-line reason as stated at the read; `confidence_unavailable:
+      // true` records a missing or malformed statement explicitly — never a
+      // fabricated `confidence_value` of 0. `extra_turn_spent` tells a first
+      // statement apart from one made after the confidence rule's one extra
+      // developer turn. All four optional, so a `gate_result_read` line
+      // logged before this field set existed still parses.
+      confidence_value: z.number().int().min(0).max(100).optional(),
+      confidence_reason: z.string().max(CONFIDENCE_REASON_MAX_LENGTH).optional(),
+      confidence_unavailable: z.boolean().optional(),
+      extra_turn_spent: z.boolean().optional()
     })
     .strict(),
   z

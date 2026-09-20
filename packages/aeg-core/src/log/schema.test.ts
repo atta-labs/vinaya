@@ -181,6 +181,72 @@ describe('LogEventSchema — dev_review_loop family', () => {
     }
     expect(LogEventSchema.safeParse(line).success).toBe(false)
   })
+
+  it('parses a gate_result_read line with a stated confidence', () => {
+    const line = {
+      meta,
+      subject,
+      kind: 'dev_review_loop' as const,
+      event: 'gate_result_read' as const,
+      payload: {},
+      loop_id: 'loop-1',
+      round: 2,
+      head: 'sha2',
+      green: true,
+      confidence_value: 90,
+      confidence_reason: 'fixed the reported issue',
+      extra_turn_spent: false
+    }
+    expect(LogEventSchema.safeParse(line).success).toBe(true)
+  })
+
+  it('parses a gate_result_read line with an explicitly unavailable confidence', () => {
+    const line = {
+      meta,
+      subject,
+      kind: 'dev_review_loop' as const,
+      event: 'gate_result_read' as const,
+      payload: {},
+      loop_id: 'loop-1',
+      round: 2,
+      head: 'sha2',
+      green: true,
+      confidence_unavailable: true,
+      extra_turn_spent: true
+    }
+    expect(LogEventSchema.safeParse(line).success).toBe(true)
+  })
+
+  it('parses a round-1 gate_result_read line with no confidence fields at all', () => {
+    const line = {
+      meta,
+      subject,
+      kind: 'dev_review_loop' as const,
+      event: 'gate_result_read' as const,
+      payload: {},
+      loop_id: 'loop-1',
+      round: 1,
+      head: 'sha1',
+      green: true
+    }
+    expect(LogEventSchema.safeParse(line).success).toBe(true)
+  })
+
+  it('refuses a gate_result_read line with a confidence_value outside 0-100', () => {
+    const line = {
+      meta,
+      subject,
+      kind: 'dev_review_loop' as const,
+      event: 'gate_result_read' as const,
+      payload: {},
+      loop_id: 'loop-1',
+      round: 2,
+      head: 'sha2',
+      green: true,
+      confidence_value: 101
+    }
+    expect(LogEventSchema.safeParse(line).success).toBe(false)
+  })
 })
 
 const validForgeWrite = {

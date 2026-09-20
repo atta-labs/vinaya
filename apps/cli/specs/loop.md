@@ -178,6 +178,8 @@ Round 1 never asks for confidence. From round 2 on, a green gate reads `.vinaya-
 - below 50, one extra turn not yet spent → one more developer turn (spent once, ever), no reviewer dispatch; below 50 again → `pause{reason:'confidence'}`.
 - 50 or over → dispatch reviewers.
 
+**What each read logs.** `assessGate`'s own `gate_result_read` event carries a round's confidence exactly as read: a stated value/reason (`confidence_value`, `confidence_reason`), or `confidence_unavailable: true` for a missing or malformed statement — never a fabricated `confidence_value` of `0`. `extra_turn_spent` reports `state.extraTurnUsed` as it stood BEFORE this read — whether the rule's one extra turn was already spent — so a first statement and a statement made after that extra turn read apart. All four fields are optional and absent on round 1 and on a red gate, since neither ever reads the file. `loop_started`/`round_started` still fire only on a round's first gate call, but `gate_result_read` fires on EVERY call, including a re-ask's own second read: when the first read is absent and the developer is asked again, the second read's real value (or a second absence) gets its own event rather than leaving the round's log stuck on the first read's `confidence_unavailable: true` even after the loop went on to act on a real one.
+
 ## The four exits
 
 `assessRound` decides every exit — the driver never re-derives one:

@@ -262,6 +262,101 @@ describe('assessRound — Part 2 (O3): objectives and confidence', () => {
   })
 })
 
+describe('assessRound — gate_result_read confidence fields (O1, O2)', () => {
+  it('a first stated confidence on round two carries value/reason and extra_turn_spent: false', () => {
+    const { events } = runScenario(freshState(), [
+      fakeGate(1, true),
+      fakeVerdicts(1, [
+        blockingVerdict('reviewer', [{ id: 'F1', severity: 'major', state: 'open' }]),
+        cleanVerdict('security')
+      ]),
+      fakeGate(2, true, { confidence: { value: 90, reason: 'fixed the reported issue' } })
+    ])
+    const gate = events.find((e) => e.event === 'gate_result_read' && 'round' in e && e.round === 2)
+    expect(gate).toMatchObject({
+      confidence_value: 90,
+      confidence_reason: 'fixed the reported issue',
+      extra_turn_spent: false
+    })
+  })
+
+  it('an absent statement is recorded confidence_unavailable: true, never a fabricated value', () => {
+    const { events } = runScenario(freshState(), [
+      fakeGate(1, true),
+      fakeVerdicts(1, [
+        blockingVerdict('reviewer', [{ id: 'F1', severity: 'major', state: 'open' }]),
+        cleanVerdict('security')
+      ]),
+      fakeGate(2, true, { confidence: 'absent' })
+    ])
+    const gate = events.find((e) => e.event === 'gate_result_read' && 'round' in e && e.round === 2)
+    expect(gate).toMatchObject({ confidence_unavailable: true, extra_turn_spent: false })
+    expect(gate).not.toHaveProperty('confidence_value')
+  })
+
+  it('a statement made after the extra turn reads extra_turn_spent: true, telling it apart from the first statement', () => {
+    const { events } = runScenario(freshState(), [
+      fakeGate(1, true),
+      fakeVerdicts(1, [
+        blockingVerdict('reviewer', [{ id: 'F1', severity: 'major', state: 'open' }]),
+        cleanVerdict('security')
+      ]),
+      fakeGate(2, true, { confidence: { value: 45, reason: 'still checking' } }), // extra turn granted
+      fakeGate(2, true, { confidence: { value: 85, reason: 'confirmed the fix' } }) // extra turn consumed
+    ])
+    const gateReads = events.filter((e) => e.event === 'gate_result_read' && 'round' in e && e.round === 2)
+    expect(gateReads).toHaveLength(2)
+    expect(gateReads[0]).toMatchObject({ confidence_value: 45, extra_turn_spent: false })
+    expect(gateReads[1]).toMatchObject({ confidence_value: 85, extra_turn_spent: true })
+  })
+
+  it('round one never carries the confidence fields on gate_result_read', () => {
+    const { events } = runScenario(freshState(), [
+      fakeGate(1, true),
+      fakeVerdicts(1, [cleanVerdict('reviewer'), cleanVerdict('security')])
+    ])
+    const gate = events.find((e) => e.event === 'gate_result_read')
+    expect(gate).not.toHaveProperty('confidence_value')
+    expect(gate).not.toHaveProperty('confidence_unavailable')
+    expect(gate).not.toHaveProperty('extra_turn_spent')
+  })
+
+  it('a red gate on round two never carries the confidence fields', () => {
+    const { events } = runScenario(freshState(), [
+      fakeGate(1, true),
+      fakeVerdicts(1, [
+        blockingVerdict('reviewer', [{ id: 'F1', severity: 'major', state: 'open' }]),
+        cleanVerdict('security')
+      ]),
+      fakeGate(2, false)
+    ])
+    const gate = events.find((e) => e.event === 'gate_result_read' && 'round' in e && e.round === 2)
+    expect(gate).not.toHaveProperty('confidence_value')
+    expect(gate).not.toHaveProperty('confidence_unavailable')
+    expect(gate).not.toHaveProperty('extra_turn_spent')
+  })
+
+  it('a re-ask that recovers a real value gets its own event — the round is never stuck on the first read’s confidence_unavailable', () => {
+    const { events } = runScenario(freshState(), [
+      fakeGate(1, true),
+      fakeVerdicts(1, [
+        blockingVerdict('reviewer', [{ id: 'F1', severity: 'major', state: 'open' }]),
+        cleanVerdict('security')
+      ]),
+      fakeGate(2, true, { confidence: 'absent' }), // first read: nothing stated, re-ask
+      fakeGate(2, true, { confidence: { value: 90, reason: 'fixed it' } }) // re-ask's own real read
+    ])
+    const gateReads = events.filter((e) => e.event === 'gate_result_read' && 'round' in e && e.round === 2)
+    expect(gateReads).toHaveLength(2)
+    expect(gateReads[0]).toMatchObject({ confidence_unavailable: true })
+    expect(gateReads[1]).toMatchObject({ confidence_value: 90, confidence_reason: 'fixed it' })
+    expect(gateReads[1]).not.toHaveProperty('confidence_unavailable')
+    // Exactly one `round_started` for round 2 — only the re-ask's own
+    // gate_result_read is new, never a second round entry.
+    expect(events.filter((e) => e.event === 'round_started' && 'round' in e && e.round === 2)).toHaveLength(1)
+  })
+})
+
 describe('assessRound — Part 3 (O2): the four exits', () => {
   it('rounds over 3 → stop_condition_met max_rounds; round 3 exactly continues, round 4 stops', () => {
     const { events, decisions } = runScenario(freshState(), [

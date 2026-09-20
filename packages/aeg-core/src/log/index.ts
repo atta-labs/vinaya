@@ -21,6 +21,7 @@ export type {
   RecordIdentity
 } from './store'
 export {
+  CONFIDENCE_REASON_MAX_LENGTH,
   DispatchEventSchema,
   DevReviewLoopEventSchema,
   EffectEventSchema,

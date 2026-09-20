@@ -11,6 +11,7 @@
 
 import { readFileSync } from 'node:fs'
 import {
+  CONFIDENCE_REASON_MAX_LENGTH,
   defaultControlStoreDeps,
   readLoopState,
   writeLoopState,
@@ -41,13 +42,20 @@ export const CONFIDENCE_PROMPT_LINE =
 
 const CONFIDENCE_LINE = /^CONFIDENCE:\s*(\d{1,3})\s*(?:—|-)\s*(.+)$/m
 
-/** `'absent'` for a missing or malformed reply — never guessed into a number. */
+/**
+ * `'absent'` for a missing or malformed reply — never guessed into a number.
+ * A reason longer than `CONFIDENCE_REASON_MAX_LENGTH` is truncated here, to
+ * the exact bound `gate_result_read.confidence_reason` enforces
+ * (`log/schema.ts`) — an over-length reason reaching that schema unbounded
+ * would fail validation and silently drop the whole event, not just the
+ * reason.
+ */
 export function parseConfidenceReply(replyText: string): Confidence {
   const m = CONFIDENCE_LINE.exec(replyText)
   if (!m) return 'absent'
   const value = Number(m[1])
   if (!Number.isFinite(value) || value < 0 || value > 100) return 'absent'
-  const reason = (m[2] ?? '').trim()
+  const reason = (m[2] ?? '').trim().slice(0, CONFIDENCE_REASON_MAX_LENGTH)
   return reason ? { value, reason } : { value }
 }
 

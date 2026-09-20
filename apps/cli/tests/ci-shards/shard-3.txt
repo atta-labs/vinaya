@@ -34,6 +34,7 @@ tests/isolation/isolation-probe.test.ts
 tests/lib/brief-assembly.test.ts
 tests/lib/dev-review-loop/gate-reading.test.ts
 tests/lib/dev-review-loop/pause-resume.test.ts
+tests/lib/dev-review-loop/round-assess.test.ts
 tests/lib/forge-write.test.ts
 tests/lib/log-flush.test.ts
 tests/lib/task-run.test.ts

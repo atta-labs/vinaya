@@ -547,6 +547,7 @@ export type {
 export {
   buildHeader,
   classifyStoredLine,
+  CONFIDENCE_REASON_MAX_LENGTH,
   createFixtureStore,
   DispatchEventSchema,
   DevReviewLoopEventSchema,
