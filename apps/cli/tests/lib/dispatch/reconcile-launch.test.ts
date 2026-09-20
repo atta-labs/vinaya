@@ -538,12 +538,21 @@ describe("recoverDeveloperLaunch (O2, Issue #605, code review, MAJOR) — the re
       expect(result.kind).toBe('pause')
     } finally {
       // The one real kill this test performs — unconditional, regardless of
-      // how the `try` block above exited.
-      if (orphanPid !== null) {
+      // how the `try` block above exited. O1 (Issue #670): the pid AND its
+      // process group both — the group kill (`-pid`) is a no-op (`ESRCH`)
+      // whenever the vendor was never a group leader itself, and the real
+      // cleanup on any path where it was. Guarded on `> 0` the same way
+      // `worker-boundary.test.ts`'s `spawnConfinedSync` already is.
+      if (orphanPid !== null && orphanPid > 0) {
         try {
           process.kill(orphanPid, 'SIGKILL')
         } catch {
           // ESRCH — already gone.
+        }
+        try {
+          process.kill(-orphanPid, 'SIGKILL')
+        } catch {
+          // ESRCH — never its own group leader, or already gone.
         }
       }
       rmSync(home, { recursive: true, force: true })

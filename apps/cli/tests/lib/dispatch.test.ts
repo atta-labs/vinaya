@@ -64,9 +64,79 @@ function pathWithoutRealVendors(): string {
   return dirs.filter((d) => !['claude', 'codex', 'gemini'].some((vendor) => existsSync(join(d, vendor)))).join(':')
 }
 
+/**
+ * O1 (Issue #670) — every fixture below that starts a role spawns its fake
+ * vendor as a GRANDCHILD of a throwaway subprocess script
+ * (`runDispatch`/`runScriptWithBudget`/`spawnBudgeted`), never a direct
+ * child of this test process: the outer subprocess's own budget kill
+ * reaches only that immediate script, never the vendor it spawned, which
+ * reparents to the service manager once the script dies or exits normally
+ * without terminating its own long-lived child first. `dispatchRole`'s own
+ * launch record (`childPid`, written to disk the instant `spawn()` returns —
+ * `dispatch.ts`) is the one identity that survives the script's own death,
+ * so recursively scanning every launch record under a fixture's own `home`
+ * is what lets teardown find a vendor pid it never held any in-memory
+ * handle to. Every `.json` file is tried — not just the ones this task
+ * happens to know the shape of — so this stays correct if the runtime
+ * directory layout under `home` ever changes.
+ */
+function collectLaunchedChildPids(dir: string): number[] {
+  const pids: number[] = []
+  let entries: import('node:fs').Dirent[]
+  try {
+    entries = readdirSync(dir, { withFileTypes: true })
+  } catch {
+    return pids
+  }
+  for (const entry of entries) {
+    const full = join(dir, entry.name)
+    if (entry.isDirectory()) {
+      pids.push(...collectLaunchedChildPids(full))
+      continue
+    }
+    if (!entry.name.endsWith('.json')) continue
+    try {
+      const parsed = JSON.parse(readFileSync(full, 'utf8')) as { childPid?: unknown }
+      if (typeof parsed.childPid === 'number') pids.push(parsed.childPid)
+    } catch {
+      // not a launch record (or a torn write) — never a reason to skip the rest
+    }
+  }
+  return pids
+}
+
+/**
+ * Kills a launch record's own vendor pid AND its process group,
+ * unconditionally — the group kill (`-pid`) is a no-op (`ESRCH`) whenever
+ * the vendor was never a group leader itself, and the real cleanup on any
+ * path where it was. Same idiom `worker-boundary.test.ts`'s
+ * `spawnConfinedSync` already established for a confined child: guard on
+ * `pid > 0` first (`spawnSync`'s own `0` "never spawned" sentinel would
+ * otherwise make `-pid` target THIS process's own group).
+ */
+function killLaunchedChild(pid: number): void {
+  if (pid <= 0) return
+  try {
+    process.kill(pid, 'SIGKILL')
+  } catch {
+    // ESRCH — already gone.
+  }
+  try {
+    process.kill(-pid, 'SIGKILL')
+  } catch {
+    // ESRCH — never its own group leader, or already gone.
+  }
+}
+
 const tempDirs: string[] = []
 afterEach(() => {
-  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+  // O1: unconditional — runs whether the test above passed, failed, or hit
+  // its own subprocess budget, since `afterEach` fires regardless of how the
+  // test body exited.
+  for (const dir of tempDirs.splice(0)) {
+    for (const pid of collectLaunchedChildPids(dir)) killLaunchedChild(pid)
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 function tempDir(prefix: string): string {
