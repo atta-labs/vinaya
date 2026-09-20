@@ -7180,6 +7180,30 @@ describe('devReviewLoop — a refusal/escalation posted before any push ends the
     expect(body).toMatch(/^<!-- aeg:loop:paused:escalation -->$/m)
     expect(body).toMatch(/brief is missing tier\/scope\/stop-conditions/)
     expect(body).toMatch(/vinaya task run/)
+
+    // round 2/round 4 review, MINOR (carried over unaddressed until this
+    // round): this call site used to post straight to the forge with no
+    // prior local record — the ONE pause/escalation site in this file that
+    // didn't, unlike every other one O1 covers. `head: 'unknown'` is the
+    // deliberate sentinel this site writes (no branch ever reached the
+    // remote, so there is no real head to resolve — the same sentinel the
+    // crash handler elsewhere in this file already uses for the identical
+    // reason).
+    const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
+    expect(pauseState.reason).toBe('escalation')
+    expect(pauseState.head).toBe('unknown')
+    expect(pauseState.prNumber).toBe(-1)
+
+    const recordPath = escalationRecordPath(home, TASK, 1, 'unknown')
+    expect(existsSync(recordPath)).toBe(true)
+    const record = JSON.parse(readFileSync(recordPath, 'utf8')) as Record<string, unknown>
+    expect(record.kind).toBe('escalation')
+    expect(record.task).toBe(TASK)
+    expect(record.round).toBe(1)
+    expect(record.reason).toBe('escalation')
   }, 20000)
 })
 

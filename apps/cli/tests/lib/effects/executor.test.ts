@@ -200,6 +200,110 @@ describe('EffectExecutor', () => {
     ).toThrow(EffectRetryRefusedError)
   })
 
+  it('reconcileRetry (round 2/round 4 review, MAJOR): an ambiguous reconcile is retried with backoff before the record is marked uncertain, never on the first read alone', () => {
+    const task = 1
+    const key = 'k1'
+    const identity = { operation: 'pr-comment', target: 'pr:1', inputVersion: 1, payloadDigest: sha256Hex('body') }
+    const executor = executorFor(task)
+
+    // Crash mid-post — the SAME setup the pre-fix "lost ack → uncertain"
+    // test above uses.
+    expect(() =>
+      executor.execute({
+        key,
+        identity,
+        poster: () => {
+          throw new Error('simulated crash')
+        },
+        reconcile: neverReconcile
+      })
+    ).toThrow('simulated crash')
+
+    // Resume attempted while the remote is STILL unreachable — every
+    // reconcile read comes back ambiguous. Without `reconcileRetry` this
+    // used to refuse on the very first read; with it, the read is retried
+    // up to `attempts` times (a real backoff duration would be `attempts-1`
+    // sleeps — asserted via the injected `sleep`, never actually waited).
+    let reconcileCalls = 0
+    const sleeps: number[] = []
+    let reportedAttempts = 0
+    expect(() =>
+      executor.execute({
+        key,
+        identity,
+        poster: () => {
+          throw new Error('poster must not be called while reconciling')
+        },
+        reconcile: () => {
+          reconcileCalls++
+          return { outcome: 'ambiguous', reason: 'gh still unreachable' }
+        },
+        reconcileRetry: {
+          attempts: 3,
+          backoffMs: 1000,
+          sleep: (ms) => sleeps.push(ms),
+          onAttempts: (n) => {
+            reportedAttempts = n
+          }
+        }
+      })
+    ).toThrow(EffectRetryRefusedError)
+    expect(reconcileCalls).toBe(3)
+    expect(sleeps).toEqual([1000, 2000])
+    expect(reportedAttempts).toBe(3)
+    expect(readEffect(deps, task, key)).toMatchObject({ status: 'ok', value: { status: 'uncertain' } })
+  })
+
+  it('reconcileRetry: the remote recovering on a later attempt completes the interrupted post without exhausting the bound', () => {
+    const task = 1
+    const key = 'k1'
+    const identity = { operation: 'pr-comment', target: 'pr:1', inputVersion: 1, payloadDigest: sha256Hex('body') }
+    const executor = executorFor(task)
+
+    expect(() =>
+      executor.execute({
+        key,
+        identity,
+        poster: () => {
+          throw new Error('crash')
+        },
+        reconcile: neverReconcile
+      })
+    ).toThrow('crash')
+
+    let reconcileCalls = 0
+    let posts = 0
+    let reportedAttempts = 0
+    const url = executor.execute({
+      key,
+      identity,
+      poster: () => {
+        posts++
+        return 'https://example.com/comment/recovered'
+      },
+      reconcile: () => {
+        reconcileCalls++
+        // Ambiguous the first two reads (network still recovering), absent
+        // on the third — genuinely gone, safe to complete the post.
+        return reconcileCalls < 3 ? { outcome: 'ambiguous', reason: 'still unreachable' } : { outcome: 'absent' }
+      },
+      reconcileRetry: {
+        attempts: 5,
+        backoffMs: 1000,
+        sleep: () => {},
+        onAttempts: (n) => {
+          reportedAttempts = n
+        }
+      }
+    })
+    expect(reconcileCalls).toBe(3)
+    expect(posts).toBe(1)
+    expect(url).toBe('https://example.com/comment/recovered')
+    // Stops retrying the instant the outcome resolves — never rides out the
+    // full bound once the remote answers.
+    expect(reportedAttempts).toBe(3)
+  })
+
   it('a lost acknowledgement whose remote read confirms genuine absence completes the interrupted post', () => {
     const task = 1
     const key = 'k1'

@@ -93,7 +93,7 @@ function sleepSyncMs(ms: number): void {
  * `EffectExecutor` itself extends to a *cross-process* `'started'` retry —
  * only a *confirmed* duplicate is the one outcome this closes.
  */
-function postWithRetry(
+export function postWithRetry(
   poster: () => string,
   reconcile: EffectReconciler,
   identity: EffectIdentity,
@@ -278,6 +278,14 @@ export function postIssuePauseComment(
     payloadDigest: sha256Hex(markedCommentBody(marker, body))
   }
   const reconcile = reconcileGhComment('issue', String(task))
+  const retryAttempts = pauseRetryEnvOverride(
+    'VINAYA_DEV_REVIEW_LOOP_PAUSE_COMMENT_RETRY_ATTEMPTS',
+    PAUSE_COMMENT_RETRY_ATTEMPTS
+  )
+  const retryBackoffMs = pauseRetryEnvOverride(
+    'VINAYA_DEV_REVIEW_LOOP_PAUSE_COMMENT_RETRY_BACKOFF_MS',
+    PAUSE_COMMENT_RETRY_BACKOFF_MS
+  )
   let attempts = 0
   try {
     executor.execute({
@@ -289,10 +297,25 @@ export function postIssuePauseComment(
           reconcile,
           identity,
           (n) => {
-            attempts = n
+            attempts += n
           }
         ),
-      reconcile
+      reconcile,
+      // round 2/round 4 review, MAJOR: a crash mid-post that left this
+      // effect's own record 'started', followed by a still-unreachable
+      // remote on THIS attempt's own `reconcile` read, used to skip
+      // `postWithRetry`'s bounded backoff loop entirely (`effects.ts`'s
+      // `reconcileExisting` consulted `reconcile` exactly once) — this
+      // widens that SAME bound to the reconcile read too, so this reachable
+      // double-failure combination gets the identical bounded retry O1
+      // promises for an ordinary post failure.
+      reconcileRetry: {
+        attempts: retryAttempts,
+        backoffMs: retryBackoffMs,
+        onAttempts: (n) => {
+          attempts += n
+        }
+      }
     })
     return { attempts, posted: true }
   } catch {
@@ -343,6 +366,14 @@ export function postPauseComment(
     payloadDigest: sha256Hex(markedCommentBody(marker, body))
   }
   const reconcile = reconcileGhComment('pr', String(prNumber))
+  const retryAttempts = pauseRetryEnvOverride(
+    'VINAYA_DEV_REVIEW_LOOP_PAUSE_COMMENT_RETRY_ATTEMPTS',
+    PAUSE_COMMENT_RETRY_ATTEMPTS
+  )
+  const retryBackoffMs = pauseRetryEnvOverride(
+    'VINAYA_DEV_REVIEW_LOOP_PAUSE_COMMENT_RETRY_BACKOFF_MS',
+    PAUSE_COMMENT_RETRY_BACKOFF_MS
+  )
   let attempts = 0
   try {
     executor.execute({
@@ -354,10 +385,20 @@ export function postPauseComment(
           reconcile,
           identity,
           (n) => {
-            attempts = n
+            attempts += n
           }
         ),
-      reconcile
+      reconcile,
+      // See `postIssuePauseComment`'s identical doc comment (round 2/round
+      // 4 review, MAJOR): widens the SAME bounded backoff to a 'started'
+      // record's own reconcile read, not only to `poster`.
+      reconcileRetry: {
+        attempts: retryAttempts,
+        backoffMs: retryBackoffMs,
+        onAttempts: (n) => {
+          attempts += n
+        }
+      }
     })
     return { attempts, posted: true }
   } catch {

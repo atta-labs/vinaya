@@ -25,6 +25,7 @@ import {
 import {
   fenceStartedEffectsAsUncertain,
   PAUSE_REASON_PROFILE,
+  postWithRetry,
   renderNoPushStopComment,
   renderPauseComment
 } from '../../../src/lib/dev-review-loop/pause-resume'
@@ -141,6 +142,65 @@ describe('renderNoPushStopComment (pure) — the no-PR-yet variant carries detai
     expect(body).toContain(reason)
     expect(body).toContain('a concrete, observed fact about this pause')
     expect(body).toContain('vinaya task run <tranche> 631')
+  })
+})
+
+describe('postWithRetry (round 2/round 4 review, MINOR — carried over unaddressed until this round) — a poster() call that landed remotely but threw locally is never duplicated on retry', () => {
+  const identity = { operation: 'pr-comment', target: 'pr:1', inputVersion: 1, payloadDigest: 'deadbeef' }
+
+  afterEach(() => {
+    delete process.env.VINAYA_DEV_REVIEW_LOOP_PAUSE_COMMENT_RETRY_BACKOFF_MS
+    delete process.env.VINAYA_DEV_REVIEW_LOOP_PAUSE_COMMENT_RETRY_ATTEMPTS
+  })
+
+  it('reconciles before the second poster() attempt and returns the already-landed url without calling poster() again', () => {
+    process.env.VINAYA_DEV_REVIEW_LOOP_PAUSE_COMMENT_RETRY_BACKOFF_MS = '0'
+    let posts = 0
+    let reconciles = 0
+    let reportedAttempts = -1
+    const url = postWithRetry(
+      () => {
+        posts++
+        // Attempt 1: the forge accepted the write, but the response never
+        // reached this process (a dropped connection, a killed process) —
+        // the caller sees a thrown error even though the comment landed.
+        throw new Error('response lost after the write landed')
+      },
+      () => {
+        reconciles++
+        return { outcome: 'confirmed', url: 'https://example.com/comment/already-there' }
+      },
+      identity,
+      (n) => {
+        reportedAttempts = n
+      }
+    )
+    expect(url).toBe('https://example.com/comment/already-there')
+    expect(posts).toBe(1)
+    expect(reconciles).toBe(1)
+    expect(reportedAttempts).toBe(1)
+  })
+
+  it('an inconclusive (ambiguous/absent) reconcile between attempts still lets an ordinary retry proceed and post again', () => {
+    process.env.VINAYA_DEV_REVIEW_LOOP_PAUSE_COMMENT_RETRY_BACKOFF_MS = '0'
+    let posts = 0
+    let reconciles = 0
+    const url = postWithRetry(
+      () => {
+        posts++
+        if (posts === 1) throw new Error('transient failure, nothing landed')
+        return 'https://example.com/comment/posted-on-retry'
+      },
+      () => {
+        reconciles++
+        return { outcome: 'absent' }
+      },
+      identity,
+      () => {}
+    )
+    expect(url).toBe('https://example.com/comment/posted-on-retry')
+    expect(posts).toBe(2)
+    expect(reconciles).toBe(1)
   })
 })
 
