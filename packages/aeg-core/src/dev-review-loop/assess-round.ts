@@ -85,13 +85,17 @@ function roundStartedEvent(state: LoopState, round: number, baseHead: string): D
 }
 
 /**
- * `confidence` is exactly what this round's own first confidence read
+ * `confidence` is exactly what THIS gate call's own confidence read
  * returned — `undefined` for round 1 or a red gate (neither ever reads the
  * file), `'absent'` for a missing or malformed statement, or the parsed
- * value/reason otherwise. `state.extraTurnUsed` is read here, before this
- * call's own branch in `assessGate` can set it — so it reports whether the
- * confidence rule's one extra turn was already spent BEFORE this read, never
- * whether this round's own outcome later spends it.
+ * value/reason otherwise. Called once per `assessGate` invocation, not only
+ * a round's first: a re-ask that recovers a real statement after an earlier
+ * absent read gets its own event, rather than leaving the round's log stuck
+ * on the earlier read's `confidence_unavailable: true`. `state.extraTurnUsed`
+ * is read here, before this call's own branch in `assessGate` can set it —
+ * so it reports whether the confidence rule's one extra turn was already
+ * spent BEFORE this read, never whether this call's own outcome later spends
+ * it.
  */
 function gateResultReadEvent(
   state: LoopState,
@@ -294,8 +298,14 @@ function assessGate(
   if (isNewRound) {
     if (state.rounds.length === 0 && state.pending === null) events.push(loopStartedEvent(state))
     events.push(roundStartedEvent(state, obs.round, obs.stats.baseHead))
-    events.push(gateResultReadEvent(state, obs.round, obs.stats.head, obs.green, obs.confidence))
   }
+  // A confidence re-ask keeps `pending` alive on the SAME round (only its
+  // `confidenceAskCount` advances), so `isNewRound` alone would suppress the
+  // second, real read's own event and leave the round's log stuck on the
+  // first read's `confidence_unavailable: true` — logged even after the loop
+  // went on to read and act on a real value. Emitting on every call, not
+  // only a new round, means the re-ask's real read gets its own event too.
+  events.push(gateResultReadEvent(state, obs.round, obs.stats.head, obs.green, obs.confidence))
 
   if (!obs.green) {
     events.push(roundEndedEvent(state, obs.round, obs.stats, 'changes_requested'))
