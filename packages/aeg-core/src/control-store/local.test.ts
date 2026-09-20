@@ -404,6 +404,40 @@ describe('a pre-planted symlink at a run directory is refused, never followed (s
   })
 })
 
+describe('a symlinked ancestor ABOVE the store root is tolerated, resolved and trust-checked, never refused outright (#668)', () => {
+  let realBase: string
+  let symlinkedBase: string
+
+  beforeEach(() => {
+    // Simulates macOS's own default temp root (`/var` -> `/private/var`):
+    // `symlinkedBase` is a symlink, `realBase` is the real directory it
+    // points to, and the store's own root sits underneath the symlink —
+    // exactly what `os.tmpdir()` hands every process on that host.
+    realBase = mkdtempSync(join(tmpdir(), 'control-store-realroot-'))
+    symlinkedBase = `${realBase}-symlink`
+    symlinkSync(realBase, symlinkedBase)
+  })
+
+  afterEach(() => {
+    rmSync(symlinkedBase, { force: true })
+    rmSync(realBase, { recursive: true, force: true })
+  })
+
+  it('creates and writes through a store root whose own ancestor is an OS-owned symlink', () => {
+    const rootUnderSymlink = join(symlinkedBase, 'runtime', 'vinaya-repo')
+    const localDeps: ControlStoreDeps = { ...deps, root: () => rootUnderSymlink }
+
+    const acquired = acquireOwnership(localDeps, 557, 'run-a')
+    expect(acquired.acquired).toBe(true)
+    const epoch = acquired.acquired ? acquired.epoch : -1
+
+    expect(() =>
+      writeRun(localDeps, 557, epoch, { runId: 'run-a', pid: 1, host: 'box', startedAt: clock.toISOString() })
+    ).not.toThrow()
+    expect(readRun(localDeps, 557, 'run-a').status).toBe('ok')
+  })
+})
+
 describe('isTrustedDirStat', () => {
   it('trusts a directory owned by the current user with a restrictive mode', () => {
     expect(isTrustedDirStat({ uid: 1000, mode: 0o700 }, 1000)).toBe(true)

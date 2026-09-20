@@ -4,7 +4,7 @@
  * caller puts a configured `runtimeDir` through.
  */
 import { describe, expect, it } from 'bun:test'
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync } from 'node:fs'
+import { lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -210,8 +210,9 @@ describe('ensureRunDir — run-file directories are owner-only (security review,
   it('creates the whole chain 0700, whatever the umask, and re-asserts it on an existing directory', () => {
     const base = mkdtempSync(join(tmpdir(), 'vinaya-ensure-run-dir-'))
     try {
-      const deep = runPath(join(base, 'runs'), 648, { area: 'round', round: 2, file: 'reviewer-work' })
-      ensureRunDir(deep)
+      const runtimeDir = join(base, 'runs')
+      const deep = runPath(runtimeDir, 648, { area: 'round', round: 2, file: 'reviewer-work' })
+      ensureRunDir(deep, runtimeDir)
       // Every ancestor this call created, not just the leaf — which writer
       // got there first must not decide the mode.
       for (const dir of [
@@ -225,7 +226,7 @@ describe('ensureRunDir — run-file directories are owner-only (security review,
         expect(statSync(dir).mode & 0o777, `${dir} should be owner-only`).toBe(0o700)
       }
       // A second call over the same tree stays 0700 and does not throw.
-      ensureRunDir(deep)
+      ensureRunDir(deep, runtimeDir)
       expect(statSync(deep).mode & 0o777).toBe(0o700)
     } finally {
       rmSync(base, { recursive: true, force: true })
@@ -242,12 +243,36 @@ describe('ensureRunDir — run-file directories are owner-only (security review,
       // real `rounds` directory would otherwise be created next.
       symlinkSync(attackerDir, join(runsRoot, 'rounds'))
 
-      const deep = runPath(join(base, 'runs'), 649, { area: 'round', round: 2, file: 'reviewer-work' })
-      expect(() => ensureRunDir(deep)).toThrow()
+      const runtimeDir = join(base, 'runs')
+      const deep = runPath(runtimeDir, 649, { area: 'round', round: 2, file: 'reviewer-work' })
+      expect(() => ensureRunDir(deep, runtimeDir)).toThrow()
       expect(readdirSync(attackerDir)).toEqual([])
     } finally {
       rmSync(base, { recursive: true, force: true })
       rmSync(attackerDir, { recursive: true, force: true })
+    }
+  })
+
+  it('tolerates a symlinked ancestor ABOVE the runtime root, such as the macOS default temp root (#668)', () => {
+    // Simulates macOS's own `/var` -> `/private/var` symlink: `realBase` is
+    // the real directory, `base` is a symlink to it that this test's own
+    // `runtimeDir` is built underneath — exactly the shape `os.tmpdir()`
+    // hands every macOS process, unrelated to any co-tenant attack.
+    const realBase = mkdtempSync(join(tmpdir(), 'vinaya-ensure-run-dir-real-'))
+    const base = `${realBase}-symlink`
+    symlinkSync(realBase, base)
+    try {
+      const runtimeDir = join(base, 'runs')
+      const deep = runPath(runtimeDir, 650, { area: 'round', round: 1, file: 'reviewer-work' })
+      expect(() => ensureRunDir(deep, runtimeDir)).not.toThrow()
+      expect(statSync(deep).isDirectory()).toBe(true)
+      // The runtime root itself — at the boundary, not above it — is still
+      // a real, owner-only directory, never a symlink, even though `base`
+      // (above it) is one.
+      expect(lstatSync(runtimeDir).isDirectory()).toBe(true)
+    } finally {
+      rmSync(base, { force: true })
+      rmSync(realBase, { recursive: true, force: true })
     }
   })
 })

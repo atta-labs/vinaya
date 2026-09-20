@@ -221,7 +221,7 @@ export function writeHeldVerdict(
   role: 'reviewer' | 'security',
   renderedComment: string
 ): void {
-  ensureRunDir(runPath(root, task, { area: 'round', round }))
+  ensureRunDir(runPath(root, task, { area: 'round', round }), root)
   writeFileSync(heldVerdictPath(root, task, round, role), renderedComment, 'utf8')
 }
 

@@ -460,9 +460,17 @@ export function runtimeDirForThisRepo(): string {
  * silently follows (security review, CRITICAL); every writer that reaches
  * this directory next then operates inside whatever real directory that
  * symlink resolves to. `mkdirNoSymlinks` refuses instead of following.
+ *
+ * `runtimeDir` is the boundary `mkdirNoSymlinks` refuses a symlink at or
+ * below — this call's own `dir` is always `runtimeDir` or a path nested
+ * under it (every caller builds `dir` from `runPath(runtimeDir, ...)`).
+ * Above `runtimeDir`, an operating-system-owned ancestor may legitimately be
+ * a symlink (macOS's default temp root, `/var` -> `/private/var`) and is
+ * tolerated once its real target passes the same ownership/mode check —
+ * `mkdirNoSymlinks` draws that line, this call just names it.
  */
-export function ensureRunDir(dir: string): void {
-  mkdirNoSymlinks(dir, 0o700)
+export function ensureRunDir(dir: string, runtimeDir: string): void {
+  mkdirNoSymlinks(dir, 0o700, runtimeDir)
   chmodSync(dir, 0o700)
 }
 

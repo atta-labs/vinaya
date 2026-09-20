@@ -119,7 +119,7 @@ export const defaultRequestStore: RequestStore = {
   claim(record) {
     const path = startRecordPath(record.requestId)
     try {
-      ensureRunDir(dirname(path))
+      ensureRunDir(dirname(path), runtimeDirForThisRepo())
       // `wx` is the atomic claim: it creates the file only if it does not exist,
       // so two racing starts for the same identity cannot both succeed here.
       writeFileSync(path, `${JSON.stringify(record, null, 2)}\n`, { flag: 'wx', mode: 0o600 })

@@ -56,6 +56,7 @@ import {
   readdirSync,
   readFileSync,
   renameSync,
+  statSync,
   unlinkSync,
   writeSync
 } from 'node:fs'
@@ -208,7 +209,10 @@ function currentUid(): number | undefined {
 /**
  * Creates `dir` and every missing ancestor, refusing to traverse through a
  * pre-existing symlink — or a pre-existing real directory with an untrusted
- * owner or mode — at any level (security review, CRITICAL then round 3).
+ * owner or mode — at or below `trustedRoot` (security review, CRITICAL then
+ * round 3; the operating-system-owned-temp-root exemption above it added
+ * once an untouched checkout's default temp root turned out to already be
+ * such a symlink).
  * `mkdirSync(dir, { recursive: true })` treats an existing symlink-to-directory
  * as already present and silently follows it — every writer that reaches
  * this store's own `openSync`/`writeSync`/`renameSync`/`linkSync` next then
@@ -220,33 +224,81 @@ function currentUid(): number | undefined {
  * scope; a shared, configurable tree makes that co-tenant a real adversary
  * for every path this store writes.
  *
+ * `trustedRoot` names the boundary between two zones, both walked from the
+ * filesystem root down to `dir`:
+ *
+ * - **Above `trustedRoot`** (its own ancestors) — never this store's own
+ *   territory, and on the declared-supported host frequently an
+ *   operating-system-owned symlink (macOS's default temp root: `/var` is
+ *   itself a symlink to `/private/var`, and `os.tmpdir()` resolves through
+ *   it). A symlink here is tolerated, but never blindly: its target is
+ *   resolved (`statSync`, which follows the link) and that REAL directory is
+ *   ownership/mode-checked exactly as a non-symlink ancestor already is —
+ *   `isTrustedDirStat` never sees the symlink's own metadata, only what it
+ *   points at.
+ * - **At or below `trustedRoot`** — this store's own tree, whether
+ *   `trustedRoot` itself still needs creating or already exists from a prior
+ *   run. A symlink here is refused unconditionally, the original check,
+ *   unweakened: a co-tenant on a shared `runtimeDir` who pre-plants a symlink
+ *   below it must still be caught, whether or not that plant happens to look
+ *   "pre-existing" from this call's own perspective.
+ *
  * Each path segment is created with a plain, non-recursive `mkdirSync` —
  * one this call itself creates cannot be a pre-planted symlink, since it did
  * not exist a moment before — then `lstatSync`-verified without following
  * symlinks, the identical check applied to a segment that already existed.
- * A non-directory at any level (a symlink, a plain file) refuses the whole
- * operation rather than writing through it; so does a real directory this
- * process cannot trust — see `isTrustedDirStat` above for what "trust" means
- * here.
  *
  * Exported (not just this module's own use) so `apps/cli`'s own run-file
  * writers — `run-paths.ts`'s `ensureRunDir`, the one chokepoint every other
  * run-file directory in that package already goes through — share this
  * exact check rather than a second, independently-maintained copy of it.
  */
-export function mkdirNoSymlinks(dir: string, mode: number): void {
+export function mkdirNoSymlinks(dir: string, mode: number, trustedRoot: string): void {
   const absolute = resolve(dir)
+  const rootSegments = resolve(trustedRoot)
+    .split(sep)
+    .filter((s) => s.length > 0)
   const segments = absolute.split(sep).filter((s) => s.length > 0)
   const ownUid = currentUid()
   let current = absolute.startsWith(sep) ? sep : ''
-  for (const segment of segments) {
+  segments.forEach((segment, index) => {
     current = current === '' || current === sep ? `${current}${segment}` : `${current}${sep}${segment}`
+    // `trustedRoot` itself sits at index `rootSegments.length - 1` — at or
+    // below it, refusal is unconditional; strictly above it, a symlink is
+    // resolved and its real target trust-checked instead of refused outright.
+    const atOrBelowTrustedRoot = index >= rootSegments.length - 1
     try {
       mkdirSync(current, { mode })
     } catch (err) {
       if (!isErrnoException(err, 'EEXIST')) throw err
     }
     const stat = lstatSync(current)
+    if (stat.isSymbolicLink()) {
+      if (atOrBelowTrustedRoot) {
+        throw new Error(
+          `control-store: refusing to create a run directory through ${current} — it already exists and is not a real directory (a symlink or a file)`
+        )
+      }
+      let real: ReturnType<typeof statSync>
+      try {
+        real = statSync(current)
+      } catch (err) {
+        throw new Error(
+          `control-store: refusing to create a run directory through ${current} — it is a symlink whose target could not be resolved: ${err instanceof Error ? err.message : String(err)}`
+        )
+      }
+      if (!real.isDirectory()) {
+        throw new Error(
+          `control-store: refusing to create a run directory through ${current} — it is a symlink that does not resolve to a real directory`
+        )
+      }
+      if (!isTrustedDirStat(real, ownUid)) {
+        throw new Error(
+          `control-store: refusing to create a run directory through ${current} — its symlink target is owned by uid ${real.uid} with mode ${(real.mode & 0o7777).toString(8)}, neither this process's own user nor a safe shared mode`
+        )
+      }
+      return
+    }
     if (!stat.isDirectory()) {
       throw new Error(
         `control-store: refusing to create a run directory through ${current} — it already exists and is not a real directory (a symlink or a file)`
@@ -257,12 +309,12 @@ export function mkdirNoSymlinks(dir: string, mode: number): void {
         `control-store: refusing to create a run directory through ${current} — it already exists, owned by uid ${stat.uid} with mode ${(stat.mode & 0o7777).toString(8)}, neither this process's own user nor a safe shared mode`
       )
     }
-  }
+  })
 }
 
-/** Whole-file write via temp-then-rename, `fsync`ed before the rename so the bytes are durable, not just visible. */
-function atomicWriteFile(path: string, contents: string): void {
-  mkdirNoSymlinks(dirname(path), 0o700)
+/** Whole-file write via temp-then-rename, `fsync`ed before the rename so the bytes are durable, not just visible. `trustedRoot` is this store's own root (`deps.root()`) — see `mkdirNoSymlinks`. */
+function atomicWriteFile(path: string, contents: string, trustedRoot: string): void {
+  mkdirNoSymlinks(dirname(path), 0o700, trustedRoot)
   const tmp = `${path}.tmp-${process.pid}-${randomUUID()}`
   const fd = openSync(tmp, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC, 0o600)
   try {
@@ -283,10 +335,15 @@ function atomicWriteFile(path: string, contents: string): void {
  * written. Used for every "only one writer may ever occupy this exact
  * name" file: an ownership epoch, a transition sequence slot. See this
  * file's own module doc for why `O_CREAT|O_EXCL` directly at `path` is not
- * used here.
+ * used here. `trustedRoot` is this store's own root (`deps.root()`) — see
+ * `mkdirNoSymlinks`.
  */
-function exclusiveCreateFile(path: string, contents: string): { created: true } | { created: false } {
-  mkdirNoSymlinks(dirname(path), 0o700)
+function exclusiveCreateFile(
+  path: string,
+  contents: string,
+  trustedRoot: string
+): { created: true } | { created: false } {
+  mkdirNoSymlinks(dirname(path), 0o700, trustedRoot)
   const tmp = `${path}.claim-${process.pid}-${randomUUID()}`
   const fd = openSync(tmp, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL, 0o600)
   try {
@@ -514,7 +571,7 @@ export function attemptEpochClaim(deps: ControlStoreDeps, task: number, epoch: n
     host: deps.hostname(),
     acquiredAt: deps.now().toISOString()
   }
-  const result = exclusiveCreateFile(path, JSON.stringify(record))
+  const result = exclusiveCreateFile(path, JSON.stringify(record), deps.root())
   if (result.created) return { outcome: 'won', record }
 
   // Lost the race, or found a corpse of a crashed claim — tell them apart
@@ -566,7 +623,7 @@ export type RunInput = Omit<RunRecord, 'version' | 'kind' | 'task'>
 export function writeRun(deps: ControlStoreDeps, task: number, epoch: number, input: RunInput): RunRecord {
   assertCurrentEpoch(deps, task, epoch)
   const record: RunRecord = { version: 1, kind: 'run', task, ...input }
-  atomicWriteFile(runPath(deps.root(), task, input.runId), JSON.stringify(record))
+  atomicWriteFile(runPath(deps.root(), task, input.runId), JSON.stringify(record), deps.root())
   return record
 }
 
@@ -579,7 +636,7 @@ export type InputInput = Omit<InputRecord, 'version' | 'kind' | 'task'>
 export function writeInput(deps: ControlStoreDeps, task: number, epoch: number, input: InputInput): InputRecord {
   assertCurrentEpoch(deps, task, epoch)
   const record: InputRecord = { version: 1, kind: 'input', task, ...input }
-  atomicWriteFile(inputPath(deps.root(), task, input.runId), JSON.stringify(record))
+  atomicWriteFile(inputPath(deps.root(), task, input.runId), JSON.stringify(record), deps.root())
   return record
 }
 
@@ -612,7 +669,7 @@ export function writeManifest(
   input: ManifestInput
 ): ManifestRecord {
   const record: ManifestRecord = { version: 1, kind: 'manifest', task, ...input }
-  atomicWriteFile(manifestPath(deps.root(), task, round), JSON.stringify(record))
+  atomicWriteFile(manifestPath(deps.root(), task, round), JSON.stringify(record), deps.root())
   return record
 }
 
@@ -637,7 +694,7 @@ export type LoopStateInput = Omit<LoopStateRecord, 'version' | 'kind' | 'task'>
  */
 export function writeLoopState(deps: ControlStoreDeps, task: number, input: LoopStateInput): LoopStateRecord {
   const record: LoopStateRecord = { version: 1, kind: 'loop_state', task, ...input }
-  atomicWriteFile(loopStatePath(deps.root(), task), JSON.stringify(record))
+  atomicWriteFile(loopStatePath(deps.root(), task), JSON.stringify(record), deps.root())
   return record
 }
 
@@ -669,7 +726,7 @@ export function appendTransition(
   let seq = existsSync(dir) ? readdirSync(dir).length : 0
   for (let attempt = 0; attempt < MAX_ACQUIRE_ATTEMPTS; attempt++) {
     const record: TransitionRecord = { version: 1, kind: 'transition', task, epoch, seq, ...input }
-    const result = exclusiveCreateFile(transitionPath(root, task, epoch, seq), JSON.stringify(record))
+    const result = exclusiveCreateFile(transitionPath(root, task, epoch, seq), JSON.stringify(record), root)
     if (result.created) return record
     seq++
   }
@@ -708,7 +765,7 @@ export function writeEffect(
 ): EffectRecord {
   assertCurrentEpoch(deps, task, epoch)
   const record: EffectRecord = { version: 1, kind: 'effect', task, key, ...input }
-  atomicWriteFile(effectPath(deps.root(), task, key), JSON.stringify(record))
+  atomicWriteFile(effectPath(deps.root(), task, key), JSON.stringify(record), deps.root())
   return record
 }
 
@@ -833,13 +890,17 @@ export function writeEscalation(
     // Absent, corrupt (healed by overwrite), or a genuine rerun of the
     // identical instance — safe to (re)write at the canonical key.
     const record: EscalationRecord = { version: 1, kind: 'escalation', task, ...input }
-    atomicWriteFile(escalationPath(deps.root(), task, canonicalId), JSON.stringify(record))
+    atomicWriteFile(escalationPath(deps.root(), task, canonicalId), JSON.stringify(record), deps.root())
     return record
   }
   for (let n = 2; n <= MAX_ESCALATION_COLLISION_ATTEMPTS; n++) {
     const candidateId = `${canonicalId}-${n}`
     const record: EscalationRecord = { version: 1, kind: 'escalation', task, ...input, escalationId: candidateId }
-    const result = exclusiveCreateFile(escalationPath(deps.root(), task, candidateId), JSON.stringify(record))
+    const result = exclusiveCreateFile(
+      escalationPath(deps.root(), task, candidateId),
+      JSON.stringify(record),
+      deps.root()
+    )
     if (result.created) return record
     const there = readEscalation(deps, task, candidateId)
     if (there.status === 'ok' && sameEscalationInstance(there.value, input)) return there.value
@@ -885,7 +946,7 @@ export function consumeResolutionOnce(
   assertCurrentEpoch(deps, task, epoch)
   const record: ResolutionRecord = { version: 1, kind: 'resolution', task, ...input }
   const path = resolutionPath(deps.root(), task, input.escalationId)
-  const result = exclusiveCreateFile(path, JSON.stringify(record))
+  const result = exclusiveCreateFile(path, JSON.stringify(record), deps.root())
   if (result.created) return { outcome: 'consumed', record }
   const existing = parseResolutionRecord(readIfExists(path))
   return { outcome: 'already-consumed', record: existing.status === 'ok' ? existing.value : null }
