@@ -14,8 +14,8 @@
  * `null` (the `unresolved/` outbox bucket) every time.
  */
 
-import { afterEach, describe, expect, it } from 'bun:test'
-import { execFileSync, spawnSync } from 'node:child_process'
+import { afterEach, beforeAll, describe, expect, it } from 'bun:test'
+import { execFileSync, execSync, spawnSync } from 'node:child_process'
 import type { SpawnSyncOptionsWithStringEncoding, SpawnSyncReturns } from 'node:child_process'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -43,6 +43,8 @@ import {
   colourLoopLine,
   recoverUsageFromDispatchTee,
   unreadDocumentationSources,
+  getProcessSnapshot,
+  matchesCapturedIdentity,
   type DispatchTeeRecoveryDeps
 } from '../../src/lib/dispatch.js'
 
@@ -64,9 +66,108 @@ function pathWithoutRealVendors(): string {
   return dirs.filter((d) => !['claude', 'codex', 'gemini'].some((vendor) => existsSync(join(d, vendor)))).join(':')
 }
 
+/**
+ * O1 (Issue #670) — every fixture below that starts a role spawns its fake
+ * vendor as a GRANDCHILD of a throwaway subprocess script
+ * (`runDispatch`/`runScriptWithBudget`/`spawnBudgeted`), never a direct
+ * child of this test process: the outer subprocess's own budget kill
+ * reaches only that immediate script, never the vendor it spawned, which
+ * reparents to the service manager once the script dies or exits normally
+ * without terminating its own long-lived child first. `dispatchRole`'s own
+ * launch record (`childPid`, written to disk the instant `spawn()` returns —
+ * `dispatch.ts`) is the one identity that survives the script's own death,
+ * so recursively scanning every launch record under a fixture's own `home`
+ * is what lets teardown find a vendor pid it never held any in-memory
+ * handle to. Every `.json` file is tried — not just the ones this task
+ * happens to know the shape of — so this stays correct if the runtime
+ * directory layout under `home` ever changes.
+ */
+type LaunchedChild = { pid: number; childStartedAt: string | null; childCommand: string | null }
+
+function collectLaunchedChildren(dir: string): LaunchedChild[] {
+  const children: LaunchedChild[] = []
+  let entries: import('node:fs').Dirent[]
+  try {
+    entries = readdirSync(dir, { withFileTypes: true })
+  } catch {
+    return children
+  }
+  for (const entry of entries) {
+    const full = join(dir, entry.name)
+    if (entry.isDirectory()) {
+      children.push(...collectLaunchedChildren(full))
+      continue
+    }
+    if (!entry.name.endsWith('.json')) continue
+    try {
+      const parsed = JSON.parse(readFileSync(full, 'utf8')) as {
+        childPid?: unknown
+        childStartedAt?: unknown
+        childCommand?: unknown
+      }
+      if (typeof parsed.childPid === 'number') {
+        children.push({
+          pid: parsed.childPid,
+          childStartedAt: typeof parsed.childStartedAt === 'string' ? parsed.childStartedAt : null,
+          childCommand: typeof parsed.childCommand === 'string' ? parsed.childCommand : null
+        })
+      }
+    } catch {
+      // not a launch record (or a torn write) — never a reason to skip the rest
+    }
+  }
+  return children
+}
+
+/**
+ * Kills a launch record's own vendor pid AND its process group,
+ * unconditionally — the group kill (`-pid`) is a no-op (`ESRCH`) whenever
+ * the vendor was never a group leader itself, and the real cleanup on any
+ * path where it was. Same idiom `worker-boundary.test.ts`'s
+ * `spawnConfinedSync` already established for a confined child: guard on
+ * `pid > 0` first (`spawnSync`'s own `0` "never spawned" sentinel would
+ * otherwise make `-pid` target THIS process's own group).
+ *
+ * Round 2 security review, MEDIUM (Issue #670) — never signals a pid whose
+ * recorded identity no longer matches a FRESH re-read of that same pid: this
+ * host is demonstrably shared with other real processes in one pid
+ * namespace, and a fake vendor that already exited earlier in its own test
+ * (the timeout-ceiling and shutdown-termination fixtures below all kill it
+ * mid-test) leaves a stale `childPid` on disk until this teardown runs —
+ * long enough, on a busy host, for the OS to recycle that exact number for
+ * an unrelated process. `getProcessSnapshot`/`matchesCapturedIdentity` are
+ * the SAME identity guard `dispatch.ts`'s own `terminateLaunchedChildOnShutdown`
+ * already applies (that function's own round 4 security HIGH) — reused
+ * here rather than reimplemented, so a recycled pid is refused identically
+ * on both paths. A pid already gone (`getProcessSnapshot` returns `null`)
+ * needs no signal at all.
+ */
+function killLaunchedChild(child: LaunchedChild): void {
+  if (child.pid <= 0) return
+  const live = getProcessSnapshot(child.pid)
+  if (live === null) return
+  if (!matchesCapturedIdentity({ childStartedAt: child.childStartedAt, childCommand: child.childCommand }, live)) return
+  try {
+    process.kill(child.pid, 'SIGKILL')
+  } catch {
+    // ESRCH — already gone.
+  }
+  try {
+    process.kill(-child.pid, 'SIGKILL')
+  } catch {
+    // ESRCH — never its own group leader, or already gone.
+  }
+}
+
 const tempDirs: string[] = []
 afterEach(() => {
-  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+  // O1: unconditional — runs whether the test above passed, failed, or hit
+  // its own subprocess budget, since `afterEach` fires regardless of how the
+  // test body exited.
+  for (const dir of tempDirs.splice(0)) {
+    for (const child of collectLaunchedChildren(dir)) killLaunchedChild(child)
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 function tempDir(prefix: string): string {
@@ -219,9 +320,22 @@ function writeFakeBinary(dir: string, name: string, script: string): string {
  * bun`, which is itself a second exec hop with the identical race) gives a
  * single, stable process image throughout, so identity capture and every
  * later re-check always agree.
+ *
+ * O3 (Issue #670) — bounded to 30s rather than an unbounded wait: every
+ * caller of this fixture kills it (or lets it be killed) well inside that
+ * window, but a teardown that never runs for whatever reason still cannot
+ * leave this process burning a core for hours, the way an unbounded
+ * `await new Promise(() => {})` alone did. Same magnitude as this file's own
+ * `sleep 30` fixtures below (the SIGTERM/SIGKILL grace-window tests) —
+ * comfortably above every real budget in this file (18s subprocess budget,
+ * 10s per-test timeouts) and comfortably below "hours."
  */
 function writeIdentityStableFakeBinary(dir: string, name: string): string {
-  return writeFakeBinary(dir, name, `#!${process.execPath}\nprocess.stdin.resume()\nawait new Promise(() => {})\n`)
+  return writeFakeBinary(
+    dir,
+    name,
+    `#!${process.execPath}\nprocess.stdin.resume()\nsetTimeout(() => process.exit(0), 30000)\nawait new Promise(() => {})\n`
+  )
 }
 
 function outboxLines(home: string, issue: number | 'none'): unknown[] {
@@ -2973,5 +3087,59 @@ describe('recoverUsageFromDispatchTee (O1, #608)', () => {
 
   it('a corrupt (non-JSON) launch record file: null, never throws', () => {
     expect(recoverUsageFromDispatchTee(fakeDeps({ launchRecord: 'not json' }))).toBeNull()
+  })
+})
+
+/**
+ * O2 (Issue #670) — the host-wide proof, run last so it observes every
+ * fixture above's own teardown, not just the one test it happens to follow.
+ * Same idiom `checks/runner.test.ts` already established for its own
+ * process-group tests (`ps -eo pid,command | grep … | grep -v grep || true`)
+ * — `-eo` lists every process on the host, not just this test process's own
+ * children, so a vendor that reparented to the service manager after its own
+ * script died is still caught here. Every fake vendor binary in this file
+ * lives under a `tempDir('vinaya-dispatch-bin-')` directory, so its own
+ * path — and therefore its `ps` command line — always carries that literal
+ * substring; a `--settings <path>` flag (`writeDispatchSettings`) on an
+ * unattended fixture additionally carries the fake task's own run folder, on
+ * the SAME command line, for the same reason. Bounded (`timeout`/
+ * `killSignal`) so a hung `ps`/`grep` cannot itself hang this file's own run
+ * — matching this file's own `stripVinayaEnv`+kill-budget discipline
+ * (`process-fixture-coverage.test.ts`).
+ *
+ * The proof is against pids NEW since `beforeAll`, never a bare host-wide
+ * zero-count: this machine runs several agents concurrently, each in its own
+ * worktree sharing the same real host — an unrelated sibling's own
+ * in-flight `vinaya-dispatch-bin-` fixture, alive before this file's first
+ * test ever ran, is not a regression this file introduced and must never
+ * fail this proof (found live: a sibling worktree's own fixture, started
+ * independently, made a bare `ps -eo` scan fail with no leak on this file's
+ * own part at all). Snapshotting the baseline first and asserting "nothing
+ * new" keeps 100% of the sensitivity to a real leak from this file's own
+ * fixtures while dropping the false positive from noise this file never
+ * controlled.
+ */
+function vendorProcessSurvivors(): string[] {
+  const out = execSync('ps -eo pid,command | grep "vinaya-dispatch-bin-" | grep -v grep || true', {
+    encoding: 'utf8',
+    timeout: 5_000,
+    killSignal: 'SIGKILL'
+  }).trim()
+  if (out.length === 0) return []
+  return out
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+}
+
+let preExistingVendorSurvivors: Set<string> = new Set()
+beforeAll(() => {
+  preExistingVendorSurvivors = new Set(vendorProcessSurvivors())
+})
+
+describe('process hygiene (Issue #670) — the file leaves no fake vendor process behind', () => {
+  it('no NEW process — beyond whatever the host already carried before this file ran — still carries a vinaya-dispatch-bin- path in its command line', () => {
+    const newSurvivors = vendorProcessSurvivors().filter((line) => !preExistingVendorSurvivors.has(line))
+    expect(newSurvivors).toEqual([])
   })
 })

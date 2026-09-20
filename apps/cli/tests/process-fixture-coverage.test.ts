@@ -671,7 +671,16 @@ describe('process-fixture coverage — O3 (#660, round 5): every real-process fi
       'apps/cli/tests/commands/log-flush.test.ts',
       'apps/cli/tests/lib/dev-review-loop/gate-reading.test.ts',
       'apps/cli/tests/conformance/harness.ts',
-      'apps/cli/tests/commands/dispatch-task.test.ts'
+      'apps/cli/tests/commands/dispatch-task.test.ts',
+      // Issue #670, O2 — the two dispatch test files hardened by that task's
+      // own pid-capture-and-group-kill fixtures (`killLaunchedChild`) and its
+      // new host-wide process-hygiene proof (a bare `execSync` call, covered
+      // by this file's own file-wide VINAYA_ strip plus its own local
+      // `killSignal: 'SIGKILL'` budget) — proven compliant here, by name,
+      // rather than left to the silent absence from `GRANDFATHERED_FILES`
+      // this round's review found insufficient on its own.
+      'apps/cli/tests/lib/dispatch.test.ts',
+      'apps/cli/tests/lib/dispatch/reconcile-launch.test.ts'
     ]
     for (const rel of fixed) {
       expect(GRANDFATHERED_FILES).not.toContain(rel)
