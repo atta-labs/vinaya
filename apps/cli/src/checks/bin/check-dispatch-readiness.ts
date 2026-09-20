@@ -3,11 +3,16 @@
 /**
  * Core check: dispatch-readiness. Thin adapter over `@attalabs/aeg-core`'s
  * `checkDispatchReadiness` — mirrors `packages/aeg-core/bin/verify-dispatch.ts`'s
- * gate-mode input assembly, scoped to the CURRENT task branch (derived from
- * `BRANCH`/the current git branch, `task/<tranche>/<n>`) rather than every
- * task in the repo — the same branch-derived scoping
- * `packages/aeg-core/bin/verify-brief.ts`/`verify-coherence.ts` already use.
+ * gate-mode input assembly, scoped to ONE task rather than every task in the
+ * repo — the same narrowing `packages/aeg-core/bin/verify-brief.ts`/
+ * `verify-coherence.ts` already use. That one task is either the CURRENT
+ * task branch (derived from `BRANCH`/the current git branch,
+ * `task/<tranche>/<n>`) or, given directly as `<tranche> <n>` positional
+ * args (issue-661, O2), a task named explicitly — evaluated through the
+ * exact same `runTrancheMode` assembly either way, reachable from any
+ * branch, not only that task's own.
  *
+
  * Tranche state is read ONLY through a `StateSource`
  * (`createForgeSource` from `@attalabs/vinaya-sources`) — no hardcoded state
  * path (task 2's ratified corollary). Forge facts come only from the two
@@ -29,6 +34,18 @@
  * re-typing the fact via a second implementation; it is a real (if narrow)
  * parity gap versus `bin/verify-dispatch.ts`, not silently equivalent to it.
  *
+ * Second known gap (issue-661, O2; escalated severity:strategy — see the PR
+ * body's Decisions section): off a task branch with no `<tranche> <n>`
+ * argument either, this still exits `0` rather than the runner's own
+ * `status: 'skipped'`. That status exists only as `checks/runner.ts`'s
+ * pre-spawn `shouldSkip` outcome, decided from static `CheckSpec` fields
+ * before a check process is ever spawned — nothing lets a running check ask
+ * for it from inside itself, and `contract.ts`'s own documented exit-code
+ * contract (0 = pass, 1 = findings, anything else = `'error'`, which
+ * `isRunFailed` treats as a run failure) gives no third code to reach it
+ * with. `main()`'s own doc comment carries the full reasoning at the exact
+ * site it applies.
+ *
  * Optional `PREMISE_FILE`: when set, names a local brief/PR
  * body file whose `Premise:` block is re-asserted against current on-disk
  * state, mirroring `packages/aeg-core/bin/verify-dispatch.ts --premise`'s
@@ -37,11 +54,13 @@
  * process's cwd — the repo under check, since this bin never `chdir`s). A
  * failed pin is folded into this check's own findings, additively: it never
  * suppresses or replaces the existing forge-derived readiness predicates
- * above. Unset, behavior is byte-identical to before this task. **Inert off
- * a task branch:** `main()`'s existing `task/<tranche>/<n>` bypass below
- * exits before `checkPremiseReassertion` is ever called, so a `PREMISE_FILE`
- * set on any other branch is silently a no-op, not an error — the same
- * bypass every forge-derived predicate above already takes.
+ * above. Unset, behavior is byte-identical to before this task. **Inert
+ * only on the off-task-branch, no-argument bypass:** `main()`'s bypass exits
+ * before `checkPremiseReassertion` is ever called, so a `PREMISE_FILE` set
+ * there is silently a no-op, not an error — the same bypass every
+ * forge-derived predicate above already takes. On the `<tranche> <n>`
+ * argument path (issue-661, O2), `PREMISE_FILE` runs exactly as it does on
+ * a real task branch — same `runTrancheMode` call, same order.
  *
  * scope: full — reads the live forge, not the local diff.
  */
@@ -332,24 +351,16 @@ async function runIssueMode(issueNumber: number): Promise<void> {
   process.exit(ready ? 0 : 1)
 }
 
-async function main(): Promise<void> {
-  const branch = currentBranch()
-  const ref = parseTaskBranchIdentity(branch)
-  if (!ref) {
-    // Non-task branch — nothing scoped to evaluate. Mirrors verify-brief.ts's bypass.
-    process.exit(0)
-  }
-
-  // O2: a backlog Issue with no tranche — resolved
-  // straight from the Issue itself, no topology lookup.
-  if (ref.kind === 'issue') {
-    await runIssueMode(ref.issueNumber)
-    return
-  }
-
-  const trancheSlug = ref.tranche
-  const taskId = ref.taskId
-
+/**
+ * O2 (issue-661) — the tranche-mode predicate assembly, unchanged, now
+ * reachable two ways: off the current branch's own `task/<tranche>/<n>`
+ * identity (`main`'s default path), or off a tranche/task named directly by
+ * argument (`main`'s `<tranche> <n>` positional path) — same function,
+ * same predicates, same output either way, never a second copy (Traps to
+ * avoid: "the check already mirrors [the standalone gate script]; add the
+ * argument to the same input assembly").
+ */
+async function runTrancheMode(trancheSlug: string, taskId: string): Promise<void> {
   const repo = resolveRepo()
   if (!repo) {
     fail(
@@ -462,6 +473,67 @@ async function main(): Promise<void> {
   if (!checkPremiseReassertion()) ready = false
 
   process.exit(ready ? 0 : 1)
+}
+
+/**
+ * O2 (issue-661) — a tranche and task number given directly as `<tranche>
+ * <n>` positional args, mirroring `packages/aeg-core/bin/verify-dispatch.ts`'s
+ * own `<tranche> <n>` grammar (never a second one), so a Planner parked on
+ * `main` — or any branch — can still evaluate a specific task, not only
+ * from that task's own checked-out branch.
+ */
+function parseTrancheTaskArgs(argv: string[]): { tranche: string; taskId: string } | null {
+  const [tranche, taskId] = argv
+  return tranche && taskId && !tranche.startsWith('--') ? { tranche, taskId } : null
+}
+
+async function main(): Promise<void> {
+  const argsRef = parseTrancheTaskArgs(process.argv.slice(2))
+  if (argsRef) {
+    await runTrancheMode(argsRef.tranche, argsRef.taskId)
+    return
+  }
+
+  const branch = currentBranch()
+  const ref = parseTaskBranchIdentity(branch)
+  if (!ref) {
+    // O2 (issue-661): off a task branch, with no tranche/task named by
+    // argument either, there is genuinely nothing to evaluate — reported as
+    // a visible finding rather than the silent, unqualified pass this used
+    // to print.
+    //
+    // **Known gap, escalated (severity:strategy; see PR body's Decisions
+    // section):** this still exits `0`. `contract.ts`'s own documented
+    // exit-code table (0 = pass, 1 = findings, anything else = `'error'`)
+    // gives a check's own exit code no way to reach the runner's
+    // `status: 'skipped'` outcome — today that status is produced ONLY by
+    // the runner's own pre-spawn `shouldSkip` gate (`runner.ts`), decided
+    // from static `CheckSpec` fields before this process is even spawned;
+    // nothing lets a running check ask for it from inside its own process.
+    // Manufacturing a third exit code the documented contract does not
+    // sanction is exactly what Traps to avoid forbids ("an exit code the
+    // runner treats as failure") — `checks/runner.ts` would read it as
+    // `'error'`, which IS treated as a failure (`commands/check.ts`'s
+    // `isRunFailed`), the opposite of what O2 wants.
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'warning',
+      message: `dispatch-readiness: off a task branch ('${branch}') with no tranche/task given by argument — nothing evaluated.`,
+      agent_recovery_prompt:
+        'Run this check from a task/<tranche>/<n> or task/issue-<n> branch, or name the task directly: check-dispatch-readiness <tranche> <n>.'
+    })
+    process.exit(0)
+  }
+
+  // O2: a backlog Issue with no tranche — resolved
+  // straight from the Issue itself, no topology lookup.
+  if (ref.kind === 'issue') {
+    await runIssueMode(ref.issueNumber)
+    return
+  }
+
+  await runTrancheMode(ref.tranche, ref.taskId)
 }
 
 /**
