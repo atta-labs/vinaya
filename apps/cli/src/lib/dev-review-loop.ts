@@ -1039,6 +1039,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       held.reason === 'infrastructure'
         ? `${resumePr}-infrastructure-retry`
         : `${resumePr}-${d.fetchNewestRulingOrdinal(resumePr)}`
+    let attachAfterReplayedResolution = false
     try {
       resolveEscalation(
         closesTask,
@@ -1049,32 +1050,59 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         resumeAuthenticatedFrom
       )
     } catch (err) {
-      if (
-        err instanceof WrongTargetResolutionError ||
-        err instanceof StaleEscalationError ||
-        err instanceof ReplayedResolutionError
-      ) {
+      if (err instanceof WrongTargetResolutionError || err instanceof StaleEscalationError) {
         throw new Error(`devReviewLoop --resume: ${err.message}`)
       }
-      throw err
+      if (!(err instanceof ReplayedResolutionError)) throw err
+      // An escalation that already carries a consumed resolution
+      // is not necessarily a replay attempt to refuse — the run that
+      // consumed it may itself have ended (a crash, or a later pause that
+      // collided back onto the SAME natural key — `sameEscalationInstance`,
+      // `control-store/local.ts`, treats a same-round/head/branch/pr/reason/
+      // detail repeat as a rerun of the identical instance, so its own
+      // `pause-state.json` write never advances past the already-consumed
+      // id) before the task's review actually concluded. The storage
+      // guarantee still binds exactly as before whenever a driver still
+      // holds the task (Traps to avoid: never weakened for that case), or
+      // whenever the task's own durable journal already shows this review
+      // concluded — nothing left for a bare `--resume` to attach to, the
+      // exact case the pre-existing "replay refused" fixture covers.
+      // Otherwise this run continues from the pull request's CURRENT state
+      // instead, the same attach a fresh `--task <n>` itself takes onto an
+      // already-open PR — never fabricating a second resolution (Traps to
+      // avoid), and never re-deriving a round/head from this stale record.
+      const existingLock = readDriverLock(root, closesTask)
+      const driverIsLive = existingLock !== null && isDriverPidAlive(existingLock.pid)
+      const repoForHistory = await resolveRepo().catch(() => null)
+      const history = d.fetchLoopHistory(d.telemetryOutboxRoot(), repoForHistory, closesTask)
+      const alreadyConcluded = history.journalFinalized?.result === 'merged_ready'
+      if (driverIsLive || err.existing?.decision !== 'resume' || alreadyConcluded) {
+        throw new Error(`devReviewLoop --resume: ${err.message}`)
+      }
+      attachAfterReplayedResolution = true
     }
-    const currentHead = d.resolveHead(held.branch)
-    // O8: a moved head is accepted, never refused, once a ruling exists —
-    // "a ruling followed by a fix push is the normal case." The ruling is
-    // itself the round-cap override it declares: the round counter
-    // restarts at the ruling's own newest ordinal (`fetchNewestRulingOrdinal`,
-    // the same integer `ruling_posted` mid-round invalidation already reads)
-    // rather than continuing from `held.round`, which may already sit past
-    // `MAX_ROUNDS` and would otherwise re-trigger the very pause this
-    // `--resume` exists to lift. An `'infrastructure'` resume carries no
-    // ruling to re-derive that override from, so a moved head there just
-    // keeps `held.round` — the same round this pause interrupted.
-    resumeHeadAlreadyMoved = currentHead !== held.head
-    task = held.task
-    branch = held.branch
-    prNumber = held.prNumber
-    resumeFrom =
-      resumeHeadAlreadyMoved && rulings.length > 0 ? { ...held, round: d.fetchNewestRulingOrdinal(resumePr) } : held
+    if (attachAfterReplayedResolution) {
+      task = held.task
+      branch = held.branch
+    } else {
+      const currentHead = d.resolveHead(held.branch)
+      // O8: a moved head is accepted, never refused, once a ruling exists —
+      // "a ruling followed by a fix push is the normal case." The ruling is
+      // itself the round-cap override it declares: the round counter
+      // restarts at the ruling's own newest ordinal (`fetchNewestRulingOrdinal`,
+      // the same integer `ruling_posted` mid-round invalidation already reads)
+      // rather than continuing from `held.round`, which may already sit past
+      // `MAX_ROUNDS` and would otherwise re-trigger the very pause this
+      // `--resume` exists to lift. An `'infrastructure'` resume carries no
+      // ruling to re-derive that override from, so a moved head there just
+      // keeps `held.round` — the same round this pause interrupted.
+      resumeHeadAlreadyMoved = currentHead !== held.head
+      task = held.task
+      branch = held.branch
+      prNumber = held.prNumber
+      resumeFrom =
+        resumeHeadAlreadyMoved && rulings.length > 0 ? { ...held, round: d.fetchNewestRulingOrdinal(resumePr) } : held
+    }
   } else {
     task = input.task
     branch = d.developerBranchFor(task)
