@@ -178,17 +178,78 @@ async function runIssueWriteGate(issue: number, retryCommand: string): Promise<v
 }
 
 /**
+ * Strips a directory-level glob down to the bare path `globCoversPath`
+ * itself compares — a trailing `/**`/`/*` and any trailing slash — so this
+ * module's own ancestor/descendant checks agree with `globCoversPath` about
+ * what "the same directory" means, without importing its private regex.
+ */
+function normalizeSurfaceGlob(glob: string): string {
+  return glob.replace(/\/\*\*?$/, '').replace(/\/+$/, '')
+}
+
+/**
+ * O2 (#674) — an `out:` glob equal to, or nested inside (covered by), an
+ * added glob is dropped: the widen itself now subsumes it, so keeping it
+ * would leave the newly-widened directory partly shadowed by an exclusion
+ * the Planner's own edit just made redundant (Origin: a directory moved
+ * from `out:` to `in:` stayed excluded because `out:` still named it
+ * verbatim). An `out:` glob that is instead a genuine ANCESTOR of an added
+ * glob is broader than what was added and still excludes it after the
+ * widen — never silently dropped (Traps to avoid: a broader `out:` glob is
+ * never removed just because a narrower path beneath it widened); reported
+ * as `stillExcluded` so the caller can refuse naming both.
+ */
+function spliceOutGlobs(
+  outGlobs: string[],
+  addedGlobs: string[]
+): { newOut: string[]; stillExcluded: { addedGlob: string; outGlob: string }[] } {
+  const normalizedAdded = addedGlobs.map((g) => ({ raw: g, norm: normalizeSurfaceGlob(g) }))
+  const newOut = outGlobs.filter((outGlob) => {
+    const o = normalizeSurfaceGlob(outGlob)
+    return !normalizedAdded.some(({ norm: a }) => o === a || o.startsWith(`${a}/`))
+  })
+  const stillExcluded: { addedGlob: string; outGlob: string }[] = []
+  for (const { raw: addedGlob, norm: a } of normalizedAdded) {
+    const outGlob = newOut.find((o) => a.startsWith(`${normalizeSurfaceGlob(o)}/`))
+    if (outGlob) stillExcluded.push({ addedGlob, outGlob })
+  }
+  return { newOut, stillExcluded }
+}
+
+/**
+ * Applies each `{match, newLine}` splice to `text`, in descending index
+ * order — so replacing one matched line's range never shifts the offset a
+ * still-pending splice was computed against. Shared by `widenSurfaceInLine`
+ * below, which now moves both the `in:` and the `out:` line in one pass.
+ */
+function spliceLines(text: string, splices: { match: RegExpExecArray; newLine: string }[]): string {
+  return [...splices]
+    .sort((a, b) => b.match.index - a.match.index)
+    .reduce(
+      (acc, { match, newLine }) => acc.slice(0, match.index) + newLine + acc.slice(match.index + match[0].length),
+      text
+    )
+}
+
+/**
  * O3 — the same directory-level `## Surface` grammar `parseIssueSurface`
- * validates, spliced rather than re-parsed: only the `in:` line's own text
- * changes, so a caller comparing `oldBody`/`newBody` with
+ * validates, spliced rather than re-parsed: only the `in:`/`out:` lines'
+ * own text changes, so a caller comparing `oldBody`/`newBody` with
  * `frozenSectionsChanged` sees exactly one section move — never `##
  * Objectives`/`## Parts`/`## Documentation`, which this function never
- * touches. Widen-only: `addedGlobs` are unioned onto whatever `in:` already
- * lists, never replacing or dropping an existing glob — a Planner
- * broadening a frozen Surface can never accidentally narrow it in the same
- * breath.
+ * touches. Widen-only for `in:`: `addedGlobs` are unioned onto whatever
+ * `in:` already lists, never replacing or dropping an existing glob — a
+ * Planner broadening a frozen Surface can never accidentally narrow it in
+ * the same breath. `out:` is narrow-only, in the opposite direction (O2,
+ * #674): a glob the widen itself subsumes is dropped from `out:`
+ * (`spliceOutGlobs`, above); an `out:` glob broader than an added glob
+ * still excludes it, and that refuses the whole widen rather than
+ * proceeding with a Surface the pre-push scope check would still reject.
  */
-export function widenSurfaceInLine(body: string, addedGlobs: string[]): { newBody: string; newIn: string[] } {
+export function widenSurfaceInLine(
+  body: string,
+  addedGlobs: string[]
+): { newBody: string; newIn: string[]; newOut: string[] } {
   const surface = parseIssueSurface(body)
   if (!surface.ok) {
     throw new DispatchTaskError(`cannot widen \`## Surface\` — the section does not parse: ${surface.errors.join(' ')}`)
@@ -207,12 +268,29 @@ export function widenSurfaceInLine(body: string, addedGlobs: string[]): { newBod
   if (!inLineMatch) {
     throw new DispatchTaskError('cannot widen `## Surface` — no `in:` line found in the section.')
   }
+  const outLineMatch = /^out:\s*(.+)$/im.exec(section)
+  if (!outLineMatch) {
+    throw new DispatchTaskError('cannot widen `## Surface` — no `out:` line found in the section.')
+  }
+
   const newIn = [...new Set([...surface.value.in, ...addedGlobs])]
+  const { newOut, stillExcluded } = spliceOutGlobs(surface.value.out, addedGlobs)
+  if (stillExcluded.length > 0) {
+    throw new DispatchTaskError(
+      `cannot widen \`## Surface\` — ${stillExcluded
+        .map((s) => `\`${s.addedGlob}\` still falls under the broader \`out:\` glob \`${s.outGlob}\``)
+        .join('; ')}.`
+    )
+  }
+
   const newInLine = `in: ${newIn.join(', ')}`
-  const newSection =
-    section.slice(0, inLineMatch.index) + newInLine + section.slice(inLineMatch.index + inLineMatch[0].length)
+  const newOutLine = `out: ${newOut.length > 0 ? newOut.join(', ') : '—'}`
+  const newSection = spliceLines(section, [
+    { match: inLineMatch, newLine: newInLine },
+    { match: outLineMatch, newLine: newOutLine }
+  ])
   const newBody = body.slice(0, afterHeadingStart) + newSection + body.slice(sectionEnd)
-  return { newBody, newIn }
+  return { newBody, newIn, newOut }
 }
 
 /**

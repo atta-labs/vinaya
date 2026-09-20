@@ -854,7 +854,7 @@ describe('resolveModelFromRationale (O3/MAJOR 2, #456 round 1) — the real reso
   })
 })
 
-describe('widenSurfaceInLine (O3) — pure splice, only the `in:` line moves', () => {
+describe('widenSurfaceInLine (O3) — splices the `in:` and `out:` lines', () => {
   const BODY = [
     '## Objectives',
     '',
@@ -863,18 +863,19 @@ describe('widenSurfaceInLine (O3) — pure splice, only the `in:` line moves', (
     '## Surface',
     '',
     'in: apps/cli/src/lib',
-    'out: apps/cli/src/commands',
+    'out: apps/cli/src/checks',
     '',
     '## Parts',
     '',
     'Part 1 (O1) — the only part.'
   ].join('\n')
 
-  it('unions the added globs onto the existing `in:` list, leaving `out:` and every other section untouched', () => {
-    const { newBody, newIn } = widenSurfaceInLine(BODY, ['apps/cli/src/commands'])
+  it('unions the added globs onto the existing `in:` list, leaving an unrelated `out:` and every other section untouched', () => {
+    const { newBody, newIn, newOut } = widenSurfaceInLine(BODY, ['apps/cli/src/commands'])
     expect(newIn).toEqual(['apps/cli/src/lib', 'apps/cli/src/commands'])
+    expect(newOut).toEqual(['apps/cli/src/checks'])
     expect(newBody).toContain('in: apps/cli/src/lib, apps/cli/src/commands')
-    expect(newBody).toContain('out: apps/cli/src/commands')
+    expect(newBody).toContain('out: apps/cli/src/checks')
     expect(newBody).toContain('## Parts')
     expect(newBody).toContain('Part 1 (O1) — the only part.')
   })
@@ -888,6 +889,62 @@ describe('widenSurfaceInLine (O3) — pure splice, only the `in:` line moves', (
     expect(() => widenSurfaceInLine('## Objectives\n\nO1. Something.', ['apps/cli/src/commands'])).toThrow(
       /does not parse|no `## Surface` heading/
     )
+  })
+
+  describe('O2 (#674) — the widened directory never stays shadowed by `out:`', () => {
+    it('drops an `out:` glob equal to the added glob, in the same splice', () => {
+      const body = [
+        '## Surface',
+        '',
+        'in: apps/cli/src/lib',
+        'out: apps/cli/src/checks',
+        '',
+        '## Parts',
+        '',
+        'Part 1 (O1) — the only part.'
+      ].join('\n')
+      const { newBody, newIn, newOut } = widenSurfaceInLine(body, ['apps/cli/src/checks'])
+      expect(newIn).toEqual(['apps/cli/src/lib', 'apps/cli/src/checks'])
+      expect(newOut).toEqual([])
+      expect(newBody).toContain('in: apps/cli/src/lib, apps/cli/src/checks')
+      expect(newBody).toContain('out: —')
+    })
+
+    it('drops an `out:` glob nested inside (covered by) the added glob, leaving an unrelated `out:` glob untouched', () => {
+      const body = [
+        '## Surface',
+        '',
+        'in: apps/cli/src/lib',
+        'out: apps/cli/src/checks/legacy, apps/cli/specs',
+        '',
+        '## Parts',
+        '',
+        'Part 1 (O1) — the only part.'
+      ].join('\n')
+      const { newOut } = widenSurfaceInLine(body, ['apps/cli/src/checks'])
+      expect(newOut).toEqual(['apps/cli/specs'])
+    })
+
+    it('refuses, naming both globs, when a broader `out:` glob still excludes the added glob', () => {
+      const body = [
+        '## Surface',
+        '',
+        'in: apps/cli/src/lib',
+        'out: apps/cli/src',
+        '',
+        '## Parts',
+        '',
+        'Part 1 (O1) — the only part.'
+      ].join('\n')
+      expect(() => widenSurfaceInLine(body, ['apps/cli/src/checks'])).toThrow(
+        /apps\/cli\/src\/checks.*still falls under the broader `out:` glob `apps\/cli\/src`/
+      )
+    })
+
+    it('never touches `out:` when the added glob has no relation to any `out:` entry', () => {
+      const { newOut } = widenSurfaceInLine(BODY, ['apps/cli/src/commands'])
+      expect(newOut).toEqual(['apps/cli/src/checks'])
+    })
   })
 })
 
