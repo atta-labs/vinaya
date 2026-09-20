@@ -60,7 +60,15 @@
  */
 
 import { randomUUID, createHash } from 'node:crypto'
-import { accessSync, constants as fsConstants, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  accessSync,
+  constants as fsConstants,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync
+} from 'node:fs'
 import { chmodSync, createWriteStream } from 'node:fs'
 import { execFileSync, spawn } from 'node:child_process'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
@@ -534,13 +542,17 @@ export function wholeSuiteTestCommandDetectorSource(): string {
     'function maskQuoted(s) {',
     "  return s.replace(/'[^']*'/g, (m) => 'x'.repeat(m.length)).replace(/\"[^\"]*\"/g, (m) => 'x'.repeat(m.length));",
     '}',
-    // A shell comment or a chained `;`/`&&`/`||` statement can plant a real
-    // test-file path AFTER (or beside) the runner invocation it never
+    // A shell comment or a chained `;`/`&&`/`||`/newline statement can plant
+    // a real test-file path AFTER (or beside) the runner invocation it never
     // actually reaches — `bun test # apps/cli/foo.test.ts` and
     // `bun test; echo apps/cli/foo.test.ts` both still run a bare `bun test`
     // as their effective first command. Judging the whole raw string let
     // both through (security review, found live); judging one statement at
-    // a time, comments stripped, does not.
+    // a time, comments stripped, does not. A newline is a statement
+    // separator here too (round 4 security review, HIGH, found live): a
+    // command whose text embeds `\n` followed by a forbidden git subcommand
+    // otherwise passes as one un-split statement, since `;`/`&&`/`||` never
+    // appear in it at all.
     'function stripLineComment(s) {',
     '  const idx = maskQuoted(s).indexOf("#");',
     '  return idx === -1 ? s : s.slice(0, idx);',
@@ -549,7 +561,7 @@ export function wholeSuiteTestCommandDetectorSource(): string {
     '  const masked = maskQuoted(command);',
     '  const statements = [];',
     '  let last = 0;',
-    '  const re = /;|&&|\\|\\|/g;',
+    '  const re = /;|&&|\\|\\||\\n/g;',
     '  let m;',
     '  while ((m = re.exec(masked)) !== null) {',
     '    statements.push(command.slice(last, m.index));',
@@ -576,6 +588,74 @@ export const SUITE_RUN_DENY_REASON =
   'Dispatched sessions cannot run a test runner with no test-file argument — name the specific *.test.*/*.spec.* file(s) this Part proves. The pre-push hook’s selected-tests run and CI are the only sanctioned whole-suite runs.'
 
 /**
+ * Round 3 security review, HIGH — found live: `buildRolePermissions`'s own
+ * `deny` entries (`Bash(git push --force*)`, `Bash(git commit --no-verify*)`,
+ * etc.) are literal command-string-PREFIX matches, exactly like every other
+ * entry the settings-file engine supports (this file's own doc comment on
+ * `buildRolePermissions` already cites the confirmed-live `Bash(<prefix>)`/
+ * `Bash(<prefix>:*)`/`Bash(<glob> *)` grammar) — so an ordinary alternate
+ * spelling never matches ANY deny entry at all and resolves through the
+ * broader `Bash(git push:*)`/`Bash(git commit:*)` allow with an empty
+ * `permission_denials` array: `git push origin --force` (the flag after the
+ * remote/branch, not right after `push`), `git push origin +feature:main`
+ * (git's own force-refspec syntax — no `--force`/`-f` flag exists at all),
+ * `git commit -am fix --no-verify` (the flag after other short options).
+ * A prefix-matched string can never generalize over argument ORDER the way
+ * this needs to. Detected here instead — the SAME `PreToolUse` hook
+ * mechanism `commandRunsWholeSuite` (above) already proves live for exactly
+ * this class of check (a whole-suite test run has the identical
+ * argument-order problem: `bun test --coverage <file>` is fine, `bun test`
+ * alone is not, and no fixed prefix distinguishes them) — real token
+ * inspection in JS, not a settings-file pattern. Reuses `commandStatements`/
+ * `stripLineComment` from `wholeSuiteTestCommandDetectorSource`'s own
+ * embedded copy (both already land in the SAME generated script), rather
+ * than a second inline reimplementation.
+ */
+function gitForceOrSkipVerifyDetectorSource(): string {
+  return [
+    'function statementTokens(stmt) {',
+    '  return stmt.trim().split(/\\s+/).filter(Boolean);',
+    '}',
+    'function commandForcesGitOrSkipsVerify(command) {',
+    "  if (typeof command !== 'string') return false;",
+    '  for (const raw of commandStatements(command)) {',
+    '    const stmt = stripLineComment(raw);',
+    '    const tokens = statementTokens(stmt);',
+    "    if (tokens[0] !== 'git') continue;",
+    '    const sub = tokens[1];',
+    "    if (sub === 'push') {",
+    '      for (let i = 2; i < tokens.length; i++) {',
+    '        const t = tokens[i];',
+    "        if (t === '-f' || t === '--force') return true;",
+    "        if (t === '--force-with-lease' || t.indexOf('--force-with-lease=') === 0) return true;",
+    "        if (t === '--no-verify') return true;",
+    // A push refspec argument starting with `+` (e.g. `+feature:main`,
+    // `+HEAD:main`) is git's OWN force-push syntax — no `--force`/`-f` flag
+    // is present at all in this shape, confirmed against git's own
+    // `git-push` documentation ("a plus sign ... has the same effect as
+    // --force").
+    "        if (t.charAt(0) === '+' && t.length > 1) return true;",
+    '      }',
+    "    } else if (sub === 'commit') {",
+    '      for (let i = 2; i < tokens.length; i++) {',
+    '        const t = tokens[i];',
+    "        if (t === '--no-verify' || t === '-n') return true;",
+    // A combined short-flag cluster (`-an`, `-na`, …) containing `n` — git
+    // commit's own short options never use `n` for anything else, so any
+    // cluster carrying it is `-n`/`--no-verify` combined with other flags.
+    "        if (/^-[a-zA-Z]+$/.test(t) && t.slice(1).indexOf('n') !== -1) return true;",
+    '      }',
+    '    }',
+    '  }',
+    '  return false;',
+    '}'
+  ].join('\n')
+}
+
+export const GIT_FORCE_OR_SKIP_VERIFY_DENY_REASON =
+  'Dispatched sessions cannot force-push (in any spelling, including a `+refspec`) or skip commit/push hooks (`--no-verify`/`-n`) — this is enforced by argument inspection, not a settings-file pattern, so no flag ordering or alternate spelling defeats it.'
+
+/**
  * The subagent tool (`Agent`/`Task` — both names are checked, as a
  * dispatched session may see either) defaults `run_in_background` to true,
  * so an unattended developer session that never sets it explicitly would
@@ -595,6 +675,16 @@ function denyOutput(reason: string): string {
   )
 }
 
+/** `denyOutput`'s counterpart — used only by `writeAccessHookScript`, which grants rather than refuses. */
+function allowOutput(reason: string): string {
+  return (
+    '      process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: ' +
+    "'PreToolUse', permissionDecision: 'allow', permissionDecisionReason: " +
+    JSON.stringify(reason) +
+    ' } }));'
+  )
+}
+
 function backgroundDenyHookScript(): string {
   return [
     "let d = '';",
@@ -604,11 +694,14 @@ function backgroundDenyHookScript(): string {
     '    const e = JSON.parse(d);',
     backgroundShapeDetectorSource(),
     wholeSuiteTestCommandDetectorSource(),
+    gitForceOrSkipVerifyDetectorSource(),
     '    const input = e.tool_input || {};',
     "    if (e.tool_name === 'Bash' && (input.run_in_background === true || commandBackgrounds(input.command))) {",
     denyOutput(BACKGROUND_DENY_REASON),
     "    } else if (e.tool_name === 'Bash' && commandRunsWholeSuite(input.command)) {",
     denyOutput(SUITE_RUN_DENY_REASON),
+    "    } else if (e.tool_name === 'Bash' && commandForcesGitOrSkipsVerify(input.command)) {",
+    denyOutput(GIT_FORCE_OR_SKIP_VERIFY_DENY_REASON),
     "    } else if ((e.tool_name === 'Agent' || e.tool_name === 'Task') && input.run_in_background === true) {",
     denyOutput(SUBAGENT_BACKGROUND_DENY_REASON),
     '    }',
@@ -771,6 +864,259 @@ function documentationStopHookScript(dir: string): string {
 const DISPATCH_BASH_MAX_TIMEOUT_MS = '1800000'
 
 /**
+ * Bump this whenever the allow/deny shape below changes —
+ * `writeDispatchSettings`'s own first lifecycle line for a role names it, so
+ * a run's own log says which policy shape it started under without needing
+ * to diff `dispatch.ts` against the run's own timestamp.
+ */
+export const PERMISSION_POLICY_VERSION = 'v1'
+
+type RolePermissions = { allow: string[]; deny: string[] }
+
+const EMPTY_ROLE_PERMISSIONS: RolePermissions = { allow: [], deny: [] }
+
+/**
+ * The settings-file counterpart to `writeDispatchSettings`'s
+ * existing hooks — an explicit, per-role `permissions.allow`/`deny` block, so
+ * a dispatched role's Bash calls resolve against a WRITTEN policy rather than
+ * falling through to whatever permission mode the host process happens to
+ * default to (`isolation.md` §2's "second, narrower precedent" — this is a
+ * third). Confirmed live against the installed `claude` binary (2.1.258):
+ * `permissions.allow`/`deny` entries use the SAME `Bash(<prefix>)`/
+ * `Bash(<prefix>:*)`/`Bash(<glob> *)` grammar `denyOutput`'s own doc comment
+ * already cites for `~/.claude/settings.json`, and a `deny` entry wins over a
+ * broader `allow` entry that also matches — verified live in an isolated
+ * fixture repo: `{"allow":["Bash(git commit:*)"],"deny":["Bash(git commit
+ * --no-verify*)"]}` let a plain `git commit` through with an empty
+ * `permission_denials` array, and refused `git commit --no-verify -am …`
+ * with a populated one, from the SAME settings file, under the SAME (default,
+ * non-interactive `-p`) permission mode — proving the narrower deny overrides
+ * the broader allow rather than the command merely falling through to
+ * "unlisted." A command this fixture never runs through this mechanism at
+ * all — no `--permission-mode` flag on record here either — is why an
+ * UNLISTED command still resolves through the host's own interactive
+ * classifier exactly as before this task; only a role's own doctrine-named
+ * commands get an explicit answer.
+ *
+ * **This function covers Bash only — never `Write`/`Edit`.** A round-2 review
+ * live-verified that `permissions.allow` entries shaped `Write(<path>/**)` /
+ * `Edit(<path>/**)` / `Write(<exact/file>)` do NOT grant a real, non-interactive
+ * `Write`/`Edit` call on the installed binary (2.1.258): every path-scoped
+ * variant tried (a trailing `/**`, `/*`, a bare directory, a `//`-prefixed
+ * absolute form, an exact relative filename) still left the call denied; only
+ * the degenerate `Write(*)` (equivalent to no scoping at all) or a bare
+ * `Write`/`Edit` with no parenthesized argument ever came back with an empty
+ * `permission_denials` array. So a real Write/Edit grant, scoped to a
+ * directory or an exact file, is expressed a different way entirely — see
+ * `buildWriteAccessScope` and `writeAccessHookScript`, below, which use the
+ * SAME `PreToolUse` hook mechanism `backgroundDenyHookScript` already proves
+ * live for Bash/Agent/Task, matched on `Write|Edit` instead.
+ *
+ * `developer` gets the version-control/forge/package/test commands
+ * `roles/developer.md`/`roles/developer/reference.md` name it running
+ * (worktree creation, fetch, add/commit/push, `gh pr`/`issue` read+write, the
+ * package manager, the test runner, this repo's own `verify-*` bin scripts
+ * and its `vinaya` CLI entry point) — plus a deny list for exactly what
+ * `roles/developer.md`/`reference.md` forbid: a force push in any of its
+ * spellings, `--no-verify` on a commit or push, `git stash` (worktree
+ * discipline — stash refs are shared across a repo's worktrees), a hard
+ * reset, and `rm -rf`/`sudo`, neither of which any doctrine command needs.
+ *
+ * `code-reviewer`/`security` get read-only git/`gh` commands
+ * (`roles/reviewer.md`: "CI is your input, never your job — read it, don't
+ * reproduce it: no `bun install`, no re-running tests or checks"). A
+ * forge-write/package/test command a Reviewer has no doctrine reason to run
+ * is explicitly denied, the same defense-in-depth posture the Developer's own
+ * deny list takes, rather than left to fall through as merely unlisted.
+ *
+ * Every other role (`planner`/`principal`/`archivist`/`architect`) gets no
+ * rules at all — this task's own Objectives name only these three roles, and
+ * an empty policy leaves an unlisted command resolving exactly as it did
+ * before this task, never a silent new restriction on a role this brief
+ * never asked to scope.
+ */
+export function buildRolePermissions(role: Role): RolePermissions {
+  if (role === 'developer') {
+    return {
+      allow: [
+        'Bash(git worktree add:*)',
+        'Bash(git worktree list:*)',
+        'Bash(git fetch:*)',
+        'Bash(git status:*)',
+        'Bash(git diff:*)',
+        'Bash(git log:*)',
+        'Bash(git show:*)',
+        'Bash(git add:*)',
+        'Bash(git commit:*)',
+        'Bash(git push:*)',
+        'Bash(git config:*)',
+        'Bash(git branch:*)',
+        'Bash(git checkout:*)',
+        'Bash(git merge:*)',
+        'Bash(git rebase:*)',
+        'Bash(gh pr create:*)',
+        'Bash(gh pr edit:*)',
+        'Bash(gh pr view:*)',
+        'Bash(gh pr comment:*)',
+        'Bash(gh pr diff:*)',
+        'Bash(gh issue view:*)',
+        'Bash(gh issue comment:*)',
+        'Bash(bun install:*)',
+        'Bash(bun run:*)',
+        'Bash(bun test:*)',
+        'Bash(bun packages/aeg-core/bin/verify-dispatch.ts:*)',
+        'Bash(bun packages/aeg-core/bin/verify-docs.ts:*)',
+        'Bash(bun packages/aeg-core/bin/verify-task.ts:*)',
+        'Bash(bun apps/cli/src/index.ts:*)'
+      ],
+      deny: [
+        'Bash(git push --force*)',
+        'Bash(git push -f*)',
+        'Bash(git push --force-with-lease*)',
+        'Bash(git push --no-verify*)',
+        'Bash(git commit --no-verify*)',
+        'Bash(git commit -n*)',
+        'Bash(git stash*)',
+        'Bash(git reset --hard*)',
+        'Bash(rm -rf*)',
+        'Bash(sudo*)'
+      ]
+    }
+  }
+  if (role === 'code-reviewer' || role === 'security') {
+    return {
+      allow: [
+        'Bash(git diff:*)',
+        'Bash(git log:*)',
+        'Bash(git show:*)',
+        'Bash(git grep:*)',
+        'Bash(git status:*)',
+        'Bash(git fetch:*)',
+        'Bash(gh pr view:*)',
+        'Bash(gh pr diff:*)',
+        'Bash(gh issue view:*)'
+      ],
+      deny: [
+        'Bash(git push:*)',
+        'Bash(git commit:*)',
+        'Bash(git add:*)',
+        'Bash(gh pr create:*)',
+        'Bash(gh pr edit:*)',
+        'Bash(gh pr merge:*)',
+        'Bash(bun install:*)',
+        'Bash(bun test:*)',
+        'Bash(bun run:*)'
+      ]
+    }
+  }
+  return EMPTY_ROLE_PERMISSIONS
+}
+
+export type WriteAccessScope = { kind: 'directory'; allowedDir: string } | { kind: 'exact-files'; paths: string[] }
+
+/**
+ * The real grant behind O1's Write/Edit half, now that `buildRolePermissions`'s
+ * own doc comment records that a `permissions.allow` path pattern never
+ * actually grants one — a directory for the developer (its own worktree), or
+ * the three hand-off files for a reviewer/security dispatch, each inside its
+ * own `extraWritableDirs` entry. Every role outside these three (or a role
+ * whose reviewer dispatch carries no `extraWritableDirs` at all) gets `null`
+ * — no hook wiring, no file written, matching `buildRolePermissions`'s own
+ * "no rules at all" posture for a role this task's Objectives never named.
+ *
+ * Paths are realpath'd here, once, before they are ever written to disk or
+ * compared against — the same "every substituted path must be canonicalized"
+ * discipline `isolation.md` §3 already states for its own Seatbelt profile:
+ * a worktree or work directory that resolves through a symlinked alias (this
+ * host's own `/tmp` → `/private/tmp` is the standing example) would otherwise
+ * make every real Write/Edit call's own resolved path fail to match the
+ * unresolved directory this function was handed. A path that does not exist
+ * yet degrades to its own raw, unresolved form rather than throwing — never
+ * fatal to the dispatch this scope is only ever a defense-in-depth layer for.
+ */
+export function buildWriteAccessScope(
+  role: Role,
+  allowedDir: string,
+  extraWritableDirs: readonly string[]
+): WriteAccessScope | null {
+  const real = (p: string): string => {
+    try {
+      return realpathSync(p)
+    } catch {
+      return p
+    }
+  }
+  if (role === 'developer') return { kind: 'directory', allowedDir: real(allowedDir) }
+  if (role === 'code-reviewer' || role === 'security') {
+    if (extraWritableDirs.length === 0) return null
+    const paths = extraWritableDirs.flatMap((dir) => {
+      const realDir = real(dir)
+      return ['findings.txt', 'report.txt', 'objectives.txt'].map((f) => join(realDir, f))
+    })
+    return { kind: 'exact-files', paths }
+  }
+  return null
+}
+
+/**
+ * The `PreToolUse` hook that grants a real `Write`/`Edit` call — matched on
+ * `Write|Edit`, never folded into `backgroundDenyHookScript`'s own
+ * `Bash|Agent|Task` matcher, since the two check entirely different tool
+ * shapes. Reads the per-run scope file `writeDispatchSettings` wrote (keyed
+ * by `runId`, same reasoning `documentationLogHookScript`'s own doc comment
+ * gives: two tasks dispatched concurrently on this box must never share one
+ * file) and resolves `tool_input.file_path`'s own containing directory via
+ * `fs.realpathSync` before comparing — a target file that does not exist yet
+ * (the normal case for a fresh `Write`) still has a real, existing parent
+ * directory to resolve through. A path outside the written scope emits no
+ * `hookSpecificOutput` at all, exactly like `backgroundDenyHookScript`'s own
+ * "silent otherwise" posture — it falls through to whatever the host's own
+ * classifier would have decided anyway, never a synthesized `deny`, since
+ * this hook's job is to grant a real capability the built-in engine cannot
+ * express, not to add a NEW restriction beyond what already existed.
+ */
+function writeAccessHookScript(dir: string): string {
+  return [
+    "const fs = require('fs');",
+    "const path = require('path');",
+    "let d = '';",
+    "process.stdin.on('data', (c) => { d += c });",
+    "process.stdin.on('end', () => {",
+    '  try {',
+    '    const e = JSON.parse(d);',
+    "    if (e.tool_name !== 'Write' && e.tool_name !== 'Edit') { process.exit(0); }",
+    "    const runId = process.env.VINAYA_RUN_ID || '';",
+    '    if (!runId) { process.exit(0); }',
+    `    const scopePath = ${JSON.stringify(join(dir, 'write-access-'))} + runId + '.json';`,
+    '    let scope;',
+    "    try { scope = JSON.parse(fs.readFileSync(scopePath, 'utf8')); } catch { process.exit(0); }",
+    '    const filePath = e.tool_input && e.tool_input.file_path;',
+    "    if (typeof filePath !== 'string') { process.exit(0); }",
+    '    let real;',
+    '    try {',
+    '      const realParent = fs.realpathSync(path.dirname(filePath));',
+    '      real = path.join(realParent, path.basename(filePath));',
+    '    } catch { real = filePath; }',
+    '    let allowed = false;',
+    "    if (scope.kind === 'directory') {",
+    '      const base = scope.allowedDir.endsWith(path.sep) ? scope.allowedDir : scope.allowedDir + path.sep;',
+    '      allowed = real === scope.allowedDir || real.startsWith(base);',
+    "    } else if (scope.kind === 'exact-files' && Array.isArray(scope.paths)) {",
+    '      allowed = scope.paths.includes(real);',
+    '    }',
+    '    if (allowed) {',
+    allowOutput("in-scope for this role's written write-access policy"),
+    '    }',
+    '  } catch {',
+    '    // an unreadable/malformed hook payload never blocks a call this hook cannot evaluate',
+    '  }',
+    '  process.exit(0);',
+    '});',
+    ''
+  ].join('\n')
+}
+
+/**
  * Writes this dispatch's settings file and the hook script it references,
  * owner-only inside an owner-only directory (same hardening posture as
  * `openOutputTee`'s tee file). Never throws: an unwritable home degrades to
@@ -804,14 +1150,42 @@ const DISPATCH_BASH_MAX_TIMEOUT_MS = '1800000'
  * sources file at all — the Stop hook reads that as "nothing owed" and never
  * blocks, the same seam-is-dormant-when-absent posture `doc-owners.ts`
  * already uses.
+ *
+ * `role` feeds `buildRolePermissions` to add this same file's third
+ * enforcement block, `permissions.allow`/`deny` — see that function's own
+ * doc comment for the per-role shape and the live proof behind it.
+ * `role`/`allowedDir`/`extraWritableDirs` together feed `buildWriteAccessScope`
+ * to wire a FOURTH block, the `Write|Edit` `PreToolUse` hook — see that
+ * function's own doc comment for why a settings-file path pattern could not
+ * carry this grant instead.
+ *
+ * **This call's own directory is scoped by `role` (round-2 security review,
+ * CRITICAL fix).** Before this fix, `dir` was keyed by task/PR scope alone —
+ * a single `settings.json` (and the hook scripts and per-run files beside
+ * it) shared by EVERY role dispatched for the same task. `dev-review-loop.ts`
+ * dispatches its code-reviewer and security roles CONCURRENTLY
+ * (`Promise.all`), each calling this function with a DIFFERENT `role` and
+ * `extraWritableDirs` — whichever call's `writeFileSync` landed last won for
+ * BOTH already-spawned `claude --settings <path>` processes, since both
+ * pointed at the identical path and the vendor process reads it at its own
+ * startup, not at the moment this function returns. That race could hand
+ * one role the other's own Bash allow/deny list and Write/Edit hand-off-file
+ * scope — exactly the "keep read access and their own hand-off files and
+ * nothing more" boundary O1 exists to hold. Nesting `role` as this
+ * directory's own final path segment gives every concurrently-dispatched
+ * role its own exclusive settings file and hook scripts — no shared
+ * mutable path for two roles to race on at all.
  */
 export function writeDispatchSettings(
   runId: string,
   documentation: IssueDocumentationSource[] = [],
-  scope: RunScope = 'unscoped'
+  scope: RunScope = 'unscoped',
+  role: Role = 'developer',
+  allowedDir = '.',
+  extraWritableDirs: readonly string[] = []
 ): string | null {
   try {
-    const dir = runPath(runtimeDirForThisRepo(), scope, { area: 'hooks' })
+    const dir = join(runPath(runtimeDirForThisRepo(), scope, { area: 'hooks' }), role)
     mkdirSync(dir, { recursive: true, mode: 0o700 })
     chmodSync(dir, 0o700)
     const scriptPath = join(dir, 'deny-background-bash.mjs')
@@ -824,19 +1198,32 @@ export function writeDispatchSettings(
       const sourcesPath = join(dir, `documentation-sources-${runId}.json`)
       writeFileSync(sourcesPath, JSON.stringify(documentation), { mode: 0o600 })
     }
+    const writeAccessScope = buildWriteAccessScope(role, allowedDir, extraWritableDirs)
+    const writeAccessScriptPath = join(dir, 'write-access.mjs')
+    const preToolUseHooks = [
+      {
+        matcher: 'Bash|Agent|Task',
+        hooks: [{ type: 'command', command: `bun "${scriptPath}"` }]
+      }
+    ]
+    if (writeAccessScope !== null) {
+      writeFileSync(writeAccessScriptPath, writeAccessHookScript(dir), { mode: 0o600 })
+      const writeAccessPath = join(dir, `write-access-${runId}.json`)
+      writeFileSync(writeAccessPath, JSON.stringify(writeAccessScope), { mode: 0o600 })
+      preToolUseHooks.push({
+        matcher: 'Write|Edit',
+        hooks: [{ type: 'command', command: `bun "${writeAccessScriptPath}"` }]
+      })
+    }
     const settingsPath = join(dir, 'settings.json')
     const settings = {
       env: {
         CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1',
         BASH_MAX_TIMEOUT_MS: DISPATCH_BASH_MAX_TIMEOUT_MS
       },
+      permissions: buildRolePermissions(role),
       hooks: {
-        PreToolUse: [
-          {
-            matcher: 'Bash|Agent|Task',
-            hooks: [{ type: 'command', command: `bun "${scriptPath}"` }]
-          }
-        ],
+        PreToolUse: preToolUseHooks,
         PostToolUse: [
           {
             matcher: 'WebFetch',
@@ -2401,8 +2788,35 @@ export async function dispatchRole(
         `'## Documentation' source(s) are not mechanically enforced for this dispatch.`
     )
   }
+  // The directory a Developer's `Write`/`Edit` rules are
+  // scoped to — the same `opts.cwd` precedence `boundaryAllowedDir` (below)
+  // resolves from, but this policy is written on EVERY host and EVERY run
+  // (unlike the Darwin/unattended-only OS boundary), so it needs a value even
+  // when neither `opts.cwd` nor `repoRoot()` resolves — `process.cwd()` is
+  // never wrong for a settings-file glob the way it would be for the OS
+  // boundary's own hard refusal-on-unresolvable semantics (left untouched,
+  // below, out of this task's own surface).
+  const permissionAllowedDir = opts.cwd ?? repoRoot() ?? process.cwd()
   const dispatchSettingsPath =
-    agent === 'claude' ? writeDispatchSettings(runId, documentationSources, scopeOf(opts.task, opts.pr)) : null
+    agent === 'claude'
+      ? writeDispatchSettings(
+          runId,
+          documentationSources,
+          scopeOf(opts.task, opts.pr),
+          role,
+          permissionAllowedDir,
+          opts.extraWritableDirs ?? []
+        )
+      : null
+  // The first lifecycle line this role's dispatch writes —
+  // every earlier `writeLifecycle` call in this function sits behind an
+  // early-return refusal branch (binary not resolvable, non-Claude
+  // Documentation degrade) that a normal Claude dispatch never reaches.
+  if (dispatchSettingsPath !== null) {
+    writeLifecycle(
+      `[vinaya dispatch ${effectId}] ${role} via ${agent}: permission policy ${PERMISSION_POLICY_VERSION} written to ${dispatchSettingsPath}`
+    )
+  }
   // Round 5 review, MEDIUM: an unattended, isolation-required Claude dispatch
   // whose settings write failed (a disk/permission fault under this task's
   // own hooks directory) previously dropped `--settings`
