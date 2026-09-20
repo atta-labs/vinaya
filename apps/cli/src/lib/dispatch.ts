@@ -656,8 +656,8 @@ export const GIT_FORCE_OR_SKIP_VERIFY_DENY_REASON =
   'Dispatched sessions cannot force-push (in any spelling, including a `+refspec`) or skip commit/push hooks (`--no-verify`/`-n`) — this is enforced by argument inspection, not a settings-file pattern, so no flag ordering or alternate spelling defeats it.'
 
 /**
- * O4 (`#680`) — defense in depth beside the pre-push hook, not the only
- * guard: the pre-push hook only ever sees an actual `git push`, at the git
+ * Defense in depth beside the pre-push hook, not the only guard: the
+ * pre-push hook only ever sees an actual `git push`, at the git
  * level, after a dispatched session has already committed and staged it;
  * this catches the ATTEMPT one layer earlier, at the Bash tool call itself,
  * before either subcommand ever runs. Origin: a developer session worked in
@@ -947,9 +947,9 @@ const DISPATCH_BASH_MAX_TIMEOUT_MS = '1800000'
 
 /**
  * Bump this whenever the allow/deny shape below changes, OR the behavior of
- * a hook `writeDispatchSettings` wires alongside it changes (the O4 (`#680`)
- * bump to `v2`: `writeAccessHookScript` now denies a `directory`-scoped
- * Write/Edit outside its granted worktree instead of falling through, and
+ * a hook `writeDispatchSettings` wires alongside it changes (the bump to
+ * `v2`: `writeAccessHookScript` now denies a `directory`-scoped Write/Edit
+ * outside its granted worktree instead of falling through, and
  * `backgroundDenyHookScript` now also denies a `git commit`/`git push`
  * whose working directory is a checkout on the default branch — neither
  * touches `buildRolePermissions`'s own `allow`/`deny` arrays, but both are
@@ -1162,7 +1162,7 @@ export const WRITE_OUTSIDE_WORKTREE_DENY_REASON =
  * (the normal case for a fresh `Write`) still has a real, existing parent
  * directory to resolve through.
  *
- * **O4 (`#680`): a `directory`-scoped path outside the written scope now
+ * **A `directory`-scoped path outside the written scope now
  * DENIES, rather than falling through.** Before this task, EVERY out-of-scope
  * path (both scope kinds) fell through silently, "exactly like
  * `backgroundDenyHookScript`'s own 'silent otherwise' posture" — this hook's
