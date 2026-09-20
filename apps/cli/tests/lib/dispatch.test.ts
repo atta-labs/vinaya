@@ -14,7 +14,7 @@
  * `null` (the `unresolved/` outbox bucket) every time.
  */
 
-import { afterEach, describe, expect, it } from 'bun:test'
+import { afterEach, beforeAll, describe, expect, it } from 'bun:test'
 import { execFileSync, execSync, spawnSync } from 'node:child_process'
 import type { SpawnSyncOptionsWithStringEncoding, SpawnSyncReturns } from 'node:child_process'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -3063,26 +3063,52 @@ describe('recoverUsageFromDispatchTee (O1, #608)', () => {
  * O2 (Issue #670) — the host-wide proof, run last so it observes every
  * fixture above's own teardown, not just the one test it happens to follow.
  * Same idiom `checks/runner.test.ts` already established for its own
- * process-group tests (`ps -eo pid,command | grep … | grep -v grep || true`,
- * asserted empty) — `-eo` lists every process on the host, not just this
- * test process's own children, so a vendor that reparented to the service
- * manager after its own script died is still caught here. Every fake vendor
- * binary in this file lives under a `tempDir('vinaya-dispatch-bin-')`
- * directory, so its own path — and therefore its `ps` command line — always
- * carries that literal substring; a `--settings <path>` flag
- * (`writeDispatchSettings`) on an unattended fixture additionally carries the
- * fake task's own run folder, on the SAME command line, for the same reason.
- * Bounded (`timeout`/`killSignal`) so a hung `ps`/`grep` cannot itself hang
- * this file's own run — matching this file's own `stripVinayaEnv`+kill-budget
- * discipline (`process-fixture-coverage.test.ts`).
+ * process-group tests (`ps -eo pid,command | grep … | grep -v grep || true`)
+ * — `-eo` lists every process on the host, not just this test process's own
+ * children, so a vendor that reparented to the service manager after its own
+ * script died is still caught here. Every fake vendor binary in this file
+ * lives under a `tempDir('vinaya-dispatch-bin-')` directory, so its own
+ * path — and therefore its `ps` command line — always carries that literal
+ * substring; a `--settings <path>` flag (`writeDispatchSettings`) on an
+ * unattended fixture additionally carries the fake task's own run folder, on
+ * the SAME command line, for the same reason. Bounded (`timeout`/
+ * `killSignal`) so a hung `ps`/`grep` cannot itself hang this file's own run
+ * — matching this file's own `stripVinayaEnv`+kill-budget discipline
+ * (`process-fixture-coverage.test.ts`).
+ *
+ * The proof is against pids NEW since `beforeAll`, never a bare host-wide
+ * zero-count: this machine runs several agents concurrently, each in its own
+ * worktree sharing the same real host — an unrelated sibling's own
+ * in-flight `vinaya-dispatch-bin-` fixture, alive before this file's first
+ * test ever ran, is not a regression this file introduced and must never
+ * fail this proof (found live: a sibling worktree's own fixture, started
+ * independently, made a bare `ps -eo` scan fail with no leak on this file's
+ * own part at all). Snapshotting the baseline first and asserting "nothing
+ * new" keeps 100% of the sensitivity to a real leak from this file's own
+ * fixtures while dropping the false positive from noise this file never
+ * controlled.
  */
+function vendorProcessSurvivors(): string[] {
+  const out = execSync('ps -eo pid,command | grep "vinaya-dispatch-bin-" | grep -v grep || true', {
+    encoding: 'utf8',
+    timeout: 5_000,
+    killSignal: 'SIGKILL'
+  }).trim()
+  if (out.length === 0) return []
+  return out
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+}
+
+let preExistingVendorSurvivors: Set<string> = new Set()
+beforeAll(() => {
+  preExistingVendorSurvivors = new Set(vendorProcessSurvivors())
+})
+
 describe('process hygiene (Issue #670) — the file leaves no fake vendor process behind', () => {
-  it('no process on the host still carries a vinaya-dispatch-bin- path in its command line', () => {
-    const survivors = execSync('ps -eo pid,command | grep "vinaya-dispatch-bin-" | grep -v grep || true', {
-      encoding: 'utf8',
-      timeout: 5_000,
-      killSignal: 'SIGKILL'
-    }).trim()
-    expect(survivors).toBe('')
+  it('no NEW process — beyond whatever the host already carried before this file ran — still carries a vinaya-dispatch-bin- path in its command line', () => {
+    const newSurvivors = vendorProcessSurvivors().filter((line) => !preExistingVendorSurvivors.has(line))
+    expect(newSurvivors).toEqual([])
   })
 })
