@@ -80,6 +80,26 @@
  *     git binary by assignment (see `identifierResolvesToGit`).
  * Re-running the scan with both fixes found no new offender and no stale
  * grandfather entry — `GRANDFATHERED_FILES` is unchanged at 55 entries.
+ *
+ * Round 9 review closed three precision gaps in the scan, no fixture
+ * changes:
+ *   - `fileHasVinayaStrip`/the kill-budget scope test ran against raw
+ *     `content`, so a comment merely NAMING `stripVinayaEnv`/`SIGKILL`
+ *     could mark a file compliant with no such code present. They now run
+ *     against `stripComments`'s output (comments blanked, strings left
+ *     intact — the real evidence is very often itself a string used as
+ *     actual call/property syntax), and both patterns are tightened to
+ *     require that call/property syntax rather than matching a bare word.
+ *   - `SPAWNS_REAL_PROCESS` matched neither `execFile` in any form nor a
+ *     member-call `exec` (`cp.exec(...)`) — the former is now in the main
+ *     alternation (a dotted call included, since `execFile` has no
+ *     `RegExp.prototype`-style collision), the latter matched separately
+ *     via `MEMBER_EXEC`, gated on the receiver provably resolving to
+ *     `node:child_process` (`identifierResolvesToChildProcess`).
+ *   - This comment and the changeset said ninety-two test files start a
+ *     real process; the scan (as fixed above) reports ninety-one.
+ * Re-running the fixed scan found no new offender and no stale grandfather
+ * entry — `GRANDFATHERED_FILES` is unchanged at 55 entries after round 9.
  */
 
 import { describe, expect, it } from 'bun:test'
@@ -162,6 +182,59 @@ function stripNonCode(content: string): string {
 }
 
 /**
+ * `content` with every line comment and block comment replaced by
+ * same-length whitespace — string/template literals are left INTACT,
+ * unlike `stripNonCode` above. Used only for the two compliance regexes
+ * (`HAS_VINAYA_ENV_STRIP`, `HAS_KILL_BUDGET`, round 9 finding 1): those
+ * patterns' real evidence is often itself a string literal used as actual
+ * call syntax — `killSignal: 'SIGKILL'`, `.kill('SIGKILL')`,
+ * `startsWith('VINAYA_')` — so blanking every string the way `stripNonCode`
+ * does would erase the real evidence along with a fake one. A comment
+ * merely NAMING the mechanism has no such excuse and is blanked here
+ * unconditionally; the compliance regexes are additionally tightened to
+ * require call/property syntax (never a bare word) so a string that merely
+ * *mentions* the mechanism in prose — with no real call attached — still
+ * doesn't count.
+ */
+function stripComments(content: string): string {
+  const out: string[] = []
+  let i = 0
+  const n = content.length
+  while (i < n) {
+    const c = content[i]
+    if (c === '/' && content[i + 1] === '/') {
+      const nl = content.indexOf('\n', i)
+      const end = nl === -1 ? n : nl
+      out.push(' '.repeat(end - i))
+      i = end
+      continue
+    }
+    if (c === '/' && content[i + 1] === '*') {
+      const end = content.indexOf('*/', i + 2)
+      const stop = end === -1 ? n : end + 2
+      out.push(content.slice(i, stop).replace(/[^\n]/g, ' '))
+      i = stop
+      continue
+    }
+    if (c === "'" || c === '"' || c === '`') {
+      const quote = c
+      let j = i + 1
+      while (j < n && content[j] !== quote) {
+        if (content[j] === '\\') j++
+        j++
+      }
+      j++
+      out.push(content.slice(i, j))
+      i = j
+      continue
+    }
+    out.push(c as string)
+    i++
+  }
+  return out.join('')
+}
+
+/**
  * A real call — matched against `stripNonCode`'s output, never raw content.
  *
  * Round 8 security review, HIGH — `execSync`/`exec` were absent, despite
@@ -174,15 +247,103 @@ function stripNonCode(content: string): string {
  * loop, which is never a child-process spawn; excluding a preceding `.`
  * keeps that member-call idiom out while still catching a bare imported
  * `exec(cmd, cb)`.
+ *
+ * Round 9 finding 2 — bare `execFile(` (never `execFileSync`, already
+ * matched) was entirely absent, so `import { execFile } from
+ * 'node:child_process'; execFile('ls', cb)` was invisible. It's now matched
+ * like every other bare spawn name — including a DOTTED call
+ * (`cp.execFile(...)`), since `\b` matches at the `.`→word-char boundary
+ * just as readily as at a bare call's own start, and `execFile` never
+ * collides with an unrelated builtin the way plain `exec` collides with
+ * `RegExp.prototype.exec`. A *member-call* `exec` (e.g. `cp.exec(cmd)`) was
+ * separately invisible — the `(?<!\.)` carve-out excludes EVERY dotted
+ * call, not just the `RegExp.prototype.exec` idiom it was written for, and
+ * that idiom can't be told apart from a real `cp.exec(...)` by regex alone.
+ * Member-call `exec` is matched separately, below
+ * (`MEMBER_EXEC` plus `identifierResolvesToChildProcess`), gated on the
+ * receiver provably resolving to the `node:child_process` module rather
+ * than trusting the call syntax alone.
  */
 const SPAWNS_REAL_PROCESS =
-  /\b(?:spawnSync|execFileSync|execSync|fork|spawn)\s*\(|(?<!\.)\bexec\s*\(|Bun\.spawn(?:Sync)?\s*\(/g
+  /\b(?:spawnSync|execFileSync|execFile|execSync|fork|spawn)\s*\(|(?<!\.)\bexec\s*\(|Bun\.spawn(?:Sync)?\s*\(/g
 
-/** `lib/process-fixture.ts`'s own `stripVinayaEnv` — imported, or reimplemented inline, anywhere in the file. */
-const HAS_VINAYA_ENV_STRIP = /startsWith\(\s*['"]VINAYA_['"]\s*\)|stripVinayaEnv/
+/**
+ * A member-call `exec(` — e.g. `cp.exec(cmd)` — matched separately from
+ * `SPAWNS_REAL_PROCESS` since the bare-`exec` carve-out there excludes
+ * every dotted call, including this real one. `execFile` needs no such
+ * separate handling (see `SPAWNS_REAL_PROCESS`'s own comment). Only counted
+ * as a spawn when `identifierResolvesToChildProcess` proves the receiver is
+ * the `node:child_process` module — otherwise `pattern.exec(text)`
+ * (`RegExp.prototype.exec`) would be a false positive, exactly the round 8
+ * BLOCKER this file's own carve-out exists to avoid.
+ */
+const MEMBER_EXEC = /\b([A-Za-z_$][A-Za-z0-9_$]*)\.exec\s*\(/g
 
-/** An explicit kill-on-timeout budget — `lib/process-fixture.ts`'s own `spawnSyncBudgeted`/`spawnBudgetedAsync`, or the same discipline reimplemented inline, within the call's own top-level declaration. */
-const HAS_KILL_BUDGET = /killSignal|SIGKILL/
+/**
+ * `hint` is only treated as a real `child_process` receiver if the file
+ * proves it by binding — a namespace import (`import * as cp from
+ * 'node:child_process'`) or a `require('child_process')` assignment — never
+ * by the identifier's name alone, the same discipline `identifierResolvesToGit`
+ * already applies to a safe-command hint.
+ *
+ * The import/require KEYWORD is matched against `codeOnly`
+ * (`stripNonCode`'s output) — this file's OWN doc comments and test
+ * fixtures spell out `import * as cp from 'node:child_process'` in
+ * prose/strings to document and test this exact function; each such mention
+ * lives entirely inside ONE string or comment, so `stripNonCode` blanks it
+ * whole, keyword included, and it never reaches this match. A genuine
+ * import's own module-specifier string is then read back from the ORIGINAL
+ * `content` at that exact, now-verified-real position — the same
+ * read-the-literal-from-original-text discipline `commandHint` already uses
+ * — so the specifier is never confused with the blanked placeholder
+ * `codeOnly` would otherwise leave in its place.
+ */
+function identifierResolvesToChildProcess(content: string, codeOnly: string, hint: string): boolean {
+  const escaped = hint.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  // Leading `\s*` absorbs the real whitespace between the prefix and the
+  // specifier's opening quote in ORIGINAL content — the prefix regexes
+  // below deliberately stop right at `from`/`require(` (no trailing `\s*`
+  // of their own) so `m[0].length` never overshoots into codeOnly's
+  // same-length BLANKED specifier, which `\s+` would otherwise swallow
+  // wholesale (greedy, and blanked chars are whitespace too) clear past
+  // where the real quote sits.
+  const specifier = /^\s*['"](?:node:)?child_process['"]/
+  const namespaceImportPrefix = new RegExp(`import\\s+\\*\\s+as\\s+${escaped}\\s+from`, 'g')
+  let m: RegExpExecArray | null
+  // biome-ignore lint/suspicious/noAssignInExpressions: standard exec-loop idiom
+  while ((m = namespaceImportPrefix.exec(codeOnly)) !== null) {
+    if (specifier.test(content.slice(m.index + m[0].length, m.index + m[0].length + 40))) return true
+  }
+  const requireAssignmentPrefix = new RegExp(`\\b${escaped}\\b\\s*=\\s*require\\(`, 'g')
+  // biome-ignore lint/suspicious/noAssignInExpressions: standard exec-loop idiom
+  while ((m = requireAssignmentPrefix.exec(codeOnly)) !== null) {
+    if (specifier.test(content.slice(m.index + m[0].length, m.index + m[0].length + 40))) return true
+  }
+  return false
+}
+
+/**
+ * `lib/process-fixture.ts`'s own `stripVinayaEnv` — imported, or
+ * reimplemented inline, anywhere in the file. Matched against
+ * `stripComments` output (round 9 finding 1: a comment merely NAMING the
+ * helper no longer counts) AND tightened to require call syntax —
+ * `stripVinayaEnv(` (a call or its own declaration), never the bare word —
+ * so a descriptive string that just mentions "stripVinayaEnv" in prose,
+ * with no real call attached, doesn't count either.
+ */
+const HAS_VINAYA_ENV_STRIP = /startsWith\(\s*['"]VINAYA_['"]\s*\)|\bstripVinayaEnv\s*\(/
+
+/**
+ * An explicit kill-on-timeout budget — `lib/process-fixture.ts`'s own
+ * `spawnSyncBudgeted`/`spawnBudgetedAsync`, or the same discipline
+ * reimplemented inline, within the call's own top-level declaration.
+ * Matched against `stripComments` output (round 9 finding 1) and tightened
+ * to the two real call/property shapes this codebase actually uses —
+ * `killSignal: 'SIGKILL'` (a spawn options object) or `.kill('SIGKILL')`
+ * (a direct signal) — never the bare words, for the same reason
+ * `HAS_VINAYA_ENV_STRIP` above requires call syntax.
+ */
+const HAS_KILL_BUDGET = /killSignal\s*:\s*['"]SIGKILL['"]|\.kill\(\s*['"]SIGKILL['"]\s*\)/
 
 /**
  * Inert setup utilities — never the `vinaya` CLI, never a build, never
@@ -318,23 +479,53 @@ function spanFor(spans: readonly [number, number][], index: number): [number, nu
  * not an inert utility, whose containing file never strips VINAYA_*
  * anywhere, or whose own top-level declaration carries no kill-budget
  * evidence.
+ *
+ * Round 9 finding 1 — `fileHasVinayaStrip` and the kill-budget scope test
+ * both now run against `stripComments`'s output, never raw `content`: a
+ * comment merely NAMING `stripVinayaEnv` or `SIGKILL` used to be enough to
+ * mark a file compliant with no such code actually present. String literals
+ * are deliberately NOT blanked for these two checks (unlike `codeOnly`
+ * below) — the real evidence itself is very often a string literal used as
+ * actual call/property syntax (`killSignal: 'SIGKILL'`, `.kill('SIGKILL')`,
+ * `startsWith('VINAYA_')`); `HAS_VINAYA_ENV_STRIP`/`HAS_KILL_BUDGET` are
+ * tightened to require that call/property syntax instead, so a stray string
+ * that merely *mentions* the mechanism in prose, with no real call
+ * attached, still doesn't count. `stripComments` and `stripNonCode` both
+ * preserve length and newlines, so slicing either by spans computed from
+ * `content` stays aligned.
  */
 function nonCompliantCallSites(content: string): string[] {
   const offenses: string[] = []
   const spans = topLevelSpans(content)
-  const fileHasVinayaStrip = HAS_VINAYA_ENV_STRIP.test(content)
   const codeOnly = stripNonCode(content)
+  const commentsStripped = stripComments(content)
+  const fileHasVinayaStrip = HAS_VINAYA_ENV_STRIP.test(commentsStripped)
+
+  const matches: { index: number; text: string }[] = []
   const re = new RegExp(SPAWNS_REAL_PROCESS.source, 'g')
   let match: RegExpExecArray | null
   // biome-ignore lint/suspicious/noAssignInExpressions: standard exec-loop idiom
   while ((match = re.exec(codeOnly)) !== null) {
-    const hint = commandHint(content, match.index + match[0].length)
+    matches.push({ index: match.index, text: match[0] })
+  }
+  const memberRe = new RegExp(MEMBER_EXEC.source, 'g')
+  let memberMatch: RegExpExecArray | null
+  // biome-ignore lint/suspicious/noAssignInExpressions: standard exec-loop idiom
+  while ((memberMatch = memberRe.exec(codeOnly)) !== null) {
+    const receiver = memberMatch[1] as string
+    if (!identifierResolvesToChildProcess(content, codeOnly, receiver)) continue
+    matches.push({ index: memberMatch.index, text: memberMatch[0] })
+  }
+  matches.sort((a, b) => a.index - b.index)
+
+  for (const { index, text } of matches) {
+    const hint = commandHint(content, index + text.length)
     if (isSafeCommand(content, hint)) continue
-    const span = spanFor(spans, match.index)
-    const scope = span ? content.slice(span[0], span[1]) : content
+    const span = spanFor(spans, index)
+    const scope = span ? commentsStripped.slice(span[0], span[1]) : commentsStripped
     if (!(fileHasVinayaStrip && HAS_KILL_BUDGET.test(scope))) {
-      const line = content.slice(0, match.index).split('\n').length
-      offenses.push(`line ${line}: ${match[0]}`)
+      const line = content.slice(0, index).split('\n').length
+      offenses.push(`line ${line}: ${text}`)
     }
   }
   return offenses
@@ -559,5 +750,61 @@ describe('process-fixture coverage — O3 (#660, round 5): every real-process fi
       '}'
     ].join('\n')
     expect(nonCompliantCallSites(namedAndResolved)).toEqual([])
+  })
+
+  it('a comment or string merely naming stripVinayaEnv/SIGKILL never fakes compliance — the round 9 finding 1 regression', () => {
+    const claimsComplianceInACommentOnly = [
+      "import { spawnSync } from 'node:child_process'",
+      '// this file already calls stripVinayaEnv and passes killSignal: SIGKILL, honest',
+      'function rawSpawn() {',
+      "  return spawnSync('bun', ['x'], { env: process.env })",
+      '}'
+    ].join('\n')
+    expect(nonCompliantCallSites(claimsComplianceInACommentOnly)).toEqual(['line 4: spawnSync('])
+
+    const claimsComplianceInAStringOnly = [
+      "import { spawnSync } from 'node:child_process'",
+      "const note = 'calls stripVinayaEnv and sets killSignal: SIGKILL'",
+      'function rawSpawn() {',
+      "  return spawnSync('bun', ['x'], { env: process.env })",
+      '}'
+    ].join('\n')
+    expect(nonCompliantCallSites(claimsComplianceInAStringOnly)).toEqual(['line 4: spawnSync('])
+  })
+
+  it('a bare execFile( and a member-call exec/execFile resolved to node:child_process are caught like any other real spawn — the round 9 finding 2 regression', () => {
+    const bareExecFile = [
+      "import { execFile } from 'node:child_process'",
+      'function rawExecFile() {',
+      "  return execFile('ls', () => {})",
+      '}'
+    ].join('\n')
+    expect(nonCompliantCallSites(bareExecFile)).toEqual(['line 3: execFile('])
+
+    const memberExec = [
+      "import * as cp from 'node:child_process'",
+      'function rawMemberExec() {',
+      "  return cp.exec('ls -la')",
+      '}'
+    ].join('\n')
+    expect(nonCompliantCallSites(memberExec)).toEqual(['line 3: cp.exec('])
+
+    // `execFile` needs no member-call carve-out (unlike `exec`) — `\b`
+    // matches at the `.`→word-char boundary just as readily as at a bare
+    // call, so the main `SPAWNS_REAL_PROCESS` regex alone catches a dotted
+    // `cp.execFile(` too, matching only the `execFile(` word itself.
+    const memberExecFile = [
+      "const cp = require('child_process')",
+      'function rawMemberExecFile() {',
+      "  return cp.execFile('ls', () => {})",
+      '}'
+    ].join('\n')
+    expect(nonCompliantCallSites(memberExecFile)).toEqual(['line 3: execFile('])
+
+    // An unresolved receiver — never proven to be `node:child_process` — is
+    // still never confused with a real spawn, the same false-positive the
+    // round 8 bare-`exec` carve-out protects against for the non-member form.
+    const unresolvedMemberExec = ['function findMatch(pattern, text) {', '  return pattern.exec(text)', '}'].join('\n')
+    expect(nonCompliantCallSites(unresolvedMemberExec)).toEqual([])
   })
 })
