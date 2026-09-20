@@ -452,6 +452,7 @@ describe('dispatchRole — a successful dispatch', () => {
       'workspace-write',
       '--strict-config',
       '--dangerously-bypass-hook-trust',
+      '--skip-git-repo-check',
       '--json',
       '-'
     ])
@@ -1341,7 +1342,16 @@ const RESUME_VENDOR_FIXTURES: ResumeVendorFixture[] = [
     agent: 'codex',
     firstStdout: (id) =>
       `{"type":"thread.started","thread_id":"${id}"}\n{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}`,
-    resumeArgv: (id) => ['exec', 'resume', id, '--strict-config', '--dangerously-bypass-hook-trust', '--json', '-']
+    resumeArgv: (id) => [
+      'exec',
+      'resume',
+      id,
+      '--strict-config',
+      '--dangerously-bypass-hook-trust',
+      '--skip-git-repo-check',
+      '--json',
+      '-'
+    ]
   },
   {
     agent: 'gemini',
@@ -2281,6 +2291,7 @@ describe('dispatchRole — model selection (O1/O2/O4, #456)', () => {
         'workspace-write',
         '--strict-config',
         '--dangerously-bypass-hook-trust',
+        '--skip-git-repo-check',
         '--model',
         'gpt-5.6-sol',
         '--json',

@@ -2607,13 +2607,16 @@ const VENDOR_TABLE: Record<AgentVendor, VendorSpec> = {
     // `codex exec` defaults to read-only. The documented `workspace-write`
     // sandbox is the narrow permission normal Developer dispatches need to
     // edit their assigned worktree; it preserves saved subscription login and
-    // the JSONL/stdin protocol below.
+    // the JSONL/stdin protocol below. Reviewer scratch directories are not Git
+    // repositories, so unattended roles also skip Codex's interactive repo
+    // trust check; the Vinaya worker boundary still supplies confinement.
     args: (model) => [
       'exec',
       '--sandbox',
       'workspace-write',
       '--strict-config',
       '--dangerously-bypass-hook-trust',
+      '--skip-git-repo-check',
       ...(model ? ['--model', model] : []),
       '--json',
       '-'
@@ -2628,6 +2631,7 @@ const VENDOR_TABLE: Record<AgentVendor, VendorSpec> = {
       id,
       '--strict-config',
       '--dangerously-bypass-hook-trust',
+      '--skip-git-repo-check',
       ...(model ? ['--model', model] : []),
       '--json',
       '-'
