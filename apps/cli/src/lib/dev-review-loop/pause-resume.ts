@@ -28,7 +28,13 @@ import {
   StaleEpochWriteError,
   writeEscalation
 } from '@attalabs/aeg-core'
-import { controlStoreRoot, createEffectExecutor, sha256Hex } from '../effects.js'
+import {
+  controlStoreRoot,
+  createEffectExecutor,
+  type EffectIdentity,
+  type EffectReconciler,
+  sha256Hex
+} from '../effects.js'
 import { markedCommentBody, postMarkedCommentOrThrow, reconcileGhComment } from '../forge-write.js'
 import { loadLoopState } from './round-assess.js'
 import { readIfExists } from './reviewer-dispatch.js'
@@ -66,8 +72,33 @@ function sleepSyncMs(ms: number): void {
  * a READ (`gate-reading.ts`'s own `sh()` already retries every `gh` read
  * this driver makes) — this is the write-side counterpart, new here
  * because no write in this driver retried at all before this task.
+ *
+ * round 2 review, security MEDIUM: a `poster()` call that actually landed
+ * remotely but threw locally (the response lost after the write went
+ * through — the exact hazard `EffectExecutor`'s own doc comment names as
+ * "remote success followed by a lost local acknowledgement duplicates the
+ * write") used to be retried blind, inside this SAME `execute()` call,
+ * with no chance to notice the first attempt already succeeded —
+ * `EffectExecutor.postAndRecord` only reconciles against the remote on a
+ * LATER, separate `execute()` call, never between two attempts this
+ * function makes within its own single `poster()` invocation. Before
+ * re-posting on any attempt after the first, this now calls the SAME
+ * `reconcile` the caller already threads to `executor.execute()` — the
+ * identical, idempotent, principal-authored-comment-digest read
+ * `reconcileExisting` performs on a fresh process's own retry — and
+ * returns the already-landed URL rather than posting a second time when it
+ * reads `'confirmed'`. `'absent'`/`'ambiguous'` fall through to an
+ * ordinary retry, exactly as before: a bounded, backed-off retry loop is
+ * allowed to try again on an inconclusive read, the same tolerance
+ * `EffectExecutor` itself extends to a *cross-process* `'started'` retry —
+ * only a *confirmed* duplicate is the one outcome this closes.
  */
-function postWithRetry(poster: () => string, onAttempts: (n: number) => void): string {
+function postWithRetry(
+  poster: () => string,
+  reconcile: EffectReconciler,
+  identity: EffectIdentity,
+  onAttempts: (n: number) => void
+): string {
   const attempts = pauseRetryEnvOverride(
     'VINAYA_DEV_REVIEW_LOOP_PAUSE_COMMENT_RETRY_ATTEMPTS',
     PAUSE_COMMENT_RETRY_ATTEMPTS
@@ -78,6 +109,13 @@ function postWithRetry(poster: () => string, onAttempts: (n: number) => void): s
   )
   let lastErr: unknown
   for (let attempt = 1; attempt <= attempts; attempt++) {
+    if (attempt > 1) {
+      const reconciled = reconcile(identity)
+      if (reconciled.outcome === 'confirmed') {
+        onAttempts(attempt - 1)
+        return reconciled.url
+      }
+    }
     try {
       const result = poster()
       onAttempts(attempt)
@@ -233,24 +271,28 @@ export function postIssuePauseComment(
   const key = `pause-issue-${round}-${reason}`
   const deps = defaultControlStoreDeps(controlStoreRoot)
   const executor = createEffectExecutor(deps, task, `dev-review-loop:${task}:${key}`)
+  const identity: EffectIdentity = {
+    operation: 'issue-comment',
+    target: `issue:${task}`,
+    inputVersion: round,
+    payloadDigest: sha256Hex(markedCommentBody(marker, body))
+  }
+  const reconcile = reconcileGhComment('issue', String(task))
   let attempts = 0
   try {
     executor.execute({
       key,
-      identity: {
-        operation: 'issue-comment',
-        target: `issue:${task}`,
-        inputVersion: round,
-        payloadDigest: sha256Hex(markedCommentBody(marker, body))
-      },
+      identity,
       poster: () =>
         postWithRetry(
           () => postMarkedCommentOrThrow('issue', String(task), marker, body),
+          reconcile,
+          identity,
           (n) => {
             attempts = n
           }
         ),
-      reconcile: reconcileGhComment('issue', String(task))
+      reconcile
     })
     return { attempts, posted: true }
   } catch {
@@ -294,24 +336,28 @@ export function postPauseComment(
   const key = `pause-${round}-${head}`
   const deps = defaultControlStoreDeps(controlStoreRoot)
   const executor = createEffectExecutor(deps, task, `dev-review-loop:${task}:${key}`)
+  const identity: EffectIdentity = {
+    operation: 'pr-comment',
+    target: `pr:${prNumber}`,
+    inputVersion: round,
+    payloadDigest: sha256Hex(markedCommentBody(marker, body))
+  }
+  const reconcile = reconcileGhComment('pr', String(prNumber))
   let attempts = 0
   try {
     executor.execute({
       key,
-      identity: {
-        operation: 'pr-comment',
-        target: `pr:${prNumber}`,
-        inputVersion: round,
-        payloadDigest: sha256Hex(markedCommentBody(marker, body))
-      },
+      identity,
       poster: () =>
         postWithRetry(
           () => postMarkedCommentOrThrow('pr', String(prNumber), marker, body),
+          reconcile,
+          identity,
           (n) => {
             attempts = n
           }
         ),
-      reconcile: reconcileGhComment('pr', String(prNumber))
+      reconcile
     })
     return { attempts, posted: true }
   } catch {

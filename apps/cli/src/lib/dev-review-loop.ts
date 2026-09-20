@@ -1617,6 +1617,16 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // total attempts made, and whether a later attempt eventually
       // recovered — never one line per attempt, and never logged at all for
       // the common case (no connection failure this dispatch).
+      //
+      // round 2 review, MAJOR: `outcome` reads off whether the LAST attempt
+      // still carries ANY `failureReason`, never specifically
+      // `'connection-failed'` — the retry loop's own condition only re-enters
+      // on `'connection-failed'`, so its exit can land on a genuine success
+      // (`handle.failureReason` undefined: `'recovered'`) OR on the bound
+      // being exhausted while still `'connection-failed'` OR on a retried
+      // attempt that failed for a DIFFERENT reason (crash/timeout/refused/
+      // signal/unbound) — every one of those non-success cases is
+      // `'exhausted'`, never silently reported as `'recovered'`.
       if (connectionRetryAttempts > 0) {
         await logEvents([
           {
@@ -1627,7 +1637,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             round: roundNum,
             failure_kind: 'developer_connection' as const,
             attempts: connectionRetryAttempts + 1,
-            outcome: handle.failureReason === 'connection-failed' ? 'exhausted' : 'recovered'
+            outcome: handle.failureReason ? 'exhausted' : 'recovered'
           }
         ])
         await d.flushOutbox(task)
@@ -2537,6 +2547,47 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               // than only reaching stderr.
               const finalFlush = await d.flushOutbox(task)
               const detail = finalFlush.ok ? err.detail : appendFinalFlushFailureNote(err.detail, finalFlush.error)
+              // O1 (round 2 review, security MEDIUM): the local record is
+              // written BEFORE the post here too — this is the one pause/
+              // escalation call site in this file that used to post straight
+              // to the forge with no prior `writeEscalationRecord`/
+              // `writePauseState`, unlike every other one. `head: 'unknown'`
+              // mirrors the crash-handler's own sentinel (above) — no branch
+              // ever reached the remote here, so there is no real head to
+              // resolve. Best-effort exactly like the general pause branch:
+              // a control-store write failure here never blocks the post.
+              let escalationRecord: EscalationRecord | null = null
+              try {
+                escalationRecord = writeEscalationRecord({
+                  task,
+                  round,
+                  head: 'unknown',
+                  branch,
+                  pr: null,
+                  runId,
+                  agent: input.agent,
+                  reason: 'escalation',
+                  detail,
+                  evidence: lastReviewContext ?? undefined,
+                  ...bestEffortInputVersions()
+                })
+              } catch {
+                // Best-effort — the pause state and comment below are the
+                // authoritative record; a control-store write failure here
+                // never undoes them.
+              }
+              writePauseState(root, {
+                task,
+                round,
+                head: 'unknown',
+                branch,
+                prNumber: -1,
+                reason: 'escalation',
+                detail,
+                pausedAt: new Date().toISOString(),
+                escalationId: escalationRecord?.escalationId,
+                infrastructureRetries
+              })
               await logPauseCommentRetryIfNotable(round, postIssuePauseComment(task, round, 'escalation', detail))
               return { finalDecision: { type: 'pause', reason: 'escalation', detail }, prNumber: 0, task }
             }
