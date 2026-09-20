@@ -7,6 +7,8 @@ import { describe, expect, it } from 'bun:test'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { loadConfig } from '../../src/lib/config'
 import { discoverWorkspacePackages, isTestFile, selectAffectedTestFiles } from '../../src/lib/test-selector'
 
 function fixtureRepo(): string {
@@ -243,5 +245,124 @@ describe('the hook drops --concurrency=1 — selected files run together in one 
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+// Issue #660, O2 — two real 2026-09-19 pushes passed the pre-push hook and
+// then failed CI on `log-callers — O2` (apps/cli/tests/lib/log-callers.test.ts):
+// a repo-wide invariant test that walks every source file directly, so no
+// import edge from a changed file ever reaches it — reachability alone can
+// never select it, which is exactly the case `alwaysRun` exists for. Each
+// change set below is the REAL repo-root-relative file list from that push
+// (`git diff --name-only <fork-point>...<head>` at the actual commits:
+// task-operator-v1/5's 93e25534 and task-files-v1/1's first push a6d9640c),
+// reproduced live against these commits to confirm log-callers — O2 does
+// fail on the unmodified tree (`bun test apps/cli/tests/lib/log-callers.test.ts`
+// at each sha, offenders: `packages/aeg-core/src/control-store/local.ts`).
+const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..', '..')
+const LOG_CALLERS_TEST = join(REPO_ROOT, 'apps/cli/tests/lib/log-callers.test.ts')
+
+const INCIDENT_CHANGE_SETS: Record<string, string[]> = {
+  'task-operator-v1/5 — 93e25534, the control-store symlink fix': [
+    'apps/cli/src/lib/run-paths.ts',
+    'apps/cli/src/lib/task-tools/resume.ts',
+    'apps/cli/src/lib/task-tools/start.ts',
+    'apps/cli/tests/lib/run-paths.test.ts',
+    'packages/aeg-core/src/control-store/index.ts',
+    'packages/aeg-core/src/control-store/local.test.ts',
+    'packages/aeg-core/src/control-store/local.ts',
+    'packages/aeg-core/src/index.ts'
+  ],
+  'task-files-v1/1 — a6d9640c, the one-runtime-directory first push': [
+    '.changeset/task-files-v1-1-one-runtime-directory.md',
+    'apps/cli/specs/isolation.md',
+    'apps/cli/specs/log.md',
+    'apps/cli/specs/loop.md',
+    'apps/cli/src/lib/config.ts',
+    'apps/cli/src/lib/dev-review-loop.ts',
+    'apps/cli/src/lib/dev-review-loop/pause-resume.ts',
+    'apps/cli/src/lib/dev-review-loop/publication.ts',
+    'apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts',
+    'apps/cli/src/lib/dev-review-loop/reviewer-isolation.ts',
+    'apps/cli/src/lib/dispatch.ts',
+    'apps/cli/src/lib/effects.ts',
+    'apps/cli/src/lib/log-sink.ts',
+    'apps/cli/src/lib/loop-log.ts',
+    'apps/cli/src/lib/run-paths.ts',
+    'apps/cli/src/lib/task-run.ts',
+    'apps/cli/src/lib/task-status.ts',
+    'apps/cli/src/lib/task-tools/cancel.ts',
+    'apps/cli/src/lib/task-tools/handlers.ts',
+    'apps/cli/src/lib/task-tools/read.ts',
+    'apps/cli/src/lib/task-tools/resume.ts',
+    'apps/cli/src/lib/task-tools/start.ts',
+    'apps/cli/src/lib/worker-boundary.ts',
+    'apps/cli/tests/ci-shards/shard-2.txt',
+    'apps/cli/tests/ci-shards/shard-3.txt',
+    'apps/cli/tests/lib/dev-review-loop.test.ts',
+    'apps/cli/tests/lib/dev-review-loop/reviewer-dispatch.test.ts',
+    'apps/cli/tests/lib/dispatch.test.ts',
+    'apps/cli/tests/lib/dispatch/launch-intent.test.ts',
+    'apps/cli/tests/lib/dispatch/worker-boundary.test.ts',
+    'apps/cli/tests/lib/effects/executor.test.ts',
+    'apps/cli/tests/lib/loop-log.test.ts',
+    'apps/cli/tests/lib/run-paths.test.ts',
+    'apps/cli/tests/lib/task-status.test.ts',
+    'apps/cli/tests/lib/task-tools/cancel.test.ts',
+    'apps/cli/tests/lib/task-tools/read.test.ts',
+    'apps/cli/tests/lib/task-tools/resume.test.ts',
+    'apps/cli/tests/run-paths-only.test.ts',
+    'packages/aeg-core/src/control-store/local.test.ts',
+    'packages/aeg-core/src/control-store/local.ts',
+    'packages/sources/src/config-reference.ts'
+  ]
+}
+
+describe('selectAffectedTestFiles replayed against the two recorded 2026-09-19 incidents (Issue #660, O2)', () => {
+  for (const [label, changed] of Object.entries(INCIDENT_CHANGE_SETS)) {
+    it(`${label} — with this repo's real alwaysRun config, log-callers — O2 is selected`, () => {
+      const alwaysRun = loadConfig()?.prePush?.alwaysRun ?? []
+      const { selected } = selectAffectedTestFiles(REPO_ROOT, changed, { alwaysRun })
+      expect(selected).toContain(LOG_CALLERS_TEST)
+    })
+
+    it(`${label} — reachability ALONE (no alwaysRun) never selects it — the real gap this task closes`, () => {
+      const { selected } = selectAffectedTestFiles(REPO_ROOT, changed, { alwaysRun: [] })
+      expect(selected).not.toContain(LOG_CALLERS_TEST)
+    })
+  }
+})
+
+// Round 2 review, BLOCKER — the a6d9640c change set above failed a SECOND
+// CI shard the first pass of this fixture never checked: GitHub Actions run
+// 35434611919, shard 3, failed 6 assertions in
+// apps/cli/tests/commands/task-status.test.ts (reproduced live at that sha).
+// This is a DIFFERENT class of gap than log-callers — O2's: that file has
+// no import edge to walk at all. It drives the real CLI end-to-end
+// (`execFileSync('bun', [INDEX, ...])` against a string path, never a
+// static `import` of any `src/` file), so reachability can never reach it
+// regardless of what changed — confirmed by grep: this file's own import
+// list is `node:child_process`/`node:fs`/`node:os`/`node:path`/`node:url`/
+// `bun:test` only. `alwaysRun` is the same escape hatch already used for
+// log-callers/ci-shards/import-boundary, applied here for a structurally
+// different reason (no edge exists to walk, rather than an edge that
+// deliberately isn't one). This fixes the ONE concrete instance this task
+// verified against a real incident — a broader audit of every CLI
+// end-to-end test sharing this same blind spot is out of this task's
+// bounded surface and is escalated separately, on the PR, rather than
+// attempted here.
+describe('a second real CI failure in the SAME task-files-v1/1 change set (Issue #660, O2, round 2 review BLOCKER)', () => {
+  const changed = INCIDENT_CHANGE_SETS['task-files-v1/1 — a6d9640c, the one-runtime-directory first push'] as string[]
+  const TASK_STATUS_E2E_TEST = join(REPO_ROOT, 'apps/cli/tests/commands/task-status.test.ts')
+
+  it("with this repo's real alwaysRun config, commands/task-status.test.ts (shard 3's real CI failure) is selected", () => {
+    const alwaysRun = loadConfig()?.prePush?.alwaysRun ?? []
+    const { selected } = selectAffectedTestFiles(REPO_ROOT, changed, { alwaysRun })
+    expect(selected).toContain(TASK_STATUS_E2E_TEST)
+  })
+
+  it('reachability ALONE (no alwaysRun) never selects it — no static import edge exists to walk, not merely one uncrossed', () => {
+    const { selected } = selectAffectedTestFiles(REPO_ROOT, changed, { alwaysRun: [] })
+    expect(selected).not.toContain(TASK_STATUS_E2E_TEST)
   })
 })

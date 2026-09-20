@@ -55,4 +55,5 @@ tests/lib/dispatch/worker-boundary.test.ts
 tests/checks/runner/correlation.test.ts
 tests/lib/artifacts/workflow.test.ts
 tests/lib/run-paths.test.ts
+tests/lib/turbo-test-task-uncached.test.ts
 tests/conformance/matrix.test.ts

@@ -30,40 +30,64 @@ import { writePauseState } from '../../../src/lib/dev-review-loop/pause-resume.j
  * continuation at all).
  */
 
+/**
+ * Issue #660, O3 — this process's OWN environment, when it is itself a
+ * dispatched Developer/Reviewer session, carries `VINAYA_RUNTIME_DIR`
+ * (checked before `$HOME` by `resolveRuntimeDirUncached`). Spreading
+ * `...process.env` into these fixtures' real subprocesses hands them THIS
+ * machine's real, shared runtime directory regardless of the fixture's own
+ * isolated `$HOME` — confirmed live: task `558` (this file's own `ISSUE`)
+ * collided with a stale record from an earlier leaked run of this exact
+ * file. Same fix `dev-review-loop.test.ts`'s `fixtureChildEnv` already
+ * applies.
+ */
+function stripVinayaEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { ...env }
+  for (const key of Object.keys(out)) {
+    if (key.startsWith('VINAYA_')) delete out[key]
+  }
+  return out
+}
+
+/**
+ * Issue #660, O3 round 3 (reviewer F1) — this file's own doc comment above
+ * claimed "the same fix `dev-review-loop.test.ts`'s `fixtureChildEnv`
+ * already applies", but only the env-stripping half was ported: both
+ * `execFileSync` calls below ran with no timeout, so the exact lock-
+ * contention scenario O3 describes (another fixture or task run still
+ * holding this file's epoch/outbox path) hung synchronously forever with
+ * zero diagnostic output rather than failing on a bounded budget with the
+ * child's own stdout/stderr. Below the smallest `it(...)` timeout this file
+ * uses, same as `dev-review-loop.test.ts`'s own `SUBPROCESS_BUDGET_MS`.
+ */
+const SUBPROCESS_BUDGET_MS = 18_000
+
+function runFixtureScript(scriptPath: string, cwd: string, env: NodeJS.ProcessEnv): string {
+  try {
+    return execFileSync('bun', [scriptPath], {
+      cwd,
+      env,
+      encoding: 'utf8',
+      timeout: SUBPROCESS_BUDGET_MS,
+      killSignal: 'SIGKILL'
+    })
+  } catch (e) {
+    const err = e as { signal?: string | null; stdout?: string; stderr?: string }
+    if (err.signal) {
+      throw new Error(
+        `cancel.test.ts subprocess killed by ${err.signal} after exceeding its ${SUBPROCESS_BUDGET_MS}ms budget ` +
+          `(script: ${scriptPath})\n--- stdout ---\n${err.stdout ?? ''}\n--- stderr ---\n${err.stderr ?? ''}`
+      )
+    }
+    throw e
+  }
+}
+
 const CALLER: CallerContext = { caller: { id: 'operator-1' } }
 const NO_CALLER: CallerContext = { caller: null }
 const ISSUE = 558
 const PR = 900
 const ESCALATION_ID = `${ISSUE}-1-headsha1`
-
-/**
- * issue-657, O5 — every real subprocess this file spawns overrides `HOME`
- * to a fresh temp dir, but `run-paths.ts`'s own runtime-dir resolution
- * checks `VINAYA_RUNTIME_DIR` FIRST, before `HOME` ever matters — a value
- * inherited from the calling shell's own environment (set when this suite
- * runs inside a real dispatched session's own orchestration) silently
- * redirects the spawned subprocess to the operator's REAL, non-isolated
- * `~/.vinaya`, where every test in this file shares the SAME hardcoded
- * `ISSUE` (`558`): two tests, or two runs of the same test, then collide on
- * the identical real control-store record (found live: a leftover
- * `consumed resolution` for task `558` made a fresh, isolated-looking test
- * fail with a stale replay it never itself produced). Stripped here,
- * unconditionally, the same fix `dev-review-loop.test.ts` already applies
- * to its own spawned driver's env.
- *
- * `AEG_REPO` is deliberately NOT stripped here, unlike that file's own
- * helper: these subprocesses run with `cwd: repoRoot` — the real worktree,
- * not a deliberately non-git tempdir — so an inherited `AEG_REPO` is a
- * legitimate short-circuit for real repo-identity resolution, not a leak;
- * removing it forces a slower, network-dependent fallback path this test
- * never meant to exercise (found live: doing so made one of this file's own
- * tests intermittently time out on this host).
- */
-function hermeticSpawnEnv(home: string): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env, HOME: home }
-  delete env.VINAYA_RUNTIME_DIR
-  return env
-}
 
 let sandbox: string
 let outbox: string
@@ -463,11 +487,13 @@ try {
 `
     writeFileSync(scriptPath, script)
     try {
-      const output = execFileSync('bun', [scriptPath], {
-        cwd: repoRoot,
-        env: hermeticSpawnEnv(home),
-        encoding: 'utf8'
-      })
+      // `stripVinayaEnv` (below) supersedes `hermeticSpawnEnv`'s narrower
+      // `VINAYA_RUNTIME_DIR`-only delete — merged from origin/main's
+      // independent issue-657 O5 fix, same root cause. Both agree `AEG_REPO`
+      // must survive: `stripVinayaEnv` only ever strips `VINAYA_*`-prefixed
+      // keys, so it already preserves the real, legitimate `AEG_REPO`
+      // short-circuit these `cwd: repoRoot` subprocesses depend on.
+      const output = runFixtureScript(scriptPath, repoRoot, stripVinayaEnv({ ...process.env, HOME: home }))
       expect(output).toContain('FIRST_OK')
       expect(output).toContain('SECOND_IS_REPLAYED:true')
       expect(output).toContain('SECOND_MESSAGE:devReviewLoop --cancel:')
@@ -620,11 +646,7 @@ console.log('DONE')
 `
     writeFileSync(scriptPath, script)
     try {
-      const output = execFileSync('bun', [scriptPath], {
-        cwd: repoRoot,
-        env: hermeticSpawnEnv(home),
-        encoding: 'utf8'
-      })
+      const output = runFixtureScript(scriptPath, repoRoot, stripVinayaEnv({ ...process.env, HOME: home }))
       expect(output).toContain('TASK_AFTER:sentinel-task')
       expect(output).toContain('RUN_AFTER:sentinel-run')
       expect(output).toContain('RESUME_REFUSED:true')

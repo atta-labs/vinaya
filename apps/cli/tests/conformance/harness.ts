@@ -20,6 +20,7 @@ import {
   dispatchToolCall,
   type TaskToolHandlers
 } from '../../src/lib/task-tools/server.js'
+import { spawnSyncBudgeted, stripVinayaEnv } from '../lib/process-fixture'
 
 /**
  * Part 2 (O2): the nine two-runtime fixture scenarios shared verbatim by
@@ -67,9 +68,18 @@ export const ABS_BIN = join(CLI_ROOT, 'dist', 'index.js')
  * than "assume a shard-mate already did it."
  */
 export function ensureCliBuilt(): void {
-  const build = Bun.spawnSync(['bun', 'run', '--cwd', CLI_ROOT, 'build'], { stdout: 'pipe', stderr: 'pipe' })
-  if (build.exitCode !== 0) {
-    throw new Error(`apps/cli build failed:\n${build.stderr.toString()}`)
+  // Issue #660, O3 (round 5 review, BLOCKER) — bounded by an explicit
+  // budget that throws with the child's own captured stdout/stderr on
+  // expiry, rather than a bare timeout.
+  const build = spawnSyncBudgeted(
+    'bun',
+    ['run', '--cwd', CLI_ROOT, 'build'],
+    { encoding: 'utf8' },
+    100_000,
+    'apps/cli build'
+  )
+  if (build.status !== 0) {
+    throw new Error(`apps/cli build failed:\n${build.stderr}`)
   }
 }
 
@@ -83,11 +93,20 @@ export class SpawnRpcClient {
   private proc: ChildProcess
   private stdin: NodeJS.WritableStream
   private buffer = ''
+  private stderrBuf = ''
   private pending = new Map<number, (value: RpcResult) => void>()
   private nextId = 1
 
   constructor(invocation: ServerInvocation, env: Record<string, string>, cwd: string) {
-    this.proc = spawn(invocation.command, invocation.args, { cwd, env, stdio: ['pipe', 'pipe', 'ignore'] })
+    // `pipe`, not `ignore` (Issue #660, O3 round 4, security MEDIUM) — a
+    // hung/crashed server's own stderr is the diagnostic a bare request
+    // timeout otherwise discards entirely. `env` arrives already stripped
+    // AND deliberately re-populated by the caller (`buildSandbox` strips
+    // ambient VINAYA_* first, then sets its own VINAYA_RUNTIME_DIR/
+    // VINAYA_MCP_CALLER/etc. on top) — stripping again here would remove
+    // those deliberate overrides right back out, so this constructor
+    // trusts its caller rather than re-stripping.
+    this.proc = spawn(invocation.command, invocation.args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] })
     this.stdin = this.proc.stdin!
     const stdout = this.proc.stdout!
     stdout.setEncoding('utf8')
@@ -110,13 +129,32 @@ export class SpawnRpcClient {
         idx = this.buffer.indexOf('\n')
       }
     })
+    const stderr = this.proc.stderr!
+    stderr.setEncoding('utf8')
+    stderr.on('data', (chunk: string) => {
+      this.stderrBuf += chunk
+    })
   }
 
   request(method: string, params?: unknown): Promise<RpcResult> {
     const id = this.nextId++
     const line = `${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`
     return new Promise<RpcResult>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`timeout waiting for ${method} (id ${id})`)), 15_000)
+      const timer = setTimeout(() => {
+        this.pending.delete(id)
+        // A stuck server under real lock contention (the exact O3 collision
+        // this fixture's own env-strip fix above closes) never answers — kill
+        // it rather than leaving a dangling process, and surface its own
+        // captured output rather than a bare "timeout" with nothing to
+        // diagnose it by.
+        this.proc.kill('SIGKILL')
+        reject(
+          new Error(
+            `timeout waiting for ${method} (id ${id}) after 15000ms\n` +
+              `--- stdout (unconsumed buffer) ---\n${this.buffer}\n--- stderr ---\n${this.stderrBuf}`
+          )
+        )
+      }, 15_000)
       this.pending.set(id, (value) => {
         clearTimeout(timer)
         resolve(value)
@@ -170,7 +208,7 @@ export function buildSandbox(): Sandbox {
   chmodSync(launcher, 0o755)
 
   const env: Record<string, string> = {
-    ...process.env,
+    ...stripVinayaEnv(process.env),
     HOME: home,
     PATH: `${binDir}:${process.env.PATH ?? ''}`,
     AEG_REPO: 'attalabs/vinaya',

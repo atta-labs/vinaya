@@ -31,6 +31,34 @@ function tempDir(prefix: string): string {
 
 type CliResult = { status: number; stdout: string; stderr: string }
 
+/**
+ * Issue #660, O3 round 3 (security review, HIGH) — `devReviewLoop`'s own
+ * `runtimeDirForThisRepo()` resolves unconditionally at the top of the call,
+ * before any dispatch, the exact same `VINAYA_RUNTIME_DIR`-leak/no-budget
+ * pattern already fixed in the sibling
+ * `apps/cli/tests/lib/dev-review-loop.test.ts` (`fixtureChildEnv`) was left
+ * unfixed here even though this file exercises the same call path.
+ *
+ * `AEG_REPO` is stripped alongside every `VINAYA_*` key (round 5, security
+ * LOW) for the same reason `fixtureChildEnv` strips it there: a real value
+ * inherited from a dispatched session's own environment would steer this
+ * fixture's repo-segment resolution away from the `unresolved` bucket this
+ * scratch, non-git `cwd` assumes. `PATH` is deliberately left untouched,
+ * unlike that reference helper — one case below (`does not require --task
+ * when --resume is given`) explicitly depends on the REAL ambient `PATH` so
+ * `devReviewLoop` reaches a real `git`/`gh` failure past argv parsing.
+ */
+function stripVinayaEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { ...env }
+  for (const key of Object.keys(out)) {
+    if (key.startsWith('VINAYA_')) delete out[key]
+  }
+  delete out.AEG_REPO
+  return out
+}
+
+const SUBPROCESS_BUDGET_MS = 18_000
+
 function run(args: string[]): CliResult {
   const cwd = tempDir('vinaya-dev-review-loop-cmd-cwd-')
   const home = tempDir('vinaya-dev-review-loop-cmd-home-')
@@ -39,11 +67,19 @@ function run(args: string[]): CliResult {
       encoding: 'utf8',
       cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, HOME: home }
+      env: { ...stripVinayaEnv(process.env), HOME: home },
+      timeout: SUBPROCESS_BUDGET_MS,
+      killSignal: 'SIGKILL'
     })
     return { status: 0, stdout, stderr: '' }
   } catch (e) {
-    const err = e as { status?: number; stdout?: string; stderr?: string }
+    const err = e as { status?: number; stdout?: string; stderr?: string; signal?: string | null }
+    if (err.signal) {
+      throw new Error(
+        `vinaya dev-review-loop subprocess killed by ${err.signal} after exceeding its ${SUBPROCESS_BUDGET_MS}ms budget ` +
+          `(args: ${args.join(' ')})\n--- stdout ---\n${err.stdout ?? ''}\n--- stderr ---\n${err.stderr ?? ''}`
+      )
+    }
     return { status: err.status ?? 1, stdout: String(err.stdout ?? ''), stderr: String(err.stderr ?? '') }
   }
 }

@@ -32,6 +32,7 @@ import {
   describeSkippedRoundEndFlush,
   resolveRoundEndFlushTarget
 } from '../../src/lib/dev-review-loop.js'
+import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 
 describe('resolveLogPublishTarget (pure) — O1: target selection honours configuration', () => {
   it('is null when logPublish is absent — the round-end flush publishes nowhere by default', () => {
@@ -199,19 +200,20 @@ function tempDir(prefix: string): string {
 
 type CliResult = { status: number; stdout: string; stderr: string }
 
+// Issue #660, O3 — this process's own VINAYA_* environment (most
+// importantly VINAYA_RUNTIME_DIR) is stripped before the fixture's own
+// `env` is applied, so the spawned `vinaya log flush` can only ever
+// resolve its runtime directory from the isolated $HOME below; bounded by
+// an explicit budget that throws with the child's own captured
+// stdout/stderr on expiry, rather than a bare timeout.
 function runCli(args: string[], cwd: string, env: Record<string, string | undefined>): CliResult {
-  try {
-    const stdout = execFileSync('bun', [INDEX, ...args], {
-      encoding: 'utf8',
-      cwd,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, ...env }
-    })
-    return { status: 0, stdout, stderr: '' }
-  } catch (e) {
-    const err = e as { status?: number; stdout?: string; stderr?: string }
-    return { status: err.status ?? 1, stdout: String(err.stdout ?? ''), stderr: String(err.stderr ?? '') }
-  }
+  return spawnSyncBudgeted(
+    'bun',
+    [INDEX, ...args],
+    { encoding: 'utf8', cwd, stdio: ['pipe', 'pipe', 'pipe'], env: { ...stripVinayaEnv(), ...env } },
+    undefined,
+    'vinaya log flush'
+  )
 }
 
 function initGitRepo(cwd: string): void {

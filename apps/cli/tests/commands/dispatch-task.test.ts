@@ -4,6 +4,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { spawnSyncBudgeted } from '../lib/process-fixture'
 
 /**
  * `vinaya task dispatch <tranche> <n> --agent <vendor>` reaching the real
@@ -313,6 +314,28 @@ function buildFixture(): Fixture {
 
 type RunResult = { status: number; stdout: string; stderr: string }
 
+/**
+ * Issue #660, O3 round 4 (reviewer F1 / security HIGH) — this file's
+ * `runTaskDispatch` reaches the real `dispatchRole`/runtime-dir code path
+ * exactly like the nine sibling fixtures already hardened this task, but
+ * spread unstripped `process.env` into the spawned child with no `VINAYA_*`
+ * stripping and no subprocess-level timeout/diagnostic. Same fix as
+ * `apps/cli/tests/lib/dev-review-loop.test.ts`'s `fixtureChildEnv`, adapted
+ * to `Bun.spawn`'s async API (no built-in `timeout`/`killSignal` option like
+ * `spawnSync`/`execFileSync`): a manual timer kills the child and the
+ * already-captured stdout/stderr ride the thrown diagnostic. Below both
+ * `it(..., 30_000)` bounds this file uses.
+ */
+function stripVinayaEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { ...env }
+  for (const key of Object.keys(out)) {
+    if (key.startsWith('VINAYA_')) delete out[key]
+  }
+  return out
+}
+
+const SUBPROCESS_BUDGET_MS = 25_000
+
 /** Runs `task dispatch --agent claude` against `entry` (either the TS
  * source, under `bun`, or the built bundle, under `node`) with the fixture's
  * faked `gh`/vendor on `PATH` and its `fetch`-intercepting preload. */
@@ -337,7 +360,7 @@ async function runTaskDispatch(runtime: 'bun' | 'node', entry: string, fixture: 
       stdout: 'pipe',
       stderr: 'pipe',
       env: {
-        ...process.env,
+        ...stripVinayaEnv(process.env),
         HOME: fixture.home,
         PATH: fixture.path,
         GITHUB_TOKEN: 'fake-token',
@@ -345,18 +368,38 @@ async function runTaskDispatch(runtime: 'bun' | 'node', entry: string, fixture: 
       }
     }
   )
+  const timedOut = { value: false }
+  const timer = setTimeout(() => {
+    timedOut.value = true
+    proc.kill('SIGKILL')
+  }, SUBPROCESS_BUDGET_MS)
   const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()])
   const status = await proc.exited
+  clearTimeout(timer)
+  if (timedOut.value) {
+    throw new Error(
+      `vinaya task dispatch subprocess killed by SIGKILL after exceeding its ${SUBPROCESS_BUDGET_MS}ms budget ` +
+        `(runtime: ${runtime})\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}`
+    )
+  }
   return { status, stdout, stderr }
 }
 
 beforeAll(async () => {
   // Always rebuild rather than trusting a possibly-stale dist/ from a prior
   // session — a stale bundle would silently test the WRONG code, and this
-  // file's entire point is the BUILT artifact, not the TS source.
-  const build = Bun.spawnSync(['bun', 'run', '--cwd', CLI_ROOT, 'build'], { stdout: 'pipe', stderr: 'pipe' })
-  if (build.exitCode !== 0) {
-    throw new Error(`apps/cli build failed:\n${build.stderr.toString()}`)
+  // file's entire point is the BUILT artifact, not the TS source. Issue
+  // #660, O3 (round 5 review, BLOCKER) — bounded by an explicit budget
+  // that throws with the child's own captured stdout/stderr on expiry.
+  const build = spawnSyncBudgeted(
+    'bun',
+    ['run', '--cwd', CLI_ROOT, 'build'],
+    { encoding: 'utf8' },
+    100_000,
+    'apps/cli build'
+  )
+  if (build.status !== 0) {
+    throw new Error(`apps/cli build failed:\n${build.stderr}`)
   }
 }, 120_000)
 

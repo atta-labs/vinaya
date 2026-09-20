@@ -30,17 +30,47 @@ function tempDir(prefix: string): string {
 
 type CliResult = { status: number; stdout: string; stderr: string }
 
+/**
+ * Issue #660, O3 — this process's OWN environment, when it is itself a
+ * dispatched Developer/Reviewer session, carries `VINAYA_RUNTIME_DIR`
+ * (checked before `$HOME` by `resolveRuntimeDirUncached`). Spreading
+ * `...process.env` into this fixture's real subprocess hands it THIS
+ * machine's real, shared runtime directory regardless of the fixture's own
+ * isolated `$HOME` (`setUp()`'s own `env.HOME`) — the same leak already
+ * fixed in `dev-review-loop.test.ts`, `dispatch.test.ts` and others. Caught
+ * live: adding this file to `prePush.alwaysRun` (Issue #660, O2 round 2
+ * review) made it run, unconditionally, in a dispatched session's own real
+ * environment, where the driver-lock lookup below silently read the wrong
+ * (real, shared) tree and reported "no driver" for a pid this fixture had
+ * genuinely started.
+ */
+function stripVinayaEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { ...env }
+  for (const key of Object.keys(out)) {
+    if (key.startsWith('VINAYA_')) delete out[key]
+  }
+  return out
+}
+
 function runCli(args: string[], env: Record<string, string | undefined>): CliResult {
   try {
     const stdout = execFileSync('bun', [INDEX, ...args], {
       cwd: CLI_ROOT,
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, ...env }
+      env: { ...stripVinayaEnv(process.env), ...env },
+      timeout: 18_000,
+      killSignal: 'SIGKILL'
     })
     return { status: 0, stdout, stderr: '' }
   } catch (e) {
-    const err = e as { status?: number; stdout?: string; stderr?: string }
+    const err = e as { status?: number; stdout?: string; stderr?: string; signal?: string | null }
+    if (err.signal) {
+      throw new Error(
+        `vinaya task status subprocess killed by ${err.signal} after exceeding its budget (args: ${args.join(' ')})\n` +
+          `--- stdout ---\n${err.stdout ?? ''}\n--- stderr ---\n${err.stderr ?? ''}`
+      )
+    }
     return { status: err.status ?? 1, stdout: String(err.stdout ?? ''), stderr: String(err.stderr ?? '') }
   }
 }
@@ -365,8 +395,9 @@ describe('vinaya task status --follow (task-run-v1 task 15, O6)', () => {
         cwd: CLI_ROOT,
         encoding: 'utf8',
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env, ...env },
-        timeout: 1500
+        env: { ...stripVinayaEnv(process.env), ...env },
+        timeout: 1500,
+        killSignal: 'SIGKILL'
       })
     } catch (e) {
       caught = e as { stdout?: string }

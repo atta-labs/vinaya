@@ -26,11 +26,11 @@
  */
 
 import { afterEach, describe, expect, it } from 'bun:test'
-import { spawnSync } from 'node:child_process'
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { spawnSyncBudgeted, stripVinayaEnv } from '../process-fixture'
 
 const GATE_READING = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -67,6 +67,12 @@ function writeFakeGh(dir: string, script: string): void {
  * `fetchFailingCheckRuns` / `fetchMergeableState`, already in scope) as a
  * fresh `bun -e` subprocess, with `binDir` prepended to that subprocess's
  * OWN spawn-time `PATH` — never this test process's `process.env.PATH`.
+ *
+ * Issue #660, O3 (round 4 review, round 5 Principal ruling) — this
+ * process's own `VINAYA_*` environment is stripped before `PATH`/`extraEnv`
+ * are applied, and the subprocess is bounded by an explicit budget that
+ * throws with its own captured stdout/stderr on expiry, rather than a bare
+ * timeout.
  */
 function runGateReading(
   binDir: string,
@@ -77,11 +83,13 @@ function runGateReading(
     import { fetchCiConclusion, fetchFailingCheckRuns, fetchMergeableState } from ${JSON.stringify(GATE_READING)}
     ${snippet}
   `
-  const r = spawnSync('bun', ['-e', script], {
-    encoding: 'utf8',
-    env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ''}`, ...extraEnv }
-  })
-  return { status: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' }
+  return spawnSyncBudgeted(
+    'bun',
+    ['-e', script],
+    { encoding: 'utf8', env: { ...stripVinayaEnv(), PATH: `${binDir}:${process.env.PATH ?? ''}`, ...extraEnv } },
+    undefined,
+    'gate-reading bun -e'
+  )
 }
 
 describe('fetchMechanicalCheckRuns dedupe — O3 (#595): newest started_at wins, not the highest id', () => {

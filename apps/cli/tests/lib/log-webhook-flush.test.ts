@@ -14,6 +14,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
@@ -32,19 +33,19 @@ function tempDir(prefix: string): string {
 
 type CliResult = { status: number; stdout: string; stderr: string }
 
+// Issue #660, O3 — this process's own VINAYA_* environment is stripped
+// before the fixture's own `env` is applied, so the spawned `vinaya`
+// subprocess can only ever resolve its runtime directory from the isolated
+// $HOME below; bounded by an explicit budget that throws with the child's
+// own captured stdout/stderr on expiry, rather than a bare timeout.
 function runCli(args: string[], cwd: string, env: Record<string, string | undefined>): CliResult {
-  try {
-    const stdout = execFileSync('bun', [INDEX, ...args], {
-      encoding: 'utf8',
-      cwd,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, ...env }
-    })
-    return { status: 0, stdout, stderr: '' }
-  } catch (e) {
-    const err = e as { status?: number; stdout?: string; stderr?: string }
-    return { status: err.status ?? 1, stdout: String(err.stdout ?? ''), stderr: String(err.stderr ?? '') }
-  }
+  return spawnSyncBudgeted(
+    'bun',
+    [INDEX, ...args],
+    { encoding: 'utf8', cwd, stdio: ['pipe', 'pipe', 'pipe'], env: { ...stripVinayaEnv(), ...env } },
+    undefined,
+    'vinaya log flush'
+  )
 }
 
 function initGitRepo(cwd: string): void {
@@ -209,13 +210,14 @@ describe('vinaya log flush — logPublish.webhookUrl', () => {
         console.log(JSON.stringify({ ok: false, isWebhookFlushError: err instanceof WebhookFlushError, message: err instanceof Error ? err.message : String(err) }))
       }`
     )
-    let stdout: string
-    try {
-      stdout = execFileSync('bun', [script], { encoding: 'utf8', cwd, env: { ...process.env, HOME: home } })
-    } catch (e) {
-      stdout = String((e as { stdout?: string }).stdout ?? '')
-    }
-    const r = { stdout }
+    const scriptResult = spawnSyncBudgeted(
+      'bun',
+      [script],
+      { encoding: 'utf8', cwd, env: { ...stripVinayaEnv(), HOME: home } },
+      undefined,
+      'run-flush.ts'
+    )
+    const r = { stdout: scriptResult.stdout }
     server.stop(true)
 
     const result = JSON.parse(r.stdout.trim().split('\n').pop() as string)

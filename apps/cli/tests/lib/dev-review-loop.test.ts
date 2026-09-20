@@ -1802,40 +1802,68 @@ function disableIsolationForFixture(cwd: string): void {
 }
 
 /**
- * issue-657, O5 — every fixture in this file relies on the driver resolving
- * its runtime directory (`run-paths.ts`'s `defaultRuntimeDir`) from the
- * OVERRIDDEN `HOME` above, under the `unresolved` repo segment (the fake
- * `git` binary answers no real remote, so `resolveRepoSync` finds none) —
- * `writeFakeClaude`'s own `$HOME/.vinaya/runtime/unresolved/tasks-execution/…`
- * path, and this file's own `taskRunDir` helper, both hardcode that
- * assumption. `runtimeDirForRepo`'s OWN resolution order checks
- * `VINAYA_RUNTIME_DIR` FIRST, before any of that — a real value inherited
- * from the CALLING shell's own environment (set when this file's own suite
- * runs inside a real dispatched session, which sets it for its own
- * orchestration) silently redirects every spawned test driver to that REAL,
- * shared, non-isolated directory instead: a live process there is genuinely
- * running and genuinely writing real files under the caller's actual
- * `~/.vinaya`, invisible to this file's own cleanup and colliding with any
- * sibling run (another test in this same suite, another task's dispatch)
- * that resolves the identical path. Found live: a driver leaked exactly
- * this way blocked a later run in this same suite with "a driver is already
- * running", and left real files under the operator's own home directory
- * that this suite never created a temp dir for and therefore never cleans
- * up. Stripped here, unconditionally, so this suite's own isolation can
- * never depend on the calling shell happening to leave it unset.
+ * Issue #660, O3 — this process's OWN environment, when it is itself a
+ * dispatched Developer/Reviewer session (or a pre-push hook run from one's
+ * shell), carries `VINAYA_RUNTIME_DIR` (`run-paths.ts`'s `RUNTIME_DIR_ENV_KEY`)
+ * pointed at this MACHINE's real, shared runtime directory — checked first,
+ * unconditionally, ahead of `$HOME`, by `resolveRuntimeDirUncached`. Spreading
+ * `...process.env` into a spawned fixture's own env therefore hands that
+ * SAME real shared directory to every fixture's driver subprocess, no
+ * matter how carefully `home` above is isolated — the exact incident this
+ * task closes: two task runs and a full suite, each dispatched the same
+ * way, all racing the SAME real `driver.pid.json` and control-store files.
+ * `VINAYA_TASK`/`VINAYA_ROUND`/`VINAYA_RUN`/`VINAYA_RUN_ID`/`VINAYA_UNATTENDED`/
+ * `VINAYA_ROLE` are stripped alongside it on the same principle — none of
+ * them should ever be decided by this OUTER process's own identity rather
+ * than the fixture's own `--task`/`--resume` argument and isolated `$HOME`.
+ * Same discipline `remote-base.ts`'s `cleanGitEnv` already applies to `GIT_*`
+ * for an analogous inherited-env collision.
+ *
+ * `AEG_REPO` is stripped alongside every `VINAYA_*` key for the same root
+ * cause, merged from origin/main's independent issue-657 O5 fix: every
+ * fixture in this file relies on the driver resolving its runtime directory
+ * under the `unresolved` repo segment (the fake `git` binary answers no real
+ * remote, so `resolveRepoSync` finds none) — `writeFakeClaude`'s own
+ * `$HOME/.vinaya/runtime/unresolved/tasks-execution/…` path, and this file's
+ * own `taskRunDir` helper, both hardcode that assumption. A real `AEG_REPO`
+ * inherited from the calling shell's own environment (set when this file's
+ * own suite runs inside a real dispatched session) silently resolves a REAL
+ * repo segment instead, the same class of collision `VINAYA_RUNTIME_DIR`
+ * causes. Found live: a driver leaked exactly this way blocked a later run
+ * in this same suite with "a driver is already running", and left real
+ * files under the operator's own home directory this suite never created a
+ * temp dir for and therefore never cleans up.
  */
-const HOST_RUNTIME_ENV_KEYS = ['VINAYA_RUNTIME_DIR', 'AEG_REPO']
+function fixtureChildEnv(home: string, path: string, extraEnv: Record<string, string>): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env }
+  for (const key of Object.keys(env)) {
+    if (key.startsWith('VINAYA_')) delete env[key]
+  }
+  delete env.AEG_REPO
+  return { ...env, HOME: home, PATH: path, ...extraEnv }
+}
+
+/**
+ * Generous on a quiet host (these fixtures only ever talk to the fake,
+ * near-instant `claude`/`gh`/`git` stand-ins on `$PATH`, never the network)
+ * and, not coincidentally, below the smallest per-test `it(..., N)` bound
+ * used anywhere in this file (20000ms) — so a genuinely stuck subprocess
+ * (the real, load-bearing case: lock contention on a path another fixture
+ * or another concurrent task run still holds) is caught HERE, with the
+ * child's own captured output, before the test framework's own outer
+ * timeout can kill the whole run with no diagnostic at all.
+ */
+const SUBPROCESS_BUDGET_MS = 18_000
 
 function runDevReviewLoopArgs(
   home: string,
   cwd: string,
   path: string,
   args: string[],
-  extraEnv: Record<string, string> = {}
+  extraEnv: Record<string, string> = {},
+  budgetMs: number = SUBPROCESS_BUDGET_MS
 ): CliResult {
   disableIsolationForFixture(cwd)
-  const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, PATH: path, ...extraEnv }
-  for (const key of HOST_RUNTIME_ENV_KEYS) delete env[key]
   // `spawnSync` (never `execFileSync`) — it hands back stdout AND stderr on
   // BOTH the success and the non-zero-exit path; `execFileSync` only
   // surfaces piped stderr via the thrown error, so a passing run's own
@@ -1844,8 +1872,16 @@ function runDevReviewLoopArgs(
   const r = spawnSync('bun', [INDEX, 'dev-review-loop', ...args], {
     encoding: 'utf8',
     cwd,
-    env
+    env: fixtureChildEnv(home, path, extraEnv),
+    timeout: budgetMs,
+    killSignal: 'SIGKILL'
   })
+  if (r.signal) {
+    throw new Error(
+      `dev-review-loop subprocess killed by ${r.signal} after exceeding its ${budgetMs}ms budget ` +
+        `(args: ${args.join(' ')})\n--- stdout ---\n${r.stdout ?? ''}\n--- stderr ---\n${r.stderr ?? ''}`
+    )
+  }
   return { status: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' }
 }
 
@@ -8665,5 +8701,60 @@ describe('resolveRoundEndFlushTarget / describeSkippedRoundEndFlush (pure) — t
     expect(reason).not.toBeNull()
     expect(reason).toContain(`#${TASK}`)
     expect(reason).toContain("this task's own Issue")
+  })
+})
+
+// Issue #660, O3 — the two isolation properties added to
+// `runDevReviewLoopArgs`: a leaked `VINAYA_RUNTIME_DIR` from THIS process's
+// own environment never redirects a fixture's driver subprocess away from
+// its isolated `$HOME`, and a genuinely stuck subprocess fails with the
+// child's own captured output rather than a bare timeout.
+describe('runDevReviewLoopArgs fixture isolation (Issue #660, O3)', () => {
+  it("a real, leaked VINAYA_RUNTIME_DIR in this test process's own env never redirects the child — it still writes under the fixture's own isolated $HOME, and nothing lands in the leaked directory", () => {
+    const { home, cwd, path } = setUp()
+    const leakedRuntimeDir = tempDir('vinaya-drl-leaked-runtime-')
+    const prevRuntimeDir = process.env.VINAYA_RUNTIME_DIR
+    // The same shape this Developer session's own dispatched environment
+    // genuinely carries — reproduced live: `runDevReviewLoopArgs` used to
+    // spread `...process.env` first, so this leaked straight into the
+    // child, which resolved its runtime directory from it instead of the
+    // fixture's own `$HOME` (`resolveRuntimeDirUncached` checks the env key
+    // before ever calling `homedir()`).
+    process.env.VINAYA_RUNTIME_DIR = leakedRuntimeDir
+    try {
+      const r = runLoop(home, cwd, path)
+      expect(r.status).toBe(0)
+    } finally {
+      if (prevRuntimeDir === undefined) delete process.env.VINAYA_RUNTIME_DIR
+      else process.env.VINAYA_RUNTIME_DIR = prevRuntimeDir
+    }
+
+    expect(existsSync(join(roundDir(home, 1), 'reviewer.md'))).toBe(true)
+    expect(existsSync(join(leakedRuntimeDir, 'tasks-execution'))).toBe(false)
+  })
+
+  it('a subprocess that never exits is killed at its budget and throws with the budget figure and the captured output, never a bare timeout', () => {
+    const home = tempDir('vinaya-drl-home-')
+    const cwd = tempDir('vinaya-drl-cwd-')
+    const binDir = tempDir('vinaya-drl-bin-')
+    writeFakeBinary(binDir, 'claude', '#!/bin/sh\necho "stuck on purpose"\nsleep 30\n')
+    writeFakeGh(binDir)
+    writeFakeGit(binDir)
+    const path = `${binDir}:${pathWithoutRealVendors()}`
+
+    let thrown: unknown
+    try {
+      runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {}, 3000)
+    } catch (err) {
+      thrown = err
+    }
+    expect(thrown).toBeInstanceOf(Error)
+    const message = (thrown as Error).message
+    expect(message).toContain('killed by')
+    expect(message).toContain('3000ms budget')
+    // The child's own output is really captured, not just an empty
+    // "timed out" line — the exact gap a bare test-framework timeout leaves.
+    expect(message).toContain('--- stdout ---')
+    expect(message).toContain('--- stderr ---')
   })
 })
