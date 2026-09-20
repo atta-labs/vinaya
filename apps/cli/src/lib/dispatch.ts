@@ -19,8 +19,10 @@
  *     Confirmed live: a real `claude -p --output-format json` run's stdout
  *     carried exactly that shape on this machine — no `usage: null` fallback
  *     was needed.
- *   - `codex exec --json -` — the trailing `-` is Codex's own documented
- *     stdin sentinel (never the prompt text on argv), one JSONL event per
+ *   - `codex exec --sandbox workspace-write --json -` — Codex's documented
+ *     least-privilege edit sandbox lets a normal dispatch modify its assigned
+ *     worktree while retaining the trailing `-` stdin sentinel (never the
+ *     prompt text on argv), one JSONL event per
  *     line. Confirmed live: the terminal `turn.completed` event carries
  *     `usage: { input_tokens, output_tokens, ... }` — the same field names
  *     as Claude's, so it is parsed the same way rather than left `null`.
@@ -2534,7 +2536,15 @@ const VENDOR_TABLE: Record<AgentVendor, VendorSpec> = {
     // `-m, --model <MODEL>` confirmed live via `codex exec --help` — a bare
     // string with no enumerated or aliased values (unlike `--sandbox`,
     // which does list `[possible values: ...]` in the same help output).
-    args: (model) => ['exec', ...(model ? ['--model', model] : []), '--json', '-'],
+    // `codex exec` defaults to read-only. The documented `workspace-write`
+    // sandbox is the narrow permission normal Developer dispatches need to
+    // edit their assigned worktree; it preserves saved subscription login and
+    // the JSONL/stdin protocol below.
+    args: (model) => ['exec', '--sandbox', 'workspace-write', ...(model ? ['--model', model] : []), '--json', '-'],
+    // `codex exec resume --help` intentionally does not accept `--sandbox`:
+    // it resumes the session's established tool policy. Keep the resume argv
+    // to Codex's documented subcommand shape rather than passing an invalid
+    // flag after a successful first turn.
     resumeArgs: (id, model) => ['exec', 'resume', id, ...(model ? ['--model', model] : []), '--json', '-'],
     parseUsage: parseCodexUsage,
     parseUsageUnits: parseCodexUsageUnits,

@@ -423,6 +423,32 @@ describe('dispatchRole — a successful dispatch', () => {
     // vendor's own default ran" is recorded instead of `'claude'`.
     expect((outcome as { model: string }).model).toBe('default')
   })
+
+  it('Codex gives a normal stdin/JSONL dispatch workspace-write access', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const argvOut = join(cwd, 'argv.out')
+    const stdinOut = join(cwd, 'stdin.out')
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    writeFakeBinary(
+      binDir,
+      'codex',
+      `#!/bin/sh\nfor a in "$@"; do printf '%s\\n' "$a"; done > "${argvOut}"\ncat > "${stdinOut}"\nprintf '%s\\n' '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'\n`
+    )
+
+    const r = runDispatch(
+      ['developer', '--agent', 'codex', '--prompt-file', promptFile],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+
+    expect(r.status).toBe(0)
+    expect(readArgv(argvOut)).toEqual(['exec', '--sandbox', 'workspace-write', '--json', '-'])
+    expect(readFileSync(stdinOut, 'utf8')).toBe(PROMPT_FILE_CONTENT)
+  })
 })
 
 describe('dispatchRole — a crashing child', () => {
@@ -2241,7 +2267,7 @@ describe('dispatchRole — model selection (O1/O2/O4, #456)', () => {
     {
       agent: 'codex',
       model: 'gpt-5.6-sol',
-      argv: ['exec', '--model', 'gpt-5.6-sol', '--json', '-']
+      argv: ['exec', '--sandbox', 'workspace-write', '--model', 'gpt-5.6-sol', '--json', '-']
     },
     {
       agent: 'gemini',
