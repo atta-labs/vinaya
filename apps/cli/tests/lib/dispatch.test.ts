@@ -289,9 +289,22 @@ function writeFakeBinary(dir: string, name: string, script: string): string {
  * bun`, which is itself a second exec hop with the identical race) gives a
  * single, stable process image throughout, so identity capture and every
  * later re-check always agree.
+ *
+ * O3 (Issue #670) — bounded to 30s rather than an unbounded wait: every
+ * caller of this fixture kills it (or lets it be killed) well inside that
+ * window, but a teardown that never runs for whatever reason still cannot
+ * leave this process burning a core for hours, the way an unbounded
+ * `await new Promise(() => {})` alone did. Same magnitude as this file's own
+ * `sleep 30` fixtures below (the SIGTERM/SIGKILL grace-window tests) —
+ * comfortably above every real budget in this file (18s subprocess budget,
+ * 10s per-test timeouts) and comfortably below "hours."
  */
 function writeIdentityStableFakeBinary(dir: string, name: string): string {
-  return writeFakeBinary(dir, name, `#!${process.execPath}\nprocess.stdin.resume()\nawait new Promise(() => {})\n`)
+  return writeFakeBinary(
+    dir,
+    name,
+    `#!${process.execPath}\nprocess.stdin.resume()\nsetTimeout(() => process.exit(0), 30000)\nawait new Promise(() => {})\n`
+  )
 }
 
 function outboxLines(home: string, issue: number | 'none'): unknown[] {

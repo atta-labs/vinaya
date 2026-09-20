@@ -391,9 +391,14 @@ describe("recoverDeveloperLaunch (O2, Issue #605, code review, MAJOR) — the re
     const binDir = tempDir('vinaya-reconcile-bin-')
     const promptFile = join(cwd, 'prompt.txt')
     writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    // O3 (Issue #670) — bounded to 30s rather than an unbounded wait: this
+    // test's own `finally` below kills it well inside that window, but a
+    // teardown that never runs still cannot leave this process burning a
+    // core for hours. Same bound `dispatch.test.ts`'s own
+    // `writeIdentityStableFakeBinary` now carries.
     writeFileSync(
       join(binDir, 'claude'),
-      `#!${process.execPath}\nprocess.stdin.resume()\nawait new Promise(() => {})\n`
+      `#!${process.execPath}\nprocess.stdin.resume()\nsetTimeout(() => process.exit(0), 30000)\nawait new Promise(() => {})\n`
     )
     chmodSync(join(binDir, 'claude'), 0o755)
 
