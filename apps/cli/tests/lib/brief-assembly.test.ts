@@ -224,6 +224,11 @@ describe('assembleAndRenderBriefForIssue — pre-write override', () => {
     expect(canRenderBriefFromHere()).toBe(true)
   })
 
+  it('uses the bundled template when the adopter has no aeg-root directory', () => {
+    rmSync(join(localDir, 'aeg-root'), { recursive: true, force: true })
+    expect(canRenderBriefFromHere()).toBe(true)
+  })
+
   it('canRenderBriefFromHere is false with no resolvable repo, even with the template present', () => {
     delete process.env.AEG_REPO
     expect(canRenderBriefFromHere()).toBe(false)

@@ -885,9 +885,12 @@ function documentationLogHookScript(dir: string): string {
     '  try {',
     '    const e = JSON.parse(d);',
     "    const runId = process.env.VINAYA_RUN_ID || '';",
-    "    if (runId && e.tool_name === 'WebFetch' && e.tool_input && typeof e.tool_input.url === 'string') {",
+    '    const urls = [];',
+    "    const visit = (v) => { if (typeof v === 'string') { const m = v.match(/https?:\\/\\/[^\\s\\\"'<>]+/g); if (m) urls.push(...m); } else if (Array.isArray(v)) v.forEach(visit); else if (v && typeof v === 'object') Object.values(v).forEach(visit); };",
+    '    visit(e.tool_input || e.tool_input_json || e.input || {});',
+    '    if (runId && urls.length > 0) {',
     `      const logPath = ${JSON.stringify(join(dir, 'documentation-log-'))} + runId + '.jsonl';`,
-    "      try { fs.appendFileSync(logPath, JSON.stringify({ url: e.tool_input.url }) + '\\n', { mode: 0o600 }); } catch {}",
+    "      try { for (const url of urls) fs.appendFileSync(logPath, JSON.stringify({ url }) + '\\n', { mode: 0o600 }); } catch {}",
     '    }',
     '  } catch {',
     '    // not a JSON line — never fail a hook whose only job is to record',
@@ -949,6 +952,71 @@ function documentationStopHookScript(dir: string): string {
     '});',
     ''
   ].join('\n')
+}
+
+function codexDocumentationStopHookScript(dir: string): string {
+  return [
+    "const fs = require('fs');",
+    "let d = '';",
+    "process.stdin.on('data', (c) => { d += c });",
+    "process.stdin.on('end', () => {",
+    '  try {',
+    '    JSON.parse(d);',
+    "    const runId = process.env.VINAYA_RUN_ID || '';",
+    '    if (!runId) { process.exit(0); }',
+    `    const sourcesPath = ${JSON.stringify(join(dir, 'documentation-sources-'))} + runId + '.json';`,
+    `    const logPath = ${JSON.stringify(join(dir, 'documentation-log-'))} + runId + '.jsonl';`,
+    "    let sources = []; try { sources = JSON.parse(fs.readFileSync(sourcesPath, 'utf8')); } catch {}",
+    "    let fetchedUrls = []; try { fetchedUrls = fs.readFileSync(logPath, 'utf8').split('\\n').filter(Boolean).map((line) => { try { return JSON.parse(line).url; } catch { return null; } }).filter((u) => typeof u === 'string'); } catch {}",
+    "    const normalize = (u) => String(u).trim().split('#')[0].replace(/\\/+$/, '');",
+    '    const fetched = new Set(fetchedUrls.map(normalize));',
+    "    const unread = Array.isArray(sources) ? sources.filter((s) => /^https?:\\/\\//i.test(String(s.source || '').trim()) && !fetched.has(normalize(s.source))) : [];",
+    '    if (unread.length > 0) {',
+    "      const names = unread.map((s) => '- ' + s.source + ' (governs: ' + s.mechanism + ')').join('\\n');",
+    "      process.stdout.write(JSON.stringify({ continue: false, stopReason: 'Required documentation remains unread', systemMessage: 'Fetch every required Documentation URL before completing:\\n' + names }) + '\\n');",
+    '      process.exit(0);',
+    '    }',
+    '  } catch {}',
+    '  process.exit(0);',
+    '});',
+    ''
+  ].join('\n')
+}
+
+function writeCodexDispatchHooks(
+  runId: string,
+  documentation: IssueDocumentationSource[],
+  scope: RunScope,
+  role: Role
+): string | null {
+  try {
+    const dir = join(runPath(runtimeDirForThisRepo(), scope, { area: 'hooks' }), role, 'codex')
+    mkdirSync(dir, { recursive: true, mode: 0o700 })
+    chmodSync(dir, 0o700)
+    const logScript = join(dir, 'documentation-log.mjs')
+    const stopScript = join(dir, 'documentation-stop.mjs')
+    writeFileSync(logScript, documentationLogHookScript(dir), { mode: 0o600 })
+    writeFileSync(stopScript, codexDocumentationStopHookScript(dir), { mode: 0o600 })
+    writeFileSync(join(dir, `documentation-sources-${runId}.json`), JSON.stringify(documentation), { mode: 0o600 })
+    const hooksPath = join(dir, 'hooks.json')
+    writeFileSync(
+      hooksPath,
+      JSON.stringify(
+        {
+          hooks: {
+            PostToolUse: [{ matcher: '.*', hooks: [{ type: 'command', command: `bun "${logScript}"` }] }],
+            Stop: [{ hooks: [{ type: 'command', command: `bun "${stopScript}"` }] }]
+          }
+        },
+        null,
+        2
+      ),
+      { mode: 0o600 }
+    )
+    return hooksPath
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -2540,12 +2608,30 @@ const VENDOR_TABLE: Record<AgentVendor, VendorSpec> = {
     // sandbox is the narrow permission normal Developer dispatches need to
     // edit their assigned worktree; it preserves saved subscription login and
     // the JSONL/stdin protocol below.
-    args: (model) => ['exec', '--sandbox', 'workspace-write', ...(model ? ['--model', model] : []), '--json', '-'],
+    args: (model) => [
+      'exec',
+      '--sandbox',
+      'workspace-write',
+      '--strict-config',
+      '--dangerously-bypass-hook-trust',
+      ...(model ? ['--model', model] : []),
+      '--json',
+      '-'
+    ],
     // `codex exec resume --help` intentionally does not accept `--sandbox`:
     // it resumes the session's established tool policy. Keep the resume argv
     // to Codex's documented subcommand shape rather than passing an invalid
     // flag after a successful first turn.
-    resumeArgs: (id, model) => ['exec', 'resume', id, ...(model ? ['--model', model] : []), '--json', '-'],
+    resumeArgs: (id, model) => [
+      'exec',
+      'resume',
+      id,
+      '--strict-config',
+      '--dangerously-bypass-hook-trust',
+      ...(model ? ['--model', model] : []),
+      '--json',
+      '-'
+    ],
     parseUsage: parseCodexUsage,
     parseUsageUnits: parseCodexUsageUnits,
     parseModel: parseCodexModel,
@@ -2968,7 +3054,7 @@ export async function dispatchRole(
   // is what an unattended start's boundary resolution wraps below, rather
   // than wrapping a pre-settings argv and reconciling the two later.
   const documentationSources = documentationSourcesFromPrompt(role, prompt)
-  if (agent !== 'claude' && documentationSources.some((s) => isDocumentationUrl(s.source))) {
+  if (agent === 'gemini' && documentationSources.some((s) => isDocumentationUrl(s.source))) {
     // round 2 security review, LOW — the PostToolUse/Stop hook
     // pair below is Claude-only, same limitation `deny-background-bash.mjs`
     // already has; unlike that hook, an unenforced Documentation obligation
@@ -3001,6 +3087,8 @@ export async function dispatchRole(
           opts.developerFiles ?? []
         )
       : null
+  const codexHooksPath =
+    agent === 'codex' ? writeCodexDispatchHooks(runId, documentationSources, scopeOf(opts.task, opts.pr), role) : null
   // The first lifecycle line this role's dispatch writes —
   // every earlier `writeLifecycle` call in this function sits behind an
   // early-return refusal branch (binary not resolvable, non-Claude
@@ -3018,7 +3106,11 @@ export async function dispatchRole(
   // surfaced error, unlike O3's own boundary-unavailable path. Fail closed
   // here the same way: refuse before any spawn, exactly as the
   // binary-not-resolvable and boundary-unavailable refusals below do.
-  if (agent === 'claude' && opts.unattended === true && requireIsolation && dispatchSettingsPath === null) {
+  if (
+    (agent === 'claude' ? dispatchSettingsPath === null : agent === 'codex' ? codexHooksPath === null : false) &&
+    opts.unattended === true &&
+    requireIsolation
+  ) {
     const durationMs = Date.now() - start
     const priorSize = sizeOfSafe(outboxPath)
     log({
@@ -3092,9 +3184,11 @@ export async function dispatchRole(
 
             // O1: claude only — the one vendor whose OAuth
             // credential shape `stageOAuthCredential` knows how to stage;
-            // Codex/Gemini get no staging attempt (`oauthConfigDir` stays
-            // `null` on the resolved launch, same as before this task).
+            // Claude stages its OAuth material; Codex stages only the brokered
+            // access token plus the task-scoped config/hooks described below.
             stageOAuthCredential: agent === 'claude',
+            stageCodexCredential: agent === 'codex',
+            codexHooksPath,
             // Round 5 review, CRITICAL fix: scoped to THIS dispatch's own
             // exact FILE, never its containing directory. The round-4 fix
             // (scoping to the repo-segment DIRECTORY, `dirname(outboxPath)`/
@@ -3157,6 +3251,9 @@ export async function dispatchRole(
               if (dispatchSettingsPath) {
                 files.push(join(dirname(dispatchSettingsPath), `documentation-log-${runId}.jsonl`))
               }
+              if (codexHooksPath) {
+                files.push(join(dirname(codexHooksPath), `documentation-log-${runId}.jsonl`))
+              }
               // O3: this round's own
               // confidence/round-response files, granted by exact path —
               // never a directory grant — the same "pre-create, then grant
@@ -3189,7 +3286,9 @@ export async function dispatchRole(
             // this directory is written by the trusted controller before
             // this resolution runs, and nothing inside the sandbox ever
             // needs to rewrite it.
-            extraReadOnlyDirs: dispatchSettingsPath ? [dirname(dispatchSettingsPath)] : [],
+            extraReadOnlyDirs: [dispatchSettingsPath, codexHooksPath]
+              .filter((path): path is string => path !== null)
+              .map(dirname),
             ...(usingRepoRootFallback
               ? { bootstrapWritableSubpaths: role === 'developer' ? ['.git', '.worktrees'] : [] }
               : {})
@@ -3229,7 +3328,8 @@ export async function dispatchRole(
     // pre-spawn refusal above already takes.
     const runtimeCredentialKeys = RUNTIME_CREDENTIAL_ENV_KEYS[agent] ?? []
     const hasRuntimeApiKey = runtimeCredentialKeys.some((key) => Boolean(process.env[key]))
-    const hasStagedOAuthCredential = boundaryLaunch.launch.oauthConfigDir !== null
+    const hasStagedOAuthCredential =
+      boundaryLaunch.launch.oauthConfigDir !== null || boundaryLaunch.launch.codexAccessToken !== null
     if (!hasRuntimeApiKey && !hasStagedOAuthCredential) {
       const durationMs = Date.now() - start
       const priorSize = sizeOfSafe(outboxPath)
@@ -3339,7 +3439,13 @@ export async function dispatchRole(
               // real, denied `<realHome>/.claude`. The key is omitted
               // entirely (not set to `undefined`) when nothing was staged,
               // so an API-key-only dispatch's env is unaffected.
-              ...(resolvedBoundary.oauthConfigDir ? { CLAUDE_CONFIG_DIR: resolvedBoundary.oauthConfigDir } : {})
+              ...(resolvedBoundary.oauthConfigDir ? { CLAUDE_CONFIG_DIR: resolvedBoundary.oauthConfigDir } : {}),
+              ...(resolvedBoundary.codexHomeDir
+                ? {
+                    CODEX_HOME: resolvedBoundary.codexHomeDir,
+                    CODEX_ACCESS_TOKEN: resolvedBoundary.codexAccessToken ?? undefined
+                  }
+                : {})
             },
             RUNTIME_CREDENTIAL_ENV_KEYS[agent] ?? []
           )

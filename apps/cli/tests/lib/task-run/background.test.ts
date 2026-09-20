@@ -78,6 +78,7 @@ function makeDeps(overrides: Partial<StartBackgroundRunDeps> = {}): StartBackgro
     spawnDetached: fakeSpawn,
     resolveLoopLogPath: async (task: number) => join(dir, `${task}.log`),
     checkHostSupervisionCapability: () => ({ supported: true }),
+    waitForStartup: async () => {},
     ...overrides
   }
 }
@@ -123,12 +124,23 @@ describe('startBackgroundRun', () => {
     }
   })
 
+  it('refuses a detached child that exits before startup readiness', async () => {
+    const deps = makeDeps({
+      waitForStartup: async () => {
+        liveness.set(5000, false)
+      }
+    })
+    await expect(startBackgroundRun({ issue: 42, agent: 'codex' }, deps)).rejects.toThrow(
+      /exited before startup readiness/
+    )
+  })
+
   it('spawns a detached, self-reinvoking child and returns without waiting on it — the parent exiting never terminates the controller', async () => {
     const deps = makeDeps()
     const handle = await startBackgroundRun({ tranche: 'control-store-v1', n: 7, agent: 'codex' }, deps)
 
     expect(spawnCalls).toHaveLength(1)
-    expect(spawnCalls[0]?.argv).toEqual(['task', 'run', '--issue', '42', '--agent', 'codex'])
+    expect(spawnCalls[0]?.argv).toEqual(['task', 'run', 'control-store-v1', '7', '--agent', 'codex'])
     // `spawnDetached`'s own fake never emits an exit or a completion signal,
     // and `startBackgroundRun` still resolved — nothing in this function's
     // own control flow awaits the child's lifecycle once it is launched and
@@ -148,8 +160,8 @@ describe('startBackgroundRun', () => {
     expect(spawnCalls[0]?.argv).toEqual([
       'task',
       'run',
-      '--issue',
-      '42',
+      'control-store-v1',
+      '7',
       '--agent',
       'codex',
       '--model',

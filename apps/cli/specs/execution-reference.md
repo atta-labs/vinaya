@@ -68,6 +68,8 @@ runtime-specific surface. `conformance.md`'s Table C is the proof this
 boundary holds identically on both runtimes; Section D there records what a
 live smoke run against it did and did not establish.
 
+Unattended Codex developer dispatches use `workspace-write` with a task-scoped `CODEX_HOME`. Vinaya brokers the existing ChatGPT access token into the Codex parent, removes credential-shaped variables from its tool subprocess environment, and loads generated lifecycle hooks from that scoped home. The operator's real Codex home is never exposed to repository commands.
+
 The five registered tools and their handlers:
 
 | Tool | Handler | What it does |

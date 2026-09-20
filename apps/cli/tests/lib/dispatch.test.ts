@@ -446,7 +446,15 @@ describe('dispatchRole — a successful dispatch', () => {
     )
 
     expect(r.status).toBe(0)
-    expect(readArgv(argvOut)).toEqual(['exec', '--sandbox', 'workspace-write', '--json', '-'])
+    expect(readArgv(argvOut)).toEqual([
+      'exec',
+      '--sandbox',
+      'workspace-write',
+      '--strict-config',
+      '--dangerously-bypass-hook-trust',
+      '--json',
+      '-'
+    ])
     expect(readFileSync(stdinOut, 'utf8')).toBe(PROMPT_FILE_CONTENT)
   })
 })
@@ -1333,7 +1341,7 @@ const RESUME_VENDOR_FIXTURES: ResumeVendorFixture[] = [
     agent: 'codex',
     firstStdout: (id) =>
       `{"type":"thread.started","thread_id":"${id}"}\n{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}`,
-    resumeArgv: (id) => ['exec', 'resume', id, '--json', '-']
+    resumeArgv: (id) => ['exec', 'resume', id, '--strict-config', '--dangerously-bypass-hook-trust', '--json', '-']
   },
   {
     agent: 'gemini',
@@ -2267,7 +2275,17 @@ describe('dispatchRole — model selection (O1/O2/O4, #456)', () => {
     {
       agent: 'codex',
       model: 'gpt-5.6-sol',
-      argv: ['exec', '--sandbox', 'workspace-write', '--model', 'gpt-5.6-sol', '--json', '-']
+      argv: [
+        'exec',
+        '--sandbox',
+        'workspace-write',
+        '--strict-config',
+        '--dangerously-bypass-hook-trust',
+        '--model',
+        'gpt-5.6-sol',
+        '--json',
+        '-'
+      ]
     },
     {
       agent: 'gemini',
@@ -3849,12 +3867,8 @@ describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () =
     expect(result.status).toBe(0)
   })
 
-  // round 2 security review, LOW (Issue #625) — the read-gate is Claude-only
-  // (same limitation the background-deny hook already has); unlike that
-  // hook, a Documentation obligation left unenforced is silent otherwise, so
-  // a non-`claude` developer dispatch must at least name the gap.
-  it('warns on stderr when a real URL-shaped source is unenforced for a non-claude agent, and stays silent for a prompt with none', () => {
-    for (const agent of ['codex', 'gemini']) {
+  it('warns only for a vendor whose Documentation gate remains unenforced', () => {
+    for (const agent of ['gemini']) {
       const home = tempDir('vinaya-dispatch-home-')
       const cwd = tempDir('vinaya-dispatch-cwd-')
       const binDir = tempDir('vinaya-dispatch-bin-')
@@ -3874,6 +3888,71 @@ describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () =
       expect(r.status).toBe(0)
       expect(r.stderr).toContain('Documentation read-gate')
       expect(r.stderr).toContain(agent)
+    }
+
+    {
+      const home = tempDir('vinaya-dispatch-home-')
+      const cwd = tempDir('vinaya-dispatch-cwd-')
+      const binDir = tempDir('vinaya-dispatch-bin-')
+      writeFakeBinary(binDir, 'codex', `#!/bin/sh\ncat > /dev/null\necho '{}'\nexit 0\n`)
+      const promptFile = join(cwd, 'prompt.txt')
+      writeFileSync(promptFile, DOC_PROMPT)
+      const result = spawnBudgeted(
+        [INDEX, 'dispatch', 'developer', '--agent', 'codex', '--prompt-file', promptFile],
+        {
+          encoding: 'utf8',
+          cwd,
+          env: stripVinayaEnv({ ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` })
+        },
+        'vinaya dispatch'
+      )
+      expect(result.status).toBe(0)
+      expect(result.stderr).not.toContain('Documentation read-gate')
+      const hooksPath = join(
+        home,
+        '.vinaya',
+        'runtime',
+        'unresolved',
+        'tasks-execution',
+        'unscoped',
+        'hooks',
+        'developer',
+        'codex',
+        'hooks.json'
+      )
+      expect(existsSync(hooksPath)).toBe(true)
+      const hooks = JSON.parse(readFileSync(hooksPath, 'utf8')) as {
+        hooks: {
+          PostToolUse: Array<{ hooks: Array<{ command: string }> }>
+          Stop: Array<{ hooks: Array<{ command: string }> }>
+        }
+      }
+      const commandPath = (command: string) => command.slice('bun "'.length, -1)
+      const sourcesFile = readdirSync(dirname(hooksPath)).find((name) => name.startsWith('documentation-sources-'))
+      const hookRunId = sourcesFile?.slice('documentation-sources-'.length, -'.json'.length) as string
+      const hookEnv = { ...process.env, VINAYA_RUN_ID: hookRunId }
+      const blocked = spawnBudgeted(
+        [commandPath(hooks.hooks.Stop[0]?.hooks[0]?.command as string)],
+        { input: '{}', encoding: 'utf8', env: hookEnv },
+        'Codex Stop hook'
+      )
+      expect(JSON.parse(blocked.stdout)).toMatchObject({ continue: false })
+      const recorded = spawnBudgeted(
+        [commandPath(hooks.hooks.PostToolUse[0]?.hooks[0]?.command as string)],
+        {
+          input: JSON.stringify({ tool_input: { url: 'https://example.com/docs/fixture' } }),
+          encoding: 'utf8',
+          env: hookEnv
+        },
+        'Codex PostToolUse hook'
+      )
+      expect(recorded.status).toBe(0)
+      const allowed = spawnBudgeted(
+        [commandPath(hooks.hooks.Stop[0]?.hooks[0]?.command as string)],
+        { input: '{}', encoding: 'utf8', env: hookEnv },
+        'Codex Stop hook'
+      )
+      expect(allowed.stdout).toBe('')
     }
 
     const home = tempDir('vinaya-dispatch-home-')

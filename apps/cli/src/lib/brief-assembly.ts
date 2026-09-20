@@ -14,7 +14,8 @@
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   buildConsumersOf,
   checkDispatchReadiness,
@@ -51,7 +52,7 @@ import { type EdgeFactsSubset, type EdgeTaskRef, resolveEdge } from '../checks/e
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
 
 const DOC_OWNERS_PATH = '.vinaya/doc-owners'
-const TEMPLATE_PATH = 'aeg-root/templates/brief-template.md'
+const TEMPLATE_PATH = join(dirname(fileURLToPath(import.meta.url)), '../../../../aeg-root/templates/brief-template.md')
 
 function git(args: string[]): string {
   try {

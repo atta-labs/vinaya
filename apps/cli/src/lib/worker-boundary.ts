@@ -89,8 +89,29 @@ export const WORKER_ENV_ALLOWLIST_KEYS = [
  */
 export const RUNTIME_CREDENTIAL_ENV_KEYS: Readonly<Record<string, readonly string[]>> = {
   claude: ['ANTHROPIC_API_KEY'],
-  codex: ['OPENAI_API_KEY'],
+  codex: ['CODEX_API_KEY', 'CODEX_ACCESS_TOKEN'],
   gemini: ['GEMINI_API_KEY', 'GOOGLE_API_KEY']
+}
+
+const CODEX_AUTH_FILE_NAME = 'auth.json'
+
+export function resolveCodexAccessToken(
+  sourceEnv: Readonly<Record<string, string | undefined>>,
+  realHome: string,
+  readFile: (path: string) => string | null = readRealOAuthCredentialFile
+): string | null {
+  if (sourceEnv.CODEX_ACCESS_TOKEN) return sourceEnv.CODEX_ACCESS_TOKEN
+  const codexHome = sourceEnv.CODEX_HOME ?? join(realHome, '.codex')
+  const raw = readFile(join(codexHome, CODEX_AUTH_FILE_NAME))
+  if (raw === null) return null
+  try {
+    const parsed = JSON.parse(raw) as { tokens?: { access_token?: unknown } }
+    return typeof parsed.tokens?.access_token === 'string' && parsed.tokens.access_token.length > 0
+      ? parsed.tokens.access_token
+      : null
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -596,6 +617,8 @@ export type WorkerBoundaryLaunch = {
   cleanup: () => void
   tmpDir: string
   oauthConfigDir: string | null
+  codexHomeDir: string | null
+  codexAccessToken: string | null
 }
 
 export type WorkerBoundaryResolution = { ok: true; launch: WorkerBoundaryLaunch } | { ok: false; reason: string }
@@ -738,6 +761,8 @@ export type WorkerBoundaryLaunchOpts = {
    * launch is always `null`.
    */
   stageOAuthCredential?: boolean
+  stageCodexCredential?: boolean
+  codexHooksPath?: string | null
 }
 
 /**
@@ -794,6 +819,23 @@ export function resolveWorkerBoundaryLaunch(
     const oauthConfigDir = opts.stageOAuthCredential
       ? (stageOAuthCredential(process.env, realHome, scratchTmpDir, deps)?.configDir ?? null)
       : null
+    const codexAccessToken = opts.stageCodexCredential
+      ? resolveCodexAccessToken(process.env, realHome, deps.readOAuthCredentialFile ?? readRealOAuthCredentialFile)
+      : null
+    let codexHomeDir: string | null = null
+    if (opts.stageCodexCredential && codexAccessToken) {
+      codexHomeDir = join(scratchTmpDir, 'codex-home')
+      mkdirSync(codexHomeDir, { recursive: true, mode: 0o700 })
+      writeFileSync(
+        join(codexHomeDir, 'config.toml'),
+        '[shell_environment_policy]\ninherit = "all"\nignore_default_excludes = false\n',
+        { mode: 0o600 }
+      )
+      if (opts.codexHooksPath) {
+        const hooks = readFileSync(opts.codexHooksPath, 'utf8')
+        writeFileSync(join(codexHomeDir, 'hooks.json'), hooks, { mode: 0o600 })
+      }
+    }
 
     /** Resolves a subpath of an already-realpath'd parent — realpath'd itself when it already exists (closing the same symlink-alias gap every other path here closes), or left as a plain `join()` when it does not yet exist (`.worktrees` on a fresh clone): the PARENT is already canonical, so a not-yet-existing child's constructed path is exact, and Seatbelt subpath rules need no existing target to compile. */
     const resolveExistingOrJoined = (parentReal: string, rel: string): string => {
@@ -948,7 +990,9 @@ export function resolveWorkerBoundaryLaunch(
         args: ['-f', profilePath, resolvedBinaryPath, ...opts.args],
         cleanup,
         tmpDir: scratchTmpDir,
-        oauthConfigDir
+        oauthConfigDir,
+        codexHomeDir,
+        codexAccessToken
       }
     }
   } catch (error) {

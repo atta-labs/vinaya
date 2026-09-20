@@ -20,6 +20,7 @@ import {
   buildWorkerSandboxProfile,
   isWorkerBoundaryAvailable,
   REAL_WORKER_BOUNDARY_DEPS,
+  resolveCodexAccessToken,
   resolveOAuthConfigSourceDir,
   resolveWorkerBoundaryLaunch,
   RUNTIME_CREDENTIAL_ENV_KEYS,
@@ -174,6 +175,34 @@ describe('RUNTIME_CREDENTIAL_ENV_KEYS — round 2 review, BLOCKER (a real model-
 
   it('an unknown vendor string yields no entry — a caller falls back to an empty list, never throws', () => {
     expect(RUNTIME_CREDENTIAL_ENV_KEYS['not-a-real-vendor']).toBeUndefined()
+  })
+})
+
+describe('resolveCodexAccessToken — subscription authentication', () => {
+  it('reads only the access token from the cached Codex session', () => {
+    let requestedPath = ''
+    const token = resolveCodexAccessToken({}, '/home/dev', (path) => {
+      requestedPath = path
+      return JSON.stringify({ tokens: { access_token: 'fixture-access', refresh_token: 'must-not-cross' } })
+    })
+    expect(requestedPath).toBe('/home/dev/.codex/auth.json')
+    expect(token).toBe('fixture-access')
+  })
+
+  it('refuses malformed or missing cached sessions', () => {
+    expect(resolveCodexAccessToken({}, '/home/dev', () => null)).toBeNull()
+    expect(resolveCodexAccessToken({}, '/home/dev', () => '{bad')).toBeNull()
+    expect(resolveCodexAccessToken({}, '/home/dev', () => JSON.stringify({ tokens: {} }))).toBeNull()
+  })
+
+  it('honors an explicitly brokered access token without reading auth.json', () => {
+    let read = false
+    const token = resolveCodexAccessToken({ CODEX_ACCESS_TOKEN: 'brokered' }, '/home/dev', () => {
+      read = true
+      return null
+    })
+    expect(token).toBe('brokered')
+    expect(read).toBe(false)
   })
 })
 
