@@ -2816,6 +2816,138 @@ describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
   })
 })
 
+describe('dispatchRole — O4 (#680): default-branch commit/push deny rule', () => {
+  /**
+   * A real, throwaway git checkout — self-referential `origin` remote (the
+   * same trick `check-review-gate-true-head.test.ts` uses), so
+   * `refs/remotes/origin/HEAD` resolves locally with no network. Omitting
+   * `defaultBranch` leaves `origin/HEAD` unset entirely (the
+   * "undetermined" fixture); `detach` checks out with no branch at all
+   * (the "nothing to compare" fixture).
+   */
+  function makeGitCheckout(opts: { checkoutBranch: string; defaultBranch?: string; detach?: boolean }): string {
+    const dir = tempDir('vinaya-default-branch-')
+    const g = (args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' })
+    g(['init', '-q', '-b', opts.checkoutBranch])
+    g(['config', 'user.email', 't@example.com'])
+    g(['config', 'user.name', 'test'])
+    writeFileSync(join(dir, 'a.txt'), 'x\n')
+    g(['add', '-A'])
+    g(['commit', '-qm', 'init'])
+    if (opts.defaultBranch) {
+      if (opts.defaultBranch !== opts.checkoutBranch) g(['branch', opts.defaultBranch])
+      g(['remote', 'add', 'origin', dir])
+      g(['fetch', '-q', 'origin', opts.defaultBranch])
+      g(['remote', 'set-head', 'origin', opts.defaultBranch])
+    }
+    if (opts.detach) g(['checkout', '-q', '--detach'])
+    return dir
+  }
+
+  /**
+   * The `Bash|Agent|Task`-matched hook's own script — generated content
+   * never depends on the cwd the dispatch that produced it happened to use
+   * (it reads `process.cwd()` fresh at hook-invocation time), only the
+   * WRITTEN FILE must still exist when a test runs it. Built fresh inside
+   * every `it()`, never shared via `beforeAll`: the top-level `afterEach`
+   * in this file wipes every `tempDir()` after EACH test, so a
+   * `beforeAll`-built script (and the `tempDir()`-backed home/cwd/bin it
+   * depends on) is deleted out from under every test after the first one
+   * in this block, exactly the fixture-lifetime bug this comment now
+   * documents having hit live.
+   */
+  function freshBackgroundDenyScriptPath(): string {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const argvOut = join(cwd, 'argv.out')
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\nfor a in "$@"; do echo "$a"; done > "${argvOut}"\ncat > /dev/null\necho '{}'\nexit 0\n`
+    )
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(0)
+    const argv = readFileSync(argvOut, 'utf8').trim().split('\n')
+    const settingsIdx = argv.indexOf('--settings')
+    const settingsPath = argv[settingsIdx + 1] as string
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as {
+      hooks: { PreToolUse: Array<{ hooks: Array<{ command: string }> }> }
+    }
+    const hookCommand = settings.hooks.PreToolUse[0]?.hooks[0]?.command as string
+    return hookCommand.slice('bun "'.length, -1)
+  }
+
+  function run(scriptPath: string, cwd: string, command: string): string {
+    const result = spawnBudgeted(
+      [scriptPath],
+      {
+        input: JSON.stringify({ tool_name: 'Bash', tool_input: { command, run_in_background: false } }),
+        encoding: 'utf8',
+        cwd
+      },
+      'PreToolUse hook'
+    )
+    expect(result.status).toBe(0)
+    return result.stdout.trim()
+  }
+  const decision = (out: string): { permissionDecision: string; permissionDecisionReason: string } | null =>
+    out === '' ? null : (JSON.parse(out).hookSpecificOutput as never)
+
+  it('denies a git commit/push whose cwd is a checkout on the default branch, allows the identical command from a non-default branch', () => {
+    const scriptPath = freshBackgroundDenyScriptPath()
+    const onDefault = makeGitCheckout({ checkoutBranch: 'main', defaultBranch: 'main' })
+    expect(decision(run(scriptPath, onDefault, 'git commit -am "x"'))?.permissionDecision).toBe('deny')
+    const pushDecision = decision(run(scriptPath, onDefault, 'git push origin main'))
+    expect(pushDecision?.permissionDecision).toBe('deny')
+    expect(pushDecision?.permissionDecisionReason).toMatch(/default branch/)
+
+    // The identical commands, from a checkout on a NON-default branch, are
+    // never caught by this rule.
+    const onFeature = makeGitCheckout({ checkoutBranch: 'feature', defaultBranch: 'main' })
+    expect(decision(run(scriptPath, onFeature, 'git commit -am "x"'))).toBeNull()
+    expect(decision(run(scriptPath, onFeature, 'git push origin feature'))).toBeNull()
+
+    // An ordinary read-only git command on the default branch is never
+    // caught either — only `commit`/`push`.
+    expect(decision(run(scriptPath, onDefault, 'git status'))).toBeNull()
+  })
+
+  it("honors a leading `cd <dir>` before the git subcommand — catches an escape into the shared main checkout even when the session's own ambient cwd is a worktree", () => {
+    const scriptPath = freshBackgroundDenyScriptPath()
+    const mainCheckout = makeGitCheckout({ checkoutBranch: 'main', defaultBranch: 'main' })
+    const worktree = makeGitCheckout({ checkoutBranch: 'task/x', defaultBranch: 'main' })
+
+    expect(decision(run(scriptPath, worktree, `cd ${mainCheckout} && git push origin main`))?.permissionDecision).toBe(
+      'deny'
+    )
+    // Never denied when the command never leaves the worktree.
+    expect(decision(run(scriptPath, worktree, 'git push origin task/x'))).toBeNull()
+  })
+
+  it('fails open — never a false deny — when the default branch cannot be determined, or HEAD is detached', () => {
+    const scriptPath = freshBackgroundDenyScriptPath()
+
+    // No `origin/HEAD` at all — the default branch is undetermined, the
+    // SAME "fail open, never a false refusal" posture
+    // `checkMainBranchRefusal`'s own doc comment states for this case.
+    const noOrigin = makeGitCheckout({ checkoutBranch: 'main' })
+    expect(decision(run(scriptPath, noOrigin, 'git commit -am "x"'))).toBeNull()
+
+    // A detached HEAD has no symbolic branch to compare — never refused,
+    // the same discriminator `checkMainBranchRefusal` uses.
+    const detached = makeGitCheckout({ checkoutBranch: 'main', defaultBranch: 'main', detach: true })
+    expect(decision(run(scriptPath, detached, 'git commit -am "x"'))).toBeNull()
+  })
+})
+
 describe('buildRolePermissions — Issue #663, O1: an explicit per-role Bash allow/deny policy', () => {
   it('developer: doctrine-named version-control/forge/package/test Bash commands allowed, never a Write/Edit entry (round 2 review, BLOCKER: those never worked)', () => {
     const perms = buildRolePermissions('developer')
@@ -2956,7 +3088,7 @@ describe('writeDispatchSettings — Issue #663, O1/O3: the permission policy is 
     expect(settings.permissions).toEqual(buildRolePermissions('developer'))
   })
 
-  it('a developer dispatch also wires a Write|Edit hook granting real access inside its own cwd, denying (falling through, no decision) outside it', () => {
+  it('a developer dispatch also wires a Write|Edit hook granting real access inside its own cwd, and DENIES outside it (O4, #680)', () => {
     const home = tempDir('vinaya-dispatch-home-')
     const cwd = tempDir('vinaya-dispatch-cwd-')
     const binDir = tempDir('vinaya-dispatch-bin-')
@@ -3012,6 +3144,11 @@ describe('writeDispatchSettings — Issue #663, O1/O3: the permission policy is 
     }
     expect(insideOut.hookSpecificOutput.permissionDecision).toBe('allow')
 
+    // O4 (`#680`): a `directory`-scoped path outside the written scope now
+    // DENIES — before this task it fell through silently (the assertion this
+    // test used to make), which is the exact gap the origin incident (a
+    // developer session writing in the shared main checkout instead of its
+    // own worktree) exploited.
     const outsideCwd = spawnBudgeted(
       [scriptPath],
       {
@@ -3022,7 +3159,11 @@ describe('writeDispatchSettings — Issue #663, O1/O3: the permission policy is 
       'write-access hook'
     )
     expect(outsideCwd.status).toBe(0)
-    expect(outsideCwd.stdout.trim()).toBe('')
+    const outsideOut = JSON.parse(outsideCwd.stdout) as {
+      hookSpecificOutput: { permissionDecision: string; permissionDecisionReason: string }
+    }
+    expect(outsideOut.hookSpecificOutput.permissionDecision).toBe('deny')
+    expect(outsideOut.hookSpecificOutput.permissionDecisionReason).toMatch(/worktree/)
   })
 
   it('a code-reviewer dispatch writes the read-only policy, never the developer one', () => {

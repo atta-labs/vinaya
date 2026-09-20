@@ -656,6 +656,85 @@ export const GIT_FORCE_OR_SKIP_VERIFY_DENY_REASON =
   'Dispatched sessions cannot force-push (in any spelling, including a `+refspec`) or skip commit/push hooks (`--no-verify`/`-n`) — this is enforced by argument inspection, not a settings-file pattern, so no flag ordering or alternate spelling defeats it.'
 
 /**
+ * Defense in depth beside the pre-push hook, not the only guard: the
+ * pre-push hook only ever sees an actual `git push`, at the git
+ * level, after a dispatched session has already committed and staged it;
+ * this catches the ATTEMPT one layer earlier, at the Bash tool call itself,
+ * before either subcommand ever runs. Origin: a developer session worked in
+ * the shared main checkout (rather than its own worktree) and ran a hard
+ * reset and pushes there, because the write-access policy only ever GRANTS
+ * a path inside the worktree and never DENIES one outside it (see
+ * `writeAccessHookScript`'s own O4 fix, alongside this one) — this closes
+ * the git-command half of that same gap.
+ *
+ * Resolved via real `git` calls (`-C <dir>`, so this never depends on the
+ * hook process's own cwd matching the command's), never a settings-file
+ * pattern — the same reasoning `gitForceOrSkipVerifyDetectorSource`'s own
+ * doc comment gives for needing real argument inspection over a fixed
+ * prefix. `cwd` starts at `process.cwd()` (this dispatch's own working
+ * directory — `spawnCwd` at `dispatchRole`'s own call site) and is updated
+ * by a leading `cd <dir>` statement before it, so `cd
+ * /path/to/main-checkout && git push` is caught even when the session's own
+ * ambient cwd is the worktree; a `cd` target this naive regex cannot parse
+ * (quoted, env-var expansion) simply leaves `cwd` unchanged rather than
+ * throwing.
+ *
+ * Fails OPEN on every uncertainty — the SAME posture
+ * `checkMainBranchRefusal`'s own doc comment states for its `defaultBranch:
+ * null` case ("a check whose job is refusing risky actions must not itself
+ * risk refusing a legitimate one it cannot actually evaluate"): a detached
+ * HEAD, an unresolvable `origin/HEAD`, or a `cwd` that is not a git
+ * checkout at all each read as "nothing to refuse," never a false deny.
+ * This hook and `checkMainBranchRefusal`/`check-main-branch-refusal.ts`
+ * deliberately read the identical two `git symbolic-ref` facts the same
+ * way, so neither can disagree with the other about what counts as "on the
+ * default branch."
+ */
+function defaultBranchCommitOrPushDetectorSource(): string {
+  return [
+    "const cp = require('child_process');",
+    "const path = require('path');",
+    'function gitOutput(cwd, args) {',
+    '  try {',
+    "    return cp.execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();",
+    '  } catch { return null; }',
+    '}',
+    'function currentBranchAt(cwd) {',
+    "  const b = gitOutput(cwd, ['symbolic-ref', '--quiet', '--short', 'HEAD']);",
+    "  return b === null || b === '' ? null : b;",
+    '}',
+    'function defaultBranchAt(cwd) {',
+    "  const ref = gitOutput(cwd, ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']);",
+    "  if (ref === null || ref === '') return null;",
+    "  const branch = ref.slice('origin/'.length);",
+    "  return branch === '' ? null : branch;",
+    '}',
+    'function commandCommitsOrPushesOnDefaultBranch(command) {',
+    "  if (typeof command !== 'string') return false;",
+    '  let cwd = process.cwd();',
+    '  for (const raw of commandStatements(command)) {',
+    '    const stmt = stripLineComment(raw).trim();',
+    '    const cdMatch = /^cd\\s+(\\S+)/.exec(stmt);',
+    '    if (cdMatch) { cwd = path.resolve(cwd, cdMatch[1]); continue; }',
+    '    const tokens = statementTokens(stmt);',
+    "    if (tokens[0] !== 'git') continue;",
+    '    const sub = tokens[1];',
+    "    if (sub !== 'commit' && sub !== 'push') continue;",
+    '    const current = currentBranchAt(cwd);',
+    '    if (current === null) continue;',
+    '    const def = defaultBranchAt(cwd);',
+    '    if (def === null) continue;',
+    '    if (current === def) return true;',
+    '  }',
+    '  return false;',
+    '}'
+  ].join('\n')
+}
+
+export const COMMIT_PUSH_ON_DEFAULT_BRANCH_DENY_REASON =
+  "Dispatched sessions cannot commit or push while the shell's working directory is a checkout on this repo's default branch — do this from a worktree instead. This is defense in depth beside the pre-push hook, not the only guard."
+
+/**
  * The subagent tool (`Agent`/`Task` — both names are checked, as a
  * dispatched session may see either) defaults `run_in_background` to true,
  * so an unattended developer session that never sets it explicitly would
@@ -695,6 +774,7 @@ function backgroundDenyHookScript(): string {
     backgroundShapeDetectorSource(),
     wholeSuiteTestCommandDetectorSource(),
     gitForceOrSkipVerifyDetectorSource(),
+    defaultBranchCommitOrPushDetectorSource(),
     '    const input = e.tool_input || {};',
     "    if (e.tool_name === 'Bash' && (input.run_in_background === true || commandBackgrounds(input.command))) {",
     denyOutput(BACKGROUND_DENY_REASON),
@@ -702,6 +782,8 @@ function backgroundDenyHookScript(): string {
     denyOutput(SUITE_RUN_DENY_REASON),
     "    } else if (e.tool_name === 'Bash' && commandForcesGitOrSkipsVerify(input.command)) {",
     denyOutput(GIT_FORCE_OR_SKIP_VERIFY_DENY_REASON),
+    "    } else if (e.tool_name === 'Bash' && commandCommitsOrPushesOnDefaultBranch(input.command)) {",
+    denyOutput(COMMIT_PUSH_ON_DEFAULT_BRANCH_DENY_REASON),
     "    } else if ((e.tool_name === 'Agent' || e.tool_name === 'Task') && input.run_in_background === true) {",
     denyOutput(SUBAGENT_BACKGROUND_DENY_REASON),
     '    }',
@@ -864,12 +946,19 @@ function documentationStopHookScript(dir: string): string {
 const DISPATCH_BASH_MAX_TIMEOUT_MS = '1800000'
 
 /**
- * Bump this whenever the allow/deny shape below changes —
+ * Bump this whenever the allow/deny shape below changes, OR the behavior of
+ * a hook `writeDispatchSettings` wires alongside it changes (the bump to
+ * `v2`: `writeAccessHookScript` now denies a `directory`-scoped Write/Edit
+ * outside its granted worktree instead of falling through, and
+ * `backgroundDenyHookScript` now also denies a `git commit`/`git push`
+ * whose working directory is a checkout on the default branch — neither
+ * touches `buildRolePermissions`'s own `allow`/`deny` arrays, but both are
+ * as much "the written policy" as those arrays are) —
  * `writeDispatchSettings`'s own first lifecycle line for a role names it, so
  * a run's own log says which policy shape it started under without needing
  * to diff `dispatch.ts` against the run's own timestamp.
  */
-export const PERMISSION_POLICY_VERSION = 'v1'
+export const PERMISSION_POLICY_VERSION = 'v2'
 
 type RolePermissions = { allow: string[]; deny: string[] }
 
@@ -1058,6 +1147,9 @@ export function buildWriteAccessScope(
   return null
 }
 
+export const WRITE_OUTSIDE_WORKTREE_DENY_REASON =
+  "Dispatched sessions cannot write or edit a file outside the developer's own worktree — this policy grants a path inside the worktree and denies everything else, rather than falling through to the host's own classifier for an out-of-scope path."
+
 /**
  * The `PreToolUse` hook that grants a real `Write`/`Edit` call — matched on
  * `Write|Edit`, never folded into `backgroundDenyHookScript`'s own
@@ -1068,12 +1160,26 @@ export function buildWriteAccessScope(
  * file) and resolves `tool_input.file_path`'s own containing directory via
  * `fs.realpathSync` before comparing — a target file that does not exist yet
  * (the normal case for a fresh `Write`) still has a real, existing parent
- * directory to resolve through. A path outside the written scope emits no
- * `hookSpecificOutput` at all, exactly like `backgroundDenyHookScript`'s own
- * "silent otherwise" posture — it falls through to whatever the host's own
- * classifier would have decided anyway, never a synthesized `deny`, since
- * this hook's job is to grant a real capability the built-in engine cannot
- * express, not to add a NEW restriction beyond what already existed.
+ * directory to resolve through.
+ *
+ * **A `directory`-scoped path outside the written scope now
+ * DENIES, rather than falling through.** Before this task, EVERY out-of-scope
+ * path (both scope kinds) fell through silently, "exactly like
+ * `backgroundDenyHookScript`'s own 'silent otherwise' posture" — this hook's
+ * job was only ever to GRANT a real capability the built-in engine cannot
+ * express, never to add a new restriction. The origin incident (a developer
+ * session working in the shared main checkout instead of its own worktree)
+ * showed that posture leaves the door open: an out-of-worktree Write/Edit
+ * simply resolved through the host's own default classifier, which can allow
+ * it in a non-interactive dispatch. `directory` scope (the developer role's
+ * own worktree grant, `buildWriteAccessScope`) now denies explicitly outside
+ * it — a real, written restriction, not a silent gap. `exact-files` scope
+ * (a reviewer/security dispatch's own three hand-off files) is UNCHANGED: it
+ * still falls through silently outside its own narrow allowlist, since O4
+ * scopes this rule to "a developer session," and a reviewer/security dispatch
+ * was never granted a directory to begin with — denying every path outside
+ * three exact filenames would be a far broader new restriction than O4 asks
+ * for, on a role this task's Objectives never named.
  */
 function writeAccessHookScript(dir: string): string {
   return [
@@ -1106,6 +1212,8 @@ function writeAccessHookScript(dir: string): string {
     '    }',
     '    if (allowed) {',
     allowOutput("in-scope for this role's written write-access policy"),
+    "    } else if (scope.kind === 'directory') {",
+    denyOutput(WRITE_OUTSIDE_WORKTREE_DENY_REASON),
     '    }',
     '  } catch {',
     '    // an unreadable/malformed hook payload never blocks a call this hook cannot evaluate',

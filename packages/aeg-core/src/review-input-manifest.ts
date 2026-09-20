@@ -338,14 +338,18 @@ export function compareManifest(
   current: ReviewInputManifest,
   patchIdOf?: (sha: string) => string | null
 ): ManifestBindingResult {
-  // The head/base pair, bound together under the acceptance rule
-  // (O1). An exact head sha is the same candidate — a base move under it is a
-  // base-only change and must fail. A patch-identity match is a proven
-  // equivalent rebase — the diff itself is byte-identical, so a base move is
-  // tolerated (the reviewer judged the patch, not the base; CI at the new
-  // head is the guard). `head` stays the whole "candidate covers current"
-  // answer (either path), unchanged for every existing caller; `base` is the
-  // separately-reported, bounded verdict on the base identity.
+  // The head/base pair, bound together under the acceptance rule (O1).
+  // A verdict judges the pull request; a move of the base branch alone never
+  // invalidates it. Base identity is still recorded for audit, but is only
+  // a blocking check when the head itself does not bind: when the candidate
+  // binds by an EXACT head sha OR by PATCH IDENTITY (a genuine equivalent
+  // rebase), a base move is TOLERATED — the reviewer judged the patch or the
+  // specific head, not the base; CI at the new head is the guard. When the
+  // head does not bind at all (a different revision, not an equivalent
+  // rebase), we check whether the base matches as a separate fact — still a
+  // fail-closed binding. The tolerance applies only to full-length SHAs: an
+  // abbreviated echoed base that does not prefix the current base remains
+  // fail-closed (corrupt or stale abbreviation).
   //
   // `patchHead` is only ever consulted when `exactHead` is false (a round-3
   // review BLOCKER finding) — a genuine rebase is "different revision,
@@ -354,15 +358,16 @@ export function compareManifest(
   // head, `patchIdOf` is called with the identical sha on both sides,
   // trivially reporting equal for any deterministic implementation — not
   // evidence of a rebase, just a self-comparison. That made `patchHead`
-  // true whenever `exactHead` already was, silently tolerating a base-only
-  // change (identical candidate, moved base) on every real evaluation
-  // (`check-review-gate.ts` always wires a real `patchIdOf`), defeating the
-  // one narrowed acceptance O1 documents. Short-circuiting here means the
-  // patch-identity path only ever runs for a genuinely different candidate.
+  // true whenever `exactHead` already was, silently defeating the binding
+  // check. Short-circuiting here means the patch-identity path only ever
+  // runs for a genuinely different candidate.
   const exactHead = isBoundToHead(echoed, current.headSha)
   const patchHead = exactHead ? false : isBoundByPatchIdentity(echoed, current.headSha, patchIdOf)
   const head = exactHead || patchHead
-  const base = patchHead ? true : isBoundToBase(echoed, current.baseSha)
+  const echoedShaLen = echoed.baseSha?.length ?? 0
+  const currentShaLen = current.baseSha?.length ?? 0
+  const bothFullShas = echoedShaLen >= 40 && currentShaLen >= 40
+  const base = patchHead || (exactHead && bothFullShas) ? true : isBoundToBase(echoed, current.baseSha)
   const briefHashBound = isBoundToBriefHash(echoed, current.briefHash)
   const objectivesVersion = isBoundToObjectives(echoed, current.objectivesVersion)
   const rulingOrdinal = isBoundToRulings(echoed, current.rulingOrdinal)
