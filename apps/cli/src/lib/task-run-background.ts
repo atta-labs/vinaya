@@ -386,6 +386,12 @@ export async function startBackgroundRun(
   const { epoch } = acquire
 
   const argv = ['task', 'run', '--issue', String(task), '--agent', input.agent as AgentVendor]
+  // issue-661, round 3 (O1 BLOCKER): an explicit --model given to the
+  // foreground-facing `startBackgroundRun` caller must reach the detached
+  // child too — this argv IS that child's own argv (it re-parses from
+  // scratch), so dropping the flag here silently loses the operator's
+  // explicit choice to the class-mapped/vendor-default model instead.
+  if (input.model) argv.push('--model', input.model)
   const fd = openLoopLogAppendFd(logPath)
   let child: SpawnedController
   try {

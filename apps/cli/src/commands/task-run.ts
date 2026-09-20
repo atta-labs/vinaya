@@ -1,5 +1,5 @@
 /**
- * `vinaya task run <tranche> <n> --agent <claude|codex|gemini>` — argv
+ * `vinaya task run <tranche> <n> --agent <claude|codex|gemini> [--model <model>]` — argv
  * parsing around `runTask` (`lib/task-run.js`), plus `colourLoopLine`
  * (`lib/dispatch.js`) to role-colour its two summary lines the same way
  * `dev-review-loop`'s own equivalent lines already are — two lib calls,
@@ -32,13 +32,14 @@ import { startBackgroundRun } from '../lib/task-run-background.js'
 /** Any failure other than a usage/argv error or a policy `pause` — see the module doc comment's exit-code table. */
 const TASK_RUN_FAILURE_EXIT_CODE = 3
 
-const KNOWN_FLAGS = ['--agent', '--issue', '--background']
+const KNOWN_FLAGS = ['--agent', '--issue', '--background', '--model']
 
 type ParsedFlags = {
   agent: string | undefined
   agentFlagPresent: boolean
   issue: string | undefined
   background: boolean
+  model: string | undefined
   unknown: string[]
 }
 
@@ -62,6 +63,7 @@ function parseFlags(rest: string[]): ParsedFlags {
   let agentFlagPresent = false
   let issue: string | undefined
   let background = false
+  let model: string | undefined
   const unknown: string[] = []
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i]
@@ -72,14 +74,16 @@ function parseFlags(rest: string[]): ParsedFlags {
       issue = rest[++i]
     } else if (a === '--background') {
       background = true
+    } else if (a === '--model') {
+      model = rest[++i]
     } else if (a !== undefined) unknown.push(a)
   }
-  return { agent, agentFlagPresent, issue, background, unknown }
+  return { agent, agentFlagPresent, issue, background, model, unknown }
 }
 
 const USAGE = [
-  `Usage: vinaya task run <tranche> <n> --agent ${DISPATCH_AGENTS.join(' | ')} [--background]`,
-  `   or: vinaya task run --issue <n> --agent ${DISPATCH_AGENTS.join(' | ')} [--background]`
+  `Usage: vinaya task run <tranche> <n> --agent ${DISPATCH_AGENTS.join(' | ')} [--background] [--model <model>]`,
+  `   or: vinaya task run --issue <n> --agent ${DISPATCH_AGENTS.join(' | ')} [--background] [--model <model>]`
 ].join('\n')
 
 /** `--agent` falls back to `dispatch.agent` in `vinaya.config.json` when omitted entirely — see `parseFlags`'s own doc comment on `agentFlagPresent`. `null` when no valid agent could be resolved (message already printed). */
@@ -202,10 +206,10 @@ export async function taskRunCommand(args: string[]): Promise<void> {
     const agent = resolveAgentOrReport(parsed)
     if (!agent) process.exit(2)
     if (parsed.background) {
-      await runBackgroundAndReport({ issue: issueN, agent })
+      await runBackgroundAndReport({ issue: issueN, agent, model: parsed.model })
       return
     }
-    await runAndReport({ issue: issueN, agent })
+    await runAndReport({ issue: issueN, agent, model: parsed.model })
     return
   }
 
@@ -232,10 +236,10 @@ export async function taskRunCommand(args: string[]): Promise<void> {
   const agent = resolveAgentOrReport(parsed)
   if (!agent) process.exit(2)
   if (parsed.background) {
-    await runBackgroundAndReport({ tranche: trancheSlug, n, agent })
+    await runBackgroundAndReport({ tranche: trancheSlug, n, agent, model: parsed.model })
     return
   }
-  await runAndReport({ tranche: trancheSlug, n, agent })
+  await runAndReport({ tranche: trancheSlug, n, agent, model: parsed.model })
 }
 
 import type { SurfaceExemption } from '../lib/surface-exemption'

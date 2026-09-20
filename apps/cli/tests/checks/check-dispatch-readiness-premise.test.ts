@@ -12,18 +12,17 @@ import { containedAbs } from '../../src/lib/ops'
  * round-trip that isn't hermetic to spawn in CI — `reassertPremiseFile`'s own
  * unit tests (`premise-reassert-logic.test.ts`) cover the pass/fail/missing-
  * file/no-pins decision logic directly. What this file proves instead: on a
- * non-task branch (the existing, unchanged bypass — `main` matches no
- * `task/<tranche>/<n>` pattern), the check still exits `0` with no findings
- * whether or not `PREMISE_FILE` is set — i.e. this task's addition changes
- * nothing about the pre-existing "nothing to evaluate here" path, satisfying
- * the unset-env "byte-equivalent in shape to pre-change behavior" test-plan
- * item at the wiring level.
+ * non-task branch, with no `<tranche> <n>` argument either (`main` matches
+ * neither), the check still exits `0` whether or not `PREMISE_FILE` is set —
+ * `PREMISE_FILE` itself stays inert either way (issue-661, O2, did not
+ * change that) — but now names the branch and says nothing was evaluated,
+ * rather than the silent, unqualified pass this bypass used to print.
  */
 const REPO_ROOT = join(import.meta.dir, '../../../..')
 const BIN = join(REPO_ROOT, 'apps/cli/src/checks/bin/check-dispatch-readiness.ts')
 
-async function run(env: Record<string, string>): Promise<{ exitCode: number; stderr: string }> {
-  const proc = Bun.spawn(['bun', BIN], {
+async function run(env: Record<string, string>, args: string[] = []): Promise<{ exitCode: number; stderr: string }> {
+  const proc = Bun.spawn(['bun', BIN, ...args], {
     env: { ...process.env, ...env },
     cwd: REPO_ROOT,
     stdout: 'ignore',
@@ -128,17 +127,42 @@ describe('check-dispatch-readiness: runIssueMode (task-run-v1 21, #541, O2, roun
   })
 })
 
-describe('check-dispatch-readiness: PREMISE_FILE on a non-task branch (bypass unaffected)', () => {
-  it('PREMISE_FILE unset: exits 0 with no findings (pre-existing bypass, unchanged)', async () => {
+describe('check-dispatch-readiness: PREMISE_FILE on a non-task branch (PREMISE_FILE itself stays inert)', () => {
+  it('PREMISE_FILE unset: exits 0, naming the branch and that nothing was evaluated (issue-661, O2)', async () => {
     const result = await run({ BRANCH: 'main' })
     expect(result.exitCode).toBe(0)
-    expect(result.stderr.trim()).toBe('')
+    const jsonLine = result.stderr.split('\n').find((l) => l.trimStart().startsWith('{'))
+    const error = JSON.parse(jsonLine ?? '')
+    expect(error.check).toBe('dispatch-readiness')
+    expect(error.severity).toBe('warning')
+    expect(error.message).toBe(
+      "dispatch-readiness: off a task branch ('main') with no tranche/task given by argument — nothing evaluated."
+    )
   })
 
-  it('PREMISE_FILE set to a nonexistent path: bypass still fires first — exits 0, no premise error raised', async () => {
+  it('PREMISE_FILE set to a nonexistent path: bypass still fires first — exits 0, no premise error raised, still the off-branch finding', async () => {
     const result = await run({ BRANCH: 'main', PREMISE_FILE: '/tmp/does-not-exist-premise-file.md' })
     expect(result.exitCode).toBe(0)
-    expect(result.stderr.trim()).toBe('')
+    const jsonLine = result.stderr.split('\n').find((l) => l.trimStart().startsWith('{'))
+    const error = JSON.parse(jsonLine ?? '')
+    expect(error.message).toContain('nothing evaluated')
+  })
+})
+
+describe('check-dispatch-readiness: <tranche> <n> argument path (issue-661, O2)', () => {
+  it("a tranche+task given by argument evaluates that task even on a non-task branch — same routing as runIssueMode's own fixture shape, off the topology path instead", async () => {
+    // No topology/Milestone fixture is reachable hermetically here (same
+    // constraint `runIssueMode`'s own suite above documents) — this proves
+    // routing, not the tranche-mode forge read itself: off `main`, with a
+    // `<tranche> <n>` argument, the process no longer takes the "nothing
+    // evaluated" bypass — it reaches past it toward the real (here,
+    // network-dependent) tranche lookup, which fails for an infra reason
+    // distinct from the bypass's own message.
+    const result = await run({ BRANCH: 'main', AEG_REPO: 'atta-labs/vinaya-fixture' }, ['fixture-tranche', '1'])
+    const jsonLine = result.stderr.split('\n').find((l) => l.trimStart().startsWith('{'))
+    expect(jsonLine).toBeDefined()
+    const error = JSON.parse(jsonLine ?? '')
+    expect(error.message).not.toContain('nothing evaluated')
   })
 })
 

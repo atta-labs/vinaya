@@ -24,7 +24,13 @@
  */
 
 import { describe, expect, it } from 'bun:test'
-import { isAlreadyDispatchedError, RunTaskError, runTask, type RunTaskDeps } from '../../src/lib/task-run.js'
+import {
+  describeModelResolution,
+  isAlreadyDispatchedError,
+  RunTaskError,
+  runTask,
+  type RunTaskDeps
+} from '../../src/lib/task-run.js'
 import { DispatchTaskError } from '../../src/lib/dispatch-task.js'
 import type { LoopResult } from '../../src/lib/dev-review-loop.js'
 
@@ -51,6 +57,12 @@ function deps(overrides: Partial<RunTaskDeps> = {}): RunTaskDeps {
     // case that must still refuse. The dead-lock takeover tests below
     // override this to `false` explicitly.
     isDriverAlive: () => true,
+    // Not `neverCalled`: `runTask` always calls this right after the Issue
+    // is resolved (O1) — every existing test in this file exercises a
+    // vendor/task pair with no rationale to read, so `undefined` (vendor
+    // default, no explicit model) is the correct default for all of them;
+    // the dedicated model-resolution tests below override it.
+    resolveModelForDispatch: () => undefined,
     devReviewLoop: neverCalled('devReviewLoop') as unknown as RunTaskDeps['devReviewLoop'],
     // Not `neverCalled`: `runTask` always calls this once `devReviewLoop`
     // resolves (to build `prUrl`), so every test that reaches that point
@@ -179,6 +191,89 @@ describe('runTask — O1: fresh task, one developer started', () => {
       })
     )
     expect(result.prUrl).toBeNull()
+  })
+})
+
+describe('runTask — O1 (issue-661): model resolution reaches devReviewLoop', () => {
+  it("an explicit --model wins outright — passed straight through as the resolver's explicitModel argument", async () => {
+    let sawExplicit: string | undefined
+    let sawDevReviewLoopInput: unknown
+    await runTask(
+      { tranche: 't', n: 1, agent: 'claude', model: 'claude-opus-5' },
+      deps({
+        prepareTask: async () => ({ issue: 480, brief: '', commentUrl: '', version: 1 }),
+        developerBranchFor: () => 'task/t/1',
+        findOpenPrForBranch: () => null,
+        resolveModelForDispatch: (agent, issue, explicitModel) => {
+          expect(agent).toBe('claude')
+          expect(issue).toBe(480)
+          sawExplicit = explicitModel
+          return explicitModel
+        },
+        devReviewLoop: async (input) => {
+          sawDevReviewLoopInput = input
+          return PUBLISH_RESULT
+        }
+      })
+    )
+    expect(sawExplicit).toBe('claude-opus-5')
+    expect(sawDevReviewLoopInput).toEqual({ task: 480, agent: 'claude', model: 'claude-opus-5' })
+  })
+
+  it("no explicit model — the Issue's suggested-agent-class resolution (fake resolver) reaches devReviewLoop", async () => {
+    let sawDevReviewLoopInput: unknown
+    await runTask(
+      { tranche: 't', n: 1, agent: 'claude' },
+      deps({
+        prepareTask: async () => ({ issue: 480, brief: '', commentUrl: '', version: 1 }),
+        developerBranchFor: () => 'task/t/1',
+        findOpenPrForBranch: () => null,
+        resolveModelForDispatch: (_agent, _issue, explicitModel) => {
+          expect(explicitModel).toBeUndefined()
+          return 'sonnet'
+        },
+        devReviewLoop: async (input) => {
+          sawDevReviewLoopInput = input
+          return PUBLISH_RESULT
+        }
+      })
+    )
+    expect(sawDevReviewLoopInput).toEqual({ task: 480, agent: 'claude', model: 'sonnet' })
+  })
+
+  it('no explicit model and no class mapping — devReviewLoop is called with no model field at all (vendor default)', async () => {
+    let sawDevReviewLoopInput: unknown
+    await runTask(
+      { tranche: 't', n: 1, agent: 'codex' },
+      deps({
+        prepareTask: async () => ({ issue: 480, brief: '', commentUrl: '', version: 1 }),
+        developerBranchFor: () => 'task/t/1',
+        findOpenPrForBranch: () => null,
+        resolveModelForDispatch: () => undefined,
+        devReviewLoop: async (input) => {
+          sawDevReviewLoopInput = input
+          return PUBLISH_RESULT
+        }
+      })
+    )
+    expect(sawDevReviewLoopInput).toEqual({ task: 480, agent: 'codex' })
+    expect('model' in (sawDevReviewLoopInput as object)).toBe(false)
+  })
+})
+
+describe("describeModelResolution (issue-661, O1) — the driver's first log line, pure", () => {
+  it('names an explicit model as the reason, even when a resolved class is also present', () => {
+    expect(describeModelResolution('claude-opus-5', 'sonnet')).toBe('model claude-opus-5 (explicit --model)')
+  })
+
+  it('names the resolved class-mapped model when no explicit model was given', () => {
+    expect(describeModelResolution(undefined, 'sonnet')).toBe("model sonnet (Issue's suggested agent-class)")
+  })
+
+  it('names the vendor default when neither an explicit model nor a resolved class exists', () => {
+    expect(describeModelResolution(undefined, undefined)).toBe(
+      'vendor default model (no --model given, no agent-class mapping for this vendor)'
+    )
   })
 })
 

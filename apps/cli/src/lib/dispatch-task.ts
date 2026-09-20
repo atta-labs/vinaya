@@ -375,8 +375,13 @@ export function resolveModelFromRationale(
  * given (the same short-circuit `resolveModelFromRationale` itself performs,
  * kept here too so a `--model`-naming caller never pays for a `gh issue
  * view` call it doesn't need).
+ *
+ * Exported for `task-run.ts`'s own `runTask` (issue-661, O1) — the SAME
+ * class-to-model resolution `task dispatch` already uses, reused rather
+ * than re-derived, so the two commands can never disagree on what a task's
+ * suggested agent-class resolves to.
  */
-function resolveModelForDispatch(
+export function resolveModelForDispatch(
   agent: DispatchAgent,
   issue: number,
   explicitModel: string | undefined

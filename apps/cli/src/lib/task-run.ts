@@ -1,8 +1,8 @@
 /**
  * `runTask` — the one lib function `vinaya task run <tranche> <n> --agent
  * <vendor>` calls (`commands/task-run.ts`). Composes `prepareTask`
- * (`dispatch-task.js`, task 1) with `devReviewLoop` (`dev-review-loop.js`,
- * unchanged) — nothing else. `prepareTask` renders and freezes the brief and
+ * (`dispatch-task.js`, task 1) with `devReviewLoop` (`dev-review-loop.js`)
+ * — nothing else. `prepareTask` renders and freezes the brief and
  * starts no agent under any circumstances (its own doc comment); the loop's
  * own round-1 entry reads that frozen brief off the Issue
  * (`fetchFrozenBrief`) and is the ONLY place a developer is ever dispatched
@@ -11,7 +11,9 @@
  *
  * `--agent` is never passed into `prepareTask` (Traps to avoid) — preparation
  * is agent-agnostic; only `devReviewLoop`'s own `LoopInput.agent` field
- * carries it, exactly once.
+ * carries it, exactly once. `LoopInput.model` (issue-661, O1) carries the
+ * SAME resolution: `runTask` resolves it once, right here, and
+ * `devReviewLoop`'s own developer dispatch is the only place it is spent.
  */
 
 import { resolveRepo as realResolveRepo, type RepoRef } from '@attalabs/aeg-forge-state'
@@ -34,6 +36,7 @@ import {
   DispatchTaskError,
   prepareIssueTask as realPrepareIssueTask,
   prepareTask as realPrepareTask,
+  resolveModelForDispatch as realResolveModelForDispatch,
   type PrepareTaskResult
 } from './dispatch-task.js'
 
@@ -62,7 +65,18 @@ export function isAlreadyDispatchedError(err: unknown): boolean {
   return err instanceof DispatchTaskError && ALREADY_DISPATCHED_PATTERN.test(err.message)
 }
 
-export type RunTaskInput = ({ tranche: string; n: number } | { issue: number }) & { agent: AgentVendor }
+/**
+ * `model` — O1 (issue-661): an explicit model the operator names on the
+ * command line. Wins over everything else; when absent, `runTask` resolves
+ * the Issue's own "Suggested agent-class" rationale through
+ * `resolveModelForDispatch` (the SAME class-to-model table `task dispatch`
+ * already uses), and falls back to the vendor's own default when neither
+ * yields one.
+ */
+export type RunTaskInput = ({ tranche: string; n: number } | { issue: number }) & {
+  agent: AgentVendor
+  model?: string
+}
 /**
  * `prUrl` — the published/paused PR's real `https://github.com/<owner>/<repo>/pull/<n>`
  * URL, per this module's own Sizing story ("...runs the loop to publish and
@@ -97,7 +111,15 @@ export type RunTaskDeps = {
    * genuinely still working the task.
    */
   isDriverAlive: (task: number) => boolean
-  devReviewLoop: (input: { task: number; agent: AgentVendor }) => Promise<LoopResult>
+  /**
+   * O1: the SAME class-to-model resolution `task dispatch` already uses
+   * (`dispatch-task.ts`'s `resolveModelForDispatch`) — an explicit model
+   * wins outright (never re-derived), absent that the Issue's own
+   * "Suggested agent-class" rationale resolves through this vendor's
+   * class-to-model table, `undefined` when neither yields one.
+   */
+  resolveModelForDispatch: (agent: AgentVendor, issue: number, explicitModel: string | undefined) => string | undefined
+  devReviewLoop: (input: { task: number; agent: AgentVendor; model?: string }) => Promise<LoopResult>
   resolveRepo: () => Promise<RepoRef | null>
 }
 
@@ -116,6 +138,7 @@ export const defaultRunTaskDeps: RunTaskDeps = {
   developerBranchFor: realDeveloperBranchFor,
   findOpenPrForBranch: realFindOpenPrForBranch,
   isDriverAlive: realIsDriverAlive,
+  resolveModelForDispatch: realResolveModelForDispatch,
   devReviewLoop: realDevReviewLoop,
   resolveRepo: () => realResolveRepo()
 }
@@ -147,6 +170,19 @@ async function resolvePrUrl(resolveRepo: () => Promise<RepoRef | null>, prNumber
 /** `RunTaskInput`'s own label for error text — a task ordinal or a bare Issue reference, whichever form the caller used. */
 export function taskLabelFor(input: RunTaskInput): string {
   return 'tranche' in input ? `task ${input.n} in tranche \`${input.tranche}\`` : `Issue #${input.issue}`
+}
+
+/**
+ * O1 — the driver's first log line: which model this run resolved, and why
+ * (Traps to avoid: an operator's stray env var must never silently win, so
+ * this names the precedence that actually applied). Pure, so the three
+ * shapes (explicit, class-mapped, absent) are fixture-tested with no
+ * `console` capture.
+ */
+export function describeModelResolution(explicitModel: string | undefined, resolvedModel: string | undefined): string {
+  if (explicitModel !== undefined) return `model ${explicitModel} (explicit --model)`
+  if (resolvedModel !== undefined) return `model ${resolvedModel} (Issue's suggested agent-class)`
+  return 'vendor default model (no --model given, no agent-class mapping for this vendor)'
 }
 
 /**
@@ -194,9 +230,15 @@ export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRu
   // classification is already true for this process and for every child that
   // inherits its environment.
   markProcessUnattended()
-  const { agent } = input
+  const { agent, model: explicitModel } = input
   const taskLabel = taskLabelFor(input)
   const issue = await resolveIssueForRunTask(input, deps)
+
+  // O1: resolved once, right after the Issue number is known and before
+  // anything else — logged as the very first line THIS invocation prints,
+  // ahead of any line `devReviewLoop` writes of its own.
+  const resolvedModel = deps.resolveModelForDispatch(agent, issue, explicitModel)
+  console.error(`vinaya task run: ${taskLabel} — ${describeModelResolution(explicitModel, resolvedModel)}`)
 
   // Round 2 security review, LOW: this check-then-act read has a real, accepted
   // race window — two concurrent `runTask` calls for the same task can both
@@ -223,7 +265,11 @@ export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRu
     )
   }
 
-  const loopResult = await deps.devReviewLoop({ task: issue, agent })
+  const loopResult = await deps.devReviewLoop({
+    task: issue,
+    agent,
+    ...(resolvedModel ? { model: resolvedModel } : {})
+  })
   const prUrl = await resolvePrUrl(deps.resolveRepo, loopResult.prNumber)
   return { ...loopResult, prUrl }
 }

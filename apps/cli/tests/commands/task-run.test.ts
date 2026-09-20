@@ -153,6 +153,30 @@ describe('vinaya task run — argv parsing', () => {
   })
 })
 
+// issue-661, round 2 (O1): `--model` is a known flag, parsed through to
+// `runTask`'s own `RunTaskInput.model` — never refused as unrecognized, and
+// never required (its absence resolves through the library's own
+// class-to-model precedence, out of this command's own concern).
+describe('vinaya task run --model — argv parsing (issue-661, round 2, O1)', () => {
+  it('is a known flag, not refused as unrecognized', () => {
+    const r = runCli(['task', 'run', 'task-run-v1', '2', '--agent', 'claude', '--model', 'opus'])
+    expect(r.stderr).not.toContain('unrecognized flag')
+  })
+
+  it('reaches past argv parsing into `runTask` itself (a real repo/tranche it cannot resolve, exit 3) — proof the value was accepted rather than short-circuited by usage', () => {
+    const r = runCli(['task', 'run', 'bogus-tranche-xyz', '999', '--agent', 'claude', '--model', 'opus'])
+    expect(r.stderr).not.toContain('Usage: vinaya task run')
+    expect(r.status).toBe(3)
+  })
+
+  it('is accepted the same way under --issue', () => {
+    const r = runCli(['task', 'run', '--issue', '999999', '--agent', 'claude', '--model', 'opus'])
+    expect(r.stderr).not.toContain('unrecognized flag')
+    expect(r.stderr).not.toContain('Usage: vinaya task run')
+    expect(r.status).toBe(3)
+  })
+})
+
 // task-run-v1 task 15, O1: `--issue <n>` is `task run`'s tranche-less form —
 // argv parsing only, mirroring the `<tranche> <n>` block above.
 describe('vinaya task run --issue — argv parsing (task-run-v1 task 15, O1)', () => {
