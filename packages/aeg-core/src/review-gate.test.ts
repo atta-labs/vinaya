@@ -416,20 +416,18 @@ describe('checkReviewGate — base identity binding (#555, O1/O3)', () => {
     expect(gate([codeReviewAtBase(BASE_A), securityAtBase(BASE_A)], BASE_A).verdict).toBe('pass')
   })
 
-  it('a base-only change (identical head, moved base) invalidates a previously clean gate', () => {
+  it('a base-only change (identical head, moved base) is tolerated (#680, O1)', () => {
     const result = gate([codeReviewAtBase(BASE_A), securityAtBase(BASE_A)], BASE_B)
-    expect(result.verdict).toBe('fail')
-    expect(result.reason).toContain('base-only change')
+    expect(result.verdict).toBe('pass')
   })
 
-  it('a base-only change STILL invalidates when a real patchIdOf is wired in (round 3 review, #555 F1 BLOCKER)', () => {
+  it('a base-only change is tolerated even when a real patchIdOf is wired in (#680, O1)', () => {
     // `check-review-gate.ts` always supplies a real `patchIdOf` — never
-    // `undefined` — so this is the actual production configuration, unlike
-    // every other test in this block, which omits it entirely. Before the
+    // `undefined` — so this is the actual production configuration. Before the
     // fix, calling `patchIdOf` with the SAME sha on both sides (the head is
-    // unchanged here) trivially reported "equal," which the gate read as a
-    // proven rebase and used to bypass the base check — silently passing a
-    // base-only change on every real evaluation.
+    // unchanged here) trivially reported "equal," and the base check was
+    // bypassed. Now the base move is tolerated directly when both base SHAs are
+    // full-length, regardless of patchIdOf.
     const result = checkReviewGate({
       comments: [codeReviewAtBase(BASE_A), securityAtBase(BASE_A)],
       labels: [],
@@ -441,8 +439,7 @@ describe('checkReviewGate — base identity binding (#555, O1/O3)', () => {
       rulingOrdinal: 0,
       patchIdOf: (sha: string) => `patch-for-${sha}`
     })
-    expect(result.verdict).toBe('fail')
-    expect(result.reason).toContain('base-only change')
+    expect(result.verdict).toBe('pass')
   })
 
   it('a verdict carrying no Judged base: line refuses against a real current base (missing required input)', () => {
