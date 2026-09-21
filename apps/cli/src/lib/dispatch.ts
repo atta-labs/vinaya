@@ -4071,7 +4071,17 @@ export async function dispatchRole(
       // which also clears this timer) complete.
       childExited = true
       clearInterval(heartbeatTimer)
-      void handleChildExit(code, Date.now() - start)
+      void handleChildExit(code, Date.now() - start).finally(() => {
+        // `exit` deliberately does not wait for stdio `close`, but Node will
+        // still keep these local pipe handles referenced when a vendor's
+        // reparented helper inherited the far end. Once the direct child's
+        // terminal output has been classified and persisted, nothing may
+        // arrive from that child again: release our ends so a completed
+        // dispatch cannot keep the controller process alive indefinitely.
+        child.stdin.destroy()
+        child.stdout.destroy()
+        child.stderr.destroy()
+      })
     })
 
     child.stdin.write(`${prompt}${codexDocumentationGuidance}`)
