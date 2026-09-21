@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
+import { spawnBudgetedAsync, stripVinayaEnv } from '../lib/process-fixture'
 
 const BIN = join(import.meta.dir, '../../src/checks/bin/check-review-gate.ts')
 
@@ -73,15 +74,14 @@ process.exit(1)
     )
     chmodSync(ghPath, 0o755)
 
-    const proc = Bun.spawn(['bun', BIN], {
+    const {
+      status: exitCode,
+      stdout,
+      stderr
+    } = await spawnBudgetedAsync(['bun', BIN], {
       cwd: dir,
-      env: { ...process.env, PATH: `${ghDir}:${process.env.PATH}`, PR_NUMBER: '1' },
-      stdout: 'pipe',
-      stderr: 'pipe'
+      env: { ...stripVinayaEnv(), PATH: `${ghDir}:${process.env.PATH}`, PR_NUMBER: '1' }
     })
-    const stderr = await new Response(proc.stderr).text()
-    const stdout = await new Response(proc.stdout).text()
-    const exitCode = await proc.exited
 
     // The red sibling check is never even fetched.
     expect(existsSync(checkRunsProbe)).toBe(false)
