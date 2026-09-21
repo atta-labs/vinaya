@@ -1568,15 +1568,18 @@ exit 1
 })
 
 /**
- * Round 2 review, BLOCKER (task-run-v1 21, `#541`, O9): `issue view --json
- * comments` dynamically replays whatever `issue comment` has actually
- * posted to `$HOME/.fake-gh-posted-issue-comments` — the static-brief-only
- * variant every OTHER scenario in this file uses is fine for those (none
- * of them need a SECOND run to see what a FIRST run flushed), but this
- * scenario's whole point is that a reattach reconstructs history from
- * exactly those flushed lines. `pr comment`'s crash-on-the-second-post
- * logic is unchanged from `writeFakeGhCrashOnSecondPostFlushSucceeds` —
- * this fixture is that one, plus the dynamic Issue-comment replay.
+ * Round 2 review, BLOCKER (task-run-v1 21, `#541`, O9); reconstruction source
+ * updated by [task-files-v1] 4 (Issue #651): the reattach rebuilds round
+ * numbering from the pull request's own principal-authored developer round
+ * marker (`pr view --json comments`, replayed from `$HOME/.fake-gh-posted-
+ * comments`), never from a flushed log line. `issue view --json comments`
+ * still dynamically replays whatever `issue comment` flushed to
+ * `$HOME/.fake-gh-posted-issue-comments`, but only so this test can ASSERT
+ * the telemetry the run logged (a green `round_ended`, and never a
+ * `merged_ready`) — that assertion reads the Log; the recovery does not.
+ * `pr comment`'s crash-on-the-second-post logic is unchanged from
+ * `writeFakeGhCrashOnSecondPostFlushSucceeds` — this fixture is that one,
+ * plus the dynamic Issue-comment replay.
  */
 function writeFakeGhCrashOnceThenReattach(dir: string): void {
   writeFakeBinary(
@@ -1835,9 +1838,9 @@ describe('devReviewLoop — O9 (task-run-v1 21, #541, round 2 review BLOCKER): a
     expect(existsSync(join(roundDir(home, 2), 'security-work'))).toBe(true)
 
     // The published summary — round 2's real, live computation — still
-    // names round 1, reconstructed from what round 1 actually flushed
-    // before it crashed, never dropped just because it never got to
-    // publish (Origin, PR #536).
+    // names round 1, reconstructed from the round-1 developer marker round 1
+    // posted to the PR before it crashed, never dropped just because it never
+    // got to publish (Origin, PR #536).
     const files = postedCommentFiles(home)
     const summaryFile = files[files.length - 1] as string
     const summary = readFileSync(join(home, '.fake-gh-posted-comments', summaryFile), 'utf8')
@@ -6878,79 +6881,36 @@ describe('devReviewLoop — the driver composes the round comment from a citatio
   }, 20000)
 })
 
-/** A schema-valid `dev_review_loop` NDJSON line — the shape `journal-reconstruction.ts` (`@attalabs/aeg-core`) requires to accept it. */
-function loopEventLine(fields: Record<string, unknown>, seq: number): string {
-  return JSON.stringify({
-    meta: {
-      schema: 1,
-      ts: new Date(2026, 0, 1, 0, 0, seq).toISOString(),
-      run_id: 'prior-run-1',
-      seq,
-      repo: null,
-      vinaya: '0.0.0-test',
-      doctrine: 'test',
-      host: 'cli',
-      machine: 'test-machine'
-    },
-    subject: { issue: TASK, role: 'unattributed' },
-    kind: 'dev_review_loop',
-    loop_id: 'prior-loop-1',
-    payload: {},
-    ...fields
-  })
-}
-
 /**
- * O9 (task-run-v1 21, `#541`): round 1 genuinely concluded
- * `changes_requested` — logged in full to the local outbox — but the
- * process then died before ever flushing those lines to the forge AND
- * before (or after) any held-verdict `.md` file survived to disk. Unlike
- * the `setUpAttachRecoversHeldRound` scenarios above, there is deliberately
- * no `round-1-reviewer.md`/`round-1-security.md` here — the ONLY signal
- * this attach has that round 1 ever happened is the raw log line, which is
- * exactly the gap `latestHeldRequestChanges` (O4, task 3) cannot close on
- * its own: a held-verdict file is one specific crash window; the durable
- * log is the task's complete record, per O9.
+ * O9 (task-run-v1 21, `#541`), [task-files-v1] 4 (Issue #651): round 1
+ * genuinely concluded `changes_requested` and posted its own developer round
+ * marker to the pull request — the durable, principal-authored FORGE MARKER
+ * the round journal is now rebuilt from, never a log event. The process then
+ * died before any held-verdict `.md` file survived to disk (unlike the
+ * `setUpAttachRecoversHeldRound` scenarios above, there is deliberately no
+ * `round-1-reviewer.md`/`round-1-security.md` here) and before any
+ * ready-for-merge summary was ever posted. The ONLY signal this attach has
+ * that round 1 ever happened is that marker comment — exactly the gap
+ * `latestHeldRequestChanges` (O4, task 3) cannot close on its own: a
+ * held-verdict file is one specific crash window; the forge marker is the
+ * task's durable record.
+ *
+ * Seeded straight into the fixture's posted-comments dir (the dir
+ * `writeFakeGhAttach`'s own `pr view --json comments` replays from), authored
+ * by the principal, so it is trusted exactly as a real round-1 marker would
+ * be.
  */
-function writeRound1LoopHistory(home: string): void {
-  const outboxDir = join(home, '.vinaya', 'outbox', 'unresolved')
-  mkdirSync(outboxDir, { recursive: true })
-  const lines = [
-    loopEventLine(
-      {
-        event: 'loop_started',
-        task: TASK,
-        policy: { max_rounds: 3, reviewers: ['code-reviewer', 'security'], models: {} }
-      },
-      0
-    ),
-    loopEventLine({ event: 'round_started', round: 1, base_head: BASE_SHA }, 1),
-    loopEventLine({ event: 'gate_result_read', round: 1, head: HELD_JUDGED_HEAD, green: true }, 2),
-    loopEventLine({ event: 'verdicts_read', round: 1, head: HELD_JUDGED_HEAD, all_approve: false, blockers: 1 }, 3),
-    loopEventLine({ event: 'findings_compared', round: 1, open: ['F1'], resolved: [], new: ['F1'], recurring: [] }, 4),
-    loopEventLine(
-      {
-        event: 'round_ended',
-        round: 1,
-        base_head: BASE_SHA,
-        head: HELD_JUDGED_HEAD,
-        files_changed: 2,
-        insertions: 5,
-        deletions: 1,
-        wall_ms: 1000,
-        outcome: 'changes_requested'
-      },
-      5
-    )
-  ]
-  writeFileSync(join(outboxDir, `${TASK}.ndjson`), `${lines.join('\n')}\n`, 'utf8')
+function seedRound1DeveloperMarker(home: string): void {
+  const stateDir = join(home, '.fake-gh-posted-comments')
+  mkdirSync(stateDir, { recursive: true })
+  writeFileSync(join(stateDir, 'comment-1.md'), `<!-- aeg:developer:round-1 -->\nHead: ${HELD_JUDGED_HEAD}\n`, 'utf8')
 }
 
-describe('devReviewLoop — O9 (task-run-v1 21, #541): attach reconstructs round numbering and the journal from the outbox alone, with no held-verdict file', () => {
+describe("devReviewLoop — O9 (task-run-v1 21, #541) / [task-files-v1] 4 (#651): attach reconstructs round numbering and the journal from the PR's own developer round marker, with no held-verdict file and no log event", () => {
   it('dispatches round 2 directly (never redelivers round 1) and publishes a two-row journal covering both rounds', () => {
     const { home, cwd, path } = setUpAttachRecoversHeldRound()
 
-    writeRound1LoopHistory(home)
+    seedRound1DeveloperMarker(home)
 
     const worktreeDir = join(cwd, '.worktrees', BRANCH)
     mkdirSync(worktreeDir, { recursive: true })
@@ -6961,15 +6921,16 @@ describe('devReviewLoop — O9 (task-run-v1 21, #541): attach reconstructs round
     expect(r.status).toBe(0)
     expect(r.stdout).toMatch(/publish/)
 
-    // Round advanced to 2 from the outbox's own round_ended alone — no
-    // held-verdict file ever existed for this attach to read instead.
+    // Round advanced to 2 from the PR's own round-1 developer marker alone —
+    // no held-verdict file, no outbox NDJSON, and no log event of any kind
+    // for this attach to read instead ([task-files-v1] 4).
     expect(existsSync(join(roundDir(home, 2), 'reviewer-work'))).toBe(true)
     expect(existsSync(join(roundDir(home, 2), 'security-work'))).toBe(true)
     expect(existsSync(join(home, '.dev-invocations'))).toBe(false)
 
-    // The published summary names both rounds — round 1's reconstructed
-    // from the outbox, round 2 computed live by this run — never fewer
-    // rows than the real rounds this task actually ran (Origin, PR #536).
+    // The published summary names both rounds — round 1 reconstructed from
+    // its forge marker, round 2 computed live by this run — never fewer rows
+    // than the real rounds this task actually ran (Origin, PR #536).
     const files = postedCommentFiles(home)
     const summaryFile = files[files.length - 1] as string
     const summary = readFileSync(join(home, '.fake-gh-posted-comments', summaryFile), 'utf8')

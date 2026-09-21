@@ -353,8 +353,8 @@ export type LoopDeps = {
   gitFetch: (sha: string) => void
   gitDiffShortstat: (base: string, head: string) => string
   flushOutbox: (task: number) => Promise<FlushOutboxOutcome>
-  /** O9: the task's complete round journal, replayed from the forge's already-flushed record plus this machine's still-unflushed outbox. */
-  fetchLoopHistory: (root: string, repo: { owner: string; repo: string } | null, task: number) => ReconstructedJournal
+  /** The task's round journal, rebuilt from the pull request's principal-authored forge markers (developer round markers, the published summary) — never a log event, a flushed log comment or the telemetry outbox. */
+  fetchLoopHistory: (prNumber: number | null) => ReconstructedJournal
   sleep: (ms: number) => Promise<void>
   now: () => number
   prPollMaxAttempts: number
@@ -1115,8 +1115,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // avoid), and never re-deriving a round/head from this stale record.
       const existingLock = readDriverLock(root, closesTask)
       const driverIsLive = existingLock !== null && isDriverPidAlive(existingLock.pid)
-      const repoForHistory = await resolveRepo().catch(() => null)
-      const history = d.fetchLoopHistory(d.telemetryOutboxRoot(), repoForHistory, closesTask)
+      const history = d.fetchLoopHistory(resumePr)
       const alreadyConcluded = history.journalFinalized?.result === 'merged_ready'
       if (driverIsLive || err.existing?.decision !== 'resume' || alreadyConcluded) {
         throw new Error(`devReviewLoop --resume: ${err.message}`)
@@ -1354,57 +1353,56 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     }
 
     /**
-     * O9: the round journal is the task's, not this process's — on a plain
+     * The round journal is the task's, not this process's — on a plain
      * attach (never a genuine round-1 dispatch, which by construction has
-     * no prior round to recover), replay every `dev_review_loop` event the
-     * task has ever emitted before this run logs one of its own.
-     * `seedLoopHistory` is called from exactly one site below: the
-     * `existingPr` attach branch.
+     * no prior round to recover), rebuild the task's prior rounds from the
+     * pull request's own principal-authored forge markers before this run
+     * computes one of its own. `seedLoopHistory` is called from exactly one
+     * site below: the `existingPr` attach branch. Its source is the forge
+     * markers alone (`fetchLoopHistory`), NEVER a log event, a flushed log
+     * comment, or the telemetry outbox — the Log is telemetry and is never
+     * read to recover a run.
      *
      * Deliberately NEVER called on `--resume` (round 2 review, BLOCKER):
-     * `resumeFrom.round` is the exact round the paused process already
-     * logged a `round_ended` for before it exited — that round is already
-     * the newest entry `fetchLoopHistory` would replay. Seeding here, then
-     * letting this same resumed run recompute and append that identical
-     * round number again, is the precise double-count this function's own
-     * append-only `state.rounds` guards against elsewhere (see below) — the
-     * attach branch never hits it because attach always continues at
-     * `held.round + 1`, one past anything replayed, while resume
-     * deliberately continues AT `resumeFrom.round` to give the ruling's fix
-     * a chance in the same round. `state.rounds` starts empty on resume and
-     * accumulates only the rounds this process itself computes from here
-     * on.
+     * `resumeFrom.round` is the exact round the paused process was on before
+     * it exited — its developer round marker is already on the forge, so
+     * seeding here, then letting this same resumed run recompute and append
+     * that identical round number again, is the precise double-count this
+     * function's own append-only `state.rounds` guards against elsewhere
+     * (see below) — the attach branch never hits it because attach always
+     * continues at `held.round + 1`, one past anything reconstructed, while
+     * resume deliberately continues AT `resumeFrom.round` to give the
+     * ruling's fix a chance in the same round. `state.rounds` starts empty on
+     * resume and accumulates only the rounds this process itself computes
+     * from here on.
      *
      * Applied whenever this task has NOT actually reached a real terminal
-     * publish — never gated on the newest round's own `outcome: 'green'`
-     * (round 2 review, BLOCKER): that field is logged the moment
-     * `assessRound` decides `publish`, but `journal_finalized` is
-     * deliberately DEFERRED until `publishRound` itself returns without
-     * throwing (this file's own doc comment on `pendingCompletionEvents`,
-     * below). A crash between those two points — `gh` failing mid-publish
-     * — leaves a `round_ended` reading green with no `journal_finalized`
-     * ever landing; treating that green `outcome` alone as "this task is
-     * done" silently dropped every round from the published table and
-     * restarted numbering at `1` on the very next attach, for a task that
-     * never actually published — exactly the failure O9 exists to close.
-     * `loopHistory.journalFinalized` is the one honest signal: present
-     * with `result: 'merged_ready'` ONLY once `publishRound` truly
-     * succeeded. Guards the one real hazard seeding would otherwise
-     * create even when genuinely finalized: `assessRound` always APPENDS
-     * to `state.rounds` (`assess-round.ts`'s `buildRoundRecord` call
-     * sites), never deduplicates by round number — seeding round 1's
-     * record here, then letting THIS SAME run recompute round 1 live
-     * (the "rerun posts nothing twice" idempotency case), would double it
-     * in the published table.
+     * publish — never gated on a round having merely decided `publish` (round
+     * 2 review, BLOCKER): the control store's own `loop_state.phase` reads
+     * `'publish'` the moment `assessRound` decides it, written before
+     * `publishRound` ever runs, so it can never stand for "actually
+     * published." The one honest signal is a principal-authored ready-for-
+     * merge SUMMARY comment on the forge (`journalFinalized.result ===
+     * 'merged_ready'`): `publishRound` posts it last, after both verdicts, so
+     * a crash mid-publish (a `gh` failure) leaves NO summary and this reads
+     * `null` — never mistaking that crash for a completion, the exact case
+     * that once silently dropped every round from the published table and
+     * restarted numbering at `1` on the next attach. Guards the one real
+     * hazard seeding would otherwise create even when genuinely finalized:
+     * `assessRound` always APPENDS to `state.rounds` (`assess-round.ts`'s
+     * `buildRoundRecord` call sites), never deduplicates by round number —
+     * seeding round 1's record here, then letting THIS SAME run recompute
+     * round 1 live (the "rerun posts nothing twice" idempotency case), would
+     * double it in the published table.
      */
     let loopHistory: ReconstructedJournal = { rounds: [], totalWallMs: 0, totalFilesChanged: 0, journalFinalized: null }
     /** Whether `seedLoopHistory` actually applied — the round-bump below reuses this instead of re-deriving the same "already published?" check a second time. */
     let historyApplies = false
     function seedLoopHistory(): void {
-      // The TELEMETRY outbox, never `root` — this reads back log events
-      // this machine has not flushed yet, which is the one class of run file
-      // that did not move into the task folder.
-      loopHistory = d.fetchLoopHistory(d.telemetryOutboxRoot(), repo, task)
+      // The forge markers on this task's own pull request — never a log
+      // event or the telemetry outbox. `prNumber` is already the attached
+      // PR's number by the one call site below.
+      loopHistory = d.fetchLoopHistory(prNumber)
       const newest = loopHistory.rounds[loopHistory.rounds.length - 1]
       const actuallyPublished = loopHistory.journalFinalized?.result === 'merged_ready'
       historyApplies = newest !== undefined && !actuallyPublished
@@ -1796,16 +1794,18 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     }
 
     /**
-     * A round-2 review MAJOR finding: logs the driver's own mid-round
-     * resume as a real `dev_review_loop` journal event — `unpushed_work_resume`
-     * (`schema.ts`) — not only the marked PR comment below: the objective's
-     * own wording is "records the resume in the journal," and only a real
-     * event reaches `fetchLoopHistory`/`reconstructRounds`, the journal this
-     * same PR's `apps/cli/specs/loop.md` names. Mid-round, never terminal —
-     * flushed immediately anyway, matching every other `logEvents` call site
-     * in this file, so the event is durable on the forge even if the
-     * resumed developer's own turn crashes the process before the round
-     * ends.
+     * A round-2 review MAJOR finding: records the driver's own mid-round
+     * resume as a real `dev_review_loop` telemetry event —
+     * `unpushed_work_resume` (`schema.ts`) — not only the marked PR comment
+     * below, so the resume leaves a durable observation in the Log. This
+     * event is deliberately kept exactly as it was — this change moves only
+     * where the round HISTORY is read from, never which events the loop
+     * emits: the round journal is now rebuilt from the pull request's own
+     * principal-authored forge markers (`fetchLoopHistory`), never replayed
+     * from this or any other log event. Mid-round, never terminal — flushed
+     * immediately anyway, matching every other `logEvents` call site in this
+     * file, so the event is durable even if the resumed developer's own turn
+     * crashes the process before the round ends.
      */
     async function logUnpushedWorkResume(roundNum: number, detail: string): Promise<void> {
       await logEvents([
@@ -2662,31 +2662,31 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         }
       }
 
-      // O9: an attach with no locally-held request-changes file to recover
+      // An attach with no locally-held request-changes file to recover
       // `round` from (`latestHeldRequestChanges`, above, returned null — a
       // different machine, or local state already cleaned) must still not
-      // restart round numbering at 1 when the reconstructed history shows
-      // real, still-unfinished prior rounds (`historyApplies` — see
-      // `seedLoopHistory`'s own doc comment for why a newest-round-green
-      // history never reaches here). Never applied to `--resume`: that round
-      // is deliberately the ruling's own ordinal (O8), not the next
-      // sequential round, and `Math.max` never regresses the more-precise,
-      // locally-held recovery above when both agree or the local one is
-      // ahead.
+      // restart round numbering at 1 when the forge markers show real prior
+      // rounds that never reached a published summary (`historyApplies` —
+      // see `seedLoopHistory`'s own doc comment for why a task whose summary
+      // WAS published never reaches here). The markers come from the pull
+      // request's own developer round comments, never a log event. Never
+      // applied to `--resume`: that round is deliberately the ruling's own
+      // ordinal (O8), not the next sequential round, and `Math.max` never
+      // regresses the more-precise, locally-held recovery above when both
+      // agree or the local one is ahead.
       if (!resumeFrom && historyApplies) round = Math.max(round, nextRoundNumber(loopHistory.rounds))
 
-      // The control store's own
-      // recovered round is the authoritative one — `Math.max` only ever
-      // advances `round` here, never regresses it, so every mechanism
-      // above (the ruling ordinal on `--resume`, the locally-held
-      // request-changes recovery, the optional-event-history fallback
-      // just above) keeps winning whenever it already agrees or is ahead.
-      // What this closes: a task whose held-verdict files and forge-
-      // flushed journal are BOTH unavailable (a different machine, a
-      // GitHub read that fails, an outbox that was cleaned) no longer
-      // silently restarts numbering at 1 as long as this task's own
-      // control-store record survived — recovery stops depending on that
-      // optional event history alone.
+      // The control store's own recovered round is the authoritative one —
+      // `Math.max` only ever advances `round` here, never regresses it, so
+      // every mechanism above (the ruling ordinal on `--resume`, the
+      // locally-held request-changes recovery, the forge-marker fallback just
+      // above) keeps winning whenever it already agrees or is ahead. What
+      // this closes: a task whose held-verdict files AND forge markers are
+      // both unavailable (a different machine, a GitHub read that fails, a
+      // pull request whose comments were never posted) no longer silently
+      // restarts numbering at 1 as long as this task's own control-store
+      // record survived — the control store and the forge markers together
+      // are the round-history source, never the Log.
       if (recoveredLoopState.status === 'ok') round = Math.max(round, recoveredLoopState.value.round)
 
       // Held back from `logEvents` until `publishRound` (below) actually

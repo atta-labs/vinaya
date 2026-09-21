@@ -1,107 +1,94 @@
 /**
- * O9: the impure half of round-journal
- * reconstruction — gathering every `dev_review_loop` log line this task has
- * ever emitted, from the two places it can live: wherever the round-end
- * flush actually posted it (O1: the task's own
- * Issue is no longer that place by default — `resolveRoundEndFlushTarget`,
- * `../config.js`, resolves the SAME `vinaya.config.json` `logPublish`
- * destination `defaultFlushOutbox` posts to, so this read and that write can
- * never disagree about where "already flushed" means), and whatever is
- * still unflushed in the local outbox on this machine (a crash between a
- * round concluding and its flush). `journal-reconstruction.ts`
- * (`@attalabs/aeg-core`) does the actual replay; this file only fetches and
- * parses.
+ * The impure half of round-journal reconstruction — gathering the two facts
+ * the pure rebuild needs (`journal-reconstruction.ts`, `@attalabs/aeg-core`)
+ * from the forge's own principal-authored markers on the pull request:
+ *
+ *   - the round numbers every developer round marker
+ *     (`<!-- aeg:developer:round-<n> -->`, `parseDeveloperRoundMarker`) carries,
+ *   - whether a ready-for-merge summary comment
+ *     (`isPublishedSummaryComment`) has actually been posted.
+ *
+ * It reads NO log event, NO flushed `dev_review_loop` log comment, and NO
+ * telemetry outbox. The Vinaya Log is telemetry and "is never the authority
+ * for … recovery" (Log tech spec, §1) — a rebuild that replayed the loop's own
+ * flushed log events broke the moment those events stopped going to the
+ * tracker, which is the whole reason this reads the principal-authored markers
+ * instead. The control store's own
+ * authoritative round is recovered separately by the driver
+ * (`recoverLoopState`), so this file's one job is the forge read.
  *
  * Same trust boundary every other forge read in this directory already
  * applies (a security-review finding): only principal-authored comments are
- * trusted, so a non-principal Issue/PR commenter cannot forge a
- * `<!-- aeg:log: -->`-shaped comment to inject fabricated rounds into the
- * published journal.
+ * trusted, so a non-principal PR commenter cannot forge a round marker or a
+ * summary-shaped comment to inject fabricated rounds or a false "already
+ * published" into the rebuilt journal. Reuses the large-buffer comment read
+ * (`sh`'s own `MAX_GH_OUTPUT_BYTES`) — a task's comment history can exceed the
+ * default 1 MiB buffer.
  */
 
-import { readFileSync } from 'node:fs'
 import {
-  extractLoopEventsFromCommentBody,
   isPrincipal,
-  parseLoopEventLines,
+  isPublishedSummaryComment,
+  parseDeveloperRoundMarker,
   reconstructRounds,
-  type DevReviewLoopEvent,
   type ReconstructedJournal
 } from '@attalabs/aeg-core'
-import { loadConfig, resolveRoundEndFlushTarget, type LogPublishTarget } from '../config.js'
-import { markerComments, principalAllowlist } from './developer-dispatch.js'
+import { markerComments, principalAllowlist, type MarkerComment } from './developer-dispatch.js'
 import { sh } from './gate-reading.js'
-import { outboxPathFor } from '../log-sink.js'
+
+/** An empty journal — no PR to read, or a `gh` read that failed: reconstruction is a display/recovery aid, never a dispatch gate, so it degrades to "no history" rather than throwing. */
+const EMPTY_JOURNAL: ReconstructedJournal = {
+  rounds: [],
+  totalWallMs: 0,
+  totalFilesChanged: 0,
+  journalFinalized: null
+}
 
 /**
- * Every `dev_review_loop` event already flushed to `target`'s comments —
- * principal-authored only. `target === null` (no `logPublish` configured,
- * or configured back onto `task`'s own Issue and refused) means nothing was
- * ever posted anywhere for this feature — skips the forge read entirely
- * rather than reading the task's own Issue on the offchance an OLDER build
- * once flushed there: a stale read is worse than an honest empty one, and
- * the unflushed local outbox below still covers this machine's own recent
- * history regardless.
+ * The pure rebuild: the two forge facts extracted from a pull request's
+ * comments, principal-authored only. A non-principal commenter's round marker
+ * or summary-shaped comment is ignored (the same trust boundary every other
+ * forge read in this directory applies), so it can neither inject a
+ * fabricated round nor forge a false "already published." Exported for
+ * unit testing without a `gh` call.
  */
-function fetchFlushedLoopEvents(target: LogPublishTarget | null): DevReviewLoopEvent[] {
-  // A webhook target has no comment history to read back (unlike GitHub's
-  // issue/pr, there is nothing to `gh ... view --json comments` against) —
-  // treated the same as unconfigured: the local outbox below still covers
-  // this machine's own recent history regardless.
-  if (target === null || 'webhookUrl' in target) return []
+export function loopHistoryFromComments(
+  comments: readonly MarkerComment[],
+  allowlist: readonly string[]
+): ReconstructedJournal {
+  const roundMarkers: number[] = []
+  let summaryPublished = false
+  for (const comment of comments) {
+    if (!isPrincipal(comment.author, allowlist as string[])) continue
+    const round = parseDeveloperRoundMarker(comment.body)
+    if (round !== null) roundMarkers.push(round)
+    if (isPublishedSummaryComment(comment.body)) summaryPublished = true
+  }
+  return reconstructRounds({ roundMarkers, summaryPublished })
+}
+
+/**
+ * The task's own complete round journal, rebuilt from the pull request's
+ * principal-authored forge markers. Called on every entry (attach to an
+ * existing PR, and the `--resume` replay-check) so a task with no PR, or one
+ * whose comment read fails, pays at most one `gh pr view` and gets back the
+ * empty journal — a harmless no-op, since reconstruction is idempotent and
+ * never destructive.
+ *
+ * `prNumber === null` (a `--resume` whose PR could not be resolved) reads
+ * nothing and returns the empty journal: the control store's own round
+ * recovery (`recoverLoopState`) still covers this run regardless.
+ */
+export function fetchLoopHistory(prNumber: number | null): ReconstructedJournal {
+  if (prNumber === null) return EMPTY_JOURNAL
   let out: string
   try {
-    out =
-      'pr' in target
-        ? sh('gh', ['pr', 'view', String(target.pr), '--json', 'comments'])
-        : sh('gh', ['issue', 'view', String(target.issue), '--json', 'comments'])
+    out = sh('gh', ['pr', 'view', String(prNumber), '--json', 'comments'])
   } catch {
-    // No Issue/PR, or `gh` unreachable — reconstruction degrades to whatever
-    // the local outbox alone can offer, never a hard failure: a task
-    // journal is a display concern, not a dispatch gate.
-    return []
+    // No PR, or `gh` unreachable — reconstruction degrades to the empty
+    // journal, never a hard failure: a task journal is a display/recovery
+    // aid, not a dispatch gate. The control store still recovers the round.
+    return EMPTY_JOURNAL
   }
-  const allowlist = principalAllowlist()
-  const events: DevReviewLoopEvent[] = []
-  for (const comment of markerComments(out)) {
-    if (!isPrincipal(comment.author, allowlist)) continue
-    events.push(...extractLoopEventsFromCommentBody(comment.body))
-  }
-  return events
-}
-
-/** Whatever this task's own outbox still holds unflushed, on THIS machine — a crash between a round concluding and its flush. Best-effort: a missing or unreadable file yields no extra events, never a throw. */
-function fetchUnflushedLoopEvents(
-  root: string,
-  repo: { owner: string; repo: string } | null,
-  task: number
-): DevReviewLoopEvent[] {
-  const path = outboxPathFor({ outboxRoot: () => root }, repo, task)
-  let raw: string
-  try {
-    raw = readFileSync(path, 'utf8')
-  } catch {
-    return []
-  }
-  return parseLoopEventLines(raw.split('\n')).filter((e) => e.kind === 'dev_review_loop')
-}
-
-/**
- * The task's own complete round journal, replayed from every source this
- * driver can reach — the forge's already-flushed record and this machine's
- * still-unflushed one, combined. Called on every entry (fresh round 1,
- * attach to an existing PR, and `--resume`) so a task with no history at
- * all pays for at most one `gh issue/pr view` (none at all when `logPublish`
- * is unconfigured) and gets back `{rounds: [], ...}`, a harmless no-op —
- * reconstruction is idempotent, never destructive.
- */
-export function fetchLoopHistory(
-  root: string,
-  repo: { owner: string; repo: string } | null,
-  task: number
-): ReconstructedJournal {
-  const target = resolveRoundEndFlushTarget(loadConfig(), task)
-  const flushed = fetchFlushedLoopEvents(target)
-  const unflushed = fetchUnflushedLoopEvents(root, repo, task)
-  return reconstructRounds([...flushed, ...unflushed])
+  return loopHistoryFromComments(markerComments(out), principalAllowlist())
 }

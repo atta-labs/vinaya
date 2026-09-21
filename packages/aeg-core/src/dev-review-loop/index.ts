@@ -2,12 +2,12 @@ export { assessRound } from './assess-round'
 export { renderSummary } from './render-summary'
 export { initialLoopState } from './types'
 export {
-  extractLoopEventsFromCommentBody,
+  isPublishedSummaryComment,
   nextRoundNumber,
-  parseLoopEventLines,
-  reconstructRounds
+  reconstructRounds,
+  SUMMARY_TABLE_HEADER
 } from './journal-reconstruction'
-export type { ReconstructedJournal } from './journal-reconstruction'
+export type { ReconstructedJournal, ReconstructionInput } from './journal-reconstruction'
 export type {
   Confidence,
   Decision,
