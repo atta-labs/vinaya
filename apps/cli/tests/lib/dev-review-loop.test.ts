@@ -9306,7 +9306,6 @@ describe('a loop-published verdict passes the merge gate (O2)', () => {
       labels: [],
       waiverLabelActor: null,
       headSha: HEAD,
-      mechanicalChecks: [{ name: 'Vinaya CI', bucket: 'pass' }],
       principalAllowlist: ['daniboomerang'],
       objectivesVersion: VERSION,
       rulingOrdinal: 0
@@ -9362,7 +9361,6 @@ describe('a loop-published verdict passes the merge gate (O2)', () => {
       labels: [],
       waiverLabelActor: null,
       headSha: HEAD,
-      mechanicalChecks: [{ name: 'Vinaya CI', bucket: 'pass' }],
       principalAllowlist: ['daniboomerang'],
       objectivesVersion: 'a-newer-version-entirely',
       rulingOrdinal: 0
@@ -9437,7 +9435,6 @@ describe('a loop-published verdict agrees with the merge gate under policy (revi
       labels: [],
       waiverLabelActor: null,
       headSha: HEAD,
-      mechanicalChecks: [{ name: 'Vinaya CI', bucket: 'pass' }],
       principalAllowlist: ['daniboomerang'],
       objectivesVersion: null,
       rulingOrdinal: 0,
@@ -9500,7 +9497,6 @@ describe('a loop-published verdict agrees with the merge gate under policy (revi
       labels: [],
       waiverLabelActor: null,
       headSha: HEAD,
-      mechanicalChecks: [{ name: 'Vinaya CI', bucket: 'pass' }],
       principalAllowlist: ['daniboomerang'],
       objectivesVersion: null,
       rulingOrdinal: 0
@@ -9571,7 +9567,6 @@ describe('a loop-published verdict is bound to the newest ruling ordinal (review
       labels: [],
       waiverLabelActor: null,
       headSha: HEAD,
-      mechanicalChecks: [{ name: 'Vinaya CI', bucket: 'pass' }],
       principalAllowlist: ['daniboomerang'],
       objectivesVersion: null,
       rulingOrdinal: 1
@@ -9627,7 +9622,6 @@ describe('a loop-published verdict is bound to the newest ruling ordinal (review
       labels: [],
       waiverLabelActor: null,
       headSha: HEAD,
-      mechanicalChecks: [{ name: 'Vinaya CI', bucket: 'pass' }],
       principalAllowlist: ['daniboomerang'],
       objectivesVersion: null,
       rulingOrdinal: 2

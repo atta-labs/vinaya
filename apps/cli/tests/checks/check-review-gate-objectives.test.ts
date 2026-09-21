@@ -86,10 +86,6 @@ if (args[0] === 'issue' && args[1] === 'view') {
   process.stdout.write(process.env.STUB_ISSUE_VIEW_BODY ?? '')
   process.exit(0)
 }
-if (args[0] === 'api' && String(args[1]).includes('/check-runs')) {
-  process.stdout.write(process.env.STUB_CHECK_RUNS_NDJSON ?? '')
-  process.exit(0)
-}
 if (args[0] === 'api' && String(args[1]).includes('/timeline')) {
   process.stdout.write(process.env.STUB_TIMELINE_JSON ?? '[]')
   process.exit(0)
@@ -101,8 +97,6 @@ process.exit(1)
     chmodSync(ghPath, 0o755)
     return ghDir
   }
-
-  const CLEAN_CHECK_RUNS = '{"id":1,"name":"ci","status":"completed","conclusion":"success"}\n'
 
   async function run(
     d: string,
@@ -146,8 +140,7 @@ process.exit(1)
 
     const { exitCode } = await run(d, ghDir, {
       STUB_PR_VIEW_JSON: JSON.stringify(prView),
-      STUB_ISSUE_VIEW_BODY: ISSUE_OBJECTIVES_BODY,
-      STUB_CHECK_RUNS_NDJSON: CLEAN_CHECK_RUNS
+      STUB_ISSUE_VIEW_BODY: ISSUE_OBJECTIVES_BODY
     })
 
     expect(exitCode).toBe(0)
@@ -180,8 +173,7 @@ process.exit(1)
 
     const { exitCode, stderr } = await run(d, ghDir, {
       STUB_PR_VIEW_JSON: JSON.stringify(prView),
-      STUB_ISSUE_VIEW_BODY: ISSUE_OBJECTIVES_BODY,
-      STUB_CHECK_RUNS_NDJSON: CLEAN_CHECK_RUNS
+      STUB_ISSUE_VIEW_BODY: ISSUE_OBJECTIVES_BODY
     })
 
     expect(exitCode).toBe(1)
@@ -219,8 +211,7 @@ process.exit(1)
     }
 
     const { exitCode } = await run(d, ghDir, {
-      STUB_PR_VIEW_JSON: JSON.stringify(prView),
-      STUB_CHECK_RUNS_NDJSON: CLEAN_CHECK_RUNS
+      STUB_PR_VIEW_JSON: JSON.stringify(prView)
     })
 
     expect(exitCode).toBe(0)
@@ -251,8 +242,7 @@ process.exit(1)
     }
 
     const { exitCode } = await run(d, ghDir, {
-      STUB_PR_VIEW_JSON: JSON.stringify(prView),
-      STUB_CHECK_RUNS_NDJSON: CLEAN_CHECK_RUNS
+      STUB_PR_VIEW_JSON: JSON.stringify(prView)
     })
 
     expect(exitCode).toBe(0)
@@ -284,8 +274,7 @@ process.exit(1)
 
     const { exitCode, stderr } = await run(d, ghDir, {
       STUB_PR_VIEW_JSON: JSON.stringify(prView),
-      STUB_ISSUE_VIEW_FAIL: 'API rate limit exceeded for this token',
-      STUB_CHECK_RUNS_NDJSON: CLEAN_CHECK_RUNS
+      STUB_ISSUE_VIEW_FAIL: 'API rate limit exceeded for this token'
     })
 
     expect(exitCode).toBe(1)
@@ -319,8 +308,7 @@ process.exit(1)
 
     const { exitCode, stderr } = await run(d, ghDir, {
       STUB_PR_VIEW_JSON: JSON.stringify(prView),
-      STUB_ISSUE_VIEW_FAIL: 'GraphQL: Could not resolve to an issue with the number of 500.',
-      STUB_CHECK_RUNS_NDJSON: CLEAN_CHECK_RUNS
+      STUB_ISSUE_VIEW_FAIL: 'GraphQL: Could not resolve to an issue with the number of 500.'
     })
 
     // A deleted/renamed Issue at/above the cutover must never silently
@@ -358,8 +346,7 @@ process.exit(1)
 
     const { exitCode, stderr } = await run(d, ghDir, {
       STUB_PR_VIEW_JSON: JSON.stringify(prView),
-      STUB_ISSUE_VIEW_BODY: 'not a real Objectives section',
-      STUB_CHECK_RUNS_NDJSON: CLEAN_CHECK_RUNS
+      STUB_ISSUE_VIEW_BODY: 'not a real Objectives section'
     })
 
     expect(exitCode).toBe(1)
@@ -397,8 +384,7 @@ process.exit(1)
     }
 
     const { exitCode } = await run(d, ghDir, {
-      STUB_PR_VIEW_JSON: JSON.stringify(prView),
-      STUB_CHECK_RUNS_NDJSON: CLEAN_CHECK_RUNS
+      STUB_PR_VIEW_JSON: JSON.stringify(prView)
     })
 
     expect(exitCode).toBe(0)
@@ -427,8 +413,7 @@ process.exit(1)
       STUB_ISSUE_VIEW_FAIL: 'GraphQL: Could not resolve to an Issue',
       STUB_TIMELINE_JSON: JSON.stringify([
         { event: 'labeled', label: { name: 'vinaya/waiver:review' }, actor: { login: 'daniboomerang' } }
-      ]),
-      STUB_CHECK_RUNS_NDJSON: CLEAN_CHECK_RUNS
+      ])
     })
 
     expect(exitCode).toBe(0)
