@@ -842,13 +842,17 @@ describe('body-bare-digits — <details> block masking', () => {
 // is exactly what happened to check-pr-body-frozen.ts (mode 100644, this same PR).
 
 describe('body-bare-digits — check bin file mode', () => {
-  it('every file in apps/cli/src/checks/bin/ ships with mode 100755 — the exact class of bug that caused red CI in round 1 of this PR', () => {
+  it('every file in apps/cli/src/checks/bin/ carries an executable bit — the exact class of bug that caused red CI in round 1 of this PR', () => {
+    // Not an exact-mode equality: a temp checkout made under umask `002`
+    // legitimately yields `0o775` (group-write added) for a file Git records
+    // as `100755` — see the umask-`002` fixture below, which reproduces that
+    // exact symptom. Only the executable property is this test's business.
     const binDir = join(import.meta.dir, '..', '..', 'src', 'checks', 'bin')
     const files = readdirSync(binDir)
     expect(files.length).toBeGreaterThan(0)
     for (const file of files) {
       const mode = statSync(join(binDir, file)).mode & 0o777
-      expect(mode).toBe(0o755)
+      expect(mode & 0o111).not.toBe(0)
     }
   })
 })
