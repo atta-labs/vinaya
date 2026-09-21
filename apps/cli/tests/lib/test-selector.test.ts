@@ -4,12 +4,12 @@
 // one — is `minimalTwoPackageFixture` below; a richer fixture covers
 // transitive chains and cross-package bare-specifier resolution.
 import { describe, expect, it } from 'bun:test'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, extname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { loadConfig } from '../../src/lib/config'
-import { discoverWorkspacePackages, isTestFile, selectAffectedTestFiles } from '../../src/lib/test-selector'
+import { discoverWorkspacePackages, isTestFile, selectAffectedTestFiles, walkFiles } from '../../src/lib/test-selector'
 
 function fixtureRepo(): string {
   const root = mkdtempSync(join(tmpdir(), 'vinaya-selector-'))
@@ -655,5 +655,252 @@ describe('Part 3 — unprovable shapes retain the whole-package edge (coarse fal
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
+  })
+})
+
+// symbol-aware-test-selection-v1 1, Part 4 — the never-miss oracle. A
+// deliberately SEPARATE, simpler resolver (not the code under test) computes a
+// lower bound of definitely-affected tests: it follows relative imports fully
+// and resolves a directly-written `import { name } from 'P'` through P's
+// entrypoint ONLY along proven direct-definition / explicit-re-export / star
+// paths within P, treating every other shape as no dependency. Everything it
+// finds IS a real dependency, so the optimized selector — which resolves strictly
+// more — MUST select every test the oracle finds. If it ever omits one, that is
+// the exact never-miss regression the stop condition names.
+const ORACLE_EXT = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']
+
+function buildOracle(root: string): (changedFile: string, testFile: string) => boolean {
+  const packages = discoverWorkspacePackages(root)
+  const knownByDir = new Map(
+    packages.map((p) => [p.dir, new Set(walkFiles(p.dir).filter((f) => ORACLE_EXT.includes(extname(f))))])
+  )
+  const read = (f: string): string => {
+    try {
+      return readFileSync(f, 'utf8')
+    } catch {
+      return ''
+    }
+  }
+  const pkgOfFile = (f: string) => packages.find((p) => f.startsWith(`${p.dir}/`)) ?? null
+  const knownOf = (f: string): Set<string> => knownByDir.get(pkgOfFile(f)?.dir ?? '') ?? new Set()
+  const resolveRel = (from: string, spec: string): string | null => {
+    const base = resolve(dirname(from), spec)
+    const known = knownOf(from)
+    for (const cand of [base, ...ORACLE_EXT.map((e) => base + e), ...ORACLE_EXT.map((e) => join(base, `index${e}`))]) {
+      if (known.has(cand)) return cand
+    }
+    return null
+  }
+  const entryOfBare = (spec: string): string | null => {
+    let best: { pkg: (typeof packages)[number]; subpath: string } | null = null
+    for (const p of packages) {
+      if (spec === p.name) best = !best || p.name.length > best.pkg.name.length ? { pkg: p, subpath: '.' } : best
+      else if (spec.startsWith(`${p.name}/`))
+        best =
+          !best || p.name.length > best.pkg.name.length ? { pkg: p, subpath: `.${spec.slice(p.name.length)}` } : best
+    }
+    return best ? (best.pkg.entrypoints.get(best.subpath) ?? null) : null
+  }
+
+  const DEF_RE =
+    /^\s*export\s+(?:declare\s+)?(?:async\s+)?(?:abstract\s+)?(?:const\s+enum|function\*?|const|let|var|class|type|interface|enum|namespace)\s+([A-Za-z_$][\w$]*)/gm
+  const REEXPORT_RE = /^\s*export\s+(?:type\s+)?\{([^}]*)\}\s*from\s*['"](\.[^'"]+)['"]/gm
+  const STAR_RE = /^\s*export\s+\*\s+from\s*['"](\.[^'"]+)['"]/gm
+
+  // Lower-bound name resolution: the def file(s) reachable along proven paths.
+  const nameCache = new Map<string, string[]>()
+  const resolveName = (entry: string, name: string, stack: Set<string>): string[] => {
+    const key = `${entry} ${name}`
+    const cached = nameCache.get(key)
+    if (cached) return cached
+    if (stack.has(entry)) return []
+    stack.add(entry)
+    const src = read(entry)
+    const out: string[] = []
+    DEF_RE.lastIndex = 0
+    for (let m = DEF_RE.exec(src); m; m = DEF_RE.exec(src)) if (m[1] === name) out.push(entry)
+    REEXPORT_RE.lastIndex = 0
+    for (let m = REEXPORT_RE.exec(src); m; m = REEXPORT_RE.exec(src)) {
+      for (const raw of (m[1] as string).split(',')) {
+        const parts = raw
+          .trim()
+          .replace(/^type\s+/, '')
+          .split(/\s+as\s+/)
+        const origin = (parts[0] as string).trim()
+        const exported = (parts[1] ?? (parts[0] as string)).trim()
+        if (exported !== name) continue
+        const target = resolveRel(entry, m[2] as string)
+        if (target) out.push(...resolveName(target, origin, stack))
+      }
+    }
+    STAR_RE.lastIndex = 0
+    for (let m = STAR_RE.exec(src); m; m = STAR_RE.exec(src)) {
+      const target = resolveRel(entry, m[1] as string)
+      if (target) out.push(...resolveName(target, name, stack))
+    }
+    stack.delete(entry)
+    const uniq = [...new Set(out)]
+    nameCache.set(key, uniq)
+    return uniq
+  }
+
+  const NAMED_BARE_RE = /^\s*(?:import|export)\s+(?:type\s+)?\{([^}]*)\}\s*from\s*['"]([^.'"][^'"]*)['"]/gm
+  const REL_FROM_RE = /^\s*(?:import|export)\b[^'"\n]*?\bfrom\s*['"](\.[^'"]+)['"]/gm
+  const REL_SIDE_RE = /^\s*import\s*['"](\.[^'"]+)['"]/gm
+
+  const edgeCache = new Map<string, string[]>()
+  const edgesOf = (file: string): string[] => {
+    const cached = edgeCache.get(file)
+    if (cached) return cached
+    const src = read(file)
+    const deps: string[] = []
+    for (const re of [REL_FROM_RE, REL_SIDE_RE]) {
+      re.lastIndex = 0
+      for (let m = re.exec(src); m; m = re.exec(src)) {
+        const r = resolveRel(file, m[1] as string)
+        if (r) deps.push(r)
+      }
+    }
+    NAMED_BARE_RE.lastIndex = 0
+    for (let m = NAMED_BARE_RE.exec(src); m; m = NAMED_BARE_RE.exec(src)) {
+      const entry = entryOfBare(m[2] as string)
+      if (!entry) continue
+      for (const raw of (m[1] as string).split(',')) {
+        const origin = (
+          raw
+            .trim()
+            .replace(/^type\s+/, '')
+            .split(/\s+as\s+/)[0] as string
+        ).trim()
+        if (origin) deps.push(...resolveName(entry, origin, new Set()))
+      }
+    }
+    const uniq = [...new Set(deps)]
+    edgeCache.set(file, uniq)
+    return uniq
+  }
+
+  return (changedFile: string, testFile: string): boolean => {
+    const visited = new Set<string>()
+    const stack = [testFile]
+    while (stack.length) {
+      const cur = stack.pop() as string
+      if (visited.has(cur)) continue
+      visited.add(cur)
+      if (cur === changedFile) return true
+      for (const dep of edgesOf(cur)) if (!visited.has(dep)) stack.push(dep)
+    }
+    return false
+  }
+}
+
+describe('Part 4 — never-miss: optimized selection is a superset of the independent oracle', () => {
+  it('over a rich constructed workspace, every definitely-affected test is selected for each sampled change', () => {
+    const { root, dir } = mkWorkspace([
+      {
+        name: '@nm/base',
+        main: INDEX_MAIN,
+        files: {
+          'src/index.ts': "export { shared } from './shared'\n",
+          'src/shared.ts': "import './shared-dep'\nexport const shared = 1\n",
+          'src/shared-dep.ts': 'export const sd = 2\n'
+        }
+      },
+      {
+        name: '@nm/core',
+        main: INDEX_MAIN,
+        files: {
+          'src/index.ts':
+            "export { hot } from './hot'\nexport { warm } from './warm-outer'\nexport { shared } from '@nm/base'\nexport * from './starred'\nexport { cold } from './cold'\n",
+          'src/hot.ts': "import './hot-dep'\nexport function hot() { return 1 }\n",
+          'src/hot-dep.ts': 'export const hd = 1\n',
+          'src/warm-outer.ts': "export { warm } from './warm-inner'\n",
+          'src/warm-inner.ts': 'export function warm() { return 2 }\n',
+          'src/starred.ts': 'export function starred() { return 3 }\n',
+          'src/cold.ts': 'export function cold() { return 4 }\n'
+        }
+      },
+      {
+        name: '@nm/app',
+        files: {
+          'src/t-hot.test.ts': "import { hot } from '@nm/core'\ntest('hot', () => hot())\n",
+          'src/t-hot-alias.test.ts': "import { hot as h } from '@nm/core'\ntest('h', () => h())\n",
+          'src/helper.ts': "import { hot } from '@nm/core'\nexport const wrap = () => hot()\n",
+          'src/t-hot-via.test.ts': "import { wrap } from './helper'\ntest('via', () => wrap())\n",
+          'src/t-warm.test.ts': "import { warm } from '@nm/core'\ntest('warm', () => warm())\n",
+          'src/t-shared.test.ts': "import { shared } from '@nm/core'\ntest('shared', () => shared)\n",
+          'src/t-starred.test.ts': "import { starred } from '@nm/core'\ntest('starred', () => starred())\n",
+          'src/t-ns.test.ts': "import * as c from '@nm/core'\ntest('ns', () => c)\n"
+        }
+      }
+    ])
+    try {
+      const oracleReaches = buildOracle(root)
+      const testFiles = [
+        ...['t-hot', 't-hot-alias', 't-hot-via', 't-warm', 't-shared', 't-starred', 't-ns'].map((n) =>
+          join(dir('@nm/app'), `src/${n}.test.ts`)
+        )
+      ]
+      const sample = [
+        join(dir('@nm/core'), 'src/hot.ts'),
+        join(dir('@nm/core'), 'src/hot-dep.ts'),
+        join(dir('@nm/core'), 'src/warm-inner.ts'),
+        join(dir('@nm/core'), 'src/warm-outer.ts'),
+        join(dir('@nm/core'), 'src/starred.ts'),
+        join(dir('@nm/core'), 'src/cold.ts'),
+        join(dir('@nm/core'), 'src/index.ts'),
+        join(dir('@nm/base'), 'src/shared.ts'),
+        join(dir('@nm/base'), 'src/shared-dep.ts')
+      ]
+      let checkedNonEmpty = 0
+      for (const changed of sample) {
+        const optimized = new Set(selectAffectedTestFiles(root, [changed]).selected)
+        const oracle = testFiles.filter((t) => oracleReaches(changed, t))
+        if (oracle.length > 0) checkedNonEmpty++
+        for (const t of oracle) {
+          expect(
+            optimized.has(t),
+            `optimized dropped ${t.slice(root.length + 1)} for change ${changed.slice(root.length + 1)}`
+          ).toBe(true)
+        }
+      }
+      // Guard the guard: several sampled changes must actually have a non-empty
+      // oracle, or the superset assertion above would be vacuous. The oracle is a
+      // deliberate lower bound — empty for entrypoint-only, hop-only, and
+      // cross-package-re-export changes it does not follow — so definition-file
+      // changes (hot, hot-dep, warm-inner, starred here) are what it catches.
+      expect(checkedNonEmpty).toBeGreaterThanOrEqual(4)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('over a sample of REAL workspace-package source files, the oracle is never wider than the optimized selection', () => {
+    const oracleReaches = buildOracle(REPO_ROOT)
+    const packages = discoverWorkspacePackages(REPO_ROOT)
+    const bunCompatibleDirs = packages.filter((p) => p.bunTestCompatible).map((p) => p.dir)
+    const allTestFiles = bunCompatibleDirs.flatMap((d) => walkFiles(d).filter(isTestFile))
+    // A spread of real source files across packages, including the #681 driver.
+    const sample = [
+      join(REPO_ROOT, 'packages/aeg-core/src/review-input-manifest.ts'),
+      join(REPO_ROOT, 'packages/aeg-core/src/anchored-region.ts'),
+      join(REPO_ROOT, 'packages/aeg-core/src/parse-registry.ts'),
+      join(REPO_ROOT, 'apps/cli/src/lib/dispatch.ts'),
+      join(REPO_ROOT, 'apps/cli/src/lib/config.ts')
+    ]
+    let checkedNonEmpty = 0
+    for (const changed of sample) {
+      const optimized = new Set(selectAffectedTestFiles(REPO_ROOT, [changed]).selected)
+      const missed: string[] = []
+      let oracleCount = 0
+      for (const t of allTestFiles) {
+        if (!oracleReaches(changed, t)) continue
+        oracleCount++
+        if (!optimized.has(t)) missed.push(t.slice(REPO_ROOT.length + 1))
+      }
+      if (oracleCount > 0) checkedNonEmpty++
+      expect(missed, `never-miss violation for ${changed.slice(REPO_ROOT.length + 1)}`).toEqual([])
+    }
+    expect(checkedNonEmpty).toBeGreaterThanOrEqual(3)
   })
 })
