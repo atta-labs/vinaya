@@ -932,12 +932,12 @@ function bodyChecksWorkflow(selfHost: VendoredVinaya | null): string {
 # request can rewrite. \`pull_request_target\` is the same boundary
 # \`vinaya-review.yml\` uses: GitHub loads this workflow and its default
 # checkout from the repository's default branch, never from the pull
-# request being judged. The job does not fetch, check out, install, build,
-# or execute pull-request content — every check registered here reads only
+# request being judged. Neither job fetches, checks out, installs, builds,
+# or executes pull-request content — every check registered here reads only
 # live-fetched PR metadata (\`gh pr view\`), never the diff or repo tree, the
 # same shape \`review-gate\` already requires of its own checks.
 #
-# \`body-bare-digits\` is the one check here today: its Changesets-release
+# \`body-bare-digits\`: its Changesets-release
 # exemption live-fetches the PR's real author, keyed on \`PR_NUMBER\` — on a
 # \`pull_request\` trigger that value is PR-editable (the PR's own workflow
 # YAML controls it), so an attacker could redirect it to any
@@ -946,6 +946,13 @@ function bodyChecksWorkflow(selfHost: VendoredVinaya | null): string {
 # inside a \`pull_request\` job closes it — \`pull_request_target\` does,
 # because the workflow text assigning \`PR_NUMBER\` comes from THIS file on
 # the default branch, which a pull request cannot edit.
+#
+# \`principal-test-plan-wait\`: reported by its own job, never by the
+# aggregate \`check --all\`, so its red can never turn another check's name
+# red. This file's own \`on: pull_request_target: types: [opened, reopened,
+# edited]\` trigger is what re-evaluates it on a PR body edit — ticking a
+# \`[principal]\` box re-runs this job, where before, enforcement living
+# inside \`review-gate\` meant a body edit retriggered nothing.
 name: Vinaya Body Checks
 run-name: "Vinaya Body Checks PR #\${{ github.event.pull_request.number }} @ \${{ github.event.pull_request.head.sha }}"
 
@@ -993,6 +1000,28 @@ ${verifiedFetchPrBodyStep()}      - name: Body checks
           # bare-digit scan.
           PR_NUMBER: \${{ github.event.pull_request.number }}
         run: ${vinayaRun(selfHost, 'check body-bare-digits')}
+
+  vinaya-principal-test-plan-wait:
+    name: vinaya check principal-test-plan-wait
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Explicit trusted ref: never use the PR head/merge ref in this job.
+          ref: \${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+${vinayaSetupSteps(selfHost, 'trusted')}      # PR_BODY is what makes this check EVALUATE at all — the bin reads
+      # \`process.env.PR_BODY\` only, never fetches it itself. Fetched live from
+      # the forge, same reasoning as the sibling job's identical step above.
+${verifiedFetchPrBodyStep()}      - name: Principal Test Plan wait
+        run: ${vinayaRun(selfHost, 'check principal-test-plan-wait')}
 `
 }
 

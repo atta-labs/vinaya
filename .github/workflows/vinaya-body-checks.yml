@@ -4,12 +4,12 @@
 # request can rewrite. `pull_request_target` is the same boundary
 # `vinaya-review.yml` uses: GitHub loads this workflow and its default
 # checkout from the repository's default branch, never from the pull
-# request being judged. The job does not fetch, check out, install, build,
-# or execute pull-request content — every check registered here reads only
+# request being judged. Neither job fetches, checks out, installs, builds,
+# or executes pull-request content — every check registered here reads only
 # live-fetched PR metadata (`gh pr view`), never the diff or repo tree, the
 # same shape `review-gate` already requires of its own checks.
 #
-# `body-bare-digits` is the one check here today: its Changesets-release
+# `body-bare-digits`: its Changesets-release
 # exemption live-fetches the PR's real author, keyed on `PR_NUMBER` — on a
 # `pull_request` trigger that value is PR-editable (the PR's own workflow
 # YAML controls it), so an attacker could redirect it to any
@@ -18,6 +18,13 @@
 # inside a `pull_request` job closes it — `pull_request_target` does,
 # because the workflow text assigning `PR_NUMBER` comes from THIS file on
 # the default branch, which a pull request cannot edit.
+#
+# `principal-test-plan-wait`: reported by its own job, never by the
+# aggregate `check --all`, so its red can never turn another check's name
+# red. This file's own `on: pull_request_target: types: [opened, reopened,
+# edited]` trigger is what re-evaluates it on a PR body edit — ticking a
+# `[principal]` box re-runs this job, where before, enforcement living
+# inside `review-gate` meant a body edit retriggered nothing.
 name: Vinaya Body Checks
 run-name: "Vinaya Body Checks PR #${{ github.event.pull_request.number }} @ ${{ github.event.pull_request.head.sha }}"
 
@@ -123,3 +130,83 @@ jobs:
           # bare-digit scan.
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: node apps/cli/dist/index.js check body-bare-digits
+
+  vinaya-principal-test-plan-wait:
+    name: vinaya check principal-test-plan-wait
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Explicit trusted ref: never use the PR head/merge ref in this job.
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # Pinned to a commit, not the mutable `v2` tag. A repoint of
+      # `v2` would execute new upstream code in every adopter on the next run,
+      # with no diff anywhere to review. Resolved from the `v2` tag on
+      # 2026-08-14. Bun's own version still comes from the repo's
+      # `packageManager` field, not from this pin.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+      - name: Restore Bun install cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock', 'bun.lockb') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+      # This repo declares the `@attalabs/vinaya` workspace package itself, so
+      # `npx @attalabs/vinaya` resolves to that local member instead of the
+      # registry and dies on its unbuilt `bin`. Build and run the trusted
+      # default-branch copy directly.
+      #
+      # This workflow executes only a trusted checkout selected by its event:
+      # never the pull request head or merge ref. The review-authority decision
+      # therefore comes from code the pull request cannot alter. `--ignore-scripts`
+      # remains defense in depth against lifecycle hooks in that trusted tree.
+      - name: Build the trusted Vinaya CLI
+        run: |
+          bun install --frozen-lockfile --ignore-scripts
+          bun run --cwd apps/cli build
+      # PR_BODY is what makes this check EVALUATE at all — the bin reads
+      # `process.env.PR_BODY` only, never fetches it itself. Fetched live from
+      # the forge, same reasoning as the sibling job's identical step above.
+      - name: Fetch PR body
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BRANCH: ${{ github.head_ref }}
+        run: |
+          ATTEMPTS=0
+          MAX_ATTEMPTS=6
+          SLEEP_SECONDS=5
+          while :; do
+            BODY="$(gh pr view "$PR_NUMBER" --json body --jq .body)"
+            WAIT_FOR=""
+            if [[ "$BRANCH" =~ ^task/[^/]+/[^/]+$ ]]; then
+              CLOSES_REGION="$(printf '%s\n' "$BODY" | sed -n '/<!-- AEG:CLOSES:START -->/,/<!-- AEG:CLOSES:END -->/p')"
+              if ! printf '%s\n' "$CLOSES_REGION" | grep -qE '#[0-9]+'; then
+                WAIT_FOR="a real Closes #N inside the AEG:CLOSES region for task branch $BRANCH"
+              fi
+            fi
+            if [ -z "$WAIT_FOR" ]; then
+              break
+            fi
+            ATTEMPTS=$((ATTEMPTS + 1))
+            if [ "$ATTEMPTS" -ge "$MAX_ATTEMPTS" ]; then
+              echo "::error::Gave up after $ATTEMPTS attempts waiting for $WAIT_FOR." >&2
+              exit 1
+            fi
+            sleep "$SLEEP_SECONDS"
+          done
+          DELIM="PR_BODY_$(openssl rand -hex 16)"
+          echo "PR_BODY<<$DELIM" >> "$GITHUB_ENV"
+          printf '%s\n' "$BODY" >> "$GITHUB_ENV"
+          echo "$DELIM" >> "$GITHUB_ENV"
+      - name: Principal Test Plan wait
+        run: node apps/cli/dist/index.js check principal-test-plan-wait
