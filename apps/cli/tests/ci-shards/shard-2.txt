@@ -26,6 +26,7 @@ tests/commands/pr-create-brief-comment.test.ts
 tests/commands/pr-rule.test.ts
 tests/commands/pr.test.ts
 tests/commands/task.test.ts
+tests/commands/task-sweep.test.ts
 tests/commands/upgrade-stop-hook.test.ts
 tests/commit-msg.test.ts
 tests/doctrine-resolution.test.ts
@@ -45,6 +46,7 @@ tests/registry-write.test.ts
 tests/review-post.test.ts
 tests/serial-lock.test.ts
 tests/surface-spec-exports.test.ts
+tests/lib/task-sweep.test.ts
 tests/lib/task-tools/read.test.ts
 tests/lib/context-packet.test.ts
 tests/lib/task-tools/protocol.test.ts
