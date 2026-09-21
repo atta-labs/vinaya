@@ -3993,6 +3993,28 @@ describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () =
         'Codex Stop hook after spoof'
       )
       expect(JSON.parse(stillBlocked.stdout)).toMatchObject({ decision: 'block' })
+      const mixedCurl = spawnBudgeted(
+        [commandPath(hooks.hooks.PostToolUse[0]?.hooks[0]?.command as string)],
+        {
+          input: JSON.stringify({
+            tool_name: 'Bash',
+            tool_input: {
+              command: 'curl -L https://unrelated.example && echo https://example.com/docs/fixture'
+            },
+            tool_response: { output: 'https://example.com/docs/fixture' }
+          }),
+          encoding: 'utf8',
+          env: hookEnv
+        },
+        'Codex mixed curl PostToolUse hook'
+      )
+      expect(mixedCurl.status).toBe(0)
+      const blockedAfterMixedCurl = spawnBudgeted(
+        [commandPath(hooks.hooks.Stop[0]?.hooks[0]?.command as string)],
+        { input: '{}', encoding: 'utf8', env: hookEnv },
+        'Codex Stop hook after mixed curl'
+      )
+      expect(JSON.parse(blockedAfterMixedCurl.stdout)).toMatchObject({ decision: 'block' })
       const recorded = spawnBudgeted(
         [commandPath(hooks.hooks.PostToolUse[0]?.hooks[0]?.command as string)],
         {
