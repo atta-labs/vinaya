@@ -449,9 +449,9 @@ export function sweepLegacyLayout(
     } else {
       // 'dispatch-output' (keyed by an opaque effect id) and 'task-start'
       // (keyed by an opaque request id) carry no repository or task marker
-      // anywhere in their own path or content (verified against both
-      // record shapes at task-files-v1 3's own render time) — every entry
-      // here is unattributable by construction, never a guess.
+      // anywhere in their own path or content (verified against both real
+      // record shapes) — every entry here is unattributable by
+      // construction, never a guess.
       for (const name of names) {
         entries.push(
           buildLegacyEntry(dirname, join(dir, name), unattributableNoTask(), root, deps, removeAttributed, home)

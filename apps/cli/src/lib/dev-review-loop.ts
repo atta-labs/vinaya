@@ -427,11 +427,10 @@ export type LoopDeps = {
     repo: { owner: string; repo: string } | null
   ) => void
   /**
-   * task-files-v1 3, O2 — the same sweep `vinaya task sweep` runs on
-   * demand, called once at the very start of a run, before anything is
-   * dispatched, `task` excluded so this run never sweeps its own folder.
-   * Best-effort by design: a failure here is reported and ignored, never a
-   * reason the run itself stops.
+   * The same sweep `vinaya task sweep` runs on demand, called once at the
+   * very start of a run, before anything is dispatched, `task` excluded so
+   * this run never sweeps its own folder. Best-effort by design: a failure
+   * here is reported and ignored, never a reason the run itself stops.
    */
   sweepTasksAtStart: (task: number) => void
 }
@@ -964,12 +963,12 @@ export function buildReexecArgs(input: LoopInput, task: number): string[] {
 }
 
 /**
- * task-files-v1 3, O2 — `runTaskSweep`'s modern-layout half, called once at
- * the start of every run, `excludeScope: task` so this run never sweeps the
- * very folder it is about to write into. Best-effort: a thrown error is
- * reported to stderr and swallowed, never re-thrown — the same "the
- * mechanics stalled, not a review verdict" tolerance this driver already
- * gives a flush failure (`flushOutbox`'s own caller, below). Injectable
+ * `runTaskSweep`'s modern-layout half, called once at the start of every
+ * run, `excludeScope: task` so this run never sweeps the very folder it is
+ * about to write into. Best-effort: a thrown error is reported to stderr
+ * and swallowed, never re-thrown — the same "the mechanics stalled, not a
+ * review verdict" tolerance this driver already gives a flush failure
+ * (`flushOutbox`'s own caller, below). Injectable
  * (`LoopDeps.sweepTasksAtStart`) so a test never shells out to real `gh` or
  * touches a real runtime directory just because a run started.
  */
@@ -1151,7 +1150,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     branch = d.developerBranchFor(task)
   }
 
-  // task-files-v1 3, O2: the same sweep `vinaya task sweep` runs on demand,
+  // The same sweep `vinaya task sweep` runs on demand,
   // called once per run, before anything is dispatched — so a finished
   // task's folder never accumulates just because no one ran the command by
   // hand. `excludeScope` (this run's OWN task) is the guard against a race
