@@ -46,6 +46,7 @@ function baseDeps(root: string, overrides: Partial<TaskSweepDeps> = {}): TaskSwe
     taskFromPrBody: () => null,
     rm: (p) => rmSync(p, { recursive: true, force: true }),
     resolveRepo: () => ({ owner: 'atta-labs', repo: 'vinaya' }),
+    commitExistsInThisRepo: () => false,
     ...overrides
   }
 }
@@ -374,6 +375,130 @@ describe('sweepLegacyLayout', () => {
     expect(entry?.class?.kind).toBe('open')
     expect(entry?.removed).toBe(false)
     expect(existsSync(join(home, 'loops', 'atta-labs-vinaya', '407.log'))).toBe(true)
+  })
+
+  it("drivers/*.out — an operator's own ad hoc files — are always reported unattributable, never removed", () => {
+    const home = homeDir()
+    const root = tempDir('vinaya-sweep-legacy-root9-')
+    mkdirSync(join(home, 'drivers'), { recursive: true })
+    writeFileSync(join(home, 'drivers', '560-r7.out'), 'narration')
+    writeFileSync(join(home, 'drivers', '575vps.out'), 'narration')
+    const deps = baseDeps(root, { fetchIssueState: () => 'CLOSED' })
+
+    const report = sweepLegacyLayout(true, deps, home)
+    const entries = report.entries.filter((e) => e.dirname === 'drivers')
+    expect(entries.length).toBe(2)
+    for (const e of entries) {
+      expect(e.attribution.kind).toBe('unattributable')
+      expect(e.removed).toBe(false)
+    }
+    expect(existsSync(join(home, 'drivers', '560-r7.out'))).toBe(true)
+    expect(existsSync(join(home, 'drivers', '575vps.out'))).toBe(true)
+  })
+
+  it("attributes control-store/<task>/ via an escalation record's branch+pr when no manifest exists (the real historical shape)", () => {
+    const home = homeDir()
+    const root = tempDir('vinaya-sweep-legacy-root10-')
+    const escalationDir = join(home, 'control-store', '625', 'escalation')
+    mkdirSync(escalationDir, { recursive: true })
+    writeFileSync(
+      join(escalationDir, '625-1-unknown.json'),
+      JSON.stringify({ task: 625, branch: 'task/driver-lifecycle-v1/7', pr: 630 })
+    )
+    const deps = baseDeps(root, {
+      fetchIssueState: () => 'CLOSED',
+      fetchPrForBranch: (branch) => (branch === 'task/driver-lifecycle-v1/7' ? { number: 630, state: 'OPEN' } : null)
+    })
+
+    const report = sweepLegacyLayout(true, deps, home)
+    const entry = report.entries.find((e) => e.dirname === 'control-store')
+    expect(entry?.attribution).toEqual({ kind: 'this-repo', scope: 625 })
+    expect(entry?.removed).toBe(true)
+    expect(existsSync(join(home, 'control-store', '625'))).toBe(false)
+  })
+
+  describe('outbox task folders (O3) — the even-older tree nested inside the telemetry outbox', () => {
+    function outboxTaskDir(home: string, task: number): string {
+      return join(home, 'outbox', 'dev-review-loop', String(task))
+    }
+
+    it("attributes via pause-state.json's own branch+prNumber, and removes it only when finished AND --include-legacy", () => {
+      const home = homeDir()
+      const root = tempDir('vinaya-sweep-legacy-outbox1-')
+      const taskDir = outboxTaskDir(home, 560)
+      mkdirSync(taskDir, { recursive: true })
+      writeFileSync(
+        join(taskDir, 'pause-state.json'),
+        JSON.stringify({ task: 560, branch: 'task/worker-isolation-v1/3', prNumber: 623, reason: 'infrastructure' })
+      )
+      const deps = baseDeps(root, {
+        fetchIssueState: () => 'CLOSED',
+        fetchPrForBranch: (branch) =>
+          branch === 'task/worker-isolation-v1/3' ? { number: 623, state: 'CLOSED' } : null
+      })
+
+      const listOnly = sweepLegacyLayout(false, deps, home)
+      const entry = listOnly.entries.find((e) => e.dirname === 'outbox task folders')
+      expect(entry?.attribution).toEqual({ kind: 'this-repo', scope: 560 })
+      expect(entry?.class?.kind).toBe('finished')
+      expect(entry?.removed).toBe(false)
+
+      const withRemoval = sweepLegacyLayout(true, deps, home)
+      const removedEntry = withRemoval.entries.find((e) => e.dirname === 'outbox task folders')
+      expect(removedEntry?.removed).toBe(true)
+      expect(existsSync(taskDir)).toBe(false)
+    })
+
+    it("attributes via a held round verdict's own Judged head sha when no pause-state or escalation record exists", () => {
+      const home = homeDir()
+      const root = tempDir('vinaya-sweep-legacy-outbox2-')
+      const taskDir = outboxTaskDir(home, 636)
+      mkdirSync(taskDir, { recursive: true })
+      writeFileSync(
+        join(taskDir, 'round-1-reviewer.md'),
+        'VERDICT: REQUEST CHANGES\n\nJudged head: 1ead23d57d2bae9ecfcf457b1abe845e1ee58729\n'
+      )
+      const deps = baseDeps(root, {
+        fetchIssueState: () => 'OPEN',
+        fetchPrForBranch: () => ({ number: 641, state: 'OPEN' }),
+        commitExistsInThisRepo: (sha) => sha === '1ead23d57d2bae9ecfcf457b1abe845e1ee58729'
+      })
+
+      const report = sweepLegacyLayout(false, deps, home)
+      const entry = report.entries.find((e) => e.dirname === 'outbox task folders')
+      expect(entry?.attribution).toEqual({ kind: 'this-repo', scope: 636 })
+      expect(entry?.class?.kind).toBe('open')
+    })
+
+    it('reports unattributable when the folder carries neither a pause/escalation record nor a round verdict', () => {
+      const home = homeDir()
+      const root = tempDir('vinaya-sweep-legacy-outbox3-')
+      const taskDir = outboxTaskDir(home, 553)
+      mkdirSync(taskDir, { recursive: true })
+      writeFileSync(
+        join(taskDir, 'driver.pid.json'),
+        JSON.stringify({ pid: 999999, startedAt: '2026-09-14T11:08:26.582Z' })
+      )
+      const deps = baseDeps(root, { fetchIssueState: () => 'CLOSED' })
+
+      const report = sweepLegacyLayout(true, deps, home)
+      const entry = report.entries.find((e) => e.dirname === 'outbox task folders')
+      expect(entry?.attribution.kind).toBe('unattributable')
+      expect(entry?.removed).toBe(false)
+      expect(existsSync(taskDir)).toBe(true)
+    })
+
+    it('never touches the live telemetry ndjson directories sitting beside it in the same outbox root', () => {
+      const home = homeDir()
+      const root = tempDir('vinaya-sweep-legacy-outbox4-')
+      mkdirSync(join(home, 'outbox', 'atta-labs-vinaya'), { recursive: true })
+      writeFileSync(join(home, 'outbox', 'atta-labs-vinaya', '999.ndjson'), '{"line":"one"}\n')
+      const deps = baseDeps(root)
+
+      const report = sweepLegacyLayout(true, deps, home)
+      expect(report.entries.some((e) => e.path.includes('.ndjson'))).toBe(false)
+      expect(existsSync(join(home, 'outbox', 'atta-labs-vinaya', '999.ndjson'))).toBe(true)
+    })
   })
 })
 

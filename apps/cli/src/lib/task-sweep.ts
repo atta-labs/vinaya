@@ -13,10 +13,14 @@
  * `finished` falls back to keeping the folder and saying why, never to
  * guessing.
  *
- * `sweepLegacyLayout` is the second half (O3): the seven top-level
- * directories an earlier layout left behind, under the machine's Vinaya
- * home (`run-paths.ts`'s `LEGACY_TOP_LEVEL_DIRNAMES` — the only other file
- * allowed to name them, `run-paths-only.test.ts`). Most of them carry no
+ * `sweepLegacyLayout` is the second half (O3): the eight top-level
+ * directories an earlier layout (or, for `drivers`, an operator's own hand)
+ * left behind under the machine's Vinaya home (`run-paths.ts`'s
+ * `LEGACY_TOP_LEVEL_DIRNAMES` — the only other file allowed to name them,
+ * `run-paths-only.test.ts`), plus the one nested exception —
+ * `outbox/dev-review-loop/<task>/`, O3's "outbox task folders" — living
+ * inside the telemetry outbox root itself
+ * (`run-paths.ts`'s `legacyOutboxTaskFoldersRoot`). Most of these carry no
  * repository segment at all, so an entry is attributed to THIS repository
  * only when its own path or its own record content names it — never
  * guessed from a bare task number, which repeats across repositories.
@@ -36,10 +40,12 @@ import {
   DRIVER_LOCK_FILENAME,
   LEGACY_CONTROL_STORE,
   LEGACY_DISPATCH_RESUME,
+  LEGACY_DRIVERS,
   LEGACY_LOOPS,
   LEGACY_TASK_RESUME,
   LEGACY_TOP_LEVEL_DIRNAMES,
   type LegacyTopLevelDirname,
+  legacyOutboxTaskFoldersRoot,
   legacyTopLevelDir,
   repoSegment,
   resolveRepoSync,
@@ -110,6 +116,8 @@ export type TaskSweepDeps = {
   taskFromPrBody: (body: string) => number | null
   rm: (path: string) => void
   resolveRepo: () => { owner: string; repo: string } | null
+  /** True iff `sha` resolves to a real commit in THIS repository's own local object database — a pure, local, network-free identity check (`git cat-file -e <sha>^{commit}`) used to attribute a bare-task legacy record that carries a judged head but no branch/PR reference of its own. */
+  commitExistsInThisRepo: (sha: string) => boolean
 }
 
 function readDriverLockForScope(root: string, scope: RunScope): DriverLockRecord | null {
@@ -133,6 +141,15 @@ function readPauseStateForScope(root: string, scope: RunScope): PauseStateRecord
   }
 }
 
+function commitExistsInThisRepo(sha: string): boolean {
+  try {
+    sh('git', ['cat-file', '-e', `${sha}^{commit}`])
+    return true
+  } catch {
+    return false
+  }
+}
+
 export const defaultTaskSweepDeps: TaskSweepDeps = {
   runtimeDir: runtimeDirForThisRepo,
   isDriverPidAlive: realIsDriverPidAlive,
@@ -144,7 +161,8 @@ export const defaultTaskSweepDeps: TaskSweepDeps = {
   fetchPrBody: realFetchPrBody,
   taskFromPrBody: realTaskFromPrBody,
   rm: (path) => rmSync(path, { recursive: true, force: true }),
-  resolveRepo: resolveRepoSync
+  resolveRepo: resolveRepoSync,
+  commitExistsInThisRepo
 }
 
 /**
@@ -319,7 +337,8 @@ export type LegacyAttribution =
   | { kind: 'unattributable'; reason: string }
 
 export type LegacyEntry = {
-  dirname: LegacyTopLevelDirname
+  /** One of `LEGACY_TOP_LEVEL_DIRNAMES`, or `LEGACY_OUTBOX_TASK_FOLDERS_LABEL` for O3's own "outbox task folders" category — the one tree nested inside `outbox/` rather than sitting directly under the home. */
+  dirname: LegacyTopLevelDirname | typeof LEGACY_OUTBOX_TASK_FOLDERS_LABEL
   path: string
   attribution: LegacyAttribution
   class?: TaskFolderClass
@@ -328,16 +347,16 @@ export type LegacyEntry = {
 
 export type LegacyReport = { entries: LegacyEntry[] }
 
-/** A `manifest/*.json` record under a legacy `control-store/<task>/` folder is the one place these pre-migration folders ever recorded their own repository (`ManifestRecordIdentity.repository`, `owner/repo`) — the "own records naming it" the Traps require before attributing a bare, repository-less task number to this repository at all. */
-function manifestRepositoryFor(controlStoreRoot: string, task: number): string | null {
+/** A `manifest/*.json` record under a legacy task folder is the one place a bare, repository-less task folder ever stated its own repository OUTRIGHT (`ManifestRecordIdentity.repository`, `owner/repo`) — checked first, and authoritative when present: this is a fact the record itself asserts, never a match this function goes on to infer. */
+function manifestRepositoryFor(taskDir: string): string | null {
   let files: string[]
   try {
-    files = readdirSync(join(controlStoreRoot, String(task), 'manifest'))
+    files = readdirSync(join(taskDir, 'manifest'))
   } catch {
     return null
   }
   for (const file of files) {
-    const raw = readIfExists(join(controlStoreRoot, String(task), 'manifest', file))
+    const raw = readIfExists(join(taskDir, 'manifest', file))
     if (!raw) continue
     try {
       const parsed = JSON.parse(raw) as { repository?: unknown }
@@ -349,15 +368,89 @@ function manifestRepositoryFor(controlStoreRoot: string, task: number): string |
   return null
 }
 
-function attributeControlStoreTask(home: string, task: number, currentRepo: string | null): LegacyAttribution {
+/** `pause-state.json`'s own `branch`/`prNumber` (the `outbox/dev-review-loop/<task>/` shape), or `escalation/*.json`'s own `branch`/`pr` (the `control-store/<task>/` shape) — the two record shapes this codebase's history actually wrote a branch+PR reference into, read the same way. */
+function branchAndPrFrom(raw: string): { branch: string; pr: number } | null {
+  try {
+    const parsed = JSON.parse(raw) as { branch?: unknown; prNumber?: unknown; pr?: unknown }
+    const branch = typeof parsed.branch === 'string' ? parsed.branch : null
+    const pr = typeof parsed.prNumber === 'number' ? parsed.prNumber : typeof parsed.pr === 'number' ? parsed.pr : null
+    return branch && pr !== null && pr > 0 ? { branch, pr } : null
+  } catch {
+    return null
+  }
+}
+
+const JUDGED_HEAD_RE = /^Judged head: ([0-9a-f]{7,40})$/m
+
+function unattributable(reason: string): LegacyAttribution {
+  return { kind: 'unattributable', reason }
+}
+
+/**
+ * A bare, repository-less task folder — `control-store/<task>/` or
+ * `outbox/dev-review-loop/<task>/` — is attributed to this repository only
+ * through its own records naming it, tried in order from strongest to
+ * weakest: a manifest's explicit `repository` field (authoritative, both
+ * directions); failing that, a `branch`+PR pair (`pause-state.json`, or any
+ * `escalation/*.json`) verified against a REAL pull request this repository
+ * itself has on that exact branch and number; failing that, a held round
+ * verdict's own `Judged head:` sha, verified as a real commit in this
+ * repository's own local history. The last two are positive-only signals —
+ * absence never asserts `other-repo`, only `unattributable` — since a
+ * missing PR or an unresolvable sha could equally mean "gone", not
+ * "elsewhere."
+ */
+function attributeBareTaskFolder(
+  taskDir: string,
+  task: number,
+  currentRepo: string | null,
+  deps: TaskSweepDeps
+): LegacyAttribution {
   if (currentRepo === null) {
-    return { kind: 'unattributable', reason: 'this repository could not be resolved to compare against' }
+    return unattributable('this repository could not be resolved to compare against')
   }
-  const repository = manifestRepositoryFor(legacyTopLevelDir(home, LEGACY_CONTROL_STORE), task)
-  if (repository === null) {
-    return { kind: 'unattributable', reason: `no manifest record under this task's own folder names a repository` }
+
+  const manifestRepo = manifestRepositoryFor(taskDir)
+  if (manifestRepo !== null) {
+    return manifestRepo === currentRepo ? { kind: 'this-repo', scope: task } : { kind: 'other-repo' }
   }
-  return repository === currentRepo ? { kind: 'this-repo', scope: task } : { kind: 'other-repo' }
+
+  const candidateRecords: string[] = []
+  const pauseState = readIfExists(join(taskDir, 'pause-state.json'))
+  if (pauseState) candidateRecords.push(pauseState)
+  try {
+    for (const name of readdirSync(join(taskDir, 'escalation'))) {
+      const raw = readIfExists(join(taskDir, 'escalation', name))
+      if (raw) candidateRecords.push(raw)
+    }
+  } catch {
+    // No escalation/ subdirectory here — nothing more to add.
+  }
+  for (const raw of candidateRecords) {
+    const found = branchAndPrFrom(raw)
+    if (!found) continue
+    try {
+      const pr = deps.fetchPrForBranch(found.branch)
+      if (pr && pr.number === found.pr) return { kind: 'this-repo', scope: task }
+    } catch {
+      // Forge unreadable for this record — try the next one, or the round-verdict fallback below.
+    }
+  }
+
+  let entries: string[]
+  try {
+    entries = readdirSync(taskDir)
+  } catch {
+    entries = []
+  }
+  for (const name of entries) {
+    if (!/^round-\d+-(?:reviewer|security)\.md$/.test(name)) continue
+    const text = readIfExists(join(taskDir, name))
+    const headMatch = text ? JUDGED_HEAD_RE.exec(text) : null
+    if (headMatch?.[1] && deps.commitExistsInThisRepo(headMatch[1])) return { kind: 'this-repo', scope: task }
+  }
+
+  return unattributable('no manifest record, pause/escalation record, or round verdict names a repository')
 }
 
 const LOOPS_LOG_RE = /^(\d+)\.log$/
@@ -398,7 +491,7 @@ export function sweepLegacyLayout(
       for (const name of names) {
         if (!/^\d+$/.test(name)) continue
         const task = Number(name)
-        const attribution = attributeControlStoreTask(home, task, repo.full)
+        const attribution = attributeBareTaskFolder(join(dir, name), task, repo.full, deps)
         entries.push(buildLegacyEntry(dirname, join(dir, name), attribution, root, deps, removeAttributed, home))
       }
     } else if (dirname === LEGACY_LOOPS) {
@@ -443,8 +536,33 @@ export function sweepLegacyLayout(
     } else if (dirname === LEGACY_TASK_RESUME) {
       for (const name of names) {
         const m = TASK_RESUME_ESCALATION_RE.exec(name)
-        const attribution = m ? attributeControlStoreTask(home, Number(m[1]), repo.full) : unattributableNoTask()
+        // Cross-referenced against the SAME task's control-store folder
+        // (never this file's own content, which is just a resume claim
+        // marker) — the one place this bare task number's repository can
+        // still be verified from, since a task-resume record carries no
+        // folder of its own to inspect.
+        const attribution = m
+          ? attributeBareTaskFolder(
+              join(legacyTopLevelDir(home, LEGACY_CONTROL_STORE), m[1] as string),
+              Number(m[1]),
+              repo.full,
+              deps
+            )
+          : unattributableNoTask()
         entries.push(buildLegacyEntry(dirname, join(dir, name), attribution, root, deps, removeAttributed, home))
+      }
+    } else if (dirname === LEGACY_DRIVERS) {
+      // An operator's own ad hoc `> ~/.vinaya/drivers/<name>.out` redirect —
+      // never written by this repository's own code at any point in its
+      // history, and named inconsistently by hand rather than by any path
+      // convention this module could parse a task number out of safely.
+      // Listed the same as any other legacy entry; never attributed, since
+      // guessing a task number out of an arbitrary hand-picked filename is
+      // exactly the guess the Traps forbid.
+      for (const name of names) {
+        entries.push(
+          buildLegacyEntry(dirname, join(dir, name), unattributableNoTask(), root, deps, removeAttributed, home)
+        )
       }
     } else {
       // 'dispatch-output' (keyed by an opaque effect id) and 'task-start'
@@ -458,6 +576,28 @@ export function sweepLegacyLayout(
         )
       }
     }
+  }
+
+  // O3's "outbox task folders" — the even-older `outbox/dev-review-loop/<task>/`
+  // tree, nested inside the SAME root the telemetry outbox still actively
+  // delivers ndjson event files under today (O4's own protected root).
+  // Scanned separately from the loop above because it is not a top-level
+  // folder under the home at all — never through `LEGACY_TOP_LEVEL_DIRNAMES`,
+  // and never by descending into `outbox/` generally (which would also walk
+  // the live `<owner>-<repo>`/`unresolved` ndjson directories O4 protects).
+  const outboxTaskFoldersRoot = legacyOutboxTaskFoldersRoot(home)
+  let outboxTaskNames: string[]
+  try {
+    outboxTaskNames = readdirSync(outboxTaskFoldersRoot)
+  } catch {
+    outboxTaskNames = []
+  }
+  for (const name of outboxTaskNames) {
+    if (!/^\d+$/.test(name)) continue
+    const task = Number(name)
+    const taskDir = join(outboxTaskFoldersRoot, name)
+    const attribution = attributeBareTaskFolder(taskDir, task, repo.full, deps)
+    entries.push(buildLegacyOutboxTaskEntry(taskDir, attribution, root, deps, removeAttributed, outboxTaskFoldersRoot))
   }
 
   return { entries }
@@ -488,6 +628,48 @@ function buildLegacyEntry(
   removeAttributed: boolean,
   home: string
 ): LegacyEntry {
+  return buildLegacyEntryUnder(
+    dirname,
+    path,
+    attribution,
+    root,
+    deps,
+    removeAttributed,
+    legacyTopLevelDir(home, dirname)
+  )
+}
+
+/** The label O3's own "outbox task folders" category renders under — not one of `LEGACY_TOP_LEVEL_DIRNAMES`, since this tree is nested inside `outbox/` rather than sitting directly under the home (see `legacyOutboxTaskFoldersRoot`'s own doc comment). */
+export const LEGACY_OUTBOX_TASK_FOLDERS_LABEL = 'outbox task folders'
+
+function buildLegacyOutboxTaskEntry(
+  taskDir: string,
+  attribution: LegacyAttribution,
+  root: string,
+  deps: TaskSweepDeps,
+  removeAttributed: boolean,
+  safeRoot: string
+): LegacyEntry {
+  return buildLegacyEntryUnder(
+    LEGACY_OUTBOX_TASK_FOLDERS_LABEL,
+    taskDir,
+    attribution,
+    root,
+    deps,
+    removeAttributed,
+    safeRoot
+  )
+}
+
+function buildLegacyEntryUnder(
+  dirname: LegacyEntry['dirname'],
+  path: string,
+  attribution: LegacyAttribution,
+  root: string,
+  deps: TaskSweepDeps,
+  removeAttributed: boolean,
+  safeRoot: string
+): LegacyEntry {
   if (attribution.kind !== 'this-repo') return { dirname, path, attribution, removed: false }
 
   const cls = classifyTaskFolder(attribution.scope, root, deps)
@@ -495,7 +677,7 @@ function buildLegacyEntry(
     return { dirname, path, attribution, class: cls, removed: false }
   }
   try {
-    assertSafeToRemove(path, legacyTopLevelDir(home, dirname))
+    assertSafeToRemove(path, safeRoot)
     deps.rm(path)
     return { dirname, path, attribution, class: cls, removed: true }
   } catch {
