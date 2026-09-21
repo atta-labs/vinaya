@@ -1166,10 +1166,18 @@ describe('Round 3 — silence-instead-of-fallback, unprovable conditions, and ho
         files: { 'src/index.d.ts': 'export declare function bar(): number\n', 'src/impl.ts': 'export const impl = 1\n' }
       },
       {
+        name: '@fx/elsewhere',
+        // One branch re-points at ANOTHER package, which is not a path under this
+        // one — so the relative sibling never wins the choice by default.
+        exports: { '.': { browser: '@fx/dual', default: './src/local.ts' } },
+        files: { 'src/local.ts': 'export function baz() { return 1 }\n', 'src/other.ts': 'export const o = 9\n' }
+      },
+      {
         name: '@fx/app',
         files: {
           'src/dual.test.ts': "import { foo } from '@fx/dual'\ntest('foo', () => foo())\n",
-          'src/typed.test.ts': "import { bar } from '@fx/typed'\ntest('bar', () => bar())\n"
+          'src/typed.test.ts': "import { bar } from '@fx/typed'\ntest('bar', () => bar())\n",
+          'src/elsewhere.test.ts': "import { baz } from '@fx/elsewhere'\ntest('baz', () => baz())\n"
         }
       }
     ])
@@ -1178,6 +1186,9 @@ describe('Round 3 — silence-instead-of-fallback, unprovable conditions, and ho
       // Coarse, not a guess: a file NEITHER declared target names still selects.
       expect(selectSet(root, [join(dir('@fx/dual'), 'src/unrelated.ts')])).toContain(join(app, 'src/dual.test.ts'))
       expect(selectSet(root, [join(dir('@fx/typed'), 'src/impl.ts')])).toContain(join(app, 'src/typed.test.ts'))
+      expect(selectSet(root, [join(dir('@fx/elsewhere'), 'src/other.ts')])).toContain(
+        join(app, 'src/elsewhere.test.ts')
+      )
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

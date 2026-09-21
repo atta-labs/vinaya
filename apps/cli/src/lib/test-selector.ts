@@ -376,7 +376,11 @@ function deriveEntrypoints(dir: string, pkg: PackageManifest, knownFiles: Set<st
   const add = (subpath: string, value: unknown): void => {
     const files = new Set<string>()
     for (const target of declaredTargets(value)) {
-      if (!target.startsWith('.')) continue
+      // A target re-pointing at ANOTHER package (`{ import: '@scope/other' }`)
+      // is not a path under `dir` to resolve, and the runtime may well take it —
+      // so it makes the whole subpath unprovable rather than ceding the choice
+      // to whichever sibling target happens to be relative.
+      if (!target.startsWith('.')) return
       const resolved = resolveFileCandidate(resolve(dir, target), knownFiles)
       if (resolved) files.add(resolved)
     }
@@ -656,6 +660,10 @@ function resolveExportedName(ctx: GraphContext, file: string, name: string, stac
  * for the whole specifier rather than keep the subset that happened to resolve.
  */
 function resolveHopNames(ctx: GraphContext, entry: string, names: string[], stack: Set<string>): string[] | null {
+  // No names is no proof, not a proof of nothing: returning an empty edge list
+  // here would drop the specifier silently. (`clean` already implies a non-empty
+  // list, so this guards the invariant rather than a reachable state.)
+  if (names.length === 0) return null
   const deps: string[] = []
   for (const name of names) {
     const sub = resolveExportedName(ctx, entry, name, stack)
