@@ -485,3 +485,70 @@ export function resetRuntimeDirCache(): void {
   memoized = null
   memoizedThisRepo = null
 }
+
+/**
+ * The top-level folder names an earlier layout left under the Vinaya home
+ * — kept here, and only here, so nothing else ever re-derives one of these
+ * strings as a path segment (`run-paths-only.test.ts`'s own architecture
+ * rule refuses any other file that names one as a quoted segment). `task
+ * sweep` (`task-sweep.ts`) is the one caller that still needs them, to
+ * list and attribute whatever an earlier run of this CLI (or an operator's
+ * own hand) left behind — it compares against these named constants
+ * rather than re-quoting any of the strings itself.
+ *
+ * Seven of these are folders this repository's own code once wrote to and
+ * later replaced with the unified `tasks-execution/` layout above.
+ * `LEGACY_DRIVERS` is the eighth: never written by this repository's own
+ * code at any point in its history (verified against the full history) —
+ * an operator's own ad hoc
+ * `> ~/.vinaya/drivers/<name>.out` redirect, named inconsistently by hand
+ * rather than by any path convention. It is still swept, listed the same
+ * way as the seven, because O3's own enumeration names "driver output" as
+ * one of the categories a survey of the Vinaya home found accumulating —
+ * disk debris is disk debris regardless of which hand wrote it, and this
+ * one carries no attributable content of its own (below) so it is only
+ * ever reported, never removed.
+ */
+export const LEGACY_DISPATCH_OUTPUT = 'dispatch-output'
+export const LEGACY_DISPATCH_RESUME = 'dispatch-resume'
+export const LEGACY_DISPATCH_SETTINGS = 'dispatch-settings'
+export const LEGACY_TASK_START = 'task-start'
+export const LEGACY_TASK_RESUME = 'task-resume'
+export const LEGACY_CONTROL_STORE = 'control-store'
+export const LEGACY_LOOPS = 'loops'
+export const LEGACY_DRIVERS = 'drivers'
+
+export const LEGACY_TOP_LEVEL_DIRNAMES = [
+  LEGACY_DISPATCH_OUTPUT,
+  LEGACY_DISPATCH_RESUME,
+  LEGACY_DISPATCH_SETTINGS,
+  LEGACY_TASK_START,
+  LEGACY_TASK_RESUME,
+  LEGACY_CONTROL_STORE,
+  LEGACY_LOOPS,
+  LEGACY_DRIVERS
+] as const
+
+export type LegacyTopLevelDirname = (typeof LEGACY_TOP_LEVEL_DIRNAMES)[number]
+
+/** `<home>/<name>` — never a run-file location (none of these ever sat inside `tasks-execution`, the layout that replaced seven of the eight; the eighth, `drivers`, was never a run-file location to begin with). */
+export function legacyTopLevelDir(home: string, name: LegacyTopLevelDirname): string {
+  return join(home, name)
+}
+
+/**
+ * The one nested exception: before this module unified the driver lock,
+ * the pause record and the held reviewer verdicts under one task folder,
+ * all three lived in a per-task folder nested INSIDE the telemetry outbox
+ * root itself — `<home>/outbox/dev-review-loop/<task>/` — the "outbox task
+ * folders" O3 names, and the Origin survey's own headline accumulation.
+ * This sits inside the SAME root the telemetry
+ * outbox (`log-sink.ts`'s `outboxRoot()`) still actively delivers ndjson
+ * event files under today, which is why it is named as its own path
+ * function here rather than folded into `LEGACY_TOP_LEVEL_DIRNAMES` above
+ * (a top-level scan of `outbox/` would otherwise have to know to skip the
+ * live `<owner>-<repo>`/`unresolved` ndjson directories sitting beside it).
+ */
+export function legacyOutboxTaskFoldersRoot(home: string): string {
+  return join(home, 'outbox', 'dev-review-loop')
+}

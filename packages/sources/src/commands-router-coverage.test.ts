@@ -84,6 +84,7 @@ describe('router -> COMMANDS coverage', () => {
         'task brief',
         'task run',
         'task status',
+        'task sweep',
         'log flush',
         'log export-artifact',
         'log collect-artifact',
