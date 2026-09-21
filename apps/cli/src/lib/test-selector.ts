@@ -34,7 +34,17 @@
  *     re-export module) becomes a change-detection-only marker (`touch:`): a
  *     change to the barrel or a hop selects the test, but the barrel's OTHER
  *     re-exports are never traversed, which is exactly what keeps a barrel edit
- *     from reintroducing whole-package selection.
+ *     from reintroducing whole-package selection. A hop's OWN module-scope
+ *     imports (a barrel's `import './register'` side effect, or an
+ *     `import { helper } from './helper'` it uses in module code) ARE surfaced
+ *     as traversable edges, since that code runs on every import through the hop
+ *     — so a change to a hop's own dependency still selects the test.
+ *
+ * A NON-source change inside a package (its `package.json`, `tsconfig.json`, or a
+ * non-`.ts` asset) is not a graph node, so a precisely-resolved importer also
+ * carries a `pkgmeta:<pkg>` marker that fires only on such a change — editing
+ * `exports`/`main` re-points what every consumer resolves to, and this keeps that
+ * caught without reintroducing whole-package selection on ordinary source edits.
  *
  * ## Conservative fallback — over-select, never omit
  *
@@ -44,12 +54,14 @@
  * over-select but never omits a truly affected test. Shapes that fall back:
  * namespace imports (`import * as ns`), default imports, side-effect imports
  * (`import '@scope/pkg'`), dynamic imports (`import('@scope/pkg')`), `export *`
- * re-exports, a requested name with no provable single origin (unknown,
- * ambiguous across multiple `export *` sources, cyclic, or re-exported across a
- * package boundary), a package whose entrypoint/subpath cannot be derived from
- * its manifest, and any specifier a single file imports under more than one
- * shape at once. Aliases (`import { a as b }`) and `type` imports are mapped by
- * their EXPORTED (origin) name, never the local alias, so they resolve
+ * re-exports, an empty or unparseable named list (`import {}`, or a brace list
+ * carrying a stray token) which narrows to nothing yet still runs the module, a
+ * requested name with no provable single origin (unknown, ambiguous across
+ * multiple `export *` sources, cyclic, or re-exported across a package boundary
+ * that itself will not resolve), a package whose entrypoint/subpath cannot be
+ * derived from its manifest, and any specifier a single file imports under more
+ * than one shape at once. Aliases (`import { a as b }`) and `type` imports are
+ * mapped by their EXPORTED (origin) name, never the local alias, so they resolve
  * precisely rather than falling back.
  */
 
@@ -61,18 +73,25 @@ const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']
 const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', 'build', 'coverage'])
 
 // A `from`-clause on an `import` or `export`, capturing the clause text between
-// the keyword and `from` (group 1) and the specifier (group 3). `[^'"]*?` spans
-// newlines (a negated class matches `\n`), so a multi-line `{ a,\n b }` clause
-// parses; it can never cross a string literal because quotes are excluded.
-const FROM_CLAUSE_RE = /^\s*(?:import|export)\s+([^'"]*?)\bfrom\s*(['"])([^'"]+)\2/gm
+// the keyword and `from` (group 1) and the specifier (group 3). `\b\s*` after the
+// keyword tolerates a whitespace-free clause (`export{a}from'x'`) so such a shape
+// still yields a record — the selector must degrade a shape it cannot fully read
+// to the coarse edge, never to silence. `[^'"]*?` spans newlines (a negated class
+// matches `\n`), so a multi-line `{ a,\n b }` clause parses; it can never cross a
+// string literal because quotes are excluded.
+const FROM_CLAUSE_RE = /^\s*(?:import|export)\b\s*([^'"]*?)\bfrom\s*(['"])([^'"]+)\2/gm
 // A side-effect import `import '<spec>'` — the quote immediately after `import`
 // distinguishes it from `import { … } from '<spec>'`.
 const SIDE_EFFECT_IMPORT_RE = /^\s*import\s*(['"])([^'"]+)\1/gm
 const DYNAMIC_IMPORT_RE = /\bimport\s*\(\s*(['"])([^'"]+)\1\s*\)/g
+// Line and block comments, stripped from a brace list before it is split on
+// commas so `import { a, /* keep */ b }` and a trailing `// note` resolve rather
+// than dropping every name the comment abuts.
+const COMMENT_RE = /\/\*[\s\S]*?\*\/|\/\/[^\n]*/g
 
 export type ImportRecord =
-  /** `import { a, b as c } from 'x'` / `export { a } from 'x'` — origin names. */
-  | { kind: 'named'; specifier: string; names: string[] }
+  /** `import { a, b as c } from 'x'` / `export { a } from 'x'` — origin names. `clean` is false when the brace list was empty or carried an entry that is not a bare identifier, so the importer must fall back to the whole-package edge rather than narrow to the parsed subset. */
+  | { kind: 'named'; specifier: string; names: string[]; clean: boolean }
   /** `import * as ns from 'x'` — the whole module namespace. */
   | { kind: 'namespace'; specifier: string }
   /** `import def from 'x'` (or `def, { … }`) — a default binding is involved. */
@@ -84,18 +103,31 @@ export type ImportRecord =
   /** `import('x')` — a dynamic specifier. */
   | { kind: 'dynamic'; specifier: string }
 
-/** Splits a `{ a, b as c, type d }` list into its EXPORTED (origin) names — the alias and any `type` keyword dropped, since the origin name is what a target package's export map is keyed by. */
-function parseNamedList(inside: string): string[] {
+/**
+ * Splits a `{ a, b as c, type d }` list into its EXPORTED (origin) names — the
+ * alias and any `type` keyword dropped, since the origin name is what a target
+ * package's export map is keyed by. `clean` reports whether EVERY entry parsed to
+ * a bare identifier: an empty list (`{}`) or any entry that does not (a stray
+ * token, an unstripped comment fragment) makes it false so the caller can keep
+ * the coarse edge instead of silently narrowing to the names it happened to read.
+ */
+function parseNamedList(inside: string): { names: string[]; clean: boolean } {
   const names: string[] = []
-  for (const raw of inside.split(',')) {
-    let entry = raw.trim()
-    if (entry.length === 0) continue
-    entry = entry.replace(/^type\s+/, '')
+  let clean = true
+  const entries = inside
+    .replace(COMMENT_RE, '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+  if (entries.length === 0) clean = false // `import {} from 'x'` — nothing named, but the module still runs.
+  for (const raw of entries) {
+    const entry = raw.replace(/^type\s+/, '')
     // `a as b` → origin is `a`; a bare `a` → origin is `a`.
     const origin = (entry.split(/\s+as\s+/)[0] as string).trim()
-    if (origin.length > 0 && /^[A-Za-z_$][\w$]*$/.test(origin)) names.push(origin)
+    if (/^[A-Za-z_$][\w$]*$/.test(origin)) names.push(origin)
+    else clean = false
   }
-  return names
+  return { names, clean }
 }
 
 /** Classifies a `from`-clause into an {@link ImportRecord} kind for `specifier`. */
@@ -106,8 +138,8 @@ function classifyFromClause(clause: string, specifier: string): ImportRecord {
     return /^\*\s+as\s+/.test(c) ? { kind: 'namespace', specifier } : { kind: 'star', specifier }
   }
   if (c.startsWith('{')) {
-    const inside = c.slice(1, c.lastIndexOf('}'))
-    return { kind: 'named', specifier, names: parseNamedList(inside) }
+    const { names, clean } = parseNamedList(c.slice(1, c.lastIndexOf('}')))
+    return { kind: 'named', specifier, names, clean }
   }
   // Anything else begins with a default binding (`def` or `def, { … }` or
   // `def, * as ns`) — a default export is never provably mapped, so coarse.
@@ -132,7 +164,7 @@ export function extractImportRecords(source: string): ImportRecord[] {
   return records
 }
 
-/** The distinct import specifiers a source file references — every `from`-clause, side-effect and dynamic import. Preserved as a stable public helper; the graph builder works off {@link extractImportRecords} directly. */
+/** The distinct import specifiers a source file references — every `from`-clause, side-effect and dynamic import. Kept as the thin, shape-agnostic view over {@link extractImportRecords} (which the graph builder uses directly); exported for tests and any future caller that needs specifiers without their import shape. */
 export function extractImportSpecifiers(source: string): string[] {
   const specifiers = new Set<string>()
   for (const record of extractImportRecords(source)) specifiers.add(record.specifier)
@@ -217,6 +249,8 @@ export type WorkspacePackage = {
    * whole-package edge.
    */
   entrypoints: Map<string, string>
+  /** Absolute paths of this package's own source files (`SOURCE_EXTENSIONS`), walked once here so the selector reuses them rather than re-walking every package directory at push time. */
+  sourceFiles: string[]
 }
 
 function isBunTestScript(script: string | undefined): boolean {
@@ -240,15 +274,23 @@ function deriveEntrypoints(dir: string, pkg: PackageManifest, knownFiles: Set<st
     if (resolved) out.set(subpath, resolved)
   }
   // An exports entry's target may be a bare string or a conditions object
-  // (`{ import: './x', default: './y' }`); take the first string condition.
+  // (`{ types: './x.d.ts', import: './x.ts' }`). Prefer a RUNTIME condition over
+  // `types`: a declaration file is what type-checking loads, not what runs, so
+  // resolving names into it would point at a `.d.ts` the runtime never executes
+  // and miss changes to the real implementation.
   const targetOf = (value: unknown): unknown => {
     if (typeof value === 'string') return value
-    if (value && typeof value === 'object') {
-      for (const cond of Object.values(value as Record<string, unknown>)) {
-        if (typeof cond === 'string') return cond
-      }
+    if (!value || typeof value !== 'object') return undefined
+    const conditions = value as Record<string, unknown>
+    for (const key of ['import', 'module', 'require', 'node', 'browser', 'default']) {
+      if (typeof conditions[key] === 'string') return conditions[key]
     }
-    return undefined
+    // No known runtime condition — fall back to the first non-`types` string, then
+    // `types` only as a last resort (better a stale edge than none).
+    for (const [key, cond] of Object.entries(conditions)) {
+      if (key !== 'types' && typeof cond === 'string') return cond
+    }
+    return typeof conditions.types === 'string' ? conditions.types : undefined
   }
   if (typeof pkg.exports === 'string') {
     add('.', pkg.exports)
@@ -292,12 +334,14 @@ export function discoverWorkspacePackages(repoRoot: string): WorkspacePackage[] 
         continue
       }
       if (!pkg.name) continue
-      const knownFiles = new Set(walkFiles(dir).filter((f) => SOURCE_EXTENSIONS.includes(extname(f))))
+      const sourceFiles = walkFiles(dir).filter((f) => SOURCE_EXTENSIONS.includes(extname(f)))
+      const knownFiles = new Set(sourceFiles)
       out.push({
         dir,
         name: pkg.name,
         bunTestCompatible: isBunTestScript(pkg.scripts?.test),
-        entrypoints: deriveEntrypoints(dir, pkg, knownFiles)
+        entrypoints: deriveEntrypoints(dir, pkg, knownFiles),
+        sourceFiles
       })
     }
   }
@@ -333,6 +377,8 @@ type ExportTable = {
   starAsNames: Set<string>
   /** Top-level imports, so an `export { name }` that re-exports an import can be traced: local name → { specifier, importedName }. `importedName` is `*`/`default` for namespace/default imports. */
   imports: Map<string, { specifier: string; importedName: string }>
+  /** Every specifier this file imports for its OWN module scope — the `imports` above plus bare side-effect `import 'x'`. A re-export HOP is a check-only marker whose module still runs on import, so these are what a hop contributes to the graph beyond the one re-export the importer resolved through it. */
+  ownImportSpecifiers: string[]
 }
 
 const EXPORT_DEF_RE =
@@ -351,6 +397,7 @@ function parseExportTable(source: string): ExportTable {
   const starReexports: string[] = []
   const starAsNames = new Set<string>()
   const imports = new Map<string, { specifier: string; importedName: string }>()
+  const ownImportSpecifiers: string[] = []
 
   EXPORT_DEF_RE.lastIndex = 0
   for (let m = EXPORT_DEF_RE.exec(source); m !== null; m = EXPORT_DEF_RE.exec(source)) {
@@ -386,6 +433,7 @@ function parseExportTable(source: string): ExportTable {
   IMPORT_BINDING_RE.lastIndex = 0
   for (let m = IMPORT_BINDING_RE.exec(source); m !== null; m = IMPORT_BINDING_RE.exec(source)) {
     const specifier = m[5] as string
+    ownImportSpecifiers.push(specifier)
     if (m[1] !== undefined) {
       for (const raw of m[1].split(',')) {
         const entry = raw.trim().replace(/^type\s+/, '')
@@ -402,11 +450,27 @@ function parseExportTable(source: string): ExportTable {
     }
   }
 
-  return { directDefs, localReexports, namedReexports, starReexports, starAsNames, imports }
+  SIDE_EFFECT_IMPORT_RE.lastIndex = 0
+  for (let m = SIDE_EFFECT_IMPORT_RE.exec(source); m !== null; m = SIDE_EFFECT_IMPORT_RE.exec(source)) {
+    ownImportSpecifiers.push(m[2] as string)
+  }
+
+  return { directDefs, localReexports, namedReexports, starReexports, starAsNames, imports, ownImportSpecifiers }
 }
 
-/** The outcome of resolving one exported name through a package's export graph. When `resolved`, `touched` is every re-export hop file on the successful path (entrypoint + intermediates) and `definers` is the file(s) that actually define the name; both empty and meaningless when unresolved. */
-type NameResolution = { resolved: true; touched: Set<string>; definers: Set<string> } | { resolved: false }
+/**
+ * The outcome of resolving one exported name through a package's export graph.
+ * When `resolved`: `touched` is every re-export hop file on the successful path
+ * (entrypoint + intermediates), recorded as check-only markers; `definers` is
+ * the file(s) that actually define the name, recorded as traversable nodes; and
+ * `hopDeps` is every file a hop imports for its OWN module scope (a barrel's
+ * `import './register'` or `import { helper } from './helper'`), which runs on
+ * every import through that hop and so must select on change — traversable too.
+ * All three empty and meaningless when unresolved.
+ */
+type NameResolution =
+  | { resolved: true; touched: Set<string>; definers: Set<string>; hopDeps: Set<string> }
+  | { resolved: false }
 
 const UNRESOLVED: NameResolution = { resolved: false }
 
@@ -427,13 +491,6 @@ function makeSourceReader(): (file: string) => string {
   }
 }
 
-/**
- * Resolves an exported `name` to the files that define it, following named and
- * unambiguous `export *` re-exports through the graph. Returns {@link UNRESOLVED}
- * — the caller's signal to keep the whole-package edge — for a namespace, a
- * default, an unknown name, an ambiguous name (more than one `export *` origin),
- * a cycle, or a re-export whose source cannot be resolved to a single file.
- */
 /**
  * The shared workspace context a name resolution needs: how to read/parse a
  * file (cached) and how to turn a re-export specifier into a real file — whether
@@ -502,9 +559,21 @@ function resolveThroughTable(
     return target ? resolveExportedName(ctx, target, nextName, stack) : UNRESOLVED
   }
 
-  // A name defined right here.
+  // A name defined right here. `file` is the definer — a traversable node whose
+  // own imports the caller already walks — so it contributes no hop deps.
   if (name !== 'default' && table.directDefs.has(name)) {
-    return { resolved: true, touched: new Set([file]), definers: new Set([file]) }
+    return { resolved: true, touched: new Set([file]), definers: new Set([file]), hopDeps: new Set() }
+  }
+
+  // Every file this re-export hop imports for its own module scope, which runs on
+  // any import through the hop and so must select on change.
+  const ownHopDeps = (): Set<string> => {
+    const out = new Set<string>()
+    for (const specifier of table.ownImportSpecifiers) {
+      const resolved = resolveSpecifierToFile(ctx, file, specifier)
+      if (resolved) out.add(resolved)
+    }
+    return out
   }
 
   // `export { local as name }` with no `from` — trace `local` to a definition
@@ -513,14 +582,18 @@ function resolveThroughTable(
   const local = table.localReexports.get(name)
   if (local !== undefined) {
     if (table.directDefs.has(local)) {
-      return { resolved: true, touched: new Set([file]), definers: new Set([file]) }
+      return { resolved: true, touched: new Set([file]), definers: new Set([file]), hopDeps: new Set() }
     }
     const imp = table.imports.get(local)
     if (imp && imp.importedName !== '*' && imp.importedName !== 'default') {
       const sub = recurse(imp.specifier, imp.importedName)
-      return sub.resolved
-        ? { resolved: true, touched: new Set([file, ...sub.touched]), definers: sub.definers }
-        : UNRESOLVED
+      if (!sub.resolved) return UNRESOLVED
+      return {
+        resolved: true,
+        touched: new Set([file, ...sub.touched]),
+        definers: sub.definers,
+        hopDeps: new Set([...ownHopDeps(), ...sub.hopDeps])
+      }
     }
     return UNRESOLVED
   }
@@ -530,7 +603,7 @@ function resolveThroughTable(
   // Gather every origin that can supply the name: one explicit `export { name }
   // from 'x'`, plus each `export * from 'y'` that resolves it. More than one is
   // ambiguous; exactly one is precise; none means the name is unknown here.
-  const origins: NameResolution[] = []
+  const origins: Extract<NameResolution, { resolved: true }>[] = []
   const named = table.namedReexports.get(name)
   if (named) {
     const sub = recurse(named.specifier, named.importedName)
@@ -543,8 +616,13 @@ function resolveThroughTable(
     if (origins.length > 1) return UNRESOLVED
   }
   if (origins.length !== 1) return UNRESOLVED
-  const only = origins[0] as { resolved: true; touched: Set<string>; definers: Set<string> }
-  return { resolved: true, touched: new Set([file, ...only.touched]), definers: only.definers }
+  const only = origins[0] as Extract<NameResolution, { resolved: true }>
+  return {
+    resolved: true,
+    touched: new Set([file, ...only.touched]),
+    definers: only.definers,
+    hopDeps: new Set([...ownHopDeps(), ...only.hopDeps])
+  }
 }
 
 // ── Selection ───────────────────────────────────────────────────────────────
@@ -575,9 +653,16 @@ export type SelectionOptions = {
   addedOrRenamed?: readonly string[]
 }
 
-/** A resolved forward dependency of a file — a real graph node, a change-only re-export-hop marker, or a coarse whole-package fallback. */
+/** A resolved forward dependency of a file — a real graph node, a change-only re-export-hop marker, a whole-package fallback, or a package-manifest marker. */
 const TOUCH_PREFIX = 'touch:'
 const EXTERNAL_PREFIX = 'external:'
+// A precisely-resolved importer carries `pkgmeta:<pkg>` so a change to a NON-source
+// file in that package (its `package.json`, `tsconfig.json`, a non-`.ts` asset)
+// still selects it: such a file is not a graph node, so the resolved file edges
+// alone would miss it, yet editing `exports`/`main` re-points what the importer
+// resolves to. It fires only on non-source changes; a source change is caught
+// precisely by the real file edge, so precision on ordinary edits is preserved.
+const PKGMETA_PREFIX = 'pkgmeta:'
 
 /**
  * The whole pipeline: given the changed files (repo-root-relative or absolute,
@@ -599,32 +684,39 @@ export function selectAffectedTestFiles(
   const alwaysRunRegexes = (options.alwaysRun ?? []).map(globToRegex)
   const addedOrRenamed = new Set((options.addedOrRenamed ?? []).map((f) => (isAbsolute(f) ? f : join(repoRoot, f))))
 
-  // Which packages have at least one changed file directly inside them — the
-  // set a coarse `external:<pkg>` fallback edge is checked against.
-  const changedPackageNames = new Set<string>()
-  for (const pkg of packages) {
-    for (const f of absChanged) {
-      if (f.startsWith(`${pkg.dir}/`)) {
-        changedPackageNames.add(pkg.name)
-        break
-      }
-    }
-  }
-
   const readSource = makeSourceReader()
   const tableCache = new Map<string, ExportTable>()
   const resultCache = new Map<string, NameResolution>()
 
-  // Per-package file inventory, and the map from any source file to its package,
-  // used to honour the own-package guard on coarse fallback edges.
+  // Per-package file inventory (reusing the walk `discoverWorkspacePackages`
+  // already did, not a second one), plus the map from any source file to its
+  // package for the own-package guard on fallback edges.
   const pkgFiles = new Map<WorkspacePackage, string[]>()
   const pkgKnownFiles = new Map<WorkspacePackage, Set<string>>()
   const fileToPackage = new Map<string, string>()
+  const allSourceFiles = new Set<string>()
   for (const pkg of packages) {
-    const files = walkFiles(pkg.dir).filter((f) => SOURCE_EXTENSIONS.includes(extname(f)))
+    const files = pkg.sourceFiles
     pkgFiles.set(pkg, files)
     pkgKnownFiles.set(pkg, new Set(files))
-    for (const f of files) fileToPackage.set(f, pkg.name)
+    for (const f of files) {
+      fileToPackage.set(f, pkg.name)
+      allSourceFiles.add(f)
+    }
+  }
+
+  // Which packages have a changed file directly inside them (the set a coarse
+  // `external:<pkg>` edge matches), and which of those changed a NON-source file
+  // — a `package.json`/`tsconfig.json`/asset that is not a graph node and so is
+  // invisible to a precisely-resolved importer's file edges (`pkgmeta:` covers it).
+  const changedPackageNames = new Set<string>()
+  const nonSourceChangedPackages = new Set<string>()
+  for (const pkg of packages) {
+    for (const f of absChanged) {
+      if (!f.startsWith(`${pkg.dir}/`)) continue
+      changedPackageNames.add(pkg.name)
+      if (!allSourceFiles.has(f)) nonSourceChangedPackages.add(pkg.name)
+    }
   }
 
   // Resolve a bare specifier to its target package + subpath, longest name first
@@ -668,7 +760,7 @@ export function selectAffectedTestFiles(
     for (const file of pkgFiles.get(pkg) as string[]) {
       const deps: string[] = []
       const coarsePackages = new Set<string>()
-      const resolvedNamed = new Map<string, { touched: Set<string>; definers: Set<string> }>()
+      const resolvedNamed = new Map<string, { touched: Set<string>; definers: Set<string>; hopDeps: Set<string> }>()
 
       for (const record of extractImportRecords(readSource(file))) {
         const specifier = record.specifier
@@ -682,9 +774,12 @@ export function selectAffectedTestFiles(
         if (coarsePackages.has(match.pkg.name)) continue // already coarse for this package.
 
         const entry = match.pkg.entrypoints.get(match.subpath)
-        if (record.kind !== 'named' || !entry) {
-          // namespace / default / star / side-effect / dynamic, or an
-          // entrypoint we cannot derive — retain the whole-package edge.
+        // A named import whose brace list did not parse cleanly (empty `{}`, or an
+        // entry that is not a bare identifier) is an unprovable shape: keep the
+        // whole-package edge rather than narrow to the names that happened to read.
+        if (record.kind !== 'named' || !record.clean || !entry) {
+          // namespace / default / star / side-effect / dynamic / unclean-named, or
+          // an entrypoint we cannot derive — retain the whole-package edge.
           coarsePackages.add(match.pkg.name)
           continue
         }
@@ -698,11 +793,12 @@ export function selectAffectedTestFiles(
             break
           }
           if (!acc) {
-            acc = { touched: new Set(), definers: new Set() }
+            acc = { touched: new Set(), definers: new Set(), hopDeps: new Set() }
             resolvedNamed.set(match.pkg.name, acc)
           }
           for (const t of resolution.touched) acc.touched.add(t)
           for (const d of resolution.definers) acc.definers.add(d)
+          for (const h of resolution.hopDeps) acc.hopDeps.add(h)
         }
       }
 
@@ -710,8 +806,10 @@ export function selectAffectedTestFiles(
       // edge for the SAME package, so a mixed import shape is never narrowed.
       for (const [name, acc] of resolvedNamed) {
         if (coarsePackages.has(name)) continue
+        deps.push(`${PKGMETA_PREFIX}${name}`) // catches a non-source (manifest) change in the package.
         for (const t of acc.touched) if (t !== file) deps.push(`${TOUCH_PREFIX}${t}`)
         for (const d of acc.definers) deps.push(d)
+        for (const h of acc.hopDeps) deps.push(h)
       }
       for (const name of coarsePackages) deps.push(`${EXTERNAL_PREFIX}${name}`)
 
@@ -733,7 +831,11 @@ export function selectAffectedTestFiles(
 
     for (const test of testFiles) {
       const forced = alwaysRunRegexes.some((re) => re.test(test.slice(repoRoot.length + 1))) || addedOrRenamed.has(test)
-      if (forced || (anythingChanged && reaches(test, edges, absChanged, changedPackageNames, fileToPackage))) {
+      if (
+        forced ||
+        (anythingChanged &&
+          reaches(test, edges, absChanged, changedPackageNames, nonSourceChangedPackages, fileToPackage))
+      ) {
         selected.push(test)
       }
     }
@@ -744,18 +846,20 @@ export function selectAffectedTestFiles(
 
 /**
  * DFS from `start` over the forward edge graph — true the moment it reaches a
- * changed file (a real node or a `touch:` re-export-hop marker), or a coarse
- * `external:<pkg>` edge naming a changed package. A `touch:` marker is checked
+ * changed file (a real node or a `touch:` re-export-hop marker), a coarse
+ * `external:<pkg>` edge naming a changed package, or a `pkgmeta:<pkg>` edge whose
+ * package had a NON-source (manifest/asset) change. A `touch:` marker is checked
  * but never traversed, so a re-exporting barrel's OTHER exports never fan out.
- * An `external:` edge naming the edge-owning file's OWN package is ignored — a
- * file "importing its own package" would otherwise coarsely select on any
- * same-package change, exactly the folder-shaped over-selection this rules out.
+ * An `external:`/`pkgmeta:` edge naming the edge-owning file's OWN package is
+ * ignored — a file "importing its own package" would otherwise coarsely select on
+ * any same-package change, exactly the folder-shaped over-selection this rules out.
  */
 function reaches(
   start: string,
   edges: Map<string, string[]>,
   changedFiles: Set<string>,
   changedPackages: Set<string>,
+  nonSourceChangedPackages: Set<string>,
   fileToPackage: Map<string, string>
 ): boolean {
   const visited = new Set<string>()
@@ -773,6 +877,11 @@ function reaches(
       if (dep.startsWith(EXTERNAL_PREFIX)) {
         const specifier = dep.slice(EXTERNAL_PREFIX.length)
         if (changedPackages.has(specifier) && specifier !== fileToPackage.get(current)) return true
+        continue
+      }
+      if (dep.startsWith(PKGMETA_PREFIX)) {
+        const pkg = dep.slice(PKGMETA_PREFIX.length)
+        if (nonSourceChangedPackages.has(pkg) && pkg !== fileToPackage.get(current)) return true
         continue
       }
       if (!visited.has(dep)) stack.push(dep)

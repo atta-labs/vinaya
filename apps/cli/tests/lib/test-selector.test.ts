@@ -373,7 +373,7 @@ describe('a second real CI failure in the SAME task-files-v1/1 change set (Issue
 // vs. ambiguous `export *`, cyclic re-exports, namespace/default/dynamic/unknown
 // shapes, and a test that reaches a bare-package import only through an
 // intermediate file. Never mocked: each writes a throwaway workspace to disk.
-type PkgSpec = { name: string; main?: string; test?: string; files: Record<string, string> }
+type PkgSpec = { name: string; main?: string; exports?: unknown; test?: string; files: Record<string, string> }
 
 /** Writes a throwaway multi-package workspace to a temp dir and returns its root plus a `dir(name)` locator. */
 function mkWorkspace(pkgs: PkgSpec[]): { root: string; dir: (name: string) => string } {
@@ -384,8 +384,9 @@ function mkWorkspace(pkgs: PkgSpec[]): { root: string; dir: (name: string) => st
     const dir = join(root, 'packages', `p${i}`)
     dirs.set(p.name, dir)
     mkdirSync(dir, { recursive: true })
-    const manifest: { name: string; main?: string; scripts?: { test: string } } = { name: p.name }
+    const manifest: { name: string; main?: string; exports?: unknown; scripts?: { test: string } } = { name: p.name }
     if (p.main) manifest.main = p.main
+    if (p.exports) manifest.exports = p.exports
     if (p.test) manifest.scripts = { test: p.test }
     writeFileSync(join(dir, 'package.json'), JSON.stringify(manifest))
     for (const [rel, content] of Object.entries(p.files)) {
@@ -902,5 +903,171 @@ describe('Part 4 — never-miss: optimized selection is a superset of the indepe
       expect(missed, `never-miss violation for ${changed.slice(REPO_ROOT.length + 1)}`).toEqual([])
     }
     expect(checkedNonEmpty).toBeGreaterThanOrEqual(3)
+  })
+})
+
+// symbol-aware-test-selection-v1 1, round 2 review — regressions the never-miss
+// invariant hid until the reviewers surfaced them: an empty/comment-bearing named
+// list must fall back (not silently drop names), a non-source change inside a
+// package must still reach precisely-resolved importers, a re-export hop's own
+// module imports must be traversed, a whitespace-free clause must still parse, and
+// an `exports` conditions object must resolve through its runtime target.
+describe('Round 2 — fallback and never-miss holes', () => {
+  it('an empty named list `import {}` falls back to the whole-package edge (F1)', () => {
+    const { root, dir } = mkWorkspace([
+      {
+        name: '@fx/lib',
+        main: INDEX_MAIN,
+        files: {
+          'src/index.ts': "export { foo } from './foo'\nexport { bar } from './bar'\n",
+          'src/foo.ts': 'export function foo() { return 1 }\n',
+          'src/bar.ts': 'export function bar() { return 2 }\n'
+        }
+      },
+      {
+        name: '@fx/app',
+        files: {
+          'src/empty.test.ts': "import {} from '@fx/lib'\ntest('empty', () => 1)\n",
+          'src/control-foo.test.ts': "import { foo } from '@fx/lib'\ntest('foo', () => foo())\n"
+        }
+      }
+    ])
+    try {
+      const app = dir('@fx/app')
+      const selected = selectSet(root, [join(dir('@fx/lib'), 'src/bar.ts')])
+      expect(selected).toContain(join(app, 'src/empty.test.ts')) // coarse: any lib change selects it
+      expect(selected).not.toContain(join(app, 'src/control-foo.test.ts')) // precise foo import untouched by a bar change
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a comment inside a multi-line named list drops no name — every name after it still resolves precisely (F1)', () => {
+    const { root, dir } = mkWorkspace([
+      {
+        name: '@fx/lib',
+        main: INDEX_MAIN,
+        files: {
+          'src/index.ts':
+            "export { alpha } from './alpha'\nexport { beta } from './beta'\nexport { gamma } from './gamma'\n",
+          'src/alpha.ts': 'export const alpha = 1\n',
+          'src/beta.ts': 'export const beta = 2\n',
+          'src/gamma.ts': 'export const gamma = 3\n'
+        }
+      },
+      {
+        name: '@fx/app',
+        files: {
+          'src/commented.test.ts':
+            "import {\n  alpha, // the first\n  beta\n} from '@fx/lib'\ntest('c', () => [alpha, beta])\n"
+        }
+      }
+    ])
+    try {
+      const commented = join(dir('@fx/app'), 'src/commented.test.ts')
+      // `beta` sits after the `// the first` comment; it must still resolve.
+      expect(selectSet(root, [join(dir('@fx/lib'), 'src/beta.ts')])).toContain(commented)
+      // `gamma` is imported by nobody, so a gamma change selects nothing (still precise, not coarse).
+      expect(selectSet(root, [join(dir('@fx/lib'), 'src/gamma.ts')])).not.toContain(commented)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a NON-source change inside a package (its package.json) still selects a precisely-resolved importer (F2)', () => {
+    const { root, dir } = mkWorkspace([
+      {
+        name: '@fx/lib',
+        main: INDEX_MAIN,
+        files: {
+          'src/index.ts': "export { foo } from './foo'\n",
+          'src/foo.ts': 'export function foo() { return 1 }\n',
+          'src/unrelated.ts': 'export const u = 9\n'
+        }
+      },
+      { name: '@fx/app', files: { 'src/uses.test.ts': "import { foo } from '@fx/lib'\ntest('foo', () => foo())\n" } }
+    ])
+    try {
+      const uses = join(dir('@fx/app'), 'src/uses.test.ts')
+      const lib = dir('@fx/lib')
+      // exports/main re-point what the importer resolves to — a manifest change must select it.
+      expect(selectSet(root, [join(lib, 'package.json')])).toContain(uses)
+      expect(selectSet(root, [join(lib, 'tsconfig.json')])).toContain(uses)
+      // A source change stays precise: foo selects, an unrelated source file does not.
+      expect(selectSet(root, [join(lib, 'src/foo.ts')])).toContain(uses)
+      expect(selectSet(root, [join(lib, 'src/unrelated.ts')])).not.toContain(uses)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it("a re-export hop's own side-effect and module-scope imports are traversed (F3)", () => {
+    const { root, dir } = mkWorkspace([
+      {
+        name: '@fx/lib',
+        main: INDEX_MAIN,
+        files: {
+          'src/index.ts':
+            "import './register'\nimport { helper } from './helper'\nexport { foo } from './foo'\nexport const wired = helper\n",
+          'src/register.ts': 'export const registered = true\n',
+          'src/helper.ts': 'export const helper = 1\n',
+          'src/foo.ts': 'export function foo() { return 1 }\n',
+          'src/unrelated.ts': 'export const u = 9\n'
+        }
+      },
+      { name: '@fx/app', files: { 'src/uses.test.ts': "import { foo } from '@fx/lib'\ntest('foo', () => foo())\n" } }
+    ])
+    try {
+      const uses = join(dir('@fx/app'), 'src/uses.test.ts')
+      const lib = dir('@fx/lib')
+      // The barrel runs `register.ts` and `helper.ts` on every import of `foo`.
+      expect(selectSet(root, [join(lib, 'src/register.ts')])).toContain(uses)
+      expect(selectSet(root, [join(lib, 'src/helper.ts')])).toContain(uses)
+      // A file the barrel does not import at all stays off the path.
+      expect(selectSet(root, [join(lib, 'src/unrelated.ts')])).not.toContain(uses)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a whitespace-free clause `import{foo}from` still yields an edge, not silence (F4)', () => {
+    const { root, dir } = mkWorkspace([
+      {
+        name: '@fx/lib',
+        main: INDEX_MAIN,
+        files: { 'src/index.ts': "export { foo } from './foo'\n", 'src/foo.ts': 'export function foo() { return 1 }\n' }
+      },
+      { name: '@fx/app', files: { 'src/tight.test.ts': "import{foo}from'@fx/lib'\ntest('foo', () => foo())\n" } }
+    ])
+    try {
+      const tight = join(dir('@fx/app'), 'src/tight.test.ts')
+      expect(selectSet(root, [join(dir('@fx/lib'), 'src/foo.ts')])).toContain(tight)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('an `exports` conditions object resolves through its RUNTIME target, not `types` (Sec-5)', () => {
+    const { root, dir } = mkWorkspace([
+      {
+        name: '@fx/lib',
+        exports: { '.': { types: './src/types.d.ts', import: './src/index.ts' } },
+        files: {
+          'src/index.ts': 'export function foo() { return 1 }\n',
+          'src/types.d.ts': 'export declare function foo(): number\n'
+        }
+      },
+      { name: '@fx/app', files: { 'src/uses.test.ts': "import { foo } from '@fx/lib'\ntest('foo', () => foo())\n" } }
+    ])
+    try {
+      const uses = join(dir('@fx/app'), 'src/uses.test.ts')
+      const lib = dir('@fx/lib')
+      // Resolution used the runtime `import` entry (index.ts), so an index change selects…
+      expect(selectSet(root, [join(lib, 'src/index.ts')])).toContain(uses)
+      // …and the `types` declaration file, which the runtime never loads, is off the path.
+      expect(selectSet(root, [join(lib, 'src/types.d.ts')])).not.toContain(uses)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })
