@@ -696,7 +696,7 @@ export function describeConfidencePauseDetail(confidence: Confidence): string {
 }
 
 /**
- * O1/O3: the `'reappearance'`/`'no_progress'`/`'escalation'` pauses
+ * O1/O3: the `'reappearance'`/`'escalation'` pauses
  * `assessVerdicts` decides (`packages/aeg-core`, out of Surface) carry no
  * `detail` either, though the round's own `findings_compared` event (Boundary:
  * read here, never recomputed — the comparison itself stays entirely in
@@ -705,7 +705,10 @@ export function describeConfidencePauseDetail(confidence: Confidence): string {
  * verdicts it built `Observations` from. `max_rounds` is excluded: it
  * already carries its own `detail` from `assessRound` (`max rounds: <n>`),
  * so this is never called for it (see the `decision.detail === undefined`
- * guard at each call site).
+ * guard at each call site). `assessVerdicts` no longer decides a
+ * `'no_progress'` pause at all — the driver's own attach-redelivery pause is
+ * the only `'no_progress'` source now, and it builds its own `detail` inline
+ * rather than here.
  */
 export function deriveVerdictPauseDetail(
   reason: PauseReason,
@@ -727,9 +730,6 @@ export function deriveVerdictPauseDetail(
     return findingsCompared.recurring.length > 0
       ? `finding${findingsCompared.recurring.length > 1 ? 's' : ''} ${findingsCompared.recurring.join(', ')} reappeared after being marked resolved in an earlier round`
       : undefined
-  }
-  if (reason === 'no_progress') {
-    return `no finding was marked resolved this round (open: ${findingsCompared.open.length}, new: ${findingsCompared.new.length}), the same as the round before it — two consecutive rounds with no forward motion`
   }
   return undefined
 }
@@ -1928,7 +1928,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
 
     /**
      * A round's own findings must carry reviewer-cited ids to be
-     * comparable across rounds at all (`assessRound`'s own `no_progress`
+     * comparable across rounds at all (`assessRound`'s own `reappearance`
      * derivation compares finding ids between rounds, and a fresh
      * `findings.txt` each round has no other stable identity to compare on).
      * A report missing them is sent back ONCE with `CITE_FINDING_IDS_PROMPT`,
@@ -3334,12 +3334,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               const obs: Observations = {
                 kind: 'verdicts',
                 round,
-                verdicts: [reviewer.verdict.observation, security.verdict.observation],
-                // Either role's report still uncitable after its
-                // one resend — `assessRound` never derives `no_progress` for
-                // this round; every other stop condition (reappearance,
-                // confidence, max_rounds, escalation) is unaffected.
-                findingsUncitable: reviewer.findingsUncitable || security.findingsUncitable
+                verdicts: [reviewer.verdict.observation, security.verdict.observation]
               }
               const result = assessRound(state, obs)
               state = result.state

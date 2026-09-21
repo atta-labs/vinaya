@@ -18,28 +18,29 @@
  *   below-50; 50 or over dispatches reviewers.
  * - A `verdicts` observation with any `NOT MET` objective is
  *   `changes_requested` regardless of findings.
- * - The four exits are decided here and nowhere else: an id previously
+ * - The three exits are decided here and nowhere else: an id previously
  *   `resolved` reported again (`stop_condition_met` `condition: 'reappearance'`),
- *   two consecutive rounds resolving no id (`condition: 'no_progress'`), a
- *   confidence collapse per the rule above (`condition: 'confidence'`), and
- *   rounds over 3 (`condition: 'max_rounds'`) — the widened, additive values
- *   a 2026-09-06 amendment adds to `stop_condition_met.condition`
- *   so a reader tells a confidence collapse and a finding reappearance apart
- *   from each other and from a generic stall, rather than collapsing all
- *   three onto `no_progress` (superseding this task's own brief §2, which
- *   predates that amendment).
+ *   a confidence collapse per the rule above (`condition: 'confidence'`), and
+ *   rounds over 3 (`condition: 'max_rounds'`) — distinct `condition` values a
+ *   2026-09-06 amendment adds to `stop_condition_met.condition` so a reader
+ *   tells a confidence collapse and a finding reappearance apart from each
+ *   other and from the round cap. A fourth exit once lived here too — two
+ *   consecutive rounds resolving no id (`condition: 'no_progress'`) — but it
+ *   read a resolved-id signal no reviewer observation ever fills (every
+ *   `state` comes back `null`), so it paused loops that had made real
+ *   progress; it is removed. The `no_progress` condition and pause reason
+ *   survive only for the driver's own attach-redelivery pause and for
+ *   already-written journals, never as an assessment exit here.
  *
  * Reuse, not a second counter: the id-state map for each round is built by
  * calling `groupRounds` (`../review-status`) with synthetic same-key
  * `VerdictComment`s — the exact "first non-null state wins" merge this
  * module needs for combining a round's reviewer and security findings, with
- * no forked copy of that rule. The reappearance/no-progress comparisons
- * themselves are new: `groupRounds` merges one round's ids, it does not
- * compare across rounds, and `review-status.ts`'s own reappearance/
- * zero-deaths triggers serve a different consumer under different exact
- * cardinality (single-round zero-deaths there vs. two-consecutive-rounds
- * here) — this module owns the exit predicates (O2: "decided there and
- * nowhere else"), built on the reused map.
+ * no forked copy of that rule. The reappearance comparison itself is new:
+ * `groupRounds` merges one round's ids, it does not compare across rounds,
+ * and `review-status.ts`'s own reappearance/zero-deaths triggers serve a
+ * different consumer — this module owns the exit predicates (O2: "decided
+ * there and nowhere else"), built on the reused map.
  */
 
 import { groupRounds, type Round, type VerdictComment } from '../review-status'
@@ -398,7 +399,7 @@ function assessGate(
 
 function assessVerdicts(
   state: LoopState,
-  obs: { round: number; verdicts: VerdictObservation[]; findingsUncitable?: boolean }
+  obs: { round: number; verdicts: VerdictObservation[] }
 ): { decision: Decision; state: LoopState; events: DevReviewLoopEventInput[] } {
   const pending = state.pending
   if (pending === null || pending.round !== obs.round) {
@@ -465,28 +466,6 @@ function assessVerdicts(
     return { decision: { type: 'pause', reason: 'reappearance' }, state: preFinalize, events }
   }
 
-  const resolvedEmptyThisRound = fc.resolved.length === 0
-  // `findingsUncitable` means this round's own ids are not
-  // trustworthy — never counted toward `no_progress`, which is exactly the
-  // id-comparison this flag is warning about. Every other stop condition
-  // above (escalation, green, reappearance) is decided before this line and
-  // is unaffected.
-  if (!obs.findingsUncitable && resolvedEmptyThisRound && state.previousResolvedEmpty === true) {
-    events.push(stopConditionMetEvent(state, obs.round, 'no_progress'))
-    events.push(pausedEvent(state, obs.round, 'principal_item'))
-    events.push(roundEndedEvent(state, obs.round, pending.stats, 'changes_requested'))
-    const record = buildRoundRecord(obs.round, obs.verdicts, confidence, 'stopped')
-    const preFinalize: LoopState = {
-      ...state,
-      rounds: [...state.rounds, record],
-      pending: null,
-      lastIds: carriedIds,
-      ...withRoundStats(state, pending.stats)
-    }
-    events.push(journalFinalizedEvent(preFinalize, pending.stats.head, 'stopped'))
-    return { decision: { type: 'pause', reason: 'no_progress' }, state: preFinalize, events }
-  }
-
   if (obs.round > state.config.maxRounds) {
     events.push(stopConditionMetEvent(state, obs.round, 'max_rounds'))
     events.push(pausedEvent(state, obs.round, 'principal_item'))
@@ -515,11 +494,6 @@ function assessVerdicts(
     rounds: [...state.rounds, record],
     pending: null,
     lastIds: carriedIds,
-    // An uncitable round neither starts nor extends the
-    // no-progress streak — it carries the PRIOR value forward unchanged,
-    // so a real two-consecutive-round stall either side of it is still
-    // caught, but this round itself is never counted as either half of it.
-    previousResolvedEmpty: obs.findingsUncitable ? state.previousResolvedEmpty : resolvedEmptyThisRound,
     ...withRoundStats(state, pending.stats)
   }
   return { decision: { type: 'dispatch_developer' }, state: newState, events }
