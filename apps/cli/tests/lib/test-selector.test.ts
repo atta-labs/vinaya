@@ -1071,3 +1071,203 @@ describe('Round 2 — fallback and never-miss holes', () => {
     }
   })
 })
+
+// symbol-aware-test-selection-v1 1, round 3 review — the shapes that still
+// resolved to SILENCE rather than to the coarse edge (a quote inside a clause, a
+// hop's own import under a clause the binding parser cannot read, a hop's bare
+// import of a package with no derivable entrypoint), the `exports` conditions
+// choice that was guessed rather than proved, and two precision residuals: a
+// `pkgmeta:` marker that named only the directly-imported package, and a hop's
+// bare import that dragged its whole target package back in.
+describe('Round 3 — silence-instead-of-fallback, unprovable conditions, and hop fan-out', () => {
+  it('a clause carrying a STRING export name still yields its edge — the statement is not dropped (R3-1)', () => {
+    const { root, dir } = mkWorkspace([
+      {
+        name: '@fx/lib',
+        main: INDEX_MAIN,
+        files: { 'src/index.ts': "export { foo } from './foo'\n", 'src/foo.ts': 'export function foo() { return 1 }\n' }
+      },
+      {
+        name: '@fx/app',
+        files: {
+          // `export { "odd-name" as odd } from './odd'` — a legal string export
+          // name. The clause carries quotes, which used to make the whole
+          // statement unparseable, so `./odd` became no edge at all.
+          'src/reexporter.ts': 'export { "odd-name" as odd } from \'./odd\'\n',
+          'src/odd.ts': "const value = 1\nexport { value as 'odd-name' }\n",
+          'src/via-odd.test.ts': "import { odd } from './reexporter'\ntest('odd', () => odd)\n",
+          // The same shape against a BARE package specifier: unparseable as a
+          // name list, so it must fall back to the whole-package edge.
+          'src/bare-odd.test.ts': "import { \"foo\" as f } from '@fx/lib'\ntest('f', () => f)\n"
+        }
+      }
+    ])
+    try {
+      const app = dir('@fx/app')
+      // The edge exists: a change to the file behind the string-named re-export selects.
+      expect(selectSet(root, [join(app, 'src/odd.ts')])).toContain(join(app, 'src/via-odd.test.ts'))
+      // The bare-specifier twin narrows to nothing, so it keeps the coarse edge:
+      // ANY change in @fx/lib selects it, including one it never names.
+      expect(selectSet(root, [join(dir('@fx/lib'), 'src/index.ts')])).toContain(join(app, 'src/bare-odd.test.ts'))
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it("a hop's own import under a clause the binding parser cannot read is still traversed (R3-2)", () => {
+    const { root, dir } = mkWorkspace([
+      {
+        name: '@fx/lib',
+        main: INDEX_MAIN,
+        files: {
+          // `default, { named }` and a whitespace-free clause: both are shapes
+          // the narrow binding regex drops, which silently cost the barrel its
+          // `./helper` and `./tight` dependency edges.
+          'src/index.ts':
+            "import registry, { helper } from './helper'\nimport{tight}from'./tight'\nexport { foo } from './foo'\nexport const wired = helper(registry) + tight\n",
+          'src/helper.ts': 'export default 1\nexport const helper = (n: number) => n\n',
+          'src/tight.ts': 'export const tight = 2\n',
+          'src/foo.ts': 'export function foo() { return 1 }\n',
+          'src/unrelated.ts': 'export const u = 9\n'
+        }
+      },
+      { name: '@fx/app', files: { 'src/uses.test.ts': "import { foo } from '@fx/lib'\ntest('foo', () => foo())\n" } }
+    ])
+    try {
+      const uses = join(dir('@fx/app'), 'src/uses.test.ts')
+      const lib = dir('@fx/lib')
+      expect(selectSet(root, [join(lib, 'src/helper.ts')])).toContain(uses)
+      expect(selectSet(root, [join(lib, 'src/tight.ts')])).toContain(uses)
+      // Still precise: a file the barrel never imports stays off the path.
+      expect(selectSet(root, [join(lib, 'src/unrelated.ts')])).not.toContain(uses)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('an `exports` conditions object declaring two different runtime targets is unprovable, so it falls back (R3-3)', () => {
+    const { root, dir } = mkWorkspace([
+      {
+        name: '@fx/dual',
+        // Which of these the runtime takes depends on the active condition, which
+        // no static scan knows — so no subpath is mapped and bare imports stay coarse.
+        exports: { '.': { import: './src/esm.ts', require: './src/cjs.ts' } },
+        files: {
+          'src/esm.ts': 'export function foo() { return 1 }\n',
+          'src/cjs.ts': 'export function foo() { return 2 }\n',
+          'src/unrelated.ts': 'export const u = 9\n'
+        }
+      },
+      {
+        name: '@fx/typed',
+        // Only a type-only condition: nothing the runtime ever executes, so this
+        // is unmapped too rather than resolving names into a declaration file.
+        exports: { '.': { types: './src/index.d.ts' } },
+        files: { 'src/index.d.ts': 'export declare function bar(): number\n', 'src/impl.ts': 'export const impl = 1\n' }
+      },
+      {
+        name: '@fx/app',
+        files: {
+          'src/dual.test.ts': "import { foo } from '@fx/dual'\ntest('foo', () => foo())\n",
+          'src/typed.test.ts': "import { bar } from '@fx/typed'\ntest('bar', () => bar())\n"
+        }
+      }
+    ])
+    try {
+      const app = dir('@fx/app')
+      // Coarse, not a guess: a file NEITHER declared target names still selects.
+      expect(selectSet(root, [join(dir('@fx/dual'), 'src/unrelated.ts')])).toContain(join(app, 'src/dual.test.ts'))
+      expect(selectSet(root, [join(dir('@fx/typed'), 'src/impl.ts')])).toContain(join(app, 'src/typed.test.ts'))
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a manifest change in an INTERMEDIATE package on the resolution path selects the importer (R3-4)', () => {
+    const { root, dir } = mkWorkspace([
+      {
+        name: '@fx/deep',
+        main: INDEX_MAIN,
+        files: {
+          'src/index.ts': "export { deep } from './deep'\n",
+          'src/deep.ts': 'export function deep() { return 1 }\n'
+        }
+      },
+      { name: '@fx/mid', main: INDEX_MAIN, files: { 'src/index.ts': "export { deep } from '@fx/deep'\n" } },
+      { name: '@fx/app', files: { 'src/uses.test.ts': "import { deep } from '@fx/mid'\ntest('deep', () => deep())\n" } }
+    ])
+    try {
+      const uses = join(dir('@fx/app'), 'src/uses.test.ts')
+      // `@fx/deep`'s own manifest re-points what `@fx/mid`'s barrel resolves to,
+      // and so what this importer resolves to — a non-source file no graph edge names.
+      expect(selectSet(root, [join(dir('@fx/deep'), 'package.json')])).toContain(uses)
+      // The directly-imported package's manifest was already covered; still is.
+      expect(selectSet(root, [join(dir('@fx/mid'), 'package.json')])).toContain(uses)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it("a hop's own BARE import resolves through exported names, not the whole target package (R3-5)", () => {
+    const { root, dir } = mkWorkspace([
+      {
+        name: '@fx/tools',
+        main: INDEX_MAIN,
+        files: {
+          'src/index.ts': "export { used } from './used'\nexport { spare } from './spare'\n",
+          'src/used.ts': 'export const used = 1\n',
+          'src/spare.ts': 'export const spare = 2\n'
+        }
+      },
+      {
+        name: '@fx/lib',
+        main: INDEX_MAIN,
+        files: {
+          // The barrel runs this on every import through it — but it names ONE
+          // tool, so it must not pull @fx/tools' other files in behind it.
+          'src/index.ts': "import { used } from '@fx/tools'\nexport { foo } from './foo'\nexport const wired = used\n",
+          'src/foo.ts': 'export function foo() { return 1 }\n'
+        }
+      },
+      { name: '@fx/app', files: { 'src/uses.test.ts': "import { foo } from '@fx/lib'\ntest('foo', () => foo())\n" } }
+    ])
+    try {
+      const uses = join(dir('@fx/app'), 'src/uses.test.ts')
+      const tools = dir('@fx/tools')
+      // Never-miss: the name the barrel actually runs, and the barrel it came through.
+      expect(selectSet(root, [join(tools, 'src/used.ts')])).toContain(uses)
+      expect(selectSet(root, [join(tools, 'src/index.ts')])).toContain(uses)
+      expect(selectSet(root, [join(dir('@fx/lib'), 'src/foo.ts')])).toContain(uses)
+      // Precision: `spare` is a sibling export of `used`, on nobody's path here.
+      expect(selectSet(root, [join(tools, 'src/spare.ts')])).not.toContain(uses)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it("a hop's bare import of a package with no derivable entrypoint keeps the coarse edge (R3-5)", () => {
+    const { root, dir } = mkWorkspace([
+      // No `main`, no `exports` — nothing to resolve a name through, so this
+      // package is only ever reachable coarsely.
+      { name: '@fx/opaque', files: { 'src/thing.ts': 'export const thing = 1\n' } },
+      {
+        name: '@fx/lib',
+        main: INDEX_MAIN,
+        files: {
+          'src/index.ts':
+            "import { thing } from '@fx/opaque'\nexport { foo } from './foo'\nexport const wired = thing\n",
+          'src/foo.ts': 'export function foo() { return 1 }\n'
+        }
+      },
+      { name: '@fx/app', files: { 'src/uses.test.ts': "import { foo } from '@fx/lib'\ntest('foo', () => foo())\n" } }
+    ])
+    try {
+      const uses = join(dir('@fx/app'), 'src/uses.test.ts')
+      // The barrel runs @fx/opaque's module scope on every import through it; an
+      // underivable entrypoint must degrade to the whole-package edge, not to silence.
+      expect(selectSet(root, [join(dir('@fx/opaque'), 'src/thing.ts')])).toContain(uses)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})

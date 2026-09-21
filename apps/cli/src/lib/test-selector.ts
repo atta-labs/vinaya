@@ -38,13 +38,32 @@
  *     imports (a barrel's `import './register'` side effect, or an
  *     `import { helper } from './helper'` it uses in module code) ARE surfaced
  *     as traversable edges, since that code runs on every import through the hop
- *     — so a change to a hop's own dependency still selects the test.
+ *     — so a change to a hop's own dependency still selects the test. A hop's own
+ *     module-scope import of ANOTHER workspace package is resolved through that
+ *     package's exported names by these same two rules, so a barrel that uses one
+ *     name from a sibling package does not drag that whole package back in.
  *
  * A NON-source change inside a package (its `package.json`, `tsconfig.json`, or a
  * non-`.ts` asset) is not a graph node, so a precisely-resolved importer also
  * carries a `pkgmeta:<pkg>` marker that fires only on such a change — editing
  * `exports`/`main` re-points what every consumer resolves to, and this keeps that
  * caught without reintroducing whole-package selection on ordinary source edits.
+ * One such marker is carried for EVERY package on the resolution path, not only
+ * the directly-imported one: when a name is re-exported across a package
+ * boundary, the intermediate package's manifest re-points the resolution just as
+ * the direct one's does.
+ *
+ * ## Residual over-selection this design accepts
+ *
+ * A re-export hop is one `touch:` marker for the WHOLE FILE, not per exported
+ * name, so editing any line of a barrel — including a sibling `export { other }
+ * from './other'` line that the importer's own name never resolves through —
+ * selects every test that resolved any name through that barrel. Narrowing a
+ * `touch:` marker to the specific re-export line would need line-level change
+ * attribution this static scan does not have; over-selecting on a barrel edit is
+ * the deliberate trade, and barrel edits are rare next to ordinary source edits.
+ * The same holds for `pkgmeta:`: it fires on ANY non-source change in a package
+ * on the path, including a `README.md` that re-points nothing.
  *
  * ## Conservative fallback — over-select, never omit
  *
@@ -63,6 +82,14 @@
  * than one shape at once. Aliases (`import { a as b }`) and `type` imports are
  * mapped by their EXPORTED (origin) name, never the local alias, so they resolve
  * precisely rather than falling back.
+ *
+ * The same rule governs an `exports` CONDITIONS object: the runtime picks a
+ * target by which condition is active, which a static scan cannot know, so a
+ * conditions object is honoured only when every runtime condition it declares
+ * lands on the SAME source file. Declare two different runtime targets and the
+ * choice is unprovable, so the subpath stays unmapped and every bare import of it
+ * keeps the whole-package edge. `types`/`typings` are excluded outright — a
+ * declaration file is what type-checking loads, never what runs.
  */
 
 import { readdirSync, readFileSync, statSync } from 'node:fs'
@@ -72,14 +99,32 @@ import { globToRegex } from '@attalabs/aeg-core'
 const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']
 const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', 'build', 'coverage'])
 
-// A `from`-clause on an `import` or `export`, capturing the clause text between
-// the keyword and `from` (group 1) and the specifier (group 3). `\b\s*` after the
-// keyword tolerates a whitespace-free clause (`export{a}from'x'`) so such a shape
-// still yields a record — the selector must degrade a shape it cannot fully read
-// to the coarse edge, never to silence. `[^'"]*?` spans newlines (a negated class
-// matches `\n`), so a multi-line `{ a,\n b }` clause parses; it can never cross a
-// string literal because quotes are excluded.
-const FROM_CLAUSE_RE = /^\s*(?:import|export)\b\s*([^'"]*?)\bfrom\s*(['"])([^'"]+)\2/gm
+// A `from`-clause on an `import` or `export`, capturing the keyword (group 1),
+// the clause text between it and `from` (group 2), and the specifier (group 4).
+// `\b\s*` after the keyword tolerates a whitespace-free clause (`export{a}from'x'`)
+// so such a shape still yields a record — the selector must degrade a shape it
+// cannot fully read to the coarse edge, never to silence. `[^'"]*?` spans newlines
+// (a negated class matches `\n`), so a multi-line `{ a,\n b }` clause parses; it
+// can never cross a string literal because quotes are excluded.
+const FROM_CLAUSE_RE = /^\s*(import|export)\b\s*([^'"]*?)\bfrom\s*(['"])([^'"]+)\3/gm
+// The one clause shape the scan above cannot read: a brace list carrying a STRING
+// export name (`import { "a-b" as ab } from 'x'`, legal since ES2022). Excluding
+// quotes there dropped the whole statement — silence, not a fallback, and with it
+// the specifier's graph edge.
+//
+// It gets its own bounded regex rather than a relaxed clause class in
+// FROM_CLAUSE_RE, for two reasons. Correctness: admitting quotes into that lazy
+// scan lets `export const A = 'x'` run past the string and swallow a real named
+// import on the line below, coarsening it. Cost: the alternation needed to admit
+// them only inside braces backtracks over every `export` statement that has no
+// `from` at all, which measured 63 ms → 346 ms across this repo's sources — paid
+// on every push. So this twin admits quotes only inside ONE brace list that
+// `from` must immediately follow: an optional `type`, an optional default
+// binding, one `{…}`, then the specifier. A list like that parses to a
+// non-identifier entry, so the importer still keeps the coarse edge — but the
+// record, and the edge, exist.
+const QUOTED_LIST_CLAUSE_RE =
+  /^\s*(import|export)\b\s*((?:type\s+)?(?:[A-Za-z_$][\w$]*\s*,\s*)?\{[^{}]*\})\s*from\s*(['"])([^'"]+)\3/gm
 // A side-effect import `import '<spec>'` — the quote immediately after `import`
 // distinguishes it from `import { … } from '<spec>'`.
 const SIDE_EFFECT_IMPORT_RE = /^\s*import\s*(['"])([^'"]+)\1/gm
@@ -146,12 +191,20 @@ function classifyFromClause(clause: string, specifier: string): ImportRecord {
   return { kind: 'default', specifier }
 }
 
-/** Every import/export edge a source file declares, classified by shape. Order-preserving; the same specifier may appear more than once. */
-export function extractImportRecords(source: string): ImportRecord[] {
+function collectRecords(source: string, includeExportFrom: boolean): ImportRecord[] {
   const records: ImportRecord[] = []
   FROM_CLAUSE_RE.lastIndex = 0
   for (let m = FROM_CLAUSE_RE.exec(source); m !== null; m = FROM_CLAUSE_RE.exec(source)) {
-    records.push(classifyFromClause(m[1] as string, m[3] as string))
+    if (!includeExportFrom && m[1] !== 'import') continue
+    records.push(classifyFromClause(m[2] as string, m[4] as string))
+  }
+  QUOTED_LIST_CLAUSE_RE.lastIndex = 0
+  for (let m = QUOTED_LIST_CLAUSE_RE.exec(source); m !== null; m = QUOTED_LIST_CLAUSE_RE.exec(source)) {
+    // Only the statements the scan above skipped: without a quote in the clause
+    // it already produced this record, and a duplicate buys nothing.
+    if (!/['"]/.test(m[2] as string)) continue
+    if (!includeExportFrom && m[1] !== 'import') continue
+    records.push(classifyFromClause(m[2] as string, m[4] as string))
   }
   SIDE_EFFECT_IMPORT_RE.lastIndex = 0
   for (let m = SIDE_EFFECT_IMPORT_RE.exec(source); m !== null; m = SIDE_EFFECT_IMPORT_RE.exec(source)) {
@@ -162,6 +215,26 @@ export function extractImportRecords(source: string): ImportRecord[] {
     records.push({ kind: 'dynamic', specifier: m[2] as string })
   }
   return records
+}
+
+/** Every import/export edge a source file declares, classified by shape. Order-preserving; the same specifier may appear more than once. */
+export function extractImportRecords(source: string): ImportRecord[] {
+  return collectRecords(source, true)
+}
+
+/**
+ * The edges a source file pulls into its OWN module scope — every `import`, side
+ * effect and dynamic specifier, with `export … from` deliberately EXCLUDED. This
+ * is what a re-export hop contributes to the graph beyond the one re-export an
+ * importer resolved through it: the hop's own module code runs on every import
+ * through it, while its other re-exports must stay untraversed or the barrel
+ * fans back out to its whole package. Shares {@link FROM_CLAUSE_RE} with
+ * {@link extractImportRecords} rather than a narrower binding parser, so a clause
+ * shape the binding parser cannot read (`import def, { a } from 'x'`,
+ * `import{a}from'x'`) still yields the hop's dependency edge instead of silence.
+ */
+export function extractOwnImportRecords(source: string): ImportRecord[] {
+  return collectRecords(source, false)
 }
 
 /** The distinct import specifiers a source file references — every `from`-clause, side-effect and dynamic import. Kept as the thin, shape-agnostic view over {@link extractImportRecords} (which the graph builder uses directly); exported for tests and any future caller that needs specifiers without their import shape. */
@@ -265,38 +338,55 @@ type PackageManifest = {
   scripts?: { test?: string }
 }
 
+/** `exports` conditions that select a TYPE-ONLY target — never what the runtime executes, so never an entrypoint this selector resolves names into. */
+const TYPE_ONLY_CONDITIONS = new Set(['types', 'typings'])
+
+/**
+ * Every target an `exports` entry could hand the runtime, in the order the
+ * manifest declares them. A bare string is its own only target; a conditions
+ * object contributes each of its non-type-only branches, nested objects and
+ * fallback arrays walked in their own declaration order.
+ */
+function declaredTargets(value: unknown, out: string[] = []): string[] {
+  if (typeof value === 'string') {
+    out.push(value)
+    return out
+  }
+  if (!value || typeof value !== 'object') return out
+  for (const [key, cond] of Object.entries(value as Record<string, unknown>)) {
+    if (TYPE_ONLY_CONDITIONS.has(key)) continue
+    declaredTargets(cond, out)
+  }
+  return out
+}
+
 /** Reads a package manifest's `exports`/`main` and resolves each subpath to a real source file under `dir`, keyed by its subpath (`.` for the package root). */
 function deriveEntrypoints(dir: string, pkg: PackageManifest, knownFiles: Set<string>): Map<string, string> {
   const out = new Map<string, string>()
-  const add = (subpath: string, target: unknown): void => {
-    if (typeof target !== 'string' || !target.startsWith('.')) return
-    const resolved = resolveFileCandidate(resolve(dir, target), knownFiles)
-    if (resolved) out.set(subpath, resolved)
-  }
-  // An exports entry's target may be a bare string or a conditions object
-  // (`{ types: './x.d.ts', import: './x.ts' }`). Prefer a RUNTIME condition over
-  // `types`: a declaration file is what type-checking loads, not what runs, so
-  // resolving names into it would point at a `.d.ts` the runtime never executes
-  // and miss changes to the real implementation.
-  const targetOf = (value: unknown): unknown => {
-    if (typeof value === 'string') return value
-    if (!value || typeof value !== 'object') return undefined
-    const conditions = value as Record<string, unknown>
-    for (const key of ['import', 'module', 'require', 'node', 'browser', 'default']) {
-      if (typeof conditions[key] === 'string') return conditions[key]
+  // Which branch of a conditions object the runtime takes depends on which
+  // condition is ACTIVE there (`import` vs `require`, `node` vs `browser`) — a
+  // fact no static text scan can know. So rather than guessing with a fixed
+  // preference order, every declared runtime target is resolved and the subpath
+  // is mapped only when they all land on the SAME source file: one file is the
+  // provable answer whichever condition wins. Two different files is an
+  // unprovable choice, so the subpath is left unmapped and every bare import of
+  // it keeps the conservative whole-package edge. A target that resolves to no
+  // source file at all (a built `./dist/index.js`) is simply not a candidate —
+  // it is never a changed file in this repo, so it constrains nothing.
+  const add = (subpath: string, value: unknown): void => {
+    const files = new Set<string>()
+    for (const target of declaredTargets(value)) {
+      if (!target.startsWith('.')) continue
+      const resolved = resolveFileCandidate(resolve(dir, target), knownFiles)
+      if (resolved) files.add(resolved)
     }
-    // No known runtime condition — fall back to the first non-`types` string, then
-    // `types` only as a last resort (better a stale edge than none).
-    for (const [key, cond] of Object.entries(conditions)) {
-      if (key !== 'types' && typeof cond === 'string') return cond
-    }
-    return typeof conditions.types === 'string' ? conditions.types : undefined
+    if (files.size === 1) out.set(subpath, files.values().next().value as string)
   }
   if (typeof pkg.exports === 'string') {
     add('.', pkg.exports)
   } else if (pkg.exports && typeof pkg.exports === 'object') {
     for (const [subpath, value] of Object.entries(pkg.exports)) {
-      if (subpath.startsWith('.')) add(subpath, targetOf(value))
+      if (subpath.startsWith('.')) add(subpath, value)
     }
   }
   if (!out.has('.') && pkg.main) add('.', pkg.main)
@@ -354,6 +444,19 @@ export function isTestFile(path: string): boolean {
   return withoutExt.endsWith('.test')
 }
 
+// ── Edge markers ────────────────────────────────────────────────────────────
+
+/** A resolved forward dependency of a file — a real graph node, a change-only re-export-hop marker, a whole-package fallback, or a package-manifest marker. */
+const TOUCH_PREFIX = 'touch:'
+const EXTERNAL_PREFIX = 'external:'
+// A precisely-resolved importer carries `pkgmeta:<pkg>` so a change to a NON-source
+// file in that package (its `package.json`, `tsconfig.json`, a non-`.ts` asset)
+// still selects it: such a file is not a graph node, so the resolved file edges
+// alone would miss it, yet editing `exports`/`main` re-points what the importer
+// resolves to. It fires only on non-source changes; a source change is caught
+// precisely by the real file edge, so precision on ordinary edits is preserved.
+const PKGMETA_PREFIX = 'pkgmeta:'
+
 // ── The workspace export graph ──────────────────────────────────────────────
 
 /**
@@ -377,8 +480,8 @@ type ExportTable = {
   starAsNames: Set<string>
   /** Top-level imports, so an `export { name }` that re-exports an import can be traced: local name → { specifier, importedName }. `importedName` is `*`/`default` for namespace/default imports. */
   imports: Map<string, { specifier: string; importedName: string }>
-  /** Every specifier this file imports for its OWN module scope — the `imports` above plus bare side-effect `import 'x'`. A re-export HOP is a check-only marker whose module still runs on import, so these are what a hop contributes to the graph beyond the one re-export the importer resolved through it. */
-  ownImportSpecifiers: string[]
+  /** Every edge this file pulls into its OWN module scope, with its import SHAPE — {@link extractOwnImportRecords}. A re-export HOP is a check-only marker whose module still runs on import, so these are what a hop contributes to the graph beyond the one re-export the importer resolved through it. The shape is kept (not just the specifier) so a hop's bare workspace import resolves through exported names like any other, rather than dragging in the whole target package. */
+  ownImports: ImportRecord[]
 }
 
 const EXPORT_DEF_RE =
@@ -397,7 +500,7 @@ function parseExportTable(source: string): ExportTable {
   const starReexports: string[] = []
   const starAsNames = new Set<string>()
   const imports = new Map<string, { specifier: string; importedName: string }>()
-  const ownImportSpecifiers: string[] = []
+  const ownImports = extractOwnImportRecords(source)
 
   EXPORT_DEF_RE.lastIndex = 0
   for (let m = EXPORT_DEF_RE.exec(source); m !== null; m = EXPORT_DEF_RE.exec(source)) {
@@ -430,10 +533,13 @@ function parseExportTable(source: string): ExportTable {
     else starReexports.push(m[3] as string)
   }
 
+  // Local BINDING names, which the tolerant clause scan above deliberately does
+  // not parse. A shape this narrower regex cannot read costs only the ability to
+  // trace `export { local }` back through an import — which falls back to coarse,
+  // never to a dropped edge, because `ownImports` already carries the specifier.
   IMPORT_BINDING_RE.lastIndex = 0
   for (let m = IMPORT_BINDING_RE.exec(source); m !== null; m = IMPORT_BINDING_RE.exec(source)) {
     const specifier = m[5] as string
-    ownImportSpecifiers.push(specifier)
     if (m[1] !== undefined) {
       for (const raw of m[1].split(',')) {
         const entry = raw.trim().replace(/^type\s+/, '')
@@ -450,12 +556,7 @@ function parseExportTable(source: string): ExportTable {
     }
   }
 
-  SIDE_EFFECT_IMPORT_RE.lastIndex = 0
-  for (let m = SIDE_EFFECT_IMPORT_RE.exec(source); m !== null; m = SIDE_EFFECT_IMPORT_RE.exec(source)) {
-    ownImportSpecifiers.push(m[2] as string)
-  }
-
-  return { directDefs, localReexports, namedReexports, starReexports, starAsNames, imports, ownImportSpecifiers }
+  return { directDefs, localReexports, namedReexports, starReexports, starAsNames, imports, ownImports }
 }
 
 /**
@@ -505,8 +606,8 @@ type GraphContext = {
   packageDirOf: (file: string) => string | null
   /** A package directory's own source-file set, for relative resolution. */
   knownFilesByPkgDir: Map<string, Set<string>>
-  /** A bare specifier to the entrypoint file for its subpath, or null when unmapped. */
-  entryOfBareSpecifier: (specifier: string) => string | null
+  /** A bare specifier to the workspace package it names plus the entrypoint file for its subpath (`entry` null when the manifest maps no such subpath). `null` for a third-party specifier no workspace package owns. */
+  packageOfBareSpecifier: (specifier: string) => { name: string; entry: string | null } | null
 }
 
 /** Resolves a re-export/import specifier from `fromFile` to a real source file: a relative specifier against `fromFile`'s own package, a bare specifier to the matching workspace package's entrypoint. `null` when it points nowhere resolvable. */
@@ -516,7 +617,7 @@ function resolveSpecifierToFile(ctx: GraphContext, fromFile: string, specifier: 
     const knownFiles = pkgDir ? ctx.knownFilesByPkgDir.get(pkgDir) : undefined
     return knownFiles ? resolveRelativeImport(fromFile, specifier, knownFiles) : null
   }
-  return ctx.entryOfBareSpecifier(specifier)
+  return ctx.packageOfBareSpecifier(specifier)?.entry ?? null
 }
 
 /**
@@ -547,6 +648,25 @@ function resolveExportedName(ctx: GraphContext, file: string, name: string, stac
   return result
 }
 
+/**
+ * Resolves every `name` a re-export hop imports from another package's `entry`
+ * into selection-graph edge strings — `touch:` per hop on the path, a plain path
+ * per definer, plus whatever nested hop deps those carried. `null` the moment any
+ * one name will not resolve, which is the caller's signal to fall back coarsely
+ * for the whole specifier rather than keep the subset that happened to resolve.
+ */
+function resolveHopNames(ctx: GraphContext, entry: string, names: string[], stack: Set<string>): string[] | null {
+  const deps: string[] = []
+  for (const name of names) {
+    const sub = resolveExportedName(ctx, entry, name, stack)
+    if (!sub.resolved) return null
+    for (const t of sub.touched) deps.push(`${TOUCH_PREFIX}${t}`)
+    for (const d of sub.definers) deps.push(d)
+    for (const h of sub.hopDeps) deps.push(h)
+  }
+  return deps
+}
+
 function resolveThroughTable(
   ctx: GraphContext,
   file: string,
@@ -565,13 +685,40 @@ function resolveThroughTable(
     return { resolved: true, touched: new Set([file]), definers: new Set([file]), hopDeps: new Set() }
   }
 
-  // Every file this re-export hop imports for its own module scope, which runs on
-  // any import through the hop and so must select on change.
+  // Everything this re-export hop pulls into its own module scope, which runs on
+  // any import through the hop and so must select on change. Yields edge strings
+  // in the same vocabulary the selection graph speaks (a plain path, `touch:`,
+  // `external:`), so the caller can forward them verbatim.
+  //
+  // A relative specifier is a plain traversable file. A BARE specifier into
+  // another workspace package is resolved through that package's exported names
+  // by the same two rules the top-level importer uses — a `touch:` marker per
+  // re-export hop, a traversable node per definer — so a barrel that imports one
+  // name from a sibling package does not drag that sibling's whole graph in
+  // behind it. Two conservative fallbacks, in narrowing order: a shape that
+  // cannot be proved (namespace, default, unclean list, an unresolvable name)
+  // falls back to the target's ENTRYPOINT as a traversable node, since everything
+  // such a specifier can expose is reachable from there; a package whose subpath
+  // the manifest does not map at all falls back to the coarse `external:` edge,
+  // the only edge left that still names it.
   const ownHopDeps = (): Set<string> => {
     const out = new Set<string>()
-    for (const specifier of table.ownImportSpecifiers) {
-      const resolved = resolveSpecifierToFile(ctx, file, specifier)
-      if (resolved) out.add(resolved)
+    for (const record of table.ownImports) {
+      if (record.specifier.startsWith('.')) {
+        const resolved = resolveSpecifierToFile(ctx, file, record.specifier)
+        if (resolved) out.add(resolved)
+        continue
+      }
+      const pkg = ctx.packageOfBareSpecifier(record.specifier)
+      if (!pkg) continue // a third-party dependency — never a changed workspace file.
+      if (!pkg.entry) {
+        out.add(`${EXTERNAL_PREFIX}${pkg.name}`)
+        continue
+      }
+      const entry = pkg.entry
+      const precise = record.kind === 'named' && record.clean ? resolveHopNames(ctx, entry, record.names, stack) : null
+      if (precise) for (const dep of precise) out.add(dep)
+      else out.add(entry)
     }
     return out
   }
@@ -652,17 +799,6 @@ export type SelectionOptions = {
    */
   addedOrRenamed?: readonly string[]
 }
-
-/** A resolved forward dependency of a file — a real graph node, a change-only re-export-hop marker, a whole-package fallback, or a package-manifest marker. */
-const TOUCH_PREFIX = 'touch:'
-const EXTERNAL_PREFIX = 'external:'
-// A precisely-resolved importer carries `pkgmeta:<pkg>` so a change to a NON-source
-// file in that package (its `package.json`, `tsconfig.json`, a non-`.ts` asset)
-// still selects it: such a file is not a graph node, so the resolved file edges
-// alone would miss it, yet editing `exports`/`main` re-points what the importer
-// resolves to. It fires only on non-source changes; a source change is caught
-// precisely by the real file edge, so precision on ordinary edits is preserved.
-const PKGMETA_PREFIX = 'pkgmeta:'
 
 /**
  * The whole pipeline: given the changed files (repo-root-relative or absolute,
@@ -747,9 +883,9 @@ export function selectAffectedTestFiles(
     resultCache,
     knownFilesByPkgDir,
     packageDirOf: (file) => sortedPkgDirs.find((d) => file.startsWith(`${d}/`)) ?? null,
-    entryOfBareSpecifier: (specifier) => {
+    packageOfBareSpecifier: (specifier) => {
       const m = matchPackage(specifier)
-      return m ? (m.pkg.entrypoints.get(m.subpath) ?? null) : null
+      return m ? { name: m.pkg.name, entry: m.pkg.entrypoints.get(m.subpath) ?? null } : null
     }
   }
 
@@ -806,7 +942,18 @@ export function selectAffectedTestFiles(
       // edge for the SAME package, so a mixed import shape is never narrowed.
       for (const [name, acc] of resolvedNamed) {
         if (coarsePackages.has(name)) continue
-        deps.push(`${PKGMETA_PREFIX}${name}`) // catches a non-source (manifest) change in the package.
+        // A `pkgmeta:` marker per package that CONTRIBUTED a file to this
+        // resolution, not just the one named in the specifier: when a name is
+        // re-exported across a package boundary, the intermediate package's
+        // manifest re-points this importer's resolution exactly as the direct
+        // package's does, and its non-source files are no more graph nodes than
+        // the direct package's are.
+        const metaPackages = new Set([name])
+        for (const f of [...acc.touched, ...acc.definers, ...acc.hopDeps]) {
+          const owner = fileToPackage.get(f) // undefined for a `touch:`/`external:` marker, which owns no file.
+          if (owner) metaPackages.add(owner)
+        }
+        for (const p of metaPackages) deps.push(`${PKGMETA_PREFIX}${p}`)
         for (const t of acc.touched) if (t !== file) deps.push(`${TOUCH_PREFIX}${t}`)
         for (const d of acc.definers) deps.push(d)
         for (const h of acc.hopDeps) deps.push(h)
