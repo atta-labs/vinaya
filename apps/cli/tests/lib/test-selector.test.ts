@@ -1316,7 +1316,10 @@ describe('a relative specifier written with an output extension resolves to its 
     })
   }
 
-  it('a real .js file sitting beside a .ts of the same name still resolves to ITSELF — the literal path wins', () => {
+  // Which of the two a `./target.js` specifier means depends on who is
+  // resolving: the compiler reads the TypeScript source, a runtime loads the
+  // emitted JavaScript. Neither can be dropped, so both carry an edge.
+  it('a real .js file sitting beside a .ts of the same name selects on a change to EITHER', () => {
     const { root, dir } = mkWorkspace([
       {
         name: '@ext/b',
@@ -1330,7 +1333,7 @@ describe('a relative specifier written with an output extension resolves to its 
     try {
       const uses = join(dir('@ext/b'), 'src/uses.test.ts')
       expect(selectSet(root, [join(dir('@ext/b'), 'src/target.js')])).toContain(uses)
-      expect(selectSet(root, [join(dir('@ext/b'), 'src/target.ts')])).not.toContain(uses)
+      expect(selectSet(root, [join(dir('@ext/b'), 'src/target.ts')])).toContain(uses)
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
@@ -1363,5 +1366,87 @@ describe('a relative specifier written with an output extension resolves to its 
       selectAffectedTestFiles(REPO_ROOT, [join(REPO_ROOT, 'apps/cli/src/commands/demo.ts')]).selected
     )
     expect(selected).toContain(join(REPO_ROOT, 'apps/cli/tests/demo.test.ts'))
+  })
+})
+
+// O2 — resolution is the compiler's, with the text scan kept only for a
+// repository that has no `typescript` to resolve. Both must hold the never-miss
+// line; the compiler is what makes the selection narrow as well as safe.
+describe('the compiler resolves the graph, and the text scan remains a safe fallback', () => {
+  it('on the real repository the compiler answers, and reports its program build separately from selection', () => {
+    const result = selectAffectedTestFiles(REPO_ROOT, [join(REPO_ROOT, 'apps/cli/src/commands/demo.ts')])
+    expect(result.resolver).toBe('compiler')
+    expect(result.programMs).toBeGreaterThan(0)
+  })
+
+  it('the text-scan fallback is reachable, resolves .js specifiers too, and never omits what the compiler selects', () => {
+    const changed = [join(REPO_ROOT, 'apps/cli/src/commands/demo.ts')]
+    const scan = selectAffectedTestFiles(REPO_ROOT, changed, { resolver: 'text-scan' })
+    const compiler = selectAffectedTestFiles(REPO_ROOT, changed)
+    expect(scan.resolver).toBe('text-scan')
+    expect(scan.programMs).toBe(0)
+    expect(scan.selected).toContain(join(REPO_ROOT, 'apps/cli/tests/demo.test.ts'))
+    // The fallback is a strict over-approximation: anything the compiler proves
+    // reachable, the coarser scan must also reach.
+    const scanned = new Set(scan.selected)
+    expect(compiler.selected.filter((f) => !scanned.has(f))).toEqual([])
+  })
+
+  it('a named import resolves to the file that DEFINES it, across a re-export chain and a package boundary', () => {
+    const { root, dir } = mkWorkspace([
+      {
+        name: '@c2/deep',
+        main: INDEX_MAIN,
+        files: {
+          'src/index.ts': "export { deep } from './deep.js'\n",
+          'src/deep.ts': 'export function deep() { return 1 }\n',
+          'src/sibling.ts': 'export function sibling() { return 2 }\n'
+        }
+      },
+      {
+        name: '@c2/mid',
+        main: INDEX_MAIN,
+        files: { 'src/index.ts': "export { deep } from '@c2/deep'\nexport const midOwn = 1\n" }
+      },
+      {
+        name: '@c2/app',
+        files: { 'src/uses.test.ts': "import { deep as d } from '@c2/mid'\ntest('deep', () => d())\n" }
+      }
+    ])
+    try {
+      const uses = join(dir('@c2/app'), 'src/uses.test.ts')
+      // The definition, and every hop on the path to it, select.
+      expect(selectSet(root, [join(dir('@c2/deep'), 'src/deep.ts')])).toContain(uses)
+      expect(selectSet(root, [join(dir('@c2/deep'), 'src/index.ts')])).toContain(uses)
+      expect(selectSet(root, [join(dir('@c2/mid'), 'src/index.ts')])).toContain(uses)
+      // A sibling in the same package that the name never resolves through does not.
+      expect(selectSet(root, [join(dir('@c2/deep'), 'src/sibling.ts')])).not.toContain(uses)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a bare workspace specifier resolves from the package MANIFEST, with no node_modules present at all', () => {
+    const { root, dir } = mkWorkspace([
+      {
+        name: '@c2/lib',
+        exports: { '.': './src/index.ts', './sub': './src/sub.ts' },
+        files: {
+          'src/index.ts': 'export function root() { return 1 }\n',
+          'src/sub.ts': 'export function sub() { return 2 }\n'
+        }
+      },
+      {
+        name: '@c2/app',
+        files: { 'src/uses-sub.test.ts': "import { sub } from '@c2/lib/sub'\ntest('sub', () => sub())\n" }
+      }
+    ])
+    try {
+      const uses = join(dir('@c2/app'), 'src/uses-sub.test.ts')
+      expect(selectSet(root, [join(dir('@c2/lib'), 'src/sub.ts')])).toContain(uses)
+      expect(selectSet(root, [join(dir('@c2/lib'), 'src/index.ts')])).not.toContain(uses)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })
