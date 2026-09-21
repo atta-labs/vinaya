@@ -537,12 +537,12 @@ export function legacyTopLevelDir(home: string, name: LegacyTopLevelDirname): st
 }
 
 /**
- * The one nested exception: before `control-store-v1`/`task-files-v1`
- * unified the driver lock, the pause record and the held reviewer verdicts
- * under one task folder, all three lived in a per-task folder nested
- * INSIDE the telemetry outbox root itself — `<home>/outbox/dev-review-loop/<task>/`
- * — the "outbox task folders" O3 names, and the Origin survey's own
- * headline accumulation. This sits inside the SAME root the telemetry
+ * The one nested exception: before this module unified the driver lock,
+ * the pause record and the held reviewer verdicts under one task folder,
+ * all three lived in a per-task folder nested INSIDE the telemetry outbox
+ * root itself — `<home>/outbox/dev-review-loop/<task>/` — the "outbox task
+ * folders" O3 names, and the Origin survey's own headline accumulation.
+ * This sits inside the SAME root the telemetry
  * outbox (`log-sink.ts`'s `outboxRoot()`) still actively delivers ndjson
  * event files under today, which is why it is named as its own path
  * function here rather than folded into `LEGACY_TOP_LEVEL_DIRNAMES` above
