@@ -100,8 +100,33 @@ deps (`LoopDeps.runtimeDir` and `LoopDeps.telemetryOutboxRoot`); they were
 one, which is how this driver's own per-task files ended up inside the
 telemetry outbox to begin with.
 
-Nothing reads or migrates a folder an earlier layout left behind: a run in
-flight when this landed had to finish, or be cancelled, first.
+`vinaya task sweep --include-legacy` is the one reader of a folder an
+earlier layout left behind (`task-files-v1` 3, O3) — a run in flight when
+this landed had to finish, or be cancelled, first, and nothing here reads
+or migrates one on its own; that command is an operator's or a
+principal's own call, never something a run in progress reaches for.
+
+## The sweep, at the start of every run (`task-files-v1` 3, `#650`, O2)
+
+Right after the task and its developer branch are resolved (both the
+`--task` and the `--resume` path, above) — and before the one-driver-per-
+task lock below is even read — `devReviewLoop` calls the SAME function
+`vinaya task sweep` calls on demand (`apps/cli/src/lib/task-sweep.ts`'s
+`runTaskSweep`, `LoopDeps.sweepTasksAtStart`), scoped to the modern
+`tasks-execution/` layout only (never `--include-legacy`'s own earlier-
+layout removal, which stays an explicit, operator-run command): every OTHER
+task folder whose Issue is closed or whose pull request is merged or
+closed is removed, so a repository that never runs the command by hand
+still never accumulates a folder for a task that finished five minutes,
+or five months, ago. `excludeScope` is this run's own task — never swept
+by its own driver, since the forge could in principle report it finished
+(a stale read, or a genuine race against an external close) at the exact
+moment this run is about to write into that same folder. A sweep failure
+— a `gh` read timing out, a folder that resists removal — is reported to
+this run's own stderr (`vinaya dev-review-loop: sweep failed — …`) and
+otherwise ignored: it is never a reason THIS run pauses or exits, the same
+"the mechanics stalled, not a review verdict" tolerance a flush failure
+already gets (below).
 
 ## One driver per task (`review-validity-v1` task 7, `#498`)
 

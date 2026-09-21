@@ -84,6 +84,7 @@ import {
 import { postMarkedComment } from './forge-write.js'
 import { createLogSink, currentRunId, log, outboxPathFor, telemetryOutboxRoot } from './log-sink.js'
 import { ensureRunDir, markProcessUnattended, runPath } from './run-paths.js'
+import { runTaskSweep } from './task-sweep.js'
 import { appendRoleLine, appendRunStartMarker, loopLogPathFor } from './loop-log.js'
 import { flushOutbox as flushOutboxLib, LogFlushError } from './log-flush.js'
 import { flushOutboxToWebhook, WebhookFlushError } from './log-webhook-flush.js'
@@ -425,6 +426,14 @@ export type LoopDeps = {
     agent: AgentVendor,
     repo: { owner: string; repo: string } | null
   ) => void
+  /**
+   * task-files-v1 3, O2 — the same sweep `vinaya task sweep` runs on
+   * demand, called once at the very start of a run, before anything is
+   * dispatched, `task` excluded so this run never sweeps its own folder.
+   * Best-effort by design: a failure here is reported and ignored, never a
+   * reason the run itself stops.
+   */
+  sweepTasksAtStart: (task: number) => void
 }
 
 function defaultRepoRoot(): string {
@@ -896,7 +905,8 @@ function defaultDeps(): LoopDeps {
     reexecSelf: defaultReexecSelf,
     exitProcess: (code) => process.exit(code),
     runEvidenceReport: defaultRunEvidenceReport,
-    terminateInFlightLaunchesOnShutdown: defaultTerminateInFlightLaunchesOnShutdown
+    terminateInFlightLaunchesOnShutdown: defaultTerminateInFlightLaunchesOnShutdown,
+    sweepTasksAtStart: defaultSweepTasksAtStart
   }
 }
 
@@ -951,6 +961,30 @@ export type LoopResult = { finalDecision: Decision; prNumber: number; task: numb
  */
 export function buildReexecArgs(input: LoopInput, task: number): string[] {
   return ['dev-review-loop', '--task', String(task), '--agent', input.agent, ...(input.json ? ['--json'] : [])]
+}
+
+/**
+ * task-files-v1 3, O2 — `runTaskSweep`'s modern-layout half, called once at
+ * the start of every run, `excludeScope: task` so this run never sweeps the
+ * very folder it is about to write into. Best-effort: a thrown error is
+ * reported to stderr and swallowed, never re-thrown — the same "the
+ * mechanics stalled, not a review verdict" tolerance this driver already
+ * gives a flush failure (`flushOutbox`'s own caller, below). Injectable
+ * (`LoopDeps.sweepTasksAtStart`) so a test never shells out to real `gh` or
+ * touches a real runtime directory just because a run started.
+ */
+function defaultSweepTasksAtStart(task: number): void {
+  try {
+    const { modern } = runTaskSweep({ includeLegacy: false }, undefined, task)
+    for (const entry of modern.removed) {
+      console.error(`vinaya dev-review-loop: sweep — removed ${entry.folder}: ${entry.reason}`)
+    }
+    if (modern.removed.length > 0 || modern.kept.length > 0) {
+      console.error(`vinaya dev-review-loop: sweep — removed ${modern.removed.length}, kept ${modern.kept.length}`)
+    }
+  } catch (err) {
+    console.error(`vinaya dev-review-loop: sweep failed — ${err instanceof Error ? err.message : String(err)}`)
+  }
 }
 
 export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = {}): Promise<LoopResult> {
@@ -1116,6 +1150,19 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     task = input.task
     branch = d.developerBranchFor(task)
   }
+
+  // task-files-v1 3, O2: the same sweep `vinaya task sweep` runs on demand,
+  // called once per run, before anything is dispatched — so a finished
+  // task's folder never accumulates just because no one ran the command by
+  // hand. `excludeScope` (this run's OWN task) is the guard against a race
+  // this exact invocation could otherwise lose to itself: were the forge to
+  // report this task finished (a stale read, or a genuine race against an
+  // external close), the sweep must never remove the very folder this run
+  // is about to write its driver lock and control-store records into. A
+  // sweep failure is reported to this run's own stderr and ignored —
+  // never a reason the run itself stops (Traps to avoid: a housekeeping
+  // pass must never gate the loop it runs alongside).
+  d.sweepTasksAtStart(task)
 
   // O1/O2: one driver per task — checked before any dispatch, a live record
   // refuses this start outright; a dead one (crashed prior driver) is taken
