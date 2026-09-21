@@ -26,11 +26,9 @@
  *   PR_NUMBER=<n> bun packages/aeg-core/bin/verify-review-gate.ts
  *   PR_NUMBER=<n> BRANCH=<head-ref> bun packages/aeg-core/bin/verify-review-gate.ts
  *
- * Mechanical-check status (review-mechanical-gate-v1 task 2, #337) is
- * resolved via a separate `gh pr checks --json name,bucket` call, filtering
- * out this repo's own review-gate check-run name before handing the result
- * to `checkReviewGate` — that exclusion is repo-specific and belongs here,
- * never inside `aeg-core`'s pure logic, which ships to every adopter.
+ * Reviews only. This shim resolves no other check's result and reads no
+ * Test Plan state — the gate it calls owns the review verdicts and nothing
+ * else, so there is nothing else to fetch.
  *
  * Exit code: 0 (pass — clean verdicts, a verified waiver, or a non-task-branch
  * bypass) or 1 (fail — the unmet requirement is named in the printed message).
@@ -43,15 +41,6 @@ import { checkReviewGate, newestPrincipalRulingOrdinal, PRINCIPAL_ALLOWLIST, WAI
 const REPO_ROOT = join(import.meta.dirname, '../../..')
 process.chdir(REPO_ROOT)
 
-// This repo's own review-gate check-run name (`.github/workflows/vinaya-review.yml:51`).
-// `vinaya-review-verdict.yml`'s retrigger job re-runs that same workflow run
-// rather than opening a new one (GitHub's 2025-02-12 check-run-ownership
-// restriction), so verdict re-evaluation reports under this identical name
-// too — there is only ever one review-gate check-run name to exclude. The
-// exclusion lives HERE, never inside `checkReviewGate` itself: `aeg-core`
-// ships to every adopter, and an adopter's workflow will not be named this.
-const OWN_CHECK_RUN_NAME = 'vinaya review gate'
-
 type PrView = {
   number: number
   comments: { body: string; author?: { login?: string } | null }[]
@@ -62,29 +51,6 @@ type PrView = {
 function fetchPr(prNumber: number): PrView {
   const out = execSync(`gh pr view ${prNumber} --json number,comments,labels,headRefOid`, { encoding: 'utf8' })
   return JSON.parse(out) as PrView
-}
-
-type CheckRun = { name: string; bucket: string }
-
-/**
- * Every check-run `gh` reports for the PR, excluding `OWN_CHECK_RUN_NAME`.
- * `gh pr checks` exits non-zero whenever any check is failing or still
- * pending, but still prints valid JSON on stdout in that case (only the exit
- * code, not the output, reflects the checks' own state) — `execSync` throws
- * on that non-zero exit, so the thrown error's own `stdout` is read before
- * this is treated as a genuine fetch failure.
- */
-function fetchMechanicalChecks(prNumber: number): CheckRun[] {
-  try {
-    const out = execSync(`gh pr checks ${prNumber} --json name,bucket`, { encoding: 'utf8' })
-    return (JSON.parse(out) as CheckRun[]).filter((c) => c.name !== OWN_CHECK_RUN_NAME)
-  } catch (err) {
-    const stdout = (err as { stdout?: unknown }).stdout
-    if (typeof stdout === 'string') {
-      return (JSON.parse(stdout) as CheckRun[]).filter((c) => c.name !== OWN_CHECK_RUN_NAME)
-    }
-    throw err
-  }
 }
 
 type TimelineLabeledEvent = { event: string; actor?: { login: string } | null; label?: { name: string } | null }
@@ -112,13 +78,10 @@ export function main(prNumber: number): void {
     ? fetchWaiverLabelActor(prNumber, WAIVER_LABEL_REVIEW)
     : null
 
-  const mechanicalChecks = fetchMechanicalChecks(prNumber)
-
   const result = checkReviewGate({
     comments: pr.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null })),
     labels,
     waiverLabelActor,
-    mechanicalChecks,
     headSha: pr.headRefOid,
     // This shim does not resolve an Issue's objectives list (dev-review-loop-v1
     // task 2, #412, out of this bin's brief-scoped surface) — `null` skips the

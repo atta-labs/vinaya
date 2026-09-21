@@ -1,29 +1,97 @@
-import { describe, expect, it } from 'bun:test'
-import { uncheckedPrincipalReason } from '../../src/checks/bin/check-review-gate'
+import { execFileSync } from 'node:child_process'
+import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it } from 'bun:test'
 
-const TASK_BRANCH = 'task/review-validity-v1/11'
+const BIN = join(import.meta.dir, '../../src/checks/bin/check-review-gate.ts')
 
-describe('uncheckedPrincipalReason (review-validity-v1 11, O2)', () => {
-  it("null when the body has no Test Plan section at all — that is test-plan's structural failure to grade, not review-gate's", () => {
-    const body = ['## Summary', '', 'no test plan section here', ''].join('\n')
-    expect(uncheckedPrincipalReason(body, TASK_BRANCH)).toBeNull()
+/**
+ * The review check owns reviews, and nothing else decides its result.
+ *
+ * It used to fail for two conditions it does not own: any other check-run
+ * on the head being red, and a `[principal]` Test Plan box still unticked.
+ * Every merge condition is its own independent check now, so that all green
+ * means mergeable — a red sibling is already red under its own name, and the
+ * principal Test Plan wait is a check of its own. This spins up a real
+ * throwaway repo and a stubbed `gh` carrying both of those conditions, and
+ * measures that neither reaches the check: the check-run endpoint is never
+ * called at all, and the unticked box is never named in the output.
+ */
+describe('check-review-gate — reviews only', () => {
+  let dir: string
+
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true })
   })
 
-  it('null when every [principal] item is ticked', () => {
-    const body = ['## Test Plan', '', '- [x] **[principal]** verify in browser', ''].join('\n')
-    expect(uncheckedPrincipalReason(body, TASK_BRANCH)).toBeNull()
-  })
+  it('never reads other check-runs, and never names an unticked [principal] Test Plan item', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'review-gate-reviews-only-'))
+    const g = (args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' })
+    g(['init', '-q', '-b', 'work'])
+    g(['config', 'user.email', 't@example.com'])
+    g(['config', 'user.name', 'test'])
+    writeFileSync(join(dir, 'a.txt'), 'content\n')
+    g(['add', '-A'])
+    g(['commit', '-qm', 'initial'])
+    const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim()
+    g(['remote', 'add', 'origin', dir])
+    g(['branch', 'main'])
 
-  it('names the unticked line(s) when one or more [principal] items are unticked', () => {
-    const body = ['## Test Plan', '', '- [ ] **[principal]** verify in browser', ''].join('\n')
-    const reason = uncheckedPrincipalReason(body, TASK_BRANCH)
-    expect(reason).not.toBeNull()
-    expect(reason).toContain('[principal]')
-    expect(reason).toContain('verify in browser')
-  })
+    // Written by the stub the moment anything asks it for this head's
+    // check-runs. Its absence after the run is the assertion.
+    const checkRunsProbe = join(dir, 'check-runs-was-fetched.txt')
+    const body = ['## Test Plan', '', '- [ ] **[principal]** verify in a signed-in browser', ''].join('\n')
+    const ghDir = join(dir, 'fakebin')
+    execFileSync('mkdir', ['-p', ghDir])
+    const ghPath = join(ghDir, 'gh')
+    writeFileSync(
+      ghPath,
+      `#!/usr/bin/env bun
+import { writeFileSync } from 'node:fs'
+const args = process.argv.slice(2)
+if (args[0] === 'pr' && args[1] === 'view') {
+  process.stdout.write(JSON.stringify({
+    number: 1,
+    comments: [],
+    labels: [],
+    headRefName: 'work',
+    headRefOid: ${JSON.stringify(sha)},
+    baseRefName: 'main',
+    body: ${JSON.stringify(body)}
+  }))
+  process.exit(0)
+}
+if (args[0] === 'api' && String(args[1]).includes('/check-runs')) {
+  writeFileSync(${JSON.stringify(checkRunsProbe)}, args.join(' '))
+  process.stdout.write('{"id":1,"name":"Vinaya CI","status":"completed","conclusion":"failure"}\\n')
+  process.exit(0)
+}
+process.stderr.write('gh stub: unhandled invocation: ' + args.join(' ') + '\\n')
+process.exit(1)
+`
+    )
+    chmodSync(ghPath, 0o755)
 
-  it('null on the unit-tests-only sentinel', () => {
-    const body = ['## Test Plan', '', 'Test Plan: unit-tests-only', ''].join('\n')
-    expect(uncheckedPrincipalReason(body, TASK_BRANCH)).toBeNull()
+    const proc = Bun.spawn(['bun', BIN], {
+      cwd: dir,
+      env: { ...process.env, PATH: `${ghDir}:${process.env.PATH}`, PR_NUMBER: '1' },
+      stdout: 'pipe',
+      stderr: 'pipe'
+    })
+    const stderr = await new Response(proc.stderr).text()
+    const stdout = await new Response(proc.stdout).text()
+    const exitCode = await proc.exited
+
+    // The red sibling check is never even fetched.
+    expect(existsSync(checkRunsProbe)).toBe(false)
+    // The unticked `[principal]` box is not this check's to name.
+    const output = `${stdout}${stderr}`
+    expect(output).not.toContain('[principal]')
+    expect(output).not.toContain('Test Plan')
+    // It still refuses for the one condition it does own: this fixture's PR
+    // carries no verdict at all.
+    expect(exitCode).toBe(1)
+    expect(output).toContain('code-reviewer verdict is not a clean APPROVE')
   })
 })
