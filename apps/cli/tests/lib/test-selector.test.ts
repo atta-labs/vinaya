@@ -4,12 +4,22 @@
 // one — is `minimalTwoPackageFixture` below; a richer fixture covers
 // transitive chains and cross-package bare-specifier resolution.
 import { describe, expect, it } from 'bun:test'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, extname, join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { ALL_NAMES, affectedNamesForFile, type LineRange, parseHunkRanges } from '../../src/lib/changed-names'
 import { loadConfig } from '../../src/lib/config'
-import { discoverWorkspacePackages, isTestFile, selectAffectedTestFiles, walkFiles } from '../../src/lib/test-selector'
+import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
+import {
+  discoverWorkspacePackages,
+  extractImportSpecifiers,
+  isTestFile,
+  selectAffectedTestFiles,
+  walkFiles
+} from '../../src/lib/test-selector'
+import { scannedRootsOf } from '../../src/lib/repo-scanner-tests'
+import { loadTypeScript } from '../../src/lib/ts-module-graph'
 
 function fixtureRepo(): string {
   const root = mkdtempSync(join(tmpdir(), 'vinaya-selector-'))
@@ -326,9 +336,16 @@ describe('selectAffectedTestFiles replayed against the two recorded 2026-09-19 i
       expect(selected).toContain(LOG_CALLERS_TEST)
     })
 
-    it(`${label} — reachability ALONE (no alwaysRun) never selects it — the real gap this task closes`, () => {
-      const { selected } = selectAffectedTestFiles(REPO_ROOT, changed, { alwaysRun: [] })
-      expect(selected).not.toContain(LOG_CALLERS_TEST)
+    it(`${label} — with no alwaysRun at all, the scan rule now selects it; the IMPORT graph alone still cannot`, () => {
+      // `log-callers.test.ts` walks the repository from disk, so no import edge
+      // has ever reached it — which is why both of these incidents passed
+      // pre-push and failed CI, and why the configured always-run list was the
+      // only thing that could select it. The scan rule closes that on the
+      // merits; withhold it and the original gap is still visible underneath.
+      expect(selectAffectedTestFiles(REPO_ROOT, changed, { alwaysRun: [] }).selected).toContain(LOG_CALLERS_TEST)
+      expect(
+        selectAffectedTestFiles(REPO_ROOT, changed, { alwaysRun: [], repoTreeScanners: 'ignore' }).selected
+      ).not.toContain(LOG_CALLERS_TEST)
     })
   }
 })
@@ -659,151 +676,182 @@ describe('Part 3 — unprovable shapes retain the whole-package edge (coarse fal
   })
 })
 
-// symbol-aware-test-selection-v1 1, Part 4 — the never-miss oracle. A
-// deliberately SEPARATE, simpler resolver (not the code under test) computes a
-// lower bound of definitely-affected tests: it follows relative imports fully
-// and resolves a directly-written `import { name } from 'P'` through P's
-// entrypoint ONLY along proven direct-definition / explicit-re-export / star
-// paths within P, treating every other shape as no dependency. Everything it
-// finds IS a real dependency, so the optimized selector — which resolves strictly
-// more — MUST select every test the oracle finds. If it ever omits one, that is
-// the exact never-miss regression the stop condition names.
-const ORACLE_EXT = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']
-
-function buildOracle(root: string): (changedFile: string, testFile: string) => boolean {
-  const packages = discoverWorkspacePackages(root)
-  const knownByDir = new Map(
-    packages.map((p) => [p.dir, new Set(walkFiles(p.dir).filter((f) => ORACLE_EXT.includes(extname(f))))])
-  )
-  const read = (f: string): string => {
-    try {
-      return readFileSync(f, 'utf8')
-    } catch {
-      return ''
+// The never-miss ORACLE, and the one rule that makes it worth anything: its
+// module graph comes from a DIFFERENT resolver than the selector's.
+//
+// The oracle this replaced read imports with its own regular expressions and
+// reused the selector's own file discovery, so it inherited the selector's
+// blind spots exactly — including the one that mattered: neither could resolve
+// a relative specifier written with a `.js` extension to its `.ts` source, so a
+// whole class of dropped edges looked like agreement. This one asks Bun to
+// BUNDLE each test file and reads the module list out of the bundle's own
+// source map: every file the bundler actually pulled in, resolved by the
+// bundler's resolver, sharing no code path with the selector at all.
+function bundlerOracle(root: string, testFiles: readonly string[]) {
+  const workdir = mkdtempSync(join(tmpdir(), 'vinaya-oracle-'))
+  try {
+    // The oracle runs in its own bundler process, one build per entrypoint.
+    //
+    // Both shortcuts were tried and both are wrong. Calling `Bun.build` from
+    // inside the test runner starts failing with "Unexpected reading file"
+    // after the first build, which silently EMPTIES the oracle instead of
+    // failing it. Passing every entrypoint to a single build is fast but merges
+    // the module registry across entrypoints, so each source map lists modules
+    // some OTHER entrypoint pulled in — measured here: one test file's map
+    // listed 98 modules built alone and 148 built alongside 172 siblings. A
+    // contaminated oracle reports violations that are not real, which is just a
+    // different way of proving nothing.
+    const script = join(workdir, 'oracle.ts')
+    writeFileSync(
+      script,
+      [
+        'const entries = JSON.parse(await Bun.file(Bun.argv[2] as string).text()) as string[]',
+        'const out: Record<string, string[]> = {}',
+        'for (const entry of entries) {',
+        "  const built = await Bun.build({ entrypoints: [entry], target: 'node', sourcemap: 'external', throw: false })",
+        '  const sources: string[] = []',
+        '  if (built.success) {',
+        '    for (const output of built.outputs) {',
+        "      if (!output.path.endsWith('.map')) continue",
+        '      sources.push(...(JSON.parse(await output.text()) as { sources: string[] }).sources)',
+        '    }',
+        '  }',
+        '  out[entry] = sources',
+        '}',
+        'await Bun.write(Bun.argv[3] as string, JSON.stringify(out))',
+        ''
+      ].join('\n')
+    )
+    const entriesFile = join(workdir, 'entries.json')
+    const resultFile = join(workdir, 'graph.json')
+    writeFileSync(entriesFile, JSON.stringify(testFiles))
+    const built = spawnSyncBudgeted(
+      'bun',
+      [script, entriesFile, resultFile],
+      {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...stripVinayaEnv(), HOME: process.env.HOME, PATH: process.env.PATH }
+      },
+      120_000,
+      'bun (never-miss oracle)'
+    )
+    if (built.status !== 0) {
+      throw new Error(`the oracle's bundler failed, so it proves nothing:\n${built.stderr}\n${built.stdout}`)
     }
+    const raw = JSON.parse(readFileSync(resultFile, 'utf8')) as Record<string, string[]>
+    const sources = new Map<string, Set<string>>()
+    // Source-map paths are relative to the bundler process's own cwd, which is `root`.
+    for (const testFile of testFiles) {
+      sources.set(testFile, new Set((raw[testFile] ?? []).map((source) => resolve(root, source))))
+    }
+    return {
+      reaches: (changedFile: string, testFile: string): boolean => sources.get(testFile)?.has(changedFile) ?? false,
+      /** Entrypoints the bundler produced no module list for — never counted as evidence in either direction. */
+      unbuildable: testFiles.filter((t) => (sources.get(t)?.size ?? 0) === 0)
+    }
+  } finally {
+    rmSync(workdir, { recursive: true, force: true })
   }
-  const pkgOfFile = (f: string) => packages.find((p) => f.startsWith(`${p.dir}/`)) ?? null
-  const knownOf = (f: string): Set<string> => knownByDir.get(pkgOfFile(f)?.dir ?? '') ?? new Set()
-  const resolveRel = (from: string, spec: string): string | null => {
-    const base = resolve(dirname(from), spec)
-    const known = knownOf(from)
-    for (const cand of [base, ...ORACLE_EXT.map((e) => base + e), ...ORACLE_EXT.map((e) => join(base, `index${e}`))]) {
-      if (known.has(cand)) return cand
-    }
-    return null
-  }
-  const entryOfBare = (spec: string): string | null => {
-    let best: { pkg: (typeof packages)[number]; subpath: string } | null = null
-    for (const p of packages) {
-      if (spec === p.name) best = !best || p.name.length > best.pkg.name.length ? { pkg: p, subpath: '.' } : best
-      else if (spec.startsWith(`${p.name}/`))
-        best =
-          !best || p.name.length > best.pkg.name.length ? { pkg: p, subpath: `.${spec.slice(p.name.length)}` } : best
-    }
-    return best ? (best.pkg.entrypoints.get(best.subpath) ?? null) : null
-  }
+}
 
-  const DEF_RE =
-    /^\s*export\s+(?:declare\s+)?(?:async\s+)?(?:abstract\s+)?(?:const\s+enum|function\*?|const|let|var|class|type|interface|enum|namespace)\s+([A-Za-z_$][\w$]*)/gm
-  const REEXPORT_RE = /^\s*export\s+(?:type\s+)?\{([^}]*)\}\s*from\s*['"](\.[^'"]+)['"]/gm
-  const STAR_RE = /^\s*export\s+\*\s+from\s*['"](\.[^'"]+)['"]/gm
-
-  // Lower-bound name resolution: the def file(s) reachable along proven paths.
-  const nameCache = new Map<string, string[]>()
-  const resolveName = (entry: string, name: string, stack: Set<string>): string[] => {
-    const key = `${entry} ${name}`
-    const cached = nameCache.get(key)
-    if (cached) return cached
-    if (stack.has(entry)) return []
-    stack.add(entry)
-    const src = read(entry)
-    const out: string[] = []
-    DEF_RE.lastIndex = 0
-    for (let m = DEF_RE.exec(src); m; m = DEF_RE.exec(src)) if (m[1] === name) out.push(entry)
-    REEXPORT_RE.lastIndex = 0
-    for (let m = REEXPORT_RE.exec(src); m; m = REEXPORT_RE.exec(src)) {
-      for (const raw of (m[1] as string).split(',')) {
-        const parts = raw
-          .trim()
-          .replace(/^type\s+/, '')
-          .split(/\s+as\s+/)
-        const origin = (parts[0] as string).trim()
-        const exported = (parts[1] ?? (parts[0] as string)).trim()
-        if (exported !== name) continue
-        const target = resolveRel(entry, m[2] as string)
-        if (target) out.push(...resolveName(target, origin, stack))
-      }
-    }
-    STAR_RE.lastIndex = 0
-    for (let m = STAR_RE.exec(src); m; m = STAR_RE.exec(src)) {
-      const target = resolveRel(entry, m[1] as string)
-      if (target) out.push(...resolveName(target, name, stack))
-    }
-    stack.delete(entry)
-    const uniq = [...new Set(out)]
-    nameCache.set(key, uniq)
-    return uniq
-  }
-
-  const NAMED_BARE_RE = /^\s*(?:import|export)\s+(?:type\s+)?\{([^}]*)\}\s*from\s*['"]([^.'"][^'"]*)['"]/gm
-  const REL_FROM_RE = /^\s*(?:import|export)\b[^'"\n]*?\bfrom\s*['"](\.[^'"]+)['"]/gm
-  const REL_SIDE_RE = /^\s*import\s*['"](\.[^'"]+)['"]/gm
-
-  const edgeCache = new Map<string, string[]>()
-  const edgesOf = (file: string): string[] => {
-    const cached = edgeCache.get(file)
-    if (cached) return cached
-    const src = read(file)
-    const deps: string[] = []
-    for (const re of [REL_FROM_RE, REL_SIDE_RE]) {
-      re.lastIndex = 0
-      for (let m = re.exec(src); m; m = re.exec(src)) {
-        const r = resolveRel(file, m[1] as string)
-        if (r) deps.push(r)
-      }
-    }
-    NAMED_BARE_RE.lastIndex = 0
-    for (let m = NAMED_BARE_RE.exec(src); m; m = NAMED_BARE_RE.exec(src)) {
-      const entry = entryOfBare(m[2] as string)
-      if (!entry) continue
-      for (const raw of (m[1] as string).split(',')) {
-        const origin = (
-          raw
-            .trim()
-            .replace(/^type\s+/, '')
-            .split(/\s+as\s+/)[0] as string
-        ).trim()
-        if (origin) deps.push(...resolveName(entry, origin, new Set()))
-      }
-    }
-    const uniq = [...new Set(deps)]
-    edgeCache.set(file, uniq)
-    return uniq
-  }
-
-  return (changedFile: string, testFile: string): boolean => {
-    const visited = new Set<string>()
-    const stack = [testFile]
-    while (stack.length) {
-      const cur = stack.pop() as string
-      if (visited.has(cur)) continue
-      visited.add(cur)
-      if (cur === changedFile) return true
-      for (const dep of edgesOf(cur)) if (!visited.has(dep)) stack.push(dep)
-    }
-    return false
+/** Links each workspace package into `<root>/node_modules/<name>` so a bundler can resolve its bare specifiers with no install. */
+function linkWorkspacePackages(root: string, names: readonly string[], dir: (name: string) => string): void {
+  for (const name of names) {
+    const target = join(root, 'node_modules', name)
+    mkdirSync(dirname(target), { recursive: true })
+    symlinkSync(dir(name), target, 'dir')
   }
 }
 
 describe('Part 4 — never-miss: optimized selection is a superset of the independent oracle', () => {
-  it('over a rich constructed workspace, every definitely-affected test is selected for each sampled change', () => {
+  /**
+   * What the bundler proves, and what it does not.
+   *
+   * Inside one package it is authoritative: it resolved every specifier
+   * itself, `.js` extensions included, so anything it pulled in is a real
+   * dependency the selector must not drop. ACROSS a workspace-package barrel it
+   * is an over-approximation instead — bundling a barrel parses every module
+   * the barrel re-exports, and what survives tree-shaking is not what the
+   * source map lists. Importing ONE name from a package depends on that name's
+   * resolution path, not on the barrel's other re-exports, which is the rule
+   * this selector documents and `apps/cli/specs/self-hosting.md` specifies.
+   *
+   * So the two assertions differ in kind, and both are real: within a package,
+   * strict superset; across a package boundary, every divergence must be
+   * attributable to the barrel — the test reached the file through that
+   * package's entry, never through a relative chain the selector lost.
+   */
+  function realRepoTestFiles(): string[] {
+    return discoverWorkspacePackages(REPO_ROOT)
+      .filter((p) => p.bunTestCompatible)
+      .flatMap((p) => walkFiles(p.dir).filter(isTestFile))
+  }
+
+  it('within a package — including files imported through .js specifiers — the bundler finds nothing the selector drops', () => {
+    const testFiles = realRepoTestFiles()
+    const oracle = bundlerOracle(REPO_ROOT, testFiles)
+    expect(oracle.unbuildable).toEqual([])
+    // Every one of these is imported by its consumers through a `.js`
+    // specifier — the exact class of edge that was missing outright.
+    const sample = [
+      'apps/cli/src/commands/demo.ts',
+      'apps/cli/src/lib/config.ts',
+      'apps/cli/src/lib/dispatch.ts',
+      'apps/cli/src/lib/test-selector.ts',
+      'apps/cli/src/lib/remote-base.ts',
+      'apps/cli/src/checks/runner.ts'
+    ].map((f) => join(REPO_ROOT, f))
+    let checkedNonEmpty = 0
+    for (const changed of sample) {
+      const optimized = new Set(selectAffectedTestFiles(REPO_ROOT, [changed]).selected)
+      const reached = testFiles.filter((t) => oracle.reaches(changed, t))
+      if (reached.length > 0) checkedNonEmpty++
+      expect(
+        reached.filter((t) => !optimized.has(t)).map((t) => t.slice(REPO_ROOT.length + 1)),
+        `never-miss violation for ${changed.slice(REPO_ROOT.length + 1)}`
+      ).toEqual([])
+    }
+    // Guard the guard: an oracle that found nothing would pass the assertion
+    // above while proving nothing at all.
+    expect(checkedNonEmpty).toBe(sample.length)
+  }, 180_000)
+
+  it('across a package barrel, every divergence is the barrel — never a relative edge the selector lost', () => {
+    const testFiles = realRepoTestFiles()
+    const oracle = bundlerOracle(REPO_ROOT, testFiles)
+    const barrel = join(REPO_ROOT, 'packages/aeg-core/src/index.ts')
+    const sample = [
+      'packages/aeg-core/src/review-input-manifest.ts',
+      'packages/aeg-core/src/anchored-region.ts',
+      'packages/aeg-core/src/parse-registry.ts'
+    ].map((f) => join(REPO_ROOT, f))
+    let checkedNonEmpty = 0
+    for (const changed of sample) {
+      const optimized = new Set(selectAffectedTestFiles(REPO_ROOT, [changed]).selected)
+      const reached = testFiles.filter((t) => oracle.reaches(changed, t))
+      if (reached.length > 0) checkedNonEmpty++
+      // A divergence is only acceptable when the test reached the file through
+      // the package's own entry barrel. One that reached it any other way is a
+      // genuinely lost edge.
+      expect(
+        reached
+          .filter((t) => !optimized.has(t) && !oracle.reaches(barrel, t))
+          .map((t) => t.slice(REPO_ROOT.length + 1)),
+        `divergence not explained by the barrel for ${changed.slice(REPO_ROOT.length + 1)}`
+      ).toEqual([])
+    }
+    expect(checkedNonEmpty).toBe(sample.length)
+  }, 180_000)
+
+  it('over a constructed workspace whose imports are ALL written with .js specifiers, the bundler finds nothing the selector drops', () => {
     const { root, dir } = mkWorkspace([
       {
         name: '@nm/base',
         main: INDEX_MAIN,
         files: {
-          'src/index.ts': "export { shared } from './shared'\n",
-          'src/shared.ts': "import './shared-dep'\nexport const shared = 1\n",
+          'src/index.ts': "export { shared } from './shared.js'\n",
+          'src/shared.ts': "import './shared-dep.js'\nexport const shared = 1\n",
           'src/shared-dep.ts': 'export const sd = 2\n'
         }
       },
@@ -812,10 +860,10 @@ describe('Part 4 — never-miss: optimized selection is a superset of the indepe
         main: INDEX_MAIN,
         files: {
           'src/index.ts':
-            "export { hot } from './hot'\nexport { warm } from './warm-outer'\nexport { shared } from '@nm/base'\nexport * from './starred'\nexport { cold } from './cold'\n",
-          'src/hot.ts': "import './hot-dep'\nexport function hot() { return 1 }\n",
+            "export { hot } from './hot.js'\nexport { warm } from './warm-outer.js'\nexport { shared } from '@nm/base'\nexport * from './starred.js'\nexport { cold } from './cold.js'\n",
+          'src/hot.ts': "import './hot-dep.js'\nexport function hot() { return 1 }\n",
           'src/hot-dep.ts': 'export const hd = 1\n',
-          'src/warm-outer.ts': "export { warm } from './warm-inner'\n",
+          'src/warm-outer.ts': "export { warm } from './warm-inner.js'\n",
           'src/warm-inner.ts': 'export function warm() { return 2 }\n',
           'src/starred.ts': 'export function starred() { return 3 }\n',
           'src/cold.ts': 'export function cold() { return 4 }\n'
@@ -827,85 +875,51 @@ describe('Part 4 — never-miss: optimized selection is a superset of the indepe
           'src/t-hot.test.ts': "import { hot } from '@nm/core'\ntest('hot', () => hot())\n",
           'src/t-hot-alias.test.ts': "import { hot as h } from '@nm/core'\ntest('h', () => h())\n",
           'src/helper.ts': "import { hot } from '@nm/core'\nexport const wrap = () => hot()\n",
-          'src/t-hot-via.test.ts': "import { wrap } from './helper'\ntest('via', () => wrap())\n",
+          'src/t-hot-via.test.ts': "import { wrap } from './helper.js'\ntest('via', () => wrap())\n",
           'src/t-warm.test.ts': "import { warm } from '@nm/core'\ntest('warm', () => warm())\n",
-          'src/t-shared.test.ts': "import { shared } from '@nm/core'\ntest('shared', () => shared)\n",
           'src/t-starred.test.ts': "import { starred } from '@nm/core'\ntest('starred', () => starred())\n",
           'src/t-ns.test.ts': "import * as c from '@nm/core'\ntest('ns', () => c)\n"
         }
       }
     ])
     try {
-      const oracleReaches = buildOracle(root)
-      const testFiles = [
-        ...['t-hot', 't-hot-alias', 't-hot-via', 't-warm', 't-shared', 't-starred', 't-ns'].map((n) =>
-          join(dir('@nm/app'), `src/${n}.test.ts`)
-        )
-      ]
+      linkWorkspacePackages(root, ['@nm/base', '@nm/core', '@nm/app'], dir)
+      const testFiles = ['t-hot', 't-hot-alias', 't-hot-via', 't-warm', 't-starred', 't-ns'].map((n) =>
+        join(dir('@nm/app'), `src/${n}.test.ts`)
+      )
+      const oracle = bundlerOracle(root, testFiles)
+      expect(oracle.unbuildable).toEqual([])
+      // @nm/core's INTERNAL chain (hot -> hot-dep, warm-outer -> warm-inner,
+      // every hop written with a `.js` specifier) is where a lost edge shows.
       const sample = [
         join(dir('@nm/core'), 'src/hot.ts'),
         join(dir('@nm/core'), 'src/hot-dep.ts'),
         join(dir('@nm/core'), 'src/warm-inner.ts'),
         join(dir('@nm/core'), 'src/warm-outer.ts'),
         join(dir('@nm/core'), 'src/starred.ts'),
-        join(dir('@nm/core'), 'src/cold.ts'),
-        join(dir('@nm/core'), 'src/index.ts'),
-        join(dir('@nm/base'), 'src/shared.ts'),
-        join(dir('@nm/base'), 'src/shared-dep.ts')
+        join(dir('@nm/core'), 'src/index.ts')
       ]
+      const barrel = join(dir('@nm/core'), 'src/index.ts')
       let checkedNonEmpty = 0
       for (const changed of sample) {
         const optimized = new Set(selectAffectedTestFiles(root, [changed]).selected)
-        const oracle = testFiles.filter((t) => oracleReaches(changed, t))
-        if (oracle.length > 0) checkedNonEmpty++
-        for (const t of oracle) {
-          expect(
-            optimized.has(t),
-            `optimized dropped ${t.slice(root.length + 1)} for change ${changed.slice(root.length + 1)}`
-          ).toBe(true)
-        }
+        const reached = testFiles.filter((t) => oracle.reaches(changed, t))
+        if (reached.length > 0) checkedNonEmpty++
+        expect(
+          reached.filter((t) => !optimized.has(t) && !oracle.reaches(barrel, t)).map((t) => t.slice(root.length + 1)),
+          `never-miss violation for ${changed.slice(root.length + 1)}`
+        ).toEqual([])
       }
-      // Guard the guard: several sampled changes must actually have a non-empty
-      // oracle, or the superset assertion above would be vacuous. The oracle is a
-      // deliberate lower bound — empty for entrypoint-only, hop-only, and
-      // cross-package-re-export changes it does not follow — so definition-file
-      // changes (hot, hot-dep, warm-inner, starred here) are what it catches.
-      expect(checkedNonEmpty).toBeGreaterThanOrEqual(4)
+      // Not every sampled file is reached: the bundler tree-shakes a name no
+      // test in this workspace uses, so `cold` and the modules only it reaches
+      // legitimately appear in nobody's graph. Several must still be reached,
+      // or the assertions above are vacuous.
+      expect(checkedNonEmpty).toBeGreaterThanOrEqual(3)
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
-  })
-
-  it('over a sample of REAL workspace-package source files, the oracle is never wider than the optimized selection', () => {
-    const oracleReaches = buildOracle(REPO_ROOT)
-    const packages = discoverWorkspacePackages(REPO_ROOT)
-    const bunCompatibleDirs = packages.filter((p) => p.bunTestCompatible).map((p) => p.dir)
-    const allTestFiles = bunCompatibleDirs.flatMap((d) => walkFiles(d).filter(isTestFile))
-    // A spread of real source files across packages, including the #681 driver.
-    const sample = [
-      join(REPO_ROOT, 'packages/aeg-core/src/review-input-manifest.ts'),
-      join(REPO_ROOT, 'packages/aeg-core/src/anchored-region.ts'),
-      join(REPO_ROOT, 'packages/aeg-core/src/parse-registry.ts'),
-      join(REPO_ROOT, 'apps/cli/src/lib/dispatch.ts'),
-      join(REPO_ROOT, 'apps/cli/src/lib/config.ts')
-    ]
-    let checkedNonEmpty = 0
-    for (const changed of sample) {
-      const optimized = new Set(selectAffectedTestFiles(REPO_ROOT, [changed]).selected)
-      const missed: string[] = []
-      let oracleCount = 0
-      for (const t of allTestFiles) {
-        if (!oracleReaches(changed, t)) continue
-        oracleCount++
-        if (!optimized.has(t)) missed.push(t.slice(REPO_ROOT.length + 1))
-      }
-      if (oracleCount > 0) checkedNonEmpty++
-      expect(missed, `never-miss violation for ${changed.slice(REPO_ROOT.length + 1)}`).toEqual([])
-    }
-    expect(checkedNonEmpty).toBeGreaterThanOrEqual(3)
-  })
+  }, 180_000)
 })
-
 // symbol-aware-test-selection-v1 1, round 2 review — regressions the never-miss
 // invariant hid until the reviewers surfaced them: an empty/comment-bearing named
 // list must fall back (not silently drop names), a non-source change inside a
@@ -1280,5 +1294,528 @@ describe('Round 3 — silence-instead-of-fallback, unprovable conditions, and ho
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
+  })
+})
+
+// A relative specifier written with the extension the EMIT will have
+// (`./demo.js` for `./demo.ts`) is how TypeScript's own ESM guidance says to
+// write these, and how 512 of this repo's 883 relative imports under `apps/cli`
+// are written. Resolving only "the literal path, then the path plus each source
+// extension" finds neither `demo.js` nor `demo.js.ts`, so every such edge was
+// absent from the graph outright — under-selection, silently.
+describe('a relative specifier written with an output extension resolves to its TypeScript source', () => {
+  for (const [written, onDisk] of [
+    ['.js', '.ts'],
+    ['.js', '.tsx'],
+    ['.jsx', '.tsx'],
+    ['.mjs', '.mts'],
+    ['.cjs', '.cts']
+  ] as const) {
+    it(`${written} specifier naming a ${onDisk} file selects the test that imports it`, () => {
+      const { root, dir } = mkWorkspace([
+        {
+          name: '@ext/a',
+          files: {
+            [`src/target${onDisk}`]: 'export function target() { return 1 }\n',
+            'src/uses.test.ts': `import { target } from './target${written}'\ntest('t', () => target())\n`
+          }
+        }
+      ])
+      try {
+        const uses = join(dir('@ext/a'), 'src/uses.test.ts')
+        expect(selectSet(root, [join(dir('@ext/a'), `src/target${onDisk}`)])).toContain(uses)
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    })
+  }
+
+  // Which of the two a `./target.js` specifier means depends on who is
+  // resolving: the compiler reads the TypeScript source, a runtime loads the
+  // emitted JavaScript. Neither can be dropped, so both carry an edge.
+  it('a real .js file sitting beside a .ts of the same name selects on a change to EITHER', () => {
+    const { root, dir } = mkWorkspace([
+      {
+        name: '@ext/b',
+        files: {
+          'src/target.js': 'export function target() { return 1 }\n',
+          'src/target.ts': 'export function target() { return 2 }\n',
+          'src/uses.test.ts': "import { target } from './target.js'\ntest('t', () => target())\n"
+        }
+      }
+    ])
+    try {
+      const uses = join(dir('@ext/b'), 'src/uses.test.ts')
+      expect(selectSet(root, [join(dir('@ext/b'), 'src/target.js')])).toContain(uses)
+      expect(selectSet(root, [join(dir('@ext/b'), 'src/target.ts')])).toContain(uses)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a directory index written as ./dir/index.js resolves to ./dir/index.ts', () => {
+    const { root, dir } = mkWorkspace([
+      {
+        name: '@ext/c',
+        files: {
+          'src/nested/index.ts': 'export function nested() { return 1 }\n',
+          'src/uses.test.ts': "import { nested } from './nested/index.js'\ntest('t', () => nested())\n"
+        }
+      }
+    ])
+    try {
+      const uses = join(dir('@ext/c'), 'src/uses.test.ts')
+      expect(selectSet(root, [join(dir('@ext/c'), 'src/nested/index.ts')])).toContain(uses)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  // The brief's own O1 fixture, on the REAL tree rather than a constructed one:
+  // `apps/cli/tests/demo.test.ts` imports `'../src/commands/demo.js'`, and before
+  // this resolution existed a change to `demo.ts` selected nothing but the
+  // always-run list.
+  it('on the real repository, a change to apps/cli/src/commands/demo.ts selects apps/cli/tests/demo.test.ts', () => {
+    const selected = new Set(
+      selectAffectedTestFiles(REPO_ROOT, [join(REPO_ROOT, 'apps/cli/src/commands/demo.ts')]).selected
+    )
+    expect(selected).toContain(join(REPO_ROOT, 'apps/cli/tests/demo.test.ts'))
+  })
+})
+
+// O2 — resolution is the compiler's, with the text scan kept only for a
+// repository that has no `typescript` to resolve. Both must hold the never-miss
+// line; the compiler is what makes the selection narrow as well as safe.
+describe('the compiler resolves the graph, and the text scan remains a safe fallback', () => {
+  it('on the real repository the compiler answers, and reports its program build separately from selection', () => {
+    const result = selectAffectedTestFiles(REPO_ROOT, [join(REPO_ROOT, 'apps/cli/src/commands/demo.ts')])
+    expect(result.resolver).toBe('compiler')
+    expect(result.programMs).toBeGreaterThan(0)
+  })
+
+  it('the text-scan fallback is reachable, resolves .js specifiers too, and never omits what the compiler selects', () => {
+    const changed = [join(REPO_ROOT, 'apps/cli/src/commands/demo.ts')]
+    const scan = selectAffectedTestFiles(REPO_ROOT, changed, { resolver: 'text-scan' })
+    const compiler = selectAffectedTestFiles(REPO_ROOT, changed)
+    expect(scan.resolver).toBe('text-scan')
+    expect(scan.programMs).toBe(0)
+    expect(scan.selected).toContain(join(REPO_ROOT, 'apps/cli/tests/demo.test.ts'))
+    // The fallback is a strict over-approximation: anything the compiler proves
+    // reachable, the coarser scan must also reach.
+    const scanned = new Set(scan.selected)
+    expect(compiler.selected.filter((f) => !scanned.has(f))).toEqual([])
+  })
+
+  it('a named import resolves to the file that DEFINES it, across a re-export chain and a package boundary', () => {
+    const { root, dir } = mkWorkspace([
+      {
+        name: '@c2/deep',
+        main: INDEX_MAIN,
+        files: {
+          'src/index.ts': "export { deep } from './deep.js'\n",
+          'src/deep.ts': 'export function deep() { return 1 }\n',
+          'src/sibling.ts': 'export function sibling() { return 2 }\n'
+        }
+      },
+      {
+        name: '@c2/mid',
+        main: INDEX_MAIN,
+        files: { 'src/index.ts': "export { deep } from '@c2/deep'\nexport const midOwn = 1\n" }
+      },
+      {
+        name: '@c2/app',
+        files: { 'src/uses.test.ts': "import { deep as d } from '@c2/mid'\ntest('deep', () => d())\n" }
+      }
+    ])
+    try {
+      const uses = join(dir('@c2/app'), 'src/uses.test.ts')
+      // The definition, and every hop on the path to it, select.
+      expect(selectSet(root, [join(dir('@c2/deep'), 'src/deep.ts')])).toContain(uses)
+      expect(selectSet(root, [join(dir('@c2/deep'), 'src/index.ts')])).toContain(uses)
+      expect(selectSet(root, [join(dir('@c2/mid'), 'src/index.ts')])).toContain(uses)
+      // A sibling in the same package that the name never resolves through does not.
+      expect(selectSet(root, [join(dir('@c2/deep'), 'src/sibling.ts')])).not.toContain(uses)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a bare workspace specifier resolves from the package MANIFEST, with no node_modules present at all', () => {
+    const { root, dir } = mkWorkspace([
+      {
+        name: '@c2/lib',
+        exports: { '.': './src/index.ts', './sub': './src/sub.ts' },
+        files: {
+          'src/index.ts': 'export function root() { return 1 }\n',
+          'src/sub.ts': 'export function sub() { return 2 }\n'
+        }
+      },
+      {
+        name: '@c2/app',
+        files: { 'src/uses-sub.test.ts': "import { sub } from '@c2/lib/sub'\ntest('sub', () => sub())\n" }
+      }
+    ])
+    try {
+      const uses = join(dir('@c2/app'), 'src/uses-sub.test.ts')
+      expect(selectSet(root, [join(dir('@c2/lib'), 'src/sub.ts')])).toContain(uses)
+      expect(selectSet(root, [join(dir('@c2/lib'), 'src/index.ts')])).not.toContain(uses)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
+// O3 — a diff is attributed to the top-level declarations its hunks touch, and
+// selection follows those names. Every shape that cannot be attributed widens to
+// the whole file, which is the file-level answer, never a narrower one.
+describe('changed-name attribution (O3)', () => {
+  const ts = loadTypeScript(REPO_ROOT) as NonNullable<ReturnType<typeof loadTypeScript>>
+
+  /** One modified file, with its hunk ranges given directly rather than through git. */
+  function modified(source: string, afterRanges: LineRange[], before = source, beforeRanges: LineRange[] = []) {
+    return affectedNamesForFile(ts, {
+      file: '/w/mod.ts',
+      after: source,
+      before,
+      afterRanges,
+      beforeRanges
+    })
+  }
+
+  const SOURCE = [
+    "import { dep } from './dep.js'", // 1
+    '', // 2
+    'export function alpha() {', // 3
+    '  return 1', // 4
+    '}', // 5
+    '', // 6
+    'export function beta() {', // 7
+    '  return helper()', // 8
+    '}', // 9
+    '', // 10
+    'function helper() {', // 11
+    '  return dep', // 12
+    '}', // 13
+    '', // 14
+    'export const gamma = 3' // 15
+  ].join('\n')
+
+  it('a hunk inside one exported function attributes to that name alone', () => {
+    expect(modified(SOURCE, [{ start: 4, end: 4 }])).toEqual(new Set(['alpha']))
+  })
+
+  it('a hunk in a local helper also affects every exported declaration that uses it', () => {
+    // `beta` calls `helper`; `alpha` and `gamma` do not.
+    expect(modified(SOURCE, [{ start: 12, end: 12 }])).toEqual(new Set(['helper', 'beta']))
+  })
+
+  it('an exported const attributes to its own name', () => {
+    expect(modified(SOURCE, [{ start: 15, end: 15 }])).toEqual(new Set(['gamma']))
+  })
+
+  it('a hunk in an import statement widens to the whole file', () => {
+    expect(modified(SOURCE, [{ start: 1, end: 1 }])).toBe(ALL_NAMES)
+  })
+
+  it('a hunk past the last declaration widens to the whole file', () => {
+    expect(modified(SOURCE, [{ start: 99, end: 99 }])).toBe(ALL_NAMES)
+  })
+
+  for (const [label, source] of [
+    ['module-scope executable code', "console.log('boot')\nexport function f() { return 1 }\n"],
+    ['an `export *` re-export', "export * from './other.js'\nexport function f() { return 1 }\n"],
+    ['an `export default`', 'export default function () { return 1 }\n'],
+    ['a destructuring binding', 'export const { a, b } = load()\n']
+  ] as const) {
+    it(`${label} widens to the whole file`, () => {
+      expect(modified(source, [{ start: 1, end: 1 }])).toBe(ALL_NAMES)
+    })
+  }
+
+  it('a declaration deleted by the diff is attributed from the OLD side', () => {
+    const before = 'export function gone() { return 1 }\nexport function kept() { return 2 }\n'
+    const after = 'export function kept() { return 2 }\n'
+    expect(
+      affectedNamesForFile(ts, {
+        file: '/w/mod.ts',
+        after,
+        before,
+        afterRanges: [{ start: 1, end: 0 }], // git's zero-width `+N,0` on a pure deletion
+        beforeRanges: [{ start: 1, end: 1 }]
+      })
+    ).toEqual(new Set(['gone']))
+  })
+
+  it('a non-TypeScript changed file is never narrowed', () => {
+    expect(
+      affectedNamesForFile(ts, {
+        file: '/w/vinaya.config.json',
+        after: '{}',
+        before: '{}',
+        afterRanges: [{ start: 1, end: 1 }],
+        beforeRanges: []
+      })
+    ).toBe(ALL_NAMES)
+  })
+
+  it('parseHunkRanges reads both sides, including git’s zero-width counts', () => {
+    const patch = ['@@ -10,0 +11,3 @@', 'body', '@@ -20,2 +24,0 @@', 'body', '@@ -30 +34 @@'].join('\n')
+    expect(parseHunkRanges(patch)).toEqual({
+      beforeRanges: [
+        { start: 10, end: 9 },
+        { start: 20, end: 21 },
+        { start: 30, end: 30 }
+      ],
+      afterRanges: [
+        { start: 11, end: 13 },
+        { start: 24, end: 23 },
+        { start: 34, end: 34 }
+      ]
+    })
+  })
+})
+
+describe('selection follows the changed names, and widens to file level when it cannot (O3)', () => {
+  const NAMED_LIB = {
+    'src/index.ts': "export { hot } from './hot.js'\nexport { cold } from './cold.js'\n",
+    'src/hot.ts': 'export function hot() { return 1 }\n',
+    'src/cold.ts': 'export function cold() { return 2 }\n'
+  }
+
+  function workspace() {
+    return mkWorkspace([
+      { name: '@o3/lib', main: INDEX_MAIN, files: NAMED_LIB },
+      {
+        name: '@o3/app',
+        files: {
+          'src/uses-hot.test.ts': "import { hot } from '@o3/lib'\ntest('hot', () => hot())\n",
+          'src/uses-cold.test.ts': "import { cold } from '@o3/lib'\ntest('cold', () => cold())\n"
+        }
+      }
+    ])
+  }
+
+  it('a change to ONE re-exported name on a shared barrel selects only that name’s consumer', () => {
+    const { root, dir } = workspace()
+    try {
+      const index = join(dir('@o3/lib'), 'src/index.ts')
+      const usesHot = join(dir('@o3/app'), 'src/uses-hot.test.ts')
+      const usesCold = join(dir('@o3/app'), 'src/uses-cold.test.ts')
+      const selected = new Set(
+        selectAffectedTestFiles(root, [index], { affectedNames: new Map([[index, new Set(['hot'])]]) }).selected
+      )
+      expect(selected).toContain(usesHot)
+      expect(selected).not.toContain(usesCold)
+      // Without name information the same change is file-level: both select.
+      const fileLevel = new Set(selectAffectedTestFiles(root, [index]).selected)
+      expect(fileLevel).toContain(usesHot)
+      expect(fileLevel).toContain(usesCold)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('an unattributable hunk (`all`) selects everything the file-level graph reaches', () => {
+    const { root, dir } = workspace()
+    try {
+      const index = join(dir('@o3/lib'), 'src/index.ts')
+      const named = new Set(
+        selectAffectedTestFiles(root, [index], { affectedNames: new Map([[index, ALL_NAMES]]) }).selected
+      )
+      expect(named).toEqual(new Set(selectAffectedTestFiles(root, [index]).selected))
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('on the real repository, a one-name change selects strictly fewer files than the file-level answer', () => {
+    const changed = join(REPO_ROOT, 'packages/aeg-core/src/review-input-manifest.ts')
+    const fileLevel = selectAffectedTestFiles(REPO_ROOT, [changed]).selected.length
+    const oneName = selectAffectedTestFiles(REPO_ROOT, [changed], {
+      affectedNames: new Map([[changed, new Set(['isBoundToPolicy'])]])
+    }).selected.length
+    expect(oneName).toBeLessThan(fileLevel)
+  })
+})
+
+// O7 — a test whose input is the repository TREE has no import edge to the
+// files it inspects, so reachability can never select it on the merits. The
+// rule that does lives in the selector, not in repository configuration, so it
+// travels with the selector into every repository that uses it.
+describe('tests that read the repository tree are selected from what they scan (O7)', () => {
+  const ts = loadTypeScript(REPO_ROOT) as NonNullable<ReturnType<typeof loadTypeScript>>
+
+  it('classifies a real-tree scanner, and never a test that only walks its own temporary fixture', () => {
+    const root = mkdtempSync(join(tmpdir(), 'vinaya-scan-'))
+    try {
+      mkdirSync(join(root, 'tests'), { recursive: true })
+      const scanner = join(root, 'tests', 'scanner.test.ts')
+      writeFileSync(
+        scanner,
+        [
+          "import { readdirSync } from 'node:fs'",
+          "import { join } from 'node:path'",
+          "const REPO_ROOT = join(import.meta.dir, '..')",
+          "const TREE = join(REPO_ROOT, 'src')",
+          "test('scans', () => readdirSync(TREE))",
+          ''
+        ].join('\n')
+      )
+      const fixtureWalker = join(root, 'tests', 'fixture.test.ts')
+      writeFileSync(
+        fixtureWalker,
+        [
+          "import { mkdtempSync, readdirSync } from 'node:fs'",
+          "import { tmpdir } from 'node:os'",
+          "import { join } from 'node:path'",
+          "test('walks its own fixture', () => {",
+          "  const dir = mkdtempSync(join(tmpdir(), 'x-'))",
+          '  readdirSync(dir)',
+          '})',
+          ''
+        ].join('\n')
+      )
+      // `root` stands in for the repository root here; the scanner anchors on
+      // its own module directory, the fixture walker on `tmpdir()`.
+      expect(scannedRootsOf(ts, scanner, readFileSync(scanner, 'utf8'), root)).toEqual([join(root, 'src')])
+      expect(scannedRootsOf(ts, fixtureWalker, readFileSync(fixtureWalker, 'utf8'), root)).toEqual([])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a git ls-files reader is classified as scanning the whole repository', () => {
+    const root = mkdtempSync(join(tmpdir(), 'vinaya-scan-'))
+    try {
+      const file = join(root, 'tracked.test.ts')
+      writeFileSync(
+        file,
+        [
+          "import { execFileSync } from 'node:child_process'",
+          "test('tracked', () => execFileSync('git', ['ls-files'], { encoding: 'utf8' }))",
+          ''
+        ].join('\n')
+      )
+      expect(scannedRootsOf(ts, file, readFileSync(file, 'utf8'), root)).toEqual([root])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  // The exact incident: a pull request changing one test file passed pre-push
+  // and failed CI on the test that audits every real-process call site, which
+  // reads the whole test tree from disk and so had no edge to what changed.
+  it('adding a bare subprocess call to a test file selects the test that audits real-process call sites', () => {
+    const auditor = join(REPO_ROOT, 'apps/cli/tests/process-fixture-coverage.test.ts')
+    const changedTest = join(REPO_ROOT, 'apps/cli/tests/demo.test.ts')
+    expect(selectAffectedTestFiles(REPO_ROOT, [changedTest]).selected).toContain(auditor)
+    // And it is reachability through the scan rule that does it, not an import
+    // edge and not the configured always-run list.
+    expect(selectAffectedTestFiles(REPO_ROOT, [changedTest], { repoTreeScanners: 'ignore' }).selected).not.toContain(
+      auditor
+    )
+  })
+
+  it('a narrowly-scoped scanner is not selected by a change outside the tree it reads', () => {
+    // `surface-spec-exports.test.ts` reads `apps/cli/src/commands`; a change in
+    // another package is outside its input entirely.
+    const scanner = join(REPO_ROOT, 'apps/cli/tests/surface-spec-exports.test.ts')
+    const roots = scannedRootsOf(ts, scanner, readFileSync(scanner, 'utf8'), REPO_ROOT)
+    expect(roots).toEqual([join(REPO_ROOT, 'apps/cli/src/commands')])
+  })
+})
+
+// Round 2 review, F1 — `import x = require('<spec>')` carries no `from`, no
+// quote directly after `import`, and no `import(` call, so it was the one shape
+// the text-scan graph could not see at all. A shape a graph cannot see
+// contributes no edge, which is silence rather than the coarse fallback; the
+// compiler graph degraded it correctly but had no fixture proving it either.
+describe('`import x = require(...)` degrades to the coarse edge under BOTH resolvers (F1)', () => {
+  const LIB = {
+    'src/index.ts': "export { foo } from './foo.js'\nexport { bar } from './bar.js'\n",
+    'src/foo.ts': 'export function foo() { return 1 }\n',
+    'src/bar.ts': 'export function bar() { return 2 }\n'
+  }
+
+  for (const resolver of ['compiler', 'text-scan'] as const) {
+    it(`${resolver}: a bare workspace specifier keeps the whole-package edge`, () => {
+      const { root, dir } = mkWorkspace([
+        { name: '@ieq/lib', main: INDEX_MAIN, files: LIB },
+        {
+          name: '@ieq/app',
+          files: {
+            'src/uses.test.ts': "import lib = require('@ieq/lib')\ntest('lib', () => lib)\n",
+            // The control: a precisely-resolved importer of one name, which a
+            // change to the OTHER name must never select.
+            'src/control.test.ts': "import { foo } from '@ieq/lib'\ntest('foo', () => foo())\n"
+          }
+        }
+      ])
+      try {
+        const uses = join(dir('@ieq/app'), 'src/uses.test.ts')
+        const control = join(dir('@ieq/app'), 'src/control.test.ts')
+        const selected = new Set(
+          selectAffectedTestFiles(root, [join(dir('@ieq/lib'), 'src/bar.ts')], { resolver }).selected
+        )
+        expect(selected).toContain(uses)
+        expect(selected).not.toContain(control)
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    })
+
+    it(`${resolver}: a relative specifier still yields its edge`, () => {
+      const { root, dir } = mkWorkspace([
+        {
+          name: '@ieq/rel',
+          files: {
+            'src/target.ts': 'export function target() { return 1 }\n',
+            'src/uses.test.ts': "import t = require('./target.js')\ntest('t', () => t)\n"
+          }
+        }
+      ])
+      try {
+        const uses = join(dir('@ieq/rel'), 'src/uses.test.ts')
+        expect(
+          selectAffectedTestFiles(root, [join(dir('@ieq/rel'), 'src/target.ts')], { resolver }).selected
+        ).toContain(uses)
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    })
+
+    it(`${resolver}: the form a re-export hop writes is traversed too`, () => {
+      const { root, dir } = mkWorkspace([
+        { name: '@ieq/opaque', main: INDEX_MAIN, files: { 'src/index.ts': 'export const thing = 1\n' } },
+        {
+          name: '@ieq/hop',
+          main: INDEX_MAIN,
+          files: {
+            // The barrel pulls a whole module into its OWN scope this way, which
+            // runs on every import through it.
+            'src/index.ts':
+              "import opaque = require('@ieq/opaque')\nexport { foo } from './foo.js'\nexport const wired = opaque\n",
+            'src/foo.ts': 'export function foo() { return 1 }\n'
+          }
+        },
+        {
+          name: '@ieq/app',
+          files: { 'src/uses.test.ts': "import { foo } from '@ieq/hop'\ntest('foo', () => foo())\n" }
+        }
+      ])
+      try {
+        const uses = join(dir('@ieq/app'), 'src/uses.test.ts')
+        expect(
+          selectAffectedTestFiles(root, [join(dir('@ieq/opaque'), 'src/index.ts')], { resolver }).selected
+        ).toContain(uses)
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    })
+  }
+
+  it('the text-scan graph extracts the specifier at all — the silence F1 found', () => {
+    expect(extractImportSpecifiers("import lib = require('@ieq/lib')\n")).toEqual(['@ieq/lib'])
+    expect(extractImportSpecifiers("export import lib = require('./thing.js')\n")).toEqual(['./thing.js'])
   })
 })

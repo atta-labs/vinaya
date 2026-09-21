@@ -1,103 +1,143 @@
 /**
  * Resolves, through the real import graph, which test files a set of changed
  * files could affect. Never a folder heuristic: a changed file selects a test
- * only when that test's own transitive import closure actually reaches it, so
- * a change in one file of a large directory never drags in every sibling test
- * that happens to share its folder.
+ * only when that test's own transitive import closure actually reaches a USE of
+ * something the change touched, so a change in one file of a large directory
+ * never drags in every sibling test that happens to share its folder.
  *
- * Deliberately regex-based, not a full TypeScript compiler pass — the same
- * extraction shape `apps/cli/tests/import-boundary.test.ts` already proved out
- * for this exact codebase (`from`-clauses, bare `import '<spec>'`, and dynamic
- * `import(...)`). A full type-checker resolution would be strictly more correct
- * but far too slow to run at push time on every commit; this stays a
- * static-text scan specifically so it can meet the push-time budget.
+ * ## Resolution is the TypeScript compiler's
+ *
+ * Module resolution, named-import alias resolution to the defining file,
+ * re-export chains and bare workspace-package specifiers all come from the
+ * compiler API — see `ts-module-graph.ts`, which also explains how the compiler
+ * gets here without becoming a shipped runtime dependency. The text scan below
+ * (`extractImportRecords` and everything it feeds) is the FALLBACK for a
+ * repository with no `typescript` to resolve: a strict over-approximation of
+ * the compiler's answer, never a narrower one.
+ *
+ * This replaced a text scan as the primary path for a reason worth keeping
+ * written down. A regular expression can read the specifier `'./demo.js'`; it
+ * cannot know that the file on disk is `demo.ts`. On this repository, where
+ * most relative imports are written with the extension the emit will have, that
+ * meant a large fraction of all edges were simply absent — a change to
+ * `apps/cli/src/commands/demo.ts` selected no test at all, though
+ * `apps/cli/tests/demo.test.ts` imports it by name. A selector that drops edges
+ * does not over-select; it silently under-selects, and its reported reductions
+ * are lost edges wearing precision's clothes.
+ *
+ * ## Selection follows the changed NAMES, not the changed file
+ *
+ * A diff is mapped to the top-level declarations its hunks touch
+ * (`changed-names.ts`), and a test is selected when its closure reaches a use of
+ * one of THOSE names. A hunk that cannot be attributed to a single declaration —
+ * module-scope code, an import statement, an `export *`, a computed name, an
+ * unparseable region — makes the whole file affected, which is the file-level
+ * answer. The default for a caller that computes no names at all is also the
+ * file-level answer: narrowing is always something the selector must EARN.
  *
  * ## Cross-package resolution — named exports, with conservative fallback
  *
- * A relative import resolves to a real file within the same package (the only
- * place a relative specifier can point). A bare `@scope/name` specifier that
- * matches another workspace package is resolved THROUGH THAT PACKAGE'S EXPORTED
- * NAMES, not treated as a dependency on the whole package: `import { foo } from
- * '@scope/pkg'` depends only on the files traversed to resolve `foo` — the
- * package's declared entrypoint, every re-export hop, and the file that
- * actually defines `foo` — never on `@scope/pkg`'s other, unrelated files. So a
- * change inside `packages/pkg` selects a consuming test only when the changed
- * file lies on the resolution path of a name that test actually imports.
+ * A bare `@scope/name` specifier that matches another workspace package is
+ * resolved THROUGH THAT PACKAGE'S EXPORTED NAMES, not treated as a dependency on
+ * the whole package: `import { foo } from '@scope/pkg'` depends only on the
+ * files traversed to resolve `foo` — the package's declared entrypoint, every
+ * re-export hop, and the file that actually defines `foo` — never on
+ * `@scope/pkg`'s other, unrelated files. The entrypoint comes from the package's
+ * own manifest (`exports`/`main`, conditions included), handed to the compiler
+ * as `paths`, so the graph never depends on how an installer laid out
+ * `node_modules`.
  *
- * The resolution path is split into two edge kinds so precision and never-miss
- * both hold:
- *   - the DEFINING file(s) become ordinary traversable graph nodes, so the
- *     definition's own transitive relative dependencies are walked exactly like
- *     any in-package import (a change to a helper the definition imports still
- *     selects the test);
- *   - each RE-EXPORT HOP file (the entrypoint barrel and any intermediate
- *     re-export module) becomes a change-detection-only marker (`touch:`): a
- *     change to the barrel or a hop selects the test, but the barrel's OTHER
- *     re-exports are never traversed, which is exactly what keeps a barrel edit
- *     from reintroducing whole-package selection. A hop's OWN module-scope
- *     imports (a barrel's `import './register'` side effect, or an
- *     `import { helper } from './helper'` it uses in module code) ARE surfaced
- *     as traversable edges, since that code runs on every import through the hop
- *     — so a change to a hop's own dependency still selects the test. A hop's own
- *     module-scope import of ANOTHER workspace package is resolved through that
- *     package's exported names by these same two rules, so a barrel that uses one
- *     name from a sibling package does not drag that whole package back in.
- *
- * A NON-source change inside a package (its `package.json`, `tsconfig.json`, or a
- * non-`.ts` asset) is not a graph node, so a precisely-resolved importer also
+ * Every file on that path becomes a name-level edge: a change to it selects only
+ * when the change touched the name this importer resolved through. A NON-source
+ * change inside a package (its `package.json`, `tsconfig.json`, or a non-`.ts`
+ * asset) is not a graph node at all, so a precisely-resolved importer also
  * carries a `pkgmeta:<pkg>` marker that fires only on such a change — editing
- * `exports`/`main` re-points what every consumer resolves to, and this keeps that
- * caught without reintroducing whole-package selection on ordinary source edits.
- * One such marker is carried for EVERY package on the resolution path, not only
- * the directly-imported one: when a name is re-exported across a package
- * boundary, the intermediate package's manifest re-points the resolution just as
- * the direct one's does.
+ * `exports`/`main` re-points what every consumer resolves to. One such marker is
+ * carried for EVERY package on the resolution path, not only the
+ * directly-imported one.
  *
- * ## Residual over-selection this design accepts
+ * ## Tests that read the repository rather than importing it
  *
- * A re-export hop is one `touch:` marker for the WHOLE FILE, not per exported
- * name, so editing any line of a barrel — including a sibling `export { other }
- * from './other'` line that the importer's own name never resolves through —
- * selects every test that resolved any name through that barrel. Narrowing a
- * `touch:` marker to the specific re-export line would need line-level change
- * attribution this static scan does not have; over-selecting on a barrel edit is
- * the deliberate trade, and barrel edits are rare next to ordinary source edits.
- * The same holds for `pkgmeta:`: it fires on ANY non-source change in a package
- * on the path, including a `README.md` that re-points nothing.
+ * An import edge cannot reach a test whose input is the repository TREE — one
+ * that walks source files from disk and asserts something about all of them. No
+ * import names those files, so reachability can never select such a test on the
+ * merits, and a change to any file it scans can break it while it stays
+ * unselected. `repo-scanner-tests.ts` classifies these from their own source and
+ * the selector gives each a `scan:` edge over the directory it actually walks.
  *
  * ## Conservative fallback — over-select, never omit
  *
- * The refinement can only ever REMOVE the whole-package edge when it can PROVE
- * a name maps to specific files. Every shape it cannot prove safe retains the
- * original whole-package dependency (`external:<pkg>`), so the selector may
- * over-select but never omits a truly affected test. Shapes that fall back:
- * namespace imports (`import * as ns`), default imports, side-effect imports
- * (`import '@scope/pkg'`), dynamic imports (`import('@scope/pkg')`), `export *`
- * re-exports, an empty or unparseable named list (`import {}`, or a brace list
- * carrying a stray token) which narrows to nothing yet still runs the module, a
- * requested name with no provable single origin (unknown, ambiguous across
- * multiple `export *` sources, cyclic, or re-exported across a package boundary
- * that itself will not resolve), a package whose entrypoint/subpath cannot be
- * derived from its manifest, and any specifier a single file imports under more
- * than one shape at once. Aliases (`import { a as b }`) and `type` imports are
+ * The refinement can only ever REMOVE the whole-package edge when it can PROVE a
+ * name maps to specific files. Every shape it cannot prove safe retains the
+ * whole-package dependency (`external:<pkg>`), so the selector may over-select
+ * but never omits a truly affected test. Shapes that fall back: namespace
+ * imports (`import * as ns`), default imports, side-effect imports, dynamic
+ * imports, `export *` re-exports, `import x = require(...)`, a name whose alias
+ * chain does not terminate in a declaration, a name supplied ambiguously by more
+ * than one `export *` source, and a package whose entrypoint/subpath cannot be
+ * derived from its manifest. Aliases (`import { a as b }`) and `type` imports are
  * mapped by their EXPORTED (origin) name, never the local alias, so they resolve
  * precisely rather than falling back.
  *
  * The same rule governs an `exports` CONDITIONS object: the runtime picks a
- * target by which condition is active, which a static scan cannot know, so a
+ * target by which condition is active, which no static analysis can know, so a
  * conditions object is honoured only when every runtime condition it declares
  * lands on the SAME source file. Declare two different runtime targets and the
  * choice is unprovable, so the subpath stays unmapped and every bare import of it
  * keeps the whole-package edge. `types`/`typings` are excluded outright — a
  * declaration file is what type-checking loads, never what runs.
+ *
+ * ## Residual over-selection this design accepts
+ *
+ * Traversing into a name's defining file walks that FILE's imports, not the
+ * declaration's own — so a change to a helper only a sibling declaration uses
+ * still selects. Narrowing that would need intra-file dependency analysis; the
+ * wider answer is the safe one and this keeps it.
  */
 
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, extname, isAbsolute, join, resolve } from 'node:path'
 import { globToRegex } from '@attalabs/aeg-core'
+import { scannedRootsOf } from './repo-scanner-tests.js'
+import {
+  ALL_PREFIX,
+  buildCompilerGraph,
+  EXTERNAL_PREFIX,
+  loadTypeScript,
+  NAME_PREFIX,
+  NAME_SEPARATOR,
+  OWN_PREFIX,
+  PKGMETA_PREFIX,
+  SCAN_PREFIX,
+  TOUCH_PREFIX
+} from './ts-module-graph.js'
 
-const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']
+const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs']
 const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', 'build', 'coverage'])
+
+/**
+ * The TypeScript output extension a specifier may be WRITTEN with, mapped to the
+ * source extensions that actually compile to it. ESM requires a real extension on
+ * a relative specifier, and TypeScript's answer is that you write the extension
+ * the EMIT will have (`./demo.js`) while the file on disk is `./demo.ts` — so on
+ * this repository, where 512 of 883 relative imports under `apps/cli` are written
+ * that way against 371 without, resolving a specifier by "the literal path, then
+ * the path plus each source extension" finds nothing at all: `demo.js` is not a
+ * file, and `demo.js.ts` is not either. Every such edge was silently absent from
+ * the graph, which is how a change to `apps/cli/src/commands/demo.ts` selected no
+ * test while `apps/cli/tests/demo.test.ts` imports it by name.
+ *
+ * The mapping is TypeScript's own (`.js` may be `.ts`/`.tsx`, `.jsx` is `.tsx`,
+ * and the single-format `.mjs`/`.cjs` map only to their matching `.mts`/`.cts`),
+ * and it is tried only AFTER the literal path, so a real `.js` file sitting next
+ * to a `.ts` of the same name still resolves to itself exactly as Node would.
+ */
+const OUTPUT_TO_SOURCE_EXTENSIONS = new Map<string, readonly string[]>([
+  ['.js', ['.ts', '.tsx']],
+  ['.jsx', ['.tsx']],
+  ['.mjs', ['.mts']],
+  ['.cjs', ['.cts']]
+])
 
 // A `from`-clause on an `import` or `export`, capturing the keyword (group 1),
 // the clause text between it and `from` (group 2), and the specifier (group 4).
@@ -129,6 +169,16 @@ const QUOTED_LIST_CLAUSE_RE =
 // distinguishes it from `import { … } from '<spec>'`.
 const SIDE_EFFECT_IMPORT_RE = /^\s*import\s*(['"])([^'"]+)\1/gm
 const DYNAMIC_IMPORT_RE = /\bimport\s*\(\s*(['"])([^'"]+)\1\s*\)/g
+// `import x = require('<spec>')`, and its `export import` form. This shape has
+// no `from` keyword, no quote directly after `import`, and no `import(` call,
+// so not one of the scans above can see it — and a shape this scan cannot see
+// contributes no edge at all, which is SILENCE, not the coarse fallback every
+// other unreadable shape degrades to. The compiler graph already treats it
+// coarsely (`ts-module-graph.ts`'s `ImportEqualsDeclaration` branch); this is
+// the same treatment for the text-scan graph, which is the one a repository
+// with no `typescript` installed actually runs.
+const IMPORT_EQUALS_REQUIRE_RE =
+  /^\s*(?:export\s+)?import\s+[A-Za-z_$][\w$]*\s*=\s*require\s*\(\s*(['"])([^'"]+)\1\s*\)/gm
 // Line and block comments, stripped from a brace list before it is split on
 // commas so `import { a, /* keep */ b }` and a trailing `// note` resolve rather
 // than dropping every name the comment abuts.
@@ -214,6 +264,14 @@ function collectRecords(source: string, includeExportFrom: boolean): ImportRecor
   for (let m = DYNAMIC_IMPORT_RE.exec(source); m !== null; m = DYNAMIC_IMPORT_RE.exec(source)) {
     records.push({ kind: 'dynamic', specifier: m[2] as string })
   }
+  // A whole-module binding, so it is classified as a namespace — never a named
+  // list, and therefore always the coarse edge. It is emitted regardless of
+  // `includeExportFrom`: even the `export import` form runs the target module
+  // on every import through this file, so a re-export hop owes it too.
+  IMPORT_EQUALS_REQUIRE_RE.lastIndex = 0
+  for (let m = IMPORT_EQUALS_REQUIRE_RE.exec(source); m !== null; m = IMPORT_EQUALS_REQUIRE_RE.exec(source)) {
+    records.push({ kind: 'namespace', specifier: m[2] as string })
+  }
   return records
 }
 
@@ -271,9 +329,14 @@ export function walkFiles(root: string): string[] {
   return out
 }
 
-/** Resolves a module base path against `knownFiles` — tries the bare path, each `SOURCE_EXTENSIONS` suffix, and an `index.<ext>` inside it as a directory, the same resolution order Node/bundlers use. `null` when nothing matches. */
+/** Resolves a module base path against `knownFiles` — tries the bare path, the TypeScript SOURCE of a written output extension ({@link OUTPUT_TO_SOURCE_EXTENSIONS}), each `SOURCE_EXTENSIONS` suffix, and an `index.<ext>` inside it as a directory, the same resolution order Node/TypeScript/bundlers use. `null` when nothing matches. */
 function resolveFileCandidate(base: string, knownFiles: Set<string>): string | null {
   if (knownFiles.has(base)) return base
+  const written = extname(base)
+  for (const ext of OUTPUT_TO_SOURCE_EXTENSIONS.get(written) ?? []) {
+    const source = base.slice(0, -written.length) + ext
+    if (knownFiles.has(source)) return source
+  }
   for (const ext of SOURCE_EXTENSIONS) {
     if (knownFiles.has(base + ext)) return base + ext
   }
@@ -450,16 +513,42 @@ export function isTestFile(path: string): boolean {
 
 // ── Edge markers ────────────────────────────────────────────────────────────
 
-/** A resolved forward dependency of a file — a real graph node, a change-only re-export-hop marker, a whole-package fallback, or a package-manifest marker. */
-const TOUCH_PREFIX = 'touch:'
-const EXTERNAL_PREFIX = 'external:'
-// A precisely-resolved importer carries `pkgmeta:<pkg>` so a change to a NON-source
-// file in that package (its `package.json`, `tsconfig.json`, a non-`.ts` asset)
-// still selects it: such a file is not a graph node, so the resolved file edges
-// alone would miss it, yet editing `exports`/`main` re-points what the importer
-// resolves to. It fires only on non-source changes; a source change is caught
-// precisely by the real file edge, so precision on ordinary edits is preserved.
-const PKGMETA_PREFIX = 'pkgmeta:'
+/**
+ * A node key in the selection graph. Six shapes, and the whole never-miss
+ * argument is which of them CHECK (can select) and which TRAVERSE (walk on):
+ *
+ * - `all:<file>` — the whole module. Checks: any change to `<file>` selects.
+ *   Traverses: every edge the file has, including what it re-exports. This is
+ *   what a coarse shape (namespace, default, `export *`, side-effect, dynamic)
+ *   degrades to, and what a test file itself starts from.
+ * - `own:<file>` — the module's OWN scope: the edges it `import`s, never the
+ *   ones it merely re-exports. Traverses only; never checks, because whatever
+ *   reached it already emitted the `name:` key that says WHICH of its exports
+ *   is in play. Keeping re-exports out of this is what stops a barrel reached
+ *   for one name from fanning out to everything else it forwards.
+ * - `name:<file>#<n>` — a use of `<file>`'s exported name `<n>`. Checks against
+ *   the changed names (see {@link SelectionOptions.affectedNames}); never
+ *   traverses — the matching `own:<file>` does that.
+ * - `touch:<file>` — a change-only marker for a file on a resolution path the
+ *   text-scan graph proved without a name. Checks any change; never traverses.
+ * - `external:<pkg>` — the coarse whole-package edge: any change anywhere in
+ *   `<pkg>` selects. The fallback of last resort, and never wrong, only wide.
+ * - `pkgmeta:<pkg>` — fires only on a NON-source change in `<pkg>` (its
+ *   `package.json`, `tsconfig.json`, an asset). Such a file is not a graph
+ *   node, so a precisely-resolved importer's file edges would miss it, yet
+ *   editing `exports`/`main` re-points what that importer resolves to.
+ *
+ * - `scan:<dir>` — a test whose INPUT is the repository tree under `<dir>`,
+ *   read from disk rather than imported (`repo-scanner-tests.ts`). Checks any
+ *   change to a file under that prefix; never traverses. No import edge can
+ *   reach such a test's real inputs, so without this it is selectable only by
+ *   configuration.
+ *
+ * `external:`/`pkgmeta:` naming the edge-owning file's OWN package are ignored:
+ * a file "importing its own package" would otherwise select on any same-package
+ * change, exactly the folder-shaped over-selection this design rules out.
+ */
+type NodeKey = string
 
 // ── The workspace export graph ──────────────────────────────────────────────
 
@@ -787,6 +876,10 @@ export type SelectionResult = {
   selected: string[]
   /** Total `*.test.*` files scanned across every affected package — the denominator for "N of M". */
   totalTestFiles: number
+  /** Which graph answered: the TypeScript compiler, or the text-scan fallback for a repository with no `typescript` to resolve. */
+  resolver: 'compiler' | 'text-scan'
+  /** Milliseconds the compiler program build took, `0` under the text scan — reported separately because it dominates selector runtime and is the figure a push-time budget is judged against. */
+  programMs: number
 }
 
 export type SelectionOptions = {
@@ -806,6 +899,30 @@ export type SelectionOptions = {
    * unconditionally.
    */
   addedOrRenamed?: readonly string[]
+  /**
+   * Per changed file (absolute or repo-root-relative), the exported names this
+   * diff actually touched — or `'all'` when the diff touched something that
+   * cannot be attributed to one declaration, which makes the whole file
+   * affected. A changed file ABSENT from this map is also wholly affected: the
+   * default is always the file-level answer, so a caller that computes nothing
+   * gets the wider, safe selection rather than a narrower, wrong one.
+   */
+  affectedNames?: ReadonlyMap<string, ReadonlySet<string> | 'all'>
+  /**
+   * Whether tests whose input is the repository TREE (`repo-scanner-tests.ts`)
+   * get their `scan:` edges. `'select'` — the default, and the only safe
+   * production value — gives them the edges; `'ignore'` withholds them, which
+   * exists so the cost of the rule can be measured against the same tree
+   * rather than estimated.
+   */
+  repoTreeScanners?: 'select' | 'ignore'
+  /**
+   * Forces the text-scan graph instead of the compiler one. Exists so the
+   * fallback path — what a repository with no `typescript` installed actually
+   * gets — is reachable from a test on a machine that does have it; production
+   * callers never set it.
+   */
+  resolver?: 'compiler' | 'text-scan'
 }
 
 /**
@@ -897,78 +1014,156 @@ export function selectAffectedTestFiles(
     }
   }
 
-  // Build the global forward edge map.
-  const edges = new Map<string, string[]>()
-  for (const pkg of packages) {
-    const knownFiles = pkgKnownFiles.get(pkg) as Set<string>
-    for (const file of pkgFiles.get(pkg) as string[]) {
-      const deps: string[] = []
-      const coarsePackages = new Set<string>()
-      const resolvedNamed = new Map<string, { touched: Set<string>; definers: Set<string>; hopDeps: Set<string> }>()
+  // Build the global forward edge map. The compiler resolves what it can (the
+  // ordinary case — the repository under analysis has `typescript`); the text
+  // scan below is the fallback for a repository that does not, and is a strict
+  // over-approximation, so never-miss holds either way.
+  // The compiler is loaded once and used for two independent jobs: the module
+  // graph, and classifying tests that read the repository tree. `resolver`
+  // forces only the FIRST back to the text scan, so the scan rule holds under
+  // both graphs and the text-scan selection stays a superset of the compiler's.
+  const typescript = loadTypeScript(repoRoot)
+  const graphTypescript = options.resolver === 'text-scan' ? null : typescript
+  const edges = new Map<NodeKey, NodeKey[]>()
+  let programMs = 0
+  if (graphTypescript) {
+    // Bare workspace specifiers, resolved from each package's OWN manifest
+    // (`deriveEntrypoints`' `exports`/`main` rules, conditions included) and
+    // handed to the compiler as `paths`, so the graph never depends on how an
+    // installer happened to lay out `node_modules`.
+    const entrypoints = new Map<string, string>()
+    for (const pkg of packages) {
+      for (const [subpath, entry] of pkg.entrypoints) {
+        entrypoints.set(subpath === '.' ? pkg.name : `${pkg.name}${subpath.slice(1)}`, entry)
+      }
+    }
+    const graph = buildCompilerGraph(graphTypescript, {
+      repoRoot,
+      files: [...allSourceFiles],
+      packageOfFile: (f) => fileToPackage.get(f) ?? null,
+      packageOfBareSpecifier: (specifier) => matchPackage(specifier)?.pkg.name ?? null,
+      entrypoints
+    })
+    for (const [node, deps] of graph.edges) edges.set(node, deps)
+    programMs = graph.programMs
+  } else {
+    buildTextScanGraph()
+  }
 
-      for (const record of extractImportRecords(readSource(file))) {
-        const specifier = record.specifier
-        if (specifier.startsWith('.')) {
-          const resolved = resolveRelativeImport(file, specifier, knownFiles)
-          if (resolved) deps.push(resolved)
-          continue
-        }
-        const match = matchPackage(specifier)
-        if (!match) continue // a third-party dependency — never a changed workspace file.
-        if (coarsePackages.has(match.pkg.name)) continue // already coarse for this package.
+  /**
+   * The pre-compiler graph, kept as the fallback for a repository with no
+   * `typescript` to resolve: the same import/export records read by regular
+   * expression, with re-export hops as `touch:` markers and every unprovable
+   * shape as the coarse whole-package edge. Its node keys are normalized into
+   * the vocabulary {@link NodeKey} describes, with no `own:`/`all:` split —
+   * a text scan cannot tell a hop's own module scope from what it forwards, so
+   * both keys carry the same, wider list.
+   */
+  function buildTextScanGraph(): void {
+    for (const pkg of packages) {
+      const knownFiles = pkgKnownFiles.get(pkg) as Set<string>
+      for (const file of pkgFiles.get(pkg) as string[]) {
+        const deps: string[] = []
+        const coarsePackages = new Set<string>()
+        const resolvedNamed = new Map<string, { touched: Set<string>; definers: Set<string>; hopDeps: Set<string> }>()
 
-        const entry = match.pkg.entrypoints.get(match.subpath)
-        // A named import whose brace list did not parse cleanly (empty `{}`, or an
-        // entry that is not a bare identifier) is an unprovable shape: keep the
-        // whole-package edge rather than narrow to the names that happened to read.
-        if (record.kind !== 'named' || !record.clean || !entry) {
-          // namespace / default / star / side-effect / dynamic / unclean-named, or
-          // an entrypoint we cannot derive — retain the whole-package edge.
-          coarsePackages.add(match.pkg.name)
-          continue
-        }
-        let acc = resolvedNamed.get(match.pkg.name)
-        for (const name of record.names) {
-          const resolution = resolveExportedName(ctx, entry, name, new Set())
-          if (!resolution.resolved) {
+        for (const record of extractImportRecords(readSource(file))) {
+          const specifier = record.specifier
+          if (specifier.startsWith('.')) {
+            const resolved = resolveRelativeImport(file, specifier, knownFiles)
+            if (resolved) deps.push(resolved)
+            continue
+          }
+          const match = matchPackage(specifier)
+          if (!match) continue // a third-party dependency — never a changed workspace file.
+          if (coarsePackages.has(match.pkg.name)) continue // already coarse for this package.
+
+          const entry = match.pkg.entrypoints.get(match.subpath)
+          // A named import whose brace list did not parse cleanly (empty `{}`, or an
+          // entry that is not a bare identifier) is an unprovable shape: keep the
+          // whole-package edge rather than narrow to the names that happened to read.
+          if (record.kind !== 'named' || !record.clean || !entry) {
+            // namespace / default / star / side-effect / dynamic / unclean-named, or
+            // an entrypoint we cannot derive — retain the whole-package edge.
             coarsePackages.add(match.pkg.name)
-            acc = undefined
-            resolvedNamed.delete(match.pkg.name)
-            break
+            continue
           }
-          if (!acc) {
-            acc = { touched: new Set(), definers: new Set(), hopDeps: new Set() }
-            resolvedNamed.set(match.pkg.name, acc)
+          let acc = resolvedNamed.get(match.pkg.name)
+          for (const name of record.names) {
+            const resolution = resolveExportedName(ctx, entry, name, new Set())
+            if (!resolution.resolved) {
+              coarsePackages.add(match.pkg.name)
+              acc = undefined
+              resolvedNamed.delete(match.pkg.name)
+              break
+            }
+            if (!acc) {
+              acc = { touched: new Set(), definers: new Set(), hopDeps: new Set() }
+              resolvedNamed.set(match.pkg.name, acc)
+            }
+            for (const t of resolution.touched) acc.touched.add(t)
+            for (const d of resolution.definers) acc.definers.add(d)
+            for (const h of resolution.hopDeps) acc.hopDeps.add(h)
           }
-          for (const t of resolution.touched) acc.touched.add(t)
-          for (const d of resolution.definers) acc.definers.add(d)
-          for (const h of resolution.hopDeps) acc.hopDeps.add(h)
         }
-      }
 
-      // A specifier that ever fell back to coarse wins over any symbol-aware
-      // edge for the SAME package, so a mixed import shape is never narrowed.
-      for (const [name, acc] of resolvedNamed) {
-        if (coarsePackages.has(name)) continue
-        // A `pkgmeta:` marker per package that CONTRIBUTED a file to this
-        // resolution, not just the one named in the specifier: when a name is
-        // re-exported across a package boundary, the intermediate package's
-        // manifest re-points this importer's resolution exactly as the direct
-        // package's does, and its non-source files are no more graph nodes than
-        // the direct package's are.
-        const metaPackages = new Set([name])
-        for (const f of [...acc.touched, ...acc.definers, ...acc.hopDeps]) {
-          const owner = fileToPackage.get(f) // undefined for a `touch:`/`external:` marker, which owns no file.
-          if (owner) metaPackages.add(owner)
+        // A specifier that ever fell back to coarse wins over any symbol-aware
+        // edge for the SAME package, so a mixed import shape is never narrowed.
+        for (const [name, acc] of resolvedNamed) {
+          if (coarsePackages.has(name)) continue
+          // A `pkgmeta:` marker per package that CONTRIBUTED a file to this
+          // resolution, not just the one named in the specifier: when a name is
+          // re-exported across a package boundary, the intermediate package's
+          // manifest re-points this importer's resolution exactly as the direct
+          // package's does, and its non-source files are no more graph nodes than
+          // the direct package's are.
+          const metaPackages = new Set([name])
+          for (const f of [...acc.touched, ...acc.definers, ...acc.hopDeps]) {
+            const owner = fileToPackage.get(f) // undefined for a `touch:`/`external:` marker, which owns no file.
+            if (owner) metaPackages.add(owner)
+          }
+          for (const p of metaPackages) deps.push(`${PKGMETA_PREFIX}${p}`)
+          for (const t of acc.touched) if (t !== file) deps.push(`${TOUCH_PREFIX}${t}`)
+          for (const d of acc.definers) deps.push(d)
+          for (const h of acc.hopDeps) deps.push(h)
         }
-        for (const p of metaPackages) deps.push(`${PKGMETA_PREFIX}${p}`)
-        for (const t of acc.touched) if (t !== file) deps.push(`${TOUCH_PREFIX}${t}`)
-        for (const d of acc.definers) deps.push(d)
-        for (const h of acc.hopDeps) deps.push(h)
-      }
-      for (const name of coarsePackages) deps.push(`${EXTERNAL_PREFIX}${name}`)
+        for (const name of coarsePackages) deps.push(`${EXTERNAL_PREFIX}${name}`)
 
-      edges.set(file, deps)
+        // A bare path in this builder's vocabulary is a traversable, any-change
+        // node — `all:` in the shared one.
+        const keys = deps.map((d) => (/^(?:touch|external|pkgmeta):/.test(d) ? d : `${ALL_PREFIX}${d}`))
+        edges.set(`${ALL_PREFIX}${file}`, keys)
+        edges.set(`${OWN_PREFIX}${file}`, keys)
+      }
+    }
+  }
+
+  // A changed file with no name-level information is WHOLLY changed: every one
+  // of its exports is affected. That is the file-level answer, and it is what
+  // every caller that does not (or cannot) compute changed names gets.
+  const affectedNames = options.affectedNames ?? new Map<string, ReadonlySet<string> | 'all'>()
+  const changeFacts: ChangeFacts = {
+    files: absChanged,
+    packages: changedPackageNames,
+    nonSourcePackages: nonSourceChangedPackages,
+    packageOfFile: (f) => fileToPackage.get(f) ?? null,
+    affects: (file, name) => {
+      const affected =
+        affectedNames.get(file) ?? affectedNames.get(file.startsWith(repoRoot) ? file.slice(repoRoot.length + 1) : file)
+      return affected === undefined || affected === 'all' || affected.has(name)
+    }
+  }
+
+  // Tests whose input is the repository TREE, not their own imports. Their
+  // `scan:` edges are added to the graph here rather than to a configured list,
+  // so the rule travels with the selector into every repository that uses it.
+  if (typescript && options.repoTreeScanners !== 'ignore') {
+    for (const file of allSourceFiles) {
+      if (!isTestFile(file)) continue
+      const roots = scannedRootsOf(typescript, file, readSource(file), repoRoot)
+      if (roots.length === 0) continue
+      const key = `${ALL_PREFIX}${file}`
+      edges.set(key, [...(edges.get(key) ?? []), ...roots.map((r) => `${SCAN_PREFIX}${r}`)])
     }
   }
 
@@ -986,57 +1181,80 @@ export function selectAffectedTestFiles(
 
     for (const test of testFiles) {
       const forced = alwaysRunRegexes.some((re) => re.test(test.slice(repoRoot.length + 1))) || addedOrRenamed.has(test)
-      if (
-        forced ||
-        (anythingChanged &&
-          reaches(test, edges, absChanged, changedPackageNames, nonSourceChangedPackages, fileToPackage))
-      ) {
+      if (forced || (anythingChanged && reaches(`${ALL_PREFIX}${test}`, edges, changeFacts))) {
         selected.push(test)
       }
     }
   }
 
-  return { selected, totalTestFiles }
+  return { selected, totalTestFiles, resolver: graphTypescript ? 'compiler' : 'text-scan', programMs }
 }
 
 /**
- * DFS from `start` over the forward edge graph — true the moment it reaches a
- * changed file (a real node or a `touch:` re-export-hop marker), a coarse
- * `external:<pkg>` edge naming a changed package, or a `pkgmeta:<pkg>` edge whose
- * package had a NON-source (manifest/asset) change. A `touch:` marker is checked
- * but never traversed, so a re-exporting barrel's OTHER exports never fan out.
- * An `external:`/`pkgmeta:` edge naming the edge-owning file's OWN package is
- * ignored — a file "importing its own package" would otherwise coarsely select on
- * any same-package change, exactly the folder-shaped over-selection this rules out.
+ * Everything the walk needs to know about this diff: which files changed, which
+ * packages they sit in, which of those changed a NON-source file, and — the
+ * name-level half — whether a given exported name of a given changed file is
+ * one the diff actually touched.
  */
-function reaches(
-  start: string,
-  edges: Map<string, string[]>,
-  changedFiles: Set<string>,
-  changedPackages: Set<string>,
-  nonSourceChangedPackages: Set<string>,
-  fileToPackage: Map<string, string>
-): boolean {
-  const visited = new Set<string>()
+type ChangeFacts = {
+  files: ReadonlySet<string>
+  packages: ReadonlySet<string>
+  nonSourcePackages: ReadonlySet<string>
+  packageOfFile: (file: string) => string | null
+  /** True when `name`, exported by the changed file `file`, is affected by this diff — and always true for a file whose changed names are unknown, which is the file-level answer. */
+  affects: (file: string, name: string) => boolean
+}
+
+/**
+ * DFS from `start` over the forward edge graph, in the node vocabulary
+ * {@link NodeKey} documents — true the moment it reaches a changed file through
+ * a node that CHECKS. `own:`, `name:`, `touch:`, `external:` and `pkgmeta:` all
+ * exist to make that reachability narrower than "any path to the file": a hop
+ * reached for one name never fans out to the rest of what it forwards, and a
+ * use of one exported name never selects on a change to a sibling name.
+ */
+function reaches(start: NodeKey, edges: Map<NodeKey, NodeKey[]>, changed: ChangeFacts): boolean {
+  const visited = new Set<NodeKey>()
   const stack = [start]
   while (stack.length > 0) {
-    const current = stack.pop() as string
+    const current = stack.pop() as NodeKey
     if (visited.has(current)) continue
     visited.add(current)
-    if (changedFiles.has(current)) return true
+    // `all:<file>` is the only node that checks on its own: it says the whole
+    // module is in play. `own:<file>` deliberately does not — whatever reached
+    // it already emitted the `name:` key that says which export is in play.
+    const currentFile = current.startsWith(ALL_PREFIX)
+      ? current.slice(ALL_PREFIX.length)
+      : current.startsWith(OWN_PREFIX)
+        ? current.slice(OWN_PREFIX.length)
+        : null
+    if (current.startsWith(ALL_PREFIX) && currentFile && changed.files.has(currentFile)) return true
+    const ownPackage = currentFile ? changed.packageOfFile(currentFile) : null
     for (const dep of edges.get(current) ?? []) {
+      if (dep.startsWith(NAME_PREFIX)) {
+        const body = dep.slice(NAME_PREFIX.length)
+        const cut = body.lastIndexOf(NAME_SEPARATOR)
+        const file = body.slice(0, cut)
+        if (changed.files.has(file) && changed.affects(file, body.slice(cut + 1))) return true
+        continue
+      }
       if (dep.startsWith(TOUCH_PREFIX)) {
-        if (changedFiles.has(dep.slice(TOUCH_PREFIX.length))) return true
+        if (changed.files.has(dep.slice(TOUCH_PREFIX.length))) return true
+        continue
+      }
+      if (dep.startsWith(SCAN_PREFIX)) {
+        const root = dep.slice(SCAN_PREFIX.length)
+        for (const f of changed.files) if (f === root || f.startsWith(`${root}/`)) return true
         continue
       }
       if (dep.startsWith(EXTERNAL_PREFIX)) {
-        const specifier = dep.slice(EXTERNAL_PREFIX.length)
-        if (changedPackages.has(specifier) && specifier !== fileToPackage.get(current)) return true
+        const pkg = dep.slice(EXTERNAL_PREFIX.length)
+        if (changed.packages.has(pkg) && pkg !== ownPackage) return true
         continue
       }
       if (dep.startsWith(PKGMETA_PREFIX)) {
         const pkg = dep.slice(PKGMETA_PREFIX.length)
-        if (nonSourceChangedPackages.has(pkg) && pkg !== fileToPackage.get(current)) return true
+        if (changed.nonSourcePackages.has(pkg) && pkg !== ownPackage) return true
         continue
       }
       if (!visited.has(dep)) stack.push(dep)
