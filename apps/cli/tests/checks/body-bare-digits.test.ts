@@ -1,9 +1,9 @@
-import { execFileSync } from 'node:child_process'
 import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
 import { checkBareDigits } from '../../src/checks/body-bare-digits-logic'
+import { spawnSyncBudgeted, stripVinayaEnv } from '../lib/process-fixture'
 
 function violationLines(body: string): number[] {
   return checkBareDigits(body).violations.map((v) => v.line)
@@ -863,7 +863,11 @@ describe('body-bare-digits — check bin file mode', () => {
     // other test files concurrently in the same process — mutating it here
     // directly would be exactly the leak the brief's stop condition warns
     // against. A subprocess's umask is its own; the parent's is never
-    // touched, so there is nothing to restore.
+    // touched, so there is nothing to restore. Spawned via the shared
+    // `apps/cli/tests/lib/process-fixture.ts` helper (Issue #660, O3): this
+    // process's own `VINAYA_*` env is stripped before the child inherits
+    // anything, and the child is bounded by an explicit kill-on-timeout
+    // budget rather than a bare framework timeout with no diagnostic.
     const dir = mkdtempSync(join(tmpdir(), 'vinaya-exec-bit-umask-'))
     try {
       const probe = join(dir, 'probe.ts')
@@ -882,8 +886,8 @@ describe('body-bare-digits — check bin file mode', () => {
         ].join('\n')
       )
 
-      const out = execFileSync(process.execPath, [probe], { encoding: 'utf8' })
-      const { execMode, nonExecMode } = JSON.parse(out) as { execMode: number; nonExecMode: number }
+      const result = spawnSyncBudgeted(process.execPath, [probe], { encoding: 'utf8', env: stripVinayaEnv() })
+      const { execMode, nonExecMode } = JSON.parse(result.stdout) as { execMode: number; nonExecMode: number }
 
       // Reproduces the real symptom (Issue #684's Origin): a requested 0o777
       // under umask `002` lands as 0o775, not 0o755.
