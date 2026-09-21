@@ -169,6 +169,16 @@ const QUOTED_LIST_CLAUSE_RE =
 // distinguishes it from `import { … } from '<spec>'`.
 const SIDE_EFFECT_IMPORT_RE = /^\s*import\s*(['"])([^'"]+)\1/gm
 const DYNAMIC_IMPORT_RE = /\bimport\s*\(\s*(['"])([^'"]+)\1\s*\)/g
+// `import x = require('<spec>')`, and its `export import` form. This shape has
+// no `from` keyword, no quote directly after `import`, and no `import(` call,
+// so not one of the scans above can see it — and a shape this scan cannot see
+// contributes no edge at all, which is SILENCE, not the coarse fallback every
+// other unreadable shape degrades to. The compiler graph already treats it
+// coarsely (`ts-module-graph.ts`'s `ImportEqualsDeclaration` branch); this is
+// the same treatment for the text-scan graph, which is the one a repository
+// with no `typescript` installed actually runs.
+const IMPORT_EQUALS_REQUIRE_RE =
+  /^\s*(?:export\s+)?import\s+[A-Za-z_$][\w$]*\s*=\s*require\s*\(\s*(['"])([^'"]+)\1\s*\)/gm
 // Line and block comments, stripped from a brace list before it is split on
 // commas so `import { a, /* keep */ b }` and a trailing `// note` resolve rather
 // than dropping every name the comment abuts.
@@ -253,6 +263,14 @@ function collectRecords(source: string, includeExportFrom: boolean): ImportRecor
   DYNAMIC_IMPORT_RE.lastIndex = 0
   for (let m = DYNAMIC_IMPORT_RE.exec(source); m !== null; m = DYNAMIC_IMPORT_RE.exec(source)) {
     records.push({ kind: 'dynamic', specifier: m[2] as string })
+  }
+  // A whole-module binding, so it is classified as a namespace — never a named
+  // list, and therefore always the coarse edge. It is emitted regardless of
+  // `includeExportFrom`: even the `export import` form runs the target module
+  // on every import through this file, so a re-export hop owes it too.
+  IMPORT_EQUALS_REQUIRE_RE.lastIndex = 0
+  for (let m = IMPORT_EQUALS_REQUIRE_RE.exec(source); m !== null; m = IMPORT_EQUALS_REQUIRE_RE.exec(source)) {
+    records.push({ kind: 'namespace', specifier: m[2] as string })
   }
   return records
 }

@@ -11,7 +11,13 @@ import { fileURLToPath } from 'node:url'
 import { ALL_NAMES, affectedNamesForFile, type LineRange, parseHunkRanges } from '../../src/lib/changed-names'
 import { loadConfig } from '../../src/lib/config'
 import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
-import { discoverWorkspacePackages, isTestFile, selectAffectedTestFiles, walkFiles } from '../../src/lib/test-selector'
+import {
+  discoverWorkspacePackages,
+  extractImportSpecifiers,
+  isTestFile,
+  selectAffectedTestFiles,
+  walkFiles
+} from '../../src/lib/test-selector'
 import { scannedRootsOf } from '../../src/lib/repo-scanner-tests'
 import { loadTypeScript } from '../../src/lib/ts-module-graph'
 
@@ -1716,5 +1722,100 @@ describe('tests that read the repository tree are selected from what they scan (
     const scanner = join(REPO_ROOT, 'apps/cli/tests/surface-spec-exports.test.ts')
     const roots = scannedRootsOf(ts, scanner, readFileSync(scanner, 'utf8'), REPO_ROOT)
     expect(roots).toEqual([join(REPO_ROOT, 'apps/cli/src/commands')])
+  })
+})
+
+// Round 2 review, F1 — `import x = require('<spec>')` carries no `from`, no
+// quote directly after `import`, and no `import(` call, so it was the one shape
+// the text-scan graph could not see at all. A shape a graph cannot see
+// contributes no edge, which is silence rather than the coarse fallback; the
+// compiler graph degraded it correctly but had no fixture proving it either.
+describe('`import x = require(...)` degrades to the coarse edge under BOTH resolvers (F1)', () => {
+  const LIB = {
+    'src/index.ts': "export { foo } from './foo.js'\nexport { bar } from './bar.js'\n",
+    'src/foo.ts': 'export function foo() { return 1 }\n',
+    'src/bar.ts': 'export function bar() { return 2 }\n'
+  }
+
+  for (const resolver of ['compiler', 'text-scan'] as const) {
+    it(`${resolver}: a bare workspace specifier keeps the whole-package edge`, () => {
+      const { root, dir } = mkWorkspace([
+        { name: '@ieq/lib', main: INDEX_MAIN, files: LIB },
+        {
+          name: '@ieq/app',
+          files: {
+            'src/uses.test.ts': "import lib = require('@ieq/lib')\ntest('lib', () => lib)\n",
+            // The control: a precisely-resolved importer of one name, which a
+            // change to the OTHER name must never select.
+            'src/control.test.ts': "import { foo } from '@ieq/lib'\ntest('foo', () => foo())\n"
+          }
+        }
+      ])
+      try {
+        const uses = join(dir('@ieq/app'), 'src/uses.test.ts')
+        const control = join(dir('@ieq/app'), 'src/control.test.ts')
+        const selected = new Set(
+          selectAffectedTestFiles(root, [join(dir('@ieq/lib'), 'src/bar.ts')], { resolver }).selected
+        )
+        expect(selected).toContain(uses)
+        expect(selected).not.toContain(control)
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    })
+
+    it(`${resolver}: a relative specifier still yields its edge`, () => {
+      const { root, dir } = mkWorkspace([
+        {
+          name: '@ieq/rel',
+          files: {
+            'src/target.ts': 'export function target() { return 1 }\n',
+            'src/uses.test.ts': "import t = require('./target.js')\ntest('t', () => t)\n"
+          }
+        }
+      ])
+      try {
+        const uses = join(dir('@ieq/rel'), 'src/uses.test.ts')
+        expect(
+          selectAffectedTestFiles(root, [join(dir('@ieq/rel'), 'src/target.ts')], { resolver }).selected
+        ).toContain(uses)
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    })
+
+    it(`${resolver}: the form a re-export hop writes is traversed too`, () => {
+      const { root, dir } = mkWorkspace([
+        { name: '@ieq/opaque', main: INDEX_MAIN, files: { 'src/index.ts': 'export const thing = 1\n' } },
+        {
+          name: '@ieq/hop',
+          main: INDEX_MAIN,
+          files: {
+            // The barrel pulls a whole module into its OWN scope this way, which
+            // runs on every import through it.
+            'src/index.ts':
+              "import opaque = require('@ieq/opaque')\nexport { foo } from './foo.js'\nexport const wired = opaque\n",
+            'src/foo.ts': 'export function foo() { return 1 }\n'
+          }
+        },
+        {
+          name: '@ieq/app',
+          files: { 'src/uses.test.ts': "import { foo } from '@ieq/hop'\ntest('foo', () => foo())\n" }
+        }
+      ])
+      try {
+        const uses = join(dir('@ieq/app'), 'src/uses.test.ts')
+        expect(
+          selectAffectedTestFiles(root, [join(dir('@ieq/opaque'), 'src/index.ts')], { resolver }).selected
+        ).toContain(uses)
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    })
+  }
+
+  it('the text-scan graph extracts the specifier at all — the silence F1 found', () => {
+    expect(extractImportSpecifiers("import lib = require('@ieq/lib')\n")).toEqual(['@ieq/lib'])
+    expect(extractImportSpecifiers("export import lib = require('./thing.js')\n")).toEqual(['./thing.js'])
   })
 })
