@@ -195,6 +195,26 @@ export const COMMANDS: readonly Command[] = [
     status: 'shipped'
   },
   {
+    name: 'task sweep',
+    description:
+      "Remove a finished task's folder — its Issue closed, or its pull request merged or closed — printing each folder removed or kept with the reason",
+    flags: [
+      {
+        flag: '--include-legacy',
+        description:
+          'Also remove whatever the earlier, pre-`tasks-execution` layout left behind that this pass can attribute to a finished task of this repository'
+      },
+      { flag: '--json', description: 'Enveloped JSON output (schema: 1)' }
+    ],
+    details: [
+      'Keeps a folder with an open pull request, a live driver, or a pause — every reason printed alongside the folder it names. Removes nothing when the forge cannot be read for a folder: a read failure or an unresolvable task is kept and reported, never guessed as finished.',
+      'Always lists the seven top-level folders an earlier layout left under the Vinaya home (`dispatch-output`, `dispatch-resume`, `dispatch-settings`, `task-start`, `task-resume`, `control-store`, `loops`), each attributed to this repository only through its own path or its own record content naming it — never a bare, repository-less task number. `--include-legacy` removes only what it can both attribute this way AND classify finished; every unattributable entry is only ever reported, never deleted.',
+      'Never touches the telemetry outbox or the machine-wide files under the Vinaya home (the configuration and the token trust file) — no sweep removes either.',
+      'The driver (`dev-review-loop`/`task run`) calls the same function at the start of every run, before it dispatches anyone; a sweep failure there is reported and ignored rather than blocking the run.'
+    ],
+    status: 'shipped'
+  },
+  {
     name: 'task-tools serve',
     description: 'Run the task-operator MCP tool server over stdio — the command both runtime adapters register',
     details: [
