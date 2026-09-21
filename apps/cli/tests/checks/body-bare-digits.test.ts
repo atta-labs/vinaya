@@ -1,7 +1,9 @@
-import { readdirSync, statSync } from 'node:fs'
+import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
 import { checkBareDigits } from '../../src/checks/body-bare-digits-logic'
+import { spawnSyncBudgeted, stripVinayaEnv } from '../lib/process-fixture'
 
 function violationLines(body: string): number[] {
   return checkBareDigits(body).violations.map((v) => v.line)
@@ -842,13 +844,60 @@ describe('body-bare-digits — <details> block masking', () => {
 // is exactly what happened to check-pr-body-frozen.ts (mode 100644, this same PR).
 
 describe('body-bare-digits — check bin file mode', () => {
-  it('every file in apps/cli/src/checks/bin/ ships with mode 100755 — the exact class of bug that caused red CI in round 1 of this PR', () => {
+  it('every file in apps/cli/src/checks/bin/ carries an executable bit — the exact class of bug that caused red CI in round 1 of this PR', () => {
+    // Not an exact-mode equality: a temp checkout made under umask `002`
+    // legitimately yields `0o775` (group-write added) for a file Git records
+    // as `100755` — see the umask-`002` fixture below, which reproduces that
+    // exact symptom. Only the executable property is this test's business.
     const binDir = join(import.meta.dir, '..', '..', 'src', 'checks', 'bin')
     const files = readdirSync(binDir)
     expect(files.length).toBeGreaterThan(0)
     for (const file of files) {
       const mode = statSync(join(binDir, file)).mode & 0o777
-      expect(mode).toBe(0o755)
+      expect(mode & 0o111).not.toBe(0)
+    }
+  })
+
+  it('the executable-bit assertion tolerates umask `002` group-write, and still fails a non-executable mode (real filesystem fixture, isolated in a subprocess so the umask change cannot leak into a concurrent test)', () => {
+    // `process.umask()` is global to the whole process, and Bun can run
+    // other test files concurrently in the same process — mutating it here
+    // directly would be exactly the leak the brief's stop condition warns
+    // against. A subprocess's umask is its own; the parent's is never
+    // touched, so there is nothing to restore. Spawned via the shared
+    // `apps/cli/tests/lib/process-fixture.ts` helper (Issue #660, O3): this
+    // process's own `VINAYA_*` env is stripped before the child inherits
+    // anything, and the child is bounded by an explicit kill-on-timeout
+    // budget rather than a bare framework timeout with no diagnostic.
+    const dir = mkdtempSync(join(tmpdir(), 'vinaya-exec-bit-umask-'))
+    try {
+      const probe = join(dir, 'probe.ts')
+      const execPath = join(dir, 'exec-file')
+      const nonExecPath = join(dir, 'non-exec-file')
+      writeFileSync(
+        probe,
+        [
+          "import { writeFileSync, statSync } from 'node:fs'",
+          'process.umask(0o002)',
+          `writeFileSync(${JSON.stringify(execPath)}, '#!/bin/sh\\necho hi\\n', { mode: 0o777 })`,
+          `writeFileSync(${JSON.stringify(nonExecPath)}, 'not a script\\n', { mode: 0o666 })`,
+          `const execMode = statSync(${JSON.stringify(execPath)}).mode & 0o777`,
+          `const nonExecMode = statSync(${JSON.stringify(nonExecPath)}).mode & 0o777`,
+          'console.log(JSON.stringify({ execMode, nonExecMode }))'
+        ].join('\n')
+      )
+
+      const result = spawnSyncBudgeted(process.execPath, [probe], { encoding: 'utf8', env: stripVinayaEnv() })
+      const { execMode, nonExecMode } = JSON.parse(result.stdout) as { execMode: number; nonExecMode: number }
+
+      // Reproduces the real symptom (Issue #684's Origin): a requested 0o777
+      // under umask `002` lands as 0o775, not 0o755.
+      expect(execMode).toBe(0o775)
+      // The Part 1 assertion accepts it...
+      expect(execMode & 0o111).not.toBe(0)
+      // ...and still refuses a mode with no executable bit at all.
+      expect(nonExecMode & 0o111).toBe(0)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
     }
   })
 })
