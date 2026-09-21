@@ -142,6 +142,54 @@ exit 1
   })
 })
 
+describe("principal-test-plan-wait exclusion (O3): its own red is the Principal's wait, not a failure to fix", () => {
+  it('the ONLY red check-run being principal-test-plan-wait reads as green CI, with nothing failing — no developer round would be dispatched', () => {
+    const dir = tempDir('vinaya-gh-principal-wait-only-')
+    writeFakeGh(
+      dir,
+      `
+if [ "$1" = "api" ]; then
+  printf '%s\\n' '{"id":1,"name":"vinaya check principal-test-plan-wait","status":"completed","conclusion":"failure","started_at":"2026-09-21T10:00:00Z"}'
+  printf '%s\\n' '{"id":2,"name":"token-report","status":"completed","conclusion":"success","started_at":"2026-09-21T10:00:00Z"}'
+  exit 0
+fi
+exit 1
+`
+    )
+    const r = runGateReading(
+      dir,
+      `console.log(fetchCiConclusion(${JSON.stringify(HEAD)})); console.log(JSON.stringify(fetchFailingCheckRuns(${JSON.stringify(HEAD)})))`
+    )
+    expect(r.stderr).toBe('')
+    const [conclusion, runs] = r.stdout.trim().split('\n')
+    expect(conclusion).toBe('green')
+    expect(JSON.parse(runs as string)).toEqual([])
+  })
+
+  it('every OTHER red check-run still reads red and still names its failure — the exclusion is scoped to this one name', () => {
+    const dir = tempDir('vinaya-gh-other-red-')
+    writeFakeGh(
+      dir,
+      `
+if [ "$1" = "api" ]; then
+  printf '%s\\n' '{"id":1,"name":"vinaya check principal-test-plan-wait","status":"completed","conclusion":"failure","started_at":"2026-09-21T10:00:00Z"}'
+  printf '%s\\n' '{"id":2,"name":"token-report","status":"completed","conclusion":"failure","started_at":"2026-09-21T10:00:00Z"}'
+  exit 0
+fi
+exit 1
+`
+    )
+    const r = runGateReading(
+      dir,
+      `console.log(fetchCiConclusion(${JSON.stringify(HEAD)})); console.log(JSON.stringify(fetchFailingCheckRuns(${JSON.stringify(HEAD)})))`
+    )
+    expect(r.stderr).toBe('')
+    const [conclusion, runs] = r.stdout.trim().split('\n')
+    expect(conclusion).toBe('red')
+    expect(JSON.parse(runs as string)).toEqual([{ name: 'token-report', id: 2, startedAt: '2026-09-21T10:00:00Z' }])
+  })
+})
+
 describe('sh (gh reads) — O5 (#595): every gh read retries three times, with backoff, before counting as a failure', () => {
   it('a fake gh failing twice then succeeding produces no error at all', () => {
     const dir = tempDir('vinaya-gh-retry-')
