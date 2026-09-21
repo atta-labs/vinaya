@@ -485,3 +485,38 @@ export function resetRuntimeDirCache(): void {
   memoized = null
   memoizedThisRepo = null
 }
+
+/**
+ * The seven top-level folder names the layout at the top of this file
+ * replaced — kept here, and only here, so nothing else ever re-derives one
+ * of these strings as a path segment (`run-paths-only.test.ts`'s own
+ * architecture rule refuses any other file that names one as a quoted
+ * segment). `task sweep` (`task-sweep.ts`) is the one caller that still
+ * needs them, to list and attribute whatever an earlier run of this CLI
+ * left behind — it compares against these named constants rather than
+ * re-quoting any of the seven strings itself.
+ */
+export const LEGACY_DISPATCH_OUTPUT = 'dispatch-output'
+export const LEGACY_DISPATCH_RESUME = 'dispatch-resume'
+export const LEGACY_DISPATCH_SETTINGS = 'dispatch-settings'
+export const LEGACY_TASK_START = 'task-start'
+export const LEGACY_TASK_RESUME = 'task-resume'
+export const LEGACY_CONTROL_STORE = 'control-store'
+export const LEGACY_LOOPS = 'loops'
+
+export const LEGACY_TOP_LEVEL_DIRNAMES = [
+  LEGACY_DISPATCH_OUTPUT,
+  LEGACY_DISPATCH_RESUME,
+  LEGACY_DISPATCH_SETTINGS,
+  LEGACY_TASK_START,
+  LEGACY_TASK_RESUME,
+  LEGACY_CONTROL_STORE,
+  LEGACY_LOOPS
+] as const
+
+export type LegacyTopLevelDirname = (typeof LEGACY_TOP_LEVEL_DIRNAMES)[number]
+
+/** `<home>/<name>` — never a run-file location (none of these seven ever sat inside `tasks-execution`, the layout that replaced them). */
+export function legacyTopLevelDir(home: string, name: LegacyTopLevelDirname): string {
+  return join(home, name)
+}

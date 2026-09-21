@@ -51,7 +51,11 @@ const VINAYA_HOME_ALLOWED: ReadonlyArray<{ file: string; why: string }> = [
   { file: 'apps/cli/src/lib/log-sink.ts', why: 'THE TELEMETRY EXCEPTION — the outbox the log tasks own and will move' },
   { file: 'apps/cli/src/lib/log-flush.ts', why: 'the telemetry exception: reads and truncates the same outbox' },
   { file: 'apps/cli/src/lib/log-webhook-flush.ts', why: 'the telemetry exception: reads the same outbox' },
-  { file: 'apps/cli/src/lib/log-artifact.ts', why: 'the telemetry exception: bundles the same outbox for CI export' }
+  { file: 'apps/cli/src/lib/log-artifact.ts', why: 'the telemetry exception: bundles the same outbox for CI export' },
+  {
+    file: 'apps/cli/src/lib/task-sweep.ts',
+    why: "task-files-v1 3, O3 — the earlier-layout sweep reads the home's own seven retired top-level folders (`run-paths.ts`'s `LEGACY_TOP_LEVEL_DIRNAMES`) to list and attribute what a prior layout left there; it names no run-file location of its own"
+  }
 ]
 
 /**
