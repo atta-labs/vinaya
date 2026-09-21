@@ -1,159 +1,119 @@
 /**
- * The round journal is the task's, not the
- * driver's. `state.rounds` (`types.ts`) starts empty on every process start
- * (`initialLoopState`) and is appended to only by THIS process's own
- * `assessRound` calls — a driver that attaches to a PR mid-loop, or resumes
- * after a pause, published a table that only ever showed its own rounds,
- * even when the task's outbox and the forge already carried a longer real
- * history (confirmed live: "five real rounds, the published table shows
- * one, because the last driver journals only its own rounds").
+ * The round journal is the task's, not the driver's — and it is rebuilt from
+ * the control store and the forge's own principal-authored markers, NEVER
+ * from a log event. The Vinaya Log is fail-open telemetry: it "is never the
+ * authority for dispatch, approval, publication or recovery" (Log tech spec,
+ * §1), so no reconstruction here reads a `dev_review_loop` event, a flushed
+ * log comment, or the telemetry outbox. This closes the dependency the Log
+ * spec forbade before the log destination moves off the tracker — a rebuild
+ * that replayed the loop's own flushed log events would break the moment
+ * those events stopped going to the tracker.
  *
- * This module is the pure half of the fix: given every `dev_review_loop`
- * log event this task has ever emitted (already-flushed comments off the
- * forge, plus whatever is still sitting unflushed in the local outbox —
- * gathering both is the impure caller's job, `journal-history.ts`), rebuild
- * one `RoundRecord` per concluded round and hand back where the next round
- * should start numbering.
+ * This module is the PURE half of the rebuild: given the round numbers the
+ * forge's own principal-authored developer round markers carry, and whether a
+ * ready-for-merge summary was actually published to the forge, hand back one
+ * `RoundRecord` per round plus where the next round should start numbering.
+ * The impure caller (`journal-history.ts`, `@attalabs/vinaya`) gathers those
+ * two facts: it reads the pull request's principal-authored comments and the
+ * control store, never a log line. The control store's own authoritative
+ * round is recovered separately by the driver (`recoverLoopState`), and is
+ * deliberately NOT folded into the numbering here — see `reconstructRounds`.
  *
- * Honest about what the log schema actually carries: `round_ended`
- * (`schema.ts`) has no per-severity finding breakdown, and `verdicts_read`
- * carries only a `blockers` count — a round's REAL `countsBySeverity` (major/
- * minor/critical/…) exists only in the live process's own in-memory
- * `VerdictObservation.findings`, which `assessRound` never logs verbatim
- * (`assess-round.ts`'s own `buildRoundRecord`). A reconstructed round's
- * `countsBySeverity` therefore carries only the `blocker` column (from
- * `verdicts_read.blockers`); every other severity reads `0` rather than a
- * fabricated count, and `confidence` is always `null` (never logged at all).
- * What's never dropped is the round's OWN existence, outcome, and diff
- * stats — round_ended carries all three — which is what the Issue's own
- * test bar ("a table that shows fewer rounds than the pull request's verdict
- * comments is a test failure") actually requires.
+ * Honest about what the forge markers carry: a developer round marker
+ * (`<!-- aeg:developer:round-<n> -->`) names only the round's own number and
+ * head — never a per-severity finding breakdown, a confidence value, or the
+ * round's wall time / files changed. Those had a source only in the log
+ * events this rebuild no longer reads, so a reconstructed round carries an
+ * empty `countsBySeverity`, a `null` confidence, and the totals read `0`
+ * (O3: "the summary says it is unavailable for that round" rather than a
+ * fabricated number). What the markers DO carry — the round's own existence
+ * and number, and whether the run reached a published summary — is exactly
+ * what the numbering and the "already published?" decision need.
  */
 
-import { SEVERITY_COLUMNS, type RoundOutcome, type RoundRecord } from './types'
-import { DevReviewLoopEventSchema, type DevReviewLoopEvent } from '../log'
+import { SEVERITY_COLUMNS, type RoundRecord } from './types'
 
-/** Exactly the fence `log-flush.ts`'s `renderChunk` posts: a `<!-- aeg:log:<runId>:<seqFrom>-<seqTo> -->` marker line, then one fenced ` ```ndjson ` block, one event per line. */
-const LOG_CHUNK_MARKER = /^<!-- aeg:log:[^:]+:\d+-\d+ -->$/
-const NDJSON_FENCE = /```ndjson\n([\s\S]*?)\n```/
+/**
+ * The published summary's own header row, byte-for-byte as `render-summary.ts`
+ * emits it — both derived from `SEVERITY_COLUMNS`, so the detector here and
+ * the renderer there can never drift about what a summary comment looks like.
+ * A principal-authored comment carrying this line is the ready-for-merge
+ * summary itself: the one honest "the summary was actually published" signal,
+ * distinct from a round merely deciding `publish` (the control store's own
+ * `loop_state.phase === 'publish'` is written before `publishRound` runs, so
+ * it can never stand in for this).
+ */
+export const SUMMARY_TABLE_HEADER = `| round | ${SEVERITY_COLUMNS.join(' | ')} | confidence | outcome |`
 
-/** One NDJSON line, best-effort: invalid JSON or a line failing `DevReviewLoopEventSchema` is skipped, never thrown — a single corrupt/foreign line must not blank the whole reconstruction. */
-function parseLoopEventLine(raw: string): DevReviewLoopEvent | null {
-  let obj: unknown
-  try {
-    obj = JSON.parse(raw)
-  } catch {
-    return null
-  }
-  const result = DevReviewLoopEventSchema.safeParse(obj)
-  return result.success ? result.data : null
+/** True when `body` is (or contains, verbatim on its own line) the published summary's header — the caller has already confirmed the comment is principal-authored. */
+export function isPublishedSummaryComment(body: string): boolean {
+  return body.split('\n').some((line) => line.trim() === SUMMARY_TABLE_HEADER)
 }
 
-/** Every valid `dev_review_loop` event found in `rawLines` — order preserved, invalid lines silently dropped. */
-export function parseLoopEventLines(rawLines: readonly string[]): DevReviewLoopEvent[] {
-  const out: DevReviewLoopEvent[] = []
-  for (const line of rawLines) {
-    if (line.length === 0) continue
-    const parsed = parseLoopEventLine(line)
-    if (parsed) out.push(parsed)
-  }
-  return out
+/**
+ * The two forge-derived facts a rebuild is handed. `roundMarkers` are the
+ * round numbers read off every principal-authored developer round marker on
+ * the pull request (order and duplicates irrelevant — deduplicated here).
+ * `summaryPublished` is whether a principal-authored summary comment exists.
+ */
+export type ReconstructionInput = {
+  roundMarkers: readonly number[]
+  summaryPublished: boolean
 }
-
-/** A single posted comment's worth of events, or `[]` when `body` isn't one of `log-flush.ts`'s own chunk comments at all. */
-export function extractLoopEventsFromCommentBody(body: string): DevReviewLoopEvent[] {
-  const firstLine = body.split('\n')[0] ?? ''
-  if (!LOG_CHUNK_MARKER.test(firstLine)) return []
-  const fence = NDJSON_FENCE.exec(body)
-  if (!fence) return []
-  const ndjson = fence[1] ?? ''
-  return parseLoopEventLines(ndjson.split('\n'))
-}
-
-function byTimeThenSeq(a: DevReviewLoopEvent, b: DevReviewLoopEvent): number {
-  if (a.meta.ts !== b.meta.ts) return a.meta.ts < b.meta.ts ? -1 : 1
-  return a.meta.seq - b.meta.seq
-}
-
-const STOPPED_CONDITIONS = new Set(['confidence', 'reappearance', 'no_progress', 'max_rounds'])
 
 export type ReconstructedJournal = {
   rounds: RoundRecord[]
+  /** Deliberately `0`: per-round wall time has no control-record or forge source, so it is reported unavailable rather than a fabricated sum (O3). */
   totalWallMs: number
+  /** Deliberately `0`: per-round files-changed has no control-record or forge source, so it is reported unavailable rather than a fabricated sum (O3). */
   totalFilesChanged: number
   /**
-   * The task's own `journal_finalized` event, if one was ever logged — the
-   * ONLY honest signal that this task's loop actually reached a terminal
-   * outcome (round 2 review, BLOCKER): a round's own `round_ended.outcome`
-   * reads `'green'` the moment `assessRound` decides `publish`, logged
-   * immediately — but `journal_finalized` is deliberately DEFERRED until
-   * `publishRound` itself returns without throwing (`dev-review-loop.ts`'s
-   * own doc comment: "held back... until publishRound actually succeeds").
-   * A crash between those two points (a `gh` failure mid-publish) leaves a
-   * `round_ended` reading green with NO `journal_finalized` ever landing —
-   * treating that `outcome: 'green'` alone as "this task is done" (the
-   * bug this field's caller fixes) silently drops every round from the
-   * published table and restarts numbering at `1` on the next attach, for
-   * a task that never actually published. The newest such event by time
-   * wins, matching `reconstructRounds`' own "last write wins" rule.
+   * `{ result: 'merged_ready' }` ONLY when a principal-authored ready-for-
+   * merge summary comment is actually on the forge — the one honest signal a
+   * run reached publication. A round that decided `publish` but crashed before
+   * the summary landed (a `gh` failure mid-publish) leaves NO summary comment,
+   * so this reads `null` and the caller never mistakes that crash for a
+   * completion — the exact distinction the old log-derived `journal_finalized`
+   * deferral drew, now drawn from the forge instead. Consumers only ever test
+   * `=== 'merged_ready'`; `'stopped'` is retained in the type for parity with
+   * the shape this replaces but is never produced here.
    */
   journalFinalized: { result: 'merged_ready' | 'stopped' } | null
 }
 
 /**
- * One `RoundRecord` per `round_ended` event found — the loop's own signal
- * that a round genuinely concluded (`assess-round.ts` always logs it,
- * whatever the outcome). Duplicate `round_ended`s for the same round number
- * (a flush replayed across two relaunches, or the same comment fetched
- * twice) keep only the one that sorts last, matching "the newest write for
- * a round wins" every other durable-state reader in this driver already
- * assumes (`readPauseState`, `latestHeldRequestChanges`).
+ * One `RoundRecord` per distinct developer round marker found on the forge,
+ * sorted ascending. Deliberately marker-derived ONLY: the control store's own
+ * `loop_state.round` is the driver's authoritative current round and is
+ * clamped in separately by `recoverLoopState` (`dev-review-loop.ts`'s round
+ * bump), NEVER folded into the numbering here. Were it folded in, an attach
+ * whose control store records an in-flight round `k` (its markers not yet on
+ * the forge) would reconstruct `k` rounds and bump the next round to `k+1`,
+ * skipping the very round the control store says is still running — the
+ * "recovers from the control store alone" fixture proves round `k` must be
+ * kept, so this function must not carry it past `nextRoundNumber`.
+ *
+ * `countsBySeverity`/`confidence` are unavailable from a marker (O3): empty and
+ * `null`, never a guessed count. `outcome` is `'changes_requested'` — the
+ * loop only posts a later round's marker after the prior round concluded
+ * changes-requested and re-dispatched the developer, so every reconstructed
+ * round is one the loop moved past; the published/green round is the live
+ * run's own computed record, never one rebuilt here.
  */
-export function reconstructRounds(events: readonly DevReviewLoopEvent[]): ReconstructedJournal {
-  const sorted = [...events].sort(byTimeThenSeq)
-
-  const verdictsByRound = new Map<number, { blockers: number }>()
-  const stopConditionByRound = new Map<number, string>()
-  for (const e of sorted) {
-    if (e.event === 'verdicts_read') verdictsByRound.set(e.round, { blockers: e.blockers })
-    if (e.event === 'stop_condition_met') stopConditionByRound.set(e.round, e.condition)
+export function reconstructRounds(input: ReconstructionInput): ReconstructedJournal {
+  const distinct = [...new Set(input.roundMarkers)].sort((a, b) => a - b)
+  const rounds: RoundRecord[] = distinct.map((round) => ({
+    round,
+    countsBySeverity: {},
+    confidence: null,
+    outcome: 'changes_requested'
+  }))
+  return {
+    rounds,
+    totalWallMs: 0,
+    totalFilesChanged: 0,
+    journalFinalized: input.summaryPublished ? { result: 'merged_ready' } : null
   }
-
-  const byRound = new Map<number, RoundRecord>()
-  const statsByRound = new Map<number, { wallMs: number; filesChanged: number }>()
-  for (const e of sorted) {
-    if (e.event !== 'round_ended') continue
-
-    const condition = stopConditionByRound.get(e.round)
-    const outcome: RoundOutcome = condition && STOPPED_CONDITIONS.has(condition) ? 'stopped' : e.outcome
-
-    const blockers = verdictsByRound.get(e.round)?.blockers ?? 0
-    const countsBySeverity: Record<string, number> = {}
-    if (blockers > 0 && (SEVERITY_COLUMNS as readonly string[]).includes('blocker')) {
-      countsBySeverity.blocker = blockers
-    }
-
-    // A round appearing twice (a chunk fetched or replayed twice) keeps
-    // only the LAST write — both here and for its own diff stats, so the
-    // two never disagree about which occurrence "won".
-    byRound.set(e.round, { round: e.round, countsBySeverity, confidence: null, outcome })
-    statsByRound.set(e.round, { wallMs: e.wall_ms, filesChanged: e.files_changed })
-  }
-
-  const rounds = [...byRound.values()].sort((a, b) => a.round - b.round)
-  let totalWallMs = 0
-  let totalFilesChanged = 0
-  for (const stats of statsByRound.values()) {
-    totalWallMs += stats.wallMs
-    totalFilesChanged += stats.filesChanged
-  }
-
-  let journalFinalized: ReconstructedJournal['journalFinalized'] = null
-  for (const e of sorted) {
-    if (e.event === 'journal_finalized') journalFinalized = { result: e.result }
-  }
-
-  return { rounds, totalWallMs, totalFilesChanged, journalFinalized }
 }
 
 /** Where a fresh round should start numbering after reconstruction — `1` when there is no prior history at all. */

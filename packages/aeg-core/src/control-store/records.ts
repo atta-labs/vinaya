@@ -177,7 +177,12 @@ export type LoopBudgets = z.infer<typeof LoopBudgetsSchema>
  * on every round transition and read back on start, attach and resume
  * (`pause-resume.ts`'s `recoverLoopState`), replacing the driver's prior
  * reliance on the task's optional, forge-flushed event history for round-
- * number and budget recovery. One record per task, overwritten in place —
+ * number and budget recovery. This record's `round`, together with the pull
+ * request's own principal-authored markers (`journal-history.ts`'s
+ * `fetchLoopHistory`), is now the WHOLE round-history source the driver
+ * rebuilds on every entry — no log event, flushed log comment, or telemetry
+ * outbox is ever read to recover a run (the Log is telemetry, never authority
+ * for recovery). One record per task, overwritten in place —
  * deliberately NOT epoch-fenced, the same precedent `ManifestRecordSchema`
  * sets: the driver's own cutover to acquired-epoch ownership over this
  * task's mutable state is separate, later adoption work (`loop.md`); this

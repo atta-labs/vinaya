@@ -5,6 +5,7 @@
  * `Judged head:`, or `Objectives version:` label anywhere in the output.
  */
 
+import { SUMMARY_TABLE_HEADER } from './journal-reconstruction'
 import { SEVERITY_COLUMNS, type Confidence, type Journal, type RoundRecord } from './types'
 
 function confidenceCell(confidence: Confidence | null): string {
@@ -19,7 +20,7 @@ function row(record: RoundRecord): string {
 }
 
 export function renderSummary(journal: Journal): string {
-  const header = `| round | ${SEVERITY_COLUMNS.join(' | ')} | confidence | outcome |`
+  const header = SUMMARY_TABLE_HEADER
   const divider = `| --- | ${SEVERITY_COLUMNS.map(() => '---').join(' | ')} | --- | --- |`
   const rows = journal.rounds.map(row)
   return [header, divider, ...rows].join('\n')

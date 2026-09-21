@@ -519,12 +519,12 @@ export {
 export type { Objective, ObjectivesSource, ParsedObjectives } from './objectives'
 export {
   assessRound,
-  extractLoopEventsFromCommentBody,
   initialLoopState,
+  isPublishedSummaryComment,
   nextRoundNumber,
-  parseLoopEventLines,
   reconstructRounds,
-  renderSummary
+  renderSummary,
+  SUMMARY_TABLE_HEADER
 } from './dev-review-loop'
 export type {
   Confidence,
@@ -539,6 +539,7 @@ export type {
   PauseReason,
   PendingRound,
   ReconstructedJournal,
+  ReconstructionInput,
   RoundOutcome,
   RoundRecord,
   RoundStats,
