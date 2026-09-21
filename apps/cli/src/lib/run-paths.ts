@@ -103,6 +103,8 @@ export type RunFileLocation =
   /** The directory holding one folder per round — what a caller lists to find which rounds this task has on disk. */
   | { area: 'rounds' }
   | { area: 'round'; round: number; file?: string }
+  /** That round's Developer folder — the driver's side channel with the Developer (its stated confidence, its round response), outside the worktree the Developer's own confined write grant otherwise limits it to. */
+  | { area: 'developer'; round: number; file?: string }
 
 /**
  * Same guard every path builder in this repository already applies before
@@ -229,6 +231,10 @@ export function runPath(runtimeDir: string, scope: RunScope, location: RunFileLo
     case 'round': {
       const roundDir = join(dir, RUN_AREA_DIRNAMES.rounds, String(location.round))
       return location.file ? join(roundDir, location.file) : roundDir
+    }
+    case 'developer': {
+      const developerDir = join(dir, RUN_AREA_DIRNAMES.rounds, String(location.round), 'developer')
+      return location.file ? join(developerDir, location.file) : developerDir
     }
     default: {
       const areaDir = join(dir, RUN_AREA_DIRNAMES[location.area])

@@ -87,7 +87,7 @@ import {
   scopeFromSegment,
   tasksExecutionRoot
 } from './run-paths.js'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { buildWorkerEnv, resolveWorkerBoundaryLaunch, RUNTIME_CREDENTIAL_ENV_KEYS } from './worker-boundary.js'
 import { repoRoot } from './diff-evidence.js'
 
@@ -259,6 +259,22 @@ export type DispatchOpts = {
    * carries no cross-task/cross-role exposure.
    */
   extraWritableDirs?: readonly string[]
+  /**
+   * O3: the absolute paths of THIS round's
+   * own confidence and round-response files — the Developer's side channel
+   * to the driver, written under that round's own Developer folder inside
+   * the task's folder (`run-paths.ts`'s `{ area: 'developer', round, file:
+   * ... }`), outside the Developer's own worktree. `role === 'developer'`
+   * is the only caller this ever applies to: granted alongside the
+   * Developer's own worktree `directory` scope, by exact path, in every
+   * write-scope mechanism a confining dispatch has (`buildWriteAccessScope`,
+   * below, and `worker-boundary.ts`'s Seatbelt profile) — never a directory
+   * grant, since nothing else in that folder is this dispatch's to write.
+   * Omitted on round 1 (no confidence is ever asked for, and a fresh
+   * dispatch carries no findings to cite) and on every dispatch for a role
+   * other than `developer`.
+   */
+  developerFiles?: readonly string[]
   /**
    * The objectives/brief/ruling/policy identity
    * this attempt is being judged against, when the caller already resolved
@@ -1101,7 +1117,9 @@ export function buildRolePermissions(role: Role): RolePermissions {
   return EMPTY_ROLE_PERMISSIONS
 }
 
-export type WriteAccessScope = { kind: 'directory'; allowedDir: string } | { kind: 'exact-files'; paths: string[] }
+export type WriteAccessScope =
+  | { kind: 'directory'; allowedDir: string; extraFiles: string[] }
+  | { kind: 'exact-files'; paths: string[] }
 
 /**
  * The real grant behind O1's Write/Edit half, now that `buildRolePermissions`'s
@@ -1122,11 +1140,34 @@ export type WriteAccessScope = { kind: 'directory'; allowedDir: string } | { kin
  * unresolved directory this function was handed. A path that does not exist
  * yet degrades to its own raw, unresolved form rather than throwing — never
  * fatal to the dispatch this scope is only ever a defense-in-depth layer for.
+ *
+ * `developerFiles` (O3): the Developer's own
+ * `directory` scope additionally carries `extraFiles` — this round's exact
+ * confidence and round-response paths, outside the worktree — never widened
+ * to a directory grant, since nothing else under that round's Developer
+ * folder is this dispatch's to write. Ignored for every other role: a
+ * reviewer/security dispatch's own `exact-files` scope is unaffected.
+ *
+ * **`developerFiles` is resolved through its own PARENT, never `real()`
+ * (round 2 review, MAJOR).** Every entry is a file that does not exist yet
+ * at scope-build time (the Developer has not written it this round) — `real()`'s
+ * `realpathSync(p)` throws on the whole, not-yet-existing path and falls back
+ * to it RAW, unresolved. `writeAccessHookScript`'s own live comparison, below,
+ * resolves the opposite way: `realpathSync(path.dirname(filePath))` (the
+ * PARENT, which does exist — `dev-review-loop.ts`'s `dispatchDeveloper` calls
+ * `ensureRunDir` on it before this dispatch ever runs) joined with the
+ * basename. A `runtimeDir` that traverses a symlinked ancestor (`/var` →
+ * `/private/var`, this reference's own documented example) would make the two
+ * sides disagree — this function's own raw, unresolved grant never matching
+ * the hook's resolved comparison — and deny the Developer's own legitimate
+ * confidence/round-response write. `realFile` mirrors the hook's exact
+ * resolution so both sides compute the identical string.
  */
 export function buildWriteAccessScope(
   role: Role,
   allowedDir: string,
-  extraWritableDirs: readonly string[]
+  extraWritableDirs: readonly string[],
+  developerFiles: readonly string[] = []
 ): WriteAccessScope | null {
   const real = (p: string): string => {
     try {
@@ -1135,7 +1176,16 @@ export function buildWriteAccessScope(
       return p
     }
   }
-  if (role === 'developer') return { kind: 'directory', allowedDir: real(allowedDir) }
+  const realFile = (p: string): string => {
+    try {
+      return join(realpathSync(dirname(p)), basename(p))
+    } catch {
+      return real(p)
+    }
+  }
+  if (role === 'developer') {
+    return { kind: 'directory', allowedDir: real(allowedDir), extraFiles: developerFiles.map(realFile) }
+  }
   if (role === 'code-reviewer' || role === 'security') {
     if (extraWritableDirs.length === 0) return null
     const paths = extraWritableDirs.flatMap((dir) => {
@@ -1180,6 +1230,11 @@ export const WRITE_OUTSIDE_WORKTREE_DENY_REASON =
  * was never granted a directory to begin with — denying every path outside
  * three exact filenames would be a far broader new restriction than O4 asks
  * for, on a role this task's Objectives never named.
+ *
+ * **`directory` scope's own `extraFiles` (O3).** A `directory`-scoped write additionally allows an exact match on
+ * one of `scope.extraFiles` — this round's confidence and round-response
+ * paths, outside the worktree — before falling through to the deny above.
+ * Never a directory grant: only these exact, driver-named files.
  */
 function writeAccessHookScript(dir: string): string {
   return [
@@ -1206,7 +1261,10 @@ function writeAccessHookScript(dir: string): string {
     '    let allowed = false;',
     "    if (scope.kind === 'directory') {",
     '      const base = scope.allowedDir.endsWith(path.sep) ? scope.allowedDir : scope.allowedDir + path.sep;',
-    '      allowed = real === scope.allowedDir || real.startsWith(base);',
+    '      allowed =',
+    '        real === scope.allowedDir ||',
+    '        real.startsWith(base) ||',
+    '        (Array.isArray(scope.extraFiles) && scope.extraFiles.includes(real));',
     "    } else if (scope.kind === 'exact-files' && Array.isArray(scope.paths)) {",
     '      allowed = scope.paths.includes(real);',
     '    }',
@@ -1290,7 +1348,8 @@ export function writeDispatchSettings(
   scope: RunScope = 'unscoped',
   role: Role = 'developer',
   allowedDir = '.',
-  extraWritableDirs: readonly string[] = []
+  extraWritableDirs: readonly string[] = [],
+  developerFiles: readonly string[] = []
 ): string | null {
   try {
     const dir = join(runPath(runtimeDirForThisRepo(), scope, { area: 'hooks' }), role)
@@ -1306,7 +1365,7 @@ export function writeDispatchSettings(
       const sourcesPath = join(dir, `documentation-sources-${runId}.json`)
       writeFileSync(sourcesPath, JSON.stringify(documentation), { mode: 0o600 })
     }
-    const writeAccessScope = buildWriteAccessScope(role, allowedDir, extraWritableDirs)
+    const writeAccessScope = buildWriteAccessScope(role, allowedDir, extraWritableDirs, developerFiles)
     const writeAccessScriptPath = join(dir, 'write-access.mjs')
     const preToolUseHooks = [
       {
@@ -2913,7 +2972,8 @@ export async function dispatchRole(
           scopeOf(opts.task, opts.pr),
           role,
           permissionAllowedDir,
-          opts.extraWritableDirs ?? []
+          opts.extraWritableDirs ?? [],
+          opts.developerFiles ?? []
         )
       : null
   // The first lifecycle line this role's dispatch writes —
@@ -3071,6 +3131,22 @@ export async function dispatchRole(
               // read-only directory the confined child genuinely writes.
               if (dispatchSettingsPath) {
                 files.push(join(dirname(dispatchSettingsPath), `documentation-log-${runId}.jsonl`))
+              }
+              // O3: this round's own
+              // confidence/round-response files, granted by exact path —
+              // never a directory grant — the same "pre-create, then grant
+              // the exact file" discipline the outbox/resume-record files
+              // above already use, since the confined child's own
+              // `mkdirSync(dirname(path), { recursive: true })` needs the
+              // parent to already exist as a real (not sandbox-created)
+              // directory.
+              for (const f of opts.developerFiles ?? []) {
+                try {
+                  mkdirSync(dirname(f), { recursive: true })
+                } catch {
+                  // best-effort, same reasoning as the outbox/resume dirs above.
+                }
+                files.push(f)
               }
               return files
             })(),

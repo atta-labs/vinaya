@@ -162,7 +162,7 @@ import {
 import {
   assertDispatchOrEscalate,
   CONFIDENCE_FILE_NAME,
-  CONFIDENCE_PROMPT_LINE,
+  confidencePromptLine,
   developerRoundMarker,
   DEVELOPER_ROUND_RESPONSE_FILE_NAME,
   driverCrashEvents,
@@ -175,7 +175,7 @@ import {
   persistLoopState,
   pollUntil,
   renderDeveloperRoundComment,
-  ROUND_RESPONSE_PROMPT_LINE,
+  roundResponsePromptLine,
   routeCompletionEvents,
   sizeOfSafe,
   waitForOwnLoopLine
@@ -280,14 +280,15 @@ export {
 } from './dev-review-loop/pause-resume.js'
 export type { EscalationFacts, ResolveEscalationResult } from './dev-review-loop/pause-resume.js'
 export {
-  CONFIDENCE_PROMPT_LINE,
+  CONFIDENCE_FILE_NAME,
+  confidencePromptLine,
   DEVELOPER_ROUND_RESPONSE_FILE_NAME,
   developerRoundMarker,
   DevReviewLoopResumeError,
   parseConfidenceReply,
   parseRoundResponseFindingIds,
   renderDeveloperRoundComment,
-  ROUND_RESPONSE_PROMPT_LINE,
+  roundResponsePromptLine,
   routeCompletionEvents
 } from './dev-review-loop/round-assess.js'
 
@@ -455,23 +456,6 @@ function defaultGitDiffShortstat(base: string, head: string): string {
 }
 
 /**
- * O2: the loop's own two control files — `CONFIDENCE_FILE_NAME`
- * and `DEVELOPER_ROUND_RESPONSE_FILE_NAME`, both written by the developer's
- * OWN turn at this driver's own instruction and read-and-cleared by
- * `readAndClearConfidence`/`readAndClearRoundResponse` before this check
- * ever runs again — are never "unpushed work." A turn that writes only
- * these two files (and pushes nothing else) is a clean turn: counting them
- * here turned a normal confidence/citation write into a `no_push` pause
- * (Boundary: "one looped forever on its own confidence file"). Named
- * exactly, never a wildcard/prefix match — Traps to avoid: "never let O2
- * ignore every untracked file."
- */
-const UNPUSHED_WORK_IGNORED_FILES: ReadonlySet<string> = new Set([
-  CONFIDENCE_FILE_NAME,
-  DEVELOPER_ROUND_RESPONSE_FILE_NAME
-])
-
-/**
  * O6: every event this loop emits, checked against its own
  * per-discriminant shape before `meta`/`subject` exist — derived from
  * `DevReviewLoopEventSchema` (`@attalabs/aeg-core`), the exact schema
@@ -520,7 +504,16 @@ export function assertValidLoopEvent(e: DevReviewLoopEventInput): void {
   )
 }
 
-/** O2: see `LoopDeps.readUnpushedWorkDetail`'s own doc comment. */
+/**
+ * O2: the loop's own two control files
+ * (`CONFIDENCE_FILE_NAME`, `DEVELOPER_ROUND_RESPONSE_FILE_NAME`) are now
+ * written under that round's own Developer folder inside the task's folder
+ * (`runPath`'s `{ area: 'developer', ... }`), never at the worktree root —
+ * so this reads the worktree's own `git status --porcelain` with no
+ * exemption at all: a file bearing either old name that still shows up here
+ * is ordinary untracked work, exactly like any other stray file, never
+ * specially ignored.
+ */
 function defaultReadUnpushedWorkDetail(worktreePath: string): { dirtyFiles: string[]; aheadCount: number } {
   let dirtyFiles: string[] = []
   try {
@@ -537,7 +530,6 @@ function defaultReadUnpushedWorkDetail(worktreePath: string): { dirtyFiles: stri
       .split('\n')
       .filter((line) => line.length > 3)
       .map((line) => line.slice(3))
-      .filter((file) => !UNPUSHED_WORK_IGNORED_FILES.has(file))
   } catch {
     // Worktree unreadable — nothing to report.
   }
@@ -1200,7 +1192,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // inside `log()` itself, resolves the identical value instantly.
     const repo = await resolveRepo().catch(() => null)
     // O6: `policy`/`repoRoot`/
-    // `confidenceFilePath`/`roundResponseFilePath`/`baseHeadAtStart` are
+    // `baseHeadAtStart` are
     // DECLARED here, at the top of this function's scope, but ASSIGNED only
     // once the widened `try` below actually runs `reviewPolicy()`/
     // `d.repoRoot()`/`d.gitRevParseOriginMain()` — each a real forge/git
@@ -1212,10 +1204,23 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // actually computed moves.
     let policy!: ReviewPolicy
     let repoRoot!: string
-    let confidenceFilePath!: string
-    let roundResponseFilePath!: string
     /** O8: recorded once, at loop start — never re-derived. Re-read at every round entry (top of the `while(true)` below) and compared against this fixed watermark for commits touching `DRIVER_OWNED_PATHS`. */
     let baseHeadAtStart!: string
+    /**
+     * O1: THIS round's own absolute path for
+     * the Developer's confidence/round-response files, under
+     * `<task folder>/rounds/<round>/developer/` — never a fixed path
+     * computed once at loop start, since a resumed Developer session gets a
+     * fresh prompt every round and reusing an earlier round's path would let
+     * a stale round's answer be read as the current one.
+     */
+    function confidenceFilePathFor(roundNum: number): string {
+      return runPath(root, task, { area: 'developer', round: roundNum, file: CONFIDENCE_FILE_NAME })
+    }
+    /** O1: the round-response counterpart to `confidenceFilePathFor`, above. */
+    function roundResponseFilePathFor(roundNum: number): string {
+      return runPath(root, task, { area: 'developer', round: roundNum, file: DEVELOPER_ROUND_RESPONSE_FILE_NAME })
+    }
     const loopOutboxPath = outboxPathFor({ outboxRoot: d.telemetryOutboxRoot }, repo, task)
     /**
      * O6: the one file this run's own role-prefixed stream tees to,
@@ -1561,7 +1566,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     async function dispatchDeveloper(
       prompt: string,
       roundNum: number,
-      opts: { skipResumeContext?: boolean } = {}
+      opts: { skipResumeContext?: boolean; developerFiles?: readonly string[] } = {}
     ): Promise<DispatchHandle> {
       const isResume = devResumeId !== null
       const fullPrompt = opts.skipResumeContext ? prompt : `${resumeContextBlock()}\n\n${prompt}`
@@ -1573,6 +1578,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // instead (its own doc comment on `unattended`) rather than refusing
       // a round-1 dispatch whose own Step 0 is creating that worktree.
       const devWorktreeDir = existsSync(worktreePathForBranch()) ? worktreePathForBranch() : null
+      // O1/O3: this round's own confidence
+      // and/or round-response files, when this prompt named any — the
+      // parent directory must exist before dispatch, both so a confined
+      // Write's own `fs.realpathSync(path.dirname(filePath))` resolves and
+      // so a Seatbelt-confined child's `mkdirSync(dirname(path), {
+      // recursive: true })` needs only the pre-existing traversal grant.
+      if (opts.developerFiles && opts.developerFiles.length > 0) {
+        ensureRunDir(runPath(root, task, { area: 'developer', round: roundNum }), root)
+      }
       const attemptDispatch = (): Promise<DispatchHandle> =>
         withPromptFile(fullPrompt, (promptFile) =>
           d.dispatchRole('developer', input.agent, fullPrompt, {
@@ -1582,6 +1596,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             promptFile,
             roleLogPath: loopLogPath,
             ...(devWorktreeDir ? { cwd: devWorktreeDir } : {}),
+            ...(opts.developerFiles && opts.developerFiles.length > 0 ? { developerFiles: opts.developerFiles } : {}),
             // issue-661, O1: `runTask`'s own resolved model, spent here and
             // only here — `dispatchRole`'s own `resolvedModel` log line
             // already reports `requested:<model>` vs `'default'`, so no
@@ -1682,7 +1697,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       if (rec) devResumeId = rec.resumeId
     }
 
-    /** O2/O3: the developer's own worktree convention (`aeg-root/roles/developer.md`) — `.worktrees/<branch>` under this repo's root, the SAME path `confidenceFilePath` above already derives its own parent from. */
+    /** O2/O3: the developer's own worktree convention (`aeg-root/roles/developer.md`) — `.worktrees/<branch>` under this repo's root. */
     function worktreePathForBranch(): string {
       return join(repoRoot, '.worktrees', branch)
     }
@@ -2174,10 +2189,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       ).catch(() => 'CONFLICTING' as const)
     }
 
-    function readAndClearConfidence(): Confidence {
-      const content = readIfExists(confidenceFilePath)
+    /** O1: reads and clears THIS round's own confidence file, at the absolute path this round's own dispatch named in its prompt. */
+    function readAndClearConfidence(roundNum: number): Confidence {
+      const path = confidenceFilePathFor(roundNum)
+      const content = readIfExists(path)
       try {
-        unlinkSync(confidenceFilePath)
+        unlinkSync(path)
       } catch {
         // Never written, or already gone — nothing to clean up.
       }
@@ -2185,10 +2202,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     }
 
     /** O2: best-effort, mirroring `readAndClearConfidence` — a missing or malformed file yields no citation, never a stall (`DEVELOPER_ROUND_RESPONSE_FILE_NAME`'s own doc comment). */
-    function readAndClearRoundResponse(): string[] {
-      const content = readIfExists(roundResponseFilePath)
+    function readAndClearRoundResponse(roundNum: number): string[] {
+      const path = roundResponseFilePathFor(roundNum)
+      const content = readIfExists(path)
       try {
-        unlinkSync(roundResponseFilePath)
+        unlinkSync(path)
       } catch {
         // Never written, or already gone — nothing to clean up.
       }
@@ -2398,9 +2416,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       policy = reviewPolicy()
       config.maxRounds = policy.maxRounds
       repoRoot = d.repoRoot()
-      confidenceFilePath = join(repoRoot, '.worktrees', branch, CONFIDENCE_FILE_NAME)
-      /** O2: the same worktree-root convention as `confidenceFilePath`, above — see `DEVELOPER_ROUND_RESPONSE_FILE_NAME`'s own doc comment. */
-      roundResponseFilePath = join(repoRoot, '.worktrees', branch, DEVELOPER_ROUND_RESPONSE_FILE_NAME)
       baseHeadAtStart = d.gitRevParseOriginMain()
 
       // O8: `resumeHeadAlreadyMoved` widens this exactly like a fresh round-1
@@ -2825,6 +2840,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // or a CI-red retry, none of which ever sent the developer a
             // findings list to cite ids against.
             const isReviewFindingsRetry = conflictFiles === null && !resumedDispatch && !isGateRedRetry
+            // O1: built fresh for THIS
+            // round, never reused from an earlier round — a resumed
+            // developer session gets a fresh prompt every round, and the
+            // driver names the exact absolute path this round's own
+            // dispatch is granted write access to.
+            const thisRoundConfidencePath = confidenceFilePathFor(round)
+            const thisRoundResponsePath = roundResponseFilePathFor(round)
             const prompt = [
               conflictFiles !== null
                 ? renderConflictPrompt(conflictFiles)
@@ -2841,11 +2863,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                       // the prior 'CI was red...' fallback below this was unreachable).
                       `Round ${round} review findings:\n\n${lastReviewContext}\n`,
               'Address the findings above per aeg-root/roles/developer.md. Commit the fix, then run `git push` from this worktree to push it as a new commit on the SAME branch; do not open a new PR.',
-              round >= 2 ? CONFIDENCE_PROMPT_LINE : '',
-              isReviewFindingsRetry ? ROUND_RESPONSE_PROMPT_LINE : ''
+              round >= 2 ? confidencePromptLine(thisRoundConfidencePath) : '',
+              isReviewFindingsRetry ? roundResponsePromptLine(thisRoundResponsePath) : ''
             ]
               .filter(Boolean)
               .join('\n\n')
+            const thisRoundDeveloperFiles = [
+              ...(round >= 2 ? [thisRoundConfidencePath] : []),
+              ...(isReviewFindingsRetry ? [thisRoundResponsePath] : [])
+            ]
             // Unchanged from before this task: a head-change wait runs ONLY
             // for a CI-red retry or a conflict retry — never for the plain
             // review-findings retry, whose own next `dispatch_reviewers`
@@ -2859,7 +2885,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // simulating one, well beyond this fix's own boundary.
             const headBeforeDispatch = isGateRedRetry || conflictFiles !== null ? d.resolveHead(branch) : null
             roundStartMs = d.now()
-            await dispatchDeveloper(prompt, round)
+            await dispatchDeveloper(prompt, round, { developerFiles: thisRoundDeveloperFiles })
             resumedDispatch = false
 
             const changedHead =
@@ -3001,7 +3027,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             gateStalledStreak = 0
           }
           unpushedResumeAttempted = false
-          const confidence = round >= 2 && gateGreen ? readAndClearConfidence() : undefined
+          const confidence = round >= 2 && gateGreen ? readAndClearConfidence(round) : undefined
           const obs: Observations = { kind: 'gate', round, green: gateGreen, confidence, stats: gate.stats }
           const result = assessRound(state, obs)
           state = result.state
@@ -3013,11 +3039,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           await d.flushOutbox(task)
           persistCurrentLoopState(decision.type, decision.type === 'pause' ? decision.reason : undefined)
         } else if (decision.type === 'ask_confidence') {
-          const reaskPrompt = `Your last reply did not include a valid confidence line.\n\n${CONFIDENCE_PROMPT_LINE}`
-          await dispatchDeveloper(reaskPrompt, round)
+          const reaskConfidencePath = confidenceFilePathFor(round)
+          const reaskPrompt = `Your last reply did not include a valid confidence line.\n\n${confidencePromptLine(reaskConfidencePath)}`
+          await dispatchDeveloper(reaskPrompt, round, { developerFiles: [reaskConfidencePath] })
           const head = d.resolveHead(branch)
           const stats = computeStats(head, roundStartMs)
-          const confidence = readAndClearConfidence()
+          const confidence = readAndClearConfidence(round)
           const obs: Observations = { kind: 'gate', round, green: true, confidence, stats }
           const result = assessRound(state, obs)
           state = result.state
@@ -3119,7 +3146,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // BEFORE the reviewer dispatch below, never after: a reviewer
           // reading the PR mid-round sees the round marker comment already
           // there, exactly as it would have if the Developer had posted it.
-          const findingIdsAddressed = readAndClearRoundResponse()
+          const findingIdsAddressed = readAndClearRoundResponse(round)
           postDeveloperRoundComment(round, head, findingIdsAddressed)
 
           // O5: an infrastructure outcome from either role (after its own
