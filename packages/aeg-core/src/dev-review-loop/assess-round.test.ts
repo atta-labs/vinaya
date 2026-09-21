@@ -357,7 +357,7 @@ describe('assessRound — gate_result_read confidence fields (O1, O2)', () => {
   })
 })
 
-describe('assessRound — Part 3 (O2): the four exits', () => {
+describe('assessRound — Part 3 (O2): the exits', () => {
   it('rounds over 3 → stop_condition_met max_rounds; round 3 exactly continues, round 4 stops', () => {
     const { events, decisions } = runScenario(freshState(), [
       fakeGate(1, true),
@@ -485,8 +485,8 @@ describe('assessRound — Part 3 (O2): the four exits', () => {
     expect(stop).toMatchObject({ condition: 'reappearance' })
   })
 
-  it('two consecutive rounds resolving no id → pause(no_progress)', () => {
-    const { decisions } = runScenario(freshState(), [
+  it('two consecutive rounds resolving no id now continue to a developer dispatch (no_progress stop removed)', () => {
+    const { decisions, events } = runScenario(freshState(), [
       fakeGate(1, true),
       fakeVerdicts(1, [
         blockingVerdict('reviewer', [{ id: 'F1', severity: 'major', state: 'open' }]),
@@ -499,7 +499,16 @@ describe('assessRound — Part 3 (O2): the four exits', () => {
       ])
     ])
 
-    expect(decisions.at(-1)).toEqual({ type: 'pause', reason: 'no_progress' })
+    // The old assessment `no_progress` exit paused here after two rounds that
+    // resolved no id — it read a resolved-id signal no reviewer observation
+    // ever fills, so it stalled loops that were making real progress and is
+    // removed. The same sequence now dispatches the developer for another
+    // round, and no `no_progress` stop is ever recorded from the assessment.
+    expect(decisions.at(-1)).toEqual({ type: 'dispatch_developer' })
+    expect(decisions).not.toContainEqual({ type: 'pause', reason: 'no_progress' })
+    expect(
+      events.some((e) => e.event === 'stop_condition_met' && 'condition' in e && e.condition === 'no_progress')
+    ).toBe(false)
   })
 
   it('defeat: a round that resolves one id and raises two new ones is healthy churn and continues', () => {
@@ -520,62 +529,6 @@ describe('assessRound — Part 3 (O2): the four exits', () => {
       ])
     ])
 
-    expect(decisions.at(-1)).toEqual({ type: 'dispatch_developer' })
-  })
-
-  it('a CI-red bounce is not a genuine round: one real resolved-nothing round after it does not fire no_progress', () => {
-    const { decisions } = runScenario(freshState(), [
-      fakeGate(1, false), // bounce — never a findings comparison
-      fakeGate(2, true, { confidence: { value: 80 } }),
-      fakeVerdicts(2, [
-        blockingVerdict('reviewer', [{ id: 'F1', severity: 'major', state: 'open' }]),
-        cleanVerdict('security')
-      ])
-    ])
-
-    expect(decisions.at(-1)).toEqual({ type: 'dispatch_developer' })
-  })
-
-  it('a CI-red bounce between two genuine resolved-nothing rounds does not swallow the second strike', () => {
-    const { decisions } = runScenario(freshState(), [
-      fakeGate(1, true),
-      fakeVerdicts(1, [
-        blockingVerdict('reviewer', [{ id: 'F1', severity: 'major', state: 'open' }]),
-        cleanVerdict('security')
-      ]),
-      fakeGate(2, false), // bounce, in between — must not reset or corrupt the streak
-      fakeGate(3, true, { confidence: { value: 80 } }),
-      fakeVerdicts(3, [
-        blockingVerdict('reviewer', [{ id: 'F1', severity: 'major', state: 'open' }]),
-        cleanVerdict('security')
-      ])
-    ])
-
-    expect(decisions.at(-1)).toEqual({ type: 'pause', reason: 'no_progress' })
-  })
-
-  it('a confidence-collapse bounce is not a genuine round: it must not fake a resolved-nothing strike', () => {
-    const { decisions } = runScenario(freshState(), [
-      fakeGate(1, true),
-      // Round 1 resolves F1 (healthy churn) — genuinely NOT a resolved-nothing round.
-      fakeVerdicts(1, [
-        blockingVerdict('reviewer', [
-          { id: 'F1', severity: 'major', state: 'resolved' },
-          { id: 'F2', severity: 'major', state: 'open' }
-        ]),
-        cleanVerdict('security')
-      ]),
-      fakeGate(2, true, { confidence: { value: 49 } }), // confidence bounce — never a findings comparison
-      fakeGate(3, true, { confidence: { value: 80 } }),
-      // Round 3 is the FIRST genuine resolved-nothing round (F2 still open).
-      fakeVerdicts(3, [
-        blockingVerdict('reviewer', [{ id: 'F2', severity: 'major', state: 'open' }]),
-        cleanVerdict('security')
-      ])
-    ])
-
-    // Only one genuine resolved-nothing round has happened — the
-    // confidence bounce must not have hardcoded a fake second strike.
     expect(decisions.at(-1)).toEqual({ type: 'dispatch_developer' })
   })
 })

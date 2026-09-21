@@ -81,16 +81,6 @@ export type Observations =
   | ({ kind: 'verdicts' } & {
       round: number
       verdicts: VerdictObservation[]
-      /**
-       * Set when a reviewer's report
-       * still carried no citable finding ids after the driver's one resend
-       * (`report_uncitable`) — this round's `open`/`resolved` id comparison
-       * is untrustworthy, so it is excluded from the `no_progress` check
-       * only; every other stop condition (reappearance, confidence,
-       * max_rounds, escalation) still applies. Omitted (or `false`) is the
-       * default, unchanged behavior.
-       */
-      findingsUncitable?: boolean
     })
 
 /**
@@ -186,8 +176,8 @@ export type Decision =
 /**
  * The summary's own outcome vocabulary — wider than `round_ended`'s
  * schema-constrained `green | changes_requested | escalated`: a round whose
- * processing triggered one of the four O2 exits (max_rounds, no_progress,
- * confidence, reappearance) records `'stopped'` here, even though the log
+ * processing triggered one of the assessment exits (max_rounds, confidence,
+ * reappearance) records `'stopped'` here, even though the log
  * event for that same round still reports `changes_requested` (the schema
  * has no fifth value) — the journal, not the per-event log line, is where
  * the loop's own verdict on that round belongs.
@@ -220,7 +210,7 @@ export type PendingRound = {
   stats: RoundStats
   confidenceAskCount: number
   confidence: Confidence | null
-  /** The id → state map of every prior round combined, for the reappearance/no-progress checks. */
+  /** The id → state map of every prior round combined, for the reappearance check. */
   priorIds: Map<string, string | null>
 }
 
@@ -232,8 +222,6 @@ export type LoopState = {
   extraTurnUsed: boolean
   /** The most recent round's combined id → state map, carried forward for the next round's comparison. */
   lastIds: Map<string, string | null>
-  /** Whether the immediately preceding round resolved zero ids — `null` before any round has concluded. */
-  previousResolvedEmpty: boolean | null
   /** Running sums for `journal_finalized` — updated once per concluded round, never recomputed from `rounds` (which carries counts only, not diff stats). */
   totalWallMs: number
   totalFilesChanged: number
@@ -246,7 +234,6 @@ export function initialLoopState(config: LoopConfig): LoopState {
     pending: null,
     extraTurnUsed: false,
     lastIds: new Map(),
-    previousResolvedEmpty: null,
     totalWallMs: 0,
     totalFilesChanged: 0
   }
