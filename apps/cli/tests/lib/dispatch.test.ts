@@ -3020,7 +3020,33 @@ describe('buildWriteAccessScope — Issue #663, O1 round 2 fix: the real Write/E
   it('developer: a directory scope, realpath-resolved', () => {
     const dir = tempDir('vinaya-write-scope-')
     const scope = buildWriteAccessScope('developer', dir, [])
-    expect(scope).toEqual({ kind: 'directory', allowedDir: realpathSync(dir) })
+    expect(scope).toEqual({ kind: 'directory', allowedDir: realpathSync(dir), extraFiles: [] })
+  })
+
+  it('developer: extraFiles (O3, task-files-v1 2, #649) carries this round’s confidence/round-response paths, realpath-resolved, alongside the worktree directory grant', () => {
+    const dir = tempDir('vinaya-write-scope-')
+    const devDir = tempDir('vinaya-write-scope-dev-')
+    const confidence = join(devDir, '.vinaya-confidence')
+    const roundResponse = join(devDir, '.vinaya-round-response')
+    const scope = buildWriteAccessScope('developer', dir, [], [confidence, roundResponse])
+    expect(scope).toEqual({
+      kind: 'directory',
+      allowedDir: realpathSync(dir),
+      extraFiles: [confidence, roundResponse]
+    })
+  })
+
+  it('a role other than developer never gets developerFiles applied', () => {
+    const a = tempDir('vinaya-write-scope-a-')
+    const scope = buildWriteAccessScope('code-reviewer', '/unused', [a], ['/some/absolute/path'])
+    expect(scope).toEqual({
+      kind: 'exact-files',
+      paths: [
+        join(realpathSync(a), 'findings.txt'),
+        join(realpathSync(a), 'report.txt'),
+        join(realpathSync(a), 'objectives.txt')
+      ]
+    })
   })
 
   for (const role of ['code-reviewer', 'security'] as const) {
@@ -3052,7 +3078,7 @@ describe('buildWriteAccessScope — Issue #663, O1 round 2 fix: the real Write/E
 
   it('a directory that does not exist yet degrades to its own raw form rather than throwing', () => {
     const scope = buildWriteAccessScope('developer', '/tmp/does-not-exist-vinaya-663', [])
-    expect(scope).toEqual({ kind: 'directory', allowedDir: '/tmp/does-not-exist-vinaya-663' })
+    expect(scope).toEqual({ kind: 'directory', allowedDir: '/tmp/does-not-exist-vinaya-663', extraFiles: [] })
   })
 })
 
@@ -3164,6 +3190,95 @@ describe('writeDispatchSettings — Issue #663, O1/O3: the permission policy is 
     }
     expect(outsideOut.hookSpecificOutput.permissionDecision).toBe('deny')
     expect(outsideOut.hookSpecificOutput.permissionDecisionReason).toMatch(/worktree/)
+  })
+
+  it('a developer dispatch carrying developerFiles (O3, task-files-v1 2, #649) ALLOWS a write to exactly those two files outside its worktree, and still DENIES an unrelated outside path', () => {
+    // `developerFiles` has no CLI flag (same reasoning `extraWritableDirs`'s
+    // own comment gives — only `dev-review-loop.ts`'s internal call site
+    // ever supplies one), so this calls `dispatchRole` directly rather than
+    // through the `vinaya dispatch` CLI, the same pattern the "two
+    // dispatches in the same process" describe block above uses.
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const devFilesDir = tempDir('vinaya-dispatch-devfiles-')
+    const confidencePath = join(devFilesDir, '.vinaya-confidence')
+    const roundResponsePath = join(devFilesDir, '.vinaya-round-response')
+    const argvOut = join(cwd, 'argv.out')
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\nfor a in "$@"; do echo "$a"; done > "${argvOut}"\ncat > /dev/null\necho '{}'\nexit 0\n`
+    )
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+
+    const dispatchLib = join(CLI_ROOT, 'src', 'lib', 'dispatch.ts')
+    const script = join(cwd, 'developer-files-dispatch.ts')
+    writeFileSync(
+      script,
+      [
+        `import { dispatchRole } from ${JSON.stringify(dispatchLib)}`,
+        'const opts = {',
+        `  promptFile: ${JSON.stringify(promptFile)},`,
+        `  cwd: ${JSON.stringify(cwd)},`,
+        `  developerFiles: [${JSON.stringify(confidencePath)}, ${JSON.stringify(roundResponsePath)}]`,
+        '}',
+        `await dispatchRole('developer', 'claude', 'p', opts)`
+      ].join('\n')
+    )
+    const spawnEnv: NodeJS.ProcessEnv = stripVinayaEnv({
+      ...process.env,
+      HOME: home,
+      PATH: `${binDir}:${pathWithoutRealVendors()}`
+    })
+    runScriptWithBudget(script, cwd, spawnEnv)
+
+    const argv = readFileSync(argvOut, 'utf8').trim().split('\n')
+    const settingsIdx = argv.indexOf('--settings')
+    const settingsPath = argv[settingsIdx + 1] as string
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as {
+      hooks: { PreToolUse: Array<{ matcher: string; hooks: Array<{ command: string }> }> }
+    }
+    const writeEntry = settings.hooks.PreToolUse.find((h) => h.matcher === 'Write|Edit')
+    expect(writeEntry).toBeDefined()
+    const hookCommand = writeEntry?.hooks[0]?.command as string
+    const scriptPath = hookCommand.slice('bun "'.length, -1)
+    const scopeFiles = readdirSync(dirname(scriptPath)).filter((f) => f.startsWith('write-access-'))
+    expect(scopeFiles).toHaveLength(1)
+    const runId = (scopeFiles[0] as string).slice('write-access-'.length, -'.json'.length)
+
+    for (const grantedPath of [confidencePath, roundResponsePath]) {
+      const r = spawnBudgeted(
+        [scriptPath],
+        {
+          input: JSON.stringify({ tool_name: 'Write', tool_input: { file_path: grantedPath } }),
+          encoding: 'utf8',
+          env: { ...process.env, VINAYA_RUN_ID: runId }
+        },
+        'write-access hook'
+      )
+      expect(r.status).toBe(0)
+      const out = JSON.parse(r.stdout) as { hookSpecificOutput: { permissionDecision: string } }
+      expect(out.hookSpecificOutput.permissionDecision).toBe('allow')
+    }
+
+    // A third, unrelated file outside the worktree — never granted — is
+    // still denied: `developerFiles` is an exact-file allowlist, never a
+    // directory grant on `devFilesDir`.
+    const unrelatedPath = join(devFilesDir, 'not-granted.txt')
+    const denied = spawnBudgeted(
+      [scriptPath],
+      {
+        input: JSON.stringify({ tool_name: 'Write', tool_input: { file_path: unrelatedPath } }),
+        encoding: 'utf8',
+        env: { ...process.env, VINAYA_RUN_ID: runId }
+      },
+      'write-access hook'
+    )
+    expect(denied.status).toBe(0)
+    const deniedOut = JSON.parse(denied.stdout) as { hookSpecificOutput: { permissionDecision: string } }
+    expect(deniedOut.hookSpecificOutput.permissionDecision).toBe('deny')
   })
 
   it('a code-reviewer dispatch writes the read-only policy, never the developer one', () => {

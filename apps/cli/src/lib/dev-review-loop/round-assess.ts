@@ -31,14 +31,18 @@ import { controlStoreRoot } from '../effects.js'
 // --- confidence -------------------------------------------------------------
 
 /**
- * Fixed text, appended to the developer's resume prompt on every round ≥ 2
- * (Part 3). The file path is a fixed, well-known relative convention — the
- * worktree root every Developer already works in
- * (`aeg-root/roles/developer.md`'s own `.worktrees/task/<tranche>/<n>/`) —
- * so this constant needs no per-round interpolation to stay fixed.
+ * Appended to the developer's resume prompt on every round ≥ 2 (Part 3).
+ * `filePath` is the absolute path the driver built for THIS round, under
+ * that round's own Developer folder inside the task's folder
+ * (`runPath(..., { area: 'developer', round, file: CONFIDENCE_FILE_NAME })`)
+ * — never a fixed, worktree-relative convention: a resumed developer
+ * session receives a fresh prompt every round, and reusing an earlier
+ * round's path would let a stale round's confidence answer be read as this
+ * round's own.
  */
-export const CONFIDENCE_PROMPT_LINE =
-  "Before ending this turn, write your confidence in this round's changes to a file named `.vinaya-confidence` at the root of your worktree, containing exactly one line: `CONFIDENCE: <0-100> — <one-sentence reason>` (a whole number from 0 to 100, an em dash, then your reason in one sentence) — for example: `echo 'CONFIDENCE: 90 — fixed the reported issue' > .vinaya-confidence`. This is read by the review loop before it decides the next step — do not skip it."
+export function confidencePromptLine(filePath: string): string {
+  return `Before ending this turn, write your confidence in this round's changes to a file at the absolute path \`${filePath}\`, containing exactly one line: \`CONFIDENCE: <0-100> — <one-sentence reason>\` (a whole number from 0 to 100, an em dash, then your reason in one sentence) — for example: \`echo 'CONFIDENCE: 90 — fixed the reported issue' > ${filePath}\`. This is read by the review loop before it decides the next step — do not skip it.`
+}
 
 const CONFIDENCE_LINE = /^CONFIDENCE:\s*(\d{1,3})\s*(?:—|-)\s*(.+)$/m
 
@@ -65,31 +69,37 @@ export const CONFIDENCE_FILE_NAME = '.vinaya-confidence'
 
 /**
  * The Developer's own side channel for citing which finding ids it addressed
- * this round — same worktree-root convention as `CONFIDENCE_FILE_NAME`
- * (`aeg-root/roles/developer.md`'s `.worktrees/task/<tranche>/<n>/`), read
- * and cleared by the driver instead of the Developer posting a PR comment.
- * The driver now ends the Developer's turn at the push — it
+ * this round — written under that round's Developer folder inside the
+ * task's folder (`runPath(..., { area: 'developer', round, file:
+ * DEVELOPER_ROUND_RESPONSE_FILE_NAME })`), never at the worktree root, and
+ * read and cleared by the driver instead of the Developer posting a PR
+ * comment. The driver now ends the Developer's turn at the push — it
  * composes and posts the round marker comment itself, from this file's
  * content (`renderDeveloperRoundComment`), so a Developer session that
  * crashes, skips, or forgets to write this file never blocks the round: it
  * is read best-effort, and an absent or empty file yields no citation, never
  * a resume or a pause. "No round is judged no_progress because a comment was
- * not posted" (this task's Objective O2) — the round's own no-progress
- * derivation (`assessRound`'s id-comparison across rounds, `@attalabs/aeg-core`)
- * never reads this file at all; it exists purely so the driver's own posted
+ * not posted" — the round's own no-progress derivation
+ * (`assessRound`'s id-comparison across rounds, `@attalabs/aeg-core`) never
+ * reads this file at all; it exists purely so the driver's own posted
  * comment can carry the same finding-id citation a Developer used to type by
  * hand.
  */
 export const DEVELOPER_ROUND_RESPONSE_FILE_NAME = '.vinaya-round-response'
 
 /**
- * Fixed text appended to the developer's resume prompt whenever this round
- * carries findings to address — the response-file counterpart to
- * `CONFIDENCE_PROMPT_LINE`. Best-effort by design (see
- * `DEVELOPER_ROUND_RESPONSE_FILE_NAME`'s own doc comment): omitted, the round
- * comment the driver posts simply carries no `FINDING_IDS:` citation.
+ * Appended to the developer's resume prompt whenever this round carries
+ * findings to address — the response-file counterpart to
+ * `confidencePromptLine`. `filePath` is this round's own absolute path,
+ * built the same way and for the same reason (a resumed developer session
+ * gets a fresh prompt every round, so the path is never reused across
+ * rounds). Best-effort by design (see
+ * `DEVELOPER_ROUND_RESPONSE_FILE_NAME`'s own doc comment): omitted, the
+ * round comment the driver posts simply carries no `FINDING_IDS:` citation.
  */
-export const ROUND_RESPONSE_PROMPT_LINE = `Before ending this turn, write a \`FINDING_IDS:\` line to a file named \`${DEVELOPER_ROUND_RESPONSE_FILE_NAME}\` at the root of your worktree, citing the ids (comma-separated, e.g. \`F1,F2\`) of the findings above you addressed this round — the driver reads this to compose the round's own comment; you do not post one yourself.`
+export function roundResponsePromptLine(filePath: string): string {
+  return `Before ending this turn, write a \`FINDING_IDS:\` line to a file at the absolute path \`${filePath}\`, citing the ids (comma-separated, e.g. \`F1,F2\`) of the findings above you addressed this round — the driver reads this to compose the round's own comment; you do not post one yourself.`
+}
 
 const ROUND_RESPONSE_FINDING_IDS_LINE = /^FINDING_IDS:\s*(.*)$/im
 

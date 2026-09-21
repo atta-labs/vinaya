@@ -128,6 +128,17 @@ describe('runPath — every run file resolves through this one function', () => 
     )
   })
 
+  it('gives a round its own Developer folder, nested under that round rather than the task root (task-files-v1 2, #649)', () => {
+    expect(runPath(RUNTIME, 648, { area: 'developer', round: 2 })).toBe(join(taskDir, 'rounds', '2', 'developer'))
+    expect(runPath(RUNTIME, 648, { area: 'developer', round: 2, file: '.vinaya-confidence' })).toBe(
+      join(taskDir, 'rounds', '2', 'developer', '.vinaya-confidence')
+    )
+    // A different round gets a different folder — never one shared across rounds.
+    expect(runPath(RUNTIME, 648, { area: 'developer', round: 3, file: '.vinaya-confidence' })).toBe(
+      join(taskDir, 'rounds', '3', 'developer', '.vinaya-confidence')
+    )
+  })
+
   it('gives a pull-request-only or unanchored dispatch a folder that cannot collide with an Issue number', () => {
     expect(runPath(RUNTIME, { pr: 648 }, { area: 'sessions', file: 'x.json' })).toBe(
       join(RUNTIME, 'tasks-execution', 'pr-648', 'sessions', 'x.json')

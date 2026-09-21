@@ -60,7 +60,8 @@ import {
   appendFinalFlushFailureNote,
   assertValidLoopEvent,
   buildReexecArgs,
-  CONFIDENCE_PROMPT_LINE,
+  CONFIDENCE_FILE_NAME,
+  confidencePromptLine,
   describeConfidencePauseDetail,
   describeObjectivesEdit,
   deriveVerdictPauseDetail,
@@ -139,6 +140,11 @@ function controlDir(home: string, task: number = TASK): string {
 /** One round's own folder: its held verdicts, reviewer work directories, and its read-only candidate and scratch copies. */
 function roundDir(home: string, round: number, task: number = TASK): string {
   return join(taskRunDir(home, task), 'rounds', String(round))
+}
+
+/** That round's own Developer folder — the confidence and round-response files' absolute path, outside the worktree (`task-files-v1` 2, #649). */
+function developerDir(home: string, round: number, task: number = TASK): string {
+  return join(roundDir(home, round, task), 'developer')
 }
 
 const BRANCH = `task/dev-review-loop-v1/${TASK}`
@@ -1812,7 +1818,11 @@ describe('devReviewLoop — O9 (task-run-v1 21, #541, round 2 review BLOCKER): a
     writeFakeGhReattachSucceeds(binDir)
     const worktreeDir = join(cwd, '.worktrees', BRANCH)
     mkdirSync(worktreeDir, { recursive: true })
-    writeFileSync(join(worktreeDir, '.vinaya-confidence'), 'CONFIDENCE: 90 — same code, already reviewed clean once\n')
+    mkdirSync(developerDir(home, 2), { recursive: true })
+    writeFileSync(
+      join(developerDir(home, 2), CONFIDENCE_FILE_NAME),
+      'CONFIDENCE: 90 — same code, already reviewed clean once\n'
+    )
     const r2 = runLoop(home, cwd, path)
     expect(r2.status).toBe(0)
     expect(r2.stdout).toMatch(/publish/)
@@ -2997,8 +3007,8 @@ case "$VINAYA_ROLE" in
   *)
     mkdir -p "$WORKROOT"
     printf '%s\\n---\\n' "$PROMPT" >> "$WORKROOT/dev-prompts.txt"
-    mkdir -p "$PWD/.worktrees/task/dev-review-loop-v1/$VINAYA_TASK"
-    echo "CONFIDENCE: 90 -- go ahead per the ruling" > "$PWD/.worktrees/task/dev-review-loop-v1/$VINAYA_TASK/.vinaya-confidence"
+    mkdir -p "$WORKROOT/rounds/$VINAYA_ROUND/developer"
+    echo "CONFIDENCE: 90 -- go ahead per the ruling" > "$WORKROOT/rounds/$VINAYA_ROUND/developer/.vinaya-confidence"
     echo '{"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5}}'
     ;;
 esac
@@ -3937,8 +3947,8 @@ case "$VINAYA_ROLE" in
       exit 9
     fi
     if [ "$VINAYA_ROUND" != "1" ]; then
-      mkdir -p "$PWD/.worktrees/task/dev-review-loop-v1/$VINAYA_TASK"
-      echo "CONFIDENCE: 90 — addressed the round 1 blocker" > "$PWD/.worktrees/task/dev-review-loop-v1/$VINAYA_TASK/.vinaya-confidence"
+      mkdir -p "$WORKROOT/rounds/$VINAYA_ROUND/developer"
+      echo "CONFIDENCE: 90 — addressed the round 1 blocker" > "$WORKROOT/rounds/$VINAYA_ROUND/developer/.vinaya-confidence"
     fi
     echo '{"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5}}'
     ;;
@@ -5230,7 +5240,8 @@ describe('devReviewLoop — control-store-v1 task 4 (#554, O1/O3): round numberi
 
     const worktreeDir = join(cwd, '.worktrees', BRANCH)
     mkdirSync(worktreeDir, { recursive: true })
-    writeFileSync(join(worktreeDir, '.vinaya-confidence'), 'CONFIDENCE: 90 — recovered from control state\n')
+    mkdirSync(developerDir(home, 2), { recursive: true })
+    writeFileSync(join(developerDir(home, 2), CONFIDENCE_FILE_NAME), 'CONFIDENCE: 90 — recovered from control state\n')
 
     const r = runLoop(home, cwd, path)
     expect(r.status).toBe(0)
@@ -6107,9 +6118,14 @@ describe('devReviewLoop — O2 (#543): unpushed real work is resumed once, then 
   }, 20000)
 })
 
-// --- O2 (#595): the loop's own control files are never unpushed work ---
+// --- O2 (`task-files-v1` 2, #649): the loop's two OLD, worktree-root
+// control-file names get no special exemption any more — since neither is
+// ever written there under the new convention (a round's own Developer
+// folder inside the task's folder), a stray file bearing either old name is
+// ordinary untracked work, exactly like any other file the driver never
+// asked for. ---
 
-/** `git -C <worktree> status --porcelain` reporting ONLY the loop's own two control files as untracked — never real work. */
+/** `git -C <worktree> status --porcelain` reporting ONLY the loop's two OLD control-file names as untracked — no longer exempt, so this reads as real unpushed work. */
 function writeFakeGitControlFilesOnly(dir: string): void {
   writeFakeBinary(
     dir,
@@ -6154,7 +6170,7 @@ exit 1
   )
 }
 
-/** Same as \`writeFakeGitDirtyWorktree\`, plus the loop's own two control files alongside the real dirty one — proves the pause detail names only the real file, never the control files too. */
+/** Same as \`writeFakeGitDirtyWorktree\`, plus the loop's two OLD control-file names alongside the real dirty one — proves the pause detail now names all three, since neither old name is exempt any more. */
 function writeFakeGitDirtyWorktreeWithControlFiles(dir: string): void {
   writeFakeBinary(
     dir,
@@ -6220,33 +6236,31 @@ function setUpNeverPushesDirtyWithControlFiles(): { home: string; cwd: string; p
   return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
 }
 
-describe("devReviewLoop — O2 (#595): the loop's own control files are never unpushed work", () => {
-  it('a worktree dirty ONLY in .vinaya-confidence/.vinaya-round-response reads clean — never a no_push pause', () => {
+describe("devReviewLoop — O2 (task-files-v1 2, #649): the loop's two OLD worktree-root control-file names get no exemption any more", () => {
+  it('a worktree dirty ONLY in the two old names now reads as real unpushed work — no_push, naming both stray files', () => {
     const { home, cwd, path } = setUpNeverPushesControlFilesOnly()
     const r = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
       VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '2',
       VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '10'
     })
     expect(r.status).not.toBe(0)
-    // Same generic bound a plain, genuinely-clean stall hits — never the
-    // no_push-specific pause, and never a resume for "unpushed work" that
-    // was never real.
-    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
-    expect(r.stdout).not.toMatch(/paused \(no_push\)/)
+    expect(r.stdout).toMatch(/paused \(no_push\)/)
 
     const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
       string,
       unknown
     >
-    expect(pauseState.reason).toBe('infrastructure')
+    expect(pauseState.reason).toBe('no_push')
+    expect(pauseState.detail).toMatch(/\.vinaya-confidence/)
+    expect(pauseState.detail).toMatch(/\.vinaya-round-response/)
 
-    const commentsDir = join(home, '.fake-gh-posted-comments')
-    for (const f of readdirSync(commentsDir)) {
-      expect(readFileSync(join(commentsDir, f), 'utf8')).not.toMatch(/aeg:loop:unpushed-work-resume/)
-    }
+    const posted = readdirSync(join(home, '.fake-gh-posted-comments')).map((f) =>
+      readFileSync(join(home, '.fake-gh-posted-comments', f), 'utf8')
+    )
+    expect(posted.some((c) => c.startsWith('<!-- aeg:loop:unpushed-work-resume -->'))).toBe(true)
   }, 20000)
 
-  it('one dirty file alongside the two control files still reads as unpushed — no_push, naming only the real file', () => {
+  it('one dirty file alongside the two old control-file names reads as unpushed too — no_push, naming all three', () => {
     const { home, cwd, path } = setUpNeverPushesDirtyWithControlFiles()
     const r = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
       VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '2',
@@ -6261,8 +6275,8 @@ describe("devReviewLoop — O2 (#595): the loop's own control files are never un
     >
     expect(pauseState.reason).toBe('no_push')
     expect(pauseState.detail).toMatch(/smoke\.ts/)
-    expect(pauseState.detail).not.toMatch(/\.vinaya-confidence/)
-    expect(pauseState.detail).not.toMatch(/\.vinaya-round-response/)
+    expect(pauseState.detail).toMatch(/\.vinaya-confidence/)
+    expect(pauseState.detail).toMatch(/\.vinaya-round-response/)
   }, 20000)
 })
 
@@ -6398,8 +6412,8 @@ case "$VINAYA_ROLE" in
     echo "$HAS_RESUME:$RESUME_ID" >> "$HOME/.dev-invocations"
     mkdir -p "$WORKROOT"
     if [ "$VINAYA_ROUND" != "1" ]; then
-      mkdir -p "$PWD/.worktrees/task/dev-review-loop-v1/$VINAYA_TASK"
-      echo "CONFIDENCE: 90 — addressed the round 1 blocker" > "$PWD/.worktrees/task/dev-review-loop-v1/$VINAYA_TASK/.vinaya-confidence"
+      mkdir -p "$WORKROOT/rounds/$VINAYA_ROUND/developer"
+      echo "CONFIDENCE: 90 — addressed the round 1 blocker" > "$WORKROOT/rounds/$VINAYA_ROUND/developer/.vinaya-confidence"
     fi
     echo '{"session_id":"dev-session-fresh","usage":{"input_tokens":10,"output_tokens":5}}'
     ;;
@@ -6755,7 +6769,8 @@ describe('devReviewLoop — attach recovers a held REQUEST-CHANGES round from di
     // attach must never dispatch.
     const worktreeDir = join(cwd, '.worktrees', BRANCH)
     mkdirSync(worktreeDir, { recursive: true })
-    writeFileSync(join(worktreeDir, '.vinaya-confidence'), 'CONFIDENCE: 90 — fixed round 1s blocker\n')
+    mkdirSync(developerDir(home, 2), { recursive: true })
+    writeFileSync(join(developerDir(home, 2), CONFIDENCE_FILE_NAME), 'CONFIDENCE: 90 — fixed round 1s blocker\n')
 
     const r = runLoop(home, cwd, path)
     expect(r.status).toBe(0)
@@ -6815,7 +6830,7 @@ describe('devReviewLoop — a second attach on the same unchanged head reads as 
 })
 
 describe('devReviewLoop — the driver composes the round comment from a citation the developer left in its outbox, never posted itself', () => {
-  it('reads FINDING_IDS from .vinaya-round-response, cites them in the round-2 marker comment, and clears the file', () => {
+  it('reads FINDING_IDS from the round-2 Developer folder, cites them in the round-2 marker comment, and clears the file', () => {
     const { home, cwd, path } = setUpAttachRecoversHeldRound()
 
     // Round 1's held findings, same shape the sibling fixture above seeds —
@@ -6827,14 +6842,16 @@ describe('devReviewLoop — the driver composes the round comment from a citatio
 
     // The Developer's own last turn (the one that pushed the fix, ending at
     // the push per O1) is what would realistically leave both of these
-    // behind: a confidence answer for round 2's gate, and — the outbox
-    // record this objective is about — a citation of which findings it
-    // addressed, for the driver to read and compose the round comment from
-    // instead of the Developer posting one itself.
+    // behind, under round 2's own Developer folder: a confidence answer for
+    // round 2's gate, and — the outbox record this objective is about — a
+    // citation of which findings it addressed, for the driver to read and
+    // compose the round comment from instead of the Developer posting one
+    // itself.
     const worktreeDir = join(cwd, '.worktrees', BRANCH)
     mkdirSync(worktreeDir, { recursive: true })
-    writeFileSync(join(worktreeDir, '.vinaya-confidence'), 'CONFIDENCE: 90 — fixed round 1s blocker\n')
-    writeFileSync(join(worktreeDir, '.vinaya-round-response'), 'FINDING_IDS: F1,F2\n')
+    mkdirSync(developerDir(home, 2), { recursive: true })
+    writeFileSync(join(developerDir(home, 2), CONFIDENCE_FILE_NAME), 'CONFIDENCE: 90 — fixed round 1s blocker\n')
+    writeFileSync(join(developerDir(home, 2), '.vinaya-round-response'), 'FINDING_IDS: F1,F2\n')
 
     const r = runLoop(home, cwd, path)
     expect(r.status).toBe(0)
@@ -6854,7 +6871,9 @@ describe('devReviewLoop — the driver composes the round comment from a citatio
     expect(roundCommentPosted).toMatch(/^FINDING_IDS: F1,F2$/m)
 
     // Read once, then cleared — a second attach on the same round must
-    // never redeliver a stale citation from a prior round.
+    // never redeliver a stale citation from a prior round. Nothing was ever
+    // written to the worktree at all.
+    expect(existsSync(join(developerDir(home, 2), '.vinaya-round-response'))).toBe(false)
     expect(existsSync(join(worktreeDir, '.vinaya-round-response'))).toBe(false)
   }, 20000)
 })
@@ -6935,7 +6954,8 @@ describe('devReviewLoop — O9 (task-run-v1 21, #541): attach reconstructs round
 
     const worktreeDir = join(cwd, '.worktrees', BRANCH)
     mkdirSync(worktreeDir, { recursive: true })
-    writeFileSync(join(worktreeDir, '.vinaya-confidence'), 'CONFIDENCE: 90 — fixed round 1s blocker\n')
+    mkdirSync(developerDir(home, 2), { recursive: true })
+    writeFileSync(join(developerDir(home, 2), CONFIDENCE_FILE_NAME), 'CONFIDENCE: 90 — fixed round 1s blocker\n')
 
     const r = runLoop(home, cwd, path)
     expect(r.status).toBe(0)
@@ -7882,8 +7902,8 @@ case "$VINAYA_ROLE" in
     ;;
   *)
     if [ "$VINAYA_ROUND" = "2" ]; then
-      mkdir -p "$PWD/.worktrees/${BRANCH}"
-      echo "CONFIDENCE: 90 — addressed the round 1 blocker" > "$PWD/.worktrees/${BRANCH}/.vinaya-confidence"
+      mkdir -p "$WORKROOT/rounds/$VINAYA_ROUND/developer"
+      echo "CONFIDENCE: 90 — addressed the round 1 blocker" > "$WORKROOT/rounds/$VINAYA_ROUND/developer/.vinaya-confidence"
     fi
     echo '{"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5}}'
     ;;
@@ -8657,14 +8677,22 @@ describe('extractObjectivesSection (pure)', () => {
   })
 })
 
-describe('CONFIDENCE_PROMPT_LINE (pure) — O11 (task-run-v1 21, #541, round 2 review MAJOR)', () => {
-  it('names the exact command expected, not just the required file format', () => {
-    expect(CONFIDENCE_PROMPT_LINE).toMatch(/`echo '.*' > \.vinaya-confidence`/)
+describe('confidencePromptLine (pure) — O11 (task-run-v1 21, #541, round 2 review MAJOR); path interpolation (task-files-v1 2, #649)', () => {
+  const EXAMPLE_PATH = '/home/dev/.vinaya/runtime/unresolved/tasks-execution/9001/rounds/2/developer/.vinaya-confidence'
+
+  it('names the exact command expected, not just the required file format, interpolating the absolute path this round names', () => {
+    expect(confidencePromptLine(EXAMPLE_PATH)).toContain(`> ${EXAMPLE_PATH}\`.`)
   })
 
   it('the confidence re-ask prompt (dispatched via dispatchDeveloper, which always prepends the resume-context block on a resume) still carries this same command, since it is appended verbatim', () => {
-    const reaskPrompt = `Your last reply did not include a valid confidence line.\n\n${CONFIDENCE_PROMPT_LINE}`
-    expect(reaskPrompt).toMatch(/`echo '.*' > \.vinaya-confidence`/)
+    const reaskPrompt = `Your last reply did not include a valid confidence line.\n\n${confidencePromptLine(EXAMPLE_PATH)}`
+    expect(reaskPrompt).toContain(`> ${EXAMPLE_PATH}\`.`)
+  })
+
+  it('never a fixed worktree-relative path — a different round gets a different absolute path', () => {
+    const roundTwo = confidencePromptLine('/runtime/tasks-execution/9001/rounds/2/developer/.vinaya-confidence')
+    const roundThree = confidencePromptLine('/runtime/tasks-execution/9001/rounds/3/developer/.vinaya-confidence')
+    expect(roundTwo).not.toBe(roundThree)
   })
 })
 
