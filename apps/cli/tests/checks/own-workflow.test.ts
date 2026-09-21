@@ -34,7 +34,12 @@ describe('ownWorkflow — checks reported by their own workflow', () => {
     expect(spec?.ownWorkflow).toBe(true)
   })
 
-  it('exactly these eight core checks are so marked — this narrows --all and must stay narrow', () => {
+  it('principal-test-plan-wait is marked, because it owns the principal Test Plan wait as its own independent check', () => {
+    const spec = coreCheckRegistry().find((s) => s.name === 'principal-test-plan-wait')
+    expect(spec?.ownWorkflow).toBe(true)
+  })
+
+  it('exactly these nine core checks are so marked — this narrows --all and must stay narrow', () => {
     const marked = coreCheckRegistry()
       .filter((s) => s.ownWorkflow)
       .map((s) => s.name)
@@ -47,6 +52,7 @@ describe('ownWorkflow — checks reported by their own workflow', () => {
       'issue-surface-globs',
       'issue-title-grammar',
       'issue-tranche-label',
+      'principal-test-plan-wait',
       'review-gate'
     ])
   })
@@ -58,10 +64,11 @@ describe('ownWorkflow — checks reported by their own workflow', () => {
     const runnable = coreCheckRegistry().filter(runsUnderAll)
     // Relative to the live registry's own size, not a hardcoded count — this
     // cannot go stale as the registry grows, unlike an absolute number would.
-    // Exactly eight checks (pinned above) are ever withheld.
-    expect(runnable.length).toBe(coreCheckRegistry().length - 8)
+    // Exactly nine checks (pinned above) are ever withheld.
+    expect(runnable.length).toBe(coreCheckRegistry().length - 9)
     expect(runnable.some((s) => s.name === 'review-gate')).toBe(false)
     expect(runnable.some((s) => s.name === 'body-bare-digits')).toBe(false)
+    expect(runnable.some((s) => s.name === 'principal-test-plan-wait')).toBe(false)
     for (const name of [
       'issue-title-grammar',
       'issue-objectives-numbering',
