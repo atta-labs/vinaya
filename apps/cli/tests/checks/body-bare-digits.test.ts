@@ -1,4 +1,6 @@
-import { readdirSync, statSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
 import { checkBareDigits } from '../../src/checks/body-bare-digits-logic'
@@ -853,6 +855,45 @@ describe('body-bare-digits — check bin file mode', () => {
     for (const file of files) {
       const mode = statSync(join(binDir, file)).mode & 0o777
       expect(mode & 0o111).not.toBe(0)
+    }
+  })
+
+  it('the executable-bit assertion tolerates umask `002` group-write, and still fails a non-executable mode (real filesystem fixture, isolated in a subprocess so the umask change cannot leak into a concurrent test)', () => {
+    // `process.umask()` is global to the whole process, and Bun can run
+    // other test files concurrently in the same process — mutating it here
+    // directly would be exactly the leak the brief's stop condition warns
+    // against. A subprocess's umask is its own; the parent's is never
+    // touched, so there is nothing to restore.
+    const dir = mkdtempSync(join(tmpdir(), 'vinaya-exec-bit-umask-'))
+    try {
+      const probe = join(dir, 'probe.ts')
+      const execPath = join(dir, 'exec-file')
+      const nonExecPath = join(dir, 'non-exec-file')
+      writeFileSync(
+        probe,
+        [
+          "import { writeFileSync, statSync } from 'node:fs'",
+          'process.umask(0o002)',
+          `writeFileSync(${JSON.stringify(execPath)}, '#!/bin/sh\\necho hi\\n', { mode: 0o777 })`,
+          `writeFileSync(${JSON.stringify(nonExecPath)}, 'not a script\\n', { mode: 0o666 })`,
+          `const execMode = statSync(${JSON.stringify(execPath)}).mode & 0o777`,
+          `const nonExecMode = statSync(${JSON.stringify(nonExecPath)}).mode & 0o777`,
+          'console.log(JSON.stringify({ execMode, nonExecMode }))'
+        ].join('\n')
+      )
+
+      const out = execFileSync(process.execPath, [probe], { encoding: 'utf8' })
+      const { execMode, nonExecMode } = JSON.parse(out) as { execMode: number; nonExecMode: number }
+
+      // Reproduces the real symptom (Issue #684's Origin): a requested 0o777
+      // under umask `002` lands as 0o775, not 0o755.
+      expect(execMode).toBe(0o775)
+      // The Part 1 assertion accepts it...
+      expect(execMode & 0o111).not.toBe(0)
+      // ...and still refuses a mode with no executable bit at all.
+      expect(nonExecMode & 0o111).toBe(0)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
     }
   })
 })
