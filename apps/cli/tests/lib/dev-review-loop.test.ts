@@ -4025,17 +4025,18 @@ describe('devReviewLoop — round 1 blocked, round 2 genuinely resumes', () => {
   }, 20000)
 })
 
-// --- no_progress pause still logs its completion event (regression, PR #459 MAJOR) ---
+// --- an escalation pause still logs its completion event (regression, PR #459 MAJOR) ---
 
 /**
- * The reviewer reports the SAME unresolved blocker on round 1 and round 2
- * (security stays clean throughout) — `assessRound` turns two consecutive
- * changes-requested rounds that resolve nothing into `pause{reason:
- * 'no_progress'}`. Round 2 needs a confidence line ≥50 (`round >= 2` asks
- * for one) so the loop reaches the reviewers at all, rather than pausing on
- * `confidence` first.
+ * The code-reviewer escalates on round 1 (`ESCALATE: authority`, security
+ * clean) — `assessRound` turns that into `pause{reason:'escalation'}` before
+ * any verdict is held or published. A round-1 escalation is the cheapest
+ * verdicts-branch pause to reach: it needs no confidence line (that gate is
+ * `round >= 2`), so it exercises the same `routeCompletionEvents` /
+ * `journal_finalized`-on-pause path the removed `no_progress` exit once did,
+ * deterministically and in a single round.
  */
-function writeFakeClaudeNoProgressScenario(dir: string): void {
+function writeFakeClaudeEscalatePauseScenario(dir: string): void {
   writeFakeBinary(
     dir,
     'claude',
@@ -4047,10 +4048,10 @@ case "$VINAYA_ROLE" in
   code-reviewer)
     WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
     mkdir -p "$WD"
-    printf 'BLOCKER|smoke.ts:1|persistent blocker, never resolved\\n' > "$WD/findings.txt"
+    : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
-    printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\nFINDING_IDS: F1\\n' > "$WD/report.txt"
-    echo '{"session_id":"rev-session-'"$VINAYA_ROUND"'","usage":{"input_tokens":8,"output_tokens":4}}'
+    printf 'ESCALATE: authority\\nSUMMARY: needs a call nobody made.\\n' > "$WD/report.txt"
+    echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
   security)
     WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work"
@@ -4058,13 +4059,9 @@ case "$VINAYA_ROLE" in
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
     printf 'CONFIG_SCAN: clean\\nSECRETS: none found\\n' > "$WD/report.txt"
-    echo '{"session_id":"sec-session-'"$VINAYA_ROUND"'","usage":{"input_tokens":8,"output_tokens":4}}'
+    echo '{"session_id":"sec-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
   *)
-    if [ "$VINAYA_ROUND" != "1" ]; then
-      mkdir -p "$PWD/.worktrees/task/dev-review-loop-v1/$VINAYA_TASK"
-      echo "CONFIDENCE: 90 — still trying" > "$PWD/.worktrees/task/dev-review-loop-v1/$VINAYA_TASK/.vinaya-confidence"
-    fi
     echo '{"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5}}'
     ;;
 esac
@@ -4073,39 +4070,35 @@ exit 0
   )
 }
 
-function setUpNoProgress(): { home: string; cwd: string; path: string } {
+function setUpEscalatePause(): { home: string; cwd: string; path: string } {
   const home = tempDir('vinaya-drl-home-')
   const cwd = tempDir('vinaya-drl-cwd-')
   const binDir = tempDir('vinaya-drl-bin-')
-  writeFakeClaudeNoProgressScenario(binDir)
+  writeFakeClaudeEscalatePauseScenario(binDir)
   writeFakeGh(binDir)
   writeFakeGit(binDir)
   return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
 }
 
-describe('devReviewLoop — a paused loop for reason no_progress still logs its completion event', () => {
-  it('pauses on no_progress after two rounds resolve nothing, and journal_finalized is not dropped', () => {
-    const { home, cwd, path } = setUpNoProgress()
+describe('devReviewLoop — a paused loop for reason escalation still logs its completion event', () => {
+  it('pauses on escalation, and journal_finalized is not dropped', () => {
+    const { home, cwd, path } = setUpEscalatePause()
     const r = runLoop(home, cwd, path)
     expect(r.status).not.toBe(0)
-    expect(r.stdout).toMatch(/paused \(no_progress\)/)
+    expect(r.stdout).toMatch(/paused \(escalation\)/)
 
-    // The driver now also posts a round marker comment for
-    // each of the two rounds before their findings are even compared — the
-    // pause comment is the LAST one posted, not necessarily `comment-1.md`.
+    // The driver posts a round marker comment before the findings are even
+    // compared — the pause comment is the LAST one posted, not necessarily
+    // `comment-1.md`.
     const postedFiles = postedCommentFiles(home)
     const pauseComment = readFileSync(
       join(home, '.fake-gh-posted-comments', postedFiles[postedFiles.length - 1] as string),
       'utf8'
     )
-    expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:no_progress -->$/m)
-    // O1 ([task-log-v1] 9, Issue #631): `assessRound`'s own generic
-    // `'no_progress'` decision (two consecutive rounds resolving no finding)
-    // carries no `detail` at all — the driver narrates it from the round's
-    // own `findings_compared` event, so the comment alone states what
-    // the driver observed, not just the bare reason name.
-    expect(pauseComment).toContain('no finding was marked resolved this round')
-    expect(pauseComment).toContain('two consecutive rounds with no forward motion')
+    expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:escalation -->$/m)
+    // The escalation pause carries no `detail` from `assessRound`; the driver
+    // narrates it from the round's own verdicts, naming which role escalated.
+    expect(pauseComment).toContain('reviewer returned ESCALATE this round')
 
     // The regression: this event was captured into `pendingCompletionEvents`
     // by the `dispatch_reviewers` branch's unconditional filter, and only
@@ -4128,11 +4121,11 @@ describe('devReviewLoop — a paused loop for reason no_progress still logs its 
   // only stderr; now it is flushed first, and a failure is folded into the
   // pause's own `detail`.
   it('a final flush that fails before this pause is folded into the posted detail, never only reaching stderr', () => {
-    const { home, cwd, path } = setUpNoProgress()
+    const { home, cwd, path } = setUpEscalatePause()
     writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ logPublish: { issue: TASK + 1 } }))
     const r = runLoop(home, cwd, path)
     expect(r.status).not.toBe(0)
-    expect(r.stdout).toMatch(/paused \(no_progress\)/)
+    expect(r.stdout).toMatch(/paused \(escalation\)/)
 
     const postedFiles = postedCommentFiles(home)
     const pauseComment = readFileSync(
@@ -8972,13 +8965,6 @@ describe('deriveVerdictPauseDetail (pure) — [task-log-v1] 9, Issue #631, O1/O3
     const detail = deriveVerdictPauseDetail('reappearance', events, false, false)
     expect(detail).toContain('F1, F3')
     expect(detail).toContain('reappeared after being marked resolved')
-  })
-
-  it('narrates the no_progress case from the same findings_compared event, never inventing a fact assessRound did not already compute', () => {
-    const events = [findingsComparedEvent({ open: ['F1'] })]
-    const detail = deriveVerdictPauseDetail('no_progress', events, false, false)
-    expect(detail).toContain('no finding was marked resolved this round')
-    expect(detail).toContain('two consecutive rounds with no forward motion')
   })
 
   it('returns undefined when no findings_compared event is present at all — never fabricates one', () => {
