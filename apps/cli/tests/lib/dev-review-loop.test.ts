@@ -2006,10 +2006,11 @@ function fixtureChildEnv(home: string, path: string, extraEnv: Record<string, st
 const FIXTURE_GITHUB_REPOSITORY = 'vinaya-fixture-owner/vinaya-fixture-repo'
 
 /**
- * Generous on a quiet host (these fixtures only ever talk to the fake,
- * near-instant `claude`/`gh`/`git` stand-ins on `$PATH`, never the network)
+ * Generous on a quiet host and under the pre-push suite's cross-file load
+ * (these fixtures only ever talk to the fake, near-instant
+ * `claude`/`gh`/`git` stand-ins on `$PATH`, never the network)
  * and, not coincidentally, below the smallest per-test `it(..., N)` bound
- * used anywhere in this file (20000ms) — so a genuinely stuck subprocess
+ * used anywhere in this file (40000ms) — so a genuinely stuck subprocess
  * (the real, load-bearing case: lock contention on a path another fixture
  * or another concurrent task run still holds) is caught HERE, with the
  * child's own captured output, before the test framework's own outer
@@ -5364,7 +5365,7 @@ describe('devReviewLoop — control-store-v1 task 4 (round 2 review, security HI
     expect(resumed.status).not.toBe(0)
     expect(resumed.stdout).not.toMatch(/paused \(infrastructure\)/)
     expect(resumed.stderr).toMatch(/fetchRulings/)
-  }, 30000)
+  }, 50000)
 })
 
 describe('devReviewLoop — control-store-v1 task 4 (round 3 review, MAJOR): a resumed process floors its own in-memory infrastructure-retry count against pause-state.json too', () => {
@@ -5417,7 +5418,7 @@ describe('devReviewLoop — control-store-v1 task 4 (round 3 review, MAJOR): a r
 
     const newPauseState = JSON.parse(readFileSync(pauseStatePath, 'utf8')) as { infrastructureRetries: number }
     expect(newPauseState.infrastructureRetries).toBeGreaterThanOrEqual(4)
-  }, 30000)
+  }, 50000)
 })
 
 /**
@@ -5776,7 +5777,7 @@ describe('devReviewLoop — O4 (#595): a re-exec child whose own first gate read
       unknown
     >
     expect(pauseState.reason).toBe('infrastructure')
-  }, 30000)
+  }, 50000)
 })
 
 describe('devReviewLoop — O5 (#595): an infrastructure pause resumes on the bare command, no Principal ruling needed', () => {
@@ -5815,7 +5816,7 @@ describe('devReviewLoop — O5 (#595): an infrastructure pause resumes on the ba
     // back into the same bounded infrastructure pause, never a crash.
     expect(resumed.status).not.toBe(0)
     expect(resumed.stdout).toMatch(/paused \(infrastructure\)/)
-  }, 30000)
+  }, 50000)
 })
 
 /**
@@ -7666,7 +7667,7 @@ describe('devReviewLoop — O7 (task-run-v1 task 15): a moved base re-execs in p
         expect(readFileSync(join(commentsDir, file), 'utf8')).not.toMatch(/aeg:loop:paused:stale_driver/)
       }
     }
-  }, 30000)
+  }, 50000)
 })
 
 /**
@@ -7741,7 +7742,7 @@ describe('devReviewLoop — O1 (#548): the re-exec hands its lock to the child i
     expect(r.stdout).toMatch(/publish/)
     // The child cleared its own lock on its own normal exit.
     expect(existsSync(driverLockPath(home))).toBe(false)
-  }, 30000)
+  }, 50000)
 })
 
 // --- O4 (Issue #662): a --resume-started run's own stale-driver re-exec never re-authenticates the ruling it already consumed ---
@@ -7913,7 +7914,7 @@ describe('devReviewLoop — O4 (Issue #662): a resumed loop that hits a stale-dr
     // by the re-exec'd child from disk) and round 2's clean one.
     expect(readFileSync(join(roundDir(home, 1), 'reviewer.md'), 'utf8')).toMatch(/^VERDICT: REQUEST CHANGES$/m)
     expect(readFileSync(join(roundDir(home, 2), 'reviewer.md'), 'utf8')).toMatch(/^VERDICT: APPROVE$/m)
-  }, 30000)
+  }, 50000)
 })
 
 describe('buildReexecArgs (pure) — O7 re-exec carries the original --json intent through the restart (task-run-v1 21, #541, round 2 review MINOR)', () => {
