@@ -92,6 +92,7 @@ describe('RC3 — reader-resolvable-prose/retired-vocabulary are part of the ado
         'no-disk-state',
         'pr-premise-reassert',
         'pr-report-density',
+        'principal-test-plan-wait',
         'quoted-command',
         'reader-resolvable-prose',
         'registry-gates',
