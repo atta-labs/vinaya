@@ -3,10 +3,7 @@ import { checkReviewGate, isChangesetsReleasePr, isReviewGateExemptBranch } from
 import { policyDigest } from './review-input-manifest'
 import { DEFAULT_REVIEW_POLICY } from './review-policy'
 
-import type { MechanicalCheckStatus, ReviewGateComment } from './review-gate'
-
-/** A single green check-run — the default "mechanical checks are clean" fixture for tests that are about verdict logic, not mechanical-check logic. */
-const CLEAN_CHECKS: MechanicalCheckStatus[] = [{ name: 'Vinaya CI', bucket: 'pass' }]
+import type { ReviewGateComment } from './review-gate'
 
 /**
  * The digest `checkReviewGate` resolves whenever a test omits its own
@@ -46,7 +43,6 @@ describe('checkReviewGate', () => {
       comments: [APPROVE_COMMENT, PASS_COMMENT],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
       objectivesVersion: null,
       rulingOrdinal: 0
@@ -60,7 +56,6 @@ describe('checkReviewGate', () => {
       comments: [],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
       objectivesVersion: null,
       rulingOrdinal: 0
@@ -75,7 +70,6 @@ describe('checkReviewGate', () => {
       comments: [REQUEST_CHANGES_COMMENT, PASS_COMMENT],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
       objectivesVersion: null,
       rulingOrdinal: 0
@@ -89,7 +83,6 @@ describe('checkReviewGate', () => {
       comments: [APPROVE_COMMENT, FAIL_COMMENT],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
       objectivesVersion: null,
       rulingOrdinal: 0
@@ -103,7 +96,6 @@ describe('checkReviewGate', () => {
       comments: [APPROVE_COMMENT],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
       objectivesVersion: null,
       rulingOrdinal: 0
@@ -117,7 +109,6 @@ describe('checkReviewGate', () => {
       comments: [PASS_COMMENT, APPROVE_COMMENT],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
       objectivesVersion: null,
       rulingOrdinal: 0
@@ -132,7 +123,6 @@ describe('checkReviewGate', () => {
         comments: [principal(`VERDICT: APPROVE\n\nJudged head: ${staleSha}`), PASS_COMMENT],
         labels: [],
         waiverLabelActor: null,
-        mechanicalChecks: CLEAN_CHECKS,
         headSha: HEAD_SHA,
         objectivesVersion: null,
         rulingOrdinal: 0
@@ -146,7 +136,6 @@ describe('checkReviewGate', () => {
         comments: [APPROVE_COMMENT, principal(`VERDICT: PASS\n\nreviewed at head ${HEAD_SHA.slice(0, 8)}.`)],
         labels: [],
         waiverLabelActor: null,
-        mechanicalChecks: CLEAN_CHECKS,
         headSha: HEAD_SHA,
         objectivesVersion: null,
         rulingOrdinal: 0
@@ -166,7 +155,6 @@ describe('checkReviewGate', () => {
         ],
         labels: [],
         waiverLabelActor: null,
-        mechanicalChecks: CLEAN_CHECKS,
         headSha: HEAD_SHA,
         objectivesVersion: null,
         rulingOrdinal: 0
@@ -180,7 +168,6 @@ describe('checkReviewGate', () => {
         comments: [APPROVE_COMMENT, PASS_COMMENT],
         labels: [],
         waiverLabelActor: null,
-        mechanicalChecks: CLEAN_CHECKS,
         headSha: newHeadAfterPush,
         objectivesVersion: null,
         rulingOrdinal: 0
@@ -207,7 +194,6 @@ describe('checkReviewGate', () => {
         ],
         labels: [],
         waiverLabelActor: null,
-        mechanicalChecks: CLEAN_CHECKS,
         headSha: newHeadAfterPush,
         objectivesVersion: null,
         rulingOrdinal: 0
@@ -222,7 +208,6 @@ describe('checkReviewGate', () => {
         comments: [],
         labels: ['vinaya/tier:1'],
         waiverLabelActor: 'daniboomerang',
-        mechanicalChecks: CLEAN_CHECKS,
         headSha: HEAD_SHA,
         objectivesVersion: null,
         rulingOrdinal: 0
@@ -236,7 +221,6 @@ describe('checkReviewGate', () => {
         comments: [],
         labels: ['vinaya/waiver:review'],
         waiverLabelActor: 'some-agent-bot',
-        mechanicalChecks: CLEAN_CHECKS,
         headSha: HEAD_SHA,
         objectivesVersion: null,
         rulingOrdinal: 0
@@ -250,7 +234,6 @@ describe('checkReviewGate', () => {
         comments: [],
         labels: ['vinaya/waiver:review'],
         waiverLabelActor: null,
-        mechanicalChecks: CLEAN_CHECKS,
         headSha: HEAD_SHA,
         objectivesVersion: null,
         rulingOrdinal: 0
@@ -264,7 +247,6 @@ describe('checkReviewGate', () => {
         comments: [],
         labels: ['vinaya/waiver:review'],
         waiverLabelActor: 'daniboomerang',
-        mechanicalChecks: CLEAN_CHECKS,
         headSha: HEAD_SHA,
         objectivesVersion: null,
         rulingOrdinal: 0
@@ -278,7 +260,6 @@ describe('checkReviewGate', () => {
         comments: [],
         labels: ['vinaya/waiver:docs'],
         waiverLabelActor: 'daniboomerang',
-        mechanicalChecks: CLEAN_CHECKS,
         headSha: HEAD_SHA,
         objectivesVersion: null,
         rulingOrdinal: 0
@@ -288,103 +269,25 @@ describe('checkReviewGate', () => {
     })
   })
 
-  describe('mechanical checks (review-mechanical-gate-v1 task 2, #337)', () => {
-    it('passes when mechanical checks are all green and both verdicts are clean and bound', () => {
-      const result = checkReviewGate({
-        comments: [APPROVE_COMMENT, PASS_COMMENT],
-        labels: [],
-        waiverLabelActor: null,
-        mechanicalChecks: [
-          { name: 'Vinaya CI', bucket: 'pass' },
-          { name: 'vinaya check --all --diff-only', bucket: 'pass' }
-        ],
-        headSha: HEAD_SHA,
-        objectivesVersion: null,
-        rulingOrdinal: 0
-      })
-      expect(result.verdict).toBe('pass')
+  // This gate owns reviews and nothing else. A sibling check going red, and
+  // an unticked `[principal]` Test Plan item, are merge conditions other
+  // checks own — neither is an input here, so neither can change this
+  // answer. The PR modelled below carries both.
+  it('passes on clean, bound verdicts even though a sibling check is red and a principal Test Plan item is unticked', () => {
+    const result = checkReviewGate({
+      comments: [
+        APPROVE_COMMENT,
+        PASS_COMMENT,
+        principal('Vinaya CI is red on this head.'),
+        principal('## Test Plan\n\n- [ ] **[principal]** verify in a signed-in browser')
+      ],
+      labels: [],
+      waiverLabelActor: null,
+      headSha: HEAD_SHA,
+      objectivesVersion: null,
+      rulingOrdinal: 0
     })
-
-    it('fails, naming the red check, when a mechanical check is not green even though both verdicts are clean and bound', () => {
-      const result = checkReviewGate({
-        comments: [APPROVE_COMMENT, PASS_COMMENT],
-        labels: [],
-        waiverLabelActor: null,
-        mechanicalChecks: [
-          { name: 'Vinaya CI', bucket: 'fail' },
-          { name: 'vinaya check --all --diff-only', bucket: 'pass' }
-        ],
-        headSha: HEAD_SHA,
-        objectivesVersion: null,
-        rulingOrdinal: 0
-      })
-      expect(result.verdict).toBe('fail')
-      expect(result.reason).toContain('mechanical check(s) not green: Vinaya CI (fail)')
-    })
-
-    it('fails, naming that none have reported, when zero mechanical checks are reported', () => {
-      const result = checkReviewGate({
-        comments: [APPROVE_COMMENT, PASS_COMMENT],
-        labels: [],
-        waiverLabelActor: null,
-        mechanicalChecks: [],
-        headSha: HEAD_SHA,
-        objectivesVersion: null,
-        rulingOrdinal: 0
-      })
-      expect(result.verdict).toBe('fail')
-      expect(result.reason).toContain('no mechanical checks have reported for this head yet')
-    })
-
-    it('the waiver label still short-circuits to pass regardless of mechanical-check state', () => {
-      const result = checkReviewGate({
-        comments: [],
-        labels: ['vinaya/waiver:review'],
-        waiverLabelActor: 'daniboomerang',
-        mechanicalChecks: [],
-        headSha: HEAD_SHA,
-        objectivesVersion: null,
-        rulingOrdinal: 0
-      })
-      expect(result.verdict).toBe('pass')
-      expect(result.waived).toBe(true)
-    })
-
-    // A job whose own `if:` is false for the current event
-    // still reports a `skipped` (bucket `skipping`, same as GitHub's
-    // `neutral` conclusion) check-run — `vinaya-review.yml`'s old
-    // `retrigger-on-ci-green` job did this on every ordinary
-    // `pull_request_target` run, and blocked every PR until this fix.
-    it('a skipping/neutral mechanical check is ignored, never treated as a failure', () => {
-      const result = checkReviewGate({
-        comments: [APPROVE_COMMENT, PASS_COMMENT],
-        labels: [],
-        waiverLabelActor: null,
-        mechanicalChecks: [
-          { name: 'Vinaya CI', bucket: 'pass' },
-          { name: 'vinaya review gate (retrigger on CI green)', bucket: 'skipping' },
-          { name: 'some other neutral job', bucket: 'neutral' }
-        ],
-        headSha: HEAD_SHA,
-        objectivesVersion: null,
-        rulingOrdinal: 0
-      })
-      expect(result.verdict).toBe('pass')
-    })
-
-    it('a head reporting only skipping/neutral checks reads as none reported, not as clean', () => {
-      const result = checkReviewGate({
-        comments: [APPROVE_COMMENT, PASS_COMMENT],
-        labels: [],
-        waiverLabelActor: null,
-        mechanicalChecks: [{ name: 'vinaya review gate (retrigger on CI green)', bucket: 'skipping' }],
-        headSha: HEAD_SHA,
-        objectivesVersion: null,
-        rulingOrdinal: 0
-      })
-      expect(result.verdict).toBe('fail')
-      expect(result.reason).toContain('no mechanical checks have reported for this head yet')
-    })
+    expect(result.verdict).toBe('pass')
   })
 })
 
@@ -405,7 +308,6 @@ describe('checkReviewGate — base identity binding (#555, O1/O3)', () => {
       comments,
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
       baseSha,
       objectivesVersion: null,
@@ -432,7 +334,6 @@ describe('checkReviewGate — base identity binding (#555, O1/O3)', () => {
       comments: [codeReviewAtBase(BASE_A), securityAtBase(BASE_A)],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
       baseSha: BASE_B,
       objectivesVersion: null,
@@ -483,7 +384,6 @@ describe('checkReviewGate — verdict-author verification (security finding, PR 
       ],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
       objectivesVersion: null,
       rulingOrdinal: 0
@@ -503,7 +403,6 @@ describe('checkReviewGate — verdict-author verification (security finding, PR 
       ],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
       objectivesVersion: null,
       rulingOrdinal: 0
@@ -517,7 +416,6 @@ describe('checkReviewGate — verdict-author verification (security finding, PR 
       comments: [{ body: `VERDICT: APPROVE\n\nJudged head: ${HEAD_SHA}`, author: null }, PASS_COMMENT],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
       objectivesVersion: null,
       rulingOrdinal: 0
@@ -534,7 +432,6 @@ describe('checkReviewGate — verdict-author verification (security finding, PR 
       ],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
       objectivesVersion: null,
       rulingOrdinal: 0
@@ -548,7 +445,6 @@ describe('checkReviewGate — verdict-author verification (security finding, PR 
       comments: [forged(`VERDICT: FAIL\n\nchaos\n\nJudged head: ${HEAD_SHA}`), APPROVE_COMMENT, PASS_COMMENT],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
       objectivesVersion: null,
       rulingOrdinal: 0
@@ -572,7 +468,6 @@ describe('checkReviewGate — configurable principalAllowlist (adopter-repo fix)
       comments: [adopterApprove('someone-else'), adopterPass('someone-else')],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
       objectivesVersion: null,
       rulingOrdinal: 0
@@ -586,7 +481,6 @@ describe('checkReviewGate — configurable principalAllowlist (adopter-repo fix)
       comments: [adopterApprove('someone-else'), adopterPass('someone-else')],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       principalAllowlist: ['someone-else'],
       headSha: HEAD_SHA,
       objectivesVersion: null,
@@ -600,7 +494,6 @@ describe('checkReviewGate — configurable principalAllowlist (adopter-repo fix)
       comments: [adopterApprove('alice'), adopterPass('ALICE')],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       principalAllowlist: ['Alice'],
       headSha: HEAD_SHA,
       objectivesVersion: null,
@@ -614,7 +507,6 @@ describe('checkReviewGate — configurable principalAllowlist (adopter-repo fix)
       comments: [adopterApprove('alice-bot'), adopterPass('alice-bot')],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       principalAllowlist: ['Alice'],
       headSha: HEAD_SHA,
       objectivesVersion: null,
@@ -628,7 +520,6 @@ describe('checkReviewGate — configurable principalAllowlist (adopter-repo fix)
       comments: [adopterApprove('daniboomerang'), adopterPass('daniboomerang')],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       principalAllowlist: ['someone-else'], // daniboomerang deliberately excluded
       headSha: HEAD_SHA,
       objectivesVersion: null,
@@ -648,7 +539,6 @@ describe('checkReviewGate — configurable principalAllowlist (adopter-repo fix)
       comments: [adopterApprove('daniboomerang'), adopterPass('daniboomerang')],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       principalAllowlist: [],
       headSha: HEAD_SHA,
       objectivesVersion: null,
@@ -663,7 +553,6 @@ describe('checkReviewGate — configurable principalAllowlist (adopter-repo fix)
       comments: [],
       labels: ['vinaya/waiver:review'],
       waiverLabelActor: 'daniboomerang',
-      mechanicalChecks: CLEAN_CHECKS,
       principalAllowlist: [],
       headSha: HEAD_SHA,
       objectivesVersion: null,
@@ -702,7 +591,6 @@ describe('checkReviewGate — verdicts are bound to the head they judged (#73, f
       ],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: PR_HEAD,
       objectivesVersion: null,
       rulingOrdinal: 0
@@ -729,7 +617,6 @@ describe('checkReviewGate — verdicts are bound to the head they judged (#73, f
       ],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: newHead,
       objectivesVersion: null,
       rulingOrdinal: 0
@@ -755,7 +642,6 @@ describe('checkReviewGate — verdicts are bound to the head they judged (#73, f
       ],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: PR_HEAD,
       objectivesVersion: null,
       rulingOrdinal: 0
@@ -779,7 +665,6 @@ describe('checkReviewGate — objectives-version binding (dev-review-loop-v1 tas
       comments: [boundComment('APPROVE', VERSION_A), boundComment('PASS', VERSION_A)],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
       objectivesVersion: VERSION_A,
       rulingOrdinal: 0
@@ -792,7 +677,6 @@ describe('checkReviewGate — objectives-version binding (dev-review-loop-v1 tas
       comments: [boundComment('APPROVE', VERSION_A), boundComment('PASS', VERSION_B)],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
       objectivesVersion: VERSION_B,
       rulingOrdinal: 0
@@ -808,7 +692,6 @@ describe('checkReviewGate — objectives-version binding (dev-review-loop-v1 tas
       comments: [APPROVE_COMMENT, boundComment('PASS', VERSION_A)],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
       objectivesVersion: VERSION_A,
       rulingOrdinal: 0
@@ -824,7 +707,6 @@ describe('checkReviewGate — objectives-version binding (dev-review-loop-v1 tas
       comments: [APPROVE_COMMENT, PASS_COMMENT],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
       objectivesVersion: null,
       rulingOrdinal: 0
@@ -837,7 +719,6 @@ describe('checkReviewGate — objectives-version binding (dev-review-loop-v1 tas
       comments: [boundComment('APPROVE', VERSION_A), boundComment('PASS', VERSION_A)],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
       objectivesVersion: VERSION_B,
       rulingOrdinal: 0
@@ -859,7 +740,6 @@ describe('checkReviewGate — ruling-freshness binding (review-validity-v1 task 
       comments: [boundComment('APPROVE', 1), boundComment('PASS', 1)],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
       objectivesVersion: null,
       rulingOrdinal: 1
@@ -872,7 +752,6 @@ describe('checkReviewGate — ruling-freshness binding (review-validity-v1 task 
       comments: [boundComment('APPROVE', 1), boundComment('PASS', 1)],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
       objectivesVersion: null,
       rulingOrdinal: 2
@@ -891,7 +770,6 @@ describe('checkReviewGate — ruling-freshness binding (review-validity-v1 task 
       comments: [APPROVE_COMMENT, PASS_COMMENT],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
       objectivesVersion: null,
       rulingOrdinal: 1
@@ -907,7 +785,6 @@ describe('checkReviewGate — ruling-freshness binding (review-validity-v1 task 
       comments: [APPROVE_COMMENT, PASS_COMMENT],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
       objectivesVersion: null,
       rulingOrdinal: 0
@@ -920,7 +797,6 @@ describe('checkReviewGate — ruling-freshness binding (review-validity-v1 task 
       comments: [boundComment('APPROVE', 0), boundComment('PASS', 0)],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
       objectivesVersion: null,
       rulingOrdinal: 0
@@ -975,7 +851,6 @@ describe('checkReviewGate — patch-identity binding', () => {
     labels: [] as string[],
     waiverLabelActor: null,
     principalAllowlist: ['daniboomerang'],
-    mechanicalChecks: [{ name: 'ci', bucket: 'pass' }],
     objectivesVersion: null as string | null,
     rulingOrdinal: 0
   }
@@ -1057,7 +932,6 @@ describe('checkReviewGate — brief-hash binding', () => {
       comments: [boundComment('APPROVE', HASH_A), boundComment('PASS', HASH_A)],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
       objectivesVersion: null,
       rulingOrdinal: 0,
@@ -1071,7 +945,6 @@ describe('checkReviewGate — brief-hash binding', () => {
       comments: [boundComment('APPROVE', HASH_A), boundComment('PASS', HASH_A)],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
       objectivesVersion: null,
       rulingOrdinal: 0,
@@ -1091,7 +964,6 @@ describe('checkReviewGate — brief-hash binding', () => {
       comments: [boundComment('APPROVE', HASH_A), boundComment('PASS', HASH_A)],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
       objectivesVersion: null,
       rulingOrdinal: 0
@@ -1104,7 +976,6 @@ describe('checkReviewGate — brief-hash binding', () => {
       comments: [boundComment('APPROVE', HASH_A), boundComment('PASS', HASH_A)],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
       objectivesVersion: null,
       rulingOrdinal: 0,
@@ -1118,7 +989,6 @@ describe('checkReviewGate — brief-hash binding', () => {
       comments: [APPROVE_COMMENT, PASS_COMMENT],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
       objectivesVersion: null,
       rulingOrdinal: 0,
@@ -1148,7 +1018,6 @@ describe('checkReviewGate — policy-digest binding', () => {
       comments: [boundComment('APPROVE', '1'.repeat(64)), boundComment('PASS', '1'.repeat(64))],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
       objectivesVersion: null,
       rulingOrdinal: 0
@@ -1161,7 +1030,6 @@ describe('checkReviewGate — policy-digest binding', () => {
       comments: [boundComment('APPROVE', currentDigest), boundComment('PASS', currentDigest)],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
       objectivesVersion: null,
       rulingOrdinal: 0
@@ -1174,7 +1042,6 @@ describe('checkReviewGate — policy-digest binding', () => {
       comments: [boundComment('APPROVE', '1'.repeat(64)), boundComment('PASS', '1'.repeat(64))],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
       objectivesVersion: null,
       rulingOrdinal: 0
@@ -1192,7 +1059,6 @@ describe('checkReviewGate — policy-digest binding', () => {
       comments: [legacyApprove, legacyPass],
       labels: [],
       waiverLabelActor: null,
-      mechanicalChecks: CLEAN_CHECKS,
       headSha: HEAD_SHA,
       objectivesVersion: null,
       rulingOrdinal: 0
@@ -1223,7 +1089,6 @@ describe('checkReviewGate — policy evaluation (O2/O3)', () => {
   const BASE_INPUT = {
     labels: [],
     waiverLabelActor: null,
-    mechanicalChecks: CLEAN_CHECKS,
     headSha: HEAD_SHA,
     objectivesVersion: null,
     rulingOrdinal: 0

@@ -5,7 +5,7 @@
 // a 2026-07-23 MINIMAL-MANIFEST re-ruling: **init installs only
 // what a shipped check or ring-2 mechanism consumes.** The manifest is
 // `vinaya.config.json` (starter ruleset, `checks: {}` empty), the
-// `vinaya-` workflows (checks, review, and its retrigger/verdict split,
+// `vinaya-` workflows (checks, review, and its verdict split,
 // body checks, the archivist's ring-2 post-merge/scheduled jobs, and the
 // task-log collector that gives task-path CI evidence a credentialed
 // publisher), git-hook managed blocks, a root
@@ -90,7 +90,6 @@ export const CONFIG_PATH = 'vinaya.config.json'
 export const DOCTRINE_POINTER_PATH = 'VINAYA.md'
 export const CHECKS_WORKFLOW_PATH = '.github/workflows/vinaya-checks.yml'
 export const REVIEW_WORKFLOW_PATH = '.github/workflows/vinaya-review.yml'
-export const REVIEW_RETRIGGER_WORKFLOW_PATH = '.github/workflows/vinaya-review-retrigger.yml'
 export const REVIEW_VERDICT_WORKFLOW_PATH = '.github/workflows/vinaya-review-verdict.yml'
 export const ARCHIVIST_WORKFLOW_PATH = '.github/workflows/vinaya-archivist.yml'
 export const BODY_CHECKS_WORKFLOW_PATH = '.github/workflows/vinaya-body-checks.yml'
@@ -671,13 +670,13 @@ function reviewWorkflow(selfHost: VendoredVinaya | null): string {
 # comment fires a different GitHub event that this
 # workflow structurally cannot receive — and keeping the comment path in a
 # separate FILE means this workflow's runs never list permanently-skipped
-# comment jobs on the PR's checks panel. The CI-green retrigger half lives
-# in its own workflow too (vinaya-review-retrigger.yml, Issue #402 O4): it
-# only ever fires on \`workflow_run\`, so it never appears as a check-run —
-# skipped or otherwise — against this workflow's own \`pull_request_target\`
-# runs. When a clean final verdict lands, or CI turns green, one of those
-# two workflows re-runs this one, so the required check below goes green
+# comment jobs on the PR's checks panel. When a clean final verdict lands,
+# that workflow re-runs this one, so the required check below goes green
 # natively with no manual rerun.
+#
+# Nothing re-runs this workflow when CI completes, and nothing needs to:
+# this gate answers for the review verdicts alone, and no other check's
+# result can change its answer, so a CI run finishing tells it nothing.
 #
 # The job's first step never builds: it reads the PR's comments and labels
 # through the API alone and fails fast, without checkout or build, whenever
@@ -685,9 +684,9 @@ function reviewWorkflow(selfHost: VendoredVinaya | null): string {
 # label exists yet — the ordinary state on \`opened\`/\`synchronize\`/
 # \`reopened\`/\`labeled\`/\`unlabeled\`. The build runs once that step finds
 # either: a verdict, which in practice is the state a rerun finds it in (the
-# verdict-comment workflow and the CI-green retrigger both re-run THIS run,
-# and by the time either fires, the verdict this job is looking for already
-# exists) — or a \`labeled\` event applying the waiver label itself, so a
+# verdict-comment workflow re-runs THIS run, and by the time it fires, the
+# verdict this job is looking for already exists) — or a \`labeled\` event
+# applying the waiver label itself, so a
 # waived PR goes green on the SAME push that applies the label rather than
 # waiting on a verdict that will never arrive (\`#525\`: found live minutes
 # after this pre-check step was first added — PR #517's Version Packages
@@ -821,110 +820,6 @@ ${vinayaSetupSteps(selfHost, 'trusted')}      - name: Review gate
 `
 }
 
-function reviewRetriggerWorkflow(): string {
-  return `# ${MANAGED_NOTE}
-#
-# The CI-green retrigger half of the review gate (Issue #402 O4, split out
-# of vinaya-review.yml). Its own FILE, not a second job there, on purpose:
-# a job's \`if:\` evaluating false still reports a \`skipped\` check-run for
-# THAT workflow's head — \`retrigger-on-ci-green\` reported \`skipped\` on
-# every ordinary \`pull_request_target\` run of vinaya-review.yml, and
-# \`check-review-gate.ts\`'s mechanical-checks read counted that as "not
-# green," blocking every PR (first seen on PR #401 at 01efd54c). This
-# workflow triggers ONLY on \`workflow_run\`, so it never runs — and so
-# never reports a check-run at all — against a \`pull_request_target\` event;
-# there is no skipped entry left for the gate to misread.
-#
-# Executes nothing itself; only re-runs vinaya-review.yml's own prior run
-# for this head, exactly as vinaya-review-verdict.yml's \`retrigger\` job
-# does for a verdict comment.
-name: Vinaya Review Gate (retrigger on CI green)
-
-on:
-  # Re-run the required gate for a head whose CI (\`ci.yml\`, name \`CI\`) just
-  # turned green, so a pull request that passed every check locally but
-  # raced a red CI run (found live on PR #398 at 4c59d4dd: gate ran with CI
-  # red, CI passed on rerun, gate held red until a hand \`gh run rerun\`)
-  # goes green on its own — no manual rerun.
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
-
-# Keyed per PR, falling back to the run id for a non-PR branch (no PR to
-# key on). Cancelling an older, still-running retrigger for the SAME PR is
-# safe and desirable, not merely tolerable: this job executes nothing of
-# its own — it only calls \`gh run rerun\` on the one required run matching
-# the CURRENT head's immutable title (see the lookup below). A newer CI
-# completion means a newer push superseded the head the older retrigger was
-# chasing, so letting the older one finish would at best re-run a gate for
-# a head nobody will read and at worst race the newer retrigger for the
-# same required run — cancelling it loses nothing the newer completion
-# doesn't already redo.
-concurrency:
-  group: vinaya-review-retrigger-\${{ github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.id }}
-  cancel-in-progress: true
-
-jobs:
-  retrigger-on-ci-green:
-    name: vinaya review gate (retrigger on CI green)
-    # \`github.event.workflow_run.pull_requests\` resolves for a same-repo
-    # branch (this repo's own model — task branches push to origin, never a
-    # fork), so PR_NUMBER needs no separate \`gh\` lookup here.
-    if: \${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.pull_requests[0] != null }}
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-    steps:
-      - name: Re-run the required review gate for this head
-        env:
-          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: \${{ github.event.workflow_run.pull_requests[0].number }}
-          HEAD_SHA: \${{ github.event.workflow_run.head_sha }}
-        run: |
-          # pull_request_target runs execute at the DEFAULT branch SHA, so a
-          # run's head_sha cannot identify the PR commit. GitHub's nested
-          # pull_requests snapshot is also not immutable: an old rerun can
-          # expose the PR's current head. The required workflow therefore
-          # records PR number + head SHA in run-name at creation, and this
-          # query matches that immutable display_title exactly — same
-          # lookup vinaya-review-verdict.yml's own retrigger step runs.
-          set -o pipefail
-          RUN_TITLE="Vinaya Review Gate PR #$PR_NUMBER @ $HEAD_SHA"
-          # O7 (found live 2026-09-04): dropped \`select(.status == "completed")\`
-          # — two retriggers for the same head race the SAME required run
-          # (PR #401, PR #409: runs 33841069791/33841065139), and the loser's
-          # query landed while the winner's \`gh run rerun\` had already
-          # flipped the run to \`in_progress\`. Requiring \`completed\` made
-          # that run invisible to the loser entirely — not "already handled,
-          # skip", but "nothing matched, give up" — so when that in-flight
-          # attempt itself later failed, nothing retried it again and the
-          # gate stayed red until a hand rerun. Matching on title+event alone
-          # (any status) lets the loser find the SAME run mid-run and try
-          # \`gh run rerun\` on it too; the existing "declined (already
-          # queued)" fallback below already handles that outcome harmlessly
-          # — it is not a new failure mode, only a query that used to see
-          # nothing at all now sees the run and takes the same safe no-op.
-          RUN_ID=$(gh api --paginate \\
-            "repos/\${{ github.repository }}/actions/workflows/vinaya-review.yml/runs?event=pull_request_target&per_page=100" \\
-            | jq -sr --arg title "$RUN_TITLE" '
-                [.[].workflow_runs[]
-                 | select(.display_title == $title)
-                 | select(.event == "pull_request_target")
-                 | select(.conclusion != "cancelled")
-                 | .id][0] // empty')
-          if [ -z "$RUN_ID" ]; then
-            echo "No completed, non-cancelled pull_request_target run of vinaya-review.yml for PR #$PR_NUMBER at $HEAD_SHA - nothing to re-run."
-            exit 0
-          fi
-          echo "Re-running vinaya-review.yml run $RUN_ID for PR #$PR_NUMBER at $HEAD_SHA"
-          # Two green CI completions for one head (e.g. a re-triggered CI
-          # run) run two retriggers in parallel. Both can select the same
-          # run, and the loser gets "already queued" — the mechanism
-          # working, not a failure worth reddening the step over.
-          gh run rerun "$RUN_ID" --repo "\${{ github.repository }}" || echo "rerun declined (already queued, or run too old) - the other retrigger covers it"
-`
-}
-
 function bodyChecksWorkflow(selfHost: VendoredVinaya | null): string {
   return `# ${MANAGED_NOTE}
 #
@@ -1027,9 +922,8 @@ ${verifiedFetchPrBodyStep()}      - name: Principal Test Plan wait
 
 /**
  * The trusted collector for task-path CI
- * evidence. `workflow_run` is the SAME trust boundary
- * `vinaya-review-retrigger.yml` already established and this generator
- * already documents there: GitHub loads this workflow from the default
+ * evidence. `workflow_run` is a default-branch trust boundary: GitHub loads
+ * this workflow from the default
  * branch, never from the pull request, and the triggering
  * \`vinaya-checks.yml\` run's own artifact is downloaded by RUN ID — an
  * API-level binding to a specific, already-completed run, never a value
@@ -1041,8 +935,7 @@ ${verifiedFetchPrBodyStep()}      - name: Principal Test Plan wait
  * publishing anything.
  *
  * \`github.event.workflow_run.pull_requests\` is empty for a fork-originated
- * pull request (the same documented GitHub Actions limitation
- * \`vinaya-review-retrigger.yml\` already notes) — this job's own \`if:\`
+ * pull request (a documented GitHub Actions limitation) — this job's own \`if:\`
  * below is therefore also the fork boundary: with no PR number to resolve,
  * there is nothing to collect into and nothing runs, so a fork's own
  * artifact is never downloaded, let alone published, under this
@@ -1938,12 +1831,6 @@ export function buildInitOps(ctx: InitContext): Op[] {
     kind: 'create-file',
     path: REVIEW_WORKFLOW_PATH,
     content: reviewWorkflow(ctx.selfHost),
-    group: 'CI workflows'
-  })
-  ops.push({
-    kind: 'create-file',
-    path: REVIEW_RETRIGGER_WORKFLOW_PATH,
-    content: reviewRetriggerWorkflow(),
     group: 'CI workflows'
   })
   ops.push({

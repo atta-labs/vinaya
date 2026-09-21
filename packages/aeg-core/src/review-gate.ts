@@ -63,6 +63,11 @@
  * reads as unbound — a ruling posted after approval turns a previously
  * clean gate red until reviewers re-cast against it.
  *
+ * This gate answers one question — are the required review verdicts present,
+ * clean, and bound to what is being merged — and nothing else. It reads no
+ * other check's result and no Test Plan tick-state; each of those is its own
+ * check, owned elsewhere.
+ *
  * Pure — no `fs`, no `fetch`, no `process.env`. The CLI shim
  * (`bin/verify-review-gate.ts`) resolves the PR's comments/labels/label-actor/
  * head sha via `gh` and calls `checkReviewGate`.
@@ -92,13 +97,6 @@ export type ReviewGateComment = {
   author: string | null
 }
 
-export type MechanicalCheckStatus = {
-  /** The check-run's display name, as GitHub reports it (`gh pr checks`' own `name` field). */
-  name: string
-  /** GitHub's own coalesced status vocabulary for this check-run — forwarded verbatim from `gh pr checks --json name,bucket`'s `bucket` field (e.g. "pass", "fail", "pending", "skipping", "cancel"). Not re-mapped to a smaller enum here — that would be a second copy of a vocabulary `gh` already owns. */
-  bucket: string
-}
-
 export type ReviewGateInput = {
   /** Every comment on the PR, with its author. */
   comments: ReviewGateComment[]
@@ -117,15 +115,6 @@ export type ReviewGateInput = {
    * default. Every verdict must cover this value to count as clean.
    */
   headSha: string
-  /**
-   * Every check-run reported for the PR's current head, EXCLUDING this
-   * repo's own review-gate check-run (the caller filters that out before
-   * calling in — see check-review-gate.ts's own comment for why the
-   * exclusion must not live here). An empty array means no mechanical
-   * check-run has reported yet, which does NOT count as clean — there is
-   * no proof to point to, not an implicit pass.
-   */
-  mechanicalChecks: MechanicalCheckStatus[]
   /**
    * Overrides `PRINCIPAL_ALLOWLIST` for this evaluation when provided — an
    * adopter repo's own `vinaya.config.json` `principals` field, resolved by
@@ -156,8 +145,8 @@ export type ReviewGateInput = {
    * A base that moved under an identical patch can carry a semantic conflict
    * the earlier review could not have seen, and this binding will still
    * hold. That is the same limit GitHub's own stale-review rule has, and CI
-   * at the new head — which this gate already requires green — is the guard
-   * for it.
+   * at the new head — a required check in its own right, never read from
+   * here — is the guard for it.
    *
    * `git patch-id --stable` ignores whitespace, so a push that changes only
    * whitespace produces the same patch identity and KEEPS the verdict. That
@@ -252,14 +241,16 @@ export function isReviewGateExemptBranch(_branch: string): boolean {
  * current `headSha` — by that sha, or by an equal patch identity when
  * `patchIdOf` is supplied — and security-review `PASS` (not `FAIL`, not
  * missing, not unclear) covering it too, both also bound to the current
- * objectives version and the current newest ruling ordinal — AND every reported mechanical check-run for that
- * same head is green, a `skipping`/`neutral` entry (a job whose own `if:`
- * was false for this event) filtered out first as absent rather than
- * counted either way (`mechanicalChecks`, after that filter, non-empty and
- * every remaining entry's `bucket` is `"pass"`). `fail` otherwise, naming
- * exactly which verdict(s) are not clean, not bound to the current head,
- * which mechanical check(s) are not green, or that none have reported at
- * all.
+ * objectives version and the current newest ruling ordinal. `fail`
+ * otherwise, naming exactly which verdict(s) are not clean or not bound to
+ * the current head.
+ *
+ * Reviews and nothing else. No other check's result, and no Test Plan
+ * tick-state, is an input here or may become one: every merge condition is
+ * its own independent check, so that all green means mergeable, and a gate
+ * that re-reported a sibling check's red answered a question it does not
+ * own. Adding such an input back is a deliberate regression a dedicated
+ * architecture test refuses.
  *
  * A verdict's own `VERDICT:` text is not, by itself, sufficient for "clean":
  * the comment's own FINDINGS block
@@ -284,21 +275,6 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
       waived: true
     }
   }
-
-  // A `skipping` (GitHub `conclusion: "skipped"` or `"neutral"`) check-run is
-  // ABSENT, never a failure: a job whose own `if:` is false
-  // for this event still reports a check-run — `vinaya-review.yml`'s
-  // `retrigger-on-ci-green` job reports `skipped` on every ordinary
-  // `pull_request_target` run — and counting that as "not green" blocked
-  // every PR (first seen live: "vinaya review gate (retrigger on CI
-  // green) (skipping)"). Filtered out before both the emptiness check and
-  // the clean-check, so a head reporting only skipped/neutral runs reads as
-  // "nothing has reported yet", not as a false pass.
-  const reportedMechanicalChecks = input.mechanicalChecks.filter(
-    (c) => c.bucket !== 'skipping' && c.bucket !== 'neutral'
-  )
-  const mechanicalChecksClean =
-    reportedMechanicalChecks.length > 0 && reportedMechanicalChecks.every((c) => c.bucket === 'pass')
 
   // Verdict-AUTHOR verification (a security finding): on a public
   // repo any GitHub account can post a `VERDICT: APPROVE`-shaped comment, and
@@ -395,10 +371,10 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
   const codeReviewRulingsBound = codeReviewBinding.rulingOrdinal
   const securityRulingsBound = securityBinding.rulingOrdinal
 
-  if (codeReviewClean && codeReviewBinding.bound && securityClean && securityBinding.bound && mechanicalChecksClean) {
+  if (codeReviewClean && codeReviewBinding.bound && securityClean && securityBinding.bound) {
     return {
       verdict: 'pass',
-      reason: `code-reviewer verdict is a clean APPROVE and security-review verdict is a clean PASS, both covering head ${input.headSha}, and every reported mechanical check is green.`,
+      reason: `code-reviewer verdict is a clean APPROVE and security-review verdict is a clean PASS, both covering head ${input.headSha}.`,
       waived: false
     }
   }
@@ -464,16 +440,6 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
   } else if (!securityBinding.policyDigest) {
     problems.push(
       `the newest security-review verdict was cast against review policy digest ${security.policyDigest ?? 'none'}, this repository's current policy digest is ${currentManifest.policyDigest}`
-    )
-  }
-  if (!mechanicalChecksClean) {
-    problems.push(
-      reportedMechanicalChecks.length === 0
-        ? 'no mechanical checks have reported for this head yet'
-        : `mechanical check(s) not green: ${reportedMechanicalChecks
-            .filter((c) => c.bucket !== 'pass')
-            .map((c) => `${c.name} (${c.bucket})`)
-            .join(', ')}`
     )
   }
   const ignoredNote =

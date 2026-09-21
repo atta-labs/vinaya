@@ -38,25 +38,12 @@
  * 0), the same "nothing to evaluate yet" shape `brief-shape`/`test-plan`
  * already use for a missing `PR_BODY`.
  *
- * Mechanical-check status is resolved via the REST "list check-runs
- * for a ref" endpoint (`gh api repos/{owner}/{repo}/commits/{sha}/check-runs`),
- * filtering out this repo's own review-gate check-run name before handing
- * the result to `checkReviewGate` — that exclusion is repo-specific and
- * belongs here, never inside `aeg-core`'s pure logic, which ships to every
- * adopter.
- *
- * NOT `gh pr checks --json name,bucket` (a real regression's original shape):
- * that command's GraphQL query asks for `checkSuite.workflowRun` on every
- * check context, and the ephemeral `GITHUB_TOKEN` a workflow run receives
- * is structurally forbidden from resolving `workflowRun` for a check suite
- * belonging to a DIFFERENT workflow run than the one currently executing —
- * "Resource not accessible by integration", unconditionally, no `permissions:`
- * scope fixes it (confirmed live: `checks: read` granted, GraphQL query still
- * refused; the REST endpoint below, which never touches `workflowRun`,
- * succeeded with the identical token in the same job). A personal PAT has no
- * such restriction, which is why every local repro of this check always
- * passed and masked the bug through its original review and a first,
- * incomplete fix pass.
+ * Reviews only. This adapter resolves no other check's result and reads no
+ * Test Plan tick-state: every merge condition is its own independent check,
+ * so that all green means mergeable, and a gate that re-reported a sibling
+ * check's red answered a question it does not own. The principal Test Plan
+ * wait is a check of its own; a red sibling check is already red on its own
+ * name.
  *
  * scope: full — a review verdict is a property of the PR, not the diff.
  */
@@ -65,7 +52,6 @@ import { execFileSync } from 'node:child_process'
 import {
   briefHash,
   checkReviewGate,
-  evaluateTestPlanGate,
   extractIssue,
   isIssueNotFoundError,
   isWaiverLabelActorVerified,
@@ -80,20 +66,8 @@ import {
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist, resolveReviewPolicy } from '../../lib/config'
 import { patchIdAt } from '../../lib/patch-id'
-import { REVIEW_GATE_CHECK_RUN_NAME as OWN_CHECK_RUN_NAME } from '../../lib/review-gate-check-name'
 
 const CHECK_NAME = 'review-gate'
-
-// This repo's own review-gate check-run name (`.github/workflows/vinaya-review.yml:51`).
-// `vinaya-review-verdict.yml`'s retrigger job re-runs that same workflow run
-// rather than opening a new one (GitHub's 2025-02-12 check-run-ownership
-// restriction), so verdict re-evaluation reports under this identical name
-// too — there is only ever one review-gate check-run name to exclude. The
-// exclusion lives HERE, never inside `checkReviewGate` itself: `aeg-core`
-// ships to every adopter, and an adopter's workflow will not be named this.
-// Promoted to `../../lib/review-gate-check-name` so
-// `dev-review-loop.ts`'s mechanical gate reads the identical constant
-// rather than a second hardcoded copy.
 
 type PrView = {
   number: number
@@ -292,33 +266,6 @@ function resolveObjectivesVersion(pr: PrView): string | null {
   return objectivesVersion(own.objectives)
 }
 
-/**
- * The `[principal]` half of `test-plan`'s own tick-state gate, moved HERE —
- * enforcement of an unticked `[principal]` Test Plan item does not disappear
- * when `test-plan`'s registry entry is marked `principalOwed`, it moves to
- * where a MERGE is actually refused: this check. `test-plan` keeps grading the `[agent]` half and the plan's
- * structure only; ticking a `[principal]` box is what a Principal does after
- * verifying in a real signed-in browser, and this is the check that refuses
- * a merge while one is still unticked, in the same `review-gate (PR #N): …`
- * message shape `checkReviewGate`'s own missing-verdict fail already uses.
- *
- * Reuses `evaluateTestPlanGate` — the exact same tick-detection logic
- * `check-test-plan.ts` runs — rather than re-implementing the checkbox scan,
- * so the two checks can never disagree about which lines are unticked.
- * Returns `null` when there is nothing to refuse: `verdict === 'pass'` (no
- * section, sentinel, no `[principal]` items, or all ticked) or a fail whose
- * cause is the OTHER (structural, no-section) branch — that one is
- * `test-plan`'s to grade and block on, not this check's; see
- * `check-test-plan.ts`'s own cause classification, which this mirrors.
- */
-export function uncheckedPrincipalReason(body: string, branch: string): string | null {
-  const result = evaluateTestPlanGate(body, branch)
-  if (result.verdict !== 'fail') return null
-  const uncheckedLines = result.messages.filter((m) => /^\s*[-*]\s+\[\s\]/.test(m)).map((m) => m.trim())
-  if (uncheckedLines.length === 0) return null
-  return `unticked [principal] Test Plan item(s) — ${uncheckedLines.join('; ')}`
-}
-
 function shaFromLsRemote(branch: string): string | null {
   try {
     const out = execFileSync('git', ['ls-remote', 'origin', `refs/heads/${branch}`], {
@@ -376,82 +323,6 @@ function resolveTrueHeadSha(pr: PrView): string | null {
   return trueSha
 }
 
-type CheckRun = { name: string; bucket: string }
-
-type RestCheckRun = { id: number; name: string; status: string; conclusion: string | null }
-
-/**
- * Mirrors `gh pr checks --json name,bucket`'s `bucket` vocabulary
- * ("pass" | "fail" | "pending" | "skipping" | "cancel") from the REST
- * check-run shape, since `checkReviewGate` (aeg-core) reads `bucket`, not
- * raw `status`/`conclusion`. Only the `=== 'pass'` distinction is load-bearing
- * downstream — the rest exists for the human-readable failure listing.
- */
-function bucketFor(run: RestCheckRun): string {
-  if (run.status !== 'completed') return 'pending'
-  switch (run.conclusion) {
-    case 'success':
-      return 'pass'
-    case 'neutral':
-    case 'skipped':
-      return 'skipping'
-    case 'cancelled':
-      return 'cancel'
-    default:
-      return 'fail'
-  }
-}
-
-/**
- * Every check-run GitHub reports for `headSha`, excluding `OWN_CHECK_RUN_NAME`,
- * deduped to the LATEST run per name. `null` on a genuine fetch failure.
- * Paginated: a PR can carry more check-runs than one page returns.
- *
- * A re-triggered check (a label toggle, a re-run, a pushed fixup) leaves its
- * earlier attempts in this endpoint's response too — it is a full history,
- * not "current state" the way the PR's own Checks tab or `gh pr checks`
- * renders it. Without the dedup below, one stale failed/cancelled attempt
- * under a name that has since gone green permanently poisons the verdict,
- * even though the PR's UI shows every check green (confirmed live: a real PR
- * carried both a failed and a passing `vinaya check body-bare-digits` run
- * for the same head, from before and after a mid-flight fix). Check-run ids
- * are monotonically increasing, so the highest id per name is the latest.
- */
-function fetchMechanicalChecks(headSha: string): CheckRun[] | null {
-  try {
-    const out = execFileSync(
-      'gh',
-      [
-        'api',
-        `repos/{owner}/{repo}/commits/${headSha}/check-runs`,
-        '--paginate',
-        '--jq',
-        '.check_runs[] | {id, name, status, conclusion}'
-      ],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
-    )
-    // `--jq` streams one check-run object per line (newline-delimited JSON);
-    // `--paginate` re-applies that filter per page, so this stays one object
-    // per line across the whole PR, however many pages it takes.
-    const runs: RestCheckRun[] = out
-      .split('\n')
-      .filter((line) => line.trim().length > 0)
-      .map((line) => JSON.parse(line) as RestCheckRun)
-
-    const latestByName = new Map<string, RestCheckRun>()
-    for (const run of runs) {
-      const seen = latestByName.get(run.name)
-      if (!seen || run.id > seen.id) latestByName.set(run.name, run)
-    }
-
-    return Array.from(latestByName.values())
-      .filter((r) => r.name !== OWN_CHECK_RUN_NAME)
-      .map((r) => ({ name: r.name, bucket: bucketFor(r) }))
-  } catch {
-    return null
-  }
-}
-
 type TimelineLabeledEvent = { event: string; actor?: { login: string } | null; label?: { name: string } | null }
 
 function fetchWaiverLabelActor(prNumber: number, label: string): string | null {
@@ -504,19 +375,6 @@ function main(): void {
       message: `review-gate severity:infra — could not resolve PR #${prNumber}'s true head via \`git ls-remote\` or the forge's \`git/ref/heads\` API.`,
       agent_recovery_prompt:
         'Confirm the branch still exists on origin and `gh auth status` passes, then re-run `vinaya check review-gate`.'
-    })
-    process.exit(1)
-  }
-
-  const mechanicalChecks = fetchMechanicalChecks(headSha)
-  if (mechanicalChecks === null) {
-    emitCheckError({
-      schema: CHECK_SCHEMA_VERSION,
-      check: CHECK_NAME,
-      severity: 'error',
-      message: `review-gate severity:infra — could not fetch check-run status for PR #${prNumber} via the REST check-runs endpoint.`,
-      agent_recovery_prompt:
-        'Confirm `gh auth status` passes and PR_NUMBER is correct, then re-run `vinaya check review-gate`.'
     })
     process.exit(1)
   }
@@ -600,7 +458,6 @@ function main(): void {
     labels,
     waiverLabelActor,
     principalAllowlist,
-    mechanicalChecks,
     headSha,
     // A verdict judged a PATCH; the head sha is only its address. A merge
     // from `main` or a rebase that leaves the patch untouched must not void
@@ -634,8 +491,6 @@ function main(): void {
     briefHash: waived ? null : resolveBriefHash(pr, principalAllowlist)
   })
 
-  let failed = false
-
   if (result.verdict === 'fail') {
     emitCheckError({
       schema: CHECK_SCHEMA_VERSION,
@@ -645,29 +500,10 @@ function main(): void {
       agent_recovery_prompt:
         'Wait for a code-reviewer APPROVE and a security-review PASS on this PR (or ask a principal to apply the `vinaya/waiver:review` label), then re-run `vinaya check review-gate`.'
     })
-    failed = true
+    process.exit(1)
   }
 
-  // O2: the `[principal]` half of `test-plan`'s tick-state gate, enforced
-  // HERE — see `uncheckedPrincipalReason`'s doc comment. Independent of the
-  // review verdict above (and of `vinaya/waiver:review`, which waives the
-  // code-review/security obligation, never the Principal's own runtime
-  // verification) — `roles/developer.md`'s Pre-merge gate already lists
-  // "reviewer approved" and "Principal confirmation" as two separate items.
-  const principalReason = uncheckedPrincipalReason(pr.body, pr.headRefName)
-  if (principalReason !== null) {
-    emitCheckError({
-      schema: CHECK_SCHEMA_VERSION,
-      check: CHECK_NAME,
-      severity: 'error',
-      message: `review-gate (PR #${prNumber}): ${principalReason}`,
-      agent_recovery_prompt:
-        'Nothing for the Developer to fix here — wait for the Principal to verify in a real signed-in browser and tick each `[principal]` Test Plan box, then re-run `vinaya check review-gate`.'
-    })
-    failed = true
-  }
-
-  process.exit(failed ? 1 : 0)
+  process.exit(0)
 }
 
 // Guarded so this module can be imported by unit tests without executing the

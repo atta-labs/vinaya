@@ -28,7 +28,6 @@ import {
   MCP_JSON_PATH,
   ROLES_FOLDER_PLACEHOLDER_PATH,
   REVIEW_WORKFLOW_PATH,
-  REVIEW_RETRIGGER_WORKFLOW_PATH,
   REVIEW_VERDICT_WORKFLOW_PATH,
   SETUP_BUN_SHA,
   starterConfig,
@@ -154,15 +153,11 @@ describe('vinaya init', () => {
     // required run — to five with vinaya-body-checks.yml, the same
     // pull_request_target trust boundary carrying body-bare-digits'
     // Changesets-release exemption, which a plain pull_request job cannot
-    // safely resolve, and to six with vinaya-review-retrigger.yml (Issue
-    // #402 O4) — the CI-green retrigger half of the review gate, split into
-    // its own file for the same reason the verdict-comment half already
-    // was: a `workflow_run`-only trigger there means it never reports a
-    // `skipped` check-run against vinaya-review.yml's own head; and to seven
-    // with vinaya-task-log-collector.yml (task-log-v1 task 4) — the trusted
-    // collector that validates and publishes a task-path job's exported
-    // outbox, the SAME `workflow_run` trust boundary):
-    // config + root VINAYA.md + seven workflows (tracked) +
+    // safely resolve, and to six with vinaya-task-log-collector.yml
+    // (task-log-v1 task 4) — the trusted collector that validates and
+    // publishes a task-path job's exported outbox, on a `workflow_run`
+    // trust boundary):
+    // config + root VINAYA.md + six workflows (tracked) +
     // three hook stubs (pre-commit/pre-push/commit-msg, the last added by
     // Issue #63) + the .vinaya/doc-owners starter, PLUS — as of task 5
     // (#152) — the three agent-vendor emitters (tasks 2/3/4), installed by
@@ -178,7 +173,6 @@ describe('vinaya init', () => {
       DOCTRINE_POINTER_PATH,
       CHECKS_WORKFLOW_PATH,
       REVIEW_WORKFLOW_PATH,
-      REVIEW_RETRIGGER_WORKFLOW_PATH,
       REVIEW_VERDICT_WORKFLOW_PATH,
       ARCHIVIST_WORKFLOW_PATH,
       BODY_CHECKS_WORKFLOW_PATH,
@@ -209,7 +203,6 @@ describe('vinaya init', () => {
       DOCTRINE_POINTER_PATH,
       CHECKS_WORKFLOW_PATH,
       REVIEW_WORKFLOW_PATH,
-      REVIEW_RETRIGGER_WORKFLOW_PATH,
       REVIEW_VERDICT_WORKFLOW_PATH,
       ARCHIVIST_WORKFLOW_PATH,
       BODY_CHECKS_WORKFLOW_PATH,
@@ -622,32 +615,26 @@ describe('workflows', () => {
     expect(checks).toContain(`if: ${'$'}{{ !cancelled() }}`)
   })
 
-  it('the review gate re-runs itself when CI turns green (#399) — no hand rerun', async () => {
+  it('no workflow re-runs the review gate when CI completes — a verdict comment is the only re-trigger', async () => {
+    // The gate answers for the review verdicts alone, so a CI run finishing
+    // tells it nothing and there is nothing for a `workflow_run` trigger to
+    // refresh. A verdict comment still re-evaluates it, through the verdict
+    // workflow's own rerun of this workflow's run.
     await runInit(['--yes'], makeDeps())
     const review = readFileSync(join(root, REVIEW_WORKFLOW_PATH), 'utf-8')
-    // The CI-green retrigger lives in its own workflow file (Issue #402 O4)
-    // — never a second job inside vinaya-review.yml — so it never reports a
-    // `skipped` check-run against that workflow's own `pull_request_target`
-    // runs (see that check's own test for why: a `skipped` mechanical check
-    // used to block every PR).
-    const retrigger = readFileSync(join(root, REVIEW_RETRIGGER_WORKFLOW_PATH), 'utf-8')
     const verdict = readFileSync(join(root, REVIEW_VERDICT_WORKFLOW_PATH), 'utf-8')
+    expect(existsSync(join(root, '.github/workflows/vinaya-review-retrigger.yml'))).toBe(false)
+    for (const wf of readdirSync(join(root, '.github/workflows'))) {
+      expect(`${wf}: ${readFileSync(join(root, '.github/workflows', wf), 'utf-8').includes('workflows: [CI]')}`).toBe(
+        `${wf}: false`
+      )
+    }
     expect(review).not.toContain('workflow_run:')
-    expect(retrigger).toContain('workflow_run:')
-    expect(retrigger).toContain('workflows: [CI]')
-    expect(retrigger).toContain('types: [completed]')
-    expect(retrigger).toContain("github.event.workflow_run.conclusion == 'success'")
     // vinaya-review.yml triggers only on pull_request_target now — no
     // second event to guard the required job against.
     expect(review).not.toContain("if: github.event_name == 'pull_request_target'")
-    // Reuses the exact rerun mechanism the verdict-comment retrigger uses:
-    // the same display-title lookup against vinaya-review.yml's own runs,
-    // then `gh run rerun`, tolerant of an already-queued/too-old run.
-    expect(retrigger).toContain('gh run rerun')
-    expect(retrigger).toContain('vinaya-review.yml')
-    expect(retrigger).toContain('display_title == $title')
-    expect(retrigger).toContain('rerun declined')
     expect(verdict).toContain('gh run rerun')
+    expect(verdict).toContain('vinaya-review.yml')
   })
 })
 
@@ -658,13 +645,7 @@ describe('workflows', () => {
 // vinaya: command not found`. Both shapes are asserted here: a test that only
 // asserted the old string was asserting the defect.
 describe('generated workflows: published vs vendored invocation (atta-labs/attalabs#929)', () => {
-  const WORKFLOWS = [
-    CHECKS_WORKFLOW_PATH,
-    REVIEW_WORKFLOW_PATH,
-    REVIEW_RETRIGGER_WORKFLOW_PATH,
-    REVIEW_VERDICT_WORKFLOW_PATH,
-    ARCHIVIST_WORKFLOW_PATH
-  ]
+  const WORKFLOWS = [CHECKS_WORKFLOW_PATH, REVIEW_WORKFLOW_PATH, REVIEW_VERDICT_WORKFLOW_PATH, ARCHIVIST_WORKFLOW_PATH]
   const VENDORED_BIN = 'node apps/cli/dist/index.js'
 
   /** Make the fixture a repo that vendors the CLI as a workspace member. */
@@ -784,20 +765,6 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     }
   })
 
-  it('the review-gate retrigger workflow carries its own concurrency group — a superseded head cancels its stale retrigger', async () => {
-    // O1 (task-run-v1 20): a newer CI-green completion means a newer push
-    // superseded the head the older retrigger was chasing — cancelling it
-    // loses nothing the newer completion doesn't already redo. Falls back to
-    // the run id when there is no PR (a non-PR branch's CI run), so the
-    // group expression never evaluates to an empty string.
-    await captureStdout(() => runInit(['--yes'], makeDeps()))
-    const retrigger = generated().get(REVIEW_RETRIGGER_WORKFLOW_PATH) ?? ''
-    expect(retrigger).toContain('concurrency:')
-    expect(retrigger).toContain('cancel-in-progress: true')
-    expect(retrigger).toContain('github.event.workflow_run.pull_requests[0].number')
-    expect(retrigger).toContain('github.event.workflow_run.id')
-  })
-
   it('the verdict workflow and the archivist workflow deliberately carry NO concurrency group', async () => {
     // vinaya-review-verdict.yml: self-hosting.md's "One run per pull
     // request" section — serializing the verdict evaluator would delay the
@@ -861,13 +828,10 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     // trying (harmlessly no-op'ing on) the same run.
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const verdict = generated().get(REVIEW_VERDICT_WORKFLOW_PATH) ?? ''
-    const retrigger = generated().get(REVIEW_RETRIGGER_WORKFLOW_PATH) ?? ''
-    for (const workflow of [verdict, retrigger]) {
-      expect(workflow).not.toContain('| select(.status == "completed")')
-      expect(workflow).toContain('select(.display_title == $title)')
-      expect(workflow).toContain('select(.event == "pull_request_target")')
-      expect(workflow).toContain('select(.conclusion != "cancelled")')
-    }
+    expect(verdict).not.toContain('| select(.status == "completed")')
+    expect(verdict).toContain('select(.display_title == $title)')
+    expect(verdict).toContain('select(.event == "pull_request_target")')
+    expect(verdict).toContain('select(.conclusion != "cancelled")')
   })
 
   it('the verdict retrigger fires on BOTH verdicts — the gate must close, not only open', async () => {
@@ -993,7 +957,6 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     expect(archivist).toContain(`${VENDORED_BIN} archive --merge-sha=${SIGIL}{{ github.sha }}`)
     expect(archivist).toContain(`${VENDORED_BIN} audit --only=dead-branches`)
     expect(archivist).toContain(`${VENDORED_BIN} audit --only=direct-push --sha=${SIGIL}{{ github.sha }}`)
-    // The retrigger job executes no repo content and gains no build step.
     expect(occurrences(new Map([[ARCHIVIST_WORKFLOW_PATH, archivist]]), 'setup-bun')).toBe(3)
 
     // O2: `vinaya-checks.yml` never builds; it downloads the artifact
@@ -1025,7 +988,6 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     // never silently makes this assertion trivially pass on a missing file.
     const bodyChecks = readFileSync(join(root, BODY_CHECKS_WORKFLOW_PATH), 'utf-8')
     const archivist = files.get(ARCHIVIST_WORKFLOW_PATH) ?? ''
-    const retrigger = files.get(REVIEW_RETRIGGER_WORKFLOW_PATH) ?? ''
     const verdict = files.get(REVIEW_VERDICT_WORKFLOW_PATH) ?? ''
 
     expect(checks).toContain('actions/download-artifact@v4')
@@ -1033,7 +995,6 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
       ['review', review],
       ['body-checks', bodyChecks],
       ['archivist', archivist],
-      ['retrigger', retrigger],
       ['verdict', verdict]
     ] as const) {
       expect(`${name}: ${content.includes('download-artifact')}`).toBe(`${name}: false`)
@@ -1089,10 +1050,9 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
       // GH_TOKEN on every step that talks to the forge: checks 2 (fetch PR
       // body, run checks) + 1 more when vendored (find the shared build,
       // O2), review 2 (require a verdict before building, O3; review gate),
-      // retrigger 1 (its own workflow file, Issue #402 O4), verdict 3
-      // (resolve-head, evaluate, retrigger), archivist 4 (archive, the O4
-      // self-archive step, dead-branch audit, direct-push audit).
-      expect(occurrences(files, expr('GH_TOKEN', 'secrets.GITHUB_TOKEN'))).toBe(vendored ? 13 : 12)
+      // verdict 3 (resolve-head, evaluate, retrigger), archivist 4 (archive,
+      // the O4 self-archive step, dead-branch audit, direct-push audit).
+      expect(occurrences(files, expr('GH_TOKEN', 'secrets.GITHUB_TOKEN'))).toBe(vendored ? 12 : 11)
     }
   })
 
@@ -2110,7 +2070,6 @@ describe('adopter-declared CI setup (ci.setup)', () => {
     for (const path of [
       ...CUSTOM_CHECK_EXECUTING,
       REVIEW_WORKFLOW_PATH,
-      REVIEW_RETRIGGER_WORKFLOW_PATH,
       REVIEW_VERDICT_WORKFLOW_PATH,
       ARCHIVIST_WORKFLOW_PATH
     ]) {

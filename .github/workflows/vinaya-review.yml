@@ -10,13 +10,13 @@
 # comment fires a different GitHub event that this
 # workflow structurally cannot receive — and keeping the comment path in a
 # separate FILE means this workflow's runs never list permanently-skipped
-# comment jobs on the PR's checks panel. The CI-green retrigger half lives
-# in its own workflow too (vinaya-review-retrigger.yml, Issue #402 O4): it
-# only ever fires on `workflow_run`, so it never appears as a check-run —
-# skipped or otherwise — against this workflow's own `pull_request_target`
-# runs. When a clean final verdict lands, or CI turns green, one of those
-# two workflows re-runs this one, so the required check below goes green
+# comment jobs on the PR's checks panel. When a clean final verdict lands,
+# that workflow re-runs this one, so the required check below goes green
 # natively with no manual rerun.
+#
+# Nothing re-runs this workflow when CI completes, and nothing needs to:
+# this gate answers for the review verdicts alone, and no other check's
+# result can change its answer, so a CI run finishing tells it nothing.
 #
 # The job's first step never builds: it reads the PR's comments and labels
 # through the API alone and fails fast, without checkout or build, whenever
@@ -24,9 +24,9 @@
 # label exists yet — the ordinary state on `opened`/`synchronize`/
 # `reopened`/`labeled`/`unlabeled`. The build runs once that step finds
 # either: a verdict, which in practice is the state a rerun finds it in (the
-# verdict-comment workflow and the CI-green retrigger both re-run THIS run,
-# and by the time either fires, the verdict this job is looking for already
-# exists) — or a `labeled` event applying the waiver label itself, so a
+# verdict-comment workflow re-runs THIS run, and by the time it fires, the
+# verdict this job is looking for already exists) — or a `labeled` event
+# applying the waiver label itself, so a
 # waived PR goes green on the SAME push that applies the label rather than
 # waiting on a verdict that will never arrive (`#525`: found live minutes
 # after this pre-check step was first added — PR #517's Version Packages

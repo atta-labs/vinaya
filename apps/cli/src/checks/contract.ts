@@ -118,8 +118,11 @@ export type CheckSpec = {
    * reported that run is `pending: true` — a structural failure on the same
    * check (no Test Plan section at all) still counts, because that one the
    * Developer can actually fix. Enforcement of the human-owed half itself
-   * does not disappear: it moves to `review-gate`, which refuses merge while
-   * the live PR body still carries an unticked `[principal]` item.
+   * does not disappear: it lives in a check of its own,
+   * `principal-test-plan-wait`, which stays red while the live PR body still
+   * carries an unticked `[principal]` item. Never `review-gate` — that check
+   * answers for the review verdicts alone and reads no Test Plan state at
+   * all, so nothing there can refuse a merge over an unticked box.
    */
   principalOwed?: true
   /**

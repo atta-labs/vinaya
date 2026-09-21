@@ -3039,13 +3039,11 @@ describe('buildWriteAccessScope — Issue #663, O1 round 2 fix: the real Write/E
     const confidence = join(devDir, '.vinaya-confidence')
     const roundResponse = join(devDir, '.vinaya-round-response')
     const scope = buildWriteAccessScope('developer', dir, [], [confidence, roundResponse])
-    // realpathSync on the FILE, not the dir, since neither file exists yet on
-    // disk (realpathSync would throw) — resolve the parent, then rejoin,
-    // matching buildWriteAccessScope's own realFile() exactly. Without this,
-    // a host whose tmpdir resolves through a symlink (macOS: /var ->
-    // /private/var) fails this assertion on the raw, unresolved path while
-    // the sibling test two below (which resolves through a symlinked
-    // ancestor on purpose) already expects the resolved form.
+    // Resolved through the parent, exactly as `writeAccessHookScript` resolves
+    // the path it compares against: on a host whose temp root is a symlink
+    // (macOS `/var` → `/private/var`), a raw expectation here fails while the
+    // grant is correct — the sibling symlinked-ancestor test below asserts the
+    // same resolution deliberately.
     const realDevDir = realpathSync(devDir)
     expect(scope).toEqual({
       kind: 'directory',
