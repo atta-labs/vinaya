@@ -1282,3 +1282,86 @@ describe('Round 3 — silence-instead-of-fallback, unprovable conditions, and ho
     }
   })
 })
+
+// A relative specifier written with the extension the EMIT will have
+// (`./demo.js` for `./demo.ts`) is how TypeScript's own ESM guidance says to
+// write these, and how 512 of this repo's 883 relative imports under `apps/cli`
+// are written. Resolving only "the literal path, then the path plus each source
+// extension" finds neither `demo.js` nor `demo.js.ts`, so every such edge was
+// absent from the graph outright — under-selection, silently.
+describe('a relative specifier written with an output extension resolves to its TypeScript source', () => {
+  for (const [written, onDisk] of [
+    ['.js', '.ts'],
+    ['.js', '.tsx'],
+    ['.jsx', '.tsx'],
+    ['.mjs', '.mts'],
+    ['.cjs', '.cts']
+  ] as const) {
+    it(`${written} specifier naming a ${onDisk} file selects the test that imports it`, () => {
+      const { root, dir } = mkWorkspace([
+        {
+          name: '@ext/a',
+          files: {
+            [`src/target${onDisk}`]: 'export function target() { return 1 }\n',
+            'src/uses.test.ts': `import { target } from './target${written}'\ntest('t', () => target())\n`
+          }
+        }
+      ])
+      try {
+        const uses = join(dir('@ext/a'), 'src/uses.test.ts')
+        expect(selectSet(root, [join(dir('@ext/a'), `src/target${onDisk}`)])).toContain(uses)
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    })
+  }
+
+  it('a real .js file sitting beside a .ts of the same name still resolves to ITSELF — the literal path wins', () => {
+    const { root, dir } = mkWorkspace([
+      {
+        name: '@ext/b',
+        files: {
+          'src/target.js': 'export function target() { return 1 }\n',
+          'src/target.ts': 'export function target() { return 2 }\n',
+          'src/uses.test.ts': "import { target } from './target.js'\ntest('t', () => target())\n"
+        }
+      }
+    ])
+    try {
+      const uses = join(dir('@ext/b'), 'src/uses.test.ts')
+      expect(selectSet(root, [join(dir('@ext/b'), 'src/target.js')])).toContain(uses)
+      expect(selectSet(root, [join(dir('@ext/b'), 'src/target.ts')])).not.toContain(uses)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a directory index written as ./dir/index.js resolves to ./dir/index.ts', () => {
+    const { root, dir } = mkWorkspace([
+      {
+        name: '@ext/c',
+        files: {
+          'src/nested/index.ts': 'export function nested() { return 1 }\n',
+          'src/uses.test.ts': "import { nested } from './nested/index.js'\ntest('t', () => nested())\n"
+        }
+      }
+    ])
+    try {
+      const uses = join(dir('@ext/c'), 'src/uses.test.ts')
+      expect(selectSet(root, [join(dir('@ext/c'), 'src/nested/index.ts')])).toContain(uses)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  // The brief's own O1 fixture, on the REAL tree rather than a constructed one:
+  // `apps/cli/tests/demo.test.ts` imports `'../src/commands/demo.js'`, and before
+  // this resolution existed a change to `demo.ts` selected nothing but the
+  // always-run list.
+  it('on the real repository, a change to apps/cli/src/commands/demo.ts selects apps/cli/tests/demo.test.ts', () => {
+    const selected = new Set(
+      selectAffectedTestFiles(REPO_ROOT, [join(REPO_ROOT, 'apps/cli/src/commands/demo.ts')]).selected
+    )
+    expect(selected).toContain(join(REPO_ROOT, 'apps/cli/tests/demo.test.ts'))
+  })
+})

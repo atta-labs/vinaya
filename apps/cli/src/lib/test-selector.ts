@@ -96,8 +96,32 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, extname, isAbsolute, join, resolve } from 'node:path'
 import { globToRegex } from '@attalabs/aeg-core'
 
-const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']
+const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs']
 const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', 'build', 'coverage'])
+
+/**
+ * The TypeScript output extension a specifier may be WRITTEN with, mapped to the
+ * source extensions that actually compile to it. ESM requires a real extension on
+ * a relative specifier, and TypeScript's answer is that you write the extension
+ * the EMIT will have (`./demo.js`) while the file on disk is `./demo.ts` — so on
+ * this repository, where 512 of 883 relative imports under `apps/cli` are written
+ * that way against 371 without, resolving a specifier by "the literal path, then
+ * the path plus each source extension" finds nothing at all: `demo.js` is not a
+ * file, and `demo.js.ts` is not either. Every such edge was silently absent from
+ * the graph, which is how a change to `apps/cli/src/commands/demo.ts` selected no
+ * test while `apps/cli/tests/demo.test.ts` imports it by name.
+ *
+ * The mapping is TypeScript's own (`.js` may be `.ts`/`.tsx`, `.jsx` is `.tsx`,
+ * and the single-format `.mjs`/`.cjs` map only to their matching `.mts`/`.cts`),
+ * and it is tried only AFTER the literal path, so a real `.js` file sitting next
+ * to a `.ts` of the same name still resolves to itself exactly as Node would.
+ */
+const OUTPUT_TO_SOURCE_EXTENSIONS = new Map<string, readonly string[]>([
+  ['.js', ['.ts', '.tsx']],
+  ['.jsx', ['.tsx']],
+  ['.mjs', ['.mts']],
+  ['.cjs', ['.cts']]
+])
 
 // A `from`-clause on an `import` or `export`, capturing the keyword (group 1),
 // the clause text between it and `from` (group 2), and the specifier (group 4).
@@ -271,9 +295,14 @@ export function walkFiles(root: string): string[] {
   return out
 }
 
-/** Resolves a module base path against `knownFiles` — tries the bare path, each `SOURCE_EXTENSIONS` suffix, and an `index.<ext>` inside it as a directory, the same resolution order Node/bundlers use. `null` when nothing matches. */
+/** Resolves a module base path against `knownFiles` — tries the bare path, the TypeScript SOURCE of a written output extension ({@link OUTPUT_TO_SOURCE_EXTENSIONS}), each `SOURCE_EXTENSIONS` suffix, and an `index.<ext>` inside it as a directory, the same resolution order Node/TypeScript/bundlers use. `null` when nothing matches. */
 function resolveFileCandidate(base: string, knownFiles: Set<string>): string | null {
   if (knownFiles.has(base)) return base
+  const written = extname(base)
+  for (const ext of OUTPUT_TO_SOURCE_EXTENSIONS.get(written) ?? []) {
+    const source = base.slice(0, -written.length) + ext
+    if (knownFiles.has(source)) return source
+  }
   for (const ext of SOURCE_EXTENSIONS) {
     if (knownFiles.has(base + ext)) return base + ext
   }
