@@ -407,6 +407,9 @@ describe('resolveWorkerBoundaryLaunch — Codex subscription preflight (O1, Issu
       expect(readFileSync(join(result.launch.codexHomeDir as string, 'config.toml'), 'utf8')).not.toContain(
         'keychain-fixture'
       )
+      expect(readFileSync(join(result.launch.codexHomeDir as string, 'config.toml'), 'utf8')).toContain(
+        '"CODEX_ACCESS_TOKEN" = "exclude"'
+      )
     } finally {
       result.launch.cleanup()
     }

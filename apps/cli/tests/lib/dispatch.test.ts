@@ -3997,14 +3997,14 @@ describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () =
         [commandPath(hooks.hooks.PostToolUse[0]?.hooks[0]?.command as string)],
         {
           input: JSON.stringify({
-            tool_name: 'WebFetch',
-            tool_input: { url: 'https://example.com/docs/fixture' },
-            tool_response: { content: 'fetched documentation body' }
+            tool_name: 'Bash',
+            tool_input: { command: 'curl -L https://example.com/docs/fixture' },
+            tool_response: { output: 'fetched documentation body' }
           }),
           encoding: 'utf8',
           env: hookEnv
         },
-        'Codex PostToolUse hook'
+        'Codex Bash/curl PostToolUse hook'
       )
       expect(recorded.status).toBe(0)
       const allowed = spawnBudgeted(

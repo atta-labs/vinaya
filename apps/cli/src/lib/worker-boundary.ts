@@ -975,7 +975,16 @@ export function resolveWorkerBoundaryLaunch(
       mkdirSync(codexHomeDir, { recursive: true, mode: 0o700 })
       writeFileSync(
         join(codexHomeDir, 'config.toml'),
-        '[shell_environment_policy]\ninherit = "all"\nignore_default_excludes = false\n',
+        [
+          '[shell_environment_policy]',
+          'inherit = "all"',
+          'ignore_default_excludes = false',
+          '',
+          '[shell_environment_policy.filters]',
+          '# Codex itself receives this brokered session; its repository commands never do.',
+          '"CODEX_ACCESS_TOKEN" = "exclude"',
+          ''
+        ].join('\n'),
         { mode: 0o600 }
       )
       if (opts.codexHooksPath) {

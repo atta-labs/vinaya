@@ -330,7 +330,16 @@ export type DispatchOpts = {
  * for them, never a guessed classification for an unconfirmed vendor's own
  * shape (the vendor tables themselves are unchanged).
  */
-export type DispatchFailureReason = 'timeout' | 'crash' | 'refused' | 'signal' | 'unbound' | 'connection-failed'
+export type DispatchFailureReason =
+  | 'timeout'
+  | 'crash'
+  | 'refused'
+  | 'signal'
+  | 'unbound'
+  | 'connection-failed'
+  | 'startup-failed'
+  | 'authentication-failed'
+  | 'hook-setup-failed'
 
 export type DispatchHandle = {
   exitCode: number | null
@@ -929,11 +938,11 @@ function documentationLogHookScript(dir: string): string {
 }
 
 /**
- * Codex-only receipt logger. Unlike Claude's `WebFetch`-matched hook above,
- * Codex can expose the fetch route under one of its local function-tool
- * aliases. The hook still verifies the canonical tool name and a successful,
- * non-empty response before recording input URLs; arbitrary Bash/apply_patch
- * payloads containing a URL can never satisfy the gate.
+ * Codex-only receipt logger. Codex documents `Bash` as a supported
+ * `PostToolUse` route, unlike its built-in web search. The generated prompt
+ * requires this route to use `curl -L <URL>` for documentation sources. The
+ * hook accepts only a successful curl command that names the required URL;
+ * arbitrary Bash/apply_patch payloads containing a URL cannot satisfy it.
  */
 function codexDocumentationLogHookScript(dir: string): string {
   return [
@@ -943,8 +952,7 @@ function codexDocumentationLogHookScript(dir: string): string {
     "process.stdin.on('end', () => {",
     '  try {',
     '    const e = JSON.parse(d);',
-    "    const fetchTools = new Set(['WebFetch', 'web.run', 'web__run']);",
-    '    if (!fetchTools.has(e.tool_name)) { process.exit(0); }',
+    "    if (e.tool_name !== 'Bash') { process.exit(0); }",
     '    const response = e.tool_response;',
     "    const responseText = typeof response === 'string' ? response : JSON.stringify(response || '');",
     '    const successful = response != null && response.isError !== true && response.error == null && responseText.length > 2;',
@@ -952,10 +960,12 @@ function codexDocumentationLogHookScript(dir: string): string {
     "    const runId = process.env.VINAYA_RUN_ID || '';",
     '    const urls = [];',
     "    const visit = (v) => { if (typeof v === 'string') { const m = v.match(/https?:\\/\\/[^\\s\\\"'<>]+/g); if (m) urls.push(...m); } else if (Array.isArray(v)) v.forEach(visit); else if (v && typeof v === 'object') Object.values(v).forEach(visit); };",
-    '    visit(e.tool_input || {});',
+    "    const command = e.tool_input && typeof e.tool_input.command === 'string' ? e.tool_input.command : '';",
+    '    if (!/(^|[;&|]\\s*)curl(?:\\s|$)/.test(command)) { process.exit(0); }',
+    '    visit(command);',
     '    if (runId && urls.length > 0) {',
     `      const logPath = ${JSON.stringify(join(dir, 'documentation-log-'))} + runId + '.jsonl';`,
-    "      for (const url of urls) fs.appendFileSync(logPath, JSON.stringify({ url, tool: e.tool_name }) + '\\n', { mode: 0o600 });",
+    "      for (const url of urls) fs.appendFileSync(logPath, JSON.stringify({ url, tool: 'Bash/curl' }) + '\\n', { mode: 0o600 });",
     '    }',
     '  } catch {',
     '    // Invalid payloads never create a receipt.',
@@ -1071,7 +1081,7 @@ function writeCodexDispatchHooks(
           hooks: {
             PostToolUse: [
               {
-                matcher: '^(WebFetch|web\\.run|web__run)$',
+                matcher: '^Bash$',
                 hooks: [{ type: 'command', command: `bun "${logScript}"` }]
               }
             ],
@@ -2039,7 +2049,11 @@ function coerceLaunchRecord(json: unknown): LaunchRecord | null {
     o.failureReason === 'crash' ||
     o.failureReason === 'refused' ||
     o.failureReason === 'signal' ||
-    o.failureReason === 'unbound'
+    o.failureReason === 'unbound' ||
+    o.failureReason === 'connection-failed' ||
+    o.failureReason === 'startup-failed' ||
+    o.failureReason === 'authentication-failed' ||
+    o.failureReason === 'hook-setup-failed'
       ? o.failureReason
       : null
   return {
@@ -3132,6 +3146,10 @@ export async function dispatchRole(
   // is what an unattended start's boundary resolution wraps below, rather
   // than wrapping a pre-settings argv and reconciling the two later.
   const documentationSources = documentationSourcesFromPrompt(role, prompt)
+  const codexDocumentationGuidance =
+    agent === 'codex' && documentationSources.some((source) => isDocumentationUrl(source.source))
+      ? '\n\nCodex documentation receipt: fetch every URL in `## Documentation` with `curl -L <URL>` in a Bash tool call before ending this turn. Built-in web search is not a receipt route for this dispatch.\n'
+      : ''
   if (agent === 'gemini' && documentationSources.some((s) => isDocumentationUrl(s.source))) {
     // round 2 security review, LOW — the PostToolUse/Stop hook
     // pair below is Claude-only, same limitation `deny-background-bash.mjs`
@@ -3189,6 +3207,7 @@ export async function dispatchRole(
     opts.unattended === true &&
     requireIsolation
   ) {
+    const failureReason: DispatchFailureReason = 'hook-setup-failed'
     const durationMs = Date.now() - start
     const priorSize = sizeOfSafe(outboxPath)
     log({
@@ -3199,6 +3218,8 @@ export async function dispatchRole(
       model: resolvedModel,
       ...roundField,
       effect_id: effectId,
+      // The forge envelope has only the generic pre-spawn `refused` event;
+      // the launch record/handle retain the actionable terminal subtype.
       reason: 'refused',
       usage: null,
       duration_ms: durationMs
@@ -3207,7 +3228,7 @@ export async function dispatchRole(
       `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended start requires the PreToolUse ` +
         "background-deny hook's settings file, which could not be written into this task's own hooks directory"
     )
-    patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason: 'refused' })
+    patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason })
     await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
     return {
       exitCode: null,
@@ -3215,7 +3236,7 @@ export async function dispatchRole(
       usage: null,
       resumeId: null,
       timedOut: false,
-      failureReason: 'refused',
+      failureReason,
       effectId
     }
   }
@@ -3372,6 +3393,10 @@ export async function dispatchRole(
               : {})
           })
     if (!boundaryLaunch.ok) {
+      const failureReason: DispatchFailureReason =
+        agent === 'codex' && boundaryLaunch.reason.startsWith('Codex subscription authentication preflight failed:')
+          ? 'authentication-failed'
+          : 'startup-failed'
       const durationMs = Date.now() - start
       const priorSize = sizeOfSafe(outboxPath)
       log({
@@ -3389,9 +3414,9 @@ export async function dispatchRole(
       writeLifecycle(
         `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended start requires the worker isolation boundary, which is unavailable: ${boundaryLaunch.reason}`
       )
-      patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason: 'refused' })
+      patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason })
       await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
-      return { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason: 'refused' }
+      return { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason }
     }
 
     // O2: the boundary resolved, but a confined `agent` child
@@ -3409,6 +3434,7 @@ export async function dispatchRole(
     const hasStagedOAuthCredential =
       boundaryLaunch.launch.oauthConfigDir !== null || boundaryLaunch.launch.codexAccessToken !== null
     if (!hasRuntimeApiKey && !hasStagedOAuthCredential) {
+      const failureReason: DispatchFailureReason = 'authentication-failed'
       const durationMs = Date.now() - start
       const priorSize = sizeOfSafe(outboxPath)
       log({
@@ -3429,9 +3455,9 @@ export async function dispatchRole(
           'set on the parent environment, and no OAuth session credential could be staged)'
       )
       boundaryLaunch.launch.cleanup()
-      patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason: 'refused' })
+      patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason })
       await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
-      return { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason: 'refused' }
+      return { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason }
     }
   }
 
@@ -4050,7 +4076,7 @@ export async function dispatchRole(
       void handleChildExit(code, Date.now() - start)
     })
 
-    child.stdin.write(prompt)
+    child.stdin.write(`${prompt}${codexDocumentationGuidance}`)
     child.stdin.end()
   })
 }
