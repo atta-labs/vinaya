@@ -13,6 +13,7 @@
  */
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
+import { type FileDiff, parseHunkRanges } from './changed-names.js'
 
 /**
  * `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE` (and the rest of the `GIT_*`
@@ -99,4 +100,48 @@ export function addedOrRenamedFilesSinceRemoteBase(repoRoot: string): string[] {
 /** Absolute paths — the O1 counterpart to `changedFilesSinceRemoteBaseAbsolute`. */
 export function addedOrRenamedFilesSinceRemoteBaseAbsolute(repoRoot: string): string[] {
   return addedOrRenamedFilesSinceRemoteBase(repoRoot).map((f) => join(repoRoot, f))
+}
+
+/**
+ * The same diff `changedFilesSinceRemoteBase` lists, but with the line ranges
+ * each file's hunks cover and the two contents they refer to — what the
+ * selector needs to follow the changed NAMES rather than the changed file.
+ *
+ * The comparison is `<merge-base>..HEAD`, spelled out rather than left to
+ * `...`: the hunk line numbers must refer to the same two blobs this function
+ * reads, and `git show <ref>:<path>` cannot be handed a three-dot range. A file
+ * whose old-side blob does not exist (added in this diff) reports `before` as
+ * `null`, which the name attribution treats as "no old side", not as an error.
+ */
+export function changedFileDiffsSinceRemoteBase(repoRoot: string): FileDiff[] {
+  const base = resolveRemoteBase(repoRoot)
+  const mergeBase = git(repoRoot, ['merge-base', base, 'HEAD']) || base
+  const out: FileDiff[] = []
+  for (const relative of changedFilesSinceRemoteBase(repoRoot)) {
+    const patch = git(repoRoot, ['diff', '-U0', `${mergeBase}..HEAD`, '--', relative])
+    const { beforeRanges, afterRanges } = parseHunkRanges(patch)
+    out.push({
+      file: join(repoRoot, relative),
+      after: showBlob(repoRoot, 'HEAD', relative),
+      before: showBlob(repoRoot, mergeBase, relative),
+      beforeRanges,
+      afterRanges
+    })
+  }
+  return out
+}
+
+/** One blob's content at a ref, or `null` when the path does not exist there (added, deleted, or renamed into place). */
+function showBlob(repoRoot: string, ref: string, relative: string): string | null {
+  try {
+    return execFileSync('git', ['show', `${ref}:${relative}`], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore'],
+      env: cleanGitEnv()
+    })
+  } catch {
+    return null
+  }
 }

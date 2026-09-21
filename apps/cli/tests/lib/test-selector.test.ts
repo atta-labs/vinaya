@@ -8,8 +8,10 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { dirname, extname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { ALL_NAMES, affectedNamesForFile, type LineRange, parseHunkRanges } from '../../src/lib/changed-names'
 import { loadConfig } from '../../src/lib/config'
 import { discoverWorkspacePackages, isTestFile, selectAffectedTestFiles, walkFiles } from '../../src/lib/test-selector'
+import { loadTypeScript } from '../../src/lib/ts-module-graph'
 
 function fixtureRepo(): string {
   const root = mkdtempSync(join(tmpdir(), 'vinaya-selector-'))
@@ -1448,5 +1450,178 @@ describe('the compiler resolves the graph, and the text scan remains a safe fall
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
+  })
+})
+
+// O3 — a diff is attributed to the top-level declarations its hunks touch, and
+// selection follows those names. Every shape that cannot be attributed widens to
+// the whole file, which is the file-level answer, never a narrower one.
+describe('changed-name attribution (O3)', () => {
+  const ts = loadTypeScript(REPO_ROOT) as NonNullable<ReturnType<typeof loadTypeScript>>
+
+  /** One modified file, with its hunk ranges given directly rather than through git. */
+  function modified(source: string, afterRanges: LineRange[], before = source, beforeRanges: LineRange[] = []) {
+    return affectedNamesForFile(ts, {
+      file: '/w/mod.ts',
+      after: source,
+      before,
+      afterRanges,
+      beforeRanges
+    })
+  }
+
+  const SOURCE = [
+    "import { dep } from './dep.js'", // 1
+    '', // 2
+    'export function alpha() {', // 3
+    '  return 1', // 4
+    '}', // 5
+    '', // 6
+    'export function beta() {', // 7
+    '  return helper()', // 8
+    '}', // 9
+    '', // 10
+    'function helper() {', // 11
+    '  return dep', // 12
+    '}', // 13
+    '', // 14
+    'export const gamma = 3' // 15
+  ].join('\n')
+
+  it('a hunk inside one exported function attributes to that name alone', () => {
+    expect(modified(SOURCE, [{ start: 4, end: 4 }])).toEqual(new Set(['alpha']))
+  })
+
+  it('a hunk in a local helper also affects every exported declaration that uses it', () => {
+    // `beta` calls `helper`; `alpha` and `gamma` do not.
+    expect(modified(SOURCE, [{ start: 12, end: 12 }])).toEqual(new Set(['helper', 'beta']))
+  })
+
+  it('an exported const attributes to its own name', () => {
+    expect(modified(SOURCE, [{ start: 15, end: 15 }])).toEqual(new Set(['gamma']))
+  })
+
+  it('a hunk in an import statement widens to the whole file', () => {
+    expect(modified(SOURCE, [{ start: 1, end: 1 }])).toBe(ALL_NAMES)
+  })
+
+  it('a hunk past the last declaration widens to the whole file', () => {
+    expect(modified(SOURCE, [{ start: 99, end: 99 }])).toBe(ALL_NAMES)
+  })
+
+  for (const [label, source] of [
+    ['module-scope executable code', "console.log('boot')\nexport function f() { return 1 }\n"],
+    ['an `export *` re-export', "export * from './other.js'\nexport function f() { return 1 }\n"],
+    ['an `export default`', 'export default function () { return 1 }\n'],
+    ['a destructuring binding', 'export const { a, b } = load()\n']
+  ] as const) {
+    it(`${label} widens to the whole file`, () => {
+      expect(modified(source, [{ start: 1, end: 1 }])).toBe(ALL_NAMES)
+    })
+  }
+
+  it('a declaration deleted by the diff is attributed from the OLD side', () => {
+    const before = 'export function gone() { return 1 }\nexport function kept() { return 2 }\n'
+    const after = 'export function kept() { return 2 }\n'
+    expect(
+      affectedNamesForFile(ts, {
+        file: '/w/mod.ts',
+        after,
+        before,
+        afterRanges: [{ start: 1, end: 0 }], // git's zero-width `+N,0` on a pure deletion
+        beforeRanges: [{ start: 1, end: 1 }]
+      })
+    ).toEqual(new Set(['gone']))
+  })
+
+  it('a non-TypeScript changed file is never narrowed', () => {
+    expect(
+      affectedNamesForFile(ts, {
+        file: '/w/vinaya.config.json',
+        after: '{}',
+        before: '{}',
+        afterRanges: [{ start: 1, end: 1 }],
+        beforeRanges: []
+      })
+    ).toBe(ALL_NAMES)
+  })
+
+  it('parseHunkRanges reads both sides, including git’s zero-width counts', () => {
+    const patch = ['@@ -10,0 +11,3 @@', 'body', '@@ -20,2 +24,0 @@', 'body', '@@ -30 +34 @@'].join('\n')
+    expect(parseHunkRanges(patch)).toEqual({
+      beforeRanges: [
+        { start: 10, end: 9 },
+        { start: 20, end: 21 },
+        { start: 30, end: 30 }
+      ],
+      afterRanges: [
+        { start: 11, end: 13 },
+        { start: 24, end: 23 },
+        { start: 34, end: 34 }
+      ]
+    })
+  })
+})
+
+describe('selection follows the changed names, and widens to file level when it cannot (O3)', () => {
+  const NAMED_LIB = {
+    'src/index.ts': "export { hot } from './hot.js'\nexport { cold } from './cold.js'\n",
+    'src/hot.ts': 'export function hot() { return 1 }\n',
+    'src/cold.ts': 'export function cold() { return 2 }\n'
+  }
+
+  function workspace() {
+    return mkWorkspace([
+      { name: '@o3/lib', main: INDEX_MAIN, files: NAMED_LIB },
+      {
+        name: '@o3/app',
+        files: {
+          'src/uses-hot.test.ts': "import { hot } from '@o3/lib'\ntest('hot', () => hot())\n",
+          'src/uses-cold.test.ts': "import { cold } from '@o3/lib'\ntest('cold', () => cold())\n"
+        }
+      }
+    ])
+  }
+
+  it('a change to ONE re-exported name on a shared barrel selects only that name’s consumer', () => {
+    const { root, dir } = workspace()
+    try {
+      const index = join(dir('@o3/lib'), 'src/index.ts')
+      const usesHot = join(dir('@o3/app'), 'src/uses-hot.test.ts')
+      const usesCold = join(dir('@o3/app'), 'src/uses-cold.test.ts')
+      const selected = new Set(
+        selectAffectedTestFiles(root, [index], { affectedNames: new Map([[index, new Set(['hot'])]]) }).selected
+      )
+      expect(selected).toContain(usesHot)
+      expect(selected).not.toContain(usesCold)
+      // Without name information the same change is file-level: both select.
+      const fileLevel = new Set(selectAffectedTestFiles(root, [index]).selected)
+      expect(fileLevel).toContain(usesHot)
+      expect(fileLevel).toContain(usesCold)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('an unattributable hunk (`all`) selects everything the file-level graph reaches', () => {
+    const { root, dir } = workspace()
+    try {
+      const index = join(dir('@o3/lib'), 'src/index.ts')
+      const named = new Set(
+        selectAffectedTestFiles(root, [index], { affectedNames: new Map([[index, ALL_NAMES]]) }).selected
+      )
+      expect(named).toEqual(new Set(selectAffectedTestFiles(root, [index]).selected))
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('on the real repository, a one-name change selects strictly fewer files than the file-level answer', () => {
+    const changed = join(REPO_ROOT, 'packages/aeg-core/src/review-input-manifest.ts')
+    const fileLevel = selectAffectedTestFiles(REPO_ROOT, [changed]).selected.length
+    const oneName = selectAffectedTestFiles(REPO_ROOT, [changed], {
+      affectedNames: new Map([[changed, new Set(['isBoundToPolicy'])]])
+    }).selected.length
+    expect(oneName).toBeLessThan(fileLevel)
   })
 })
