@@ -1858,4 +1858,44 @@ describe('the confined role reaches only its OWN task folder under the new layou
       result.launch.cleanup()
     }
   })
+
+  it('grants a confined developer exactly its own round’s confidence/round-response files, by exact path, never the whole Developer folder (O3, task-files-v1 2, #649)', () => {
+    const runtimeDir = tempDir('vinaya-wb-o4-runtime-')
+    const allowedDir = tempDir('vinaya-wb-o4-allowed-')
+    const binDir = tempDir('vinaya-wb-o4-bin-')
+    const confidencePath = runPath(runtimeDir, OWN_TASK, { area: 'developer', round: 2, file: '.vinaya-confidence' })
+    const roundResponsePath = runPath(runtimeDir, OWN_TASK, {
+      area: 'developer',
+      round: 2,
+      file: '.vinaya-round-response'
+    })
+    const result = resolveWorkerBoundaryLaunch(
+      {
+        binaryPath: fakeBinaryIn(binDir),
+        args: [],
+        allowedDir,
+        // Exactly what `dispatch.ts` computes for a round-≥2 developer
+        // dispatch that carries findings to address: the two exact files,
+        // never a directory.
+        extraWritableFiles: [confidencePath, roundResponsePath],
+        extraWritableDirs: []
+      },
+      AVAILABLE_DEPS
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    try {
+      const profile = readFileSync(result.launch.args[1] as string, 'utf8')
+      const real = realpathSync(runtimeDir)
+      const developerDir = join(real, 'tasks-execution', String(OWN_TASK), 'rounds', '2', 'developer')
+      expect(profile).toContain(`(literal "${join(developerDir, '.vinaya-confidence')}")`)
+      expect(profile).toContain(`(literal "${join(developerDir, '.vinaya-round-response')}")`)
+      // Never a directory-level grant on the Developer folder itself — a
+      // third, unrelated file dropped there is not exposed just because it
+      // sits alongside the two named ones.
+      expect(profile).not.toContain(`(subpath "${developerDir}")`)
+    } finally {
+      result.launch.cleanup()
+    }
+  })
 })
