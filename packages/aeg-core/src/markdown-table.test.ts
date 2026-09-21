@@ -81,7 +81,8 @@ describe('enforcement.md Ring 0/1/2 tables (implementation column)', () => {
     // evidence-fresh, doc-coverage (PR open/edit), and surface-scope.
     // A later task added the `PR-body premise
     // reassertion` row.
-    expect(ring1.rows).toHaveLength(32)
+    // A later task added the `Principal Test Plan wait` row.
+    expect(ring1.rows).toHaveLength(33)
 
     // (2026-07-13) removed the "Daily drift check — stuck row-adjacent
     // blockers" ring-2 row (its subject matter, stale-blocker.ts, was retired).

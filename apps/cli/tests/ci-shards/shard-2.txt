@@ -7,6 +7,7 @@ tests/checks/branch-topology.test.ts
 tests/checks/changeset-coverage.test.ts
 tests/checks/check-exec-bits.test.ts
 tests/checks/check-pr-premise-reassert-own-body.test.ts
+tests/checks/check-principal-test-plan-wait.test.ts
 tests/checks/check-test-plan-principal-owed.test.ts
 tests/checks/check-token-report-probe-crash.test.ts
 tests/checks/check-workspace-escape.test.ts

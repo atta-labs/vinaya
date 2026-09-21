@@ -57,6 +57,7 @@ describe('registry env declarations', () => {
         'no-disk-state',
         'pr-premise-reassert',
         'pr-report-density',
+        'principal-test-plan-wait',
         'quoted-command',
         'reader-resolvable-prose',
         'registry-gates',

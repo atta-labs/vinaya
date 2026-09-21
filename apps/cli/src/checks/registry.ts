@@ -373,6 +373,44 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
   ],
   [
     {
+      // Owns the merge condition an unticked `[principal]` Test Plan item
+      // represents, as its own independent check — the Principal wants
+      // every merge condition to be its own check, so that all green means
+      // mergeable, rather than depending on a reviewer to notice this
+      // reason buried inside `review-gate`'s own possible failures.
+      // Reported by its own job in `vinaya-body-checks.yml`, never by
+      // `--all` (see `ownWorkflow` below) — its own workflow re-runs on a
+      // PR body edit (ticking a box), unlike `review-gate`, which a body
+      // edit never retriggers.
+      name: 'principal-test-plan-wait',
+      validates: 'body',
+      run: bin('check-principal-test-plan-wait'),
+      scope: 'diff',
+      timeoutMs: 15_000,
+      // Pre-merge-only: an unticked `[principal]` Test Plan item is never
+      // tickable by the Developer's first commit — only the Principal
+      // clears it. See `CheckSpec.requiresOpenPr`'s doc comment.
+      requiresOpenPr: true,
+      // Reported by its own dedicated job in the generated
+      // `vinaya-body-checks.yml` — `--all` must never evaluate it a second
+      // time, the same reasoning `review-gate`/`body-bare-digits` document
+      // on their own entries: a second copy inside `--all` would put this
+      // check's red inside another check's name.
+      ownWorkflow: true,
+      // `process.env.PR_BODY ?? ''` / `process.env.BRANCH ?? ''` — both
+      // plain absence-tolerant fall-throughs, same shape as `test-plan`'s
+      // identical declaration above.
+      env: {
+        PR_BODY: { optional: true },
+        BRANCH: { optional: true }
+      }
+    },
+    // requiresOpenPr AND ownWorkflow — CI/PR-only twice over, same as
+    // `body-bare-digits`/`token-report` above.
+    1
+  ],
+  [
+    {
       name: 'body-bare-digits',
       validates: 'body',
       run: bin('check-body-bare-digits'),

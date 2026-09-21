@@ -9,6 +9,7 @@
 
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
+import { PRINCIPAL_TEST_PLAN_WAIT_CHECK_RUN_NAME } from '../principal-test-plan-wait-check-name.js'
 import { REVIEW_GATE_CHECK_RUN_NAME } from '../review-gate-check-name.js'
 
 /** Env-overridable, same idiom `dev-review-loop.ts`'s own `gatePollEnvOverride` uses — a fixture needs sub-millisecond backoff, real usage needs real spacing between retries. */
@@ -97,15 +98,20 @@ type RestCheckRun = { id: number; name: string; status: string; conclusion: stri
 
 /**
  * Every mechanical check-run GitHub reports for `headSha`, deduped to the
- * latest run per name, EXCLUDING `REVIEW_GATE_CHECK_RUN_NAME` — the same
- * exclusion `check-review-gate.ts` already applies to itself, imported from
- * the one shared constant rather than a second hardcoded name
- * (Traps to avoid). Excluded
- * entirely, in every status: a review gate that hasn't posted a verdict yet
- * (no check-run conclusion, or one still `in_progress`) must never read as
- * pending CI either — it is not CI at all. `null` on a genuine fetch
- * failure, read by both callers below as `'pending'` (a transient hiccup
- * reads the same as "not resolved yet", never as red).
+ * latest run per name, EXCLUDING `REVIEW_GATE_CHECK_RUN_NAME` and
+ * `PRINCIPAL_TEST_PLAN_WAIT_CHECK_RUN_NAME` — the same exclusion
+ * `check-review-gate.ts` already applies to its own name, imported from the
+ * one shared constant rather than a second hardcoded name (Traps to avoid).
+ * Both are excluded entirely, in every status, but for two different
+ * reasons: a review gate that hasn't posted a verdict yet (no check-run
+ * conclusion, or one still `in_progress`) must never read as pending CI
+ * either — it is not CI at all; the principal-test-plan-wait check IS a real
+ * mechanical check-run, but its own red is the Principal's own wait, not a
+ * failure the Developer can fix by pushing — its own job is what actually
+ * holds the merge open while it stays red. No other red check may be
+ * excluded this way. `null` on a genuine fetch failure, read by
+ * both callers below as `'pending'` (a transient hiccup reads the same as
+ * "not resolved yet", never as red).
  */
 function fetchMechanicalCheckRuns(headSha: string): RestCheckRun[] | null {
   let out: string
@@ -137,7 +143,9 @@ function fetchMechanicalCheckRuns(headSha: string): RestCheckRun[] | null {
     const seen = latestByName.get(run.name)
     if (!seen || Date.parse(run.started_at) > Date.parse(seen.started_at)) latestByName.set(run.name, run)
   }
-  return Array.from(latestByName.values()).filter((r) => r.name !== REVIEW_GATE_CHECK_RUN_NAME)
+  return Array.from(latestByName.values()).filter(
+    (r) => r.name !== REVIEW_GATE_CHECK_RUN_NAME && r.name !== PRINCIPAL_TEST_PLAN_WAIT_CHECK_RUN_NAME
+  )
 }
 
 /**
