@@ -265,9 +265,8 @@ jobs:
   # above and reports under the historical "Vinaya CI" name (`run-name`
   # left unset — the JOB name is what a required-check setting matches),
   # so sharding the work behind it never means sharding, renaming, or
-  # multiplying the required check `vinaya-review-retrigger.yml`'s
-  # `workflow_run: workflows: [CI]` trigger and every adopter's branch
-  # protection already key on. `if: always()` — this must still run (and
+  # multiplying the required check every adopter's branch protection
+  # already keys on. `if: always()` — this must still run (and
   # fail loudly) when an upstream job fails, never be skipped alongside it.
   aggregate:
     name: Vinaya CI
