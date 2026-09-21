@@ -58,6 +58,7 @@ import {
   matchesCapturedIdentity,
   buildRolePermissions,
   buildWriteAccessScope,
+  addCodexWritableDirs,
   PERMISSION_POLICY_VERSION,
   type DispatchTeeRecoveryDeps
 } from '../../src/lib/dispatch.js'
@@ -457,6 +458,30 @@ describe('dispatchRole — a successful dispatch', () => {
       '-'
     ])
     expect(readFileSync(stdinOut, 'utf8')).toBe(PROMPT_FILE_CONTENT)
+  })
+})
+
+describe('addCodexWritableDirs — reviewer hand-off directories', () => {
+  it('adds each realpath-resolved directory before the JSONL prompt flags on a fresh exec', () => {
+    const a = tempDir('vinaya-codex-write-a-')
+    const b = tempDir('vinaya-codex-write-b-')
+    expect(addCodexWritableDirs(['exec', '--sandbox', 'workspace-write', '--json', '-'], [a, b], false)).toEqual([
+      'exec',
+      '--sandbox',
+      'workspace-write',
+      '--add-dir',
+      realpathSync(a),
+      '--add-dir',
+      realpathSync(b),
+      '--json',
+      '-'
+    ])
+  })
+
+  it('does not pass unsupported --add-dir flags to codex exec resume', () => {
+    const dir = tempDir('vinaya-codex-write-resume-')
+    const argv = ['exec', 'resume', 'thread-id', '--json', '-']
+    expect(addCodexWritableDirs(argv, [dir], true)).toEqual(argv)
   })
 })
 

@@ -354,6 +354,33 @@ export type DispatchHandle = {
 }
 
 /**
+ * Give Codex's nested `workspace-write` sandbox the same caller-scoped
+ * directories already granted by Vinaya's outer worker boundary.
+ * `codex exec resume` does not accept `--add-dir`, so only fresh sessions
+ * receive these flags; reviewer and security attempts are always fresh.
+ */
+export function addCodexWritableDirs(
+  args: readonly string[],
+  extraWritableDirs: readonly string[],
+  resumed: boolean
+): string[] {
+  if (resumed || extraWritableDirs.length === 0) return [...args]
+  const jsonIndex = args.indexOf('--json')
+  const insertionIndex = jsonIndex === -1 ? args.length : jsonIndex
+  const writableArgs = extraWritableDirs.flatMap((dir) => {
+    let canonical = dir
+    try {
+      canonical = realpathSync(dir)
+    } catch {
+      // Boundary construction performs the authoritative fail-closed path
+      // validation; preserve its diagnostic rather than throwing here.
+    }
+    return ['--add-dir', canonical]
+  })
+  return [...args.slice(0, insertionIndex), ...writableArgs, ...args.slice(insertionIndex)]
+}
+
+/**
  * Four hours — matches `dispatch.timeoutMs`'s documented default in
  * `VinayaConfigSchema`. Raised from the original one hour:
  * a real dispatched agent turn was found live still working past the
@@ -3045,7 +3072,11 @@ export async function dispatchRole(
     }
   }
 
-  const baseArgs = opts.resumeId ? vendor.resumeArgs(opts.resumeId, opts.model) : vendor.args(opts.model)
+  const vendorArgs = opts.resumeId ? vendor.resumeArgs(opts.resumeId, opts.model) : vendor.args(opts.model)
+  const baseArgs =
+    agent === 'codex'
+      ? addCodexWritableDirs(vendorArgs, opts.extraWritableDirs ?? [], opts.resumeId !== undefined)
+      : vendorArgs
   // Computed here, once — both the settings-write fail-closed check below
   // and the boundary-resolution block further down read the SAME value,
   // never two independently-evaluated `loadConfig()` calls that could
