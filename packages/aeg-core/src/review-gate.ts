@@ -145,8 +145,8 @@ export type ReviewGateInput = {
    * A base that moved under an identical patch can carry a semantic conflict
    * the earlier review could not have seen, and this binding will still
    * hold. That is the same limit GitHub's own stale-review rule has, and CI
-   * at the new head — which this gate already requires green — is the guard
-   * for it.
+   * at the new head — a required check in its own right, never read from
+   * here — is the guard for it.
    *
    * `git patch-id --stable` ignores whitespace, so a push that changes only
    * whitespace produces the same patch identity and KEEPS the verdict. That
