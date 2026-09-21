@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'bun:test'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { loadConfig } from '../../src/lib/config'
 import { discoverWorkspacePackages, isTestFile, selectAffectedTestFiles } from '../../src/lib/test-selector'
@@ -364,5 +364,296 @@ describe('a second real CI failure in the SAME task-files-v1/1 change set (Issue
   it('reachability ALONE (no alwaysRun) never selects it — no static import edge exists to walk, not merely one uncrossed', () => {
     const { selected } = selectAffectedTestFiles(REPO_ROOT, changed, { alwaysRun: [] })
     expect(selected).not.toContain(TASK_STATUS_E2E_TEST)
+  })
+})
+
+// symbol-aware-test-selection-v1 1, Part 3 — real on-disk fixtures for every
+// import/export shape the refinement must resolve precisely or fall back on:
+// aliases and `type` imports, nested and cross-package re-exports, unambiguous
+// vs. ambiguous `export *`, cyclic re-exports, namespace/default/dynamic/unknown
+// shapes, and a test that reaches a bare-package import only through an
+// intermediate file. Never mocked: each writes a throwaway workspace to disk.
+type PkgSpec = { name: string; main?: string; test?: string; files: Record<string, string> }
+
+/** Writes a throwaway multi-package workspace to a temp dir and returns its root plus a `dir(name)` locator. */
+function mkWorkspace(pkgs: PkgSpec[]): { root: string; dir: (name: string) => string } {
+  const root = mkdtempSync(join(tmpdir(), 'vinaya-sym-'))
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ workspaces: ['packages/*'] }))
+  const dirs = new Map<string, string>()
+  pkgs.forEach((p, i) => {
+    const dir = join(root, 'packages', `p${i}`)
+    dirs.set(p.name, dir)
+    mkdirSync(dir, { recursive: true })
+    const manifest: { name: string; main?: string; scripts?: { test: string } } = { name: p.name }
+    if (p.main) manifest.main = p.main
+    if (p.test) manifest.scripts = { test: p.test }
+    writeFileSync(join(dir, 'package.json'), JSON.stringify(manifest))
+    for (const [rel, content] of Object.entries(p.files)) {
+      const abs = join(dir, rel)
+      mkdirSync(dirname(abs), { recursive: true })
+      writeFileSync(abs, content)
+    }
+  })
+  return { root, dir: (name) => dirs.get(name) as string }
+}
+
+/** Runs the selector and returns the selected paths as a Set for containment asserts. */
+function selectSet(root: string, changed: string[]): Set<string> {
+  return new Set(selectAffectedTestFiles(root, changed).selected)
+}
+
+const INDEX_MAIN = './src/index.ts'
+
+describe('Part 3 — named-export precision across import/export shapes', () => {
+  it('aliases and type imports resolve by their origin name; an unrelated export never selects', () => {
+    const { root, dir } = mkWorkspace([
+      {
+        name: '@fx/lib',
+        main: INDEX_MAIN,
+        files: {
+          'src/index.ts':
+            "export { foo } from './foo'\nexport type { Thing } from './thing'\nexport { bar } from './bar'\n",
+          'src/foo.ts': 'export function foo() { return 1 }\n',
+          'src/thing.ts': 'export type Thing = { a: number }\n',
+          'src/bar.ts': 'export function bar() { return 2 }\n'
+        }
+      },
+      {
+        name: '@fx/app',
+        files: {
+          'src/uses-foo.test.ts': "import { foo as f } from '@fx/lib'\ntest('foo', () => f())\n",
+          'src/uses-thing.test.ts':
+            "import type { Thing } from '@fx/lib'\ntest('thing', () => { const t: Thing = { a: 1 }; return t })\n"
+        }
+      }
+    ])
+    try {
+      const lib = dir('@fx/lib')
+      const app = dir('@fx/app')
+      const usesFoo = join(app, 'src/uses-foo.test.ts')
+      const usesThing = join(app, 'src/uses-thing.test.ts')
+      // Changing foo.ts selects only the aliased foo importer.
+      expect(selectSet(root, [join(lib, 'src/foo.ts')])).toEqual(new Set([usesFoo]))
+      // Changing the type's defining file selects only the `type`-import test.
+      expect(selectSet(root, [join(lib, 'src/thing.ts')])).toEqual(new Set([usesThing]))
+      // Changing an unrelated export selects NEITHER — the coarse rule would have selected both.
+      expect(selectSet(root, [join(lib, 'src/bar.ts')])).toEqual(new Set())
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a nested re-export chain resolves to the deep definition, and a change to any hop on the path selects', () => {
+    const { root, dir } = mkWorkspace([
+      {
+        name: '@fx/lib',
+        main: INDEX_MAIN,
+        files: {
+          'src/index.ts': "export { deep } from './outer'\n",
+          'src/outer.ts': "export { deep } from './inner'\n",
+          'src/inner.ts': 'export function deep() { return 1 }\n',
+          'src/unrelated.ts': 'export function unrelated() { return 9 }\n'
+        }
+      },
+      {
+        name: '@fx/app',
+        files: { 'src/uses-deep.test.ts': "import { deep } from '@fx/lib'\ntest('deep', () => deep())\n" }
+      }
+    ])
+    try {
+      const lib = dir('@fx/lib')
+      const usesDeep = join(dir('@fx/app'), 'src/uses-deep.test.ts')
+      expect(selectSet(root, [join(lib, 'src/inner.ts')])).toEqual(new Set([usesDeep])) // deep definition
+      expect(selectSet(root, [join(lib, 'src/outer.ts')])).toEqual(new Set([usesDeep])) // intermediate hop
+      expect(selectSet(root, [join(lib, 'src/index.ts')])).toEqual(new Set([usesDeep])) // entrypoint barrel
+      expect(selectSet(root, [join(lib, 'src/unrelated.ts')])).toEqual(new Set()) // off the path
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a name re-exported across a package boundary resolves to its true origin, not a coarse edge on the middle package', () => {
+    const { root, dir } = mkWorkspace([
+      {
+        name: '@fx/base',
+        main: INDEX_MAIN,
+        files: { 'src/index.ts': "export { val } from './val'\n", 'src/val.ts': 'export const val = 1\n' }
+      },
+      {
+        name: '@fx/mid',
+        main: INDEX_MAIN,
+        files: {
+          'src/index.ts': "export { val } from '@fx/base'\nexport { own } from './own'\n",
+          'src/own.ts': 'export const own = 2\n'
+        }
+      },
+      { name: '@fx/app', files: { 'src/uses-val.test.ts': "import { val } from '@fx/mid'\ntest('val', () => val)\n" } }
+    ])
+    try {
+      const usesVal = join(dir('@fx/app'), 'src/uses-val.test.ts')
+      // The true origin is in @fx/base — a change there selects the consumer of @fx/mid.
+      expect(selectSet(root, [join(dir('@fx/base'), 'src/val.ts')])).toContain(usesVal)
+      // @fx/mid's own unrelated file does NOT — the coarse rule would have selected it on any @fx/mid change.
+      expect(selectSet(root, [join(dir('@fx/mid'), 'src/own.ts')])).not.toContain(usesVal)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('an unambiguous `export *` resolves precisely — it is not treated as automatically unsafe', () => {
+    const { root, dir } = mkWorkspace([
+      {
+        name: '@fx/lib',
+        main: INDEX_MAIN,
+        files: {
+          'src/index.ts': "export * from './only'\nexport { extra } from './extra'\n",
+          'src/only.ts': 'export function solo() { return 1 }\nexport function other() { return 2 }\n',
+          'src/extra.ts': 'export const extra = 3\n'
+        }
+      },
+      {
+        name: '@fx/app',
+        files: { 'src/uses-solo.test.ts': "import { solo } from '@fx/lib'\ntest('solo', () => solo())\n" }
+      }
+    ])
+    try {
+      const lib = dir('@fx/lib')
+      const usesSolo = join(dir('@fx/app'), 'src/uses-solo.test.ts')
+      expect(selectSet(root, [join(lib, 'src/only.ts')])).toEqual(new Set([usesSolo])) // resolved through the single star source
+      expect(selectSet(root, [join(lib, 'src/extra.ts')])).toEqual(new Set()) // a different export, off solo's path
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a test reaches a bare-package import through an intermediate file, not written in the test itself', () => {
+    const { root, dir } = mkWorkspace([
+      {
+        name: '@fx/lib',
+        main: INDEX_MAIN,
+        files: {
+          'src/index.ts': "export { foo } from './foo'\n",
+          'src/foo.ts': 'export function foo() { return 1 }\n',
+          'src/unrelated.ts': 'export const u = 9\n'
+        }
+      },
+      {
+        name: '@fx/app',
+        files: {
+          'src/helper.ts': "import { foo } from '@fx/lib'\nexport const wrapped = () => foo()\n",
+          'src/via-helper.test.ts': "import { wrapped } from './helper'\ntest('wrapped', () => wrapped())\n"
+        }
+      }
+    ])
+    try {
+      const lib = dir('@fx/lib')
+      const viaHelper = join(dir('@fx/app'), 'src/via-helper.test.ts')
+      expect(selectSet(root, [join(lib, 'src/foo.ts')])).toEqual(new Set([viaHelper])) // reached transitively through helper.ts
+      expect(selectSet(root, [join(lib, 'src/unrelated.ts')])).toEqual(new Set()) // off the resolved path
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('Part 3 — unprovable shapes retain the whole-package edge (coarse fallback)', () => {
+  // Each fixture shares one lib whose `foo`/`bar` are precisely resolvable; the
+  // coarse test imports foo via an unprovable shape. A change to `bar.ts` (which
+  // the precise control never imports) must select the coarse test and NOT the
+  // control — proving the fallback is a real whole-package edge, not precision.
+  const libFiles = {
+    'src/index.ts':
+      "export { foo } from './foo'\nexport { bar } from './bar'\nexport * from './dupa'\nexport * from './dupb'\nexport { cyc } from './cyca'\n",
+    'src/foo.ts': 'export function foo() { return 1 }\n',
+    'src/bar.ts': 'export function bar() { return 2 }\n',
+    'src/dupa.ts': 'export function dup() { return 3 }\n',
+    'src/dupb.ts': 'export function dup() { return 4 }\n',
+    'src/cyca.ts': "export { cyc } from './cycb'\n",
+    'src/cycb.ts': "export { cyc } from './cyca'\n"
+  }
+
+  const cases: Array<{ label: string; test: string; body: string }> = [
+    { label: 'namespace import', test: 'ns.test.ts', body: "import * as lib from '@fx/lib'\ntest('ns', () => lib)\n" },
+    { label: 'default import', test: 'def.test.ts', body: "import lib from '@fx/lib'\ntest('def', () => lib)\n" },
+    { label: 'dynamic import', test: 'dyn.test.ts', body: "test('dyn', async () => await import('@fx/lib'))\n" },
+    { label: 'side-effect import', test: 'side.test.ts', body: "import '@fx/lib'\ntest('side', () => 1)\n" },
+    { label: 'unknown name', test: 'unk.test.ts', body: "import { ghost } from '@fx/lib'\ntest('unk', () => ghost)\n" },
+    {
+      label: 'ambiguous export *',
+      test: 'amb.test.ts',
+      body: "import { dup } from '@fx/lib'\ntest('amb', () => dup())\n"
+    },
+    { label: 'cyclic re-export', test: 'cyc.test.ts', body: "import { cyc } from '@fx/lib'\ntest('cyc', () => cyc)\n" }
+  ]
+
+  for (const c of cases) {
+    it(`${c.label}: a change to an unrelated export still selects it, but never the precise control`, () => {
+      const { root, dir } = mkWorkspace([
+        { name: '@fx/lib', main: INDEX_MAIN, files: libFiles },
+        {
+          name: '@fx/app',
+          files: {
+            [`src/${c.test}`]: c.body,
+            'src/control-foo.test.ts': "import { foo } from '@fx/lib'\ntest('foo', () => foo())\n"
+          }
+        }
+      ])
+      try {
+        const app = dir('@fx/app')
+        const coarse = join(app, `src/${c.test}`)
+        const control = join(app, 'src/control-foo.test.ts')
+        const selected = selectSet(root, [join(dir('@fx/lib'), 'src/bar.ts')])
+        expect(selected).toContain(coarse) // whole-package fallback fired
+        expect(selected).not.toContain(control) // precise `foo` import is untouched by a `bar` change
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    })
+  }
+
+  it('an underivable entrypoint (no exports/main) makes every bare import of that package coarse', () => {
+    const { root, dir } = mkWorkspace([
+      { name: '@fx/noentry', files: { 'src/thing.ts': 'export function thing() { return 1 }\n' } },
+      {
+        name: '@fx/app',
+        files: { 'src/uses.test.ts': "import { thing } from '@fx/noentry'\ntest('thing', () => thing())\n" }
+      }
+    ])
+    try {
+      const uses = join(dir('@fx/app'), 'src/uses.test.ts')
+      // No entrypoint to resolve `thing` through — any change in @fx/noentry selects the importer.
+      expect(selectSet(root, [join(dir('@fx/noentry'), 'src/thing.ts')])).toContain(uses)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a single file importing the same package under BOTH a resolvable and an unprovable shape stays coarse', () => {
+    const { root, dir } = mkWorkspace([
+      {
+        name: '@fx/lib',
+        main: INDEX_MAIN,
+        files: {
+          'src/index.ts': "export { foo } from './foo'\nexport { bar } from './bar'\n",
+          'src/foo.ts': 'export function foo() { return 1 }\n',
+          'src/bar.ts': 'export function bar() { return 2 }\n'
+        }
+      },
+      {
+        name: '@fx/app',
+        files: {
+          'src/mixed.test.ts':
+            "import { foo } from '@fx/lib'\nimport * as all from '@fx/lib'\ntest('mixed', () => [foo(), all])\n"
+        }
+      }
+    ])
+    try {
+      const mixed = join(dir('@fx/app'), 'src/mixed.test.ts')
+      // `bar` is unrelated to the resolvable `foo` import, yet the namespace import
+      // on the same file forces the whole-package edge, so `bar` still selects it.
+      expect(selectSet(root, [join(dir('@fx/lib'), 'src/bar.ts')])).toContain(mixed)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })
