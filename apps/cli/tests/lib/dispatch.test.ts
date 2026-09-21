@@ -17,7 +17,17 @@
 import { afterEach, beforeAll, describe, expect, it } from 'bun:test'
 import { execFileSync, execSync, spawnSync } from 'node:child_process'
 import type { SpawnSyncOptionsWithStringEncoding, SpawnSyncReturns } from 'node:child_process'
-import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -3036,6 +3046,35 @@ describe('buildWriteAccessScope — Issue #663, O1 round 2 fix: the real Write/E
     })
   })
 
+  it('developer: extraFiles resolves through a symlinked ancestor even though the file itself does not exist yet (round 2 review, MAJOR) — matching writeAccessHookScript’s own live comparison', () => {
+    const dir = tempDir('vinaya-write-scope-')
+    const realParent = tempDir('vinaya-write-scope-realparent-')
+    const linkContainer = tempDir('vinaya-write-scope-link-')
+    const symlinkedRoot = join(linkContainer, 'runs')
+    symlinkSync(realParent, symlinkedRoot)
+    const devDir = join(symlinkedRoot, 'rounds', '2', 'developer')
+    mkdirSync(devDir, { recursive: true })
+    // Never created — every developerFiles entry is genuinely absent at
+    // scope-build time (the Developer has not written it yet this round).
+    const confidence = join(devDir, '.vinaya-confidence')
+
+    const scope = buildWriteAccessScope('developer', dir, [], [confidence])
+    expect(scope).not.toBeNull()
+    if (scope === null) return
+    expect(scope.kind).toBe('directory')
+    const resolved = (scope as { extraFiles: string[] }).extraFiles[0]
+
+    // Never the raw, symlinked-through path `real()` alone would have fallen
+    // back to (the pre-fix behavior: `realpathSync` on the whole,
+    // not-yet-existing path throws, and the catch returned it unresolved).
+    expect(resolved).not.toBe(confidence)
+    // The SAME canonical path `writeAccessHookScript`'s own live comparison
+    // computes for an identical Write call — `realpathSync(dirname(filePath))`
+    // joined with the basename — so a real dispatch's grant and its own
+    // hook's check agree.
+    expect(resolved).toBe(join(realpathSync(devDir), '.vinaya-confidence'))
+  })
+
   it('a role other than developer never gets developerFiles applied', () => {
     const a = tempDir('vinaya-write-scope-a-')
     const scope = buildWriteAccessScope('code-reviewer', '/unused', [a], ['/some/absolute/path'])
@@ -3279,6 +3318,78 @@ describe('writeDispatchSettings — Issue #663, O1/O3: the permission policy is 
     expect(denied.status).toBe(0)
     const deniedOut = JSON.parse(denied.stdout) as { hookSpecificOutput: { permissionDecision: string } }
     expect(deniedOut.hookSpecificOutput.permissionDecision).toBe('deny')
+  })
+
+  it('developerFiles behind a symlinked ancestor still ALLOWS end to end — the grant and the live hook check agree (round 2 review, MAJOR)', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const realDevFilesDir = tempDir('vinaya-dispatch-devfiles-real-')
+    const linkContainer = tempDir('vinaya-dispatch-devfiles-link-')
+    const linkedDevFilesDir = join(linkContainer, 'developer')
+    symlinkSync(realDevFilesDir, linkedDevFilesDir)
+    // Named through the SYMLINK, exactly as `dev-review-loop.ts`'s
+    // `confidenceFilePathFor` would if `runtimeDir` itself traversed one
+    // (`/var` → `/private/var`, this reference's own documented example) —
+    // never created, matching the real "not written yet this round" case.
+    const confidencePath = join(linkedDevFilesDir, '.vinaya-confidence')
+    const argvOut = join(cwd, 'argv.out')
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\nfor a in "$@"; do echo "$a"; done > "${argvOut}"\ncat > /dev/null\necho '{}'\nexit 0\n`
+    )
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+
+    const dispatchLib = join(CLI_ROOT, 'src', 'lib', 'dispatch.ts')
+    const script = join(cwd, 'developer-files-symlink-dispatch.ts')
+    writeFileSync(
+      script,
+      [
+        `import { dispatchRole } from ${JSON.stringify(dispatchLib)}`,
+        'const opts = {',
+        `  promptFile: ${JSON.stringify(promptFile)},`,
+        `  cwd: ${JSON.stringify(cwd)},`,
+        `  developerFiles: [${JSON.stringify(confidencePath)}]`,
+        '}',
+        `await dispatchRole('developer', 'claude', 'p', opts)`
+      ].join('\n')
+    )
+    const spawnEnv: NodeJS.ProcessEnv = stripVinayaEnv({
+      ...process.env,
+      HOME: home,
+      PATH: `${binDir}:${pathWithoutRealVendors()}`
+    })
+    runScriptWithBudget(script, cwd, spawnEnv)
+
+    const argv = readFileSync(argvOut, 'utf8').trim().split('\n')
+    const settingsIdx = argv.indexOf('--settings')
+    const settingsPath = argv[settingsIdx + 1] as string
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as {
+      hooks: { PreToolUse: Array<{ matcher: string; hooks: Array<{ command: string }> }> }
+    }
+    const writeEntry = settings.hooks.PreToolUse.find((h) => h.matcher === 'Write|Edit')
+    const hookCommand = writeEntry?.hooks[0]?.command as string
+    const scriptPath = hookCommand.slice('bun "'.length, -1)
+    const scopeFiles = readdirSync(dirname(scriptPath)).filter((f) => f.startsWith('write-access-'))
+    const runId = (scopeFiles[0] as string).slice('write-access-'.length, -'.json'.length)
+
+    // Claude Code itself would report `tool_input.file_path` as the caller
+    // spelled it — through the symlink, never pre-resolved — since it never
+    // saw the real target either.
+    const r = spawnBudgeted(
+      [scriptPath],
+      {
+        input: JSON.stringify({ tool_name: 'Write', tool_input: { file_path: confidencePath } }),
+        encoding: 'utf8',
+        env: { ...process.env, VINAYA_RUN_ID: runId }
+      },
+      'write-access hook'
+    )
+    expect(r.status).toBe(0)
+    const out = JSON.parse(r.stdout) as { hookSpecificOutput: { permissionDecision: string } }
+    expect(out.hookSpecificOutput.permissionDecision).toBe('allow')
   })
 
   it('a code-reviewer dispatch writes the read-only policy, never the developer one', () => {

@@ -87,7 +87,7 @@ import {
   scopeFromSegment,
   tasksExecutionRoot
 } from './run-paths.js'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { buildWorkerEnv, resolveWorkerBoundaryLaunch, RUNTIME_CREDENTIAL_ENV_KEYS } from './worker-boundary.js'
 import { repoRoot } from './diff-evidence.js'
 
@@ -1147,6 +1147,21 @@ export type WriteAccessScope =
  * to a directory grant, since nothing else under that round's Developer
  * folder is this dispatch's to write. Ignored for every other role: a
  * reviewer/security dispatch's own `exact-files` scope is unaffected.
+ *
+ * **`developerFiles` is resolved through its own PARENT, never `real()`
+ * (round 2 review, MAJOR).** Every entry is a file that does not exist yet
+ * at scope-build time (the Developer has not written it this round) — `real()`'s
+ * `realpathSync(p)` throws on the whole, not-yet-existing path and falls back
+ * to it RAW, unresolved. `writeAccessHookScript`'s own live comparison, below,
+ * resolves the opposite way: `realpathSync(path.dirname(filePath))` (the
+ * PARENT, which does exist — `dev-review-loop.ts`'s `dispatchDeveloper` calls
+ * `ensureRunDir` on it before this dispatch ever runs) joined with the
+ * basename. A `runtimeDir` that traverses a symlinked ancestor (`/var` →
+ * `/private/var`, this reference's own documented example) would make the two
+ * sides disagree — this function's own raw, unresolved grant never matching
+ * the hook's resolved comparison — and deny the Developer's own legitimate
+ * confidence/round-response write. `realFile` mirrors the hook's exact
+ * resolution so both sides compute the identical string.
  */
 export function buildWriteAccessScope(
   role: Role,
@@ -1161,8 +1176,15 @@ export function buildWriteAccessScope(
       return p
     }
   }
+  const realFile = (p: string): string => {
+    try {
+      return join(realpathSync(dirname(p)), basename(p))
+    } catch {
+      return real(p)
+    }
+  }
   if (role === 'developer') {
-    return { kind: 'directory', allowedDir: real(allowedDir), extraFiles: developerFiles.map(real) }
+    return { kind: 'directory', allowedDir: real(allowedDir), extraFiles: developerFiles.map(realFile) }
   }
   if (role === 'code-reviewer' || role === 'security') {
     if (extraWritableDirs.length === 0) return null
