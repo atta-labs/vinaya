@@ -7939,12 +7939,14 @@ describe('buildReexecArgs (pure) — O7 re-exec carries the original --json inte
   })
 
   it('O4 (#662): a re-exec of a --resume-started run is still --task, never --resume — a re-exec must never re-run the resume gate against an already-consumed resolution', () => {
-    expect(buildReexecArgs({ resumePr: 42, agent: 'codex', json: true }, 9001)).toEqual([
+    expect(buildReexecArgs({ resumePr: 42, agent: 'codex', model: 'gpt-5.6-terra', json: true }, 9001)).toEqual([
       'dev-review-loop',
       '--task',
       '9001',
       '--agent',
       'codex',
+      '--model',
+      'gpt-5.6-terra',
       '--json'
     ])
   })

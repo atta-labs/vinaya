@@ -3972,11 +3972,35 @@ describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () =
         { input: '{}', encoding: 'utf8', env: hookEnv },
         'Codex Stop hook'
       )
-      expect(JSON.parse(blocked.stdout)).toMatchObject({ continue: false })
+      expect(JSON.parse(blocked.stdout)).toMatchObject({ decision: 'block' })
+      const spoofed = spawnBudgeted(
+        [commandPath(hooks.hooks.PostToolUse[0]?.hooks[0]?.command as string)],
+        {
+          input: JSON.stringify({
+            tool_name: 'Bash',
+            tool_input: { command: 'echo https://example.com/docs/fixture' },
+            tool_response: { output: 'https://example.com/docs/fixture' }
+          }),
+          encoding: 'utf8',
+          env: hookEnv
+        },
+        'Codex unrelated PostToolUse hook'
+      )
+      expect(spoofed.status).toBe(0)
+      const stillBlocked = spawnBudgeted(
+        [commandPath(hooks.hooks.Stop[0]?.hooks[0]?.command as string)],
+        { input: '{}', encoding: 'utf8', env: hookEnv },
+        'Codex Stop hook after spoof'
+      )
+      expect(JSON.parse(stillBlocked.stdout)).toMatchObject({ decision: 'block' })
       const recorded = spawnBudgeted(
         [commandPath(hooks.hooks.PostToolUse[0]?.hooks[0]?.command as string)],
         {
-          input: JSON.stringify({ tool_input: { url: 'https://example.com/docs/fixture' } }),
+          input: JSON.stringify({
+            tool_name: 'WebFetch',
+            tool_input: { url: 'https://example.com/docs/fixture' },
+            tool_response: { content: 'fetched documentation body' }
+          }),
           encoding: 'utf8',
           env: hookEnv
         },

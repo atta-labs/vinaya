@@ -779,9 +779,9 @@ function defaultDeps(): LoopDeps {
  * `devReviewLoop` caller that never resolved one — `dispatchRole` already
  * treats an absent `model` as "run this vendor's own default," unchanged.
  */
-export type LoopInput = { agent: AgentVendor; json?: boolean; model?: string } & (
-  | { task: number }
-  | { resumePr: number }
+export type LoopInput = { json?: boolean; model?: string } & (
+  | { task: number; agent: AgentVendor }
+  | { resumePr: number; agent?: AgentVendor }
 )
 export type LoopResult = { finalDecision: Decision; prNumber: number; task: number }
 
@@ -818,7 +818,16 @@ export type LoopResult = { finalDecision: Decision; prNumber: number; task: numb
  * in that path; it only shapes the driver's OWN internal re-exec.
  */
 export function buildReexecArgs(input: LoopInput, task: number): string[] {
-  return ['dev-review-loop', '--task', String(task), '--agent', input.agent, ...(input.json ? ['--json'] : [])]
+  if (!input.agent) throw new Error('buildReexecArgs: resolved agent is required')
+  return [
+    'dev-review-loop',
+    '--task',
+    String(task),
+    '--agent',
+    input.agent,
+    ...(input.model ? ['--model', input.model] : []),
+    ...(input.json ? ['--json'] : [])
+  ]
 }
 
 /**
@@ -868,6 +877,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   let branch: string
   let prNumber = -1 // resolved below, before any use — never read while -1
   let resumeFrom: PauseState | null = null
+  let dispatchAgent: AgentVendor = input.agent ?? 'claude'
+  let dispatchModel = input.model
   /** O8: true when `--resume` found the head already moved past the pause-time head — a ruling followed by a fix push, the normal case. Widens `firstPass` below so the loop skips redispatching the developer (it already acted) and goes straight to the gate/reviewer path on the new head. */
   let resumeHeadAlreadyMoved = false
 
@@ -890,6 +901,21 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         `devReviewLoop --resume: task ${closesTask}'s held pause state names PR #${held.prNumber}, not PR #${resumePr}.`
       )
     }
+    if (held.agent !== undefined && !isAgentVendor(held.agent)) {
+      throw new Error(`devReviewLoop --resume: held pause state carries invalid agent '${held.agent}'.`)
+    }
+    if (!input.agent && !held.agent) {
+      throw new Error(
+        'devReviewLoop --resume: this legacy pause state does not record an agent; retry once with --agent <claude|codex|gemini>.'
+      )
+    }
+    if (input.agent && held.agent && input.agent !== held.agent) {
+      throw new Error(
+        `devReviewLoop --resume: task ${closesTask} was dispatched with agent '${held.agent}', not '${input.agent}'. Retry without --agent or with --agent ${held.agent}.`
+      )
+    }
+    dispatchAgent = input.agent ?? (held.agent as AgentVendor)
+    dispatchModel = input.model ?? held.model
     // O5: an `'infrastructure'` pause is the driver's own
     // recoverable hiccup, never a human decision point (same wording the
     // pause-return branch below already uses for it and `stale_driver`) —
@@ -1208,7 +1234,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // issue-661, O1: the developer's own resolved model when `runTask`
       // resolved one, else the vendor name unchanged — reviewer/security
       // model resolution is out of this task's boundary.
-      models: { developer: input.model ?? input.agent, 'code-reviewer': input.agent, security: input.agent },
+      models: { developer: dispatchModel ?? dispatchAgent, 'code-reviewer': dispatchAgent, security: dispatchAgent },
       // O4: the repo-wide default, corrected to the REAL
       // `reviewPolicy()` value the moment the widened `try` below reads it
       // successfully (O6: `config` must be valid — never built from a
@@ -1519,7 +1545,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       }
       const attemptDispatch = (): Promise<DispatchHandle> =>
         withPromptFile(fullPrompt, (promptFile) =>
-          d.dispatchRole('developer', input.agent, fullPrompt, {
+          d.dispatchRole('developer', dispatchAgent, fullPrompt, {
             task: task,
             round: roundNum,
             resumeId: devResumeId ?? undefined,
@@ -1531,7 +1557,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // only here — `dispatchRole`'s own `resolvedModel` log line
             // already reports `requested:<model>` vs `'default'`, so no
             // separate log line is needed on this side.
-            ...(input.model ? { model: input.model } : {}),
+            ...(dispatchModel ? { model: dispatchModel } : {}),
             unattended: true
           })
         )
@@ -1586,7 +1612,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           }
         ])
       }
-      await assertDispatchOrEscalate(handle, input.agent, isResume, devDispatchSucceededBefore)
+      await assertDispatchOrEscalate(handle, dispatchAgent, isResume, devDispatchSucceededBefore)
       if (!handle.failureReason) {
         devDispatchSucceededBefore = true
         if (handle.resumeId) devResumeId = handle.resumeId
@@ -1609,7 +1635,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * already used, unchanged.
      */
     function reconcileDeveloperResume(artifactsPresent: boolean): void {
-      const recon = recoverDeveloperLaunch(task, input.agent, repo, { artifactsPresent })
+      const recon = recoverDeveloperLaunch(task, dispatchAgent, repo, { artifactsPresent })
       if (recon.kind === 'live') {
         throw new LaunchContinuityLost(
           `a prior dispatched developer launch (pid ${recon.record.childPid}) is still running for task ${task} — refusing to start a second worker on the same task`
@@ -1622,7 +1648,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       }
       // 'none' | 'finished' — no continuity-required session to reconcile;
       // fall back to the durable resume-record read the loop already used.
-      const rec = d.readResumeRecord(task, input.agent, repo)
+      const rec = d.readResumeRecord(task, dispatchAgent, repo)
       if (rec) devResumeId = rec.resumeId
     }
 
@@ -1907,7 +1933,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // `cwd` override, exactly as before this task.
       const scratchDir = candidateDir ? buildReviewerScratch(root, task, roundNum, role, 3, candidateDir) : null
       const handle = await withPromptFile(prompt, (promptFile) =>
-        d.dispatchRole(dispatchRoleName, input.agent, prompt, {
+        d.dispatchRole(dispatchRoleName, dispatchAgent, prompt, {
           task: task,
           round: roundNum,
           promptFile,
@@ -1931,7 +1957,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           extraWritableDirs: [workDir]
         })
       )
-      await assertDispatchOrEscalate(handle, input.agent, false, false)
+      await assertDispatchOrEscalate(handle, dispatchAgent, false, false)
       if (missingReviewerArtifacts(workDir, hasObjectives).length > 0) {
         return { verdict: firstVerdict, findingsUncitable: true }
       }
@@ -1939,7 +1965,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         const verdict = buildVerdictFromReport(
           role,
           workDir,
-          input.agent,
+          dispatchAgent,
           task,
           handle,
           facts.manifest,
@@ -1982,7 +2008,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // dispatch before this task.
         const scratchDir = candidateDir ? buildReviewerScratch(root, task, roundNum, role, attempt, candidateDir) : null
         const handle = await withPromptFile(prompt, (promptFile) =>
-          d.dispatchRole(dispatchRoleName, input.agent, prompt, {
+          d.dispatchRole(dispatchRoleName, dispatchAgent, prompt, {
             task: task,
             round: roundNum,
             promptFile,
@@ -2007,7 +2033,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             extraWritableDirs: [workDir]
           })
         )
-        await assertDispatchOrEscalate(handle, input.agent, false, false)
+        await assertDispatchOrEscalate(handle, dispatchAgent, false, false)
         lastHandle = handle
         const missing = missingReviewerArtifacts(workDir, hasObjectives)
         if (missing.length > 0) {
@@ -2023,7 +2049,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           const verdict = buildVerdictFromReport(
             role,
             workDir,
-            input.agent,
+            dispatchAgent,
             task,
             handle,
             facts.manifest,
@@ -2193,7 +2219,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // `interrupted`, so a killed driver leaves no orphan and no stale
     // `'launched'` record for the next start to trip over.
     process.on('SIGTERM', async () => {
-      d.terminateInFlightLaunchesOnShutdown(task, input.agent, repo)
+      d.terminateInFlightLaunchesOnShutdown(task, dispatchAgent, repo)
       cleanupAllReviewerIsolationArtifacts(root, task)
       recordDriverExited('signal')
       // O3: this driver's own sink may still have a `log()` call in flight
@@ -2205,7 +2231,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       process.exit(143)
     })
     process.on('SIGINT', async () => {
-      d.terminateInFlightLaunchesOnShutdown(task, input.agent, repo)
+      d.terminateInFlightLaunchesOnShutdown(task, dispatchAgent, repo)
       cleanupAllReviewerIsolationArtifacts(root, task)
       recordDriverExited('signal')
       await drainAllLogSinks()
@@ -2272,7 +2298,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // starts; the child then writes its own lock immediately, same as
         // any fresh driver invocation.
         clearDriverLock(root, task)
-        const reexecArgs = buildReexecArgs(input, task)
+        const reexecArgs = buildReexecArgs(
+          { ...input, agent: dispatchAgent, ...(dispatchModel ? { model: dispatchModel } : {}) },
+          task
+        )
         const exitCode = d.reexecSelf(reexecArgs)
         if (exitCode !== null) {
           // A clean hand-off to the child is never a
@@ -2378,7 +2407,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         if (!resumeHeadAlreadyMoved) {
           await logPauseCommentRetryIfNotable(
             resumeFrom.round,
-            postPauseComment(task, resumeFrom.round, resumeFrom.head, prNumber, resumeFrom.reason, resumeFrom.detail)
+            postPauseComment(task, resumeFrom.round, resumeFrom.head, prNumber, resumeFrom.reason, resumeFrom.detail, {
+              agent: dispatchAgent,
+              ...(dispatchModel ? { model: dispatchModel } : {})
+            })
           )
         }
       } else {
@@ -2513,7 +2545,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                   branch,
                   pr: null,
                   runId,
-                  agent: input.agent,
+                  agent: dispatchAgent,
                   reason: 'escalation',
                   detail,
                   evidence: lastReviewContext ?? undefined,
@@ -2533,6 +2565,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 reason: 'escalation',
                 detail,
                 pausedAt: new Date().toISOString(),
+                agent: dispatchAgent,
+                ...(dispatchModel ? { model: dispatchModel } : {}),
                 escalationId: escalationRecord?.escalationId,
                 infrastructureRetries
               })
@@ -2675,7 +2709,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             branch,
             pr: prNumber > 0 ? prNumber : null,
             runId,
-            agent: input.agent,
+            agent: dispatchAgent,
             reason: decision.reason,
             detail: decision.detail,
             evidence: lastReviewContext ?? undefined,
@@ -2695,6 +2729,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           reason: decision.reason,
           detail: decision.detail,
           pausedAt: new Date().toISOString(),
+          agent: dispatchAgent,
+          ...(dispatchModel ? { model: dispatchModel } : {}),
           escalationId: escalationRecord?.escalationId,
           infrastructureRetries
         })
@@ -2707,7 +2743,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         const postResult =
           prNumber < 0
             ? postIssuePauseComment(task, round, decision.reason, decision.detail)
-            : postPauseComment(task, round, head, prNumber, decision.reason, decision.detail)
+            : postPauseComment(task, round, head, prNumber, decision.reason, decision.detail, {
+                agent: dispatchAgent,
+                ...(dispatchModel ? { model: dispatchModel } : {})
+              })
         await logPauseCommentRetryIfNotable(round, postResult)
       } catch {
         // Swallowed deliberately — see above. The role log's own
@@ -3160,7 +3199,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               actor: err.role,
               attempt: null,
               effect_id: err.attemptEffectId ?? randomUUID(),
-              model: input.agent,
+              model: dispatchAgent,
               outcome: err instanceof ReviewerInfrastructureFailure ? 'infrastructure_failed' : 'incomplete',
               usage: null,
               duration_ms: err.attemptDurationMs ?? d.now() - roundStartMs
@@ -3391,7 +3430,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               branch,
               pr: prNumber > 0 ? prNumber : null,
               runId,
-              agent: input.agent,
+              agent: dispatchAgent,
               reason: decision.reason,
               detail: decision.detail,
               evidence: lastReviewContext ?? undefined,
@@ -3410,6 +3449,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             reason: decision.reason,
             detail: decision.detail,
             pausedAt: new Date().toISOString(),
+            agent: dispatchAgent,
+            ...(dispatchModel ? { model: dispatchModel } : {}),
             escalationId: escalationRecord?.escalationId,
             infrastructureRetries
           })
@@ -3421,7 +3462,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // with a synthetic 'infrastructure' one.
           await logPauseCommentRetryIfNotable(
             round,
-            postPauseComment(task, round, pauseHead, prNumber, decision.reason, decision.detail)
+            postPauseComment(task, round, pauseHead, prNumber, decision.reason, decision.detail, {
+              agent: dispatchAgent,
+              ...(dispatchModel ? { model: dispatchModel } : {})
+            })
           )
           // Every pause, regardless of
           // which branch above decided it, funnels through here exactly

@@ -190,9 +190,30 @@ describe('resolveCodexAccessToken — subscription authentication', () => {
   })
 
   it('refuses malformed or missing cached sessions', () => {
-    expect(resolveCodexAccessToken({}, '/home/dev', () => null)).toBeNull()
-    expect(resolveCodexAccessToken({}, '/home/dev', () => '{bad')).toBeNull()
-    expect(resolveCodexAccessToken({}, '/home/dev', () => JSON.stringify({ tokens: {} }))).toBeNull()
+    expect(
+      resolveCodexAccessToken(
+        {},
+        '/home/dev',
+        () => null,
+        () => null
+      )
+    ).toBeNull()
+    expect(
+      resolveCodexAccessToken(
+        {},
+        '/home/dev',
+        () => '{bad',
+        () => null
+      )
+    ).toBeNull()
+    expect(
+      resolveCodexAccessToken(
+        {},
+        '/home/dev',
+        () => JSON.stringify({ tokens: {} }),
+        () => null
+      )
+    ).toBeNull()
   })
 
   it('honors an explicitly brokered access token without reading auth.json', () => {
@@ -203,6 +224,21 @@ describe('resolveCodexAccessToken — subscription authentication', () => {
     })
     expect(token).toBe('brokered')
     expect(read).toBe(false)
+  })
+
+  it('loads a keychain-backed Codex session when auth.json is absent', () => {
+    let requestedHome = ''
+    const token = resolveCodexAccessToken(
+      {},
+      '/home/dev',
+      () => null,
+      (codexHome) => {
+        requestedHome = codexHome
+        return JSON.stringify({ tokens: { access_token: 'keychain-access', refresh_token: 'must-not-cross' } })
+      }
+    )
+    expect(requestedHome).toBe('/home/dev/.codex')
+    expect(token).toBe('keychain-access')
   })
 })
 
@@ -314,6 +350,66 @@ describe('resolveWorkerBoundaryLaunch — OAuth credential staging (O1, Issue #6
     if (!result.ok) return
     expect(result.launch.oauthConfigDir).toBeNull()
     result.launch.cleanup()
+  })
+})
+
+describe('resolveWorkerBoundaryLaunch — Codex subscription preflight (O1, Issue #676)', () => {
+  it('refuses a cached token when the bounded vendor probe rejects it', () => {
+    const allowedDir = tempDir('vinaya-wb-codex-preflight-refused-')
+    const result = resolveWorkerBoundaryLaunch(
+      {
+        binaryPath: '/usr/bin/env',
+        args: [],
+        allowedDir,
+        extraWritableDirs: [],
+        stageCodexCredential: true
+      },
+      {
+        ...AVAILABLE_DEPS,
+        readOAuthCredentialFile: () => JSON.stringify({ tokens: { access_token: 'expired-fixture' } }),
+        readCodexKeychainCredential: () => null,
+        runCodexAuthPreflight: () => ({ ok: false, reason: 'Codex rejected the staged ChatGPT session (exit 1)' })
+      }
+    )
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.reason).toContain('Codex subscription authentication preflight failed')
+    expect(result.reason).toContain('exit 1')
+  })
+
+  it('accepts a keychain-backed token only after the bounded vendor probe succeeds', () => {
+    const allowedDir = tempDir('vinaya-wb-codex-preflight-ok-')
+    let probedHome = ''
+    const result = resolveWorkerBoundaryLaunch(
+      {
+        binaryPath: '/usr/bin/env',
+        args: [],
+        allowedDir,
+        extraWritableDirs: [],
+        stageCodexCredential: true
+      },
+      {
+        ...AVAILABLE_DEPS,
+        readOAuthCredentialFile: () => null,
+        readCodexKeychainCredential: () =>
+          JSON.stringify({ tokens: { access_token: 'keychain-fixture', refresh_token: 'must-not-cross' } }),
+        runCodexAuthPreflight: ({ codexHome }) => {
+          probedHome = codexHome
+          return { ok: true }
+        }
+      }
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    try {
+      expect(probedHome).toBe(join(homedir(), '.codex'))
+      expect(result.launch.codexAccessToken).toBe('keychain-fixture')
+      expect(readFileSync(join(result.launch.codexHomeDir as string, 'config.toml'), 'utf8')).not.toContain(
+        'keychain-fixture'
+      )
+    } finally {
+      result.launch.cleanup()
+    }
   })
 })
 

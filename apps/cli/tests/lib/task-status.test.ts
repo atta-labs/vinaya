@@ -284,5 +284,8 @@ describe('renderTaskStatusRow', () => {
 describe('resumeCommandFor', () => {
   it("renders the exact command the loop's own pause comment prints", () => {
     expect(resumeCommandFor(517)).toBe('vinaya dev-review-loop --resume 517')
+    expect(resumeCommandFor(682, 'codex', 'gpt-5.6-terra')).toBe(
+      'vinaya dev-review-loop --resume 682 --agent codex --model gpt-5.6-terra'
+    )
   })
 })

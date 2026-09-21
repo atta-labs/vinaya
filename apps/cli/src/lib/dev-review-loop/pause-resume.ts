@@ -192,14 +192,20 @@ export function pauseMarker(reason: PauseReason): string {
  * `deriveVerdictPauseDetail`, and every driver-decided pause's own inline
  * `detail:` field) — this function renders whatever it is handed.
  */
-export function renderPauseComment(prNumber: number, reason: PauseReason, detail?: string): string {
+export function renderPauseComment(
+  prNumber: number,
+  reason: PauseReason,
+  detail?: string,
+  invocation?: { agent: string; model?: string }
+): string {
+  const resume = `vinaya dev-review-loop --resume ${prNumber}${invocation ? ` --agent ${invocation.agent}` : ''}${invocation?.model ? ` --model ${invocation.model}` : ''}`
   return [
     `The dev-review-loop paused: ${reason}${detail ? ` — ${detail}` : ''}.`,
     '',
     'A Principal ruling is needed before this can continue. Once one is posted on this PR, resume with:',
     '',
     '```',
-    `vinaya dev-review-loop --resume ${prNumber}`,
+    resume,
     '```'
   ].join('\n')
 }
@@ -377,7 +383,8 @@ export function postPauseComment(
   head: string,
   prNumber: number,
   reason: PauseReason,
-  detail?: string
+  detail?: string,
+  invocation?: { agent: string; model?: string }
 ): PauseCommentPostResult {
   // Sanitized HERE, unconditionally — the caller's `detail` may be the raw machine-local
   // string a `decision.detail` field carries (a subprocess's stderr, a
@@ -385,7 +392,7 @@ export function postPauseComment(
   // See `sanitizePublicPauseDetail`'s own doc comment for what this closes.
   const publicDetail = detail === undefined ? undefined : sanitizePublicPauseDetail(detail)
   const marker = pauseMarker(reason)
-  const body = renderPauseComment(prNumber, reason, publicDetail)
+  const body = renderPauseComment(prNumber, reason, publicDetail, invocation)
   const key = `pause-${round}-${head}`
   const identity: EffectIdentity = {
     operation: 'pr-comment',
@@ -452,6 +459,9 @@ export type PauseState = {
   reason: PauseReason
   detail?: string
   pausedAt: string
+  /** Vendor/model identity required to resume the same execution path. */
+  agent?: string
+  model?: string
   /**
    * The escalation record's OWN `escalationId` — not necessarily
    * `escalationIdFor(task, round, head)` any more (code review, round 2,

@@ -134,6 +134,14 @@ describe('renderPauseComment (pure) — O1: every pause reason renders its detai
       'The dev-review-loop paused: no_progress — round 4 findings delivered again — guard: local marker file present.'
     )
   })
+
+  it('renders the exact vendor and model required to resume the same execution path', () => {
+    const body = renderPauseComment(682, 'infrastructure', undefined, {
+      agent: 'codex',
+      model: 'gpt-5.6-terra'
+    })
+    expect(body).toContain('vinaya dev-review-loop --resume 682 --agent codex --model gpt-5.6-terra')
+  })
 })
 
 describe('renderNoPushStopComment (pure) — the no-PR-yet variant carries detail the same way', () => {

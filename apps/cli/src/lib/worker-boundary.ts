@@ -41,6 +41,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 
@@ -94,15 +95,9 @@ export const RUNTIME_CREDENTIAL_ENV_KEYS: Readonly<Record<string, readonly strin
 }
 
 const CODEX_AUTH_FILE_NAME = 'auth.json'
+const CODEX_KEYCHAIN_SERVICE = 'Codex Auth'
 
-export function resolveCodexAccessToken(
-  sourceEnv: Readonly<Record<string, string | undefined>>,
-  realHome: string,
-  readFile: (path: string) => string | null = readRealOAuthCredentialFile
-): string | null {
-  if (sourceEnv.CODEX_ACCESS_TOKEN) return sourceEnv.CODEX_ACCESS_TOKEN
-  const codexHome = sourceEnv.CODEX_HOME ?? join(realHome, '.codex')
-  const raw = readFile(join(codexHome, CODEX_AUTH_FILE_NAME))
+function accessTokenFromCodexAuth(raw: string | null): string | null {
   if (raw === null) return null
   try {
     const parsed = JSON.parse(raw) as { tokens?: { access_token?: unknown } }
@@ -111,6 +106,94 @@ export function resolveCodexAccessToken(
       : null
   } catch {
     return null
+  }
+}
+
+function codexKeychainAccount(codexHome: string): string {
+  let canonical = codexHome
+  try {
+    canonical = realpathSync(codexHome)
+  } catch {
+    // Codex uses the unresolved path when CODEX_HOME does not exist yet.
+  }
+  return `cli|${createHash('sha256').update(canonical).digest('hex').slice(0, 16)}`
+}
+
+/** Trusted-controller-only read of Codex's macOS credential-store session. */
+function readRealCodexKeychainCredential(codexHome: string): string | null {
+  if (process.platform !== 'darwin') return null
+  try {
+    return execFileSync(
+      '/usr/bin/security',
+      ['find-generic-password', '-s', CODEX_KEYCHAIN_SERVICE, '-a', codexKeychainAccount(codexHome), '-w'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5_000, maxBuffer: 1024 * 1024 }
+    ).trim()
+  } catch {
+    return null
+  }
+}
+
+export function resolveCodexAccessToken(
+  sourceEnv: Readonly<Record<string, string | undefined>>,
+  realHome: string,
+  readFile: (path: string) => string | null = readRealOAuthCredentialFile,
+  readKeychain: (codexHome: string) => string | null = readRealCodexKeychainCredential
+): string | null {
+  if (sourceEnv.CODEX_ACCESS_TOKEN) return sourceEnv.CODEX_ACCESS_TOKEN
+  const codexHome = sourceEnv.CODEX_HOME ?? join(realHome, '.codex')
+  return (
+    accessTokenFromCodexAuth(readFile(join(codexHome, CODEX_AUTH_FILE_NAME))) ??
+    accessTokenFromCodexAuth(readKeychain(codexHome))
+  )
+}
+
+export type CodexAuthPreflightResult = { ok: true } | { ok: false; reason: string }
+
+/**
+ * Proves usability with a fixed, read-only, ephemeral vendor request outside
+ * the adopter repository. A revoked or expired session refuses before the
+ * developer loop, and the hard timeout keeps the preflight bounded.
+ */
+function runRealCodexAuthPreflight(input: {
+  binaryPath: string
+  codexHome: string
+  cwd: string
+  realHome: string
+}): CodexAuthPreflightResult {
+  try {
+    execFileSync(
+      input.binaryPath,
+      [
+        'exec',
+        '--ephemeral',
+        '--sandbox',
+        'read-only',
+        '--ignore-user-config',
+        '--ignore-rules',
+        '--skip-git-repo-check',
+        '--json',
+        'Respond exactly OK without using tools.'
+      ],
+      {
+        cwd: input.cwd,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 45_000,
+        maxBuffer: 4 * 1024 * 1024,
+        env: {
+          PATH: process.env.PATH,
+          LANG: process.env.LANG,
+          HOME: input.realHome,
+          TMPDIR: input.cwd,
+          CODEX_HOME: input.codexHome
+        }
+      }
+    )
+    return { ok: true }
+  } catch (error) {
+    const e = error as { killed?: boolean; signal?: string; status?: number | null }
+    if (e.killed || e.signal === 'SIGTERM') return { ok: false, reason: 'timed out after 45 seconds' }
+    return { ok: false, reason: `Codex rejected the staged ChatGPT session (exit ${e.status ?? 'unknown'})` }
   }
 }
 
@@ -248,11 +331,20 @@ export type WorkerBoundaryDeps = {
    * back to the real file read.
    */
   readOAuthCredentialFile?: (path: string) => string | null
+  readCodexKeychainCredential?: (codexHome: string) => string | null
+  runCodexAuthPreflight?: (input: {
+    binaryPath: string
+    codexHome: string
+    cwd: string
+    realHome: string
+  }) => CodexAuthPreflightResult
 }
 
 export const REAL_WORKER_BOUNDARY_DEPS: WorkerBoundaryDeps = {
   detectHost: detectRealHost,
-  readOAuthCredentialFile: readRealOAuthCredentialFile
+  readOAuthCredentialFile: readRealOAuthCredentialFile,
+  readCodexKeychainCredential: readRealCodexKeychainCredential,
+  runCodexAuthPreflight: runRealCodexAuthPreflight
 }
 
 /** `true` only on a host `isolation.md` §3 actually names as supported — Darwin, `sandbox-exec` present. Injectable (`deps`) so a test can assert `dispatchRole`'s fail-closed wiring without needing a real macOS host — see `apps/cli/tests/lib/dispatch/worker-boundary.test.ts`. */
@@ -662,6 +754,43 @@ function resolveBunExecDir(): string | null {
   }
 }
 
+/** Read-only directories containing the selected macOS executable's dynamic-library closure. */
+function resolveRuntimeLibraryDirs(binaryPath: string): string[] {
+  if (process.platform !== 'darwin') return []
+  const dirs = new Set<string>()
+  const siblingLib = join(dirname(dirname(binaryPath)), 'lib')
+  if (existsSync(siblingLib)) dirs.add(realpathSync(siblingLib))
+  const queue = [binaryPath]
+  const seen = new Set<string>()
+  while (queue.length > 0 && seen.size < 256) {
+    const current = queue.shift()
+    if (!current || seen.has(current)) continue
+    seen.add(current)
+    try {
+      const output = execFileSync('/usr/bin/otool', ['-L', current], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore']
+      })
+      for (const line of output.split('\n').slice(1)) {
+        const dependency = line.trim().split(/\s+/, 1)[0]
+        if (!dependency || dependency.startsWith('/usr/lib/') || dependency.startsWith('/System/')) continue
+        const dylib = dependency.startsWith('@rpath/') ? join(siblingLib, basename(dependency)) : dependency
+        if (!dylib.startsWith('/') || !existsSync(dylib)) continue
+        dirs.add(realpathSync(dirname(dylib)))
+        const homebrewFormula = dylib.match(/^\/opt\/homebrew\/opt\/([^/]+)\//)?.[1]
+        if (homebrewFormula) {
+          const formulaConfig = join('/opt/homebrew/etc', homebrewFormula)
+          if (existsSync(formulaConfig)) dirs.add(realpathSync(formulaConfig))
+        }
+        queue.push(realpathSync(dylib))
+      }
+    } catch {
+      // A non-Mach-O dependency contributes no further paths.
+    }
+  }
+  return [...dirs]
+}
+
 function resolveSshSockCanon(): string {
   const raw = process.env.SSH_AUTH_SOCK
   if (!raw) return '/nonexistent/vinaya-worker-boundary-no-ssh-sock'
@@ -819,8 +948,26 @@ export function resolveWorkerBoundaryLaunch(
     const oauthConfigDir = opts.stageOAuthCredential
       ? (stageOAuthCredential(process.env, realHome, scratchTmpDir, deps)?.configDir ?? null)
       : null
+    if (opts.stageCodexCredential) {
+      const sourceCodexHome = process.env.CODEX_HOME ?? join(realHome, '.codex')
+      const authPreflight = (deps.runCodexAuthPreflight ?? runRealCodexAuthPreflight)({
+        binaryPath: resolvedBinaryPath,
+        codexHome: sourceCodexHome,
+        cwd: scratchTmpDir,
+        realHome
+      })
+      if (!authPreflight.ok) {
+        rmSync(scratchTmpDir, { recursive: true, force: true })
+        throw new Error(`Codex subscription authentication preflight failed: ${authPreflight.reason}`)
+      }
+    }
     const codexAccessToken = opts.stageCodexCredential
-      ? resolveCodexAccessToken(process.env, realHome, deps.readOAuthCredentialFile ?? readRealOAuthCredentialFile)
+      ? resolveCodexAccessToken(
+          process.env,
+          realHome,
+          deps.readOAuthCredentialFile ?? readRealOAuthCredentialFile,
+          deps.readCodexKeychainCredential ?? readRealCodexKeychainCredential
+        )
       : null
     let codexHomeDir: string | null = null
     if (opts.stageCodexCredential && codexAccessToken) {
@@ -893,6 +1040,10 @@ export function resolveWorkerBoundaryLaunch(
     const vinayaWritableDirs = opts.extraWritableDirs.map(canonical)
     const vinayaWritableFiles = (opts.extraWritableFiles ?? []).map(canonical)
     const vinayaReadOnlyDirs = (opts.extraReadOnlyDirs ?? []).map(canonical)
+    // A dynamically-linked runtime must read its own direct libraries after
+    // it passes process-exec. Keep this to otool-reported directories plus
+    // the conventional sibling `lib/`, never a package-manager root.
+    const runtimeReadOnlyDirs = resolveRuntimeLibraryDirs(resolvedBinaryPath)
 
     // Round 4 review, HIGH: no machine-wide root is ever added here — only
     // the caller's own narrowly-scoped `vinayaWritableDirs`/
@@ -904,7 +1055,11 @@ export function resolveWorkerBoundaryLaunch(
     // subpaths keeps that true now that a task's run files and the
     // telemetry outbox live under two different roots.
     const readOnlyDirs = Array.from(
-      new Set([...(opts.bootstrapWritableSubpaths ? [allowedDirReal] : []), ...vinayaReadOnlyDirs])
+      new Set([
+        ...(opts.bootstrapWritableSubpaths ? [allowedDirReal] : []),
+        ...vinayaReadOnlyDirs,
+        ...runtimeReadOnlyDirs
+      ])
     )
     const readWriteDirs = Array.from(
       new Set([

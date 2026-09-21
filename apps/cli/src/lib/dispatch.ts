@@ -929,6 +929,44 @@ function documentationLogHookScript(dir: string): string {
 }
 
 /**
+ * Codex-only receipt logger. Unlike Claude's `WebFetch`-matched hook above,
+ * Codex can expose the fetch route under one of its local function-tool
+ * aliases. The hook still verifies the canonical tool name and a successful,
+ * non-empty response before recording input URLs; arbitrary Bash/apply_patch
+ * payloads containing a URL can never satisfy the gate.
+ */
+function codexDocumentationLogHookScript(dir: string): string {
+  return [
+    "const fs = require('fs');",
+    "let d = '';",
+    "process.stdin.on('data', (c) => { d += c });",
+    "process.stdin.on('end', () => {",
+    '  try {',
+    '    const e = JSON.parse(d);',
+    "    const fetchTools = new Set(['WebFetch', 'web.run', 'web__run']);",
+    '    if (!fetchTools.has(e.tool_name)) { process.exit(0); }',
+    '    const response = e.tool_response;',
+    "    const responseText = typeof response === 'string' ? response : JSON.stringify(response || '');",
+    '    const successful = response != null && response.isError !== true && response.error == null && responseText.length > 2;',
+    '    if (!successful) { process.exit(0); }',
+    "    const runId = process.env.VINAYA_RUN_ID || '';",
+    '    const urls = [];',
+    "    const visit = (v) => { if (typeof v === 'string') { const m = v.match(/https?:\\/\\/[^\\s\\\"'<>]+/g); if (m) urls.push(...m); } else if (Array.isArray(v)) v.forEach(visit); else if (v && typeof v === 'object') Object.values(v).forEach(visit); };",
+    '    visit(e.tool_input || {});',
+    '    if (runId && urls.length > 0) {',
+    `      const logPath = ${JSON.stringify(join(dir, 'documentation-log-'))} + runId + '.jsonl';`,
+    "      for (const url of urls) fs.appendFileSync(logPath, JSON.stringify({ url, tool: e.tool_name }) + '\\n', { mode: 0o600 });",
+    '    }',
+    '  } catch {',
+    '    // Invalid payloads never create a receipt.',
+    '  }',
+    '  process.exit(0);',
+    '});',
+    ''
+  ].join('\n')
+}
+
+/**
  * The `Stop` hook that refuses to let the turn end while a `## Documentation`
  * source named in this dispatch's own brief was never fetched —
  * O2. Reads the per-run sources file `writeDispatchSettings` wrote (dormant,
@@ -1000,7 +1038,7 @@ function codexDocumentationStopHookScript(dir: string): string {
     "    const unread = Array.isArray(sources) ? sources.filter((s) => /^https?:\\/\\//i.test(String(s.source || '').trim()) && !fetched.has(normalize(s.source))) : [];",
     '    if (unread.length > 0) {',
     "      const names = unread.map((s) => '- ' + s.source + ' (governs: ' + s.mechanism + ')').join('\\n');",
-    "      process.stdout.write(JSON.stringify({ continue: false, stopReason: 'Required documentation remains unread', systemMessage: 'Fetch every required Documentation URL before completing:\\n' + names }) + '\\n');",
+    "      process.stdout.write(JSON.stringify({ decision: 'block', reason: 'Fetch every required Documentation URL before completing:\\n' + names }) + '\\n');",
     '      process.exit(0);',
     '    }',
     '  } catch {}',
@@ -1022,7 +1060,7 @@ function writeCodexDispatchHooks(
     chmodSync(dir, 0o700)
     const logScript = join(dir, 'documentation-log.mjs')
     const stopScript = join(dir, 'documentation-stop.mjs')
-    writeFileSync(logScript, documentationLogHookScript(dir), { mode: 0o600 })
+    writeFileSync(logScript, codexDocumentationLogHookScript(dir), { mode: 0o600 })
     writeFileSync(stopScript, codexDocumentationStopHookScript(dir), { mode: 0o600 })
     writeFileSync(join(dir, `documentation-sources-${runId}.json`), JSON.stringify(documentation), { mode: 0o600 })
     const hooksPath = join(dir, 'hooks.json')
@@ -1031,7 +1069,12 @@ function writeCodexDispatchHooks(
       JSON.stringify(
         {
           hooks: {
-            PostToolUse: [{ matcher: '.*', hooks: [{ type: 'command', command: `bun "${logScript}"` }] }],
+            PostToolUse: [
+              {
+                matcher: '^(WebFetch|web\\.run|web__run)$',
+                hooks: [{ type: 'command', command: `bun "${logScript}"` }]
+              }
+            ],
             Stop: [{ hooks: [{ type: 'command', command: `bun "${stopScript}"` }] }]
           }
         },
