@@ -12,6 +12,7 @@ import { ALL_NAMES, affectedNamesForFile, type LineRange, parseHunkRanges } from
 import { loadConfig } from '../../src/lib/config'
 import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 import { discoverWorkspacePackages, isTestFile, selectAffectedTestFiles, walkFiles } from '../../src/lib/test-selector'
+import { scannedRootsOf } from '../../src/lib/repo-scanner-tests'
 import { loadTypeScript } from '../../src/lib/ts-module-graph'
 
 function fixtureRepo(): string {
@@ -329,9 +330,16 @@ describe('selectAffectedTestFiles replayed against the two recorded 2026-09-19 i
       expect(selected).toContain(LOG_CALLERS_TEST)
     })
 
-    it(`${label} — reachability ALONE (no alwaysRun) never selects it — the real gap this task closes`, () => {
-      const { selected } = selectAffectedTestFiles(REPO_ROOT, changed, { alwaysRun: [] })
-      expect(selected).not.toContain(LOG_CALLERS_TEST)
+    it(`${label} — with no alwaysRun at all, the scan rule now selects it; the IMPORT graph alone still cannot`, () => {
+      // `log-callers.test.ts` walks the repository from disk, so no import edge
+      // has ever reached it — which is why both of these incidents passed
+      // pre-push and failed CI, and why the configured always-run list was the
+      // only thing that could select it. The scan rule closes that on the
+      // merits; withhold it and the original gap is still visible underneath.
+      expect(selectAffectedTestFiles(REPO_ROOT, changed, { alwaysRun: [] }).selected).toContain(LOG_CALLERS_TEST)
+      expect(
+        selectAffectedTestFiles(REPO_ROOT, changed, { alwaysRun: [], repoTreeScanners: 'ignore' }).selected
+      ).not.toContain(LOG_CALLERS_TEST)
     })
   }
 })
@@ -1621,5 +1629,92 @@ describe('selection follows the changed names, and widens to file level when it 
       affectedNames: new Map([[changed, new Set(['isBoundToPolicy'])]])
     }).selected.length
     expect(oneName).toBeLessThan(fileLevel)
+  })
+})
+
+// O7 — a test whose input is the repository TREE has no import edge to the
+// files it inspects, so reachability can never select it on the merits. The
+// rule that does lives in the selector, not in repository configuration, so it
+// travels with the selector into every repository that uses it.
+describe('tests that read the repository tree are selected from what they scan (O7)', () => {
+  const ts = loadTypeScript(REPO_ROOT) as NonNullable<ReturnType<typeof loadTypeScript>>
+
+  it('classifies a real-tree scanner, and never a test that only walks its own temporary fixture', () => {
+    const root = mkdtempSync(join(tmpdir(), 'vinaya-scan-'))
+    try {
+      mkdirSync(join(root, 'tests'), { recursive: true })
+      const scanner = join(root, 'tests', 'scanner.test.ts')
+      writeFileSync(
+        scanner,
+        [
+          "import { readdirSync } from 'node:fs'",
+          "import { join } from 'node:path'",
+          "const REPO_ROOT = join(import.meta.dir, '..')",
+          "const TREE = join(REPO_ROOT, 'src')",
+          "test('scans', () => readdirSync(TREE))",
+          ''
+        ].join('\n')
+      )
+      const fixtureWalker = join(root, 'tests', 'fixture.test.ts')
+      writeFileSync(
+        fixtureWalker,
+        [
+          "import { mkdtempSync, readdirSync } from 'node:fs'",
+          "import { tmpdir } from 'node:os'",
+          "import { join } from 'node:path'",
+          "test('walks its own fixture', () => {",
+          "  const dir = mkdtempSync(join(tmpdir(), 'x-'))",
+          '  readdirSync(dir)',
+          '})',
+          ''
+        ].join('\n')
+      )
+      // `root` stands in for the repository root here; the scanner anchors on
+      // its own module directory, the fixture walker on `tmpdir()`.
+      expect(scannedRootsOf(ts, scanner, readFileSync(scanner, 'utf8'), root)).toEqual([join(root, 'src')])
+      expect(scannedRootsOf(ts, fixtureWalker, readFileSync(fixtureWalker, 'utf8'), root)).toEqual([])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a git ls-files reader is classified as scanning the whole repository', () => {
+    const root = mkdtempSync(join(tmpdir(), 'vinaya-scan-'))
+    try {
+      const file = join(root, 'tracked.test.ts')
+      writeFileSync(
+        file,
+        [
+          "import { execFileSync } from 'node:child_process'",
+          "test('tracked', () => execFileSync('git', ['ls-files'], { encoding: 'utf8' }))",
+          ''
+        ].join('\n')
+      )
+      expect(scannedRootsOf(ts, file, readFileSync(file, 'utf8'), root)).toEqual([root])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  // The exact incident: a pull request changing one test file passed pre-push
+  // and failed CI on the test that audits every real-process call site, which
+  // reads the whole test tree from disk and so had no edge to what changed.
+  it('adding a bare subprocess call to a test file selects the test that audits real-process call sites', () => {
+    const auditor = join(REPO_ROOT, 'apps/cli/tests/process-fixture-coverage.test.ts')
+    const changedTest = join(REPO_ROOT, 'apps/cli/tests/demo.test.ts')
+    expect(selectAffectedTestFiles(REPO_ROOT, [changedTest]).selected).toContain(auditor)
+    // And it is reachability through the scan rule that does it, not an import
+    // edge and not the configured always-run list.
+    expect(selectAffectedTestFiles(REPO_ROOT, [changedTest], { repoTreeScanners: 'ignore' }).selected).not.toContain(
+      auditor
+    )
+  })
+
+  it('a narrowly-scoped scanner is not selected by a change outside the tree it reads', () => {
+    // `surface-spec-exports.test.ts` reads `apps/cli/src/commands`; a change in
+    // another package is outside its input entirely.
+    const scanner = join(REPO_ROOT, 'apps/cli/tests/surface-spec-exports.test.ts')
+    const roots = scannedRootsOf(ts, scanner, readFileSync(scanner, 'utf8'), REPO_ROOT)
+    expect(roots).toEqual([join(REPO_ROOT, 'apps/cli/src/commands')])
   })
 })

@@ -98,6 +98,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, extname, isAbsolute, join, resolve } from 'node:path'
 import { globToRegex } from '@attalabs/aeg-core'
+import { scannedRootsOf } from './repo-scanner-tests.js'
 import {
   ALL_PREFIX,
   buildCompilerGraph,
@@ -107,6 +108,7 @@ import {
   NAME_SEPARATOR,
   OWN_PREFIX,
   PKGMETA_PREFIX,
+  SCAN_PREFIX,
   TOUCH_PREFIX
 } from './ts-module-graph.js'
 
@@ -518,6 +520,12 @@ export function isTestFile(path: string): boolean {
  *   node, so a precisely-resolved importer's file edges would miss it, yet
  *   editing `exports`/`main` re-points what that importer resolves to.
  *
+ * - `scan:<dir>` — a test whose INPUT is the repository tree under `<dir>`,
+ *   read from disk rather than imported (`repo-scanner-tests.ts`). Checks any
+ *   change to a file under that prefix; never traverses. No import edge can
+ *   reach such a test's real inputs, so without this it is selectable only by
+ *   configuration.
+ *
  * `external:`/`pkgmeta:` naming the edge-owning file's OWN package are ignored:
  * a file "importing its own package" would otherwise select on any same-package
  * change, exactly the folder-shaped over-selection this design rules out.
@@ -883,6 +891,14 @@ export type SelectionOptions = {
    */
   affectedNames?: ReadonlyMap<string, ReadonlySet<string> | 'all'>
   /**
+   * Whether tests whose input is the repository TREE (`repo-scanner-tests.ts`)
+   * get their `scan:` edges. `'select'` — the default, and the only safe
+   * production value — gives them the edges; `'ignore'` withholds them, which
+   * exists so the cost of the rule can be measured against the same tree
+   * rather than estimated.
+   */
+  repoTreeScanners?: 'select' | 'ignore'
+  /**
    * Forces the text-scan graph instead of the compiler one. Exists so the
    * fallback path — what a repository with no `typescript` installed actually
    * gets — is reachable from a test on a machine that does have it; production
@@ -984,10 +1000,15 @@ export function selectAffectedTestFiles(
   // ordinary case — the repository under analysis has `typescript`); the text
   // scan below is the fallback for a repository that does not, and is a strict
   // over-approximation, so never-miss holds either way.
-  const typescript = options.resolver === 'text-scan' ? null : loadTypeScript(repoRoot)
+  // The compiler is loaded once and used for two independent jobs: the module
+  // graph, and classifying tests that read the repository tree. `resolver`
+  // forces only the FIRST back to the text scan, so the scan rule holds under
+  // both graphs and the text-scan selection stays a superset of the compiler's.
+  const typescript = loadTypeScript(repoRoot)
+  const graphTypescript = options.resolver === 'text-scan' ? null : typescript
   const edges = new Map<NodeKey, NodeKey[]>()
   let programMs = 0
-  if (typescript) {
+  if (graphTypescript) {
     // Bare workspace specifiers, resolved from each package's OWN manifest
     // (`deriveEntrypoints`' `exports`/`main` rules, conditions included) and
     // handed to the compiler as `paths`, so the graph never depends on how an
@@ -998,7 +1019,7 @@ export function selectAffectedTestFiles(
         entrypoints.set(subpath === '.' ? pkg.name : `${pkg.name}${subpath.slice(1)}`, entry)
       }
     }
-    const graph = buildCompilerGraph(typescript, {
+    const graph = buildCompilerGraph(graphTypescript, {
       repoRoot,
       files: [...allSourceFiles],
       packageOfFile: (f) => fileToPackage.get(f) ?? null,
@@ -1115,6 +1136,19 @@ export function selectAffectedTestFiles(
     }
   }
 
+  // Tests whose input is the repository TREE, not their own imports. Their
+  // `scan:` edges are added to the graph here rather than to a configured list,
+  // so the rule travels with the selector into every repository that uses it.
+  if (typescript && options.repoTreeScanners !== 'ignore') {
+    for (const file of allSourceFiles) {
+      if (!isTestFile(file)) continue
+      const roots = scannedRootsOf(typescript, file, readSource(file), repoRoot)
+      if (roots.length === 0) continue
+      const key = `${ALL_PREFIX}${file}`
+      edges.set(key, [...(edges.get(key) ?? []), ...roots.map((r) => `${SCAN_PREFIX}${r}`)])
+    }
+  }
+
   const anythingChanged = absChanged.size > 0 || changedPackageNames.size > 0
   const selected: string[] = []
   let totalTestFiles = 0
@@ -1135,7 +1169,7 @@ export function selectAffectedTestFiles(
     }
   }
 
-  return { selected, totalTestFiles, resolver: typescript ? 'compiler' : 'text-scan', programMs }
+  return { selected, totalTestFiles, resolver: graphTypescript ? 'compiler' : 'text-scan', programMs }
 }
 
 /**
@@ -1188,6 +1222,11 @@ function reaches(start: NodeKey, edges: Map<NodeKey, NodeKey[]>, changed: Change
       }
       if (dep.startsWith(TOUCH_PREFIX)) {
         if (changed.files.has(dep.slice(TOUCH_PREFIX.length))) return true
+        continue
+      }
+      if (dep.startsWith(SCAN_PREFIX)) {
+        const root = dep.slice(SCAN_PREFIX.length)
+        for (const f of changed.files) if (f === root || f.startsWith(`${root}/`)) return true
         continue
       }
       if (dep.startsWith(EXTERNAL_PREFIX)) {
