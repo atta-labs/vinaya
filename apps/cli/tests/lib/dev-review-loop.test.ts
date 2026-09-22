@@ -1903,8 +1903,8 @@ exit 1
 
 type CliResult = { status: number; stdout: string; stderr: string }
 
-function runLoop(home: string, cwd: string, path: string): CliResult {
-  return runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'])
+function runLoop(home: string, cwd: string, path: string, budgetMs: number = SUBPROCESS_BUDGET_MS): CliResult {
+  return runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {}, budgetMs)
 }
 
 function runResume(home: string, cwd: string, path: string, pr: number): CliResult {
@@ -9963,7 +9963,13 @@ describe('the start-of-run sweep never delays the loop, and re-checks before rem
 
     mkdirSync(taskRunDir(home, 8002), { recursive: true })
 
-    const r = runLoop(home, cwd, path)
+    // This fixture deliberately overlaps the asynchronous sweep with a full
+    // developer + two-reviewer round. On the 60-file Linux CI shard that
+    // completed just beyond the generic 18s subprocess diagnostic budget
+    // twice in succession, although the behavior itself was correct. Give
+    // this integration-heavy case its own ceiling while retaining the tight
+    // default for every ordinary fixture in this file.
+    const r = runLoop(home, cwd, path, 45_000)
     expect(r.status).toBe(0)
     expect(r.stdout).toMatch(/publish/)
 
@@ -9973,5 +9979,5 @@ describe('the start-of-run sweep never delays the loop, and re-checks before rem
     expect(readFileSync(join(home, '.sweep-8002-state-calls'), 'utf8').trim()).toBe('2')
     expect(r.stderr).toContain('kept Issue #8002')
     expect(r.stderr).toContain('open — Issue #8002 open, no pull request yet')
-  }, 20000)
+  }, 50_000)
 })
