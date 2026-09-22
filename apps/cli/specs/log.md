@@ -48,6 +48,8 @@ Every new field is declared here and honestly `null`/`'unavailable'` until a lat
 
 `packages/aeg-core/src/log/` is the policy layer: the zod schema (`LogEventSchema`), the pure envelope builder (`buildHeader`), and `redact`. No filesystem, no network, no process (`surface.md` "The rule"). `apps/cli/src/lib/log-sink.ts` is the one write: every environment read, remote read, package read, hostname and git call lives there, and it is the only file that opens the outbox path — proved by `apps/cli/tests/lib/log-callers.test.ts`.
 
+**A `log-sink.ts`-only change is now reachable by pre-push selection through every test that exercises it by spawning the built CLI, not only the tests that import it directly.** Measured live: a change to this file alone made `vinaya check --all` print a warning twenty-five times instead of once, a real regression the file-import-only selector (`apps/cli/src/lib/test-selector.ts`) had no edge to catch, caught only because CI runs everything — `apps/cli/tests/commands/check.test.ts`, which spawns `bun apps/cli/src/index.ts check --all` as a subprocess and imports neither this file nor anything that does, stayed unselected. `apps/cli/src/lib/cli-spawn-tests.ts` closes this the same way `repo-scanner-tests.ts` closes the analogous gap for a test that reads the repository tree instead of importing it: a synthetic edge from the spawning test straight to the CLI entrypoint's own `all:` node, so the entrypoint's real, already-computed import edges (which reach this file) do the rest.
+
 ## The header, on every line
 
 ```
