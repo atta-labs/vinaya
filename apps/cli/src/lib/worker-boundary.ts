@@ -150,7 +150,7 @@ export function resolveCodexAccessToken(
 export type CodexAuthPreflightResult = { ok: true } | { ok: false; reason: string }
 
 /**
- * Round 5 review, BLOCKER (Issue #676): a bare `CODEX_ACCESS_TOKEN`
+ * Round 5 review, BLOCKER: a bare `CODEX_ACCESS_TOKEN`
  * environment variable is not itself a session Codex's real CLI accepts —
  * live-verified against `codex-cli 0.152.1` on this authoring host (`codex
  * --help` documents no such env-var auth path at all): the vendor CLI only
@@ -1016,7 +1016,7 @@ export function resolveWorkerBoundaryLaunch(
       codexHomeDir = join(scratchTmpDir, 'codex-home')
       mkdirSync(codexHomeDir, { recursive: true, mode: 0o700 })
 
-      // Round 5 review, BLOCKER (Issue #676): a bare `CODEX_ACCESS_TOKEN`
+      // Round 5 review, BLOCKER: a bare `CODEX_ACCESS_TOKEN`
       // env var is not a session the real Codex CLI accepts — this call is
       // the fix: `codex login --with-access-token` reads the token from
       // stdin and writes a real `auth.json` (its own `account_id`/
@@ -1033,7 +1033,7 @@ export function resolveWorkerBoundaryLaunch(
         throw new Error(`Codex subscription login failed: ${login.reason}`)
       }
 
-      // Round 5 review, BLOCKER (Issue #676): this preflight must probe the
+      // Round 5 review, BLOCKER: this preflight must probe the
       // SAME scoped `codexHomeDir` the confined worker will actually run
       // against — probing the operator's real, unscoped `CODEX_HOME` (the
       // prior shape) always reported the session usable even when the
