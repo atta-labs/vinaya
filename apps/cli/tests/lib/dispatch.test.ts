@@ -478,10 +478,34 @@ describe('addCodexWritableDirs — reviewer hand-off directories', () => {
     ])
   })
 
-  it('does not pass unsupported --add-dir flags to codex exec resume', () => {
+  it('uses a sandbox writable-roots config override for codex exec resume', () => {
     const dir = tempDir('vinaya-codex-write-resume-')
     const argv = ['exec', 'resume', 'thread-id', '--json', '-']
-    expect(addCodexWritableDirs(argv, [dir], true)).toEqual(argv)
+    expect(addCodexWritableDirs(argv, [dir], true)).toEqual([
+      'exec',
+      'resume',
+      'thread-id',
+      '--config',
+      `sandbox_workspace_write.writable_roots=${JSON.stringify([realpathSync(dir)])}`,
+      '--json',
+      '-'
+    ])
+  })
+
+  it('grants only the real parent of a resumed developer artifact and de-duplicates it', () => {
+    const dir = tempDir('vinaya-codex-developer-file-')
+    const confidence = join(dir, '.vinaya-confidence')
+    const response = join(dir, '.vinaya-round-response')
+    const argv = ['exec', 'resume', 'thread-id', '--json', '-']
+    expect(addCodexWritableDirs(argv, [], true, [confidence, response])).toEqual([
+      'exec',
+      'resume',
+      'thread-id',
+      '--config',
+      `sandbox_workspace_write.writable_roots=${JSON.stringify([realpathSync(dir)])}`,
+      '--json',
+      '-'
+    ])
   })
 })
 

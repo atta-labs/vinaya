@@ -365,18 +365,26 @@ export type DispatchHandle = {
 /**
  * Give Codex's nested `workspace-write` sandbox the same caller-scoped
  * directories already granted by Vinaya's outer worker boundary.
- * `codex exec resume` does not accept `--add-dir`, so only fresh sessions
- * receive these flags; reviewer and security attempts are always fresh.
+ *
+ * Fresh `codex exec` accepts `--add-dir`. `codex exec resume` does not, but
+ * does accept the documented dotted `--config` override, so resumed sessions
+ * receive the same roots through `sandbox_workspace_write.writable_roots`.
+ * Developer artifacts are individual files at the outer boundary; Codex's
+ * inner boundary accepts directories, so only each file's real parent is
+ * added here. The outer Seatbelt profile remains the authoritative exact-file
+ * restriction.
  */
 export function addCodexWritableDirs(
   args: readonly string[],
   extraWritableDirs: readonly string[],
-  resumed: boolean
+  resumed: boolean,
+  developerFiles: readonly string[] = []
 ): string[] {
-  if (resumed || extraWritableDirs.length === 0) return [...args]
+  const requestedDirs = [...extraWritableDirs, ...developerFiles.map((file) => dirname(file))]
+  if (requestedDirs.length === 0) return [...args]
   const jsonIndex = args.indexOf('--json')
   const insertionIndex = jsonIndex === -1 ? args.length : jsonIndex
-  const writableArgs = extraWritableDirs.flatMap((dir) => {
+  const canonicalDirs = requestedDirs.map((dir) => {
     let canonical = dir
     try {
       canonical = realpathSync(dir)
@@ -384,8 +392,12 @@ export function addCodexWritableDirs(
       // Boundary construction performs the authoritative fail-closed path
       // validation; preserve its diagnostic rather than throwing here.
     }
-    return ['--add-dir', canonical]
+    return canonical
   })
+  const uniqueDirs = [...new Set(canonicalDirs)]
+  const writableArgs = resumed
+    ? ['--config', `sandbox_workspace_write.writable_roots=${JSON.stringify(uniqueDirs)}`]
+    : uniqueDirs.flatMap((dir) => ['--add-dir', dir])
   return [...args.slice(0, insertionIndex), ...writableArgs, ...args.slice(insertionIndex)]
 }
 
@@ -3130,7 +3142,12 @@ export async function dispatchRole(
   const vendorArgs = opts.resumeId ? vendor.resumeArgs(opts.resumeId, opts.model) : vendor.args(opts.model)
   const baseArgs =
     agent === 'codex'
-      ? addCodexWritableDirs(vendorArgs, opts.extraWritableDirs ?? [], opts.resumeId !== undefined)
+      ? addCodexWritableDirs(
+          vendorArgs,
+          opts.extraWritableDirs ?? [],
+          opts.resumeId !== undefined,
+          opts.developerFiles ?? []
+        )
       : vendorArgs
   // Computed here, once — both the settings-write fail-closed check below
   // and the boundary-resolution block further down read the SAME value,
