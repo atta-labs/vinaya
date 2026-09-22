@@ -26,9 +26,12 @@
  * guessed from a bare task number, which repeats across repositories.
  */
 
-import { execFileSync } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import { lstatSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { join, sep, resolve as resolvePath } from 'node:path'
+import { promisify } from 'node:util'
+import { issueBranchName } from '@attalabs/aeg-core'
+import { hasLabel } from '@attalabs/aeg-forge-state'
 import {
   developerBranchFor as realDeveloperBranchFor,
   fetchPrBody as realFetchPrBody,
@@ -327,6 +330,305 @@ function scopesEqual(a: RunScope, b: RunScope): boolean {
   if (a === 'unscoped' || b === 'unscoped') return a === b
   if (typeof a === 'number' || typeof b === 'number') return a === b
   return a.pr === b.pr
+}
+
+// --- async lookups + concurrent modern-layout sweep -------------------------
+// The driver's own start-of-run call (`dev-review-loop.ts`) never uses the
+// synchronous `classifyTaskFolder`/`sweepModernTasks` above: each folder
+// there costs several sequential, blocking `gh` calls, and a driver running
+// them one after another for every folder under `tasksExecutionRoot` starves
+// the event loop that carries a concurrently dispatched agent's own output
+// (Traps to avoid). Everything below is a non-blocking mirror of the same
+// keep-policy, reached ONLY from the driver's own call — `vinaya task sweep`
+// keeps using the synchronous functions above, unchanged.
+
+const execFileAsync = promisify(execFile)
+
+async function shAsync(cmd: string, args: string[]): Promise<string> {
+  const { stdout } = await execFileAsync(cmd, args, { encoding: 'utf8' })
+  return stdout.trim()
+}
+
+/** Async twin of `fetchIssueState` — same `gh` call and result shape, non-blocking. */
+export async function fetchIssueStateAsync(issue: number): Promise<IssueState> {
+  const out = await shAsync('gh', ['issue', 'view', String(issue), '--json', 'state'])
+  return (JSON.parse(out) as { state: IssueState }).state
+}
+
+/** Async twin of `fetchPrForBranch` — same `gh` call and result shape, non-blocking. */
+export async function fetchPrForBranchAsync(branch: string): Promise<PrLookup | null> {
+  const out = await shAsync('gh', [
+    'pr',
+    'list',
+    '--head',
+    branch,
+    '--state',
+    'all',
+    '--json',
+    'number,state,headRefName'
+  ])
+  const list = JSON.parse(out) as { number: number; state: PrState; headRefName: string }[]
+  const found = list.find((p) => p.headRefName === branch)
+  return found ? { number: found.number, state: found.state } : null
+}
+
+/** Async twin of `fetchPrBody` — same `gh` call and result shape, non-blocking. */
+export async function fetchPrBodyAsync(pr: number): Promise<string> {
+  const out = await shAsync('gh', ['pr', 'view', String(pr), '--json', 'body'])
+  return (JSON.parse(out) as { body: string }).body
+}
+
+async function fetchIssueTitleAsync(issueNumber: number): Promise<string> {
+  const out = await shAsync('gh', ['issue', 'view', String(issueNumber), '--json', 'title'])
+  return (JSON.parse(out) as { title: string }).title
+}
+
+async function fetchIssueLabelsAsync(issueNumber: number): Promise<string[]> {
+  const out = await shAsync('gh', ['issue', 'view', String(issueNumber), '--json', 'labels'])
+  return (JSON.parse(out) as { labels: { name: string }[] }).labels.map((l) => l.name)
+}
+
+const ISSUE_TITLE_SHAPE = /^\[([^\]]+)\]\s+(\d+)\s+[—-]/
+
+/**
+ * Async twin of `developerBranchFor` (`dev-review-loop/developer-dispatch.ts`)
+ * — the same two-shape rule (`task/<tranche>/<n>` off a `vinaya/tranche:*`
+ * Issue's title, `task/issue-<n>` otherwise), reimplemented here on
+ * non-blocking `gh` calls rather than imported: the original shells out
+ * synchronously, which this sweep can never do without starving the agent's
+ * own output.
+ */
+export async function developerBranchForAsync(issueNumber: number): Promise<string> {
+  const labels = await fetchIssueLabelsAsync(issueNumber)
+  if (!hasLabel('tranche', labels)) return issueBranchName(issueNumber)
+  const title = await fetchIssueTitleAsync(issueNumber)
+  const m = ISSUE_TITLE_SHAPE.exec(title)
+  if (m) return `task/${m[1]}/${m[2]}`
+  throw new Error(
+    `developerBranchForAsync: Issue #${issueNumber}'s title \`${title}\` does not match the \`[<tranche>] <n> — …\` shape, but it carries a vinaya/tranche:* label — cannot derive the developer's branch.`
+  )
+}
+
+export type TaskSweepAsyncDeps = {
+  runtimeDir: () => string
+  isDriverPidAlive: (pid: number) => boolean
+  readDriverLockForScope: (root: string, scope: RunScope) => DriverLockRecord | null
+  readPauseStateForScope: (root: string, scope: RunScope) => PauseStateRecord | null
+  fetchIssueState: (issue: number) => Promise<IssueState>
+  developerBranchFor: (issue: number) => Promise<string>
+  fetchPrForBranch: (branch: string) => Promise<PrLookup | null>
+  fetchPrBody: (pr: number) => Promise<string>
+  taskFromPrBody: (body: string) => number | null
+  rm: (path: string) => void
+}
+
+export const defaultTaskSweepAsyncDeps: TaskSweepAsyncDeps = {
+  runtimeDir: runtimeDirForThisRepo,
+  isDriverPidAlive: realIsDriverPidAlive,
+  readDriverLockForScope,
+  readPauseStateForScope,
+  fetchIssueState: fetchIssueStateAsync,
+  developerBranchFor: developerBranchForAsync,
+  fetchPrForBranch: fetchPrForBranchAsync,
+  fetchPrBody: fetchPrBodyAsync,
+  taskFromPrBody: realTaskFromPrBody,
+  rm: (path) => rmSync(path, { recursive: true, force: true })
+}
+
+async function resolveIssueForScopeAsync(
+  scope: RunScope,
+  deps: TaskSweepAsyncDeps
+): Promise<{ issue: number | null; reason?: string }> {
+  if (typeof scope === 'number') return { issue: scope }
+  if (scope === 'unscoped') {
+    return { issue: null, reason: 'unscoped dispatch folder — no Issue or PR to check against the forge' }
+  }
+  let body: string
+  try {
+    body = await deps.fetchPrBody(scope.pr)
+  } catch (err) {
+    return { issue: null, reason: `could not read PR #${scope.pr}'s body to resolve its task: ${message(err)}` }
+  }
+  const issue = deps.taskFromPrBody(body)
+  if (issue === null) {
+    return {
+      issue: null,
+      reason: `PR #${scope.pr}'s body carries no \`Closes #N\` reference — cannot resolve its task`
+    }
+  }
+  return { issue }
+}
+
+/**
+ * Async twin of `classifyTaskFolder` — identical keep-policy, identical
+ * reason strings for identical forge answers (O4), the only difference
+ * being non-blocking lookups. Kept as a full mirror rather than sharing an
+ * implementation because the sync original's own deps (`TaskSweepDeps`) are
+ * load-bearing for `vinaya task sweep`'s existing, unmodified tests — this
+ * function exists only for the driver's own start-of-run call.
+ */
+export async function classifyTaskFolderAsync(
+  scope: RunScope,
+  root: string,
+  deps: TaskSweepAsyncDeps = defaultTaskSweepAsyncDeps
+): Promise<TaskFolderClass> {
+  const lock = deps.readDriverLockForScope(root, scope)
+  if (lock && deps.isDriverPidAlive(lock.pid)) {
+    return { kind: 'live', reason: `driver lock names live pid ${lock.pid} (started ${lock.startedAt})` }
+  }
+
+  const resolved = await resolveIssueForScopeAsync(scope, deps)
+  if (resolved.issue === null)
+    return { kind: 'unknown', reason: resolved.reason ?? 'could not resolve a task to check' }
+  const issue = resolved.issue
+
+  let issueState: IssueState
+  try {
+    issueState = await deps.fetchIssueState(issue)
+  } catch (err) {
+    return { kind: 'unknown', reason: `could not read Issue #${issue}'s state from the forge: ${message(err)}` }
+  }
+  if (issueState === 'CLOSED') return { kind: 'finished', reason: `Issue #${issue} is closed` }
+
+  let branch: string
+  try {
+    branch = await deps.developerBranchFor(issue)
+  } catch (err) {
+    return { kind: 'unknown', reason: `could not derive Issue #${issue}'s developer branch: ${message(err)}` }
+  }
+
+  let pr: PrLookup | null
+  try {
+    pr = await deps.fetchPrForBranch(branch)
+  } catch (err) {
+    return { kind: 'unknown', reason: `could not read the pull request for branch \`${branch}\`: ${message(err)}` }
+  }
+
+  if (pr && pr.state !== 'OPEN') {
+    return { kind: 'finished', reason: `Issue #${issue} is open but PR #${pr.number} is ${pr.state.toLowerCase()}` }
+  }
+
+  const pause = deps.readPauseStateForScope(root, scope)
+  if (pause) {
+    return {
+      kind: 'paused',
+      reason: `paused (${pause.reason})${pr ? `, PR #${pr.number} open` : ', no pull request yet'}`
+    }
+  }
+
+  return pr
+    ? { kind: 'open', reason: `Issue #${issue} open, PR #${pr.number} open` }
+    : { kind: 'open', reason: `Issue #${issue} open, no pull request yet` }
+}
+
+/** "Small bounded concurrency" (Traps to avoid) — enough to cut a long serial sweep down substantially without opening dozens of `gh` subprocesses at once. */
+const SWEEP_CONCURRENCY = 4
+
+export type SweepAsyncDecision = {
+  completed: number
+  total: number
+  folder: string
+  removed: boolean
+  reason: string
+}
+
+/**
+ * The driver's own start-of-run sweep (O1/O2/O3): every folder under
+ * `tasksExecutionRoot`, classified concurrently (bounded by
+ * `SWEEP_CONCURRENCY`) over non-blocking `gh` lookups, `onDecision` called
+ * once per folder AS its own decision is made — never batched after every
+ * lookup finishes — carrying a running count. A folder found `finished` is
+ * classified a SECOND time, immediately before it is removed (Traps to
+ * avoid): a task revived since the first read (its Issue reopened, its pull
+ * request moved) is never deleted on a stale answer. The final
+ * `SweepReport` is built in the directory listing's own order, independent
+ * of completion order, so it reads the same as the synchronous sweep's for
+ * the same forge state (O4).
+ */
+export async function sweepModernTasksAsync(
+  excludeScope: RunScope | undefined,
+  onDecision: (decision: SweepAsyncDecision) => void,
+  deps: TaskSweepAsyncDeps = defaultTaskSweepAsyncDeps,
+  concurrency: number = SWEEP_CONCURRENCY
+): Promise<SweepReport> {
+  const root = deps.runtimeDir()
+  let names: string[]
+  try {
+    names = readdirSync(tasksExecutionRoot(root))
+  } catch {
+    return { removed: [], kept: [] }
+  }
+
+  const total = names.length
+  const results: { removed: boolean; entry: SweepEntry }[] = new Array(total)
+  let completed = 0
+  let cursor = 0
+
+  async function decide(index: number): Promise<void> {
+    const name = names[index] as string
+    const scope = scopeFromSegment(name)
+    const label = describeScope(scope)
+
+    if (excludeScope !== undefined && scopesEqual(scope, excludeScope)) {
+      const reason = 'this run’s own task — never swept by its own driver'
+      results[index] = { removed: false, entry: { folder: label, reason } }
+      completed++
+      onDecision({ completed, total, folder: label, removed: false, reason })
+      return
+    }
+
+    const folderPath = runPath(root, scope, { area: 'task' })
+    const cls = await classifyTaskFolderAsync(scope, root, deps)
+    if (cls.kind !== 'finished') {
+      const reason = `${cls.kind} — ${cls.reason}`
+      results[index] = { removed: false, entry: { folder: label, reason } }
+      completed++
+      onDecision({ completed, total, folder: label, removed: false, reason })
+      return
+    }
+
+    // O4/Traps: classify again immediately before removing. If the answer
+    // changed — the Issue reopened, the pull request moved — the folder is
+    // kept, never deleted on the FIRST, now-stale read.
+    const recheck = await classifyTaskFolderAsync(scope, root, deps)
+    if (recheck.kind !== 'finished') {
+      const reason = `${recheck.kind} — ${recheck.reason}`
+      results[index] = { removed: false, entry: { folder: label, reason } }
+      completed++
+      onDecision({ completed, total, folder: label, removed: false, reason })
+      return
+    }
+
+    try {
+      assertSafeToRemove(folderPath, root)
+      deps.rm(folderPath)
+      results[index] = { removed: true, entry: { folder: label, reason: recheck.reason } }
+      completed++
+      onDecision({ completed, total, folder: label, removed: true, reason: recheck.reason })
+    } catch (err) {
+      const reason = `finished (${recheck.reason}) but could not be removed: ${message(err)}`
+      results[index] = { removed: false, entry: { folder: label, reason } }
+      completed++
+      onDecision({ completed, total, folder: label, removed: false, reason })
+    }
+  }
+
+  async function worker(): Promise<void> {
+    while (cursor < names.length) {
+      const index = cursor++
+      await decide(index)
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, names.length) }, () => worker()))
+
+  const removed: SweepEntry[] = []
+  const kept: SweepEntry[] = []
+  for (const r of results) {
+    if (r.removed) removed.push(r.entry)
+    else kept.push(r.entry)
+  }
+  return { removed, kept }
 }
 
 // --- earlier-layout listing and attribution (Part 4, O3) -------------------
