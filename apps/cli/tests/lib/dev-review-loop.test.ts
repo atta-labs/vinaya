@@ -9966,12 +9966,13 @@ describe('the start-of-run sweep never delays the loop, and re-checks before rem
     mkdirSync(taskRunDir(home, 8002), { recursive: true })
 
     // This fixture deliberately overlaps the asynchronous sweep with a full
-    // developer + two-reviewer round. On the 60-file Linux CI shard that
-    // completed just beyond the generic 18s subprocess diagnostic budget
-    // twice in succession, although the behavior itself was correct. Give
-    // this integration-heavy case its own ceiling while retaining the tight
-    // default for every ordinary fixture in this file.
-    const r = runLoop(home, cwd, path, 45_000)
+    // developer + two-reviewer round. On a loaded CI shard it completed just
+    // beyond an earlier, tighter ceiling (twice in succession, then a third
+    // time only 13ms over a 45s ceiling), although the behavior itself was
+    // correct each time. Give this integration-heavy case a wider ceiling,
+    // with real headroom rather than another razor-thin margin, while
+    // retaining the tight default for every ordinary fixture in this file.
+    const r = runLoop(home, cwd, path, 75_000)
     expect(r.status).toBe(0)
     expect(r.stdout).toMatch(/publish/)
 
@@ -9981,5 +9982,5 @@ describe('the start-of-run sweep never delays the loop, and re-checks before rem
     expect(readFileSync(join(home, '.sweep-8002-state-calls'), 'utf8').trim()).toBe('2')
     expect(r.stderr).toContain('kept Issue #8002')
     expect(r.stderr).toContain('open — Issue #8002 open, no pull request yet')
-  }, 50_000)
+  }, 80_000)
 })
