@@ -2098,4 +2098,45 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
     const missing = testFiles.filter((f) => !selectedSet.has(f))
     expect(missing).toEqual([])
   })
+
+  // Round 2 review, MAJOR (capped MINOR) — a PR-body claim ("the N
+  // newly-covered tests include ... all M identified matches") was
+  // hand-typed and wrong on two counts: a smaller newly-covered set cannot
+  // include a larger identified set, and not every identified file even
+  // NEEDS this edge — some (this file's own `bundlerOracle` helper, which
+  // really does spawn `bun`; the repo-tree scanners `log-callers.test.ts`
+  // and `process-fixture-coverage.test.ts`) were already selected by an
+  // existing mechanism before this task. This mechanically pins the honest
+  // relationship instead of a hand-typed count: the newly-covered set is a
+  // PROPER, non-empty SUBSET of the identified files — never all of them,
+  // and never none.
+  it('the identified files split into two real groups — some already selected without this edge, the rest newly covered by it', () => {
+    const grep = spawnSyncBudgeted(
+      'grep',
+      ['-rlE', ORIGIN_PATTERN, join(REPO_ROOT, 'apps/cli/tests'), '--include=*.ts'],
+      { encoding: 'utf8' }
+    )
+    const testFiles = grep.stdout
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((f) => resolve(f))
+      .filter(isTestFile)
+
+    const changed = [join(REPO_ROOT, 'apps/cli/src/lib/log-sink.ts')]
+    const withEdge = new Set(selectAffectedTestFiles(REPO_ROOT, changed).selected)
+    const withoutEdge = new Set(selectAffectedTestFiles(REPO_ROOT, changed, { cliSpawnDetection: 'ignore' }).selected)
+
+    const alreadyCovered = testFiles.filter((f) => withoutEdge.has(f))
+    const newlyCovered = testFiles.filter((f) => !withoutEdge.has(f) && withEdge.has(f))
+
+    // Every identified file lands in exactly one of the two groups — the
+    // sibling test above already proves none is left uncovered by either.
+    expect(alreadyCovered.length + newlyCovered.length).toBe(testFiles.length)
+    // The newly-covered group is real (this task's edge is doing actual
+    // work) but never the WHOLE identified set — some were already
+    // reachable on the merits before this task.
+    expect(newlyCovered.length).toBeGreaterThan(0)
+    expect(newlyCovered.length).toBeLessThan(testFiles.length)
+  })
 })
