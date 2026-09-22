@@ -152,7 +152,7 @@ async function waitForOwnLine(
  * this line documents the flush of the retry queue itself, so it must land
  * there regardless of a configured `logs` folder/server destination — the
  * one place in this codebase that deliberately bypasses `logs` for a
- * telemetry write ([task-files-v1] 5).
+ * telemetry write.
  *
  * Returns whether the write was confirmed landed (`waitForOwnLine`) rather
  * than throwing — a timeout is not necessarily fatal (see call sites
