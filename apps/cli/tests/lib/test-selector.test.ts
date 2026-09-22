@@ -18,6 +18,7 @@ import {
   selectAffectedTestFiles,
   walkFiles
 } from '../../src/lib/test-selector'
+import { cliSpawnEdgeOf } from '../../src/lib/cli-spawn-tests'
 import { scannedRootsOf } from '../../src/lib/repo-scanner-tests'
 import { loadTypeScript } from '../../src/lib/ts-module-graph'
 
@@ -1833,10 +1834,134 @@ describe('`import x = require(...)` degrades to the coarse edge under BOTH resol
 // regardless of what changed: a change to `apps/cli/src/lib/log-sink.ts`
 // alone made `vinaya check --all` print a warning twenty-five times instead
 // of once, a real regression this repository's own pre-push selection never
-// had a chance to catch, caught only because CI runs everything. The
-// classifier itself (`cliSpawnEdgeOf`) has its own unit tests in
-// `cli-spawn-tests.test.ts`; these prove how the selector CONSUMES each
-// outcome.
+// had a chance to catch, caught only because CI runs everything.
+//
+// The classifier's own unit tests (below) prove what `cliSpawnEdgeOf` decides
+// in isolation; the `selectAffectedTestFiles` suites after it prove how the
+// selector CONSUMES each outcome. Kept in this already-sharded file rather
+// than a new one — `apps/cli/tests/ci-shards/*.txt` is out of this task's
+// surface, and a new `*.test.ts` file needs a matching shard-list edit or CI
+// silently drops it (`ci-shards.test.ts`'s own purpose).
+describe('cliSpawnEdgeOf classifies a test file’s own spawn shapes (Issue #702, O1/O3)', () => {
+  const ts = loadTypeScript(REPO_ROOT) as NonNullable<ReturnType<typeof loadTypeScript>>
+
+  function fixture(testBody: string): { root: string; file: string; entrypoint: string } {
+    const root = mkdtempSync(join(tmpdir(), 'vinaya-cli-spawn-'))
+    mkdirSync(join(root, 'src'), { recursive: true })
+    mkdirSync(join(root, 'tests'), { recursive: true })
+    writeFileSync(join(root, 'src', 'index.ts'), 'export const noop = 1\n')
+    const file = join(root, 'tests', 'spawn.test.ts')
+    writeFileSync(file, testBody)
+    return { root, file, entrypoint: join(root, 'src', 'index.ts') }
+  }
+
+  it('a direct Bun.spawn of `bun <entrypoint>` classifies as the precise entrypoint edge', () => {
+    const { root, file, entrypoint } = fixture(
+      [
+        "import { join } from 'node:path'",
+        "const INDEX = join(import.meta.dir, '..', 'src', 'index.ts')",
+        "test('runs cli', () => Bun.spawn(['bun', INDEX, 'check'], { stdout: 'pipe' }))",
+        ''
+      ].join('\n')
+    )
+    try {
+      expect(cliSpawnEdgeOf(ts, file, readFileSync(file, 'utf8'), root, entrypoint)).toBe('entrypoint')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it("execFileSync('bun', [entrypoint, ...args]) — the shape most of the 58 identified tests use — is also precise", () => {
+    const { root, file, entrypoint } = fixture(
+      [
+        "import { execFileSync } from 'node:child_process'",
+        "import { dirname } from 'node:path'",
+        "import { fileURLToPath } from 'node:url'",
+        "import { join } from 'node:path'",
+        "const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')",
+        "const INDEX = join(CLI_ROOT, 'src', 'index.ts')",
+        "const args = ['check', '--all']",
+        "test('runs cli', () => execFileSync('bun', [INDEX, ...args], { encoding: 'utf8' }))",
+        ''
+      ].join('\n')
+    )
+    try {
+      expect(cliSpawnEdgeOf(ts, file, readFileSync(file, 'utf8'), root, entrypoint)).toBe('entrypoint')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('an ordinary spawn of something else entirely (git) is neither precise nor a fallback — reachability is untouched', () => {
+    const { root, file, entrypoint } = fixture(
+      [
+        "import { execFileSync } from 'node:child_process'",
+        "test('git init', () => execFileSync('git', ['init', '-q'], { cwd: '/tmp' }))",
+        ''
+      ].join('\n')
+    )
+    try {
+      expect(cliSpawnEdgeOf(ts, file, readFileSync(file, 'utf8'), root, entrypoint)).toBeNull()
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a computed argument list (`bun`, plus args built by a helper) still proves `bun` but not the entrypoint — falls back', () => {
+    const { root, file, entrypoint } = fixture(
+      [
+        "function pickArgs() { return ['check', '--all'] }",
+        "test('runs cli', () => Bun.spawn(['bun', ...pickArgs()], { stdout: 'pipe' }))",
+        ''
+      ].join('\n')
+    )
+    try {
+      expect(cliSpawnEdgeOf(ts, file, readFileSync(file, 'utf8'), root, entrypoint)).toBe('fallback')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('the entrypoint threaded through an indirect wrapper’s own parameter — not a module-level binding — falls back', () => {
+    const { root, file, entrypoint } = fixture(
+      [
+        "import { execFileSync } from 'node:child_process'",
+        "import { join } from 'node:path'",
+        "const INDEX = join(import.meta.dir, '..', 'src', 'index.ts')",
+        "function runCli(entry) { return execFileSync('bun', [entry], { encoding: 'utf8' }) }",
+        "test('runs cli', () => runCli(INDEX))",
+        ''
+      ].join('\n')
+    )
+    try {
+      // `INDEX` resolves at module scope, but the call that actually spawns
+      // (`execFileSync` inside `runCli`) sees only its own parameter `entry` —
+      // invisible to a top-level-only static read, the same conservative limit
+      // `repo-scanner-tests.ts`'s own evaluator has always had.
+      expect(cliSpawnEdgeOf(ts, file, readFileSync(file, 'utf8'), root, entrypoint)).toBe('fallback')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('the entrypoint spawned through a different binary (never proven `bun`) falls back, not to silence', () => {
+    const { root, file, entrypoint } = fixture(
+      [
+        "import { execFileSync } from 'node:child_process'",
+        "import { join } from 'node:path'",
+        "const INDEX = join(import.meta.dir, '..', 'src', 'index.ts')",
+        "test('runs via node', () => execFileSync('node', [INDEX, 'check'], { encoding: 'utf8' }))",
+        ''
+      ].join('\n')
+    )
+    try {
+      expect(cliSpawnEdgeOf(ts, file, readFileSync(file, 'utf8'), root, entrypoint)).toBe('fallback')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('selectAffectedTestFiles reaches a CLI-spawning test through the entrypoint’s real import graph (Issue #702, O1/O2)', () => {
   it('a change to a file the entrypoint transitively imports selects a test that only spawns the CLI, never imports it', () => {
     const { root, dir } = mkWorkspace([
@@ -1962,18 +2087,11 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
     // Only genuine `*.test.ts` files are the selector's own universe: a
     // `.ts` script `bun test` never discovers (an existing, unrelated
     // `isTestFile` convention predating this task) owes this task nothing.
-    //
-    // `cli-spawn-tests.test.ts` itself matches this pattern too — its own
-    // fixture bodies write the literal call shapes being classified — the
-    // same false-positive class the pattern already had before this task
-    // (`process-fixture-coverage.test.ts` embeds example call sites as
-    // strings for its OWN compliance-checker fixtures the same way; it
-    // never shows up as "missing" below only because it independently
-    // qualifies as a real-tree scanner, which this classifier fixture file
-    // does not). Excluded here as this task's own addition, never one of
-    // the Origin's named 58.
-    const CLASSIFIER_FIXTURE_FILE = join(REPO_ROOT, 'apps/cli/tests/lib/cli-spawn-tests.test.ts')
-    const testFiles = matched.filter(isTestFile).filter((f) => f !== CLASSIFIER_FIXTURE_FILE)
+    // (This file itself now matches the pattern too — its own fixture
+    // bodies write the literal call shapes being classified, and its real
+    // `bundlerOracle` helper genuinely spawns `bun` — so it is legitimately
+    // `missing`-checked like any other match, not special-cased out.)
+    const testFiles = matched.filter(isTestFile)
 
     const { selected } = selectAffectedTestFiles(REPO_ROOT, [join(REPO_ROOT, 'apps/cli/src/lib/log-sink.ts')])
     const selectedSet = new Set(selected)
