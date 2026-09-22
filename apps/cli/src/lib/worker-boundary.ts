@@ -150,6 +150,55 @@ export function resolveCodexAccessToken(
 export type CodexAuthPreflightResult = { ok: true } | { ok: false; reason: string }
 
 /**
+ * Round 5 review, BLOCKER (Issue #676): a bare `CODEX_ACCESS_TOKEN`
+ * environment variable is not itself a session Codex's real CLI accepts —
+ * live-verified against `codex-cli 0.152.1` on this authoring host (`codex
+ * --help` documents no such env-var auth path at all): the vendor CLI only
+ * ever authenticates from `auth.json` inside its `CODEX_HOME`, written by
+ * its own `login` subcommand. `codex login --with-access-token` (confirmed
+ * live via `codex login --help` on this host: "Read the access token from
+ * stdin") is that subcommand's own supported non-interactive bootstrap path
+ * — it reads the token from stdin and writes a real `auth.json` (deriving
+ * `account_id`/`refresh_token` itself) into whatever `CODEX_HOME` it is
+ * pointed at, never the operator's real one here, since `codexHome` is
+ * always the scratch directory this module already staged. The actual
+ * token round-trip (a real ChatGPT session authenticating through this
+ * exact call) is NOT independently live-verified by this change — a
+ * dispatched Developer session is denied read access to the operator's real
+ * `~/.codex/auth.json` by this same isolation boundary (confirmed live:
+ * the read was refused), so this call's real-world behavior can only be
+ * proven by a live canary or the Principal's own privileged host, not by
+ * this dispatch — disclosed rather than silently assumed, the same posture
+ * this file already takes for `codex`/`gemini`'s unverified env var names.
+ */
+function runRealCodexLoginWithAccessToken(input: {
+  binaryPath: string
+  codexHome: string
+  accessToken: string
+}): { ok: true } | { ok: false; reason: string } {
+  try {
+    execFileSync(input.binaryPath, ['login', '--with-access-token'], {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: 45_000,
+      maxBuffer: 4 * 1024 * 1024,
+      input: input.accessToken,
+      env: {
+        PATH: process.env.PATH,
+        CODEX_HOME: input.codexHome
+      }
+    })
+    return { ok: true }
+  } catch (error) {
+    const e = error as { killed?: boolean; signal?: string; status?: number | null }
+    if (e.killed || e.signal === 'SIGTERM') {
+      return { ok: false, reason: 'codex login --with-access-token timed out after 45 seconds' }
+    }
+    return { ok: false, reason: `codex login --with-access-token failed (exit ${e.status ?? 'unknown'})` }
+  }
+}
+
+/**
  * Proves usability with a fixed, read-only, ephemeral vendor request outside
  * the adopter repository. A revoked or expired session refuses before the
  * developer loop, and the hard timeout keeps the preflight bounded.
@@ -332,6 +381,11 @@ export type WorkerBoundaryDeps = {
    */
   readOAuthCredentialFile?: (path: string) => string | null
   readCodexKeychainCredential?: (codexHome: string) => string | null
+  runCodexLoginWithAccessToken?: (input: {
+    binaryPath: string
+    codexHome: string
+    accessToken: string
+  }) => { ok: true } | { ok: false; reason: string }
   runCodexAuthPreflight?: (input: {
     binaryPath: string
     codexHome: string
@@ -344,6 +398,7 @@ export const REAL_WORKER_BOUNDARY_DEPS: WorkerBoundaryDeps = {
   detectHost: detectRealHost,
   readOAuthCredentialFile: readRealOAuthCredentialFile,
   readCodexKeychainCredential: readRealCodexKeychainCredential,
+  runCodexLoginWithAccessToken: runRealCodexLoginWithAccessToken,
   runCodexAuthPreflight: runRealCodexAuthPreflight
 }
 
@@ -948,19 +1003,6 @@ export function resolveWorkerBoundaryLaunch(
     const oauthConfigDir = opts.stageOAuthCredential
       ? (stageOAuthCredential(process.env, realHome, scratchTmpDir, deps)?.configDir ?? null)
       : null
-    if (opts.stageCodexCredential) {
-      const sourceCodexHome = process.env.CODEX_HOME ?? join(realHome, '.codex')
-      const authPreflight = (deps.runCodexAuthPreflight ?? runRealCodexAuthPreflight)({
-        binaryPath: resolvedBinaryPath,
-        codexHome: sourceCodexHome,
-        cwd: scratchTmpDir,
-        realHome
-      })
-      if (!authPreflight.ok) {
-        rmSync(scratchTmpDir, { recursive: true, force: true })
-        throw new Error(`Codex subscription authentication preflight failed: ${authPreflight.reason}`)
-      }
-    }
     const codexAccessToken = opts.stageCodexCredential
       ? resolveCodexAccessToken(
           process.env,
@@ -973,6 +1015,40 @@ export function resolveWorkerBoundaryLaunch(
     if (opts.stageCodexCredential && codexAccessToken) {
       codexHomeDir = join(scratchTmpDir, 'codex-home')
       mkdirSync(codexHomeDir, { recursive: true, mode: 0o700 })
+
+      // Round 5 review, BLOCKER (Issue #676): a bare `CODEX_ACCESS_TOKEN`
+      // env var is not a session the real Codex CLI accepts — this call is
+      // the fix: `codex login --with-access-token` reads the token from
+      // stdin and writes a real `auth.json` (its own `account_id`/
+      // `refresh_token` derivation) into the SCOPED `codexHomeDir`, never
+      // the operator's real `CODEX_HOME`. See `runRealCodexLoginWithAccessToken`'s
+      // own doc comment for what is and is not live-verified here.
+      const login = (deps.runCodexLoginWithAccessToken ?? runRealCodexLoginWithAccessToken)({
+        binaryPath: resolvedBinaryPath,
+        codexHome: codexHomeDir,
+        accessToken: codexAccessToken
+      })
+      if (!login.ok) {
+        rmSync(scratchTmpDir, { recursive: true, force: true })
+        throw new Error(`Codex subscription login failed: ${login.reason}`)
+      }
+
+      // Round 5 review, BLOCKER (Issue #676): this preflight must probe the
+      // SAME scoped `codexHomeDir` the confined worker will actually run
+      // against — probing the operator's real, unscoped `CODEX_HOME` (the
+      // prior shape) always reported the session usable even when the
+      // isolated worker's own brokered credential could not authenticate.
+      const authPreflight = (deps.runCodexAuthPreflight ?? runRealCodexAuthPreflight)({
+        binaryPath: resolvedBinaryPath,
+        codexHome: codexHomeDir,
+        cwd: scratchTmpDir,
+        realHome
+      })
+      if (!authPreflight.ok) {
+        rmSync(scratchTmpDir, { recursive: true, force: true })
+        throw new Error(`Codex subscription authentication preflight failed: ${authPreflight.reason}`)
+      }
+
       writeFileSync(
         join(codexHomeDir, 'config.toml'),
         [
@@ -983,6 +1059,13 @@ export function resolveWorkerBoundaryLaunch(
           '[shell_environment_policy.filters]',
           '# Codex itself receives this brokered session; its repository commands never do.',
           '"CODEX_ACCESS_TOKEN" = "exclude"',
+          // Security review (round 5), HIGH: `CODEX_API_KEY` is the sibling
+          // credential `RUNTIME_CREDENTIAL_ENV_KEYS` names alongside
+          // `CODEX_ACCESS_TOKEN` and `buildWorkerEnv` passes through from the
+          // trusted controller's own env when set there — excluded here too,
+          // for the same reason: Codex's own repository-spawned subprocesses
+          // must never see it, only the Codex parent itself.
+          '"CODEX_API_KEY" = "exclude"',
           ''
         ].join('\n'),
         { mode: 0o600 }

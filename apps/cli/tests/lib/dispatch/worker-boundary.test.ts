@@ -368,6 +368,7 @@ describe('resolveWorkerBoundaryLaunch — Codex subscription preflight (O1, Issu
         ...AVAILABLE_DEPS,
         readOAuthCredentialFile: () => JSON.stringify({ tokens: { access_token: 'expired-fixture' } }),
         readCodexKeychainCredential: () => null,
+        runCodexLoginWithAccessToken: () => ({ ok: true }),
         runCodexAuthPreflight: () => ({ ok: false, reason: 'Codex rejected the staged ChatGPT session (exit 1)' })
       }
     )
@@ -377,8 +378,33 @@ describe('resolveWorkerBoundaryLaunch — Codex subscription preflight (O1, Issu
     expect(result.reason).toContain('exit 1')
   })
 
-  it('accepts a keychain-backed token only after the bounded vendor probe succeeds', () => {
+  it('refuses a cached token when the non-interactive login step itself fails', () => {
+    const allowedDir = tempDir('vinaya-wb-codex-login-refused-')
+    const result = resolveWorkerBoundaryLaunch(
+      {
+        binaryPath: '/usr/bin/env',
+        args: [],
+        allowedDir,
+        extraWritableDirs: [],
+        stageCodexCredential: true
+      },
+      {
+        ...AVAILABLE_DEPS,
+        readOAuthCredentialFile: () => JSON.stringify({ tokens: { access_token: 'expired-fixture' } }),
+        readCodexKeychainCredential: () => null,
+        runCodexLoginWithAccessToken: () => ({ ok: false, reason: 'codex login --with-access-token failed (exit 1)' })
+      }
+    )
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.reason).toContain('Codex subscription login failed')
+    expect(result.reason).toContain('exit 1')
+  })
+
+  it('accepts a keychain-backed token only after a real `codex login --with-access-token` and the bounded vendor probe both succeed, against the SCOPED codex home never the real one', () => {
     const allowedDir = tempDir('vinaya-wb-codex-preflight-ok-')
+    let loggedInHome = ''
+    let loggedInToken = ''
     let probedHome = ''
     const result = resolveWorkerBoundaryLaunch(
       {
@@ -393,6 +419,11 @@ describe('resolveWorkerBoundaryLaunch — Codex subscription preflight (O1, Issu
         readOAuthCredentialFile: () => null,
         readCodexKeychainCredential: () =>
           JSON.stringify({ tokens: { access_token: 'keychain-fixture', refresh_token: 'must-not-cross' } }),
+        runCodexLoginWithAccessToken: ({ codexHome, accessToken }) => {
+          loggedInHome = codexHome
+          loggedInToken = accessToken
+          return { ok: true }
+        },
         runCodexAuthPreflight: ({ codexHome }) => {
           probedHome = codexHome
           return { ok: true }
@@ -402,13 +433,19 @@ describe('resolveWorkerBoundaryLaunch — Codex subscription preflight (O1, Issu
     expect(result.ok).toBe(true)
     if (!result.ok) return
     try {
-      expect(probedHome).toBe(join(homedir(), '.codex'))
+      expect(loggedInToken).toBe('keychain-fixture')
+      expect(loggedInHome).toBe(result.launch.codexHomeDir)
+      expect(probedHome).toBe(result.launch.codexHomeDir)
+      expect(probedHome).not.toBe(join(homedir(), '.codex'))
       expect(result.launch.codexAccessToken).toBe('keychain-fixture')
       expect(readFileSync(join(result.launch.codexHomeDir as string, 'config.toml'), 'utf8')).not.toContain(
         'keychain-fixture'
       )
       expect(readFileSync(join(result.launch.codexHomeDir as string, 'config.toml'), 'utf8')).toContain(
         '"CODEX_ACCESS_TOKEN" = "exclude"'
+      )
+      expect(readFileSync(join(result.launch.codexHomeDir as string, 'config.toml'), 'utf8')).toContain(
+        '"CODEX_API_KEY" = "exclude"'
       )
     } finally {
       result.launch.cleanup()
