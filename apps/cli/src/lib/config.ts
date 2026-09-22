@@ -931,31 +931,49 @@ export function globalRuntimeDirIgnoredWarning(path: string): string {
  * role name resolves to must come from the reviewed, committed repo file,
  * never a machine-wide personal config.
  */
+/**
+ * The global-config-ignored warnings are a per-process alert about a static
+ * config fact, so each distinct one must print at most once no matter how many
+ * times config is loaded this process. `stripGlobalOnlyKeys` runs on EVERY
+ * `loadConfig()`/`loadConfigChecked()` call, and a single command can now reach
+ * several independent load sites (`vinaya check --all` loads once for the check
+ * resolver and again when the log sink resolves its destination) — without this
+ * dedupe each site re-fired the identical warning, spamming stderr (regression
+ * guarded by check.test.ts's "exactly once"). Keyed by the full message (path +
+ * key), so a genuinely different offending file still warns.
+ */
+const emittedGlobalKeyWarnings = new Set<string>()
+function warnGlobalKeyIgnoredOnce(message: string): void {
+  if (emittedGlobalKeyWarnings.has(message)) return
+  emittedGlobalKeyWarnings.add(message)
+  console.error(`⚠ ${message}`)
+}
+
 function stripGlobalOnlyKeys(config: VinayaConfig, path: string): VinayaConfig {
   if (path !== GLOBAL_CONFIG_PATH) return config
   let result = config
   if (result.checks && Object.keys(result.checks).length > 0) {
-    console.error(`⚠ ${globalChecksIgnoredWarning(path)}`)
+    warnGlobalKeyIgnoredOnce(globalChecksIgnoredWarning(path))
     result = { ...result, checks: undefined }
   }
   if (result.roles && Object.keys(result.roles).length > 0) {
-    console.error(`⚠ ${globalRolesIgnoredWarning(path)}`)
+    warnGlobalKeyIgnoredOnce(globalRolesIgnoredWarning(path))
     result = { ...result, roles: undefined }
   }
   if (result.principals && result.principals.length > 0) {
-    console.error(`⚠ ${globalPrincipalsIgnoredWarning(path)}`)
+    warnGlobalKeyIgnoredOnce(globalPrincipalsIgnoredWarning(path))
     result = { ...result, principals: undefined }
   }
   if (result.releaseActor) {
-    console.error(`⚠ ${globalReleaseActorIgnoredWarning(path)}`)
+    warnGlobalKeyIgnoredOnce(globalReleaseActorIgnoredWarning(path))
     result = { ...result, releaseActor: undefined }
   }
   if (result.tokens) {
-    console.error(`⚠ ${globalTokensCollectIgnoredWarning(path)}`)
+    warnGlobalKeyIgnoredOnce(globalTokensCollectIgnoredWarning(path))
     result = { ...result, tokens: undefined }
   }
   if (result.runtimeDir) {
-    console.error(`⚠ ${globalRuntimeDirIgnoredWarning(path)}`)
+    warnGlobalKeyIgnoredOnce(globalRuntimeDirIgnoredWarning(path))
     result = { ...result, runtimeDir: undefined }
   }
   return result
