@@ -33,6 +33,7 @@ tests/lib/dev-review-loop.test.ts
 tests/lib/dev-review-loop/reviewer-dispatch.test.ts
 tests/lib/dev-review-loop/reviewer-isolation.test.ts
 tests/lib/log-callers.test.ts
+tests/lib/log-destination.test.ts
 tests/lib/log-sink.test.ts
 tests/lib/loop-log.test.ts
 tests/new-check.test.ts

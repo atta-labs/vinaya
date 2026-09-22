@@ -416,6 +416,7 @@ function appendLine(path: string, line: string, warn: (message: string) => void)
 /** Injectable for tests; the default instance below is wired to the real reads (env, git, the resolved `logs` destination). */
 export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
   log: (e: LogEventInput) => void
+  logToOutboxQueue: (e: LogEventInput) => void
   runId: string
   warmup: () => void
 } {
@@ -499,7 +500,16 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
       })
   }
 
-  function log(e: LogEventInput): void {
+  // `forcedDestination`, when given, bypasses `resolveDestinationOnce`
+  // entirely for this one call — the retry-queue bookkeeping lines
+  // `log-flush.ts`'s `logForFlush` writes (`forge_write` `validated`/
+  // `written`/`refused`) must always land in the SAME queue file that
+  // caller is about to read and truncate, never wherever a configured
+  // `logs` destination happens to point. Sharing this instance's `runId`/
+  // `seq`/doctrine/repo cache (rather than a second, independent sink) is
+  // what keeps `(run_id, seq)` a genuinely unique pair — two sinks sharing
+  // one `runId` would each start `seq` at 0 and collide.
+  function log(e: LogEventInput, forcedDestination?: ResolvedLogDestination): void {
     try {
       const env = deps.env()
       const host = hostFromEnv(env)
@@ -570,7 +580,7 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
             return
           }
           const line = `${JSON.stringify(redact(parsed.data, deps.home()))}\n`
-          const destination = resolveDestinationOnce(repo, env)
+          const destination = forcedDestination ?? resolveDestinationOnce(repo, env)
           if (destination.kind === 'server') {
             // The local outbox is the retry queue for a server destination
             // (O2) — appended first, synchronously with every other
@@ -631,7 +641,15 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
     })
   }
 
-  return { log, runId, warmup }
+  // Always the machine-local retry queue (`deps.outboxRoot()`), never the
+  // configured `logs` destination — `log-flush.ts`'s own audit-trail lines
+  // about a flush call must land beside the file that flush is reading and
+  // about to truncate, regardless of where ordinary telemetry goes.
+  const logToOutboxQueue = (e: LogEventInput): void => {
+    log(e, { kind: 'folder', folder: deps.outboxRoot() })
+  }
+
+  return { log, logToOutboxQueue, runId, warmup }
 }
 
 const defaultSink = createLogSink()
@@ -660,6 +678,17 @@ export function currentRunId(): string {
  */
 export function log(e: LogEventInput): void {
   defaultSink.log(e)
+}
+
+/**
+ * `log-flush.ts`'s own chokepoint for a flush call's audit-trail lines
+ * (`forge_write` `validated`/`written`/`refused`) — always the local retry
+ * queue (`telemetryOutboxRoot()`), never a configured `logs` folder/server
+ * destination, since these lines document the flush of THAT queue file and
+ * must land beside it regardless of where ordinary telemetry is delivered.
+ */
+export function logToOutboxQueue(e: LogEventInput): void {
+  defaultSink.logToOutboxQueue(e)
 }
 
 /**

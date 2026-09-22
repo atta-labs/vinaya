@@ -165,5 +165,5 @@ export async function dispatchCommand(args: string[]): Promise<void> {
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  dispatch: { date: '2026-09-16', callsToday: 12, retiresVia: 'sharedCommandShell' }
+  dispatch: { date: '2026-09-22', callsToday: 4, retiresVia: 'sharedCommandShell' }
 }
