@@ -4,6 +4,7 @@ import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { resetResolveRepoCache } from '../../../packages/aeg-forge-state/src/resolve-repo'
 import {
   FALLBACK_PORT,
   parsePortFlag,
@@ -137,12 +138,26 @@ describe('runStudio', () => {
     mkdirSync(tmpDir, { recursive: true })
     savedAegRepo = process.env.AEG_REPO
     delete process.env.AEG_REPO
+    // `resolveRepo()` caches at module scope and returns that cache BEFORE it
+    // reads the env (`resolve-repo.ts`), so deleting AEG_REPO above is not
+    // enough on its own: `bun test` runs a whole shard's files in ONE process,
+    // and an earlier shard-3 file that called `resolveRepo()` (with the CI
+    // runner's own AEG_REPO set, or against the CI checkout's own origin)
+    // leaves the cache holding a value the derivation test below would read
+    // back instead of the guest repo it set up. Clearing the cache here makes
+    // this file's derivation assertion independent of whatever ran before it
+    // in the same process — the poisoning the file's own header comment (the
+    // "latent footgun if that ever changes") warned about, now realised by CI
+    // exporting AEG_REPO into the test process.
+    resetResolveRepoCache()
   })
 
   afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true })
     if (savedAegRepo === undefined) delete process.env.AEG_REPO
     else process.env.AEG_REPO = savedAegRepo
+    // Leave no poisoned cache behind for a later file in the same shard run.
+    resetResolveRepoCache()
   })
 
   it('names the install and returns 1 when the target is missing', async () => {
