@@ -923,6 +923,47 @@ describe('runtimeDir — scope and shape (security review)', () => {
   })
 })
 
+// [task-files-v1] 5 — the `logs` setting: a folder (absolute path only) or a
+// server (`url`/`headers`), never both.
+describe('logs — shape and mutual exclusion', () => {
+  it('accepts an absolute folder path', () => {
+    expect(VinayaConfigSchema.safeParse({ logs: { folder: '/var/lib/vinaya/logs' } }).success).toBe(true)
+  })
+
+  it('refuses a relative folder path', () => {
+    expect(VinayaConfigSchema.safeParse({ logs: { folder: 'relative/logs' } }).success).toBe(false)
+  })
+
+  it('accepts a url, with headers', () => {
+    // The schema itself accepts any string header value — a literal secret
+    // or an env-var reference (see tests/lib/log-destination.test.ts for
+    // resolveLogsHeaderValues' own substitution behavior).
+    const parsed = VinayaConfigSchema.safeParse({
+      logs: { url: 'https://example.com/ingest', headers: { authorization: 'Bearer example-token' } }
+    })
+    expect(parsed.success).toBe(true)
+  })
+
+  it('refuses both folder and url set together', () => {
+    expect(
+      VinayaConfigSchema.safeParse({ logs: { folder: '/var/lib/vinaya/logs', url: 'https://example.com/ingest' } })
+        .success
+    ).toBe(false)
+  })
+
+  it('refuses headers without a url', () => {
+    expect(
+      VinayaConfigSchema.safeParse({ logs: { folder: '/var/lib/vinaya/logs', headers: { a: 'b' } } }).success
+    ).toBe(false)
+  })
+
+  it('an absent logs key still validates — the sink falls back to its own default folder', () => {
+    const parsed = VinayaConfigSchema.safeParse({})
+    expect(parsed.success).toBe(true)
+    if (parsed.success) expect(parsed.data.logs).toBeUndefined()
+  })
+})
+
 // task-15 (issue-545), O1/O5 — the two additive config keys this task adds.
 describe('VinayaConfigSchema.prePush / .report — additive-only', () => {
   it("this repo's own vinaya.config.json declares prePush.alwaysRun and still validates", () => {
