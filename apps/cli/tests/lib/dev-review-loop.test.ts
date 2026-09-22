@@ -9813,3 +9813,271 @@ describe('runDevReviewLoopArgs fixture isolation (Issue #660, O3)', () => {
     expect(message).toContain('--- stderr ---')
   })
 })
+
+/**
+ * Same as `writeFakeGh`, except `gh issue view <blockedIssue> --json state`
+ * — the one call the driver's own start-of-run sweep makes for a seeded,
+ * unrelated task folder — blocks until `.fake-dev-invoked` exists (bounded,
+ * so a genuine regression fails fast instead of hanging the whole test)
+ * before answering `CLOSED`. Every other call behaves exactly as
+ * `writeFakeGh`'s own.
+ */
+function writeFakeGhSweepBlocksUntilDevInvoked(dir: string, blockedIssue: number): void {
+  writeFakeBinary(
+    dir,
+    'gh',
+    `#!/bin/sh
+if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then
+  echo "gh: HTTP 404 Not Found (test stub — no vinaya.config.json on the default branch)" >&2
+  exit 1
+fi
+STATE_DIR="$HOME/.fake-gh-posted-comments"
+mkdir -p "$STATE_DIR"
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$3" = "${blockedIssue}" ] && [ "$4" = "--json" ] && [ "$5" = "state" ]; then
+  i=0
+  while [ ! -f "$HOME/.fake-dev-invoked" ] && [ "$i" -lt 100 ]; do
+    sleep 0.05
+    i=$((i + 1))
+  done
+  if [ ! -f "$HOME/.fake-dev-invoked" ]; then
+    touch "$HOME/.sweep-blocked-dispatch"
+  fi
+  echo '{"state":"CLOSED"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n\\n## Planner rationale\\n\\nOut of scope for facts.\\n","author":{"login":"daniboomerang"}}]}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
+  printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo '[{"number":123,"headRefName":"${BRANCH}"}]'
+  else
+    echo '[]'
+  fi
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
+  N=$(ls "$STATE_DIR"/comment-*.md 2>/dev/null | wc -l | tr -d ' ')
+  BODY_FILE="$5"
+  cp "$BODY_FILE" "$STATE_DIR/comment-$((N + 1)).md"
+  echo "https://github.com/example/repo/pull/$3#issuecomment-$((N + 1))"
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "body" ]; then
+  echo '{"body":"Closes #${TASK}"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "mergeable" ]; then
+  echo '{"mergeable":"MERGEABLE"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  FAKE_GH_STATE="$STATE_DIR" bun -e '
+    const fs = require("fs")
+    const dir = process.env.FAKE_GH_STATE
+    const files = fs
+      .readdirSync(dir)
+      .filter((f) => f.startsWith("comment-"))
+      .sort((a, b) => Number(a.match(/\\d+/)[0]) - Number(b.match(/\\d+/)[0]))
+    const bodies = files.map((f) => fs.readFileSync(dir + "/" + f, "utf8"))
+    console.log(JSON.stringify({ comments: bodies.map((body) => ({ body, author: { login: "daniboomerang" } })) }))
+  '
+  exit 0
+fi
+if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
+  echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
+  echo "fake gh: refusing issue comment (log flush not under test)" >&2
+  exit 1
+fi
+echo "unhandled fake gh call: $*" >&2
+exit 1
+`
+  )
+}
+
+/**
+ * Same as `writeFakeGh`, except `gh issue view <revivedIssue> --json state`
+ * answers `CLOSED` on its first call and `OPEN` on every call after — the
+ * shape of a task revived (its Issue reopened) in the interval between the
+ * sweep's first classification and its immediately-pre-removal recheck —
+ * and `--json labels` for the same Issue answers with no `tranche` label,
+ * so its branch derivation needs no further `--json title` call. Every
+ * other call behaves exactly as `writeFakeGh`'s own.
+ */
+function writeFakeGhSweepRevivedBetweenChecks(dir: string, revivedIssue: number): void {
+  writeFakeBinary(
+    dir,
+    'gh',
+    `#!/bin/sh
+if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then
+  echo "gh: HTTP 404 Not Found (test stub — no vinaya.config.json on the default branch)" >&2
+  exit 1
+fi
+STATE_DIR="$HOME/.fake-gh-posted-comments"
+mkdir -p "$STATE_DIR"
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$3" = "${revivedIssue}" ] && [ "$4" = "--json" ] && [ "$5" = "state" ]; then
+  COUNT_FILE="$HOME/.sweep-${revivedIssue}-state-calls"
+  N=0
+  if [ -f "$COUNT_FILE" ]; then N=$(cat "$COUNT_FILE"); fi
+  N=$((N + 1))
+  echo "$N" > "$COUNT_FILE"
+  if [ "$N" -eq 1 ]; then
+    echo '{"state":"CLOSED"}'
+  else
+    echo '{"state":"OPEN"}'
+  fi
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$3" = "${revivedIssue}" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  echo '{"labels":[]}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n\\n## Planner rationale\\n\\nOut of scope for facts.\\n","author":{"login":"daniboomerang"}}]}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
+  printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
+  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  if [ -f "$HOME/.fake-dev-invoked" ]; then
+    echo '[{"number":123,"headRefName":"${BRANCH}"}]'
+  else
+    echo '[]'
+  fi
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
+  N=$(ls "$STATE_DIR"/comment-*.md 2>/dev/null | wc -l | tr -d ' ')
+  BODY_FILE="$5"
+  cp "$BODY_FILE" "$STATE_DIR/comment-$((N + 1)).md"
+  echo "https://github.com/example/repo/pull/$3#issuecomment-$((N + 1))"
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "body" ]; then
+  echo '{"body":"Closes #${TASK}"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "mergeable" ]; then
+  echo '{"mergeable":"MERGEABLE"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
+  FAKE_GH_STATE="$STATE_DIR" bun -e '
+    const fs = require("fs")
+    const dir = process.env.FAKE_GH_STATE
+    const files = fs
+      .readdirSync(dir)
+      .filter((f) => f.startsWith("comment-"))
+      .sort((a, b) => Number(a.match(/\\d+/)[0]) - Number(b.match(/\\d+/)[0]))
+    const bodies = files.map((f) => fs.readFileSync(dir + "/" + f, "utf8"))
+    console.log(JSON.stringify({ comments: bodies.map((body) => ({ body, author: { login: "daniboomerang" } })) }))
+  '
+  exit 0
+fi
+if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
+  echo '{"id":1,"name":"ci","status":"completed","conclusion":"success"}'
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
+  echo "fake gh: refusing issue comment (log flush not under test)" >&2
+  exit 1
+fi
+echo "unhandled fake gh call: $*" >&2
+exit 1
+`
+  )
+}
+
+// Issue #697: the start-of-run sweep no longer runs synchronously ahead of
+// the run's own narration and the first dispatch — it is started, narrated
+// as it goes, and never awaited before dispatch; a folder it finds
+// `finished` is re-classified immediately before removal so a revival in
+// the interval is never deleted on a stale answer.
+describe('the start-of-run sweep never delays the loop, and re-checks before removing (Issue #697)', () => {
+  it('O1/O2: the run-start marker and the sweep-running line land in the loop log and on stderr before the sweep’s own forge lookup, and the developer is dispatched before that lookup ever answers', () => {
+    const home = tempDir('vinaya-drl-home-')
+    const cwd = tempDir('vinaya-drl-cwd-')
+    const binDir = tempDir('vinaya-drl-bin-')
+    writeFakeClaude(binDir)
+    writeFakeGhSweepBlocksUntilDevInvoked(binDir, 8001)
+    writeFakeGit(binDir)
+    const path = `${binDir}:${pathWithoutRealVendors()}`
+
+    // A finished, unrelated task folder for the sweep to classify — its
+    // own `gh issue view --json state` call blocks (bounded) until the
+    // developer has already been dispatched.
+    mkdirSync(taskRunDir(home, 8001), { recursive: true })
+
+    const r = runLoop(home, cwd, path)
+    expect(r.status).toBe(0)
+    expect(r.stdout).toMatch(/publish/)
+
+    // O2: the developer was dispatched, and the sweep's own blocked lookup
+    // never stalled it — had dispatch waited on the sweep, the two would
+    // have deadlocked and the fake `gh` script's own bounded poll would
+    // have given up and left this marker behind.
+    expect(existsSync(join(home, '.fake-dev-invoked'))).toBe(true)
+    expect(existsSync(join(home, '.sweep-blocked-dispatch'))).toBe(false)
+
+    // O1: the run-start marker and the sweep-running line are both in the
+    // loop log (the same file `vinaya task status --follow` tails) and on
+    // this process's own stderr.
+    const driverLog = readFileSync(join(taskRunDir(home), 'output', 'driver.log'), 'utf8')
+    expect(driverLog).toMatch(/=== run started .*role=dev-review-loop/)
+    expect(driverLog).toContain('[dev-review-loop] sweep — running')
+    expect(r.stderr).toContain('vinaya dev-review-loop: sweep — running')
+
+    // The sweep genuinely ran to completion (not merely skipped) — the
+    // other, unrelated finished folder it found is gone.
+    expect(existsSync(taskRunDir(home, 8001))).toBe(false)
+
+    // O3: each decision is printed with a running count as it is made —
+    // two folders total (this run's own excluded task, plus the seeded
+    // one), so the excluded task's own decision lands first as `[1/2]`
+    // (no forge lookup needed) and the removal lands last as `[2/2]`,
+    // after the developer's own dispatch line already appears above it.
+    expect(r.stderr).toContain('sweep — [1/2] kept Issue #9001')
+    expect(r.stderr).toContain('sweep — [2/2] removed Issue #8001')
+  }, 20000)
+
+  it('O4: a folder found finished is classified again immediately before removal — a task revived in the interval is kept, never deleted on the stale first read', () => {
+    const home = tempDir('vinaya-drl-home-')
+    const cwd = tempDir('vinaya-drl-cwd-')
+    const binDir = tempDir('vinaya-drl-bin-')
+    writeFakeClaude(binDir)
+    writeFakeGhSweepRevivedBetweenChecks(binDir, 8002)
+    writeFakeGit(binDir)
+    const path = `${binDir}:${pathWithoutRealVendors()}`
+
+    mkdirSync(taskRunDir(home, 8002), { recursive: true })
+
+    const r = runLoop(home, cwd, path)
+    expect(r.status).toBe(0)
+    expect(r.stdout).toMatch(/publish/)
+
+    // The FIRST read (classification) said CLOSED — finished; the SECOND,
+    // immediately before removal, said OPEN — revived. The folder survives.
+    expect(existsSync(taskRunDir(home, 8002))).toBe(true)
+    expect(readFileSync(join(home, '.sweep-8002-state-calls'), 'utf8').trim()).toBe('2')
+    expect(r.stderr).toContain('kept Issue #8002')
+    expect(r.stderr).toContain('open — Issue #8002 open, no pull request yet')
+  }, 20000)
+})

@@ -84,7 +84,7 @@ import {
 import { postMarkedComment } from './forge-write.js'
 import { createLogSink, currentRunId, log, outboxPathFor, telemetryOutboxRoot } from './log-sink.js'
 import { ensureRunDir, markProcessUnattended, runPath } from './run-paths.js'
-import { runTaskSweep } from './task-sweep.js'
+import { defaultTaskSweepAsyncDeps, sweepModernTasksAsync } from './task-sweep.js'
 import { appendRoleLine, appendRunStartMarker, loopLogPathFor } from './loop-log.js'
 import { flushOutbox as flushOutboxLib, LogFlushError } from './log-flush.js'
 import { flushOutboxToWebhook, WebhookFlushError } from './log-webhook-flush.js'
@@ -427,12 +427,16 @@ export type LoopDeps = {
     repo: { owner: string; repo: string } | null
   ) => void
   /**
-   * The same sweep `vinaya task sweep` runs on demand, called once at the
-   * very start of a run, before anything is dispatched, `task` excluded so
-   * this run never sweeps its own folder. Best-effort by design: a failure
-   * here is reported and ignored, never a reason the run itself stops.
+   * The same keep-policy `vinaya task sweep` runs on demand, started once
+   * at the very start of a run — but never awaited before the first
+   * dispatch, since its own lookups run concurrently with everything else
+   * this process does. `task` excluded so this run never sweeps its own
+   * folder. Best-effort by design: a failure here is reported and ignored,
+   * never a reason the run itself stops. The returned promise never
+   * rejects; awaited once, in this function's own `finally`, so the
+   * process never exits mid-removal.
    */
-  sweepTasksAtStart: (task: number) => void
+  sweepTasksAtStart: (task: number) => Promise<void>
 }
 
 function defaultRepoRoot(): string {
@@ -963,24 +967,32 @@ export function buildReexecArgs(input: LoopInput, task: number): string[] {
 }
 
 /**
- * `runTaskSweep`'s modern-layout half, called once at the start of every
+ * `sweepModernTasksAsync`'s own call, started once at the start of every
  * run, `excludeScope: task` so this run never sweeps the very folder it is
  * about to write into. Best-effort: a thrown error is reported to stderr
  * and swallowed, never re-thrown — the same "the mechanics stalled, not a
  * review verdict" tolerance this driver already gives a flush failure
- * (`flushOutbox`'s own caller, below). Injectable
- * (`LoopDeps.sweepTasksAtStart`) so a test never shells out to real `gh` or
- * touches a real runtime directory just because a run started.
+ * (`flushOutbox`'s own caller, below). Non-blocking lookups with bounded
+ * concurrency (Traps to avoid) — never the legacy-layout half of the sweep
+ * (Boundary: out of scope, and its own driver-side result was always
+ * discarded anyway). Injectable (`LoopDeps.sweepTasksAtStart`) so a test
+ * never shells out to real `gh` or touches a real runtime directory just
+ * because a run started. Never rejects — every failure, including one from
+ * `onDecision` itself, is caught and reported, so the caller can safely
+ * await the returned promise unconditionally.
  */
-function defaultSweepTasksAtStart(task: number): void {
+async function defaultSweepTasksAtStart(task: number): Promise<void> {
   try {
-    const { modern } = runTaskSweep({ includeLegacy: false }, undefined, task)
-    for (const entry of modern.removed) {
-      console.error(`vinaya dev-review-loop: sweep — removed ${entry.folder}: ${entry.reason}`)
-    }
-    if (modern.removed.length > 0 || modern.kept.length > 0) {
-      console.error(`vinaya dev-review-loop: sweep — removed ${modern.removed.length}, kept ${modern.kept.length}`)
-    }
+    await sweepModernTasksAsync(
+      task,
+      (decision) => {
+        const verb = decision.removed ? 'removed' : 'kept'
+        console.error(
+          `vinaya dev-review-loop: sweep — [${decision.completed}/${decision.total}] ${verb} ${decision.folder}: ${decision.reason}`
+        )
+      },
+      defaultTaskSweepAsyncDeps
+    )
   } catch (err) {
     console.error(`vinaya dev-review-loop: sweep failed — ${err instanceof Error ? err.message : String(err)}`)
   }
@@ -1149,18 +1161,36 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     branch = d.developerBranchFor(task)
   }
 
-  // The same sweep `vinaya task sweep` runs on demand,
-  // called once per run, before anything is dispatched — so a finished
-  // task's folder never accumulates just because no one ran the command by
-  // hand. `excludeScope` (this run's OWN task) is the guard against a race
-  // this exact invocation could otherwise lose to itself: were the forge to
-  // report this task finished (a stale read, or a genuine race against an
-  // external close), the sweep must never remove the very folder this run
-  // is about to write its driver lock and control-store records into. A
-  // sweep failure is reported to this run's own stderr and ignored —
-  // never a reason the run itself stops (Traps to avoid: a housekeeping
-  // pass must never gate the loop it runs alongside).
-  d.sweepTasksAtStart(task)
+  // O1: this run's own narration begins here, before the start-of-run
+  // sweep below ever makes a forge lookup — the log sink (and this
+  // process's own `runId`) is created now, rather than inside
+  // `runDevReviewLoopBody` below (its later, original home), so the
+  // run-start marker and a line saying the sweep is running land in the
+  // loop log AND on stderr first. A driver that still has many folders
+  // left to classify must never look silent while it works through them.
+  const { log, runId } = createLogSink()
+  if (!process.env.VINAYA_RUN_ID) process.env.VINAYA_RUN_ID = runId
+  // `loopLogPathFor`'s own `repo` parameter never affects the path it
+  // returns (kept on the signature only for callers that already resolved
+  // one) — passing `null` here means this marker never waits on
+  // `resolveRepo()`, which only runs later, inside the body.
+  const loopLogPath = loopLogPathFor(null, task)
+  appendRunStartMarker(loopLogPath, { role: 'dev-review-loop', pid: process.pid, runId })
+  appendRoleLine(loopLogPath, 'dev-review-loop', 'sweep — running')
+  console.error('vinaya dev-review-loop: sweep — running')
+
+  // The same keep-policy `vinaya task sweep` runs on demand, started here
+  // but never awaited before dispatch (O2) — `excludeScope` (this run's OWN
+  // task) is the guard against a race this exact invocation could otherwise
+  // lose to itself: were the forge to report this task finished (a stale
+  // read, or a genuine race against an external close), the sweep must
+  // never remove the very folder this run is about to write its driver
+  // lock and control-store records into. A sweep failure is reported to
+  // this run's own stderr and ignored — never a reason the run itself
+  // stops (Traps to avoid: a housekeeping pass must never gate the loop it
+  // runs alongside). Awaited once, in the `finally` below, so the process
+  // never exits while it is still mid-removal.
+  const sweepDone = d.sweepTasksAtStart(task)
 
   // O1/O2: one driver per task — checked before any dispatch, a live record
   // refuses this start outright; a dead one (crashed prior driver) is taken
@@ -1211,6 +1241,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // call unconditionally here, including while a real error is already
     // propagating out of the `try`.
     await d.flushOutbox(task)
+    // O2/Traps: the sweep was never awaited before dispatch, but a run
+    // that is about to exit must "let it finish… cleanly" rather than
+    // leave a removal partway done — `sweepDone` never rejects (its own
+    // doc comment), so this is safe unconditionally, including while a
+    // real error is already propagating out of the `try`.
+    await sweepDone
     // An infrastructure/stale_driver pause deliberately leaves the lock
     // in place — this run is not "done," it is a live process that hit a
     // recoverable hiccup, and a cleared lock here would misrepresent that
@@ -1221,8 +1257,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   }
 
   async function runDevReviewLoopBody(): Promise<LoopResult> {
-    const { log, runId } = createLogSink()
-    if (!process.env.VINAYA_RUN_ID) process.env.VINAYA_RUN_ID = runId
     // `buildHeader` derives `subject.issue` (and thus the outbox file this
     // loop's OWN `log()` calls land in) purely from `env.VINAYA_TASK`
     // (`envelope.ts`'s `issueFromTask`) — never self-declared. `dispatchRole`
@@ -1267,15 +1301,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       return runPath(root, task, { area: 'developer', round: roundNum, file: DEVELOPER_ROUND_RESPONSE_FILE_NAME })
     }
     const loopOutboxPath = outboxPathFor({ outboxRoot: d.telemetryOutboxRoot }, repo, task)
-    /**
-     * O6: the one file this run's own role-prefixed stream tees to,
-     * regardless of where it was launched — `vinaya task status --follow`
-     * tails it live. Resolved once, from the same `repo`/`task` every other
-     * per-run path here already uses; the run-start marker delineates this
-     * process's own narration from an earlier relaunch's still-appended one.
-     */
-    const loopLogPath = loopLogPathFor(repo, task)
-    appendRunStartMarker(loopLogPath, { role: 'dev-review-loop', pid: process.pid, runId })
     /**
      * Awaits EACH event's own landing before firing the next `log()` call —
      * not just the batch's last one. `resolveRepo()` only caches a

@@ -106,27 +106,59 @@ this landed had to finish, or be cancelled, first, and nothing here reads
 or migrates one on its own; that command is an operator's or a
 principal's own call, never something a run in progress reaches for.
 
-## The sweep, at the start of every run (`task-files-v1` 3, `#650`, O2)
+## The sweep, at the start of every run (`task-files-v1` 3, `#650`, O2; non-blocking and narrated as it runs — Issue `#697`)
 
-Right after the task and its developer branch are resolved (both the
-`--task` and the `--resume` path, above) — and before the one-driver-per-
-task lock below is even read — `devReviewLoop` calls the SAME function
-`vinaya task sweep` calls on demand (`apps/cli/src/lib/task-sweep.ts`'s
-`runTaskSweep`, `LoopDeps.sweepTasksAtStart`), scoped to the modern
-`tasks-execution/` layout only (never `--include-legacy`'s own earlier-
-layout removal, which stays an explicit, operator-run command): every OTHER
-task folder whose Issue is closed or whose pull request is merged or
-closed is removed, so a repository that never runs the command by hand
-still never accumulates a folder for a task that finished five minutes,
-or five months, ago. `excludeScope` is this run's own task — never swept
-by its own driver, since the forge could in principle report it finished
-(a stale read, or a genuine race against an external close) at the exact
-moment this run is about to write into that same folder. A sweep failure
-— a `gh` read timing out, a folder that resists removal — is reported to
-this run's own stderr (`vinaya dev-review-loop: sweep failed — …`) and
-otherwise ignored: it is never a reason THIS run pauses or exits, the same
-"the mechanics stalled, not a review verdict" tolerance a flush failure
-already gets (below).
+This run's own narration begins before the sweep ever makes a forge
+lookup: right after the task and its developer branch are resolved (both
+the `--task` and the `--resume` path, above), the loop log (`<task
+folder>/output/driver.log`, the same file `vinaya task status --follow`
+tails) and this process's own stderr both receive the run-start marker
+and a `sweep — running` line — before the sweep's own `gh` calls, and
+before the one-driver-per-task lock below is even read. The sweep is
+then STARTED, not awaited: `devReviewLoop` calls
+`apps/cli/src/lib/task-sweep.ts`'s `sweepModernTasksAsync`
+(`LoopDeps.sweepTasksAtStart`) and keeps going immediately, so the
+run's first developer dispatch never waits on it, however many folders
+it still has to classify. `vinaya task sweep` on demand is unaffected —
+it still calls the original, synchronous `runTaskSweep`/
+`classifyTaskFolder`, unchanged; the async path exists only for this
+driver's own start-of-run call, since a synchronous, sequential `gh`
+call per folder would otherwise starve the event loop that carries a
+concurrently dispatched agent's own output.
+
+Every OTHER task folder whose Issue is closed or whose pull request is
+merged or closed is removed, exactly as the synchronous sweep decides
+it — the keep-policy itself is unchanged, only how it runs:
+`classifyTaskFolderAsync` mirrors `classifyTaskFolder`'s decision and
+reason text over non-blocking `gh` lookups, run with a small bounded
+concurrency rather than one after another. Each folder's own decision is
+printed to stderr — `[<completed>/<total>] removed|kept <folder>:
+<reason>` — the moment that folder's own classification finishes, never
+batched into one line after every lookup completes. A folder found
+`finished` is classified a SECOND time, immediately before it is
+removed: a task revived in the interval (its Issue reopened, its pull
+request moved) is read again and kept, never deleted on the first,
+now-stale answer. `excludeScope` is this run's own task — never swept by
+its own driver, since the forge could in principle report it finished (a
+stale read, or a genuine race against an external close) at the exact
+moment this run is about to write into that same folder.
+
+The driver's own start-of-run call never reaches the legacy-layout half
+of the sweep (`sweepLegacyLayout`, `--include-legacy`) at all — its
+result was always discarded here even before this change (`runTaskSweep`
+returned it, but the driver's own call only ever read the modern half),
+so skipping it outright removes wasted, synchronous work rather than
+changing any observable behavior; `vinaya task sweep --include-legacy`
+remains the only way to read or remove anything in the earlier layout.
+
+A sweep failure — a `gh` read timing out, a folder that resists removal
+— is reported to this run's own stderr (`vinaya dev-review-loop: sweep
+failed — …`) and otherwise ignored: it is never a reason THIS run pauses
+or exits, the same "the mechanics stalled, not a review verdict"
+tolerance a flush failure already gets (below). The sweep is awaited
+exactly once, in this function's own `finally`, alongside the outbox
+flush — so a run that finishes before the sweep does still lets it
+finish cleanly rather than exiting mid-removal.
 
 ## One driver per task (`review-validity-v1` task 7, `#498`)
 
