@@ -2927,6 +2927,55 @@ function sizeOfSafe(path: string): number {
 }
 
 /**
+ * Round 6 security review: the (env, extraAllowlistKeys) decision for a
+ * confined Codex child's spawn, extracted so it is unit-testable without a
+ * real confined dispatch. Two live-verified defects this closes:
+ *
+ * CRITICAL — `codexHomeDir` (when set) already carries a real, working
+ * `auth.json` written by `codex login --with-access-token`; ALSO setting
+ * `CODEX_ACCESS_TOKEN` on that exact process breaks bearer auth entirely
+ * (every turn: HTTP 401 "Missing bearer or basic authentication in
+ * header"), while `CODEX_HOME` alone authenticates correctly. This never
+ * sets `CODEX_ACCESS_TOKEN`.
+ *
+ * HIGH — `RUNTIME_CREDENTIAL_ENV_KEYS[agent]` (for codex, `CODEX_API_KEY`/
+ * `CODEX_ACCESS_TOKEN`) is the API-key-only auth path, passed through from
+ * the trusted controller's own env only when no subscription session was
+ * staged. When one WAS staged, also copying an operator's own
+ * `CODEX_API_KEY` (set for unrelated tooling) silently switches Codex's own
+ * auth precedence to the API key instead, with no refusal or diagnostic
+ * naming the downgrade — closed by returning no extra allowlist keys at all
+ * in that case.
+ */
+/**
+ * Round 6 review, MAJOR: a failed `codex login --with-access-token` step
+ * (`worker-boundary.ts`'s `Codex subscription login failed:` reason) is the
+ * SAME class of authentication failure as the bounded preflight's own
+ * refusal (`Codex subscription authentication preflight failed:`) — both
+ * mean no usable Codex session was established — and must classify the
+ * same way, not fall through to the generic `startup-failed`. Extracted so
+ * the classification is unit-testable without a real boundary refusal.
+ */
+export function codexBoundaryFailureReason(agent: AgentVendor, boundaryFailureReason: string): DispatchFailureReason {
+  const isAuthFailure =
+    agent === 'codex' &&
+    (boundaryFailureReason.startsWith('Codex subscription authentication preflight failed:') ||
+      boundaryFailureReason.startsWith('Codex subscription login failed:'))
+  return isAuthFailure ? 'authentication-failed' : 'startup-failed'
+}
+
+export function codexSpawnEnvExtras(
+  agent: AgentVendor,
+  codexHomeDir: string | null
+): { attribution: Record<string, string>; extraAllowlistKeys: readonly string[] } {
+  const staged = agent === 'codex' && codexHomeDir !== null
+  return {
+    attribution: staged ? { CODEX_HOME: codexHomeDir as string } : {},
+    extraAllowlistKeys: staged ? [] : (RUNTIME_CREDENTIAL_ENV_KEYS[agent] ?? [])
+  }
+}
+
+/**
  * Starts `agent`'s headless mode for `role`, attributes the child's
  * environment, and records the dispatch through `log()`. Never throws — a
  * missing/non-executable binary, a crash, or a timeout all resolve the
@@ -3408,10 +3457,7 @@ export async function dispatchRole(
               : {})
           })
     if (!boundaryLaunch.ok) {
-      const failureReason: DispatchFailureReason =
-        agent === 'codex' && boundaryLaunch.reason.startsWith('Codex subscription authentication preflight failed:')
-          ? 'authentication-failed'
-          : 'startup-failed'
+      const failureReason: DispatchFailureReason = codexBoundaryFailureReason(agent, boundaryLaunch.reason)
       const durationMs = Date.now() - start
       const priorSize = sizeOfSafe(outboxPath)
       log({
@@ -3523,6 +3569,7 @@ export async function dispatchRole(
       // nobody wrote to. It also saves the child a network round trip.
       [RUNTIME_DIR_ENV_KEY]: runtimeDirForRepo(repo)
     }
+    const codexEnvExtras = resolvedBoundary ? codexSpawnEnvExtras(agent, resolvedBoundary.codexHomeDir) : null
     const child = spawn(spawnCommand, spawnCommandArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
       ...(spawnCwd ? { cwd: spawnCwd } : {}),
@@ -3559,14 +3606,12 @@ export async function dispatchRole(
               // entirely (not set to `undefined`) when nothing was staged,
               // so an API-key-only dispatch's env is unaffected.
               ...(resolvedBoundary.oauthConfigDir ? { CLAUDE_CONFIG_DIR: resolvedBoundary.oauthConfigDir } : {}),
-              ...(resolvedBoundary.codexHomeDir
-                ? {
-                    CODEX_HOME: resolvedBoundary.codexHomeDir,
-                    CODEX_ACCESS_TOKEN: resolvedBoundary.codexAccessToken ?? undefined
-                  }
-                : {})
+              // Round 6 security review, CRITICAL/HIGH — see
+              // `codexSpawnEnvExtras`'s own doc comment for what each half
+              // of this closes.
+              ...codexEnvExtras!.attribution
             },
-            RUNTIME_CREDENTIAL_ENV_KEYS[agent] ?? []
+            codexEnvExtras!.extraAllowlistKeys
           )
         : { ...process.env, ...attribution }
     })

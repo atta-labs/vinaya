@@ -60,6 +60,8 @@ import {
   buildWriteAccessScope,
   addCodexWritableDirs,
   PERMISSION_POLICY_VERSION,
+  codexSpawnEnvExtras,
+  codexBoundaryFailureReason,
   type DispatchTeeRecoveryDeps
 } from '../../src/lib/dispatch.js'
 
@@ -3648,6 +3650,53 @@ describe('unreadDocumentationSources', () => {
   it('never reports a non-URL (in-repo path) source — WebFetch cannot answer for it', () => {
     const sources = [{ source: 'apps/cli/specs/loop.md', mechanism: 'x', objectiveIds: [1] }]
     expect(unreadDocumentationSources(sources, [])).toEqual([])
+  })
+})
+
+describe('codexSpawnEnvExtras — round 6 security review, CRITICAL/HIGH (Issue #676)', () => {
+  it('a staged subscription session (codexHomeDir set) carries CODEX_HOME but never CODEX_ACCESS_TOKEN — live-verified the env var breaks bearer auth once a real auth.json exists', () => {
+    const extras = codexSpawnEnvExtras('codex', '/tmp/scratch/codex-home')
+    expect(extras.attribution).toEqual({ CODEX_HOME: '/tmp/scratch/codex-home' })
+    expect(extras.attribution).not.toHaveProperty('CODEX_ACCESS_TOKEN')
+  })
+
+  it('a staged subscription session never allowlists CODEX_API_KEY/CODEX_ACCESS_TOKEN through from the controller env — an operator-set CODEX_API_KEY must never silently downgrade a staged session to API-key auth', () => {
+    const extras = codexSpawnEnvExtras('codex', '/tmp/scratch/codex-home')
+    expect(extras.extraAllowlistKeys).toEqual([])
+  })
+
+  it('no staged session (codexHomeDir null) sets no CODEX_HOME and falls back to the ordinary RUNTIME_CREDENTIAL_ENV_KEYS allowlist — the API-key-only path is unaffected', () => {
+    const extras = codexSpawnEnvExtras('codex', null)
+    expect(extras.attribution).toEqual({})
+    expect(extras.extraAllowlistKeys).toEqual(['CODEX_API_KEY', 'CODEX_ACCESS_TOKEN'])
+  })
+
+  it('a non-codex vendor never gets CODEX_HOME even if codexHomeDir were somehow non-null, and keeps its own RUNTIME_CREDENTIAL_ENV_KEYS allowlist', () => {
+    const extras = codexSpawnEnvExtras('claude', '/tmp/scratch/codex-home')
+    expect(extras.attribution).toEqual({})
+    expect(extras.extraAllowlistKeys).toEqual(['ANTHROPIC_API_KEY'])
+  })
+})
+
+describe('codexBoundaryFailureReason — round 6 review, MAJOR (Issue #676)', () => {
+  it('classifies a preflight refusal as authentication-failed', () => {
+    expect(codexBoundaryFailureReason('codex', 'Codex subscription authentication preflight failed: exit 1')).toBe(
+      'authentication-failed'
+    )
+  })
+
+  it('classifies a login-step refusal as authentication-failed too — the same class of "no usable session" failure', () => {
+    expect(codexBoundaryFailureReason('codex', 'Codex subscription login failed: exit 1')).toBe('authentication-failed')
+  })
+
+  it('classifies any other boundary refusal reason as startup-failed', () => {
+    expect(codexBoundaryFailureReason('codex', 'worker boundary unavailable on this host')).toBe('startup-failed')
+  })
+
+  it('never classifies a non-codex vendor as authentication-failed even with a matching-shaped reason string', () => {
+    expect(codexBoundaryFailureReason('claude', 'Codex subscription authentication preflight failed: exit 1')).toBe(
+      'startup-failed'
+    )
   })
 })
 
