@@ -119,14 +119,30 @@ describe('resolveStudioTarget', () => {
 
 describe('runStudio', () => {
   let tmpDir: string
+  // `resolveRepo()` (`@attalabs/aeg-forge-state`) honors an explicit
+  // `AEG_REPO` env value AHEAD of any git-remote derivation, by design — an
+  // operator-set repo always wins. The AEG_REPO-derivation test below asserts
+  // the git-remote path specifically, so it must run with AEG_REPO unset, or
+  // an ambient value silently short-circuits the very derivation it checks and
+  // the assertion reads that ambient value back. A CI runner that exports
+  // AEG_REPO into the test process (as this repo's own CI now does) made the
+  // test fail for exactly that reason while it passed on a developer box with
+  // no such var; stripping it here makes the test hermetic either way, the
+  // same guard `packages/aeg-forge-state/src/resolve-repo.test.ts` already
+  // applies to its own AEG_REPO-sensitive cases.
+  let savedAegRepo: string | undefined
 
   beforeEach(() => {
     tmpDir = join(tmpdir(), `vinaya-studio-run-test-${Date.now()}-${Math.random().toString(36).slice(2)}`)
     mkdirSync(tmpDir, { recursive: true })
+    savedAegRepo = process.env.AEG_REPO
+    delete process.env.AEG_REPO
   })
 
   afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true })
+    if (savedAegRepo === undefined) delete process.env.AEG_REPO
+    else process.env.AEG_REPO = savedAegRepo
   })
 
   it('names the install and returns 1 when the target is missing', async () => {
