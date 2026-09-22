@@ -1875,6 +1875,50 @@ describe('selectAffectedTestFiles reaches a CLI-spawning test through the entryp
   })
 })
 
+describe('Issue #702, O3 — a spawn shape the classifier cannot read falls back to the whole-package edge, never to silence', () => {
+  it('an unrecognized spawn call selects on any change under the entrypoint’s own source directory, never a sibling package or the manifest outside it', () => {
+    const { root, dir } = mkWorkspace([
+      {
+        name: '@fx/cli',
+        main: INDEX_MAIN,
+        files: {
+          'src/index.ts': 'export const noop = 1\n',
+          'src/unrelated.ts': 'export const other = 2\n',
+          'src/spawn.test.ts': [
+            "import { execFileSync } from 'node:child_process'",
+            "function pickArgs() { return ['status'] }",
+            "test('spawns something bun-shaped', () => execFileSync('bun', pickArgs(), { encoding: 'utf8' }))",
+            ''
+          ].join('\n')
+        }
+      },
+      { name: '@fx/other', files: { 'src/sibling.test.ts': "test('sibling', () => 1)\n" } }
+    ])
+    const cliEntrypoint = 'packages/p0/src/index.ts'
+    try {
+      const spawnTest = join(dir('@fx/cli'), 'src/spawn.test.ts')
+      const unrelated = join(dir('@fx/cli'), 'src/unrelated.ts')
+      const manifest = join(dir('@fx/cli'), 'package.json')
+      const siblingTest = join(dir('@fx/other'), 'src/sibling.test.ts')
+
+      // Never imported, never scanned as a repo-tree read — only the coarse
+      // fallback edge over the entrypoint's own source directory explains this.
+      expect(selectAffectedTestFiles(root, [unrelated], { cliEntrypoint }).selected).toContain(spawnTest)
+      expect(
+        selectAffectedTestFiles(root, [unrelated], { cliSpawnDetection: 'ignore', cliEntrypoint }).selected
+      ).not.toContain(spawnTest)
+
+      // Whole-PACKAGE-source granularity, not whole-repo and not whole-package:
+      // a sibling package's own test never selects it, and neither does the
+      // package's own manifest, which sits outside the entrypoint's `src/`.
+      expect(selectAffectedTestFiles(root, [siblingTest], { cliEntrypoint }).selected).not.toContain(spawnTest)
+      expect(selectAffectedTestFiles(root, [manifest], { cliEntrypoint }).selected).not.toContain(spawnTest)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('Issue #702, O2 — the exact regression: a log-sink.ts-only change now selects check.test.ts', () => {
   const LOG_SINK = join(REPO_ROOT, 'apps/cli/src/lib/log-sink.ts')
   const CHECK_TEST = join(REPO_ROOT, 'apps/cli/tests/commands/check.test.ts')
@@ -1890,5 +1934,50 @@ describe('Issue #702, O2 — the exact regression: a log-sink.ts-only change now
       CHECK_TEST
     )
     expect(selectAffectedTestFiles(REPO_ROOT, [LOG_SINK]).selected).toContain(CHECK_TEST)
+  })
+})
+
+describe('Issue #702, O2 — every test file the Origin’s own grep identifies is now selected', () => {
+  // Re-run live, never special-cased by path (`aeg-root` trap for this task):
+  // the same pattern the Origin's own grep used, so this test still passes
+  // when a new spawning test is added tomorrow and still fails honestly if
+  // this task's own edge regresses.
+  const ORIGIN_PATTERN =
+    'Bun\\.spawn(Sync)?\\(\\[[^]]*[\'"]bun[\'"]|execFileSync\\([\'"]bun[\'"]|spawnSync\\([\'"]bun[\'"]'
+
+  it('every real *.test.ts file the pattern matches is selected by a log-sink.ts-only change', () => {
+    const grep = spawnSyncBudgeted(
+      'grep',
+      ['-rlE', ORIGIN_PATTERN, join(REPO_ROOT, 'apps/cli/tests'), '--include=*.ts'],
+      { encoding: 'utf8' }
+    )
+    const matched = grep.stdout
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((f) => resolve(f))
+    // Sanity floor on the Origin's own count (58 when this task was written) —
+    // guards against the pattern itself silently matching nothing.
+    expect(matched.length).toBeGreaterThan(50)
+    // Only genuine `*.test.ts` files are the selector's own universe: a
+    // `.ts` script `bun test` never discovers (an existing, unrelated
+    // `isTestFile` convention predating this task) owes this task nothing.
+    //
+    // `cli-spawn-tests.test.ts` itself matches this pattern too — its own
+    // fixture bodies write the literal call shapes being classified — the
+    // same false-positive class the pattern already had before this task
+    // (`process-fixture-coverage.test.ts` embeds example call sites as
+    // strings for its OWN compliance-checker fixtures the same way; it
+    // never shows up as "missing" below only because it independently
+    // qualifies as a real-tree scanner, which this classifier fixture file
+    // does not). Excluded here as this task's own addition, never one of
+    // the Origin's named 58.
+    const CLASSIFIER_FIXTURE_FILE = join(REPO_ROOT, 'apps/cli/tests/lib/cli-spawn-tests.test.ts')
+    const testFiles = matched.filter(isTestFile).filter((f) => f !== CLASSIFIER_FIXTURE_FILE)
+
+    const { selected } = selectAffectedTestFiles(REPO_ROOT, [join(REPO_ROOT, 'apps/cli/src/lib/log-sink.ts')])
+    const selectedSet = new Set(selected)
+    const missing = testFiles.filter((f) => !selectedSet.has(f))
+    expect(missing).toEqual([])
   })
 })

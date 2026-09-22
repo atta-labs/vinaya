@@ -78,7 +78,12 @@
  * `all:`-prefixed edge to the CLI entrypoint FILE itself — not a hand-listed
  * set of what it imports — so the entrypoint's own already-computed real
  * import edges do the rest, exactly as they do for every file that imports it
- * directly.
+ * directly. A spawn shape the classifier cannot read as precisely as `bun
+ * apps/cli/src/index.ts` (a different binary, a computed argument list, the
+ * entrypoint threaded through an indirect wrapper's own parameter) still
+ * carries real evidence the file spawns the built CLI somehow, so it falls
+ * back to a `scan:` edge over the entrypoint's own source directory instead —
+ * the whole-package edge for this file, never silence.
  *
  * ## Conservative fallback — over-select, never omit
  *
@@ -1207,15 +1212,20 @@ export function selectAffectedTestFiles(
   // imports either. A precisely-classified spawn gets one synthetic edge
   // straight to the entrypoint's own `all:` node — the entrypoint's real,
   // already-computed edges (built above, by whichever graph answered) do the
-  // rest.
+  // rest. A spawn shape the classifier cannot read as precisely earns the
+  // coarse `scan:` edge over the entrypoint's own source directory instead —
+  // the whole-package edge for this file, never silence.
   if (typescript && options.cliSpawnDetection !== 'ignore') {
     const cliEntrypoint = join(repoRoot, options.cliEntrypoint ?? DEFAULT_CLI_ENTRYPOINT)
+    const cliEntrypointSourceRoot = dirname(cliEntrypoint)
     for (const file of allSourceFiles) {
       if (!isTestFile(file)) continue
       const classification = cliSpawnEdgeOf(typescript, file, readSource(file), repoRoot, cliEntrypoint)
-      if (classification !== 'entrypoint') continue
+      if (!classification) continue
       const key = `${ALL_PREFIX}${file}`
-      edges.set(key, [...(edges.get(key) ?? []), `${ALL_PREFIX}${cliEntrypoint}`])
+      const edge =
+        classification === 'entrypoint' ? `${ALL_PREFIX}${cliEntrypoint}` : `${SCAN_PREFIX}${cliEntrypointSourceRoot}`
+      edges.set(key, [...(edges.get(key) ?? []), edge])
     }
   }
 
