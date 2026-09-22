@@ -353,7 +353,11 @@ function writeIdentityStableFakeBinary(dir: string, name: string): string {
 }
 
 function outboxLines(home: string, issue: number | 'none'): unknown[] {
-  const p = join(home, '.vinaya', 'outbox', 'unresolved', `${issue}.ndjson`)
+  // [task-files-v1] 5, O1: the default `logs` destination is now a folder
+  // under this repository's own `runtimeDir` — never the machine-global
+  // `~/.vinaya/outbox/` these fixtures resolve to `unresolved` (no git
+  // origin in the scratch `cwd`).
+  const p = join(home, '.vinaya', 'runtime', 'unresolved', 'logs', 'unresolved', `${issue}.ndjson`)
   return readFileSync(p, 'utf8')
     .trim()
     .split('\n')

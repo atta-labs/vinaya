@@ -33,7 +33,18 @@ import {
   recordIdentity,
   redact
 } from '@attalabs/aeg-core'
-import { GLOBAL_VINAYA_HOME } from './config.js'
+import {
+  GLOBAL_VINAYA_HOME,
+  loadConfig,
+  loadTrustAnchorConfig,
+  resolveLogsHeaderValues,
+  resolveLogsSetting,
+  resolveTrustAnchorLogsDestination,
+  type LogsDestination,
+  type VinayaConfig
+} from './config.js'
+import { isUnattendedProcess, runtimeDirForRepo } from './run-paths.js'
+import { flushOutboxToWebhook } from './log-webhook-flush.js'
 import { packageRoot } from './package-root.js'
 
 /** Rotation cap (§9: "rotation and a size cap ship with the first write") — one `.1.ndjson` slot, overwritten each time the live file crosses this. */
@@ -54,6 +65,16 @@ export type LogSinkInputVersions = {
   policyDigest?: string | null
 }
 
+/**
+ * Where THIS process's `log()` calls land, resolved once per sink instance
+ * (`resolveDestinationOnce`, below) — a folder the sink appends directly to,
+ * or a server drained from the local retry queue after every append
+ * (`apps/cli/specs/log.md` § The destination).
+ */
+export type ResolvedLogDestination =
+  | { kind: 'folder'; folder: string }
+  | { kind: 'server'; url: string; headers?: Record<string, string> }
+
 export type LogSinkDeps = {
   outboxRoot: () => string
   home: () => string
@@ -73,6 +94,87 @@ export type LogSinkDeps = {
    * fields as optional, `null` for whichever it isn't given).
    */
   inputVersions: () => LogSinkInputVersions | undefined
+  /**
+   * The `logs` setting's resolved destination for this process (O1/O4) —
+   * `vinaya.config.json`'s `logs`, trust-anchor-gated for an unattended
+   * caller exactly as `runtimeDir` already is, falling back to a folder
+   * under this repository's own `runtimeDir` when unset. Called at most
+   * once per sink instance (`resolveDestinationOnce`) — a `url` destination
+   * can require a network read (`loadTrustAnchorConfig`) an unattended
+   * caller must not repeat on every event.
+   */
+  resolveLogDestination: (repo: RepoRef | null, env: NodeJS.ProcessEnv) => ResolvedLogDestination
+}
+
+function safeLoadTrustAnchorConfig(): VinayaConfig | null {
+  try {
+    return loadTrustAnchorConfig()
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The pure decision behind `LogSinkDeps.resolveLogDestination` — a `url`
+ * destination is honoured only when the repository's default branch
+ * declares the identical one for an unattended caller (round-2 security
+ * review, HIGH, the same rule `runtimeDir`/`logPublish.webhookUrl` already
+ * carry: a pull request under review cannot redirect where an unattended
+ * run's telemetry is delivered by editing its own diff). An attended caller
+ * — a human running `vinaya`, choosing to trust their own working tree —
+ * honours the local value unchecked, the same trust level running
+ * `vinaya.config.json`'s own `dispatch.agent` already carries.
+ *
+ * No `logs` setting resolved at all (the ordinary default, and every
+ * refused/ungated case above) falls back to `defaultLogsFolder` — never "no
+ * destination," since O1 declares a folder the default, not an opt-in.
+ * Pure — takes the already-resolved local/trust-anchor config and the
+ * per-repository default folder, so it is directly unit-testable with plain
+ * objects, mirroring `run-paths.ts`'s own `resolveRuntimeDir`.
+ */
+export function resolveLogDestinationFrom(input: {
+  localConfig: VinayaConfig | null
+  trustAnchorConfig: VinayaConfig | null
+  unattended: boolean
+  env: NodeJS.ProcessEnv
+  defaultFolder: string
+}): ResolvedLogDestination {
+  const local = resolveLogsSetting(input.localConfig)
+  let effective: LogsDestination | null = null
+  if (local) {
+    effective = input.unattended ? resolveTrustAnchorLogsDestination(local, input.trustAnchorConfig) : local
+  }
+  if (effective && 'url' in effective) {
+    return { kind: 'server', url: effective.url, headers: resolveLogsHeaderValues(effective.headers, input.env) }
+  }
+  const folder = effective && 'folder' in effective ? effective.folder : input.defaultFolder
+  return { kind: 'folder', folder }
+}
+
+/**
+ * The real resolution behind `LogSinkDeps.resolveLogDestination` — the
+ * real-IO wrapper `resolveLogDestinationFrom` above needs (config reads, the
+ * trust-anchor network read, the per-repository default folder).
+ *
+ * The trust-anchor read only ever runs when a `logs` setting is actually
+ * configured LOCALLY — mirrors `run-paths.ts`'s own `resolveRuntimeDirUncached`
+ * (`needsAnchor`): every dispatched role's child is unattended by
+ * `isUnattendedProcess`'s own definition (`VINAYA_ROLE` is always set), so
+ * without this guard every single dispatch would cost a `gh api` round trip
+ * for a setting that, in the overwhelmingly common unconfigured case, was
+ * never going to change the answer.
+ */
+function defaultResolveLogDestination(repo: RepoRef | null, env: NodeJS.ProcessEnv): ResolvedLogDestination {
+  const localConfig = loadConfig()
+  const unattended = isUnattendedProcess(env)
+  const needsAnchor = unattended && resolveLogsSetting(localConfig) !== null
+  return resolveLogDestinationFrom({
+    localConfig,
+    trustAnchorConfig: needsAnchor ? safeLoadTrustAnchorConfig() : null,
+    unattended,
+    env,
+    defaultFolder: join(runtimeDirForRepo(repo), 'logs')
+  })
 }
 
 function isEnoent(err: unknown): boolean {
@@ -127,28 +229,28 @@ function isSafeRepoSegment(segment: string): boolean {
 }
 
 /**
- * The telemetry outbox's own root, under the machine's Vinaya home.
+ * The local retry-queue outbox's own root, under the machine's Vinaya home —
+ * no longer where `log()` delivers by default (that moved to a folder under
+ * this repository's own `runtimeDir`, `defaultResolveLogDestination` above),
+ * but still the machine-local home `vinaya log flush` reads, and still where
+ * `log()` itself appends first for a configured `logs.url` server
+ * destination before draining (O2).
  *
- * Deliberately NOT under `runtimeDir` (`run-paths.ts`), and named here so
- * that stays a decision rather than an accident: telemetry is the one class
- * of file a task's run writes that did NOT move into the task folder,
- * because where log events are delivered is itself changing and moving the
- * outbox first would mean moving it twice.
+ * Deliberately NOT under `runtimeDir` (`run-paths.ts`) even so: a retry
+ * queue is machine-local plumbing, not one task's own run file, and two
+ * repositories' identically-numbered tasks already share this same
+ * `<owner>-<repo>` segmenting scheme without collision.
  * `apps/cli/tests/run-paths-only.test.ts` names this module as the single
  * exception to "no file outside `run-paths.ts` assembles a run-file path."
- *
- * The driver used to thread ONE root for both this and its own per-task
- * files, so a test redirecting one silently redirected the other; the two
- * are separate deps now (`LoopDeps.telemetryOutboxRoot` vs
- * `LoopDeps.runtimeDir`).
  */
 export function telemetryOutboxRoot(): string {
   return join(GLOBAL_VINAYA_HOME, 'outbox')
 }
 
 /**
- * The outbox path `log()` writes to and `vinaya log flush` reads from —
- * keyed by repo (or `unresolved`, never a value from an unvalidated
+ * The retry-queue outbox path `vinaya log flush` reads from, and `log()`
+ * itself appends to first for a `logs.url` server destination (O2) — keyed
+ * by repo (or `unresolved`, never a value from an unvalidated
  * `resolveRepo()` result) and by Issue (or `none`), never by PR (task 2,
  * `apps/cli/specs/log.md`).
  */
@@ -160,6 +262,27 @@ export function outboxPathFor(
   const dirName = repo ? `${repo.owner}-${repo.repo}` : 'unresolved'
   const fileName = `${issue ?? 'none'}.ndjson`
   return join(deps.outboxRoot(), dirName, fileName)
+}
+
+/**
+ * The exact path THIS process's `log()` will append a `repo`/`issue` event
+ * to — a folder destination's own `<repository>/<task>.ndjson`, or (a `url`
+ * destination) the local retry queue it appends to before every drain.
+ * Mirrors `log()`'s own destination resolution exactly, so a caller that
+ * needs to poll for its own line landing (`dispatch.ts`'s `dispatchRole`,
+ * `dev-review-loop.ts`'s `logEvents`) watches the SAME file `log()` actually
+ * writes to, whichever destination is configured. Not memoized — callers
+ * that need this call it once per process, not once per event.
+ */
+export function resolveLogAppendPath(
+  repo: { owner: string; repo: string } | null,
+  issue: number | null,
+  overrides: Partial<Pick<LogSinkDeps, 'resolveLogDestination' | 'outboxRoot' | 'env'>> = {}
+): string {
+  const deps = { ...defaultDeps(), ...overrides }
+  const destination = deps.resolveLogDestination(repo, deps.env())
+  const root = destination.kind === 'server' ? deps.outboxRoot() : destination.folder
+  return outboxPathFor({ outboxRoot: () => root }, repo, issue)
 }
 
 function hostFromEnv(env: NodeJS.ProcessEnv): Host {
@@ -182,7 +305,8 @@ function defaultDeps(): LogSinkDeps {
     stderr: (message: string) => {
       process.stderr.write(message)
     },
-    inputVersions: () => undefined
+    inputVersions: () => undefined,
+    resolveLogDestination: defaultResolveLogDestination
   }
 }
 
@@ -289,7 +413,7 @@ function appendLine(path: string, line: string, warn: (message: string) => void)
   }
 }
 
-/** Injectable for tests; the default instance below is wired to the real reads (env, git, the outbox under `GLOBAL_VINAYA_HOME`). */
+/** Injectable for tests; the default instance below is wired to the real reads (env, git, the resolved `logs` destination). */
 export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
   log: (e: LogEventInput) => void
   runId: string
@@ -338,6 +462,41 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
   const resolveRepoOnce = (): ReturnType<LogSinkDeps['resolveRepo']> => {
     if (resolveRepoCache === undefined) resolveRepoCache = deps.resolveRepo()
     return resolveRepoCache
+  }
+
+  // Resolved at most once per sink instance, from the FIRST resolved repo —
+  // a `url` destination can cost a network read (`loadTrustAnchorConfig`),
+  // which an unattended run must not repeat on every single event (O4: "a
+  // destination that cannot accept an event never … slows a run").
+  let destinationCache: ResolvedLogDestination | undefined
+  const resolveDestinationOnce = (repo: RepoRef | null, env: NodeJS.ProcessEnv): ResolvedLogDestination => {
+    if (destinationCache === undefined) destinationCache = deps.resolveLogDestination(repo, env)
+    return destinationCache
+  }
+
+  // Every `url`-destination append schedules a drain of the local retry
+  // queue right after it — chained onto this SAME promise, never fired
+  // concurrently with a prior drain, so two drains can never race each
+  // other's read-then-truncate of the identical queue file (Traps: "serialize
+  // drains so order is preserved"). A failed drain (the server unreachable)
+  // leaves the queue exactly as `flushOutboxToWebhook` already guarantees —
+  // untouched, picked up whole by the NEXT event's own drain — so delivery
+  // catches back up in order once the server is back, with no separate
+  // retry timer of this sink's own.
+  let drainChain: Promise<void> = Promise.resolve()
+  const scheduleWebhookDrain = (
+    issue: number | null,
+    url: string,
+    headers: Record<string, string> | undefined
+  ): void => {
+    drainChain = drainChain
+      .then(() => flushOutboxToWebhook(issue, url, headers))
+      .then(() => undefined)
+      .catch((err) => {
+        warnOnce(
+          `vinaya: log delivery to ${url} failed — queued in the local outbox, retried on the next event: ${err instanceof Error ? err.message : String(err)}\n`
+        )
+      })
   }
 
   function log(e: LogEventInput): void {
@@ -411,7 +570,22 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
             return
           }
           const line = `${JSON.stringify(redact(parsed.data, deps.home()))}\n`
-          appendLine(outboxPathFor(deps, repo, header.subject.issue), line, warnOnce)
+          const destination = resolveDestinationOnce(repo, env)
+          if (destination.kind === 'server') {
+            // The local outbox is the retry queue for a server destination
+            // (O2) — appended first, synchronously with every other
+            // destination, THEN drained: the append itself never waits on
+            // the network (Traps: "append locally first, drain
+            // asynchronously").
+            appendLine(outboxPathFor(deps, repo, header.subject.issue), line, warnOnce)
+            scheduleWebhookDrain(header.subject.issue, destination.url, destination.headers)
+          } else {
+            appendLine(
+              outboxPathFor({ outboxRoot: () => destination.folder }, repo, header.subject.issue),
+              line,
+              warnOnce
+            )
+          }
         })
         .catch((err) => {
           warnOnce(`vinaya: log() failed — ${err instanceof Error ? err.message : String(err)}\n`)
@@ -475,13 +649,14 @@ export function currentRunId(): string {
 }
 
 /**
- * `log(e)` — the one call site every future chokepoint (`dispatchRole`,
- * `devReviewLoop`, and later `runChecks`/`forgeWrite`/the CLI wrapper/
- * `collectTokens`) reaches to record an act. Fills `meta`/`subject` from the
- * environment, the remote, the package and the tree; validates against
- * `LogEventSchema`; appends one ndjson line under
- * `~/.vinaya/outbox/<owner>-<repo>/<issue-or-none>.ndjson`. Returns `void`,
- * never throws.
+ * `log(e)` — the one call site every chokepoint (`dispatchRole`,
+ * `devReviewLoop`, `runChecks`, `forgeWrite`, `collectTokens`) reaches to
+ * record an act. Fills `meta`/`subject` from the environment, the remote,
+ * the package and the tree; validates against `LogEventSchema`; appends one
+ * ndjson line to the configured `logs` destination — a folder's own
+ * `<repository>/<task>.ndjson` (the default, under this repository's own
+ * `runtimeDir`), or the local retry queue ahead of a `logs.url` server drain
+ * (`apps/cli/specs/log.md` § The destination). Returns `void`, never throws.
  */
 export function log(e: LogEventInput): void {
   defaultSink.log(e)
