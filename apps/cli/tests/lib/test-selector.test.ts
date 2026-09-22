@@ -2110,6 +2110,17 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
   // relationship instead of a hand-typed count: the newly-covered set is a
   // PROPER, non-empty SUBSET of the identified files — never all of them,
   // and never none.
+  //
+  // The measured breakdown at this task's writing (the honest figures the
+  // PR report must name, recorded here in the durable artifact rather than
+  // only in a frozen PR body): of the 57 identified real `*.test.ts` files,
+  // 38 are NEWLY covered by this task's edge and 19 were already selected
+  // without it; the whole-selection delta from the log-sink.ts change is 49
+  // files (83 -> 132), which exceeds the 38 newly-covered-identified figure
+  // because it also catches 11 further spawn-shaped tests the Origin's own
+  // narrower text-grep pattern never matched. These exact counts are
+  // documented, not asserted (a new spawn test added tomorrow moves them);
+  // the assertions below pin the invariants that must hold regardless.
   it('the identified files split into two real groups — some already selected without this edge, the rest newly covered by it', () => {
     const grep = spawnSyncBudgeted(
       'grep',
@@ -2124,8 +2135,10 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
       .filter(isTestFile)
 
     const changed = [join(REPO_ROOT, 'apps/cli/src/lib/log-sink.ts')]
-    const withEdge = new Set(selectAffectedTestFiles(REPO_ROOT, changed).selected)
-    const withoutEdge = new Set(selectAffectedTestFiles(REPO_ROOT, changed, { cliSpawnDetection: 'ignore' }).selected)
+    const withEdgeAll = selectAffectedTestFiles(REPO_ROOT, changed).selected
+    const withoutEdgeAll = selectAffectedTestFiles(REPO_ROOT, changed, { cliSpawnDetection: 'ignore' }).selected
+    const withEdge = new Set(withEdgeAll)
+    const withoutEdge = new Set(withoutEdgeAll)
 
     const alreadyCovered = testFiles.filter((f) => withoutEdge.has(f))
     const newlyCovered = testFiles.filter((f) => !withoutEdge.has(f) && withEdge.has(f))
@@ -2137,6 +2150,15 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
     // work) but never the WHOLE identified set — some were already
     // reachable on the merits before this task.
     expect(newlyCovered.length).toBeGreaterThan(0)
+    expect(newlyCovered.length).toBeLessThan(testFiles.length)
+    // The exact arithmetic the wrong PR-body claim violated: the whole-
+    // selection delta cannot be SMALLER than the identified files it newly
+    // covers (the newly-covered-identified set is a subset of the delta),
+    // and it does NOT cover every identified file — so the delta can never
+    // "include all" the identified matches, the impossible claim round 1/2/3
+    // review flagged.
+    const wholeDelta = withEdgeAll.filter((f) => !withoutEdge.has(f))
+    expect(wholeDelta.length).toBeGreaterThanOrEqual(newlyCovered.length)
     expect(newlyCovered.length).toBeLessThan(testFiles.length)
   })
 })
