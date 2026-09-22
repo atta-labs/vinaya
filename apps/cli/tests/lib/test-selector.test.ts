@@ -354,21 +354,24 @@ describe('selectAffectedTestFiles replayed against the two recorded 2026-09-19 i
 // CI shard the first pass of this fixture never checked: GitHub Actions run
 // 35434611919, shard 3, failed 6 assertions in
 // apps/cli/tests/commands/task-status.test.ts (reproduced live at that sha).
-// This is a DIFFERENT class of gap than log-callers — O2's: that file has
-// no import edge to walk at all. It drives the real CLI end-to-end
+// This was a DIFFERENT class of gap than log-callers — O2's: this file has no
+// import edge to walk at all. It drives the real CLI end-to-end
 // (`execFileSync('bun', [INDEX, ...])` against a string path, never a
-// static `import` of any `src/` file), so reachability can never reach it
-// regardless of what changed — confirmed by grep: this file's own import
-// list is `node:child_process`/`node:fs`/`node:os`/`node:path`/`node:url`/
-// `bun:test` only. `alwaysRun` is the same escape hatch already used for
-// log-callers/ci-shards/import-boundary, applied here for a structurally
-// different reason (no edge exists to walk, rather than an edge that
-// deliberately isn't one). This fixes the ONE concrete instance this task
-// verified against a real incident — a broader audit of every CLI
-// end-to-end test sharing this same blind spot is out of this task's
-// bounded surface and is escalated separately, on the PR, rather than
-// attempted here.
-describe('a second real CI failure in the SAME task-files-v1/1 change set (Issue #660, O2, round 2 review BLOCKER)', () => {
+// static `import` of any `src/` file), so reachability alone could never
+// reach it regardless of what changed — confirmed by grep: this file's own
+// import list is `node:child_process`/`node:fs`/`node:os`/`node:path`/
+// `node:url`/`bun:test` only. `alwaysRun` was the escape hatch this task's
+// own fix carried at the time, for a structurally different reason than
+// log-callers (no edge existed to walk, rather than an edge that
+// deliberately isn't one) — and it explicitly escalated "a broader audit of
+// every CLI end-to-end test sharing this same blind spot" as out of its own
+// bounded surface, future work rather than attempted there.
+//
+// Issue #702 is that escalated future work: `cli-spawn-tests.ts` gives
+// exactly this shape (`execFileSync('bun', [INDEX, ...])`) a real edge, so
+// reachability alone now reaches it — no `alwaysRun` entry required — the
+// same way it reaches every other file that imports the entrypoint directly.
+describe('a second real CI failure in the SAME task-files-v1/1 change set (Issue #660, O2, round 2 review BLOCKER; closed on the merits by Issue #702)', () => {
   const changed = INCIDENT_CHANGE_SETS['task-files-v1/1 — a6d9640c, the one-runtime-directory first push'] as string[]
   const TASK_STATUS_E2E_TEST = join(REPO_ROOT, 'apps/cli/tests/commands/task-status.test.ts')
 
@@ -378,9 +381,14 @@ describe('a second real CI failure in the SAME task-files-v1/1 change set (Issue
     expect(selected).toContain(TASK_STATUS_E2E_TEST)
   })
 
-  it('reachability ALONE (no alwaysRun) never selects it — no static import edge exists to walk, not merely one uncrossed', () => {
-    const { selected } = selectAffectedTestFiles(REPO_ROOT, changed, { alwaysRun: [] })
-    expect(selected).not.toContain(TASK_STATUS_E2E_TEST)
+  it('reachability ALONE (no alwaysRun) now selects it on the merits — the CLI-spawn edge (Issue #702), not the escape hatch', () => {
+    expect(selectAffectedTestFiles(REPO_ROOT, changed, { alwaysRun: [] }).selected).toContain(TASK_STATUS_E2E_TEST)
+    // Withhold the new edge alone and the ORIGINAL gap is still visible
+    // underneath — proving it is this edge doing the work, not a static
+    // import this fixture happened to gain some other way.
+    expect(
+      selectAffectedTestFiles(REPO_ROOT, changed, { alwaysRun: [], cliSpawnDetection: 'ignore' }).selected
+    ).not.toContain(TASK_STATUS_E2E_TEST)
   })
 })
 
@@ -1817,5 +1825,70 @@ describe('`import x = require(...)` degrades to the coarse edge under BOTH resol
   it('the text-scan graph extracts the specifier at all — the silence F1 found', () => {
     expect(extractImportSpecifiers("import lib = require('@ieq/lib')\n")).toEqual(['@ieq/lib'])
     expect(extractImportSpecifiers("export import lib = require('./thing.js')\n")).toEqual(['./thing.js'])
+  })
+})
+
+// Issue #702 — a test that spawns the built CLI as a subprocess names no
+// import of the code it exercises, so it was invisible to reachability
+// regardless of what changed: a change to `apps/cli/src/lib/log-sink.ts`
+// alone made `vinaya check --all` print a warning twenty-five times instead
+// of once, a real regression this repository's own pre-push selection never
+// had a chance to catch, caught only because CI runs everything. The
+// classifier itself (`cliSpawnEdgeOf`) has its own unit tests in
+// `cli-spawn-tests.test.ts`; these prove how the selector CONSUMES each
+// outcome.
+describe('selectAffectedTestFiles reaches a CLI-spawning test through the entrypoint’s real import graph (Issue #702, O1/O2)', () => {
+  it('a change to a file the entrypoint transitively imports selects a test that only spawns the CLI, never imports it', () => {
+    const { root, dir } = mkWorkspace([
+      {
+        name: '@fx/cli',
+        main: INDEX_MAIN,
+        files: {
+          'src/index.ts': "export { run } from './run'\n",
+          'src/run.ts': "export { helper as run } from './helper'\n",
+          'src/helper.ts': 'export function helper() { return 42 }\n',
+          'src/spawn.test.ts': [
+            "import { join } from 'node:path'",
+            "const INDEX = join(import.meta.dir, 'index.ts')",
+            "test('spawns cli', () => Bun.spawn(['bun', INDEX, 'run'], { stdout: 'pipe' }))",
+            ''
+          ].join('\n')
+        }
+      }
+    ])
+    const cliEntrypoint = 'packages/p0/src/index.ts'
+    try {
+      const spawnTest = join(dir('@fx/cli'), 'src/spawn.test.ts')
+      const helper = join(dir('@fx/cli'), 'src/helper.ts')
+      // Reachability through ordinary imports alone never selects it — the
+      // test's own source has no import of `helper.ts`, only a subprocess call.
+      expect(
+        selectAffectedTestFiles(root, [helper], { cliSpawnDetection: 'ignore', cliEntrypoint }).selected
+      ).not.toContain(spawnTest)
+      // The synthetic edge to the entrypoint's `all:` node, plus the
+      // entrypoint's own already-computed real import edges (index.ts ->
+      // run.ts -> helper.ts), reach it.
+      expect(selectAffectedTestFiles(root, [helper], { cliEntrypoint }).selected).toContain(spawnTest)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('Issue #702, O2 — the exact regression: a log-sink.ts-only change now selects check.test.ts', () => {
+  const LOG_SINK = join(REPO_ROOT, 'apps/cli/src/lib/log-sink.ts')
+  const CHECK_TEST = join(REPO_ROOT, 'apps/cli/tests/commands/check.test.ts')
+
+  it('check.test.ts imports neither log-sink.ts nor anything that does, and spawns the built CLI directly', () => {
+    const source = readFileSync(CHECK_TEST, 'utf8')
+    expect(source).not.toMatch(/log-sink/)
+    expect(extractImportSpecifiers(source).some((s) => s.startsWith('.'))).toBe(false)
+  })
+
+  it('is invisible to reachability alone, and selected once the CLI-spawn edge is in play', () => {
+    expect(selectAffectedTestFiles(REPO_ROOT, [LOG_SINK], { cliSpawnDetection: 'ignore' }).selected).not.toContain(
+      CHECK_TEST
+    )
+    expect(selectAffectedTestFiles(REPO_ROOT, [LOG_SINK]).selected).toContain(CHECK_TEST)
   })
 })

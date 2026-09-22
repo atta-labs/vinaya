@@ -65,6 +65,21 @@
  * unselected. `repo-scanner-tests.ts` classifies these from their own source and
  * the selector gives each a `scan:` edge over the directory it actually walks.
  *
+ * ## Tests that spawn the built CLI as a fresh subprocess
+ *
+ * The same gap, one class further removed: a test that runs `bun
+ * apps/cli/src/index.ts <args>` as a subprocess and reads its stdout/stderr
+ * names no import of the code it exercises either — it observes the built
+ * binary from OUTSIDE, never calling anything reachability could walk from.
+ * `cli-spawn-tests.ts` classifies these from their own source (`cliSpawnEdgeOf`,
+ * a static evaluator styled like `repo-scanner-tests.ts`'s own but kept
+ * private to that file, so extending it never changes what the repo-tree
+ * scanner class above classifies) and the selector gives each a synthetic
+ * `all:`-prefixed edge to the CLI entrypoint FILE itself — not a hand-listed
+ * set of what it imports — so the entrypoint's own already-computed real
+ * import edges do the rest, exactly as they do for every file that imports it
+ * directly.
+ *
  * ## Conservative fallback — over-select, never omit
  *
  * The refinement can only ever REMOVE the whole-package edge when it can PROVE a
@@ -98,6 +113,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, extname, isAbsolute, join, resolve } from 'node:path'
 import { globToRegex } from '@attalabs/aeg-core'
+import { cliSpawnEdgeOf } from './cli-spawn-tests.js'
 import { scannedRootsOf } from './repo-scanner-tests.js'
 import {
   ALL_PREFIX,
@@ -923,7 +939,27 @@ export type SelectionOptions = {
    * callers never set it.
    */
   resolver?: 'compiler' | 'text-scan'
+  /**
+   * Whether a test that spawns the built CLI as a subprocess (`cli-spawn-tests.ts`)
+   * gets its synthetic edge into the entrypoint's own import graph (`'select'`,
+   * the default and the only safe production value) or withholds it
+   * (`'ignore'`), which exists so this rule's own selection cost can be
+   * measured against the same tree rather than estimated — the same shape
+   * `repoTreeScanners` already offers for the repo-tree-scanner class.
+   */
+  cliSpawnDetection?: 'select' | 'ignore'
+  /**
+   * Repo-root-relative path of the CLI's own entrypoint file that
+   * `cli-spawn-tests.ts` classifies a test's spawn calls against. Defaults to
+   * this repository's real entrypoint, `apps/cli/src/index.ts`; overridable so
+   * a test can point it at a throwaway fixture's own entrypoint instead of the
+   * real one.
+   */
+  cliEntrypoint?: string
 }
+
+/** This repository's real CLI entrypoint, repo-root-relative — {@link SelectionOptions.cliEntrypoint}'s default. */
+export const DEFAULT_CLI_ENTRYPOINT = 'apps/cli/src/index.ts'
 
 /**
  * The whole pipeline: given the changed files (repo-root-relative or absolute,
@@ -1164,6 +1200,22 @@ export function selectAffectedTestFiles(
       if (roots.length === 0) continue
       const key = `${ALL_PREFIX}${file}`
       edges.set(key, [...(edges.get(key) ?? []), ...roots.map((r) => `${SCAN_PREFIX}${r}`)])
+    }
+  }
+
+  // Tests that spawn the built CLI as a fresh subprocess, not through their own
+  // imports either. A precisely-classified spawn gets one synthetic edge
+  // straight to the entrypoint's own `all:` node — the entrypoint's real,
+  // already-computed edges (built above, by whichever graph answered) do the
+  // rest.
+  if (typescript && options.cliSpawnDetection !== 'ignore') {
+    const cliEntrypoint = join(repoRoot, options.cliEntrypoint ?? DEFAULT_CLI_ENTRYPOINT)
+    for (const file of allSourceFiles) {
+      if (!isTestFile(file)) continue
+      const classification = cliSpawnEdgeOf(typescript, file, readSource(file), repoRoot, cliEntrypoint)
+      if (classification !== 'entrypoint') continue
+      const key = `${ALL_PREFIX}${file}`
+      edges.set(key, [...(edges.get(key) ?? []), `${ALL_PREFIX}${cliEntrypoint}`])
     }
   }
 
