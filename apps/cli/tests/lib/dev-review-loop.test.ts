@@ -57,7 +57,6 @@ import { hostname, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
-  appendFinalFlushFailureNote,
   assertValidLoopEvent,
   buildReexecArgs,
   CONFIDENCE_FILE_NAME,
@@ -80,11 +79,8 @@ import {
   renderDeveloperRoundComment,
   renderReviewerPrompt,
   type ReviewerPromptFacts,
-  routeCompletionEvents,
-  describeSkippedRoundEndFlush,
-  resolveRoundEndFlushTarget
+  routeCompletionEvents
 } from '../../src/lib/dev-review-loop.js'
-import type { VinayaConfig } from '../../src/lib/config.js'
 import { MAX_INFRASTRUCTURE_RETRIES } from '../../src/lib/dev-review-loop/round-assess.js'
 import {
   deriveCodeReviewVerdict,
@@ -1276,38 +1272,24 @@ describe('devReviewLoop — a crash mid-publish never logs merged_ready (regress
     expect(journalFinalizedLines.some((l) => l.result === 'merged_ready')).toBe(false)
   }, 20000)
 
-  it("O10 (task-run-v1 21, #541): still flushes the outbox to the forge on the way out, even though this run ends via an uncaught throw — task-log-v1 8 (#626, O1): only once a target is configured, never to the task's own Issue", () => {
+  it("[task-files-v1] 5, O3: an uncaught throw mid-round never posts telemetry to the task's own Issue — there is no final flush left to do it, configured `logPublish` or not", () => {
     const { home, cwd, path } = setUpCrashMidPublishFlushSucceeds()
-    // task-log-v1 8 (Issue #626, O1): the round-end flush no longer
-    // defaults to the task's own Issue — it is a no-op unless
-    // `logPublish` names a target. The fake `gh issue comment` stub
-    // doesn't discriminate by issue number, so any distinct number proves
-    // the same crash-survival guarantee at its new, configured home.
+    // A `logPublish` target configured here would have been exactly what
+    // the old round-end/final flush read — proving it is never even
+    // consulted any more, on the identical uncaught-throw exit path the
+    // removed O10 fix used to guarantee a flush for.
     writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ logPublish: { issue: TASK + 1 } }))
-    const r = runLoopNoPauseCommentRetry(home, cwd, path)
-    expect(r.status).not.toBe(0)
-
-    // Every explicit `d.flushOutbox(task)` call site inside the round loop
-    // itself runs BEFORE `publishRound` throws (round 1's own gate/verdicts
-    // processing) — so a post reaching the Issue here can only be the ONE
-    // flush this run never explicitly asked for: the `finally` wrapping the
-    // whole loop body, which now runs on every exit, including this one.
-    const issueDir = join(home, '.fake-gh-posted-issue-comments')
-    const posted = existsSync(issueDir) ? readdirSync(issueDir).filter((f) => f.startsWith('comment-')) : []
-    expect(posted.length).toBeGreaterThan(0)
-
-    const body = readFileSync(join(issueDir, posted[0] as string), 'utf8')
-    expect(body).toMatch(/^<!-- aeg:log:/)
-  }, 20000)
-
-  it('task-log-v1 8 (Issue #626, O1): with no logPublish configured, the round-end flush posts nowhere, even on the same uncaught-throw exit path O10 guarantees for a configured target', () => {
-    const { home, cwd, path } = setUpCrashMidPublishFlushSucceeds()
     const r = runLoopNoPauseCommentRetry(home, cwd, path)
     expect(r.status).not.toBe(0)
 
     const issueDir = join(home, '.fake-gh-posted-issue-comments')
     const posted = existsSync(issueDir) ? readdirSync(issueDir).filter((f) => f.startsWith('comment-')) : []
     expect(posted).toHaveLength(0)
+
+    // The events themselves still landed — live, in the local default
+    // destination — even though nothing ever shipped them anywhere else.
+    const journalFinalizedLines = outboxLines(home).filter((l) => l.event === 'journal_finalized')
+    expect(journalFinalizedLines.length).toBeGreaterThan(0)
   }, 20000)
 
   // `#548` v3, O2: this exact scenario — a genuinely uncaught throw mid-round,
@@ -1572,14 +1554,11 @@ exit 1
  * updated by [task-files-v1] 4 (Issue #651): the reattach rebuilds round
  * numbering from the pull request's own principal-authored developer round
  * marker (`pr view --json comments`, replayed from `$HOME/.fake-gh-posted-
- * comments`), never from a flushed log line. `issue view --json comments`
- * still dynamically replays whatever `issue comment` flushed to
- * `$HOME/.fake-gh-posted-issue-comments`, but only so this test can ASSERT
- * the telemetry the run logged (a green `round_ended`, and never a
- * `merged_ready`) — that assertion reads the Log; the recovery does not.
- * `pr comment`'s crash-on-the-second-post logic is unchanged from
- * `writeFakeGhCrashOnSecondPostFlushSucceeds` — this fixture is that one,
- * plus the dynamic Issue-comment replay.
+ * comments`), never from a log line — the local outbox this test separately
+ * reads (`outboxLines`) to ASSERT the telemetry the run logged (a green
+ * `round_ended`, never a `merged_ready`) is never consulted by the recovery
+ * itself. `pr comment`'s crash-on-the-second-post logic is unchanged from
+ * `writeFakeGhCrashOnSecondPostFlushSucceeds` — this fixture is that one.
  */
 function writeFakeGhCrashOnceThenReattach(dir: string): void {
   writeFakeBinary(
@@ -1777,12 +1756,6 @@ describe('devReviewLoop — O9 (task-run-v1 21, #541, round 2 review BLOCKER): a
     writeFakeGhCrashOnceThenReattach(binDir)
     writeFakeGit(binDir)
     const path = `${binDir}:${pathWithoutRealVendors()}`
-    // task-log-v1 8 (Issue #626, O1): the round-end flush no longer
-    // defaults to the task's own Issue — this fixture's fake `gh` doesn't
-    // discriminate by issue number for either the read or the write, so any
-    // distinct number reproduces the SAME crash-recovery/reattach story at
-    // its new, configured home.
-    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ logPublish: { issue: TASK + 1 } }))
 
     // Round 1: gate green, reviewers clean, `round_ended(outcome: 'green')`
     // logs — then `publishRound` crashes posting the security verdict,
@@ -1790,26 +1763,14 @@ describe('devReviewLoop — O9 (task-run-v1 21, #541, round 2 review BLOCKER): a
     // would trigger) is ever reached. O10's own crash-recovery fix (above)
     // still logs its OWN `journal_finalized`, but with `result: 'stopped'`
     // — never `'merged_ready'`, which only the real publish path can ever
-    // write — so it must never be mistaken for a genuine completion. The
-    // flush actually succeeds in THIS fixture (unlike most others in this
-    // file), so both lines have already left the local outbox by the time
-    // `runLoop` returns — read them back from what was flushed to the
-    // Issue instead of the local file.
+    // write — so it must never be mistaken for a genuine completion. Both
+    // lines land live, in the local default destination — read directly,
+    // never via a flush-then-forge-read round trip ([task-files-v1] 5, O3).
     const r1 = runLoopNoPauseCommentRetry(home, cwd, path)
     expect(r1.status).not.toBe(0)
-    const issueDir = join(home, '.fake-gh-posted-issue-comments')
-    const flushedAfterCrash = readdirSync(issueDir)
-      .filter((f) => f.startsWith('comment-'))
-      .flatMap((f) => readFileSync(join(issueDir, f), 'utf8').split('\n').filter(Boolean))
-      .flatMap((line) => {
-        try {
-          return [JSON.parse(line)]
-        } catch {
-          return []
-        }
-      })
-    expect(flushedAfterCrash.some((l) => l.event === 'round_ended' && l.outcome === 'green')).toBe(true)
-    expect(flushedAfterCrash.some((l) => l.event === 'journal_finalized' && l.result === 'merged_ready')).toBe(false)
+    const linesAfterCrash = outboxLines(home)
+    expect(linesAfterCrash.some((l) => l.event === 'round_ended' && l.outcome === 'green')).toBe(true)
+    expect(linesAfterCrash.some((l) => l.event === 'journal_finalized' && l.result === 'merged_ready')).toBe(false)
 
     // Swap to a `gh` with no crash logic — round 2's own posts must succeed
     // — then reattach with a plain `--task`, exactly as an operator
@@ -2095,7 +2056,11 @@ function postedCommentFiles(home: string): string[] {
 }
 
 function outboxLines(home: string): Array<Record<string, unknown>> {
-  const p = join(home, '.vinaya', 'outbox', 'unresolved', `${TASK}.ndjson`)
+  // [task-files-v1] 5, O1: the default `logs` destination is now a folder
+  // under this repository's own `runtimeDir` — `<runtimeDir>/logs/<repo>/
+  // <task>.ndjson` — never the machine-global `~/.vinaya/outbox/` these
+  // fixtures resolve to `unresolved` (no git origin in the scratch `cwd`).
+  const p = join(home, '.vinaya', 'runtime', 'unresolved', 'logs', 'unresolved', `${TASK}.ndjson`)
   if (!existsSync(p)) return []
   return readFileSync(p, 'utf8')
     .trim()
@@ -2606,7 +2571,7 @@ describe('devReviewLoop — restart fixtures (task-log-v1 task 6, O3): equivalen
     // untouched between runs — gone, not merely unread, so a controller
     // that secretly depended on replaying it would fail loudly here rather
     // than passing by accident.
-    const outboxPath = join(home, '.vinaya', 'outbox', 'unresolved', `${TASK}.ndjson`)
+    const outboxPath = join(home, '.vinaya', 'runtime', 'unresolved', 'logs', 'unresolved', `${TASK}.ndjson`)
     expect(existsSync(outboxPath)).toBe(true)
     rmSync(outboxPath)
 
@@ -4123,35 +4088,6 @@ describe('devReviewLoop — a paused loop for reason escalation still logs its c
       | undefined
     expect(journalFinalized).toBeDefined()
     expect(journalFinalized?.result).toBe('stopped')
-  }, 20000)
-
-  // O2 ([task-log-v1] 9, Issue #631): the SAME pause, but with a configured
-  // `logPublish` target so the driver's own final flush actually attempts a
-  // forge post — `writeFakeGh` (the default stub every scenario above this
-  // one uses) deliberately fails every `gh issue comment` call, exactly the
-  // shape a real round-end flush failure takes. Before this task the flush
-  // ran AFTER the comment was already posted, so a failure here reached
-  // only stderr; now it is flushed first, and a failure is folded into the
-  // pause's own `detail`.
-  it('a final flush that fails before this pause is folded into the posted detail, never only reaching stderr', () => {
-    const { home, cwd, path } = setUpEscalatePause()
-    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ logPublish: { issue: TASK + 1 } }))
-    const r = runLoop(home, cwd, path)
-    expect(r.status).not.toBe(0)
-    expect(r.stdout).toMatch(/paused \(escalation\)/)
-
-    const postedFiles = postedCommentFiles(home)
-    const pauseComment = readFileSync(
-      join(home, '.fake-gh-posted-comments', postedFiles[postedFiles.length - 1] as string),
-      'utf8'
-    )
-    expect(pauseComment).toContain('the final outbox flush before this pause failed')
-
-    const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
-      string,
-      unknown
-    >
-    expect(pauseState.detail).toContain('the final outbox flush before this pause failed')
   }, 20000)
 })
 
@@ -8965,21 +8901,6 @@ describe('deriveVerdictPauseDetail (pure) — [task-log-v1] 9, Issue #631, O1/O3
   })
 })
 
-describe('appendFinalFlushFailureNote (pure) — [task-log-v1] 9, Issue #631, O2: a failed final flush is folded into detail, never swallowed', () => {
-  it('appends the note when no detail existed yet', () => {
-    const detail = appendFinalFlushFailureNote(undefined, 'gh: rate limited')
-    expect(detail).toContain('the final outbox flush before this pause failed')
-    expect(detail).toContain('gh: rate limited')
-  })
-
-  it('appends the note onto an existing detail, never replacing it', () => {
-    const detail = appendFinalFlushFailureNote('round 4 findings delivered again', 'gh: rate limited')
-    expect(detail).toContain('round 4 findings delivered again')
-    expect(detail).toContain('the final outbox flush before this pause failed')
-    expect(detail).toContain('gh: rate limited')
-  })
-})
-
 describe('filterPrincipalRulings / findPrincipalFrozenBrief (pure)', () => {
   const ALLOWLIST = ['daniboomerang']
 
@@ -9730,33 +9651,6 @@ describe('devReviewLoop — a principal-owed red never redispatches the develope
     const gateResult = outboxLines(home).find((l) => l.event === 'gate_result_read') as Record<string, unknown>
     expect(gateResult.green).toBe(true)
   }, 20000)
-})
-
-describe('resolveRoundEndFlushTarget / describeSkippedRoundEndFlush (pure) — task-log-v1 8, Issue #626, O1: the round-end flush never defaults to the task Issue', () => {
-  it('is null — no publish — when logPublish is unconfigured, the ordinary default for every existing repo', () => {
-    expect(resolveRoundEndFlushTarget(null, TASK)).toBeNull()
-    expect(describeSkippedRoundEndFlush(null, TASK)).toBeNull()
-  })
-
-  it('resolves a configured issue distinct from the task being flushed', () => {
-    const config = { logPublish: { issue: TASK + 1 } } as VinayaConfig
-    expect(resolveRoundEndFlushTarget(config, TASK)).toEqual({ issue: TASK + 1 })
-    expect(describeSkippedRoundEndFlush(config, TASK)).toBeNull()
-  })
-
-  it('resolves a configured pr target unconditionally — a pr number is never compared against the task Issue', () => {
-    const config = { logPublish: { pr: TASK } } as VinayaConfig
-    expect(resolveRoundEndFlushTarget(config, TASK)).toEqual({ pr: TASK })
-  })
-
-  it("refuses a configured issue equal to the task's own Issue — the loss is named, not swallowed", () => {
-    const config = { logPublish: { issue: TASK } } as VinayaConfig
-    expect(resolveRoundEndFlushTarget(config, TASK)).toBeNull()
-    const reason = describeSkippedRoundEndFlush(config, TASK)
-    expect(reason).not.toBeNull()
-    expect(reason).toContain(`#${TASK}`)
-    expect(reason).toContain("this task's own Issue")
-  })
 })
 
 // Issue #660, O3 — the two isolation properties added to

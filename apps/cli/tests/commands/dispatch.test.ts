@@ -1,9 +1,12 @@
 /**
  * `vinaya dispatch` command-level stories (task 3, `vinaya-log-v1`, Issue
- * #406): `--task` attribution vs. `issue: null`, and the flush call firing
- * only when `--task`/`--pr` is given. Spawn/timeout/refusal fidelity itself
- * is `apps/cli/tests/lib/dispatch.test.ts`'s job — this file is the argv and
- * flush-wiring layer. Same fresh-subprocess discipline as that file (a
+ * #406): `--task` attribution vs. `issue: null`. The command's own trailing
+ * flush call is gone entirely ([task-files-v1] 5, O3) — telemetry now
+ * reaches its destination live, as `dispatchRole` emits it, so this file no
+ * longer asserts anything about a flush firing or being skipped, only that
+ * no `gh` call happens at all. Spawn/timeout/refusal fidelity itself is
+ * `apps/cli/tests/lib/dispatch.test.ts`'s job — this file is the argv/
+ * attribution layer. Same fresh-subprocess discipline as that file (a
  * scratch `HOME`, a scratch non-git `cwd`) and the same fake-binary-on-PATH
  * pattern as `apps/cli/tests/commands/issue.test.ts`'s fake `gh`.
  */
@@ -128,7 +131,11 @@ exit 1
 }
 
 function outboxLines(home: string, issue: number | 'none'): Array<Record<string, unknown>> {
-  const p = join(home, '.vinaya', 'outbox', 'unresolved', `${issue}.ndjson`)
+  // [task-files-v1] 5, O1: the default `logs` destination is now a folder
+  // under this repository's own `runtimeDir` — never the machine-global
+  // `~/.vinaya/outbox/` these fixtures resolve to `unresolved` (no git
+  // origin in the scratch `cwd`).
+  const p = join(home, '.vinaya', 'runtime', 'unresolved', 'logs', 'unresolved', `${issue}.ndjson`)
   if (!existsSync(p)) return []
   return readFileSync(p, 'utf8')
     .trim()
@@ -194,37 +201,13 @@ describe('vinaya dispatch — --task attribution', () => {
   })
 })
 
-describe('vinaya dispatch — the flush call', () => {
-  // Issue #636, O4: the trailing flush's DESTINATION is `logPublish` in
-  // `vinaya.config.json`, never `--task`/`--pr` directly — those two flags
-  // only pick which task's own local outbox to drain. Before this fix, this
-  // command posted straight onto the dispatched task's own Issue/PR
-  // unconditionally, ignoring `logPublish` (and therefore never honoring a
-  // configured `webhookUrl`, and never skipping when nothing was
-  // configured).
-  it("publishes nowhere, and says so on stderr, when no logPublish target is configured — never defaults to --task's own Issue", () => {
-    const home = tempDir('vinaya-dispatch-cmd-home-')
-    const cwd = tempDir('vinaya-dispatch-cmd-cwd-')
-    const toolsDir = tempDir('vinaya-dispatch-cmd-tools-')
-    writeFakeVendor(toolsDir)
-    const callsLog = join(cwd, 'gh-calls.log')
-    writeFileSync(callsLog, '')
-    writeFakeGh(toolsDir, callsLog)
-    const promptFile = join(cwd, 'prompt.txt')
-    writeFileSync(promptFile, 'p')
-
-    const r = runDispatch(
-      ['developer', '--agent', 'claude', '--prompt-file', promptFile, '--task', '777'],
-      cwd,
-      home,
-      `${toolsDir}:${process.env.PATH}`
-    )
-    expect(r.status).toBe(0)
-    expect(readFileSync(callsLog, 'utf8')).toBe('')
-    expect(r.stderr).toMatch(/no logPublish target configured/)
-  })
-
-  it("routes to the configured logPublish.issue, not --task's own issue number", () => {
+describe('vinaya dispatch — no trailing flush ([task-files-v1] 5, O3)', () => {
+  // The trailing flush this command used to run after every `--task`/`--pr`
+  // dispatch is gone entirely — telemetry reaches its destination live, as
+  // `dispatchRole` emits it (`logs`, `apps/cli/src/lib/log-sink.ts`), so
+  // there is nothing left to ship in a trailing step. `gh` is never called
+  // by this command at all any more, `logPublish` configured or not.
+  it('never calls gh, regardless of a configured logPublish target', () => {
     const home = tempDir('vinaya-dispatch-cmd-home-')
     const cwd = tempDir('vinaya-dispatch-cmd-cwd-')
     const toolsDir = tempDir('vinaya-dispatch-cmd-tools-')
@@ -243,111 +226,10 @@ describe('vinaya dispatch — the flush call', () => {
       `${toolsDir}:${process.env.PATH}`
     )
     expect(r.status).toBe(0)
-
-    const calls = readFileSync(callsLog, 'utf8')
-    expect(calls).toMatch(/^issue comment 999 /m)
-  })
-
-  it("refuses to publish back onto the dispatched task's own Issue even when logPublish configures it — same protection the round-end auto-flush already has", () => {
-    const home = tempDir('vinaya-dispatch-cmd-home-')
-    const cwd = tempDir('vinaya-dispatch-cmd-cwd-')
-    const toolsDir = tempDir('vinaya-dispatch-cmd-tools-')
-    writeFakeVendor(toolsDir)
-    const callsLog = join(cwd, 'gh-calls.log')
-    writeFileSync(callsLog, '')
-    writeFakeGh(toolsDir, callsLog)
-    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ logPublish: { issue: 777 } }))
-    const promptFile = join(cwd, 'prompt.txt')
-    writeFileSync(promptFile, 'p')
-
-    const r = runDispatch(
-      ['developer', '--agent', 'claude', '--prompt-file', promptFile, '--task', '777'],
-      cwd,
-      home,
-      `${toolsDir}:${process.env.PATH}`
-    )
-    expect(r.status).toBe(0)
     expect(readFileSync(callsLog, 'utf8')).toBe('')
-    expect(r.stderr).toMatch(/refusing to flush there/)
   })
 
-  it('routes the trailing flush to a configured logPublish.webhookUrl instead of gh, once the trust anchor agrees — O4/O1 interaction, Issue #636 round-2 BLOCKER', () => {
-    const home = tempDir('vinaya-dispatch-cmd-home-')
-    const cwd = tempDir('vinaya-dispatch-cmd-cwd-')
-    const toolsDir = tempDir('vinaya-dispatch-cmd-tools-')
-    writeFakeVendor(toolsDir)
-    const callsLog = join(cwd, 'gh-calls.log')
-    writeFileSync(callsLog, '')
-    const requests: string[] = []
-    const server = Bun.serve({
-      port: 0,
-      async fetch(req) {
-        requests.push(await req.text())
-        return new Response('ok', { status: 200 })
-      }
-    })
-    const webhookUrl = `http://127.0.0.1:${server.port}/ingest`
-    // The default branch's own copy names the SAME webhookUrl — the only
-    // case the trust-anchor gate honors automatically.
-    writeFakeGh(toolsDir, callsLog, { logPublish: { webhookUrl } })
-    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ logPublish: { webhookUrl } }))
-    const promptFile = join(cwd, 'prompt.txt')
-    writeFileSync(promptFile, 'p')
-
-    const r = runDispatch(
-      ['developer', '--agent', 'claude', '--prompt-file', promptFile, '--task', '778'],
-      cwd,
-      home,
-      `${toolsDir}:${process.env.PATH}`,
-      { GITHUB_REPOSITORY: 'test-owner/test-repo' }
-    )
-    server.stop()
-
-    expect(r.status).toBe(0)
-    expect(readFileSync(callsLog, 'utf8')).not.toMatch(/^(issue|pr) comment/m)
-    expect(requests.length).toBe(1)
-    expect(outboxLines(home, 778).length).toBe(0)
-  })
-
-  it("refuses to POST a working-tree webhookUrl the default branch doesn't also name — a PR cannot grant itself a new outbound destination, Issue #636 round-2 BLOCKER", () => {
-    const home = tempDir('vinaya-dispatch-cmd-home-')
-    const cwd = tempDir('vinaya-dispatch-cmd-cwd-')
-    const toolsDir = tempDir('vinaya-dispatch-cmd-tools-')
-    writeFakeVendor(toolsDir)
-    const callsLog = join(cwd, 'gh-calls.log')
-    writeFileSync(callsLog, '')
-    const requests: string[] = []
-    const server = Bun.serve({
-      port: 0,
-      async fetch(req) {
-        requests.push(await req.text())
-        return new Response('ok', { status: 200 })
-      }
-    })
-    const webhookUrl = `http://127.0.0.1:${server.port}/ingest`
-    // No `gh api .../contents/vinaya.config.json` stub given — the default
-    // branch has no logPublish at all, so it disagrees with the PR's own.
-    writeFakeGh(toolsDir, callsLog)
-    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ logPublish: { webhookUrl } }))
-    const promptFile = join(cwd, 'prompt.txt')
-    writeFileSync(promptFile, 'p')
-
-    const r = runDispatch(
-      ['developer', '--agent', 'claude', '--prompt-file', promptFile, '--task', '779'],
-      cwd,
-      home,
-      `${toolsDir}:${process.env.PATH}`,
-      { GITHUB_REPOSITORY: 'test-owner/test-repo' }
-    )
-    server.stop()
-
-    expect(r.status).toBe(0)
-    expect(requests.length).toBe(0)
-    expect(readFileSync(callsLog, 'utf8')).not.toMatch(/^(issue|pr) comment/m)
-    expect(r.stderr).toMatch(/refusing to POST there automatically/)
-  })
-
-  it('never calls gh at all when neither --task nor --pr is given', () => {
+  it('never calls gh when neither --task nor --pr is given either', () => {
     const home = tempDir('vinaya-dispatch-cmd-home-')
     const cwd = tempDir('vinaya-dispatch-cmd-cwd-')
     const toolsDir = tempDir('vinaya-dispatch-cmd-tools-')
@@ -368,7 +250,7 @@ describe('vinaya dispatch — the flush call', () => {
     expect(readFileSync(callsLog, 'utf8')).toBe('')
   })
 
-  it('refuses --task and --pr both given as an ambiguous flush target', () => {
+  it('accepts --task and --pr both given — no longer an ambiguous flush target, both are attribution only', () => {
     const home = tempDir('vinaya-dispatch-cmd-home-')
     const cwd = tempDir('vinaya-dispatch-cmd-cwd-')
     const binDir = tempDir('vinaya-dispatch-cmd-bin-')
@@ -382,8 +264,7 @@ describe('vinaya dispatch — the flush call', () => {
       home,
       `${binDir}:${process.env.PATH}`
     )
-    expect(r.status).toBe(1)
-    expect(r.stderr).toMatch(/mutually exclusive/)
+    expect(r.status).toBe(0)
   })
 })
 

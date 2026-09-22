@@ -2,64 +2,18 @@
  * `vinaya dispatch <role> --agent claude|codex|gemini --prompt-file <path>`.
  * Thin argv-parsing shim over
  * `dispatchRole` (`../lib/dispatch.js`) — the real spawn/timeout/attribution
- * logic lives there. Calls `flushOutbox`/`flushOutboxToWebhook`
- * (`../lib/log-flush.js`/`../lib/log-webhook-flush.js`) directly when
- * `--task`/`--pr` is given, per the Principal's ruling that this command's
- * three-vendor/spawn/signal shape is exempt from the one-lib-call rule
- * (`apps/cli/specs/surface.md`) — no shared `flushLog` extraction here, that
- * is `sharedCommandShell`'s own future task.
- *
- * **The trailing flush's destination is `logPublish`,
- * never `--task`/`--pr` directly.** `--task`/`--pr` only pick WHICH
- * task's own local outbox to drain — same as `vinaya log flush`'s own
- * `--issue`/`--pr` for that half. Before this fix, this command posted the
- * outbox straight onto the dispatched task's own Issue/PR unconditionally,
- * ignoring `vinaya.config.json`'s `logPublish` entirely: a configured
- * `webhookUrl` was silently never honored here, and there was no way to
- * configure "publish nowhere" for this call site the way the round-end
- * auto-flush already allows. `resolveRoundEndFlushTarget`/
- * `describeSkippedRoundEndFlush` (`../lib/config.js`) are the same two
- * functions the round-end auto-flush uses, so a repo that configures
- * `logPublish` gets identical behavior — including the refusal to publish
- * back onto the very task/Issue being flushed — from every flush call site.
- * With no `logPublish` configured (the ordinary default for every existing
- * repo), this command now publishes nowhere and says so on stderr, rather
- * than defaulting to the task's own Issue/PR.
- *
- * A resolved `webhookUrl` is additionally gated against
- * `loadTrustAnchorConfig()` (round-2 security review, BLOCKER) the same way
- * `defaultFlushOutbox` (`../lib/dev-review-loop.js`) gates the round-end
- * auto-flush: this command is not always human-run, since a dispatched
- * role's own nested `vinaya dispatch` call reaches this exact trailing-flush
- * code with no human approving that run, so a PR-controlled working-tree
- * `webhookUrl` is never honored on its own — only the repository's
- * default-branch copy of the SAME `webhookUrl` authorizes the POST.
- *
- * `flushOutbox`/`flushOutboxToWebhook` never call `process.exit` — unlike
- * the `logFlushCommand` this used to call directly, a real command-calling-
- * command case `surface.md`'s Exemptions table used to carry for this row
- * (retired by that same task). A thrown
- * `LogFlushError`/`WebhookFlushError` is caught and logged to stderr, never
- * fatal: a flush failure does not undo the dispatch's own effect (the child
- * already ran, and its log lines are already durably written to the local
- * outbox for a later `vinaya log flush` retry).
+ * logic lives there, including where its own log lines are delivered (the
+ * `logs` setting, `../lib/log-sink.js`). This command runs no flush of its
+ * own after the dispatch returns: events reach their configured destination
+ * live, as `dispatchRole` emits them, so there is nothing left to ship in a
+ * trailing step.
  */
 
 import { readFileSync } from 'node:fs'
 import { ROLE_VALUES, type Role } from '@attalabs/aeg-core'
 import { AGENT_VENDOR_NAMES, dispatchRole, isAgentVendor, type AgentVendor } from '../lib/dispatch.js'
-import {
-  describeSkippedRoundEndFlush,
-  loadConfig,
-  loadTrustAnchorConfig,
-  resolveLogPublishMaxChunksPerFlush,
-  resolveRoundEndFlushTarget,
-  resolveTrustAnchorWebhookTarget,
-  type VinayaConfig
-} from '../lib/config.js'
+import { loadConfig } from '../lib/config.js'
 import { printJson } from '../lib/envelope.js'
-import { flushOutbox, issueFromPr, LogFlushError } from '../lib/log-flush.js'
-import { flushOutboxToWebhook, WebhookFlushError } from '../lib/log-webhook-flush.js'
 
 type ParsedArgs = {
   role: string | undefined
@@ -166,13 +120,6 @@ export async function dispatchCommand(args: string[]): Promise<void> {
   }
   const promptFile = parsed.promptFile
 
-  if (parsed.task !== undefined && parsed.pr !== undefined) {
-    process.stderr.write(
-      'vinaya dispatch: --task and --pr are mutually exclusive (ambiguous flush target) — pass exactly one\n'
-    )
-    process.exit(1)
-  }
-
   let prompt: string
   try {
     prompt = readFileSync(promptFile, 'utf8')
@@ -210,72 +157,6 @@ export async function dispatchCommand(args: string[]): Promise<void> {
     process.stdout.write(
       `vinaya dispatch: ${role} via ${agent} completed in ${handle.durationMs}ms (resumeId: ${handle.resumeId ?? 'none'})\n`
     )
-  }
-
-  if (parsed.task !== undefined || parsed.pr !== undefined) {
-    const outboxTask = parsed.task !== undefined ? parsed.task : issueFromPr(String(parsed.pr))
-    const config = loadConfig()
-    const skipReason = describeSkippedRoundEndFlush(config, outboxTask)
-    if (skipReason) {
-      process.stderr.write(`vinaya dispatch: ${skipReason}\n`)
-    } else {
-      const target = resolveRoundEndFlushTarget(config, outboxTask)
-      if (target === null) {
-        process.stderr.write(
-          `vinaya dispatch: no logPublish target configured in vinaya.config.json — skipping publish; telemetry stays in the local outbox for #${outboxTask} (retry later with \`vinaya log flush\`).\n`
-        )
-      } else if ('webhookUrl' in target) {
-        // Same trust-anchor gate `defaultFlushOutbox` (`../lib/dev-review-loop.js`)
-        // applies to the round-end auto-flush — required here too, not just
-        // there: this command's own doc comment above documents a dispatched
-        // role's nested `vinaya dispatch` call reaching this exact code path
-        // with no human approving the run, so a working-tree `webhookUrl`
-        // (the PR's own `vinaya.config.json`) is never honored on its own.
-        // Only the repository's default-branch copy of the SAME `webhookUrl`
-        // authorizes the POST.
-        let anchorConfig: VinayaConfig | null
-        try {
-          anchorConfig = loadTrustAnchorConfig()
-        } catch {
-          anchorConfig = null
-        }
-        const anchorTarget = resolveTrustAnchorWebhookTarget(target.webhookUrl, anchorConfig)
-        if (!anchorTarget) {
-          process.stderr.write(
-            `vinaya dispatch: trailing flush's configured logPublish.webhookUrl is not present on the repository's default branch (or doesn't match it) — refusing to POST there automatically, since a PR under review cannot grant itself a new outbound destination; merge it to the default branch first.\n`
-          )
-        } else {
-          try {
-            const outcome = await flushOutboxToWebhook(outboxTask, anchorTarget.webhookUrl, anchorTarget.headers)
-            if (!outcome.flushed) {
-              process.stderr.write('vinaya dispatch: trailing webhook flush — nothing to flush\n')
-            }
-          } catch (err) {
-            const message = err instanceof WebhookFlushError || err instanceof Error ? err.message : String(err)
-            process.stderr.write(
-              `vinaya dispatch: trailing webhook flush failed (non-fatal — retry with \`vinaya log flush\`): ${message}\n`
-            )
-          }
-        }
-      } else {
-        try {
-          const outcome = await flushOutbox(target, {
-            outboxTask,
-            maxChunksPerFlush: resolveLogPublishMaxChunksPerFlush(config)
-          })
-          if (outcome.flushed && outcome.deferredChunkCount > 0) {
-            process.stderr.write(
-              `vinaya dispatch: trailing flush bounded — ${outcome.deferredChunkCount} chunk(s) remain queued in the outbox (non-fatal — retry with \`vinaya log flush\`).\n`
-            )
-          }
-        } catch (err) {
-          const message = err instanceof LogFlushError || err instanceof Error ? err.message : String(err)
-          process.stderr.write(
-            `vinaya dispatch: log flush failed (non-fatal — retry with \`vinaya log flush\`): ${message}\n`
-          )
-        }
-      }
-    }
   }
 
   if (handle.failureReason) process.exit(1)
