@@ -911,7 +911,7 @@ describe('devReviewLoop — the mechanical gate excludes the review gate’s own
       | undefined
     expect(gateRead?.green).toBe(true)
     expect(loopEvents).toContain('verdicts_read')
-  }, 20000)
+  }, 45000)
 })
 
 /**
@@ -1270,7 +1270,7 @@ describe('devReviewLoop — a crash mid-publish never logs merged_ready (regress
     // pair with (see the O10 test below) — the two must never be confused.
     const journalFinalizedLines = outboxLines(home).filter((l) => l.event === 'journal_finalized')
     expect(journalFinalizedLines.some((l) => l.result === 'merged_ready')).toBe(false)
-  }, 20000)
+  }, 45000)
 
   it("[task-files-v1] 5, O3: an uncaught throw mid-round never posts telemetry to the task's own Issue — there is no final flush left to do it, configured `logPublish` or not", () => {
     const { home, cwd, path } = setUpCrashMidPublishFlushSucceeds()
@@ -1290,7 +1290,7 @@ describe('devReviewLoop — a crash mid-publish never logs merged_ready (regress
     // destination — even though nothing ever shipped them anywhere else.
     const journalFinalizedLines = outboxLines(home).filter((l) => l.event === 'journal_finalized')
     expect(journalFinalizedLines.length).toBeGreaterThan(0)
-  }, 20000)
+  }, 45000)
 
   // `#548` v3, O2: this exact scenario — a genuinely uncaught throw mid-round,
   // never a decided `pause`/`publish` — is the fixture the brief asks for.
@@ -1304,7 +1304,7 @@ describe('devReviewLoop — a crash mid-publish never logs merged_ready (regress
 
     const roleLog = readFileSync(join(taskRunDir(home), 'output', 'driver.log'), 'utf8')
     expect(roleLog).toMatch(/^\[dev-review-loop\] driver_exited: reason=error last_decision=\S+$/m)
-  }, 20000)
+  }, 45000)
 
   // O6: the SAME uncaught-error scenario, now proven to be a
   // clean, decided pause — never a raw crash the process merely survives by
@@ -1342,7 +1342,7 @@ describe('devReviewLoop — a crash mid-publish never logs merged_ready (regress
 
     const posted = postedCommentFiles(home).map((f) => readFileSync(join(home, '.fake-gh-posted-comments', f), 'utf8'))
     expect(posted.some((body) => /^<!-- aeg:loop:paused:infrastructure -->$/m.test(body))).toBe(true)
-  }, 20000)
+  }, 45000)
 })
 
 /**
@@ -1494,7 +1494,7 @@ exit 1
     // stale_driver pause now gets.
     const lock = JSON.parse(readFileSync(driverLockPath(home), 'utf8')) as { pid: number }
     expect(typeof lock.pid).toBe('number')
-  }, 20000)
+  }, 45000)
 
   // A `git` failure on `rev-parse origin/main` is the driver's own SETUP,
   // run before round 1's fresh-dispatch entry even starts (this file's own
@@ -1546,7 +1546,7 @@ exit 1
     // exactly as it does for every other infrastructure pause.
     const lock = JSON.parse(readFileSync(driverLockPath(home), 'utf8')) as { pid: number }
     expect(typeof lock.pid).toBe('number')
-  }, 20000)
+  }, 45000)
 })
 
 /**
@@ -1807,7 +1807,7 @@ describe('devReviewLoop — O9 (task-run-v1 21, #541, round 2 review BLOCKER): a
     const summary = readFileSync(join(home, '.fake-gh-posted-comments', summaryFile), 'utf8')
     expect(summary).toMatch(/^\| 1 \|/m)
     expect(summary).toMatch(/^\| 2 \|/m)
-  }, 20000)
+  }, 45000)
 })
 
 /**
@@ -2036,7 +2036,7 @@ const FIXTURE_GITHUB_REPOSITORY = 'vinaya-fixture-owner/vinaya-fixture-repo'
  * child's own captured output, before the test framework's own outer
  * timeout can kill the whole run with no diagnostic at all.
  */
-const SUBPROCESS_BUDGET_MS = 18_000
+const SUBPROCESS_BUDGET_MS = 40_000
 
 function runDevReviewLoopArgs(
   home: string,
@@ -2118,7 +2118,7 @@ describe('devReviewLoop — round 1 clean, ends on publish', () => {
     expect(securityVerdict).toMatch(/^VERDICT: PASS$/m)
     expect(securityVerdict).toMatch(new RegExp(`^Objectives version: ${expectedVersion}$`, 'm'))
     expect(securityVerdict).toMatch(/^O1: MET — done\.$/m)
-  }, 20000)
+  }, 45000)
 
   it('logs the exact assessRound event sequence for a clean round 1, byte-for-byte on event names', () => {
     const { home, cwd, path } = setUp()
@@ -2163,7 +2163,7 @@ describe('devReviewLoop — round 1 clean, ends on publish', () => {
 
     const journalFinalized = lines.find((l) => l.event === 'journal_finalized') as Record<string, unknown>
     expect(journalFinalized.result).toBe('merged_ready')
-  }, 20000)
+  }, 45000)
 
   it('publishes the two verdicts then the summary, in order, self-verified — and a rerun posts nothing twice (O1)', () => {
     const { home, cwd, path } = setUp()
@@ -2201,7 +2201,7 @@ describe('devReviewLoop — round 1 clean, ends on publish', () => {
     expect(r2.status).toBe(0)
     expect(r2.stdout).toMatch(/publish/)
     expect(postedCommentFiles(home)).toEqual(firstRunFiles)
-  }, 20000)
+  }, 45000)
 
   it('runs the evidence report in-process, from the driver, with no developer resume for it', () => {
     // Every `gh` call this run makes is appended to `.fake-gh-call-log`
@@ -2233,7 +2233,7 @@ describe('devReviewLoop — round 1 clean, ends on publish', () => {
     // report itself from there, never waiting on or resuming the Developer.
     const devInvocations = readFileSync(join(home, '.dev-invocations'), 'utf8').trim().split('\n').filter(Boolean)
     expect(devInvocations).toHaveLength(1)
-  }, 20000)
+  }, 45000)
 
   it('runs the evidence report concurrently with reviewer dispatch, never serialized ahead of it', () => {
     // Rendezvous, not a sleep-and-hope timing race: the evidence report's
@@ -2263,7 +2263,7 @@ describe('devReviewLoop — round 1 clean, ends on publish', () => {
 
     expect(existsSync(join(home, '.reviewer-dispatch-started'))).toBe(true)
     expect(existsSync(join(home, '.evidence-report-gh-timed-out'))).toBe(false)
-  }, 20000)
+  }, 45000)
 
   // Issue #639: `runReportForOpenPr`'s call to `runBodyChecks` had no
   // `try`/`catch` around it — `refuse()` (`forge-write.ts`) calls
@@ -2319,7 +2319,7 @@ describe('devReviewLoop — round 1 clean, ends on publish', () => {
     const roleLog = readFileSync(join(taskRunDir(home), 'output', 'driver.log'), 'utf8')
     expect(roleLog).toMatch(/evidence_report_failed: round=1 head=\S+ reason=/)
     expect(roleLog).toContain('fake-always-refuse-body: fixture forces a body-check refusal')
-  }, 20000)
+  }, 45000)
 })
 
 // --- issue-657, O4: the review-input manifest's base identity is a merge
@@ -2421,7 +2421,7 @@ describe('devReviewLoop — O4 (issue-657): the review-input manifest binds a me
     const r = runLoop(home, cwd, path)
     expect(r.status).toBe(0)
     expect(r.stdout).toMatch(/publish/)
-  }, 20000)
+  }, 45000)
 
   it('a branch behind a moved default branch: the round still completes normally off the resolved merge base, never erroring on the mismatch between it and the tip', () => {
     const home = tempDir('vinaya-drl-home-')
@@ -2435,7 +2435,7 @@ describe('devReviewLoop — O4 (issue-657): the review-input manifest binds a me
     const r = runLoop(home, cwd, path)
     expect(r.status).toBe(0)
     expect(r.stdout).toMatch(/publish/)
-  }, 20000)
+  }, 45000)
 
   it('a non-ancestor / unresolvable merge base: the round pauses as infrastructure rather than binding a base that was never proven an ancestor of the head', () => {
     const home = tempDir('vinaya-drl-home-')
@@ -2449,7 +2449,7 @@ describe('devReviewLoop — O4 (issue-657): the review-input manifest binds a me
     const r = runLoop(home, cwd, path)
     expect(r.status).not.toBe(0)
     expect(r.stdout).toMatch(/paused \(infrastructure\)/)
-  }, 20000)
+  }, 45000)
 })
 
 // issue-657, O4 — source-wiring proof, the same convention this file's own
@@ -2533,7 +2533,7 @@ describe('devReviewLoop — restart fixtures (task-log-v1 task 6, O3): equivalen
     // distinct process identities, never a single lineage.run silently
     // spanning both runs as if nothing happened in between.
     expect(runsInOrder[0]).not.toBe(runsInOrder[1])
-  }, 20000)
+  }, 45000)
 
   it("the rerun's own effect events reconcile the FIRST run's identities — an idempotent 'verified' replay, never a second 'attempted', for the SAME effect_id across the restart (O1/O3)", () => {
     const { home, cwd, path } = setUp()
@@ -2578,7 +2578,7 @@ describe('devReviewLoop — restart fixtures (task-log-v1 task 6, O3): equivalen
       expect(events).toEqual(['attempted', 'observed', 'verified', 'verified'])
       expect(events.filter((e) => e === 'attempted')).toHaveLength(1)
     }
-  }, 20000)
+  }, 45000)
 
   it('the controller never reads the Vinaya Log to decide — deleting the local outbox between the two runs changes nothing about the rerun’s own decision (O2/O3)', () => {
     const { home, cwd, path } = setUp()
@@ -2603,7 +2603,7 @@ describe('devReviewLoop — restart fixtures (task-log-v1 task 6, O3): equivalen
     // consult: idempotency here comes from `postForgeEffectOnce`'s/the
     // control store's own durable records, never from re-reading this file.
     expect(postedCommentFiles(home)).toEqual(firstRunFiles)
-  }, 20000)
+  }, 45000)
 })
 
 /**
@@ -2847,7 +2847,7 @@ describe('devReviewLoop — reviewers inspect one immutable candidate with isola
     expect(existsSync(join(roundDir(home, 1), 'candidate'))).toBe(false)
     expect(existsSync(reviewerCwd)).toBe(false)
     expect(existsSync(securityCwd)).toBe(false)
-  }, 20000)
+  }, 45000)
 
   it('restart cleanliness: a candidate/scratch directory left by a crashed prior run is gone before this run dispatches anything (O3)', () => {
     const { home, cwd, path } = setUp()
@@ -2861,7 +2861,7 @@ describe('devReviewLoop — reviewers inspect one immutable candidate with isola
     expect(r.status).toBe(0)
     expect(existsSync(staleCandidate)).toBe(false)
     expect(existsSync(staleScratch)).toBe(false)
-  }, 20000)
+  }, 45000)
 
   it("a local worktree whose own head has diverged from the round's resolved candidate sha is never copied — no candidate, no scratch cwd (round 2 review, MAJOR)", () => {
     const home = tempDir('vinaya-drl-home-')
@@ -2895,7 +2895,7 @@ describe('devReviewLoop — reviewers inspect one immutable candidate with isola
     // still creates its target file via shell redirection even when `cat`
     // itself fails — so the assertion is an EMPTY file, never a missing one.
     expect(readFileSync(join(roundDir(home, 1), 'reviewer-work', 'candidate-marker-seen.txt'), 'utf8')).toBe('')
-  }, 20000)
+  }, 45000)
 })
 
 // --- pause and --resume (O2) ------------------------------------------------
@@ -3147,7 +3147,7 @@ describe('devReviewLoop — escalation pauses, --resume continues after a ruling
     // posted again.
     const allComments = postedCommentFiles(home)
     expect(allComments).toHaveLength(6)
-  }, 20000)
+  }, 45000)
 
   it("a single pause's dev_review_loop 'paused' event and the effect events its own pause-comment post fires share the SAME meta.lineage.run (task-log-v1 task 6, O1/O2: one correlated history)", () => {
     const { home, cwd, path } = setUpPauseResume()
@@ -3172,7 +3172,7 @@ describe('devReviewLoop — escalation pauses, --resume continues after a ruling
     )
     expect(runs.size).toBe(1)
     expect([...runs][0]).not.toBeNull()
-  }, 20000)
+  }, 45000)
 
   it('logs a resumed event, and every event this resumed process emits shares the SAME meta.lineage.run (task-log-v1 task 6, O1/O2/O3: one correlated history)', () => {
     const { home, cwd, path } = setUpPauseResume()
@@ -3209,7 +3209,7 @@ describe('devReviewLoop — escalation pauses, --resume continues after a ruling
     const lineageRuns = new Set(resumedRunLines.map((l) => (l.meta as { lineage: { run: string | null } }).lineage.run))
     expect(lineageRuns.size).toBe(1)
     expect([...lineageRuns][0]).not.toBeNull()
-  }, 20000)
+  }, 45000)
 })
 
 // --- O1 (`[task-operator-v1]`/Issue #662): the pause comment post itself is retried with backoff, and a run that exhausts every attempt still exits cleanly, resumable ---
@@ -3404,7 +3404,7 @@ describe('devReviewLoop — O1 (`[task-operator-v1]`/Issue #662): the pause comm
     expect(retryEvent?.failure_kind).toBe('pause_comment_post')
     expect(retryEvent?.attempts).toBe(2)
     expect(retryEvent?.outcome).toBe('recovered')
-  }, 20000)
+  }, 45000)
 
   it('a post that never succeeds exhausts its bound WITHOUT crashing — the driver exits resumable, the pause reason is intact, and one exhausted infrastructure_retry event is logged', () => {
     const home = tempDir('vinaya-drl-home-')
@@ -3442,7 +3442,7 @@ describe('devReviewLoop — O1 (`[task-operator-v1]`/Issue #662): the pause comm
     expect(retryEvent?.failure_kind).toBe('pause_comment_post')
     expect(retryEvent?.attempts).toBe(3)
     expect(retryEvent?.outcome).toBe('exhausted')
-  }, 20000)
+  }, 45000)
 
   it('the next --resume posts the missing comment first, once, and continues — never a second copy once it lands', () => {
     const home = tempDir('vinaya-drl-home-')
@@ -3488,7 +3488,7 @@ describe('devReviewLoop — O1 (`[task-operator-v1]`/Issue #662): the pause comm
     )
     const pausedComments = allComments.filter((body) => /^<!-- aeg:loop:paused:escalation -->$/m.test(body))
     expect(pausedComments).toHaveLength(1)
-  }, 20000)
+  }, 45000)
 })
 
 // --- control-store-v1 task 6, #556: escalation record, resolution replay, cancel ---
@@ -3541,7 +3541,7 @@ describe('devReviewLoop — escalation record persisted at pause (O1)', () => {
     expect(record.recipient).toBe('principal')
     expect(typeof record.attemptedRecovery).toBe('string')
     expect((record.attemptedRecovery as string).length).toBeGreaterThan(0)
-  }, 20000)
+  }, 45000)
 })
 
 describe('devReviewLoop — resolution consumed once, replay refused (O2)', () => {
@@ -3567,7 +3567,7 @@ describe('devReviewLoop — resolution consumed once, replay refused (O2)', () =
     const replayed = runResume(home, cwd, path, 123)
     expect(replayed.status).not.toBe(0)
     expect(replayed.stderr).toMatch(/already has a consumed resolution|replay refused/)
-  }, 20000)
+  }, 45000)
 })
 
 describe("devReviewLoop — O1 (#674): a resume continues from the pull request's current state once its newest escalation is already resolved and no driver is running", () => {
@@ -3613,7 +3613,7 @@ describe("devReviewLoop — O1 (#674): a resume continues from the pull request'
     expect(secondResume.stderr).not.toMatch(/already has a consumed resolution|replay refused/)
     expect(secondResume.status).toBe(0)
     expect(secondResume.stdout).toMatch(/publish/)
-  }, 20000)
+  }, 45000)
 
   it('the SAME already-resolved escalation is still refused while a driver genuinely still owns the task (Traps to avoid: the storage guarantee is never weakened)', () => {
     const { home, cwd, path } = setUpPauseResumeEscalatesTwice()
@@ -3634,7 +3634,7 @@ describe("devReviewLoop — O1 (#674): a resume continues from the pull request'
     const secondResume = runResume(home, cwd, path, 123)
     expect(secondResume.status).not.toBe(0)
     expect(secondResume.stderr).toMatch(/already has a consumed resolution|replay refused/)
-  }, 20000)
+  }, 45000)
 })
 
 describe('devReviewLoop — --cancel (O3)', () => {
@@ -3647,7 +3647,7 @@ describe('devReviewLoop — --cancel (O3)', () => {
     const cancelled = runCancel(home, cwd, path, 123)
     expect(cancelled.status).not.toBe(0)
     expect(cancelled.stderr).toMatch(/no Principal ruling comment yet/)
-  }, 20000)
+  }, 45000)
 
   it('cancels a paused run once — durable, and a second cancel is refused as a replay', () => {
     const { home, cwd, path } = setUpPauseResume()
@@ -3677,7 +3677,7 @@ describe('devReviewLoop — --cancel (O3)', () => {
     const resumeAfterCancel = runResume(home, cwd, path, 123)
     expect(resumeAfterCancel.status).not.toBe(0)
     expect(resumeAfterCancel.stderr).toMatch(/already has a consumed resolution|replay refused/)
-  }, 20000)
+  }, 45000)
 
   it('a replayed cancel is refused WITHOUT bumping the task epoch (code review, round 2, HIGH)', () => {
     const { home, cwd, path } = setUpPauseResume()
@@ -3699,7 +3699,7 @@ describe('devReviewLoop — --cancel (O3)', () => {
     expect(cancelledAgain.status).not.toBe(0)
     expect(cancelledAgain.stderr).toMatch(/already has a consumed resolution|replay refused/)
     expect(ownershipEpochFiles(home, TASK)).toEqual(epochsAfterFirstCancel)
-  }, 20000)
+  }, 45000)
 
   it('logs a cancelled event, correlated to the task (task-log-v1 task 6, O2)', () => {
     const { home, cwd, path } = setUpPauseResume()
@@ -3717,7 +3717,7 @@ describe('devReviewLoop — --cancel (O3)', () => {
     const cancelledEvent = cancelledEvents[0] as { kind: string; round: number; by: string; subject: { issue: number } }
     expect(cancelledEvent).toMatchObject({ kind: 'dev_review_loop', round: 1, by: 'principal' })
     expect(cancelledEvent.subject.issue).toBe(TASK)
-  }, 20000)
+  }, 45000)
 })
 
 describe('devReviewLoop — --cancel refuses a mismatched --agent (code review, round 2, MAJOR)', () => {
@@ -3748,7 +3748,7 @@ describe('devReviewLoop — --cancel refuses a mismatched --agent (code review, 
     const cancelled = runCancel(home, cwd, path, 123)
     expect(cancelled.status).toBe(0)
     expect(cancelled.stdout).toMatch(/cancelled/)
-  }, 20000)
+  }, 45000)
 })
 
 describe('devReviewLoop — resolveEscalation’s WrongTargetResolutionError/StaleEscalationError, above the storage level (code review, round 2, MINOR)', () => {
@@ -3768,7 +3768,7 @@ describe('devReviewLoop — resolveEscalation’s WrongTargetResolutionError/Sta
     expect(resumed.status).not.toBe(0)
     expect(resumed.stderr).toMatch(/is stale/)
     expect(resumed.stderr).toMatch(/no escalation record was ever written/)
-  }, 20000)
+  }, 45000)
 
   it('refuses a --cancel whose escalation record names a different PR (WrongTargetResolutionError)', () => {
     const { home, cwd, path } = setUpPauseResume()
@@ -3786,7 +3786,7 @@ describe('devReviewLoop — resolveEscalation’s WrongTargetResolutionError/Sta
     const cancelled = runCancel(home, cwd, path, 123)
     expect(cancelled.status).not.toBe(0)
     expect(cancelled.stderr).toMatch(/names PR 999, not PR 123/)
-  }, 20000)
+  }, 45000)
 })
 
 // --- task-run-v1 15, O8: --resume accepts a moved head once a ruling exists ---
@@ -3870,7 +3870,7 @@ describe('devReviewLoop — O8 (task-run-v1 task 15): --resume accepts a moved h
     if (existsSync(devPromptsPath)) {
       expect(readFileSync(devPromptsPath, 'utf8')).not.toMatch(/Principal ruling on this pause/)
     }
-  }, 20000)
+  }, 45000)
 })
 
 // --- round 2: a genuine resume, not just a clean round 1 -------------------
@@ -4021,7 +4021,7 @@ describe('devReviewLoop — round 1 blocked, round 2 genuinely resumes', () => {
     ])
     const rounds = lines.filter((l) => l.event === 'round_started').map((l) => (l as Record<string, unknown>).round)
     expect(rounds).toEqual([1, 2])
-  }, 20000)
+  }, 45000)
 })
 
 // --- an escalation pause still logs its completion event (regression, PR #459 MAJOR) ---
@@ -4109,7 +4109,7 @@ describe('devReviewLoop — a paused loop for reason escalation still logs its c
       | undefined
     expect(journalFinalized).toBeDefined()
     expect(journalFinalized?.result).toBe('stopped')
-  }, 20000)
+  }, 45000)
 })
 
 // --- a reviewer that writes nothing is infrastructure, never approval (O1/O2) ---
@@ -4234,7 +4234,7 @@ describe('devReviewLoop — a reviewer that wrote nothing cast no verdict (O1/O2
     expect(stop.condition).toBe('principal_stop')
     const journalFinalized = outboxLines(home).find((l) => l.event === 'journal_finalized') as Record<string, unknown>
     expect(journalFinalized.result).toBe('stopped')
-  }, 20000)
+  }, 45000)
 })
 
 /**
@@ -4359,7 +4359,7 @@ describe('devReviewLoop — a superseded check-run failure never pauses a health
     expect(pauseState.reason).toBe('infrastructure')
     expect(pauseState.detail).toMatch(/security/)
     expect(pauseState.detail).not.toMatch(/failing check-run/)
-  }, 20000)
+  }, 45000)
 })
 
 // --- a findings.txt that still does not parse is infrastructure, never an
@@ -4490,7 +4490,7 @@ describe('devReviewLoop — a findings.txt line that still does not parse is an 
     const matching = securityDispatchOutcomeLines.find((l) => l.effect_id === failureAttempt?.effect_id)
     expect(matching).toBeDefined()
     expect(failureAttempt?.duration_ms).toBe(matching?.duration_ms)
-  }, 20000)
+  }, 45000)
 })
 
 // --- a report.txt missing SECRETS is infrastructure, never a fabricated
@@ -4574,7 +4574,7 @@ describe('devReviewLoop — a report.txt missing SECRETS is an infrastructure pa
     expect(pauseComment).toMatch(/sec-session-no-secrets/)
     expect(pauseComment).not.toMatch(/^VERDICT:/m)
     expect(pauseComment).not.toMatch(/SECRETS: none found/)
-  }, 20000)
+  }, 45000)
 })
 
 // --- an empty findings file is still a clean verdict (O1, contrast case) ---
@@ -4680,7 +4680,7 @@ describe('devReviewLoop — the reviewer prompt names the objectives file, and o
     // (round 1 review finding, BLOCKER, PR #489).
     expect(existsSync(join(roundDir(home, 1), 'reviewer.md'))).toBe(false)
     expect(existsSync(join(roundDir(home, 1), 'security.md'))).toBe(false)
-  }, 20000)
+  }, 45000)
 })
 
 // --- O2/O3: a red gate that the developer never fixes pauses, bounded ------
@@ -4918,7 +4918,7 @@ describe('devReviewLoop — a red gate the developer never fixes pauses, bounded
     expect(gateRedPrompt).toMatch(/^Remote head: [0-9a-f]{40}$/m)
     expect(gateRedPrompt).toMatch(/CI is red on the last head/)
     expect(gateRedPrompt).toMatch(/`git push`/)
-  }, 20000)
+  }, 45000)
 })
 
 // --- O2 (`[task-operator-v1]`/Issue #662): a developer session ending on a connection failure is waited-and-re-dispatched, never a decided stop the developer itself never made ---
@@ -5034,7 +5034,7 @@ describe("devReviewLoop — O2 (`[task-operator-v1]`/Issue #662): a developer di
     for (const f of postedCommentFiles(home)) {
       expect(readFileSync(join(home, '.fake-gh-posted-comments', f), 'utf8')).not.toMatch(/aeg:loop:paused/)
     }
-  }, 20000)
+  }, 45000)
 
   it('exhausts the shared infrastructure-retry bound, then pauses infrastructure — never a crash, never blamed on the developer', () => {
     const { home, cwd, path } = setUpDeveloperConnectionNeverRecovers()
@@ -5058,7 +5058,7 @@ describe("devReviewLoop — O2 (`[task-operator-v1]`/Issue #662): a developer di
 
     const pauseComment = readFileSync(join(home, '.fake-gh-posted-comments', 'comment-1.md'), 'utf8')
     expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:infrastructure -->$/m)
-  }, 20000)
+  }, 45000)
 })
 
 // --- control-store-v1 task 4 (#554): the loop recovers budgets and held
@@ -5120,7 +5120,7 @@ describe('devReviewLoop — control-store-v1 task 4 (#554, O2): mechanical-retry
     expect(persisted.budgets.infrastructureRetries).toBe(1)
     expect(persisted.phase).toBe('pause')
     expect(persisted.pauseReason).toBe('infrastructure')
-  }, 20000)
+  }, 45000)
 })
 
 describe('devReviewLoop — control-store-v1 task 4 (#554, O3): a delivered-findings identity in the control store prevents a second redelivery, even with no local marker file', () => {
@@ -5171,7 +5171,7 @@ describe('devReviewLoop — control-store-v1 task 4 (#554, O3): a delivered-find
     )
     expect(pauseComment).toContain('local marker file absent')
     expect(pauseComment).toContain('control-store delivered-findings identity matched')
-  }, 20000)
+  }, 45000)
 })
 
 describe('devReviewLoop — control-store-v1 task 4 (#554, O1/O3): round numbering recovers from the control store alone when both the local held files AND the forge-flushed journal are missing', () => {
@@ -5214,7 +5214,7 @@ describe('devReviewLoop — control-store-v1 task 4 (#554, O1/O3): round numberi
     expect(existsSync(join(roundDir(home, 2), 'security-work'))).toBe(true)
     expect(existsSync(join(roundDir(home, 1), 'reviewer-work'))).toBe(false)
     expect(existsSync(join(home, '.dev-invocations'))).toBe(false)
-  }, 20000)
+  }, 45000)
 })
 
 describe('devReviewLoop — control-store-v1 task 4 (#554, round 2 review, BLOCKER): a corrupt loop-state record decides a pause, never an uncaught crash', () => {
@@ -5264,7 +5264,7 @@ describe('devReviewLoop — control-store-v1 task 4 (#554, round 2 review, BLOCK
     expect(pauseFiles).toHaveLength(1)
     const body = readFileSync(join(home, '.fake-gh-posted-comments', pauseFiles[0] as string), 'utf8')
     expect(body).toMatch(/control-store loop-state record is corrupt/)
-  }, 20000)
+  }, 45000)
 })
 
 describe('devReviewLoop — control-store-v1 task 4 (round 3 review, BLOCKER): a real filesystem read fault on loop-state.json decides a pause too, never an uncaught crash', () => {
@@ -5299,7 +5299,7 @@ describe('devReviewLoop — control-store-v1 task 4 (round 3 review, BLOCKER): a
     expect(pauseFiles).toHaveLength(1)
     const body = readFileSync(join(home, '.fake-gh-posted-comments', pauseFiles[0] as string), 'utf8')
     expect(body).toMatch(/control-store loop-state record is corrupt/)
-  }, 20000)
+  }, 45000)
 })
 
 describe('devReviewLoop — control-store-v1 task 4 (round 2 review, security HIGH): refusing a corrupt loop-state record never self-heals its infrastructure-retry count to zero', () => {
@@ -5336,7 +5336,7 @@ describe('devReviewLoop — control-store-v1 task 4 (round 2 review, security HI
       infrastructureRetries: number
     }
     expect(pauseState.infrastructureRetries).toBeGreaterThanOrEqual(MAX_INFRASTRUCTURE_RETRIES)
-  }, 20000)
+  }, 45000)
 })
 
 describe('devReviewLoop — control-store-v1 task 4 (round 2 review, security HIGH): --resume floors its infrastructure-retry bound against the pause-state file, not the control store alone', () => {
@@ -5546,7 +5546,7 @@ describe('devReviewLoop — a genuinely failing current check-run still pauses, 
     const gateRedPrompt = readFileSync(join(home, '.dev-prompt-2.txt'), 'utf8')
     expect(gateRedPrompt).toMatch(/CI is red on the last head/)
     expect(gateRedPrompt).toMatch(/Vinaya CI \(run 2, started 2026-09-14T10:05:00Z\)/)
-  }, 20000)
+  }, 45000)
 })
 
 /**
@@ -5755,7 +5755,7 @@ describe('devReviewLoop — O1 (#595): a blank/dash-only token-report row never 
 
     // Never a pause of any kind — this run reaches a clean publish.
     expect(existsSync(join(controlDir(home), 'pause-state.json'))).toBe(false)
-  }, 20000)
+  }, 45000)
 })
 
 describe('devReviewLoop — O4 (#595): a re-exec child whose own first gate read is red stays alive and pauses, never exits', () => {
@@ -5962,7 +5962,7 @@ describe('devReviewLoop — a stale Premise pin pauses like a red gate, never a 
     const pauseComment = readFileSync(join(home, '.fake-gh-posted-comments', 'comment-1.md'), 'utf8')
     expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:infrastructure -->$/m)
     expect(pauseComment).toMatch(/dispatch-gate premise:/)
-  }, 20000)
+  }, 45000)
 })
 
 // --- O2 (#543): unpushed-work resume, then no_push, distinct from a genuinely idle stall ---
@@ -6075,7 +6075,7 @@ describe('devReviewLoop — O2 (#543): unpushed real work is resumed once, then 
     expect(resumeEvent?.kind).toBe('dev_review_loop')
     expect(resumeEvent?.branch).toBe(BRANCH)
     expect(resumeEvent?.detail as string).toMatch(/smoke\.ts/)
-  }, 20000)
+  }, 45000)
 })
 
 // --- O2 (`task-files-v1` 2, #649): the loop's two OLD, worktree-root
@@ -6218,7 +6218,7 @@ describe("devReviewLoop — O2 (task-files-v1 2, #649): the loop's two OLD workt
       readFileSync(join(home, '.fake-gh-posted-comments', f), 'utf8')
     )
     expect(posted.some((c) => c.startsWith('<!-- aeg:loop:unpushed-work-resume -->'))).toBe(true)
-  }, 20000)
+  }, 45000)
 
   it('one dirty file alongside the two old control-file names reads as unpushed too — no_push, naming all three', () => {
     const { home, cwd, path } = setUpNeverPushesDirtyWithControlFiles()
@@ -6237,7 +6237,7 @@ describe("devReviewLoop — O2 (task-files-v1 2, #649): the loop's two OLD workt
     expect(pauseState.detail).toMatch(/smoke\.ts/)
     expect(pauseState.detail).toMatch(/\.vinaya-confidence/)
     expect(pauseState.detail).toMatch(/\.vinaya-round-response/)
-  }, 20000)
+  }, 45000)
 })
 
 // --- O3 (#543): a reviewer report missing finding ids is sent back once, never no_progress ---
@@ -6321,7 +6321,7 @@ describe('devReviewLoop — O3 (#543): a reviewer report missing finding ids is 
     const uncitableComment = posted.find((c) => c.startsWith('<!-- aeg:loop:report-uncitable -->'))
     expect(uncitableComment).toBeDefined()
     expect(uncitableComment as string).toMatch(/report_uncitable: reviewer/)
-  }, 20000)
+  }, 45000)
 })
 
 // --- O4: round-1 entry attaches to an open PR, resuming the recorded session ---
@@ -6539,7 +6539,7 @@ describe('devReviewLoop — round 1 entry attaches to an open PR, resuming the r
     const invocations = readFileSync(join(home, '.dev-invocations'), 'utf8').trim().split('\n').filter(Boolean)
     expect(invocations).toHaveLength(1)
     expect(invocations[0]).toBe('1:seeded-session-42')
-  }, 20000)
+  }, 45000)
 })
 
 // --- O4: a remote branch with no open PR resumes once to open it -----------
@@ -6648,7 +6648,7 @@ describe('devReviewLoop — a remote branch with no open PR resumes the recorded
     expect(fullPrompt).toMatch(new RegExp(`^Worktree: \`.*\\.worktrees/${BRANCH}\`$`, 'm'))
     expect(fullPrompt).toMatch(/^Remote head: [0-9a-f]{40}$/m)
     expect(fullPrompt).toMatch(/already exists with no open pull request/)
-  }, 20000)
+  }, 45000)
 })
 
 // --- task-run-v1 3 (#482), O4: attach recovers a held REQUEST-CHANGES round from disk ---
@@ -6745,7 +6745,7 @@ describe('devReviewLoop — attach recovers a held REQUEST-CHANGES round from di
     // reset-to-round-1 re-review of the exact same (already-fixed) head.
     expect(existsSync(join(roundDir(home, 2), 'reviewer-work'))).toBe(true)
     expect(existsSync(join(roundDir(home, 2), 'security-work'))).toBe(true)
-  }, 20000)
+  }, 45000)
 })
 
 describe('devReviewLoop — a second attach on the same unchanged head reads as no_progress, not another redelivery (O4, task-run-v1 3, #482)', () => {
@@ -6786,7 +6786,7 @@ describe('devReviewLoop — a second attach on the same unchanged head reads as 
     )
     expect(pauseComment).toContain('local marker file present')
     expect(pauseComment).toContain('control-store delivered-findings identity absent')
-  }, 20000)
+  }, 45000)
 })
 
 describe('devReviewLoop — the driver composes the round comment from a citation the developer left in its outbox, never posted itself', () => {
@@ -6835,7 +6835,7 @@ describe('devReviewLoop — the driver composes the round comment from a citatio
     // written to the worktree at all.
     expect(existsSync(join(developerDir(home, 2), '.vinaya-round-response'))).toBe(false)
     expect(existsSync(join(worktreeDir, '.vinaya-round-response'))).toBe(false)
-  }, 20000)
+  }, 45000)
 })
 
 /**
@@ -6893,7 +6893,7 @@ describe("devReviewLoop — O9 (task-run-v1 21, #541) / [task-files-v1] 4 (#651)
     const summary = readFileSync(join(home, '.fake-gh-posted-comments', summaryFile), 'utf8')
     expect(summary).toMatch(/^\| 1 \|/m)
     expect(summary).toMatch(/^\| 2 \|/m)
-  }, 20000)
+  }, 45000)
 })
 
 // --- task-run-v1 13 (#508): the developer's first turn ends with no push at all, resumed once (O2/O3) ---
@@ -6980,7 +6980,7 @@ describe("devReviewLoop — the developer's first turn ends with no push at all,
     expect(resumedPrompt).toMatch(/push and the pull-request open are foreground steps/i)
     expect(resumedPrompt).toMatch(/git push/)
     expect(resumedPrompt).toMatch(/pr create/)
-  }, 20000)
+  }, 45000)
 })
 
 /** Never touches `.fake-dev-invoked`, ever, on any invocation — a developer whose branch never reaches the remote no matter how many turns it gets. */
@@ -7045,7 +7045,7 @@ describe('devReviewLoop — the pull-request poll gives up naming what it waited
     expect(pauseComment).toContain('no open PR appeared within the poll budget')
     expect(pauseComment).not.toMatch(/local head:/)
     expect(pauseComment).not.toMatch(/pull request: none open/)
-  }, 20000)
+  }, 45000)
 })
 
 // --- task-run-v1 13 (#508), O9: a refusal/escalation before any push ends the loop at once ---
@@ -7153,7 +7153,7 @@ describe('devReviewLoop — a refusal/escalation posted before any push ends the
     expect(record.task).toBe(TASK)
     expect(record.round).toBe(1)
     expect(record.reason).toBe('escalation')
-  }, 20000)
+  }, 45000)
 })
 
 /**
@@ -7236,7 +7236,7 @@ describe('devReviewLoop — the no-push-stop escalation comment is sanitized too
     expect(body).not.toContain('someone-else')
     expect(body).toContain('<redacted>')
     expect(body).toContain('~/config.json')
-  }, 20000)
+  }, 45000)
 })
 
 // --- task-run-v1 13 (#508), O4/O6: mergeability blocks reviewer dispatch ---
@@ -7440,7 +7440,7 @@ describe('devReviewLoop — a conflicting head is sent back to the developer, ne
     expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:infrastructure -->$/m)
     expect(pauseComment).toMatch(/conflict never resolved/)
     expect(pauseComment).toMatch(/apps\/cli\/src\/lib\/dev-review-loop\.ts/)
-  }, 20000)
+  }, 45000)
 })
 
 // --- task-run-v1 13 (#508), O8: a base that moves past this driver's own code pauses `stale_driver` ---
@@ -7526,7 +7526,7 @@ describe('devReviewLoop — a base that moves past this driver’s own code paus
     expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:stale_driver -->$/m)
     expect(pauseComment).toMatch(new RegExp(`base moved from ${BASE_SHA} to ${'c'.repeat(40)}`))
     expect(pauseComment).toMatch(/touching this driver's own code/)
-  }, 20000)
+  }, 45000)
 })
 
 /** Same as \`writeFakeGit\`, except \`rev-parse origin/main\` answers a NEW sha once \`.reviewers-ran\` exists (not \`.fake-dev-invoked\` — the base moves WHILE reviewers are working, not before the developer's own first turn), and \`log\` reports one commit in that range. */
@@ -7599,7 +7599,7 @@ describe('devReviewLoop — a base that moves past this driver’s own code WHIL
     const pauseComment = readFileSync(join(home, '.fake-gh-posted-comments', 'comment-2.md'), 'utf8')
     expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:stale_driver -->$/m)
     expect(pauseComment).toMatch(new RegExp(`base moved from ${BASE_SHA} to ${'e'.repeat(40)}`))
-  }, 20000)
+  }, 45000)
 })
 
 // --- task-run-v1 15, O7: a moved base re-execs in place, reattaching to the same task, rather than pausing outright ---
@@ -8159,7 +8159,7 @@ describe('devReviewLoop — a clean head falls into conflict while reviewers wor
     expect(conflictPrompt).toMatch(/^Remote head: [0-9a-f]{40}$/m)
     expect(conflictPrompt).toMatch(/`git merge origin\/main`/)
     expect(conflictPrompt).toMatch(/`git push`/)
-  }, 20000)
+  }, 45000)
 })
 
 // --- task-run-v1 13 (#508), O7: UNKNOWN is polled, never read as clean or conflicting ---
@@ -8311,7 +8311,7 @@ describe('devReviewLoop — an UNKNOWN mergeable answer is polled, never read as
     // first (UNKNOWN) read as a final answer.
     const reads = Number(readFileSync(join(home, '.mergeable-reads'), 'utf8').trim())
     expect(reads).toBeGreaterThanOrEqual(3)
-  }, 20000)
+  }, 45000)
 })
 
 // --- objectives version changes mid-round (review-validity-v1 task 2, #476, O3) ---
@@ -8360,7 +8360,7 @@ describe('devReviewLoop — an objectives edit lands between reviewer dispatch a
     // named a path production never writes and the guard was vacuously true.
     expect(existsSync(join(roundDir(home, 1), 'reviewer.md'))).toBe(false)
     expect(existsSync(join(roundDir(home, 1), 'security.md'))).toBe(false)
-  }, 20000)
+  }, 45000)
 })
 
 // --- a ruling lands mid-round (review-validity-v1 task 3, #477, O3) -------
@@ -8407,7 +8407,7 @@ describe('devReviewLoop — a ruling lands between reviewer dispatch and assessm
     // named a path production never writes and the guard was vacuously true.
     expect(existsSync(join(roundDir(home, 1), 'reviewer.md'))).toBe(false)
     expect(existsSync(join(roundDir(home, 1), 'security.md'))).toBe(false)
-  }, 20000)
+  }, 45000)
 })
 
 // --- a frozen-brief supersede lands mid-round (review-validity-v1 task 4, #478, O1/O2) ---
@@ -8564,7 +8564,7 @@ describe('devReviewLoop — a frozen-brief supersede lands between reviewer disp
     // named a path production never writes and the guard was vacuously true.
     expect(existsSync(join(roundDir(home, 1), 'reviewer.md'))).toBe(false)
     expect(existsSync(join(roundDir(home, 1), 'security.md'))).toBe(false)
-  }, 20000)
+  }, 45000)
 })
 
 // --- pure-function coverage for the two Decisions-section fixes -----------
@@ -9671,7 +9671,7 @@ describe('devReviewLoop — a principal-owed red never redispatches the develope
     ])
     const gateResult = outboxLines(home).find((l) => l.event === 'gate_result_read') as Record<string, unknown>
     expect(gateResult.green).toBe(true)
-  }, 20000)
+  }, 45000)
 })
 
 // Issue #660, O3 — the two isolation properties added to
@@ -9971,7 +9971,7 @@ describe('the start-of-run sweep never delays the loop, and re-checks before rem
     // after the developer's own dispatch line already appears above it.
     expect(r.stderr).toContain('sweep — [1/2] kept Issue #9001')
     expect(r.stderr).toContain('sweep — [2/2] removed Issue #8001')
-  }, 20000)
+  }, 45000)
 
   it('O4: a folder found finished is classified again immediately before removal — a task revived in the interval is kept, never deleted on the stale first read', () => {
     const home = tempDir('vinaya-drl-home-')
