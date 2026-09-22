@@ -831,12 +831,22 @@ export function buildReexecArgs(input: LoopInput, task: number): string[] {
  * concurrency (Traps to avoid) — never the legacy-layout half of the sweep
  * (Boundary: out of scope, and its own driver-side result was always
  * discarded anyway). Injectable (`LoopDeps.sweepTasksAtStart`) so a test
- * never shells out to real `gh` or touches a real runtime directory just
- * because a run started. Never rejects — every failure, including one from
- * `onDecision` itself, is caught and reported, so the caller can safely
- * await the returned promise unconditionally.
+ * calling `devReviewLoop()` in-process never shells out to real `gh` or
+ * touches a real runtime directory just because a run started — but that
+ * injection cannot reach a test that spawns the BUILT CLI as its own real
+ * subprocess (dependency injection never crosses a process boundary), and
+ * a subprocess fixture that pre-seeds its own task folder for a reason
+ * that has nothing to do with the sweep still pays a real classification
+ * pass every invocation. `VINAYA_SKIP_STARTUP_SWEEP` is that boundary's
+ * own opt-out: any real subprocess, not only a test one, may set it to
+ * skip the pass entirely; the sweep's own coverage stays real because ITS
+ * fixtures are the ones that must never set it. Never rejects — every
+ * failure, including one from `onDecision` itself, is caught and
+ * reported, so the caller can safely await the returned promise
+ * unconditionally.
  */
 async function defaultSweepTasksAtStart(task: number): Promise<void> {
+  if (process.env.VINAYA_SKIP_STARTUP_SWEEP) return
   try {
     await sweepModernTasksAsync(
       task,

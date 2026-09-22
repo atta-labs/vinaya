@@ -1903,8 +1903,14 @@ exit 1
 
 type CliResult = { status: number; stdout: string; stderr: string }
 
-function runLoop(home: string, cwd: string, path: string, budgetMs: number = SUBPROCESS_BUDGET_MS): CliResult {
-  return runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {}, budgetMs)
+function runLoop(
+  home: string,
+  cwd: string,
+  path: string,
+  budgetMs: number = SUBPROCESS_BUDGET_MS,
+  extraEnv: Record<string, string> = {}
+): CliResult {
+  return runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], extraEnv, budgetMs)
 }
 
 function runResume(home: string, cwd: string, path: string, pr: number): CliResult {
@@ -1985,7 +1991,22 @@ function fixtureChildEnv(home: string, path: string, extraEnv: Record<string, st
     if (key.startsWith('VINAYA_')) delete env[key]
   }
   delete env.AEG_REPO
-  return { ...env, HOME: home, PATH: path, GITHUB_REPOSITORY: FIXTURE_GITHUB_REPOSITORY, ...extraEnv }
+  // Every fixture here spawns the BUILT CLI as its own real subprocess, so
+  // the driver's own start-of-run sweep runs for real, not the injected
+  // no-op an in-process test gets — a fixture that pre-seeds its own task
+  // folder for a reason that has nothing to do with the sweep still paid a
+  // real classification pass on every invocation (Issue #697's own
+  // structural gap: dependency injection never crosses a process
+  // boundary). Skipped by default here; the sweep's own fixtures below
+  // override this back to `''` (falsy) to keep exercising the real thing.
+  return {
+    ...env,
+    HOME: home,
+    PATH: path,
+    GITHUB_REPOSITORY: FIXTURE_GITHUB_REPOSITORY,
+    VINAYA_SKIP_STARTUP_SWEEP: '1',
+    ...extraEnv
+  }
 }
 
 /**
@@ -9920,7 +9941,7 @@ describe('the start-of-run sweep never delays the loop, and re-checks before rem
     // developer has already been dispatched.
     mkdirSync(taskRunDir(home, 8001), { recursive: true })
 
-    const r = runLoop(home, cwd, path)
+    const r = runLoop(home, cwd, path, SUBPROCESS_BUDGET_MS, { VINAYA_SKIP_STARTUP_SWEEP: '' })
     expect(r.status).toBe(0)
     expect(r.stdout).toMatch(/publish/)
 
@@ -9969,7 +9990,7 @@ describe('the start-of-run sweep never delays the loop, and re-checks before rem
     // twice in succession, although the behavior itself was correct. Give
     // this integration-heavy case its own ceiling while retaining the tight
     // default for every ordinary fixture in this file.
-    const r = runLoop(home, cwd, path, 45_000)
+    const r = runLoop(home, cwd, path, 45_000, { VINAYA_SKIP_STARTUP_SWEEP: '' })
     expect(r.status).toBe(0)
     expect(r.stdout).toMatch(/publish/)
 
