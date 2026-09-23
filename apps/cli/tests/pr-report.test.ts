@@ -37,7 +37,6 @@ import {
   writeTokensBlock
 } from '../src/commands/pr-report'
 import { resolveTokenReportCapabilityWith } from '../src/lib/pr-report-engine'
-import { resetRuntimeDirCache } from '../src/lib/run-paths'
 import { spawnBudgetedAsync, stripVinayaEnv } from './lib/process-fixture'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -741,32 +740,39 @@ describe('defaultTestRunCache — one shared file regardless of PR_NUMBER (round
     const dir = mkdtempSync(join(tmpdir(), 'pr-report-scope-consistency-'))
     initTestGitRepo(dir)
     const runtimeDir = mkdtempSync(join(tmpdir(), 'pr-report-scope-consistency-runtime-'))
-    const previousRuntimeDir = process.env.VINAYA_RUNTIME_DIR
-    process.env.VINAYA_RUNTIME_DIR = runtimeDir
-    resetRuntimeDirCache()
-    try {
+    // A real subprocess, not an in-process `VINAYA_RUNTIME_DIR` mutation:
+    // `runtimeDirForThisRepo()` memoizes per process, so a fresh child is
+    // what actually gets a clean, isolated resolution — the same discipline
+    // the spawn test above already uses, and it costs this file no direct
+    // import of `run-paths.ts` (which would itself become a NEW depth-one
+    // edge into O1's own log-sink/config/run-paths reference change set).
+    const script = join(dir, 'scope-consistency.ts')
+    const engine = join(CLI_ROOT, 'src', 'lib', 'pr-report-engine.ts')
+    writeFileSync(
+      script,
+      `import { buildReport, recordGreenTestRun } from ${JSON.stringify(engine)}
       const command = 'echo hi'
-      // Mirrors the hook's own writer: no PR_NUMBER in play at all.
-      const recorded = await recordGreenTestRun(command, 'hi', dir, 'pre-push')
-      expect(recorded).toBe(true)
-
-      const body = ['## Test Plan', '', '```', command, '```'].join('\n')
-      // Mirrors `pr report --push <n>` against a real open PR: PR_NUMBER set
-      // in the env `buildReport` reads Group C's extra env from.
+      const recorded = await recordGreenTestRun(command, 'hi', ${JSON.stringify(dir)}, 'pre-push')
+      if (!recorded) throw new Error('recordGreenTestRun returned false')
+      const fence = String.fromCharCode(96).repeat(3)
+      const body = ['## Test Plan', '', fence, command, fence].join('\\n')
       const result = await buildReport({
-        groupA: FIXED_GROUP_A,
-        gateRunner: () => PASSING_GATES,
+        groupA: { head: 'a'.repeat(40), base: 'b'.repeat(40), numstat: '' },
+        gateRunner: () => ({ outcomes: [], failed: false }),
         body,
-        cwd: dir,
+        cwd: ${JSON.stringify(dir)},
         envOverlay: { PR_NUMBER: '999' }
       })
-      expect(result.block).toContain('Reused from a green run recorded')
-      expect(result.block).toContain('(pre-push)')
-    } finally {
-      if (previousRuntimeDir === undefined) delete process.env.VINAYA_RUNTIME_DIR
-      else process.env.VINAYA_RUNTIME_DIR = previousRuntimeDir
-      resetRuntimeDirCache()
-    }
+      console.log(result.block)`
+    )
+    const out = await spawnBudgetedAsync(
+      ['bun', script],
+      { cwd: dir, env: { ...stripVinayaEnv(), VINAYA_RUNTIME_DIR: runtimeDir } },
+      undefined,
+      'scope-consistency.ts'
+    )
+    expect(out.stdout).toContain('Reused from a green run recorded')
+    expect(out.stdout).toContain('(pre-push)')
   })
 })
 
