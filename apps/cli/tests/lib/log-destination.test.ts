@@ -29,7 +29,7 @@ import {
   resolveLogDestinationFrom,
   type LogSinkDeps
 } from '../../src/lib/log-sink.js'
-import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
+import { spawnBudgetedAsync, stripVinayaEnv } from './process-fixture'
 
 const DEFAULT_FOLDER = '/h/runtime/atta-labs-vinaya/logs'
 
@@ -371,8 +371,24 @@ function initGitRepo(cwd: string): void {
 
 const LOG_SINK_PATH = join(import.meta.dir, '..', '..', 'src', 'lib', 'log-sink.ts')
 
-/** Runs a fresh `bun` subprocess that logs one `dispatched` event through a sink pinned to a `{kind: 'server', url}` destination, then exits — proving the sink's own append-then-drain sequencing without touching this test process's real `~/.vinaya`. */
-function runServerDestinationScript(home: string, cwd: string, url: string, effectId: string): void {
+/**
+ * Runs a fresh `bun` subprocess that logs one `dispatched` event through a
+ * sink pinned to a `{kind: 'server', url}` destination, then exits — proving
+ * the sink's own append-then-drain sequencing without touching this test
+ * process's real `~/.vinaya`.
+ *
+ * Async launch, not `spawnSyncBudgeted`: for a real `url` (`startWebhookServer`,
+ * below), the child's own drain POSTs back to THIS test process's
+ * `Bun.serve()` instance — a synchronous spawn here would block the one
+ * thread that server's `fetch` handler also needs to run on, and on Bun
+ * 1.4.2 (a genuinely blocking synchronous spawn, unlike 1.2.14's
+ * event-loop-spinning one) the request would never be answered at all
+ * (found live running this task's own required Test Plan; escalated on
+ * Issue #706 before this fix, since neither this file nor these two tests
+ * were named among the seven Bun-1.4.2 failures the task's Boundary lists —
+ * same root cause as O4's three named `log-webhook-flush.test.ts` tests).
+ */
+async function runServerDestinationScript(home: string, cwd: string, url: string, effectId: string): Promise<void> {
   const script = join(cwd, `run-log-${effectId}.ts`)
   writeFileSync(
     script,
@@ -387,13 +403,7 @@ function runServerDestinationScript(home: string, cwd: string, url: string, effe
     })
     await new Promise((r) => setTimeout(r, 400))`
   )
-  spawnSyncBudgeted(
-    'bun',
-    [script],
-    { encoding: 'utf8', cwd, env: { ...stripVinayaEnv(), HOME: home } },
-    undefined,
-    'run-log.ts'
-  )
+  await spawnBudgetedAsync(['bun', script], { cwd, env: { ...stripVinayaEnv(), HOME: home } }, undefined, 'run-log.ts')
 }
 
 function queuePath(home: string): string {
@@ -401,13 +411,13 @@ function queuePath(home: string): string {
 }
 
 describe('log-sink — a server destination appends locally first, then drains (O2)', () => {
-  it('a single event lands in the queue and reaches the server, which truncates it', () => {
+  it('a single event lands in the queue and reaches the server, which truncates it', async () => {
     const cwd = tempDir()
     initGitRepo(cwd)
     const home = tempDir()
     const server = startWebhookServer(200)
 
-    runServerDestinationScript(home, cwd, server.url, 'e1')
+    await runServerDestinationScript(home, cwd, server.url, 'e1')
     server.stop()
 
     expect(server.requests).toHaveLength(1)
@@ -419,31 +429,31 @@ describe('log-sink — a server destination appends locally first, then drains (
     expect(readFileSync(queuePath(home), 'utf8')).toBe('')
   })
 
-  it('an event queues locally and survives an unreachable server — nothing lost, nothing thrown', () => {
+  it('an event queues locally and survives an unreachable server — nothing lost, nothing thrown', async () => {
     const cwd = tempDir()
     initGitRepo(cwd)
     const home = tempDir()
 
-    runServerDestinationScript(home, cwd, 'http://127.0.0.1:1/never-reached', 'e2')
+    await runServerDestinationScript(home, cwd, 'http://127.0.0.1:1/never-reached', 'e2')
 
     const afterFailure = readFileSync(queuePath(home), 'utf8').trim().split('\n')
     expect(afterFailure).toHaveLength(1)
     expect(JSON.parse(afterFailure[0]!).effect_id).toBe('e2')
   })
 
-  it('a later event catches up the backlog once the server is back — delivered in order, no separate retry timer', () => {
+  it('a later event catches up the backlog once the server is back — delivered in order, no separate retry timer', async () => {
     const cwd = tempDir()
     initGitRepo(cwd)
     const home = tempDir()
 
     // First attempt: server unreachable, the line stays queued.
-    runServerDestinationScript(home, cwd, 'http://127.0.0.1:1/never-reached', 'first')
+    await runServerDestinationScript(home, cwd, 'http://127.0.0.1:1/never-reached', 'first')
     expect(readFileSync(queuePath(home), 'utf8').trim().split('\n')).toHaveLength(1)
 
     // Second attempt, same queue file, server now live: its own drain reads
     // the WHOLE file — both the backlogged first line and this one.
     const server = startWebhookServer(200)
-    runServerDestinationScript(home, cwd, server.url, 'second')
+    await runServerDestinationScript(home, cwd, server.url, 'second')
     server.stop()
 
     expect(server.requests).toHaveLength(1)
