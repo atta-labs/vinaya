@@ -576,11 +576,11 @@ async function testRunCacheKey(command: string, cwd?: string): Promise<string> {
   const diff = await git(['diff', 'HEAD'], cwd)
   const hash = createHash('sha256')
   hash.update(hostname())
-  hash.update(' ')
+  hash.update(' ')
   hash.update(head)
-  hash.update(' ')
+  hash.update(' ')
   hash.update(status)
-  hash.update(' ')
+  hash.update(' ')
   hash.update(diff)
   const untracked = status
     .split('\n')
@@ -589,7 +589,7 @@ async function testRunCacheKey(command: string, cwd?: string): Promise<string> {
     .sort()
   const base = cwd ?? process.cwd()
   for (const f of untracked) {
-    hash.update(' ')
+    hash.update(' ')
     hash.update(f)
     try {
       hash.update(readFileSync(join(base, f)))
@@ -597,7 +597,7 @@ async function testRunCacheKey(command: string, cwd?: string): Promise<string> {
       hash.update('MISSING')
     }
   }
-  hash.update(' ')
+  hash.update(' ')
   hash.update(command)
   return hash.digest('hex')
 }
