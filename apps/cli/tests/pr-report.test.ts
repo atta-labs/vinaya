@@ -37,6 +37,7 @@ import {
   writeTokensBlock
 } from '../src/commands/pr-report'
 import { resolveTokenReportCapabilityWith } from '../src/lib/pr-report-engine'
+import { resetRuntimeDirCache } from '../src/lib/run-paths'
 import { spawnBudgetedAsync, stripVinayaEnv } from './lib/process-fixture'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -726,6 +727,74 @@ describe('recordGreenTestRun — the pre-push hook half of O3 reuse (round-2 rev
     const records = Object.values(cacheContents)
     expect(records).toHaveLength(1)
     expect(records[0]?.source).toBe('pre-push')
+  })
+})
+
+// Round-3 security review, MEDIUM — `defaultTestRunCache` used to scope its
+// file by `PR_NUMBER` when one was set, but the pre-push hook's own writer
+// never sets one (it runs at push time, often before a PR exists) — so the
+// hook always wrote the unscoped file while `pr report --push` on a real
+// open PR set `PR_NUMBER` and read/wrote a DIFFERENT, PR-scoped file. Fixed:
+// one shared, always-unscoped file for every caller.
+describe('defaultTestRunCache — one shared file regardless of PR_NUMBER (round-3 security review, MEDIUM)', () => {
+  it('a run the pre-push hook recorded is reused by buildReport even when PR_NUMBER is set, the real `pr report --push` shape', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-scope-consistency-'))
+    initTestGitRepo(dir)
+    const runtimeDir = mkdtempSync(join(tmpdir(), 'pr-report-scope-consistency-runtime-'))
+    const previousRuntimeDir = process.env.VINAYA_RUNTIME_DIR
+    process.env.VINAYA_RUNTIME_DIR = runtimeDir
+    resetRuntimeDirCache()
+    try {
+      const command = 'echo hi'
+      // Mirrors the hook's own writer: no PR_NUMBER in play at all.
+      const recorded = await recordGreenTestRun(command, 'hi', dir, 'pre-push')
+      expect(recorded).toBe(true)
+
+      const body = ['## Test Plan', '', '```', command, '```'].join('\n')
+      // Mirrors `pr report --push <n>` against a real open PR: PR_NUMBER set
+      // in the env `buildReport` reads Group C's extra env from.
+      const result = await buildReport({
+        groupA: FIXED_GROUP_A,
+        gateRunner: () => PASSING_GATES,
+        body,
+        cwd: dir,
+        envOverlay: { PR_NUMBER: '999' }
+      })
+      expect(result.block).toContain('Reused from a green run recorded')
+      expect(result.block).toContain('(pre-push)')
+    } finally {
+      if (previousRuntimeDir === undefined) delete process.env.VINAYA_RUNTIME_DIR
+      else process.env.VINAYA_RUNTIME_DIR = previousRuntimeDir
+      resetRuntimeDirCache()
+    }
+  })
+})
+
+// Round-3 security review, LOW — git's default `--porcelain` output QUOTES
+// any path with a space, a quote, or a non-ASCII byte (`"a file.txt"`,
+// escapes and all); reading that quoted text straight off `git status` and
+// joining it onto the working directory always misses the real file, so
+// such a path fell back to the constant `'MISSING'` hash contribution and a
+// content-only edit to it never invalidated a cached result. Fixed: `-z`
+// disables the quoting and NUL-terminates each record instead.
+describe('testRunCacheKey — a quoted/escaped path from git status still invalidates reuse (round-3 security review, LOW)', () => {
+  it('editing the content of an untracked file whose name contains a space invalidates reuse', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-quoted-path-'))
+    initTestGitRepo(dir)
+    const cache = memoryTestRunCache()
+    const counterFile = join(mkdtempSync(join(tmpdir(), 'pr-report-quoted-path-counter-')), 'counter.txt')
+    const command = `echo -n x >> ${counterFile}`
+    const spacedPath = join(dir, 'a file with spaces.txt')
+    writeFileSync(spacedPath, 'v1\n')
+
+    await runAgentCommand(command, undefined, dir, {}, cache)
+    expect(readFileSync(counterFile, 'utf8')).toBe('x')
+
+    writeFileSync(spacedPath, 'v2\n')
+
+    const afterEdit = await runAgentCommand(command, undefined, dir, {}, cache)
+    expect(afterEdit.reusedFrom).toBeUndefined()
+    expect(readFileSync(counterFile, 'utf8')).toBe('xx')
   })
 })
 

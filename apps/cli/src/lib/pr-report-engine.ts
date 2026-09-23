@@ -22,7 +22,7 @@ import { type DispatchTeeRecovery, realDispatchTeeRecoveryDeps, recoverUsageFrom
 import { collectBodyCheckErrors } from './forge-write.js'
 import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from './numstat'
 import { packageRoot } from './package-root.js'
-import { ensureRunDir, runPath, runtimeDirForThisRepo, type RunScope } from './run-paths.js'
+import { ensureRunDir, runPath, runtimeDirForThisRepo } from './run-paths.js'
 import { meteringRefusalMessage, realDeps } from '../commands/tokens'
 
 /**
@@ -547,18 +547,25 @@ export function fileBackedTestRunCache(path: string, runtimeDir: string): TestRu
 
 /**
  * The default cache location for a live process: this repository's own
- * runtime directory, scoped to the PR when `extraEnv.PR_NUMBER` names one
- * (matching Group C's own `[agent]` commands, which already receive it) or
- * `'unscoped'` otherwise — a Test-plan command run before a PR exists (the
- * pre-push hook's own first push) still has somewhere real to land, and both
- * write into the SAME file for a given repo, so a run the hook already
- * proved green is the one a later `pr report` on the same head/tree finds.
+ * runtime directory, always `'unscoped'` — deliberately NOT scoped by PR
+ * number (round-3 security review, MEDIUM). A PR-scoped path looked
+ * reasonable in isolation, but the pre-push hook's own writer
+ * (`pre-push-cache-test-run.ts`) never has a PR number to set — it runs at
+ * push time, often before a PR even exists — so it always wrote the
+ * unscoped file while `pr report --push` on a real open PR set `PR_NUMBER`
+ * and read/wrote a DIFFERENT, PR-scoped one: two files for the same repo
+ * state, so a run the hook already proved green was never found by the
+ * primary real-PR evidence path. The cache key itself (`testRunCacheKey`)
+ * already disambiguates every dimension that matters — head, working tree,
+ * command, machine — so a second axis of separation by PR number was never
+ * load-bearing for correctness, only for tidiness; one shared file per repo
+ * is what actually delivers "in the pre-push hook or an earlier pr report"
+ * reuse for every caller, not just the ones that happen to agree on a PR
+ * number.
  */
-export function defaultTestRunCache(extraEnv: Record<string, string> = {}): TestRunCache {
+export function defaultTestRunCache(): TestRunCache {
   const runtimeDir = runtimeDirForThisRepo()
-  const pr = Number(extraEnv.PR_NUMBER)
-  const scope: RunScope = extraEnv.PR_NUMBER && Number.isFinite(pr) && pr > 0 ? { pr } : 'unscoped'
-  const path = runPath(runtimeDir, scope, { area: 'output', file: 'test-run-cache.json' })
+  const path = runPath(runtimeDir, 'unscoped', { area: 'output', file: 'test-run-cache.json' })
   return fileBackedTestRunCache(path, runtimeDir)
 }
 
@@ -607,11 +614,23 @@ async function gitOrNull(args: string[], cwd?: string): Promise<string | null> {
  * throws — from the per-entry loop below), so the directory's mere
  * presence/absence still changes the key; a content change to a file NESTED
  * inside it does not. A known, accepted gap, not a silent one.
+ *
+ * `-z` (round-3 security review, LOW): git's DEFAULT `--porcelain` quotes any
+ * path containing a space, a double quote, or a non-ASCII byte, wrapping it
+ * in `"…"` with C-style escapes — a real path read that way still carries
+ * its quotes and escape sequences, so `readFileSync` on it always misses and
+ * every such file silently falls back to the constant `'MISSING'` hash
+ * contribution, meaning a real content edit to it never invalidates a
+ * cached result. `-z` disables that quoting entirely and NUL-terminates
+ * each record instead of newline-terminating it, so every path below is the
+ * exact, literal one `readFileSync` needs.
  */
+const NUL = String.fromCharCode(0)
+
 async function testRunCacheKey(command: string, cwd?: string): Promise<string | null> {
   const head = await gitOrNull(['rev-parse', 'HEAD'], cwd)
   if (!head) return null
-  const status = await gitOrNull(['status', '--porcelain=v1', '-uall', '--ignored'], cwd)
+  const status = await gitOrNull(['status', '--porcelain=v1', '-uall', '--ignored', '-z'], cwd)
   if (status === null) return null
   const diff = await gitOrNull(['diff', 'HEAD'], cwd)
   if (diff === null) return null
@@ -624,9 +643,9 @@ async function testRunCacheKey(command: string, cwd?: string): Promise<string | 
   hash.update(' ')
   hash.update(diff)
   const uncommitted = status
-    .split('\n')
-    .filter((l) => l.startsWith('?? ') || l.startsWith('!! '))
-    .map((l) => l.slice(3).trim())
+    .split(NUL)
+    .filter((entry) => entry.startsWith('?? ') || entry.startsWith('!! '))
+    .map((entry) => entry.slice(3))
     .sort()
   const base = cwd ?? process.cwd()
   for (const f of uncommitted) {
@@ -1491,12 +1510,7 @@ export async function buildReport(
   if (ambientReportEnv.BRANCH !== undefined) groupCExtraEnv.BRANCH = ambientReportEnv.BRANCH
   const groupC =
     opts.groupC ??
-    (await computeGroupC(
-      gradedBody,
-      opts.cwd,
-      groupCExtraEnv,
-      opts.testRunCache ?? defaultTestRunCache(groupCExtraEnv)
-    ))
+    (await computeGroupC(gradedBody, opts.cwd, groupCExtraEnv, opts.testRunCache ?? defaultTestRunCache()))
   const blockInner = buildBlockInner(groupA, outcomes, groupC, gradedBodySource)
   const block = `${EVIDENCE_START}\n${blockInner}\n${EVIDENCE_END}`
   return {
