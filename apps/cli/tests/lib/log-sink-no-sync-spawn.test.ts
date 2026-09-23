@@ -19,6 +19,7 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -127,5 +128,110 @@ describe('log() never makes a synchronous spawn', () => {
     })
     expect(r.syncCalls).toEqual([])
     expect(landedIn(join(outside, 'logs'))).toBe(true)
+  }, 30000)
+})
+
+// The default-branch `logs` read (an unattended caller consults it even when
+// its own working tree declares no `logs`) has two rules of its own, each
+// held here against the real default sink in its own process:
+//   - whether a process is unattended is decided by THAT process's own
+//     environment — `dispatchRole` hands its sink a synthetic env carrying the
+//     CHILD's `VINAYA_ROLE` for attribution, and an attended parent must never
+//     do a forge read because of it;
+//   - the read is silent — its fallback warning would otherwise land on the
+//     stdout that `vinaya dispatch --json` and every check own.
+const ANCHOR_PROBE = `
+const { createLogSink } = await import(${JSON.stringify(LOG_SINK)})
+const eventEnv = process.env.PROBE_EVENT_ROLE ? { ...process.env, VINAYA_ROLE: process.env.PROBE_EVENT_ROLE } : process.env
+const { log } = createLogSink({ env: () => eventEnv })
+log({
+  kind: 'dispatch',
+  event: 'dispatched',
+  payload: {},
+  target_role: 'developer',
+  model: 'sonnet',
+  effect_id: 'anchor-probe',
+  prompt_hash: 'sha256:abc'
+})
+await new Promise((resolve) => setTimeout(resolve, 1500))
+`
+
+function setUpAnchorFixture(ghMode: 'answers' | 'fails'): {
+  cwd: string
+  anchorLogs: string
+  ghCalls: string
+  env: Record<string, string>
+} {
+  const cwd = tempDir('vinaya-anchor-probe-')
+  const outside = tempDir('vinaya-anchor-probe-out-')
+  execFileSync('git', ['init', '--quiet'], { cwd })
+  const anchorLogs = join(outside, 'anchor-logs')
+  const content = Buffer.from(JSON.stringify({ logs: { folder: anchorLogs } })).toString('base64')
+  const bin = join(cwd, 'bin')
+  mkdirSync(bin)
+  const ghCalls = join(outside, 'gh-calls.txt')
+  const answer = ghMode === 'answers' ? `echo '${content}'` : `echo 'HTTP 500: server error' >&2; exit 1`
+  writeFileSync(join(bin, 'gh'), `#!/bin/sh\necho "$*" >> '${ghCalls}'\n${answer}\n`, { mode: 0o755 })
+  return {
+    cwd,
+    anchorLogs,
+    ghCalls,
+    env: {
+      HOME: cwd,
+      AEG_REPO: 'example/example',
+      GITHUB_REPOSITORY: 'example/example',
+      PATH: `${bin}:${process.env.PATH}`
+    }
+  }
+}
+
+function runAnchorProbe(cwd: string, env: Record<string, string>): { stdout: string } {
+  const probe = join(cwd, 'anchor-probe.mjs')
+  writeFileSync(probe, ANCHOR_PROBE, 'utf8')
+  const r = spawnSyncBudgeted(
+    'bun',
+    [probe],
+    { cwd, encoding: 'utf8', env: { ...stripVinayaEnv(), ...env } },
+    20_000,
+    'log-sink default-branch anchor probe'
+  )
+  expect(r.status).toBe(0)
+  return { stdout: r.stdout }
+}
+
+function lineIn(dir: string, marker: string): boolean {
+  try {
+    return ndjsonUnder(dir).some((file) => readFileSync(file, 'utf8').includes(marker))
+  } catch {
+    return false
+  }
+}
+
+describe('the default-branch logs read belongs to the process, and is silent', () => {
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('an attended process whose event carries a child role never reads the default branch', () => {
+    const f = setUpAnchorFixture('answers')
+    runAnchorProbe(f.cwd, { ...f.env, PROBE_EVENT_ROLE: 'developer' })
+    expect(existsSync(f.ghCalls)).toBe(false)
+    expect(lineIn(join(f.cwd, '.vinaya'), 'anchor-probe')).toBe(true)
+    expect(lineIn(f.anchorLogs, 'anchor-probe')).toBe(false)
+  }, 30000)
+
+  it('an unattended process with no local logs setting delivers to the default branch’s folder', () => {
+    const f = setUpAnchorFixture('answers')
+    runAnchorProbe(f.cwd, { ...f.env, VINAYA_ROLE: 'developer' })
+    expect(readFileSync(f.ghCalls, 'utf8')).toContain('contents/vinaya.config.json')
+    expect(lineIn(f.anchorLogs, 'anchor-probe')).toBe(true)
+  }, 30000)
+
+  it('an unreadable default branch falls back to the local default and writes nothing to stdout', () => {
+    const f = setUpAnchorFixture('fails')
+    const { stdout } = runAnchorProbe(f.cwd, { ...f.env, VINAYA_ROLE: 'developer' })
+    expect(readFileSync(f.ghCalls, 'utf8')).toContain('contents/vinaya.config.json')
+    expect(stdout).toBe('')
+    expect(lineIn(join(f.cwd, '.vinaya'), 'anchor-probe')).toBe(true)
   }, 30000)
 })
