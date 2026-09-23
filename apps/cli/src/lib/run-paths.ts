@@ -44,8 +44,8 @@
  * the repo.
  */
 import { execFileSync } from 'node:child_process'
-import { chmodSync } from 'node:fs'
-import { join, resolve as resolvePath } from 'node:path'
+import { chmodSync, existsSync, realpathSync } from 'node:fs'
+import { dirname, join, resolve as resolvePath } from 'node:path'
 import { CONTROL_AREA_DIRNAME, mkdirNoSymlinks } from '@attalabs/aeg-core'
 import {
   GLOBAL_VINAYA_HOME,
@@ -371,15 +371,30 @@ function resolveRuntimeDirUncached(repo: RunPathsRepo): string {
   })
 }
 
-/** The enclosing repository's root, or `null` outside one — used only to refuse a `runtimeDir` that points inside the working tree. */
-function repoRootSync(): string | null {
+/**
+ * The enclosing repository's root, or `null` outside one — used only to
+ * refuse a `runtimeDir` that points inside the working tree.
+ *
+ * Found by walking up from the working directory to the first `.git` entry
+ * (a directory, or the file a linked worktree carries), never by spawning
+ * `git`. The log sink reaches this on its first event, which lands while a
+ * batch of check children is still running; a synchronous spawn at that
+ * moment intermittently swallows their exit, so the runner never sees them
+ * finish and records a finished check as a timeout. Reading the filesystem
+ * blocks nothing.
+ */
+export function repoRootSync(start: string = process.cwd()): string | null {
+  let dir: string
   try {
-    return execFileSync('git', ['rev-parse', '--show-toplevel'], {
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'pipe']
-    }).trim()
+    dir = realpathSync(start)
   } catch {
     return null
+  }
+  for (;;) {
+    if (existsSync(join(dir, '.git'))) return dir
+    const parent = dirname(dir)
+    if (parent === dir) return null
+    dir = parent
   }
 }
 
