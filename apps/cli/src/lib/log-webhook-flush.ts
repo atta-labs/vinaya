@@ -19,9 +19,20 @@
  * § The destination), never batched at a round end.
  */
 
-import { lstatSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  closeSync,
+  constants as fsConstants,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+  writeSync
+} from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import { classifyStoredLine } from '@attalabs/aeg-core'
 import { outboxPathFor as sinkOutboxPathFor } from './log-sink.js'
@@ -41,8 +52,82 @@ function isSafeRepoSegment(segment: string): boolean {
   return SAFE_PATH_SEGMENT.test(segment) && !segment.includes('..')
 }
 
+function isErrnoCode(err: unknown, code: string): boolean {
+  return typeof err === 'object' && err !== null && (err as NodeJS.ErrnoException).code === code
+}
+
 function isEnoent(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && (err as NodeJS.ErrnoException).code === 'ENOENT'
+  return isErrnoCode(err, 'ENOENT')
+}
+
+/** A lock older than this was almost certainly abandoned by a holder that crashed mid-flush — normal completion always removes its own lock well before this — so it is stolen rather than left to jam every future drain of this queue file forever. Set well above `WEBHOOK_FETCH_TIMEOUT_MS`, the longest a healthy holder can legitimately still be inside the critical section. */
+export const WEBHOOK_FLUSH_LOCK_STALE_MS = 4 * WEBHOOK_FETCH_TIMEOUT_MS
+
+function tryCreateLock(lockPath: string): boolean {
+  try {
+    // The outbox directory may not exist yet — nothing has appended to this
+    // task's queue file before (e.g. a bare `vinaya log flush` against a
+    // task nothing ever logged for); `O_CREAT` on the lock file itself never
+    // creates a missing parent, so it must be made here first, same 0o700
+    // mode `log-sink.ts`'s own `appendLine` already uses.
+    mkdirSync(dirname(lockPath), { recursive: true, mode: 0o700 })
+    const fd = openSync(lockPath, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL, 0o600)
+    try {
+      writeSync(fd, `${process.pid}\n`)
+    } finally {
+      closeSync(fd)
+    }
+    return true
+  } catch (err) {
+    if (isErrnoCode(err, 'EEXIST')) return false
+    throw err
+  }
+}
+
+/**
+ * Cross-process mutual exclusion for the read-then-truncate below (round-2
+ * security review, BLOCKER) — two OS processes, each running their own
+ * `log-sink.ts` instance against the SAME `<owner>-<repo>/<task>.ndjson`
+ * queue file (`dev-review-loop.ts` runs the reviewer and security roles
+ * inside one `Promise.all`, each with its own `vinaya` invocations), can
+ * otherwise both read the queue, both POST, and both truncate — one
+ * process's `writeFileSync(path, tail)` silently discarding a line the
+ * other appended in the gap, or both processes double-posting the same
+ * lines. A `.flush-lock` sibling file, created with `O_EXCL` (atomic — the
+ * filesystem picks exactly one winner, the same primitive
+ * `control-store/local.ts` already uses for its own exclusive claims),
+ * serializes the two. A caller that loses the race never blocks: it
+ * returns immediately and the caller treats that exactly like "nothing to
+ * flush this call" — the file is untouched, and the NEXT event's own drain
+ * (this process's chained one, or another process's) retries, so delivery
+ * still catches up in order, just not on this exact call.
+ */
+function acquireFlushLock(lockPath: string): boolean {
+  if (tryCreateLock(lockPath)) return true
+  let stale: boolean
+  try {
+    stale = Date.now() - statSync(lockPath).mtimeMs > WEBHOOK_FLUSH_LOCK_STALE_MS
+  } catch (err) {
+    if (!isEnoent(err)) throw err
+    // The lock vanished between the failed create above and this stat — its
+    // holder just finished. One more attempt rather than giving up here.
+    return tryCreateLock(lockPath)
+  }
+  if (!stale) return false
+  try {
+    unlinkSync(lockPath)
+  } catch (err) {
+    if (!isEnoent(err)) throw err
+  }
+  return tryCreateLock(lockPath)
+}
+
+function releaseFlushLock(lockPath: string): void {
+  try {
+    unlinkSync(lockPath)
+  } catch (err) {
+    if (!isEnoent(err)) throw err
+  }
 }
 
 export type WebhookFlushOutcome = { flushed: false } | { flushed: true; lineCount: number; bytes: number }
@@ -87,79 +172,85 @@ export async function flushOutboxToWebhook(
   const outboxRoot = () => join(GLOBAL_VINAYA_HOME, 'outbox')
   const path = sinkOutboxPathFor({ outboxRoot }, repo, outboxTask)
 
-  let lstat: ReturnType<typeof lstatSync> | undefined
+  const lockPath = `${path}.flush-lock`
+  if (!acquireFlushLock(lockPath)) return { flushed: false }
   try {
-    lstat = lstatSync(path)
-  } catch (err) {
-    if (!isEnoent(err)) throw err
-  }
-  if (lstat === undefined) return { flushed: false }
-  if (!lstat.isFile()) {
-    throw new WebhookFlushError(
-      'log-webhook-flush-symlink',
-      `log webhook flush: outbox target is not a regular file (symlink, FIFO, or similar) — refusing to read: ${path}`
-    )
-  }
-
-  const buf = readFileSync(path)
-  const startOffset = buf.byteLength
-  const rawLines = buf
-    .toString('utf8')
-    .split('\n')
-    .filter((l) => l.length > 0)
-  if (rawLines.length === 0) return { flushed: false }
-
-  const postLines: string[] = []
-  for (let i = 0; i < rawLines.length; i++) {
-    const record = classifyStoredLine(rawLines[i] as string, homedir())
-    if (record.status !== 'ok') {
+    let lstat: ReturnType<typeof lstatSync> | undefined
+    try {
+      lstat = lstatSync(path)
+    } catch (err) {
+      if (!isEnoent(err)) throw err
+    }
+    if (lstat === undefined) return { flushed: false }
+    if (!lstat.isFile()) {
       throw new WebhookFlushError(
-        'log-webhook-flush-corrupt-line',
-        `log webhook flush: outbox line ${i} failed schema re-validation — ${record.reason}`
+        'log-webhook-flush-symlink',
+        `log webhook flush: outbox target is not a regular file (symlink, FIFO, or similar) — refusing to read: ${path}`
       )
     }
-    postLines.push(record.postLine)
-  }
 
-  const body = `${postLines.join('\n')}\n`
-  const bytes = Buffer.byteLength(body, 'utf8')
-  if (bytes > MAX_WEBHOOK_BODY_BYTES) {
-    throw new WebhookFlushError(
-      'log-webhook-flush-too-large',
-      `log webhook flush: outbox body is ${bytes} byte(s), over the ${MAX_WEBHOOK_BODY_BYTES}-byte per-call cap — flush more often to drain it.`
-    )
-  }
+    const buf = readFileSync(path)
+    const startOffset = buf.byteLength
+    const rawLines = buf
+      .toString('utf8')
+      .split('\n')
+      .filter((l) => l.length > 0)
+    if (rawLines.length === 0) return { flushed: false }
 
-  let response: Response
-  try {
-    response = await fetch(webhookUrl, {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-ndjson', ...headers },
-      body,
-      signal: AbortSignal.timeout(fetchTimeoutMs)
-    })
-  } catch (err) {
-    const reason =
-      err instanceof Error && err.name === 'TimeoutError'
-        ? `timed out after ${fetchTimeoutMs}ms`
-        : err instanceof Error
-          ? err.message
-          : String(err)
-    throw new WebhookFlushError(
-      'log-webhook-flush-failed',
-      `log webhook flush: POST to ${webhookUrl} failed: ${reason}`
-    )
-  }
-  if (!response.ok) {
-    throw new WebhookFlushError(
-      'log-webhook-flush-failed',
-      `log webhook flush: POST to ${webhookUrl} returned ${response.status} ${response.statusText}`
-    )
-  }
+    const postLines: string[] = []
+    for (let i = 0; i < rawLines.length; i++) {
+      const record = classifyStoredLine(rawLines[i] as string, homedir())
+      if (record.status !== 'ok') {
+        throw new WebhookFlushError(
+          'log-webhook-flush-corrupt-line',
+          `log webhook flush: outbox line ${i} failed schema re-validation — ${record.reason}`
+        )
+      }
+      postLines.push(record.postLine)
+    }
 
-  const liveNow = readFileSync(path)
-  const tail = liveNow.subarray(Math.min(startOffset, liveNow.byteLength))
-  writeFileSync(path, tail)
+    const body = `${postLines.join('\n')}\n`
+    const bytes = Buffer.byteLength(body, 'utf8')
+    if (bytes > MAX_WEBHOOK_BODY_BYTES) {
+      throw new WebhookFlushError(
+        'log-webhook-flush-too-large',
+        `log webhook flush: outbox body is ${bytes} byte(s), over the ${MAX_WEBHOOK_BODY_BYTES}-byte per-call cap — flush more often to drain it.`
+      )
+    }
 
-  return { flushed: true, lineCount: postLines.length, bytes }
+    let response: Response
+    try {
+      response = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-ndjson', ...headers },
+        body,
+        signal: AbortSignal.timeout(fetchTimeoutMs)
+      })
+    } catch (err) {
+      const reason =
+        err instanceof Error && err.name === 'TimeoutError'
+          ? `timed out after ${fetchTimeoutMs}ms`
+          : err instanceof Error
+            ? err.message
+            : String(err)
+      throw new WebhookFlushError(
+        'log-webhook-flush-failed',
+        `log webhook flush: POST to ${webhookUrl} failed: ${reason}`
+      )
+    }
+    if (!response.ok) {
+      throw new WebhookFlushError(
+        'log-webhook-flush-failed',
+        `log webhook flush: POST to ${webhookUrl} returned ${response.status} ${response.statusText}`
+      )
+    }
+
+    const liveNow = readFileSync(path)
+    const tail = liveNow.subarray(Math.min(startOffset, liveNow.byteLength))
+    writeFileSync(path, tail)
+
+    return { flushed: true, lineCount: postLines.length, bytes }
+  } finally {
+    releaseFlushLock(lockPath)
+  }
 }

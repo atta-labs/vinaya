@@ -193,6 +193,45 @@ describe('resolveLogDestinationFrom (pure) — who is allowed to name the destin
       })
     ).toEqual({ kind: 'folder', folder: DEFAULT_FOLDER })
   })
+
+  it('refuses a folder inside the repository — for an ATTENDED caller too, mirroring resolveRuntimeDir’s isInsideRepo rule', () => {
+    expect(
+      resolveLogDestinationFrom({
+        localConfig: { logs: { folder: '/repo/.worktrees/task/5/logs' } } as VinayaConfig,
+        trustAnchorConfig: null,
+        unattended: false,
+        env: {},
+        defaultFolder: DEFAULT_FOLDER,
+        repoRoot: '/repo'
+      })
+    ).toEqual({ kind: 'folder', folder: DEFAULT_FOLDER })
+  })
+
+  it('refuses a folder that IS the repository root, not just a subpath', () => {
+    expect(
+      resolveLogDestinationFrom({
+        localConfig: { logs: { folder: '/repo' } } as VinayaConfig,
+        trustAnchorConfig: null,
+        unattended: true,
+        env: {},
+        defaultFolder: DEFAULT_FOLDER,
+        repoRoot: '/repo'
+      })
+    ).toEqual({ kind: 'folder', folder: DEFAULT_FOLDER })
+  })
+
+  it('honours a folder outside the repository, unaffected by the inside-repo refusal', () => {
+    expect(
+      resolveLogDestinationFrom({
+        localConfig: { logs: { folder: '/srv/logs' } } as VinayaConfig,
+        trustAnchorConfig: null,
+        unattended: false,
+        env: {},
+        defaultFolder: DEFAULT_FOLDER,
+        repoRoot: '/repo'
+      })
+    ).toEqual({ kind: 'folder', folder: '/srv/logs' })
+  })
 })
 
 // --- resolveLogAppendPath — the exact path log() will append to -----------

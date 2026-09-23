@@ -44,7 +44,7 @@ import {
   type LogsDestination,
   type VinayaConfig
 } from './config.js'
-import { isUnattendedProcess, runtimeDirForRepoAsync } from './run-paths.js'
+import { isInsideRepo, isUnattendedProcess, repoRootSync, runtimeDirForRepoAsync } from './run-paths.js'
 import { flushOutboxToWebhook } from './log-webhook-flush.js'
 import { packageRoot } from './package-root.js'
 
@@ -136,6 +136,15 @@ async function safeLoadTrustAnchorConfig(): Promise<VinayaConfig | null> {
  * Pure — takes the already-resolved local/trust-anchor config and the
  * per-repository default folder, so it is directly unit-testable with plain
  * objects, mirroring `run-paths.ts`'s own `resolveRuntimeDir`.
+ *
+ * A `folder` naming the repository itself, or anything inside it, is refused
+ * outright — for either caller, attended or unattended — exactly
+ * `resolveRuntimeDir`'s own `isInsideRepo` rule (round-2 security review,
+ * HIGH): a confined role granted write access to a path under the working
+ * tree (a worktree checkout included) must never also be able to forge or
+ * tamper with the append-only log recording its own task's events by writing
+ * into a `logs.folder` that happens to resolve there. Falls back to
+ * `defaultFolder`, the same as "no `logs` setting at all."
  */
 export function resolveLogDestinationFrom(input: {
   localConfig: VinayaConfig | null
@@ -143,6 +152,7 @@ export function resolveLogDestinationFrom(input: {
   unattended: boolean
   env: NodeJS.ProcessEnv
   defaultFolder: string
+  repoRoot?: string | null
 }): ResolvedLogDestination {
   const local = resolveLogsSetting(input.localConfig)
   let effective: LogsDestination | null = null
@@ -151,6 +161,9 @@ export function resolveLogDestinationFrom(input: {
   }
   if (effective && 'url' in effective) {
     return { kind: 'server', url: effective.url, headers: resolveLogsHeaderValues(effective.headers, input.env) }
+  }
+  if (effective && 'folder' in effective && isInsideRepo(effective.folder, input.repoRoot)) {
+    effective = null
   }
   const folder = effective && 'folder' in effective ? effective.folder : input.defaultFolder
   return { kind: 'folder', folder }
@@ -181,7 +194,8 @@ async function defaultResolveLogDestination(
     trustAnchorConfig: needsAnchor ? await safeLoadTrustAnchorConfig() : null,
     unattended,
     env,
-    defaultFolder: join(await runtimeDirForRepoAsync(repo), 'logs')
+    defaultFolder: join(await runtimeDirForRepoAsync(repo), 'logs'),
+    repoRoot: repoRootSync()
   })
 }
 

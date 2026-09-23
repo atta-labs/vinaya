@@ -10,11 +10,12 @@
 
 import { afterEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
+import { WEBHOOK_FLUSH_LOCK_STALE_MS } from '../../src/lib/log-webhook-flush.js'
+import { spawnBudgetedAsync, spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
@@ -112,6 +113,37 @@ function startWebhookServer(status = 200): {
 
 function writeWebhookConfig(cwd: string, webhookUrl: string, headers?: Record<string, string>): void {
   writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ logPublish: { webhookUrl, headers } }))
+}
+
+/** Like `startWebhookServer`, but holds the response for `delayMs` — long enough for a concurrently-spawned second `vinaya log flush` to observe the first's lock still held. */
+function startSlowWebhookServer(
+  status: number,
+  delayMs: number
+): { url: string; requests: CapturedRequest[]; stop: () => void } {
+  const requests: CapturedRequest[] = []
+  const server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const body = await req.text()
+      const headers: Record<string, string> = {}
+      req.headers.forEach((v, k) => {
+        headers[k] = v
+      })
+      requests.push({ body, headers })
+      await new Promise((r) => setTimeout(r, delayMs))
+      return new Response(status === 200 ? 'ok' : 'error', { status })
+    }
+  })
+  return { url: `http://127.0.0.1:${server.port}/ingest`, requests, stop: () => server.stop() }
+}
+
+function runCliAsync(args: string[], cwd: string, env: Record<string, string | undefined>): Promise<CliResult> {
+  return spawnBudgetedAsync(
+    ['bun', INDEX, ...args],
+    { cwd, env: { ...stripVinayaEnv(), ...env } },
+    6000,
+    'vinaya log flush (async)'
+  )
 }
 
 describe('vinaya log flush — logPublish.webhookUrl', () => {
@@ -240,5 +272,55 @@ describe('vinaya log flush — logPublish.webhookUrl', () => {
     expect(r.status).toBe(0)
     expect(r.stdout).toContain('nothing to flush')
     expect(server.requests.length).toBe(0)
+  })
+
+  it('round-2 security review, BLOCKER: two concurrent processes never race the same queue file — the loser backs off untouched instead of double-posting or dropping a line', async () => {
+    const cwd = tempDir('log-webhook-cwd-')
+    initGitRepo(cwd)
+    const home = tempDir('log-webhook-home-')
+    const server = startSlowWebhookServer(200, 500)
+    writeWebhookConfig(cwd, server.url)
+    const lines = [ndjsonLine('run-1', 705), ndjsonLine('run-2', 705)]
+    const path = seedOutbox(home, 705, lines)
+
+    const first = runCliAsync(['log', 'flush', '--issue', '705'], cwd, { HOME: home })
+    // Gives the first process time to win the lock and enter its (slow) POST
+    // before the second even starts — the second must find the lock already
+    // held for the whole window, not race to create it first.
+    await new Promise((r) => setTimeout(r, 150))
+    const second = runCliAsync(['log', 'flush', '--issue', '705'], cwd, { HOME: home })
+
+    const [r1, r2] = await Promise.all([first, second])
+    server.stop()
+
+    const results = [r1, r2]
+    const winner = results.find((r) => r.stdout.includes('posted'))
+    const loser = results.find((r) => r.stdout.includes('nothing to flush'))
+
+    expect(server.requests.length).toBe(1)
+    expect(winner?.stdout).toContain('posted 2 line(s)')
+    expect(loser).toBeDefined()
+    expect(readFileSync(path, 'utf8')).toBe('')
+  }, 10000)
+
+  it('round-2 security review, BLOCKER: a lock abandoned by a crashed holder is stolen once stale, not left to jam every future flush', () => {
+    const cwd = tempDir('log-webhook-cwd-')
+    initGitRepo(cwd)
+    const home = tempDir('log-webhook-home-')
+    const server = startWebhookServer(200)
+    writeWebhookConfig(cwd, server.url)
+    const line = ndjsonLine('run-1', 706)
+    const path = seedOutbox(home, 706, [line])
+    const lockPath = `${path}.flush-lock`
+    writeFileSync(lockPath, '999999\n')
+    const staleMtime = new Date(Date.now() - WEBHOOK_FLUSH_LOCK_STALE_MS - 5000)
+    utimesSync(lockPath, staleMtime, staleMtime)
+
+    const r = runCli(['log', 'flush', '--issue', '706'], cwd, { HOME: home })
+    server.stop()
+
+    expect(r.status).toBe(0)
+    expect(r.stdout).toContain('posted 1 line(s)')
+    expect(readFileSync(path, 'utf8')).toBe('')
   })
 })
