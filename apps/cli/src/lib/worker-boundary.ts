@@ -199,6 +199,130 @@ function runRealCodexLoginWithAccessToken(input: {
 }
 
 /**
+ * Round 7 review, BLOCKER: a bare `hooks.json` file dropped at `CODEX_HOME`
+ * root is never loaded by the real Codex CLI — live-verified on this
+ * authoring host (`codex-cli 0.152.1`): every real hooks.json this host
+ * carries lives inside an INSTALLED PLUGIN's own directory (e.g. a
+ * marketplace-installed `figma` plugin's `hooks.json`, found via `find
+ * ~/.codex -iname hooks.json`), never at `CODEX_HOME` root directly, and
+ * `codex doctor`'s own config report names no mechanism that would discover
+ * one there. Codex's real, documented, non-interactive path is `codex
+ * plugin marketplace add <local-dir>` (confirmed live: `codex plugin
+ * marketplace add --help` names `codex plugin marketplace add
+ * ./path/to/marketplace` as its own worked example) followed by `codex
+ * plugin add <plugin>@<marketplace>` — both plain local filesystem/config
+ * operations needing no ChatGPT/API credential at all, so both are
+ * live-verified end to end on this host: a scratch marketplace built to
+ * this exact shape (`buildCodexHooksMarketplace`, below) installed
+ * successfully into a scratch `CODEX_HOME` with `codex plugin list --json`
+ * confirming `"installed": true, "enabled": true` and the hooks.json
+ * content genuinely copied into
+ * `<CODEX_HOME>/plugins/cache/<marketplace>/<plugin>/<version>/hooks.json`.
+ * `--dangerously-bypass-hook-trust` (already passed at every Codex launch
+ * site, `dispatch.ts`) is what then lets an ENABLED plugin's hooks actually
+ * fire without an interactive trust prompt — installation and trust are the
+ * two separate gates this closes; only a live, authenticated turn can prove
+ * a hook actually FIRES mid-session, which remains outside what this
+ * dispatched session can reach (the same disclosed limit every other
+ * end-to-end Codex claim in this file already carries).
+ */
+const CODEX_HOOKS_MARKETPLACE_NAME = 'vinaya-dispatch'
+const CODEX_HOOKS_PLUGIN_NAME = 'vinaya-documentation-gate'
+
+/**
+ * Writes the marketplace + plugin manifests `runRealCodexPluginInstall`
+ * installs from — the exact shape live-verified against this host's real
+ * `codex plugin marketplace add`/`codex plugin add` (schema errors from
+ * real, wrong first attempts: the manifest must live at
+ * `<root>/.agents/plugins/marketplace.json`, never `<root>/marketplace.json`;
+ * `policy.authentication` accepts only `ON_INSTALL`/`ON_USE`, never `NONE`).
+ * `hooksJsonContent` is `dispatch.ts`'s own `writeCodexDispatchHooks`
+ * output, unmodified — this function only relocates it into the shape
+ * Codex's plugin system actually discovers.
+ */
+function buildCodexHooksMarketplace(marketplaceDir: string, hooksJsonContent: string): void {
+  const pluginRelDir = `./plugins/${CODEX_HOOKS_PLUGIN_NAME}`
+  const pluginDir = join(marketplaceDir, 'plugins', CODEX_HOOKS_PLUGIN_NAME)
+  mkdirSync(join(marketplaceDir, '.agents', 'plugins'), { recursive: true, mode: 0o700 })
+  mkdirSync(join(pluginDir, '.codex-plugin'), { recursive: true, mode: 0o700 })
+  writeFileSync(
+    join(marketplaceDir, '.agents', 'plugins', 'marketplace.json'),
+    JSON.stringify(
+      {
+        name: CODEX_HOOKS_MARKETPLACE_NAME,
+        interface: { displayName: 'Vinaya dispatch' },
+        plugins: [
+          {
+            name: CODEX_HOOKS_PLUGIN_NAME,
+            source: { source: 'local', path: pluginRelDir },
+            policy: { installation: 'AVAILABLE', authentication: 'ON_USE' },
+            category: 'Developer Tools'
+          }
+        ]
+      },
+      null,
+      2
+    ),
+    { mode: 0o600 }
+  )
+  writeFileSync(
+    join(pluginDir, '.codex-plugin', 'plugin.json'),
+    JSON.stringify(
+      {
+        name: CODEX_HOOKS_PLUGIN_NAME,
+        version: '0.0.1',
+        description: "Mechanizes this dispatch's Documentation read-gate for Codex.",
+        interface: {
+          displayName: 'Vinaya documentation gate',
+          shortDescription: 'Documentation read-gate hooks',
+          category: 'Developer Tools'
+        }
+      },
+      null,
+      2
+    ),
+    { mode: 0o600 }
+  )
+  writeFileSync(join(pluginDir, 'hooks.json'), hooksJsonContent, { mode: 0o600 })
+}
+
+function runRealCodexPluginInstall(input: {
+  binaryPath: string
+  codexHome: string
+  marketplaceDir: string
+}): { ok: true } | { ok: false; reason: string } {
+  const env = { PATH: process.env.PATH, CODEX_HOME: input.codexHome }
+  try {
+    execFileSync(input.binaryPath, ['plugin', 'marketplace', 'add', input.marketplaceDir, '--json'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 20_000,
+      maxBuffer: 4 * 1024 * 1024,
+      env
+    })
+    execFileSync(
+      input.binaryPath,
+      ['plugin', 'add', `${CODEX_HOOKS_PLUGIN_NAME}@${CODEX_HOOKS_MARKETPLACE_NAME}`, '--json'],
+      {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 20_000,
+        maxBuffer: 4 * 1024 * 1024,
+        env
+      }
+    )
+    return { ok: true }
+  } catch (error) {
+    const e = error as { status?: number | null; stderr?: Buffer | string }
+    const stderrText = e.stderr ? (typeof e.stderr === 'string' ? e.stderr : e.stderr.toString('utf8')).trim() : ''
+    return {
+      ok: false,
+      reason: `codex plugin install failed (exit ${e.status ?? 'unknown'})${stderrText ? `: ${stderrText}` : ''}`
+    }
+  }
+}
+
+/**
  * Proves usability with a fixed, read-only, ephemeral vendor request outside
  * the adopter repository. A revoked or expired session refuses before the
  * developer loop, and the hard timeout keeps the preflight bounded.
@@ -392,6 +516,11 @@ export type WorkerBoundaryDeps = {
     cwd: string
     realHome: string
   }) => CodexAuthPreflightResult
+  runCodexPluginInstall?: (input: {
+    binaryPath: string
+    codexHome: string
+    marketplaceDir: string
+  }) => { ok: true } | { ok: false; reason: string }
 }
 
 export const REAL_WORKER_BOUNDARY_DEPS: WorkerBoundaryDeps = {
@@ -399,7 +528,8 @@ export const REAL_WORKER_BOUNDARY_DEPS: WorkerBoundaryDeps = {
   readOAuthCredentialFile: readRealOAuthCredentialFile,
   readCodexKeychainCredential: readRealCodexKeychainCredential,
   runCodexLoginWithAccessToken: runRealCodexLoginWithAccessToken,
-  runCodexAuthPreflight: runRealCodexAuthPreflight
+  runCodexAuthPreflight: runRealCodexAuthPreflight,
+  runCodexPluginInstall: runRealCodexPluginInstall
 }
 
 /** `true` only on a host `isolation.md` §3 actually names as supported — Darwin, `sandbox-exec` present. Injectable (`deps`) so a test can assert `dispatchRole`'s fail-closed wiring without needing a real macOS host — see `apps/cli/tests/lib/dispatch/worker-boundary.test.ts`. */
@@ -1071,8 +1201,22 @@ export function resolveWorkerBoundaryLaunch(
         { mode: 0o600 }
       )
       if (opts.codexHooksPath) {
-        const hooks = readFileSync(opts.codexHooksPath, 'utf8')
-        writeFileSync(join(codexHomeDir, 'hooks.json'), hooks, { mode: 0o600 })
+        // Round 7 review, BLOCKER: see `buildCodexHooksMarketplace`'s own
+        // doc comment for why this is a plugin install, never a bare file
+        // write — a bare `hooks.json` at `CODEX_HOME` root is never
+        // discovered by the real Codex CLI.
+        const hooksContent = readFileSync(opts.codexHooksPath, 'utf8')
+        const marketplaceDir = join(scratchTmpDir, 'codex-hooks-marketplace')
+        buildCodexHooksMarketplace(marketplaceDir, hooksContent)
+        const install = (deps.runCodexPluginInstall ?? runRealCodexPluginInstall)({
+          binaryPath: resolvedBinaryPath,
+          codexHome: codexHomeDir,
+          marketplaceDir
+        })
+        if (!install.ok) {
+          rmSync(scratchTmpDir, { recursive: true, force: true })
+          throw new Error(`Codex documentation-gate hook install failed: ${install.reason}`)
+        }
       }
     }
 

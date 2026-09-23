@@ -2957,11 +2957,23 @@ function sizeOfSafe(path: string): number {
  * the classification is unit-testable without a real boundary refusal.
  */
 export function codexBoundaryFailureReason(agent: AgentVendor, boundaryFailureReason: string): DispatchFailureReason {
-  const isAuthFailure =
-    agent === 'codex' &&
-    (boundaryFailureReason.startsWith('Codex subscription authentication preflight failed:') ||
-      boundaryFailureReason.startsWith('Codex subscription login failed:'))
-  return isAuthFailure ? 'authentication-failed' : 'startup-failed'
+  if (agent !== 'codex') return 'startup-failed'
+  if (
+    boundaryFailureReason.startsWith('Codex subscription authentication preflight failed:') ||
+    boundaryFailureReason.startsWith('Codex subscription login failed:')
+  ) {
+    return 'authentication-failed'
+  }
+  // Round 7 review, BLOCKER: a failed `codex plugin marketplace add`/`codex
+  // plugin add` step (`worker-boundary.ts`'s `Codex documentation-gate hook
+  // install failed:`) means the Documentation read-gate could not be wired
+  // for this dispatch — a hook-setup failure, not an authentication one; the
+  // brief's own O3 requires refusing rather than silently downgrading the
+  // gate when hook/configuration setup fails.
+  if (boundaryFailureReason.startsWith('Codex documentation-gate hook install failed:')) {
+    return 'hook-setup-failed'
+  }
+  return 'startup-failed'
 }
 
 export function codexSpawnEnvExtras(

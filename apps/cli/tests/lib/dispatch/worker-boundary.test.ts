@@ -453,6 +453,160 @@ describe('resolveWorkerBoundaryLaunch — Codex subscription preflight (O1, Issu
   })
 })
 
+/** `null` when no real `codex` binary is on this host's PATH — best-effort, never assumed, the same posture `REAL_NODE_PATH` (below) already takes. */
+const REAL_CODEX_PATH: string | null = (() => {
+  try {
+    return execFileSync('which', ['codex'], { encoding: 'utf8' }).trim() || null
+  } catch {
+    return null
+  }
+})()
+
+describe('resolveWorkerBoundaryLaunch — Codex documentation-gate hook install (O3, round 7 review BLOCKER, Issue #676)', () => {
+  const stageOk = {
+    readOAuthCredentialFile: () => JSON.stringify({ tokens: { access_token: 'hooks-fixture' } }),
+    readCodexKeychainCredential: () => null,
+    runCodexLoginWithAccessToken: () => ({ ok: true }) as const,
+    runCodexAuthPreflight: () => ({ ok: true }) as const
+  }
+
+  it('refuses the whole dispatch when the plugin install step itself fails, never a silent downgrade to no gate at all', () => {
+    const allowedDir = tempDir('vinaya-wb-codex-hooks-refused-')
+    const hooksSourceDir = tempDir('vinaya-wb-codex-hooks-source-')
+    const hooksSourcePath = join(hooksSourceDir, 'hooks.json')
+    writeFileSync(hooksSourcePath, '{}')
+    const result = resolveWorkerBoundaryLaunch(
+      {
+        binaryPath: '/usr/bin/env',
+        args: [],
+        allowedDir,
+        extraWritableDirs: [],
+        stageCodexCredential: true,
+        codexHooksPath: hooksSourcePath
+      },
+      {
+        ...AVAILABLE_DEPS,
+        ...stageOk,
+        runCodexPluginInstall: () => ({ ok: false, reason: 'codex plugin install failed (exit 1)' })
+      }
+    )
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.reason).toContain('Codex documentation-gate hook install failed')
+    expect(result.reason).toContain('exit 1')
+  })
+
+  it('installs from a marketplace shaped exactly as the real `codex plugin marketplace add`/`codex plugin add` require — manifest at .agents/plugins/marketplace.json, plugin.json under .codex-plugin/, hooks.json content passed through unmodified', () => {
+    const allowedDir = tempDir('vinaya-wb-codex-hooks-shape-')
+    const hooksSourceDir = tempDir('vinaya-wb-codex-hooks-source-')
+    const hooksSourcePath = join(hooksSourceDir, 'hooks.json')
+    const hooksContent = JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'true' }] }] } })
+    writeFileSync(hooksSourcePath, hooksContent)
+    let seenMarketplaceDir = ''
+    let seenCodexHome = ''
+    const result = resolveWorkerBoundaryLaunch(
+      {
+        binaryPath: '/usr/bin/env',
+        args: [],
+        allowedDir,
+        extraWritableDirs: [],
+        stageCodexCredential: true,
+        codexHooksPath: hooksSourcePath
+      },
+      {
+        ...AVAILABLE_DEPS,
+        ...stageOk,
+        runCodexPluginInstall: ({ codexHome, marketplaceDir }) => {
+          seenCodexHome = codexHome
+          seenMarketplaceDir = marketplaceDir
+          return { ok: true }
+        }
+      }
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    try {
+      expect(seenCodexHome).toBe(result.launch.codexHomeDir)
+      const marketplaceJson = JSON.parse(
+        readFileSync(join(seenMarketplaceDir, '.agents', 'plugins', 'marketplace.json'), 'utf8')
+      )
+      expect(marketplaceJson.plugins).toHaveLength(1)
+      expect(marketplaceJson.plugins[0].source).toEqual({
+        source: 'local',
+        path: './plugins/vinaya-documentation-gate'
+      })
+      expect(marketplaceJson.plugins[0].policy.authentication).toBe('ON_USE')
+      const pluginManifest = JSON.parse(
+        readFileSync(
+          join(seenMarketplaceDir, 'plugins', 'vinaya-documentation-gate', '.codex-plugin', 'plugin.json'),
+          'utf8'
+        )
+      )
+      expect(pluginManifest.name).toBe('vinaya-documentation-gate')
+      const installedHooksJson = readFileSync(
+        join(seenMarketplaceDir, 'plugins', 'vinaya-documentation-gate', 'hooks.json'),
+        'utf8'
+      )
+      expect(installedHooksJson).toBe(hooksContent)
+    } finally {
+      result.launch.cleanup()
+    }
+  })
+
+  it.skipIf(!isWorkerBoundaryAvailable(REAL_WORKER_BOUNDARY_DEPS) || !REAL_CODEX_PATH)(
+    'a real `codex plugin marketplace add` + `codex plugin add` genuinely installs the documentation-gate hooks.json as an enabled plugin — never a bare, undiscovered file (live-verified: a bare hooks.json at CODEX_HOME root is not loaded by the real Codex CLI at all)',
+    () => {
+      const allowedDir = tempDir('vinaya-wb-codex-hooks-live-')
+      const hooksSourceDir = tempDir('vinaya-wb-codex-hooks-live-source-')
+      const hooksSourcePath = join(hooksSourceDir, 'hooks.json')
+      const hooksContent = JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'true' }] }] } })
+      writeFileSync(hooksSourcePath, hooksContent)
+
+      const result = resolveWorkerBoundaryLaunch(
+        {
+          binaryPath: REAL_CODEX_PATH as string,
+          args: [],
+          allowedDir,
+          extraWritableDirs: [],
+          stageCodexCredential: true,
+          codexHooksPath: hooksSourcePath
+        },
+        { ...AVAILABLE_DEPS, ...stageOk }
+      )
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      try {
+        const codexHome = result.launch.codexHomeDir as string
+        const list = JSON.parse(
+          execFileSync(REAL_CODEX_PATH as string, ['plugin', 'list', '--json'], {
+            encoding: 'utf8',
+            env: { ...process.env, CODEX_HOME: codexHome }
+          })
+        )
+        expect(list.installed).toHaveLength(1)
+        expect(list.installed[0]).toMatchObject({
+          name: 'vinaya-documentation-gate',
+          installed: true,
+          enabled: true
+        })
+        const installedHooksPath = join(
+          codexHome,
+          'plugins',
+          'cache',
+          'vinaya-dispatch',
+          'vinaya-documentation-gate',
+          '0.0.1',
+          'hooks.json'
+        )
+        expect(existsSync(installedHooksPath)).toBe(true)
+        expect(readFileSync(installedHooksPath, 'utf8')).toBe(hooksContent)
+      } finally {
+        result.launch.cleanup()
+      }
+    }
+  )
+})
+
 describe('isWorkerBoundaryAvailable — O3 host detection', () => {
   it('reports false when the platform is not darwin, even with sandbox-exec present', () => {
     expect(isWorkerBoundaryAvailable({ detectHost: () => ({ platform: 'linux', sandboxExecExecutable: true }) })).toBe(

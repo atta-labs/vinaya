@@ -3689,6 +3689,15 @@ describe('codexBoundaryFailureReason — round 6 review, MAJOR (Issue #676)', ()
     expect(codexBoundaryFailureReason('codex', 'Codex subscription login failed: exit 1')).toBe('authentication-failed')
   })
 
+  it('classifies a failed plugin install (the Documentation-gate hooks) as hook-setup-failed, never startup-failed or authentication-failed', () => {
+    expect(
+      codexBoundaryFailureReason(
+        'codex',
+        'Codex documentation-gate hook install failed: codex plugin install failed (exit 1)'
+      )
+    ).toBe('hook-setup-failed')
+  })
+
   it('classifies any other boundary refusal reason as startup-failed', () => {
     expect(codexBoundaryFailureReason('codex', 'worker boundary unavailable on this host')).toBe('startup-failed')
   })
