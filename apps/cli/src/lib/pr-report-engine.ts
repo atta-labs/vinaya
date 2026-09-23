@@ -1,6 +1,19 @@
 import { execFile } from 'node:child_process'
-import { createHash } from 'node:crypto'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createHash, randomUUID } from 'node:crypto'
+import {
+  closeSync,
+  constants as fsConstants,
+  existsSync,
+  fsyncSync,
+  lstatSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+  writeSync
+} from 'node:fs'
 import { hostname, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
@@ -516,12 +529,51 @@ export type TestRunCache = {
   set: (key: string, record: TestRunCacheRecord) => void
 }
 
+/**
+ * The cache's leaf file, read and written directly — never through
+ * `mkdirNoSymlinks` (a DIRECTORY check; this is one file) — so both halves
+ * close their own symlink gap by hand (round-4 security review, HIGH/MEDIUM):
+ * on a shared, configurable `runtimeDir` a co-tenant able to write anywhere
+ * under it (never this process's own already-hardened directories, only
+ * files) could pre-plant a SYMLINK at this exact leaf path. A plain
+ * `writeFileSync` would follow it and overwrite whatever it points at (the
+ * WRITE half); a plain `readFileSync` would follow it and silently trust
+ * whatever JSON sits there as a real cached run — the exact "evidence that
+ * cannot be traced to a real run" O3 exists to rule out (the READ half).
+ * This cache never creates a symlink at its own path itself, so — the same
+ * reasoning `mkdirNoSymlinks` already applies to a directory segment — one
+ * found there is refused rather than followed, on both sides:
+ *
+ *   - Read: `lstatSync` first, UNFOLLOWED; anything other than a real file
+ *     (a symlink, a directory, nothing at all) reads as "no cache yet"
+ *     rather than being opened.
+ *   - Write: a temp file under a fresh, per-call random name — which cannot
+ *     itself be a pre-planted symlink, since it never existed before this
+ *     call — then `renameSync` into place, mirroring
+ *     `control-store/local.ts`'s own `atomicWriteFile`. `rename` REPLACES
+ *     whatever sits at the destination — a real file or a symlink — without
+ *     ever opening or following it, so a planted symlink is atomically
+ *     swapped out for a real file rather than written through.
+ */
 function readTestRunCacheFile(path: string): Record<string, TestRunCacheRecord> {
   try {
+    if (!lstatSync(path).isFile()) return {}
     return JSON.parse(readFileSync(path, 'utf8')) as Record<string, TestRunCacheRecord>
   } catch {
     return {}
   }
+}
+
+function writeTestRunCacheFile(path: string, all: Record<string, TestRunCacheRecord>): void {
+  const tmp = `${path}.tmp-${process.pid}-${randomUUID()}`
+  const fd = openSync(tmp, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL, 0o600)
+  try {
+    writeSync(fd, JSON.stringify(all, null, 2), null, 'utf8')
+    fsyncSync(fd)
+  } finally {
+    closeSync(fd)
+  }
+  renameSync(tmp, path)
 }
 
 /**
@@ -531,7 +583,8 @@ function readTestRunCacheFile(path: string): Record<string, TestRunCacheRecord> 
  * command that finishes green), so a heavier per-key store buys nothing here.
  * `runtimeDir` is threaded through only for `ensureRunDir`'s own
  * ownership/mode re-assertion on the containing directory, matching every
- * other run-file writer in this codebase (`run-paths.ts`).
+ * other run-file writer in this codebase (`run-paths.ts`) — the leaf file
+ * itself is guarded separately, above.
  */
 export function fileBackedTestRunCache(path: string, runtimeDir: string): TestRunCache {
   return {
@@ -540,7 +593,7 @@ export function fileBackedTestRunCache(path: string, runtimeDir: string): TestRu
       const all = readTestRunCacheFile(path)
       all[key] = record
       ensureRunDir(dirname(path), runtimeDir)
-      writeFileSync(path, JSON.stringify(all, null, 2))
+      writeTestRunCacheFile(path, all)
     }
   }
 }

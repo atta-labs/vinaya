@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -17,6 +17,7 @@ import {
   DEFAULT_COMMAND_TIMEOUT_MS,
   defaultTestRunCache,
   extractAgentCommandLines,
+  fileBackedTestRunCache,
   type GateOutcome,
   type GateRunner,
   type GateRunResult,
@@ -801,6 +802,69 @@ describe('testRunCacheKey — a quoted/escaped path from git status still invali
     const afterEdit = await runAgentCommand(command, undefined, dir, {}, cache)
     expect(afterEdit.reusedFrom).toBeUndefined()
     expect(readFileSync(counterFile, 'utf8')).toBe('xx')
+  })
+})
+
+// Round-4 security review, HIGH/MEDIUM — a co-tenant on a shared, writable
+// `runtimeDir` who cannot touch this process's own hardened directories can
+// still pre-plant a SYMLINK at the cache's exact leaf path. A plain
+// `writeFileSync` there follows it and overwrites whatever it points at
+// (the write half); a plain `readFileSync` follows it and silently trusts
+// whatever JSON sits there as a real cached run (the read half). Neither
+// test below uses a shared `runtimeDir` — `fileBackedTestRunCache` is
+// exercised directly, pointed at an isolated temp path, so the planted
+// symlink is unambiguously this test's own doing and nothing else's.
+describe('fileBackedTestRunCache — a pre-planted symlink at the cache path is refused, never followed (round-4 security review, HIGH/MEDIUM)', () => {
+  it('set() never writes through a symlink at the cache path — the real target is untouched', () => {
+    const runtimeDir = mkdtempSync(join(tmpdir(), 'pr-report-cache-symlink-write-runtime-'))
+    const cachePath = join(runtimeDir, 'test-run-cache.json')
+    const victimPath = join(mkdtempSync(join(tmpdir(), 'pr-report-cache-symlink-write-victim-')), 'victim.json')
+    writeFileSync(victimPath, "not a cache file — a co-tenant's own real data\n")
+    symlinkSync(victimPath, cachePath)
+
+    const cache = fileBackedTestRunCache(cachePath, runtimeDir)
+    cache.set('some-key', {
+      output: 'hi',
+      exitCode: 0,
+      timedOut: false,
+      overflowed: false,
+      recordedAt: '2026-09-24T00:00:00.000Z',
+      source: 'pre-push'
+    })
+
+    // The victim file, reached through the (now former) symlink target,
+    // must read back byte-identical to what it held before `set()` ran.
+    expect(readFileSync(victimPath, 'utf8')).toBe("not a cache file — a co-tenant's own real data\n")
+    // `rename` replaced the symlink itself with a real file at the cache
+    // path — the write landed where it was supposed to, just not THROUGH
+    // the planted link.
+    expect(lstatSync(cachePath).isSymbolicLink()).toBe(false)
+    expect(cache.get('some-key')?.output).toBe('hi')
+  })
+
+  it('get() never reads through a symlink at the cache path — an attacker-controlled file is never trusted', () => {
+    const runtimeDir = mkdtempSync(join(tmpdir(), 'pr-report-cache-symlink-read-runtime-'))
+    const cachePath = join(runtimeDir, 'test-run-cache.json')
+    const attackerPath = join(mkdtempSync(join(tmpdir(), 'pr-report-cache-symlink-read-attacker-')), 'attacker.json')
+    // A forged record for a key the victim might plausibly look up —
+    // exactly the shape a real, honest cache entry would have.
+    writeFileSync(
+      attackerPath,
+      JSON.stringify({
+        'some-key': {
+          output: 'FORGED — this command never ran',
+          exitCode: 0,
+          timedOut: false,
+          overflowed: false,
+          recordedAt: '2026-01-01T00:00:00.000Z',
+          source: 'pre-push'
+        }
+      })
+    )
+    symlinkSync(attackerPath, cachePath)
+
+    const cache = fileBackedTestRunCache(cachePath, runtimeDir)
+    expect(cache.get('some-key')).toBeUndefined()
   })
 })
 
