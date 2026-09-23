@@ -1419,15 +1419,17 @@ export function loadTrustAnchorConfig(fetcher: TrustAnchorFetcher = ghFetchTrust
  * those children's exit. Same fetch, same fallbacks, same warnings.
  */
 export async function loadTrustAnchorConfigAsync(
-  fetcher: () => Promise<string> = ghFetchTrustAnchorConfigAsync
+  fetcher: () => Promise<string> = ghFetchTrustAnchorConfigAsync,
+  options: { quiet?: boolean } = {}
 ): Promise<VinayaConfig | null> {
+  const warn = options.quiet ? () => {} : warnTrustAnchorFallback
   let base64: string
   try {
     base64 = await fetcher()
   } catch (err) {
-    return trustAnchorFetchFailed(err)
+    return trustAnchorFetchFailed(err, warn)
   }
-  return parseTrustAnchorContent(base64)
+  return parseTrustAnchorContent(base64, warn)
 }
 
 function warnTrustAnchorFallback(why: string): void {
@@ -1436,13 +1438,15 @@ function warnTrustAnchorFallback(why: string): void {
   )
 }
 
-function trustAnchorFetchFailed(err: unknown): null {
-  if (!isMissingFileError(err)) warnTrustAnchorFallback(firstLine(err))
+function trustAnchorFetchFailed(err: unknown, warn: (why: string) => void = warnTrustAnchorFallback): null {
+  if (!isMissingFileError(err)) warn(firstLine(err))
   return null
 }
 
-function parseTrustAnchorContent(content: string): VinayaConfig | null {
-  const warn = warnTrustAnchorFallback
+function parseTrustAnchorContent(
+  content: string,
+  warn: (why: string) => void = warnTrustAnchorFallback
+): VinayaConfig | null {
   const base64 = content.trim()
   if (!base64) return null
   try {

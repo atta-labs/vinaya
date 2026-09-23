@@ -111,9 +111,12 @@ export type LogSinkDeps = {
   ) => ResolvedLogDestination | Promise<ResolvedLogDestination>
 }
 
+// Quiet: the fallback warning goes to stdout, and every process that logs —
+// `vinaya dispatch --json`, a check binary — owns its stdout; telemetry
+// resolving its destination must never write into it.
 async function safeLoadTrustAnchorConfig(): Promise<VinayaConfig | null> {
   try {
-    return await loadTrustAnchorConfigAsync()
+    return await loadTrustAnchorConfigAsync(undefined, { quiet: true })
   } catch {
     return null
   }
@@ -205,7 +208,11 @@ async function defaultResolveLogDestination(
   env: NodeJS.ProcessEnv
 ): Promise<ResolvedLogDestination> {
   const localConfig = loadConfig()
-  const unattended = isUnattendedProcess(env)
+  // THIS process's own classification, never the event env's: `dispatchRole`
+  // hands its sink a synthetic env carrying the CHILD's `VINAYA_ROLE` for
+  // attribution, and reading trust from that would treat an attended parent
+  // as unattended — a forge read on every dispatch the parent logs.
+  const unattended = isUnattendedProcess(process.env)
   return resolveLogDestinationFrom({
     localConfig,
     trustAnchorConfig: unattended ? await safeLoadTrustAnchorConfig() : null,
