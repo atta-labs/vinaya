@@ -1336,7 +1336,14 @@ git rev-parse --git-dir 2>&1 || true
         encoding: 'utf8'
       })
       expect(withSeparator).not.toContain('EVIL PRELOAD RAN')
-      expect(withSeparator).toContain('normal.test.ts')
+      // Bun 1.4.2's default reporter no longer names the file in a clean
+      // passing run's own stdout (round-4's original `toContain('normal.test.ts')`
+      // broke on this exact upgrade) — "1 pass"/"0 fail" is the
+      // reporter-format-agnostic proof that the real, intended file still
+      // ran (and ran successfully), which is what this assertion exists to
+      // show once the injection check above already passed.
+      expect(withSeparator).toContain('1 pass')
+      expect(withSeparator).toContain('0 fail')
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
