@@ -2443,17 +2443,19 @@ describe('devReviewLoop — O4 (issue-657) wiring: the manifest builder reads a 
   const src = readFileSync(join(import.meta.dirname, '..', '..', 'src', 'lib', 'dev-review-loop.ts'), 'utf8')
 
   it('the round-1 dispatch builds baseSha from d.gitMergeBase(head), not d.gitRevParseOriginMain()', () => {
-    expect(src).toContain('const baseSha = d.gitMergeBase(head)')
+    expect(src).toContain('const baseSha = await d.gitMergeBase(head)')
   })
 
   it('the publish-time fallback manifest rebuild resolves baseSha the same way', () => {
-    expect(src).toContain('baseSha: d.gitMergeBase(d.resolveHead(branch))')
+    expect(src).toContain('baseSha: await d.gitMergeBase(d.resolveHead(branch))')
   })
 
   it('gitMergeBase is a real Deps field, defaulting to resolveMergeBase — never an ad hoc shell pipeline in the driver', () => {
-    expect(src).toContain('gitMergeBase: (head: string) => string')
+    expect(src).toContain('gitMergeBase: (head: string) => Promise<string>')
     expect(src).toContain('gitMergeBase: defaultGitMergeBase')
-    expect(src).toMatch(/function defaultGitMergeBase\(head: string\): string \{\s*return resolveMergeBase\(head\)/)
+    expect(src).toMatch(
+      /function defaultGitMergeBase\(head: string\): Promise<string> \{\s*return resolveMergeBase\(head\)/
+    )
   })
 })
 

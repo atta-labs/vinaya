@@ -1,7 +1,8 @@
-import { execFileSync, spawnSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { promisify } from 'node:util'
 import {
   type AnchorField,
   anchoredRegionBounds,
@@ -115,30 +116,37 @@ import { meteringRefusalMessage, realDeps } from '../commands/tokens'
 const EVIDENCE_START = '<!-- AEG:EVIDENCE:START -->'
 const EVIDENCE_END = '<!-- AEG:EVIDENCE:END -->'
 
-// Array-form execFileSync — no shell, so no injection surface.
+// `node:child_process`'s async `execFile`, promisified — never
+// `execFileSync`/`spawnSync`. Bun 1.2.14's synchronous spawn kept spinning
+// the event loop while it waited, which incidentally let other concurrent
+// work (a sibling reviewer dispatch, another spawned child's own exit)
+// interleave; Bun 1.4.2's synchronous spawn genuinely blocks the single
+// thread, so every read this module performs while running inside the
+// loop's own `Promise.all` (`dev-review-loop.ts`) must be a real async
+// child, or it starves whichever dispatch is racing it. No shell, so no
+// injection surface — same discipline the removed `execFileSync` calls had.
+const execFileAsync = promisify(execFile)
+
 // `env: { ...process.env }` explicit on every call below — the same reason
-// `runRealGates`'s own spawnSync already carries it (see that function's doc
+// `runRealGates`'s own spawn already carries it (see that function's doc
 // comment): Bun resolves the child EXECUTABLE's own PATH lookup from a
 // cached environment when `env` is omitted, not from `process.env` read at
 // call time, so a runtime `process.env.PATH` mutation (a test's fake `gh`/
 // `git` on a prepended directory) is silently ignored without this.
-function git(args: string[], cwd?: string): string {
+async function git(args: string[], cwd?: string): Promise<string> {
   try {
-    return execFileSync('git', args, {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      env: process.env,
-      cwd
-    }).trim()
+    const { stdout } = await execFileAsync('git', args, { encoding: 'utf8', env: process.env, cwd })
+    return stdout.trim()
   } catch {
     return ''
   }
 }
 
-/** Array-form execFileSync against `gh` — same no-shell discipline as `git()`, but throws (rather than collapsing to `''`) since a `--push` run must never mistake a failed forge call for an empty answer. Mirrors `review-post.ts`'s `gh()`. `gh` resolves the repo from the git remote, which is identical whether the caller's cwd is the main checkout or one of its worktrees — so, unlike `git()`/`gitStrict()`, this never needs an explicit `cwd`. */
-export function gh(args: string[]): string {
+/** Array-form async `execFile` against `gh` — same no-shell discipline as `git()`, but throws (rather than collapsing to `''`) since a `--push` run must never mistake a failed forge call for an empty answer. Mirrors `review-post.ts`'s `gh()`. `gh` resolves the repo from the git remote, which is identical whether the caller's cwd is the main checkout or one of its worktrees — so, unlike `git()`/`gitStrict()`, this never needs an explicit `cwd`. */
+export async function gh(args: string[]): Promise<string> {
   try {
-    return execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: process.env }).trim()
+    const { stdout } = await execFileAsync('gh', args, { encoding: 'utf8', env: process.env })
+    return stdout.trim()
   } catch (err) {
     const stderr = (err as { stderr?: Buffer | string }).stderr
     throw new Error(String(stderr ?? (err as Error).message).trim() || 'gh command failed')
@@ -175,14 +183,10 @@ export class GitCommandError extends Error {
  * the soft `git()`: there, an empty result IS the signal it acts on, and it
  * raises its own error once every candidate ref has been tried.
  */
-function gitStrict(args: string[], cwd?: string): string {
+async function gitStrict(args: string[], cwd?: string): Promise<string> {
   try {
-    return execFileSync('git', args, {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: process.env,
-      cwd
-    }).trim()
+    const { stdout } = await execFileAsync('git', args, { encoding: 'utf8', env: process.env, cwd })
+    return stdout.trim()
   } catch (err) {
     const stderr = (err as { stderr?: Buffer | string }).stderr
     throw new GitCommandError(args, String(stderr ?? (err as Error).message).trim() || 'non-zero exit')
@@ -228,11 +232,11 @@ export class UnresolvableMergeBaseError extends Error {
  * that class's doc comment for why silently degrading to an empty base is
  * the wrong failure mode.
  */
-export function resolveMergeBase(head: string, cwd?: string): string {
+export async function resolveMergeBase(head: string, cwd?: string): Promise<string> {
   const primary = process.env.BASE_SHA || 'origin/main'
   const tried = primary === 'main' ? [primary] : [primary, 'main']
   for (const ref of tried) {
-    const base = git(['merge-base', ref, head], cwd)
+    const base = await git(['merge-base', ref, head], cwd)
     if (base) return base
   }
   throw new UnresolvableMergeBaseError(head, tried)
@@ -252,15 +256,15 @@ export type GroupA = { head: string; base: string; numstat: string }
  * `GitCommandError` again. Only an empty `numstat` from a SUCCEEDING diff is
  * a legitimate result, and it is returned normally.
  */
-export function computeGroupA(cwd?: string): GroupA {
+export async function computeGroupA(cwd?: string): Promise<GroupA> {
   // Every step throws rather than degrading. An unborn branch (no commits
   // yet, so `rev-parse HEAD` fails) previously short-circuited BOTH ternaries
   // below, so `resolveMergeBase` was never reached and nothing refused — the
   // emitter wrote an empty head and an empty Group A and exited 0. That is
   // the same fail-open shape, reached by a different door.
-  const head = gitStrict(['rev-parse', 'HEAD'], cwd)
-  const base = resolveMergeBase(head, cwd)
-  const numstat = gitStrict(['diff', `${base}...${head}`, '--numstat'], cwd)
+  const head = await gitStrict(['rev-parse', 'HEAD'], cwd)
+  const base = await resolveMergeBase(head, cwd)
+  const numstat = await gitStrict(['diff', `${base}...${head}`, '--numstat'], cwd)
   return { head, base, numstat }
 }
 
@@ -352,35 +356,44 @@ export function anyGateFailed(outcomes: GateOutcome[]): boolean {
  * shared `process.env` binding, so a reviewer/security dispatch running at
  * the same time in that same process never observes this call's PR context.
  */
-export function runRealGates(cwd?: string, env?: NodeJS.ProcessEnv): GateRunResult {
+export async function runRealGates(cwd?: string, env?: NodeJS.ProcessEnv): Promise<GateRunResult> {
   const entry = resolveSelfEntry()
-  // `node:child_process`, not `Bun.spawnSync`: this package ships a
+  // `node:child_process`, not `Bun.spawn`: this package ships a
   // `#!/usr/bin/env node` bin with `engines.node >= 20`, so a `Bun.*` call
   // here is a `ReferenceError: Bun is not defined` for every adopter running
   // the published CLI under node — Group B could never run for them. It
   // failed closed (the ReferenceError escapes the narrowed catch below
   // before any write), so no false attestation could be published.
-  const proc = spawnSync(process.execPath, [entry, 'check', '--all', '--diff-only', '--json'], {
-    cwd: cwd ?? process.cwd(),
-    // Explicit, and load-bearing under Bun — not merely clearer than omitting
-    // the key. A one-shot CLI invocation (`--push`) sets `PR_BODY`/
-    // `PR_NUMBER`/`BRANCH` by mutating its OWN `process.env` just before this
-    // call, safely, since that process does nothing else concurrently. Node
-    // propagates a runtime `process.env` mutation into a `spawnSync` child
-    // that inherits the parent environment; Bun does not — its child sees
-    // the environment the process started with, so under Bun the
-    // omitted-key form would hand the gate child a `PR_BODY` that is stale
-    // or absent, and every body-reading gate in Group B would grade the
-    // wrong text (or skip). Spreading `env ?? process.env` here reads the
-    // caller's intended values at call time and passes them explicitly,
-    // which is correct on both runtimes, and never touches the caller's own
-    // `process.env` when an explicit overlay is given.
-    env: { ...(env ?? process.env) },
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'ignore'],
-    maxBuffer: 32 * 1024 * 1024
-  })
-  const stdout = proc.stdout ?? ''
+  let stdout = ''
+  try {
+    const result = await execFileAsync(process.execPath, [entry, 'check', '--all', '--diff-only', '--json'], {
+      cwd: cwd ?? process.cwd(),
+      // Explicit, and load-bearing under Bun — not merely clearer than omitting
+      // the key. A one-shot CLI invocation (`--push`) sets `PR_BODY`/
+      // `PR_NUMBER`/`BRANCH` by mutating its OWN `process.env` just before this
+      // call, safely, since that process does nothing else concurrently. Node
+      // propagates a runtime `process.env` mutation into a child that
+      // inherits the parent environment; Bun does not — its child sees the
+      // environment the process started with, so under Bun the
+      // omitted-key form would hand the gate child a `PR_BODY` that is stale
+      // or absent, and every body-reading gate in Group B would grade the
+      // wrong text (or skip). Spreading `env ?? process.env` here reads the
+      // caller's intended values at call time and passes them explicitly,
+      // which is correct on both runtimes, and never touches the caller's own
+      // `process.env` when an explicit overlay is given.
+      env: { ...(env ?? process.env) },
+      encoding: 'utf8',
+      maxBuffer: 32 * 1024 * 1024
+    })
+    stdout = result.stdout
+  } catch (err) {
+    // `check --all --diff-only` exits non-zero when a check fails — that is
+    // its normal, expected shape here, not a spawn failure. `execFile`
+    // rejects on any non-zero exit, but still attaches the captured stdout
+    // to the error, which is the same JSON payload `spawnSync` used to hand
+    // back on `proc.stdout` regardless of `proc.status`.
+    stdout = (err as { stdout?: string }).stdout ?? ''
+  }
   try {
     const parsed = JSON.parse(stdout) as { data: { checks: GateOutcome[] } }
     const outcomes = parsed.data.checks
@@ -546,24 +559,40 @@ function truncateAgentOutput(output: string): string {
  * every run for this reason alone, contradicting the Test Plan's own
  * "→ exits 0" claim for a command that could never have exited 0.
  */
-export function runAgentCommand(
+export async function runAgentCommand(
   command: string,
   timeoutMs: number = resolveCommandTimeoutMs(),
   cwd?: string,
   extraEnv: Record<string, string> = {}
-): GroupCCommandResult {
-  const proc = spawnSync('bash', ['-c', command], {
-    cwd: cwd ?? process.cwd(),
-    encoding: 'utf8',
-    timeout: timeoutMs,
-    maxBuffer: 32 * 1024 * 1024,
-    env: { ...buildCheckEnv(undefined), ...extraEnv }
-  })
-  if (proc.error && (proc.error as NodeJS.ErrnoException).code === 'ETIMEDOUT') {
-    return { command, output: `timeout (budget ${timeoutMs}ms)`, exitCode: null, timedOut: true }
+): Promise<GroupCCommandResult> {
+  try {
+    const { stdout, stderr } = await execFileAsync('bash', ['-c', command], {
+      cwd: cwd ?? process.cwd(),
+      encoding: 'utf8',
+      timeout: timeoutMs,
+      maxBuffer: 32 * 1024 * 1024,
+      env: { ...buildCheckEnv(undefined), ...extraEnv }
+    })
+    const output = truncateAgentOutput(`${stdout}${stderr}`.trim())
+    return { command, output, exitCode: 0, timedOut: false }
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException & {
+      stdout?: string
+      stderr?: string
+      code?: number | string
+      killed?: boolean
+    }
+    // Node's async `timeout` option kills the child itself when it fires
+    // (`subprocess.killed` true only when node's own kill call did it — never
+    // when the command under test kills itself or is signalled by something
+    // else), which is the async equivalent of `spawnSync`'s own
+    // `error.code === 'ETIMEDOUT'` this replaces.
+    if (e.killed) {
+      return { command, output: `timeout (budget ${timeoutMs}ms)`, exitCode: null, timedOut: true }
+    }
+    const output = truncateAgentOutput(`${e.stdout ?? ''}${e.stderr ?? ''}`.trim())
+    return { command, output, exitCode: typeof e.code === 'number' ? e.code : null, timedOut: false }
   }
-  const output = truncateAgentOutput(`${proc.stdout ?? ''}${proc.stderr ?? ''}`.trim())
-  return { command, output, exitCode: proc.status, timedOut: false }
 }
 
 /**
@@ -576,12 +605,22 @@ export function runAgentCommand(
  * about, never an ambient value some other repo state happened to leave
  * around.
  */
-export function computeGroupC(prBody: string, cwd?: string, extraEnv: Record<string, string> = {}): GroupC {
-  return {
-    commands: extractAgentCommandLines(prBody).map((line) =>
-      runAgentCommand(agentCommandText(line), undefined, cwd, { PR_BODY: prBody, ...extraEnv })
-    )
+export async function computeGroupC(
+  prBody: string,
+  cwd?: string,
+  extraEnv: Record<string, string> = {}
+): Promise<GroupC> {
+  // Sequential, deliberately — a `.map` into `Promise.all` would run every
+  // Test-Plan command concurrently, and a §9 list is conventionally ordered
+  // (build, then test, then run) with later commands depending on earlier
+  // ones' side effects. Each command is still an async child (O2) — this
+  // loop never blocks the event loop between commands, it only preserves the
+  // original one-after-another order.
+  const commands: GroupCCommandResult[] = []
+  for (const line of extractAgentCommandLines(prBody)) {
+    commands.push(await runAgentCommand(agentCommandText(line), undefined, cwd, { PR_BODY: prBody, ...extraEnv }))
   }
+  return { commands }
 }
 
 /** True when any Group C command timed out or exited non-zero — folded into this command's overall exit code exactly like a failing Group B gate. */
@@ -803,8 +842,8 @@ export function writeTokensBlock(body: string, addition: string): string {
  * and refusing here would block the Evidence half of this command over a
  * Token-report-only concern.
  */
-export function derivePhase(): string {
-  const branch = git(['rev-parse', '--abbrev-ref', 'HEAD'])
+export async function derivePhase(): Promise<string> {
+  const branch = await git(['rev-parse', '--abbrev-ref', 'HEAD'])
   const m = /^task\/[^/]+\/(.+)$/.exec(branch)
   const taskId = m ? m[1] : branch || 'unknown'
   return `${taskId}: develop`
@@ -1142,7 +1181,7 @@ export async function buildReport(
     envOverlay?: NodeJS.ProcessEnv
   } = {}
 ): Promise<ReportResult> {
-  const groupA = opts.groupA ?? computeGroupA(opts.cwd)
+  const groupA = opts.groupA ?? (await computeGroupA(opts.cwd))
   const gateRunner = opts.gateRunner ?? (() => runRealGates(opts.cwd, opts.envOverlay))
   const gateResult = await gateRunner()
   const gradedBody = opts.body ?? process.env.PR_BODY ?? ''
@@ -1167,7 +1206,7 @@ export async function buildReport(
   const groupCExtraEnv: Record<string, string> = {}
   if (ambientReportEnv.PR_NUMBER !== undefined) groupCExtraEnv.PR_NUMBER = ambientReportEnv.PR_NUMBER
   if (ambientReportEnv.BRANCH !== undefined) groupCExtraEnv.BRANCH = ambientReportEnv.BRANCH
-  const groupC = opts.groupC ?? computeGroupC(gradedBody, opts.cwd, groupCExtraEnv)
+  const groupC = opts.groupC ?? (await computeGroupC(gradedBody, opts.cwd, groupCExtraEnv))
   const blockInner = buildBlockInner(groupA, outcomes, groupC, gradedBodySource)
   const block = `${EVIDENCE_START}\n${blockInner}\n${EVIDENCE_END}`
   return {
@@ -1180,12 +1219,12 @@ export async function buildReport(
 }
 
 /** `gh pr edit <pr> --body-file <path>` via a scratch file — no shell, no long argv body. `mkdtempSync`, matching `forge-write.ts`'s own scratch-file discipline, rather than a pid/timestamp name in the shared tmp root. */
-export function ghEditBody(pr: string, body: string): void {
+export async function ghEditBody(pr: string, body: string): Promise<void> {
   const dir = mkdtempSync(join(tmpdir(), 'vinaya-pr-report-push-'))
   const tmp = join(dir, 'body.md')
   writeFileSync(tmp, body)
   try {
-    gh(['pr', 'edit', pr, '--body-file', tmp])
+    await gh(['pr', 'edit', pr, '--body-file', tmp])
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -1293,7 +1332,7 @@ export async function runReportForOpenPr(
   const includeTokens = opts.includeTokens ?? true
   const tokens: TokensAddition = includeTokens
     ? collectTokensAddition({
-        phase: opts.phaseOverride ?? derivePhase(),
+        phase: opts.phaseOverride ?? (await derivePhase()),
         role: opts.roleOverride ?? 'Developer',
         date: isoToday(),
         transcriptPath: opts.transcriptPath,
@@ -1325,7 +1364,7 @@ export async function runReportForOpenPr(
   }
 
   try {
-    ghEditBody(pushPr, spliced.body)
+    await ghEditBody(pushPr, spliced.body)
   } catch (err) {
     return {
       kind: 'edit-failed',
@@ -1335,7 +1374,7 @@ export async function runReportForOpenPr(
 
   let postEditBody: string
   try {
-    postEditBody = gh(['pr', 'view', pushPr, '--json', 'body', '-q', '.body'])
+    postEditBody = await gh(['pr', 'view', pushPr, '--json', 'body', '-q', '.body'])
   } catch (err) {
     return {
       kind: 'reread-failed',
@@ -1345,7 +1384,7 @@ export async function runReportForOpenPr(
 
   if (!bodiesAgreeOutsideRegions(preEditBody, postEditBody)) {
     try {
-      ghEditBody(pushPr, preEditBody)
+      await ghEditBody(pushPr, preEditBody)
     } catch (err) {
       const dir = mkdtempSync(join(tmpdir(), 'vinaya-pr-report-push-restore-failed-'))
       const savePath = join(dir, 'pre-edit-body.md')

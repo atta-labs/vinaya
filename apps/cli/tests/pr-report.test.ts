@@ -369,26 +369,26 @@ describe('extractAgentCommandLines / agentCommandText — task 12, #387', () => 
 })
 
 describe('runAgentCommand — real subprocess, no network', () => {
-  it('captures stdout, a zero exit code, and never times out for a fast command', () => {
-    const result = runAgentCommand('echo hello')
+  it('captures stdout, a zero exit code, and never times out for a fast command', async () => {
+    const result = await runAgentCommand('echo hello')
     expect(result.output).toBe('hello')
     expect(result.exitCode).toBe(0)
     expect(result.timedOut).toBe(false)
   })
 
-  it("captures a non-zero exit code and the command's own output", () => {
-    const result = runAgentCommand('echo oops >&2; exit 3')
+  it("captures a non-zero exit code and the command's own output", async () => {
+    const result = await runAgentCommand('echo oops >&2; exit 3')
     expect(result.output).toBe('oops')
     expect(result.exitCode).toBe(3)
   })
 
-  it('never forwards GH_TOKEN/GITHUB_TOKEN to a §9 command (Principal ruling, PR open-1 addendum)', () => {
+  it('never forwards GH_TOKEN/GITHUB_TOKEN to a §9 command (Principal ruling, PR open-1 addendum)', async () => {
     const previousGhToken = process.env.GH_TOKEN
     const previousGithubToken = process.env.GITHUB_TOKEN
     process.env.GH_TOKEN = 'secret-gh-token'
     process.env.GITHUB_TOKEN = 'secret-github-token'
     try {
-      const result = runAgentCommand('env')
+      const result = await runAgentCommand('env')
       expect(result.output).not.toContain('secret-gh-token')
       expect(result.output).not.toContain('secret-github-token')
       expect(result.output).not.toContain('GH_TOKEN')
@@ -409,8 +409,8 @@ describe('runAgentCommand — real subprocess, no network', () => {
 
   // issue-545, O5 — the budget is policy (`report.commandTimeoutMs`), and a
   // command that exceeds it is recorded with the budget it exceeded.
-  it('a command that exceeds an explicit timeoutMs is recorded with that exact budget, never a bare "timeout"', () => {
-    const result = runAgentCommand('sleep 5', 50)
+  it('a command that exceeds an explicit timeoutMs is recorded with that exact budget, never a bare "timeout"', async () => {
+    const result = await runAgentCommand('sleep 5', 50)
     expect(result.timedOut).toBe(true)
     expect(result.exitCode).toBeNull()
     expect(result.output).toBe('timeout (budget 50ms)')
@@ -443,13 +443,13 @@ describe('resolveCommandTimeoutMs (issue-545, O5)', () => {
     }
   })
 
-  it('runAgentCommand with no explicit timeoutMs picks up the config-resolved budget', () => {
+  it('runAgentCommand with no explicit timeoutMs picks up the config-resolved budget', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'pr-report-timeout-wired-'))
     writeFileSync(join(dir, 'vinaya.config.json'), JSON.stringify({ report: { commandTimeoutMs: 50 } }))
     const cwd = process.cwd()
     process.chdir(dir)
     try {
-      const result = runAgentCommand('sleep 5')
+      const result = await runAgentCommand('sleep 5')
       expect(result.timedOut).toBe(true)
       expect(result.output).toBe('timeout (budget 50ms)')
     } finally {
@@ -478,16 +478,16 @@ describe('groupCFailed', () => {
 })
 
 describe('computeGroupC — extracts and runs, end to end', () => {
-  it('runs every command in the fenced list and records its real output', () => {
+  it('runs every command in the fenced list and records its real output', async () => {
     const body = ['## Test Plan', '', '```', 'echo one → one', 'echo two → two', '```'].join('\n')
-    const groupC = computeGroupC(body)
+    const groupC = await computeGroupC(body)
     expect(groupC.commands).toHaveLength(2)
     expect(groupC.commands[0]).toEqual({ command: 'echo one', output: 'one', exitCode: 0, timedOut: false })
     expect(groupC.commands[1]).toEqual({ command: 'echo two', output: 'two', exitCode: 0, timedOut: false })
   })
 
-  it('is the empty commands list for a body with no Test Plan command list', () => {
-    expect(computeGroupC('Test Plan: unit-tests-only')).toEqual({ commands: [] })
+  it('is the empty commands list for a body with no Test Plan command list', async () => {
+    expect(await computeGroupC('Test Plan: unit-tests-only')).toEqual({ commands: [] })
   })
 
   // Round 3 review, F2 (test-honesty): a `[agent]` command that itself reads
@@ -495,17 +495,17 @@ describe('computeGroupC — extracts and runs, end to end', () => {
   // see an empty body here — `runAgentCommand`'s own env never carried it —
   // so Group C's own evidence could never demonstrate a Test Plan's
   // "→ exits 0" claim for such a command, no matter when it ran.
-  it('threads the graded body through as PR_BODY, so a command that reads it sees the SAME text Group C extracted its own command list from', () => {
+  it('threads the graded body through as PR_BODY, so a command that reads it sees the SAME text Group C extracted its own command list from', async () => {
     const body = ['## Test Plan', '', '```', 'echo "body was: $PR_BODY"', '```'].join('\n')
-    const groupC = computeGroupC(body)
+    const groupC = await computeGroupC(body)
     expect(groupC.commands[0]?.output).toBe(`body was: ${body}`)
   })
 
-  it('threads PR_NUMBER/BRANCH through when the caller supplies them, never on its own', () => {
+  it('threads PR_NUMBER/BRANCH through when the caller supplies them, never on its own', async () => {
     const body = ['## Test Plan', '', '```', 'echo "pr=$PR_NUMBER branch=$BRANCH"', '```'].join('\n')
-    const withoutExtras = computeGroupC(body)
+    const withoutExtras = await computeGroupC(body)
     expect(withoutExtras.commands[0]?.output).toBe('pr= branch=')
-    const withExtras = computeGroupC(body, undefined, { PR_NUMBER: '623', BRANCH: 'task/worker-isolation-v1/3' })
+    const withExtras = await computeGroupC(body, undefined, { PR_NUMBER: '623', BRANCH: 'task/worker-isolation-v1/3' })
     expect(withExtras.commands[0]?.output).toBe('pr=623 branch=task/worker-isolation-v1/3')
   })
 })
@@ -583,32 +583,32 @@ describe('computeGroupA — real git, no origin/main fallback (found live, own d
     return root
   }
 
-  function withFixtureCwd<T>(root: string, fn: () => T): T {
+  async function withFixtureCwd<T>(root: string, fn: () => Promise<T>): Promise<T> {
     const originalCwd = process.cwd()
     try {
       process.chdir(root)
-      return fn()
+      return await fn()
     } finally {
       process.chdir(originalCwd)
       rmSync(root, { recursive: true, force: true })
     }
   }
 
-  it('resolves a real, non-empty diff via the `main` fallback when `origin/main` does not exist', () => {
+  it('resolves a real, non-empty diff via the `main` fallback when `origin/main` does not exist', async () => {
     const root = initFixtureWithFeatureBranch('main')
-    withFixtureCwd(root, () => {
-      const groupA = computeGroupA()
+    await withFixtureCwd(root, async () => {
+      const groupA = await computeGroupA()
       expect(groupA.base).not.toBe('')
       expect(groupA.numstat).toContain('a.txt')
     })
   })
 
-  it('refuses (UnresolvableMergeBaseError) rather than writing an empty diff when the default branch is `master` — neither `origin/main` nor `main` resolves', () => {
+  it('refuses (UnresolvableMergeBaseError) rather than writing an empty diff when the default branch is `master` — neither `origin/main` nor `main` resolves', async () => {
     const root = initFixtureWithFeatureBranch('master')
-    withFixtureCwd(root, () => {
-      expect(() => computeGroupA()).toThrow(UnresolvableMergeBaseError)
+    await withFixtureCwd(root, async () => {
+      await expect(computeGroupA()).rejects.toThrow(UnresolvableMergeBaseError)
       try {
-        computeGroupA()
+        await computeGroupA()
       } catch (err) {
         expect(err).toBeInstanceOf(UnresolvableMergeBaseError)
         const e = err as UnresolvableMergeBaseError
@@ -619,13 +619,13 @@ describe('computeGroupA — real git, no origin/main fallback (found live, own d
     })
   })
 
-  it('BASE_SHA overrides the primary resolution attempt (escape hatch for a non-main default branch)', () => {
+  it('BASE_SHA overrides the primary resolution attempt (escape hatch for a non-main default branch)', async () => {
     const root = initFixtureWithFeatureBranch('master')
     const originalBaseSha = process.env.BASE_SHA
-    withFixtureCwd(root, () => {
+    await withFixtureCwd(root, async () => {
       process.env.BASE_SHA = 'master'
       try {
-        const groupA = computeGroupA()
+        const groupA = await computeGroupA()
         expect(groupA.base).not.toBe('')
         expect(groupA.numstat).toContain('a.txt')
       } finally {
@@ -703,7 +703,7 @@ describe('computeGroupA refuses rather than degrading', () => {
   // exact bytes a genuinely empty diff produces — and the check, recomputing
   // the same way, compared '' to '' and passed having verified nothing.
 
-  it('throws on an unborn branch instead of emitting an empty head and diff', () => {
+  it('throws on an unborn branch instead of emitting an empty head and diff', async () => {
     // No commits yet, so `git rev-parse HEAD` exits non-zero. This previously
     // short-circuited BOTH ternaries in computeGroupA, so resolveMergeBase was
     // never reached and nothing refused.
@@ -713,7 +713,7 @@ describe('computeGroupA refuses rather than degrading', () => {
       const cwd = process.cwd()
       process.chdir(dir)
       try {
-        expect(() => computeGroupA()).toThrow(GitCommandError)
+        await expect(computeGroupA()).rejects.toThrow(GitCommandError)
       } finally {
         process.chdir(cwd)
       }
@@ -722,7 +722,7 @@ describe('computeGroupA refuses rather than degrading', () => {
     }
   })
 
-  it('a genuinely empty diff is still a normal, non-throwing answer', () => {
+  it('a genuinely empty diff is still a normal, non-throwing answer', async () => {
     // The distinction the fix rests on: empty OUTPUT is a real verified
     // answer; a failed COMMAND is not. Only the latter throws.
     const dir = mkdtempSync(join(tmpdir(), 'c126-empty-'))
@@ -737,7 +737,7 @@ describe('computeGroupA refuses rather than degrading', () => {
       const cwd = process.cwd()
       process.chdir(dir)
       try {
-        const result = computeGroupA()
+        const result = await computeGroupA()
         expect(result.numstat).toBe('')
         expect(result.head).not.toBe('')
         expect(result.base).not.toBe('')

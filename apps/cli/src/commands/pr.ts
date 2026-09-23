@@ -295,8 +295,8 @@ export function tokenReportRowForCapability(capability: MeteringCapability, phas
   })
 }
 
-function tokenRowForOpen(): string {
-  return tokenReportRowForCapability(resolveTokenReportCapability(), derivePhase(), isoToday())
+async function tokenRowForOpen(): Promise<string> {
+  return tokenReportRowForCapability(resolveTokenReportCapability(), await derivePhase(), isoToday())
 }
 
 /**
@@ -409,7 +409,7 @@ export async function prCreateCommand(args: string[]): Promise<void> {
     reportPass(json, 'pr create')
     return
   }
-  const bodyWithTokens = writeTokensBlock(body, tokenRowForOpen())
+  const bodyWithTokens = writeTokensBlock(body, await tokenRowForOpen())
   const finalBodyResult: BodyResult | null = bodyResult ? { ...bodyResult, body: bodyWithTokens } : null
   runGhWrite(['pr', 'create'], ghArgs, finalBodyResult, json)
 }

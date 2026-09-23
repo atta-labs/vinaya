@@ -332,7 +332,7 @@ export type LoopDeps = {
    * already takes; the caller never falls back to a value that is not
    * actually an ancestor of the head it is judging.
    */
-  gitMergeBase: (head: string) => string
+  gitMergeBase: (head: string) => Promise<string>
   gitFetch: (sha: string) => void
   gitDiffShortstat: (base: string, head: string) => string
   /** The task's round journal, rebuilt from the pull request's principal-authored forge markers (developer round markers, the published summary) — never a log event, a flushed log comment or the telemetry outbox. */
@@ -429,7 +429,7 @@ function defaultGitRevParseOriginMain(): string {
   return sh('git', ['rev-parse', 'origin/main'])
 }
 
-function defaultGitMergeBase(head: string): string {
+function defaultGitMergeBase(head: string): Promise<string> {
   return resolveMergeBase(head)
 }
 
@@ -677,7 +677,7 @@ async function defaultRunEvidenceReport(
   const pushPr = String(prNumber)
   let preEditBody: string
   try {
-    preEditBody = gh(['pr', 'view', pushPr, '--json', 'body', '-q', '.body'])
+    preEditBody = await gh(['pr', 'view', pushPr, '--json', 'body', '-q', '.body'])
   } catch (err) {
     return {
       ok: false,
@@ -2985,7 +2985,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // so never drifts within a single run"). A base move across
           // rounds is caught by the gate and by the existing `stale_driver`
           // guard, not by manufacturing a new mid-round pause reason.
-          const baseSha = d.gitMergeBase(head)
+          const baseSha = await d.gitMergeBase(head)
           const manifest: ReviewInputManifest = buildReviewInputManifest({
             headSha: head,
             baseSha,
@@ -3320,7 +3320,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               lastDispatchedManifest ??
               buildReviewInputManifest({
                 headSha: d.resolveHead(branch),
-                baseSha: d.gitMergeBase(d.resolveHead(branch)),
+                baseSha: await d.gitMergeBase(d.resolveHead(branch)),
                 briefContent: d.fetchFrozenBrief(task),
                 objectivesVersion: d.resolveIssueObjectives(task).version,
                 rulingOrdinal: d.fetchNewestRulingOrdinal(prNumber),
