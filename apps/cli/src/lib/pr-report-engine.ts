@@ -550,9 +550,11 @@ export function fileBackedTestRunCache(path: string, runtimeDir: string): TestRu
  * runtime directory, scoped to the PR when `extraEnv.PR_NUMBER` names one
  * (matching Group C's own `[agent]` commands, which already receive it) or
  * `'unscoped'` otherwise — a Test-plan command run before a PR exists (the
- * pre-push hook's own first push) still has somewhere real to land.
+ * pre-push hook's own first push) still has somewhere real to land, and both
+ * write into the SAME file for a given repo, so a run the hook already
+ * proved green is the one a later `pr report` on the same head/tree finds.
  */
-function defaultTestRunCache(extraEnv: Record<string, string>): TestRunCache {
+export function defaultTestRunCache(extraEnv: Record<string, string> = {}): TestRunCache {
   const runtimeDir = runtimeDirForThisRepo()
   const pr = Number(extraEnv.PR_NUMBER)
   const scope: RunScope = extraEnv.PR_NUMBER && Number.isFinite(pr) && pr > 0 ? { pr } : 'unscoped'
@@ -561,19 +563,58 @@ function defaultTestRunCache(extraEnv: Record<string, string>): TestRunCache {
 }
 
 /**
+ * `git()` (this module's shared helper) collapses ANY failure — a real "no
+ * output" AND a broken pipe, a lock, a missing binary — to the same `''`,
+ * which is correct for its other callers but wrong here: this function's own
+ * job is telling "the repo has no changes" apart from "the repo could not be
+ * read", and folding both into `''` let a transient git failure produce a
+ * cache key indistinguishable from a real one (round-2 security review,
+ * HIGH) — two different heads or working trees that both hit the failure on
+ * the same command would collide and reuse each other's output. `null` means
+ * "could not resolve, don't know" and is never hashed into a key; only a
+ * REAL zero-exit run — even one whose own stdout happens to be empty —
+ * reaches the caller as a string.
+ */
+async function gitOrNull(args: string[], cwd?: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync('git', args, { encoding: 'utf8', env: process.env, cwd })
+    return stdout.trim()
+  } catch {
+    return null
+  }
+}
+
+/**
  * Everything that makes a prior run of `command` reusable for THIS one: the
  * exact command text, the head it would run against, a hash of the working
- * tree's own content (tracked changes vs `HEAD` plus every untracked file's
- * own bytes — not just a status listing, which would miss an untracked
- * file's content changing while its path stays the same), and the machine
- * running it. `git()` collapses a failure to `''` rather than throwing
- * (matching its own documented behaviour) — a repo this can't resolve just
- * degrades to a key that can never collide with a real one, never a crash.
+ * tree's own content, and the machine running it — `null` when any of that
+ * cannot be established, which the caller must treat as "skip the cache
+ * entirely for this call" (round-2 security review, HIGH — see
+ * {@link gitOrNull}).
+ *
+ * The working-tree hash covers tracked changes (`git diff HEAD`), every
+ * UNTRACKED file's own content (a status listing alone would miss a file
+ * whose content changed while its path stayed the same), and — `--ignored`
+ * (round-2 security review, MEDIUM) — every IGNORED path git's own default
+ * (non-`matching`) listing names, with the same per-file content hash for
+ * any ignored entry that is itself a regular file (closing the `.env`/single
+ * generated-file case the finding named). A large ignored DIRECTORY (most
+ * commonly `node_modules`) is deliberately NOT expanded file-by-file:
+ * `--ignored=matching` would force git to walk and list every file inside
+ * it, and hashing that tree's full content on every cache lookup would cost
+ * more than O3 exists to save. Its own path stays in the hash (from the
+ * status line, and — via `MISSING`, since `readFileSync` on a directory
+ * throws — from the per-entry loop below), so the directory's mere
+ * presence/absence still changes the key; a content change to a file NESTED
+ * inside it does not. A known, accepted gap, not a silent one.
  */
-async function testRunCacheKey(command: string, cwd?: string): Promise<string> {
-  const head = await git(['rev-parse', 'HEAD'], cwd)
-  const status = await git(['status', '--porcelain=v1', '-uall'], cwd)
-  const diff = await git(['diff', 'HEAD'], cwd)
+async function testRunCacheKey(command: string, cwd?: string): Promise<string | null> {
+  const head = await gitOrNull(['rev-parse', 'HEAD'], cwd)
+  if (!head) return null
+  const status = await gitOrNull(['status', '--porcelain=v1', '-uall', '--ignored'], cwd)
+  if (status === null) return null
+  const diff = await gitOrNull(['diff', 'HEAD'], cwd)
+  if (diff === null) return null
   const hash = createHash('sha256')
   hash.update(hostname())
   hash.update(' ')
@@ -582,13 +623,13 @@ async function testRunCacheKey(command: string, cwd?: string): Promise<string> {
   hash.update(status)
   hash.update(' ')
   hash.update(diff)
-  const untracked = status
+  const uncommitted = status
     .split('\n')
-    .filter((l) => l.startsWith('?? '))
+    .filter((l) => l.startsWith('?? ') || l.startsWith('!! '))
     .map((l) => l.slice(3).trim())
     .sort()
   const base = cwd ?? process.cwd()
-  for (const f of untracked) {
+  for (const f of uncommitted) {
     hash.update(' ')
     hash.update(f)
     try {
@@ -787,6 +828,39 @@ export async function runAgentCommand(
     })
   }
   return result
+}
+
+/**
+ * Records a command as a green run WITHOUT running it — for the one caller
+ * that already knows it ran green, by its own separate means: the pre-push
+ * hook (`pre-push-cache-test-run.ts`), whose shell already ran `bun test`
+ * and captured its output before this is ever reached. This is what makes
+ * the O3 reuse clause's other half real: without it, `source: 'pre-push'`
+ * was a value `TestRunCacheRecord` could type but no code path ever wrote,
+ * so a run the hook already proved green still re-ran the first time a `pr
+ * report` built evidence for that same head (round-2 code review, BLOCKER).
+ * A `null` key (see {@link testRunCacheKey}) records nothing rather than
+ * guessing — an unresolvable git state is never a reason to fabricate a
+ * cache entry, on this path any more than on `runAgentCommand`'s own.
+ */
+export async function recordGreenTestRun(
+  command: string,
+  output: string,
+  cwd: string | undefined,
+  source: 'pre-push' | 'pr-report',
+  cache: TestRunCache = defaultTestRunCache()
+): Promise<boolean> {
+  const key = await testRunCacheKey(command, cwd)
+  if (!key) return false
+  cache.set(key, {
+    output: truncateAgentOutput(output),
+    exitCode: 0,
+    timedOut: false,
+    overflowed: false,
+    recordedAt: new Date().toISOString(),
+    source
+  })
+  return true
 }
 
 /**

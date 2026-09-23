@@ -91,7 +91,7 @@ for (const f of readdirSync(checkBinDir).filter((f) => f.endsWith('.ts'))) {
 // `npx --yes -p @attalabs/vinaya@<version> <bin>` either one without going
 // through the CLI's own argv router at all.
 const libBinDir = join(pkgRoot, 'src', 'lib')
-const libBinNames = ['pre-push-select-tests.ts', 'pre-push-changed-files.ts']
+const libBinNames = ['pre-push-select-tests.ts', 'pre-push-changed-files.ts', 'pre-push-cache-test-run.ts']
 const libOutdir = join(pkgRoot, 'dist', 'lib')
 await build(
   libBinNames.map((f) => join(libBinDir, f)),

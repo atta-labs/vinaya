@@ -66,6 +66,11 @@ if [ -n "$VINAYA_SELECTED_TESTS" ]; then
   # `date` on a contributor's own Mac, which has no `%N` at all.
   VINAYA_TEST_LOG="$(mktemp)"
   VINAYA_TEST_STARTED=$(date +%s)
+  # O3: the exact command text this run executes — reconstructed here,
+  # before running it, so the SAME string is what gets cached below and
+  # what a later PR-body Test-plan command line would need to match,
+  # verbatim, to reuse this run instead of re-executing it.
+  VINAYA_TEST_CMD="bun test --timeout=30000 -- $(printf '%s' "$VINAYA_SELECTED_TESTS" | tr '\n' ' ')"
   echo "$VINAYA_SELECTED_TESTS" | xargs bun test --timeout=30000 -- > "$VINAYA_TEST_LOG" 2>&1
   VINAYA_TEST_STATUS=$?
   cat "$VINAYA_TEST_LOG"
@@ -85,6 +90,12 @@ if [ -n "$VINAYA_SELECTED_TESTS" ]; then
     rm -f "$VINAYA_TEST_LOG"
     exit 1
   fi
+  # O3: this exact run just proved green against this head/tree — cache it
+  # (best-effort; a caching failure here never fails the push, since the
+  # test run itself already succeeded) so a "pr report" evidence build for
+  # the same head/tree naming the identical command reuses it rather than
+  # running it again.
+  bun apps/cli/src/lib/pre-push-cache-test-run.ts "$VINAYA_TEST_CMD" "$VINAYA_TEST_LOG" || true
   rm -f "$VINAYA_TEST_LOG"
   echo "vinaya pre-push: selected ${VINAYA_SELECTED_COUNT} file(s), ${VINAYA_TEST_ELAPSED}s — all green"
 fi

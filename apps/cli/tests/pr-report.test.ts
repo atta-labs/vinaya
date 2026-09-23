@@ -15,6 +15,7 @@ import {
   computeGroupA,
   computeGroupC,
   DEFAULT_COMMAND_TIMEOUT_MS,
+  defaultTestRunCache,
   extractAgentCommandLines,
   type GateOutcome,
   type GateRunner,
@@ -24,6 +25,7 @@ import {
   MissingEvidenceAnchorError,
   prReportCommand,
   prReportExitCode,
+  recordGreenTestRun,
   renderGroupC,
   replaceEvidenceBlock,
   resolveCommandTimeoutMs,
@@ -35,6 +37,7 @@ import {
   writeTokensBlock
 } from '../src/commands/pr-report'
 import { resolveTokenReportCapabilityWith } from '../src/lib/pr-report-engine'
+import { spawnBudgetedAsync, stripVinayaEnv } from './lib/process-fixture'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
@@ -666,6 +669,130 @@ describe('runAgentCommand / computeGroupC — test-run reuse (O3, Issue #707)', 
     })
     expect(rendered).toContain('1 pass, 0 fail')
     expect(rendered).toContain('Reused from a green run recorded 2026-09-24T00:00:00.000Z (pr-report) — not re-run.')
+  })
+})
+
+// Round-2 review, BLOCKER — O3 promises reuse "in the pre-push hook or an
+// earlier pr report", but nothing ever wrote a `source: 'pre-push'` record.
+// `recordGreenTestRun` is what the hook's own `pre-push-cache-test-run.ts`
+// calls; these tests prove the write it makes is the SAME cache a later
+// `computeGroupC` reads from — the hook-then-report sequence the finding
+// said was unreachable.
+describe('recordGreenTestRun — the pre-push hook half of O3 reuse (round-2 review, BLOCKER)', () => {
+  it('a run recorded with source "pre-push" is reused by a later computeGroupC, named as such', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-prepush-reuse-'))
+    initTestGitRepo(dir)
+    const cache = memoryTestRunCache()
+
+    const recorded = await recordGreenTestRun('bun test x.test.ts', '3 pass, 0 fail', dir, 'pre-push', cache)
+    expect(recorded).toBe(true)
+
+    const body = ['## Test Plan', '', '```', 'bun test x.test.ts', '```'].join('\n')
+    const groupC = await computeGroupC(body, dir, {}, cache)
+    expect(groupC.commands[0]?.output).toBe('3 pass, 0 fail')
+    expect(groupC.commands[0]?.reusedFrom).toContain('pre-push')
+  })
+
+  it('returns false and records nothing when the working tree cannot be resolved (no git repo at all)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-prepush-nogit-'))
+    const cache = memoryTestRunCache()
+    const recorded = await recordGreenTestRun('echo hi', 'hi', dir, 'pre-push', cache)
+    expect(recorded).toBe(false)
+  })
+
+  it("defaultTestRunCache() with no args is a real, usable cache (the pre-push script's own default before a PR exists)", () => {
+    const cache = defaultTestRunCache()
+    expect(typeof cache.get).toBe('function')
+    expect(typeof cache.set).toBe('function')
+  })
+
+  it('the real generated hook script (pre-push-cache-test-run.ts), spawned as a subprocess, writes a record a later computeGroupC reuses', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-prepush-script-'))
+    initTestGitRepo(dir)
+    const runtimeDir = mkdtempSync(join(tmpdir(), 'pr-report-prepush-script-runtime-'))
+    const logFile = join(dir, 'captured-output.txt')
+    writeFileSync(logFile, '2 pass, 0 fail\n')
+    const scriptPath = join(CLI_ROOT, 'src', 'lib', 'pre-push-cache-test-run.ts')
+
+    await spawnBudgetedAsync(
+      ['bun', scriptPath, 'bun test y.test.ts', logFile],
+      { cwd: dir, env: { ...stripVinayaEnv(), VINAYA_RUNTIME_DIR: runtimeDir } },
+      undefined,
+      'pre-push-cache-test-run.ts'
+    )
+
+    const cachePath = join(runtimeDir, 'tasks-execution', 'unscoped', 'output', 'test-run-cache.json')
+    const cacheContents = JSON.parse(readFileSync(cachePath, 'utf8')) as Record<string, { source: string }>
+    const records = Object.values(cacheContents)
+    expect(records).toHaveLength(1)
+    expect(records[0]?.source).toBe('pre-push')
+  })
+})
+
+// Round-2 security review, HIGH — `git()` collapsed ANY failure (a lock, a
+// missing binary, a broken worktree) to `''`, indistinguishable from a real
+// empty answer, so two DIFFERENT unresolvable working trees running the
+// identical command could collide on the same cache key and one's cached
+// output would be presented as evidence for the other's run. Fixed: any git
+// failure now makes the whole key resolution `null`, which every caller
+// treats as "no caching this call" — never a key, so never a collision.
+describe('testRunCacheKey — a git failure disables caching, never fabricates a colliding key (round-2 security review, HIGH)', () => {
+  it('two different non-git directories running the identical command never share a cached result', async () => {
+    const dirA = mkdtempSync(join(tmpdir(), 'pr-report-nogit-a-'))
+    const dirB = mkdtempSync(join(tmpdir(), 'pr-report-nogit-b-'))
+    const cache = memoryTestRunCache()
+    const counterA = join(mkdtempSync(join(tmpdir(), 'pr-report-nogit-counter-a-')), 'counter.txt')
+    const counterB = join(mkdtempSync(join(tmpdir(), 'pr-report-nogit-counter-b-')), 'counter.txt')
+
+    const first = await runAgentCommand(`echo -n x >> ${counterA}`, undefined, dirA, {}, cache)
+    expect(first.reusedFrom).toBeUndefined()
+    // Same command text, a DIFFERENT unresolvable directory — if the git
+    // failure collapsed to a shared key, this would incorrectly reuse A's
+    // result instead of running for real.
+    const second = await runAgentCommand(`echo -n x >> ${counterB}`, undefined, dirB, {}, cache)
+    expect(second.reusedFrom).toBeUndefined()
+    expect(readFileSync(counterA, 'utf8')).toBe('x')
+    expect(readFileSync(counterB, 'utf8')).toBe('x')
+  })
+
+  it('a git repo real head still caches normally — the fix narrows only the failure case', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-realgit-'))
+    initTestGitRepo(dir)
+    const cache = memoryTestRunCache()
+    const counterFile = join(mkdtempSync(join(tmpdir(), 'pr-report-realgit-counter-')), 'counter.txt')
+    const command = `echo -n x >> ${counterFile}`
+    await runAgentCommand(command, undefined, dir, {}, cache)
+    const second = await runAgentCommand(command, undefined, dir, {}, cache)
+    expect(second.reusedFrom).toBeDefined()
+  })
+})
+
+// Round-2 security review, MEDIUM — the cache key's working-tree hash
+// excluded gitignored paths entirely (`git status` with no `--ignored`), so
+// a behavioral change confined to a single gitignored file (a `.env`, a
+// locally patched generated file) was invisible to the key: the tree read
+// as unchanged and a stale cached result kept being reused.
+describe("testRunCacheKey — an ignored file's own content is part of the working-tree hash (round-2 security review, MEDIUM)", () => {
+  it('editing a gitignored file invalidates reuse', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-ignored-'))
+    initTestGitRepo(dir)
+    writeFileSync(join(dir, '.gitignore'), 'secret.env\n')
+    writeFileSync(join(dir, 'secret.env'), 'FIRST=1\n')
+    execFileSync('git', ['add', '.gitignore'], { cwd: dir })
+    execFileSync('git', ['commit', '-q', '-m', 'ignore secret.env'], { cwd: dir })
+    const cache = memoryTestRunCache()
+    const counterFile = join(mkdtempSync(join(tmpdir(), 'pr-report-ignored-counter-')), 'counter.txt')
+    const command = `echo -n x >> ${counterFile}`
+
+    await runAgentCommand(command, undefined, dir, {}, cache)
+    expect(readFileSync(counterFile, 'utf8')).toBe('x')
+
+    // Only the ignored file changes — no tracked file, nothing new/untracked.
+    writeFileSync(join(dir, 'secret.env'), 'FIRST=2\n')
+
+    const afterIgnoredChange = await runAgentCommand(command, undefined, dir, {}, cache)
+    expect(afterIgnoredChange.reusedFrom).toBeUndefined()
+    expect(readFileSync(counterFile, 'utf8')).toBe('xx')
   })
 })
 
