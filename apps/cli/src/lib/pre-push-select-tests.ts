@@ -31,7 +31,7 @@ function main(): void {
   // selector falls back to the file-level answer on its own.
   const typescript = loadTypeScript(repoRoot)
   const names = typescript ? affectedNames(typescript, changedFileDiffsSinceRemoteBase(repoRoot)) : undefined
-  // O1 (Issue #707): never the full transitive closure a push away from
+  // Never the full transitive closure a push away from
   // main can grow to — that stays CI's job (every shard still runs every
   // test). Depth-one keeps a push to a widely-imported module small: the
   // test files this diff changed, the test files that import a changed

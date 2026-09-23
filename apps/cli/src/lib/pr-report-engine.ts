@@ -487,9 +487,9 @@ export type GroupCCommandResult = {
   output: string
   exitCode: number | null
   timedOut: boolean
-  /** True when the command's captured stdout+stderr exceeded `runAgentCommand`'s own buffer budget (O4, Issue #707) — Node kills the child on either a timeout OR a maxBuffer overflow, so this is checked and reported BEFORE `timedOut`, never folded into it. */
+  /** True when the command's captured stdout+stderr exceeded `runAgentCommand`'s own buffer budget — Node kills the child on either a timeout OR a maxBuffer overflow, so this is checked and reported BEFORE `timedOut`, never folded into it. */
   overflowed: boolean
-  /** Set only when this result was reused from a prior green run against the identical head, working tree and command (O3, Issue #707) — names the run it reused rather than silently re-presenting cached output as freshly run. `undefined` for every command this call actually executed. */
+  /** Set only when this result was reused from a prior green run against the identical head, working tree and command — names the run it reused rather than silently re-presenting cached output as freshly run. `undefined` for every command this call actually executed. */
   reusedFrom?: string
 }
 export type GroupC = { commands: GroupCCommandResult[] }
@@ -497,7 +497,7 @@ export type GroupC = { commands: GroupCCommandResult[] }
 /**
  * One prior GREEN run of a Test-plan command, keyed by the exact command
  * text, the head it ran against, the working tree's content at that moment,
- * and the machine it ran on — O3 (Issue #707): a result is reused only when
+ * and the machine it ran on — a result is reused only when
  * all four still match, so a stale, cross-branch, or cross-machine result
  * can never masquerade as evidence for a run that never happened.
  */
@@ -682,7 +682,7 @@ function truncateAgentOutput(output: string): string {
  * The output-buffer budget `execFileAsync` is spawned with below — Node kills
  * the child the same way it does on a `timeout`, and sets `killed: true` on
  * the SAME error either way, so the overflow case must be told apart from a
- * genuine timeout BEFORE the `killed` check (O4, Issue #707): Node's own
+ * genuine timeout BEFORE the `killed` check: Node's own
  * error carries `code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'` only for this
  * case, checked first.
  */
@@ -754,7 +754,7 @@ export async function runAgentCommand(
   cache?: TestRunCache,
   maxBufferBytes: number = AGENT_COMMAND_MAX_BUFFER_BYTES
 ): Promise<GroupCCommandResult> {
-  // O3 (Issue #707): a command that already ran green against this EXACT
+  // A command that already ran green against this EXACT
   // head, working tree and command text — in an earlier `pr report`, or the
   // pre-push hook, whichever wrote the matching record — is reused rather
   // than run again. `cache` is `undefined` for every existing caller of this
@@ -854,7 +854,7 @@ export function renderGroupC(groupC: GroupC): string {
     // pass/fail, and a tail-truncated 600-char block should never bury it
     // below output text — put it at the top of the fence, not the bottom.
     const output = [...(status ? [status] : []), c.output].join('\n')
-    // O3 (Issue #707): a reused result names the run it reused, right below
+    // A reused result names the run it reused, right below
     // its own fence — never inside it, so the fence stays byte-identical to
     // what a fresh run of the same command would have produced.
     const reused = c.reusedFrom ? [`\n_Reused from ${c.reusedFrom} — not re-run._`] : []
@@ -1386,7 +1386,7 @@ export async function buildReport(
     gradedBodySource?: GradedBodySource
     cwd?: string
     envOverlay?: NodeJS.ProcessEnv
-    /** O3 (Issue #707): where a green Test-plan run is looked up and recorded. Defaults to this repository's own runtime directory — a test that wants isolation from that real location injects its own, an in-memory one most often. */
+    /** Where a green Test-plan run is looked up and recorded. Defaults to this repository's own runtime directory — a test that wants isolation from that real location injects its own, an in-memory one most often. */
     testRunCache?: TestRunCache
   } = {}
 ): Promise<ReportResult> {

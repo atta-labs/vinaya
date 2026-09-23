@@ -963,7 +963,7 @@ export type SelectionOptions = {
   cliEntrypoint?: string
   /**
    * How far the reachability walk may travel past a test's own first-level
-   * imports before it stops counting as "affected" (Issue `#707`, O1).
+   * imports before it stops counting as "affected".
    * `'transitive'` — the default, and every caller's behaviour before this
    * option existed — keeps walking through however many files it takes to
    * reach the change; that is the never-miss answer this repository's own
@@ -1212,7 +1212,7 @@ export function selectAffectedTestFiles(
     }
   }
 
-  // `depth: 'one'` (Issue #707, O1) defaults these two categories to
+  // `depth: 'one'` defaults these two categories to
   // `'ignore'` unless a caller names an explicit value: a repo-tree-scanner
   // or a CLI-spawn test earns its edge from what it IS, not from what it
   // imports, so no depth bound can narrow it — leaving either on on the
@@ -1306,7 +1306,7 @@ type ChangeFacts = {
  * reached for one name never fans out to the rest of what it forwards, and a
  * use of one exported name never selects on a change to a sibling name.
  *
- * `maxDepth` (Issue `#707`, O1) bounds how many TRAVERSABLE pushes (`all:`/
+ * `maxDepth` bounds how many TRAVERSABLE pushes (`all:`/
  * `own:` nodes queued for later expansion) the walk may make past `start`
  * itself — `start`'s own direct edges are depth `0` and always examined
  * regardless of `maxDepth`, since that is "this file's own imports", never a
