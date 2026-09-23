@@ -32,6 +32,7 @@ export {
   DEFAULT_COMMAND_TIMEOUT_MS,
   DivergentEvidenceAnchorError,
   extractAgentCommandLines,
+  fileBackedTestRunCache,
   type GateOutcome,
   type GateRunner,
   type GateRunResult,
@@ -46,6 +47,8 @@ export {
   resolveCommandTimeoutMs,
   runAgentCommand,
   spliceIntoLiveBody,
+  type TestRunCache,
+  type TestRunCacheRecord,
   UnresolvableMergeBaseError,
   writeTokensBlock
 } from '../lib/pr-report-engine.js'

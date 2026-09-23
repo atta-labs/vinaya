@@ -24,10 +24,13 @@ import {
   MissingEvidenceAnchorError,
   prReportCommand,
   prReportExitCode,
+  renderGroupC,
   replaceEvidenceBlock,
   resolveCommandTimeoutMs,
   runAgentCommand,
   spliceIntoLiveBody,
+  type TestRunCache,
+  type TestRunCacheRecord,
   UnresolvableMergeBaseError,
   writeTokensBlock
 } from '../src/commands/pr-report'
@@ -461,15 +464,31 @@ describe('resolveCommandTimeoutMs (issue-545, O5)', () => {
 
 describe('groupCFailed', () => {
   it('false when every command exited 0', () => {
-    expect(groupCFailed({ commands: [{ command: 'x', output: '', exitCode: 0, timedOut: false }] })).toBe(false)
+    expect(
+      groupCFailed({ commands: [{ command: 'x', output: '', exitCode: 0, timedOut: false, overflowed: false }] })
+    ).toBe(false)
   })
 
   it('true when any command exited non-zero', () => {
-    expect(groupCFailed({ commands: [{ command: 'x', output: '', exitCode: 1, timedOut: false }] })).toBe(true)
+    expect(
+      groupCFailed({ commands: [{ command: 'x', output: '', exitCode: 1, timedOut: false, overflowed: false }] })
+    ).toBe(true)
   })
 
   it('true when any command timed out', () => {
-    expect(groupCFailed({ commands: [{ command: 'x', output: 'timeout', exitCode: null, timedOut: true }] })).toBe(true)
+    expect(
+      groupCFailed({
+        commands: [{ command: 'x', output: 'timeout', exitCode: null, timedOut: true, overflowed: false }]
+      })
+    ).toBe(true)
+  })
+
+  it('true when any command overflowed its output budget (O4, Issue #707)', () => {
+    expect(
+      groupCFailed({
+        commands: [{ command: 'x', output: 'output overflow', exitCode: null, timedOut: false, overflowed: true }]
+      })
+    ).toBe(true)
   })
 
   it('false for zero commands', () => {
@@ -482,8 +501,20 @@ describe('computeGroupC — extracts and runs, end to end', () => {
     const body = ['## Test Plan', '', '```', 'echo one → one', 'echo two → two', '```'].join('\n')
     const groupC = await computeGroupC(body)
     expect(groupC.commands).toHaveLength(2)
-    expect(groupC.commands[0]).toEqual({ command: 'echo one', output: 'one', exitCode: 0, timedOut: false })
-    expect(groupC.commands[1]).toEqual({ command: 'echo two', output: 'two', exitCode: 0, timedOut: false })
+    expect(groupC.commands[0]).toEqual({
+      command: 'echo one',
+      output: 'one',
+      exitCode: 0,
+      timedOut: false,
+      overflowed: false
+    })
+    expect(groupC.commands[1]).toEqual({
+      command: 'echo two',
+      output: 'two',
+      exitCode: 0,
+      timedOut: false,
+      overflowed: false
+    })
   })
 
   it('is the empty commands list for a body with no Test Plan command list', async () => {
@@ -507,6 +538,181 @@ describe('computeGroupC — extracts and runs, end to end', () => {
     expect(withoutExtras.commands[0]?.output).toBe('pr= branch=')
     const withExtras = await computeGroupC(body, undefined, { PR_NUMBER: '623', BRANCH: 'task/worker-isolation-v1/3' })
     expect(withExtras.commands[0]?.output).toBe('pr=623 branch=task/worker-isolation-v1/3')
+  })
+})
+
+/** An in-memory `TestRunCache` for a test — no disk, no shared state with another test or the real machine's runtime directory. */
+function memoryTestRunCache(): TestRunCache {
+  const store = new Map<string, TestRunCacheRecord>()
+  return {
+    get: (key) => store.get(key),
+    set: (key, record) => store.set(key, record)
+  }
+}
+
+function initTestGitRepo(dir: string): void {
+  execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: dir })
+  execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir })
+  execFileSync('git', ['config', 'user.name', 'Test'], { cwd: dir })
+  writeFileSync(join(dir, 'README.md'), 'hello\n')
+  execFileSync('git', ['add', '.'], { cwd: dir })
+  execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: dir })
+}
+
+// Issue #707, O3 — a Test-plan command that already ran green against the
+// exact head and working tree is reused, never run again, and the evidence
+// names the run it reused. `counterFile` (appended to by the command itself)
+// is the ground truth for "did this actually re-run", independent of
+// whatever `runAgentCommand` reports about itself.
+describe('runAgentCommand / computeGroupC — test-run reuse (O3, Issue #707)', () => {
+  it('a second run of the identical command against the identical head and working tree reuses the first — the command itself never runs twice', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-reuse-'))
+    initTestGitRepo(dir)
+    const cache = memoryTestRunCache()
+    // Outside `dir` on purpose: the command's OWN write must never itself
+    // become an untracked file the working-tree hash picks up, or every
+    // "same tree" run would look different from the last.
+    const counterFile = join(mkdtempSync(join(tmpdir(), 'pr-report-reuse-counter-')), 'counter.txt')
+    const command = `echo -n x >> ${counterFile}`
+
+    const first = await runAgentCommand(command, undefined, dir, {}, cache)
+    expect(first.reusedFrom).toBeUndefined()
+    expect(first.exitCode).toBe(0)
+    expect(readFileSync(counterFile, 'utf8')).toBe('x')
+
+    const second = await runAgentCommand(command, undefined, dir, {}, cache)
+    expect(second.reusedFrom).toBeDefined()
+    expect(second.reusedFrom).toContain('pr-report')
+    expect(second.exitCode).toBe(0)
+    expect(second.timedOut).toBe(false)
+    expect(second.overflowed).toBe(false)
+    // The counter file still holds exactly one `x` — the command itself was
+    // never spawned a second time.
+    expect(readFileSync(counterFile, 'utf8')).toBe('x')
+  })
+
+  it('a working-tree change invalidates reuse — the command runs again', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-reuse-tree-'))
+    initTestGitRepo(dir)
+    const cache = memoryTestRunCache()
+    const counterFile = join(mkdtempSync(join(tmpdir(), 'pr-report-reuse-tree-counter-')), 'counter.txt')
+    const command = `echo -n x >> ${counterFile}`
+
+    await runAgentCommand(command, undefined, dir, {}, cache)
+    expect(readFileSync(counterFile, 'utf8')).toBe('x')
+
+    // A real, uncommitted change to the working tree — the same head, a
+    // different tree.
+    writeFileSync(join(dir, 'README.md'), 'hello, changed\n')
+
+    const afterChange = await runAgentCommand(command, undefined, dir, {}, cache)
+    expect(afterChange.reusedFrom).toBeUndefined()
+    expect(readFileSync(counterFile, 'utf8')).toBe('xx')
+  })
+
+  it('a failing command is never cached — reruns every time', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-reuse-fail-'))
+    initTestGitRepo(dir)
+    const cache = memoryTestRunCache()
+    const counterFile = join(mkdtempSync(join(tmpdir(), 'pr-report-reuse-fail-counter-')), 'counter.txt')
+    const command = `echo -n x >> ${counterFile}; exit 1`
+
+    const first = await runAgentCommand(command, undefined, dir, {}, cache)
+    expect(first.exitCode).toBe(1)
+    expect(first.reusedFrom).toBeUndefined()
+
+    const second = await runAgentCommand(command, undefined, dir, {}, cache)
+    expect(second.exitCode).toBe(1)
+    expect(second.reusedFrom).toBeUndefined()
+    // Ran twice — a failing result is never a green run worth reusing.
+    expect(readFileSync(counterFile, 'utf8')).toBe('xx')
+  })
+
+  it('computeGroupC threads the cache through every command in the list, and a second call on the same head/tree finishes without re-running any of them', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-reuse-groupc-'))
+    initTestGitRepo(dir)
+    const cache = memoryTestRunCache()
+    const counterFile = join(mkdtempSync(join(tmpdir(), 'pr-report-reuse-groupc-counter-')), 'counter.txt')
+    const body = ['## Test Plan', '', '```', `echo -n a >> ${counterFile}`, `echo -n b >> ${counterFile}`, '```'].join(
+      '\n'
+    )
+
+    const first = await computeGroupC(body, dir, {}, cache)
+    expect(first.commands.every((c) => c.reusedFrom === undefined)).toBe(true)
+    expect(readFileSync(counterFile, 'utf8')).toBe('ab')
+
+    const started = performance.now()
+    const second = await computeGroupC(body, dir, {}, cache)
+    const elapsedMs = performance.now() - started
+    expect(second.commands.every((c) => c.reusedFrom !== undefined)).toBe(true)
+    expect(readFileSync(counterFile, 'utf8')).toBe('ab')
+    // Reused, not re-run — no process spawn on the second pass, so this
+    // stays well under the second it would cost to fork `bash -c` twice more.
+    expect(elapsedMs).toBeLessThan(1000)
+  })
+
+  it('renderGroupC names the run a reused command reused, right below its own fence', () => {
+    const rendered = renderGroupC({
+      commands: [
+        {
+          command: 'bun test x.test.ts',
+          output: '1 pass, 0 fail',
+          exitCode: 0,
+          timedOut: false,
+          overflowed: false,
+          reusedFrom: 'a green run recorded 2026-09-24T00:00:00.000Z (pr-report)'
+        }
+      ]
+    })
+    expect(rendered).toContain('1 pass, 0 fail')
+    expect(rendered).toContain('Reused from a green run recorded 2026-09-24T00:00:00.000Z (pr-report) — not re-run.')
+  })
+})
+
+// Issue #707, O4 — an output-buffer overflow is reported as its own outcome,
+// never folded into a timeout. Node kills the child on either condition and
+// sets `killed: true` both times, so `code` must be checked first.
+describe('runAgentCommand — output-buffer overflow is its own outcome, never a timeout (O4, Issue #707)', () => {
+  it('a command whose output exceeds the buffer budget is reported as an overflow, not a timeout', async () => {
+    // A tiny budget and a command that produces far more than it, but returns
+    // almost instantly — proving the failure is about SIZE, not TIME. If this
+    // were mis-reported as a timeout, `output` would read `timeout (budget
+    // ...ms)`; `overflowed` would be false.
+    const result = await runAgentCommand(
+      'head -c 100000 /dev/zero | tr "\\0" "x"',
+      60_000,
+      undefined,
+      {},
+      undefined,
+      1024
+    )
+    expect(result.overflowed).toBe(true)
+    expect(result.timedOut).toBe(false)
+    expect(result.exitCode).toBeNull()
+    expect(result.output).toContain('output overflow')
+    expect(result.output).not.toContain('timeout')
+  })
+
+  it('renderGroupC and groupCFailed treat an overflow as a failure, with its own status marker', () => {
+    const groupC = {
+      commands: [
+        {
+          command: 'x',
+          output: 'output overflow (budget 1024 bytes)',
+          exitCode: null,
+          timedOut: false,
+          overflowed: true
+        }
+      ]
+    }
+    expect(groupCFailed(groupC)).toBe(true)
+    expect(renderGroupC(groupC)).toContain('[output overflow]')
+  })
+
+  it('a genuine timeout at the same small budget is still reported as a timeout, never an overflow', async () => {
+    const result = await runAgentCommand('sleep 5', 50, undefined, {}, undefined, 1024)
+    expect(result.timedOut).toBe(true)
+    expect(result.overflowed).toBe(false)
   })
 })
 

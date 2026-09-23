@@ -223,7 +223,7 @@ describe('compareEvidenceBlock — patch-identity fallback on a stale Head (#497
 })
 
 function groupCResult(command: string, output: string): GroupCCommandResult {
-  return { command, output, exitCode: 0, timedOut: false }
+  return { command, output, exitCode: 0, timedOut: false, overflowed: false }
 }
 
 /** A block carrying a real `renderGroupC` render — appended after Group B, exactly as `pr-report.ts` emits it. */
