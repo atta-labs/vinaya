@@ -1386,6 +1386,14 @@ export function writeDispatchSettings(
     const settings = {
       env: {
         CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1',
+        // O6 (issue-706): the SAME constant as the maximum, from the SAME
+        // object literal, so the two can never drift apart. Without a
+        // default equal to the ceiling, a command that names no timeout of
+        // its own (a `git push` whose pre-push hook runs for minutes, a long
+        // test run) is killed at the client's own 2-minute default and
+        // retried — observed live, twice in one round, as `Exit code 143 —
+        // Command timed out after 2m 0s`.
+        BASH_DEFAULT_TIMEOUT_MS: DISPATCH_BASH_MAX_TIMEOUT_MS,
         BASH_MAX_TIMEOUT_MS: DISPATCH_BASH_MAX_TIMEOUT_MS
       },
       permissions: buildRolePermissions(role),

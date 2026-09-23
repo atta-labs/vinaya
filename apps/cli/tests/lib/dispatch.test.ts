@@ -2498,6 +2498,11 @@ describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
     // itself — no operator export required.
     expect(settings.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).toBe('1')
     expect(Number(settings.env.BASH_MAX_TIMEOUT_MS)).toBeGreaterThan(600000)
+    // O6 (issue-706): the default equals the maximum, from the SAME written
+    // value, so a command naming no timeout of its own (a `git push` behind
+    // a slow pre-push hook) is never killed at the client's own 2-minute
+    // default and retried.
+    expect(settings.env.BASH_DEFAULT_TIMEOUT_MS).toBe(settings.env.BASH_MAX_TIMEOUT_MS)
 
     const preToolUse = settings.hooks.PreToolUse
     // Issue #663 adds a second entry (`Write|Edit`, the write-access grant) —
