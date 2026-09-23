@@ -1482,7 +1482,50 @@ if [ -n "$VINAYA_SELECTED_TESTS" ]; then
   # tight enough that a CLI-invocation test doing real subprocess and
   # filesystem work (a registered check's own gate observation, most
   # recently) can lose the race under nothing worse than ordinary host load.
-  echo "$VINAYA_SELECTED_TESTS" | xargs bun test --timeout=30000 -- || exit 1
+  #
+  # O6: captured to a file rather than piped straight through, so a refusal
+  # can end with a clean summary — the count, the hook's own wall time and,
+  # on a refusal, every failing test's file and title — instead of whatever
+  # line \`bun test\` itself happened to print last. A caller that keeps only
+  # the tail of a refused push's output (this loop's own driver among them)
+  # sees the failing tests either way, never buried under a full run's
+  # scrollback. \`date +%s\` (seconds, not \`%N\` nanoseconds) is the portable
+  # choice across this hook's two real targets — GNU \`date\` on CI, BSD
+  # \`date\` on a contributor's own Mac, which has no \`%N\` at all.
+  VINAYA_TEST_LOG="$(mktemp)"
+  VINAYA_TEST_STARTED=$(date +%s)
+  # O3: the exact command text this run executes — reconstructed here,
+  # before running it, so the SAME string is what gets cached below and
+  # what a later PR-body Test-plan command line would need to match,
+  # verbatim, to reuse this run instead of re-executing it.
+  VINAYA_TEST_CMD="bun test --timeout=30000 -- $(printf '%s' "$VINAYA_SELECTED_TESTS" | tr '\\n' ' ')"
+  echo "$VINAYA_SELECTED_TESTS" | xargs bun test --timeout=30000 -- > "$VINAYA_TEST_LOG" 2>&1
+  VINAYA_TEST_STATUS=$?
+  cat "$VINAYA_TEST_LOG"
+  VINAYA_TEST_ELAPSED=$(( $(date +%s) - VINAYA_TEST_STARTED ))
+  VINAYA_SELECTED_COUNT=$(printf '%s\\n' "$VINAYA_SELECTED_TESTS" | grep -c .)
+  if [ "$VINAYA_TEST_STATUS" -ne 0 ]; then
+    echo ""
+    echo "vinaya pre-push: refused — selected \${VINAYA_SELECTED_COUNT} file(s), \${VINAYA_TEST_ELAPSED}s — failing tests:"
+    # \`<path>.test.<ext>:\` is this repo's own per-file header (\`isTestFile\`'s
+    # own convention) — the one line shape a real error/stack-trace line
+    # never happens to end with, so the file a failing title belongs to is
+    # never misattributed to an unrelated colon-terminated line above it.
+    awk '
+      /\\.test\\.[a-zA-Z]+:$/ { f = $0; sub(/:$/, "", f) }
+      /^\\(fail\\) / { t = $0; sub(/^\\(fail\\) /, "", t); print "  " f ": " t }
+    ' "$VINAYA_TEST_LOG"
+    rm -f "$VINAYA_TEST_LOG"
+    exit 1
+  fi
+  # O3: this exact run just proved green against this head/tree — cache it
+  # (best-effort; a caching failure here never fails the push, since the
+  # test run itself already succeeded) so a "pr report" evidence build for
+  # the same head/tree naming the identical command reuses it rather than
+  # running it again.
+  ${libBinInvocation(selfHost, 'pre-push-cache-test-run.ts', 'vinaya-cache-test-run')} "$VINAYA_TEST_CMD" "$VINAYA_TEST_LOG" || true
+  rm -f "$VINAYA_TEST_LOG"
+  echo "vinaya pre-push: selected \${VINAYA_SELECTED_COUNT} file(s), \${VINAYA_TEST_ELAPSED}s — all green"
 fi`
 }
 

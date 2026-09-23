@@ -13,7 +13,7 @@
 
 import { afterEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -462,5 +462,81 @@ describe('log-sink — a server destination appends locally first, then drains (
       .map((l) => JSON.parse(l).effect_id)
     expect(delivered).toEqual(['first', 'second'])
     expect(readFileSync(queuePath(home), 'utf8')).toBe('')
+  })
+})
+
+// --- the sink's drain of pending writes before an abrupt exit (O5, Issue
+// #707) --------------------------------------------------------------------
+//
+// `log()`'s own write does not land synchronously — it lands inside a `.then()`
+// continuation of `context()`'s repo/doctrine/destination resolution, which
+// genuinely forks a `git` subprocess. A caller that calls `process.exit()`
+// right after `log()`, with nothing else keeping the event loop alive,
+// tears the process down before that continuation ever runs — exactly the
+// gap `drainLogSink()` exists to close, and exactly the shape of the driver's
+// own `SIGTERM`/`SIGINT` handlers (`dev-review-loop.ts`). Both scripts below
+// register the SAME signal, log the SAME event, and send themselves that
+// SAME signal in the SAME synchronous turn — the only difference is whether
+// the handler awaits `drainLogSink()` before exiting. The 60-second interval
+// is what makes the exit genuinely abrupt rather than the process ending
+// naturally once its own microtasks settle: nothing but the handler's own
+// `process.exit()` call can end the process before it fires.
+async function runAbruptExitScript(cwd: string, home: string, drainOnExit: boolean, effectId: string): Promise<void> {
+  const script = join(cwd, `run-log-abrupt-${effectId}.ts`)
+  writeFileSync(
+    script,
+    `import { drainLogSink, log } from ${JSON.stringify(LOG_SINK_PATH)}
+    setInterval(() => {}, 60000)
+    process.on('SIGTERM', async () => {
+      ${drainOnExit ? 'await drainLogSink()' : ''}
+      process.exit(0)
+    })
+    log({
+      kind: 'dispatch', event: 'dispatched', payload: {}, target_role: 'developer',
+      model: 'sonnet', effect_id: ${JSON.stringify(effectId)}, prompt_hash: 'sha256:abc'
+    })
+    process.kill(process.pid, 'SIGTERM')`
+  )
+  await spawnBudgetedAsync(
+    ['bun', script],
+    { cwd, env: { ...stripVinayaEnv(), HOME: home } },
+    undefined,
+    'run-log-abrupt.ts'
+  )
+}
+
+function folderEventPath(logsFolder: string): string {
+  return join(logsFolder, 'test-owner-test-repo', 'none.ndjson')
+}
+
+describe('log-sink — the drain before an abrupt exit is what keeps a pending write from being dropped (O5, Issue #707)', () => {
+  it('a SIGTERM handler that awaits drainLogSink() before exiting never drops the write in flight', async () => {
+    const cwd = tempDir()
+    initGitRepo(cwd)
+    const home = tempDir()
+    const logsFolder = join(home, 'logs')
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ logs: { folder: logsFolder } }))
+
+    await runAbruptExitScript(cwd, home, true, 'drained')
+
+    const path = folderEventPath(logsFolder)
+    expect(existsSync(path)).toBe(true)
+    const line = JSON.parse(readFileSync(path, 'utf8').trim())
+    expect(line.effect_id).toBe('drained')
+  })
+
+  it('a SIGTERM handler that exits WITHOUT draining drops the write — the control case that proves the assertion above is real', async () => {
+    const cwd = tempDir()
+    initGitRepo(cwd)
+    const home = tempDir()
+    const logsFolder = join(home, 'logs')
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ logs: { folder: logsFolder } }))
+
+    await runAbruptExitScript(cwd, home, false, 'dropped')
+
+    // No drain, no wait: `context()`'s own async resolution (a real `git`
+    // fork) had no chance to land the append before `process.exit()` tore
+    // the process down.
+    expect(existsSync(folderEventPath(logsFolder))).toBe(false)
   })
 })

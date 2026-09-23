@@ -2162,3 +2162,43 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
     expect(newlyCovered.length).toBeLessThan(testFiles.length)
   })
 })
+
+// Issue #707, O1 — `depth: 'one'` (the pre-push hook's own mode) stops at
+// direct importers, never the full transitive closure. Three reference
+// change sets, pinned against this repository's own real tree, each with a
+// ceiling: exceeding it is a regression in the depth rule itself (a caller
+// widening what "direct" means, or reinstating an unbounded category under
+// `depth: 'one'`), not a fact about these three files that could drift on
+// its own — none of them changes shape from a change ELSEWHERE in the repo.
+describe('selectAffectedTestFiles depth: "one" — reference change-set ceilings (Issue #707, O1)', () => {
+  it('a change to the log sink (log-sink.ts/config.ts/run-paths.ts) selects at most 20 files', () => {
+    const changed = [
+      join(REPO_ROOT, 'apps/cli/src/lib/log-sink.ts'),
+      join(REPO_ROOT, 'apps/cli/src/lib/config.ts'),
+      join(REPO_ROOT, 'apps/cli/src/lib/run-paths.ts')
+    ]
+    const { selected } = selectAffectedTestFiles(REPO_ROOT, changed, { depth: 'one' })
+    expect(selected.length).toBeLessThanOrEqual(20)
+  })
+
+  it('a change to a widely imported export of the shared core package selects at most 25 files', () => {
+    // `defaultControlStoreDeps` (`packages/aeg-core/src/control-store/local.ts`)
+    // — the control store's own dependency builder, imported directly by
+    // every suite that exercises ownership, effects, or the task-tools MCP
+    // handlers against a real store.
+    const changed = join(REPO_ROOT, 'packages/aeg-core/src/control-store/local.ts')
+    const { selected } = selectAffectedTestFiles(REPO_ROOT, [changed], {
+      depth: 'one',
+      affectedNames: new Map([[changed, new Set(['defaultControlStoreDeps'])]])
+    })
+    expect(selected.length).toBeLessThanOrEqual(25)
+  })
+
+  it('a change to one leaf module selects at most 5 files', () => {
+    // `sum-ledger.ts` — a small, narrowly-consumed utility with no re-export
+    // fan-out of its own.
+    const changed = join(REPO_ROOT, 'packages/aeg-core/src/sum-ledger.ts')
+    const { selected } = selectAffectedTestFiles(REPO_ROOT, [changed], { depth: 'one' })
+    expect(selected.length).toBeLessThanOrEqual(5)
+  })
+})

@@ -961,6 +961,23 @@ export type SelectionOptions = {
    * real one.
    */
   cliEntrypoint?: string
+  /**
+   * How far the reachability walk may travel past a test's own first-level
+   * imports before it stops counting as "affected".
+   * `'transitive'` — the default, and every caller's behaviour before this
+   * option existed — keeps walking through however many files it takes to
+   * reach the change; that is the never-miss answer this repository's own
+   * ceiling-free suite of tests below still holds it to, and it stays CI's
+   * job. `'one'` stops the walk after the test's own direct edges (an import
+   * it names, plus whatever a resolved re-export hop or a barrel's own
+   * module-scope pulls in for that SAME edge — never a second file's own
+   * further imports): a test that reaches the change only by importing a
+   * file that itself imports the changed file is not selected. This is what
+   * lets a push touching a widely-imported module stay small — the pre-push
+   * hook is the one caller that passes it (`pre-push-select-tests.ts`); the
+   * full-suite CI shards and every other caller keep the default.
+   */
+  depth?: 'one' | 'transitive'
 }
 
 /** This repository's real CLI entrypoint, repo-root-relative — {@link SelectionOptions.cliEntrypoint}'s default. */
@@ -1195,10 +1212,23 @@ export function selectAffectedTestFiles(
     }
   }
 
+  // `depth: 'one'` defaults these two categories to
+  // `'ignore'` unless a caller names an explicit value: a repo-tree-scanner
+  // or a CLI-spawn test earns its edge from what it IS, not from what it
+  // imports, so no depth bound can narrow it — leaving either on on the
+  // hook's own depth-one path would select every one of them on ANY matching
+  // change, the exact unbounded-by-rule shape O1 exists to close. CI's own
+  // full shards (`depth` left at its 'transitive' default there) still run
+  // every one of these regardless, so the never-miss guarantee these two
+  // categories exist for stays intact — only pre-push narrows.
+  const depthOneDefault = options.depth === 'one' ? 'ignore' : 'select'
+  const repoTreeScanners = options.repoTreeScanners ?? depthOneDefault
+  const cliSpawnDetection = options.cliSpawnDetection ?? depthOneDefault
+
   // Tests whose input is the repository TREE, not their own imports. Their
   // `scan:` edges are added to the graph here rather than to a configured list,
   // so the rule travels with the selector into every repository that uses it.
-  if (typescript && options.repoTreeScanners !== 'ignore') {
+  if (typescript && repoTreeScanners !== 'ignore') {
     for (const file of allSourceFiles) {
       if (!isTestFile(file)) continue
       const roots = scannedRootsOf(typescript, file, readSource(file), repoRoot)
@@ -1215,7 +1245,7 @@ export function selectAffectedTestFiles(
   // rest. A spawn shape the classifier cannot read as precisely earns the
   // coarse `scan:` edge over the entrypoint's own source directory instead —
   // the whole-package edge for this file, never silence.
-  if (typescript && options.cliSpawnDetection !== 'ignore') {
+  if (typescript && cliSpawnDetection !== 'ignore') {
     const cliEntrypoint = join(repoRoot, options.cliEntrypoint ?? DEFAULT_CLI_ENTRYPOINT)
     const cliEntrypointSourceRoot = dirname(cliEntrypoint)
     for (const file of allSourceFiles) {
@@ -1241,9 +1271,10 @@ export function selectAffectedTestFiles(
     // symmetric with the reachability path.
     if (!pkg.bunTestCompatible) continue
 
+    const maxDepth = options.depth === 'one' ? 1 : Number.POSITIVE_INFINITY
     for (const test of testFiles) {
       const forced = alwaysRunRegexes.some((re) => re.test(test.slice(repoRoot.length + 1))) || addedOrRenamed.has(test)
-      if (forced || (anythingChanged && reaches(`${ALL_PREFIX}${test}`, edges, changeFacts))) {
+      if (forced || (anythingChanged && reaches(`${ALL_PREFIX}${test}`, edges, changeFacts, maxDepth))) {
         selected.push(test)
       }
     }
@@ -1274,12 +1305,27 @@ type ChangeFacts = {
  * exist to make that reachability narrower than "any path to the file": a hop
  * reached for one name never fans out to the rest of what it forwards, and a
  * use of one exported name never selects on a change to a sibling name.
+ *
+ * `maxDepth` bounds how many TRAVERSABLE pushes (`all:`/
+ * `own:` nodes queued for later expansion) the walk may make past `start`
+ * itself — `start`'s own direct edges are depth `0` and always examined
+ * regardless of `maxDepth`, since that is "this file's own imports", never a
+ * further hop. A node popped at `depth === maxDepth` still has its own
+ * self-check run (is IT the changed file?) but its edges are never iterated,
+ * so nothing past it is reachable. `Number.POSITIVE_INFINITY` (every caller
+ * before this option existed) never trips that gate, so the walk is
+ * unbounded exactly as before.
  */
-function reaches(start: NodeKey, edges: Map<NodeKey, NodeKey[]>, changed: ChangeFacts): boolean {
+function reaches(
+  start: NodeKey,
+  edges: Map<NodeKey, NodeKey[]>,
+  changed: ChangeFacts,
+  maxDepth: number = Number.POSITIVE_INFINITY
+): boolean {
   const visited = new Set<NodeKey>()
-  const stack = [start]
+  const stack: Array<[NodeKey, number]> = [[start, 0]]
   while (stack.length > 0) {
-    const current = stack.pop() as NodeKey
+    const [current, depth] = stack.pop() as [NodeKey, number]
     if (visited.has(current)) continue
     visited.add(current)
     // `all:<file>` is the only node that checks on its own: it says the whole
@@ -1291,6 +1337,7 @@ function reaches(start: NodeKey, edges: Map<NodeKey, NodeKey[]>, changed: Change
         ? current.slice(OWN_PREFIX.length)
         : null
     if (current.startsWith(ALL_PREFIX) && currentFile && changed.files.has(currentFile)) return true
+    if (depth >= maxDepth) continue
     const ownPackage = currentFile ? changed.packageOfFile(currentFile) : null
     for (const dep of edges.get(current) ?? []) {
       if (dep.startsWith(NAME_PREFIX)) {
@@ -1319,7 +1366,7 @@ function reaches(start: NodeKey, edges: Map<NodeKey, NodeKey[]>, changed: Change
         if (changed.nonSourcePackages.has(pkg) && pkg !== ownPackage) return true
         continue
       }
-      if (!visited.has(dep)) stack.push(dep)
+      if (!visited.has(dep)) stack.push([dep, depth + 1])
     }
   }
   return false

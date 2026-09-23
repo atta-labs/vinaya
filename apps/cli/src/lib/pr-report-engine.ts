@@ -1,7 +1,21 @@
 import { execFile } from 'node:child_process'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { createHash, randomUUID } from 'node:crypto'
+import {
+  closeSync,
+  constants as fsConstants,
+  existsSync,
+  fsyncSync,
+  lstatSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+  writeSync
+} from 'node:fs'
+import { hostname, tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import {
   type AnchorField,
@@ -21,6 +35,7 @@ import { type DispatchTeeRecovery, realDispatchTeeRecoveryDeps, recoverUsageFrom
 import { collectBodyCheckErrors } from './forge-write.js'
 import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from './numstat'
 import { packageRoot } from './package-root.js'
+import { ensureRunDir, runPath, runtimeDirForThisRepo } from './run-paths.js'
 import { meteringRefusalMessage, realDeps } from '../commands/tokens'
 
 /**
@@ -480,8 +495,246 @@ export function resolveCommandTimeoutMs(): number {
   return loadConfig()?.report?.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS
 }
 
-export type GroupCCommandResult = { command: string; output: string; exitCode: number | null; timedOut: boolean }
+export type GroupCCommandResult = {
+  command: string
+  output: string
+  exitCode: number | null
+  timedOut: boolean
+  /** True when the command's captured stdout+stderr exceeded `runAgentCommand`'s own buffer budget — Node kills the child on either a timeout OR a maxBuffer overflow, so this is checked and reported BEFORE `timedOut`, never folded into it. */
+  overflowed: boolean
+  /** Set only when this result was reused from a prior green run against the identical head, working tree and command — names the run it reused rather than silently re-presenting cached output as freshly run. `undefined` for every command this call actually executed. */
+  reusedFrom?: string
+}
 export type GroupC = { commands: GroupCCommandResult[] }
+
+/**
+ * One prior GREEN run of a Test-plan command, keyed by the exact command
+ * text, the head it ran against, the working tree's content at that moment,
+ * and the machine it ran on — a result is reused only when
+ * all four still match, so a stale, cross-branch, or cross-machine result
+ * can never masquerade as evidence for a run that never happened.
+ */
+export type TestRunCacheRecord = {
+  output: string
+  exitCode: 0
+  timedOut: false
+  overflowed: false
+  recordedAt: string
+  source: 'pre-push' | 'pr-report'
+}
+
+/** A place a green Test-plan run can be looked up and recorded — `get`/`set` rather than a bare object so a test can inject an in-memory stand-in without touching disk. */
+export type TestRunCache = {
+  get: (key: string) => TestRunCacheRecord | undefined
+  set: (key: string, record: TestRunCacheRecord) => void
+}
+
+/**
+ * The cache's leaf file, read and written directly — never through
+ * `mkdirNoSymlinks` (a DIRECTORY check; this is one file) — so both halves
+ * close their own symlink gap by hand (round-4 security review, HIGH/MEDIUM):
+ * on a shared, configurable `runtimeDir` a co-tenant able to write anywhere
+ * under it (never this process's own already-hardened directories, only
+ * files) could pre-plant a SYMLINK at this exact leaf path. A plain
+ * `writeFileSync` would follow it and overwrite whatever it points at (the
+ * WRITE half); a plain `readFileSync` would follow it and silently trust
+ * whatever JSON sits there as a real cached run — the exact "evidence that
+ * cannot be traced to a real run" O3 exists to rule out (the READ half).
+ * This cache never creates a symlink at its own path itself, so — the same
+ * reasoning `mkdirNoSymlinks` already applies to a directory segment — one
+ * found there is refused rather than followed, on both sides:
+ *
+ *   - Read: `lstatSync` first, UNFOLLOWED; anything other than a real file
+ *     (a symlink, a directory, nothing at all) reads as "no cache yet"
+ *     rather than being opened.
+ *   - Write: a temp file under a fresh, per-call random name — which cannot
+ *     itself be a pre-planted symlink, since it never existed before this
+ *     call — then `renameSync` into place, mirroring
+ *     `control-store/local.ts`'s own `atomicWriteFile`. `rename` REPLACES
+ *     whatever sits at the destination — a real file or a symlink — without
+ *     ever opening or following it, so a planted symlink is atomically
+ *     swapped out for a real file rather than written through.
+ */
+function readTestRunCacheFile(path: string): Record<string, TestRunCacheRecord> {
+  try {
+    if (!lstatSync(path).isFile()) return {}
+    return JSON.parse(readFileSync(path, 'utf8')) as Record<string, TestRunCacheRecord>
+  } catch {
+    return {}
+  }
+}
+
+function writeTestRunCacheFile(path: string, all: Record<string, TestRunCacheRecord>): void {
+  const tmp = `${path}.tmp-${process.pid}-${randomUUID()}`
+  const fd = openSync(tmp, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL, 0o600)
+  try {
+    writeSync(fd, JSON.stringify(all, null, 2), null, 'utf8')
+    fsyncSync(fd)
+  } finally {
+    closeSync(fd)
+  }
+  renameSync(tmp, path)
+}
+
+/**
+ * A `TestRunCache` backed by one JSON file, read-modify-written whole on
+ * every `set` — the file is small (one entry per distinct command/head/tree
+ * combination actually run) and writes are infrequent (once per Test-plan
+ * command that finishes green), so a heavier per-key store buys nothing here.
+ * `runtimeDir` is threaded through only for `ensureRunDir`'s own
+ * ownership/mode re-assertion on the containing directory, matching every
+ * other run-file writer in this codebase (`run-paths.ts`) — the leaf file
+ * itself is guarded separately, above.
+ */
+export function fileBackedTestRunCache(path: string, runtimeDir: string): TestRunCache {
+  return {
+    get: (key) => readTestRunCacheFile(path)[key],
+    set: (key, record) => {
+      const all = readTestRunCacheFile(path)
+      all[key] = record
+      ensureRunDir(dirname(path), runtimeDir)
+      writeTestRunCacheFile(path, all)
+    }
+  }
+}
+
+/**
+ * The default cache location for a live process: this repository's own
+ * runtime directory, always `'unscoped'` — deliberately NOT scoped by PR
+ * number (round-3 security review, MEDIUM). A PR-scoped path looked
+ * reasonable in isolation, but the pre-push hook's own writer
+ * (`pre-push-cache-test-run.ts`) never has a PR number to set — it runs at
+ * push time, often before a PR even exists — so it always wrote the
+ * unscoped file while `pr report --push` on a real open PR set `PR_NUMBER`
+ * and read/wrote a DIFFERENT, PR-scoped one: two files for the same repo
+ * state, so a run the hook already proved green was never found by the
+ * primary real-PR evidence path. The cache key itself (`testRunCacheKey`)
+ * already disambiguates every dimension that matters — head, working tree,
+ * command, machine — so a second axis of separation by PR number was never
+ * load-bearing for correctness, only for tidiness; one shared file per repo
+ * is what actually delivers "in the pre-push hook or an earlier pr report"
+ * reuse for every caller, not just the ones that happen to agree on a PR
+ * number.
+ */
+export function defaultTestRunCache(): TestRunCache {
+  const runtimeDir = runtimeDirForThisRepo()
+  const path = runPath(runtimeDir, 'unscoped', { area: 'output', file: 'test-run-cache.json' })
+  return fileBackedTestRunCache(path, runtimeDir)
+}
+
+/**
+ * `git()` (this module's shared helper) collapses ANY failure — a real "no
+ * output" AND a broken pipe, a lock, a missing binary — to the same `''`,
+ * which is correct for its other callers but wrong here: this function's own
+ * job is telling "the repo has no changes" apart from "the repo could not be
+ * read", and folding both into `''` let a transient git failure produce a
+ * cache key indistinguishable from a real one (round-2 security review,
+ * HIGH) — two different heads or working trees that both hit the failure on
+ * the same command would collide and reuse each other's output. `null` means
+ * "could not resolve, don't know" and is never hashed into a key; only a
+ * REAL zero-exit run — even one whose own stdout happens to be empty —
+ * reaches the caller as a string.
+ */
+async function gitOrNull(args: string[], cwd?: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync('git', args, { encoding: 'utf8', env: process.env, cwd })
+    return stdout.trim()
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Everything that makes a prior run of `command` reusable for THIS one: the
+ * exact command text, the head it would run against, a hash of the working
+ * tree's own content, and the machine running it — `null` when any of that
+ * cannot be established, which the caller must treat as "skip the cache
+ * entirely for this call" (round-2 security review, HIGH — see
+ * {@link gitOrNull}).
+ *
+ * The working-tree hash covers tracked changes (`git diff HEAD`), every
+ * UNTRACKED file's own content (a status listing alone would miss a file
+ * whose content changed while its path stayed the same), and — `--ignored`
+ * (round-2 security review, MEDIUM) — every IGNORED path git's own default
+ * (non-`matching`) listing names, with the same per-file content hash for
+ * any ignored entry that is itself a regular file (closing the `.env`/single
+ * generated-file case the finding named). A large ignored DIRECTORY (most
+ * commonly `node_modules`) is deliberately NOT expanded file-by-file:
+ * `--ignored=matching` would force git to walk and list every file inside
+ * it, and hashing that tree's full content on every cache lookup would cost
+ * more than O3 exists to save. Its own path stays in the hash (from the
+ * status line, and — via `MISSING`, since `readFileSync` on a directory
+ * throws — from the per-entry loop below), so the directory's mere
+ * presence/absence still changes the key; a content change to a file NESTED
+ * inside it does not. A known, accepted gap, not a silent one.
+ *
+ * `-z` (round-3 security review, LOW): git's DEFAULT `--porcelain` quotes any
+ * path containing a space, a double quote, or a non-ASCII byte, wrapping it
+ * in `"…"` with C-style escapes — a real path read that way still carries
+ * its quotes and escape sequences, so `readFileSync` on it always misses and
+ * every such file silently falls back to the constant `'MISSING'` hash
+ * contribution, meaning a real content edit to it never invalidates a
+ * cached result. `-z` disables that quoting entirely and NUL-terminates
+ * each record instead of newline-terminating it, so every path below is the
+ * exact, literal one `readFileSync` needs.
+ */
+const NUL = String.fromCharCode(0)
+
+/**
+ * Hashes ONE field as a fixed-width (4-byte, big-endian) length prefix
+ * followed by its bytes — never a bare delimiter between fields (round-5
+ * security review, HIGH). A delimiter chosen from a fixed alphabet (a
+ * space, a NUL) can still occur INSIDE a field whose content this function
+ * does not control — `git diff HEAD`'s own output, an untracked file's own
+ * name or bytes — so two genuinely different (field, field) pairs can
+ * concatenate to the IDENTICAL byte stream by shifting where one field ends
+ * and the next begins (e.g. status `"a b"` + diff `"c"` vs status `"a"` +
+ * diff `"b c"`, joined by a bare space either way): a Test-plan command run
+ * against one real state would then be served as reused evidence for a
+ * DIFFERENT state that merely hashes the same, exactly the fabrication O3
+ * exists to rule out. A length prefix closes this the way any
+ * length-prefixed framing does: it is fixed-width, so it can never itself
+ * be mistaken for field content, and it is written BEFORE the field it
+ * measures, so no byte sequence can be reinterpreted as spanning a
+ * different split between two fields.
+ */
+function hashField(hash: ReturnType<typeof createHash>, value: string | Buffer): void {
+  const buf = typeof value === 'string' ? Buffer.from(value, 'utf8') : value
+  const length = Buffer.alloc(4)
+  length.writeUInt32BE(buf.length, 0)
+  hash.update(length)
+  hash.update(buf)
+}
+
+export async function testRunCacheKey(command: string, cwd?: string): Promise<string | null> {
+  const head = await gitOrNull(['rev-parse', 'HEAD'], cwd)
+  if (!head) return null
+  const status = await gitOrNull(['status', '--porcelain=v1', '-uall', '--ignored', '-z'], cwd)
+  if (status === null) return null
+  const diff = await gitOrNull(['diff', 'HEAD'], cwd)
+  if (diff === null) return null
+  const hash = createHash('sha256')
+  hashField(hash, hostname())
+  hashField(hash, head)
+  hashField(hash, status)
+  hashField(hash, diff)
+  const uncommitted = status
+    .split(NUL)
+    .filter((entry) => entry.startsWith('?? ') || entry.startsWith('!! '))
+    .map((entry) => entry.slice(3))
+    .sort()
+  const base = cwd ?? process.cwd()
+  for (const f of uncommitted) {
+    hashField(hash, f)
+    try {
+      hashField(hash, readFileSync(join(base, f)))
+    } catch {
+      hashField(hash, 'MISSING')
+    }
+  }
+  hashField(hash, command)
+  return hash.digest('hex')
+}
 
 /**
  * The `[agent]` command lines out of the PR body's Test Plan section — the
@@ -559,22 +812,34 @@ function truncateAgentOutput(output: string): string {
  * every run for this reason alone, contradicting the Test Plan's own
  * "→ exits 0" claim for a command that could never have exited 0.
  */
-export async function runAgentCommand(
+/**
+ * The output-buffer budget `execFileAsync` is spawned with below — Node kills
+ * the child the same way it does on a `timeout`, and sets `killed: true` on
+ * the SAME error either way, so the overflow case must be told apart from a
+ * genuine timeout BEFORE the `killed` check: Node's own
+ * error carries `code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'` only for this
+ * case, checked first.
+ */
+const AGENT_COMMAND_MAX_BUFFER_BYTES = 32 * 1024 * 1024
+const MAXBUFFER_ERROR_CODE = 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
+
+async function runOneAgentCommand(
   command: string,
-  timeoutMs: number = resolveCommandTimeoutMs(),
-  cwd?: string,
-  extraEnv: Record<string, string> = {}
+  timeoutMs: number,
+  cwd: string | undefined,
+  extraEnv: Record<string, string>,
+  maxBufferBytes: number
 ): Promise<GroupCCommandResult> {
   try {
     const { stdout, stderr } = await execFileAsync('bash', ['-c', command], {
       cwd: cwd ?? process.cwd(),
       encoding: 'utf8',
       timeout: timeoutMs,
-      maxBuffer: 32 * 1024 * 1024,
+      maxBuffer: maxBufferBytes,
       env: { ...buildCheckEnv(undefined), ...extraEnv }
     })
     const output = truncateAgentOutput(`${stdout}${stderr}`.trim())
-    return { command, output, exitCode: 0, timedOut: false }
+    return { command, output, exitCode: 0, timedOut: false, overflowed: false }
   } catch (err) {
     const e = err as NodeJS.ErrnoException & {
       stdout?: string
@@ -582,17 +847,113 @@ export async function runAgentCommand(
       code?: number | string
       killed?: boolean
     }
+    // Checked BEFORE `killed`: Node kills the child on a maxBuffer overflow
+    // exactly as it does on a timeout, and sets `killed: true` either way —
+    // only `code` tells the two apart. Reported as its own outcome, never
+    // folded into `timedOut` (a command that overflowed had already produced
+    // its correct result; it never ran out of TIME).
+    if (e.code === MAXBUFFER_ERROR_CODE) {
+      return {
+        command,
+        output: `output overflow (budget ${maxBufferBytes} bytes)`,
+        exitCode: null,
+        timedOut: false,
+        overflowed: true
+      }
+    }
     // Node's async `timeout` option kills the child itself when it fires
     // (`subprocess.killed` true only when node's own kill call did it — never
     // when the command under test kills itself or is signalled by something
     // else), which is the async equivalent of `spawnSync`'s own
     // `error.code === 'ETIMEDOUT'` this replaces.
     if (e.killed) {
-      return { command, output: `timeout (budget ${timeoutMs}ms)`, exitCode: null, timedOut: true }
+      return { command, output: `timeout (budget ${timeoutMs}ms)`, exitCode: null, timedOut: true, overflowed: false }
     }
     const output = truncateAgentOutput(`${e.stdout ?? ''}${e.stderr ?? ''}`.trim())
-    return { command, output, exitCode: typeof e.code === 'number' ? e.code : null, timedOut: false }
+    return {
+      command,
+      output,
+      exitCode: typeof e.code === 'number' ? e.code : null,
+      timedOut: false,
+      overflowed: false
+    }
   }
+}
+
+export async function runAgentCommand(
+  command: string,
+  timeoutMs: number = resolveCommandTimeoutMs(),
+  cwd?: string,
+  extraEnv: Record<string, string> = {},
+  cache?: TestRunCache,
+  maxBufferBytes: number = AGENT_COMMAND_MAX_BUFFER_BYTES
+): Promise<GroupCCommandResult> {
+  // A command that already ran green against this EXACT
+  // head, working tree and command text — in an earlier `pr report`, or the
+  // pre-push hook, whichever wrote the matching record — is reused rather
+  // than run again. `cache` is `undefined` for every existing caller of this
+  // function (every test that calls it directly, and any future one that
+  // doesn't opt in) — reuse is additive, never a behavior change for a
+  // caller that never asked for it.
+  const cacheKey = cache ? await testRunCacheKey(command, cwd) : null
+  if (cache && cacheKey) {
+    const hit = cache.get(cacheKey)
+    if (hit) {
+      return {
+        command,
+        output: hit.output,
+        exitCode: 0,
+        timedOut: false,
+        overflowed: false,
+        reusedFrom: `a green run recorded ${hit.recordedAt} (${hit.source})`
+      }
+    }
+  }
+  const result = await runOneAgentCommand(command, timeoutMs, cwd, extraEnv, maxBufferBytes)
+  if (cache && cacheKey && result.exitCode === 0 && !result.timedOut && !result.overflowed) {
+    cache.set(cacheKey, {
+      output: result.output,
+      exitCode: 0,
+      timedOut: false,
+      overflowed: false,
+      recordedAt: new Date().toISOString(),
+      source: 'pr-report'
+    })
+  }
+  return result
+}
+
+/**
+ * Records a command as a green run WITHOUT running it — for the one caller
+ * that already knows it ran green, by its own separate means: the pre-push
+ * hook (`pre-push-cache-test-run.ts`), whose shell already ran `bun test`
+ * and captured its output before this is ever reached. This is what makes
+ * the O3 reuse clause's other half real: without it, `source: 'pre-push'`
+ * was a value `TestRunCacheRecord` could type but no code path ever wrote,
+ * so a run the hook already proved green still re-ran the first time a `pr
+ * report` built evidence for that same head (round-2 code review, BLOCKER).
+ * A `null` key (see {@link testRunCacheKey}) records nothing rather than
+ * guessing — an unresolvable git state is never a reason to fabricate a
+ * cache entry, on this path any more than on `runAgentCommand`'s own.
+ */
+export async function recordGreenTestRun(
+  command: string,
+  output: string,
+  cwd: string | undefined,
+  source: 'pre-push' | 'pr-report',
+  cache: TestRunCache = defaultTestRunCache()
+): Promise<boolean> {
+  const key = await testRunCacheKey(command, cwd)
+  if (!key) return false
+  cache.set(key, {
+    output: truncateAgentOutput(output),
+    exitCode: 0,
+    timedOut: false,
+    overflowed: false,
+    recordedAt: new Date().toISOString(),
+    source
+  })
+  return true
 }
 
 /**
@@ -608,7 +969,8 @@ export async function runAgentCommand(
 export async function computeGroupC(
   prBody: string,
   cwd?: string,
-  extraEnv: Record<string, string> = {}
+  extraEnv: Record<string, string> = {},
+  cache?: TestRunCache
 ): Promise<GroupC> {
   // Sequential, deliberately — a `.map` into `Promise.all` would run every
   // Test-Plan command concurrently, and a §9 list is conventionally ordered
@@ -618,14 +980,16 @@ export async function computeGroupC(
   // original one-after-another order.
   const commands: GroupCCommandResult[] = []
   for (const line of extractAgentCommandLines(prBody)) {
-    commands.push(await runAgentCommand(agentCommandText(line), undefined, cwd, { PR_BODY: prBody, ...extraEnv }))
+    commands.push(
+      await runAgentCommand(agentCommandText(line), undefined, cwd, { PR_BODY: prBody, ...extraEnv }, cache)
+    )
   }
   return { commands }
 }
 
-/** True when any Group C command timed out or exited non-zero — folded into this command's overall exit code exactly like a failing Group B gate. */
+/** True when any Group C command timed out, overflowed its output budget, or exited non-zero — folded into this command's overall exit code exactly like a failing Group B gate. */
 export function groupCFailed(groupC: GroupC): boolean {
-  return groupC.commands.some((c) => c.timedOut || (c.exitCode !== null && c.exitCode !== 0))
+  return groupC.commands.some((c) => c.timedOut || c.overflowed || (c.exitCode !== null && c.exitCode !== 0))
 }
 
 /**
@@ -646,12 +1010,22 @@ export function renderGroupC(groupC: GroupC): string {
     return ['### Group C — Test Plan commands', '', '(no [agent] commands in the Test Plan section)'].join('\n')
   }
   const blocks = groupC.commands.map((c, i) => {
-    const status = c.timedOut ? '[timeout]' : c.exitCode !== 0 ? `[exit ${c.exitCode}]` : null
+    const status = c.overflowed
+      ? '[output overflow]'
+      : c.timedOut
+        ? '[timeout]'
+        : c.exitCode !== 0
+          ? `[exit ${c.exitCode}]`
+          : null
     // Status FIRST (task 5): the one fact a reviewer reads is
     // pass/fail, and a tail-truncated 600-char block should never bury it
     // below output text — put it at the top of the fence, not the bottom.
     const output = [...(status ? [status] : []), c.output].join('\n')
-    return [`#### C${i + 1}: \`${c.command}\``, '', '```', output, '```'].join('\n')
+    // A reused result names the run it reused, right below
+    // its own fence — never inside it, so the fence stays byte-identical to
+    // what a fresh run of the same command would have produced.
+    const reused = c.reusedFrom ? [`\n_Reused from ${c.reusedFrom} — not re-run._`] : []
+    return [`#### C${i + 1}: \`${c.command}\``, '', '```', output, '```', ...reused].join('\n')
   })
   return ['### Group C — Test Plan commands', '', blocks.join('\n\n')].join('\n')
 }
@@ -1179,6 +1553,8 @@ export async function buildReport(
     gradedBodySource?: GradedBodySource
     cwd?: string
     envOverlay?: NodeJS.ProcessEnv
+    /** Where a green Test-plan run is looked up and recorded. Defaults to this repository's own runtime directory — a test that wants isolation from that real location injects its own, an in-memory one most often. */
+    testRunCache?: TestRunCache
   } = {}
 ): Promise<ReportResult> {
   const groupA = opts.groupA ?? (await computeGroupA(opts.cwd))
@@ -1206,7 +1582,9 @@ export async function buildReport(
   const groupCExtraEnv: Record<string, string> = {}
   if (ambientReportEnv.PR_NUMBER !== undefined) groupCExtraEnv.PR_NUMBER = ambientReportEnv.PR_NUMBER
   if (ambientReportEnv.BRANCH !== undefined) groupCExtraEnv.BRANCH = ambientReportEnv.BRANCH
-  const groupC = opts.groupC ?? (await computeGroupC(gradedBody, opts.cwd, groupCExtraEnv))
+  const groupC =
+    opts.groupC ??
+    (await computeGroupC(gradedBody, opts.cwd, groupCExtraEnv, opts.testRunCache ?? defaultTestRunCache()))
   const blockInner = buildBlockInner(groupA, outcomes, groupC, gradedBodySource)
   const block = `${EVIDENCE_START}\n${blockInner}\n${EVIDENCE_END}`
   return {
