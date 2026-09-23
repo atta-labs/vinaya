@@ -51,6 +51,7 @@ export {
   spliceIntoLiveBody,
   type TestRunCache,
   type TestRunCacheRecord,
+  testRunCacheKey,
   UnresolvableMergeBaseError,
   writeTokensBlock
 } from '../lib/pr-report-engine.js'

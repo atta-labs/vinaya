@@ -680,7 +680,33 @@ async function gitOrNull(args: string[], cwd?: string): Promise<string | null> {
  */
 const NUL = String.fromCharCode(0)
 
-async function testRunCacheKey(command: string, cwd?: string): Promise<string | null> {
+/**
+ * Hashes ONE field as a fixed-width (4-byte, big-endian) length prefix
+ * followed by its bytes — never a bare delimiter between fields (round-5
+ * security review, HIGH). A delimiter chosen from a fixed alphabet (a
+ * space, a NUL) can still occur INSIDE a field whose content this function
+ * does not control — `git diff HEAD`'s own output, an untracked file's own
+ * name or bytes — so two genuinely different (field, field) pairs can
+ * concatenate to the IDENTICAL byte stream by shifting where one field ends
+ * and the next begins (e.g. status `"a b"` + diff `"c"` vs status `"a"` +
+ * diff `"b c"`, joined by a bare space either way): a Test-plan command run
+ * against one real state would then be served as reused evidence for a
+ * DIFFERENT state that merely hashes the same, exactly the fabrication O3
+ * exists to rule out. A length prefix closes this the way any
+ * length-prefixed framing does: it is fixed-width, so it can never itself
+ * be mistaken for field content, and it is written BEFORE the field it
+ * measures, so no byte sequence can be reinterpreted as spanning a
+ * different split between two fields.
+ */
+function hashField(hash: ReturnType<typeof createHash>, value: string | Buffer): void {
+  const buf = typeof value === 'string' ? Buffer.from(value, 'utf8') : value
+  const length = Buffer.alloc(4)
+  length.writeUInt32BE(buf.length, 0)
+  hash.update(length)
+  hash.update(buf)
+}
+
+export async function testRunCacheKey(command: string, cwd?: string): Promise<string | null> {
   const head = await gitOrNull(['rev-parse', 'HEAD'], cwd)
   if (!head) return null
   const status = await gitOrNull(['status', '--porcelain=v1', '-uall', '--ignored', '-z'], cwd)
@@ -688,13 +714,10 @@ async function testRunCacheKey(command: string, cwd?: string): Promise<string | 
   const diff = await gitOrNull(['diff', 'HEAD'], cwd)
   if (diff === null) return null
   const hash = createHash('sha256')
-  hash.update(hostname())
-  hash.update(' ')
-  hash.update(head)
-  hash.update(' ')
-  hash.update(status)
-  hash.update(' ')
-  hash.update(diff)
+  hashField(hash, hostname())
+  hashField(hash, head)
+  hashField(hash, status)
+  hashField(hash, diff)
   const uncommitted = status
     .split(NUL)
     .filter((entry) => entry.startsWith('?? ') || entry.startsWith('!! '))
@@ -702,16 +725,14 @@ async function testRunCacheKey(command: string, cwd?: string): Promise<string | 
     .sort()
   const base = cwd ?? process.cwd()
   for (const f of uncommitted) {
-    hash.update(' ')
-    hash.update(f)
+    hashField(hash, f)
     try {
-      hash.update(readFileSync(join(base, f)))
+      hashField(hash, readFileSync(join(base, f)))
     } catch {
-      hash.update('MISSING')
+      hashField(hash, 'MISSING')
     }
   }
-  hash.update(' ')
-  hash.update(command)
+  hashField(hash, command)
   return hash.digest('hex')
 }
 

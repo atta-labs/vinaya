@@ -34,6 +34,7 @@ import {
   spliceIntoLiveBody,
   type TestRunCache,
   type TestRunCacheRecord,
+  testRunCacheKey,
   UnresolvableMergeBaseError,
   writeTokensBlock
 } from '../src/commands/pr-report'
@@ -868,6 +869,46 @@ describe('fileBackedTestRunCache — a pre-planted symlink at the cache path is 
   })
 })
 
+// Round-5 security review, HIGH — the per-file loop hashed a file's own
+// name directly against its own content with no delimiter between them
+// (`hash.update(f)` immediately followed by `hash.update(content)`), and
+// the outer fields (hostname/head/status/diff/command) were joined by a
+// bare literal space that can itself occur inside any of those free-form
+// values. Either shape lets two GENUINELY DIFFERENT working-tree states
+// concatenate to the IDENTICAL byte stream and hash identically — exactly
+// this test's own scenario: an untracked file named `foo` holding `barX`
+// versus one named `foobar` holding `X`. Fixed: every field is now hashed
+// as a fixed-width length prefix followed by its bytes (`hashField`), which
+// cannot be reinterpreted as spanning a different split between fields.
+describe('testRunCacheKey — a filename/content boundary shift never collides with a different working tree (round-5 security review, HIGH)', () => {
+  it('two untracked files named "a" and "b", with content shifted across their own name/content boundary, hash differently (same repo, same head, same command, same file NAMES — so git status\'s own listing is byte-identical between the two states too, isolating the per-file loop itself)', async () => {
+    // Both states keep the SAME two files present (`a`, `b`) — only their
+    // CONTENT differs — so `git status`'s own text is identical between
+    // them and cannot be what tells the two states apart; only the per-file
+    // loop's own name/content concatenation can. Verified by hand against
+    // the PRE-fix scheme (`' ' + f + content` per file, no delimiter
+    // between a name and its own content): state A's bytes — " a" + "X" +
+    // " b" + "Y bZ" — and state B's — " a" + "X bY" + " b" + "Z" — are both
+    // literally " aX bY bZ", byte for byte; the SAME " b" bytes read as
+    // either the tail of `a`'s own content or the start of `b`'s own
+    // leading marker.
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-key-boundary-'))
+    initTestGitRepo(dir)
+    writeFileSync(join(dir, 'a'), 'X')
+    writeFileSync(join(dir, 'b'), 'Y bZ')
+
+    const keyA = await testRunCacheKey('echo hi', dir)
+    expect(keyA).not.toBeNull()
+
+    writeFileSync(join(dir, 'a'), 'X bY')
+    writeFileSync(join(dir, 'b'), 'Z')
+
+    const keyB = await testRunCacheKey('echo hi', dir)
+    expect(keyB).not.toBeNull()
+    expect(keyA).not.toBe(keyB)
+  })
+})
+
 // Round-2 security review, HIGH — `git()` collapsed ANY failure (a lock, a
 // missing binary, a broken worktree) to `''`, indistinguishable from a real
 // empty answer, so two DIFFERENT unresolvable working trees running the
@@ -979,6 +1020,22 @@ describe('runAgentCommand — output-buffer overflow is its own outcome, never a
     const result = await runAgentCommand('sleep 5', 50, undefined, {}, undefined, 1024)
     expect(result.timedOut).toBe(true)
     expect(result.overflowed).toBe(false)
+  })
+
+  // Round-5 security review, LOW — the tests above prove the overflow-vs-
+  // timeout DISTINCTION with a custom, tiny `maxBufferBytes` override for
+  // speed; none of them exercised the REAL production budget
+  // (`AGENT_COMMAND_MAX_BUFFER_BYTES`, 32 MiB — every `[agent]` command a
+  // real PR's Test Plan runs goes through this exact default, never a
+  // caller-supplied override) end to end. This one does: no sixth argument
+  // at all, so `runAgentCommand` falls back to its own real default.
+  it('a command whose output exceeds the REAL default 32 MiB budget — no override — is reported as an overflow, not a timeout', async () => {
+    const overThirtyTwoMebibytes = 33 * 1024 * 1024
+    const result = await runAgentCommand(`head -c ${overThirtyTwoMebibytes} /dev/zero | tr "\\0" "x"`, 60_000)
+    expect(result.overflowed).toBe(true)
+    expect(result.timedOut).toBe(false)
+    expect(result.output).toContain('output overflow')
+    expect(result.output).toContain('33554432 bytes')
   })
 })
 
