@@ -10,11 +10,20 @@
 
 import { afterEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { WEBHOOK_FLUSH_LOCK_STALE_MS, releaseFlushLock } from '../../src/lib/log-webhook-flush.js'
+import { WEBHOOK_FLUSH_LOCK_STALE_MS, acquireFlushLock, releaseFlushLock } from '../../src/lib/log-webhook-flush.js'
 import { spawnBudgetedAsync, spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -332,23 +341,68 @@ describe('vinaya log flush — logPublish.webhookUrl', () => {
     // stolen for staleness by a second process, which wrote ITS OWN pid —
     // never this process's — before this process's stalled `finally` block
     // finally runs and calls release.
-    const anotherProcessPid = process.pid + 1
-    writeFileSync(lockPath, `${anotherProcessPid}\n`)
+    const anotherOwner = `${process.pid + 1}:their-acquisition`
+    writeFileSync(lockPath, `${anotherOwner}\n`)
 
-    releaseFlushLock(lockPath)
+    releaseFlushLock(lockPath, `${process.pid}:my-acquisition`)
 
     expect(existsSync(lockPath)).toBe(true)
-    expect(readFileSync(lockPath, 'utf8')).toBe(`${anotherProcessPid}\n`)
+    expect(readFileSync(lockPath, 'utf8')).toBe(`${anotherOwner}\n`)
   })
 
   it('round-3 security review, MEDIUM: releaseFlushLock still deletes a lock this process actually holds', () => {
     const home = tempDir('log-webhook-home-')
     const lockPath = join(home, 'some-task.flush-lock')
     mkdirSync(dirname(lockPath), { recursive: true })
-    writeFileSync(lockPath, `${process.pid}\n`)
+    const token = acquireFlushLock(lockPath)
+    expect(token).not.toBeNull()
 
-    releaseFlushLock(lockPath)
+    releaseFlushLock(lockPath, token as string)
 
     expect(existsSync(lockPath)).toBe(false)
+  })
+
+  it('a second flush in the SAME process that took over a stale lock keeps it — the pid alone never proves ownership', () => {
+    const home = tempDir('log-webhook-home-')
+    const lockPath = join(home, 'some-task.flush-lock')
+    mkdirSync(dirname(lockPath), { recursive: true })
+    const first = acquireFlushLock(lockPath) as string
+    const staleMtime = new Date(Date.now() - WEBHOOK_FLUSH_LOCK_STALE_MS - 60_000)
+    utimesSync(lockPath, staleMtime, staleMtime)
+    const second = acquireFlushLock(lockPath)
+    expect(second).not.toBeNull()
+    expect(second).not.toBe(first)
+
+    // The first holder resumes and releases — same pid, different acquisition.
+    releaseFlushLock(lockPath, first)
+
+    expect(existsSync(lockPath)).toBe(true)
+    expect(readFileSync(lockPath, 'utf8')).toBe(`${second}\n`)
+  })
+
+  it('a stale lock is taken over by exactly one contender, never two', () => {
+    const home = tempDir('log-webhook-home-')
+    const lockPath = join(home, 'some-task.flush-lock')
+    mkdirSync(dirname(lockPath), { recursive: true })
+    writeFileSync(lockPath, '999999:crashed-holder\n')
+    const staleMtime = new Date(Date.now() - WEBHOOK_FLUSH_LOCK_STALE_MS - 60_000)
+    utimesSync(lockPath, staleMtime, staleMtime)
+
+    const winners = [acquireFlushLock(lockPath), acquireFlushLock(lockPath), acquireFlushLock(lockPath)].filter(
+      (t) => t !== null
+    )
+
+    expect(winners).toHaveLength(1)
+    expect(readFileSync(lockPath, 'utf8')).toBe(`${winners[0]}\n`)
+    expect(readdirSync(dirname(lockPath)).filter((n) => n.includes('.claimed-'))).toEqual([])
+  })
+
+  it('a fresh lock is never taken over — the holder keeps it', () => {
+    const home = tempDir('log-webhook-home-')
+    const lockPath = join(home, 'some-task.flush-lock')
+    mkdirSync(dirname(lockPath), { recursive: true })
+    const holder = acquireFlushLock(lockPath) as string
+    expect(acquireFlushLock(lockPath)).toBeNull()
+    expect(readFileSync(lockPath, 'utf8')).toBe(`${holder}\n`)
   })
 })

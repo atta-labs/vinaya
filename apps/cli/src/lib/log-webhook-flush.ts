@@ -25,12 +25,15 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
+  linkSync,
   readFileSync,
+  renameSync,
   statSync,
   unlinkSync,
   writeFileSync,
   writeSync
 } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
@@ -63,7 +66,7 @@ function isEnoent(err: unknown): boolean {
 /** A lock older than this was almost certainly abandoned by a holder that crashed mid-flush — normal completion always removes its own lock well before this — so it is stolen rather than left to jam every future drain of this queue file forever. Set well above `WEBHOOK_FETCH_TIMEOUT_MS`, the longest a healthy holder can legitimately still be inside the critical section. */
 export const WEBHOOK_FLUSH_LOCK_STALE_MS = 4 * WEBHOOK_FETCH_TIMEOUT_MS
 
-function tryCreateLock(lockPath: string): boolean {
+function tryCreateLock(lockPath: string, token: string): boolean {
   try {
     // The outbox directory may not exist yet — nothing has appended to this
     // task's queue file before (e.g. a bare `vinaya log flush` against a
@@ -73,7 +76,7 @@ function tryCreateLock(lockPath: string): boolean {
     mkdirSync(dirname(lockPath), { recursive: true, mode: 0o700 })
     const fd = openSync(lockPath, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL, 0o600)
     try {
-      writeSync(fd, `${process.pid}\n`)
+      writeSync(fd, `${token}\n`)
     } finally {
       closeSync(fd)
     }
@@ -102,28 +105,62 @@ function tryCreateLock(lockPath: string): boolean {
  * (this process's chained one, or another process's) retries, so delivery
  * still catches up in order, just not on this exact call.
  */
-function acquireFlushLock(lockPath: string): boolean {
-  if (tryCreateLock(lockPath)) return true
-  let stale: boolean
+export function acquireFlushLock(lockPath: string): string | null {
+  // A token unique to THIS acquisition, never the pid alone: two flushes in
+  // one process (the default sink and a dispatch's own sink) share a pid, so
+  // a pid cannot tell a caller's own lock from one another caller in the
+  // same process took over after it went stale.
+  const token = `${process.pid}:${randomUUID()}`
+  if (tryCreateLock(lockPath, token)) return token
+  let observedMtimeMs: number
   try {
-    stale = Date.now() - statSync(lockPath).mtimeMs > WEBHOOK_FLUSH_LOCK_STALE_MS
+    observedMtimeMs = statSync(lockPath).mtimeMs
   } catch (err) {
     if (!isEnoent(err)) throw err
     // The lock vanished between the failed create above and this stat — its
     // holder just finished. One more attempt rather than giving up here.
-    return tryCreateLock(lockPath)
+    return tryCreateLock(lockPath, token) ? token : null
   }
-  if (!stale) return false
+  if (Date.now() - observedMtimeMs <= WEBHOOK_FLUSH_LOCK_STALE_MS) return null
+  // Claim the stale lock atomically. A rename moves the file for exactly one
+  // contender; every other contender's rename finds nothing and backs off —
+  // never the unlink-then-create two contenders could both complete, each
+  // then believing it holds the lock.
+  const claimed = `${lockPath}.claimed-${randomUUID()}`
   try {
-    unlinkSync(lockPath)
+    renameSync(lockPath, claimed)
+  } catch (err) {
+    if (isEnoent(err)) return null
+    throw err
+  }
+  let claimedMtimeMs: number | null = null
+  try {
+    claimedMtimeMs = statSync(claimed).mtimeMs
   } catch (err) {
     if (!isEnoent(err)) throw err
   }
-  return tryCreateLock(lockPath)
+  if (claimedMtimeMs !== observedMtimeMs) {
+    // What moved is not the lock this caller judged stale — another
+    // contender claimed that one and created a fresh lock in between. Put the
+    // fresh lock back untouched and back off.
+    try {
+      linkSync(claimed, lockPath)
+    } catch (err) {
+      if (!isErrnoCode(err, 'EEXIST')) throw err
+    }
+    try {
+      unlinkSync(claimed)
+    } catch (err) {
+      if (!isEnoent(err)) throw err
+    }
+    return null
+  }
+  unlinkSync(claimed)
+  return tryCreateLock(lockPath, token) ? token : null
 }
 
 /**
- * Exported only for `log-webhook-flush.test.ts` — verifies ownership before
+ * Exported for `log-webhook-flush.test.ts` — verifies ownership before
  * deleting (round-3 security review, MEDIUM). A holder stalled past
  * `WEBHOOK_FLUSH_LOCK_STALE_MS` (plausible on a resource-contended host, not
  * only a genuine crash) can have `acquireFlushLock` steal its lock out from
@@ -131,15 +168,16 @@ function acquireFlushLock(lockPath: string): boolean {
  * unconditional unlink there would delete the NEW owner's still-active lock
  * — reopening the exact double-post/lost-line race this lock exists to
  * prevent, and letting a third caller acquire concurrently with the second.
- * Reading the pid back and refusing to unlink a lock this process did not
- * most recently create closes that: a stolen lock is the new owner's alone
- * to release, and the original holder's own release becomes a no-op instead
- * of a false teardown.
+ * Reading the token back and refusing to unlink a lock that does not carry
+ * the caller's own acquisition token closes that — a token, not the pid,
+ * since a second flush in the SAME process shares the pid: a stolen lock is
+ * the new owner's alone to release, and the original holder's own release
+ * becomes a no-op instead of a false teardown.
  */
-export function releaseFlushLock(lockPath: string): void {
+export function releaseFlushLock(lockPath: string, token: string): void {
   try {
     const holder = readFileSync(lockPath, 'utf8').trim()
-    if (holder !== String(process.pid)) return
+    if (holder !== token) return
     unlinkSync(lockPath)
   } catch (err) {
     if (!isEnoent(err)) throw err
@@ -189,7 +227,8 @@ export async function flushOutboxToWebhook(
   const path = sinkOutboxPathFor({ outboxRoot }, repo, outboxTask)
 
   const lockPath = `${path}.flush-lock`
-  if (!acquireFlushLock(lockPath)) return { flushed: false }
+  const lockToken = acquireFlushLock(lockPath)
+  if (lockToken === null) return { flushed: false }
   try {
     let lstat: ReturnType<typeof lstatSync> | undefined
     try {
@@ -267,6 +306,6 @@ export async function flushOutboxToWebhook(
 
     return { flushed: true, lineCount: postLines.length, bytes }
   } finally {
-    releaseFlushLock(lockPath)
+    releaseFlushLock(lockPath, lockToken)
   }
 }
