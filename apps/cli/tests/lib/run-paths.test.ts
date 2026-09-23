@@ -4,7 +4,17 @@
  * caller puts a configured `runtimeDir` through.
  */
 import { describe, expect, it } from 'bun:test'
-import { lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync } from 'node:fs'
+import {
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -14,6 +24,7 @@ import {
   isInsideRepo,
   isUnattendedProcess,
   markProcessUnattended,
+  repoRootSync,
   repoSegment,
   resolveRuntimeDir,
   runPath,
@@ -284,6 +295,47 @@ describe('ensureRunDir — run-file directories are owner-only (security review,
     } finally {
       rmSync(base, { force: true })
       rmSync(realBase, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('repoRootSync — found on the filesystem, never by spawning git', () => {
+  it('returns the nearest directory holding a .git directory, from a nested start', () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), 'run-paths-root-')))
+    try {
+      mkdirSync(join(base, '.git'))
+      mkdirSync(join(base, 'a', 'b'), { recursive: true })
+      expect(repoRootSync(join(base, 'a', 'b'))).toBe(base)
+    } finally {
+      rmSync(base, { recursive: true, force: true })
+    }
+  })
+
+  it('treats a linked worktree’s .git file as the root, the same as git does', () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), 'run-paths-root-')))
+    try {
+      writeFileSync(join(base, '.git'), 'gitdir: /elsewhere/.git/worktrees/x\n')
+      mkdirSync(join(base, 'src'))
+      expect(repoRootSync(join(base, 'src'))).toBe(base)
+    } finally {
+      rmSync(base, { recursive: true, force: true })
+    }
+  })
+
+  it('returns null for a start directory that does not exist', () => {
+    expect(repoRootSync(join(tmpdir(), 'run-paths-root-missing', 'nope'))).toBeNull()
+  })
+
+  it('resolves a symlinked start to its real path, matching git rev-parse --show-toplevel', () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), 'run-paths-root-')))
+    const link = `${base}-link`
+    try {
+      mkdirSync(join(base, '.git'))
+      symlinkSync(base, link)
+      expect(repoRootSync(link)).toBe(base)
+    } finally {
+      rmSync(link, { force: true })
+      rmSync(base, { recursive: true, force: true })
     }
   })
 })

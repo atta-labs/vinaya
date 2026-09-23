@@ -1,4 +1,5 @@
-import { execFileSync } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
+import { promisify } from 'node:util'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -706,22 +707,14 @@ export const VinayaConfigSchema = z.object({
       }
     })
     .optional(),
-  // Where the developer-review loop's own round-end flush publishes telemetry
-  // (O1/O2) — `apps/cli/src/lib/log-flush.ts`'s
-  // `flushOutbox`, called in-process at every round end. Absent (the default
-  // for every repo that has never set this key): the round-end flush is a
-  // no-op — telemetry stays in the local, already-bounded/rotated outbox
-  // (`log-sink.ts`, out of this task's surface) until an operator explicitly
-  // runs `vinaya log flush --issue <n>` by hand. NEVER falls back to the
-  // task's own Issue — that Issue is precisely the surface
-  // `fetchFrozenBrief` must read to dispatch the next developer round, and
-  // publishing unbounded telemetry there is the defect this key exists to
-  // stop (a prior task's own tracker comment payload once reached
-  // 1,597,599 bytes and broke `fetchFrozenBrief`'s own `gh issue view
-  // --json comments` read). `resolveLogPublishTarget`/`resolveLogPublishMaxChunksPerFlush`
-  // (below) are the two read sides; `dev-review-loop.ts`'s own
-  // `resolveRoundEndFlushTarget` additionally refuses a configured `issue`
-  // equal to the task being flushed, for the same reason.
+  // Backs the one-shot `vinaya log flush`/`vinaya log collect-artifact`
+  // commands' own optional webhook-posting mode and per-call chunk bound
+  // (`apps/cli/src/lib/log-flush.ts`'s `flushOutbox`,
+  // `apps/cli/src/lib/log-webhook-flush.ts`'s `flushOutboxToWebhook`) —
+  // never read by the dev-review loop itself, which delivers live through
+  // the `logs` setting instead (above; `apps/cli/specs/log.md` § The
+  // destination). `resolveLogPublishTarget`/`resolveLogPublishMaxChunksPerFlush`
+  // (below) are the two read sides.
   logPublish: z
     .object({
       issue: z.number().int().positive().optional(),
@@ -785,6 +778,42 @@ export const VinayaConfigSchema = z.object({
     .string()
     .min(1)
     .refine((v) => isAbsolute(v), { message: 'runtimeDir: must be an absolute path' })
+    .optional(),
+  // Where the Vinaya Log delivers events LIVE, as they occur — no batching,
+  // no tracker, no code host (`apps/cli/specs/log.md` § The destination;
+  // Linear "Tech spec — The Vinaya Log" rev 8). A folder (the default, when
+  // this key is absent) or a server, never both. `log-sink.ts`'s `log()` is
+  // the one reader of this setting.
+  //
+  // `folder` must be an absolute path — a relative one is refused at load
+  // time, the same rule `runtimeDir` already carries, since each process
+  // would otherwise resolve it against its own working directory.
+  //
+  // `url`'s `headers` values may reference an environment variable with
+  // `${VAR_NAME}` instead of a literal secret — resolved at delivery time,
+  // by the trusted process only, so a credential never sits in the
+  // committed config (`resolveLogsHeaderValues`, below).
+  //
+  // **Default-branch only, for an unattended caller** — the exact rule
+  // `runtimeDir`/`logPublish.webhookUrl` already carry: the destination is a
+  // path or URL a pull request under review could otherwise redirect in its
+  // own diff (`resolveTrustAnchorLogsDestination`, below).
+  logs: z
+    .object({
+      folder: z
+        .string()
+        .min(1)
+        .refine((v) => isAbsolute(v), { message: 'logs.folder: must be an absolute path' })
+        .optional(),
+      url: z.string().url().optional(),
+      headers: z.record(z.string()).optional()
+    })
+    .refine((v) => [v.folder, v.url].filter((x) => x !== undefined).length <= 1, {
+      message: 'logs: set at most one of folder/url'
+    })
+    .refine((v) => v.headers === undefined || v.url !== undefined, {
+      message: 'logs: headers requires url'
+    })
     .optional()
 })
 
@@ -903,31 +932,49 @@ export function globalRuntimeDirIgnoredWarning(path: string): string {
  * role name resolves to must come from the reviewed, committed repo file,
  * never a machine-wide personal config.
  */
+/**
+ * The global-config-ignored warnings are a per-process alert about a static
+ * config fact, so each distinct one must print at most once no matter how many
+ * times config is loaded this process. `stripGlobalOnlyKeys` runs on EVERY
+ * `loadConfig()`/`loadConfigChecked()` call, and a single command can now reach
+ * several independent load sites (`vinaya check --all` loads once for the check
+ * resolver and again when the log sink resolves its destination) — without this
+ * dedupe each site re-fired the identical warning, spamming stderr (regression
+ * guarded by check.test.ts's "exactly once"). Keyed by the full message (path +
+ * key), so a genuinely different offending file still warns.
+ */
+const emittedGlobalKeyWarnings = new Set<string>()
+function warnGlobalKeyIgnoredOnce(message: string): void {
+  if (emittedGlobalKeyWarnings.has(message)) return
+  emittedGlobalKeyWarnings.add(message)
+  console.error(`⚠ ${message}`)
+}
+
 function stripGlobalOnlyKeys(config: VinayaConfig, path: string): VinayaConfig {
   if (path !== GLOBAL_CONFIG_PATH) return config
   let result = config
   if (result.checks && Object.keys(result.checks).length > 0) {
-    console.error(`⚠ ${globalChecksIgnoredWarning(path)}`)
+    warnGlobalKeyIgnoredOnce(globalChecksIgnoredWarning(path))
     result = { ...result, checks: undefined }
   }
   if (result.roles && Object.keys(result.roles).length > 0) {
-    console.error(`⚠ ${globalRolesIgnoredWarning(path)}`)
+    warnGlobalKeyIgnoredOnce(globalRolesIgnoredWarning(path))
     result = { ...result, roles: undefined }
   }
   if (result.principals && result.principals.length > 0) {
-    console.error(`⚠ ${globalPrincipalsIgnoredWarning(path)}`)
+    warnGlobalKeyIgnoredOnce(globalPrincipalsIgnoredWarning(path))
     result = { ...result, principals: undefined }
   }
   if (result.releaseActor) {
-    console.error(`⚠ ${globalReleaseActorIgnoredWarning(path)}`)
+    warnGlobalKeyIgnoredOnce(globalReleaseActorIgnoredWarning(path))
     result = { ...result, releaseActor: undefined }
   }
   if (result.tokens) {
-    console.error(`⚠ ${globalTokensCollectIgnoredWarning(path)}`)
+    warnGlobalKeyIgnoredOnce(globalTokensCollectIgnoredWarning(path))
     result = { ...result, tokens: undefined }
   }
   if (result.runtimeDir) {
-    console.error(`⚠ ${globalRuntimeDirIgnoredWarning(path)}`)
+    warnGlobalKeyIgnoredOnce(globalRuntimeDirIgnoredWarning(path))
     result = { ...result, runtimeDir: undefined }
   }
   return result
@@ -1017,26 +1064,14 @@ export type LogPublishTarget =
   | { webhookUrl: string; headers?: Record<string, string> }
 
 /**
- * The round-end flush's configured destination
- * (O1) — `config?.logPublish`'s `issue`/`pr`/`webhookUrl`, or `null` when the
- * key is absent, which means "publish nowhere automatically." This is an
- * operational choice, not a trust decision (unlike `principals`/
- * `reviewPolicy`), so callers pass `loadConfig()` (the local, repo-walking
- * resolution), the same sourcing `dispatch.timeoutMs`/`prePush.alwaysRun`/
- * `report.commandTimeoutMs` already use — never `loadTrustAnchorConfig()`.
- *
- * **`webhookUrl` is the one exception (round-2 security review,
- * HIGH).** An `issue`/`pr` destination stays inside the same forge repo this
- * process is already running against; a `webhookUrl` is an arbitrary
- * outbound HTTP destination, so an UNATTENDED caller (the dev-review-loop's
- * own round-end auto-flush) honoring one resolved here — from the PR's own
- * working tree — would let a PR under review add or edit
- * `logPublish.webhookUrl` in its own diff and have that loop POST task
- * telemetry straight to an attacker-chosen host. `resolveTrustAnchorWebhookTarget`
- * (below) is the additional gate an unattended caller must run before ever
- * honoring a `webhookUrl` this function resolved. An interactively-run
- * command (`vinaya log flush`) is not gated this way — a human is choosing
- * to run it, the same trust level as running `vinaya.config.json`'s own
+ * `config?.logPublish`'s `issue`/`pr`/`webhookUrl`, or `null` when the key is
+ * absent. Backs the one-shot `vinaya log flush --issue/--pr` and
+ * `vinaya log collect-artifact` commands' own webhook-mode branch — both are
+ * always human- or trusted-collector-run (never the unattended dev-review
+ * loop, which delivers live through the `logs` setting instead, see
+ * `resolveLogsSetting` below), so no trust-anchor gate applies here: a human
+ * or an already-credentialed CI job is choosing to run the command, the same
+ * trust level as running `vinaya.config.json`'s own
  * `dispatch.agent`/`prePush.alwaysRun`.
  */
 export function resolveLogPublishTarget(config: VinayaConfig | null): LogPublishTarget | null {
@@ -1046,30 +1081,6 @@ export function resolveLogPublishTarget(config: VinayaConfig | null): LogPublish
   if (raw.issue !== undefined) return { issue: raw.issue }
   if (raw.pr !== undefined) return { pr: raw.pr }
   return null
-}
-
-/**
- * The trust-anchor-approved webhook target for an UNATTENDED flush caller
- * (round-2 security review, HIGH) — `null` unless the
- * repository's default-branch copy of `vinaya.config.json`
- * (`trustAnchorConfig`, from `loadTrustAnchorConfig()`) configures the
- * EXACT SAME `webhookUrl` the working tree resolved via
- * `resolveLogPublishTarget`. Pure — takes the already-resolved local
- * `webhookUrl` and an already-loaded trust-anchor config, so it is directly
- * unit-testable with plain objects, no filesystem or network of its own.
- *
- * Returns the TRUST ANCHOR's own `headers`, never the working tree's — a PR
- * that leaves `webhookUrl` untouched but edits `headers` (e.g. to smuggle
- * its own value into an `Authorization` header, or strip one) is caught the
- * same way a changed `webhookUrl` is.
- */
-export function resolveTrustAnchorWebhookTarget(
-  localWebhookUrl: string,
-  trustAnchorConfig: VinayaConfig | null
-): { webhookUrl: string; headers?: Record<string, string> } | null {
-  const anchorTarget = resolveLogPublishTarget(trustAnchorConfig)
-  if (!anchorTarget || !('webhookUrl' in anchorTarget) || anchorTarget.webhookUrl !== localWebhookUrl) return null
-  return anchorTarget
 }
 
 /**
@@ -1089,8 +1100,8 @@ export function resolveRuntimeDirSetting(config: VinayaConfig | null): string | 
  * SAME value the working tree resolved. A `null` result means "fall back to
  * the per-repository default," never "honour the working tree anyway."
  *
- * Exactly `resolveTrustAnchorWebhookTarget`'s rule, applied to the second
- * destination a pull request could redirect in its own diff. A branch that
+ * Exactly `resolveTrustAnchorLogsDestination`'s rule (below), applied to a
+ * different destination a pull request could redirect in its own diff. A branch that
  * set `runtimeDir` to the developer's own worktree would otherwise put the
  * driver's lock, the control records and the reviewer hand-off files inside
  * the very tree the confined developer is allowed to write — letting a
@@ -1116,45 +1127,77 @@ export function resolveLogPublishMaxChunksPerFlush(config: VinayaConfig | null):
   return typeof n === 'number' && Number.isInteger(n) && n > 0 ? n : DEFAULT_MAX_CHUNKS_PER_FLUSH
 }
 
+/** Exactly one of `folder`/`url` — `config?.logs`'s resolved shape, mirroring `LogPublishTarget`'s own discriminated-union convention. */
+export type LogsDestination = { folder: string } | { url: string; headers?: Record<string, string> }
+
 /**
- * The round-end flush's own destination for `task`
- * (O1) — `resolveLogPublishTarget`'s result, or `null` when either
- * unconfigured or configured to the very Issue being flushed. That second
- * case is refused, not merely discouraged: it would silently recreate the
- * exact defect this task fixes — telemetry published straight onto the
- * Issue `fetchFrozenBrief` must read to dispatch the next developer round.
- * Pure — no forge read, no filesystem beyond the already-loaded `config` —
- * so it is directly unit-testable with a plain object
- * (`dev-review-loop.test.ts`). Lives here, not in `dev-review-loop.ts`
- * (where the round-end flush's own call site is), so `journal-history.ts`'s
- * `fetchLoopHistory` can resolve the SAME destination when reading back
- * what was already flushed, without a `dev-review-loop.ts` →
- * `journal-history.ts` → `dev-review-loop.ts` import cycle.
+ * The working tree's own `logs` setting — `null` when unset, which means "no
+ * destination declared; the sink falls back to its own per-repository
+ * default folder" (`log-sink.ts`'s `resolveLogDestination`). The value an
+ * ATTENDED caller honours directly; an UNATTENDED one must put it through
+ * `resolveTrustAnchorLogsDestination` first — exactly `resolveRuntimeDirSetting`'s
+ * own split, applied to where telemetry is delivered instead of where a
+ * task's run files live.
  */
-export function resolveRoundEndFlushTarget(config: VinayaConfig | null, task: number): LogPublishTarget | null {
-  const target = resolveLogPublishTarget(config)
-  if (target === null) return null
-  if ('issue' in target && target.issue === task) return null
-  return target
+export function resolveLogsSetting(config: VinayaConfig | null): LogsDestination | null {
+  const raw = config?.logs
+  if (!raw) return null
+  if (raw.url !== undefined) return { url: raw.url, headers: raw.headers }
+  if (raw.folder !== undefined) return { folder: raw.folder }
+  return null
 }
 
 /**
- * The visible (never silent) reason the round-end flush skipped a round's
- * publish for a CONFIGURATION reason — `null` when nothing was skipped for
- * one: either a real target was flushed, or `logPublish` was never
- * configured at all, which is this task's ordinary, unremarkable default
- * (telemetry simply stays in the local outbox) and not itself a loss to
- * report. Kept separate from `resolveRoundEndFlushTarget` so the two can be
- * unit-tested independently — one resolves WHAT to flush, this one explains
- * WHY nothing was.
+ * The trust-anchor-approved `logs` destination for an UNATTENDED caller —
+ * `null` unless the repository's default-branch copy of `vinaya.config.json`
+ * (`trustAnchorConfig`, from `loadTrustAnchorConfig()`) declares the EXACT
+ * SAME destination the working tree resolved. A `null` result means "fall
+ * back to the per-repository default folder," never "honour the working
+ * tree anyway."
+ *
+ * Exactly `resolveTrustAnchorRuntimeDir`'s rule, applied to a second
+ * destination a pull request could otherwise redirect in its own diff: a
+ * branch that pointed `logs.url` at an attacker-chosen host, or `logs.folder`
+ * at a path a confined role can read, would otherwise have this unattended
+ * sink honour it with no human ever approving that specific destination.
+ * Pure: takes the already-resolved local value and an already-loaded
+ * trust-anchor config, no filesystem or network of its own.
+ *
+ * Returns the TRUST ANCHOR's own `headers` for a server destination, never
+ * the working tree's — a PR that leaves `url` untouched but edits `headers`
+ * (e.g. to smuggle its own value into an `Authorization` header, or strip
+ * one) is caught the same way a changed `url` is.
  */
-export function describeSkippedRoundEndFlush(config: VinayaConfig | null, task: number): string | null {
-  const configured = resolveLogPublishTarget(config)
-  if (configured === null) return null
-  if ('issue' in configured && configured.issue === task) {
-    return `vinaya dev-review-loop: logPublish.issue (#${configured.issue}) is this task's own Issue — refusing to flush there (that is exactly the surface \`fetchFrozenBrief\` must read to dispatch); configure a different target in vinaya.config.json.`
+export function resolveTrustAnchorLogsDestination(
+  local: LogsDestination,
+  trustAnchorConfig: VinayaConfig | null
+): LogsDestination | null {
+  const anchored = resolveLogsSetting(trustAnchorConfig)
+  if (!anchored) return null
+  if ('url' in local) return 'url' in anchored && anchored.url === local.url ? anchored : null
+  return 'folder' in anchored && anchored.folder === local.folder ? anchored : null
+}
+
+/**
+ * Substitutes `${VAR_NAME}` references in a `logs.url` header value with the
+ * named environment variable — never a literal secret sitting in
+ * `vinaya.config.json` itself. A reference to an unset variable resolves to
+ * the empty string rather than throwing, matching `redact()`'s own
+ * fail-open-but-visible posture elsewhere in this contract: an
+ * authentication failure at the destination is the observable signal, not a
+ * crashed sink. `undefined` in, `undefined` out — a `logs.url` with no
+ * `headers` at all never allocates a fresh empty object.
+ */
+export function resolveLogsHeaderValues(
+  headers: Record<string, string> | undefined,
+  env: NodeJS.ProcessEnv
+): Record<string, string> | undefined {
+  if (!headers) return undefined
+  const resolved: Record<string, string> = {}
+  for (const [key, value] of Object.entries(headers)) {
+    resolved[key] = value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, name: string) => env[name] ?? '')
   }
-  return null
+  return resolved
 }
 
 /**
@@ -1228,28 +1271,53 @@ export type TrustAnchorFetcher = () => string
  * why neither is a practical attack lever.
  */
 export function trustAnchorRepo(): string | null {
-  // One shape gate both sources pass through — the remote path used to skip
-  // it, and its own `(.+?)` group can capture slashes, so a crafted remote
-  // could have produced an `owner/a/b`-shaped value that lands somewhere
-  // other than the intended contents endpoint (a review finding).
-  const wellFormed = (slug: string): string | null => (/^[^/\s]+\/[^/\s]+$/.test(slug) ? slug : null)
-
-  const fromRunner = process.env.GITHUB_REPOSITORY?.trim()
-  if (fromRunner) {
-    const validated = wellFormed(fromRunner)
-    if (validated) return validated
-  }
+  const fromRunner = trustAnchorRepoFromRunner()
+  if (fromRunner) return fromRunner
   try {
     const url = execFileSync('git', ['remote', 'get-url', 'origin'], {
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'pipe']
-    }).trim()
-    const m = url.match(/github\.com[:/]([^/]+)\/(.+?)(?:\.git)?\/?$/)
-    return m?.[1] && m[2] ? wellFormed(`${m[1]}/${m[2]}`) : null
+    })
+    return trustAnchorRepoFromRemoteUrl(url)
   } catch {
     return null
   }
 }
+
+/** `trustAnchorRepo`, without ever blocking the event loop — the `origin` fallback runs as an async child. */
+export async function trustAnchorRepoAsync(): Promise<string | null> {
+  const fromRunner = trustAnchorRepoFromRunner()
+  if (fromRunner) return fromRunner
+  try {
+    const { stdout } = await execFileAsync('git', ['remote', 'get-url', 'origin'], {
+      encoding: 'utf-8',
+      timeout: 10_000
+    })
+    return trustAnchorRepoFromRemoteUrl(stdout)
+  } catch {
+    return null
+  }
+}
+
+// One shape gate both sources pass through — the remote path used to skip
+// it, and its own `(.+?)` group can capture slashes, so a crafted remote
+// could have produced an `owner/a/b`-shaped value that lands somewhere
+// other than the intended contents endpoint (a review finding).
+function wellFormedRepoSlug(slug: string): string | null {
+  return /^[^/\s]+\/[^/\s]+$/.test(slug) ? slug : null
+}
+
+function trustAnchorRepoFromRunner(): string | null {
+  const fromRunner = process.env.GITHUB_REPOSITORY?.trim()
+  return fromRunner ? wellFormedRepoSlug(fromRunner) : null
+}
+
+function trustAnchorRepoFromRemoteUrl(url: string): string | null {
+  const m = url.trim().match(/github\.com[:/]([^/]+)\/(.+?)(?:\.git)?\/?$/)
+  return m?.[1] && m[2] ? wellFormedRepoSlug(`${m[1]}/${m[2]}`) : null
+}
+
+const execFileAsync = promisify(execFile)
 
 /**
  * Fetches `vinaya.config.json` from the repository's DEFAULT BRANCH via the
@@ -1264,6 +1332,18 @@ function ghFetchTrustAnchorConfig(): string {
     encoding: 'utf-8',
     stdio: ['ignore', 'pipe', 'pipe']
   })
+}
+
+/** `ghFetchTrustAnchorConfig`'s async twin — the same read, as an async child that never blocks the event loop. */
+async function ghFetchTrustAnchorConfigAsync(): Promise<string> {
+  const repo = await trustAnchorRepoAsync()
+  if (!repo) throw new Error('could not resolve repo identity for the trust-anchor read')
+  const { stdout } = await execFileAsync(
+    'gh',
+    ['api', `repos/${repo}/contents/${LOCAL_CONFIG_FILENAME}`, '--jq', '.content'],
+    { encoding: 'utf-8', timeout: 10_000 }
+  )
+  return stdout
 }
 
 /**
@@ -1326,18 +1406,51 @@ function isMissingFileError(err: unknown): boolean {
 }
 
 export function loadTrustAnchorConfig(fetcher: TrustAnchorFetcher = ghFetchTrustAnchorConfig): VinayaConfig | null {
-  const warn = (why: string) =>
-    process.stdout.write(
-      `⚠ could not read the trust-anchor config (\`principals\`/\`releaseActor\`) from the default branch (${why}) — falling back to vinaya's built-in defaults.\n`
-    )
-
   let base64: string
   try {
-    base64 = fetcher().trim()
+    base64 = fetcher()
   } catch (err) {
-    if (!isMissingFileError(err)) warn(firstLine(err))
-    return null
+    return trustAnchorFetchFailed(err)
   }
+  return parseTrustAnchorContent(base64)
+}
+
+/**
+ * `loadTrustAnchorConfig` for a caller that must never block the event loop
+ * — the log sink, whose first event can land while a batch of async check
+ * children is still running. A synchronous spawn at that moment can swallow
+ * those children's exit. Same fetch, same fallbacks, same warnings.
+ */
+export async function loadTrustAnchorConfigAsync(
+  fetcher: () => Promise<string> = ghFetchTrustAnchorConfigAsync,
+  options: { quiet?: boolean } = {}
+): Promise<VinayaConfig | null> {
+  const warn = options.quiet ? () => {} : warnTrustAnchorFallback
+  let base64: string
+  try {
+    base64 = await fetcher()
+  } catch (err) {
+    return trustAnchorFetchFailed(err, warn)
+  }
+  return parseTrustAnchorContent(base64, warn)
+}
+
+function warnTrustAnchorFallback(why: string): void {
+  process.stdout.write(
+    `⚠ could not read the trust-anchor config (\`principals\`/\`releaseActor\`) from the default branch (${why}) — falling back to vinaya's built-in defaults.\n`
+  )
+}
+
+function trustAnchorFetchFailed(err: unknown, warn: (why: string) => void = warnTrustAnchorFallback): null {
+  if (!isMissingFileError(err)) warn(firstLine(err))
+  return null
+}
+
+function parseTrustAnchorContent(
+  content: string,
+  warn: (why: string) => void = warnTrustAnchorFallback
+): VinayaConfig | null {
+  const base64 = content.trim()
   if (!base64) return null
   try {
     const raw = Buffer.from(base64, 'base64').toString('utf-8')

@@ -75,7 +75,7 @@ import { resolveRepo } from '@attalabs/aeg-forge-state'
 import { homedir, hostname as osHostname } from 'node:os'
 import { parseIssueDocumentation, redact, summarizeTranscript } from '@attalabs/aeg-core'
 import type { IssueDocumentationSource, Role, RoleAttemptOutcome, TranscriptSummary } from '@attalabs/aeg-core'
-import { createLogSink, outboxPathFor, telemetryOutboxRoot } from './log-sink.js'
+import { createLogSink, resolveLogAppendPath } from './log-sink.js'
 import { appendRoleLine } from './loop-log.js'
 import { loadConfig } from './config.js'
 import {
@@ -2737,13 +2737,20 @@ export async function dispatchRole(
   prompt: string,
   opts: DispatchOpts
 ): Promise<DispatchHandle> {
+  // Shared with `resolveLogAppendPath` below, verbatim — the sink's own
+  // destination resolution reads `VINAYA_ROLE` to decide whether THIS call
+  // counts as unattended (`isUnattendedProcess`), so the two must see the
+  // identical synthetic env or they can resolve two different destinations
+  // whenever a human runs `vinaya dispatch` by hand with a non-default
+  // `logs` setting still only declared locally.
+  const sinkEnv = (): NodeJS.ProcessEnv => ({
+    ...process.env,
+    VINAYA_ROLE: role,
+    VINAYA_TASK: opts.task !== undefined ? String(opts.task) : undefined,
+    VINAYA_ROUND: opts.round !== undefined ? String(opts.round) : undefined
+  })
   const { log, runId } = createLogSink({
-    env: () => ({
-      ...process.env,
-      VINAYA_ROLE: role,
-      VINAYA_TASK: opts.task !== undefined ? String(opts.task) : undefined,
-      VINAYA_ROUND: opts.round !== undefined ? String(opts.round) : undefined
-    }),
+    env: sinkEnv,
     inputVersions: () => opts.inputVersions
   })
 
@@ -2756,7 +2763,7 @@ export async function dispatchRole(
   // harmlessly rather than mis-locating the file.
   const repo = await resolveRepo().catch(() => null)
   const issue = opts.task ?? null
-  const outboxPath = outboxPathFor({ outboxRoot: telemetryOutboxRoot }, repo, issue)
+  const outboxPath = await resolveLogAppendPath(repo, issue, { env: sinkEnv })
 
   const effectId = randomUUID()
   const vendor = VENDOR_TABLE[agent]

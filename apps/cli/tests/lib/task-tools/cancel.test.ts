@@ -636,7 +636,7 @@ function fileExistsUnder(root, name) {
   return false
 }
 
-const outboxRootPath = \`\${process.env.HOME}/.vinaya/outbox\`
+const outboxRootPath = \`\${process.env.HOME}/.vinaya\`
 const deadline = Date.now() + 10000
 while (Date.now() < deadline) {
   if (fileExistsUnder(outboxRootPath, \`\${OTHER_ISSUE}.ndjson\`)) break
@@ -652,7 +652,11 @@ console.log('DONE')
       expect(output).toContain('RESUME_REFUSED:true')
       expect(output).toContain('DONE')
 
-      const outboxRoot = join(home, '.vinaya', 'outbox')
+      // [task-files-v1] 5, O1: `log()`'s own default destination is now a
+      // folder under this repository's own `runtimeDir`, not
+      // `~/.vinaya/outbox/` — searching the whole `~/.vinaya` tree keeps
+      // this fixture robust to exactly which folder that resolves to.
+      const outboxRoot = join(home, '.vinaya')
       const otherOutboxPath = findOutboxFile(outboxRoot, '991.ndjson')
       const cancelledOutboxPath = findOutboxFile(outboxRoot, '558.ndjson')
       const otherLines = readFileSync(otherOutboxPath, 'utf8').trim().split('\n').filter(Boolean)

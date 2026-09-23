@@ -137,7 +137,11 @@ function runDispatch(fixture: Fixture, extraArgs: string[]): { status: number; s
 }
 
 function outboxLines(home: string): unknown[] {
-  const p = join(home, '.vinaya', 'outbox', 'unresolved', 'none.ndjson')
+  // [task-files-v1] 5, O1: the default `logs` destination is now a folder
+  // under this repository's own `runtimeDir` — never the machine-global
+  // `~/.vinaya/outbox/` this fixture resolves to `unresolved` (no git
+  // origin in the scratch `cwd`).
+  const p = join(home, '.vinaya', 'runtime', 'unresolved', 'logs', 'unresolved', 'none.ndjson')
   return readFileSync(p, 'utf8')
     .trim()
     .split('\n')

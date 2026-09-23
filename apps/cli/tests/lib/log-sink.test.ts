@@ -25,6 +25,12 @@ function testDeps(overrides: Partial<LogSinkDeps> = {}): { dir: string; deps: Pa
     dir,
     deps: {
       outboxRoot: () => join(dir, 'outbox'),
+      // Every test in this file asserts against `<dir>/outbox/...` — a
+      // fixed folder destination reproduces that layout exactly, leaving
+      // the `logs` setting's own resolution (default folder, server queue
+      // + drain, trust-anchor gating) to `log-destination.test.ts`
+      // ([task-files-v1] 5).
+      resolveLogDestination: () => ({ kind: 'folder', folder: join(dir, 'outbox') }),
       home: () => dir,
       hostname: () => 'test-host',
       cwd: () => dir,

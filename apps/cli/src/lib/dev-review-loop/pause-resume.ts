@@ -933,7 +933,7 @@ const MAX_FENCE_REACQUIRE_ATTEMPTS = 5
  * other call is itself refused moments later at `consumeResolutionOnce`.
  * Left unguarded, the very next `markEffectUncertain` here would throw
  * `StaleEpochWriteError` uncaught, aborting a LEGITIMATE cancel before every
- * started effect is fenced and before the caller's outbox flush ever runs.
+ * started effect is fenced and before the caller's own cancellation completes.
  * Since this function's own cancellation intent is already durably recorded
  * (the resolution was consumed before this ever runs), racing in and
  * re-claiming a fresh epoch to finish the fencing under is always safe and

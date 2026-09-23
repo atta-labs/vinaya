@@ -638,12 +638,28 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     type: 'string (optional)',
     semantics: [
       "The one directory every file a task's run writes lives under, laid out as `<runtimeDir>/tasks-execution/<task>/` with the task's files classified by nature: `control/` for the control-store records, `sessions/` for vendor session ids, `hooks/` for the per-run documentation-check files, `output/` for raw agent output and the driver's own log, `rounds/<n>/` for that round's reviewer hand-off files and its read-only candidate, and the driver lock at the task folder's root. Absent — this key's own default — runs write under `~/.vinaya/runtime/<owner>-<repo>` instead; the repository segment is kept there because task numbers repeat across repositories.",
-      'Set it to put the tree on a disk with room, or somewhere an existing backup and retention policy already covers. Nothing here changes where TELEMETRY goes: the outbox keeps its own home under the Vinaya home.',
+      "Set it to put the tree on a disk with room, or somewhere an existing backup and retention policy already covers. The `logs` setting's own default folder (below) sits under this directory, so moving `runtimeDir` moves the default telemetry destination along with it — a configured `logs.folder`/`logs.url` is unaffected either way.",
       "Repo-local only, and absolute. It is stripped from the machine-global `~/.vinaya/config.json` with a warning, the same as `checks`/`roles`/`principals`/`releaseActor`/`tokens`: only the DEFAULT carries the `<owner>-<repo>` segment, so a machine-wide value would collapse every repository into one tree and give two repositories' identically-numbered tasks the same driver lock, ownership epochs and session records. A relative path is refused (each process would resolve it against its own working directory), and so is one naming a directory inside the repository (a confined role can write there).",
-      "Read from the default branch only by an unattended caller, the same rule `logPublish.webhookUrl` carries: a value the working tree declares but the default branch does not is refused and the per-repository default is used instead, so a pull request under review cannot redirect the driver's own lock, control records and reviewer hand-off files into a tree its own agent is allowed to write. An interactively-run command honours the working tree directly.",
+      "Read from the default branch only by an unattended caller, the same rule `logs`/`logPublish.webhookUrl` carry: a value the working tree declares but the default branch does not is refused and the per-repository default is used instead, so a pull request under review cannot redirect the driver's own lock, control records and reviewer hand-off files into a tree its own agent is allowed to write. An interactively-run command honours the working tree directly.",
       'Changing it does not move what earlier runs left behind — nothing reads or migrates the old folders, so let a run in flight finish, or cancel it, before changing this key.'
     ],
     example: `{ "runtimeDir": "/var/lib/vinaya/runs" }`
+  },
+  {
+    key: 'logs',
+    type: 'object (optional)',
+    semantics: [
+      "Where the Vinaya Log delivers events LIVE, as they occur — no end-of-round batch, no tracker or code-host comment. A folder (`logs.folder`) or a server (`logs.url`), never both. Absent — this key's own default — events go to a folder under this repository's own `runtimeDir`: `<runtimeDir>/logs/<owner>-<repo>/<task>.ndjson`, one line appended per event, in order, readable while the run is still going.",
+      `A server destination (\`logs.url\`) delivers each event as it occurs too: the sink appends it to a small local retry queue first, then drains that queue in one POST — the queue holds events only while the server is unreachable, and a later event's own drain catches up whatever is still queued, in order, once it is back. \`logs.headers\` are extra HTTP headers merged into that POST; a value may reference an environment variable with \${VAR_NAME} instead of a literal secret, resolved at delivery time so a credential never sits in the committed config.`,
+      "Read from the default branch only by an unattended caller, the same rule `runtimeDir`/`logPublish.webhookUrl` carry: a `logs.folder`/`logs.url` the working tree declares but the default branch does not is refused, and the per-repository default folder is used instead — a pull request under review cannot redirect an unattended run's own telemetry by editing its own diff. An interactively-run command honours the working tree directly. `logs.folder` must also be an absolute path, for the same reason `runtimeDir` requires one.",
+      'Distinct from `logPublish`, which still backs the separate, manual `vinaya log flush`/`vinaya log collect-artifact` commands — those never read this key.'
+    ],
+    example: `{
+  "logs": {
+    "url": "https://ingest.example.com/vinaya",
+    "headers": { "authorization": "Bearer \${VINAYA_LOG_TOKEN}" }
+  }
+}`
   }
 ] as const
 

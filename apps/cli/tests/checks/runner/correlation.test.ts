@@ -22,6 +22,11 @@ const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 
 function sinkFor(dir: string, env: NodeJS.ProcessEnv): ReturnType<typeof createLogSink> {
   const deps: Partial<LogSinkDeps> = {
     outboxRoot: () => join(dir, 'outbox'),
+    // [task-files-v1] 5: `log()` now resolves its destination through
+    // `resolveLogDestination` rather than always writing under
+    // `outboxRoot()` — pinned to a folder matching `readGateLines`'s own
+    // expected layout below.
+    resolveLogDestination: () => ({ kind: 'folder', folder: join(dir, 'outbox') }),
     home: () => dir,
     hostname: () => 'test-host',
     cwd: () => dir,

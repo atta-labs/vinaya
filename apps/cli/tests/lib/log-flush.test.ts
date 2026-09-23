@@ -3,15 +3,16 @@
  * 8, Issue #626, O1/O2) — the two pieces `apps/cli/tests/commands/
  * log-flush.test.ts` doesn't cover: `vinaya.config.json`'s `logPublish` key
  * (`resolveLogPublishTarget`/`resolveLogPublishMaxChunksPerFlush`,
- * `../../src/lib/config.js`) and the round-end flush's own refusal to ever
- * default to the task's own Issue (`resolveRoundEndFlushTarget`/
- * `describeSkippedRoundEndFlush`, `../../src/lib/dev-review-loop.js`) are
- * pure — unit-tested directly, no `gh`, no subprocess. The per-flush chunk
- * bound itself is exercised through the real `vinaya log flush` CLI entry
- * point against a stubbed `gh` on `PATH`, the same discipline
- * `commands/log-flush.test.ts` uses and for the same reason: `config.ts`'s
- * `GLOBAL_VINAYA_HOME` is a module-level constant frozen at first import, so
- * a fake `$HOME` only takes effect in a fresh subprocess.
+ * `../../src/lib/config.js`), backing the surviving `vinaya log flush`/
+ * `log collect-artifact` commands only — never the dev-review loop itself,
+ * which delivers live through the `logs` setting instead
+ * (`log-destination.test.ts`, [task-files-v1] 5). Unit-tested directly, no
+ * `gh`, no subprocess. The per-flush chunk bound itself is exercised through
+ * the real `vinaya log flush` CLI entry point against a stubbed `gh` on
+ * `PATH`, the same discipline `commands/log-flush.test.ts` uses and for the
+ * same reason: `config.ts`'s `GLOBAL_VINAYA_HOME` is a module-level constant
+ * frozen at first import, so a fake `$HOME` only takes effect in a fresh
+ * subprocess.
  */
 
 import { afterEach, describe, expect, it } from 'bun:test'
@@ -24,14 +25,8 @@ import {
   DEFAULT_MAX_CHUNKS_PER_FLUSH,
   resolveLogPublishMaxChunksPerFlush,
   resolveLogPublishTarget,
-  resolveTrustAnchorWebhookTarget,
   type VinayaConfig
 } from '../../src/lib/config.js'
-import {
-  defaultFlushOutbox,
-  describeSkippedRoundEndFlush,
-  resolveRoundEndFlushTarget
-} from '../../src/lib/dev-review-loop.js'
 import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 
 describe('resolveLogPublishTarget (pure) — O1: target selection honours configuration', () => {
@@ -61,73 +56,6 @@ describe('resolveLogPublishTarget (pure) — O1: target selection honours config
   })
 })
 
-describe('resolveTrustAnchorWebhookTarget (pure) — round-2 security review, HIGH: a PR cannot grant itself a new webhook destination', () => {
-  it('is null when the default branch has no logPublish at all', () => {
-    expect(resolveTrustAnchorWebhookTarget('https://example.com/ingest', null)).toBeNull()
-    expect(resolveTrustAnchorWebhookTarget('https://example.com/ingest', {} as VinayaConfig)).toBeNull()
-  })
-
-  it("is null when the default branch's webhookUrl differs from the working tree's — a PR editing its own webhookUrl is never honoured automatically", () => {
-    const anchor = { logPublish: { webhookUrl: 'https://trusted.example.com/ingest' } } as VinayaConfig
-    expect(resolveTrustAnchorWebhookTarget('https://attacker.example.com/ingest', anchor)).toBeNull()
-  })
-
-  it('is null when the default branch configures issue/pr instead of a webhookUrl', () => {
-    const anchor = { logPublish: { issue: 999 } } as VinayaConfig
-    expect(resolveTrustAnchorWebhookTarget('https://example.com/ingest', anchor)).toBeNull()
-  })
-
-  it("resolves the TRUST ANCHOR's own headers, never a caller-supplied set, when the webhookUrl matches", () => {
-    const anchor = {
-      logPublish: { webhookUrl: 'https://trusted.example.com/ingest', headers: { authorization: 'Bearer real' } }
-    } as VinayaConfig
-    expect(resolveTrustAnchorWebhookTarget('https://trusted.example.com/ingest', anchor)).toEqual({
-      webhookUrl: 'https://trusted.example.com/ingest',
-      headers: { authorization: 'Bearer real' }
-    })
-  })
-})
-
-describe('defaultFlushOutbox — the round-end auto-flush never trusts a working-tree webhookUrl on its own (Issue #636)', () => {
-  it("skips (ok: true, no throw) and never calls the injected trust-anchor loader's result when it mismatches — proven by an unreachable URL that would otherwise surface as ok: false", async () => {
-    const cwd = tempDir('log-flush-lib-trust-cwd-')
-    writeFileSync(
-      join(cwd, 'vinaya.config.json'),
-      JSON.stringify({ logPublish: { webhookUrl: 'http://127.0.0.1:1/never-reached' } })
-    )
-    const originalCwd = process.cwd()
-    process.chdir(cwd)
-    try {
-      const outcome = await defaultFlushOutbox(601, () => null)
-      // A real attempt at this unroutable URL would reject and this
-      // function would return `{ok: false, error: ...}` — `ok: true` here
-      // is only reachable via the mismatch short-circuit, before `fetch` is
-      // ever called.
-      expect(outcome).toEqual({ ok: true })
-    } finally {
-      process.chdir(originalCwd)
-    }
-  })
-
-  it('skips (never throws, never treats an unreachable trust-anchor read as trust) when the injected loader itself throws', async () => {
-    const cwd = tempDir('log-flush-lib-trust-cwd-')
-    writeFileSync(
-      join(cwd, 'vinaya.config.json'),
-      JSON.stringify({ logPublish: { webhookUrl: 'http://127.0.0.1:1/never-reached' } })
-    )
-    const originalCwd = process.cwd()
-    process.chdir(cwd)
-    try {
-      const outcome = await defaultFlushOutbox(602, () => {
-        throw new Error('gh unreachable')
-      })
-      expect(outcome).toEqual({ ok: true })
-    } finally {
-      process.chdir(originalCwd)
-    }
-  })
-})
-
 describe('resolveLogPublishMaxChunksPerFlush (pure) — O2: bounded volume per target', () => {
   it('defaults to DEFAULT_MAX_CHUNKS_PER_FLUSH when unset', () => {
     expect(resolveLogPublishMaxChunksPerFlush(null)).toBe(DEFAULT_MAX_CHUNKS_PER_FLUSH)
@@ -149,35 +77,6 @@ describe('resolveLogPublishMaxChunksPerFlush (pure) — O2: bounded volume per t
     expect(
       resolveLogPublishMaxChunksPerFlush({ logPublish: { issue: 1, maxChunksPerFlush: -3 } } as VinayaConfig)
     ).toBe(DEFAULT_MAX_CHUNKS_PER_FLUSH)
-  })
-})
-
-describe('resolveRoundEndFlushTarget / describeSkippedRoundEndFlush (pure) — O1: never defaults to the task Issue', () => {
-  const TASK = 566
-
-  it('is null (no publish) when logPublish is unconfigured — the ordinary default, and not a reported skip', () => {
-    expect(resolveRoundEndFlushTarget(null, TASK)).toBeNull()
-    expect(describeSkippedRoundEndFlush(null, TASK)).toBeNull()
-  })
-
-  it('resolves a configured target distinct from the task Issue', () => {
-    const config = { logPublish: { issue: 999 } } as VinayaConfig
-    expect(resolveRoundEndFlushTarget(config, TASK)).toEqual({ issue: 999 })
-    expect(describeSkippedRoundEndFlush(config, TASK)).toBeNull()
-  })
-
-  it('refuses — visibly, never silently — a configured issue equal to the task being flushed, the exact surface fetchFrozenBrief must read', () => {
-    const config = { logPublish: { issue: TASK } } as VinayaConfig
-    expect(resolveRoundEndFlushTarget(config, TASK)).toBeNull()
-    const reason = describeSkippedRoundEndFlush(config, TASK)
-    expect(reason).toContain(`#${TASK}`)
-    expect(reason).toContain('fetchFrozenBrief')
-  })
-
-  it('a configured pr target is never compared against the task Issue number (a distinct forge object)', () => {
-    const config = { logPublish: { pr: TASK } } as VinayaConfig
-    expect(resolveRoundEndFlushTarget(config, TASK)).toEqual({ pr: TASK })
-    expect(describeSkippedRoundEndFlush(config, TASK)).toBeNull()
   })
 })
 

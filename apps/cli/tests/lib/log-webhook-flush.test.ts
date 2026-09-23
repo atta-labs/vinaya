@@ -10,11 +10,21 @@
 
 import { afterEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
+import { WEBHOOK_FLUSH_LOCK_STALE_MS, acquireFlushLock, releaseFlushLock } from '../../src/lib/log-webhook-flush.js'
+import { spawnBudgetedAsync, spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
@@ -112,6 +122,37 @@ function startWebhookServer(status = 200): {
 
 function writeWebhookConfig(cwd: string, webhookUrl: string, headers?: Record<string, string>): void {
   writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ logPublish: { webhookUrl, headers } }))
+}
+
+/** Like `startWebhookServer`, but holds the response for `delayMs` — long enough for a concurrently-spawned second `vinaya log flush` to observe the first's lock still held. */
+function startSlowWebhookServer(
+  status: number,
+  delayMs: number
+): { url: string; requests: CapturedRequest[]; stop: () => void } {
+  const requests: CapturedRequest[] = []
+  const server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const body = await req.text()
+      const headers: Record<string, string> = {}
+      req.headers.forEach((v, k) => {
+        headers[k] = v
+      })
+      requests.push({ body, headers })
+      await new Promise((r) => setTimeout(r, delayMs))
+      return new Response(status === 200 ? 'ok' : 'error', { status })
+    }
+  })
+  return { url: `http://127.0.0.1:${server.port}/ingest`, requests, stop: () => server.stop() }
+}
+
+function runCliAsync(args: string[], cwd: string, env: Record<string, string | undefined>): Promise<CliResult> {
+  return spawnBudgetedAsync(
+    ['bun', INDEX, ...args],
+    { cwd, env: { ...stripVinayaEnv(), ...env } },
+    6000,
+    'vinaya log flush (async)'
+  )
 }
 
 describe('vinaya log flush — logPublish.webhookUrl', () => {
@@ -240,5 +281,128 @@ describe('vinaya log flush — logPublish.webhookUrl', () => {
     expect(r.status).toBe(0)
     expect(r.stdout).toContain('nothing to flush')
     expect(server.requests.length).toBe(0)
+  })
+
+  it('round-2 security review, BLOCKER: two concurrent processes never race the same queue file — the loser backs off untouched instead of double-posting or dropping a line', async () => {
+    const cwd = tempDir('log-webhook-cwd-')
+    initGitRepo(cwd)
+    const home = tempDir('log-webhook-home-')
+    const server = startSlowWebhookServer(200, 500)
+    writeWebhookConfig(cwd, server.url)
+    const lines = [ndjsonLine('run-1', 705), ndjsonLine('run-2', 705)]
+    const path = seedOutbox(home, 705, lines)
+
+    const first = runCliAsync(['log', 'flush', '--issue', '705'], cwd, { HOME: home })
+    // Gives the first process time to win the lock and enter its (slow) POST
+    // before the second even starts — the second must find the lock already
+    // held for the whole window, not race to create it first.
+    await new Promise((r) => setTimeout(r, 150))
+    const second = runCliAsync(['log', 'flush', '--issue', '705'], cwd, { HOME: home })
+
+    const [r1, r2] = await Promise.all([first, second])
+    server.stop()
+
+    const results = [r1, r2]
+    const winner = results.find((r) => r.stdout.includes('posted'))
+    const loser = results.find((r) => r.stdout.includes('nothing to flush'))
+
+    expect(server.requests.length).toBe(1)
+    expect(winner?.stdout).toContain('posted 2 line(s)')
+    expect(loser).toBeDefined()
+    expect(readFileSync(path, 'utf8')).toBe('')
+  }, 10000)
+
+  it('round-2 security review, BLOCKER: a lock abandoned by a crashed holder is stolen once stale, not left to jam every future flush', () => {
+    const cwd = tempDir('log-webhook-cwd-')
+    initGitRepo(cwd)
+    const home = tempDir('log-webhook-home-')
+    const server = startWebhookServer(200)
+    writeWebhookConfig(cwd, server.url)
+    const line = ndjsonLine('run-1', 706)
+    const path = seedOutbox(home, 706, [line])
+    const lockPath = `${path}.flush-lock`
+    writeFileSync(lockPath, '999999\n')
+    const staleMtime = new Date(Date.now() - WEBHOOK_FLUSH_LOCK_STALE_MS - 5000)
+    utimesSync(lockPath, staleMtime, staleMtime)
+
+    const r = runCli(['log', 'flush', '--issue', '706'], cwd, { HOME: home })
+    server.stop()
+
+    expect(r.status).toBe(0)
+    expect(r.stdout).toContain('posted 1 line(s)')
+    expect(readFileSync(path, 'utf8')).toBe('')
+  })
+
+  it('round-3 security review, MEDIUM: releaseFlushLock never deletes a lock another process now owns — a holder stalled past the stale window, then resumed, cannot tear down the lock its own lock was stolen from', () => {
+    const home = tempDir('log-webhook-home-')
+    const lockPath = join(home, 'some-task.flush-lock')
+    mkdirSync(dirname(lockPath), { recursive: true })
+    // Simulates the exact race: this process's own lock (pid below) was
+    // stolen for staleness by a second process, which wrote ITS OWN pid —
+    // never this process's — before this process's stalled `finally` block
+    // finally runs and calls release.
+    const anotherOwner = `${process.pid + 1}:their-acquisition`
+    writeFileSync(lockPath, `${anotherOwner}\n`)
+
+    releaseFlushLock(lockPath, `${process.pid}:my-acquisition`)
+
+    expect(existsSync(lockPath)).toBe(true)
+    expect(readFileSync(lockPath, 'utf8')).toBe(`${anotherOwner}\n`)
+  })
+
+  it('round-3 security review, MEDIUM: releaseFlushLock still deletes a lock this process actually holds', () => {
+    const home = tempDir('log-webhook-home-')
+    const lockPath = join(home, 'some-task.flush-lock')
+    mkdirSync(dirname(lockPath), { recursive: true })
+    const token = acquireFlushLock(lockPath)
+    expect(token).not.toBeNull()
+
+    releaseFlushLock(lockPath, token as string)
+
+    expect(existsSync(lockPath)).toBe(false)
+  })
+
+  it('a second flush in the SAME process that took over a stale lock keeps it — the pid alone never proves ownership', () => {
+    const home = tempDir('log-webhook-home-')
+    const lockPath = join(home, 'some-task.flush-lock')
+    mkdirSync(dirname(lockPath), { recursive: true })
+    const first = acquireFlushLock(lockPath) as string
+    const staleMtime = new Date(Date.now() - WEBHOOK_FLUSH_LOCK_STALE_MS - 60_000)
+    utimesSync(lockPath, staleMtime, staleMtime)
+    const second = acquireFlushLock(lockPath)
+    expect(second).not.toBeNull()
+    expect(second).not.toBe(first)
+
+    // The first holder resumes and releases — same pid, different acquisition.
+    releaseFlushLock(lockPath, first)
+
+    expect(existsSync(lockPath)).toBe(true)
+    expect(readFileSync(lockPath, 'utf8')).toBe(`${second}\n`)
+  })
+
+  it('a stale lock is taken over by exactly one contender, never two', () => {
+    const home = tempDir('log-webhook-home-')
+    const lockPath = join(home, 'some-task.flush-lock')
+    mkdirSync(dirname(lockPath), { recursive: true })
+    writeFileSync(lockPath, '999999:crashed-holder\n')
+    const staleMtime = new Date(Date.now() - WEBHOOK_FLUSH_LOCK_STALE_MS - 60_000)
+    utimesSync(lockPath, staleMtime, staleMtime)
+
+    const winners = [acquireFlushLock(lockPath), acquireFlushLock(lockPath), acquireFlushLock(lockPath)].filter(
+      (t) => t !== null
+    )
+
+    expect(winners).toHaveLength(1)
+    expect(readFileSync(lockPath, 'utf8')).toBe(`${winners[0]}\n`)
+    expect(readdirSync(dirname(lockPath)).filter((n) => n.includes('.claimed-'))).toEqual([])
+  })
+
+  it('a fresh lock is never taken over — the holder keeps it', () => {
+    const home = tempDir('log-webhook-home-')
+    const lockPath = join(home, 'some-task.flush-lock')
+    mkdirSync(dirname(lockPath), { recursive: true })
+    const holder = acquireFlushLock(lockPath) as string
+    expect(acquireFlushLock(lockPath)).toBeNull()
+    expect(readFileSync(lockPath, 'utf8')).toBe(`${holder}\n`)
   })
 })

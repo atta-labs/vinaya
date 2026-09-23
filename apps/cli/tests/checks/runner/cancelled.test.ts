@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import { mkdtempSync, readFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { stripVinayaEnv } from '../../lib/process-fixture'
 
 const FIXTURES = join(import.meta.dir, '..', '..', 'fixtures', 'checks')
 const RUN_AND_HANG = join(FIXTURES, 'run-and-hang.ts')
@@ -16,13 +17,23 @@ const RUN_AND_HANG = join(FIXTURES, 'run-and-hang.ts')
  * this is the real production singleton (`apps/cli/src/lib/log-sink.ts`'s
  * `log`) actually writing — redirecting `HOME` is what makes its output
  * readable without touching the real machine's `~/.vinaya`.
+ *
+ * `stripVinayaEnv` (`../../lib/process-fixture.ts`) matters more than it
+ * used to ([task-files-v1] 5): `log()`'s own default destination is now
+ * resolved through `runtimeDirForRepo`, which honours a leaked
+ * `VINAYA_RUNTIME_DIR` from THIS test process's own environment ahead of
+ * `$HOME` entirely — the exact cross-run collision Issue #660 closed for
+ * every other real-process fixture. This file is still on
+ * `process-fixture-coverage.test.ts`'s own grandfather list (it carries no
+ * kill-budget evidence at its own spawn scope, a separate, later-task
+ * concern), so this fixes only the leak, not full compliance.
  */
 describe('runChecks — SIGINT/SIGTERM records every in-flight check as cancelled', () => {
   it('an interrupted check gets one gate line with outcome cancelled, not silence', async () => {
     const home = mkdtempSync(join(tmpdir(), 'vinaya-gate-cancelled-'))
     const wrapper = Bun.spawn(['bun', RUN_AND_HANG], {
       stdio: ['ignore', 'ignore', 'ignore'],
-      env: { ...process.env, HOME: home, VINAYA_TASK: '905' }
+      env: { ...stripVinayaEnv(), HOME: home, VINAYA_TASK: '905' }
     })
 
     // Give the wrapper time to start and spawn its own (detached) check
@@ -36,10 +47,14 @@ describe('runChecks — SIGINT/SIGTERM records every in-flight check as cancelle
     // SIGKILL escalation to finish.
     await new Promise((resolve) => setTimeout(resolve, 500))
 
-    const outboxDir = join(home, '.vinaya', 'outbox')
-    const repoDirs = readdirSync(outboxDir)
+    // [task-files-v1] 5, O1: the default `logs` destination is now a
+    // folder under this repository's own `runtimeDir` — `<runtimeDir>/logs/
+    // <repo>/<task>.ndjson` — never `~/.vinaya/outbox/`. The same repo
+    // segment names both the `runtimeDir` and the inner `logs/` folder.
+    const runtimeRoot = join(home, '.vinaya', 'runtime')
+    const repoDirs = readdirSync(runtimeRoot)
     expect(repoDirs.length).toBeGreaterThan(0)
-    const path = join(outboxDir, repoDirs[0] as string, '905.ndjson')
+    const path = join(runtimeRoot, repoDirs[0] as string, 'logs', repoDirs[0] as string, '905.ndjson')
     const lines = readFileSync(path, 'utf8')
       .trim()
       .split('\n')
@@ -56,7 +71,7 @@ describe('runChecks — SIGINT/SIGTERM records every in-flight check as cancelle
     const home = mkdtempSync(join(tmpdir(), 'vinaya-gate-cancelled-double-'))
     const wrapper = Bun.spawn(['bun', RUN_AND_HANG], {
       stdio: ['ignore', 'ignore', 'ignore'],
-      env: { ...process.env, HOME: home, VINAYA_TASK: '905' }
+      env: { ...stripVinayaEnv(), HOME: home, VINAYA_TASK: '905' }
     })
 
     await new Promise((resolve) => setTimeout(resolve, 500))
@@ -69,10 +84,14 @@ describe('runChecks — SIGINT/SIGTERM records every in-flight check as cancelle
 
     await new Promise((resolve) => setTimeout(resolve, 500))
 
-    const outboxDir = join(home, '.vinaya', 'outbox')
-    const repoDirs = readdirSync(outboxDir)
+    // [task-files-v1] 5, O1: the default `logs` destination is now a
+    // folder under this repository's own `runtimeDir` — `<runtimeDir>/logs/
+    // <repo>/<task>.ndjson` — never `~/.vinaya/outbox/`. The same repo
+    // segment names both the `runtimeDir` and the inner `logs/` folder.
+    const runtimeRoot = join(home, '.vinaya', 'runtime')
+    const repoDirs = readdirSync(runtimeRoot)
     expect(repoDirs.length).toBeGreaterThan(0)
-    const path = join(outboxDir, repoDirs[0] as string, '905.ndjson')
+    const path = join(runtimeRoot, repoDirs[0] as string, 'logs', repoDirs[0] as string, '905.ndjson')
     const lines = readFileSync(path, 'utf8')
       .trim()
       .split('\n')

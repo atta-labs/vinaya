@@ -2,16 +2,19 @@
  * The flush's own body — moved verbatim out of
  * `apps/cli/src/commands/log.ts`'s `logFlushCommand`, which is now argv
  * parsing and process-exit translation around this one function. Posts a
- * target's outbox — written by `log()` (`./log-sink.js`) — as one or more
- * marked comments on an Issue or a PR, then truncates only the lines the
- * forge confirmed. `apps/cli/specs/log.md` § The flush is the durable
- * reference for the chunking/truncation contract this file implements;
- * this comment does not restate it.
+ * target's local retry-queue outbox (`log-sink.ts`'s `telemetryOutboxRoot`
+ * — the one destination `log()` writes regardless of a configured `logs`
+ * folder/server setting is a `logs.url` server's own retry queue; a folder
+ * destination never touches it at all) as one or more marked comments on an
+ * Issue or a PR, then truncates only the lines the forge confirmed.
+ * `apps/cli/specs/log.md` § The flush is the durable reference for the
+ * chunking/truncation contract this file implements; this comment does not
+ * restate it.
  *
  * Never calls `process.exit` — every terminal outcome is either a returned
  * `LogFlushOutcome` or a thrown `LogFlushError`, so this function is safe to
- * call in-process from a long-running driver (O2: `dev-review-loop.ts`'s
- * round-end flush) as well as from the one-shot `vinaya log flush` command.
+ * call in-process (the CI artifact collector, `log-artifact.ts`) as well as
+ * from the one-shot `vinaya log flush` command.
  */
 
 import { execFileSync } from 'node:child_process'
@@ -20,7 +23,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import { classifyStoredLine, extractIssue, isPrincipal, type ForgeOp } from '@attalabs/aeg-core'
-import { currentRunId, log, outboxPathFor as sinkOutboxPathFor, type LogEventInput } from './log-sink.js'
+import { currentRunId, logToOutboxQueue, outboxPathFor as sinkOutboxPathFor, type LogEventInput } from './log-sink.js'
 import {
   DEFAULT_MAX_CHUNKS_PER_FLUSH,
   GLOBAL_VINAYA_HOME,
@@ -134,7 +137,7 @@ async function waitForOwnLine(
 }
 
 /**
- * `log()` fills `subject.issue` from `process.env.VINAYA_TASK`
+ * `logToOutboxQueue()` fills `subject.issue` from `process.env.VINAYA_TASK`
  * (`log/envelope.ts`'s `issueFromTask`) — never from an argument. For this
  * call's line to land in the SAME outbox this function is about to
  * truncate, `VINAYA_TASK` is set to `outboxTask` — the task whose outbox is
@@ -143,19 +146,26 @@ async function waitForOwnLine(
  * destination) — for the duration of the call, restored after. This holds
  * identically whether the caller is the one-shot command or an in-process,
  * long-running driver (O2/O3): the driver's own `VINAYA_TASK` is a live
- * process env var this restores exactly, never clobbers. Returns whether the
- * write was confirmed landed (`waitForOwnLine`) rather than throwing — a
- * timeout is not necessarily fatal (see call sites below): a bare
- * `process.exit()` right after `log()` would abandon the write mid-flight,
- * but the caller decides what "not confirmed" means for its own position in
- * the flush.
+ * process env var this restores exactly, never clobbers.
+ *
+ * `logToOutboxQueue`, never the ordinary `log()`, is what actually writes:
+ * this line documents the flush of the retry queue itself, so it must land
+ * there regardless of a configured `logs` folder/server destination — the
+ * one place in this codebase that deliberately bypasses `logs` for a
+ * telemetry write.
+ *
+ * Returns whether the write was confirmed landed (`waitForOwnLine`) rather
+ * than throwing — a timeout is not necessarily fatal (see call sites
+ * below): a bare `process.exit()` right after logging would abandon the
+ * write mid-flight, but the caller decides what "not confirmed" means for
+ * its own position in the flush.
  */
 async function logForFlush(outboxTask: number, path: string, e: LogEventInput & ForgeWriteSignature): Promise<boolean> {
   const prevTask = process.env.VINAYA_TASK
   process.env.VINAYA_TASK = String(outboxTask)
   const priorSize = sizeOf(path)
   try {
-    log(e)
+    logToOutboxQueue(e)
     return await waitForOwnLine(path, priorSize, { event: e.event, op: e.op, target: e.target })
   } finally {
     if (prevTask === undefined) delete process.env.VINAYA_TASK

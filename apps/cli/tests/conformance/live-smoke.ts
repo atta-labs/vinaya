@@ -19,11 +19,13 @@
  * Isolation: reuses `harness.ts`'s own `buildSandbox()` verbatim (isolated
  * `HOME`, fake `gh`, isolated `VINAYA_RUNTIME_DIR`) — the SAME sandbox task
  * 5's own tests already run safely, not a second isolation mechanism. The
- * real `log()` chokepoint (`log-sink.ts`) reads `HOME` via `os.homedir()`
- * for its outbox root, so the sandboxed `HOME` also isolates the ONE real
- * event this script writes: it lands under `<sandbox>/home/.vinaya/outbox/`,
- * never this machine's own `~/.vinaya/outbox` that real dev-review-loop runs
- * on this repo already share.
+ * real `log()` chokepoint (`log-sink.ts`) resolves its default destination
+ * from `sb.runtimeDir` ([task-files-v1] 5's own default folder, `<runtimeDir>/logs/`)
+ * — handed down via the sandboxed `VINAYA_RUNTIME_DIR`, which
+ * `runtimeDirForRepo` honours ahead of any repo lookup — so the sandbox also
+ * isolates the ONE real event this script writes: it lands under
+ * `<sandbox.runtimeDir>/logs/`, never this machine's own `~/.vinaya` that
+ * real dev-review-loop runs on this repo already share.
  *
  * What this script does NOT do: it does not spawn a live model session. An
  * actual live-model-driven call — an LLM autonomously deciding, from a
@@ -111,10 +113,13 @@ async function main(): Promise<void> {
 
     // `buildSandbox()`'s own `AEG_REPO` fixture value (`attalabs/vinaya`, no
     // hyphen — `resolveRepo`'s own env-first precedence, `resolve-repo.ts`)
-    // wins over the real git remote, so the outbox lands under whatever that
-    // fixture resolves to, not this repo's real `atta-labs-vinaya` slug —
-    // found live authoring this script. Searched for, never hardcoded.
-    const outboxRoot = join(sb.env.HOME as string, '.vinaya', 'outbox')
+    // wins over the real git remote, so the destination's own repo segment
+    // is whatever that fixture resolves to, not this repo's real
+    // `atta-labs-vinaya` slug — found live authoring this script. Searched
+    // for, never hardcoded. `sb.runtimeDir` is handed down via the
+    // sandboxed `VINAYA_RUNTIME_DIR` ([task-files-v1] 5), so the default
+    // `logs` folder sits directly under it, never under `HOME`.
+    const outboxRoot = join(sb.runtimeDir, 'logs')
     const eventFile = existsSync(outboxRoot)
       ? readdirSync(outboxRoot)
           .map((repoDir) => join(outboxRoot, repoDir, `${ISSUE}.ndjson`))

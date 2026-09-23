@@ -82,29 +82,10 @@ import {
   terminateLaunchedChildOnShutdown as realTerminateLaunchedChildOnShutdown
 } from './dispatch.js'
 import { postMarkedComment } from './forge-write.js'
-import { createLogSink, currentRunId, log, outboxPathFor, telemetryOutboxRoot } from './log-sink.js'
+import { createLogSink, currentRunId, log, resolveLogAppendPath } from './log-sink.js'
 import { ensureRunDir, markProcessUnattended, runPath } from './run-paths.js'
 import { defaultTaskSweepAsyncDeps, sweepModernTasksAsync } from './task-sweep.js'
 import { appendRoleLine, appendRunStartMarker, loopLogPathFor } from './loop-log.js'
-import { flushOutbox as flushOutboxLib, LogFlushError } from './log-flush.js'
-import { flushOutboxToWebhook, WebhookFlushError } from './log-webhook-flush.js'
-import {
-  describeSkippedRoundEndFlush,
-  loadConfig,
-  loadTrustAnchorConfig,
-  resolveLogPublishMaxChunksPerFlush,
-  resolveRoundEndFlushTarget,
-  resolveTrustAnchorWebhookTarget,
-  type VinayaConfig
-} from './config.js'
-
-// Re-exported under this file's own path (this module's composition-root
-// convention, `gate-reading.ts`'s own doc comment): `resolveRoundEndFlushTarget`/
-// `describeSkippedRoundEndFlush` moved to `config.ts` (O1) so
-// `journal-history.ts` can read the SAME resolved target
-// without a `dev-review-loop.ts` → `journal-history.ts` → `dev-review-loop.ts`
-// import cycle; existing callers/tests importing them from here keep working.
-export { describeSkippedRoundEndFlush, resolveRoundEndFlushTarget } from './config.js'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import {
   describeFailingCheckRun,
@@ -321,16 +302,18 @@ export type LoopDeps = {
    * The one directory this task's run writes under (`run-paths.ts`) — the
    * driver lock, the control records, the held verdicts, every round's
    * reviewer hand-off files and isolation copies.
-   *
-   * Split from `telemetryOutboxRoot` below, which used to be the same dep.
-   * One root meant two things — where log events queue, and where the
-   * driver's own per-task files live — so the driver's files sat inside the
-   * telemetry outbox and no test could redirect one without redirecting the
-   * other.
    */
   runtimeDir: () => string
-  /** Where log events queue (`log-sink.ts`) — unchanged by the run-file relocation, and the one exception to it. */
-  telemetryOutboxRoot: () => string
+  /**
+   * The exact path THIS process's `log()` calls for `task` land at — a
+   * folder destination's own file, or the local retry queue ahead of a
+   * server drain (`log-sink.ts`'s `resolveLogAppendPath`). Used only to know
+   * where to poll for an event's own line landing (`logEvents`, below) —
+   * the loop never reads this file back for anything else, and never
+   * flushes or otherwise publishes it: events reach the configured `logs`
+   * destination live, as they are logged.
+   */
+  resolveLogAppendPath: (repo: { owner: string; repo: string } | null, issue: number) => string | Promise<string>
   repoRoot: () => string
   gitRevParseOriginMain: () => string
   /**
@@ -352,7 +335,6 @@ export type LoopDeps = {
   gitMergeBase: (head: string) => string
   gitFetch: (sha: string) => void
   gitDiffShortstat: (base: string, head: string) => string
-  flushOutbox: (task: number) => Promise<FlushOutboxOutcome>
   /** The task's round journal, rebuilt from the pull request's principal-authored forge markers (developer round markers, the published summary) — never a log event, a flushed log comment or the telemetry outbox. */
   fetchLoopHistory: (prNumber: number | null) => ReconstructedJournal
   sleep: (ms: number) => Promise<void>
@@ -557,132 +539,6 @@ function defaultReadUnpushedWorkDetail(worktreePath: string): { dirtyFiles: stri
 }
 
 /**
- * Calls `flushOutbox` (`./log-flush.js`) in-process rather than spawning a
- * `vinaya log flush` subprocess — a command calling a
- * command, via a child process, which `apps/cli/specs/surface.md`'s "the
- * rule" forbids. `flushOutbox` never calls `process.exit` (unlike the old
- * `logFlushCommand` it replaced here), so this driver's long-running,
- * multi-round process is never at risk of dying on a flush's own terminal
- * path; a thrown `LogFlushError` — or any other failure — is caught and
- * logged to stderr, never fatal to the loop (flush failures don't undo a
- * dispatch's own already-durable outbox lines).
- *
- * **No longer defaults to the task's own Issue by default.**
- * `resolveRoundEndFlushTarget` reads `vinaya.config.json`'s
- * `logPublish`; unconfigured (this task's own default for every existing
- * repo), this function is a no-op — telemetry accumulates in the local,
- * already-bounded outbox (`log-sink.ts`) until an operator runs
- * `vinaya log flush --issue <n>` by hand. A configured target still passes
- * through O2's own per-flush chunk bound (`resolveLogPublishMaxChunksPerFlush`),
- * and a non-zero `deferredChunkCount` is surfaced to stderr — partial
- * coverage, made visible, never silent.
- *
- * **O2: the outcome is returned, never only written to stderr.** A pause
- * exit folds a failed final flush into the pause's own `detail` (see the
- * pause-handling call sites in `runDevReviewLoopBody`) so the failure
- * reaches the durable pause-state/escalation record and the posted comment
- * — a stderr line alone is not something a Principal reading the PR three
- * days later can see. Every OTHER call site in this file (the ~25 mid-round
- * flushes) still just awaits this and ignores the result, exactly as
- * before — this function itself still never throws.
- *
- * **`webhookUrl` is trust-anchor-gated (round-2 security review, HIGH).**
- * Unlike `issue`/`pr` — forge-internal, already the same repo this loop is
- * running against — a `webhookUrl` is an arbitrary outbound HTTP
- * destination: honoring one read from `loadConfig()` (the PR's own working
- * tree) would let a PR under review add or edit `logPublish.webhookUrl` in
- * its own diff and have this unattended loop POST task telemetry straight
- * to an attacker-chosen host on the very next round, with no human in the
- * loop. `resolveRoundEndFlushTarget`/`loadConfig()` above still resolve
- * `issue`/`pr` the ordinary operational way; a resolved `webhookUrl` is
- * additionally checked against `loadTrustAnchorConfig()` (the repository's
- * default branch, the same source `principals`/`tokens.collect` require for
- * exactly this reason, see `config.ts`'s own doc comments) and only the
- * default branch's OWN `webhookUrl`/`headers` are ever POSTed to — a PR
- * cannot grant itself a new outbound destination, only use one already
- * merged.
- */
-type FlushOutboxOutcome = { ok: true } | { ok: false; error: string }
-
-export async function defaultFlushOutbox(
-  task: number,
-  loadTrustAnchor: () => VinayaConfig | null = loadTrustAnchorConfig
-): Promise<FlushOutboxOutcome> {
-  const config = loadConfig()
-  const skipReason = describeSkippedRoundEndFlush(config, task)
-  if (skipReason) {
-    process.stderr.write(`${skipReason}\n`)
-    return { ok: true }
-  }
-  const target = resolveRoundEndFlushTarget(config, task)
-  if (target === null) return { ok: true }
-
-  // `logPublish.webhookUrl` (set) routes the round-end flush to a plain
-  // HTTP POST instead of a GitHub comment — same non-fatal-failure
-  // contract as the `gh` path below, just via `flushOutboxToWebhook`
-  // (`./log-webhook-flush.js`) instead of `flushOutboxLib`.
-  if ('webhookUrl' in target) {
-    // `loadTrustAnchor()` (the real default, `loadTrustAnchorConfig`) never
-    // throws on its own — every failure mode already resolves to `null` — but
-    // this call is still guarded so an injected loader's own throw can never
-    // escape this function either, matching the "never throws" contract
-    // every other branch here already honors.
-    let anchorConfig: VinayaConfig | null
-    try {
-      anchorConfig = loadTrustAnchor()
-    } catch {
-      anchorConfig = null
-    }
-    const anchorTarget = resolveTrustAnchorWebhookTarget(target.webhookUrl, anchorConfig)
-    if (!anchorTarget) {
-      process.stderr.write(
-        `vinaya dev-review-loop: round-end flush's configured logPublish.webhookUrl is not present on the repository's default branch (or doesn't match it) — refusing to POST there automatically, since a PR under review cannot grant itself a new outbound destination; merge it to the default branch first.\n`
-      )
-      return { ok: true }
-    }
-    try {
-      // Posts the TRUST-ANCHOR's own webhookUrl/headers, never the working
-      // tree's — a PR that leaves `webhookUrl` untouched but edits `headers`
-      // (e.g. to smuggle its own value into an `Authorization` header, or
-      // strip one) is caught the same way.
-      await flushOutboxToWebhook(task, anchorTarget.webhookUrl, anchorTarget.headers)
-      return { ok: true }
-    } catch (err) {
-      const message = err instanceof WebhookFlushError || err instanceof Error ? err.message : String(err)
-      process.stderr.write(
-        `vinaya dev-review-loop: round-end webhook flush failed (non-fatal, lines stay in the outbox for a later flush): ${message}\n`
-      )
-      return { ok: false, error: message }
-    }
-  }
-
-  try {
-    const outcome = await flushOutboxLib(target, {
-      outboxTask: task,
-      maxChunksPerFlush: resolveLogPublishMaxChunksPerFlush(config)
-    })
-    if (outcome.flushed && outcome.deferredChunkCount > 0) {
-      process.stderr.write(
-        `vinaya dev-review-loop: round-end flush bounded — ${outcome.deferredChunkCount} chunk(s) remain queued in the outbox for a later flush (non-fatal, no lines lost).\n`
-      )
-    }
-    return { ok: true }
-  } catch (err) {
-    const message = err instanceof LogFlushError || err instanceof Error ? err.message : String(err)
-    process.stderr.write(
-      `vinaya dev-review-loop: round-end flush failed (non-fatal, lines stay in the outbox for a later flush): ${message}\n`
-    )
-    return { ok: false, error: message }
-  }
-}
-
-/** O2: appends a failed final flush's own reason to a pause's `detail` — never replaces an existing detail, never invents one where none existed. */
-export function appendFinalFlushFailureNote(detail: string | undefined, error: string): string {
-  const note = `the final outbox flush before this pause failed, so some events covering the pause window may not be on the forge yet: ${error}`
-  return detail ? `${detail} (${note})` : note
-}
-
-/**
  * O1/O3: `assessRound`'s own `'confidence'` pause (`packages/aeg-core`, out
  * of this task's Surface — the guard itself is untouched) carries no
  * `detail` at all for either branch that reaches it (a re-asked turn that
@@ -879,13 +735,12 @@ function defaultDeps(): LoopDeps {
     findOpenPrForBranch,
     readResumeRecord: (task, agent, repo) => realReadResumeRecord('developer', agent, repo, task),
     runtimeDir,
-    telemetryOutboxRoot,
+    resolveLogAppendPath,
     repoRoot: defaultRepoRoot,
     gitRevParseOriginMain: defaultGitRevParseOriginMain,
     gitMergeBase: defaultGitMergeBase,
     gitFetch: defaultGitFetch,
     gitDiffShortstat: defaultGitDiffShortstat,
-    flushOutbox: defaultFlushOutbox,
     fetchLoopHistory,
     sleep: defaultSleep,
     now: () => Date.now(),
@@ -971,8 +826,8 @@ export function buildReexecArgs(input: LoopInput, task: number): string[] {
  * run, `excludeScope: task` so this run never sweeps the very folder it is
  * about to write into. Best-effort: a thrown error is reported to stderr
  * and swallowed, never re-thrown — the same "the mechanics stalled, not a
- * review verdict" tolerance this driver already gives a flush failure
- * (`flushOutbox`'s own caller, below). Non-blocking lookups with bounded
+ * review verdict" tolerance this driver already gives every other
+ * best-effort side effect. Non-blocking lookups with bounded
  * concurrency (Traps to avoid) — never the legacy-layout half of the sweep
  * (Boundary: out of scope, and its own driver-side result was always
  * discarded anyway). Injectable (`LoopDeps.sweepTasksAtStart`) so a test
@@ -1229,18 +1084,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   try {
     return await runDevReviewLoopBody()
   } finally {
-    // O10: every explicit return path already
-    // flushes before leaving (~19 call sites throughout the round loop
-    // below) — this is the one flush that is NOT conditional on reaching
-    // one of them. An uncaught error thrown from anywhere in the loop
-    // (a `gh` call, `assessRound`, a rejected promise) unwinds straight
-    // through every one of those sites without calling any of them, and
-    // this `finally` is the only code that still runs on that path.
-    // `d.flushOutbox` never throws (`defaultFlushOutbox`'s own doc comment:
-    // every failure is caught and written to stderr, non-fatal) — safe to
-    // call unconditionally here, including while a real error is already
-    // propagating out of the `try`.
-    await d.flushOutbox(task)
     // O2/Traps: the sweep was never awaited before dispatch, but a run
     // that is about to exit must "let it finish… cleanly" rather than
     // leave a removal partway done — `sweepDone` never rejects (its own
@@ -1300,7 +1143,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     function roundResponseFilePathFor(roundNum: number): string {
       return runPath(root, task, { area: 'developer', round: roundNum, file: DEVELOPER_ROUND_RESPONSE_FILE_NAME })
     }
-    const loopOutboxPath = outboxPathFor({ outboxRoot: d.telemetryOutboxRoot }, repo, task)
+    const loopOutboxPath = await d.resolveLogAppendPath(repo, task)
     /**
      * Awaits EACH event's own landing before firing the next `log()` call —
      * not just the batch's last one. `resolveRepo()` only caches a
@@ -1724,7 +1567,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             outcome: handle.failureReason ? 'exhausted' : 'recovered'
           }
         ])
-        await d.flushOutbox(task)
       }
       await assertDispatchOrEscalate(handle, input.agent, isResume, devDispatchSucceededBefore)
       if (!handle.failureReason) {
@@ -1844,7 +1686,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           detail
         }
       ])
-      await d.flushOutbox(task)
     }
 
     /**
@@ -1879,7 +1720,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           outcome: result.posted ? ('recovered' as const) : ('exhausted' as const)
         }
       ])
-      await d.flushOutbox(task)
     }
 
     /** Records the mid-round unpushed-work resume as its own marked, idempotent PR comment — the same `postForgeEffectOnce`/`postMarkedComment` mechanism `postPauseComment` already uses, keyed by round+head so a genuine re-run of the same stall posts only once. */
@@ -2415,10 +2255,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // never runs on this path (`d.exitProcess` below is real
           // `process.exit`), so this is the only chance to write it.
           recordDriverExited('reexec')
-          // Round 2 review, MINOR: whatever this process already logged
-          // durably to the local outbox is worth posting now, not left for
-          // whenever the re-exec'd process's own next flush happens to run.
-          await d.flushOutbox(task)
           d.exitProcess(exitCode)
           // `exitProcess` is typed `(code: number) => never` — real process.exit
           // never returns here. This `return` guards a test fake that records
@@ -2446,7 +2282,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // Cumulative, never reset by a
       // restart — see `MAX_INFRASTRUCTURE_RETRIES`'s own doc comment.
       infrastructureRetries += 1
-      await d.flushOutbox(task)
       return true
     }
 
@@ -2633,12 +2468,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               // O9: no branch ever reached the remote, and the developer
               // posted a refusal/escalation instead — end the loop now, on the
               // Issue (there is no PR to comment on), never entering the poll.
-              // O2: flushed BEFORE the comment is posted, so the events
-              // covering this pause window are on the forge first, and a
-              // failed final flush is folded into the posted detail rather
-              // than only reaching stderr.
-              const finalFlush = await d.flushOutbox(task)
-              const detail = finalFlush.ok ? err.detail : appendFinalFlushFailureNote(err.detail, finalFlush.error)
+              const detail = err.detail
               // O1 (round 2 review, security MEDIUM): the local record is
               // written BEFORE the post here too — this is the one pause/
               // escalation call site in this file that used to post straight
@@ -2740,10 +2570,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
        */
 
       /**
-       * O10 (round 2 review, BLOCKER): the outer `finally`'s guaranteed flush
-       * (above) only ever posts whatever this run already logged — it never
-       * synthesizes the terminal event a genuinely uncaught error skips. Left
-       * alone, a crash mid-round left the forge log with `loop_started` and
+       * O10 (round 2 review, BLOCKER): every event this driver emits is
+       * whatever `logEvents` is explicitly told to log — nothing synthesizes
+       * the terminal event a genuinely uncaught error skips on its own. Left
+       * alone, a crash mid-round left the log with `loop_started` and
        * `round_started` but no `paused`/`journal_finalized` at all,
        * permanently — exactly the shape O10 calls a test failure.
        * Deliberately `driverCrashEvents`, never `driverDecidedPauseEvents`:
@@ -2788,15 +2618,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         detail: `an uncaught error ended round ${round}'s own processing: ${err instanceof Error ? err.message : String(err)}`
       }
       keepLockAlive = true
-      // O2: flushed BEFORE the escalation record/pause state/comment below —
-      // the events covering this pause window reach the forge before the
-      // driver exits, and a failed final flush is folded into `decision.detail`
-      // (every downstream write below reads it from there) rather than only
-      // reaching stderr.
-      const finalFlush = await d.flushOutbox(task)
-      if (!finalFlush.ok) {
-        decision = { ...decision, detail: appendFinalFlushFailureNote(decision.detail, finalFlush.error) }
-      }
       // The SAME durable snapshot every
       // other pause reason gets, best-effort like the write itself already
       // is — a genuinely uncaught error is exactly the case this record
@@ -2808,9 +2629,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // process to crash on its way out — the ORIGINAL error is already
       // handled (this pause IS the handling); a forge write failing here
       // too (the exact fault that just took down the round, still live)
-      // must never re-throw and undo it. `d.flushOutbox`/`recordDriverExited`
-      // above already follow the identical "never throws" discipline for
-      // the same reason.
+      // must never re-throw and undo it. `recordDriverExited` above already
+      // follows the identical "never throws" discipline for the same
+      // reason.
       try {
         // O1: the durable escalation record — best-effort (never a second
         // chance for the process to crash on its way out), written BEFORE
@@ -3011,7 +2832,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                     }`
                     await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
                     decision = { type: 'pause', reason: 'no_push', detail }
-                    await d.flushOutbox(task)
                     continue
                   }
                 }
@@ -3038,13 +2858,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                         lastFailingChecks.length > 0 ? lastFailingChecks.join(', ') : '(unknown)'
                       }`
                 if (gateStalledStreak < MAX_GATE_STALLED_TURNS) {
-                  await d.flushOutbox(task)
                   continue
                 }
                 await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
                 decision = { type: 'pause', reason: 'infrastructure', detail }
                 infrastructureRetries += 1
-                await d.flushOutbox(task)
                 continue
               }
               // else: `resolvedByUnpushedResume` — fall through exactly like
@@ -3066,7 +2884,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           const mergeableBeforeGate = await pollMergeableState(prNumber)
           if (mergeableBeforeGate === 'CONFLICTING') {
             pendingConflictFiles = d.fetchConflictingFiles('main', branch)
-            await d.flushOutbox(task)
             continue
           }
           pendingConflictFiles = null
@@ -3107,7 +2924,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             decision = { ...decision, detail: describeConfidencePauseDetail(confidence ?? 'absent') }
           }
           await logEvents(result.events)
-          await d.flushOutbox(task)
           persistCurrentLoopState(decision.type, decision.type === 'pause' ? decision.reason : undefined)
         } else if (decision.type === 'ask_confidence') {
           const reaskConfidencePath = confidenceFilePathFor(round)
@@ -3131,7 +2947,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           }
           unpushedResumeAttempted = false
           await logEvents(result.events)
-          await d.flushOutbox(task)
           persistCurrentLoopState(decision.type, decision.type === 'pause' ? decision.reason : undefined)
         } else if (decision.type === 'dispatch_reviewers') {
           // O4/O7: mergeability is read BEFORE any CI
@@ -3144,7 +2959,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           if (mergeableForReview === 'CONFLICTING') {
             pendingConflictFiles = d.fetchConflictingFiles('main', branch)
             decision = { type: 'dispatch_developer' }
-            await d.flushOutbox(task)
             continue
           }
           // Genuinely resolved (or never conflicting) — clear the retry flag
@@ -3377,25 +3191,21 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               const stats = computeStats(head, roundStartMs)
               await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
               decision = { type: 'pause', reason: 'objectives_changed', detail }
-              await d.flushOutbox(task)
             } else if (!binding.rulingOrdinal) {
               const detail = `a new ruling landed between reviewer dispatch and assessment — ruling ordinal moved from ${facts.manifest.rulingOrdinal} to ${reassessedRulingOrdinal} — superseded by ruling ${prNumber}-${reassessedRulingOrdinal}`
               const stats = computeStats(head, roundStartMs)
               await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
               decision = { type: 'pause', reason: 'ruling_posted', detail }
-              await d.flushOutbox(task)
             } else if (!binding.briefHash) {
               const detail = `the frozen brief was superseded between reviewer dispatch and assessment — brief hash moved from ${facts.manifest.briefHash ?? 'none'} to ${currentManifest.briefHash ?? 'none'}`
               const stats = computeStats(head, roundStartMs)
               await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
               decision = { type: 'pause', reason: 'brief_superseded', detail }
-              await d.flushOutbox(task)
             } else if (!binding.policyDigest) {
               const detail = `the review policy changed between reviewer dispatch and assessment — policy digest moved from ${facts.manifest.policyDigest} to ${currentManifest.policyDigest}`
               const stats = computeStats(head, roundStartMs)
               await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
               decision = { type: 'pause', reason: 'policy_changed', detail }
-              await d.flushOutbox(task)
             } else {
               const [reviewer, security] = verdicts
               // Both roles genuinely finished (`Promise.all` did not reject) —
@@ -3451,13 +3261,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               const routed = routeCompletionEvents(result.events, decision.type)
               pendingCompletionEvents = routed.toDeferUntilPublish
               await logEvents(routed.toLogNow)
-              await d.flushOutbox(task)
               if (decision.type === 'dispatch_developer') round += 1
               persistCurrentLoopState(decision.type, decision.type === 'pause' ? decision.reason : undefined)
             }
           } else {
             persistCurrentLoopState(decision.type, decision.type === 'pause' ? decision.reason : undefined)
-            await d.flushOutbox(task)
           }
         }
 
@@ -3482,7 +3290,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // were just discarded above — nothing is held any more.
             heldResultIdentity = null
             persistCurrentLoopState(decision.type)
-            await d.flushOutbox(task)
             continue
           }
           pendingConflictFiles = null
@@ -3493,7 +3300,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // between, so the top-of-loop check alone never catches a base that
           // moved past this driver's own code while reviewers were working.
           if (await checkStaleDriver()) {
-            await d.flushOutbox(task)
             continue
           }
 
@@ -3529,7 +3335,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // Published — nothing is held any more.
           heldResultIdentity = null
           persistCurrentLoopState('publish')
-          await d.flushOutbox(task)
           return { finalDecision: decision, prNumber, task }
         }
 
@@ -3547,15 +3352,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             keepLockAlive = true
           }
           const pauseHead = d.resolveHead(branch)
-          // O2: flushed BEFORE the escalation record/pause state/comment
-          // below — the events covering this pause window reach the forge
-          // before the driver exits, and a failed final flush is folded
-          // into `decision.detail` (every write below reads it from there)
-          // rather than only reaching stderr.
-          const finalFlush = await d.flushOutbox(task)
-          if (!finalFlush.ok) {
-            decision = { ...decision, detail: appendFinalFlushFailureNote(decision.detail, finalFlush.error) }
-          }
           // O1: best-effort, same discipline as the crash-catch pause site —
           // written BEFORE `pause-state.json` so its own real `escalationId`
           // (code review, round 2, MEDIUM — see `writeEscalation`'s own doc
@@ -3626,14 +3422,13 @@ export type CancelDeps = {
   fetchNewestRulingOrdinal: typeof fetchNewestRulingOrdinal
   fetchNewestRulingAuthor: typeof fetchNewestRulingAuthor
   runtimeDir: () => string
-  telemetryOutboxRoot: () => string
+  resolveLogAppendPath: (repo: { owner: string; repo: string } | null, issue: number) => string | Promise<string>
   resolveRepo: () => Promise<{ owner: string; repo: string } | null>
   terminateInFlightLaunchesOnShutdown: (
     task: number,
     agent: AgentVendor,
     repo: { owner: string; repo: string } | null
   ) => void
-  flushOutbox: (task: number) => Promise<FlushOutboxOutcome>
   sleep: (ms: number) => Promise<void>
 }
 
@@ -3646,11 +3441,10 @@ function defaultCancelDeps(): CancelDeps {
     fetchNewestRulingOrdinal,
     fetchNewestRulingAuthor,
     runtimeDir,
-    telemetryOutboxRoot,
+    resolveLogAppendPath,
     resolveRepo: () => resolveRepo().catch(() => null),
     sleep: defaultSleep,
-    terminateInFlightLaunchesOnShutdown: defaultTerminateInFlightLaunchesOnShutdown,
-    flushOutbox: defaultFlushOutbox
+    terminateInFlightLaunchesOnShutdown: defaultTerminateInFlightLaunchesOnShutdown
   }
 }
 
@@ -3785,7 +3579,7 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
     round: held.round,
     by: 'principal'
   }
-  const cancelOutboxPath = outboxPathFor({ outboxRoot: d.telemetryOutboxRoot }, repo, task)
+  const cancelOutboxPath = await d.resolveLogAppendPath(repo, task)
   const priorSize = sizeOfSafe(cancelOutboxPath)
   try {
     log(cancelEvent)
@@ -3797,7 +3591,6 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
     else process.env.VINAYA_RUN = prevRun
   }
 
-  await d.flushOutbox(task)
   return { task, escalationId, fencedEffectKeys }
 }
 
