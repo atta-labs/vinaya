@@ -373,6 +373,19 @@ function hostFromEnv(env: NodeJS.ProcessEnv): Host {
   return 'cli'
 }
 
+// One visible warning per PROCESS, not per sink: `warnOnce`'s own flag lives
+// in each `createLogSink` closure, and `dispatchRole` and the loop driver
+// build a fresh sink per call inside one long-running process, so a
+// persistently broken destination would otherwise warn once per dispatch.
+// Gated here, on the real stderr write every default-deps sink shares; a test
+// that injects its own `stderr` gets an isolated writer this never touches.
+let warnedThisProcess = false
+function defaultStderr(message: string): void {
+  if (warnedThisProcess) return
+  warnedThisProcess = true
+  process.stderr.write(message)
+}
+
 function defaultDeps(): LogSinkDeps {
   return {
     outboxRoot: () => join(GLOBAL_VINAYA_HOME, 'outbox'),
@@ -383,9 +396,7 @@ function defaultDeps(): LogSinkDeps {
     env: () => process.env,
     resolveRepo: () => resolveRepoDefault(),
     vinayaVersion: () => readVinayaVersion(),
-    stderr: (message: string) => {
-      process.stderr.write(message)
-    },
+    stderr: defaultStderr,
     inputVersions: () => undefined,
     resolveLogDestination: defaultResolveLogDestination
   }

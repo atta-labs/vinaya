@@ -250,3 +250,52 @@ describe('the default-branch logs read belongs to the process, and is silent', (
     expect(lineIn(join(f.cwd, '.vinaya'), 'anchor-probe')).toBe(true)
   }, 30000)
 })
+
+// `O4`: one visible warning per process, however many sinks that process
+// builds — `dispatchRole` and the loop driver each build a fresh sink per
+// call, and a persistently broken destination must not warn once per call.
+const WARN_PROBE = `
+const { createLogSink } = await import(${JSON.stringify(LOG_SINK)})
+for (let i = 0; i < 3; i++) {
+  const { log } = createLogSink()
+  log({
+    kind: 'dispatch',
+    event: 'dispatched',
+    payload: {},
+    target_role: 'developer',
+    model: 'sonnet',
+    effect_id: 'warn-probe-' + i,
+    prompt_hash: 'sha256:abc'
+  })
+}
+await new Promise((resolve) => setTimeout(resolve, 1500))
+process.exit(0)
+`
+
+describe('a broken destination warns once per process, not once per sink', () => {
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('three sinks in one process, every write refused, one warning line', () => {
+    const cwd = tempDir('vinaya-warn-once-')
+    execFileSync('git', ['init', '--quiet'], { cwd })
+    // A logs folder, outside the repository, whose path is a regular FILE:
+    // every append is refused.
+    const blocked = join(tempDir('vinaya-warn-once-out-'), 'not-a-folder')
+    writeFileSync(blocked, 'x')
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ logs: { folder: blocked } }), 'utf8')
+    const probe = join(cwd, 'warn-probe.mjs')
+    writeFileSync(probe, WARN_PROBE, 'utf8')
+    const r = spawnSyncBudgeted(
+      'bun',
+      [probe],
+      { cwd, encoding: 'utf8', env: { ...stripVinayaEnv(), HOME: cwd, AEG_REPO: 'example/example' } },
+      20_000,
+      'log-sink warn-once probe'
+    )
+    expect(r.status).toBe(0)
+    const warnings = r.stderr.split('\n').filter((line) => line.startsWith('vinaya: '))
+    expect(warnings).toHaveLength(1)
+  }, 30000)
+})
