@@ -949,9 +949,20 @@ describe('terminateLaunchedChildOnShutdown — driver shutdown termination (O1, 
         // pid "alive" by this process's own bookkeeping for a beat after the
         // kernel has already reaped it, a same-process artifact with no
         // bearing on whether an orphan actually persists on the system.
+        //
+        // O4: reads the STAT column, not just whether the pid still has a
+        // `ps` entry at all. Bun 1.2.14's synchronous `ps -p` call ran while
+        // its own spin gave this fire-and-forget child's internal SIGCHLD
+        // handling a chance to run first, so the entry was usually already
+        // gone by the time this check ran. On Bun 1.4.2 that spin is gone,
+        // so `ps -p` can find the child still present as a genuine kernel
+        // zombie (`Z`) — terminated, exited, but not yet reaped by this
+        // process's own never-awaited `ChildProcess` handle. A zombie is
+        // dead, not an orphan; only a real, still-running state (anything
+        // else `ps` reports) counts as still alive.
         'let childAlive = false',
         'if (childPid !== null) {',
-        `  try { execFileSync('ps', ['-p', String(childPid)], { stdio: ['ignore', 'ignore', 'ignore'] }); childAlive = true } catch { childAlive = false }`,
+        `  try { const stat = execFileSync('ps', ['-o', 'stat=', '-p', String(childPid)], { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); childAlive = stat.length > 0 && !stat.startsWith('Z') } catch { childAlive = false }`,
         '}',
         `writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({ before, after, childAlive }))`,
         'process.exit(0)'
@@ -1038,9 +1049,11 @@ describe('terminateLaunchedChildOnShutdown — driver shutdown termination (O1, 
         `const childPid = before.status === 'ok' ? before.record.childPid : null`,
         `terminateLaunchedChildOnShutdown('developer', 'claude', null, 42)`,
         `const after = readLaunchRecord('developer', 'claude', null, 42)`,
+        // O4: STAT-aware — a kernel zombie is dead, not still alive; see the
+        // first shutdown test's own doc comment above for why this changed.
         'let childAlive = false',
         'if (childPid !== null) {',
-        `  try { execFileSync('ps', ['-p', String(childPid)], { stdio: ['ignore', 'ignore', 'ignore'] }); childAlive = true } catch { childAlive = false }`,
+        `  try { const stat = execFileSync('ps', ['-o', 'stat=', '-p', String(childPid)], { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); childAlive = stat.length > 0 && !stat.startsWith('Z') } catch { childAlive = false }`,
         '}',
         // Clean up the real child ourselves — the function under test must
         // NOT have done this, which is exactly what this test proves.
@@ -1111,9 +1124,11 @@ describe('terminateLaunchedChildOnShutdown — driver shutdown termination (O1, 
         `const childPid = before.status === 'ok' ? before.record.childPid : null`,
         `terminateLaunchedChildOnShutdown('code-reviewer', 'claude', null, 42)`,
         `const after = readLaunchRecord('code-reviewer', 'claude', null, 42)`,
+        // O4: STAT-aware — a kernel zombie is dead, not still alive; see the
+        // first shutdown test's own doc comment above for why this changed.
         'let childAlive = false',
         'if (childPid !== null) {',
-        `  try { execFileSync('ps', ['-p', String(childPid)], { stdio: ['ignore', 'ignore', 'ignore'] }); childAlive = true } catch { childAlive = false }`,
+        `  try { const stat = execFileSync('ps', ['-o', 'stat=', '-p', String(childPid)], { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); childAlive = stat.length > 0 && !stat.startsWith('Z') } catch { childAlive = false }`,
         '}',
         `writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({ before, after, childAlive }))`,
         'process.exit(0)'
