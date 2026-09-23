@@ -200,16 +200,16 @@ describe('resolveLogDestinationFrom (pure) — who is allowed to name the destin
 describe('resolveLogAppendPath — mirrors log()’s own destination resolution', () => {
   const REPO = { owner: 'atta-labs', repo: 'vinaya' }
 
-  it('a folder destination resolves to <folder>/<repo>/<issue>.ndjson', () => {
-    const path = resolveLogAppendPath(REPO, 404, {
+  it('a folder destination resolves to <folder>/<repo>/<issue>.ndjson', async () => {
+    const path = await resolveLogAppendPath(REPO, 404, {
       resolveLogDestination: () => ({ kind: 'folder', folder: '/srv/logs' }),
       env: () => ({})
     })
     expect(path).toBe('/srv/logs/atta-labs-vinaya/404.ndjson')
   })
 
-  it('a server destination resolves to the local retry queue, never the server root', () => {
-    const path = resolveLogAppendPath(REPO, 404, {
+  it('a server destination resolves to the local retry queue, never the server root', async () => {
+    const path = await resolveLogAppendPath(REPO, 404, {
       resolveLogDestination: () => ({ kind: 'server', url: 'https://example.com/ingest' }),
       outboxRoot: () => '/queue',
       env: () => ({})
@@ -217,9 +217,9 @@ describe('resolveLogAppendPath — mirrors log()’s own destination resolution'
     expect(path).toBe('/queue/atta-labs-vinaya/404.ndjson')
   })
 
-  it('a null issue resolves to none.ndjson, for either destination kind', () => {
+  it('a null issue resolves to none.ndjson, for either destination kind', async () => {
     expect(
-      resolveLogAppendPath(REPO, null, { resolveLogDestination: () => ({ kind: 'folder', folder: '/srv/logs' }) })
+      await resolveLogAppendPath(REPO, null, { resolveLogDestination: () => ({ kind: 'folder', folder: '/srv/logs' }) })
     ).toBe('/srv/logs/atta-labs-vinaya/none.ndjson')
   })
 })

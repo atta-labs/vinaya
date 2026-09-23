@@ -51,6 +51,7 @@ import {
   GLOBAL_VINAYA_HOME,
   loadConfig,
   loadTrustAnchorConfig,
+  loadTrustAnchorConfigAsync,
   resolveRuntimeDirSetting,
   resolveTrustAnchorRuntimeDir,
   type VinayaConfig
@@ -352,23 +353,60 @@ export function runtimeDirForRepo(repo: RunPathsRepo): string {
   return value
 }
 
+/**
+ * `runtimeDirForRepo` for a caller that must never block the event loop —
+ * the log sink, whose first event can land while a batch of async check
+ * children is still running; a synchronous spawn at that moment can swallow
+ * their exit. Same answer, same memo: the only step that could spawn (the
+ * trust-anchor read, when a `runtimeDir` is configured for an unattended
+ * caller) runs as an async child here.
+ */
+export async function runtimeDirForRepoAsync(repo: RunPathsRepo): Promise<string> {
+  const key = repoSegment(repo)
+  if (memoized?.key === key) return memoized.value
+  const inputs = runtimeDirInputs()
+  if (typeof inputs === 'string') return inputs
+  const value = resolveRuntimeDir({
+    repo,
+    ...inputs.base,
+    trustAnchorConfig: inputs.needsAnchor ? await loadTrustAnchorConfigAsync() : null
+  })
+  memoized = { key, value }
+  return value
+}
+
 function resolveRuntimeDirUncached(repo: RunPathsRepo): string {
-  // A trusted controller already decided this — use it verbatim rather than
-  // re-deriving an answer that could differ from the one that created the
-  // files this process is about to read.
+  const inputs = runtimeDirInputs()
+  if (typeof inputs === 'string') return inputs
+  return resolveRuntimeDir({
+    repo,
+    ...inputs.base,
+    trustAnchorConfig: inputs.needsAnchor ? loadTrustAnchorConfig() : null
+  })
+}
+
+/**
+ * Everything `resolveRuntimeDir` needs except the trust-anchor config, which
+ * the sync and async resolvers each read their own way — or the handed-down
+ * directory itself, when a trusted controller already decided it (used
+ * verbatim rather than re-deriving an answer that could differ from the one
+ * that created the files this process is about to read).
+ */
+function runtimeDirInputs():
+  | string
+  | {
+      base: { localConfig: VinayaConfig | null; unattended: boolean; repoRoot: string | null }
+      needsAnchor: boolean
+    } {
   const handedDown = process.env[RUNTIME_DIR_ENV_KEY]
   if (handedDown) return handedDown
 
   const localConfig = loadConfig()
   const unattended = isUnattendedProcess()
-  const needsAnchor = unattended && resolveRuntimeDirSetting(localConfig) !== null
-  return resolveRuntimeDir({
-    repo,
-    localConfig,
-    trustAnchorConfig: needsAnchor ? loadTrustAnchorConfig() : null,
-    unattended,
-    repoRoot: repoRootSync()
-  })
+  return {
+    base: { localConfig, unattended, repoRoot: repoRootSync() },
+    needsAnchor: unattended && resolveRuntimeDirSetting(localConfig) !== null
+  }
 }
 
 /**

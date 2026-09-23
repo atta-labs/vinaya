@@ -8,7 +8,7 @@
  * `process.stderr.write` per process, guarded by a module-level flag.
  */
 
-import { execFileSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import {
   closeSync,
@@ -23,6 +23,7 @@ import {
 } from 'node:fs'
 import { hostname as osHostname, homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { promisify } from 'node:util'
 import { resolveRepo as resolveRepoDefault } from '@attalabs/aeg-forge-state'
 import {
   buildHeader,
@@ -36,14 +37,14 @@ import {
 import {
   GLOBAL_VINAYA_HOME,
   loadConfig,
-  loadTrustAnchorConfig,
+  loadTrustAnchorConfigAsync,
   resolveLogsHeaderValues,
   resolveLogsSetting,
   resolveTrustAnchorLogsDestination,
   type LogsDestination,
   type VinayaConfig
 } from './config.js'
-import { isUnattendedProcess, runtimeDirForRepo } from './run-paths.js'
+import { isUnattendedProcess, runtimeDirForRepoAsync } from './run-paths.js'
 import { flushOutboxToWebhook } from './log-webhook-flush.js'
 import { packageRoot } from './package-root.js'
 
@@ -67,7 +68,7 @@ export type LogSinkInputVersions = {
 
 /**
  * Where THIS process's `log()` calls land, resolved once per sink instance
- * (`resolveDestinationOnce`, below) — a folder the sink appends directly to,
+ * (the sink's shared context, below) — a folder the sink appends directly to,
  * or a server drained from the local retry queue after every append
  * (`apps/cli/specs/log.md` § The destination).
  */
@@ -99,16 +100,20 @@ export type LogSinkDeps = {
    * `vinaya.config.json`'s `logs`, trust-anchor-gated for an unattended
    * caller exactly as `runtimeDir` already is, falling back to a folder
    * under this repository's own `runtimeDir` when unset. Called at most
-   * once per sink instance (`resolveDestinationOnce`) — a `url` destination
-   * can require a network read (`loadTrustAnchorConfig`) an unattended
-   * caller must not repeat on every event.
+   * once per sink instance (the sink's shared context) — a `url`
+   * destination can require a network read (`loadTrustAnchorConfigAsync`)
+   * an unattended caller must not repeat on every event. May answer
+   * synchronously or asynchronously; the sink awaits either.
    */
-  resolveLogDestination: (repo: RepoRef | null, env: NodeJS.ProcessEnv) => ResolvedLogDestination
+  resolveLogDestination: (
+    repo: RepoRef | null,
+    env: NodeJS.ProcessEnv
+  ) => ResolvedLogDestination | Promise<ResolvedLogDestination>
 }
 
-function safeLoadTrustAnchorConfig(): VinayaConfig | null {
+async function safeLoadTrustAnchorConfig(): Promise<VinayaConfig | null> {
   try {
-    return loadTrustAnchorConfig()
+    return await loadTrustAnchorConfigAsync()
   } catch {
     return null
   }
@@ -164,16 +169,19 @@ export function resolveLogDestinationFrom(input: {
  * for a setting that, in the overwhelmingly common unconfigured case, was
  * never going to change the answer.
  */
-function defaultResolveLogDestination(repo: RepoRef | null, env: NodeJS.ProcessEnv): ResolvedLogDestination {
+async function defaultResolveLogDestination(
+  repo: RepoRef | null,
+  env: NodeJS.ProcessEnv
+): Promise<ResolvedLogDestination> {
   const localConfig = loadConfig()
   const unattended = isUnattendedProcess(env)
   const needsAnchor = unattended && resolveLogsSetting(localConfig) !== null
   return resolveLogDestinationFrom({
     localConfig,
-    trustAnchorConfig: needsAnchor ? safeLoadTrustAnchorConfig() : null,
+    trustAnchorConfig: needsAnchor ? await safeLoadTrustAnchorConfig() : null,
     unattended,
     env,
-    defaultFolder: join(runtimeDirForRepo(repo), 'logs')
+    defaultFolder: join(await runtimeDirForRepoAsync(repo), 'logs')
   })
 }
 
@@ -181,23 +189,23 @@ function isEnoent(err: unknown): boolean {
   return typeof err === 'object' && err !== null && (err as NodeJS.ErrnoException).code === 'ENOENT'
 }
 
-/** `git -C <root> rev-parse HEAD:aeg-root` for a tree checkout; the CLI's own package version for a bundle; `'unknown'` when `git` itself is unreachable. Called once per sink instance, never per line. */
-function resolveDoctrine(cwd: string, vinayaVersion: string): string {
+const execFileAsync = promisify(execFile)
+
+/** `git -C <root> rev-parse HEAD:aeg-root` for a tree checkout; the CLI's own package version for a bundle; `'unknown'` when `git` itself is unreachable. Called once per sink instance, never per line, and only ever as an async child (see `createLogSink`'s context). */
+async function resolveDoctrine(cwd: string, vinayaVersion: string): Promise<string> {
   let toplevel: string
   try {
-    toplevel = execFileSync('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe']
-    }).trim()
+    toplevel = (
+      await execFileAsync('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' })
+    ).stdout.trim()
   } catch (err) {
     return isEnoent(err) ? 'unknown' : vinayaVersion
   }
   if (!existsSync(join(toplevel, 'aeg-root', 'roles'))) return vinayaVersion
   try {
-    const sha = execFileSync('git', ['-C', toplevel, 'rev-parse', 'HEAD:aeg-root'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe']
-    }).trim()
+    const sha = (
+      await execFileAsync('git', ['-C', toplevel, 'rev-parse', 'HEAD:aeg-root'], { encoding: 'utf8' })
+    ).stdout.trim()
     return `aeg-root@${sha}`
   } catch {
     return vinayaVersion
@@ -274,13 +282,13 @@ export function outboxPathFor(
  * writes to, whichever destination is configured. Not memoized — callers
  * that need this call it once per process, not once per event.
  */
-export function resolveLogAppendPath(
+export async function resolveLogAppendPath(
   repo: { owner: string; repo: string } | null,
   issue: number | null,
   overrides: Partial<Pick<LogSinkDeps, 'resolveLogDestination' | 'outboxRoot' | 'env'>> = {}
-): string {
+): Promise<string> {
   const deps = { ...defaultDeps(), ...overrides }
-  const destination = deps.resolveLogDestination(repo, deps.env())
+  const destination = await deps.resolveLogDestination(repo, deps.env())
   const root = destination.kind === 'server' ? deps.outboxRoot() : destination.folder
   return outboxPathFor({ outboxRoot: () => root }, repo, issue)
 }
@@ -437,8 +445,8 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
       // never throw out of the warn path either
     }
   }
-  let doctrineCache: string | undefined
-  const doctrine = (): string => {
+  let doctrineCache: Promise<string> | undefined
+  const doctrine = (): Promise<string> => {
     if (doctrineCache === undefined) doctrineCache = resolveDoctrine(deps.cwd(), deps.vinayaVersion())
     return doctrineCache
   }
@@ -466,13 +474,35 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
   }
 
   // Resolved at most once per sink instance, from the FIRST resolved repo —
-  // a `url` destination can cost a network read (`loadTrustAnchorConfig`),
+  // a `url` destination can cost a network read (`loadTrustAnchorConfigAsync`),
   // which an unattended run must not repeat on every single event (O4: "a
   // destination that cannot accept an event never … slows a run").
-  let destinationCache: ResolvedLogDestination | undefined
-  const resolveDestinationOnce = (repo: RepoRef | null, env: NodeJS.ProcessEnv): ResolvedLogDestination => {
-    if (destinationCache === undefined) destinationCache = deps.resolveLogDestination(repo, env)
-    return destinationCache
+  //
+  // Everything a line needs beyond its own event — the repo, the doctrine,
+  // the destination — is resolved ONCE into this one shared context, and
+  // every resolution step is asynchronous: nothing on `log()`'s path ever
+  // blocks the event loop. That is load-bearing, not style. The first event
+  // commonly lands while a batch of async children is still running
+  // (`runChecks` logs each check as it finishes; the loop logs while its
+  // roles run), and a synchronous spawn at that moment can swallow those
+  // children's exit — neither 'close' nor 'exit' is delivered, and the
+  // runner records a finished check as a timeout.
+  // `tests/lib/log-sink-no-sync-spawn.test.ts` holds this: it makes every
+  // synchronous spawn throw and requires a real line to land anyway.
+  //
+  // Every `log()` call awaits this SAME promise and then writes
+  // synchronously, so lines land in call order.
+  type SinkContext = { repo: RepoRef | null; doctrine: string; destination: ResolvedLogDestination }
+  let contextCache: Promise<SinkContext> | undefined
+  const context = (): Promise<SinkContext> => {
+    if (contextCache === undefined) {
+      const env = deps.env()
+      contextCache = Promise.all([resolveRepoOnce(), doctrine()]).then(async ([resolved, doctrineValue]) => {
+        const repo = resolved && isSafeRepoSegment(resolved.owner) && isSafeRepoSegment(resolved.repo) ? resolved : null
+        return { repo, doctrine: doctrineValue, destination: await deps.resolveLogDestination(repo, env) }
+      })
+    }
+    return contextCache
   }
 
   // Every `url`-destination append schedules a drain of the local retry
@@ -500,8 +530,8 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
       })
   }
 
-  // `forcedDestination`, when given, bypasses `resolveDestinationOnce`
-  // entirely for this one call — the retry-queue bookkeeping lines
+  // `forcedDestination`, when given, overrides the context's destination
+  // for this one call — the retry-queue bookkeeping lines
   // `log-flush.ts`'s `logForFlush` writes (`forge_write` `validated`/
   // `written`/`refused`) must always land in the SAME queue file that
   // caller is about to read and truncate, never wherever a configured
@@ -546,17 +576,15 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
         attempt: env.VINAYA_ATTEMPT,
         parent: env.VINAYA_PARENT_EVENT
       }
-      resolveRepoOnce()
-        .then((resolved) => {
-          const repo =
-            resolved && isSafeRepoSegment(resolved.owner) && isSafeRepoSegment(resolved.repo) ? resolved : null
+      context()
+        .then(({ repo, doctrine: doctrineValue, destination: resolvedDestination }) => {
           const header = buildHeader({
             now,
             runId,
             seq: mySeq,
             repo: repo ? `${repo.owner}/${repo.repo}` : null,
             vinaya: deps.vinayaVersion(),
-            doctrine: doctrine(),
+            doctrine: doctrineValue,
             host,
             hostname: deps.hostname(),
             env: envFields,
@@ -580,7 +608,7 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
             return
           }
           const line = `${JSON.stringify(redact(parsed.data, deps.home()))}\n`
-          const destination = forcedDestination ?? resolveDestinationOnce(repo, env)
+          const destination = forcedDestination ?? resolvedDestination
           if (destination.kind === 'server') {
             // The local outbox is the retry queue for a server destination
             // (O2) — appended first, synchronously with every other
@@ -605,24 +633,11 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
     }
   }
 
-  // Forces `doctrine()`'s memoized resolution now, on demand, instead of
-  // lazily on this sink's first `log()` call. `resolveDoctrine` is a
-  // synchronous, blocking `execFileSync` — cheap once, but measured live:
-  // when its FIRST run lands during a burst of several child processes
-  // exiting at once (`runChecks` dispatching many checks concurrently, each
-  // calling `log()` on completion), the resulting event-loop stall can
-  // coincide with another child's own 'close' event delivery closely enough
-  // that the event is never delivered at all — the check's own process
-  // confirmed dead, but nothing left to resolve the `runOne` promise
-  // waiting on it (see `apps/cli/src/checks/runner.ts`'s own safety-net
-  // timeout, added for the case this call site cannot prevent). Calling
-  // this once, deliberately, BEFORE that burst begins — `runChecks`'s own
-  // job — means the blocking work is already done and cached by the time
-  // any check's process has even been spawned, let alone exited. Harmless
-  // to call from elsewhere or not at all: every other caller keeps the
-  // existing lazy-on-first-log behavior this never changes.
+  // Starts the shared context's resolution now instead of on this sink's
+  // first `log()` call, so it is usually already settled by the time the
+  // first event arrives. An optimisation only: every step of that
+  // resolution is asynchronous, so starting it late never blocks anything.
   const warmup = (): void => {
-    doctrine()
     // `resolveRepo` (`@attalabs/aeg-forge-state`) prints its own
     // `console.warn` straight to this process's real stderr when the
     // lookup fails (no git repo, or a repo with no configured `origin`) —
@@ -639,6 +654,7 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
     resolveRepoOnce().finally(() => {
       console.warn = originalWarn
     })
+    context().catch(() => undefined)
   }
 
   // Always the machine-local retry queue (`deps.outboxRoot()`), never the
@@ -692,11 +708,12 @@ export function logToOutboxQueue(e: LogEventInput): void {
 }
 
 /**
- * Forces the default sink's one-time doctrine/repo resolution now rather
- * than on its first `log()` call — see `createLogSink`'s own `warmup` for
- * why this matters and when to call it (`runChecks`, before dispatching a
- * batch of checks whose completions could otherwise cluster around that
- * first call). A no-op on every subsequent call in the same process.
+ * Starts the default sink's one-time context resolution (repo, doctrine,
+ * destination) now rather than on its first `log()` call, so it is usually
+ * settled before a batch of checks starts finishing (`runChecks` calls this
+ * first). An optimisation only — that resolution never blocks the event
+ * loop, so calling it late, or not at all, is still correct. A no-op on
+ * every subsequent call in the same process.
  */
 export function warmupLogSink(): void {
   defaultSink.warmup()

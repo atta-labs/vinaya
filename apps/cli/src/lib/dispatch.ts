@@ -2763,7 +2763,7 @@ export async function dispatchRole(
   // harmlessly rather than mis-locating the file.
   const repo = await resolveRepo().catch(() => null)
   const issue = opts.task ?? null
-  const outboxPath = resolveLogAppendPath(repo, issue, { env: sinkEnv })
+  const outboxPath = await resolveLogAppendPath(repo, issue, { env: sinkEnv })
 
   const effectId = randomUUID()
   const vendor = VENDOR_TABLE[agent]

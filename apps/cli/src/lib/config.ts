@@ -1,4 +1,5 @@
-import { execFileSync } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
+import { promisify } from 'node:util'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -1270,28 +1271,50 @@ export type TrustAnchorFetcher = () => string
  * why neither is a practical attack lever.
  */
 export function trustAnchorRepo(): string | null {
-  // One shape gate both sources pass through — the remote path used to skip
-  // it, and its own `(.+?)` group can capture slashes, so a crafted remote
-  // could have produced an `owner/a/b`-shaped value that lands somewhere
-  // other than the intended contents endpoint (a review finding).
-  const wellFormed = (slug: string): string | null => (/^[^/\s]+\/[^/\s]+$/.test(slug) ? slug : null)
-
-  const fromRunner = process.env.GITHUB_REPOSITORY?.trim()
-  if (fromRunner) {
-    const validated = wellFormed(fromRunner)
-    if (validated) return validated
-  }
+  const fromRunner = trustAnchorRepoFromRunner()
+  if (fromRunner) return fromRunner
   try {
     const url = execFileSync('git', ['remote', 'get-url', 'origin'], {
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'pipe']
-    }).trim()
-    const m = url.match(/github\.com[:/]([^/]+)\/(.+?)(?:\.git)?\/?$/)
-    return m?.[1] && m[2] ? wellFormed(`${m[1]}/${m[2]}`) : null
+    })
+    return trustAnchorRepoFromRemoteUrl(url)
   } catch {
     return null
   }
 }
+
+/** `trustAnchorRepo`, without ever blocking the event loop — the `origin` fallback runs as an async child. */
+export async function trustAnchorRepoAsync(): Promise<string | null> {
+  const fromRunner = trustAnchorRepoFromRunner()
+  if (fromRunner) return fromRunner
+  try {
+    const { stdout } = await execFileAsync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf-8' })
+    return trustAnchorRepoFromRemoteUrl(stdout)
+  } catch {
+    return null
+  }
+}
+
+// One shape gate both sources pass through — the remote path used to skip
+// it, and its own `(.+?)` group can capture slashes, so a crafted remote
+// could have produced an `owner/a/b`-shaped value that lands somewhere
+// other than the intended contents endpoint (a review finding).
+function wellFormedRepoSlug(slug: string): string | null {
+  return /^[^/\s]+\/[^/\s]+$/.test(slug) ? slug : null
+}
+
+function trustAnchorRepoFromRunner(): string | null {
+  const fromRunner = process.env.GITHUB_REPOSITORY?.trim()
+  return fromRunner ? wellFormedRepoSlug(fromRunner) : null
+}
+
+function trustAnchorRepoFromRemoteUrl(url: string): string | null {
+  const m = url.trim().match(/github\.com[:/]([^/]+)\/(.+?)(?:\.git)?\/?$/)
+  return m?.[1] && m[2] ? wellFormedRepoSlug(`${m[1]}/${m[2]}`) : null
+}
+
+const execFileAsync = promisify(execFile)
 
 /**
  * Fetches `vinaya.config.json` from the repository's DEFAULT BRANCH via the
@@ -1306,6 +1329,18 @@ function ghFetchTrustAnchorConfig(): string {
     encoding: 'utf-8',
     stdio: ['ignore', 'pipe', 'pipe']
   })
+}
+
+/** `ghFetchTrustAnchorConfig`'s async twin — the same read, as an async child that never blocks the event loop. */
+async function ghFetchTrustAnchorConfigAsync(): Promise<string> {
+  const repo = await trustAnchorRepoAsync()
+  if (!repo) throw new Error('could not resolve repo identity for the trust-anchor read')
+  const { stdout } = await execFileAsync(
+    'gh',
+    ['api', `repos/${repo}/contents/${LOCAL_CONFIG_FILENAME}`, '--jq', '.content'],
+    { encoding: 'utf-8' }
+  )
+  return stdout
 }
 
 /**
@@ -1368,18 +1403,47 @@ function isMissingFileError(err: unknown): boolean {
 }
 
 export function loadTrustAnchorConfig(fetcher: TrustAnchorFetcher = ghFetchTrustAnchorConfig): VinayaConfig | null {
-  const warn = (why: string) =>
-    process.stdout.write(
-      `⚠ could not read the trust-anchor config (\`principals\`/\`releaseActor\`) from the default branch (${why}) — falling back to vinaya's built-in defaults.\n`
-    )
-
   let base64: string
   try {
-    base64 = fetcher().trim()
+    base64 = fetcher()
   } catch (err) {
-    if (!isMissingFileError(err)) warn(firstLine(err))
-    return null
+    return trustAnchorFetchFailed(err)
   }
+  return parseTrustAnchorContent(base64)
+}
+
+/**
+ * `loadTrustAnchorConfig` for a caller that must never block the event loop
+ * — the log sink, whose first event can land while a batch of async check
+ * children is still running. A synchronous spawn at that moment can swallow
+ * those children's exit. Same fetch, same fallbacks, same warnings.
+ */
+export async function loadTrustAnchorConfigAsync(
+  fetcher: () => Promise<string> = ghFetchTrustAnchorConfigAsync
+): Promise<VinayaConfig | null> {
+  let base64: string
+  try {
+    base64 = await fetcher()
+  } catch (err) {
+    return trustAnchorFetchFailed(err)
+  }
+  return parseTrustAnchorContent(base64)
+}
+
+function warnTrustAnchorFallback(why: string): void {
+  process.stdout.write(
+    `⚠ could not read the trust-anchor config (\`principals\`/\`releaseActor\`) from the default branch (${why}) — falling back to vinaya's built-in defaults.\n`
+  )
+}
+
+function trustAnchorFetchFailed(err: unknown): null {
+  if (!isMissingFileError(err)) warnTrustAnchorFallback(firstLine(err))
+  return null
+}
+
+function parseTrustAnchorContent(content: string): VinayaConfig | null {
+  const warn = warnTrustAnchorFallback
+  const base64 = content.trim()
   if (!base64) return null
   try {
     const raw = Buffer.from(base64, 'base64').toString('utf-8')

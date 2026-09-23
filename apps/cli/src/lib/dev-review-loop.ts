@@ -313,7 +313,7 @@ export type LoopDeps = {
    * flushes or otherwise publishes it: events reach the configured `logs`
    * destination live, as they are logged.
    */
-  resolveLogAppendPath: (repo: { owner: string; repo: string } | null, issue: number) => string
+  resolveLogAppendPath: (repo: { owner: string; repo: string } | null, issue: number) => string | Promise<string>
   repoRoot: () => string
   gitRevParseOriginMain: () => string
   /**
@@ -1153,7 +1153,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     function roundResponseFilePathFor(roundNum: number): string {
       return runPath(root, task, { area: 'developer', round: roundNum, file: DEVELOPER_ROUND_RESPONSE_FILE_NAME })
     }
-    const loopOutboxPath = d.resolveLogAppendPath(repo, task)
+    const loopOutboxPath = await d.resolveLogAppendPath(repo, task)
     /**
      * Awaits EACH event's own landing before firing the next `log()` call —
      * not just the batch's last one. `resolveRepo()` only caches a
@@ -3432,7 +3432,7 @@ export type CancelDeps = {
   fetchNewestRulingOrdinal: typeof fetchNewestRulingOrdinal
   fetchNewestRulingAuthor: typeof fetchNewestRulingAuthor
   runtimeDir: () => string
-  resolveLogAppendPath: (repo: { owner: string; repo: string } | null, issue: number) => string
+  resolveLogAppendPath: (repo: { owner: string; repo: string } | null, issue: number) => string | Promise<string>
   resolveRepo: () => Promise<{ owner: string; repo: string } | null>
   terminateInFlightLaunchesOnShutdown: (
     task: number,
@@ -3589,7 +3589,7 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
     round: held.round,
     by: 'principal'
   }
-  const cancelOutboxPath = d.resolveLogAppendPath(repo, task)
+  const cancelOutboxPath = await d.resolveLogAppendPath(repo, task)
   const priorSize = sizeOfSafe(cancelOutboxPath)
   try {
     log(cancelEvent)
