@@ -1289,7 +1289,10 @@ export async function trustAnchorRepoAsync(): Promise<string | null> {
   const fromRunner = trustAnchorRepoFromRunner()
   if (fromRunner) return fromRunner
   try {
-    const { stdout } = await execFileAsync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf-8' })
+    const { stdout } = await execFileAsync('git', ['remote', 'get-url', 'origin'], {
+      encoding: 'utf-8',
+      timeout: 10_000
+    })
     return trustAnchorRepoFromRemoteUrl(stdout)
   } catch {
     return null
@@ -1338,7 +1341,7 @@ async function ghFetchTrustAnchorConfigAsync(): Promise<string> {
   const { stdout } = await execFileAsync(
     'gh',
     ['api', `repos/${repo}/contents/${LOCAL_CONFIG_FILENAME}`, '--jq', '.content'],
-    { encoding: 'utf-8' }
+    { encoding: 'utf-8', timeout: 10_000 }
   )
   return stdout
 }

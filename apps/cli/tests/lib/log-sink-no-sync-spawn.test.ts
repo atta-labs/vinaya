@@ -153,10 +153,11 @@ log({
   effect_id: 'anchor-probe',
   prompt_hash: 'sha256:abc'
 })
-await new Promise((resolve) => setTimeout(resolve, 1500))
+await new Promise((resolve) => setTimeout(resolve, Number(process.env.PROBE_WAIT_MS ?? 1500)))
+process.exit(0)
 `
 
-function setUpAnchorFixture(ghMode: 'answers' | 'fails'): {
+function setUpAnchorFixture(ghMode: 'answers' | 'fails' | 'never-answers'): {
   cwd: string
   anchorLogs: string
   ghCalls: string
@@ -170,7 +171,12 @@ function setUpAnchorFixture(ghMode: 'answers' | 'fails'): {
   const bin = join(cwd, 'bin')
   mkdirSync(bin)
   const ghCalls = join(outside, 'gh-calls.txt')
-  const answer = ghMode === 'answers' ? `echo '${content}'` : `echo 'HTTP 500: server error' >&2; exit 1`
+  const answer =
+    ghMode === 'answers'
+      ? `echo '${content}'`
+      : ghMode === 'fails'
+        ? `echo 'HTTP 500: server error' >&2; exit 1`
+        : 'sleep 30'
   writeFileSync(join(bin, 'gh'), `#!/bin/sh\necho "$*" >> '${ghCalls}'\n${answer}\n`, { mode: 0o755 })
   return {
     cwd,
@@ -231,6 +237,15 @@ describe('the default-branch logs read belongs to the process, and is silent', (
     const f = setUpAnchorFixture('fails')
     const { stdout } = runAnchorProbe(f.cwd, { ...f.env, VINAYA_ROLE: 'developer' })
     expect(readFileSync(f.ghCalls, 'utf8')).toContain('contents/vinaya.config.json')
+    expect(stdout).toBe('')
+    expect(lineIn(join(f.cwd, '.vinaya'), 'anchor-probe')).toBe(true)
+  }, 30000)
+
+  it('a default-branch read that never answers holds log() back for a bounded time, then falls back to the local default', () => {
+    const f = setUpAnchorFixture('never-answers')
+    const started = Date.now()
+    const { stdout } = runAnchorProbe(f.cwd, { ...f.env, VINAYA_ROLE: 'developer', PROBE_WAIT_MS: '5000' })
+    expect(Date.now() - started).toBeLessThan(15_000)
     expect(stdout).toBe('')
     expect(lineIn(join(f.cwd, '.vinaya'), 'anchor-probe')).toBe(true)
   }, 30000)

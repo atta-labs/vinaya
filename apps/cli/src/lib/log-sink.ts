@@ -114,12 +114,37 @@ export type LogSinkDeps = {
 // Quiet: the fallback warning goes to stdout, and every process that logs —
 // `vinaya dispatch --json`, a check binary — owns its stdout; telemetry
 // resolving its destination must never write into it.
+/**
+ * The longest any one lookup behind a sink's shared context (the repo, the
+ * doctrine, the default branch's `logs` read) may hold `log()` back. Every
+ * line a process logs waits on that one context, so a lookup whose child
+ * process never reports its exit — the lost-exit defect of the pinned Bun —
+ * would otherwise stop the whole process's telemetry for good, and any
+ * caller waiting for its own line to land waits with it. Past the deadline
+ * the lookup falls back to exactly what an unreadable source already yields.
+ */
+export const LOG_CONTEXT_LOOKUP_DEADLINE_MS = 3000
+
+/** `work`'s value, or `fallback` once `ms` has passed or `work` rejects — the timer never holds a process open. */
+export function withDeadline<T>(work: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(fallback), ms)
+    timer.unref?.()
+    work.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      () => {
+        clearTimeout(timer)
+        resolve(fallback)
+      }
+    )
+  })
+}
+
 async function safeLoadTrustAnchorConfig(): Promise<VinayaConfig | null> {
-  try {
-    return await loadTrustAnchorConfigAsync(undefined, { quiet: true })
-  } catch {
-    return null
-  }
+  return withDeadline(loadTrustAnchorConfigAsync(undefined, { quiet: true }), LOG_CONTEXT_LOOKUP_DEADLINE_MS, null)
 }
 
 /**
@@ -203,6 +228,16 @@ export function resolveLogDestinationFrom(input: {
  * the round trip this function's caller can no longer skip still happens at
  * most once per sink instance.
  */
+// The default branch's config cannot change within one process, so it is read
+// once per process, not once per sink: the loop driver alone holds several
+// sinks (its own, one per dispatched role, the module default), and each
+// extra read is one more child process whose exit the pinned Bun can lose.
+let processTrustAnchorOnce: Promise<VinayaConfig | null> | undefined
+function processTrustAnchor(): Promise<VinayaConfig | null> {
+  if (processTrustAnchorOnce === undefined) processTrustAnchorOnce = safeLoadTrustAnchorConfig()
+  return processTrustAnchorOnce
+}
+
 async function defaultResolveLogDestination(
   repo: RepoRef | null,
   env: NodeJS.ProcessEnv
@@ -215,7 +250,7 @@ async function defaultResolveLogDestination(
   const unattended = isUnattendedProcess(process.env)
   return resolveLogDestinationFrom({
     localConfig,
-    trustAnchorConfig: unattended ? await safeLoadTrustAnchorConfig() : null,
+    trustAnchorConfig: unattended ? await processTrustAnchor() : null,
     unattended,
     env,
     defaultFolder: join(await runtimeDirForRepoAsync(repo), 'logs'),
@@ -485,7 +520,13 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
   }
   let doctrineCache: Promise<string> | undefined
   const doctrine = (): Promise<string> => {
-    if (doctrineCache === undefined) doctrineCache = resolveDoctrine(deps.cwd(), deps.vinayaVersion())
+    if (doctrineCache === undefined) {
+      doctrineCache = withDeadline(
+        resolveDoctrine(deps.cwd(), deps.vinayaVersion()),
+        LOG_CONTEXT_LOOKUP_DEADLINE_MS,
+        deps.vinayaVersion()
+      )
+    }
     return doctrineCache
   }
 
@@ -535,7 +576,10 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
   const context = (): Promise<SinkContext> => {
     if (contextCache === undefined) {
       const env = deps.env()
-      contextCache = Promise.all([resolveRepoOnce(), doctrine()]).then(async ([resolved, doctrineValue]) => {
+      contextCache = Promise.all([
+        withDeadline(resolveRepoOnce(), LOG_CONTEXT_LOOKUP_DEADLINE_MS, null),
+        doctrine()
+      ]).then(async ([resolved, doctrineValue]) => {
         const repo = resolved && isSafeRepoSegment(resolved.owner) && isSafeRepoSegment(resolved.repo) ? resolved : null
         return { repo, doctrine: doctrineValue, destination: await deps.resolveLogDestination(repo, env) }
       })
