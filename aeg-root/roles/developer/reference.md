@@ -132,7 +132,7 @@ All of the following must pass before the PR is opened:
 
 - [ ] Code passes typecheck (this repo: `bun run typecheck`)
 - [ ] Code passes lint/format (this repo: `bun run format-and-lint`)
-- [ ] Tests pass if applicable (this repo: `bun test`)
+- [ ] Tests pass if applicable — the affected selection only, never a hand-run full suite (this repo: `bun apps/cli/src/lib/pre-push-select-tests.ts | xargs -r bun test --timeout=30000 --`; see [§ Verification before reporting done](#verification-before-reporting-done) item 3, Issue #707 O2)
 - [ ] PR description follows the template, carries the report, and declares `Tier: 0`
 - [ ] "Token report" section in the PR body carrying your turn's real token figures, collected by whatever means your host offers (see the token-reporting section above; on this repo's shipped reference host, `vinaya tokens`) — and, on each re-push after `CHANGES_REQUESTED`, one appended row inside the `AEG:TOKENS` anchor, written in the same `pr edit` that regenerates the Evidence block (see [§ Evidence is emitted, never typed](#evidence-is-emitted-never-typed)); the Archivist appends the ledger row post-merge, you do not
 
@@ -308,7 +308,7 @@ Before you say you are done or open a PR, run all of the following (substitute y
 0. **Commit message length** — for every commit on this branch: `git log origin/main..HEAD --format="%s" | awk '{ if (length > 72) print NR": "length" chars (OVER LIMIT): "$0 }'` — must return nothing. If any commit header exceeds 72 chars, amend it before opening the PR.
 1. `typecheck` (this repo: `bun run typecheck`) — paste the result line ("X successful, X total" or the error)
 2. `lint/format` (this repo: `bun run format-and-lint`) — paste "No fixes applied" or the violations
-3. `test` (this repo: `bun test`) — paste "X pass, 0 fail" or the failures
+3. **the affected tests only — never a hand-run full suite (Issue #707, O2).** One command both selects and runs them (this repo: `bun apps/cli/src/lib/pre-push-select-tests.ts | xargs -r bun test --timeout=30000 --`) — paste the "selected N of M" line and "X pass, 0 fail" or the failures. This is the SAME depth-one selection the pre-push hook itself runs (`apps/cli/specs/self-hosting.md`'s "the pre-push hook selects at depth one") — running it yourself first is the earlier, cheaper catch, not a second, different check. Never hand-run the whole suite (`bun run test` with no file arguments) here: the hook re-runs this exact selection on your one push and refuses it on failure, and CI's own shards run every test regardless of what either selected — a full local run duplicates work both of those already do, for minutes of wall time O1's own Boundary measured directly.
 4. `verify-docs --pr` (this repo: `bun run verify-docs --pr`) — paste the result (real gate now — pass, or the specific failure to fix)
 5. `git status` — must be clean (everything committed) or explain what's uncommitted and why
 6. `git log --oneline -3` — confirm commit ancestry is correct (new commit is direct child of expected parent)
