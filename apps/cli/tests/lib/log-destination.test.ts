@@ -168,6 +168,32 @@ describe('resolveLogDestinationFrom (pure) — who is allowed to name the destin
     ).toEqual({ kind: 'folder', folder: '/srv/logs' })
   })
 
+  it("honours the default branch's own folder for an unattended caller even when the working tree declares no `logs` setting at all (round-3 security review, HIGH: a PR that deletes its local declaration must not silently evade the org's configured destination)", () => {
+    expect(
+      resolveLogDestinationFrom({
+        localConfig: null,
+        trustAnchorConfig: { logs: { folder: '/srv/logs' } } as VinayaConfig,
+        unattended: true,
+        env: {},
+        defaultFolder: DEFAULT_FOLDER
+      })
+    ).toEqual({ kind: 'folder', folder: '/srv/logs' })
+  })
+
+  it("honours the default branch's own server destination the same way, with header substitution applied, when the working tree declares nothing", () => {
+    expect(
+      resolveLogDestinationFrom({
+        localConfig: null,
+        trustAnchorConfig: {
+          logs: { url: 'https://example.com/ingest', headers: { authorization: 'Bearer ${T}' } }
+        } as VinayaConfig,
+        unattended: true,
+        env: { T: 'xyz' },
+        defaultFolder: DEFAULT_FOLDER
+      })
+    ).toEqual({ kind: 'server', url: 'https://example.com/ingest', headers: { authorization: 'Bearer xyz' } })
+  })
+
   it('resolves a server destination for an attended caller, with header substitution applied', () => {
     expect(
       resolveLogDestinationFrom({

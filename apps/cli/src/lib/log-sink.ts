@@ -130,10 +130,21 @@ async function safeLoadTrustAnchorConfig(): Promise<VinayaConfig | null> {
  * honours the local value unchecked, the same trust level running
  * `vinaya.config.json`'s own `dispatch.agent` already carries.
  *
+ * An unattended caller whose LOCAL config declares no `logs` setting at all
+ * still honours the default branch's own declared destination (round-3
+ * security review, HIGH) — a working tree that OMITS the setting is exactly
+ * as untrustworthy as one that redirects it: a pull request diff can delete
+ * a line as easily as it can edit one, and an unattended run whose telemetry
+ * silently reverted to the local default folder the moment `logs` went
+ * missing from a diff would let the very branch under review switch off the
+ * org's independent monitoring destination with nobody warned. Only when the
+ * default branch ITSELF declares nothing does this fall back to
+ * `defaultFolder` — never "no destination," since O1 declares a folder the
+ * default, not an opt-in.
+ *
  * No `logs` setting resolved at all (the ordinary default, and every
- * refused/ungated case above) falls back to `defaultLogsFolder` — never "no
- * destination," since O1 declares a folder the default, not an opt-in.
- * Pure — takes the already-resolved local/trust-anchor config and the
+ * refused/ungated case above) falls back to `defaultLogsFolder`. Pure —
+ * takes the already-resolved local/trust-anchor config and the
  * per-repository default folder, so it is directly unit-testable with plain
  * objects, mirroring `run-paths.ts`'s own `resolveRuntimeDir`.
  *
@@ -156,8 +167,12 @@ export function resolveLogDestinationFrom(input: {
 }): ResolvedLogDestination {
   const local = resolveLogsSetting(input.localConfig)
   let effective: LogsDestination | null = null
-  if (local) {
-    effective = input.unattended ? resolveTrustAnchorLogsDestination(local, input.trustAnchorConfig) : local
+  if (input.unattended) {
+    effective = local
+      ? resolveTrustAnchorLogsDestination(local, input.trustAnchorConfig)
+      : resolveLogsSetting(input.trustAnchorConfig)
+  } else {
+    effective = local
   }
   if (effective && 'url' in effective) {
     return { kind: 'server', url: effective.url, headers: resolveLogsHeaderValues(effective.headers, input.env) }
@@ -174,13 +189,16 @@ export function resolveLogDestinationFrom(input: {
  * real-IO wrapper `resolveLogDestinationFrom` above needs (config reads, the
  * trust-anchor network read, the per-repository default folder).
  *
- * The trust-anchor read only ever runs when a `logs` setting is actually
- * configured LOCALLY — mirrors `run-paths.ts`'s own `resolveRuntimeDirUncached`
- * (`needsAnchor`): every dispatched role's child is unattended by
- * `isUnattendedProcess`'s own definition (`VINAYA_ROLE` is always set), so
- * without this guard every single dispatch would cost a `gh api` round trip
- * for a setting that, in the overwhelmingly common unconfigured case, was
- * never going to change the answer.
+ * Unlike `run-paths.ts`'s own `resolveRuntimeDirUncached`, the trust-anchor
+ * read here cannot be gated on whether `logs` is configured LOCALLY: a
+ * working tree that OMITS the setting is precisely the case this destination
+ * must still catch (round-3 security review, HIGH — see
+ * `resolveLogDestinationFrom`'s own doc comment), so the anchor is read for
+ * every unattended caller regardless of what the local config says. Already
+ * bounded to one read per process either way — `createLogSink`'s own
+ * `context()` calls this function once, into its memoized `contextCache`, so
+ * the round trip this function's caller can no longer skip still happens at
+ * most once per sink instance.
  */
 async function defaultResolveLogDestination(
   repo: RepoRef | null,
@@ -188,10 +206,9 @@ async function defaultResolveLogDestination(
 ): Promise<ResolvedLogDestination> {
   const localConfig = loadConfig()
   const unattended = isUnattendedProcess(env)
-  const needsAnchor = unattended && resolveLogsSetting(localConfig) !== null
   return resolveLogDestinationFrom({
     localConfig,
-    trustAnchorConfig: needsAnchor ? await safeLoadTrustAnchorConfig() : null,
+    trustAnchorConfig: unattended ? await safeLoadTrustAnchorConfig() : null,
     unattended,
     env,
     defaultFolder: join(await runtimeDirForRepoAsync(repo), 'logs'),
