@@ -511,6 +511,7 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
   logToOutboxQueue: (e: LogEventInput) => void
   runId: string
   warmup: () => void
+  drain: () => Promise<void>
 } {
   const deps: LogSinkDeps = { ...defaultDeps(), ...overrides }
   const runId = deps.env().VINAYA_RUN_ID || randomUUID()
@@ -608,6 +609,18 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
   // catches back up in order once the server is back, with no separate
   // retry timer of this sink's own.
   let drainChain: Promise<void> = Promise.resolve()
+
+  // O3: the set of `log()` calls whose write has not yet landed — `context()`
+  // is asynchronous (the shared repo/doctrine/destination resolution above),
+  // so an abrupt `process.exit()` between a `log()` call and its own
+  // `.then()` continuation running would otherwise drop that event's write
+  // entirely: `process.exit` tears the process down immediately, with no
+  // microtask draining, unlike a normal fall-off-the-end-of-main exit (which
+  // lets the event loop finish everything already scheduled). `drain()`
+  // below is the loop's own answer — awaited ONCE at an abrupt exit, never
+  // per event, so `log()` itself stays exactly as fire-and-forget as it was.
+  const pendingWrites = new Set<Promise<void>>()
+
   const scheduleWebhookDrain = (
     issue: number | null,
     url: string,
@@ -669,7 +682,7 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
         attempt: env.VINAYA_ATTEMPT,
         parent: env.VINAYA_PARENT_EVENT
       }
-      context()
+      const written: Promise<void> = context()
         .then(({ repo, doctrine: doctrineValue, destination: resolvedDestination }) => {
           const header = buildHeader({
             now,
@@ -721,6 +734,8 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
         .catch((err) => {
           warnOnce(`vinaya: log() failed — ${err instanceof Error ? err.message : String(err)}\n`)
         })
+      pendingWrites.add(written)
+      written.finally(() => pendingWrites.delete(written))
     } catch (err) {
       warnOnce(`vinaya: log() failed — ${err instanceof Error ? err.message : String(err)}\n`)
     }
@@ -758,7 +773,25 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
     log(e, { kind: 'folder', folder: deps.outboxRoot() })
   }
 
-  return { log, logToOutboxQueue, runId, warmup }
+  /**
+   * O3: waits for every `log()` call still in flight — `pendingWrites` — to
+   * finish landing (the synchronous `appendLine` a settled `context()`
+   * triggers), then for the webhook retry-queue drain chain those writes may
+   * have just scheduled to settle too. A single pass suffices: each
+   * `pendingWrites` entry only resolves AFTER its own `.then()` body (which
+   * calls `scheduleWebhookDrain` synchronously, when the destination is a
+   * server) has already run, so by the time every entry has settled,
+   * `drainChain` already reflects every drain this batch of writes
+   * scheduled — no further writes are produced once a caller starts
+   * draining, since `drain()` is only ever called on the way out. Never
+   * called per event (Traps to avoid) — only once, from an abrupt exit path.
+   */
+  const drain = async (): Promise<void> => {
+    if (pendingWrites.size > 0) await Promise.allSettled(Array.from(pendingWrites))
+    await drainChain.catch(() => undefined)
+  }
+
+  return { log, logToOutboxQueue, runId, warmup, drain }
 }
 
 const defaultSink = createLogSink()
@@ -810,4 +843,18 @@ export function logToOutboxQueue(e: LogEventInput): void {
  */
 export function warmupLogSink(): void {
   defaultSink.warmup()
+}
+
+/**
+ * Waits for every `log()` call the default sink has in flight to land on
+ * its destination, then for any webhook drain those writes scheduled to
+ * settle — O3, "no pending write is dropped because the process ended
+ * first." `log()` itself stays fire-and-forget for every caller; this is
+ * the ONE place a caller about to end the process (`process.exit`, never a
+ * normal fall-off-the-end-of-main exit, which already lets pending
+ * microtasks run) awaits the difference. Called once per abrupt exit, never
+ * per event.
+ */
+export async function drainLogSink(): Promise<void> {
+  await defaultSink.drain()
 }

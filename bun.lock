@@ -1,5 +1,6 @@
 {
   "lockfileVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "vinaya",
@@ -12,7 +13,7 @@
     },
     "apps/cli": {
       "name": "@attalabs/vinaya",
-      "version": "0.24.1",
+      "version": "0.31.0",
       "bin": {
         "vinaya": "./dist/index.js",
       },
@@ -31,10 +32,10 @@
     },
     "packages/aeg-core": {
       "name": "@attalabs/aeg-core",
-      "version": "0.24.1",
+      "version": "0.31.0",
       "dependencies": {
-        "@attalabs/aeg-forge-state": "0.24.1",
-        "@attalabs/aeg-types": "0.24.1",
+        "@attalabs/aeg-forge-state": "0.31.0",
+        "@attalabs/aeg-types": "0.31.0",
         "gray-matter": "^4.0.3",
         "zod": "3.25.76",
       },
@@ -46,9 +47,9 @@
     },
     "packages/aeg-forge-state": {
       "name": "@attalabs/aeg-forge-state",
-      "version": "0.24.1",
+      "version": "0.31.0",
       "dependencies": {
-        "@attalabs/aeg-types": "0.24.1",
+        "@attalabs/aeg-types": "0.31.0",
         "@octokit/graphql": "^8.1.1",
       },
       "devDependencies": {
@@ -59,7 +60,7 @@
     },
     "packages/aeg-types": {
       "name": "@attalabs/aeg-types",
-      "version": "0.24.1",
+      "version": "0.31.0",
       "devDependencies": {
         "@atta/typescript-config": "workspace:*",
         "typescript": "^5.7.0",
@@ -67,11 +68,11 @@
     },
     "packages/sources": {
       "name": "@attalabs/vinaya-sources",
-      "version": "0.24.1",
+      "version": "0.31.0",
       "dependencies": {
-        "@attalabs/aeg-core": "0.14.0",
-        "@attalabs/aeg-forge-state": "0.14.0",
-        "@attalabs/aeg-types": "0.14.0",
+        "@attalabs/aeg-core": "0.31.0",
+        "@attalabs/aeg-forge-state": "0.31.0",
+        "@attalabs/aeg-types": "0.31.0",
         "zod": "3.25.76",
       },
       "devDependencies": {
@@ -434,8 +435,12 @@
 
     "zod": ["zod@3.25.76", "", {}, "sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ=="],
 
+    "@attalabs/vinaya-sources/@types/bun": ["@types/bun@1.4.2", "", { "dependencies": { "bun-types": "1.4.2" } }, "sha512-GimotNn7+ZV0uVArItBbriZsR1oNf0+WTzPkdcFrzShI7k2norL0uzEaJT8T33dWr7O/c9ZDuAFQrctKCi72oQ=="],
+
     "vite-node/cac": ["cac@6.7.14", "", {}, "sha512-b6Ilus+c3RrdDk+JhLKUAQfzzgLEPy6wcXqS7f/xe1EETvsDP6GORG7SFuOs6cID5YkqchW/LXZbX5bc8j7ZcQ=="],
 
     "vitest/tinyexec": ["tinyexec@0.3.2", "", {}, "sha512-KQQR9yN7R5+OSwaK0XQoj22pwHoTlgYqmUscPYoknOoWCWfj/5/ABTMRi69FrKU5ffPVh5QcFikpWJI/P1ocHA=="],
+
+    "@attalabs/vinaya-sources/@types/bun/bun-types": ["bun-types@1.4.2", "", { "dependencies": { "@types/node": "*" } }, "sha512-bxV1FgK7yBIzjRe5zBozIM4Bem11ZJcCXSrjWRG3YWLt8yFDePu4cLjpebO8OvPeIE9trbyPF4fuj3Cia4Fj3w=="],
   }
 }

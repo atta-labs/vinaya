@@ -82,7 +82,7 @@ import {
   terminateLaunchedChildOnShutdown as realTerminateLaunchedChildOnShutdown
 } from './dispatch.js'
 import { postMarkedComment } from './forge-write.js'
-import { createLogSink, currentRunId, log, resolveLogAppendPath } from './log-sink.js'
+import { createLogSink, currentRunId, drainLogSink, log, resolveLogAppendPath } from './log-sink.js'
 import { ensureRunDir, markProcessUnattended, runPath } from './run-paths.js'
 import { defaultTaskSweepAsyncDeps, sweepModernTasksAsync } from './task-sweep.js'
 import { appendRoleLine, appendRunStartMarker, loopLogPathFor } from './loop-log.js'
@@ -332,7 +332,7 @@ export type LoopDeps = {
    * already takes; the caller never falls back to a value that is not
    * actually an ancestor of the head it is judging.
    */
-  gitMergeBase: (head: string) => string
+  gitMergeBase: (head: string) => Promise<string>
   gitFetch: (sha: string) => void
   gitDiffShortstat: (base: string, head: string) => string
   /** The task's round journal, rebuilt from the pull request's principal-authored forge markers (developer round markers, the published summary) — never a log event, a flushed log comment or the telemetry outbox. */
@@ -429,7 +429,7 @@ function defaultGitRevParseOriginMain(): string {
   return sh('git', ['rev-parse', 'origin/main'])
 }
 
-function defaultGitMergeBase(head: string): string {
+function defaultGitMergeBase(head: string): Promise<string> {
   return resolveMergeBase(head)
 }
 
@@ -677,7 +677,7 @@ async function defaultRunEvidenceReport(
   const pushPr = String(prNumber)
   let preEditBody: string
   try {
-    preEditBody = gh(['pr', 'view', pushPr, '--json', 'body', '-q', '.body'])
+    preEditBody = await gh(['pr', 'view', pushPr, '--json', 'body', '-q', '.body'])
   } catch (err) {
     return {
       ok: false,
@@ -1023,8 +1023,18 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   // run-start marker and a line saying the sweep is running land in the
   // loop log AND on stderr first. A driver that still has many folders
   // left to classify must never look silent while it works through them.
-  const { log, runId } = createLogSink()
+  const { log, runId, drain: drainLoopLogSink } = createLogSink()
   if (!process.env.VINAYA_RUN_ID) process.env.VINAYA_RUN_ID = runId
+  // O3: two independent sink instances can both have a `log()` call in
+  // flight when this driver is about to exit — this closure's own
+  // `createLogSink()` instance above (the round/pause events `logEvents`
+  // emits) and the module-level default sink (`./log-sink.js`'s plain
+  // `log`/`drainLogSink`), which `effects.ts`'s `EffectExecutor` writes
+  // its `attempted`/`observed`/`verified` lines through instead — a
+  // separate `createLogSink()` call, with its own `pendingWrites`/
+  // `drainChain`, that this closure's own `drain()` cannot see. Every abrupt
+  // exit below drains both, never just the one this closure happens to own.
+  const drainAllLogSinks = (): Promise<void> => Promise.all([drainLoopLogSink(), drainLogSink()]).then(() => undefined)
   // `loopLogPathFor`'s own `repo` parameter never affects the path it
   // returns (kept on the signature only for callers that already resolved
   // one) — passing `null` here means this marker never waits on
@@ -1084,6 +1094,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   try {
     return await runDevReviewLoopBody()
   } finally {
+    // O3: every pause decision (including an uncaught error, converted to
+    // `pause{reason:'infrastructure'}` by `runDevReviewLoopBody`'s own crash
+    // catch) and every clean publish all return through here — the ONE
+    // place this covers both exits the objective names. The caller
+    // (`devReviewLoopCommand`) calls `process.exit(1)` on a pause AFTER
+    // this promise resolves, so draining here, before that return, is what
+    // makes both log sinks land everything first.
+    await drainAllLogSinks()
     // O2/Traps: the sweep was never awaited before dispatch, but a run
     // that is about to exit must "let it finish… cleanly" rather than
     // leave a removal partway done — `sweepDone` never rejects (its own
@@ -2174,16 +2192,23 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // reviewer, dispatched concurrently) and marks its launch record
     // `interrupted`, so a killed driver leaves no orphan and no stale
     // `'launched'` record for the next start to trip over.
-    process.on('SIGTERM', () => {
+    process.on('SIGTERM', async () => {
       d.terminateInFlightLaunchesOnShutdown(task, input.agent, repo)
       cleanupAllReviewerIsolationArtifacts(root, task)
       recordDriverExited('signal')
+      // O3: this driver's own sink may still have a `log()` call in flight
+      // (`context()` unresolved, or a webhook drain still running) — a bare
+      // `process.exit` here tears the process down with no microtask
+      // draining, which would silently drop it. Awaited once, on the way
+      // out, never per event.
+      await drainAllLogSinks()
       process.exit(143)
     })
-    process.on('SIGINT', () => {
+    process.on('SIGINT', async () => {
       d.terminateInFlightLaunchesOnShutdown(task, input.agent, repo)
       cleanupAllReviewerIsolationArtifacts(root, task)
       recordDriverExited('signal')
+      await drainAllLogSinks()
       process.exit(130)
     })
 
@@ -2255,6 +2280,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // never runs on this path (`d.exitProcess` below is real
           // `process.exit`), so this is the only chance to write it.
           recordDriverExited('reexec')
+          await drainAllLogSinks()
           d.exitProcess(exitCode)
           // `exitProcess` is typed `(code: number) => never` — real process.exit
           // never returns here. This `return` guards a test fake that records
@@ -2985,7 +3011,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // so never drifts within a single run"). A base move across
           // rounds is caught by the gate and by the existing `stale_driver`
           // guard, not by manufacturing a new mid-round pause reason.
-          const baseSha = d.gitMergeBase(head)
+          const baseSha = await d.gitMergeBase(head)
           const manifest: ReviewInputManifest = buildReviewInputManifest({
             headSha: head,
             baseSha,
@@ -3320,7 +3346,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               lastDispatchedManifest ??
               buildReviewInputManifest({
                 headSha: d.resolveHead(branch),
-                baseSha: d.gitMergeBase(d.resolveHead(branch)),
+                baseSha: await d.gitMergeBase(d.resolveHead(branch)),
                 briefContent: d.fetchFrozenBrief(task),
                 objectivesVersion: d.resolveIssueObjectives(task).version,
                 rulingOrdinal: d.fetchNewestRulingOrdinal(prNumber),

@@ -179,7 +179,7 @@ export async function prReportCommand(args: string[], testOverrides?: { gateRunn
   let preEditBody: string | undefined
   if (pushPr) {
     try {
-      preEditBody = gh(['pr', 'view', pushPr, '--json', 'body', '-q', '.body'])
+      preEditBody = await gh(['pr', 'view', pushPr, '--json', 'body', '-q', '.body'])
     } catch (err) {
       console.error(
         `vinaya pr report: refused — could not fetch PR ${pushPr}'s live body: ${err instanceof Error ? err.message : String(err)}`
@@ -271,7 +271,7 @@ export async function prReportCommand(args: string[], testOverrides?: { gateRunn
     )
 
     try {
-      ghEditBody(pushPr, composed)
+      await ghEditBody(pushPr, composed)
     } catch (err) {
       console.error(
         `vinaya pr report: refused — \`gh pr edit ${pushPr}\` failed: ${err instanceof Error ? err.message : String(err)}. Nothing was pushed.`
@@ -281,7 +281,7 @@ export async function prReportCommand(args: string[], testOverrides?: { gateRunn
 
     let postEditBody: string
     try {
-      postEditBody = gh(['pr', 'view', pushPr, '--json', 'body', '-q', '.body'])
+      postEditBody = await gh(['pr', 'view', pushPr, '--json', 'body', '-q', '.body'])
     } catch (err) {
       console.error(
         `vinaya pr report: pushed to PR ${pushPr} but could not re-read its live body to self-verify: ${err instanceof Error ? err.message : String(err)}. Inspect PR ${pushPr} by hand — this command could not confirm the push landed cleanly.`
