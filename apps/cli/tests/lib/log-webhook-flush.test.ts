@@ -156,7 +156,7 @@ function runCliAsync(args: string[], cwd: string, env: Record<string, string | u
 }
 
 describe('vinaya log flush — logPublish.webhookUrl', () => {
-  it('POSTs the outbox as ndjson, with configured headers, and truncates on 2xx', () => {
+  it('POSTs the outbox as ndjson, with configured headers, and truncates on 2xx', async () => {
     const cwd = tempDir('log-webhook-cwd-')
     initGitRepo(cwd)
     const home = tempDir('log-webhook-home-')
@@ -165,7 +165,12 @@ describe('vinaya log flush — logPublish.webhookUrl', () => {
     const lines = [ndjsonLine('run-1', 700), ndjsonLine('run-2', 700)]
     const path = seedOutbox(home, 700, lines)
 
-    const r = runCli(['log', 'flush', '--issue', '700'], cwd, { HOME: home })
+    // Async launch (O4): the child's own POST lands on this SAME process's
+    // `Bun.serve()` server above — a synchronous spawn here would block the
+    // one thread that server's `fetch` handler also needs to run on, and on
+    // Bun 1.4.2 (a genuinely blocking synchronous spawn, unlike 1.2.14's
+    // event-loop-spinning one) the request would never be answered at all.
+    const r = await runCliAsync(['log', 'flush', '--issue', '700'], cwd, { HOME: home })
     server.stop()
 
     expect(r.status).toBe(0)
@@ -182,7 +187,7 @@ describe('vinaya log flush — logPublish.webhookUrl', () => {
     expect(readFileSync(path, 'utf8')).toBe('')
   })
 
-  it('leaves the outbox untouched and refuses when the webhook does not answer 2xx', () => {
+  it('leaves the outbox untouched and refuses when the webhook does not answer 2xx', async () => {
     const cwd = tempDir('log-webhook-cwd-')
     initGitRepo(cwd)
     const home = tempDir('log-webhook-home-')
@@ -191,7 +196,9 @@ describe('vinaya log flush — logPublish.webhookUrl', () => {
     const line = ndjsonLine('run-1', 701)
     const path = seedOutbox(home, 701, [line])
 
-    const r = runCli(['log', 'flush', '--issue', '701'], cwd, { HOME: home })
+    // Async launch (O4) — same reason as the 2xx test above: the server this
+    // child contacts lives in this same process.
+    const r = await runCliAsync(['log', 'flush', '--issue', '701'], cwd, { HOME: home })
     server.stop()
 
     expect(r.status).toBe(2)
@@ -312,7 +319,7 @@ describe('vinaya log flush — logPublish.webhookUrl', () => {
     expect(readFileSync(path, 'utf8')).toBe('')
   }, 10000)
 
-  it('round-2 security review, BLOCKER: a lock abandoned by a crashed holder is stolen once stale, not left to jam every future flush', () => {
+  it('round-2 security review, BLOCKER: a lock abandoned by a crashed holder is stolen once stale, not left to jam every future flush', async () => {
     const cwd = tempDir('log-webhook-cwd-')
     initGitRepo(cwd)
     const home = tempDir('log-webhook-home-')
@@ -325,7 +332,8 @@ describe('vinaya log flush — logPublish.webhookUrl', () => {
     const staleMtime = new Date(Date.now() - WEBHOOK_FLUSH_LOCK_STALE_MS - 5000)
     utimesSync(lockPath, staleMtime, staleMtime)
 
-    const r = runCli(['log', 'flush', '--issue', '706'], cwd, { HOME: home })
+    // Async launch (O4) — same reason as the tests above.
+    const r = await runCliAsync(['log', 'flush', '--issue', '706'], cwd, { HOME: home })
     server.stop()
 
     expect(r.status).toBe(0)
