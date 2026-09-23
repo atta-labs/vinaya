@@ -122,8 +122,24 @@ function acquireFlushLock(lockPath: string): boolean {
   return tryCreateLock(lockPath)
 }
 
-function releaseFlushLock(lockPath: string): void {
+/**
+ * Exported only for `log-webhook-flush.test.ts` — verifies ownership before
+ * deleting (round-3 security review, MEDIUM). A holder stalled past
+ * `WEBHOOK_FLUSH_LOCK_STALE_MS` (plausible on a resource-contended host, not
+ * only a genuine crash) can have `acquireFlushLock` steal its lock out from
+ * under it; that holder's own `finally` still runs once it resumes, and an
+ * unconditional unlink there would delete the NEW owner's still-active lock
+ * — reopening the exact double-post/lost-line race this lock exists to
+ * prevent, and letting a third caller acquire concurrently with the second.
+ * Reading the pid back and refusing to unlink a lock this process did not
+ * most recently create closes that: a stolen lock is the new owner's alone
+ * to release, and the original holder's own release becomes a no-op instead
+ * of a false teardown.
+ */
+export function releaseFlushLock(lockPath: string): void {
   try {
+    const holder = readFileSync(lockPath, 'utf8').trim()
+    if (holder !== String(process.pid)) return
     unlinkSync(lockPath)
   } catch (err) {
     if (!isEnoent(err)) throw err

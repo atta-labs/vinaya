@@ -10,11 +10,11 @@
 
 import { afterEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { WEBHOOK_FLUSH_LOCK_STALE_MS } from '../../src/lib/log-webhook-flush.js'
+import { WEBHOOK_FLUSH_LOCK_STALE_MS, releaseFlushLock } from '../../src/lib/log-webhook-flush.js'
 import { spawnBudgetedAsync, spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -322,5 +322,33 @@ describe('vinaya log flush — logPublish.webhookUrl', () => {
     expect(r.status).toBe(0)
     expect(r.stdout).toContain('posted 1 line(s)')
     expect(readFileSync(path, 'utf8')).toBe('')
+  })
+
+  it('round-3 security review, MEDIUM: releaseFlushLock never deletes a lock another process now owns — a holder stalled past the stale window, then resumed, cannot tear down the lock its own lock was stolen from', () => {
+    const home = tempDir('log-webhook-home-')
+    const lockPath = join(home, 'some-task.flush-lock')
+    mkdirSync(dirname(lockPath), { recursive: true })
+    // Simulates the exact race: this process's own lock (pid below) was
+    // stolen for staleness by a second process, which wrote ITS OWN pid —
+    // never this process's — before this process's stalled `finally` block
+    // finally runs and calls release.
+    const anotherProcessPid = process.pid + 1
+    writeFileSync(lockPath, `${anotherProcessPid}\n`)
+
+    releaseFlushLock(lockPath)
+
+    expect(existsSync(lockPath)).toBe(true)
+    expect(readFileSync(lockPath, 'utf8')).toBe(`${anotherProcessPid}\n`)
+  })
+
+  it('round-3 security review, MEDIUM: releaseFlushLock still deletes a lock this process actually holds', () => {
+    const home = tempDir('log-webhook-home-')
+    const lockPath = join(home, 'some-task.flush-lock')
+    mkdirSync(dirname(lockPath), { recursive: true })
+    writeFileSync(lockPath, `${process.pid}\n`)
+
+    releaseFlushLock(lockPath)
+
+    expect(existsSync(lockPath)).toBe(false)
   })
 })
