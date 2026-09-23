@@ -54,30 +54,6 @@ if [ -n "$VINAYA_SELECTED_TESTS" ]; then
   # tight enough that a CLI-invocation test doing real subprocess and
   # filesystem work (a registered check's own gate observation, most
   # recently) can lose the race under nothing worse than ordinary host load.
-  # A test file that spawns the built CLI as its own subprocess (a real
-  # `claude`/`gh`/`git` dispatch round, a full command invocation) competes
-  # for the SAME host resources as every sibling heavy file bun test would
-  # otherwise run alongside it — several, batched together, lose their own
-  # internal timeout budget under nothing worse than ordinary host load, a
-  # real, repeated incident. Split the selection: files with no such spawn
-  # run together as one job, unchanged; files that do spawn the CLI run one
-  # at a time, after, so they never contend with each other.
-  VINAYA_HEAVY_TESTS=""
-  VINAYA_LIGHT_TESTS=""
-  for _vinaya_test_file in $VINAYA_SELECTED_TESTS; do
-    if grep -qE "Bun\.spawn(Sync)?\([^)]*['"]bun['"]|execFileSync\(['"]bun['"]|spawnSync\(['"]bun['"]" "$_vinaya_test_file" 2>/dev/null; then
-      VINAYA_HEAVY_TESTS="$VINAYA_HEAVY_TESTS $_vinaya_test_file"
-    else
-      VINAYA_LIGHT_TESTS="$VINAYA_LIGHT_TESTS $_vinaya_test_file"
-    fi
-  done
-  if [ -n "$VINAYA_LIGHT_TESTS" ]; then
-    echo "$VINAYA_LIGHT_TESTS" | xargs bun test --timeout=30000 -- || exit 1
-  fi
-  if [ -n "$VINAYA_HEAVY_TESTS" ]; then
-    for _vinaya_heavy_file in $VINAYA_HEAVY_TESTS; do
-      bun test --timeout=30000 -- "$_vinaya_heavy_file" || exit 1
-    done
-  fi
+  echo "$VINAYA_SELECTED_TESTS" | xargs bun test --timeout=30000 -- || exit 1
 fi
 # <<< vinaya:managed:pre-push <<<
