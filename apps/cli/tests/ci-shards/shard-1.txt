@@ -37,6 +37,7 @@ tests/lib/dev-review-loop/reviewer-dispatch.test.ts
 tests/lib/dev-review-loop/reviewer-isolation.test.ts
 tests/lib/log-callers.test.ts
 tests/lib/log-destination.test.ts
+tests/lib/no-log-forge-writes.test.ts
 tests/lib/log-sink.test.ts
 tests/lib/log-sink-no-sync-spawn.test.ts
 tests/lib/loop-log.test.ts
@@ -60,6 +61,5 @@ tests/lib/broker/worker-grants.test.ts
 tests/lib/dispatch/unattended.test.ts
 tests/checks/runner/outcomes.test.ts
 tests/checks/runner/traces.test.ts
-tests/lib/artifacts/collect.test.ts
 tests/conformance/codex.test.ts
 tests/process-fixture-coverage.test.ts

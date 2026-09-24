@@ -1,22 +1,19 @@
 /**
- * A generic HTTP alternative to `flushOutbox`'s GitHub-comment posting
- * (`./log-flush.js`) — one POST of a task's outbox, as ndjson, to any
- * endpoint that accepts one. No GitHub account or `gh` auth needed on the
- * receiving end — the point of this option is a destination an adopter can
- * point at with nothing more than a URL. There is no forge read, no comment
- * chunking, and no marker-based idempotent retry — those exist in
- * `flushOutbox` specifically to work around GitHub's own per-comment size
- * limit and to detect a lost acknowledgement against GitHub's comment
- * history; a generic webhook has no equivalent to read back. Truncation
- * follows only a confirmed 2xx response, the same fail-closed rule
- * `flushOutbox` uses: a failed POST leaves the outbox untouched, safe to
- * retry on the next call.
+ * The one delivery mechanism a `logs.url` server destination uses: one POST
+ * of a task's local retry queue, as ndjson, to any HTTP endpoint that
+ * accepts one — no GitHub account or `gh` auth needed on the receiving end.
+ * Renamed from the tracker-posting-era `flushOutboxToWebhook`: there is no
+ * GitHub comment path left to distinguish this from, so "drain" names what
+ * it actually does — empty the local queue into the
+ * configured server, called by `log-sink.ts` after every append
+ * (`apps/cli/specs/log.md` § The destination), never batched at a round end
+ * and never reachable from a one-shot CLI command any more.
  *
- * Two callers: `logPublish.webhookUrl` (`./config.js`)'s one-shot
- * `vinaya log flush`/`log collect-artifact` posting mode, and `log-sink.ts`'s
- * own live per-event drain of a configured `logs.url` server destination —
- * called after every append to the local retry queue (`apps/cli/specs/log.md`
- * § The destination), never batched at a round end.
+ * Truncation follows only a confirmed 2xx response — a failed POST leaves
+ * the queue untouched, safe to retry on the next call — and every line is
+ * re-validated and re-redacted through the storage contract's
+ * `classifyStoredLine` before it is ever sent, fail-closed on any corrupt or
+ * unknown-version line.
  */
 
 import {
@@ -47,9 +44,6 @@ export const MAX_WEBHOOK_BODY_BYTES = 5 * 1024 * 1024
 /** Bounds the POST itself (round-2 security review, MEDIUM) — an unresponsive or intentionally slow endpoint would otherwise hang this call, and with it the round-end auto-flush and the whole dev-review-loop, indefinitely. */
 export const WEBHOOK_FETCH_TIMEOUT_MS = 30_000
 
-// Mirrors `log-flush.ts`'s own `SAFE_PATH_SEGMENT`/`isSafeRepoSegment` — not
-// exported from there, so the same narrow guard is repeated here rather than
-// widening that file's export surface for a one-line check.
 const SAFE_PATH_SEGMENT = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/
 function isSafeRepoSegment(segment: string): boolean {
   return SAFE_PATH_SEGMENT.test(segment) && !segment.includes('..')
@@ -64,13 +58,12 @@ function isEnoent(err: unknown): boolean {
 }
 
 /** A lock older than this was almost certainly abandoned by a holder that crashed mid-flush — normal completion always removes its own lock well before this — so it is stolen rather than left to jam every future drain of this queue file forever. Set well above `WEBHOOK_FETCH_TIMEOUT_MS`, the longest a healthy holder can legitimately still be inside the critical section. */
-export const WEBHOOK_FLUSH_LOCK_STALE_MS = 4 * WEBHOOK_FETCH_TIMEOUT_MS
+export const WEBHOOK_DRAIN_LOCK_STALE_MS = 4 * WEBHOOK_FETCH_TIMEOUT_MS
 
 function tryCreateLock(lockPath: string, token: string): boolean {
   try {
     // The outbox directory may not exist yet — nothing has appended to this
-    // task's queue file before (e.g. a bare `vinaya log flush` against a
-    // task nothing ever logged for); `O_CREAT` on the lock file itself never
+    // task's queue file before; `O_CREAT` on the lock file itself never
     // creates a missing parent, so it must be made here first, same 0o700
     // mode `log-sink.ts`'s own `appendLine` already uses.
     mkdirSync(dirname(lockPath), { recursive: true, mode: 0o700 })
@@ -105,7 +98,7 @@ function tryCreateLock(lockPath: string, token: string): boolean {
  * (this process's chained one, or another process's) retries, so delivery
  * still catches up in order, just not on this exact call.
  */
-export function acquireFlushLock(lockPath: string): string | null {
+export function acquireDrainLock(lockPath: string): string | null {
   // A token unique to THIS acquisition, never the pid alone: two flushes in
   // one process (the default sink and a dispatch's own sink) share a pid, so
   // a pid cannot tell a caller's own lock from one another caller in the
@@ -121,7 +114,7 @@ export function acquireFlushLock(lockPath: string): string | null {
     // holder just finished. One more attempt rather than giving up here.
     return tryCreateLock(lockPath, token) ? token : null
   }
-  if (Date.now() - observedMtimeMs <= WEBHOOK_FLUSH_LOCK_STALE_MS) return null
+  if (Date.now() - observedMtimeMs <= WEBHOOK_DRAIN_LOCK_STALE_MS) return null
   // Claim the stale lock atomically. A rename moves the file for exactly one
   // contender; every other contender's rename finds nothing and backs off —
   // never the unlink-then-create two contenders could both complete, each
@@ -160,10 +153,10 @@ export function acquireFlushLock(lockPath: string): string | null {
 }
 
 /**
- * Exported for `log-webhook-flush.test.ts` — verifies ownership before
+ * Exported for `log-webhook-drain.test.ts` — verifies ownership before
  * deleting (round-3 security review, MEDIUM). A holder stalled past
- * `WEBHOOK_FLUSH_LOCK_STALE_MS` (plausible on a resource-contended host, not
- * only a genuine crash) can have `acquireFlushLock` steal its lock out from
+ * `WEBHOOK_DRAIN_LOCK_STALE_MS` (plausible on a resource-contended host, not
+ * only a genuine crash) can have `acquireDrainLock` steal its lock out from
  * under it; that holder's own `finally` still runs once it resumes, and an
  * unconditional unlink there would delete the NEW owner's still-active lock
  * — reopening the exact double-post/lost-line race this lock exists to
@@ -174,7 +167,7 @@ export function acquireFlushLock(lockPath: string): string | null {
  * the new owner's alone to release, and the original holder's own release
  * becomes a no-op instead of a false teardown.
  */
-export function releaseFlushLock(lockPath: string, token: string): void {
+export function releaseDrainLock(lockPath: string, token: string): void {
   try {
     const holder = readFileSync(lockPath, 'utf8').trim()
     if (holder !== token) return
@@ -184,18 +177,18 @@ export function releaseFlushLock(lockPath: string, token: string): void {
   }
 }
 
-export type WebhookFlushOutcome = { flushed: false } | { flushed: true; lineCount: number; bytes: number }
+export type WebhookDrainOutcome = { flushed: false } | { flushed: true; lineCount: number; bytes: number }
 
-export type WebhookFlushErrorCode =
-  | 'log-webhook-flush-symlink'
-  | 'log-webhook-flush-corrupt-line'
-  | 'log-webhook-flush-too-large'
-  | 'log-webhook-flush-failed'
+export type WebhookDrainErrorCode =
+  | 'log-webhook-drain-symlink'
+  | 'log-webhook-drain-corrupt-line'
+  | 'log-webhook-drain-too-large'
+  | 'log-webhook-drain-failed'
 
-/** The one thrown-error shape `flushOutboxToWebhook` ever raises — never `process.exit`, mirroring `LogFlushError`. */
-export class WebhookFlushError extends Error {
-  readonly code: WebhookFlushErrorCode
-  constructor(code: WebhookFlushErrorCode, message: string) {
+/** The one thrown-error shape `drainOutboxToWebhook` ever raises — never `process.exit`. */
+export class WebhookDrainError extends Error {
+  readonly code: WebhookDrainErrorCode
+  constructor(code: WebhookDrainErrorCode, message: string) {
     super(message)
     this.code = code
   }
@@ -205,29 +198,28 @@ export class WebhookFlushError extends Error {
  * Reads `outboxTask`'s own local outbox (`null` for the `subject.issue:
  * null` case — an unattributed process still delivers), validates and
  * re-redacts every line through the storage contract's `classifyStoredLine`
- * (the same transport-boundary check `flushOutbox` runs before a GitHub
- * post — fail closed on any corrupt or unknown-version line, never post data
- * this function cannot vouch for), then POSTs the survivors as one ndjson
- * body to `webhookUrl`. Truncates the outbox to exactly whatever was
- * appended to the live file since the read started (a concurrent writer's
- * line) — every line present at read time was either posted or the whole
- * call threw before posting anything, so there is never a partially-posted
- * remainder to preserve, unlike `flushOutbox`'s per-chunk case.
+ * — fail closed on any corrupt or unknown-version line, never post data this
+ * function cannot vouch for — then POSTs the survivors as one ndjson body to
+ * `webhookUrl`. Truncates the outbox to exactly whatever was appended to the
+ * live file since the read started (a concurrent writer's line) — every
+ * line present at read time was either posted or the whole call threw
+ * before posting anything, so there is never a partially-posted remainder
+ * to preserve.
  */
-export async function flushOutboxToWebhook(
+export async function drainOutboxToWebhook(
   outboxTask: number | null,
   webhookUrl: string,
   headers?: Record<string, string>,
   /** Test-only override of `WEBHOOK_FETCH_TIMEOUT_MS` — every production call site omits this and gets the real bound; a test proving the timeout fires does not have to pay the real 30s to observe it. */
   fetchTimeoutMs: number = WEBHOOK_FETCH_TIMEOUT_MS
-): Promise<WebhookFlushOutcome> {
+): Promise<WebhookDrainOutcome> {
   const resolved = await resolveRepo()
   const repo = resolved && isSafeRepoSegment(resolved.owner) && isSafeRepoSegment(resolved.repo) ? resolved : null
   const outboxRoot = () => join(GLOBAL_VINAYA_HOME, 'outbox')
   const path = sinkOutboxPathFor({ outboxRoot }, repo, outboxTask)
 
   const lockPath = `${path}.flush-lock`
-  const lockToken = acquireFlushLock(lockPath)
+  const lockToken = acquireDrainLock(lockPath)
   if (lockToken === null) return { flushed: false }
   try {
     let lstat: ReturnType<typeof lstatSync> | undefined
@@ -238,9 +230,9 @@ export async function flushOutboxToWebhook(
     }
     if (lstat === undefined) return { flushed: false }
     if (!lstat.isFile()) {
-      throw new WebhookFlushError(
-        'log-webhook-flush-symlink',
-        `log webhook flush: outbox target is not a regular file (symlink, FIFO, or similar) — refusing to read: ${path}`
+      throw new WebhookDrainError(
+        'log-webhook-drain-symlink',
+        `log webhook drain: outbox target is not a regular file (symlink, FIFO, or similar) — refusing to read: ${path}`
       )
     }
 
@@ -256,9 +248,9 @@ export async function flushOutboxToWebhook(
     for (let i = 0; i < rawLines.length; i++) {
       const record = classifyStoredLine(rawLines[i] as string, homedir())
       if (record.status !== 'ok') {
-        throw new WebhookFlushError(
-          'log-webhook-flush-corrupt-line',
-          `log webhook flush: outbox line ${i} failed schema re-validation — ${record.reason}`
+        throw new WebhookDrainError(
+          'log-webhook-drain-corrupt-line',
+          `log webhook drain: outbox line ${i} failed schema re-validation — ${record.reason}`
         )
       }
       postLines.push(record.postLine)
@@ -267,9 +259,9 @@ export async function flushOutboxToWebhook(
     const body = `${postLines.join('\n')}\n`
     const bytes = Buffer.byteLength(body, 'utf8')
     if (bytes > MAX_WEBHOOK_BODY_BYTES) {
-      throw new WebhookFlushError(
-        'log-webhook-flush-too-large',
-        `log webhook flush: outbox body is ${bytes} byte(s), over the ${MAX_WEBHOOK_BODY_BYTES}-byte per-call cap — flush more often to drain it.`
+      throw new WebhookDrainError(
+        'log-webhook-drain-too-large',
+        `log webhook drain: outbox body is ${bytes} byte(s), over the ${MAX_WEBHOOK_BODY_BYTES}-byte per-call cap — flush more often to drain it.`
       )
     }
 
@@ -288,15 +280,15 @@ export async function flushOutboxToWebhook(
           : err instanceof Error
             ? err.message
             : String(err)
-      throw new WebhookFlushError(
-        'log-webhook-flush-failed',
-        `log webhook flush: POST to ${webhookUrl} failed: ${reason}`
+      throw new WebhookDrainError(
+        'log-webhook-drain-failed',
+        `log webhook drain: POST to ${webhookUrl} failed: ${reason}`
       )
     }
     if (!response.ok) {
-      throw new WebhookFlushError(
-        'log-webhook-flush-failed',
-        `log webhook flush: POST to ${webhookUrl} returned ${response.status} ${response.statusText}`
+      throw new WebhookDrainError(
+        'log-webhook-drain-failed',
+        `log webhook drain: POST to ${webhookUrl} returned ${response.status} ${response.statusText}`
       )
     }
 
@@ -306,6 +298,6 @@ export async function flushOutboxToWebhook(
 
     return { flushed: true, lineCount: postLines.length, bytes }
   } finally {
-    releaseFlushLock(lockPath, lockToken)
+    releaseDrainLock(lockPath, lockToken)
   }
 }

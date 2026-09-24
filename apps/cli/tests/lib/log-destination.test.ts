@@ -8,7 +8,7 @@
  * decision layer built on top of them, mirroring `run-paths.ts`'s own
  * `resolveRuntimeDir`. The sink's own live delivery (folder append, server
  * queue + drain) is covered end to end below, against a real local HTTP
- * server, the same discipline `log-webhook-flush.test.ts` uses.
+ * server, the same discipline `log-webhook-drain.test.ts` uses.
  */
 
 import { afterEach, describe, expect, it } from 'bun:test'
@@ -260,6 +260,132 @@ describe('resolveLogDestinationFrom (pure) — who is allowed to name the destin
   })
 })
 
+// --- CI (task-files-v1 6, O3): a server or nothing, never an ephemeral
+// runner's own folder, and never delivered without a real credential. -----
+
+describe('resolveLogDestinationFrom — CI never falls back to a folder (O3)', () => {
+  const CI_ENV = { GITHUB_ACTIONS: 'true' }
+
+  it('records nothing when no server destination is configured at all', () => {
+    expect(
+      resolveLogDestinationFrom({
+        localConfig: null,
+        trustAnchorConfig: null,
+        unattended: true,
+        env: CI_ENV,
+        defaultFolder: DEFAULT_FOLDER
+      })
+    ).toEqual({
+      kind: 'none',
+      reason: 'no server destination is configured for CI delivery (vinaya.config.json logs.url)'
+    })
+  })
+
+  it('records nothing when the working tree configures a folder — CI never honours a folder, credentialed or not', () => {
+    expect(
+      resolveLogDestinationFrom({
+        localConfig: { logs: { folder: '/srv/logs' } } as VinayaConfig,
+        trustAnchorConfig: { logs: { folder: '/srv/logs' } } as VinayaConfig,
+        unattended: true,
+        env: CI_ENV,
+        defaultFolder: DEFAULT_FOLDER
+      })
+    ).toEqual({
+      kind: 'none',
+      reason: 'no server destination is configured for CI delivery (vinaya.config.json logs.url)'
+    })
+  })
+
+  it('delivers live to the configured server when the credential is present (a same-repository or default-branch run)', () => {
+    expect(
+      resolveLogDestinationFrom({
+        localConfig: {
+          logs: { url: 'https://ingest.example.com/vinaya', headers: { authorization: 'Bearer ${VINAYA_LOG_TOKEN}' } }
+        } as VinayaConfig,
+        trustAnchorConfig: {
+          logs: { url: 'https://ingest.example.com/vinaya', headers: { authorization: 'Bearer ${VINAYA_LOG_TOKEN}' } }
+        } as VinayaConfig,
+        unattended: true,
+        env: { ...CI_ENV, VINAYA_LOG_TOKEN: 'real-token' },
+        defaultFolder: DEFAULT_FOLDER
+      })
+    ).toEqual({
+      kind: 'server',
+      url: 'https://ingest.example.com/vinaya',
+      headers: { authorization: 'Bearer real-token' }
+    })
+  })
+
+  it('records nothing, naming the missing credential, when the referenced env var is empty — a fork pull request withheld the secret', () => {
+    expect(
+      resolveLogDestinationFrom({
+        localConfig: {
+          logs: { url: 'https://ingest.example.com/vinaya', headers: { authorization: 'Bearer ${VINAYA_LOG_TOKEN}' } }
+        } as VinayaConfig,
+        trustAnchorConfig: {
+          logs: { url: 'https://ingest.example.com/vinaya', headers: { authorization: 'Bearer ${VINAYA_LOG_TOKEN}' } }
+        } as VinayaConfig,
+        unattended: true,
+        // GitHub Actions sets a secret-backed env var to '' for a fork PR —
+        // the variable is present, its value is withheld.
+        env: { ...CI_ENV, VINAYA_LOG_TOKEN: '' },
+        defaultFolder: DEFAULT_FOLDER
+      })
+    ).toEqual({
+      kind: 'none',
+      reason:
+        'a logs.url server destination is configured, but this job holds no delivery credential (a fork pull request, or a missing repository secret)'
+    })
+  })
+
+  it('records nothing, naming the missing credential, when the referenced env var is entirely absent', () => {
+    expect(
+      resolveLogDestinationFrom({
+        localConfig: {
+          logs: { url: 'https://ingest.example.com/vinaya', headers: { authorization: 'Bearer ${VINAYA_LOG_TOKEN}' } }
+        } as VinayaConfig,
+        trustAnchorConfig: {
+          logs: { url: 'https://ingest.example.com/vinaya', headers: { authorization: 'Bearer ${VINAYA_LOG_TOKEN}' } }
+        } as VinayaConfig,
+        unattended: true,
+        env: CI_ENV,
+        defaultFolder: DEFAULT_FOLDER
+      })
+    ).toEqual({
+      kind: 'none',
+      reason:
+        'a logs.url server destination is configured, but this job holds no delivery credential (a fork pull request, or a missing repository secret)'
+    })
+  })
+
+  it('delivers without a credential check when the destination declares no headers at all — nothing to be missing', () => {
+    expect(
+      resolveLogDestinationFrom({
+        localConfig: { logs: { url: 'https://ingest.example.com/vinaya' } } as VinayaConfig,
+        trustAnchorConfig: { logs: { url: 'https://ingest.example.com/vinaya' } } as VinayaConfig,
+        unattended: true,
+        env: CI_ENV,
+        defaultFolder: DEFAULT_FOLDER
+      })
+    ).toEqual({ kind: 'server', url: 'https://ingest.example.com/vinaya', headers: undefined })
+  })
+
+  it("a fork PR cannot redirect CI delivery by editing its own diff's logs.url — the trust-anchor gate still applies, so an unmatched working-tree url falls through to 'no server configured', never the attacker's own endpoint", () => {
+    expect(
+      resolveLogDestinationFrom({
+        localConfig: { logs: { url: 'https://attacker.example.com/ingest' } } as VinayaConfig,
+        trustAnchorConfig: { logs: { url: 'https://ingest.example.com/vinaya' } } as VinayaConfig,
+        unattended: true,
+        env: { ...CI_ENV, VINAYA_LOG_TOKEN: 'real-token' },
+        defaultFolder: DEFAULT_FOLDER
+      })
+    ).toEqual({
+      kind: 'none',
+      reason: 'no server destination is configured for CI delivery (vinaya.config.json logs.url)'
+    })
+  })
+})
+
 // --- resolveLogAppendPath — the exact path log() will append to -----------
 
 describe('resolveLogAppendPath — mirrors log()’s own destination resolution', () => {
@@ -345,12 +471,41 @@ describe('log-sink — a folder destination is appended to directly (O1/O2)', ()
   })
 })
 
+describe("log-sink — a 'none' destination writes nothing and warns exactly once per process (O3)", () => {
+  it('writes no outbox file at all', async () => {
+    const { dir, deps } = sinkDeps({
+      resolveLogDestination: () => ({ kind: 'none', reason: 'no server destination is configured' })
+    })
+    const { log } = createLogSink(deps)
+    log(DISPATCHED)
+    log(DISPATCHED)
+    await flush()
+    expect(existsSync(join(dir, 'logs'))).toBe(false)
+    expect(existsSync(join(dir, 'queue'))).toBe(false)
+  })
+
+  it('warns once, naming the reason, even across several events', async () => {
+    const messages: string[] = []
+    const { deps } = sinkDeps({
+      resolveLogDestination: () => ({ kind: 'none', reason: 'a fork pull request holds no delivery credential' }),
+      stderr: (m) => messages.push(m)
+    })
+    const { log } = createLogSink(deps)
+    log(DISPATCHED)
+    log(DISPATCHED)
+    log(DISPATCHED)
+    await flush()
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toContain('a fork pull request holds no delivery credential')
+  })
+})
+
 // --- server destination: drains through the REAL `flushOutboxToWebhook`,
 // which resolves its own read path from `GLOBAL_VINAYA_HOME` (a module-level
 // constant frozen at first import) rather than an injectable dep — a fresh
 // subprocess with its own scratch `$HOME` is what makes that path land
 // somewhere this test controls, the identical discipline
-// `log-webhook-flush.test.ts` documents for the same reason.
+// `log-webhook-drain.test.ts` documents for the same reason.
 
 function startWebhookServer(status = 200): { url: string; requests: string[]; stop: () => void } {
   const requests: string[] = []
@@ -386,7 +541,7 @@ const LOG_SINK_PATH = join(import.meta.dir, '..', '..', 'src', 'lib', 'log-sink.
  * (found live running this task's own required Test Plan; escalated on
  * Issue #706 before this fix, since neither this file nor these two tests
  * were named among the seven Bun-1.4.2 failures the task's Boundary lists —
- * same root cause as O4's three named `log-webhook-flush.test.ts` tests).
+ * same root cause as O4's three named `log-webhook-drain.test.ts` tests).
  */
 async function runServerDestinationScript(home: string, cwd: string, url: string, effectId: string): Promise<void> {
   const script = join(cwd, `run-log-${effectId}.ts`)

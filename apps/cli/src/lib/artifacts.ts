@@ -596,6 +596,22 @@ ${verifiedFetchPrBodyStep()}      - name: Run checks
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: \${{ github.event.pull_request.number }}
           BRANCH: \${{ github.head_ref }}
+          # O3: this job's gate events deliver live to the \`logs.url\` server
+          # destination the default branch's own \`vinaya.config.json\`
+          # declares — never a fork PR's own working-tree copy
+          # (\`resolveTrustAnchorLogsDestination\`). VINAYA_UNATTENDED is what
+          # makes that gate apply here at all; without it this run would be
+          # classified attended and would honour the PR's own diff directly.
+          VINAYA_UNATTENDED: '1'
+          # A write-only ingest token, never a value this job can use to read
+          # anything back — GitHub withholds every repository secret from a
+          # fork-originated pull_request run, so this resolves to an empty
+          # string there. \`log()\` treats an empty/absent value referenced by
+          # a configured \`logs.headers\` entry as "no credential" and records
+          # nothing for this run, naming why, rather than delivering with a
+          # blank credential or silently falling back to this ephemeral
+          # runner's own disk.
+          VINAYA_LOG_TOKEN: \${{ secrets.VINAYA_LOG_TOKEN }}
         # pipefail is load-bearing: this job's default shell is \`bash -e\`
         # WITHOUT pipefail, so an unguarded pipe through tee would mask the
         # check runner's exit code and report a red suite green.
@@ -618,29 +634,6 @@ ${verifiedFetchPrBodyStep()}      - name: Run checks
             cat vinaya-check-output.txt 2>/dev/null || echo 'no check output captured (runner did not start)'
             echo '~~~'
           } >> "$GITHUB_STEP_SUMMARY"
-      # This job holds no forge-write credential
-      # (see \`permissions:\` above) — it only ever copies THIS run's own
-      # local outbox to a file and uploads it as a plain build artifact.
-      # \`if: always()\` on both steps is load-bearing, not decorative: a
-      # cancelled or failed run must still export whatever partial evidence
-      # its outbox already holds (O2's "cancellation preserve[s] available
-      # evidence"), not only a clean pass. Nothing here posts, comments, or
-      # calls the forge — \`vinaya-task-log-collector.yml\`, running on the
-      # default branch with its own credential, is the only place a
-      # downloaded copy of this artifact is ever validated and published.
-      - name: Export task-log artifact
-        if: always()
-        run: ${vinayaRun(selfHost, 'log export-artifact vinaya-task-log.ndjson')}
-      - name: Upload task-log artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: vinaya-task-log-\${{ github.run_id }}
-          path: vinaya-task-log.ndjson
-          # A run with no gate events yet (the export step wrote nothing) is
-          # a legitimate outcome, never a reason to fail this job.
-          if-no-files-found: ignore
-          retention-days: 1
 `
 }
 
@@ -917,103 +910,6 @@ ${vinayaSetupSteps(selfHost, 'trusted')}      # PR_BODY is what makes this check
       # the forge, same reasoning as the sibling job's identical step above.
 ${verifiedFetchPrBodyStep()}      - name: Principal Test Plan wait
         run: ${vinayaRun(selfHost, 'check principal-test-plan-wait')}
-`
-}
-
-/**
- * The trusted collector for task-path CI
- * evidence. `workflow_run` is a default-branch trust boundary: GitHub loads
- * this workflow from the default
- * branch, never from the pull request, and the triggering
- * \`vinaya-checks.yml\` run's own artifact is downloaded by RUN ID — an
- * API-level binding to a specific, already-completed run, never a value
- * this job trusts the artifact's own bytes to assert. The artifact's
- * CONTENT is still untrusted (a fork PR's own check run produced it): this
- * job never executes it, only parses it as data through
- * \`vinaya log collect-artifact\`'s schema/size/redaction/provenance
- * validation (\`@attalabs/aeg-core\`'s \`validateTaskLogArtifact\`) before
- * publishing anything.
- *
- * \`github.event.workflow_run.pull_requests\` is empty for a fork-originated
- * pull request (a documented GitHub Actions limitation) — this job's own \`if:\`
- * below is therefore also the fork boundary: with no PR number to resolve,
- * there is nothing to collect into and nothing runs, so a fork's own
- * artifact is never downloaded, let alone published, under this
- * credential (O2).
- *
- * Fires on every conclusion \`workflow_run\` reports — success, failure,
- * cancelled, timed out — not only success: a cancelled or failed
- * \`vinaya-checks.yml\` run already exported whatever partial outbox it had
- * (that export step's own \`if: always()\`), and this is where that partial
- * evidence still reaches durable storage (O2).
- */
-function taskLogCollectorWorkflow(selfHost: VendoredVinaya | null): string {
-  return `# ${MANAGED_NOTE}
-#
-# The trusted collector for task-path CI evidence. Runs
-# on the default branch with its own credential — never the pull request
-# being judged, never the worker that produced the artifact it downloads.
-name: Vinaya Task Log Collector
-
-on:
-  workflow_run:
-    workflows: [Vinaya Checks]
-    types: [completed]
-
-concurrency:
-  group: vinaya-task-log-collector-\${{ github.event.workflow_run.id }}
-  cancel-in-progress: true
-
-jobs:
-  collect:
-    name: vinaya log collect-artifact
-    # No \`pull_requests\` entry means either a non-PR run (a push straight to
-    # a branch with no open PR) or a FORK pull request — GitHub does not
-    # populate this field for fork-originated PRs. Either way there is no
-    # trusted PR number to resolve an outbox for, so this job does nothing
-    # rather than guess one (O2).
-    if: \${{ github.event.workflow_run.pull_requests[0] != null }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      issues: write
-      pull-requests: write
-      actions: read
-    steps:
-      - name: Check for a task-log artifact on this run
-        id: probe
-        env:
-          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
-          RUN_ID: \${{ github.event.workflow_run.id }}
-        run: |
-          set -o pipefail
-          HAS_ARTIFACT=$(gh api "repos/\${{ github.repository }}/actions/runs/$RUN_ID/artifacts" \\
-            --jq "[.artifacts[] | select(.name == \\"vinaya-task-log-$RUN_ID\\")] | length > 0")
-          echo "has_artifact=$HAS_ARTIFACT" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v4
-        if: \${{ steps.probe.outputs.has_artifact == 'true' }}
-        with:
-          # Explicit trusted ref: never use the PR head/merge ref in this job.
-          ref: \${{ github.event.repository.default_branch }}
-          persist-credentials: false
-          fetch-depth: 0
-      - uses: actions/setup-node@v4
-        if: \${{ steps.probe.outputs.has_artifact == 'true' }}
-        with:
-          node-version: 20
-${vinayaSetupSteps(selfHost, 'trusted')}      - name: Download the task-log artifact
-        if: \${{ steps.probe.outputs.has_artifact == 'true' }}
-        uses: actions/download-artifact@v4
-        with:
-          name: vinaya-task-log-\${{ github.event.workflow_run.id }}
-          path: vinaya-task-log-download
-          github-token: \${{ secrets.GITHUB_TOKEN }}
-          run-id: \${{ github.event.workflow_run.id }}
-      - name: Validate and publish
-        if: \${{ steps.probe.outputs.has_artifact == 'true' }}
-        env:
-          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
-        run: ${vinayaRun(selfHost, 'log collect-artifact vinaya-task-log-download/vinaya-task-log.ndjson')} --pr \${{ github.event.workflow_run.pull_requests[0].number }} --repo \${{ github.repository }}
 `
 }
 
@@ -1892,12 +1788,6 @@ export function buildInitOps(ctx: InitContext): Op[] {
     kind: 'create-file',
     path: BODY_CHECKS_WORKFLOW_PATH,
     content: bodyChecksWorkflow(ctx.selfHost),
-    group: 'CI workflows'
-  })
-  ops.push({
-    kind: 'create-file',
-    path: TASK_LOG_COLLECTOR_WORKFLOW_PATH,
-    content: taskLogCollectorWorkflow(ctx.selfHost),
     group: 'CI workflows'
   })
 

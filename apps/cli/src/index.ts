@@ -18,7 +18,6 @@ import { ejectCommand } from './commands/eject.js'
 import { initCommand, initProductCommand } from './commands/init.js'
 import { issueCreateCommand, issueEditCommand } from './commands/issue.js'
 import { issueObjectivesEditCommand } from './commands/issue-objectives.js'
-import { logFlushCommand, logCollectArtifactCommand, logExportArtifactCommand } from './commands/log.js'
 import {
   milestoneAdoptCommand,
   milestoneCloseCommand,
@@ -265,22 +264,6 @@ try {
         await taskToolsServeCommand(rest)
       } else {
         console.error(`Unknown 'task-tools' subcommand: ${subcommand ?? '(none)'} (expected 'serve')`)
-        process.exit(2)
-      }
-      break
-    }
-    case 'log': {
-      const [subcommand, ...rest] = args
-      if (subcommand === 'flush') {
-        await logFlushCommand(rest)
-      } else if (subcommand === 'export-artifact') {
-        await logExportArtifactCommand(rest)
-      } else if (subcommand === 'collect-artifact') {
-        await logCollectArtifactCommand(rest)
-      } else {
-        console.error(
-          `Unknown 'log' subcommand: ${subcommand ?? '(none)'} (expected 'flush', 'export-artifact', or 'collect-artifact')`
-        )
         process.exit(2)
       }
       break

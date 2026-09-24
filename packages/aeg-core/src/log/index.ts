@@ -1,8 +1,6 @@
 export { buildHeader } from './envelope'
 export type { HeaderInput } from './envelope'
 export { redact } from './redact'
-export { TASK_LOG_ARTIFACT_MAX_BYTES, validateTaskLogArtifact } from './artifact'
-export type { ArtifactExpectedProvenance, ArtifactGap, ArtifactValidationResult } from './artifact'
 export {
   classifyStoredLine,
   createFixtureStore,

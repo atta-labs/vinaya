@@ -925,6 +925,14 @@ function fixtureChildEnv(home: string, path: string, extraEnv: Record<string, st
     if (key.startsWith('VINAYA_')) delete env[key]
   }
   delete env.AEG_REPO
+  // Left in place, a leaked GITHUB_ACTIONS (an Actions runner sets one for
+  // the whole job) makes the child's own log() resolve its destination to
+  // 'none' (log-sink.ts's resolveLogDestinationFrom's CI branch — no
+  // logs.url is configured for these fixtures), so every fixture here that
+  // polls outboxLines() for a landed event times out on a CI runner while
+  // passing on a laptop — the same leak #721 fixed for the in-process loop
+  // harness's withWorldEnv.
+  delete env.GITHUB_ACTIONS
   return {
     ...env,
     HOME: home,

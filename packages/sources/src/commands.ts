@@ -354,50 +354,6 @@ export const COMMANDS: readonly Command[] = [
     status: 'shipped'
   },
   {
-    name: 'log flush',
-    description:
-      "Post a target Issue or PR's outbox as one or more marked comments, then truncate what the forge confirmed",
-    flags: [
-      { flag: '--issue', description: "Flush this Issue's outbox (`~/.vinaya/outbox/<owner>-<repo>/<n>.ndjson`)" },
-      {
-        flag: '--pr',
-        description: "Flush the Issue named by this PR's `Closes #N` line, posting the comments on the PR"
-      },
-      { flag: '--json', description: 'Enveloped JSON output (schema: 1)' }
-    ],
-    details: [
-      "Exactly one of `--issue`/`--pr` is required. `--pr` resolves the Issue from the PR body's `Closes #N` line — the same anchor every gate reads — and refuses with a check error naming the missing line when the body carries none.",
-      'Splits the outbox first at `run_id` boundaries (a maximal run of consecutive lines sharing one `run_id`, never a global group-by, so an interleaved outbox never produces a range spanning a gap), then at `FORGE_COMMENT_MAX_CHARS` (65536) within each run. Each comment opens with `<!-- aeg:log:<run_id>:<seq_from>-<seq_to> -->` on its own line, then one fenced `ndjson` block, one outbox line per line, verbatim. A single line too large to fit alone is refused by name, never split across two comments.',
-      "Logs its own `forge_write` line — `validated` before posting, `written` (with every returned comment id) after the last post succeeds, or `refused` (with gh's error) on any failure — through the same `log()` every other family uses, into the same outbox, before truncating. The outbox is truncated only to the lines confirmed posted; a failed chunk's lines, and anything appended to the outbox during the flush (including the flush's own `validated`/`written`/`refused` line), always survive to ride the next flush."
-    ],
-    status: 'shipped'
-  },
-  {
-    name: 'log export-artifact',
-    description: "Copy this run's own local outbox into a file, for the generated task-path workflow's own upload step",
-    flags: [],
-    details: [
-      "Concatenates every `*.ndjson` file under `~/.vinaya/outbox/` into `<dest>`, verbatim — no filtering, no second redaction pass (lines are already redacted at `log()`'s own write boundary). Writes nothing when the outbox is empty, and exits 0 either way: no gate events this run is a legitimate outcome, never a failure.",
-      'Runs inside the generated `vinaya-checks.yml` job, which holds no forge-write credential — this command never calls the forge. Both this step and the `actions/upload-artifact` step after it run `if: always()`, so a cancelled or failed job still exports whatever partial outbox it has.'
-    ],
-    status: 'shipped'
-  },
-  {
-    name: 'log collect-artifact',
-    description:
-      'Validate a downloaded task-log artifact and publish the valid records through the existing flush path',
-    flags: [
-      { flag: '--pr', description: 'The pull request this artifact belongs to' },
-      { flag: '--repo', description: 'Expected `owner/repo` — a provenance cross-check against each record' }
-    ],
-    details: [
-      'Runs inside the generated `vinaya-task-log-collector.yml` workflow — a `workflow_run`-triggered job on the default branch, holding the write credential the task-path job that produced the artifact never gets. `<path>` is already downloaded by that workflow, scoped to a specific, API-verified run id — a provenance guarantee this command never re-derives from the artifact bytes.',
-      "Never executes, imports, or evaluates the artifact's content: every line is read as text and validated (schema, an 8 MiB whole-artifact size cap, redaction, and a repo cross-check) before anything is trusted. A rejected line becomes a named gap — printed, never a silent drop — and the artifact is never partially trusted past that check into executing anything.",
-      "The valid, re-redacted survivors are appended into the same local outbox `vinaya log flush` would read for that PR's Issue, then published through the existing `flushOutbox` unmodified — reusing its chunking, its `<!-- aeg:log:… -->` marker, and its idempotent-retry read, rather than a second publisher. A retried collector run (a fresh runner, the same forge state) therefore dedupes for free: the marker already on the forge is acknowledged, never re-posted."
-    ],
-    status: 'shipped'
-  },
-  {
     name: 'milestone create',
     description: 'Create a GitHub Milestone from a validated body',
     flags: [
@@ -746,7 +702,7 @@ export const COMMANDS: readonly Command[] = [
       { flag: '--task', description: "This dispatch's task Issue number — mutually exclusive with `--pr`" },
       {
         flag: '--pr',
-        description: "Flush the outbox to this PR's Issue after the dispatch — mutually exclusive with `--task`"
+        description: "This dispatch's pull request number, for attribution — mutually exclusive with `--task`"
       },
       { flag: '--round', description: 'Round number, for a dispatch inside a review loop' },
       {
@@ -759,9 +715,9 @@ export const COMMANDS: readonly Command[] = [
     details: [
       "Sets `VINAYA_RUN_ID`/`VINAYA_ROLE`/`VINAYA_TASK`/`VINAYA_ROUND` on the child only — never on this process's own environment — and refuses by name, before any spawn attempt, when the named vendor binary is absent from `PATH` or present but not executable.",
       "Records `dispatched` (with the prompt's sha256), `outcome_received` (duration, the vendor's own usage when its stdout prints a recognizable shape), or `dispatch_failed` (`timeout`, `crash`, or `refused`) through the Vinaya Log's one `dispatch` family writer, `dispatchRole`. A wall-time ceiling (`dispatch.timeoutMs` in config, default one hour) sends `SIGTERM` then, after a grace window, `SIGKILL`.",
-      "When `--task` or `--pr` is given, flushes that outbox via `vinaya log flush` immediately after the child settles — `--task` and `--pr` are mutually exclusive here, matching `log flush`'s own single-target rule. Without either, the dispatch still runs and logs; nothing is flushed, and the lines ride to the next flush.",
+      'Runs no flush of its own after the dispatch returns: every log line `dispatchRole` emits reaches its configured `logs` destination live, as it is emitted, so there is nothing left to ship in a trailing step. `--task`/`--pr` are attribution only, and remain mutually exclusive.',
       // AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:'-r',
-      // AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:resumeArgs: (id, model) => ['exec', 'resume', id, ...(model ? ['--model', model] : []), '--json', '-'],
+      // AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:resumeArgs: (id, model) => [
       // AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:'--resume',
       "A successful dispatch's `DispatchHandle` carries `resumeId` — the vendor's own session/thread identifier (claude/gemini: `session_id`; codex: `thread_id`), parsed from its stdout, `null` on any failure. Passing that value as `--resume <id>` on a later call swaps in that vendor's own resume invocation (`claude -p -r <id> ...`; `codex exec resume <id> ...`; `gemini ... --resume <id> ...`) in place of its first-dispatch args."
     ],
@@ -783,7 +739,7 @@ export const COMMANDS: readonly Command[] = [
       'Dispatches the developer through `dispatchRole` with the brief read from the Issue, waits for the PR it opens, then runs `assessRound` (`@attalabs/aeg-core`) — the entire policy — against observations this command reads from the forge: the head via `git ls-remote` only (never `gh pr view headRefOid`, which can lag a push), CI conclusion via the check-runs API (never run locally), and ruling comments matching `<!-- aeg:principal:ruling:<pr>-<k> -->`.',
       "Nothing is posted to the PR before the policy decides `publish`: each round's reviewer and security verdicts are dispatched fresh (never a resumed session) through `dispatchRole`, rendered through `review post`'s own render functions, and written to a local file under the outbox — never `gh pr comment`/`gh pr review`. Posting the held verdicts is a separate, later task.",
       "The developer's session is resumed every round via `dispatchRole`'s `resumeId` — never a fresh session — for every vendor; a round whose resume fails for a vendor that resumed successfully the round before stops the loop rather than silently falling back to a fresh developer session.",
-      'Every dispatch and round transition is a log line through the Vinaya Log, flushed to the forge at each round boundary.',
+      'Every dispatch and round transition is a log line through the Vinaya Log, delivered live to its configured `logs` destination as it is emitted — never a tracker comment.',
       "issue-711 O4: this command — `--task <n>`, `--resume <pr>`, `--cancel <pr>` alike — stays `task run`'s own one-shot debug/direct entry; the watching driver that survives a pause and continues on its own is `task run`'s (see that command's own entry)."
     ],
     status: 'shipped'

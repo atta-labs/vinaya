@@ -24,12 +24,27 @@
 
 import { spawnSync, type SpawnSyncOptionsWithStringEncoding } from 'node:child_process'
 
-/** A copy of `env` (defaulting to this process's own) with every `VINAYA_*` key removed. */
+/**
+ * A copy of `env` (defaulting to this process's own) with every `VINAYA_*`
+ * key removed, plus `GITHUB_ACTIONS` — the CI-runner flag that, left in
+ * place, makes the child's own `log()` resolve its destination to `'ci'`
+ * with no delivery credential configured, i.e. `'none'` (`log-sink.ts`'s
+ * `resolveLogDestination`), so a fixture that spawns a real subprocess and
+ * then polls its outbox for a landed log line times out on a CI runner
+ * (this process's real `GITHUB_ACTIONS` leaking into the child) while
+ * passing on a laptop. The same leak #721 fixed for the in-process loop
+ * harness's `withWorldEnv`, here for every real-subprocess fixture that
+ * shares this helper. `AEG_REPO`/`GITHUB_REPOSITORY` are deliberately left
+ * alone — unlike the in-process harness, these subprocess fixtures run with
+ * a real `cwd` and depend on the real repo-identity short-circuit those two
+ * still provide.
+ */
 export function stripVinayaEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = { ...env }
   for (const key of Object.keys(out)) {
     if (key.startsWith('VINAYA_')) delete out[key]
   }
+  delete out.GITHUB_ACTIONS
   return out
 }
 

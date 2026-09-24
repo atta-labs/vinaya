@@ -45,7 +45,7 @@ import {
   type VinayaConfig
 } from './config.js'
 import { isInsideRepo, isUnattendedProcess, repoRootSync, runtimeDirForRepoAsync } from './run-paths.js'
-import { flushOutboxToWebhook } from './log-webhook-flush.js'
+import { drainOutboxToWebhook } from './log-webhook-drain.js'
 import { packageRoot } from './package-root.js'
 
 /** Rotation cap (§9: "rotation and a size cap ship with the first write") — one `.1.ndjson` slot, overwritten each time the live file crosses this. */
@@ -69,12 +69,17 @@ export type LogSinkInputVersions = {
 /**
  * Where THIS process's `log()` calls land, resolved once per sink instance
  * (the sink's shared context, below) — a folder the sink appends directly to,
- * or a server drained from the local retry queue after every append
- * (`apps/cli/specs/log.md` § The destination).
+ * a server drained from the local retry queue after every append
+ * (`apps/cli/specs/log.md` § The destination), or `none` (O3): a CI run with
+ * no server configured, or holding no delivery credential for one that is —
+ * an ephemeral runner's own folder is never a real destination for CI, so
+ * `log()` records nothing rather than writing somewhere nobody reads before
+ * the runner is torn down, and `reason` is what a job-output line names.
  */
 export type ResolvedLogDestination =
   | { kind: 'folder'; folder: string }
   | { kind: 'server'; url: string; headers?: Record<string, string> }
+  | { kind: 'none'; reason: string }
 
 export type LogSinkDeps = {
   outboxRoot: () => string
@@ -151,8 +156,8 @@ async function safeLoadTrustAnchorConfig(): Promise<VinayaConfig | null> {
  * The pure decision behind `LogSinkDeps.resolveLogDestination` — a `url`
  * destination is honoured only when the repository's default branch
  * declares the identical one for an unattended caller (round-2 security
- * review, HIGH, the same rule `runtimeDir`/`logPublish.webhookUrl` already
- * carry: a pull request under review cannot redirect where an unattended
+ * review, HIGH, the same rule `runtimeDir` already
+ * carries: a pull request under review cannot redirect where an unattended
  * run's telemetry is delivered by editing its own diff). An attended caller
  * — a human running `vinaya`, choosing to trust their own working tree —
  * honours the local value unchecked, the same trust level running
@@ -185,6 +190,25 @@ async function safeLoadTrustAnchorConfig(): Promise<VinayaConfig | null> {
  * into a `logs.folder` that happens to resolve there. Falls back to
  * `defaultFolder`, the same as "no `logs` setting at all."
  */
+/**
+ * O3: a `logs.url` header referencing `${VAR_NAME}` whose named variable is
+ * absent or empty in `env` — GitHub Actions sets a secret-backed env var to
+ * an empty string for a fork pull request (the secret is withheld, never the
+ * variable), so "empty" and "unset" are the same signal here: this job holds
+ * no real delivery credential. A destination with no headers at all (no
+ * credential concept) never trips this — there is nothing to be missing.
+ */
+function logsCredentialMissing(headers: Record<string, string> | undefined, env: NodeJS.ProcessEnv): boolean {
+  if (!headers) return false
+  const varPattern = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g
+  for (const value of Object.values(headers)) {
+    for (const match of value.matchAll(varPattern)) {
+      if (!env[match[1] as string]) return true
+    }
+  }
+  return false
+}
+
 export function resolveLogDestinationFrom(input: {
   localConfig: VinayaConfig | null
   trustAnchorConfig: VinayaConfig | null
@@ -201,6 +225,29 @@ export function resolveLogDestinationFrom(input: {
       : resolveLogsSetting(input.trustAnchorConfig)
   } else {
     effective = local
+  }
+  // O3: a CI job never falls back to a folder — an ephemeral runner's own
+  // disk dies with the job, so a folder there is not a real destination, it
+  // is a silent no-op wearing delivery's clothes. CI delivers to a
+  // configured server or it records nothing and says so (Linear "Tech
+  // spec — The Vinaya Log" rev 8, § 4, Diagram K); it is never told apart
+  // from an ordinary unattended caller by anything but this host check,
+  // since the trust-anchor gate above already applies identically to both.
+  if (hostFromEnv(input.env) === 'ci') {
+    if (effective && 'url' in effective) {
+      if (logsCredentialMissing(effective.headers, input.env)) {
+        return {
+          kind: 'none',
+          reason:
+            'a logs.url server destination is configured, but this job holds no delivery credential (a fork pull request, or a missing repository secret)'
+        }
+      }
+      return { kind: 'server', url: effective.url, headers: resolveLogsHeaderValues(effective.headers, input.env) }
+    }
+    return {
+      kind: 'none',
+      reason: 'no server destination is configured for CI delivery (vinaya.config.json logs.url)'
+    }
   }
   if (effective && 'url' in effective) {
     return { kind: 'server', url: effective.url, headers: resolveLogsHeaderValues(effective.headers, input.env) }
@@ -313,9 +360,8 @@ function isSafeRepoSegment(segment: string): boolean {
  * The local retry-queue outbox's own root, under the machine's Vinaya home —
  * no longer where `log()` delivers by default (that moved to a folder under
  * this repository's own `runtimeDir`, `defaultResolveLogDestination` above),
- * but still the machine-local home `vinaya log flush` reads, and still where
- * `log()` itself appends first for a configured `logs.url` server
- * destination before draining (O2).
+ * but still where `log()` itself appends first for a configured `logs.url`
+ * server destination before draining (O2).
  *
  * Deliberately NOT under `runtimeDir` (`run-paths.ts`) even so: a retry
  * queue is machine-local plumbing, not one task's own run file, and two
@@ -329,11 +375,10 @@ export function telemetryOutboxRoot(): string {
 }
 
 /**
- * The retry-queue outbox path `vinaya log flush` reads from, and `log()`
- * itself appends to first for a `logs.url` server destination (O2) — keyed
- * by repo (or `unresolved`, never a value from an unvalidated
- * `resolveRepo()` result) and by Issue (or `none`), never by PR (task 2,
- * `apps/cli/specs/log.md`).
+ * The retry-queue outbox path `log()` itself appends to first for a
+ * `logs.url` server destination (O2) — keyed by repo (or `unresolved`, never
+ * a value from an unvalidated `resolveRepo()` result) and by Issue (or
+ * `none`), never by PR (task 2, `apps/cli/specs/log.md`).
  */
 export function outboxPathFor(
   deps: Pick<LogSinkDeps, 'outboxRoot'>,
@@ -362,7 +407,7 @@ export async function resolveLogAppendPath(
 ): Promise<string> {
   const deps = { ...defaultDeps(), ...overrides }
   const destination = await deps.resolveLogDestination(repo, deps.env())
-  const root = destination.kind === 'server' ? deps.outboxRoot() : destination.folder
+  const root = destination.kind === 'folder' ? destination.folder : deps.outboxRoot()
   return outboxPathFor({ outboxRoot: () => root }, repo, issue)
 }
 
@@ -508,7 +553,6 @@ function appendLine(path: string, line: string, warn: (message: string) => void)
 /** Injectable for tests; the default instance below is wired to the real reads (env, git, the resolved `logs` destination). */
 export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
   log: (e: LogEventInput) => void
-  logToOutboxQueue: (e: LogEventInput) => void
   runId: string
   warmup: () => void
   drain: () => Promise<void>
@@ -604,7 +648,7 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
   // concurrently with a prior drain, so two drains can never race each
   // other's read-then-truncate of the identical queue file (Traps: "serialize
   // drains so order is preserved"). A failed drain (the server unreachable)
-  // leaves the queue exactly as `flushOutboxToWebhook` already guarantees —
+  // leaves the queue exactly as `drainOutboxToWebhook` already guarantees —
   // untouched, picked up whole by the NEXT event's own drain — so delivery
   // catches back up in order once the server is back, with no separate
   // retry timer of this sink's own.
@@ -627,7 +671,7 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
     headers: Record<string, string> | undefined
   ): void => {
     drainChain = drainChain
-      .then(() => flushOutboxToWebhook(issue, url, headers))
+      .then(() => drainOutboxToWebhook(issue, url, headers))
       .then(() => undefined)
       .catch((err) => {
         warnOnce(
@@ -636,16 +680,7 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
       })
   }
 
-  // `forcedDestination`, when given, overrides the context's destination
-  // for this one call — the retry-queue bookkeeping lines
-  // `log-flush.ts`'s `logForFlush` writes (`forge_write` `validated`/
-  // `written`/`refused`) must always land in the SAME queue file that
-  // caller is about to read and truncate, never wherever a configured
-  // `logs` destination happens to point. Sharing this instance's `runId`/
-  // `seq`/doctrine/repo cache (rather than a second, independent sink) is
-  // what keeps `(run_id, seq)` a genuinely unique pair — two sinks sharing
-  // one `runId` would each start `seq` at 0 and collide.
-  function log(e: LogEventInput, forcedDestination?: ResolvedLogDestination): void {
+  function log(e: LogEventInput): void {
     try {
       const env = deps.env()
       const host = hostFromEnv(env)
@@ -656,8 +691,8 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
       // `.then()` below. The real `deps.env()` IS `process.env` itself (one
       // shared, mutable object across the whole process), and this module's
       // own callers set VINAYA_TASK/VINAYA_RUN for the duration of a single
-      // `log()` call, then restore them (`log-flush.ts`'s `logForFlush`,
-      // `dev-review-loop.ts`'s `cancelDevReviewLoop`) — safe in a one-task-
+      // `log()` call, then restore them (`dev-review-loop.ts`'s
+      // `cancelDevReviewLoop`) — safe in a one-task-
       // per-process CLI, but the multi-tenant `vinaya task-tools serve` MCP
       // server (`task-tools/server.ts`) dispatches calls for DIFFERENT tasks
       // without awaiting each to completion before the next. Reading `env.*`
@@ -705,6 +740,15 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
           // TS's excess-property check only fires on a fresh object literal,
           // never on a variable. Spreading `header` second means a forged
           // field in `e` is always overwritten, never honored.
+          if (resolvedDestination.kind === 'none') {
+            // O3: one visible line per process — never per event, which
+            // would spam a CI job's output once per check — naming exactly
+            // why nothing is being recorded (no server configured, or this
+            // job holds no delivery credential). Never a failure: recording
+            // nothing is the sanctioned outcome here, not a degraded one.
+            warnOnce(`vinaya: not recording — ${resolvedDestination.reason}\n`)
+            return
+          }
           const full = { ...e, ...header }
           const parsed = LogEventSchema.safeParse(full)
           if (!parsed.success) {
@@ -714,7 +758,7 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
             return
           }
           const line = `${JSON.stringify(redact(parsed.data, deps.home()))}\n`
-          const destination = forcedDestination ?? resolvedDestination
+          const destination = resolvedDestination
           if (destination.kind === 'server') {
             // The local outbox is the retry queue for a server destination
             // (O2) — appended first, synchronously with every other
@@ -765,14 +809,6 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
     context().catch(() => undefined)
   }
 
-  // Always the machine-local retry queue (`deps.outboxRoot()`), never the
-  // configured `logs` destination — `log-flush.ts`'s own audit-trail lines
-  // about a flush call must land beside the file that flush is reading and
-  // about to truncate, regardless of where ordinary telemetry goes.
-  const logToOutboxQueue = (e: LogEventInput): void => {
-    log(e, { kind: 'folder', folder: deps.outboxRoot() })
-  }
-
   /**
    * O3: waits for every `log()` call still in flight — `pendingWrites` — to
    * finish landing (the synchronous `appendLine` a settled `context()`
@@ -791,7 +827,7 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
     await drainChain.catch(() => undefined)
   }
 
-  return { log, logToOutboxQueue, runId, warmup, drain }
+  return { log, runId, warmup, drain }
 }
 
 const defaultSink = createLogSink()
@@ -799,10 +835,11 @@ const defaultSink = createLogSink()
 /**
  * The current process's own `run_id` — fixed once, for the process lifetime,
  * at `defaultSink`'s construction (`VINAYA_RUN_ID` or a fresh `randomUUID()`).
- * `vinaya log flush` reads this to tell its OWN fire-and-forget `log()` call
- * apart from a concurrent, unrelated process appending to the same outbox
- * file at the same moment (a code-review finding) — a bare "did the file
- * grow" signal cannot make that distinction on its own.
+ * `dev-review-loop.ts`'s `cancelDevReviewLoop` reads this to tell its OWN
+ * fire-and-forget `log()` call apart from a concurrent, unrelated process
+ * appending to the same outbox file at the same moment (a code-review
+ * finding) — a bare "did the file grow" signal cannot make that distinction
+ * on its own.
  */
 export function currentRunId(): string {
   return defaultSink.runId
@@ -820,17 +857,6 @@ export function currentRunId(): string {
  */
 export function log(e: LogEventInput): void {
   defaultSink.log(e)
-}
-
-/**
- * `log-flush.ts`'s own chokepoint for a flush call's audit-trail lines
- * (`forge_write` `validated`/`written`/`refused`) — always the local retry
- * queue (`telemetryOutboxRoot()`), never a configured `logs` folder/server
- * destination, since these lines document the flush of THAT queue file and
- * must land beside it regardless of where ordinary telemetry is delivered.
- */
-export function logToOutboxQueue(e: LogEventInput): void {
-  defaultSink.logToOutboxQueue(e)
 }
 
 /**
