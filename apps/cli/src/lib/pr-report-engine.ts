@@ -530,9 +530,37 @@ export type TestRunCacheRecord = {
    * second, redundant file list on it would never be read. Absolute,
    * resolved paths (`resolveFileSet`) — comparable against a later Test-plan
    * command's own resolved file arguments regardless of which relative form
-   * either command happened to spell them in.
+   * either command happened to spell them in. On a coverage record carrying
+   * `runs`, this top-level field mirrors the MOST RECENT run only — every
+   * run's own files, individually, live in `runs`.
    */
   files?: string[]
+  /**
+   * Every distinct green `bun test <files>` run ever recorded at this exact
+   * state (head/tree/machine), oldest first — set only on the file-coverage
+   * record. A round-2 review finding: writing a SECOND run at the same
+   * state used to overwrite the coverage record wholesale, discarding a
+   * broader run's file list (the pre-push hook's own wide selection, most
+   * often) the moment ANY later, narrower `bun test <files>` command ran at
+   * the same head/tree — so a file that had already proven green minutes
+   * earlier, in the very same `pr report` invocation, was silently forced
+   * to re-run because the run that covered it was gone. `runs` is what
+   * fixes that: every run's own {files, output} stays independently
+   * queryable, so a later command missing one run's coverage can still
+   * match an EARLIER one — {@link findCoveringRun} — rather than only ever
+   * the most recent. A reuse never synthesizes output by merging two runs'
+   * text together: it always names ONE real run that alone covers every
+   * file the command asks for, never a composite no run actually produced.
+   */
+  runs?: FileCoverageRun[]
+}
+
+/** One entry in a file-coverage record's own `runs` history — the minimal shape {@link findCoveringRun} matches a request against. */
+export type FileCoverageRun = {
+  files: string[]
+  output: string
+  recordedAt: string
+  source: 'pre-push' | 'pr-report'
 }
 
 /** A place a green Test-plan run can be looked up and recorded — `get`/`set` rather than a bare object so a test can inject an in-memory stand-in without touching disk. */
@@ -824,10 +852,72 @@ function resolveFileSet(files: string[], cwd?: string): string[] {
   return [...new Set(files.map((f) => resolvePath(base, f)))].sort()
 }
 
-/** Describes a cache hit for `reusedFrom` — names the run's own record time and source, and, for a per-file (rather than exact-command) hit, how many files it covered, so the evidence never merely says "reused" without saying what was actually verified to cover the command it stands in for. */
-function describeReuse(hit: TestRunCacheRecord): string {
+/** Describes a cache hit for `reusedFrom` — names the run's own record time and source, and, for a per-file (rather than exact-command) hit, how many files it covered, so the evidence never merely says "reused" without saying what was actually verified to cover the command it stands in for. Structural (never `TestRunCacheRecord` by name) so a single `FileCoverageRun` — one real run out of a coverage record's own history — describes itself identically to a whole record. */
+function describeReuse(hit: { recordedAt: string; source: string; files?: string[] }): string {
   const base = `a green run recorded ${hit.recordedAt} (${hit.source})`
   return hit.files ? `${base}, covering ${hit.files.length} file(s) including every file this command names` : base
+}
+
+/**
+ * Every run a file-coverage record has ever accumulated, oldest first —
+ * `record.runs` when present, or a one-element list synthesized from the
+ * record's own top-level fields for a record written before `runs` existed
+ * (or by a caller that never goes through {@link mergeFileCoverageRecord}).
+ * `undefined`/no-`files` records (an exact-command record read by mistake
+ * through this path) contribute nothing.
+ */
+function coverageRuns(record: TestRunCacheRecord | undefined): FileCoverageRun[] {
+  if (!record) return []
+  if (record.runs) return record.runs
+  return record.files
+    ? [{ files: record.files, output: record.output, recordedAt: record.recordedAt, source: record.source }]
+    : []
+}
+
+/**
+ * The one run, among a coverage record's own history, whose file list alone
+ * covers every file in `requestedFiles` — or `undefined` when none does.
+ * Never synthesizes a covering answer by combining two runs' file lists:
+ * O1's own reuse contract is that the evidence names THE run it reused, a
+ * single real execution, never a composite no run actually produced.
+ */
+function findCoveringRun(
+  record: TestRunCacheRecord | undefined,
+  requestedFiles: string[]
+): FileCoverageRun | undefined {
+  return coverageRuns(record).find((run) => {
+    const covered = new Set(run.files)
+    return requestedFiles.every((f) => covered.has(f))
+  })
+}
+
+/**
+ * Builds the file-coverage record a fresh green run's write should replace
+ * the existing one with — round-2 review, MAJOR: the prior code simply
+ * `cache.set` a brand-new record on every green `bun test <files>` run,
+ * which silently discarded every EARLIER run's own coverage at the same
+ * state the moment a narrower run came along, forcing a real re-run for a
+ * file that had already proven green minutes earlier in the very same `pr
+ * report` invocation. This appends the new run to `runs` (never drops an
+ * earlier one) and keeps the top-level `files`/`output`/`recordedAt`/`source`
+ * mirroring the newest run only, for a reader/caller that never looks past
+ * the top level — `runs`, not the top level, is what {@link findCoveringRun}
+ * actually searches.
+ */
+function mergeFileCoverageRecord(
+  existing: TestRunCacheRecord | undefined,
+  newRun: FileCoverageRun
+): TestRunCacheRecord {
+  return {
+    output: newRun.output,
+    exitCode: 0,
+    timedOut: false,
+    overflowed: false,
+    recordedAt: newRun.recordedAt,
+    source: newRun.source,
+    files: newRun.files,
+    runs: [...coverageRuns(existing), newRun]
+  }
 }
 
 /**
@@ -1011,22 +1101,21 @@ export async function runAgentCommand(
   // and in `recordGreenTestRun`), and never one from another machine (the
   // state key hashes `hostname()` exactly as the exact-command key does).
   const requestedFiles = cache ? bunTestFileArgs(command) : null
+  let resolvedRequested: string[] | undefined
   if (cache && requestedFiles) {
     const stateKey = await testRunStateKey(cwd)
     if (stateKey) {
       const coverage = cache.get(`${FILE_COVERAGE_PREFIX}${stateKey}`)
-      if (coverage?.files) {
-        const covered = new Set(coverage.files)
-        const resolvedRequested = resolveFileSet(requestedFiles, cwd)
-        if (resolvedRequested.every((f) => covered.has(f))) {
-          return {
-            command,
-            output: coverage.output,
-            exitCode: 0,
-            timedOut: false,
-            overflowed: false,
-            reusedFrom: describeReuse(coverage)
-          }
+      resolvedRequested = resolveFileSet(requestedFiles, cwd)
+      const covering = findCoveringRun(coverage, resolvedRequested)
+      if (covering) {
+        return {
+          command,
+          output: covering.output,
+          exitCode: 0,
+          timedOut: false,
+          overflowed: false,
+          reusedFrom: describeReuse(covering)
         }
       }
     }
@@ -1045,15 +1134,14 @@ export async function runAgentCommand(
     if (requestedFiles) {
       const stateKey = await testRunStateKey(cwd)
       if (stateKey) {
-        cache.set(`${FILE_COVERAGE_PREFIX}${stateKey}`, {
+        const coverageKey = `${FILE_COVERAGE_PREFIX}${stateKey}`
+        const merged = mergeFileCoverageRecord(cache.get(coverageKey), {
+          files: resolvedRequested ?? resolveFileSet(requestedFiles, cwd),
           output: result.output,
-          exitCode: 0,
-          timedOut: false,
-          overflowed: false,
           recordedAt,
-          source: 'pr-report',
-          files: resolveFileSet(requestedFiles, cwd)
+          source: 'pr-report'
         })
+        cache.set(coverageKey, merged)
       }
     }
   }
@@ -1093,15 +1181,14 @@ export async function recordGreenTestRun(
   if (files) {
     const stateKey = await testRunStateKey(cwd)
     if (stateKey) {
-      cache.set(`${FILE_COVERAGE_PREFIX}${stateKey}`, {
+      const coverageKey = `${FILE_COVERAGE_PREFIX}${stateKey}`
+      const merged = mergeFileCoverageRecord(cache.get(coverageKey), {
+        files: resolveFileSet(files, cwd),
         output: truncated,
-        exitCode: 0,
-        timedOut: false,
-        overflowed: false,
         recordedAt,
-        source,
-        files: resolveFileSet(files, cwd)
+        source
       })
+      cache.set(coverageKey, merged)
     }
   }
   return true

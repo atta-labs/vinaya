@@ -823,6 +823,49 @@ describe('runAgentCommand — per-file reuse of a recorded green run (O1, Issue 
     expect(coverage?.files).toEqual([file])
     expect(coverage?.source).toBe('pre-push')
   })
+
+  // Round-2 review, MAJOR: writing a green run's own coverage record used to
+  // `cache.set` a brand-new record every time, discarding whatever an
+  // EARLIER run at the identical head/tree had already proven — so a
+  // second, narrower `bun test <files>` command run moments later inside
+  // the SAME `pr report` invocation silently erased the first command's own
+  // coverage, forcing a real re-run for a file that had already run green
+  // seconds earlier. This test holds the fix: two non-overlapping commands
+  // both stay reusable, and a third command asking for the FIRST command's
+  // own file still reuses it — never re-runs it just because a second,
+  // unrelated command wrote to the same state key in between.
+  it("a second, non-overlapping bun-test command at the same state never discards the first command's own coverage", async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-perfile-union-'))
+    initTestGitRepo(dir)
+    const cache = memoryTestRunCache()
+    const counterFile = join(mkdtempSync(join(tmpdir(), 'pr-report-perfile-union-counter-')), 'counter.txt')
+    const fakeBunDir = fakeBunBinDir(counterFile)
+    const extraEnv = { PATH: `${fakeBunDir}:${process.env.PATH}` }
+    const fileA = join(dir, 'a.test.ts')
+    const fileB = join(dir, 'b.test.ts')
+    const fileC = join(dir, 'c.test.ts')
+
+    // Command 1: files A and B — a real run (cache miss), recorded.
+    const first = await runAgentCommand(`bun test ${fileA} ${fileB}`, undefined, dir, extraEnv, cache)
+    expect(first.reusedFrom).toBeUndefined()
+    expect(readFileSync(counterFile, 'utf8')).toBe('r')
+
+    // Command 2: file C alone — does not overlap A/B at all, so it is also
+    // a real run (cache miss). Before the fix, writing THIS run's coverage
+    // record overwrote command 1's, leaving only C recorded.
+    const second = await runAgentCommand(`bun test ${fileC}`, undefined, dir, extraEnv, cache)
+    expect(second.reusedFrom).toBeUndefined()
+    expect(readFileSync(counterFile, 'utf8')).toBe('rr')
+
+    // Command 3: file A alone — already proven green by command 1. Must
+    // reuse command 1's own run, never re-run just because command 2 wrote
+    // a second, unrelated coverage entry at the same state key in between.
+    const third = await runAgentCommand(`bun test ${fileA}`, undefined, dir, extraEnv, cache)
+    expect(third.reusedFrom).toBeDefined()
+    expect(third.exitCode).toBe(0)
+    // Still exactly two real executions — command 3 never ran the fake bun.
+    expect(readFileSync(counterFile, 'utf8')).toBe('rr')
+  })
 })
 
 // Issue #715, O3 — the body `pr report --write` produces must pass every
