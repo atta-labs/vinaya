@@ -476,6 +476,17 @@ Both runtime adapters register the shared MCP server (`vinaya task-tools serve`)
 
 Neither handler accepts a free-text approval field, and neither ever posts a ruling itself — the only decision reference either consumes is a Principal ruling already on the forge, read fresh on every call. Both emit a typed `operation` event (`packages/aeg-core/src/log/schema.ts`) naming the tool, the task target, and the outcome.
 
+## The in-process test seam (issue-709, O2)
+
+`devReviewLoop` already takes its every forge/git/dispatch READ as an injectable `LoopDeps` field, so a test can drive the whole loop in-process by supplying fakes. Five WRITE/read operations that used to shell out to `gh` unconditionally — outside any `LoopDeps` field — are now injectable too, defaulting to their real implementations so a real run is byte-for-byte unchanged:
+
+- `postMarkedComment` — the poster inside every `postForgeEffectOnce` call (the round marker comment, the unpushed-work-resume note, the report-uncitable note).
+- `postPauseComment` / `postIssuePauseComment` — the two pause-comment posters (on the PR, and on the Issue before a PR exists).
+- `publishRound` — the post-then-re-fetch publication at green.
+- `fetchPrBody` — the PR body read `checkPremiseAtHead` performs on EVERY round's gate check (the premise re-assertion). This one is a read, not a write, but it shelled out per round exactly like the others, so an in-process run would otherwise make a real network `gh` call every round. The `--resume` entry reads the paused pull request's body through the same field, so a resumed run is in the harness's scope too. `cancelDevReviewLoop` logs its `cancelled` event through a sink of its own, bound to the same repo its wait path was resolved for, so the line lands where the wait looks even in a process whose default sink already resolved another repo.
+
+This is the ONE seam the in-process harness required; adding it kept the seam inside `dev-review-loop.ts` itself (the composition root that already owns and re-exports these operations), never in a module the loop merely consumes. `apps/cli/tests/lib/dev-review-loop-harness.ts` is the shared harness those fakes live in: one mutable in-memory world (branch/head per push-state, PR state, gate result, posted comments, per-round role outcomes) backs a complete `LoopDeps`, and the driver still writes its real on-disk artifacts (held verdicts, control store, pause state, driver lock, logged events) under a temp `runtimeDir`, so a converted test reads exactly what the driver wrote. Tests whose subject is a real process — exit status, a signal, the driver lock, the start-of-run sweep, stdio shape, or `publishRound`'s own posted-comment re-fetch and manifest re-binding — keep a real subprocess with a `// REAL PROCESS:` reason line, enforced by `apps/cli/tests/lib/dev-review-loop-real-process-debt.test.ts`.
+
 ## Doc-owners binding
 
 `.vinaya/doc-owners` binds `apps/cli/src/lib/dev-review-loop.ts` to this file — a code change to the driver requires this file to appear in the same diff (or a `Doc-ack`/waiver), per `verify-docs` C5.

@@ -82,7 +82,7 @@ import {
   terminateLaunchedChildOnShutdown as realTerminateLaunchedChildOnShutdown
 } from './dispatch.js'
 import { postMarkedComment } from './forge-write.js'
-import { createLogSink, currentRunId, drainLogSink, log, resolveLogAppendPath } from './log-sink.js'
+import { createLogSink, drainLogSink, resolveLogAppendPath } from './log-sink.js'
 import { ensureRunDir, markProcessUnattended, runPath } from './run-paths.js'
 import { defaultTaskSweepAsyncDeps, sweepModernTasksAsync } from './task-sweep.js'
 import { appendRoleLine, appendRunStartMarker, loopLogPathFor } from './loop-log.js'
@@ -419,6 +419,32 @@ export type LoopDeps = {
    * process never exits mid-removal.
    */
   sweepTasksAtStart: (task: number) => Promise<void>
+  /**
+   * issue-709, O2 — the loop's four forge-WRITE operations, injected so the
+   * whole driver can run in-process against an in-memory world with no real
+   * `gh`: the marked-comment poster (`postForgeEffectOnce`'s own poster
+   * closures — the round marker, the unpushed-work-resume note, the
+   * report-uncitable note), the two pause-comment posters (on the PR, and on
+   * the Issue before a PR exists), and `publishRound`'s post-then-re-fetch
+   * publication. Every production default is the real implementation
+   * unchanged, so this changes nothing about a real run; a test's fake
+   * records to its own world instead of shelling out. This is the one seam
+   * this file gained for the in-process harness — documented in
+   * `apps/cli/specs/loop.md` § "The in-process test seam."
+   */
+  postMarkedComment: typeof postMarkedComment
+  postPauseComment: typeof postPauseComment
+  postIssuePauseComment: typeof postIssuePauseComment
+  publishRound: typeof publishRound
+  /**
+   * issue-709, O2 — the PR body read `checkPremiseAtHead` performs on every
+   * round's gate check (a real `gh pr view <n> --json body`), injected for
+   * the same reason as the writes above: an in-process run must not make a
+   * real network `gh` call per round. Production default is the real
+   * `fetchPrBody`. The `--resume` entry reads its PR body through this same
+   * dependency, so a resumed run is in the in-process harness's scope too.
+   */
+  fetchPrBody: typeof fetchPrBody
 }
 
 function defaultRepoRoot(): string {
@@ -764,7 +790,14 @@ function defaultDeps(): LoopDeps {
     exitProcess: (code) => process.exit(code),
     runEvidenceReport: defaultRunEvidenceReport,
     terminateInFlightLaunchesOnShutdown: defaultTerminateInFlightLaunchesOnShutdown,
-    sweepTasksAtStart: defaultSweepTasksAtStart
+    sweepTasksAtStart: defaultSweepTasksAtStart,
+    // issue-709, O2: the real forge-write operations — unchanged for a real
+    // run; a test injects fakes that record to its own in-memory world.
+    postMarkedComment,
+    postPauseComment,
+    postIssuePauseComment,
+    publishRound,
+    fetchPrBody
   }
 }
 
@@ -884,7 +917,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
 
   if ('resumePr' in input) {
     const resumePr = input.resumePr
-    const closesTask = taskFromPrBody(fetchPrBody(resumePr))
+    const closesTask = taskFromPrBody(d.fetchPrBody(resumePr))
     if (closesTask === null) {
       throw new Error(
         `devReviewLoop --resume: PR #${resumePr}'s body carries no \`Closes #N\` reference — cannot derive its task.`
@@ -1779,7 +1812,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         'Resumed once, in the foreground, with a commit-and-push instruction.'
       ].join('\n')
       postForgeEffectOnce(root, task, `unpushed-work-resume-${roundNum}-${head}`, () =>
-        postMarkedComment('pr', String(prNumber), '<!-- aeg:loop:unpushed-work-resume -->', body)
+        d.postMarkedComment('pr', String(prNumber), '<!-- aeg:loop:unpushed-work-resume -->', body)
       )
     }
 
@@ -2096,7 +2129,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     function checkPremiseAtHead(pr: number): PremiseReassertResult | null {
       let body: string
       try {
-        body = fetchPrBody(pr)
+        body = d.fetchPrBody(pr)
       } catch {
         return null
       }
@@ -2171,7 +2204,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     /** O2: the round marker comment the driver now posts in the Developer's place (`renderDeveloperRoundComment`) — idempotent per round+head, the same `postForgeEffectOnce` discipline every other driver-posted comment in this file already uses. */
     function postDeveloperRoundComment(roundNum: number, head: string, findingIds: readonly string[]): void {
       postForgeEffectOnce(root, task, `developer-round-comment-${roundNum}-${head}`, () =>
-        postMarkedComment(
+        d.postMarkedComment(
           'pr',
           String(prNumber),
           developerRoundMarker(roundNum),
@@ -2407,10 +2440,18 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         if (!resumeHeadAlreadyMoved) {
           await logPauseCommentRetryIfNotable(
             resumeFrom.round,
-            postPauseComment(task, resumeFrom.round, resumeFrom.head, prNumber, resumeFrom.reason, resumeFrom.detail, {
-              agent: dispatchAgent,
-              ...(dispatchModel ? { model: dispatchModel } : {})
-            })
+            d.postPauseComment(
+              task,
+              resumeFrom.round,
+              resumeFrom.head,
+              prNumber,
+              resumeFrom.reason,
+              resumeFrom.detail,
+              {
+                agent: dispatchAgent,
+                ...(dispatchModel ? { model: dispatchModel } : {})
+              }
+            )
           )
         }
       } else {
@@ -2570,7 +2611,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 escalationId: escalationRecord?.escalationId,
                 infrastructureRetries
               })
-              await logPauseCommentRetryIfNotable(round, postIssuePauseComment(task, round, 'escalation', detail))
+              await logPauseCommentRetryIfNotable(round, d.postIssuePauseComment(task, round, 'escalation', detail))
               return { finalDecision: { type: 'pause', reason: 'escalation', detail }, prNumber: 0, task }
             }
           }
@@ -2742,8 +2783,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // task with no open PR yet.
         const postResult =
           prNumber < 0
-            ? postIssuePauseComment(task, round, decision.reason, decision.detail)
-            : postPauseComment(task, round, head, prNumber, decision.reason, decision.detail, {
+            ? d.postIssuePauseComment(task, round, decision.reason, decision.detail)
+            : d.postPauseComment(task, round, head, prNumber, decision.reason, decision.detail, {
                 agent: dispatchAgent,
                 ...(dispatchModel ? { model: dispatchModel } : {})
               })
@@ -3295,7 +3336,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               ].filter((r): r is string => r !== null)
               if (uncitableRoles.length > 0) {
                 postForgeEffectOnce(root, task, `report-uncitable-${round}`, () =>
-                  postMarkedComment(
+                  d.postMarkedComment(
                     'pr',
                     String(prNumber),
                     '<!-- aeg:loop:report-uncitable -->',
@@ -3368,7 +3409,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             continue
           }
 
-          publishRound(root, {
+          d.publishRound(root, {
             task,
             round,
             prNumber,
@@ -3462,7 +3503,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // with a synthetic 'infrastructure' one.
           await logPauseCommentRetryIfNotable(
             round,
-            postPauseComment(task, round, pauseHead, prNumber, decision.reason, decision.detail, {
+            d.postPauseComment(task, round, pauseHead, prNumber, decision.reason, decision.detail, {
               agent: dispatchAgent,
               ...(dispatchModel ? { model: dispatchModel } : {})
             })
@@ -3651,9 +3692,16 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
   }
   const cancelOutboxPath = await d.resolveLogAppendPath(repo, task)
   const priorSize = sizeOfSafe(cancelOutboxPath)
+  // Its own sink, bound to the SAME repo `cancelOutboxPath` was resolved
+  // for, never the process-wide default: the default resolves its repo and
+  // destination once, on its first write, so in a long-lived process whose
+  // first write resolved another repo this line would land away from
+  // `cancelOutboxPath` and the wait below would run out its bound.
+  const cancelSink = createLogSink({ resolveRepo: async () => repo })
   try {
-    log(cancelEvent)
-    await waitForOwnLoopLine(cancelOutboxPath, priorSize, currentRunId(), cancelEvent, d.sleep)
+    cancelSink.log(cancelEvent)
+    await waitForOwnLoopLine(cancelOutboxPath, priorSize, cancelSink.runId, cancelEvent, d.sleep)
+    await cancelSink.drain()
   } finally {
     if (prevTask === undefined) delete process.env.VINAYA_TASK
     else process.env.VINAYA_TASK = prevTask
