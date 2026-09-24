@@ -19,7 +19,7 @@
 import { colourLoopLine, isAgentVendor, type AgentVendor } from '../lib/dispatch.js'
 import { loadConfig } from '../lib/config.js'
 import { printJson } from '../lib/envelope.js'
-import { cancelDevReviewLoop, devReviewLoop, type LoopInput } from '../lib/dev-review-loop.js'
+import { cancelDevReviewLoop, devReviewLoop, runDriverLoop, type LoopInput } from '../lib/dev-review-loop.js'
 
 type ParsedArgs = {
   task: number | undefined
@@ -95,7 +95,13 @@ export async function devReviewLoopCommand(args: string[]): Promise<void> {
     return
   }
 
+  // issue-711 O4: `--resume`/`--cancel` stay the one-shot debug/direct entry
+  // they always were — an operator forcing a continuation or a stop by
+  // hand — so only a fresh `--task <n>` start runs through the watching
+  // driver (`runDriverLoop`); `--resume` calls `devReviewLoop` directly,
+  // exactly as before this task.
   let input: LoopInput
+  let result: Awaited<ReturnType<typeof runDriverLoop>>
   if (parsed.resumePr !== undefined) {
     if (!Number.isInteger(parsed.resumePr) || parsed.resumePr <= 0) {
       process.stderr.write('vinaya dev-review-loop: --resume <pr> requires a positive integer PR number\n')
@@ -107,6 +113,7 @@ export async function devReviewLoopCommand(args: string[]): Promise<void> {
       ...(parsed.model ? { model: parsed.model } : {}),
       json: parsed.json
     }
+    result = await devReviewLoop(input)
   } else {
     if (parsed.task === undefined || !Number.isInteger(parsed.task) || parsed.task <= 0) {
       process.stderr.write(
@@ -116,9 +123,8 @@ export async function devReviewLoopCommand(args: string[]): Promise<void> {
     }
     if (agent === undefined) throw new Error('dev-review-loop start requires an agent')
     input = { task: parsed.task, agent, ...(parsed.model ? { model: parsed.model } : {}), json: parsed.json }
+    result = await runDriverLoop(input)
   }
-
-  const result = await devReviewLoop(input)
 
   if (parsed.json) {
     printJson({ finalDecision: result.finalDecision, prNumber: result.prNumber, task: result.task })
@@ -133,11 +139,25 @@ export async function devReviewLoopCommand(args: string[]): Promise<void> {
         process.stdout
       )}\n`
     )
+  } else if (result.finalDecision.type === 'ended') {
+    // issue-711 O4: the driver watched this pause through to a genuine end
+    // — the pull request merged, closed, or an operator's own `--cancel`
+    // resolved it — never printed as a `pause` (there is nothing left to
+    // resume).
+    process.stdout.write(
+      `${colourLoopLine(
+        `vinaya dev-review-loop: task ${result.task}, PR #${result.prNumber} — ended (${result.finalDecision.reason})`,
+        process.stdout
+      )}\n`
+    )
   }
 
   // O2: a paused loop exits non-zero — the pause comment/state are already
   // durable (`devReviewLoop` wrote both before returning); this is the
-  // process-level signal an unattended dispatcher watches for.
+  // process-level signal an unattended dispatcher watches for. issue-711
+  // O4: `'ended'` is never this — a watched pause that reached merge,
+  // close, or `--cancel` is a normal, successful end to this process, exit
+  // `0`, same as `publish`.
   if (result.finalDecision.type === 'pause') process.exit(1)
 }
 

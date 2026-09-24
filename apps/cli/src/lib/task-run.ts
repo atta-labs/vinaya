@@ -25,10 +25,10 @@ import {
 import type { AgentVendor } from './dispatch.js'
 import {
   developerBranchFor as realDeveloperBranchFor,
-  devReviewLoop as realDevReviewLoop,
+  type DriverResult,
   findOpenPrForBranch as realFindOpenPrForBranch,
   type LoopInput,
-  type LoopResult
+  runDriverLoop as realRunDriverLoop
 } from './dev-review-loop.js'
 import { isDriverPidAlive, readDriverLock, readPauseState } from './dev-review-loop/pause-resume.js'
 import { runtimeDir } from './dev-review-loop/reviewer-dispatch.js'
@@ -81,15 +81,21 @@ export type RunTaskInput = ({ tranche: string; n: number } | { issue: number }) 
 /**
  * `prUrl` — the published/paused PR's real `https://github.com/<owner>/<repo>/pull/<n>`
  * URL, per this module's own Sizing story ("...runs the loop to publish and
- * exits zero printing the PR URL"). `LoopResult` itself carries no URL field
- * (`dev-review-loop.ts` is unmodified — out of this task's Surface), so it is
- * constructed here from `resolveRepo()` plus the loop's own `prNumber`.
- * `null` only when the repo genuinely cannot be resolved (no git remote, an
- * unparseable `AEG_REPO`) — the same tolerance `dev-review-loop.ts`'s own
- * `resolveRepo().catch(() => null)` already extends to this exact failure,
- * never a thrown error over a display-only nicety.
+ * exits zero printing the PR URL"). Neither `LoopResult` nor `DriverResult`
+ * carries a URL field of its own, so it is constructed here from
+ * `resolveRepo()` plus the loop's own `prNumber`. `null` only when the repo
+ * genuinely cannot be resolved (no git remote, an unparseable `AEG_REPO`) —
+ * the same tolerance `dev-review-loop.ts`'s own `resolveRepo().catch(() =>
+ * null)` already extends to this exact failure, never a thrown error over a
+ * display-only nicety.
+ *
+ * issue-711 O4: `LoopResult` widened to `DriverResult` — `runTask` now
+ * composes the watching driver (`runDriverLoop`), never `devReviewLoop`
+ * directly, so its own final decision can also read `'ended'` (the pull
+ * request merged, closed, or was cancelled while this run watched a pause)
+ * alongside the pre-existing `'publish'`/`'pause'`.
  */
-export type RunTaskResult = LoopResult & { prUrl: string | null }
+export type RunTaskResult = DriverResult & { prUrl: string | null }
 
 /**
  * Injection seam for `apps/cli/tests/lib/task-run.test.ts` — same convention
@@ -134,8 +140,18 @@ export type RunTaskDeps = {
    * class-to-model table, `undefined` when neither yields one.
    */
   resolveModelForDispatch: (agent: AgentVendor, issue: number, explicitModel: string | undefined) => string | undefined
-  /** issue-711 O5: widened from `{ task, agent, model? }` to the full `LoopInput` union — the paused-PR redirect below now calls this with `{ resumePr, agent, model? }` too. */
-  devReviewLoop: (input: LoopInput) => Promise<LoopResult>
+  /**
+   * issue-711 O5: widened from `{ task, agent, model? }` to the full
+   * `LoopInput` union — the paused-PR redirect below now calls this with
+   * `{ resumePr, agent, model? }` too. issue-711 O4: its return type
+   * widened from `LoopResult` to `DriverResult` — the real default is now
+   * `runDriverLoop` (the watching driver), never `devReviewLoop` directly,
+   * so `runTask` itself never hands back to an operator's own `--resume`
+   * for the ordinary case; the field keeps this name for every existing
+   * caller/fixture (this file's own doc comment, `task-run.test.ts`)
+   * rather than a rename that touches nothing behavioural.
+   */
+  devReviewLoop: (input: LoopInput) => Promise<DriverResult>
   resolveRepo: () => Promise<RepoRef | null>
 }
 
@@ -161,7 +177,7 @@ export const defaultRunTaskDeps: RunTaskDeps = {
   isDriverAlive: realIsDriverAlive,
   hasPauseState: realHasPauseState,
   resolveModelForDispatch: realResolveModelForDispatch,
-  devReviewLoop: realDevReviewLoop,
+  devReviewLoop: realRunDriverLoop,
   resolveRepo: () => realResolveRepo()
 }
 

@@ -93,6 +93,7 @@ import {
   fetchConflictingFiles,
   fetchFailingCheckRuns,
   fetchMergeableState,
+  fetchPrState,
   gitCommitsTouchingDriverPaths,
   type MergeableState,
   readWorktreeHead,
@@ -183,6 +184,7 @@ import {
   readDriverLock,
   readEscalationRecord,
   readPauseState,
+  readResolutionRecord,
   recoverLoopState,
   ReplayedResolutionError,
   resolveEscalation,
@@ -208,8 +210,8 @@ export {
   readWorktreeHead,
   resolveHead
 } from './dev-review-loop/gate-reading.js'
-export type { MergeableState } from './dev-review-loop/gate-reading.js'
-export { DRIVER_OWNED_PATHS, parseMergeTreeConflictFiles } from './dev-review-loop/gate-reading.js'
+export type { MergeableState, PrOpenState } from './dev-review-loop/gate-reading.js'
+export { DRIVER_OWNED_PATHS, fetchPrState, parseMergeTreeConflictFiles } from './dev-review-loop/gate-reading.js'
 export {
   describeObjectivesEdit,
   developerBranchFor,
@@ -3863,6 +3865,240 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
   }
 
   return { task, escalationId, fencedEffectKeys }
+}
+
+// --- the driver watch (issue-711 O4) ---------------------------------------
+
+/**
+ * issue-711 O4 — a pause never ends the driver. After `devReviewLoop`
+ * returns a `pause` against an already-open pull request, `runDriverLoop`
+ * keeps this same process running and watches that pull request rather
+ * than handing back to an operator's own `--resume`. It polls three forge
+ * facts — the PR's own open/merged/closed state (`fetchPrState`,
+ * `gate-reading.ts`), whether a newer Principal ruling has landed since
+ * this pause was posted (`fetchNewestRulingOrdinal`, "newer than the
+ * pause" is O4's own wording), and whether THIS pause's own escalation has
+ * been resolved `'cancel'` by someone else (`--cancel`, `task_cancel`,
+ * `readResolutionRecord`) — and, the moment one of them says "continue,"
+ * calls `devReviewLoop` again with EXACTLY the `{resumePr, agent, model}`
+ * shape a human's own `dev-review-loop --resume <pr>` builds, never a
+ * second, parallel continuation path: this is what "continues from that
+ * ruling exactly as `dev-review-loop --resume <pr>` does today" (the
+ * brief's own wording) means in code — the SAME function call, not a
+ * reimplementation of what it does. `'infrastructure'`/`'stale_driver'`
+ * pauses need no ruling at all (the same bare-resume allowance `--resume`
+ * already grants them — "Pause and `--resume`", `apps/cli/specs/loop.md`)
+ * — they retry after one bounded backoff wait instead of watching for a
+ * ruling; a bare retry that itself fails (the driver's own bare-resume
+ * budget, `MAX_INFRASTRUCTURE_RETRIES`, already exhausted) falls back to
+ * watching for a real ruling from that point on, rather than hammering the
+ * same failing bare attempt every poll tick forever.
+ *
+ * The one pause this never watches: the pre-first-push escalation
+ * (`prNumber <= 0` — no pull request exists yet to poll or comment on)
+ * ends the driver exactly as before this task, printing `vinaya task run
+ * <tranche> <n>` as its own resume command ("Pause and `--resume`",
+ * `apps/cli/specs/loop.md`) — there is nothing yet to watch.
+ *
+ * A resume attempt this watcher makes can itself fail — a benign race
+ * against an operator's own concurrent `--resume`/`--cancel` (a
+ * `ReplayedResolutionError`, or the one-driver-per-task lock refusing a
+ * second start under this same pid — "One driver per task",
+ * `apps/cli/specs/loop.md`), or a transient forge read. Neither crashes
+ * this unattended watcher: both are reported to stderr and the SAME pause
+ * is watched again from scratch after one poll interval, never treated as
+ * this driver's own final decision.
+ *
+ * A human's own explicit `dev-review-loop --resume <pr>`/`--cancel <pr>`
+ * invocation stays exactly as it was before this task — a one-shot debug/
+ * direct entry, never itself a watcher (`apps/cli/specs/loop.md`, "The
+ * command"). `runDriverLoop` is what a fresh driver RUN uses instead —
+ * wired into `dev-review-loop --task <n>` and `task run` — so an operator
+ * never needs to type a resume command at all for the ordinary case this
+ * task exists for; `--resume`/`--cancel` remain there for the cases they
+ * always covered (an operator forcing a continuation or a stop by hand).
+ */
+export type DriverEndReason = 'merged' | 'closed' | 'cancelled'
+/**
+ * `runDriverLoop`'s own terminal decision — `Decision` (`@attalabs/aeg-core`,
+ * the pure policy layer) widened by exactly the three facts above, none of
+ * which `assessRound` could ever decide (they are facts about the PULL
+ * REQUEST, never a round's verdicts) — never added to `Decision` itself,
+ * the same "driver-decided, never a policy-layer type" precedent
+ * `'infrastructure'`/`'stale_driver'` already set ("Infrastructure
+ * failures", `apps/cli/specs/loop.md`) and this task's own declared
+ * Surface keeps: `packages/aeg-core` stays untouched by this member.
+ */
+export type DriverDecision = Decision | { type: 'ended'; reason: DriverEndReason }
+export type DriverResult = { finalDecision: DriverDecision; prNumber: number; task: number }
+
+export type DriverWatchDeps = {
+  /** Defaults to the real `devReviewLoop` — every resume attempt this watcher makes goes through it unchanged, threading the SAME caller-supplied `loopDeps` every time (a test's in-process harness included). */
+  devReviewLoop: (input: LoopInput, deps?: Partial<LoopDeps>) => Promise<LoopResult>
+  fetchPrState: typeof fetchPrState
+  fetchNewestRulingOrdinal: typeof fetchNewestRulingOrdinal
+  readPauseState: typeof readPauseState
+  readResolutionRecord: typeof readResolutionRecord
+  /**
+   * "One driver per task" ("the lock hands off to the child before the
+   * spawn, not after", `apps/cli/specs/loop.md`) applies here too, in a
+   * narrower form: an `'infrastructure'`/`'stale_driver'` pause deliberately
+   * leaves this SAME process's own driver lock in place (`keepLockAlive`,
+   * `devReviewLoop`'s own doc comment) so a genuinely SEPARATE `--resume`
+   * process never mistakes a live recoverable-hiccup retry for an
+   * abandoned one. This watcher's own bare-resume retry is not a separate
+   * process, though — it is the SAME pid calling `devReviewLoop` again,
+   * which would otherwise refuse itself at the entry-gate lock check
+   * ("a driver is already running (pid <this pid>)"). Cleared right before
+   * EVERY resume attempt (every reason, not only the bounded-retry ones —
+   * a harmless no-op wherever the lock was already cleared) for the exact
+   * same reason `checkStaleDriver`'s own re-exec clears it before handing
+   * off: the next `devReviewLoop` entry re-acquires it itself, under
+   * whichever pid actually continues.
+   */
+  clearDriverLock: typeof clearDriverLock
+  runtimeDir: () => string
+  sleep: (ms: number) => Promise<void>
+  /** How often this watcher polls the PR/resolution/ruling while nothing is yet ready — env-overridable (`VINAYA_DEV_REVIEW_LOOP_WATCH_POLL_MS`) for a fast fixture; real usage never needs sub-second spacing. */
+  watchPollIntervalMs: number
+  /** The single bounded wait an `'infrastructure'`/`'stale_driver'` pause takes before its own bare-resume retry — env-overridable (`VINAYA_DEV_REVIEW_LOOP_WATCH_INFRA_BACKOFF_MS`). */
+  infrastructureBackoffMs: number
+}
+
+function defaultDriverWatchDeps(): DriverWatchDeps {
+  return {
+    devReviewLoop,
+    fetchPrState,
+    fetchNewestRulingOrdinal,
+    readPauseState,
+    readResolutionRecord,
+    clearDriverLock,
+    runtimeDir,
+    sleep: defaultSleep,
+    watchPollIntervalMs: gatePollEnvOverride('VINAYA_DEV_REVIEW_LOOP_WATCH_POLL_MS', 30_000),
+    infrastructureBackoffMs: gatePollEnvOverride('VINAYA_DEV_REVIEW_LOOP_WATCH_INFRA_BACKOFF_MS', 60_000)
+  }
+}
+
+/**
+ * One pause's own watch cycle: polls until the pull request is genuinely
+ * done (merged/closed/cancelled) or a resume attempt against it returns a
+ * fresh `LoopResult` — `runDriverLoop`'s own doc comment names the three
+ * `'ended'` exits as the only other way out of this deliberately unbounded,
+ * unattended wait.
+ */
+async function watchPauseThenResume(
+  pauseResult: LoopResult,
+  loopDeps: Partial<LoopDeps>,
+  w: DriverWatchDeps
+): Promise<{ kind: 'ended'; reason: DriverEndReason } | { kind: 'result'; result: LoopResult }> {
+  const { prNumber, task } = pauseResult
+  const reason = pauseResult.finalDecision.type === 'pause' ? pauseResult.finalDecision.reason : undefined
+  const isBoundedRetry = reason === 'infrastructure' || reason === 'stale_driver'
+  // Read once, right as this pause begins being watched — this IS the
+  // pause `devReviewLoop` just wrote `pause-state.json` for, so it is never
+  // null here (unlike a `--resume` invoked well after the fact, which must
+  // tolerate a pause that has since been superseded).
+  const held = w.readPauseState(w.runtimeDir(), task)
+  const agent = held?.agent
+  const model = held?.model
+  const escalationId = held?.escalationId ?? null
+  // "Newer than the pause" (O4's own wording) — captured now, the moment
+  // this pause starts being watched, never re-derived from the pause's own
+  // recorded time: a ruling that already existed when this pause posted
+  // must not immediately re-trigger a resume this pause's own round
+  // already accounted for.
+  const baselineOrdinal = w.fetchNewestRulingOrdinal(prNumber)
+  let backoffDone = !isBoundedRetry
+  // Set once a bare (no-ruling) retry itself fails — the driver's own
+  // bare-resume budget is almost certainly exhausted at that point
+  // (`devReviewLoop`'s own `--resume` entry says so in its thrown message),
+  // so this pause falls back to watching for a real ruling from here on,
+  // rather than re-attempting the same failing bare call every poll tick
+  // forever.
+  let bareRetryExhausted = false
+
+  while (true) {
+    const prState = w.fetchPrState(prNumber)
+    if (prState === 'MERGED') return { kind: 'ended', reason: 'merged' }
+    if (prState === 'CLOSED') return { kind: 'ended', reason: 'closed' }
+
+    if (escalationId) {
+      const resolution = w.readResolutionRecord(task, escalationId)
+      if (resolution?.decision === 'cancel') return { kind: 'ended', reason: 'cancelled' }
+    }
+
+    if (isBoundedRetry && !backoffDone) {
+      await w.sleep(w.infrastructureBackoffMs)
+      backoffDone = true
+      // Re-check the three exits above once more, right after the wait,
+      // before ever attempting the bare resume below — never fire a resume
+      // at a pull request that concluded while this driver slept.
+      continue
+    }
+
+    const readyForBareRetry = isBoundedRetry && !bareRetryExhausted
+    const readyForRuling = w.fetchNewestRulingOrdinal(prNumber) > baselineOrdinal
+    if (readyForBareRetry || readyForRuling) {
+      // This SAME process's own driver lock, cleared right before it calls
+      // itself back into `devReviewLoop` — see `DriverWatchDeps.clearDriverLock`'s
+      // own doc comment for why this is never optional.
+      w.clearDriverLock(w.runtimeDir(), task)
+      try {
+        const result = await w.devReviewLoop(
+          {
+            resumePr: prNumber,
+            ...(agent !== undefined && isAgentVendor(agent) ? { agent } : {}),
+            ...(model ? { model } : {})
+          },
+          loopDeps
+        )
+        return { kind: 'result', result }
+      } catch (err) {
+        if (readyForBareRetry && !readyForRuling) bareRetryExhausted = true
+        // A benign race (an operator's own concurrent `--resume`, a
+        // replayed resolution, a transient forge read) — never this
+        // watcher's own final decision. Reported, then the SAME pause is
+        // watched again from scratch.
+        process.stderr.write(
+          `vinaya dev-review-loop: watcher's resume attempt for PR #${prNumber} failed — ${
+            err instanceof Error ? err.message : String(err)
+          }; still watching.\n`
+        )
+      }
+    }
+
+    await w.sleep(w.watchPollIntervalMs)
+  }
+}
+
+/**
+ * issue-711 O4's own entry point — `apps/cli/src/commands/dev-review-loop.ts`'s
+ * `--task` start and `task-run.ts`'s `runTask` both call this instead of
+ * `devReviewLoop` directly (a human's own explicit `--resume <pr>`/
+ * `--cancel <pr>` stay one-shot, unchanged — see this function's own
+ * module doc comment, above). One call in, one `DriverResult` out, however
+ * many pause/resume cycles it takes underneath.
+ */
+export async function runDriverLoop(
+  input: LoopInput,
+  loopDeps: Partial<LoopDeps> = {},
+  watchDeps: Partial<DriverWatchDeps> = {}
+): Promise<DriverResult> {
+  const w: DriverWatchDeps = { ...defaultDriverWatchDeps(), ...watchDeps }
+  let result = await w.devReviewLoop(input, loopDeps)
+  while (result.finalDecision.type === 'pause' && result.prNumber > 0) {
+    const outcome = await watchPauseThenResume(result, loopDeps, w)
+    if (outcome.kind === 'ended') {
+      return {
+        finalDecision: { type: 'ended', reason: outcome.reason },
+        prNumber: result.prNumber,
+        task: result.task
+      }
+    }
+    result = outcome.result
+  }
+  return result
 }
 
 export const DEV_REVIEW_LOOP_AGENTS = AGENT_VENDOR_NAMES
