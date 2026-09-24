@@ -717,7 +717,7 @@ export const COMMANDS: readonly Command[] = [
       "Records `dispatched` (with the prompt's sha256), `outcome_received` (duration, the vendor's own usage when its stdout prints a recognizable shape), or `dispatch_failed` (`timeout`, `crash`, or `refused`) through the Vinaya Log's one `dispatch` family writer, `dispatchRole`. A wall-time ceiling (`dispatch.timeoutMs` in config, default one hour) sends `SIGTERM` then, after a grace window, `SIGKILL`.",
       'Runs no flush of its own after the dispatch returns: every log line `dispatchRole` emits reaches its configured `logs` destination live, as it is emitted, so there is nothing left to ship in a trailing step. `--task`/`--pr` are attribution only, and remain mutually exclusive.',
       // AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:'-r',
-      // AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:resumeArgs: (id, model) => ['exec', 'resume', id, ...(model ? ['--model', model] : []), '--json', '-'],
+      // AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:resumeArgs: (id, model) => [
       // AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:'--resume',
       "A successful dispatch's `DispatchHandle` carries `resumeId` — the vendor's own session/thread identifier (claude/gemini: `session_id`; codex: `thread_id`), parsed from its stdout, `null` on any failure. Passing that value as `--resume <id>` on a later call swaps in that vendor's own resume invocation (`claude -p -r <id> ...`; `codex exec resume <id> ...`; `gemini ... --resume <id> ...`) in place of its first-dispatch args."
     ],
