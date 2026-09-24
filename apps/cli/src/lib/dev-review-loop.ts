@@ -82,7 +82,7 @@ import {
   terminateLaunchedChildOnShutdown as realTerminateLaunchedChildOnShutdown
 } from './dispatch.js'
 import { postMarkedComment } from './forge-write.js'
-import { createLogSink, currentRunId, drainLogSink, log, resolveLogAppendPath } from './log-sink.js'
+import { createLogSink, drainLogSink, resolveLogAppendPath } from './log-sink.js'
 import { ensureRunDir, markProcessUnattended, runPath } from './run-paths.js'
 import { defaultTaskSweepAsyncDeps, sweepModernTasksAsync } from './task-sweep.js'
 import { appendRoleLine, appendRunStartMarker, loopLogPathFor } from './loop-log.js'
@@ -3692,9 +3692,16 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
   }
   const cancelOutboxPath = await d.resolveLogAppendPath(repo, task)
   const priorSize = sizeOfSafe(cancelOutboxPath)
+  // Its own sink, bound to the SAME repo `cancelOutboxPath` was resolved
+  // for, never the process-wide default: the default resolves its repo and
+  // destination once, on its first write, so in a long-lived process whose
+  // first write resolved another repo this line would land away from
+  // `cancelOutboxPath` and the wait below would run out its bound.
+  const cancelSink = createLogSink({ resolveRepo: async () => repo })
   try {
-    log(cancelEvent)
-    await waitForOwnLoopLine(cancelOutboxPath, priorSize, currentRunId(), cancelEvent, d.sleep)
+    cancelSink.log(cancelEvent)
+    await waitForOwnLoopLine(cancelOutboxPath, priorSize, cancelSink.runId, cancelEvent, d.sleep)
+    await cancelSink.drain()
   } finally {
     if (prevTask === undefined) delete process.env.VINAYA_TASK
     else process.env.VINAYA_TASK = prevTask

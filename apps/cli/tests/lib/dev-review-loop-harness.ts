@@ -39,7 +39,6 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { devReviewLoop, type LoopDeps, type LoopInput, type LoopResult } from '../../src/lib/dev-review-loop.js'
-import { resolveLogAppendPath as realResolveLogAppendPath } from '../../src/lib/log-sink.js'
 import { resetRuntimeDirCache } from '../../src/lib/run-paths.js'
 import type { DispatchHandle } from '../../src/lib/dispatch.js'
 import {
@@ -303,12 +302,6 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
     findOpenPrForBranch: (branch) => (world.developerPushed ? { number: world.prNumber, branch } : null),
     readResumeRecord: () => null,
     runtimeDir: () => world.runtimeDir,
-    // Delegate to the REAL resolver so the poll path matches exactly where
-    // the module-level `log()` writes (both resolve under `VINAYA_RUNTIME_DIR`,
-    // which `runLoopInProcess` points at `world.runtimeDir` for the run). A
-    // temp path here that `log()` never writes to would hang `logEvents`'
-    // own wait-for-landing forever.
-    resolveLogAppendPath: (repo, issue) => realResolveLogAppendPath(repo, issue),
     repoRoot: () => world.repoRoot,
     gitRevParseOriginMain: () => world.base,
     gitMergeBase: async (_head) => world.mergeBase,
@@ -449,6 +442,15 @@ export async function runLoopInProcess(
   input: LoopInput = { task: world.task, agent: 'claude' },
   overrides: Partial<LoopDeps> = {}
 ): Promise<LoopResult> {
+  return withWorldEnv(world, () => devReviewLoop(input, { ...makeInProcessDeps(world), ...overrides }))
+}
+
+/**
+ * Runs `fn` with this world's runtime directory, task and working directory
+ * in place, then restores all of them. `runLoopInProcess` uses it; so does a
+ * test driving another loop entry point (`cancelDevReviewLoop`) in-process.
+ */
+export async function withWorldEnv<T>(world: LoopWorld, fn: () => Promise<T> | T): Promise<T> {
   const saved: Record<string, string | undefined> = {}
   for (const key of OWNED_ENV_KEYS) saved[key] = process.env[key]
   const savedCwd = process.cwd()
@@ -468,7 +470,7 @@ export async function runLoopInProcess(
   // resolution.
   resetRuntimeDirCache()
   try {
-    return await devReviewLoop(input, { ...makeInProcessDeps(world), ...overrides })
+    return await fn()
   } finally {
     resetRuntimeDirCache()
     process.chdir(savedCwd)

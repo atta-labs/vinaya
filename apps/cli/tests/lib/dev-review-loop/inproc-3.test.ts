@@ -5,37 +5,6 @@
  * driven through `devReviewLoop()`/`cancelDevReviewLoop()` directly rather
  * than a spawned CLI process. See `dev-review-loop-harness.ts` for the
  * shared `LoopWorld`/`runLoopInProcess` machinery this file builds on.
- *
- * Two src-level boundaries this file ran into, confirmed empirically, both
- * of which sent the ORIGINAL slice's other tests to the real-process KEPT
- * list instead (see the dispatch report):
- *
- * 1. `devReviewLoop({ resumePr, agent })` (`--resume`) does NOT convert:
- *    its very first line — `taskFromPrBody(fetchPrBody(resumePr))` — calls
- *    the bare imported `fetchPrBody`, never `d.fetchPrBody`, by the
- *    source's own explicit design (`LoopDeps.fetchPrBody`'s own doc
- *    comment: "the `--resume` path's own `fetchPrBody` read is left on the
- *    bare import — a resumed run is out of the in-process harness's
- *    scope"). Driving it in-process makes a real, synchronous
- *    `execFileSync('gh', ...)` call against a non-git scratch `cwd`, which
- *    fails slowly through `sh()`'s own real retry/backoff and can exceed
- *    `bun:test`'s per-test timeout.
- *
- * 2. A cancel or resume that reaches its OWN final `log(event)` call (the
- *    module-level default log sink, `log-sink.ts`) is safe only ONCE per
- *    `bun:test` FILE PROCESS: that sink's own destination/context is
- *    resolved once, on its first-ever real write, and cached for the
- *    process's lifetime — a later test's own different `world.runtimeDir`
- *    is silently ignored, so its own `cancelled`/`resumed` event lands in
- *    an EARLIER test's (by then already-cleaned-up) directory instead of
- *    its own, and that later test's own `waitForOwnLoopLine` poll never
- *    finds it, spinning out its full 5s best-effort bound. Confirmed by
- *    running two independent successful in-process cancels back to back —
- *    the second always times out. This file therefore contains exactly
- *    ONE cancel call that reaches that final `log()` line (the "logs a
- *    cancelled event" test, first in declaration order); every other
- *    cancel scenario that would ALSO need to reach it stays on the real
- *    subprocess harness.
  */
 
 import { afterEach, describe, expect, it } from 'bun:test'
@@ -44,8 +13,6 @@ import { join } from 'node:path'
 import { cancelDevReviewLoop, taskFromPrBody, type LoopDeps } from '../../../src/lib/dev-review-loop.js'
 import { CONFIDENCE_FILE_NAME } from '../../../src/lib/dev-review-loop/round-assess.js'
 import { readPauseState } from '../../../src/lib/dev-review-loop/pause-resume.js'
-import { resolveLogAppendPath } from '../../../src/lib/log-sink.js'
-import { resetRuntimeDirCache } from '../../../src/lib/run-paths.js'
 import {
   cleanupWorlds,
   controlDir as ipControlDir,
@@ -56,7 +23,8 @@ import {
   roundDir as ipRoundDir,
   runLoopInProcess,
   type LoopWorld,
-  type RoleOutcome
+  type RoleOutcome,
+  withWorldEnv
 } from '../dev-review-loop-harness.js'
 
 afterEach(cleanupWorlds)
@@ -81,50 +49,9 @@ function escalationRecordPath(world: LoopWorld, round: number, head: string): st
   return join(ipControlDir(world), 'escalation', `${world.task}-${round}-${head}.json`)
 }
 
-/**
- * `cancelDevReviewLoop` (and the real control-store reads/writes its own
- * `resolveEscalation` performs) resolve their root from
- * `VINAYA_RUNTIME_DIR`/cwd exactly like `devReviewLoop` does — this mirrors
- * `runLoopInProcess`'s own save/point-at-this-world/restore dance so those
- * real reads and writes land under THIS world's `runtimeDir`.
- */
-async function runInWorldEnv<T>(world: LoopWorld, fn: () => Promise<T> | T): Promise<T> {
-  const keys = [
-    'VINAYA_RUNTIME_DIR',
-    'VINAYA_TASK',
-    'VINAYA_ROUND',
-    'VINAYA_RUN',
-    'VINAYA_RUN_ID',
-    'AEG_REPO',
-    'GITHUB_REPOSITORY'
-  ] as const
-  const saved: Record<string, string | undefined> = {}
-  for (const key of keys) saved[key] = process.env[key]
-  const savedCwd = process.cwd()
-  process.env.VINAYA_RUNTIME_DIR = world.runtimeDir
-  process.env.VINAYA_TASK = String(world.task)
-  delete process.env.VINAYA_ROUND
-  delete process.env.VINAYA_RUN
-  delete process.env.VINAYA_RUN_ID
-  delete process.env.AEG_REPO
-  delete process.env.GITHUB_REPOSITORY
-  process.chdir(world.repoRoot)
-  resetRuntimeDirCache()
-  try {
-    return await fn()
-  } finally {
-    resetRuntimeDirCache()
-    process.chdir(savedCwd)
-    for (const key of keys) {
-      if (saved[key] === undefined) delete process.env[key]
-      else process.env[key] = saved[key]
-    }
-  }
-}
-
 /** `cancelDevReviewLoop` in-process against `world` — every dep wired to the same world fields `makeInProcessDeps` uses for `devReviewLoop`, so a cancel sees exactly the ruling/PR-body state a resume would. */
 function cancelInProcess(world: LoopWorld, agent: 'claude' | 'codex' | 'gemini' = 'claude') {
-  return runInWorldEnv(world, () =>
+  return withWorldEnv(world, () =>
     cancelDevReviewLoop(
       { cancelPr: world.prNumber, agent },
       {
@@ -135,7 +62,6 @@ function cancelInProcess(world: LoopWorld, agent: 'claude' | 'codex' | 'gemini' 
         fetchNewestRulingOrdinal: () => world.rulingOrdinal,
         fetchNewestRulingAuthor: () => world.rulingAuthor,
         runtimeDir: () => world.runtimeDir,
-        resolveLogAppendPath: (repo, issue) => resolveLogAppendPath(repo, issue),
         resolveRepo: async () => null,
         terminateInFlightLaunchesOnShutdown: () => {},
         sleep: (ms) => new Promise((r) => setTimeout(r, ms > 0 ? 1 : 0))
