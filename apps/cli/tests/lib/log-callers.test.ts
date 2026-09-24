@@ -107,12 +107,27 @@ import { fileURLToPath } from 'node:url'
  * so they join `CALLER_ALLOWLIST` alone, the same "no truncate, no
  * held-verdict write" shape `journal-history.ts`/`resume.ts`/`cancel.ts`/
  * `runner.ts` already occupy above.
+ *
+ * Amended by task-files-v1 task 6 (O1): logs never reach a tracker or a code
+ * host in any form, so the comment-posting flush and the artifact commands
+ * are deleted outright, not merely reduced. `apps/cli/src/commands/log.ts`,
+ * `apps/cli/src/lib/log-flush.ts` and `apps/cli/src/lib/log-artifact.ts` are
+ * gone — `FLUSH_PATH`, `LOG_FLUSH_LIB_PATH` and `LOG_ARTIFACT_LIB_PATH`, and
+ * every allowlist entry and test naming them, go with them.
+ * `forge_write.validated/refused/written` — the flush's own line, logged
+ * before it truncated what it posted — has no producer left at all now, so
+ * it moves into `LOG_COVERAGE_EXEMPTIONS` alongside `handoff`, the same
+ * "declared, not (or no longer) real" shape that entry already documents;
+ * the schema keeps every `forge_write` operation so an old outbox/comment
+ * line still parses (`apps/cli/specs/log.md` § the envelope). The webhook
+ * destination survives as the one delivery mechanism a `logs.url` server
+ * destination uses — renamed from `log-webhook-flush.ts`/`flushOutboxToWebhook`
+ * to `log-webhook-drain.ts`/`drainOutboxToWebhook` now that there is no
+ * sibling GitHub-comment flush left for "flush" to distinguish it from.
  */
 
 const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..', '..')
 const SINK_PATH = 'apps/cli/src/lib/log-sink.ts'
-const FLUSH_PATH = 'apps/cli/src/commands/log.ts'
-const LOG_FLUSH_LIB_PATH = 'apps/cli/src/lib/log-flush.ts'
 const DISPATCH_PATH = 'apps/cli/src/lib/dispatch.ts'
 const DEV_REVIEW_LOOP_PATH = 'apps/cli/src/lib/dev-review-loop.ts'
 const DEV_REVIEW_LOOP_REVIEWER_DISPATCH_PATH = 'apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts'
@@ -122,18 +137,16 @@ const DEV_REVIEW_LOOP_JOURNAL_HISTORY_PATH = 'apps/cli/src/lib/dev-review-loop/j
 const TASK_TOOLS_RESUME_PATH = 'apps/cli/src/lib/task-tools/resume.ts'
 const TASK_TOOLS_CANCEL_PATH = 'apps/cli/src/lib/task-tools/cancel.ts'
 const RUNNER_PATH = 'apps/cli/src/checks/runner.ts'
-const LOG_ARTIFACT_LIB_PATH = 'apps/cli/src/lib/log-artifact.ts'
 /**
- * The webhook destination (`task-log-v1` 10, Issue #636) is the flush's
- * second implementation, not a second kind of caller: it reads the same
- * outbox, re-validates and re-redacts the same way, and truncates exactly
- * the lines the endpoint confirmed with a 2xx — the identical durability
- * rule `log-flush.ts` carries. It therefore joins the same two allowlists
- * that file does, for the same reasons, rather than earning a category of
- * its own. A third destination would join them too; a caller that merely
- * *asks* for a flush still would not.
+ * The webhook destination (`task-log-v1` 10, Issue #636) is the sink's own
+ * delivery mechanism for a `logs.url` server destination, not a second kind
+ * of caller: it reads the same outbox, re-validates and re-redacts the same
+ * way, and truncates exactly the lines the endpoint confirmed with a 2xx.
+ * Renamed from `log-webhook-flush.ts`/`flushOutboxToWebhook` to
+ * `log-webhook-drain.ts`/`drainOutboxToWebhook` (task-files-v1 6, O1) now
+ * that the tracker-posting flush it once stood alongside is deleted.
  */
-const LOG_WEBHOOK_FLUSH_LIB_PATH = 'apps/cli/src/lib/log-webhook-flush.ts'
+const LOG_WEBHOOK_DRAIN_LIB_PATH = 'apps/cli/src/lib/log-webhook-drain.ts'
 const EFFECTS_PATH = 'apps/cli/src/lib/effects.ts'
 const BROKER_PATH = 'apps/cli/src/lib/broker.ts'
 const SCHEMA_PATH = 'packages/aeg-core/src/log/schema.ts'
@@ -141,8 +154,7 @@ const ASSESS_ROUND_PATH = 'packages/aeg-core/src/dev-review-loop/assess-round.ts
 const FUTURE_CALLER_ALLOWLIST = new Set<string>([])
 const CALLER_ALLOWLIST = new Set([
   ...FUTURE_CALLER_ALLOWLIST,
-  LOG_FLUSH_LIB_PATH,
-  LOG_WEBHOOK_FLUSH_LIB_PATH,
+  LOG_WEBHOOK_DRAIN_LIB_PATH,
   DISPATCH_PATH,
   DEV_REVIEW_LOOP_PATH,
   DEV_REVIEW_LOOP_JOURNAL_HISTORY_PATH,
@@ -152,22 +164,14 @@ const CALLER_ALLOWLIST = new Set([
   EFFECTS_PATH,
   BROKER_PATH
 ])
-const OUTBOX_TRUNCATE_ALLOWLIST = new Set([LOG_FLUSH_LIB_PATH, LOG_WEBHOOK_FLUSH_LIB_PATH])
+const OUTBOX_TRUNCATE_ALLOWLIST = new Set([LOG_WEBHOOK_DRAIN_LIB_PATH])
 const OUTBOX_HELD_VERDICT_ALLOWLIST = new Set([
   DEV_REVIEW_LOOP_PATH,
   DEV_REVIEW_LOOP_REVIEWER_DISPATCH_PATH,
   DEV_REVIEW_LOOP_PUBLICATION_PATH,
   DEV_REVIEW_LOOP_PAUSE_RESUME_PATH
 ])
-/**
- * `log-artifact.ts` reads outbox files (to export them elsewhere) and
- * appends an already-validated batch into the outbox (before `flushOutbox`
- * publishes it) — a fourth write category next to the sink's append, the
- * flush's truncate, and the held-verdict sibling-file write. Named
- * explicitly rather than stretched into either existing allowlist, since
- * it describes neither a truncate nor a held-verdict file.
- */
-const OUTBOX_APPEND_ALLOWLIST = new Set([LOG_ARTIFACT_LIB_PATH])
+const OUTBOX_APPEND_ALLOWLIST = new Set<string>([])
 /**
  * Amended by task 8 (#454, O8): `dispatch.ts` durably records a run's vendor
  * resume identifier under `~/.vinaya/dispatch-resume/`, so an operator can
@@ -297,16 +301,6 @@ describe('log-callers — O2', () => {
     }
   })
 
-  it('the flush command file still exists — argv parsing only, no outbox access of its own', () => {
-    const existing = files.map(([rel]) => rel)
-    expect(existing).toContain(FLUSH_PATH)
-  })
-
-  it('the flush lib allowlist entry does exist — task 3 is the landed chokepoint, not a future one', () => {
-    const existing = files.map(([rel]) => rel)
-    expect(existing).toContain(LOG_FLUSH_LIB_PATH)
-  })
-
   it('the dispatch allowlist entry does exist — task 3 is the landed caller, not a future one', () => {
     const existing = files.map(([rel]) => rel)
     expect(existing).toContain(DISPATCH_PATH)
@@ -324,12 +318,12 @@ describe('log-callers — O2', () => {
     expect(existing).toContain(DEV_REVIEW_LOOP_PAUSE_RESUME_PATH)
   })
 
-  it('the log-artifact allowlist entry does exist, and really does append to the outbox — task-log-v1 task 4 is the landed chokepoint, not a future one', () => {
-    const entry = files.find(([rel]) => rel === LOG_ARTIFACT_LIB_PATH)
-    expect(entry, `${LOG_ARTIFACT_LIB_PATH} not found by the scan`).toBeDefined()
-    const content = readFileSync((entry as [string, string])[1], 'utf8')
-    expect(content.includes('outbox')).toBe(true)
-    expect(OUTBOX_WRITE_CALLS.some((call) => content.includes(call))).toBe(true)
+  it('log-flush.ts and log-artifact.ts are gone — the tracker-posting flush and the artifact commands are deleted, not merely reduced', () => {
+    const existing = new Set(files.map(([rel]) => rel))
+    expect(existing.has('apps/cli/src/lib/log-flush.ts')).toBe(false)
+    expect(existing.has('apps/cli/src/lib/log-artifact.ts')).toBe(false)
+    expect(existing.has('apps/cli/src/commands/log.ts')).toBe(false)
+    expect(existing.has('packages/aeg-core/src/log/artifact.ts')).toBe(false)
   })
 })
 
@@ -463,22 +457,26 @@ const PRODUCER_BOUNDARIES: ProducerBoundary[] = [
     name: 'task-tools cancel/resume handlers',
     files: [TASK_TOOLS_CANCEL_PATH, TASK_TOOLS_RESUME_PATH],
     requires: [{ kind: 'operation', event: 'completed' }]
-  },
-  {
-    name: "flushOutbox — validated before post, written/refused after (this task's own line, not a caller's)",
-    files: [LOG_FLUSH_LIB_PATH],
-    requires: [
-      { kind: 'forge_write', event: 'validated' },
-      { kind: 'forge_write', event: 'refused' },
-      { kind: 'forge_write', event: 'written' }
-    ]
   }
 ]
 
-/** A kind/event pair no real caller emits yet — named explicitly so this file neither silently passes nor silently fails on it. */
+/**
+ * A kind/event pair no real caller emits — named explicitly so this file
+ * neither silently passes nor silently fails on it. `forge_write`'s three
+ * events were `flushOutbox`'s own line, logged before it posted to a
+ * tracker; that flush is deleted outright (task-files-v1 6, O1 — logs never
+ * reach a tracker or a code host in any form), so no producer emits these
+ * any more. The schema keeps the family so an old outbox/comment line still
+ * parses (`apps/cli/specs/log.md` § the envelope) — this exemption is what
+ * lets the schema stay honest about its own history without a coverage
+ * check demanding a producer that no longer exists.
+ */
 const LOG_COVERAGE_EXEMPTIONS: RequiredEvent[] = [
   { kind: 'handoff', event: 'raised' },
-  { kind: 'handoff', event: 'resolved' }
+  { kind: 'handoff', event: 'resolved' },
+  { kind: 'forge_write', event: 'validated' },
+  { kind: 'forge_write', event: 'refused' },
+  { kind: 'forge_write', event: 'written' }
 ]
 
 function pairKey(p: RequiredEvent): string {

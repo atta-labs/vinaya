@@ -964,6 +964,26 @@ describe('logs — shape and mutual exclusion', () => {
   })
 })
 
+describe('logPublish — removed (task-files-v1 6, O1): refused, naming its replacement', () => {
+  it('refuses a config still carrying logPublish.issue', () => {
+    const parsed = VinayaConfigSchema.safeParse({ logPublish: { issue: 42 } })
+    expect(parsed.success).toBe(false)
+    if (parsed.success) return
+    expect(parsed.error.issues.some((i) => i.path.join('.') === 'logPublish' && i.message.includes('logs'))).toBe(true)
+  })
+
+  it('refuses a config still carrying logPublish.webhookUrl', () => {
+    const parsed = VinayaConfigSchema.safeParse({ logPublish: { webhookUrl: 'https://example.com/ingest' } })
+    expect(parsed.success).toBe(false)
+    if (parsed.success) return
+    expect(parsed.error.issues.some((i) => i.path.join('.') === 'logPublish')).toBe(true)
+  })
+
+  it('an absent logPublish key still validates', () => {
+    expect(VinayaConfigSchema.safeParse({}).success).toBe(true)
+  })
+})
+
 // task-15 (issue-545), O1/O5 — the two additive config keys this task adds.
 describe('VinayaConfigSchema.prePush / .report — additive-only', () => {
   it("this repo's own vinaya.config.json declares prePush.alwaysRun and still validates", () => {

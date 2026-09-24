@@ -8,7 +8,7 @@
  * decision layer built on top of them, mirroring `run-paths.ts`'s own
  * `resolveRuntimeDir`. The sink's own live delivery (folder append, server
  * queue + drain) is covered end to end below, against a real local HTTP
- * server, the same discipline `log-webhook-flush.test.ts` uses.
+ * server, the same discipline `log-webhook-drain.test.ts` uses.
  */
 
 import { afterEach, describe, expect, it } from 'bun:test'
@@ -386,7 +386,7 @@ const LOG_SINK_PATH = join(import.meta.dir, '..', '..', 'src', 'lib', 'log-sink.
  * (found live running this task's own required Test Plan; escalated on
  * Issue #706 before this fix, since neither this file nor these two tests
  * were named among the seven Bun-1.4.2 failures the task's Boundary lists —
- * same root cause as O4's three named `log-webhook-flush.test.ts` tests).
+ * same root cause as O4's three named `log-webhook-drain.test.ts` tests).
  */
 async function runServerDestinationScript(home: string, cwd: string, url: string, effectId: string): Promise<void> {
   const script = join(cwd, `run-log-${effectId}.ts`)

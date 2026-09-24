@@ -598,40 +598,11 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
   },
   {
     key: 'logPublish',
-    type: 'object (optional)',
+    type: 'refused (any value)',
     semantics: [
-      "Where the developer-review loop's own round-end flush publishes telemetry (`apps/cli/src/lib/log-flush.ts`'s `flushOutbox`, called in-process at every round end). Absent — this key's own default for every repo that has never set it — the round-end flush is a no-op: telemetry simply stays in the local, already-bounded outbox until an operator runs `vinaya log flush --issue <n>` by hand. NEVER falls back to the task's own Issue — that Issue is exactly the surface the loop must read to dispatch the next developer round, and publishing unbounded telemetry there is the defect this key exists to prevent. Set at most one of `issue`/`pr`; config load refuses both set together."
+      'Removed (task-files-v1 6, O1): telemetry is never posted to a tracker or a code host in any form, so the comment-posting flush and its `issue`/`pr`/`webhookUrl` destinations are gone. The key is still declared — refused, not silently stripped — so a config that still carries it fails config load loudly, naming `logs` as its replacement, rather than silently losing the setting.'
     ],
-    example: `{
-  "logPublish": {
-    "issue": 42,
-    "maxChunksPerFlush": 5
-  }
-}`
-  },
-  {
-    key: 'logPublish.issue',
-    type: 'number (optional, positive integer)',
-    semantics: [
-      'The Issue the round-end flush posts to. Mutually exclusive with `logPublish.pr`. A value equal to the task being flushed is refused (silently downgraded to unconfigured, reported to stderr by name) rather than recreating the exact defect this key exists to prevent.'
-    ],
-    example: `{ "logPublish": { "issue": 42 } }`
-  },
-  {
-    key: 'logPublish.pr',
-    type: 'number (optional, positive integer)',
-    semantics: [
-      'The pull request the round-end flush posts to, instead of an Issue. Mutually exclusive with `logPublish.issue`.'
-    ],
-    example: `{ "logPublish": { "pr": 42 } }`
-  },
-  {
-    key: 'logPublish.maxChunksPerFlush',
-    type: 'number (optional, positive integer)',
-    semantics: [
-      'Caps how many NEW comments one round-end flush call posts to the configured target — the rest stay queued, untouched, in the outbox for a later flush. Absent defaults to `DEFAULT_MAX_CHUNKS_PER_FLUSH` (`apps/cli/src/lib/config.ts`). A non-zero deferred count is always surfaced visibly (stderr for the round-end flush, stdout for `vinaya log flush`), never silently reported as a complete flush.'
-    ],
-    example: `{ "logPublish": { "maxChunksPerFlush": 10 } }`
+    example: `{ "logs": { "url": "https://ingest.example.com/vinaya" } }`
   },
   {
     key: 'runtimeDir',
@@ -640,7 +611,7 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
       "The one directory every file a task's run writes lives under, laid out as `<runtimeDir>/tasks-execution/<task>/` with the task's files classified by nature: `control/` for the control-store records, `sessions/` for vendor session ids, `hooks/` for the per-run documentation-check files, `output/` for raw agent output and the driver's own log, `rounds/<n>/` for that round's reviewer hand-off files and its read-only candidate, and the driver lock at the task folder's root. Absent — this key's own default — runs write under `~/.vinaya/runtime/<owner>-<repo>` instead; the repository segment is kept there because task numbers repeat across repositories.",
       "Set it to put the tree on a disk with room, or somewhere an existing backup and retention policy already covers. The `logs` setting's own default folder (below) sits under this directory, so moving `runtimeDir` moves the default telemetry destination along with it — a configured `logs.folder`/`logs.url` is unaffected either way.",
       "Repo-local only, and absolute. It is stripped from the machine-global `~/.vinaya/config.json` with a warning, the same as `checks`/`roles`/`principals`/`releaseActor`/`tokens`: only the DEFAULT carries the `<owner>-<repo>` segment, so a machine-wide value would collapse every repository into one tree and give two repositories' identically-numbered tasks the same driver lock, ownership epochs and session records. A relative path is refused (each process would resolve it against its own working directory), and so is one naming a directory inside the repository (a confined role can write there).",
-      "Read from the default branch only by an unattended caller, the same rule `logs`/`logPublish.webhookUrl` carry: a value the working tree declares but the default branch does not is refused and the per-repository default is used instead, so a pull request under review cannot redirect the driver's own lock, control records and reviewer hand-off files into a tree its own agent is allowed to write. An interactively-run command honours the working tree directly.",
+      "Read from the default branch only by an unattended caller, the same rule `logs` carries: a value the working tree declares but the default branch does not is refused and the per-repository default is used instead, so a pull request under review cannot redirect the driver's own lock, control records and reviewer hand-off files into a tree its own agent is allowed to write. An interactively-run command honours the working tree directly.",
       'Changing it does not move what earlier runs left behind — nothing reads or migrates the old folders, so let a run in flight finish, or cancel it, before changing this key.'
     ],
     example: `{ "runtimeDir": "/var/lib/vinaya/runs" }`
@@ -649,10 +620,10 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     key: 'logs',
     type: 'object (optional)',
     semantics: [
-      "Where the Vinaya Log delivers events LIVE, as they occur — no end-of-round batch, no tracker or code-host comment. A folder (`logs.folder`) or a server (`logs.url`), never both. Absent — this key's own default — events go to a folder under this repository's own `runtimeDir`: `<runtimeDir>/logs/<owner>-<repo>/<task>.ndjson`, one line appended per event, in order, readable while the run is still going.",
+      "Where the Vinaya Log delivers events LIVE, as they occur — no end-of-round batch, no tracker or code-host comment, and no `logPublish` key any more (removed: a config still carrying it is refused, naming this key). A folder (`logs.folder`) or a server (`logs.url`), never both. Absent — this key's own default — events go to a folder under this repository's own `runtimeDir`: `<runtimeDir>/logs/<owner>-<repo>/<task>.ndjson`, one line appended per event, in order, readable while the run is still going.",
       `A server destination (\`logs.url\`) delivers each event as it occurs too: the sink appends it to a small local retry queue first, then drains that queue in one POST — the queue holds events only while the server is unreachable, and a later event's own drain catches up whatever is still queued, in order, once it is back. \`logs.headers\` are extra HTTP headers merged into that POST; a value may reference an environment variable with \${VAR_NAME} instead of a literal secret, resolved at delivery time so a credential never sits in the committed config.`,
-      "Read from the default branch only by an unattended caller, the same rule `runtimeDir`/`logPublish.webhookUrl` carry: a `logs.folder`/`logs.url` the working tree declares but the default branch does not is refused, and the per-repository default folder is used instead — a pull request under review cannot redirect an unattended run's own telemetry by editing its own diff. An interactively-run command honours the working tree directly. `logs.folder` must also be an absolute path, for the same reason `runtimeDir` requires one.",
-      'Distinct from `logPublish`, which still backs the separate, manual `vinaya log flush`/`vinaya log collect-artifact` commands — those never read this key.'
+      "Read from the default branch only by an unattended caller, the same rule `runtimeDir` carries: a `logs.folder`/`logs.url` the working tree declares but the default branch does not is refused, and the per-repository default folder is used instead — a pull request under review cannot redirect an unattended run's own telemetry by editing its own diff. An interactively-run command honours the working tree directly. `logs.folder` must also be an absolute path, for the same reason `runtimeDir` requires one.",
+      "A CI job never falls back to a folder, credentialed or not: it delivers to the configured `logs.url` when this job's own environment resolves every referenced header credential to a real value, and otherwise records nothing for this run and says so in the job's own output — never a tracker, a code-host comment, or a CI artifact. A job holding no credential (a fork pull request; GitHub withholds repository secrets from one) is exactly this second case, not a failure."
     ],
     example: `{
   "logs": {

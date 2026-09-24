@@ -707,44 +707,16 @@ export const VinayaConfigSchema = z.object({
       }
     })
     .optional(),
-  // Backs the one-shot `vinaya log flush`/`vinaya log collect-artifact`
-  // commands' own optional webhook-posting mode and per-call chunk bound
-  // (`apps/cli/src/lib/log-flush.ts`'s `flushOutbox`,
-  // `apps/cli/src/lib/log-webhook-flush.ts`'s `flushOutboxToWebhook`) —
-  // never read by the dev-review loop itself, which delivers live through
-  // the `logs` setting instead (above; `apps/cli/specs/log.md` § The
-  // destination). `resolveLogPublishTarget`/`resolveLogPublishMaxChunksPerFlush`
-  // (below) are the two read sides.
-  logPublish: z
-    .object({
-      issue: z.number().int().positive().optional(),
-      pr: z.number().int().positive().optional(),
-      // A third, mutually-exclusive destination alongside issue/pr
-      // (`log-webhook-flush.ts`'s O1): a plain HTTP endpoint that receives
-      // one POST of the outbox's validated, redacted lines as ndjson,
-      // instead of a GitHub Issue/PR comment. No forge account or `gh` auth
-      // required on the receiving end — the point of this option is a
-      // destination an adopter can point at without any GitHub-side setup.
-      webhookUrl: z.string().url().optional(),
-      // Extra headers merged into the POST (e.g. `Authorization`) — only
-      // meaningful alongside `webhookUrl`, checked below.
-      headers: z.record(z.string()).optional(),
-      // Caps how many comments (`FlushChunk`s, each up to
-      // `FORGE_COMMENT_MAX_CHARS`) one `flushOutbox` call posts to this
-      // target — the rest stay queued, untouched, in the outbox for a later
-      // flush (O2's bound, never a drop: `log-flush.ts`'s durability
-      // guarantee — truncate only what the target confirmed — is
-      // unaffected). Absent defaults to `DEFAULT_MAX_CHUNKS_PER_FLUSH`. Not
-      // read by the webhook path, which posts the whole outbox in one call.
-      maxChunksPerFlush: z.number().int().positive().optional()
-    })
-    .refine((v) => [v.issue, v.pr, v.webhookUrl].filter((x) => x !== undefined).length <= 1, {
-      message: 'logPublish: set at most one of issue/pr/webhookUrl'
-    })
-    .refine((v) => v.headers === undefined || v.webhookUrl !== undefined, {
-      message: 'logPublish: headers requires webhookUrl'
-    })
-    .optional(),
+  // Removed (task-files-v1 6, O1): telemetry never reaches a tracker or a
+  // code host in any form, so the comment-posting flush and its
+  // issue/pr/webhookUrl destinations are gone. Kept as a declared-but-refused
+  // key, rather than silently stripped by the object schema's default
+  // unknown-key handling, so a config that still carries it fails loudly
+  // naming its replacement instead of being ignored.
+  logPublish: z.unknown().refine((v) => v === undefined, {
+    message:
+      'logPublish is removed — telemetry is never posted to a tracker or a code host; configure `logs` instead (a folder or a server destination)'
+  }),
   // The one directory every file a task's RUN writes lives under
   // (`apps/cli/src/lib/run-paths.ts`'s `runPath`, the single function that
   // resolves all of them). Absent — the default for every repo that has
@@ -795,7 +767,7 @@ export const VinayaConfigSchema = z.object({
   // committed config (`resolveLogsHeaderValues`, below).
   //
   // **Default-branch only, for an unattended caller** — the exact rule
-  // `runtimeDir`/`logPublish.webhookUrl` already carry: the destination is a
+  // `runtimeDir` already carries: the destination is a
   // path or URL a pull request under review could otherwise redirect in its
   // own diff (`resolveTrustAnchorLogsDestination`, below).
   logs: z
@@ -1057,32 +1029,6 @@ export function resolveReviewPolicy(config: VinayaConfig | null): ReviewPolicy {
   }
 }
 
-/** Exactly one of `issue`/`pr`/`webhookUrl` — mirrors `log-flush.ts`'s own `LogFlushTarget` shape (plus the webhook variant `log-webhook-flush.ts` adds) without importing either (avoids a `config.ts` → `log-flush.ts` dependency; those files already import from `config.ts`, not the reverse). */
-export type LogPublishTarget =
-  | { issue: number }
-  | { pr: number }
-  | { webhookUrl: string; headers?: Record<string, string> }
-
-/**
- * `config?.logPublish`'s `issue`/`pr`/`webhookUrl`, or `null` when the key is
- * absent. Backs the one-shot `vinaya log flush --issue/--pr` and
- * `vinaya log collect-artifact` commands' own webhook-mode branch — both are
- * always human- or trusted-collector-run (never the unattended dev-review
- * loop, which delivers live through the `logs` setting instead, see
- * `resolveLogsSetting` below), so no trust-anchor gate applies here: a human
- * or an already-credentialed CI job is choosing to run the command, the same
- * trust level as running `vinaya.config.json`'s own
- * `dispatch.agent`/`prePush.alwaysRun`.
- */
-export function resolveLogPublishTarget(config: VinayaConfig | null): LogPublishTarget | null {
-  const raw = config?.logPublish
-  if (!raw) return null
-  if (raw.webhookUrl !== undefined) return { webhookUrl: raw.webhookUrl, headers: raw.headers }
-  if (raw.issue !== undefined) return { issue: raw.issue }
-  if (raw.pr !== undefined) return { pr: raw.pr }
-  return null
-}
-
 /**
  * The working tree's own `runtimeDir` — `null` when unset. The value an
  * ATTENDED caller honours directly (a human chose to run the command, the
@@ -1118,16 +1064,7 @@ export function resolveTrustAnchorRuntimeDir(
   return anchored !== null && anchored === localRuntimeDir ? anchored : null
 }
 
-/** `log-flush.ts`'s own default when a caller passes no `maxChunksPerFlush` at all — kept here, next to the config field it backs, so the schema comment and the default never drift apart. */
-export const DEFAULT_MAX_CHUNKS_PER_FLUSH = 5
-
-/** The effective per-flush chunk bound (O2): `config?.logPublish?.maxChunksPerFlush` when a valid positive integer, else `DEFAULT_MAX_CHUNKS_PER_FLUSH`. Same sourcing as `resolveLogPublishTarget`. */
-export function resolveLogPublishMaxChunksPerFlush(config: VinayaConfig | null): number {
-  const n = config?.logPublish?.maxChunksPerFlush
-  return typeof n === 'number' && Number.isInteger(n) && n > 0 ? n : DEFAULT_MAX_CHUNKS_PER_FLUSH
-}
-
-/** Exactly one of `folder`/`url` — `config?.logs`'s resolved shape, mirroring `LogPublishTarget`'s own discriminated-union convention. */
+/** Exactly one of `folder`/`url` — `config?.logs`'s resolved shape. */
 export type LogsDestination = { folder: string } | { url: string; headers?: Record<string, string> }
 
 /**

@@ -50,7 +50,7 @@ const VINAYA_HOME_ALLOWED: ReadonlyArray<{ file: string; why: string }> = [
   },
   { file: 'apps/cli/src/lib/log-sink.ts', why: 'THE TELEMETRY EXCEPTION — the outbox the log tasks own and will move' },
   { file: 'apps/cli/src/lib/log-flush.ts', why: 'the telemetry exception: reads and truncates the same outbox' },
-  { file: 'apps/cli/src/lib/log-webhook-flush.ts', why: 'the telemetry exception: reads the same outbox' },
+  { file: 'apps/cli/src/lib/log-webhook-drain.ts', why: 'the telemetry exception: reads the same outbox' },
   { file: 'apps/cli/src/lib/log-artifact.ts', why: 'the telemetry exception: bundles the same outbox for CI export' },
   {
     file: 'apps/cli/src/lib/task-sweep.ts',

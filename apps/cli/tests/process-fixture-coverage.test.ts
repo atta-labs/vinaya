@@ -537,13 +537,14 @@ function isNonCompliant(content: string): boolean {
 
 /**
  * Round 5's own fix: the two build spawns (`package-root.test.ts`,
- * `commands/check-json-pipe.test.ts`), the log-flush sibling group
- * (`lib/log-flush.test.ts`, `lib/log-webhook-flush.test.ts`,
- * `commands/log-flush.test.ts`), and the three round-4-named sites
- * (`lib/dev-review-loop/gate-reading.test.ts`, `conformance/harness.ts`,
- * `commands/dispatch-task.test.ts`) are all NOT on this list — proven by
- * the negative assertion below, so a regression on any of them is caught
- * as a new offender rather than silently re-covered by a stale entry.
+ * `commands/check-json-pipe.test.ts`), the webhook-drain fixture
+ * (`lib/log-webhook-drain.test.ts` — the sibling GitHub-comment-posting
+ * fixtures it once stood alongside are deleted, task-files-v1 6, O1), and
+ * the three round-4-named sites (`lib/dev-review-loop/gate-reading.test.ts`,
+ * `conformance/harness.ts`, `commands/dispatch-task.test.ts`) are all NOT on
+ * this list — proven by the negative assertion below, so a regression on any
+ * of them is caught as a new offender rather than silently re-covered by a
+ * stale entry.
  * `commands/task-status.test.ts` and `lib/dispatch.test.ts` (already fully
  * migrated in earlier rounds) are also absent — this round's move to
  * call-site precision re-verified both and found no gap.
@@ -605,8 +606,6 @@ const GRANDFATHERED_FILES: readonly string[] = [
   'apps/cli/tests/fixtures/checks/spawns-stubborn-grandchild.ts',
   'apps/cli/tests/init.test.ts',
   'apps/cli/tests/isolation/isolation-probe.test.ts',
-  'apps/cli/tests/lib/artifacts/collect.test.ts',
-  'apps/cli/tests/lib/artifacts/export.test.ts',
   'apps/cli/tests/lib/dispatch/worker-boundary.test.ts',
   'apps/cli/tests/lib/forge-write.test.ts',
   'apps/cli/tests/lib/test-selector.test.ts',
@@ -666,9 +665,7 @@ describe('process-fixture coverage — O3 (#660, round 5): every real-process fi
     const fixed = [
       'apps/cli/tests/package-root.test.ts',
       'apps/cli/tests/commands/check-json-pipe.test.ts',
-      'apps/cli/tests/lib/log-flush.test.ts',
-      'apps/cli/tests/lib/log-webhook-flush.test.ts',
-      'apps/cli/tests/commands/log-flush.test.ts',
+      'apps/cli/tests/lib/log-webhook-drain.test.ts',
       'apps/cli/tests/lib/dev-review-loop/gate-reading.test.ts',
       'apps/cli/tests/conformance/harness.ts',
       'apps/cli/tests/commands/dispatch-task.test.ts',

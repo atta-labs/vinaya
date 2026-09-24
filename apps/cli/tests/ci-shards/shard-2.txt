@@ -22,7 +22,6 @@ tests/checks/token-collection-wiring-logic.test.ts
 tests/claude-command-emitter.test.ts
 tests/commands/dispatch-task.test.ts
 tests/commands/issue.test.ts
-tests/commands/log-flush.test.ts
 tests/commands/pr-create-brief-comment.test.ts
 tests/commands/pr-rule.test.ts
 tests/commands/pr.test.ts
@@ -37,7 +36,7 @@ tests/lib/dev-review-loop/developer-dispatch.test.ts
 tests/lib/dev-review-loop/publication.test.ts
 tests/lib/dispatch-task.test.ts
 tests/lib/dispatch.test.ts
-tests/lib/log-webhook-flush.test.ts
+tests/lib/log-webhook-drain.test.ts
 tests/lib/pr-report-engine.test.ts
 tests/lib/remote-base.test.ts
 tests/lib/test-selector.test.ts
@@ -57,6 +56,5 @@ tests/lib/broker/operator-grants.test.ts
 tests/lib/dispatch/unattended-publication.test.ts
 tests/lib/task-run/background.test.ts
 tests/checks/runner/cancelled.test.ts
-tests/lib/artifacts/export.test.ts
 tests/run-paths-only.test.ts
 tests/conformance/claude.test.ts
