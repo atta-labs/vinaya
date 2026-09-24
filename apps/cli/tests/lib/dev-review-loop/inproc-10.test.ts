@@ -1,0 +1,212 @@
+/**
+ * In-process tests for issue-711 O4: a pause never ends the driver.
+ * `runDriverLoop` (`dev-review-loop.ts`) is the watching driver
+ * `dev-review-loop --task <n>` and `task run` compose instead of calling
+ * `devReviewLoop` directly — see its own module doc comment for the full
+ * design. These tests drive it through `runDriverLoopInProcess`
+ * (`dev-review-loop-harness.ts`), which threads `world.prState` and fast,
+ * near-zero poll/backoff intervals so a real driver-watch cycle runs in
+ * test time, never a real wall-clock wait.
+ */
+
+import { afterEach, describe, expect, it } from 'bun:test'
+import { escalationIdFor, type LoopDeps, resolveEscalation } from '../../../src/lib/dev-review-loop.js'
+import { readPauseState } from '../../../src/lib/dev-review-loop/pause-resume.js'
+import {
+  cleanupWorlds,
+  makeInProcessDeps,
+  makeWorld,
+  runDriverLoopInProcess,
+  type LoopWorld,
+  type RoleOutcome
+} from '../dev-review-loop-harness.js'
+
+afterEach(cleanupWorlds)
+
+/** The reviewer outcome for a round-1 `ESCALATE: authority` — the shortest real path into `pause{reason:'escalation'}`, the same shape `inproc-7.test.ts`'s own `makeEscalationWorld` uses. */
+const ESCALATE_REVIEWER: RoleOutcome = {
+  findings: '',
+  report: 'ESCALATE: authority\nSUMMARY: needs a call nobody made.\n',
+  objectives: null,
+  sessionId: 'rev-session-1'
+}
+
+function makeEscalationWorld(overrides: Partial<LoopWorld> = {}): LoopWorld {
+  return makeWorld({ roleOutcomes: { 1: { reviewer: ESCALATE_REVIEWER } }, ...overrides })
+}
+
+describe('runDriverLoop — issue-711 O4: a pause never ends the driver; it watches the pull request and continues once a newer ruling appears', () => {
+  it('drives ONE call through a pause, a ruling posted while it waits, and on to publish — no resume command', async () => {
+    const world = makeEscalationWorld()
+    let sleepCalls = 0
+
+    const result = await runDriverLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {},
+      {
+        sleep: async (ms) => {
+          sleepCalls += 1
+          if (sleepCalls === 1) {
+            // Simulate a Principal posting a ruling ON THE PR while this
+            // driver is watching it — never a resume command run against
+            // it. Round 1's reviewer also comes back clean on the retry,
+            // the same "escalated once, clean on retry" shape
+            // `inproc-7.test.ts`'s own hand-driven `--resume` test uses.
+            world.rulings = ['Go ahead and fix it.']
+            world.rulingOrdinal = 1
+            world.rulingAuthor = 'daniboomerang'
+            world.roleOutcomes[1]!.reviewer = undefined
+          }
+          await new Promise((r) => setTimeout(r, ms > 0 ? 1 : 0))
+        }
+      }
+    )
+
+    expect(result.finalDecision).toEqual({ type: 'publish' })
+    expect(world.publishedRounds).toEqual([1])
+    // The watcher itself made at least one poll wait before the ruling was
+    // ready to act on — proof this ran through the watch loop, never a
+    // direct `devReviewLoop({resumePr})` call this test made by hand.
+    expect(sleepCalls).toBeGreaterThanOrEqual(1)
+  })
+
+  it('ends the driver once the pull request is merged while it watches — never a pause, never a resume attempt', async () => {
+    const world = makeEscalationWorld()
+
+    const result = await runDriverLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {},
+      {
+        sleep: async (ms) => {
+          // The pull request merges (a human admin-merged it, or another
+          // process did) while this driver is still watching its own
+          // escalation pause — no ruling is ever posted.
+          world.prState = 'MERGED'
+          await new Promise((r) => setTimeout(r, ms > 0 ? 1 : 0))
+        }
+      }
+    )
+
+    expect(result.finalDecision).toEqual({ type: 'ended', reason: 'merged' })
+    // Round 1 stayed paused — no resumed dispatch ever ran.
+    expect(world.dispatchCountByRole['code-reviewer']).toBe(1)
+    expect(world.publishedRounds).toEqual([])
+  })
+
+  it('ends the driver once the pull request is closed while it watches', async () => {
+    const world = makeEscalationWorld()
+
+    const result = await runDriverLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {},
+      {
+        sleep: async (ms) => {
+          world.prState = 'CLOSED'
+          await new Promise((r) => setTimeout(r, ms > 0 ? 1 : 0))
+        }
+      }
+    )
+
+    expect(result.finalDecision).toEqual({ type: 'ended', reason: 'closed' })
+  })
+
+  it('ends the driver on --cancel’s own resolution, consumed while it watches — the same single-consumption escalation record `cancelDevReviewLoop` writes', async () => {
+    const world = makeEscalationWorld()
+
+    const result = await runDriverLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {},
+      {
+        sleep: async (ms) => {
+          // Stand in for a separate `vinaya dev-review-loop --cancel <pr>`
+          // process: it authenticates against a posted ruling (out of this
+          // test's own scope — `cancelDevReviewLoop` covers that
+          // separately) and consumes THIS pause's own escalation via the
+          // SAME `resolveEscalation` call, decision `'cancel'`.
+          const held = readPauseState(world.runtimeDir, world.task)
+          if (held) {
+            const escalationId = held.escalationId ?? escalationIdFor(world.task, held.round, held.head)
+            resolveEscalation(
+              world.task,
+              escalationId,
+              world.prNumber,
+              'cancel',
+              'daniboomerang',
+              `${world.prNumber}-1`
+            )
+          }
+          await new Promise((r) => setTimeout(r, ms > 0 ? 1 : 0))
+        }
+      }
+    )
+
+    expect(result.finalDecision).toEqual({ type: 'ended', reason: 'cancelled' })
+    expect(world.publishedRounds).toEqual([])
+  })
+
+  it('an infrastructure pause retries on its own after a bounded backoff, with no ruling ever posted', async () => {
+    // Round 1's mechanical gate stays red long enough to hit the bounded
+    // `MAX_GATE_STALLED_TURNS` stall — the same driver-decided
+    // `pause{reason:'infrastructure'}` `inproc-2.test.ts` already covers on
+    // its own; this test's own subject is that the WATCHING driver retries
+    // it, unattended, rather than requiring a hand `--resume`.
+    const world = makeWorld({ gate: 'red' })
+    let backoffWaited = false
+
+    const result = await runDriverLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {},
+      {
+        infrastructureBackoffMs: 5,
+        sleep: async (ms) => {
+          if (ms === 5) {
+            // The one bounded backoff wait this pause reason takes before
+            // its own bare-resume retry — the gate turns green during it,
+            // so the retry that follows actually succeeds.
+            backoffWaited = true
+            world.gate = 'green'
+          }
+          await new Promise((r) => setTimeout(r, 1))
+        }
+      }
+    )
+
+    expect(backoffWaited).toBe(true)
+    expect(result.finalDecision).toEqual({ type: 'publish' })
+    // Never a Principal ruling — this reason's own bare-resume allowance
+    // (the SAME one a hand `--resume` already gets for it) is what let this
+    // driver continue on its own.
+    expect(world.rulings).toHaveLength(0)
+  })
+
+  it('never watches the pre-first-push escalation — no pull request exists yet, so it ends exactly as before this task', async () => {
+    // The developer never reaches the remote at all — `afterDeveloperTurnBeforePrPoll`
+    // throws `DeveloperStopSignal` before any branch/PR exists, the ONE
+    // pause `prNumber <= 0` names (this file's own module doc, and
+    // `dev-review-loop.ts`'s `runDriverLoop` doc comment). The default
+    // world-backed `dispatchRole` fake always marks a developer dispatch as
+    // pushed, so the developer half is replaced here with one that never
+    // does — matching "no branch ever reached the remote" for real.
+    const world = makeWorld({ developerStop: 'ESCALATE: no brief section names this repo at all.' as never })
+    const base = makeInProcessDeps(world)
+    const dispatchRole: LoopDeps['dispatchRole'] = async (role, agent, prompt, opts) => {
+      if (role === 'developer') {
+        return { exitCode: 0, durationMs: 1, usage: null, resumeId: null, timedOut: false, effectId: 'eff-dev-1' }
+      }
+      return base.dispatchRole!(role, agent, prompt, opts)
+    }
+
+    const result = await runDriverLoopInProcess(world, { task: world.task, agent: 'claude' }, { dispatchRole }, {})
+
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'escalation' })
+    expect(result.prNumber).toBe(0)
+    // Never entered the watch loop — no additional poll/backoff wait beyond
+    // whatever this pre-PR path itself needed (none).
+    expect(world.dispatchCountByRole['code-reviewer']).toBeUndefined()
+  })
+})
