@@ -793,6 +793,25 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
   ],
   [
     {
+      // Refuses a commit that stages a new CLI test file not
+      // listed in any `apps/cli/tests/ci-shards/shard-{1,2,3}.txt` —
+      // `tests/ci-shards.test.ts` already enforces the same rule, but only at
+      // push time, over the whole affected suite. No `include` glob: the
+      // bin reads `git diff --cached` itself to see the file being staged
+      // for THIS commit, which a committed-history diff (what an `include`
+      // glob would be tested against) cannot see before the commit exists.
+      name: 'ci-shard-coverage',
+      run: bin('check-ci-shard-coverage'),
+      scope: 'diff',
+      timeoutMs: 15_000,
+      // Local-only: `git diff --cached`/`git show :<path>`, never the
+      // network — same shape as `exec-bits` above.
+      env: {}
+    },
+    0
+  ],
+  [
+    {
       name: 'workspace-escape',
       run: bin('check-workspace-escape'),
       scope: 'full',
