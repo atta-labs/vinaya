@@ -42,6 +42,13 @@ import { devReviewLoop, type LoopDeps, type LoopInput, type LoopResult } from '.
 import { resolveLogAppendPath as realResolveLogAppendPath } from '../../src/lib/log-sink.js'
 import { resetRuntimeDirCache } from '../../src/lib/run-paths.js'
 import type { DispatchHandle } from '../../src/lib/dispatch.js'
+import {
+  pauseMarker,
+  renderNoPushStopComment,
+  renderPauseComment,
+  sanitizePublicPauseDetail
+} from '../../src/lib/dev-review-loop/pause-resume.js'
+import { markedCommentBody } from '../../src/lib/forge-write.js'
 import { objectivesOf, objectivesVersion, renderObjectives } from '@attalabs/aeg-core'
 
 /** The role output files a fake reviewer/security dispatch writes into its work dir — the exact grammar the real reviewer binary produces. */
@@ -54,15 +61,17 @@ export type RoleOutcome = {
   objectives: string | null
   /** The vendor session id this dispatch reports. */
   sessionId: string
+  /** When true, the dispatch writes NO artifact files at all — the "a reviewer that wrote nothing" infrastructure-pause scenario. */
+  writesNothing?: boolean
 }
 
-const CLEAN_REVIEWER: RoleOutcome = {
+export const CLEAN_REVIEWER: RoleOutcome = {
   findings: '',
   report: 'BRIEF_CONFORMANCE: yes\nSPEC_CONFORMANCE: yes\nSCOPE: small\nTESTS: pass\nDOCS: n/a\n',
   objectives: 'O1|MET|done.\n',
   sessionId: 'rev-session-1'
 }
-const CLEAN_SECURITY: RoleOutcome = {
+export const CLEAN_SECURITY: RoleOutcome = {
   findings: '',
   report: 'CONFIG_SCAN: clean\nSECRETS: none found\n',
   objectives: 'O1|MET|done.\n',
@@ -137,7 +146,7 @@ export type LoopWorld = {
   cleanup: () => void
 }
 
-/** A whole (`40`-frames-a-second) sha of the letter, e.g. `'a'.repeat(40)`. */
+/** A 40-char sha made of one repeated letter, e.g. `sha('a') === 'a'.repeat(40)`. */
 function sha(ch: string): string {
   return ch.repeat(40)
 }
@@ -262,7 +271,7 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
       const workDir = opts.extraWritableDirs?.[0]
       const reviewRole = role === 'code-reviewer' ? 'reviewer' : 'security'
       const outcome = roleOutcomeFor(world, reviewRole, round)
-      if (workDir) writeRoleArtifacts(workDir, outcome)
+      if (workDir && !outcome.writesNothing) writeRoleArtifacts(workDir, outcome)
       world.dispatches.push({ role, round, resumeId: outcome.sessionId })
       return handle(outcome.sessionId, `eff-${reviewRole}-${++dispatchSeq}`)
     },
@@ -356,21 +365,22 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
       return `https://github.com/example/repo/${kind}/${ref}#issuecomment-${world.postedComments.length}`
     },
     postPauseComment: (_task, _round, _head, prNumber, reason, detail) => {
-      world.postedComments.push({
-        kind: 'pr',
-        ref: String(prNumber),
-        marker: `pause:${reason}`,
-        body: detail ?? ''
-      })
+      // Render the REAL marked body (sanitize → marker → renderPauseComment →
+      // markedCommentBody) — the same pure pipeline production `postPauseComment`
+      // runs before its `gh` post. Only the network post and the control-store
+      // idempotency record are skipped, so a test asserting on the posted pause
+      // comment's marker/detail/shape reads exactly what the forge would receive.
+      const publicDetail = detail === undefined ? undefined : sanitizePublicPauseDetail(detail)
+      const marker = pauseMarker(reason)
+      const body = markedCommentBody(marker, renderPauseComment(prNumber, reason, publicDetail))
+      world.postedComments.push({ kind: 'pr', ref: String(prNumber), marker, body })
       return { posted: true, url: 'https://example/pause', attempts: 1 } as never
     },
-    postIssuePauseComment: (_task, _round, reason, detail) => {
-      world.postedComments.push({
-        kind: 'issue',
-        ref: String(world.task),
-        marker: `pause:${reason}`,
-        body: detail ?? ''
-      })
+    postIssuePauseComment: (task, _round, reason, detail) => {
+      const publicDetail = detail === undefined ? undefined : sanitizePublicPauseDetail(detail)
+      const marker = pauseMarker(reason)
+      const body = markedCommentBody(marker, renderNoPushStopComment(task, reason, publicDetail))
+      world.postedComments.push({ kind: 'issue', ref: String(task), marker, body })
       return { posted: true, url: 'https://example/issue-pause', attempts: 1 } as never
     },
     publishRound: (_root, input) => {

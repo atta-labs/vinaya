@@ -99,7 +99,9 @@ import {
   type DevReviewLoopEventInput
 } from '@attalabs/aeg-core'
 import {
+  CLEAN_SECURITY,
   cleanupWorlds,
+  controlDir as ipControlDir,
   makeWorld,
   outboxLines as ipOutboxLines,
   roundDir as ipRoundDir,
@@ -4113,32 +4115,21 @@ exit 0
   )
 }
 
-function setUpReviewerWritesNothing(): { home: string; cwd: string; path: string } {
-  const home = tempDir('vinaya-drl-home-')
-  const cwd = tempDir('vinaya-drl-cwd-')
-  const binDir = tempDir('vinaya-drl-bin-')
-  writeFakeClaudeReviewerWritesNothingScenario(binDir)
-  writeFakeGh(binDir)
-  writeFakeGit(binDir)
-  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
-}
-
 describe('devReviewLoop — a reviewer that wrote nothing cast no verdict (O1/O2)', () => {
-  it('retries once into a fresh work directory, then pauses naming the role and the missing artifacts — nothing held or published', () => {
-    const { home, cwd, path } = setUpReviewerWritesNothing()
-    const r = runLoop(home, cwd, path)
-    expect(r.status).not.toBe(0)
-    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+  it('retries once into a fresh work directory, then pauses naming the role and the missing artifacts — nothing held or published', async () => {
+    // Security writes NO artifact files, on both its attempts.
+    const world = makeWorld({ roleOutcomes: { 1: { security: { ...CLEAN_SECURITY, writesNothing: true } } } })
+    const result = await runLoopInProcess(world)
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
 
     // Two genuinely separate dispatches for the failing role — one attempt,
     // one fresh retry — never the same call read twice.
-    const invocations = readFileSync(join(home, '.security-invocations'), 'utf8').trim().split('\n').filter(Boolean)
-    expect(invocations).toHaveLength(2)
+    expect(world.dispatchCountByRole.security).toBe(2)
 
     // The retry used a genuinely fresh directory — the first attempt's own
     // directory is never reused or resumed.
-    expect(existsSync(join(roundDir(home, 1), 'security-work'))).toBe(true)
-    expect(existsSync(join(roundDir(home, 1), 'security-work-retry1'))).toBe(true)
+    expect(existsSync(join(ipRoundDir(world, 1), 'security-work'))).toBe(true)
+    expect(existsSync(join(ipRoundDir(world, 1), 'security-work-retry1'))).toBe(true)
 
     // Nothing held or published for this round: no security verdict file
     // ever got written, and the round never advanced past 1. The code-review
@@ -4147,9 +4138,9 @@ describe('devReviewLoop — a reviewer that wrote nothing cast no verdict (O1/O2
     // BLOCKER, PR #489: `writeHeldVerdict` used to run inside `dispatchReviewer`
     // itself, so the succeeding role's file was already written by the time
     // `Promise.all` rejected on its sibling).
-    expect(existsSync(join(roundDir(home, 1), 'reviewer.md'))).toBe(false)
-    expect(existsSync(join(roundDir(home, 1), 'security.md'))).toBe(false)
-    const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
+    expect(existsSync(join(ipRoundDir(world, 1), 'reviewer.md'))).toBe(false)
+    expect(existsSync(join(ipRoundDir(world, 1), 'security.md'))).toBe(false)
+    const pauseState = JSON.parse(readFileSync(join(ipControlDir(world), 'pause-state.json'), 'utf8')) as Record<
       string,
       unknown
     >
@@ -4158,9 +4149,8 @@ describe('devReviewLoop — a reviewer that wrote nothing cast no verdict (O1/O2
 
     // Two comments: the round marker (posted before either
     // reviewer even dispatches) and the pause. Never a verdict.
-    const pausedFiles = postedCommentFiles(home)
-    expect(pausedFiles).toHaveLength(2)
-    const pauseComment = readFileSync(join(home, '.fake-gh-posted-comments', pausedFiles[1] as string), 'utf8')
+    expect(world.postedComments).toHaveLength(2)
+    const pauseComment = world.postedComments[1]!.body
     expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:infrastructure -->$/m)
     expect(pauseComment).toMatch(/security/)
     expect(pauseComment).toMatch(/findings\.txt/)
@@ -4175,7 +4165,7 @@ describe('devReviewLoop — a reviewer that wrote nothing cast no verdict (O1/O2
     // `packages/aeg-core`, so this is driver-built, reusing the schema's
     // existing `'principal_stop'`/`'principal_item'` values, never a new
     // schema value — see that function's own doc comment).
-    const loopEvents = outboxLines(home)
+    const loopEvents = ipOutboxLines(world)
       .filter((l) => l.kind === 'dev_review_loop')
       .map((l) => l.event)
     expect(loopEvents).toEqual([
@@ -4187,11 +4177,14 @@ describe('devReviewLoop — a reviewer that wrote nothing cast no verdict (O1/O2
       'round_ended',
       'journal_finalized'
     ])
-    const stop = outboxLines(home).find((l) => l.event === 'stop_condition_met') as Record<string, unknown>
+    const stop = ipOutboxLines(world).find((l) => l.event === 'stop_condition_met') as Record<string, unknown>
     expect(stop.condition).toBe('principal_stop')
-    const journalFinalized = outboxLines(home).find((l) => l.event === 'journal_finalized') as Record<string, unknown>
+    const journalFinalized = ipOutboxLines(world).find((l) => l.event === 'journal_finalized') as Record<
+      string,
+      unknown
+    >
     expect(journalFinalized.result).toBe('stopped')
-  }, 45000)
+  })
 })
 
 /**

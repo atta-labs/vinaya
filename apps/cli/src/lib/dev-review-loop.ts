@@ -3503,7 +3503,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // with a synthetic 'infrastructure' one.
           await logPauseCommentRetryIfNotable(
             round,
-            postPauseComment(task, round, pauseHead, prNumber, decision.reason, decision.detail, {
+            d.postPauseComment(task, round, pauseHead, prNumber, decision.reason, decision.detail, {
               agent: dispatchAgent,
               ...(dispatchModel ? { model: dispatchModel } : {})
             })
