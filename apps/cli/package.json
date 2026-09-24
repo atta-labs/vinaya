@@ -8,7 +8,8 @@
   "bin": {
     "vinaya": "./dist/index.js",
     "vinaya-select-tests": "./dist/lib/pre-push-select-tests.js",
-    "vinaya-changed-files": "./dist/lib/pre-push-changed-files.js"
+    "vinaya-changed-files": "./dist/lib/pre-push-changed-files.js",
+    "vinaya-cache-test-run": "./dist/lib/pre-push-cache-test-run.js"
   },
   "files": [
     "dist",

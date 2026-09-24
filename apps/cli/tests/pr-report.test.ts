@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -15,7 +15,9 @@ import {
   computeGroupA,
   computeGroupC,
   DEFAULT_COMMAND_TIMEOUT_MS,
+  defaultTestRunCache,
   extractAgentCommandLines,
+  fileBackedTestRunCache,
   type GateOutcome,
   type GateRunner,
   type GateRunResult,
@@ -24,14 +26,20 @@ import {
   MissingEvidenceAnchorError,
   prReportCommand,
   prReportExitCode,
+  recordGreenTestRun,
+  renderGroupC,
   replaceEvidenceBlock,
   resolveCommandTimeoutMs,
   runAgentCommand,
   spliceIntoLiveBody,
+  type TestRunCache,
+  type TestRunCacheRecord,
+  testRunCacheKey,
   UnresolvableMergeBaseError,
   writeTokensBlock
 } from '../src/commands/pr-report'
 import { resolveTokenReportCapabilityWith } from '../src/lib/pr-report-engine'
+import { spawnBudgetedAsync, stripVinayaEnv } from './lib/process-fixture'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
@@ -461,15 +469,31 @@ describe('resolveCommandTimeoutMs (issue-545, O5)', () => {
 
 describe('groupCFailed', () => {
   it('false when every command exited 0', () => {
-    expect(groupCFailed({ commands: [{ command: 'x', output: '', exitCode: 0, timedOut: false }] })).toBe(false)
+    expect(
+      groupCFailed({ commands: [{ command: 'x', output: '', exitCode: 0, timedOut: false, overflowed: false }] })
+    ).toBe(false)
   })
 
   it('true when any command exited non-zero', () => {
-    expect(groupCFailed({ commands: [{ command: 'x', output: '', exitCode: 1, timedOut: false }] })).toBe(true)
+    expect(
+      groupCFailed({ commands: [{ command: 'x', output: '', exitCode: 1, timedOut: false, overflowed: false }] })
+    ).toBe(true)
   })
 
   it('true when any command timed out', () => {
-    expect(groupCFailed({ commands: [{ command: 'x', output: 'timeout', exitCode: null, timedOut: true }] })).toBe(true)
+    expect(
+      groupCFailed({
+        commands: [{ command: 'x', output: 'timeout', exitCode: null, timedOut: true, overflowed: false }]
+      })
+    ).toBe(true)
+  })
+
+  it('true when any command overflowed its output budget (O4, Issue #707)', () => {
+    expect(
+      groupCFailed({
+        commands: [{ command: 'x', output: 'output overflow', exitCode: null, timedOut: false, overflowed: true }]
+      })
+    ).toBe(true)
   })
 
   it('false for zero commands', () => {
@@ -482,8 +506,20 @@ describe('computeGroupC — extracts and runs, end to end', () => {
     const body = ['## Test Plan', '', '```', 'echo one → one', 'echo two → two', '```'].join('\n')
     const groupC = await computeGroupC(body)
     expect(groupC.commands).toHaveLength(2)
-    expect(groupC.commands[0]).toEqual({ command: 'echo one', output: 'one', exitCode: 0, timedOut: false })
-    expect(groupC.commands[1]).toEqual({ command: 'echo two', output: 'two', exitCode: 0, timedOut: false })
+    expect(groupC.commands[0]).toEqual({
+      command: 'echo one',
+      output: 'one',
+      exitCode: 0,
+      timedOut: false,
+      overflowed: false
+    })
+    expect(groupC.commands[1]).toEqual({
+      command: 'echo two',
+      output: 'two',
+      exitCode: 0,
+      timedOut: false,
+      overflowed: false
+    })
   })
 
   it('is the empty commands list for a body with no Test Plan command list', async () => {
@@ -507,6 +543,499 @@ describe('computeGroupC — extracts and runs, end to end', () => {
     expect(withoutExtras.commands[0]?.output).toBe('pr= branch=')
     const withExtras = await computeGroupC(body, undefined, { PR_NUMBER: '623', BRANCH: 'task/worker-isolation-v1/3' })
     expect(withExtras.commands[0]?.output).toBe('pr=623 branch=task/worker-isolation-v1/3')
+  })
+})
+
+/** An in-memory `TestRunCache` for a test — no disk, no shared state with another test or the real machine's runtime directory. */
+function memoryTestRunCache(): TestRunCache {
+  const store = new Map<string, TestRunCacheRecord>()
+  return {
+    get: (key) => store.get(key),
+    set: (key, record) => store.set(key, record)
+  }
+}
+
+function initTestGitRepo(dir: string): void {
+  execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: dir })
+  execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir })
+  execFileSync('git', ['config', 'user.name', 'Test'], { cwd: dir })
+  writeFileSync(join(dir, 'README.md'), 'hello\n')
+  execFileSync('git', ['add', '.'], { cwd: dir })
+  execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: dir })
+}
+
+// Issue #707, O3 — a Test-plan command that already ran green against the
+// exact head and working tree is reused, never run again, and the evidence
+// names the run it reused. `counterFile` (appended to by the command itself)
+// is the ground truth for "did this actually re-run", independent of
+// whatever `runAgentCommand` reports about itself.
+describe('runAgentCommand / computeGroupC — test-run reuse (O3, Issue #707)', () => {
+  it('a second run of the identical command against the identical head and working tree reuses the first — the command itself never runs twice', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-reuse-'))
+    initTestGitRepo(dir)
+    const cache = memoryTestRunCache()
+    // Outside `dir` on purpose: the command's OWN write must never itself
+    // become an untracked file the working-tree hash picks up, or every
+    // "same tree" run would look different from the last.
+    const counterFile = join(mkdtempSync(join(tmpdir(), 'pr-report-reuse-counter-')), 'counter.txt')
+    const command = `echo -n x >> ${counterFile}`
+
+    const first = await runAgentCommand(command, undefined, dir, {}, cache)
+    expect(first.reusedFrom).toBeUndefined()
+    expect(first.exitCode).toBe(0)
+    expect(readFileSync(counterFile, 'utf8')).toBe('x')
+
+    const second = await runAgentCommand(command, undefined, dir, {}, cache)
+    expect(second.reusedFrom).toBeDefined()
+    expect(second.reusedFrom).toContain('pr-report')
+    expect(second.exitCode).toBe(0)
+    expect(second.timedOut).toBe(false)
+    expect(second.overflowed).toBe(false)
+    // The counter file still holds exactly one `x` — the command itself was
+    // never spawned a second time.
+    expect(readFileSync(counterFile, 'utf8')).toBe('x')
+  })
+
+  it('a working-tree change invalidates reuse — the command runs again', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-reuse-tree-'))
+    initTestGitRepo(dir)
+    const cache = memoryTestRunCache()
+    const counterFile = join(mkdtempSync(join(tmpdir(), 'pr-report-reuse-tree-counter-')), 'counter.txt')
+    const command = `echo -n x >> ${counterFile}`
+
+    await runAgentCommand(command, undefined, dir, {}, cache)
+    expect(readFileSync(counterFile, 'utf8')).toBe('x')
+
+    // A real, uncommitted change to the working tree — the same head, a
+    // different tree.
+    writeFileSync(join(dir, 'README.md'), 'hello, changed\n')
+
+    const afterChange = await runAgentCommand(command, undefined, dir, {}, cache)
+    expect(afterChange.reusedFrom).toBeUndefined()
+    expect(readFileSync(counterFile, 'utf8')).toBe('xx')
+  })
+
+  it('a failing command is never cached — reruns every time', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-reuse-fail-'))
+    initTestGitRepo(dir)
+    const cache = memoryTestRunCache()
+    const counterFile = join(mkdtempSync(join(tmpdir(), 'pr-report-reuse-fail-counter-')), 'counter.txt')
+    const command = `echo -n x >> ${counterFile}; exit 1`
+
+    const first = await runAgentCommand(command, undefined, dir, {}, cache)
+    expect(first.exitCode).toBe(1)
+    expect(first.reusedFrom).toBeUndefined()
+
+    const second = await runAgentCommand(command, undefined, dir, {}, cache)
+    expect(second.exitCode).toBe(1)
+    expect(second.reusedFrom).toBeUndefined()
+    // Ran twice — a failing result is never a green run worth reusing.
+    expect(readFileSync(counterFile, 'utf8')).toBe('xx')
+  })
+
+  it('computeGroupC threads the cache through every command in the list, and a second call on the same head/tree finishes without re-running any of them', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-reuse-groupc-'))
+    initTestGitRepo(dir)
+    const cache = memoryTestRunCache()
+    const counterFile = join(mkdtempSync(join(tmpdir(), 'pr-report-reuse-groupc-counter-')), 'counter.txt')
+    const body = ['## Test Plan', '', '```', `echo -n a >> ${counterFile}`, `echo -n b >> ${counterFile}`, '```'].join(
+      '\n'
+    )
+
+    const first = await computeGroupC(body, dir, {}, cache)
+    expect(first.commands.every((c) => c.reusedFrom === undefined)).toBe(true)
+    expect(readFileSync(counterFile, 'utf8')).toBe('ab')
+
+    const started = performance.now()
+    const second = await computeGroupC(body, dir, {}, cache)
+    const elapsedMs = performance.now() - started
+    expect(second.commands.every((c) => c.reusedFrom !== undefined)).toBe(true)
+    expect(readFileSync(counterFile, 'utf8')).toBe('ab')
+    // Reused, not re-run — no process spawn on the second pass, so this
+    // stays well under the second it would cost to fork `bash -c` twice more.
+    expect(elapsedMs).toBeLessThan(1000)
+  })
+
+  it('renderGroupC names the run a reused command reused, right below its own fence', () => {
+    const rendered = renderGroupC({
+      commands: [
+        {
+          command: 'bun test x.test.ts',
+          output: '1 pass, 0 fail',
+          exitCode: 0,
+          timedOut: false,
+          overflowed: false,
+          reusedFrom: 'a green run recorded 2026-09-24T00:00:00.000Z (pr-report)'
+        }
+      ]
+    })
+    expect(rendered).toContain('1 pass, 0 fail')
+    expect(rendered).toContain('Reused from a green run recorded 2026-09-24T00:00:00.000Z (pr-report) — not re-run.')
+  })
+})
+
+// Round-2 review, BLOCKER — O3 promises reuse "in the pre-push hook or an
+// earlier pr report", but nothing ever wrote a `source: 'pre-push'` record.
+// `recordGreenTestRun` is what the hook's own `pre-push-cache-test-run.ts`
+// calls; these tests prove the write it makes is the SAME cache a later
+// `computeGroupC` reads from — the hook-then-report sequence the finding
+// said was unreachable.
+describe('recordGreenTestRun — the pre-push hook half of O3 reuse (round-2 review, BLOCKER)', () => {
+  it('a run recorded with source "pre-push" is reused by a later computeGroupC, named as such', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-prepush-reuse-'))
+    initTestGitRepo(dir)
+    const cache = memoryTestRunCache()
+
+    const recorded = await recordGreenTestRun('bun test x.test.ts', '3 pass, 0 fail', dir, 'pre-push', cache)
+    expect(recorded).toBe(true)
+
+    const body = ['## Test Plan', '', '```', 'bun test x.test.ts', '```'].join('\n')
+    const groupC = await computeGroupC(body, dir, {}, cache)
+    expect(groupC.commands[0]?.output).toBe('3 pass, 0 fail')
+    expect(groupC.commands[0]?.reusedFrom).toContain('pre-push')
+  })
+
+  it('returns false and records nothing when the working tree cannot be resolved (no git repo at all)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-prepush-nogit-'))
+    const cache = memoryTestRunCache()
+    const recorded = await recordGreenTestRun('echo hi', 'hi', dir, 'pre-push', cache)
+    expect(recorded).toBe(false)
+  })
+
+  it("defaultTestRunCache() with no args is a real, usable cache (the pre-push script's own default before a PR exists)", () => {
+    const cache = defaultTestRunCache()
+    expect(typeof cache.get).toBe('function')
+    expect(typeof cache.set).toBe('function')
+  })
+
+  it('the real generated hook script (pre-push-cache-test-run.ts), spawned as a subprocess, writes a record a later computeGroupC reuses', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-prepush-script-'))
+    initTestGitRepo(dir)
+    const runtimeDir = mkdtempSync(join(tmpdir(), 'pr-report-prepush-script-runtime-'))
+    const logFile = join(dir, 'captured-output.txt')
+    writeFileSync(logFile, '2 pass, 0 fail\n')
+    const scriptPath = join(CLI_ROOT, 'src', 'lib', 'pre-push-cache-test-run.ts')
+
+    await spawnBudgetedAsync(
+      ['bun', scriptPath, 'bun test y.test.ts', logFile],
+      { cwd: dir, env: { ...stripVinayaEnv(), VINAYA_RUNTIME_DIR: runtimeDir } },
+      undefined,
+      'pre-push-cache-test-run.ts'
+    )
+
+    const cachePath = join(runtimeDir, 'tasks-execution', 'unscoped', 'output', 'test-run-cache.json')
+    const cacheContents = JSON.parse(readFileSync(cachePath, 'utf8')) as Record<string, { source: string }>
+    const records = Object.values(cacheContents)
+    expect(records).toHaveLength(1)
+    expect(records[0]?.source).toBe('pre-push')
+  })
+})
+
+// Round-3 security review, MEDIUM — `defaultTestRunCache` used to scope its
+// file by `PR_NUMBER` when one was set, but the pre-push hook's own writer
+// never sets one (it runs at push time, often before a PR exists) — so the
+// hook always wrote the unscoped file while `pr report --push` on a real
+// open PR set `PR_NUMBER` and read/wrote a DIFFERENT, PR-scoped file. Fixed:
+// one shared, always-unscoped file for every caller.
+describe('defaultTestRunCache — one shared file regardless of PR_NUMBER (round-3 security review, MEDIUM)', () => {
+  it('a run the pre-push hook recorded is reused by buildReport even when PR_NUMBER is set, the real `pr report --push` shape', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-scope-consistency-'))
+    initTestGitRepo(dir)
+    const runtimeDir = mkdtempSync(join(tmpdir(), 'pr-report-scope-consistency-runtime-'))
+    // A real subprocess, not an in-process `VINAYA_RUNTIME_DIR` mutation:
+    // `runtimeDirForThisRepo()` memoizes per process, so a fresh child is
+    // what actually gets a clean, isolated resolution — the same discipline
+    // the spawn test above already uses, and it costs this file no direct
+    // import of `run-paths.ts` (which would itself become a NEW depth-one
+    // edge into O1's own log-sink/config/run-paths reference change set).
+    const script = join(dir, 'scope-consistency.ts')
+    const engine = join(CLI_ROOT, 'src', 'lib', 'pr-report-engine.ts')
+    writeFileSync(
+      script,
+      `import { buildReport, recordGreenTestRun } from ${JSON.stringify(engine)}
+      const command = 'echo hi'
+      const recorded = await recordGreenTestRun(command, 'hi', ${JSON.stringify(dir)}, 'pre-push')
+      if (!recorded) throw new Error('recordGreenTestRun returned false')
+      const fence = String.fromCharCode(96).repeat(3)
+      const body = ['## Test Plan', '', fence, command, fence].join('\\n')
+      const result = await buildReport({
+        groupA: { head: 'a'.repeat(40), base: 'b'.repeat(40), numstat: '' },
+        gateRunner: () => ({ outcomes: [], failed: false }),
+        body,
+        cwd: ${JSON.stringify(dir)},
+        envOverlay: { PR_NUMBER: '999' }
+      })
+      console.log(result.block)`
+    )
+    const out = await spawnBudgetedAsync(
+      ['bun', script],
+      { cwd: dir, env: { ...stripVinayaEnv(), VINAYA_RUNTIME_DIR: runtimeDir } },
+      undefined,
+      'scope-consistency.ts'
+    )
+    expect(out.stdout).toContain('Reused from a green run recorded')
+    expect(out.stdout).toContain('(pre-push)')
+  })
+})
+
+// Round-3 security review, LOW — git's default `--porcelain` output QUOTES
+// any path with a space, a quote, or a non-ASCII byte (`"a file.txt"`,
+// escapes and all); reading that quoted text straight off `git status` and
+// joining it onto the working directory always misses the real file, so
+// such a path fell back to the constant `'MISSING'` hash contribution and a
+// content-only edit to it never invalidated a cached result. Fixed: `-z`
+// disables the quoting and NUL-terminates each record instead.
+describe('testRunCacheKey — a quoted/escaped path from git status still invalidates reuse (round-3 security review, LOW)', () => {
+  it('editing the content of an untracked file whose name contains a space invalidates reuse', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-quoted-path-'))
+    initTestGitRepo(dir)
+    const cache = memoryTestRunCache()
+    const counterFile = join(mkdtempSync(join(tmpdir(), 'pr-report-quoted-path-counter-')), 'counter.txt')
+    const command = `echo -n x >> ${counterFile}`
+    const spacedPath = join(dir, 'a file with spaces.txt')
+    writeFileSync(spacedPath, 'v1\n')
+
+    await runAgentCommand(command, undefined, dir, {}, cache)
+    expect(readFileSync(counterFile, 'utf8')).toBe('x')
+
+    writeFileSync(spacedPath, 'v2\n')
+
+    const afterEdit = await runAgentCommand(command, undefined, dir, {}, cache)
+    expect(afterEdit.reusedFrom).toBeUndefined()
+    expect(readFileSync(counterFile, 'utf8')).toBe('xx')
+  })
+})
+
+// Round-4 security review, HIGH/MEDIUM — a co-tenant on a shared, writable
+// `runtimeDir` who cannot touch this process's own hardened directories can
+// still pre-plant a SYMLINK at the cache's exact leaf path. A plain
+// `writeFileSync` there follows it and overwrites whatever it points at
+// (the write half); a plain `readFileSync` follows it and silently trusts
+// whatever JSON sits there as a real cached run (the read half). Neither
+// test below uses a shared `runtimeDir` — `fileBackedTestRunCache` is
+// exercised directly, pointed at an isolated temp path, so the planted
+// symlink is unambiguously this test's own doing and nothing else's.
+describe('fileBackedTestRunCache — a pre-planted symlink at the cache path is refused, never followed (round-4 security review, HIGH/MEDIUM)', () => {
+  it('set() never writes through a symlink at the cache path — the real target is untouched', () => {
+    const runtimeDir = mkdtempSync(join(tmpdir(), 'pr-report-cache-symlink-write-runtime-'))
+    const cachePath = join(runtimeDir, 'test-run-cache.json')
+    const victimPath = join(mkdtempSync(join(tmpdir(), 'pr-report-cache-symlink-write-victim-')), 'victim.json')
+    writeFileSync(victimPath, "not a cache file — a co-tenant's own real data\n")
+    symlinkSync(victimPath, cachePath)
+
+    const cache = fileBackedTestRunCache(cachePath, runtimeDir)
+    cache.set('some-key', {
+      output: 'hi',
+      exitCode: 0,
+      timedOut: false,
+      overflowed: false,
+      recordedAt: '2026-09-24T00:00:00.000Z',
+      source: 'pre-push'
+    })
+
+    // The victim file, reached through the (now former) symlink target,
+    // must read back byte-identical to what it held before `set()` ran.
+    expect(readFileSync(victimPath, 'utf8')).toBe("not a cache file — a co-tenant's own real data\n")
+    // `rename` replaced the symlink itself with a real file at the cache
+    // path — the write landed where it was supposed to, just not THROUGH
+    // the planted link.
+    expect(lstatSync(cachePath).isSymbolicLink()).toBe(false)
+    expect(cache.get('some-key')?.output).toBe('hi')
+  })
+
+  it('get() never reads through a symlink at the cache path — an attacker-controlled file is never trusted', () => {
+    const runtimeDir = mkdtempSync(join(tmpdir(), 'pr-report-cache-symlink-read-runtime-'))
+    const cachePath = join(runtimeDir, 'test-run-cache.json')
+    const attackerPath = join(mkdtempSync(join(tmpdir(), 'pr-report-cache-symlink-read-attacker-')), 'attacker.json')
+    // A forged record for a key the victim might plausibly look up —
+    // exactly the shape a real, honest cache entry would have.
+    writeFileSync(
+      attackerPath,
+      JSON.stringify({
+        'some-key': {
+          output: 'FORGED — this command never ran',
+          exitCode: 0,
+          timedOut: false,
+          overflowed: false,
+          recordedAt: '2026-01-01T00:00:00.000Z',
+          source: 'pre-push'
+        }
+      })
+    )
+    symlinkSync(attackerPath, cachePath)
+
+    const cache = fileBackedTestRunCache(cachePath, runtimeDir)
+    expect(cache.get('some-key')).toBeUndefined()
+  })
+})
+
+// Round-5 security review, HIGH — the per-file loop hashed a file's own
+// name directly against its own content with no delimiter between them
+// (`hash.update(f)` immediately followed by `hash.update(content)`), and
+// the outer fields (hostname/head/status/diff/command) were joined by a
+// bare literal space that can itself occur inside any of those free-form
+// values. Either shape lets two GENUINELY DIFFERENT working-tree states
+// concatenate to the IDENTICAL byte stream and hash identically — exactly
+// this test's own scenario: an untracked file named `foo` holding `barX`
+// versus one named `foobar` holding `X`. Fixed: every field is now hashed
+// as a fixed-width length prefix followed by its bytes (`hashField`), which
+// cannot be reinterpreted as spanning a different split between fields.
+describe('testRunCacheKey — a filename/content boundary shift never collides with a different working tree (round-5 security review, HIGH)', () => {
+  it('two untracked files named "a" and "b", with content shifted across their own name/content boundary, hash differently (same repo, same head, same command, same file NAMES — so git status\'s own listing is byte-identical between the two states too, isolating the per-file loop itself)', async () => {
+    // Both states keep the SAME two files present (`a`, `b`) — only their
+    // CONTENT differs — so `git status`'s own text is identical between
+    // them and cannot be what tells the two states apart; only the per-file
+    // loop's own name/content concatenation can. Verified by hand against
+    // the PRE-fix scheme (`' ' + f + content` per file, no delimiter
+    // between a name and its own content): state A's bytes — " a" + "X" +
+    // " b" + "Y bZ" — and state B's — " a" + "X bY" + " b" + "Z" — are both
+    // literally " aX bY bZ", byte for byte; the SAME " b" bytes read as
+    // either the tail of `a`'s own content or the start of `b`'s own
+    // leading marker.
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-key-boundary-'))
+    initTestGitRepo(dir)
+    writeFileSync(join(dir, 'a'), 'X')
+    writeFileSync(join(dir, 'b'), 'Y bZ')
+
+    const keyA = await testRunCacheKey('echo hi', dir)
+    expect(keyA).not.toBeNull()
+
+    writeFileSync(join(dir, 'a'), 'X bY')
+    writeFileSync(join(dir, 'b'), 'Z')
+
+    const keyB = await testRunCacheKey('echo hi', dir)
+    expect(keyB).not.toBeNull()
+    expect(keyA).not.toBe(keyB)
+  })
+})
+
+// Round-2 security review, HIGH — `git()` collapsed ANY failure (a lock, a
+// missing binary, a broken worktree) to `''`, indistinguishable from a real
+// empty answer, so two DIFFERENT unresolvable working trees running the
+// identical command could collide on the same cache key and one's cached
+// output would be presented as evidence for the other's run. Fixed: any git
+// failure now makes the whole key resolution `null`, which every caller
+// treats as "no caching this call" — never a key, so never a collision.
+describe('testRunCacheKey — a git failure disables caching, never fabricates a colliding key (round-2 security review, HIGH)', () => {
+  it('two different non-git directories running the identical command never share a cached result', async () => {
+    const dirA = mkdtempSync(join(tmpdir(), 'pr-report-nogit-a-'))
+    const dirB = mkdtempSync(join(tmpdir(), 'pr-report-nogit-b-'))
+    const cache = memoryTestRunCache()
+    const counterA = join(mkdtempSync(join(tmpdir(), 'pr-report-nogit-counter-a-')), 'counter.txt')
+    const counterB = join(mkdtempSync(join(tmpdir(), 'pr-report-nogit-counter-b-')), 'counter.txt')
+
+    const first = await runAgentCommand(`echo -n x >> ${counterA}`, undefined, dirA, {}, cache)
+    expect(first.reusedFrom).toBeUndefined()
+    // Same command text, a DIFFERENT unresolvable directory — if the git
+    // failure collapsed to a shared key, this would incorrectly reuse A's
+    // result instead of running for real.
+    const second = await runAgentCommand(`echo -n x >> ${counterB}`, undefined, dirB, {}, cache)
+    expect(second.reusedFrom).toBeUndefined()
+    expect(readFileSync(counterA, 'utf8')).toBe('x')
+    expect(readFileSync(counterB, 'utf8')).toBe('x')
+  })
+
+  it('a git repo real head still caches normally — the fix narrows only the failure case', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-realgit-'))
+    initTestGitRepo(dir)
+    const cache = memoryTestRunCache()
+    const counterFile = join(mkdtempSync(join(tmpdir(), 'pr-report-realgit-counter-')), 'counter.txt')
+    const command = `echo -n x >> ${counterFile}`
+    await runAgentCommand(command, undefined, dir, {}, cache)
+    const second = await runAgentCommand(command, undefined, dir, {}, cache)
+    expect(second.reusedFrom).toBeDefined()
+  })
+})
+
+// Round-2 security review, MEDIUM — the cache key's working-tree hash
+// excluded gitignored paths entirely (`git status` with no `--ignored`), so
+// a behavioral change confined to a single gitignored file (a `.env`, a
+// locally patched generated file) was invisible to the key: the tree read
+// as unchanged and a stale cached result kept being reused.
+describe("testRunCacheKey — an ignored file's own content is part of the working-tree hash (round-2 security review, MEDIUM)", () => {
+  it('editing a gitignored file invalidates reuse', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-ignored-'))
+    initTestGitRepo(dir)
+    writeFileSync(join(dir, '.gitignore'), 'secret.env\n')
+    writeFileSync(join(dir, 'secret.env'), 'FIRST=1\n')
+    execFileSync('git', ['add', '.gitignore'], { cwd: dir })
+    execFileSync('git', ['commit', '-q', '-m', 'ignore secret.env'], { cwd: dir })
+    const cache = memoryTestRunCache()
+    const counterFile = join(mkdtempSync(join(tmpdir(), 'pr-report-ignored-counter-')), 'counter.txt')
+    const command = `echo -n x >> ${counterFile}`
+
+    await runAgentCommand(command, undefined, dir, {}, cache)
+    expect(readFileSync(counterFile, 'utf8')).toBe('x')
+
+    // Only the ignored file changes — no tracked file, nothing new/untracked.
+    writeFileSync(join(dir, 'secret.env'), 'FIRST=2\n')
+
+    const afterIgnoredChange = await runAgentCommand(command, undefined, dir, {}, cache)
+    expect(afterIgnoredChange.reusedFrom).toBeUndefined()
+    expect(readFileSync(counterFile, 'utf8')).toBe('xx')
+  })
+})
+
+// Issue #707, O4 — an output-buffer overflow is reported as its own outcome,
+// never folded into a timeout. Node kills the child on either condition and
+// sets `killed: true` both times, so `code` must be checked first.
+describe('runAgentCommand — output-buffer overflow is its own outcome, never a timeout (O4, Issue #707)', () => {
+  it('a command whose output exceeds the buffer budget is reported as an overflow, not a timeout', async () => {
+    // A tiny budget and a command that produces far more than it, but returns
+    // almost instantly — proving the failure is about SIZE, not TIME. If this
+    // were mis-reported as a timeout, `output` would read `timeout (budget
+    // ...ms)`; `overflowed` would be false.
+    const result = await runAgentCommand(
+      'head -c 100000 /dev/zero | tr "\\0" "x"',
+      60_000,
+      undefined,
+      {},
+      undefined,
+      1024
+    )
+    expect(result.overflowed).toBe(true)
+    expect(result.timedOut).toBe(false)
+    expect(result.exitCode).toBeNull()
+    expect(result.output).toContain('output overflow')
+    expect(result.output).not.toContain('timeout')
+  })
+
+  it('renderGroupC and groupCFailed treat an overflow as a failure, with its own status marker', () => {
+    const groupC = {
+      commands: [
+        {
+          command: 'x',
+          output: 'output overflow (budget 1024 bytes)',
+          exitCode: null,
+          timedOut: false,
+          overflowed: true
+        }
+      ]
+    }
+    expect(groupCFailed(groupC)).toBe(true)
+    expect(renderGroupC(groupC)).toContain('[output overflow]')
+  })
+
+  it('a genuine timeout at the same small budget is still reported as a timeout, never an overflow', async () => {
+    const result = await runAgentCommand('sleep 5', 50, undefined, {}, undefined, 1024)
+    expect(result.timedOut).toBe(true)
+    expect(result.overflowed).toBe(false)
+  })
+
+  // Round-5 security review, LOW — the tests above prove the overflow-vs-
+  // timeout DISTINCTION with a custom, tiny `maxBufferBytes` override for
+  // speed; none of them exercised the REAL production budget
+  // (`AGENT_COMMAND_MAX_BUFFER_BYTES`, 32 MiB — every `[agent]` command a
+  // real PR's Test Plan runs goes through this exact default, never a
+  // caller-supplied override) end to end. This one does: no sixth argument
+  // at all, so `runAgentCommand` falls back to its own real default.
+  it('a command whose output exceeds the REAL default 32 MiB budget — no override — is reported as an overflow, not a timeout', async () => {
+    const overThirtyTwoMebibytes = 33 * 1024 * 1024
+    const result = await runAgentCommand(`head -c ${overThirtyTwoMebibytes} /dev/zero | tr "\\0" "x"`, 60_000)
+    expect(result.overflowed).toBe(true)
+    expect(result.timedOut).toBe(false)
+    expect(result.output).toContain('output overflow')
+    expect(result.output).toContain('33554432 bytes')
   })
 })
 

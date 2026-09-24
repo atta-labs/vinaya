@@ -1307,7 +1307,7 @@ git rev-parse --git-dir 2>&1 || true
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const prePush = readFileSync(join(root, '.husky/pre-push'), 'utf-8')
     expect(prePush).toContain('xargs bunx biome check --no-errors-on-unmatched -- ||')
-    expect(prePush).toContain('xargs bun test --timeout=30000 -- ||')
+    expect(prePush).toContain('xargs bun test --timeout=30000 --')
   })
 
   it("real subprocess: 'bun test --' really does refuse to treat a selected file named like a flag as one — without it, a tracked file named '--preload=<module>' would load and run that module (round-4 security review, HIGH)", () => {
@@ -1336,14 +1336,10 @@ git rev-parse --git-dir 2>&1 || true
         encoding: 'utf8'
       })
       expect(withSeparator).not.toContain('EVIL PRELOAD RAN')
-      // Bun 1.4.2's default reporter no longer names the file in a clean
-      // passing run's own stdout (round-4's original `toContain('normal.test.ts')`
-      // broke on this exact upgrade) — "1 pass"/"0 fail" is the
-      // reporter-format-agnostic proof that the real, intended file still
-      // ran (and ran successfully), which is what this assertion exists to
-      // show once the injection check above already passed.
+      // Bun 1.4.2's own reporter (Issue #706) no longer names a passing
+      // file in its summary output — only the pass count proves the real
+      // test actually ran, not a preload of the malicious file.
       expect(withSeparator).toContain('1 pass')
-      expect(withSeparator).toContain('0 fail')
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -1400,6 +1396,51 @@ git rev-parse --git-dir 2>&1 || true
     expect(error).toBeDefined()
     const stderr = String((error as { stderr?: Buffer })?.stderr ?? '')
     expect(stderr).toContain('fake turbo: typecheck failed')
+  })
+
+  it('the generated hook names a failing test — file and title — in its own last 10 lines, real execution of the generated snippet (O6, Issue #707)', async () => {
+    vendorVinaya()
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const prePush = readFileSync(join(root, '.husky/pre-push'), 'utf-8')
+
+    // Extracted from the REAL generated hook — never hand-duplicated — so
+    // this test can never silently drift from what `prePushBody` actually
+    // emits. Isolated from the earlier Biome/doctrine/typecheck steps on
+    // purpose: those need a full vendoring source tree to run for real
+    // (`pre-push-select-tests.ts` itself, which this fixture never carries
+    // a copy of); this test is about the summary this task adds, not about
+    // re-proving those earlier steps already covered above.
+    const snippetStart = prePush.indexOf('VINAYA_TEST_LOG="$(mktemp)"')
+    const snippetEnd = prePush.indexOf('\nfi', snippetStart) + '\nfi'.length
+    expect(snippetStart).toBeGreaterThan(-1)
+    const snippet = prePush.slice(snippetStart, snippetEnd)
+    expect(snippet).toContain('vinaya pre-push: refused')
+
+    const fixtureDir = mkdtempSync(join(tmpdir(), 'vinaya-o6-summary-'))
+    writeFileSync(
+      join(fixtureDir, 'a-fixture-failure.test.ts'),
+      'import { expect, test } from "bun:test"\ntest("this fixture always breaks", () => { expect(1).toBe(2) })\n'
+    )
+
+    let error: unknown
+    try {
+      execFileSync('sh', ['-c', snippet], {
+        cwd: fixtureDir,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...process.env, VINAYA_SELECTED_TESTS: join(fixtureDir, 'a-fixture-failure.test.ts') },
+        encoding: 'utf8'
+      })
+    } catch (e) {
+      error = e
+    }
+    expect(error).toBeDefined()
+    const stdout = String((error as { stdout?: Buffer })?.stdout ?? '')
+    const lastTenLines = stdout.trimEnd().split('\n').slice(-10)
+    expect(lastTenLines.some((l) => l.includes('this fixture always breaks'))).toBe(true)
+    expect(lastTenLines.some((l) => l.includes('a-fixture-failure.test.ts'))).toBe(true)
+    // The refusal summary itself — not just the failing test's own line —
+    // also lands in the tail.
+    expect(lastTenLines.some((l) => l.includes('vinaya pre-push: refused'))).toBe(true)
   })
 })
 
