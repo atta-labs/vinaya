@@ -54,6 +54,11 @@ function stripVinayaEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     if (key.startsWith('VINAYA_')) delete out[key]
   }
   delete out.AEG_REPO
+  // Left in place, a leaked GITHUB_ACTIONS makes a spawned child's own
+  // log() resolve its destination to 'none' (log-sink.ts's
+  // resolveLogDestinationFrom) instead of the folder/server a test expects
+  // — the same leak #721 fixed for the in-process loop harness.
+  delete out.GITHUB_ACTIONS
   return out
 }
 

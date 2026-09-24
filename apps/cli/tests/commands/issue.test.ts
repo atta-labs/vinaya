@@ -35,11 +35,20 @@ type CliResult = { status: number; stdout: string; stderr: string }
 // contention this test suite has no reason to invite on itself.
 function runCli(args: string[], cwd: string, env?: Record<string, string>): CliResult {
   try {
+    // `GITHUB_ACTIONS`, left in place, makes `runIssueChecks`'s own gate
+    // observation resolve its log destination through the CI branch
+    // (`log-sink.ts`'s `resolveLogDestinationFrom`) and print its own
+    // "not recording" line onto this process's stderr the first time it
+    // fires per process — exactly the same stream every assertion below
+    // parses as pure `CheckError` JSON, same class of leak as `AEG_REPO`'s
+    // own doc comment above describes for `resolveRepo`'s retry line.
+    const baseEnv = { ...process.env }
+    delete baseEnv.GITHUB_ACTIONS
     const stdout = execFileSync('bun', [INDEX, ...args], {
       cwd,
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, AEG_REPO: 'example/example', HOME: cwd, ...env }
+      env: { ...baseEnv, AEG_REPO: 'example/example', HOME: cwd, ...env }
     })
     return { status: 0, stdout, stderr: '' }
   } catch (e) {

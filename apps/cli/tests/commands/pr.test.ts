@@ -38,11 +38,20 @@ type CliResult = { status: number; stdout: string; stderr: string }
 
 function runCli(args: string[], opts: { cwd: string; input?: string }): CliResult {
   try {
+    // `GITHUB_ACTIONS`, left in place, makes the registry checks this
+    // command runs resolve their gate observation's log destination through
+    // the CI branch (`log-sink.ts`'s `resolveLogDestinationFrom`) and print
+    // its own "not recording" line onto this process's stderr the first
+    // time it fires per process — exactly the stream every assertion below
+    // parses as pure `CheckError` JSON.
+    const env = { ...process.env }
+    delete env.GITHUB_ACTIONS
     const stdout = execFileSync('bun', [INDEX, ...args], {
       cwd: opts.cwd,
       encoding: 'utf8',
       input: opts.input,
-      stdio: ['pipe', 'pipe', 'pipe']
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env
     })
     return { status: 0, stdout, stderr: '' }
   } catch (e) {
