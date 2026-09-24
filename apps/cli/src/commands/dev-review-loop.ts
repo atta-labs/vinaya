@@ -26,6 +26,7 @@ type ParsedArgs = {
   resumePr: number | undefined
   cancelPr: number | undefined
   agent: string | undefined
+  model: string | undefined
   json: boolean
 }
 
@@ -34,6 +35,7 @@ function parseArgs(args: string[]): ParsedArgs {
   let resumePr: number | undefined
   let cancelPr: number | undefined
   let agent: string | undefined
+  let model: string | undefined
   let json = false
   for (let i = 0; i < args.length; i++) {
     const a = args[i]
@@ -48,32 +50,36 @@ function parseArgs(args: string[]): ParsedArgs {
     // anything.
     else if (a === '--cancel') cancelPr = Number(args[++i])
     else if (a === '--agent') agent = args[++i]
+    else if (a === '--model') model = args[++i]
     else if (a === '--json') json = true
   }
-  return { task, resumePr, cancelPr, agent, json }
+  return { task, resumePr, cancelPr, agent, model, json }
 }
 
 export async function devReviewLoopCommand(args: string[]): Promise<void> {
   const parsed = parseArgs(args)
 
-  const agentRaw = parsed.agent ?? loadConfig()?.dispatch?.agent
-  if (!agentRaw) {
+  // A bare resume recovers the vendor/model from its durable pause state.
+  // Fresh starts and cancellation still use the explicit/configured vendor.
+  const agentRaw = parsed.agent ?? (parsed.resumePr === undefined ? loadConfig()?.dispatch?.agent : undefined)
+  if (!agentRaw && parsed.resumePr === undefined) {
     process.stderr.write(
       'vinaya dev-review-loop: --agent <claude|codex|gemini> is required (or set dispatch.agent in vinaya.config.json)\n'
     )
     process.exit(1)
   }
-  if (!isAgentVendor(agentRaw)) {
+  if (agentRaw !== undefined && !isAgentVendor(agentRaw)) {
     process.stderr.write(`vinaya dev-review-loop: invalid vendor '${agentRaw}' — expected claude, codex, or gemini\n`)
     process.exit(1)
   }
-  const agent: AgentVendor = agentRaw
+  const agent: AgentVendor | undefined = agentRaw
 
   // O3: `--cancel <pr>` is its own path, never a `LoopInput` variant — a
   // cancelled run never re-enters the round loop, it only authenticates,
   // consumes, terminates, and fences (`cancelDevReviewLoop`'s own doc
   // comment).
   if (parsed.cancelPr !== undefined) {
+    if (agent === undefined) throw new Error('dev-review-loop cancellation requires an agent')
     if (!Number.isInteger(parsed.cancelPr) || parsed.cancelPr <= 0) {
       process.stderr.write('vinaya dev-review-loop: --cancel <pr> requires a positive integer PR number\n')
       process.exit(1)
@@ -95,7 +101,12 @@ export async function devReviewLoopCommand(args: string[]): Promise<void> {
       process.stderr.write('vinaya dev-review-loop: --resume <pr> requires a positive integer PR number\n')
       process.exit(1)
     }
-    input = { resumePr: parsed.resumePr, agent, json: parsed.json }
+    input = {
+      resumePr: parsed.resumePr,
+      ...(agent ? { agent } : {}),
+      ...(parsed.model ? { model: parsed.model } : {}),
+      json: parsed.json
+    }
   } else {
     if (parsed.task === undefined || !Number.isInteger(parsed.task) || parsed.task <= 0) {
       process.stderr.write(
@@ -103,7 +114,8 @@ export async function devReviewLoopCommand(args: string[]): Promise<void> {
       )
       process.exit(1)
     }
-    input = { task: parsed.task, agent, json: parsed.json }
+    if (agent === undefined) throw new Error('dev-review-loop start requires an agent')
+    input = { task: parsed.task, agent, ...(parsed.model ? { model: parsed.model } : {}), json: parsed.json }
   }
 
   const result = await devReviewLoop(input)

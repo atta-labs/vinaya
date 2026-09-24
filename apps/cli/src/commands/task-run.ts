@@ -99,7 +99,7 @@ function resolveAgentOrReport(parsed: ParsedFlags): DispatchAgent | null {
 }
 
 /** The publish/pause summary — shared by the tranche-keyed and `--issue` invocations, which differ only in how `result` was obtained. */
-function reportRunTaskResult(result: RunTaskResult): void {
+function reportRunTaskResult(result: RunTaskResult, invocation: { agent: DispatchAgent; model?: string }): void {
   // `prUrl` is `null` only when the repo genuinely could not be resolved
   // (`lib/task-run.ts`'s own `resolvePrUrl` doc comment) — falls back to the
   // bare `PR #<n>` form rather than printing a broken/missing URL.
@@ -131,7 +131,9 @@ function reportRunTaskResult(result: RunTaskResult): void {
   process.stdout.write(
     `${colourLoopLine(`vinaya task run: task ${result.task}, ${prRef} — paused (${decision.reason})`, process.stdout)}\n`
   )
-  process.stdout.write(`Resume with: vinaya dev-review-loop --resume ${result.prNumber}\n`)
+  process.stdout.write(
+    `Resume with: vinaya dev-review-loop --resume ${result.prNumber} --agent ${invocation.agent}${invocation.model ? ` --model ${invocation.model}` : ''}\n`
+  )
   process.exit(1)
 }
 
@@ -144,7 +146,7 @@ async function runAndReport(input: Parameters<typeof runTask>[0]): Promise<void>
     process.stderr.write(`Error: ${message}\n`)
     process.exit(TASK_RUN_FAILURE_EXIT_CODE)
   }
-  reportRunTaskResult(result)
+  reportRunTaskResult(result, { agent: input.agent, ...(input.model ? { model: input.model } : {}) })
 }
 
 /**

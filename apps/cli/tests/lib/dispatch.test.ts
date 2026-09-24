@@ -58,7 +58,10 @@ import {
   matchesCapturedIdentity,
   buildRolePermissions,
   buildWriteAccessScope,
+  addCodexWritableDirs,
   PERMISSION_POLICY_VERSION,
+  codexSpawnEnvExtras,
+  codexBoundaryFailureReason,
   type DispatchTeeRecoveryDeps
 } from '../../src/lib/dispatch.js'
 
@@ -422,6 +425,89 @@ describe('dispatchRole — a successful dispatch', () => {
     // task closes. No `--model` was given here, so the placeholder for "the
     // vendor's own default ran" is recorded instead of `'claude'`.
     expect((outcome as { model: string }).model).toBe('default')
+  })
+
+  it('Codex gives a normal stdin/JSONL dispatch workspace-write access', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const argvOut = join(cwd, 'argv.out')
+    const stdinOut = join(cwd, 'stdin.out')
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    writeFakeBinary(
+      binDir,
+      'codex',
+      `#!/bin/sh\nfor a in "$@"; do printf '%s\\n' "$a"; done > "${argvOut}"\ncat > "${stdinOut}"\nprintf '%s\\n' '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'\n`
+    )
+
+    const r = runDispatch(
+      ['developer', '--agent', 'codex', '--prompt-file', promptFile],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+
+    expect(r.status).toBe(0)
+    expect(readArgv(argvOut)).toEqual([
+      'exec',
+      '--sandbox',
+      'workspace-write',
+      '--strict-config',
+      '--dangerously-bypass-hook-trust',
+      '--skip-git-repo-check',
+      '--json',
+      '-'
+    ])
+    expect(readFileSync(stdinOut, 'utf8')).toBe(PROMPT_FILE_CONTENT)
+  })
+})
+
+describe('addCodexWritableDirs — reviewer hand-off directories', () => {
+  it('adds each realpath-resolved directory before the JSONL prompt flags on a fresh exec', () => {
+    const a = tempDir('vinaya-codex-write-a-')
+    const b = tempDir('vinaya-codex-write-b-')
+    expect(addCodexWritableDirs(['exec', '--sandbox', 'workspace-write', '--json', '-'], [a, b], false)).toEqual([
+      'exec',
+      '--sandbox',
+      'workspace-write',
+      '--add-dir',
+      realpathSync(a),
+      '--add-dir',
+      realpathSync(b),
+      '--json',
+      '-'
+    ])
+  })
+
+  it('uses a sandbox writable-roots config override for codex exec resume', () => {
+    const dir = tempDir('vinaya-codex-write-resume-')
+    const argv = ['exec', 'resume', 'thread-id', '--json', '-']
+    expect(addCodexWritableDirs(argv, [dir], true)).toEqual([
+      'exec',
+      'resume',
+      'thread-id',
+      '--config',
+      `sandbox_workspace_write.writable_roots=${JSON.stringify([realpathSync(dir)])}`,
+      '--json',
+      '-'
+    ])
+  })
+
+  it('grants only the real parent of a resumed developer artifact and de-duplicates it', () => {
+    const dir = tempDir('vinaya-codex-developer-file-')
+    const confidence = join(dir, '.vinaya-confidence')
+    const response = join(dir, '.vinaya-round-response')
+    const argv = ['exec', 'resume', 'thread-id', '--json', '-']
+    expect(addCodexWritableDirs(argv, [], true, [confidence, response])).toEqual([
+      'exec',
+      'resume',
+      'thread-id',
+      '--config',
+      `sandbox_workspace_write.writable_roots=${JSON.stringify([realpathSync(dir)])}`,
+      '--json',
+      '-'
+    ])
   })
 })
 
@@ -1307,7 +1393,16 @@ const RESUME_VENDOR_FIXTURES: ResumeVendorFixture[] = [
     agent: 'codex',
     firstStdout: (id) =>
       `{"type":"thread.started","thread_id":"${id}"}\n{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}`,
-    resumeArgv: (id) => ['exec', 'resume', id, '--json', '-']
+    resumeArgv: (id) => [
+      'exec',
+      'resume',
+      id,
+      '--strict-config',
+      '--dangerously-bypass-hook-trust',
+      '--skip-git-repo-check',
+      '--json',
+      '-'
+    ]
   },
   {
     agent: 'gemini',
@@ -2241,7 +2336,18 @@ describe('dispatchRole — model selection (O1/O2/O4, #456)', () => {
     {
       agent: 'codex',
       model: 'gpt-5.6-sol',
-      argv: ['exec', '--model', 'gpt-5.6-sol', '--json', '-']
+      argv: [
+        'exec',
+        '--sandbox',
+        'workspace-write',
+        '--strict-config',
+        '--dangerously-bypass-hook-trust',
+        '--skip-git-repo-check',
+        '--model',
+        'gpt-5.6-sol',
+        '--json',
+        '-'
+      ]
     },
     {
       agent: 'gemini',
@@ -3547,6 +3653,62 @@ describe('unreadDocumentationSources', () => {
   })
 })
 
+describe('codexSpawnEnvExtras — round 6 security review, CRITICAL/HIGH (Issue #676)', () => {
+  it('a staged subscription session (codexHomeDir set) carries CODEX_HOME but never CODEX_ACCESS_TOKEN — live-verified the env var breaks bearer auth once a real auth.json exists', () => {
+    const extras = codexSpawnEnvExtras('codex', '/tmp/scratch/codex-home')
+    expect(extras.attribution).toEqual({ CODEX_HOME: '/tmp/scratch/codex-home' })
+    expect(extras.attribution).not.toHaveProperty('CODEX_ACCESS_TOKEN')
+  })
+
+  it('a staged subscription session never allowlists CODEX_API_KEY/CODEX_ACCESS_TOKEN through from the controller env — an operator-set CODEX_API_KEY must never silently downgrade a staged session to API-key auth', () => {
+    const extras = codexSpawnEnvExtras('codex', '/tmp/scratch/codex-home')
+    expect(extras.extraAllowlistKeys).toEqual([])
+  })
+
+  it('no staged session (codexHomeDir null) sets no CODEX_HOME and falls back to the ordinary RUNTIME_CREDENTIAL_ENV_KEYS allowlist — the API-key-only path is unaffected', () => {
+    const extras = codexSpawnEnvExtras('codex', null)
+    expect(extras.attribution).toEqual({})
+    expect(extras.extraAllowlistKeys).toEqual(['CODEX_API_KEY', 'CODEX_ACCESS_TOKEN'])
+  })
+
+  it('a non-codex vendor never gets CODEX_HOME even if codexHomeDir were somehow non-null, and keeps its own RUNTIME_CREDENTIAL_ENV_KEYS allowlist', () => {
+    const extras = codexSpawnEnvExtras('claude', '/tmp/scratch/codex-home')
+    expect(extras.attribution).toEqual({})
+    expect(extras.extraAllowlistKeys).toEqual(['ANTHROPIC_API_KEY'])
+  })
+})
+
+describe('codexBoundaryFailureReason — round 6 review, MAJOR (Issue #676)', () => {
+  it('classifies a preflight refusal as authentication-failed', () => {
+    expect(codexBoundaryFailureReason('codex', 'Codex subscription authentication preflight failed: exit 1')).toBe(
+      'authentication-failed'
+    )
+  })
+
+  it('classifies a login-step refusal as authentication-failed too — the same class of "no usable session" failure', () => {
+    expect(codexBoundaryFailureReason('codex', 'Codex subscription login failed: exit 1')).toBe('authentication-failed')
+  })
+
+  it('classifies a failed plugin install (the Documentation-gate hooks) as hook-setup-failed, never startup-failed or authentication-failed', () => {
+    expect(
+      codexBoundaryFailureReason(
+        'codex',
+        'Codex documentation-gate hook install failed: codex plugin install failed (exit 1)'
+      )
+    ).toBe('hook-setup-failed')
+  })
+
+  it('classifies any other boundary refusal reason as startup-failed', () => {
+    expect(codexBoundaryFailureReason('codex', 'worker boundary unavailable on this host')).toBe('startup-failed')
+  })
+
+  it('never classifies a non-codex vendor as authentication-failed even with a matching-shaped reason string', () => {
+    expect(codexBoundaryFailureReason('claude', 'Codex subscription authentication preflight failed: exit 1')).toBe(
+      'startup-failed'
+    )
+  })
+})
+
 describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () => {
   const DOC_PROMPT = [
     '## Objectives',
@@ -3823,12 +3985,8 @@ describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () =
     expect(result.status).toBe(0)
   })
 
-  // round 2 security review, LOW (Issue #625) — the read-gate is Claude-only
-  // (same limitation the background-deny hook already has); unlike that
-  // hook, a Documentation obligation left unenforced is silent otherwise, so
-  // a non-`claude` developer dispatch must at least name the gap.
-  it('warns on stderr when a real URL-shaped source is unenforced for a non-claude agent, and stays silent for a prompt with none', () => {
-    for (const agent of ['codex', 'gemini']) {
+  it('warns only for a vendor whose Documentation gate remains unenforced', () => {
+    for (const agent of ['gemini']) {
       const home = tempDir('vinaya-dispatch-home-')
       const cwd = tempDir('vinaya-dispatch-cwd-')
       const binDir = tempDir('vinaya-dispatch-bin-')
@@ -3848,6 +4006,117 @@ describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () =
       expect(r.status).toBe(0)
       expect(r.stderr).toContain('Documentation read-gate')
       expect(r.stderr).toContain(agent)
+    }
+
+    {
+      const home = tempDir('vinaya-dispatch-home-')
+      const cwd = tempDir('vinaya-dispatch-cwd-')
+      const binDir = tempDir('vinaya-dispatch-bin-')
+      writeFakeBinary(binDir, 'codex', `#!/bin/sh\ncat > /dev/null\necho '{}'\nexit 0\n`)
+      const promptFile = join(cwd, 'prompt.txt')
+      writeFileSync(promptFile, DOC_PROMPT)
+      const result = spawnBudgeted(
+        [INDEX, 'dispatch', 'developer', '--agent', 'codex', '--prompt-file', promptFile],
+        {
+          encoding: 'utf8',
+          cwd,
+          env: stripVinayaEnv({ ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` })
+        },
+        'vinaya dispatch'
+      )
+      expect(result.status).toBe(0)
+      expect(result.stderr).not.toContain('Documentation read-gate')
+      const hooksPath = join(
+        home,
+        '.vinaya',
+        'runtime',
+        'unresolved',
+        'tasks-execution',
+        'unscoped',
+        'hooks',
+        'developer',
+        'codex',
+        'hooks.json'
+      )
+      expect(existsSync(hooksPath)).toBe(true)
+      const hooks = JSON.parse(readFileSync(hooksPath, 'utf8')) as {
+        hooks: {
+          PostToolUse: Array<{ hooks: Array<{ command: string }> }>
+          Stop: Array<{ hooks: Array<{ command: string }> }>
+        }
+      }
+      const commandPath = (command: string) => command.slice('bun "'.length, -1)
+      const sourcesFile = readdirSync(dirname(hooksPath)).find((name) => name.startsWith('documentation-sources-'))
+      const hookRunId = sourcesFile?.slice('documentation-sources-'.length, -'.json'.length) as string
+      const hookEnv = { ...process.env, VINAYA_RUN_ID: hookRunId }
+      const blocked = spawnBudgeted(
+        [commandPath(hooks.hooks.Stop[0]?.hooks[0]?.command as string)],
+        { input: '{}', encoding: 'utf8', env: hookEnv },
+        'Codex Stop hook'
+      )
+      expect(JSON.parse(blocked.stdout)).toMatchObject({ decision: 'block' })
+      const spoofed = spawnBudgeted(
+        [commandPath(hooks.hooks.PostToolUse[0]?.hooks[0]?.command as string)],
+        {
+          input: JSON.stringify({
+            tool_name: 'Bash',
+            tool_input: { command: 'echo https://example.com/docs/fixture' },
+            tool_response: { output: 'https://example.com/docs/fixture' }
+          }),
+          encoding: 'utf8',
+          env: hookEnv
+        },
+        'Codex unrelated PostToolUse hook'
+      )
+      expect(spoofed.status).toBe(0)
+      const stillBlocked = spawnBudgeted(
+        [commandPath(hooks.hooks.Stop[0]?.hooks[0]?.command as string)],
+        { input: '{}', encoding: 'utf8', env: hookEnv },
+        'Codex Stop hook after spoof'
+      )
+      expect(JSON.parse(stillBlocked.stdout)).toMatchObject({ decision: 'block' })
+      const mixedCurl = spawnBudgeted(
+        [commandPath(hooks.hooks.PostToolUse[0]?.hooks[0]?.command as string)],
+        {
+          input: JSON.stringify({
+            tool_name: 'Bash',
+            tool_input: {
+              command: 'curl -L https://unrelated.example && echo https://example.com/docs/fixture'
+            },
+            tool_response: { output: 'https://example.com/docs/fixture' }
+          }),
+          encoding: 'utf8',
+          env: hookEnv
+        },
+        'Codex mixed curl PostToolUse hook'
+      )
+      expect(mixedCurl.status).toBe(0)
+      const blockedAfterMixedCurl = spawnBudgeted(
+        [commandPath(hooks.hooks.Stop[0]?.hooks[0]?.command as string)],
+        { input: '{}', encoding: 'utf8', env: hookEnv },
+        'Codex Stop hook after mixed curl'
+      )
+      expect(JSON.parse(blockedAfterMixedCurl.stdout)).toMatchObject({ decision: 'block' })
+      const recorded = spawnBudgeted(
+        [commandPath(hooks.hooks.PostToolUse[0]?.hooks[0]?.command as string)],
+        {
+          input: JSON.stringify({
+            tool_name: 'Bash',
+            tool_input: { command: 'curl -L https://example.com/docs/fixture' },
+            tool_response: { output: 'fetched documentation body' }
+          }),
+          encoding: 'utf8',
+          env: hookEnv
+        },
+        'Codex Bash/curl PostToolUse hook'
+      )
+      expect(recorded.status).toBe(0)
+      const allowed = spawnBudgeted(
+        [commandPath(hooks.hooks.Stop[0]?.hooks[0]?.command as string)],
+        { input: '{}', encoding: 'utf8', env: hookEnv },
+        'Codex Stop hook'
+      )
+      expect(allowed.stdout).toBe('')
     }
 
     const home = tempDir('vinaya-dispatch-home-')

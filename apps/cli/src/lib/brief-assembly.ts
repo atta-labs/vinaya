@@ -49,9 +49,15 @@ import { parseRationaleDeps } from '@attalabs/aeg-forge-state'
 import { createForgeSource } from '@attalabs/vinaya-sources'
 import { type EdgeFactsSubset, type EdgeTaskRef, resolveEdge } from '../checks/edge-resolve.js'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
+import { packageRoot } from './package-root.js'
 
 const DOC_OWNERS_PATH = '.vinaya/doc-owners'
-const TEMPLATE_PATH = 'aeg-root/templates/brief-template.md'
+const WORKSPACE_TEMPLATE_PATH = 'aeg-root/templates/brief-template.md'
+const PACKAGE_ROOT = packageRoot(import.meta.url)
+const PACKAGED_TEMPLATE_PATH = join(PACKAGE_ROOT, 'aeg-root', 'templates', 'brief-template.md')
+const TEMPLATE_PATH = existsSync(PACKAGED_TEMPLATE_PATH)
+  ? PACKAGED_TEMPLATE_PATH
+  : join(PACKAGE_ROOT, '..', '..', 'aeg-root', 'templates', 'brief-template.md')
 
 function git(args: string[]): string {
   try {
@@ -92,7 +98,7 @@ function resolveRepo(): { owner: string; repo: string } | null {
  * fail-closed gate this pre-write validation requires.
  */
 export function canRenderBriefFromHere(): boolean {
-  return existsSync(TEMPLATE_PATH) && resolveRepo() !== null
+  return existsSync(WORKSPACE_TEMPLATE_PATH) && resolveRepo() !== null
 }
 
 async function resolveToken(): Promise<string | null> {

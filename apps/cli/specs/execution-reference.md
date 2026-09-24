@@ -68,6 +68,8 @@ runtime-specific surface. `conformance.md`'s Table C is the proof this
 boundary holds identically on both runtimes; Section D there records what a
 live smoke run against it did and did not establish.
 
+Unattended Codex developer dispatches use `workspace-write` with a task-scoped `CODEX_HOME`. Vinaya brokers the existing ChatGPT access token into the Codex parent and removes credential-shaped variables from its tool subprocess environment. The generated Documentation-gate lifecycle hooks are installed into that scoped home as a local Codex plugin — live-verified on this authoring host that a bare `hooks.json` file dropped at `CODEX_HOME` root is never discovered by the real Codex CLI at all; the real, documented, non-interactive path is `codex plugin marketplace add <local-dir>` followed by `codex plugin add <plugin>@<marketplace>`, confirmed live end to end (`codex plugin list --json` reporting the installed plugin as `installed: true, enabled: true`, with its `hooks.json` genuinely present at the path Codex's own plugin cache resolves to). `--dangerously-bypass-hook-trust` (already passed at every Codex launch) is the separate gate that then lets an enabled plugin's hooks fire without an interactive trust prompt. The operator's real Codex home is never exposed to repository commands.
+
 The five registered tools and their handlers:
 
 | Tool | Handler | What it does |

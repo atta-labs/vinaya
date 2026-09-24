@@ -19,8 +19,10 @@
  *     Confirmed live: a real `claude -p --output-format json` run's stdout
  *     carried exactly that shape on this machine — no `usage: null` fallback
  *     was needed.
- *   - `codex exec --json -` — the trailing `-` is Codex's own documented
- *     stdin sentinel (never the prompt text on argv), one JSONL event per
+ *   - `codex exec --sandbox workspace-write --json -` — Codex's documented
+ *     least-privilege edit sandbox lets a normal dispatch modify its assigned
+ *     worktree while retaining the trailing `-` stdin sentinel (never the
+ *     prompt text on argv), one JSONL event per
  *     line. Confirmed live: the terminal `turn.completed` event carries
  *     `usage: { input_tokens, output_tokens, ... }` — the same field names
  *     as Claude's, so it is parsed the same way rather than left `null`.
@@ -328,7 +330,16 @@ export type DispatchOpts = {
  * for them, never a guessed classification for an unconfirmed vendor's own
  * shape (the vendor tables themselves are unchanged).
  */
-export type DispatchFailureReason = 'timeout' | 'crash' | 'refused' | 'signal' | 'unbound' | 'connection-failed'
+export type DispatchFailureReason =
+  | 'timeout'
+  | 'crash'
+  | 'refused'
+  | 'signal'
+  | 'unbound'
+  | 'connection-failed'
+  | 'startup-failed'
+  | 'authentication-failed'
+  | 'hook-setup-failed'
 
 export type DispatchHandle = {
   exitCode: number | null
@@ -349,6 +360,45 @@ export type DispatchHandle = {
    * fresh, unjoinable id.
    */
   effectId?: string
+}
+
+/**
+ * Give Codex's nested `workspace-write` sandbox the same caller-scoped
+ * directories already granted by Vinaya's outer worker boundary.
+ *
+ * Fresh `codex exec` accepts `--add-dir`. `codex exec resume` does not, but
+ * does accept the documented dotted `--config` override, so resumed sessions
+ * receive the same roots through `sandbox_workspace_write.writable_roots`.
+ * Developer artifacts are individual files at the outer boundary; Codex's
+ * inner boundary accepts directories, so only each file's real parent is
+ * added here. The outer Seatbelt profile remains the authoritative exact-file
+ * restriction.
+ */
+export function addCodexWritableDirs(
+  args: readonly string[],
+  extraWritableDirs: readonly string[],
+  resumed: boolean,
+  developerFiles: readonly string[] = []
+): string[] {
+  const requestedDirs = [...extraWritableDirs, ...developerFiles.map((file) => dirname(file))]
+  if (requestedDirs.length === 0) return [...args]
+  const jsonIndex = args.indexOf('--json')
+  const insertionIndex = jsonIndex === -1 ? args.length : jsonIndex
+  const canonicalDirs = requestedDirs.map((dir) => {
+    let canonical = dir
+    try {
+      canonical = realpathSync(dir)
+    } catch {
+      // Boundary construction performs the authoritative fail-closed path
+      // validation; preserve its diagnostic rather than throwing here.
+    }
+    return canonical
+  })
+  const uniqueDirs = [...new Set(canonicalDirs)]
+  const writableArgs = resumed
+    ? ['--config', `sandbox_workspace_write.writable_roots=${JSON.stringify(uniqueDirs)}`]
+    : uniqueDirs.flatMap((dir) => ['--add-dir', dir])
+  return [...args.slice(0, insertionIndex), ...writableArgs, ...args.slice(insertionIndex)]
 }
 
 /**
@@ -883,12 +933,52 @@ function documentationLogHookScript(dir: string): string {
     '  try {',
     '    const e = JSON.parse(d);',
     "    const runId = process.env.VINAYA_RUN_ID || '';",
-    "    if (runId && e.tool_name === 'WebFetch' && e.tool_input && typeof e.tool_input.url === 'string') {",
+    '    const urls = [];',
+    "    const visit = (v) => { if (typeof v === 'string') { const m = v.match(/https?:\\/\\/[^\\s\\\"'<>]+/g); if (m) urls.push(...m); } else if (Array.isArray(v)) v.forEach(visit); else if (v && typeof v === 'object') Object.values(v).forEach(visit); };",
+    '    visit(e.tool_input || e.tool_input_json || e.input || {});',
+    '    if (runId && urls.length > 0) {',
     `      const logPath = ${JSON.stringify(join(dir, 'documentation-log-'))} + runId + '.jsonl';`,
-    "      try { fs.appendFileSync(logPath, JSON.stringify({ url: e.tool_input.url }) + '\\n', { mode: 0o600 }); } catch {}",
+    "      try { for (const url of urls) fs.appendFileSync(logPath, JSON.stringify({ url }) + '\\n', { mode: 0o600 }); } catch {}",
     '    }',
     '  } catch {',
     '    // not a JSON line — never fail a hook whose only job is to record',
+    '  }',
+    '  process.exit(0);',
+    '});',
+    ''
+  ].join('\n')
+}
+
+/**
+ * Codex-only receipt logger. Codex documents `Bash` as a supported
+ * `PostToolUse` route, unlike its built-in web search. The generated prompt
+ * requires this route to use `curl -L <URL>` for documentation sources. The
+ * hook accepts only a successful curl command that names the required URL;
+ * arbitrary Bash/apply_patch payloads containing a URL cannot satisfy it.
+ */
+function codexDocumentationLogHookScript(dir: string): string {
+  return [
+    "const fs = require('fs');",
+    "let d = '';",
+    "process.stdin.on('data', (c) => { d += c });",
+    "process.stdin.on('end', () => {",
+    '  try {',
+    '    const e = JSON.parse(d);',
+    "    if (e.tool_name !== 'Bash') { process.exit(0); }",
+    '    const response = e.tool_response;',
+    "    const responseText = typeof response === 'string' ? response : JSON.stringify(response || '');",
+    '    const successful = response != null && response.isError !== true && response.error == null && responseText.length > 2;',
+    '    if (!successful) { process.exit(0); }',
+    "    const runId = process.env.VINAYA_RUN_ID || '';",
+    "    const command = e.tool_input && typeof e.tool_input.command === 'string' ? e.tool_input.command : '';",
+    '    const match = command.trim().match(/^curl\\s+-L\\s+([\'"]?)(https?:\\/\\/[^\\s\'"<>;&|]+)\\1$/);',
+    '    if (!match) { process.exit(0); }',
+    '    if (runId) {',
+    `      const logPath = ${JSON.stringify(join(dir, 'documentation-log-'))} + runId + '.jsonl';`,
+    "      fs.appendFileSync(logPath, JSON.stringify({ url: match[2], tool: 'Bash/curl' }) + '\\n', { mode: 0o600 });",
+    '    }',
+    '  } catch {',
+    '    // Invalid payloads never create a receipt.',
     '  }',
     '  process.exit(0);',
     '});',
@@ -947,6 +1037,76 @@ function documentationStopHookScript(dir: string): string {
     '});',
     ''
   ].join('\n')
+}
+
+function codexDocumentationStopHookScript(dir: string): string {
+  return [
+    "const fs = require('fs');",
+    "let d = '';",
+    "process.stdin.on('data', (c) => { d += c });",
+    "process.stdin.on('end', () => {",
+    '  try {',
+    '    JSON.parse(d);',
+    "    const runId = process.env.VINAYA_RUN_ID || '';",
+    '    if (!runId) { process.exit(0); }',
+    `    const sourcesPath = ${JSON.stringify(join(dir, 'documentation-sources-'))} + runId + '.json';`,
+    `    const logPath = ${JSON.stringify(join(dir, 'documentation-log-'))} + runId + '.jsonl';`,
+    "    let sources = []; try { sources = JSON.parse(fs.readFileSync(sourcesPath, 'utf8')); } catch {}",
+    "    let fetchedUrls = []; try { fetchedUrls = fs.readFileSync(logPath, 'utf8').split('\\n').filter(Boolean).map((line) => { try { return JSON.parse(line).url; } catch { return null; } }).filter((u) => typeof u === 'string'); } catch {}",
+    "    const normalize = (u) => String(u).trim().split('#')[0].replace(/\\/+$/, '');",
+    '    const fetched = new Set(fetchedUrls.map(normalize));',
+    "    const unread = Array.isArray(sources) ? sources.filter((s) => /^https?:\\/\\//i.test(String(s.source || '').trim()) && !fetched.has(normalize(s.source))) : [];",
+    '    if (unread.length > 0) {',
+    "      const names = unread.map((s) => '- ' + s.source + ' (governs: ' + s.mechanism + ')').join('\\n');",
+    "      process.stdout.write(JSON.stringify({ decision: 'block', reason: 'Fetch every required Documentation URL before completing:\\n' + names }) + '\\n');",
+    '      process.exit(0);',
+    '    }',
+    '  } catch {}',
+    '  process.exit(0);',
+    '});',
+    ''
+  ].join('\n')
+}
+
+function writeCodexDispatchHooks(
+  runId: string,
+  documentation: IssueDocumentationSource[],
+  scope: RunScope,
+  role: Role
+): string | null {
+  try {
+    const dir = join(runPath(runtimeDirForThisRepo(), scope, { area: 'hooks' }), role, 'codex')
+    mkdirSync(dir, { recursive: true, mode: 0o700 })
+    chmodSync(dir, 0o700)
+    const logScript = join(dir, 'documentation-log.mjs')
+    const stopScript = join(dir, 'documentation-stop.mjs')
+    writeFileSync(logScript, codexDocumentationLogHookScript(dir), { mode: 0o600 })
+    writeFileSync(stopScript, codexDocumentationStopHookScript(dir), { mode: 0o600 })
+    writeFileSync(join(dir, `documentation-sources-${runId}.json`), JSON.stringify(documentation), { mode: 0o600 })
+    const hooksPath = join(dir, 'hooks.json')
+    writeFileSync(
+      hooksPath,
+      JSON.stringify(
+        {
+          hooks: {
+            PostToolUse: [
+              {
+                matcher: '^Bash$',
+                hooks: [{ type: 'command', command: `bun "${logScript}"` }]
+              }
+            ],
+            Stop: [{ hooks: [{ type: 'command', command: `bun "${stopScript}"` }] }]
+          }
+        },
+        null,
+        2
+      ),
+      { mode: 0o600 }
+    )
+    return hooksPath
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -1899,7 +2059,11 @@ function coerceLaunchRecord(json: unknown): LaunchRecord | null {
     o.failureReason === 'crash' ||
     o.failureReason === 'refused' ||
     o.failureReason === 'signal' ||
-    o.failureReason === 'unbound'
+    o.failureReason === 'unbound' ||
+    o.failureReason === 'connection-failed' ||
+    o.failureReason === 'startup-failed' ||
+    o.failureReason === 'authentication-failed' ||
+    o.failureReason === 'hook-setup-failed'
       ? o.failureReason
       : null
   return {
@@ -2534,8 +2698,38 @@ const VENDOR_TABLE: Record<AgentVendor, VendorSpec> = {
     // `-m, --model <MODEL>` confirmed live via `codex exec --help` — a bare
     // string with no enumerated or aliased values (unlike `--sandbox`,
     // which does list `[possible values: ...]` in the same help output).
-    args: (model) => ['exec', ...(model ? ['--model', model] : []), '--json', '-'],
-    resumeArgs: (id, model) => ['exec', 'resume', id, ...(model ? ['--model', model] : []), '--json', '-'],
+    // `codex exec` defaults to read-only. The documented `workspace-write`
+    // sandbox is the narrow permission normal Developer dispatches need to
+    // edit their assigned worktree; it preserves saved subscription login and
+    // the JSONL/stdin protocol below. Reviewer scratch directories are not Git
+    // repositories, so unattended roles also skip Codex's interactive repo
+    // trust check; the Vinaya worker boundary still supplies confinement.
+    args: (model) => [
+      'exec',
+      '--sandbox',
+      'workspace-write',
+      '--strict-config',
+      '--dangerously-bypass-hook-trust',
+      '--skip-git-repo-check',
+      ...(model ? ['--model', model] : []),
+      '--json',
+      '-'
+    ],
+    // `codex exec resume --help` intentionally does not accept `--sandbox`:
+    // it resumes the session's established tool policy. Keep the resume argv
+    // to Codex's documented subcommand shape rather than passing an invalid
+    // flag after a successful first turn.
+    resumeArgs: (id, model) => [
+      'exec',
+      'resume',
+      id,
+      '--strict-config',
+      '--dangerously-bypass-hook-trust',
+      '--skip-git-repo-check',
+      ...(model ? ['--model', model] : []),
+      '--json',
+      '-'
+    ],
     parseUsage: parseCodexUsage,
     parseUsageUnits: parseCodexUsageUnits,
     parseModel: parseCodexModel,
@@ -2729,6 +2923,67 @@ function sizeOfSafe(path: string): number {
     return readFileSync(path).byteLength
   } catch {
     return 0
+  }
+}
+
+/**
+ * Round 6 security review: the (env, extraAllowlistKeys) decision for a
+ * confined Codex child's spawn, extracted so it is unit-testable without a
+ * real confined dispatch. Two live-verified defects this closes:
+ *
+ * CRITICAL — `codexHomeDir` (when set) already carries a real, working
+ * `auth.json` written by `codex login --with-access-token`; ALSO setting
+ * `CODEX_ACCESS_TOKEN` on that exact process breaks bearer auth entirely
+ * (every turn: HTTP 401 "Missing bearer or basic authentication in
+ * header"), while `CODEX_HOME` alone authenticates correctly. This never
+ * sets `CODEX_ACCESS_TOKEN`.
+ *
+ * HIGH — `RUNTIME_CREDENTIAL_ENV_KEYS[agent]` (for codex, `CODEX_API_KEY`/
+ * `CODEX_ACCESS_TOKEN`) is the API-key-only auth path, passed through from
+ * the trusted controller's own env only when no subscription session was
+ * staged. When one WAS staged, also copying an operator's own
+ * `CODEX_API_KEY` (set for unrelated tooling) silently switches Codex's own
+ * auth precedence to the API key instead, with no refusal or diagnostic
+ * naming the downgrade — closed by returning no extra allowlist keys at all
+ * in that case.
+ */
+/**
+ * Round 6 review, MAJOR: a failed `codex login --with-access-token` step
+ * (`worker-boundary.ts`'s `Codex subscription login failed:` reason) is the
+ * SAME class of authentication failure as the bounded preflight's own
+ * refusal (`Codex subscription authentication preflight failed:`) — both
+ * mean no usable Codex session was established — and must classify the
+ * same way, not fall through to the generic `startup-failed`. Extracted so
+ * the classification is unit-testable without a real boundary refusal.
+ */
+export function codexBoundaryFailureReason(agent: AgentVendor, boundaryFailureReason: string): DispatchFailureReason {
+  if (agent !== 'codex') return 'startup-failed'
+  if (
+    boundaryFailureReason.startsWith('Codex subscription authentication preflight failed:') ||
+    boundaryFailureReason.startsWith('Codex subscription login failed:')
+  ) {
+    return 'authentication-failed'
+  }
+  // Round 7 review, BLOCKER: a failed `codex plugin marketplace add`/`codex
+  // plugin add` step (`worker-boundary.ts`'s `Codex documentation-gate hook
+  // install failed:`) means the Documentation read-gate could not be wired
+  // for this dispatch — a hook-setup failure, not an authentication one; the
+  // brief's own O3 requires refusing rather than silently downgrading the
+  // gate when hook/configuration setup fails.
+  if (boundaryFailureReason.startsWith('Codex documentation-gate hook install failed:')) {
+    return 'hook-setup-failed'
+  }
+  return 'startup-failed'
+}
+
+export function codexSpawnEnvExtras(
+  agent: AgentVendor,
+  codexHomeDir: string | null
+): { attribution: Record<string, string>; extraAllowlistKeys: readonly string[] } {
+  const staged = agent === 'codex' && codexHomeDir !== null
+  return {
+    attribution: staged ? { CODEX_HOME: codexHomeDir as string } : {},
+    extraAllowlistKeys: staged ? [] : (RUNTIME_CREDENTIAL_ENV_KEYS[agent] ?? [])
   }
 }
 
@@ -2945,7 +3200,16 @@ export async function dispatchRole(
     }
   }
 
-  const baseArgs = opts.resumeId ? vendor.resumeArgs(opts.resumeId, opts.model) : vendor.args(opts.model)
+  const vendorArgs = opts.resumeId ? vendor.resumeArgs(opts.resumeId, opts.model) : vendor.args(opts.model)
+  const baseArgs =
+    agent === 'codex'
+      ? addCodexWritableDirs(
+          vendorArgs,
+          opts.extraWritableDirs ?? [],
+          opts.resumeId !== undefined,
+          opts.developerFiles ?? []
+        )
+      : vendorArgs
   // Computed here, once — both the settings-write fail-closed check below
   // and the boundary-resolution block further down read the SAME value,
   // never two independently-evaluated `loadConfig()` calls that could
@@ -2958,7 +3222,11 @@ export async function dispatchRole(
   // is what an unattended start's boundary resolution wraps below, rather
   // than wrapping a pre-settings argv and reconciling the two later.
   const documentationSources = documentationSourcesFromPrompt(role, prompt)
-  if (agent !== 'claude' && documentationSources.some((s) => isDocumentationUrl(s.source))) {
+  const codexDocumentationGuidance =
+    agent === 'codex' && documentationSources.some((source) => isDocumentationUrl(source.source))
+      ? '\n\nCodex documentation receipt: fetch every URL in `## Documentation` with `curl -L <URL>` in a Bash tool call before ending this turn. Built-in web search is not a receipt route for this dispatch.\n'
+      : ''
+  if (agent === 'gemini' && documentationSources.some((s) => isDocumentationUrl(s.source))) {
     // round 2 security review, LOW — the PostToolUse/Stop hook
     // pair below is Claude-only, same limitation `deny-background-bash.mjs`
     // already has; unlike that hook, an unenforced Documentation obligation
@@ -2991,6 +3259,8 @@ export async function dispatchRole(
           opts.developerFiles ?? []
         )
       : null
+  const codexHooksPath =
+    agent === 'codex' ? writeCodexDispatchHooks(runId, documentationSources, scopeOf(opts.task, opts.pr), role) : null
   // The first lifecycle line this role's dispatch writes —
   // every earlier `writeLifecycle` call in this function sits behind an
   // early-return refusal branch (binary not resolvable, non-Claude
@@ -3008,7 +3278,12 @@ export async function dispatchRole(
   // surfaced error, unlike O3's own boundary-unavailable path. Fail closed
   // here the same way: refuse before any spawn, exactly as the
   // binary-not-resolvable and boundary-unavailable refusals below do.
-  if (agent === 'claude' && opts.unattended === true && requireIsolation && dispatchSettingsPath === null) {
+  if (
+    (agent === 'claude' ? dispatchSettingsPath === null : agent === 'codex' ? codexHooksPath === null : false) &&
+    opts.unattended === true &&
+    requireIsolation
+  ) {
+    const failureReason: DispatchFailureReason = 'hook-setup-failed'
     const durationMs = Date.now() - start
     const priorSize = sizeOfSafe(outboxPath)
     log({
@@ -3019,6 +3294,8 @@ export async function dispatchRole(
       model: resolvedModel,
       ...roundField,
       effect_id: effectId,
+      // The forge envelope has only the generic pre-spawn `refused` event;
+      // the launch record/handle retain the actionable terminal subtype.
       reason: 'refused',
       usage: null,
       duration_ms: durationMs
@@ -3027,7 +3304,7 @@ export async function dispatchRole(
       `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended start requires the PreToolUse ` +
         "background-deny hook's settings file, which could not be written into this task's own hooks directory"
     )
-    patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason: 'refused' })
+    patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason })
     await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
     return {
       exitCode: null,
@@ -3035,7 +3312,7 @@ export async function dispatchRole(
       usage: null,
       resumeId: null,
       timedOut: false,
-      failureReason: 'refused',
+      failureReason,
       effectId
     }
   }
@@ -3082,9 +3359,11 @@ export async function dispatchRole(
 
             // O1: claude only — the one vendor whose OAuth
             // credential shape `stageOAuthCredential` knows how to stage;
-            // Codex/Gemini get no staging attempt (`oauthConfigDir` stays
-            // `null` on the resolved launch, same as before this task).
+            // Claude stages its OAuth material; Codex stages only the brokered
+            // access token plus the task-scoped config/hooks described below.
             stageOAuthCredential: agent === 'claude',
+            stageCodexCredential: agent === 'codex',
+            codexHooksPath,
             // Round 5 review, CRITICAL fix: scoped to THIS dispatch's own
             // exact FILE, never its containing directory. The round-4 fix
             // (scoping to the repo-segment DIRECTORY, `dirname(outboxPath)`/
@@ -3147,6 +3426,9 @@ export async function dispatchRole(
               if (dispatchSettingsPath) {
                 files.push(join(dirname(dispatchSettingsPath), `documentation-log-${runId}.jsonl`))
               }
+              if (codexHooksPath) {
+                files.push(join(dirname(codexHooksPath), `documentation-log-${runId}.jsonl`))
+              }
               // O3: this round's own
               // confidence/round-response files, granted by exact path —
               // never a directory grant — the same "pre-create, then grant
@@ -3179,12 +3461,15 @@ export async function dispatchRole(
             // this directory is written by the trusted controller before
             // this resolution runs, and nothing inside the sandbox ever
             // needs to rewrite it.
-            extraReadOnlyDirs: dispatchSettingsPath ? [dirname(dispatchSettingsPath)] : [],
+            extraReadOnlyDirs: [dispatchSettingsPath, codexHooksPath]
+              .filter((path): path is string => path !== null)
+              .map(dirname),
             ...(usingRepoRootFallback
               ? { bootstrapWritableSubpaths: role === 'developer' ? ['.git', '.worktrees'] : [] }
               : {})
           })
     if (!boundaryLaunch.ok) {
+      const failureReason: DispatchFailureReason = codexBoundaryFailureReason(agent, boundaryLaunch.reason)
       const durationMs = Date.now() - start
       const priorSize = sizeOfSafe(outboxPath)
       log({
@@ -3202,9 +3487,9 @@ export async function dispatchRole(
       writeLifecycle(
         `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended start requires the worker isolation boundary, which is unavailable: ${boundaryLaunch.reason}`
       )
-      patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason: 'refused' })
+      patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason })
       await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
-      return { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason: 'refused' }
+      return { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason }
     }
 
     // O2: the boundary resolved, but a confined `agent` child
@@ -3219,8 +3504,10 @@ export async function dispatchRole(
     // pre-spawn refusal above already takes.
     const runtimeCredentialKeys = RUNTIME_CREDENTIAL_ENV_KEYS[agent] ?? []
     const hasRuntimeApiKey = runtimeCredentialKeys.some((key) => Boolean(process.env[key]))
-    const hasStagedOAuthCredential = boundaryLaunch.launch.oauthConfigDir !== null
+    const hasStagedOAuthCredential =
+      boundaryLaunch.launch.oauthConfigDir !== null || boundaryLaunch.launch.codexAccessToken !== null
     if (!hasRuntimeApiKey && !hasStagedOAuthCredential) {
+      const failureReason: DispatchFailureReason = 'authentication-failed'
       const durationMs = Date.now() - start
       const priorSize = sizeOfSafe(outboxPath)
       log({
@@ -3241,9 +3528,9 @@ export async function dispatchRole(
           'set on the parent environment, and no OAuth session credential could be staged)'
       )
       boundaryLaunch.launch.cleanup()
-      patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason: 'refused' })
+      patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason })
       await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
-      return { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason: 'refused' }
+      return { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason }
     }
   }
 
@@ -3294,6 +3581,7 @@ export async function dispatchRole(
       // nobody wrote to. It also saves the child a network round trip.
       [RUNTIME_DIR_ENV_KEY]: runtimeDirForRepo(repo)
     }
+    const codexEnvExtras = resolvedBoundary ? codexSpawnEnvExtras(agent, resolvedBoundary.codexHomeDir) : null
     const child = spawn(spawnCommand, spawnCommandArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
       ...(spawnCwd ? { cwd: spawnCwd } : {}),
@@ -3329,9 +3617,13 @@ export async function dispatchRole(
               // real, denied `<realHome>/.claude`. The key is omitted
               // entirely (not set to `undefined`) when nothing was staged,
               // so an API-key-only dispatch's env is unaffected.
-              ...(resolvedBoundary.oauthConfigDir ? { CLAUDE_CONFIG_DIR: resolvedBoundary.oauthConfigDir } : {})
+              ...(resolvedBoundary.oauthConfigDir ? { CLAUDE_CONFIG_DIR: resolvedBoundary.oauthConfigDir } : {}),
+              // Round 6 security review, CRITICAL/HIGH — see
+              // `codexSpawnEnvExtras`'s own doc comment for what each half
+              // of this closes.
+              ...codexEnvExtras!.attribution
             },
-            RUNTIME_CREDENTIAL_ENV_KEYS[agent] ?? []
+            codexEnvExtras!.extraAllowlistKeys
           )
         : { ...process.env, ...attribution }
     })
@@ -3853,10 +4145,20 @@ export async function dispatchRole(
       // which also clears this timer) complete.
       childExited = true
       clearInterval(heartbeatTimer)
-      void handleChildExit(code, Date.now() - start)
+      void handleChildExit(code, Date.now() - start).finally(() => {
+        // `exit` deliberately does not wait for stdio `close`, but Node will
+        // still keep these local pipe handles referenced when a vendor's
+        // reparented helper inherited the far end. Once the direct child's
+        // terminal output has been classified and persisted, nothing may
+        // arrive from that child again: release our ends so a completed
+        // dispatch cannot keep the controller process alive indefinitely.
+        child.stdin.destroy()
+        child.stdout.destroy()
+        child.stderr.destroy()
+      })
     })
 
-    child.stdin.write(prompt)
+    child.stdin.write(`${prompt}${codexDocumentationGuidance}`)
     child.stdin.end()
   })
 }

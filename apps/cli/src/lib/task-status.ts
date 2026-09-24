@@ -248,6 +248,8 @@ type PauseState = {
   reason: PauseReason
   detail?: string
   pausedAt: string
+  agent?: string
+  model?: string
 }
 
 function readPauseState(root: string, task: number): PauseState | null {
@@ -358,8 +360,8 @@ export function deriveLoopState(
 }
 
 /** `vinaya dev-review-loop --resume <pr>` — the exact string `renderPauseComment`/`task run` already print, rendered fresh from the pr number rather than duplicated as a literal in each caller. */
-export function resumeCommandFor(prNumber: number): string {
-  return `vinaya dev-review-loop --resume ${prNumber}`
+export function resumeCommandFor(prNumber: number, agent?: string, model?: string): string {
+  return `vinaya dev-review-loop --resume ${prNumber}${agent ? ` --agent ${agent}` : ''}${model ? ` --model ${model}` : ''}`
 }
 
 // --- O2: last round's verdict lines ---------------------------------------
@@ -494,6 +496,8 @@ export function gatherSingleTaskStatus(tranche: string, id: string): SingleTaskS
 
   const root = runtimeDir()
   const verdictLines = lastRoundVerdictLines(root, ref.issue)
-  const resumeCommand = row.state.kind === 'paused' && row.pr ? resumeCommandFor(row.pr.number) : null
+  const pause = readPauseState(root, ref.issue)
+  const resumeCommand =
+    row.state.kind === 'paused' && row.pr ? resumeCommandFor(row.pr.number, pause?.agent, pause?.model) : null
   return { kind: 'ok', row, line: renderTaskStatusRow(row), verdictLines, resumeCommand }
 }

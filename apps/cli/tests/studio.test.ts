@@ -134,6 +134,7 @@ describe('runStudio', () => {
   let savedAegRepo: string | undefined
 
   beforeEach(() => {
+    resetResolveRepoCache()
     tmpDir = join(tmpdir(), `vinaya-studio-run-test-${Date.now()}-${Math.random().toString(36).slice(2)}`)
     mkdirSync(tmpDir, { recursive: true })
     savedAegRepo = process.env.AEG_REPO
@@ -153,6 +154,7 @@ describe('runStudio', () => {
   })
 
   afterEach(() => {
+    resetResolveRepoCache()
     rmSync(tmpDir, { recursive: true, force: true })
     if (savedAegRepo === undefined) delete process.env.AEG_REPO
     else process.env.AEG_REPO = savedAegRepo

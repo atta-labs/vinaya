@@ -20,6 +20,7 @@ import {
   buildWorkerSandboxProfile,
   isWorkerBoundaryAvailable,
   REAL_WORKER_BOUNDARY_DEPS,
+  resolveCodexAccessToken,
   resolveOAuthConfigSourceDir,
   resolveWorkerBoundaryLaunch,
   RUNTIME_CREDENTIAL_ENV_KEYS,
@@ -177,6 +178,70 @@ describe('RUNTIME_CREDENTIAL_ENV_KEYS — round 2 review, BLOCKER (a real model-
   })
 })
 
+describe('resolveCodexAccessToken — subscription authentication', () => {
+  it('reads only the access token from the cached Codex session', () => {
+    let requestedPath = ''
+    const token = resolveCodexAccessToken({}, '/home/dev', (path) => {
+      requestedPath = path
+      return JSON.stringify({ tokens: { access_token: 'fixture-access', refresh_token: 'must-not-cross' } })
+    })
+    expect(requestedPath).toBe('/home/dev/.codex/auth.json')
+    expect(token).toBe('fixture-access')
+  })
+
+  it('refuses malformed or missing cached sessions', () => {
+    expect(
+      resolveCodexAccessToken(
+        {},
+        '/home/dev',
+        () => null,
+        () => null
+      )
+    ).toBeNull()
+    expect(
+      resolveCodexAccessToken(
+        {},
+        '/home/dev',
+        () => '{bad',
+        () => null
+      )
+    ).toBeNull()
+    expect(
+      resolveCodexAccessToken(
+        {},
+        '/home/dev',
+        () => JSON.stringify({ tokens: {} }),
+        () => null
+      )
+    ).toBeNull()
+  })
+
+  it('honors an explicitly brokered access token without reading auth.json', () => {
+    let read = false
+    const token = resolveCodexAccessToken({ CODEX_ACCESS_TOKEN: 'brokered' }, '/home/dev', () => {
+      read = true
+      return null
+    })
+    expect(token).toBe('brokered')
+    expect(read).toBe(false)
+  })
+
+  it('loads a keychain-backed Codex session when auth.json is absent', () => {
+    let requestedHome = ''
+    const token = resolveCodexAccessToken(
+      {},
+      '/home/dev',
+      () => null,
+      (codexHome) => {
+        requestedHome = codexHome
+        return JSON.stringify({ tokens: { access_token: 'keychain-access', refresh_token: 'must-not-cross' } })
+      }
+    )
+    expect(requestedHome).toBe('/home/dev/.codex')
+    expect(token).toBe('keychain-access')
+  })
+})
+
 describe('resolveOAuthConfigSourceDir — O1 (Issue #640)', () => {
   it('defaults to <realHome>/.claude when the source env carries no CLAUDE_CONFIG_DIR', () => {
     expect(resolveOAuthConfigSourceDir({}, '/home/dev')).toBe(join('/home/dev', '.claude'))
@@ -286,6 +351,260 @@ describe('resolveWorkerBoundaryLaunch — OAuth credential staging (O1, Issue #6
     expect(result.launch.oauthConfigDir).toBeNull()
     result.launch.cleanup()
   })
+})
+
+describe('resolveWorkerBoundaryLaunch — Codex subscription preflight (O1, Issue #676)', () => {
+  it('refuses a cached token when the bounded vendor probe rejects it', () => {
+    const allowedDir = tempDir('vinaya-wb-codex-preflight-refused-')
+    const result = resolveWorkerBoundaryLaunch(
+      {
+        binaryPath: '/usr/bin/env',
+        args: [],
+        allowedDir,
+        extraWritableDirs: [],
+        stageCodexCredential: true
+      },
+      {
+        ...AVAILABLE_DEPS,
+        readOAuthCredentialFile: () => JSON.stringify({ tokens: { access_token: 'expired-fixture' } }),
+        readCodexKeychainCredential: () => null,
+        runCodexLoginWithAccessToken: () => ({ ok: true }),
+        runCodexAuthPreflight: () => ({ ok: false, reason: 'Codex rejected the staged ChatGPT session (exit 1)' })
+      }
+    )
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.reason).toContain('Codex subscription authentication preflight failed')
+    expect(result.reason).toContain('exit 1')
+  })
+
+  it('refuses a cached token when the non-interactive login step itself fails', () => {
+    const allowedDir = tempDir('vinaya-wb-codex-login-refused-')
+    const result = resolveWorkerBoundaryLaunch(
+      {
+        binaryPath: '/usr/bin/env',
+        args: [],
+        allowedDir,
+        extraWritableDirs: [],
+        stageCodexCredential: true
+      },
+      {
+        ...AVAILABLE_DEPS,
+        readOAuthCredentialFile: () => JSON.stringify({ tokens: { access_token: 'expired-fixture' } }),
+        readCodexKeychainCredential: () => null,
+        runCodexLoginWithAccessToken: () => ({ ok: false, reason: 'codex login --with-access-token failed (exit 1)' })
+      }
+    )
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.reason).toContain('Codex subscription login failed')
+    expect(result.reason).toContain('exit 1')
+  })
+
+  it('accepts a keychain-backed token only after a real `codex login --with-access-token` and the bounded vendor probe both succeed, against the SCOPED codex home never the real one', () => {
+    const allowedDir = tempDir('vinaya-wb-codex-preflight-ok-')
+    let loggedInHome = ''
+    let loggedInToken = ''
+    let probedHome = ''
+    const result = resolveWorkerBoundaryLaunch(
+      {
+        binaryPath: '/usr/bin/env',
+        args: [],
+        allowedDir,
+        extraWritableDirs: [],
+        stageCodexCredential: true
+      },
+      {
+        ...AVAILABLE_DEPS,
+        readOAuthCredentialFile: () => null,
+        readCodexKeychainCredential: () =>
+          JSON.stringify({ tokens: { access_token: 'keychain-fixture', refresh_token: 'must-not-cross' } }),
+        runCodexLoginWithAccessToken: ({ codexHome, accessToken }) => {
+          loggedInHome = codexHome
+          loggedInToken = accessToken
+          return { ok: true }
+        },
+        runCodexAuthPreflight: ({ codexHome }) => {
+          probedHome = codexHome
+          return { ok: true }
+        }
+      }
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    try {
+      expect(loggedInToken).toBe('keychain-fixture')
+      expect(loggedInHome).toBe(result.launch.codexHomeDir)
+      expect(probedHome).toBe(result.launch.codexHomeDir)
+      expect(probedHome).not.toBe(join(homedir(), '.codex'))
+      expect(result.launch.codexAccessToken).toBe('keychain-fixture')
+      expect(readFileSync(join(result.launch.codexHomeDir as string, 'config.toml'), 'utf8')).not.toContain(
+        'keychain-fixture'
+      )
+      expect(readFileSync(join(result.launch.codexHomeDir as string, 'config.toml'), 'utf8')).toContain(
+        '"CODEX_ACCESS_TOKEN" = "exclude"'
+      )
+      expect(readFileSync(join(result.launch.codexHomeDir as string, 'config.toml'), 'utf8')).toContain(
+        '"CODEX_API_KEY" = "exclude"'
+      )
+    } finally {
+      result.launch.cleanup()
+    }
+  })
+})
+
+/** `null` when no real `codex` binary is on this host's PATH — best-effort, never assumed, the same posture `REAL_NODE_PATH` (below) already takes. */
+const REAL_CODEX_PATH: string | null = (() => {
+  try {
+    return execFileSync('which', ['codex'], { encoding: 'utf8' }).trim() || null
+  } catch {
+    return null
+  }
+})()
+
+describe('resolveWorkerBoundaryLaunch — Codex documentation-gate hook install (O3, round 7 review BLOCKER, Issue #676)', () => {
+  const stageOk = {
+    readOAuthCredentialFile: () => JSON.stringify({ tokens: { access_token: 'hooks-fixture' } }),
+    readCodexKeychainCredential: () => null,
+    runCodexLoginWithAccessToken: () => ({ ok: true }) as const,
+    runCodexAuthPreflight: () => ({ ok: true }) as const
+  }
+
+  it('refuses the whole dispatch when the plugin install step itself fails, never a silent downgrade to no gate at all', () => {
+    const allowedDir = tempDir('vinaya-wb-codex-hooks-refused-')
+    const hooksSourceDir = tempDir('vinaya-wb-codex-hooks-source-')
+    const hooksSourcePath = join(hooksSourceDir, 'hooks.json')
+    writeFileSync(hooksSourcePath, '{}')
+    const result = resolveWorkerBoundaryLaunch(
+      {
+        binaryPath: '/usr/bin/env',
+        args: [],
+        allowedDir,
+        extraWritableDirs: [],
+        stageCodexCredential: true,
+        codexHooksPath: hooksSourcePath
+      },
+      {
+        ...AVAILABLE_DEPS,
+        ...stageOk,
+        runCodexPluginInstall: () => ({ ok: false, reason: 'codex plugin install failed (exit 1)' })
+      }
+    )
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.reason).toContain('Codex documentation-gate hook install failed')
+    expect(result.reason).toContain('exit 1')
+  })
+
+  it('installs from a marketplace shaped exactly as the real `codex plugin marketplace add`/`codex plugin add` require — manifest at .agents/plugins/marketplace.json, plugin.json under .codex-plugin/, hooks.json content passed through unmodified', () => {
+    const allowedDir = tempDir('vinaya-wb-codex-hooks-shape-')
+    const hooksSourceDir = tempDir('vinaya-wb-codex-hooks-source-')
+    const hooksSourcePath = join(hooksSourceDir, 'hooks.json')
+    const hooksContent = JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'true' }] }] } })
+    writeFileSync(hooksSourcePath, hooksContent)
+    let seenMarketplaceDir = ''
+    let seenCodexHome = ''
+    const result = resolveWorkerBoundaryLaunch(
+      {
+        binaryPath: '/usr/bin/env',
+        args: [],
+        allowedDir,
+        extraWritableDirs: [],
+        stageCodexCredential: true,
+        codexHooksPath: hooksSourcePath
+      },
+      {
+        ...AVAILABLE_DEPS,
+        ...stageOk,
+        runCodexPluginInstall: ({ codexHome, marketplaceDir }) => {
+          seenCodexHome = codexHome
+          seenMarketplaceDir = marketplaceDir
+          return { ok: true }
+        }
+      }
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    try {
+      expect(seenCodexHome).toBe(result.launch.codexHomeDir)
+      const marketplaceJson = JSON.parse(
+        readFileSync(join(seenMarketplaceDir, '.agents', 'plugins', 'marketplace.json'), 'utf8')
+      )
+      expect(marketplaceJson.plugins).toHaveLength(1)
+      expect(marketplaceJson.plugins[0].source).toEqual({
+        source: 'local',
+        path: './plugins/vinaya-documentation-gate'
+      })
+      expect(marketplaceJson.plugins[0].policy.authentication).toBe('ON_USE')
+      const pluginManifest = JSON.parse(
+        readFileSync(
+          join(seenMarketplaceDir, 'plugins', 'vinaya-documentation-gate', '.codex-plugin', 'plugin.json'),
+          'utf8'
+        )
+      )
+      expect(pluginManifest.name).toBe('vinaya-documentation-gate')
+      const installedHooksJson = readFileSync(
+        join(seenMarketplaceDir, 'plugins', 'vinaya-documentation-gate', 'hooks.json'),
+        'utf8'
+      )
+      expect(installedHooksJson).toBe(hooksContent)
+    } finally {
+      result.launch.cleanup()
+    }
+  })
+
+  it.skipIf(!isWorkerBoundaryAvailable(REAL_WORKER_BOUNDARY_DEPS) || !REAL_CODEX_PATH)(
+    'a real `codex plugin marketplace add` + `codex plugin add` genuinely installs the documentation-gate hooks.json as an enabled plugin — never a bare, undiscovered file (live-verified: a bare hooks.json at CODEX_HOME root is not loaded by the real Codex CLI at all)',
+    () => {
+      const allowedDir = tempDir('vinaya-wb-codex-hooks-live-')
+      const hooksSourceDir = tempDir('vinaya-wb-codex-hooks-live-source-')
+      const hooksSourcePath = join(hooksSourceDir, 'hooks.json')
+      const hooksContent = JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'true' }] }] } })
+      writeFileSync(hooksSourcePath, hooksContent)
+
+      const result = resolveWorkerBoundaryLaunch(
+        {
+          binaryPath: REAL_CODEX_PATH as string,
+          args: [],
+          allowedDir,
+          extraWritableDirs: [],
+          stageCodexCredential: true,
+          codexHooksPath: hooksSourcePath
+        },
+        { ...AVAILABLE_DEPS, ...stageOk }
+      )
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      try {
+        const codexHome = result.launch.codexHomeDir as string
+        const list = JSON.parse(
+          execFileSync(REAL_CODEX_PATH as string, ['plugin', 'list', '--json'], {
+            encoding: 'utf8',
+            env: { ...process.env, CODEX_HOME: codexHome }
+          })
+        )
+        expect(list.installed).toHaveLength(1)
+        expect(list.installed[0]).toMatchObject({
+          name: 'vinaya-documentation-gate',
+          installed: true,
+          enabled: true
+        })
+        const installedHooksPath = join(
+          codexHome,
+          'plugins',
+          'cache',
+          'vinaya-dispatch',
+          'vinaya-documentation-gate',
+          '0.0.1',
+          'hooks.json'
+        )
+        expect(existsSync(installedHooksPath)).toBe(true)
+        expect(readFileSync(installedHooksPath, 'utf8')).toBe(hooksContent)
+      } finally {
+        result.launch.cleanup()
+      }
+    }
+  )
 })
 
 describe('isWorkerBoundaryAvailable — O3 host detection', () => {

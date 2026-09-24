@@ -288,6 +288,7 @@ export type StartBackgroundRunDeps = {
   spawnDetached: (argv: string[], opts: { stdioFd: number }) => SpawnedController
   resolveLoopLogPath: (task: number) => Promise<string>
   checkHostSupervisionCapability: () => { supported: true } | { supported: false; reason: string }
+  waitForStartup: () => Promise<void>
 }
 
 function defaultStartBackgroundRunDeps(): StartBackgroundRunDeps {
@@ -303,7 +304,8 @@ function defaultStartBackgroundRunDeps(): StartBackgroundRunDeps {
     fenceStartedEffects: (task, epoch) => fenceStartedEffectsAsUncertain(task, epoch, controlStore),
     spawnDetached: defaultSpawnDetached,
     resolveLoopLogPath: defaultResolveLoopLogPath,
-    checkHostSupervisionCapability
+    checkHostSupervisionCapability,
+    waitForStartup: () => new Promise((resolve) => setTimeout(resolve, 250))
   }
 }
 
@@ -385,7 +387,10 @@ export async function startBackgroundRun(
   }
   const { epoch } = acquire
 
-  const argv = ['task', 'run', '--issue', String(task), '--agent', input.agent as AgentVendor]
+  const argv =
+    'tranche' in input
+      ? ['task', 'run', input.tranche, String(input.n), '--agent', input.agent as AgentVendor]
+      : ['task', 'run', '--issue', String(task), '--agent', input.agent as AgentVendor]
   // issue-661, round 3 (O1 BLOCKER): an explicit --model given to the
   // foreground-facing `startBackgroundRun` caller must reach the detached
   // child too — this argv IS that child's own argv (it re-parses from
@@ -435,5 +440,25 @@ export async function startBackgroundRun(
   }
 
   child.unref()
+  await deps.waitForStartup()
+  const readySnapshot = deps.getProcessSnapshot(childPid)
+  if (
+    !deps.isPidAlive(childPid) ||
+    readySnapshot === null ||
+    !deps.matchesCapturedIdentity(
+      { childStartedAt: run.childStartedAt ?? null, childCommand: run.childCommand ?? null },
+      readySnapshot
+    )
+  ) {
+    appendTransition(deps.controlStore, task, epoch, {
+      from: 'running',
+      to: 'paused',
+      detail: 'background controller exited before startup readiness',
+      at: deps.controlStore.now().toISOString()
+    })
+    throw new Error(
+      `vinaya task run --background: detached controller for task ${task} exited before startup readiness; inspect ${logPath}`
+    )
+  }
   return handleFromRun(run, epoch, logPath)
 }

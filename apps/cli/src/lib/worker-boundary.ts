@@ -41,6 +41,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 
@@ -89,8 +90,284 @@ export const WORKER_ENV_ALLOWLIST_KEYS = [
  */
 export const RUNTIME_CREDENTIAL_ENV_KEYS: Readonly<Record<string, readonly string[]>> = {
   claude: ['ANTHROPIC_API_KEY'],
-  codex: ['OPENAI_API_KEY'],
+  codex: ['CODEX_API_KEY', 'CODEX_ACCESS_TOKEN'],
   gemini: ['GEMINI_API_KEY', 'GOOGLE_API_KEY']
+}
+
+const CODEX_AUTH_FILE_NAME = 'auth.json'
+const CODEX_KEYCHAIN_SERVICE = 'Codex Auth'
+
+function accessTokenFromCodexAuth(raw: string | null): string | null {
+  if (raw === null) return null
+  try {
+    const parsed = JSON.parse(raw) as { tokens?: { access_token?: unknown } }
+    return typeof parsed.tokens?.access_token === 'string' && parsed.tokens.access_token.length > 0
+      ? parsed.tokens.access_token
+      : null
+  } catch {
+    return null
+  }
+}
+
+function codexKeychainAccount(codexHome: string): string {
+  let canonical = codexHome
+  try {
+    canonical = realpathSync(codexHome)
+  } catch {
+    // Codex uses the unresolved path when CODEX_HOME does not exist yet.
+  }
+  return `cli|${createHash('sha256').update(canonical).digest('hex').slice(0, 16)}`
+}
+
+/** Trusted-controller-only read of Codex's macOS credential-store session. */
+function readRealCodexKeychainCredential(codexHome: string): string | null {
+  if (process.platform !== 'darwin') return null
+  try {
+    return execFileSync(
+      '/usr/bin/security',
+      ['find-generic-password', '-s', CODEX_KEYCHAIN_SERVICE, '-a', codexKeychainAccount(codexHome), '-w'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5_000, maxBuffer: 1024 * 1024 }
+    ).trim()
+  } catch {
+    return null
+  }
+}
+
+export function resolveCodexAccessToken(
+  sourceEnv: Readonly<Record<string, string | undefined>>,
+  realHome: string,
+  readFile: (path: string) => string | null = readRealOAuthCredentialFile,
+  readKeychain: (codexHome: string) => string | null = readRealCodexKeychainCredential
+): string | null {
+  if (sourceEnv.CODEX_ACCESS_TOKEN) return sourceEnv.CODEX_ACCESS_TOKEN
+  const codexHome = sourceEnv.CODEX_HOME ?? join(realHome, '.codex')
+  return (
+    accessTokenFromCodexAuth(readFile(join(codexHome, CODEX_AUTH_FILE_NAME))) ??
+    accessTokenFromCodexAuth(readKeychain(codexHome))
+  )
+}
+
+export type CodexAuthPreflightResult = { ok: true } | { ok: false; reason: string }
+
+/**
+ * Round 5 review, BLOCKER: a bare `CODEX_ACCESS_TOKEN`
+ * environment variable is not itself a session Codex's real CLI accepts —
+ * live-verified against `codex-cli 0.152.1` on this authoring host (`codex
+ * --help` documents no such env-var auth path at all): the vendor CLI only
+ * ever authenticates from `auth.json` inside its `CODEX_HOME`, written by
+ * its own `login` subcommand. `codex login --with-access-token` (confirmed
+ * live via `codex login --help` on this host: "Read the access token from
+ * stdin") is that subcommand's own supported non-interactive bootstrap path
+ * — it reads the token from stdin and writes a real `auth.json` (deriving
+ * `account_id`/`refresh_token` itself) into whatever `CODEX_HOME` it is
+ * pointed at, never the operator's real one here, since `codexHome` is
+ * always the scratch directory this module already staged. The actual
+ * token round-trip (a real ChatGPT session authenticating through this
+ * exact call) is NOT independently live-verified by this change — a
+ * dispatched Developer session is denied read access to the operator's real
+ * `~/.codex/auth.json` by this same isolation boundary (confirmed live:
+ * the read was refused), so this call's real-world behavior can only be
+ * proven by a live canary or the Principal's own privileged host, not by
+ * this dispatch — disclosed rather than silently assumed, the same posture
+ * this file already takes for `codex`/`gemini`'s unverified env var names.
+ */
+function runRealCodexLoginWithAccessToken(input: {
+  binaryPath: string
+  codexHome: string
+  accessToken: string
+}): { ok: true } | { ok: false; reason: string } {
+  try {
+    execFileSync(input.binaryPath, ['login', '--with-access-token'], {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: 45_000,
+      maxBuffer: 4 * 1024 * 1024,
+      input: input.accessToken,
+      env: {
+        PATH: process.env.PATH,
+        CODEX_HOME: input.codexHome
+      }
+    })
+    return { ok: true }
+  } catch (error) {
+    const e = error as { killed?: boolean; signal?: string; status?: number | null }
+    if (e.killed || e.signal === 'SIGTERM') {
+      return { ok: false, reason: 'codex login --with-access-token timed out after 45 seconds' }
+    }
+    return { ok: false, reason: `codex login --with-access-token failed (exit ${e.status ?? 'unknown'})` }
+  }
+}
+
+/**
+ * Round 7 review, BLOCKER: a bare `hooks.json` file dropped at `CODEX_HOME`
+ * root is never loaded by the real Codex CLI — live-verified on this
+ * authoring host (`codex-cli 0.152.1`): every real hooks.json this host
+ * carries lives inside an INSTALLED PLUGIN's own directory (e.g. a
+ * marketplace-installed `figma` plugin's `hooks.json`, found via `find
+ * ~/.codex -iname hooks.json`), never at `CODEX_HOME` root directly, and
+ * `codex doctor`'s own config report names no mechanism that would discover
+ * one there. Codex's real, documented, non-interactive path is `codex
+ * plugin marketplace add <local-dir>` (confirmed live: `codex plugin
+ * marketplace add --help` names `codex plugin marketplace add
+ * ./path/to/marketplace` as its own worked example) followed by `codex
+ * plugin add <plugin>@<marketplace>` — both plain local filesystem/config
+ * operations needing no ChatGPT/API credential at all, so both are
+ * live-verified end to end on this host: a scratch marketplace built to
+ * this exact shape (`buildCodexHooksMarketplace`, below) installed
+ * successfully into a scratch `CODEX_HOME` with `codex plugin list --json`
+ * confirming `"installed": true, "enabled": true` and the hooks.json
+ * content genuinely copied into
+ * `<CODEX_HOME>/plugins/cache/<marketplace>/<plugin>/<version>/hooks.json`.
+ * `--dangerously-bypass-hook-trust` (already passed at every Codex launch
+ * site, `dispatch.ts`) is what then lets an ENABLED plugin's hooks actually
+ * fire without an interactive trust prompt — installation and trust are the
+ * two separate gates this closes; only a live, authenticated turn can prove
+ * a hook actually FIRES mid-session, which remains outside what this
+ * dispatched session can reach (the same disclosed limit every other
+ * end-to-end Codex claim in this file already carries).
+ */
+const CODEX_HOOKS_MARKETPLACE_NAME = 'vinaya-dispatch'
+const CODEX_HOOKS_PLUGIN_NAME = 'vinaya-documentation-gate'
+
+/**
+ * Writes the marketplace + plugin manifests `runRealCodexPluginInstall`
+ * installs from — the exact shape live-verified against this host's real
+ * `codex plugin marketplace add`/`codex plugin add` (schema errors from
+ * real, wrong first attempts: the manifest must live at
+ * `<root>/.agents/plugins/marketplace.json`, never `<root>/marketplace.json`;
+ * `policy.authentication` accepts only `ON_INSTALL`/`ON_USE`, never `NONE`).
+ * `hooksJsonContent` is `dispatch.ts`'s own `writeCodexDispatchHooks`
+ * output, unmodified — this function only relocates it into the shape
+ * Codex's plugin system actually discovers.
+ */
+function buildCodexHooksMarketplace(marketplaceDir: string, hooksJsonContent: string): void {
+  const pluginRelDir = `./plugins/${CODEX_HOOKS_PLUGIN_NAME}`
+  const pluginDir = join(marketplaceDir, 'plugins', CODEX_HOOKS_PLUGIN_NAME)
+  mkdirSync(join(marketplaceDir, '.agents', 'plugins'), { recursive: true, mode: 0o700 })
+  mkdirSync(join(pluginDir, '.codex-plugin'), { recursive: true, mode: 0o700 })
+  writeFileSync(
+    join(marketplaceDir, '.agents', 'plugins', 'marketplace.json'),
+    JSON.stringify(
+      {
+        name: CODEX_HOOKS_MARKETPLACE_NAME,
+        interface: { displayName: 'Vinaya dispatch' },
+        plugins: [
+          {
+            name: CODEX_HOOKS_PLUGIN_NAME,
+            source: { source: 'local', path: pluginRelDir },
+            policy: { installation: 'AVAILABLE', authentication: 'ON_USE' },
+            category: 'Developer Tools'
+          }
+        ]
+      },
+      null,
+      2
+    ),
+    { mode: 0o600 }
+  )
+  writeFileSync(
+    join(pluginDir, '.codex-plugin', 'plugin.json'),
+    JSON.stringify(
+      {
+        name: CODEX_HOOKS_PLUGIN_NAME,
+        version: '0.0.1',
+        description: "Mechanizes this dispatch's Documentation read-gate for Codex.",
+        interface: {
+          displayName: 'Vinaya documentation gate',
+          shortDescription: 'Documentation read-gate hooks',
+          category: 'Developer Tools'
+        }
+      },
+      null,
+      2
+    ),
+    { mode: 0o600 }
+  )
+  writeFileSync(join(pluginDir, 'hooks.json'), hooksJsonContent, { mode: 0o600 })
+}
+
+function runRealCodexPluginInstall(input: {
+  binaryPath: string
+  codexHome: string
+  marketplaceDir: string
+}): { ok: true } | { ok: false; reason: string } {
+  const env = { PATH: process.env.PATH, CODEX_HOME: input.codexHome }
+  try {
+    execFileSync(input.binaryPath, ['plugin', 'marketplace', 'add', input.marketplaceDir, '--json'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 20_000,
+      maxBuffer: 4 * 1024 * 1024,
+      env
+    })
+    execFileSync(
+      input.binaryPath,
+      ['plugin', 'add', `${CODEX_HOOKS_PLUGIN_NAME}@${CODEX_HOOKS_MARKETPLACE_NAME}`, '--json'],
+      {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 20_000,
+        maxBuffer: 4 * 1024 * 1024,
+        env
+      }
+    )
+    return { ok: true }
+  } catch (error) {
+    const e = error as { status?: number | null; stderr?: Buffer | string }
+    const stderrText = e.stderr ? (typeof e.stderr === 'string' ? e.stderr : e.stderr.toString('utf8')).trim() : ''
+    return {
+      ok: false,
+      reason: `codex plugin install failed (exit ${e.status ?? 'unknown'})${stderrText ? `: ${stderrText}` : ''}`
+    }
+  }
+}
+
+/**
+ * Proves usability with a fixed, read-only, ephemeral vendor request outside
+ * the adopter repository. A revoked or expired session refuses before the
+ * developer loop, and the hard timeout keeps the preflight bounded.
+ */
+function runRealCodexAuthPreflight(input: {
+  binaryPath: string
+  codexHome: string
+  cwd: string
+  realHome: string
+}): CodexAuthPreflightResult {
+  try {
+    execFileSync(
+      input.binaryPath,
+      [
+        'exec',
+        '--ephemeral',
+        '--sandbox',
+        'read-only',
+        '--ignore-user-config',
+        '--ignore-rules',
+        '--skip-git-repo-check',
+        '--json',
+        'Respond exactly OK without using tools.'
+      ],
+      {
+        cwd: input.cwd,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 45_000,
+        maxBuffer: 4 * 1024 * 1024,
+        env: {
+          PATH: process.env.PATH,
+          LANG: process.env.LANG,
+          HOME: input.realHome,
+          TMPDIR: input.cwd,
+          CODEX_HOME: input.codexHome
+        }
+      }
+    )
+    return { ok: true }
+  } catch (error) {
+    const e = error as { killed?: boolean; signal?: string; status?: number | null }
+    if (e.killed || e.signal === 'SIGTERM') return { ok: false, reason: 'timed out after 45 seconds' }
+    return { ok: false, reason: `Codex rejected the staged ChatGPT session (exit ${e.status ?? 'unknown'})` }
+  }
 }
 
 /**
@@ -227,11 +504,32 @@ export type WorkerBoundaryDeps = {
    * back to the real file read.
    */
   readOAuthCredentialFile?: (path: string) => string | null
+  readCodexKeychainCredential?: (codexHome: string) => string | null
+  runCodexLoginWithAccessToken?: (input: {
+    binaryPath: string
+    codexHome: string
+    accessToken: string
+  }) => { ok: true } | { ok: false; reason: string }
+  runCodexAuthPreflight?: (input: {
+    binaryPath: string
+    codexHome: string
+    cwd: string
+    realHome: string
+  }) => CodexAuthPreflightResult
+  runCodexPluginInstall?: (input: {
+    binaryPath: string
+    codexHome: string
+    marketplaceDir: string
+  }) => { ok: true } | { ok: false; reason: string }
 }
 
 export const REAL_WORKER_BOUNDARY_DEPS: WorkerBoundaryDeps = {
   detectHost: detectRealHost,
-  readOAuthCredentialFile: readRealOAuthCredentialFile
+  readOAuthCredentialFile: readRealOAuthCredentialFile,
+  readCodexKeychainCredential: readRealCodexKeychainCredential,
+  runCodexLoginWithAccessToken: runRealCodexLoginWithAccessToken,
+  runCodexAuthPreflight: runRealCodexAuthPreflight,
+  runCodexPluginInstall: runRealCodexPluginInstall
 }
 
 /** `true` only on a host `isolation.md` §3 actually names as supported — Darwin, `sandbox-exec` present. Injectable (`deps`) so a test can assert `dispatchRole`'s fail-closed wiring without needing a real macOS host — see `apps/cli/tests/lib/dispatch/worker-boundary.test.ts`. */
@@ -596,6 +894,8 @@ export type WorkerBoundaryLaunch = {
   cleanup: () => void
   tmpDir: string
   oauthConfigDir: string | null
+  codexHomeDir: string | null
+  codexAccessToken: string | null
 }
 
 export type WorkerBoundaryResolution = { ok: true; launch: WorkerBoundaryLaunch } | { ok: false; reason: string }
@@ -637,6 +937,43 @@ function resolveBunExecDir(): string | null {
   } catch {
     return null
   }
+}
+
+/** Read-only directories containing the selected macOS executable's dynamic-library closure. */
+function resolveRuntimeLibraryDirs(binaryPath: string): string[] {
+  if (process.platform !== 'darwin') return []
+  const dirs = new Set<string>()
+  const siblingLib = join(dirname(dirname(binaryPath)), 'lib')
+  if (existsSync(siblingLib)) dirs.add(realpathSync(siblingLib))
+  const queue = [binaryPath]
+  const seen = new Set<string>()
+  while (queue.length > 0 && seen.size < 256) {
+    const current = queue.shift()
+    if (!current || seen.has(current)) continue
+    seen.add(current)
+    try {
+      const output = execFileSync('/usr/bin/otool', ['-L', current], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore']
+      })
+      for (const line of output.split('\n').slice(1)) {
+        const dependency = line.trim().split(/\s+/, 1)[0]
+        if (!dependency || dependency.startsWith('/usr/lib/') || dependency.startsWith('/System/')) continue
+        const dylib = dependency.startsWith('@rpath/') ? join(siblingLib, basename(dependency)) : dependency
+        if (!dylib.startsWith('/') || !existsSync(dylib)) continue
+        dirs.add(realpathSync(dirname(dylib)))
+        const homebrewFormula = dylib.match(/^\/opt\/homebrew\/opt\/([^/]+)\//)?.[1]
+        if (homebrewFormula) {
+          const formulaConfig = join('/opt/homebrew/etc', homebrewFormula)
+          if (existsSync(formulaConfig)) dirs.add(realpathSync(formulaConfig))
+        }
+        queue.push(realpathSync(dylib))
+      }
+    } catch {
+      // A non-Mach-O dependency contributes no further paths.
+    }
+  }
+  return [...dirs]
 }
 
 function resolveSshSockCanon(): string {
@@ -738,6 +1075,8 @@ export type WorkerBoundaryLaunchOpts = {
    * launch is always `null`.
    */
   stageOAuthCredential?: boolean
+  stageCodexCredential?: boolean
+  codexHooksPath?: string | null
 }
 
 /**
@@ -794,6 +1133,92 @@ export function resolveWorkerBoundaryLaunch(
     const oauthConfigDir = opts.stageOAuthCredential
       ? (stageOAuthCredential(process.env, realHome, scratchTmpDir, deps)?.configDir ?? null)
       : null
+    const codexAccessToken = opts.stageCodexCredential
+      ? resolveCodexAccessToken(
+          process.env,
+          realHome,
+          deps.readOAuthCredentialFile ?? readRealOAuthCredentialFile,
+          deps.readCodexKeychainCredential ?? readRealCodexKeychainCredential
+        )
+      : null
+    let codexHomeDir: string | null = null
+    if (opts.stageCodexCredential && codexAccessToken) {
+      codexHomeDir = join(scratchTmpDir, 'codex-home')
+      mkdirSync(codexHomeDir, { recursive: true, mode: 0o700 })
+
+      // Round 5 review, BLOCKER: a bare `CODEX_ACCESS_TOKEN`
+      // env var is not a session the real Codex CLI accepts — this call is
+      // the fix: `codex login --with-access-token` reads the token from
+      // stdin and writes a real `auth.json` (its own `account_id`/
+      // `refresh_token` derivation) into the SCOPED `codexHomeDir`, never
+      // the operator's real `CODEX_HOME`. See `runRealCodexLoginWithAccessToken`'s
+      // own doc comment for what is and is not live-verified here.
+      const login = (deps.runCodexLoginWithAccessToken ?? runRealCodexLoginWithAccessToken)({
+        binaryPath: resolvedBinaryPath,
+        codexHome: codexHomeDir,
+        accessToken: codexAccessToken
+      })
+      if (!login.ok) {
+        rmSync(scratchTmpDir, { recursive: true, force: true })
+        throw new Error(`Codex subscription login failed: ${login.reason}`)
+      }
+
+      // Round 5 review, BLOCKER: this preflight must probe the
+      // SAME scoped `codexHomeDir` the confined worker will actually run
+      // against — probing the operator's real, unscoped `CODEX_HOME` (the
+      // prior shape) always reported the session usable even when the
+      // isolated worker's own brokered credential could not authenticate.
+      const authPreflight = (deps.runCodexAuthPreflight ?? runRealCodexAuthPreflight)({
+        binaryPath: resolvedBinaryPath,
+        codexHome: codexHomeDir,
+        cwd: scratchTmpDir,
+        realHome
+      })
+      if (!authPreflight.ok) {
+        rmSync(scratchTmpDir, { recursive: true, force: true })
+        throw new Error(`Codex subscription authentication preflight failed: ${authPreflight.reason}`)
+      }
+
+      writeFileSync(
+        join(codexHomeDir, 'config.toml'),
+        [
+          '[shell_environment_policy]',
+          'inherit = "all"',
+          'ignore_default_excludes = false',
+          '',
+          '[shell_environment_policy.filters]',
+          '# Codex itself receives this brokered session; its repository commands never do.',
+          '"CODEX_ACCESS_TOKEN" = "exclude"',
+          // Security review (round 5), HIGH: `CODEX_API_KEY` is the sibling
+          // credential `RUNTIME_CREDENTIAL_ENV_KEYS` names alongside
+          // `CODEX_ACCESS_TOKEN` and `buildWorkerEnv` passes through from the
+          // trusted controller's own env when set there — excluded here too,
+          // for the same reason: Codex's own repository-spawned subprocesses
+          // must never see it, only the Codex parent itself.
+          '"CODEX_API_KEY" = "exclude"',
+          ''
+        ].join('\n'),
+        { mode: 0o600 }
+      )
+      if (opts.codexHooksPath) {
+        // Round 7 review, BLOCKER: see `buildCodexHooksMarketplace`'s own
+        // doc comment for why this is a plugin install, never a bare file
+        // write — a bare `hooks.json` at `CODEX_HOME` root is never
+        // discovered by the real Codex CLI.
+        const hooksContent = readFileSync(opts.codexHooksPath, 'utf8')
+        const marketplaceDir = join(scratchTmpDir, 'codex-hooks-marketplace')
+        buildCodexHooksMarketplace(marketplaceDir, hooksContent)
+        const install = (deps.runCodexPluginInstall ?? runRealCodexPluginInstall)({
+          binaryPath: resolvedBinaryPath,
+          codexHome: codexHomeDir,
+          marketplaceDir
+        })
+        if (!install.ok) {
+          rmSync(scratchTmpDir, { recursive: true, force: true })
+          throw new Error(`Codex documentation-gate hook install failed: ${install.reason}`)
+        }
+      }
+    }
 
     /** Resolves a subpath of an already-realpath'd parent — realpath'd itself when it already exists (closing the same symlink-alias gap every other path here closes), or left as a plain `join()` when it does not yet exist (`.worktrees` on a fresh clone): the PARENT is already canonical, so a not-yet-existing child's constructed path is exact, and Seatbelt subpath rules need no existing target to compile. */
     const resolveExistingOrJoined = (parentReal: string, rel: string): string => {
@@ -851,6 +1276,10 @@ export function resolveWorkerBoundaryLaunch(
     const vinayaWritableDirs = opts.extraWritableDirs.map(canonical)
     const vinayaWritableFiles = (opts.extraWritableFiles ?? []).map(canonical)
     const vinayaReadOnlyDirs = (opts.extraReadOnlyDirs ?? []).map(canonical)
+    // A dynamically-linked runtime must read its own direct libraries after
+    // it passes process-exec. Keep this to otool-reported directories plus
+    // the conventional sibling `lib/`, never a package-manager root.
+    const runtimeReadOnlyDirs = resolveRuntimeLibraryDirs(resolvedBinaryPath)
 
     // Round 4 review, HIGH: no machine-wide root is ever added here — only
     // the caller's own narrowly-scoped `vinayaWritableDirs`/
@@ -862,7 +1291,11 @@ export function resolveWorkerBoundaryLaunch(
     // subpaths keeps that true now that a task's run files and the
     // telemetry outbox live under two different roots.
     const readOnlyDirs = Array.from(
-      new Set([...(opts.bootstrapWritableSubpaths ? [allowedDirReal] : []), ...vinayaReadOnlyDirs])
+      new Set([
+        ...(opts.bootstrapWritableSubpaths ? [allowedDirReal] : []),
+        ...vinayaReadOnlyDirs,
+        ...runtimeReadOnlyDirs
+      ])
     )
     const readWriteDirs = Array.from(
       new Set([
@@ -948,7 +1381,9 @@ export function resolveWorkerBoundaryLaunch(
         args: ['-f', profilePath, resolvedBinaryPath, ...opts.args],
         cleanup,
         tmpDir: scratchTmpDir,
-        oauthConfigDir
+        oauthConfigDir,
+        codexHomeDir,
+        codexAccessToken
       }
     }
   } catch (error) {
