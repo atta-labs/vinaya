@@ -38,7 +38,7 @@ const REASON_MARKER = /\/\/ REAL PROCESS: \S/g
  * exact per-test census). Lowered as each `describe` block converts; the
  * `round 1 clean, ends on publish` block was the first, taking it from `135`.
  */
-const TODAYS_UNREASONED_DEBT = 41
+const TODAYS_UNREASONED_DEBT = 22
 
 describe('dev-review-loop.test.ts — real-process debt never grows unreasoned (O3)', () => {
   it('every real-process call site beyond today’s recorded debt carries a `// REAL PROCESS:` reason', () => {

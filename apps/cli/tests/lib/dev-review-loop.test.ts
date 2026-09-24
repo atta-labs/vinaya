@@ -66,7 +66,6 @@ import {
   deriveVerdictPauseDetail,
   developerRoundMarker,
   DRIVER_OWNED_PATHS,
-  escalationIdFor,
   extractObjectivesSection,
   filterPrincipalRulings,
   findLatestPrincipalObjectivesEdit,
@@ -81,7 +80,6 @@ import {
   type ReviewerPromptFacts,
   routeCompletionEvents
 } from '../../src/lib/dev-review-loop.js'
-import { MAX_INFRASTRUCTURE_RETRIES } from '../../src/lib/dev-review-loop/round-assess.js'
 import {
   deriveCodeReviewVerdict,
   renderCodeReviewComment,
@@ -1403,72 +1401,6 @@ exit 0
   )
 }
 
-/**
- * O1 (#674): the code-reviewer escalates with the IDENTICAL reason/detail on
- * its first TWO invocations — round and head never move across a resume with
- * no fix push, so this reproduces `sameEscalationInstance`'s own collision
- * (`control-store/local.ts`): a second pause that looks like a rerun of the
- * first, still-consumed one, landing back on the SAME natural escalation id.
- * Comes back clean on the third invocation, so a fixed `--resume` that
- * continues past the collision has something to actually publish.
- */
-function writeFakeClaudeEscalatesTwiceThenCleanScenario(dir: string): void {
-  writeFakeBinary(
-    dir,
-    'claude',
-    `#!/bin/sh
-touch "$HOME/.fake-dev-invoked" 2>/dev/null
-PROMPT="$(cat)"
-WORKROOT="$HOME/.vinaya/runtime/unresolved/tasks-execution/$VINAYA_TASK"
-case "$VINAYA_ROLE" in
-  code-reviewer)
-    WD="$WORKROOT/rounds/$VINAYA_ROUND/reviewer-work"
-    mkdir -p "$WD"
-    COUNT_FILE="$HOME/.escalate-count"
-    COUNT=0
-    if [ -f "$COUNT_FILE" ]; then COUNT="$(cat "$COUNT_FILE")"; fi
-    if [ "$COUNT" -lt 2 ]; then
-      echo $((COUNT + 1)) > "$COUNT_FILE"
-      : > "$WD/findings.txt"
-      printf 'ESCALATE: authority\\nSUMMARY: needs a call nobody made.\\n' > "$WD/report.txt"
-    else
-      : > "$WD/findings.txt"
-      printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
-      printf 'BRIEF_CONFORMANCE: yes\\nSPEC_CONFORMANCE: yes\\nSCOPE: small\\nTESTS: pass\\nDOCS: n/a\\n' > "$WD/report.txt"
-    fi
-    echo '{"session_id":"rev-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
-    ;;
-  security)
-    WD="$WORKROOT/rounds/$VINAYA_ROUND/security-work"
-    mkdir -p "$WD"
-    : > "$WD/findings.txt"
-    printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
-    printf 'CONFIG_SCAN: clean\\nSECRETS: none found\\n' > "$WD/report.txt"
-    echo '{"session_id":"sec-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
-    ;;
-  *)
-    mkdir -p "$WORKROOT"
-    printf '%s\\n---\\n' "$PROMPT" >> "$WORKROOT/dev-prompts.txt"
-    mkdir -p "$WORKROOT/rounds/$VINAYA_ROUND/developer"
-    echo "CONFIDENCE: 90 -- go ahead per the ruling" > "$WORKROOT/rounds/$VINAYA_ROUND/developer/.vinaya-confidence"
-    echo '{"session_id":"dev-session-1","usage":{"input_tokens":10,"output_tokens":5}}'
-    ;;
-esac
-exit 0
-`
-  )
-}
-
-function setUpPauseResumeEscalatesTwice(): { home: string; cwd: string; path: string } {
-  const home = tempDir('vinaya-drl-home-')
-  const cwd = tempDir('vinaya-drl-cwd-')
-  const binDir = tempDir('vinaya-drl-bin-')
-  writeFakeClaudeEscalatesTwiceThenCleanScenario(binDir)
-  writeFakeGh(binDir)
-  writeFakeGit(binDir)
-  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
-}
-
 function driverLockPath(home: string): string {
   return join(taskRunDir(home), 'driver.pid.json')
 }
@@ -1536,75 +1468,6 @@ function setUpPauseResume(): { home: string; cwd: string; path: string } {
 }
 
 describe('devReviewLoop — escalation pauses, --resume continues after a ruling', () => {
-  // REAL PROCESS: needs a real --resume call (devReviewLoop's --resume entry calls the bare, non-injectable fetchPrBody, per its own doc comment)
-  it('pauses with a marked comment and a non-zero exit, then --resume publishes after a ruling', () => {
-    const { home, cwd, path } = setUpPauseResume()
-
-    const paused = runLoop(home, cwd, path)
-    expect(paused.status).not.toBe(0)
-    expect(paused.stdout).toMatch(/paused \(escalation\)/)
-
-    const pausedFiles = postedCommentFiles(home)
-    // One more than before: the driver posts the round
-    // marker comment itself before the escalation is even discovered — see
-    // `devReviewLoop — round 1 clean, ends on publish`'s own O2 fixture.
-    expect(pausedFiles).toHaveLength(2)
-    const roundCommentPosted = readFileSync(join(home, '.fake-gh-posted-comments', pausedFiles[0] as string), 'utf8')
-    expect(roundCommentPosted).toMatch(/^<!-- aeg:developer:round-1 -->$/m)
-    const pauseComment = readFileSync(join(home, '.fake-gh-posted-comments', pausedFiles[1] as string), 'utf8')
-    expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:escalation -->$/m)
-    expect(pauseComment).toMatch(/vinaya dev-review-loop --resume 123/)
-    expect(pauseComment).not.toMatch(/^VERDICT:/m)
-    // O1 ([task-log-v1] 9, Issue #631): `assessRound`'s own `'escalation'`
-    // decision (a reviewer's ESCALATE verdict) carries no `detail` at all —
-    // the driver narrates it from the same verdicts it already dispatched,
-    // naming WHICH role escalated, so the comment alone states what fired.
-    expect(pauseComment).toContain('reviewer returned ESCALATE this round')
-
-    const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
-      string,
-      unknown
-    >
-    expect(pauseState.round).toBe(1)
-    expect(pauseState.reason).toBe('escalation')
-    expect(pauseState.detail).toContain('reviewer returned ESCALATE this round')
-
-    // Seed a Principal ruling comment on the PR — the same shape
-    // `filterPrincipalRulings`'s own unit tests use — before resuming. Named
-    // `comment-3.md`: `comment-1.md`/`comment-2.md` are now the round
-    // comment and the pause comment above.
-    writeFileSync(
-      join(home, '.fake-gh-posted-comments', 'comment-3.md'),
-      `<!-- aeg:principal:ruling:${TASK}-1 -->\nGo ahead and fix it.\n`
-    )
-
-    const resumed = runResume(home, cwd, path, 123)
-    expect(resumed.status).toBe(0)
-    expect(resumed.stdout).toMatch(/publish/)
-
-    const devPrompts = readFileSync(join(taskRunDir(home), 'dev-prompts.txt'), 'utf8')
-    expect(devPrompts).toMatch(/Principal ruling on this pause/)
-    expect(devPrompts).toMatch(/Go ahead and fix it\./)
-
-    // O11 (task-run-v1 21, #541, round 2 review MAJOR): the ruling-resume
-    // prompt names the task/branch/worktree/head context AND the exact
-    // command expected — not just "push fixes" in prose.
-    expect(devPrompts).toMatch(new RegExp(`^Resuming task Issue #${TASK}\\.$`, 'm'))
-    expect(devPrompts).toMatch(new RegExp(`^Branch: \`${BRANCH}\`$`, 'm'))
-    expect(devPrompts).toMatch(/^Worktree: `.*\.worktrees\//m)
-    expect(devPrompts).toMatch(/^Remote head: [0-9a-f]{40}$/m)
-    expect(devPrompts).toMatch(/`git push`/)
-
-    // Published: the two verdicts and the summary, appended after the round
-    // comment, the pause comment, and the seeded ruling. No SECOND round
-    // comment: the resumed round dispatches reviewers on the SAME head
-    // (round 1, `HEAD_SHA` unchanged in this fixture), so the driver's own
-    // `postForgeEffectOnce` key from before the pause is reused rather than
-    // posted again.
-    const allComments = postedCommentFiles(home)
-    expect(allComments).toHaveLength(6)
-  }, 45000)
-
   // REAL PROCESS: harness's fake postPauseComment records directly to world.postedComments and never runs the real EffectExecutor, so no effect-kind lines are ever emitted to assert on
   it("a single pause's dev_review_loop 'paused' event and the effect events its own pause-comment post fires share the SAME meta.lineage.run (task-log-v1 task 6, O1/O2: one correlated history)", () => {
     const { home, cwd, path } = setUpPauseResume()
@@ -1629,44 +1492,6 @@ describe('devReviewLoop — escalation pauses, --resume continues after a ruling
     )
     expect(runs.size).toBe(1)
     expect([...runs][0]).not.toBeNull()
-  }, 45000)
-
-  // REAL PROCESS: needs a real --resume call
-  it('logs a resumed event, and every event this resumed process emits shares the SAME meta.lineage.run (task-log-v1 task 6, O1/O2/O3: one correlated history)', () => {
-    const { home, cwd, path } = setUpPauseResume()
-
-    const paused = runLoop(home, cwd, path)
-    expect(paused.status).not.toBe(0)
-
-    writeFileSync(
-      join(home, '.fake-gh-posted-comments', 'comment-3.md'),
-      `<!-- aeg:principal:ruling:${TASK}-1 -->\nGo ahead and fix it.\n`
-    )
-
-    const resumed = runResume(home, cwd, path, 123)
-    expect(resumed.status).toBe(0)
-
-    const lines = outboxLines(home)
-    const resumedEvents = lines.filter((l) => l.event === 'resumed')
-    expect(resumedEvents).toHaveLength(1)
-    expect(resumedEvents[0]).toMatchObject({ kind: 'dev_review_loop', round: 1, by: 'principal' })
-
-    // Every line THIS resumed process itself logged — starting with its own
-    // `resumed` event — carries the identical `meta.lineage.run`, the
-    // resumed run's own `loopId`: a `dev_review_loop` event from the round
-    // loop itself and any `operation`/`effect` event a pause-adjacent write
-    // fires in the SAME process are provably part of the same one history,
-    // not two independently-correlated streams. (Lines from BEFORE the
-    // resume — the original paused run's own `loop_started`.. `paused`/
-    // `journal_finalized` batch — belong to a DIFFERENT process and are
-    // correctly excluded: `resumed` is the first line the code under test
-    // logs.)
-    const resumedIdx = lines.findIndex((l) => l.event === 'resumed')
-    expect(resumedIdx).toBeGreaterThanOrEqual(0)
-    const resumedRunLines = lines.slice(resumedIdx)
-    const lineageRuns = new Set(resumedRunLines.map((l) => (l.meta as { lineage: { run: string | null } }).lineage.run))
-    expect(lineageRuns.size).toBe(1)
-    expect([...lineageRuns][0]).not.toBeNull()
   }, 45000)
 })
 
@@ -1903,53 +1728,6 @@ describe('devReviewLoop — O1 (`[task-operator-v1]`/Issue #662): the pause comm
     expect(retryEvent?.attempts).toBe(3)
     expect(retryEvent?.outcome).toBe('exhausted')
   }, 45000)
-
-  // REAL PROCESS: the pause comment's own retry-with-backoff (postWithRetry) is the subject, and the --resume entry reads the PR body outside the injected dependencies
-  it('the next --resume posts the missing comment first, once, and continues — never a second copy once it lands', () => {
-    const home = tempDir('vinaya-drl-home-')
-    const cwd = tempDir('vinaya-drl-cwd-')
-    const binDir = tempDir('vinaya-drl-bin-')
-    writeFakeClaudePauseThenResumeScenario(binDir)
-    writeFakeGhPauseCommentNeverSucceeds(binDir)
-    writeFakeGit(binDir)
-    const path = `${binDir}:${pathWithoutRealVendors()}`
-
-    const paused = runDevReviewLoopArgs(
-      home,
-      cwd,
-      path,
-      ['--task', String(TASK), '--agent', 'claude'],
-      FAST_PAUSE_RETRY_ENV
-    )
-    expect(paused.status).not.toBe(0)
-    expect(postedCommentFiles(home)).toHaveLength(1)
-
-    // Seed a Principal ruling — --resume's own authentication needs one —
-    // and swap to a healthy gh before resuming.
-    writeFileSync(
-      join(home, '.fake-gh-posted-comments', 'comment-2.md'),
-      `<!-- aeg:principal:ruling:${TASK}-1 -->\nGo ahead and fix it.\n`
-    )
-    writeFakeGh(binDir)
-
-    const resumed = runDevReviewLoopArgs(
-      home,
-      cwd,
-      path,
-      ['--resume', '123', '--agent', 'claude'],
-      FAST_PAUSE_RETRY_ENV
-    )
-    expect(resumed.status).toBe(0)
-    expect(resumed.stdout).toMatch(/publish/)
-
-    // The missing pause comment was posted first, exactly once — never
-    // duplicated on a later idempotent re-check within the same run.
-    const allComments = postedCommentFiles(home).map((f) =>
-      readFileSync(join(home, '.fake-gh-posted-comments', f), 'utf8')
-    )
-    const pausedComments = allComments.filter((body) => /^<!-- aeg:loop:paused:escalation -->$/m.test(body))
-    expect(pausedComments).toHaveLength(1)
-  }, 45000)
 })
 
 // --- control-store-v1 task 6, #556: escalation record, resolution replay, cancel ---
@@ -1977,102 +1755,6 @@ function seedRuling(home: string, commentName: string): void {
     `<!-- aeg:principal:ruling:${TASK}-1 -->\nGo ahead.\n`
   )
 }
-
-describe('devReviewLoop — resolution consumed once, replay refused (O2)', () => {
-  // REAL PROCESS: needs two real --resume calls
-  it('a second --resume against the SAME already-resolved pause is refused, never re-dispatching', () => {
-    const { home, cwd, path } = setUpPauseResume()
-
-    const paused = runLoop(home, cwd, path)
-    expect(paused.status).not.toBe(0)
-
-    seedRuling(home, 'comment-3.md')
-
-    const resumed = runResume(home, cwd, path, 123)
-    expect(resumed.status).toBe(0)
-    expect(resumed.stdout).toMatch(/publish/)
-
-    const resolutionPath = resolutionRecordPath(home, TASK, 1, HEAD_SHA)
-    expect(existsSync(resolutionPath)).toBe(true)
-    const resolution = JSON.parse(readFileSync(resolutionPath, 'utf8')) as Record<string, unknown>
-    expect(resolution.decision).toBe('resume')
-
-    // Replay: the SAME PR, the SAME pause instance already consumed above —
-    // refused rather than silently re-dispatching a second time.
-    const replayed = runResume(home, cwd, path, 123)
-    expect(replayed.status).not.toBe(0)
-    expect(replayed.stderr).toMatch(/already has a consumed resolution|replay refused/)
-  }, 45000)
-})
-
-describe("devReviewLoop — O1 (#674): a resume continues from the pull request's current state once its newest escalation is already resolved and no driver is running", () => {
-  // REAL PROCESS: needs real --resume calls
-  it('a resumed round that collides back onto the SAME already-consumed escalation still continues on the next --resume, instead of exiting with a replay refusal', () => {
-    const { home, cwd, path } = setUpPauseResumeEscalatesTwice()
-
-    const paused = runLoop(home, cwd, path)
-    expect(paused.status).not.toBe(0)
-    expect(paused.stdout).toMatch(/paused \(escalation\)/)
-
-    seedRuling(home, 'comment-3.md')
-
-    // First --resume: consumes the escalation's resolution and dispatches
-    // the developer and reviewers fresh on the ruling — the SAME reviewer
-    // escalates again, with the identical reason/detail (the ruling never
-    // touched the underlying disagreement), on the SAME round and head.
-    // `sameEscalationInstance` (`control-store/local.ts`) reads this as a
-    // rerun of the identical pause instance, so it lands back on the exact
-    // escalation id `--resume` already consumed — this machine's own
-    // `pause-state.json` never advances past it, the same shape a genuine
-    // crash right after the resolve would leave behind.
-    const firstResume = runResume(home, cwd, path, 123)
-    expect(firstResume.status).not.toBe(0)
-    expect(firstResume.stdout).toMatch(/paused \(escalation\)/)
-
-    const resolutionPath = resolutionRecordPath(home, TASK, 1, HEAD_SHA)
-    expect(existsSync(resolutionPath)).toBe(true)
-
-    const heldAfterFirstResume = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
-      string,
-      unknown
-    >
-    expect(heldAfterFirstResume.escalationId).toBe(escalationIdFor(TASK, 1, HEAD_SHA))
-
-    // Second --resume: no driver owns the task any more (the first resume's
-    // own process already exited and cleared its lock), and the task's own
-    // durable journal never shows a `merged_ready` conclusion — so this
-    // continues from the pull request's current state, dispatching
-    // reviewers fresh a third time, where the fake reviewer finally comes
-    // back clean, and the loop publishes. The pre-existing replay refusal
-    // never fires.
-    const secondResume = runResume(home, cwd, path, 123)
-    expect(secondResume.stderr).not.toMatch(/already has a consumed resolution|replay refused/)
-    expect(secondResume.status).toBe(0)
-    expect(secondResume.stdout).toMatch(/publish/)
-  }, 45000)
-
-  // REAL PROCESS: needs real --resume calls
-  it('the SAME already-resolved escalation is still refused while a driver genuinely still owns the task (Traps to avoid: the storage guarantee is never weakened)', () => {
-    const { home, cwd, path } = setUpPauseResumeEscalatesTwice()
-
-    const paused = runLoop(home, cwd, path)
-    expect(paused.status).not.toBe(0)
-
-    seedRuling(home, 'comment-3.md')
-
-    const firstResume = runResume(home, cwd, path, 123)
-    expect(firstResume.status).not.toBe(0)
-
-    // Simulate a driver that still owns the task at the moment of the next
-    // --resume — a live pid (this test process's own) on the task's driver
-    // lock, exactly as "one driver per task"'s own fixtures do above.
-    writeDriverLockFixture(home, { pid: process.pid, startedAt: new Date(0).toISOString() })
-
-    const secondResume = runResume(home, cwd, path, 123)
-    expect(secondResume.status).not.toBe(0)
-    expect(secondResume.stderr).toMatch(/already has a consumed resolution|replay refused/)
-  }, 45000)
-})
 
 describe('devReviewLoop — --cancel (O3)', () => {
   // REAL PROCESS: trailing assertion needs a real --resume attempt
@@ -2159,112 +1841,6 @@ describe('devReviewLoop — --cancel refuses a mismatched --agent (code review, 
     const cancelled = runCancel(home, cwd, path, 123)
     expect(cancelled.status).toBe(0)
     expect(cancelled.stdout).toMatch(/cancelled/)
-  }, 45000)
-})
-
-describe('devReviewLoop — resolveEscalation’s WrongTargetResolutionError/StaleEscalationError, above the storage level (code review, round 2, MINOR)', () => {
-  // REAL PROCESS: needs a real --resume call
-  it('refuses a --resume whose escalation record was never written (StaleEscalationError)', () => {
-    const { home, cwd, path } = setUpPauseResume()
-
-    const paused = runLoop(home, cwd, path)
-    expect(paused.status).not.toBe(0)
-
-    seedRuling(home, 'comment-3.md')
-
-    const recordPath = escalationRecordPath(home, TASK, 1, HEAD_SHA)
-    expect(existsSync(recordPath)).toBe(true)
-    rmSync(recordPath)
-
-    const resumed = runResume(home, cwd, path, 123)
-    expect(resumed.status).not.toBe(0)
-    expect(resumed.stderr).toMatch(/is stale/)
-    expect(resumed.stderr).toMatch(/no escalation record was ever written/)
-  }, 45000)
-})
-
-// --- task-run-v1 15, O8: --resume accepts a moved head once a ruling exists ---
-
-/** Same as `writeFakeGit`, except `ls-remote` answers a NEW head sha once `$HOME/.fix-pushed-after-pause` exists — the developer pushing a fix while this loop was paused, out of band, before `--resume` ever runs. */
-function writeFakeGitHeadMovesAfterPause(dir: string): void {
-  writeFakeBinary(
-    dir,
-    'git',
-    `#!/bin/sh
-if [ "$1" = "ls-remote" ]; then
-  if [ -f "$HOME/.fake-dev-invoked" ]; then
-    if [ -f "$HOME/.fix-pushed-after-pause" ]; then
-      echo "${'f'.repeat(40)}	refs/heads/${BRANCH}"
-    else
-      echo "${HEAD_SHA}	refs/heads/${BRANCH}"
-    fi
-  fi
-  exit 0
-fi
-if [ "$1" = "rev-parse" ] && [ "$2" = "origin/main" ]; then
-  echo "${BASE_SHA}"
-  exit 0
-fi
-if [ "$1" = "merge-base" ]; then
-  echo "${BASE_SHA}"
-  exit 0
-fi
-if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
-  echo "$PWD"
-  exit 0
-fi
-if [ "$1" = "fetch" ]; then
-  exit 0
-fi
-if [ "$1" = "diff" ]; then
-  echo " 2 files changed, 10 insertions(+), 3 deletions(-)"
-  exit 0
-fi
-exit 1
-`
-  )
-}
-
-function setUpPauseResumeHeadMoves(): { home: string; cwd: string; path: string } {
-  const home = tempDir('vinaya-drl-home-')
-  const cwd = tempDir('vinaya-drl-cwd-')
-  const binDir = tempDir('vinaya-drl-bin-')
-  writeFakeClaudePauseThenResumeScenario(binDir)
-  writeFakeGh(binDir)
-  writeFakeGitHeadMovesAfterPause(binDir)
-  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
-}
-
-describe('devReviewLoop — O8 (task-run-v1 task 15): --resume accepts a moved head after a ruling', () => {
-  // REAL PROCESS: needs a real --resume call
-  it('never refuses a moved head once a ruling exists — dispatches reviewers directly (no re-dispatched developer) and publishes', () => {
-    const { home, cwd, path } = setUpPauseResumeHeadMoves()
-
-    const paused = runLoop(home, cwd, path)
-    expect(paused.status).not.toBe(0)
-    expect(paused.stdout).toMatch(/paused \(escalation\)/)
-
-    // Seed a Principal ruling, THEN simulate the developer pushing a fix
-    // out of band, before --resume ever runs — "a ruling followed by a fix
-    // push," the exact normal case O8 names.
-    writeFileSync(
-      join(home, '.fake-gh-posted-comments', 'comment-2.md'),
-      `<!-- aeg:principal:ruling:${TASK}-1 -->\nGo ahead and fix it.\n`
-    )
-    writeFileSync(join(home, '.fix-pushed-after-pause'), '')
-
-    const resumed = runResume(home, cwd, path, 123)
-    expect(resumed.status).toBe(0)
-    expect(resumed.stdout).toMatch(/publish/)
-
-    // No developer re-dispatch on the resumed run — dev-prompts.txt carries
-    // only round 1's original brief prompt (written before the pause),
-    // never a "Principal ruling on this pause" entry, which only the
-    // SAME-head resume path (the sibling describe block above) ever writes.
-    const devPromptsPath = join(taskRunDir(home), 'dev-prompts.txt')
-    if (existsSync(devPromptsPath)) {
-      expect(readFileSync(devPromptsPath, 'utf8')).not.toMatch(/Principal ruling on this pause/)
-    }
   }, 45000)
 })
 
@@ -2575,6 +2151,7 @@ function setUpReviewerWritesGarbageFindings(): { home: string; cwd: string; path
 }
 
 describe('devReviewLoop — a findings.txt line that still does not parse is an infrastructure pause (review-validity-v1 task 8, #506, O6)', () => {
+  // REAL PROCESS: the dispatch outcome line it joins against is logged by the real dispatchRole, which the in-process harness replaces
   it('retries once into a fresh work directory, then pauses naming the file, the line, and the reviewer session id — never an uncaught throw', () => {
     const { home, cwd, path } = setUpReviewerWritesGarbageFindings()
     const r = runLoop(home, cwd, path)
@@ -2732,196 +2309,6 @@ exit 1
 }
 
 /**
- * Same as `writeFakeGhAlwaysRedCi`, plus `pr view --json body` (O5, `#595`)
- * — `--resume`'s very first read (`fetchPrBody`, to derive the task from
- * `Closes #N`) has no answer in the plain fixture, which never resumes.
- */
-function writeFakeGhAlwaysRedCiResumable(dir: string): void {
-  writeFakeBinary(
-    dir,
-    'gh',
-    `#!/bin/sh
-if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then
-  # #668: every fixture's principalAllowlist()/reviewPolicy() call reaches
-  # loadTrustAnchorConfig() with no injected fetcher (it runs inside this
-  # spawned driver subprocess, past any in-process seam) — declaring the
-  # read unavailable here, 404-shaped, keeps it on loadTrustAnchorConfig's
-  # SILENT path (isMissingFileError), never its stdout warning, which no
-  # fixture's captured output expects.
-  echo "gh: HTTP 404 Not Found (test stub — no vinaya.config.json on the default branch)" >&2
-  exit 1
-fi
-STATE_DIR="$HOME/.fake-gh-posted-comments"
-mkdir -p "$STATE_DIR"
-if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
-  printf '%s\\n' '{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\nDo the thing.\\n\\n## Objectives\\n\\nO1. Do the thing.\\n","author":{"login":"daniboomerang"}}]}'
-  exit 0
-fi
-if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "title" ]; then
-  printf '%s\\n' '{"title":"[dev-review-loop-v1] ${TASK} \\u2014 test task"}'
-  exit 0
-fi
-if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "labels" ]; then
-  printf '%s\n' '{"labels":[{"name":"vinaya/tranche:x"}]}'
-  exit 0
-fi
-if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
-  if [ -f "$HOME/.fake-dev-invoked" ]; then
-    echo '[{"number":123,"headRefName":"${BRANCH}"}]'
-  else
-    echo '[]'
-  fi
-  exit 0
-fi
-if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
-  N=$(ls "$STATE_DIR"/comment-*.md 2>/dev/null | wc -l | tr -d ' ')
-  BODY_FILE="$5"
-  cp "$BODY_FILE" "$STATE_DIR/comment-$((N + 1)).md"
-  echo "https://github.com/example/repo/pull/$3#issuecomment-$((N + 1))"
-  exit 0
-fi
-if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "mergeable" ]; then
-  echo '{"mergeable":"MERGEABLE"}'
-  exit 0
-fi
-if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "body" ]; then
-  printf '%s\\n' '{"body":"Closes #${TASK}"}'
-  exit 0
-fi
-if [ "$1" = "api" ] && [ "\${2#*check-runs}" != "$2" ]; then
-  echo '{"id":1,"name":"Vinaya CI","status":"completed","conclusion":"failure"}'
-  exit 0
-fi
-if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
-  echo "fake gh: refusing issue comment (log flush not under test)" >&2
-  exit 1
-fi
-echo "unhandled fake gh call: $*" >&2
-exit 1
-`
-  )
-}
-
-function setUpNeverPushesResumable(): { home: string; cwd: string; path: string } {
-  const home = tempDir('vinaya-drl-home-')
-  const cwd = tempDir('vinaya-drl-cwd-')
-  const binDir = tempDir('vinaya-drl-bin-')
-  writeFakeClaudeNeverPushes(binDir)
-  writeFakeGhAlwaysRedCiResumable(binDir)
-  writeFakeGit(binDir)
-  return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
-}
-
-// --- control-store-v1 task 4 (#554): the loop recovers budgets and held
-// results from control state, not from optional event history -------------
-
-function controlStoreLoopStatePath(home: string): string {
-  return join(controlDir(home), 'loop-state.json')
-}
-
-describe('devReviewLoop — control-store-v1 task 4 (round 2 review, security HIGH): --resume floors its infrastructure-retry bound against the pause-state file, not the control store alone', () => {
-  // REAL PROCESS: the --resume/resumePr path calls the bare imported fetchPrBody directly (not d.fetchPrBody), a real gh pr view call the harness cannot intercept — explicitly documented in dev-revi
-  it('refuses a bare-command resume once the pause-state file alone already reflects the bound, even with the control-store record absent', () => {
-    const { home, cwd, path } = setUpNeverPushesResumable()
-    const paused = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
-      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '2',
-      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '10',
-      VINAYA_DEV_REVIEW_LOOP_GH_RETRY_BACKOFF_MS: '1'
-    })
-    expect(paused.status).not.toBe(0)
-    expect(paused.stdout).toMatch(/paused \(infrastructure\)/)
-
-    // Simulates a `persistLoopState` write that has been silently failing
-    // for this task's whole life (an unwritable control-store directory, a
-    // hand-cleaned one) while `writePauseState`'s own plain `writeFileSync`
-    // — a different write path — kept landing: the control store reads
-    // `'absent'`, but the pause-state file alone already carries a count at
-    // the bound.
-    const pauseStatePath = join(controlDir(home), 'pause-state.json')
-    const pauseState = JSON.parse(readFileSync(pauseStatePath, 'utf8')) as Record<string, unknown>
-    pauseState.infrastructureRetries = MAX_INFRASTRUCTURE_RETRIES
-    writeFileSync(pauseStatePath, JSON.stringify(pauseState), 'utf8')
-    rmSync(controlStoreLoopStatePath(home), { force: true })
-
-    // Before the fix, `infrastructureRetriesSoFar` came from the
-    // control-store read alone: `'absent'` read as `0`, well under the
-    // bound, so this resumed on the bare command exactly like the O5 test
-    // above, with `bareInfrastructureResume` true and `d.fetchRulings`
-    // never even called — exactly the silently-reset-to-a-clean-slate hole
-    // the security finding named. With the fix, the pause-state floor pins
-    // `infrastructureRetriesSoFar` at the bound, `bareInfrastructureResume`
-    // is false, and the code takes the "fetch rulings for real" branch —
-    // this fixture (built for the never-a-real-PR bare-resume case) answers
-    // that particular `gh pr view <n> --json comments` call with nothing
-    // wired, so the resume fails fetching rulings rather than finding zero
-    // of them; either failure proves the SAME thing this test asserts: the
-    // bare-command path was refused.
-    const resumed = runDevReviewLoopArgs(home, cwd, path, ['--resume', '123', '--agent', 'claude'], {
-      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '2',
-      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '10',
-      VINAYA_DEV_REVIEW_LOOP_GH_RETRY_BACKOFF_MS: '1'
-    })
-    expect(resumed.status).not.toBe(0)
-    expect(resumed.stdout).not.toMatch(/paused \(infrastructure\)/)
-    expect(resumed.stderr).toMatch(/fetchRulings/)
-  }, 30000)
-})
-
-describe('devReviewLoop — control-store-v1 task 4 (round 3 review, MAJOR): a resumed process floors its own in-memory infrastructure-retry count against pause-state.json too', () => {
-  // REAL PROCESS: the --resume entry reads the PR body outside the injected dependencies
-  it('never regresses the persisted count after a further pause, even with the control-store record absent going in', () => {
-    const { home, cwd, path } = setUpNeverPushesResumable()
-    const paused = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
-      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '2',
-      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '10',
-      VINAYA_DEV_REVIEW_LOOP_GH_RETRY_BACKOFF_MS: '1'
-    })
-    expect(paused.status).not.toBe(0)
-    expect(paused.stdout).toMatch(/paused \(infrastructure\)/)
-
-    // Simulates a `persistLoopState` write that has been silently failing
-    // since well before this resume: the control-store record is gone
-    // entirely, while `pause-state.json` — a different, simpler write path —
-    // already carries a real prior count of `3`, still comfortably under
-    // `MAX_INFRASTRUCTURE_RETRIES` (`5`), so the resume GATE check
-    // (`infrastructureRetriesSoFar`, already floored against this same file
-    // since the security-HIGH fix) grants the bare-command resume cleanly —
-    // this test is entirely about what happens to the IN-PROCESS seed once
-    // that resumed process actually starts running, not about the gate.
-    const pauseStatePath = join(controlDir(home), 'pause-state.json')
-    const pauseState = JSON.parse(readFileSync(pauseStatePath, 'utf8')) as Record<string, unknown>
-    pauseState.infrastructureRetries = 3
-    writeFileSync(pauseStatePath, JSON.stringify(pauseState), 'utf8')
-    rmSync(controlStoreLoopStatePath(home), { force: true })
-
-    // The SAME always-red CI stalls this resumed process again — one more
-    // genuine infrastructure pause, which persists whatever the in-process
-    // `infrastructureRetries` variable was seeded at, plus one.
-    const resumed = runDevReviewLoopArgs(home, cwd, path, ['--resume', '123', '--agent', 'claude'], {
-      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '2',
-      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '10',
-      VINAYA_DEV_REVIEW_LOOP_GH_RETRY_BACKOFF_MS: '1'
-    })
-    expect(resumed.status).not.toBe(0)
-    expect(resumed.stdout).toMatch(/paused \(infrastructure\)/)
-
-    // Before the fix, the in-process seed read the (now-absent)
-    // control-store alone: `0`, incremented once by this pause, persisted as
-    // `1` — silently regressing the true count from `3` down to `1`, even
-    // though `pause-state.json` itself already said `3` going in. With the
-    // fix, the seed floors against `resumeFrom.infrastructureRetries` (`3`),
-    // so this pause can only ever advance it to `4` or more, never back down.
-    const persisted = JSON.parse(readFileSync(controlStoreLoopStatePath(home), 'utf8')) as {
-      budgets: { infrastructureRetries: number }
-    }
-    expect(persisted.budgets.infrastructureRetries).toBeGreaterThanOrEqual(4)
-
-    const newPauseState = JSON.parse(readFileSync(pauseStatePath, 'utf8')) as { infrastructureRetries: number }
-    expect(newPauseState.infrastructureRetries).toBeGreaterThanOrEqual(4)
-  }, 30000)
-})
-
-/**
  * Same as `writeFakeGhAlwaysRedCi`, except the mechanical check-run named
  * `Vinaya CI` answers with TWO runs: an older `success`, superseded by a
  * newer `failure` (driver-lifecycle-v1 task 2, `#607`, O2 — the reverse of
@@ -3073,46 +2460,6 @@ describe('devReviewLoop — O4 (#595): a re-exec child whose own first gate read
   }, 30000)
 })
 
-describe('devReviewLoop — O5 (#595): an infrastructure pause resumes on the bare command, no Principal ruling needed', () => {
-  // REAL PROCESS: uses the --resume <pr>/resumePr input path, which LoopDeps.fetchPrBody's own doc comment in dev-review-loop.ts declares explicitly out of the in-process harness's scope ("a resumed
-  it('--resume continues past an infrastructure pause with zero ruling comments ever posted', () => {
-    const { home, cwd, path } = setUpNeverPushesResumable()
-    const paused = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
-      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '2',
-      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '10',
-      VINAYA_DEV_REVIEW_LOOP_GH_RETRY_BACKOFF_MS: '1'
-    })
-    expect(paused.status).not.toBe(0)
-    expect(paused.stdout).toMatch(/paused \(infrastructure\)/)
-
-    const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
-      string,
-      unknown
-    >
-    expect(pauseState.reason).toBe('infrastructure')
-
-    // Every other pause reason requires a Principal ruling comment before
-    // `--resume` will proceed at all (`devReviewLoop --resume: PR #<n>
-    // carries no Principal ruling comment yet`) — this run posts NONE, ever,
-    // and `--resume` must still continue rather than throw that error.
-    expect(postedCommentFiles(home).length).toBeGreaterThan(0)
-    for (const f of postedCommentFiles(home)) {
-      expect(readFileSync(join(home, '.fake-gh-posted-comments', f), 'utf8')).not.toMatch(/aeg:principal:ruling/)
-    }
-
-    const resumed = runDevReviewLoopArgs(home, cwd, path, ['--resume', '123', '--agent', 'claude'], {
-      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '2',
-      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '10',
-      VINAYA_DEV_REVIEW_LOOP_GH_RETRY_BACKOFF_MS: '1'
-    })
-    expect(resumed.stderr).not.toMatch(/carries no Principal ruling comment yet/)
-    // Still stuck on the exact same never-fixed red gate — resumes straight
-    // back into the same bounded infrastructure pause, never a crash.
-    expect(resumed.status).not.toBe(0)
-    expect(resumed.stdout).toMatch(/paused \(infrastructure\)/)
-  }, 30000)
-})
-
 // --- task-run-v1 13 (#508), O8: a base that moves past this driver's own code pauses `stale_driver` ---
 
 /** Pushes and opens the PR on its one turn, and ALSO flips `.base-moved` — standing in for a separate PR merging into the base, touching the driver's own code, while this loop was running. */
@@ -3181,6 +2528,7 @@ exit 1
 }
 
 describe('devReviewLoop — O7 (task-run-v1 task 15): a moved base re-execs in place instead of pausing', () => {
+  // REAL PROCESS: a re-exec replaces the driver process with a child; the subject is that real process hand-off
   it('pulls the default branch, re-execs onto the same task, and never pauses stale_driver', () => {
     const home = tempDir('vinaya-drl-home-')
     const cwd = tempDir('vinaya-drl-cwd-')
@@ -3262,6 +2610,7 @@ exit 0
 }
 
 describe('devReviewLoop — O1 (#548): the re-exec hands its lock to the child instead of refusing it', () => {
+  // REAL PROCESS: the driver lock handed from a parent process to its re-exec'd child is the subject
   it('clears the parent’s own live lock before spawning, so the child starts and publishes instead of dying to its own parent’s lock', () => {
     const home = tempDir('vinaya-drl-home-')
     const cwd = tempDir('vinaya-drl-cwd-')
@@ -3429,6 +2778,7 @@ const FAST_POLL_ENV = {
 }
 
 describe('devReviewLoop — O4 (Issue #662): a resumed loop that hits a stale-driver restart before its next developer turn continues, never refusing the ruling it already consumed', () => {
+  // REAL PROCESS: a --resume process and its re-exec'd child are two real processes; the hand-off between them is the subject
   it('runs two rounds across the --resume process and its own re-exec’d child, publishing rather than crashing on a replayed resolution', () => {
     const { home, cwd, path } = setUpResumeThenStaleDriver()
 
@@ -4589,6 +3939,7 @@ function setUpPrincipalOwedRedReviewGate(): { home: string; cwd: string; path: s
 }
 
 describe('devReviewLoop — a principal-owed red never redispatches the developer (review-validity-v1 11, O3)', () => {
+  // REAL PROCESS: the real check-run filter that excludes the review gate's own check is the subject, and the in-process harness replaces it
   it('dispatches both reviewers off the green mechanical gate, even with review-gate itself red', () => {
     const { home, cwd, path } = setUpPrincipalOwedRedReviewGate()
     const r = runLoop(home, cwd, path)
