@@ -411,7 +411,16 @@ const OWNED_ENV_KEYS = [
   'VINAYA_RUN',
   'VINAYA_RUN_ID',
   'AEG_REPO',
-  'GITHUB_REPOSITORY'
+  'GITHUB_REPOSITORY',
+  // What the log path reads to decide where a line goes and whose it is: a
+  // CI runner sets `GITHUB_ACTIONS`, a dispatched session sets the rest. Left
+  // in place, the same test resolves a different log destination on a CI
+  // runner than on a laptop, and passes on one while failing on the other.
+  'GITHUB_ACTIONS',
+  'VINAYA_HOST',
+  'VINAYA_ROLE',
+  'VINAYA_ATTEMPT',
+  'VINAYA_PARENT_EVENT'
 ] as const
 
 /**
@@ -456,11 +465,9 @@ export async function withWorldEnv<T>(world: LoopWorld, fn: () => Promise<T> | T
   const savedCwd = process.cwd()
   process.env.VINAYA_RUNTIME_DIR = world.runtimeDir
   process.env.VINAYA_TASK = String(world.task)
-  delete process.env.VINAYA_ROUND
-  delete process.env.VINAYA_RUN
-  delete process.env.VINAYA_RUN_ID
-  delete process.env.AEG_REPO
-  delete process.env.GITHUB_REPOSITORY
+  for (const key of OWNED_ENV_KEYS) {
+    if (key !== 'VINAYA_RUNTIME_DIR' && key !== 'VINAYA_TASK') delete process.env[key]
+  }
   process.chdir(world.repoRoot)
   // `loopsRoot()`/`runtimeDirForThisRepo()` memoizes its runtime-dir
   // resolution process-wide; drop it so the driver log for THIS run resolves

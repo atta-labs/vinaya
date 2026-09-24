@@ -12,6 +12,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   cleanupWorlds,
+  makeInProcessDeps,
   makeWorld,
   outboxLines as ipOutboxLines,
   runLoopInProcess,
@@ -127,6 +128,41 @@ describe('devReviewLoop — a crash mid-publish never logs merged_ready (regress
     // normally — the real marked pipeline (`pauseMarker` → `renderPauseComment`
     // → `markedCommentBody`), asserted on its exact marker line.
     expect(world.postedComments.some((c) => /^<!-- aeg:loop:paused:infrastructure -->$/m.test(c.body))).toBe(true)
+  })
+})
+
+describe('runLoopInProcess — the run never inherits the outer CI runner’s or dispatched session’s env', () => {
+  // A CI runner sets `GITHUB_ACTIONS`, which moves the log destination off the
+  // local file `outboxLines` reads; a dispatched session sets `VINAYA_ROLE`.
+  // Either leaking into the in-process loop made the same test pass on a
+  // laptop and time out in CI.
+  it('clears GITHUB_ACTIONS and VINAYA_ROLE for the run, restores both after, and the run still lands its log lines', async () => {
+    const saved = { GITHUB_ACTIONS: process.env.GITHUB_ACTIONS, VINAYA_ROLE: process.env.VINAYA_ROLE }
+    process.env.GITHUB_ACTIONS = 'true'
+    process.env.VINAYA_ROLE = 'developer'
+    try {
+      const world = makeWorld()
+      const seen: Array<{ ci: string | undefined; role: string | undefined }> = []
+      const worldDispatch = makeInProcessDeps(world).dispatchRole!
+      const result = await runLoopInProcess(world, undefined, {
+        dispatchRole: (...args) => {
+          seen.push({ ci: process.env.GITHUB_ACTIONS, role: process.env.VINAYA_ROLE })
+          return worldDispatch(...args)
+        }
+      })
+      expect(result.finalDecision.type).toBe('publish')
+      expect(seen.length).toBeGreaterThan(0)
+      expect(seen.every((s) => s.ci === undefined && s.role === undefined)).toBe(true)
+      expect(ipOutboxLines(world).length).toBeGreaterThan(0)
+
+      expect(process.env.GITHUB_ACTIONS).toBe('true')
+      expect(process.env.VINAYA_ROLE).toBe('developer')
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+    }
   })
 })
 
