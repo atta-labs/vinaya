@@ -1,5 +1,21 @@
 # @atta/aeg-core
 
+## 0.32.0
+
+### Minor Changes
+
+- 25f63aa: Logs never reach a tracker or a code host, in any form. `vinaya log flush`, `vinaya log export-artifact`, `vinaya log collect-artifact`, and the `logPublish` config key that backed them are removed — a config still carrying `logPublish` is refused, naming `logs` (the live destination `vinaya.config.json` already supports) as its replacement. `@attalabs/aeg-core` drops `validateTaskLogArtifact`/`TASK_LOG_ARTIFACT_MAX_BYTES` and the `ArtifactExpectedProvenance`/`ArtifactGap`/`ArtifactValidationResult` types along with the deleted collect path.
+  
+  `vinaya init`/`vinaya upgrade` no longer generate a task-log-collector workflow or an artifact-export step in `vinaya-checks.yml`; `vinaya upgrade` removes both from a repository that already has them. A CI job's own gate events now deliver live to a configured `logs.url` server destination — a same-repository or default-branch run delivers when a `logs.headers` credential is present; a fork pull request (which never receives a repository secret) records nothing and says so in the job's own output, never falling back to the ephemeral runner's own disk.
+
+### Patch Changes
+
+- 5604fdb: The dev-review loop now rebuilds its round history — round numbers, which rounds happened, and whether the ready-for-merge summary was actually published — from the control store and the pull request's own principal-authored forge markers (developer round markers and the published summary comment), never from a log event, a flushed log comment, or the telemetry outbox. The Vinaya Log is telemetry and is never read to recover a run, so recovery no longer breaks when the log destination moves off the tracker.
+  
+  A round that merely decided to publish is no longer mistaken for one that published: the honest signal is the summary comment's presence on the forge, so a crash between a green round and its publication still reconstructs as unpublished and resumes on the next round rather than restarting numbering. Per-round values a marker cannot carry (finding counts, confidence, wall time, files changed) are reported unavailable rather than fabricated.
+- @attalabs/aeg-forge-state@0.32.0
+  - @attalabs/aeg-types@0.32.0
+
 ## 0.31.0
 
 ### Patch Changes

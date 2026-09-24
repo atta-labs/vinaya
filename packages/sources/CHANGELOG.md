@@ -1,5 +1,25 @@
 # @atta/vinaya-sources
 
+## 0.32.0
+
+### Minor Changes
+
+- 25f63aa: Logs never reach a tracker or a code host, in any form. `vinaya log flush`, `vinaya log export-artifact`, `vinaya log collect-artifact`, and the `logPublish` config key that backed them are removed — a config still carrying `logPublish` is refused, naming `logs` (the live destination `vinaya.config.json` already supports) as its replacement. `@attalabs/aeg-core` drops `validateTaskLogArtifact`/`TASK_LOG_ARTIFACT_MAX_BYTES` and the `ArtifactExpectedProvenance`/`ArtifactGap`/`ArtifactValidationResult` types along with the deleted collect path.
+  
+  `vinaya init`/`vinaya upgrade` no longer generate a task-log-collector workflow or an artifact-export step in `vinaya-checks.yml`; `vinaya upgrade` removes both from a repository that already has them. A CI job's own gate events now deliver live to a configured `logs.url` server destination — a same-repository or default-branch run delivers when a `logs.headers` credential is present; a fork pull request (which never receives a repository secret) records nothing and says so in the job's own output, never falling back to the ephemeral runner's own disk.
+
+### Patch Changes
+
+- cc595a7: `vinaya task run`'s own `--help` text now describes its updated behaviour: a pause no longer ends the process. It keeps running and watches the pull request, continuing on its own once a newer Principal ruling appears (or, for an infrastructure/stale-driver hiccup, after a bounded backoff) — an operator no longer has to run a separate resume command for the ordinary case. `vinaya dev-review-loop` is unaffected: it stays `task run`'s own one-shot, direct-entry command.
+- a6699fe: `vinaya.config.json` gains a `logs` setting: a folder (the default, under the repository's own `runtimeDir`) or a server, mutually exclusive, with header values that may reference an environment variable so a credential never sits in the config. Events reach this destination live, as they occur — a folder is appended to directly, a server is drained from a local retry queue immediately after each append, in order, surviving an outage. Honoured from the working tree for an attended caller; an unattended one only honours a value the repository's default branch also declares.
+  
+  The developer-review loop's round-end flush, its flush on every pause exit, its final flush, and `vinaya dispatch`'s own trailing flush are all removed — there is nothing left to batch or ship after the fact, since every event already reached its configured destination the moment it was logged. `vinaya log flush`/`vinaya log collect-artifact` are unaffected: `logPublish` still backs those two commands' own manual, one-shot posting.
+- Updated dependencies [5604fdb]
+- Updated dependencies [25f63aa]
+  - @attalabs/aeg-core@0.32.0
+  - @attalabs/aeg-forge-state@0.32.0
+  - @attalabs/aeg-types@0.32.0
+
 ## 0.31.0
 
 ### Minor Changes

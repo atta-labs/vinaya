@@ -1,5 +1,29 @@
 # @attalabs/vinaya
 
+## 0.32.0
+
+### Minor Changes
+
+- 6e9156a: Run unattended Codex tasks with isolated ChatGPT subscription authentication, documentation hooks, portable brief templates, and truthful background startup handling.
+- 25f63aa: Logs never reach a tracker or a code host, in any form. `vinaya log flush`, `vinaya log export-artifact`, `vinaya log collect-artifact`, and the `logPublish` config key that backed them are removed — a config still carrying `logPublish` is refused, naming `logs` (the live destination `vinaya.config.json` already supports) as its replacement. `@attalabs/aeg-core` drops `validateTaskLogArtifact`/`TASK_LOG_ARTIFACT_MAX_BYTES` and the `ArtifactExpectedProvenance`/`ArtifactGap`/`ArtifactValidationResult` types along with the deleted collect path.
+  
+  `vinaya init`/`vinaya upgrade` no longer generate a task-log-collector workflow or an artifact-export step in `vinaya-checks.yml`; `vinaya upgrade` removes both from a repository that already has them. A CI job's own gate events now deliver live to a configured `logs.url` server destination — a same-repository or default-branch run delivers when a `logs.headers` credential is present; a fork pull request (which never receives a repository secret) records nothing and says so in the job's own output, never falling back to the ephemeral runner's own disk.
+
+### Patch Changes
+
+- ad0f97f: A test that spawns the built CLI as a subprocess (`Bun.spawn`/`Bun.spawnSync`, `execFileSync`, or `spawnSync` invoking `bun apps/cli/src/index.ts`) is now reachable by the pre-push test selector through the entrypoint's own real import graph, the same way a file that imports the entrypoint directly already was. Previously such a test named no import of the code it exercised, so a change to anything the entrypoint transitively imports — for example `apps/cli/src/lib/log-sink.ts` — could pass pre-push and only fail in CI.
+  
+  A spawn shape the detector cannot read precisely (a different binary, a computed argument list, an indirect wrapper) still earns a coarse edge over the entrypoint's own source directory rather than staying invisible.
+- a6699fe: `vinaya.config.json` gains a `logs` setting: a folder (the default, under the repository's own `runtimeDir`) or a server, mutually exclusive, with header values that may reference an environment variable so a credential never sits in the config. Events reach this destination live, as they occur — a folder is appended to directly, a server is drained from a local retry queue immediately after each append, in order, surviving an outage. Honoured from the working tree for an attended caller; an unattended one only honours a value the repository's default branch also declares.
+  
+  The developer-review loop's round-end flush, its flush on every pause exit, its final flush, and `vinaya dispatch`'s own trailing flush are all removed — there is nothing left to batch or ship after the fact, since every event already reached its configured destination the moment it was logged. `vinaya log flush`/`vinaya log collect-artifact` are unaffected: `logPublish` still backs those two commands' own manual, one-shot posting.
+- 5604fdb: The dev-review loop now rebuilds its round history — round numbers, which rounds happened, and whether the ready-for-merge summary was actually published — from the control store and the pull request's own principal-authored forge markers (developer round markers and the published summary comment), never from a log event, a flushed log comment, or the telemetry outbox. The Vinaya Log is telemetry and is never read to recover a run, so recovery no longer breaks when the log destination moves off the tracker.
+  
+  A round that merely decided to publish is no longer mistaken for one that published: the honest signal is the summary comment's presence on the forge, so a crash between a green round and its publication still reconstructs as unpublished and resumes on the next round rather than restarting numbering. Per-round values a marker cannot carry (finding counts, confidence, wall time, files changed) are reported unavailable rather than fabricated.
+- 2626c53: The dev-review loop's start-of-run sweep no longer runs synchronously ahead of the run's own narration and its first dispatch. The run-start marker and a `sweep — running` line now land in the loop log and on stderr before the sweep's own forge lookups begin; the sweep itself is started, never awaited, so the first developer dispatch of a run never waits on it, however many finished task folders there are to classify. Each folder's own decision now prints as it is made, with a running count, instead of arriving as one block after every lookup finishes.
+  
+  The sweep's decisions are unchanged: the same folders are removed and kept for the same reasons, and unreadable forge state still keeps a folder rather than guessing. A folder found finished is now classified a second time, immediately before it is removed, so a task revived in the meantime (its Issue reopened, its pull request moved) is never deleted on a stale answer. `vinaya task sweep` on demand is unaffected.
+
 ## 0.31.0
 
 ### Minor Changes
