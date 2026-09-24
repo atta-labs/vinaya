@@ -20,6 +20,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { CI_SHARD_COUNT, isCliTestFile } from '../src/lib/ci-shard-membership'
+import { spawnSyncBudgeted, stripVinayaEnv } from './lib/process-fixture'
 
 const CLI_ROOT = join(import.meta.dir, '..')
 const SHARD_DIR = join(import.meta.dir, 'ci-shards')
@@ -122,13 +123,11 @@ describe('ci-shard-coverage — the commit-time check', () => {
   }
 
   function run(cwd: string): { status: number; stdout: string; stderr: string } {
-    try {
-      const stdout = execFileSync('bun', [BIN], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
-      return { status: 0, stdout, stderr: '' }
-    } catch (e) {
-      const err = e as { status?: number; stdout?: string; stderr?: string }
-      return { status: err.status ?? 1, stdout: String(err.stdout ?? ''), stderr: String(err.stderr ?? '') }
-    }
+    return spawnSyncBudgeted('bun', [BIN], {
+      cwd,
+      encoding: 'utf8',
+      env: { ...stripVinayaEnv(), PATH: process.env.PATH }
+    })
   }
 
   it('refuses a new CLI test file staged without a shard line, naming the file and the shard files', () => {
