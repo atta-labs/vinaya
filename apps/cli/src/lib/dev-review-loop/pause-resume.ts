@@ -560,7 +560,20 @@ export function recoverLoopState(
  * liveness is a plain `process.kill(pid, 0)` probe, so a crashed driver's
  * stale record is taken over rather than blocking forever.
  */
-type DriverLock = { pid: number; startedAt: string }
+/**
+ * `token` (issue-711 O4, code review round 2, MAJOR/security LOW) — a
+ * per-acquisition identifier, never derived from the pid alone: a bare
+ * `pid === process.pid` match is not proof of ownership — if the OS
+ * reissues a crashed driver's exact pid to a fresh, unrelated
+ * `devReviewLoop` invocation for the SAME task, that pid would match this
+ * new, genuinely different run too. `token` is what `devReviewLoop`'s own
+ * entry gate actually checks alongside the pid before treating a lock as
+ * "mine already, no need to re-acquire" (`dev-review-loop.ts`). Optional
+ * so a lock file written before this field existed still parses — read
+ * back as `undefined`, which the entry gate treats as "not proven mine,"
+ * never as a match.
+ */
+type DriverLock = { pid: number; startedAt: string; token?: string }
 
 function driverLockPath(root: string, task: number): string {
   return runPath(root, task, { area: 'task', file: DRIVER_LOCK_FILENAME })

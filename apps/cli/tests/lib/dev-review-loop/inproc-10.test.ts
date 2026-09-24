@@ -19,6 +19,7 @@
  * touches the lock file directly.
  */
 
+import { spawnSync } from 'node:child_process'
 import { afterEach, describe, expect, it } from 'bun:test'
 import { escalationIdFor, type LoopDeps, resolveEscalation } from '../../../src/lib/dev-review-loop.js'
 import { readDriverLock, readPauseState, writeDriverLock } from '../../../src/lib/dev-review-loop/pause-resume.js'
@@ -72,14 +73,20 @@ describe('runDriverLoop — issue-711 O4: a pause never ends the driver; it watc
             // watches, is refused — simulated by naming a provably alive,
             // genuinely different pid (`process.ppid`) on the lock file,
             // then calling `devReviewLoop` fresh exactly as a second
-            // `task run`/`dev-review-loop --task` would.
+            // `task run`/`dev-review-loop --task` would. This driver's own
+            // real lock (pid + token) is captured first so it can be
+            // restored exactly — code review round 2 (MAJOR/security LOW)
+            // is precisely about that token mattering, so this test must
+            // never lose it either.
+            const ownLock = readDriverLock(world.runtimeDir, world.task)
             writeDriverLock(world.runtimeDir, world.task, { pid: process.ppid, startedAt: new Date(0).toISOString() })
             await expect(runLoopInProcess(world, { task: world.task, agent: 'claude' })).rejects.toThrow(
               new RegExp(`a driver is already running \\(pid ${process.ppid}`)
             )
             // Restores this driver's own lock — the state it actually
-            // still owns — before letting the watch continue.
-            writeDriverLock(world.runtimeDir, world.task, { pid: process.pid, startedAt: new Date(0).toISOString() })
+            // still owns, token included — before letting the watch
+            // continue.
+            if (ownLock) writeDriverLock(world.runtimeDir, world.task, ownLock)
 
             // Simulate a Principal posting a ruling ON THE PR while this
             // driver is watching it — never a resume command run against
@@ -258,5 +265,70 @@ describe('runDriverLoop — issue-711 O4: a pause never ends the driver; it watc
     // Never entered the watch loop — no additional poll/backoff wait beyond
     // whatever this pre-PR path itself needed (none).
     expect(world.dispatchCountByRole['code-reviewer']).toBeUndefined()
+  })
+})
+
+describe('devReviewLoop — issue-711 F3 (code review round 2, MAJOR/security LOW): lock ownership is bound to a per-acquisition token, never the pid alone', () => {
+  it("a lock naming this process's own pid but a DIFFERENT token is never treated as self re-entry — refused, not silently inherited", async () => {
+    // Stands in for the exact scenario F3 names: the OS reissuing a
+    // crashed driver's pid to a fresh, unrelated invocation for the SAME
+    // task. That fresh invocation's own pid is, by definition, alive to
+    // itself (`process.kill(<own pid>, 0)` always succeeds) — so once the
+    // token no longer matches, the only safe reading left is "some driver
+    // — this one or a genuinely different one — already holds this lock,"
+    // and this run refuses rather than silently taking over a lock it has
+    // no real continuity with.
+    const world = makeWorld()
+    writeDriverLock(world.runtimeDir, world.task, {
+      pid: process.pid,
+      startedAt: new Date(0).toISOString(),
+      token: 'a-different-crashed-runs-token'
+    })
+
+    await expect(runDriverLoopInProcess(world, { task: world.task, agent: 'claude' })).rejects.toThrow(
+      new RegExp(`a driver is already running \\(pid ${process.pid}`)
+    )
+  })
+
+  it('a lock naming a genuinely DEAD pid is still taken over via the normal path — fresh startedAt, takeover noted — regardless of its own token', async () => {
+    const world = makeWorld()
+    const dead = spawnSync('true', [])
+    if (typeof dead.pid !== 'number') throw new Error('spawnSync did not report a pid')
+    writeDriverLock(world.runtimeDir, world.task, {
+      pid: dead.pid,
+      startedAt: new Date(0).toISOString(),
+      token: 'a-token-that-does-not-matter-once-the-pid-is-dead'
+    })
+
+    const result = await runDriverLoopInProcess(world, { task: world.task, agent: 'claude' })
+
+    expect(result.finalDecision).toEqual({ type: 'publish' })
+    // A fresh lock, under a fresh token this run generated itself — never
+    // the dead lock's own stale identity.
+    const lock = readDriverLock(world.runtimeDir, world.task)
+    expect(lock).toBeNull() // published — cleared, same as any ordinary clean run.
+  })
+
+  it("the driver's own genuine re-entry — same pid AND its own token — is never refused nor re-raced", async () => {
+    // The narrow, direct proof at the entry gate's own boundary (the first
+    // test in this file already proves the full end-to-end watch cycle
+    // observes this on every poll tick): a SECOND `devReviewLoop` call
+    // carrying the SAME token an already-held lock names proceeds exactly
+    // as if no lock existed at all — no refusal, no takeover diagnostic,
+    // no re-acquire.
+    const world = makeWorld()
+    writeDriverLock(world.runtimeDir, world.task, {
+      pid: process.pid,
+      startedAt: new Date(0).toISOString(),
+      token: 'this-drivers-own-token'
+    })
+
+    const result = await runLoopInProcess(world, {
+      task: world.task,
+      agent: 'claude',
+      retainDriverLock: 'this-drivers-own-token'
+    })
+
+    expect(result.finalDecision).toEqual({ type: 'publish' })
   })
 })
