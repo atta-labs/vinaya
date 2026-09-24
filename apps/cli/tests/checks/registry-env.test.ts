@@ -35,6 +35,7 @@ describe('registry env declarations', () => {
         'brief-shape',
         'branch-topology',
         'changeset-coverage',
+        'ci-shard-coverage',
         'closes-n',
         'coherence',
         'dead-branch-push',
