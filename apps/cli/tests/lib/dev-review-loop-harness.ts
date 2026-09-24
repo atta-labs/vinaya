@@ -35,7 +35,7 @@
  * to `world.postedComments` instead of shelling out to `gh`.
  */
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { devReviewLoop, type LoopDeps, type LoopInput, type LoopResult } from '../../src/lib/dev-review-loop.js'
@@ -477,17 +477,30 @@ export async function runLoopInProcess(
 }
 
 /**
- * The log ndjson lines this run emitted. With `runLoopInProcess`'s non-git
- * cwd, the loop resolves the `unresolved` repo segment, so the destination is
- * `<runtimeDir>/logs/unresolved/<task>.ndjson` — the identical path the
- * spawned fixtures' own `outboxLines` helper reads.
+ * The log ndjson lines this run emitted, from `<runtimeDir>/logs/<repo>/
+ * <task>.ndjson`. The `<repo>` segment is normally `unresolved` (the non-git
+ * cwd `runLoopInProcess` sets), but `resolveRepo`'s module-level cache is
+ * process-wide and does NOT clear on the env/cwd this harness controls: a
+ * prior test in the same runner process that resolved a real repo (a CI
+ * runner sets `GITHUB_REPOSITORY`/`AEG_REPO`) leaves that segment cached, so
+ * `log()` writes under `logs/<owner>-<repo>/` instead. Found live in CI: the
+ * hardcoded `unresolved` path read empty there while the file sat under the
+ * real repo segment. So this searches every segment under `logs/` for THIS
+ * world's own `<task>.ndjson` (the runtime dir is a per-world temp, so only
+ * this run's file is ever present).
  */
 export function outboxLines(world: LoopWorld): Array<Record<string, unknown>> {
-  const path = join(world.runtimeDir, 'logs', 'unresolved', `${world.task}.ndjson`)
-  if (!existsSync(path)) return []
-  return readFileSync(path, 'utf8')
-    .trim()
-    .split('\n')
+  const logsRoot = join(world.runtimeDir, 'logs')
+  if (!existsSync(logsRoot)) return []
+  const target = `${world.task}.ndjson`
+  const found: string[] = []
+  for (const seg of readdirSync(logsRoot)) {
+    const candidate = join(logsRoot, seg, target)
+    if (existsSync(candidate)) found.push(candidate)
+  }
+  if (found.length === 0) return []
+  return found
+    .flatMap((p) => readFileSync(p, 'utf8').trim().split('\n'))
     .filter(Boolean)
     .map((l) => JSON.parse(l))
 }
