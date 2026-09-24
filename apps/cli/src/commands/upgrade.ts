@@ -829,12 +829,12 @@ export async function runUpgrade(args: string[], deps: UpgradeDeps): Promise<num
   const staleSkillPaths = doctrineRootForStaleSkills
     ? staleAgentSkillPaths(doctrineRootForStaleSkills, planManifest.files)
     : []
-  // The collector workflow is retired outright (task-files-v1 6, O2): no
-  // adopter should keep uploading a log artifact or running a collector, so
-  // any manifest that still owns this path gets it removed the same way a
-  // retired role's agent skill does — never re-emitted, unconditionally
-  // stale for every adopter that has it, not filtered by a "still live"
-  // check the way `staleAgentSkillPaths` filters retired role names.
+  // The collector workflow is retired outright: no adopter should keep
+  // uploading a log artifact or running a collector, so any manifest that
+  // still owns this path gets it removed the same way a retired role's
+  // agent skill does — never re-emitted, unconditionally stale for every
+  // adopter that has it, not filtered by a "still live" check the way
+  // `staleAgentSkillPaths` filters retired role names.
   const staleWorkflowPaths = planManifest.files.includes(TASK_LOG_COLLECTOR_WORKFLOW_PATH)
     ? [TASK_LOG_COLLECTOR_WORKFLOW_PATH]
     : []

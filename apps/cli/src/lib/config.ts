@@ -707,12 +707,12 @@ export const VinayaConfigSchema = z.object({
       }
     })
     .optional(),
-  // Removed (task-files-v1 6, O1): telemetry never reaches a tracker or a
-  // code host in any form, so the comment-posting flush and its
-  // issue/pr/webhookUrl destinations are gone. Kept as a declared-but-refused
-  // key, rather than silently stripped by the object schema's default
-  // unknown-key handling, so a config that still carries it fails loudly
-  // naming its replacement instead of being ignored.
+  // Removed: telemetry never reaches a tracker or a code host in any form,
+  // so the comment-posting flush and its issue/pr/webhookUrl destinations
+  // are gone. Kept as a declared-but-refused key, rather than silently
+  // stripped by the object schema's default unknown-key handling, so a
+  // config that still carries it fails loudly naming its replacement
+  // instead of being ignored.
   logPublish: z.unknown().refine((v) => v === undefined, {
     message:
       'logPublish is removed — telemetry is never posted to a tracker or a code host; configure `logs` instead (a folder or a server destination)'

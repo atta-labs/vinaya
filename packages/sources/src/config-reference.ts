@@ -600,7 +600,7 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     key: 'logPublish',
     type: 'refused (any value)',
     semantics: [
-      'Removed (task-files-v1 6, O1): telemetry is never posted to a tracker or a code host in any form, so the comment-posting flush and its `issue`/`pr`/`webhookUrl` destinations are gone. The key is still declared — refused, not silently stripped — so a config that still carries it fails config load loudly, naming `logs` as its replacement, rather than silently losing the setting.'
+      'Removed: telemetry is never posted to a tracker or a code host in any form, so the comment-posting flush and its `issue`/`pr`/`webhookUrl` destinations are gone. The key is still declared — refused, not silently stripped — so a config that still carries it fails config load loudly, naming `logs` as its replacement, rather than silently losing the setting.'
     ],
     example: `{ "logs": { "url": "https://ingest.example.com/vinaya" } }`
   },

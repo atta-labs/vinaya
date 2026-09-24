@@ -2,9 +2,9 @@
  * The one delivery mechanism a `logs.url` server destination uses: one POST
  * of a task's local retry queue, as ndjson, to any HTTP endpoint that
  * accepts one — no GitHub account or `gh` auth needed on the receiving end.
- * Renamed from the tracker-posting-era `flushOutboxToWebhook` (task-files-v1
- * 6, O1): there is no GitHub comment path left to distinguish this from, so
- * "drain" names what it actually does — empty the local queue into the
+ * Renamed from the tracker-posting-era `flushOutboxToWebhook`: there is no
+ * GitHub comment path left to distinguish this from, so "drain" names what
+ * it actually does — empty the local queue into the
  * configured server, called by `log-sink.ts` after every append
  * (`apps/cli/specs/log.md` § The destination), never batched at a round end
  * and never reachable from a one-shot CLI command any more.
