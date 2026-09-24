@@ -121,6 +121,98 @@ describe('devReviewLoop — the reviewer prompt names the objectives file, and o
   })
 })
 
+describe('devReviewLoop — issue-711 O6: a reviewer whose objectives.txt does not cover the resolved list is redispatched once with the exact list, before the round pauses', () => {
+  it('an under-reporting reviewer on attempt 1 recovers on the fresh retry — the round publishes, never pauses', async () => {
+    const world = makeWorld({
+      frozenBrief:
+        '<!-- aeg:brief:v1 -->\nBrief hash: deadbeef\nDo the thing.\n\n## Objectives\n\nO1. Do the thing.\nO2. Do the other thing.\n\n## Planner rationale\n\nOut of scope for facts.\n',
+      roleOutcomes: {
+        1: {
+          // Attempt 1 omits O2 entirely — `checkObjectiveIdCoverage` refuses
+          // it (`missing O2`); attempt 2 (the fresh retry, a genuinely new
+          // dispatch into a fresh work dir, told the SAME resolved list via
+          // the SAME `renderReviewerDispatchPrompt`) covers both ids.
+          reviewer: [
+            {
+              findings: '',
+              report: 'BRIEF_CONFORMANCE: yes\nSPEC_CONFORMANCE: yes\nSCOPE: small\nTESTS: pass\nDOCS: n/a\n',
+              objectives: 'O1|MET|done.\n',
+              sessionId: 'rev-session-under-report'
+            },
+            {
+              findings: '',
+              report: 'BRIEF_CONFORMANCE: yes\nSPEC_CONFORMANCE: yes\nSCOPE: small\nTESTS: pass\nDOCS: n/a\n',
+              objectives: 'O1|MET|done.\nO2|MET|done too.\n',
+              sessionId: 'rev-session-covers-both'
+            }
+          ],
+          security: {
+            findings: '',
+            report: 'CONFIG_SCAN: clean\nSECRETS: none found\n',
+            objectives: 'O1|MET|done.\nO2|MET|done too.\n',
+            sessionId: 'sec-session-1'
+          }
+        }
+      }
+    })
+    const result = await runLoopInProcess(world)
+
+    expect(result.finalDecision).toEqual({ type: 'publish' })
+    expect(world.publishedRounds).toEqual([1])
+
+    // Two genuinely separate dispatches for the under-reporting role — one
+    // attempt, one fresh retry — each with its own session id, never the
+    // same call read twice.
+    expect(world.dispatchCountByRole['code-reviewer']).toBe(2)
+    const reviewerDispatches = world.dispatches.filter((d) => d.role === 'code-reviewer' && d.round === 1)
+    expect(reviewerDispatches.map((d) => d.resumeId)).toEqual(['rev-session-under-report', 'rev-session-covers-both'])
+
+    // Security never needed a retry: its own first attempt already covered
+    // both ids.
+    expect(world.dispatchCountByRole.security).toBe(1)
+
+    // Nothing paused — the retry's own recovery means this round never
+    // reaches the pause path at all.
+    expect(world.postedComments.some((c) => /^<!-- aeg:loop:paused:/m.test(c.body))).toBe(false)
+  })
+
+  it('an under-reporting reviewer that never recovers pauses as infrastructure, naming objectives.txt — never a silently-accepted partial report', async () => {
+    const world = makeWorld({
+      frozenBrief:
+        '<!-- aeg:brief:v1 -->\nBrief hash: deadbeef\nDo the thing.\n\n## Objectives\n\nO1. Do the thing.\nO2. Do the other thing.\n\n## Planner rationale\n\nOut of scope for facts.\n',
+      roleOutcomes: {
+        1: {
+          // Both attempts omit O2 — coverage never recovers, so this
+          // exhausts the one-fresh-retry budget exactly like a missing
+          // artifact does.
+          reviewer: {
+            findings: '',
+            report: 'BRIEF_CONFORMANCE: yes\nSPEC_CONFORMANCE: yes\nSCOPE: small\nTESTS: pass\nDOCS: n/a\n',
+            objectives: 'O1|MET|done.\n',
+            sessionId: 'rev-session-under-report'
+          },
+          security: {
+            findings: '',
+            report: 'CONFIG_SCAN: clean\nSECRETS: none found\n',
+            objectives: 'O1|MET|done.\nO2|MET|done too.\n',
+            sessionId: 'sec-session-1'
+          }
+        }
+      }
+    })
+    const result = await runLoopInProcess(world)
+
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
+    expect(world.publishedRounds).toEqual([])
+    expect(world.dispatchCountByRole['code-reviewer']).toBe(2)
+
+    const pauseComment = world.postedComments[1]!.body
+    expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:infrastructure -->$/m)
+    expect(pauseComment).toMatch(/reviewer/)
+    expect(pauseComment).toMatch(/objectives\.txt/)
+  })
+})
+
 describe('devReviewLoop — a red gate the developer never fixes pauses, bounded (O2/O3)', () => {
   it('waits for the head to change, never re-reads a tight loop, and pauses naming the head and the failing check after the bound', async () => {
     const world = makeWorld({ gate: 'red', failingCheckRuns: [failingCheckRun(1, 'Vinaya CI')] })

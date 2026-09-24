@@ -25,11 +25,12 @@ import {
 import type { AgentVendor } from './dispatch.js'
 import {
   developerBranchFor as realDeveloperBranchFor,
-  devReviewLoop as realDevReviewLoop,
+  type DriverResult,
   findOpenPrForBranch as realFindOpenPrForBranch,
-  type LoopResult
+  type LoopInput,
+  runDriverLoop as realRunDriverLoop
 } from './dev-review-loop.js'
-import { isDriverPidAlive, readDriverLock } from './dev-review-loop/pause-resume.js'
+import { isDriverPidAlive, readDriverLock, readPauseState } from './dev-review-loop/pause-resume.js'
 import { runtimeDir } from './dev-review-loop/reviewer-dispatch.js'
 import { markProcessUnattended } from './run-paths.js'
 import {
@@ -80,15 +81,21 @@ export type RunTaskInput = ({ tranche: string; n: number } | { issue: number }) 
 /**
  * `prUrl` — the published/paused PR's real `https://github.com/<owner>/<repo>/pull/<n>`
  * URL, per this module's own Sizing story ("...runs the loop to publish and
- * exits zero printing the PR URL"). `LoopResult` itself carries no URL field
- * (`dev-review-loop.ts` is unmodified — out of this task's Surface), so it is
- * constructed here from `resolveRepo()` plus the loop's own `prNumber`.
- * `null` only when the repo genuinely cannot be resolved (no git remote, an
- * unparseable `AEG_REPO`) — the same tolerance `dev-review-loop.ts`'s own
- * `resolveRepo().catch(() => null)` already extends to this exact failure,
- * never a thrown error over a display-only nicety.
+ * exits zero printing the PR URL"). Neither `LoopResult` nor `DriverResult`
+ * carries a URL field of its own, so it is constructed here from
+ * `resolveRepo()` plus the loop's own `prNumber`. `null` only when the repo
+ * genuinely cannot be resolved (no git remote, an unparseable `AEG_REPO`) —
+ * the same tolerance `dev-review-loop.ts`'s own `resolveRepo().catch(() =>
+ * null)` already extends to this exact failure, never a thrown error over a
+ * display-only nicety.
+ *
+ * issue-711 O4: `LoopResult` widened to `DriverResult` — `runTask` now
+ * composes the watching driver (`runDriverLoop`), never `devReviewLoop`
+ * directly, so its own final decision can also read `'ended'` (the pull
+ * request merged, closed, or was cancelled while this run watched a pause)
+ * alongside the pre-existing `'publish'`/`'pause'`.
  */
-export type RunTaskResult = LoopResult & { prUrl: string | null }
+export type RunTaskResult = DriverResult & { prUrl: string | null }
 
 /**
  * Injection seam for `apps/cli/tests/lib/task-run.test.ts` — same convention
@@ -112,6 +119,20 @@ export type RunTaskDeps = {
    */
   isDriverAlive: (task: number) => boolean
   /**
+   * issue-711 O5: true only when a pause is currently held for this task —
+   * read from the SAME local record `devReviewLoop`'s own `--resume` entry
+   * reads (`readPauseState`, `pause-resume.ts`). A task that was never
+   * paused reads `false` here forever (the record is written only on a
+   * pause), so the ordinary fresh-dispatch/dead-lock-takeover path below is
+   * unchanged for it. A task whose most recent pause has already been
+   * resumed and concluded still reads `true` — `devReviewLoop`'s own
+   * `--resume` entry self-heals that case (`ReplayedResolutionError` ->
+   * `attachAfterReplayedResolution`, continuing from the PR's current state
+   * exactly like a fresh `--task <n>` attach) rather than needing a second,
+   * independent staleness check duplicated here.
+   */
+  hasPauseState: (task: number) => boolean
+  /**
    * O1: the SAME class-to-model resolution `task dispatch` already uses
    * (`dispatch-task.ts`'s `resolveModelForDispatch`) — an explicit model
    * wins outright (never re-derived), absent that the Issue's own
@@ -119,7 +140,18 @@ export type RunTaskDeps = {
    * class-to-model table, `undefined` when neither yields one.
    */
   resolveModelForDispatch: (agent: AgentVendor, issue: number, explicitModel: string | undefined) => string | undefined
-  devReviewLoop: (input: { task: number; agent: AgentVendor; model?: string }) => Promise<LoopResult>
+  /**
+   * issue-711 O5: widened from `{ task, agent, model? }` to the full
+   * `LoopInput` union — the paused-PR redirect below now calls this with
+   * `{ resumePr, agent, model? }` too. issue-711 O4: its return type
+   * widened from `LoopResult` to `DriverResult` — the real default is now
+   * `runDriverLoop` (the watching driver), never `devReviewLoop` directly,
+   * so `runTask` itself never hands back to an operator's own `--resume`
+   * for the ordinary case; the field keeps this name for every existing
+   * caller/fixture (this file's own doc comment, `task-run.test.ts`)
+   * rather than a rename that touches nothing behavioural.
+   */
+  devReviewLoop: (input: LoopInput) => Promise<DriverResult>
   resolveRepo: () => Promise<RepoRef | null>
 }
 
@@ -127,6 +159,11 @@ export type RunTaskDeps = {
 function realIsDriverAlive(task: number): boolean {
   const lock = readDriverLock(runtimeDir(), task)
   return lock !== null && isDriverPidAlive(lock.pid)
+}
+
+/** issue-711 O5: the real production check — reads the SAME on-disk `pause-state.json` `devReviewLoop`'s own `--resume` entry reads, rather than a second copy. */
+function realHasPauseState(task: number): boolean {
+  return readPauseState(runtimeDir(), task) !== null
 }
 
 /** Exported for `task-run-background.ts`'s own `resolveIssueForRunTask` call — the same real preparation functions, never a second copy. */
@@ -138,8 +175,9 @@ export const defaultRunTaskDeps: RunTaskDeps = {
   developerBranchFor: realDeveloperBranchFor,
   findOpenPrForBranch: realFindOpenPrForBranch,
   isDriverAlive: realIsDriverAlive,
+  hasPauseState: realHasPauseState,
   resolveModelForDispatch: realResolveModelForDispatch,
-  devReviewLoop: realDevReviewLoop,
+  devReviewLoop: realRunDriverLoop,
   resolveRepo: () => realResolveRepo()
 }
 
@@ -265,11 +303,20 @@ export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRu
     )
   }
 
-  const loopResult = await deps.devReviewLoop({
-    task: issue,
-    agent,
-    ...(resolvedModel ? { model: resolvedModel } : {})
-  })
+  // issue-711 O5: a paused task's pull request continues from the newest
+  // Principal ruling, exactly as `dev-review-loop --resume <pr>` does — it
+  // never resumes the Developer's previous session by attaching fresh
+  // (`{task: issue}`) instead. Gated on an open PR existing at all (a
+  // pause with no PR yet is unreachable — a pause is always posted against
+  // an already-open pull request) so a task that has never been paused
+  // (`deps.hasPauseState` false) takes the exact same fresh-dispatch /
+  // dead-lock-takeover path as before this task.
+  const shouldResumeFromPause = existingPr !== null && deps.hasPauseState(issue)
+  const loopResult = await deps.devReviewLoop(
+    shouldResumeFromPause
+      ? { resumePr: existingPr.number, agent, ...(resolvedModel ? { model: resolvedModel } : {}) }
+      : { task: issue, agent, ...(resolvedModel ? { model: resolvedModel } : {}) }
+  )
   const prUrl = await resolvePrUrl(deps.resolveRepo, loopResult.prNumber)
   return { ...loopResult, prUrl }
 }

@@ -281,6 +281,73 @@ export function latestHeldRequestChanges(root: string, task: number): HeldReques
   return { round: highest, head: reviewer.headSha, rendered: `${reviewerBody}\n\n---\n\n${securityBody}` }
 }
 
+export type HeldCleanVerdict = { round: number; head: string; rendered: string; manifest: ReviewInputManifest }
+
+/**
+ * issue-711 O1 — the held-clean counterpart to `latestHeldRequestChanges`,
+ * above: the HIGHEST round with any held verdict file at all, read only if
+ * its own reviewer AND security pair are both still on disk, re-parse
+ * clean, agree on every manifest field, and cast APPROVE/PASS (the
+ * inverse of `latestHeldRequestChanges`'s own exclusion). A verdict judges
+ * a patch, not a head — this is what lets the driver recognize a held
+ * (or, since these files are never deleted after posting, already
+ * published — `publishRound`'s own posting is idempotent per round)
+ * clean verdict as still covering a head that moved only by a
+ * patch-identical rebase or a merge from the base, rather than discarding
+ * it and dispatching a whole fresh review round. Never falls back to an
+ * OLDER round, for the identical reason `latestHeldRequestChanges` never
+ * does: a later round's own held pair already supersedes it.
+ *
+ * `rulingOrdinal`/`policyDigest` are required non-null here (stricter than
+ * `latestHeldRequestChanges`, which never reads them) — `ReviewInputManifest`
+ * itself has no null case for either field, and every verdict this
+ * codebase renders carries both unconditionally, so a `null` here only
+ * ever means legacy pre-cutover stock; returning `null` for that case
+ * costs a fresh review round, never a wrong publish.
+ */
+export function latestHeldCleanVerdict(root: string, task: number): HeldCleanVerdict | null {
+  let entries: string[]
+  try {
+    entries = readdirSync(runPath(root, task, { area: 'rounds' }))
+  } catch {
+    return null
+  }
+  let highest = -1
+  for (const name of entries) {
+    if (!/^\d+$/.test(name)) continue
+    const round = Number(name)
+    if (existsSync(heldVerdictPath(root, task, round, 'reviewer'))) highest = Math.max(highest, round)
+  }
+  if (highest < 0) return null
+
+  const reviewerBody = readIfExists(heldVerdictPath(root, task, highest, 'reviewer'))
+  const securityBody = readIfExists(heldVerdictPath(root, task, highest, 'security'))
+  if (!reviewerBody || !securityBody) return null
+  const reviewer = extractCodeReviewVerdict([reviewerBody])
+  const security = extractSecurityReviewVerdict([securityBody])
+  if (reviewer.danglingNote || security.danglingNote) return null
+  if (reviewer.value !== 'APPROVE' || security.value !== 'PASS') return null
+  if (!reviewer.headSha || !security.headSha || reviewer.headSha !== security.headSha) return null
+  if (reviewer.baseSha !== security.baseSha) return null
+  if (reviewer.briefHash !== security.briefHash) return null
+  if (reviewer.objectivesVersion !== security.objectivesVersion) return null
+  if (reviewer.rulingOrdinal === null || reviewer.rulingOrdinal !== security.rulingOrdinal) return null
+  if (reviewer.policyDigest === null || reviewer.policyDigest !== security.policyDigest) return null
+  return {
+    round: highest,
+    head: reviewer.headSha,
+    rendered: `${reviewerBody}\n\n---\n\n${securityBody}`,
+    manifest: {
+      headSha: reviewer.headSha,
+      baseSha: reviewer.baseSha,
+      briefHash: reviewer.briefHash,
+      objectivesVersion: reviewer.objectivesVersion,
+      rulingOrdinal: reviewer.rulingOrdinal,
+      policyDigest: reviewer.policyDigest
+    }
+  }
+}
+
 /**
  * `attempt` 1 is the round's normal work directory (unchanged path, so an
  * existing fixture/fake that never retries keeps working unmodified);

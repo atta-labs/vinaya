@@ -8,19 +8,29 @@
  * already carries. One command, from a planned Issue to a reviewed pull
  * request, exactly one developer started.
  *
- * A paused run is resumed through the loop's OWN existing path —
- * `vinaya dev-review-loop --resume <pr>` — never a `--resume` flag on this
- * command (`runTask` composes `devReviewLoop` fresh every call, it does not
- * carry resume state of its own).
+ * issue-711 O4: `runTask` composes the watching driver (`runDriverLoop`,
+ * `lib/dev-review-loop.js`) — a pause never ends this process any more, it
+ * keeps running and watches the pull request, continuing on its own once a
+ * newer Principal ruling lands (or, for `'infrastructure'`/`'stale_driver'`,
+ * after a bounded backoff). `1` (below) is reached only for the one pause
+ * this run can never watch: the pre-first-push escalation, which has no
+ * pull request yet — still resumed by hand with `vinaya task run <tranche>
+ * <n>` (no `--resume` flag on this command; `runTask` composes the loop
+ * fresh every call, it carries no resume state of its own). An
+ * `--resume`/`--cancel` an operator issues directly against `dev-review-loop`
+ * stays a one-shot debug/direct entry, unaffected by this.
  *
- * Exit codes (round 2 security review, HIGH): `0` publish, `1` pause, `2`
- * a usage/argv error, `3` any other failure (a refused preparation, an
- * open-PR refusal, an internal contract violation) — never sharing `1`
- * with pause, so an unattended host tells "resume with the printed command"
- * apart from "this run genuinely failed" from the exit code alone.
- * Cancellation (`SIGINT`) is Node's own ambient default disposition (exit
- * `130`) — no handler was added for it, matching the boundary's exclusion
- * of process-supervision/unattended-mode work.
+ * Exit codes (round 2 security review, HIGH): `0` publish OR a watched
+ * pause's own genuine end (`'ended'` — merged, closed, or `--cancel`), `1`
+ * the one un-watchable pause above, `2` a usage/argv error, `3` any other
+ * failure (a refused preparation, an open-PR refusal, an internal contract
+ * violation) — never sharing `1` with a genuine end, so an unattended host
+ * tells "resume with the printed command" apart from "this run genuinely
+ * failed" from the exit code alone. Cancellation (`SIGINT`) is Node's own
+ * ambient default disposition (exit `130`) — no handler was added for it,
+ * matching the boundary's exclusion of process-supervision/unattended-mode
+ * work; a driver watching a pause instead ends on `--cancel`, an intentional
+ * operator action rather than a signal.
  */
 
 import { colourLoopLine } from '../lib/dispatch.js'
@@ -112,12 +122,25 @@ function reportRunTaskResult(result: RunTaskResult, invocation: { agent: Dispatc
     )
     return
   }
+  if (decision.type === 'ended') {
+    // issue-711 O4: `runTask` now composes the watching driver
+    // (`runDriverLoop`) — a pause it watched through to a genuine end (the
+    // pull request merged, closed, or an operator's own `--cancel`) is a
+    // normal, successful end to this process, exit `0`, same as `publish`;
+    // never printed or exited as a `pause` (there is nothing left to
+    // resume).
+    process.stdout.write(
+      `${colourLoopLine(`vinaya task run: task ${result.task}, ${prRef} — ended (${decision.reason})`, process.stdout)}\n`
+    )
+    return
+  }
   if (decision.type !== 'pause') {
-    // `devReviewLoop` only ever RETURNS on `publish` or `pause` (its own doc
-    // comment) — every other `Decision` member is an intermediate step the
-    // loop acts on internally and never hands back. Reaching this branch
-    // would mean that contract broke, which is a failure, never a pause —
-    // the same distinct failure exit the `catch` above uses, not `1`.
+    // `runDriverLoop` only ever RETURNS on `publish`, `pause`, or `ended`
+    // (its own doc comment) — every other `Decision` member is an
+    // intermediate step the loop acts on internally and never hands back.
+    // Reaching this branch would mean that contract broke, which is a
+    // failure, never a pause — the same distinct failure exit the `catch`
+    // above uses, not `1`.
     process.stderr.write(
       `Error: vinaya task run: devReviewLoop returned an unexpected final decision type \`${decision.type}\`.\n`
     )

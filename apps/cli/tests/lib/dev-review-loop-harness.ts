@@ -38,7 +38,15 @@
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { devReviewLoop, type LoopDeps, type LoopInput, type LoopResult } from '../../src/lib/dev-review-loop.js'
+import {
+  devReviewLoop,
+  type DriverResult,
+  type DriverWatchDeps,
+  type LoopDeps,
+  type LoopInput,
+  type LoopResult,
+  runDriverLoop
+} from '../../src/lib/dev-review-loop.js'
 import { resetRuntimeDirCache } from '../../src/lib/run-paths.js'
 import type { DispatchHandle } from '../../src/lib/dispatch.js'
 import {
@@ -91,6 +99,8 @@ export type LoopWorld = {
   base: string
   mergeBase: string
   prNumber: number
+  /** issue-711 O4: the forge's own pull-request state `runDriverLoop`'s watch loop polls (`fetchPrState`) — defaults to `'OPEN'`; a fixture flips it to `'MERGED'`/`'CLOSED'` to drive the driver's own terminal `'ended'` exits. */
+  prState: 'OPEN' | 'MERGED' | 'CLOSED'
   /** Flips true the first time the Developer role is dispatched — the head then resolves and the PR opens, exactly as the fake `gh` keyed on `.fake-dev-invoked`. */
   developerPushed: boolean
   /** The developer's local worktree head; defaults to `head` (nothing unpushed). */
@@ -109,8 +119,23 @@ export type LoopWorld = {
   /** The PR body `checkPremiseAtHead` reads each round; the default carries only `Closes #<task>` (no `Premise:` block, so the reassert is dormant). */
   prBody: string
   shortstat: string
-  /** Per-round role outcomes; a round with no entry uses the clean default. */
-  roleOutcomes: Record<number, { reviewer?: RoleOutcome; security?: RoleOutcome; developer?: { sessionId: string } }>
+  /**
+   * Per-round role outcomes; a round with no entry uses the clean default.
+   * A role's value may be a single `RoleOutcome` (every attempt in the round
+   * gets it, the original shape) or an array — attempt `n` (1-indexed) gets
+   * `array[n - 1]`, clamped to the array's last entry once attempts exceed
+   * its length. issue-711 O6: this is what lets a fixture write a MISMATCHED
+   * `objectives.txt` on attempt 1 and a covering one on attempt 2, proving
+   * the one-fresh-retry actually recovers rather than merely re-failing.
+   */
+  roleOutcomes: Record<
+    number,
+    {
+      reviewer?: RoleOutcome | RoleOutcome[]
+      security?: RoleOutcome | RoleOutcome[]
+      developer?: { sessionId: string }
+    }
+  >
   /** The evidence-report outcome the fake `runEvidenceReport` returns. */
   evidenceOutcome: { ok: true; gatesFailed: boolean } | { ok: false; reason: string }
   /**
@@ -183,6 +208,7 @@ export function makeWorld(overrides: Partial<LoopWorld> = {}): LoopWorld {
     base: sha('b'),
     mergeBase: sha('b'),
     prNumber: 123,
+    prState: 'OPEN',
     developerPushed: false,
     worktreeHead: sha('a'),
     gate: 'green',
@@ -222,10 +248,11 @@ export function makeWorld(overrides: Partial<LoopWorld> = {}): LoopWorld {
   return world
 }
 
-function roleOutcomeFor(world: LoopWorld, role: 'reviewer' | 'security', round: number): RoleOutcome {
+function roleOutcomeFor(world: LoopWorld, role: 'reviewer' | 'security', round: number, attempt: number): RoleOutcome {
   const configured = world.roleOutcomes[round]?.[role]
-  if (configured) return configured
-  return role === 'reviewer' ? CLEAN_REVIEWER : CLEAN_SECURITY
+  if (!configured) return role === 'reviewer' ? CLEAN_REVIEWER : CLEAN_SECURITY
+  if (!Array.isArray(configured)) return configured
+  return configured[Math.min(attempt, configured.length) - 1]!
 }
 
 function writeRoleArtifacts(workDir: string, outcome: RoleOutcome): void {
@@ -269,7 +296,8 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
       world.reviewerDispatchStarted = true
       const workDir = opts.extraWritableDirs?.[0]
       const reviewRole = role === 'code-reviewer' ? 'reviewer' : 'security'
-      const outcome = roleOutcomeFor(world, reviewRole, round)
+      const attempt = world.dispatches.filter((d) => d.role === role && d.round === round).length + 1
+      const outcome = roleOutcomeFor(world, reviewRole, round, attempt)
       if (workDir && !outcome.writesNothing) writeRoleArtifacts(workDir, outcome)
       world.dispatches.push({ role, round, resumeId: outcome.sessionId })
       return handle(outcome.sessionId, `eff-${reviewRole}-${++dispatchSeq}`)
@@ -452,6 +480,44 @@ export async function runLoopInProcess(
   overrides: Partial<LoopDeps> = {}
 ): Promise<LoopResult> {
   return withWorldEnv(world, () => devReviewLoop(input, { ...makeInProcessDeps(world), ...overrides }))
+}
+
+/**
+ * issue-711 O4 — the SAME in-process world driving `runDriverLoop` (the
+ * watching driver) instead of a single `devReviewLoop` pass: every resume
+ * attempt the watcher makes goes back through `makeInProcessDeps(world)`
+ * merged with `overrides`, exactly like `runLoopInProcess`. `watchOverrides`
+ * defaults `fetchPrState` to `world.prState` and both poll intervals to
+ * near-zero (the same "the retry COUNT is under test, never the wall-clock
+ * gap" reasoning `makeInProcessDeps`'s own doc comment states for
+ * `prPollIntervalMs`/`gatePollIntervalMs`) — a fixture overriding `sleep`
+ * itself (to mutate `world` mid-wait, simulating an external ruling/cancel/
+ * merge arriving while this driver watches) still goes through those fast
+ * defaults for every OTHER `DriverWatchDeps` field it doesn't itself set.
+ */
+export async function runDriverLoopInProcess(
+  world: LoopWorld,
+  input: LoopInput = { task: world.task, agent: 'claude' },
+  overrides: Partial<LoopDeps> = {},
+  watchOverrides: Partial<DriverWatchDeps> = {}
+): Promise<DriverResult> {
+  return withWorldEnv(world, () =>
+    runDriverLoop(
+      input,
+      { ...makeInProcessDeps(world), ...overrides },
+      {
+        fetchPrState: (_pr) => world.prState,
+        // Same world-backed fake `makeInProcessDeps` gives `LoopDeps` — a
+        // fixture that mutates `world.rulingOrdinal` mid-watch (simulating
+        // a Principal ruling posted while this driver waits) needs the
+        // WATCHER's own ruling read to see it too, never the real `gh`.
+        fetchNewestRulingOrdinal: (_pr) => world.rulingOrdinal,
+        watchPollIntervalMs: 1,
+        infrastructureBackoffMs: 1,
+        ...watchOverrides
+      }
+    )
+  )
 }
 
 /**
