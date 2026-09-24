@@ -36,6 +36,10 @@ tests/lib/dev-review-loop/gate-reading.test.ts
 tests/lib/dev-review-loop/journal-history.test.ts
 tests/lib/dev-review-loop/pause-resume.test.ts
 tests/lib/dev-review-loop/round-assess.test.ts
+tests/lib/dev-review-loop/inproc-2.test.ts
+tests/lib/dev-review-loop/inproc-4.test.ts
+tests/lib/dev-review-loop/inproc-6.test.ts
+tests/lib/dev-review-loop/inproc-8.test.ts
 tests/lib/forge-write.test.ts
 tests/lib/log-flush.test.ts
 tests/lib/task-run.test.ts
