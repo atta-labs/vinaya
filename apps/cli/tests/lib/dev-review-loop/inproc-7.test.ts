@@ -233,6 +233,10 @@ describe('devReviewLoop — escalation pauses, --resume continues after a ruling
     expect(world.postedComments[0]!.marker).toBe('<!-- aeg:developer:round-1 -->')
     const pauseComment = world.postedComments[1]!
     expect(pauseComment.marker).toBe('<!-- aeg:loop:paused:escalation -->')
+    // The pause comment names the exact command to resume this run (the
+    // harness fake `postPauseComment` renders the real body via
+    // `renderPauseComment`, which embeds this `--resume` line).
+    expect(pauseComment.body).toMatch(new RegExp(`vinaya dev-review-loop --resume ${world.prNumber}`))
     expect(pauseComment.body).not.toMatch(/^VERDICT:/m)
     // O1 ([task-log-v1] 9, Issue #631): `assessRound`'s own 'escalation'
     // decision carries no `detail` at all — the driver narrates it from the

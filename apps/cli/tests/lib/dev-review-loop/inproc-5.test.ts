@@ -172,13 +172,23 @@ describe('devReviewLoop — a stale Premise pin pauses like a red gate, never a 
 describe('devReviewLoop — O2 (#543): unpushed real work is resumed once, then no_push — never folded into the generic infrastructure stall', () => {
   it('resumes once with a commit-and-push instruction, records the resume comment, then pauses (no_push) naming the branch and the dirty file', async () => {
     const world = makeWorld({ gate: 'red' })
-    const { deps } = withCapturedDeveloperDispatch(world, {
+    const { deps, prompts } = withCapturedDeveloperDispatch(world, {
       readUnpushedWorkDetail: () => ({ dirtyFiles: ['smoke.ts'], aheadCount: 0 })
     })
     const result = await runLoopInProcessSafe(world, deps, { gatePollMaxAttempts: 2, gatePollIntervalMs: 5 })
 
     expect(result.finalDecision.type).toBe('pause')
     expect((result.finalDecision as { reason: string }).reason).toBe('no_push')
+
+    // Exactly one commit-and-push resume: round 1's own fresh dispatch is
+    // `prompts[0]`, the gate-red retry that discovers the dirty worktree is
+    // `prompts[1]`, and the ONE commit-and-push resume this triggers is
+    // `prompts[2]` — never a fourth (the base fixture proved this through
+    // `.dev-prompt-3.txt` existing and `.dev-prompt-4.txt` not). The resume
+    // prompt itself names the uncommitted changes and how to push them.
+    expect(prompts).toHaveLength(3)
+    expect(prompts[2]).toMatch(/uncommitted changes.*local commits ahead/)
+    expect(prompts[2]).toMatch(/`git push`/)
 
     const pauseState = JSON.parse(readFileSync(join(controlDir(world), 'pause-state.json'), 'utf8')) as Record<
       string,
@@ -396,6 +406,7 @@ describe('devReviewLoop — a remote branch with no open PR resumes the recorded
     const fullPrompt = prompts[0] as string
     expect(fullPrompt).toMatch(new RegExp(`^Resuming task Issue #${world.task}\\.$`, 'm'))
     expect(fullPrompt).toMatch(new RegExp(`^Branch: \`${world.branch}\`$`, 'm'))
+    expect(fullPrompt).toMatch(new RegExp(`^Worktree: \`.*\\.worktrees/${world.branch}\`$`, 'm'))
     expect(fullPrompt).toMatch(/^Remote head: [0-9a-f]{40}$/m)
     expect(fullPrompt).toMatch(/already exists with no open pull request/)
   })
