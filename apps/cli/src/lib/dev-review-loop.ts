@@ -122,6 +122,8 @@ import {
   buildVerdictFromReport,
   discardHeldVerdicts,
   hasObjectivesFacts,
+  type HeldCleanVerdict,
+  latestHeldCleanVerdict,
   latestHeldRequestChanges,
   missingReviewerArtifacts,
   persistManifestRecord,
@@ -165,7 +167,8 @@ import {
 import { buildReport, gh, resolveMergeBase, runReportForOpenPr } from './pr-report-engine.js'
 import { reassertPrBodyPremise } from '../checks/bin/check-pr-premise-reassert.js'
 import type { PremiseReassertResult } from '../checks/premise-reassert-logic.js'
-import { postForgeEffectOnce, publishRound } from './dev-review-loop/publication.js'
+import { postForgeEffectOnce, publishRound, unboundFields } from './dev-review-loop/publication.js'
+import { patchIdAt } from './patch-id.js'
 import { fetchLoopHistory } from './dev-review-loop/journal-history.js'
 import {
   clearDriverLock,
@@ -445,6 +448,19 @@ export type LoopDeps = {
    * dependency, so a resumed run is in the in-process harness's scope too.
    */
   fetchPrBody: typeof fetchPrBody
+  /**
+   * issue-711 O1 — a commit's patch identity against the pull request's
+   * base, `null` when git cannot answer (an unreachable commit, a fetch
+   * failure — never read as "they match"). The SAME function
+   * `check-review-gate.ts` wires into `checkReviewGate`'s own `patchIdOf`
+   * (`patch-id.ts`'s `patchIdAt`), reused here rather than a second
+   * implementation, so the loop's own patch tolerance and the merge gate's
+   * agree by construction. This driver always judges against `main` — the
+   * same base `gitRevParseOriginMain`/`defaultPullDefaultBranch` already
+   * hardcode — never the PR's own (possibly different) `baseRefName`,
+   * since the loop has no forge PR object in scope to read one from.
+   */
+  patchIdOf: (sha: string) => string | null
 }
 
 function defaultRepoRoot(): string {
@@ -473,6 +489,11 @@ function defaultGitDiffShortstat(base: string, head: string): string {
   } catch {
     return ''
   }
+}
+
+/** issue-711 O1 — this driver's base is always `main`, the same hardcoded base `gitRevParseOriginMain`/`defaultPullDefaultBranch` already use; never the PR's own `baseRefName` (the loop has no forge PR object to read one from). */
+function defaultPatchIdOf(sha: string): string | null {
+  return patchIdAt('main', sha)
 }
 
 /**
@@ -797,7 +818,8 @@ function defaultDeps(): LoopDeps {
     postPauseComment,
     postIssuePauseComment,
     publishRound,
-    fetchPrBody
+    fetchPrBody,
+    patchIdOf: defaultPatchIdOf
   }
 }
 
@@ -1438,6 +1460,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // bind the posted verdicts against it with the SAME `compareManifest` the
     // gate uses. Set the moment the manifest is built, read only at publish.
     let lastDispatchedManifest: ReviewInputManifest | undefined
+    /**
+     * issue-711 O3: set by the pre-loop patch-carry check (below) whenever a
+     * held clean verdict existed but did not bind to the current head —
+     * named in a later `max_rounds` pause's own detail so a human reading
+     * it can tell "the cap is genuine, the patch really did change" apart
+     * from "the patch-carry check silently missed a real match." `null`
+     * whenever no held clean verdict was ever found (the ordinary case).
+     */
+    let patchCarryNote: string | null = null
     /**
      * O1: the input-version facts an escalation record binds to
      * (`writeEscalationRecord`'s own `briefHash`/`objectivesVersion`/
@@ -2685,6 +2716,104 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
        * plausible CAUSE of the crash being handled here, so this never lets
        * a secondary failure mask the original error.
        */
+
+      // issue-711 O1/O3: a verdict judges a patch, not a head. This runs at
+      // round start AND on resume — both paths (the attach branch above,
+      // and the `resumePr` branch at the top of `devReviewLoop`) have
+      // already converged into `round`/`branch`/`prNumber` by this point,
+      // so one check covers both entry points, exactly as `check-review-gate.ts`
+      // and this self-check share the SAME `compareManifest` comparison.
+      // Gated on `prNumber > 0`: a task with no open PR yet has no held
+      // verdict to carry (`latestHeldCleanVerdict` would read nothing
+      // anyway). If the held clean verdict's own head is still bound to the
+      // current one — exact identity, or a proven patch-identical rebase/
+      // merge-from-base — this publishes it directly and `runRoundLoop`
+      // never dispatches a fresh round. A field OTHER than head having
+      // drifted (most commonly `rulingOrdinal`, the ordinary case when
+      // `--resume` itself was triggered by a NEW Principal ruling) correctly
+      // fails the comparison and falls through to a genuine fresh round
+      // below — this never overrides an actual decision point, only a pure
+      // head-address move (Traps to avoid: "carry verdicts only when every
+      // other bound input … is also unchanged").
+      if (prNumber > 0) {
+        const heldClean: HeldCleanVerdict | null = latestHeldCleanVerdict(root, task)
+        if (heldClean) {
+          let currentHeadForCarry: string | null = null
+          try {
+            currentHeadForCarry = d.resolveHead(branch)
+          } catch {
+            // No remote head yet — nothing to carry against.
+          }
+          // Two guards, both required, neither redundant:
+          //  - `currentHeadForCarry !== heldClean.head` — an UNCHANGED head
+          //    is not this task's scope at all (O1 is about a head MOVE);
+          //    the existing re-run behavior for an unmoved head — a genuine
+          //    fresh round, its own `publishRound` call discovering nothing
+          //    new to post via its own idempotent effect keys — is
+          //    unaffected, on purpose (round 2 review: this exact path,
+          //    unshortcut, is load-bearing test behavior elsewhere in this
+          //    suite).
+          //  - `heldClean.round === round` — `round` here already reflects
+          //    every OTHER recovery this function ran above (the
+          //    `historyApplies` forge-marker bump, the control-store
+          //    `Math.max`); a held pair from an OLDER round than what those
+          //    already established is stale — superseded by real progress
+          //    since, never something to carry forward past it (the same
+          //    "never falls back to an older round" discipline
+          //    `latestHeldRequestChanges` already documents for its own
+          //    read).
+          if (currentHeadForCarry !== null && currentHeadForCarry !== heldClean.head && heldClean.round === round) {
+            let carryBaseSha: string | null = null
+            try {
+              carryBaseSha = await d.gitMergeBase(currentHeadForCarry)
+            } catch {
+              // Unresolvable base — the comparison below fails closed on `null`.
+            }
+            const reassessedObjectives = d.resolveIssueObjectives(task)
+            const currentManifestForCarry: ReviewInputManifest = buildReviewInputManifest({
+              headSha: currentHeadForCarry,
+              baseSha: carryBaseSha,
+              briefContent: d.fetchFrozenBrief(task),
+              objectivesVersion: reassessedObjectives.version,
+              rulingOrdinal: d.fetchNewestRulingOrdinal(prNumber),
+              policy
+            })
+            const carryBinding = compareManifest(
+              manifestAsEchoed(heldClean.manifest),
+              currentManifestForCarry,
+              d.patchIdOf
+            )
+            if (carryBinding.bound) {
+              // issue-711 O1: "publishes the held verdicts, OR treats the
+              // published ones as current" — two different actions for two
+              // different states, both read off the SAME `heldClean` round.
+              // A round whose summary is already on the forge (held files
+              // are never deleted after posting — see `HeldCleanVerdict`'s
+              // own doc comment) must never re-run `publishRound`: its
+              // `journal` argument is built from THIS process's own
+              // `state.rounds`, empty here since `assessRound` never ran on
+              // this path, so a genuine re-post would render a summary
+              // table with no row for the round it names — a real content
+              // drift `postPrCommentOnce`'s idempotency keys off, and
+              // exactly the "second run posts nothing new" invariant this
+              // driver already guarantees for the ordinary re-run case.
+              const freshHistory = d.fetchLoopHistory(prNumber)
+              if (freshHistory.journalFinalized?.result === 'merged_ready') {
+                heldResultIdentity = null
+                persistCurrentLoopState('publish')
+                return { finalDecision: { type: 'publish' }, prNumber, task }
+              }
+              round = heldClean.round
+              lastDispatchedManifest = heldClean.manifest
+              heldResultIdentity = { round: heldClean.round, head: heldClean.head }
+              decision = { type: 'publish' }
+            } else {
+              patchCarryNote = `held clean verdict from round ${heldClean.round} at head ${heldClean.head} does not cover the current head ${currentHeadForCarry} (unbound: ${unboundFields(carryBinding).join(', ')}) — starting a fresh round`
+            }
+          }
+        }
+      }
+
       return await runRoundLoop()
     } catch (err) {
       // A genuinely uncaught error — a gate error, a
@@ -3364,6 +3493,17 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                   )
                 }
               }
+              // issue-711 O3: `max_rounds` already carries its own detail
+              // from `assessRound` ("max rounds: <n>") — the guard above
+              // never touches it. Appended here, never replacing it, only
+              // when the pre-loop patch-carry check (above) actually ran
+              // and found a genuine mismatch — a human reading this pause
+              // can tell "the cap is real, the patch changed" apart from a
+              // cap that a patch-identical carry should have (and did)
+              // already avoid.
+              if (decision.type === 'pause' && decision.reason === 'max_rounds' && patchCarryNote !== null) {
+                decision = { ...decision, detail: `${decision.detail ?? ''} — ${patchCarryNote}`.trim() }
+              }
               const routed = routeCompletionEvents(result.events, decision.type)
               pendingCompletionEvents = routed.toDeferUntilPublish
               await logEvents(routed.toLogNow)
@@ -3413,7 +3553,18 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             task,
             round,
             prNumber,
-            expectedHead: d.resolveHead(branch),
+            // issue-711 O1: the round's OWN judged head — `lastDispatchedManifest`'s
+            // when one was actually dispatched or carried this run (the ONLY
+            // two ways `decision.type` ever becomes `'publish'`), never a
+            // live re-resolve. A live `d.resolveHead(branch)` is correct only
+            // by coincidence on the ordinary same-iteration
+            // `dispatch_reviewers` → `publish` path (nothing has pushed since
+            // `head` was captured) and is flatly wrong on the patch-carry
+            // path below: the verdict being posted there is the OLD text,
+            // addressed to the OLD head, and a live head that has since
+            // moved (even patch-identically) would make `publishRound`'s own
+            // exact re-parse check fail.
+            expectedHead: lastDispatchedManifest?.headSha ?? d.resolveHead(branch),
             journal: { rounds: state.rounds },
             policy,
             // The manifest this round was dispatched against (O3) —
@@ -3421,7 +3572,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // either verdict was held, so binding the posted comments against
             // it is the same field-complete check the gate applies. Non-null
             // on every real path here: a `publish` decision is only ever set
-            // inside the `dispatch_reviewers` branch that just assigned it.
+            // inside the `dispatch_reviewers` branch that just assigned it,
+            // or (issue-711 O1) the patch-carry check below, which assigns
+            // the held verdict's OWN manifest before setting `decision`.
             manifest:
               lastDispatchedManifest ??
               buildReviewInputManifest({
