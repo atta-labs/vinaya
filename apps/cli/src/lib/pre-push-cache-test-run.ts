@@ -11,6 +11,10 @@
  * earlier `pr report` able to reuse this exact run instead of re-executing
  * it: without a real writer on this side, that half of O3's reuse clause
  * ("in the pre-push hook or an earlier pr report") was never reachable.
+ * `recordGreenTestRun` also files this run's own file list under a second,
+ * state-only key, so a later Test-plan `bun test <files>`
+ * command naming a SUBSET of the files this run covered reuses it too —
+ * never only a command matching this run's own text verbatim.
  *
  * Best-effort, deliberately: a failure here (an unreadable log file, an
  * unresolvable git state) never fails the push — the test run itself
@@ -18,9 +22,10 @@
  * cost is one avoidable re-run later, never a lost or corrupted result.
  *
  * Contract with the generated hook (`artifacts.ts`'s `prePushBody`):
- * `argv[2]` is the exact command text that was run (the same text a later
- * Test-plan command line would need to match, verbatim, to reuse this
- * record), `argv[3]` is the path to that command's captured stdout+stderr.
+ * `argv[2]` is the exact command text that was run (the pre-push hook's own
+ * full selected-file list, space-joined) — matched verbatim for exact-command
+ * reuse, and parsed for its own file arguments for per-file reuse — `argv[3]`
+ * is the path to that command's captured stdout+stderr.
  */
 import { readFileSync } from 'node:fs'
 import { recordGreenTestRun } from './pr-report-engine.js'

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -10,6 +10,7 @@ import {
   anyGateFailed,
   bodiesAgreeOutsideRegions,
   buildReport,
+  bunTestFileArgs,
   collectTokensAddition,
   composeWrittenBody,
   computeGroupA,
@@ -35,6 +36,7 @@ import {
   type TestRunCache,
   type TestRunCacheRecord,
   testRunCacheKey,
+  testRunStateKey,
   UnresolvableMergeBaseError,
   writeTokensBlock
 } from '../src/commands/pr-report'
@@ -674,6 +676,295 @@ describe('runAgentCommand / computeGroupC — test-run reuse (O3, Issue #707)', 
   })
 })
 
+describe("bunTestFileArgs — parsing a Test-plan command's own file arguments (O1, Issue #715)", () => {
+  it('extracts the file arguments of a bare `bun test <files>` command', () => {
+    expect(bunTestFileArgs('bun test a.test.ts b.test.ts')).toEqual(['a.test.ts', 'b.test.ts'])
+  })
+
+  it("drops flags and the `--` separator, matching the pre-push hook's own recorded command shape", () => {
+    expect(bunTestFileArgs('bun test --timeout=30000 -- /abs/a.test.ts /abs/b.test.ts')).toEqual([
+      '/abs/a.test.ts',
+      '/abs/b.test.ts'
+    ])
+  })
+
+  it('returns null for a command that is not a `bun test` invocation at all', () => {
+    expect(bunTestFileArgs('bun apps/cli/src/index.ts check --all')).toBeNull()
+    expect(bunTestFileArgs('echo hi')).toBeNull()
+  })
+
+  it('returns null for `bun test` with no file arguments — nothing for per-file reuse to match against', () => {
+    expect(bunTestFileArgs('bun test --timeout=30000')).toBeNull()
+  })
+})
+
+// Issue #715, O1 — `pr report` reused a pre-push result only when a
+// Test-plan command's text matched the recorded run VERBATIM. A Test-plan
+// `bun test <files>` command naming a subset of a recorded green run's own
+// files never reused it, even though every file it named had already run
+// green at this exact head/tree. These tests hold the fix: reuse keyed on
+// head/tree/machine plus the requested FILE SET, never the command text.
+describe('runAgentCommand — per-file reuse of a recorded green run (O1, Issue #715)', () => {
+  /** A fake `bun` on `PATH` that appends one byte to `counterFile` and exits 0 — proves whether a command actually ran, without paying for a real `bun test` subprocess or depending on real test files existing. */
+  function fakeBunBinDir(counterFile: string): string {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-fake-bun-'))
+    const script = join(dir, 'bun')
+    writeFileSync(script, `#!/bin/sh\nprintf r >> ${counterFile}\necho "0 pass, 0 fail"\n`)
+    chmodSync(script, 0o755)
+    return dir
+  }
+
+  it("a Test-plan command naming a subset of a recorded run's files reuses it — nothing re-runs", async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-perfile-subset-'))
+    initTestGitRepo(dir)
+    const cache = memoryTestRunCache()
+    const files = Array.from({ length: 12 }, (_, i) => join(dir, `f${i}.test.ts`))
+    const recordedCommand = `bun test --timeout=30000 -- ${files.join(' ')}`
+    const recorded = await recordGreenTestRun(recordedCommand, '12 pass, 0 fail', dir, 'pre-push', cache)
+    expect(recorded).toBe(true)
+
+    const counterFile = join(mkdtempSync(join(tmpdir(), 'pr-report-perfile-subset-counter-')), 'counter.txt')
+    const subsetCommand = `bun test ${files[0]} ${files[1]}`
+    const result = await runAgentCommand(
+      subsetCommand,
+      undefined,
+      dir,
+      { PATH: `${fakeBunBinDir(counterFile)}:${process.env.PATH}` },
+      cache
+    )
+
+    expect(result.reusedFrom).toBeDefined()
+    expect(result.reusedFrom).toContain('pre-push')
+    expect(result.reusedFrom).toContain('covering 12 file(s)')
+    expect(result.exitCode).toBe(0)
+    expect(result.output).toBe('12 pass, 0 fail')
+    // The fake `bun` never ran — the counter file was never created.
+    expect(() => readFileSync(counterFile, 'utf8')).toThrow()
+  })
+
+  it('refuses reuse when a named file was not in the recorded run — it actually runs', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-perfile-refuse-'))
+    initTestGitRepo(dir)
+    const cache = memoryTestRunCache()
+    const covered = [join(dir, 'covered-0.test.ts'), join(dir, 'covered-1.test.ts')]
+    const recordedCommand = `bun test --timeout=30000 -- ${covered.join(' ')}`
+    await recordGreenTestRun(recordedCommand, '2 pass, 0 fail', dir, 'pre-push', cache)
+
+    const counterFile = join(mkdtempSync(join(tmpdir(), 'pr-report-perfile-refuse-counter-')), 'counter.txt')
+    const notCovered = join(dir, 'not-covered.test.ts')
+    const command = `bun test ${covered[0]} ${notCovered}`
+    const result = await runAgentCommand(
+      command,
+      undefined,
+      dir,
+      { PATH: `${fakeBunBinDir(counterFile)}:${process.env.PATH}` },
+      cache
+    )
+
+    expect(result.reusedFrom).toBeUndefined()
+    // The fake `bun` DID run — proving this was a real execution, not a
+    // silent skip that merely failed to report itself as reused.
+    expect(readFileSync(counterFile, 'utf8')).toBe('r')
+  })
+
+  it('a repo-relative Test-plan file argument matches an absolute-path recorded run for the same file', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-perfile-relative-'))
+    initTestGitRepo(dir)
+    const cache = memoryTestRunCache()
+    const absoluteFile = join(dir, 'nested', 'a.test.ts')
+    const recordedCommand = `bun test --timeout=30000 -- ${absoluteFile}`
+    await recordGreenTestRun(recordedCommand, '1 pass, 0 fail', dir, 'pre-push', cache)
+
+    const counterFile = join(mkdtempSync(join(tmpdir(), 'pr-report-perfile-relative-counter-')), 'counter.txt')
+    const relativeCommand = 'bun test nested/a.test.ts'
+    const result = await runAgentCommand(
+      relativeCommand,
+      undefined,
+      dir,
+      { PATH: `${fakeBunBinDir(counterFile)}:${process.env.PATH}` },
+      cache
+    )
+
+    expect(result.reusedFrom).toContain('pre-push')
+    expect(() => readFileSync(counterFile, 'utf8')).toThrow()
+  })
+
+  it('a working-tree change invalidates per-file reuse exactly as it does exact-command reuse', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-perfile-tree-'))
+    initTestGitRepo(dir)
+    const cache = memoryTestRunCache()
+    const files = [join(dir, 'a.test.ts'), join(dir, 'b.test.ts')]
+    await recordGreenTestRun(`bun test --timeout=30000 -- ${files.join(' ')}`, '2 pass, 0 fail', dir, 'pre-push', cache)
+
+    writeFileSync(join(dir, 'README.md'), 'hello, changed\n')
+
+    const counterFile = join(mkdtempSync(join(tmpdir(), 'pr-report-perfile-tree-counter-')), 'counter.txt')
+    const result = await runAgentCommand(
+      `bun test ${files[0]}`,
+      undefined,
+      dir,
+      { PATH: `${fakeBunBinDir(counterFile)}:${process.env.PATH}` },
+      cache
+    )
+    expect(result.reusedFrom).toBeUndefined()
+    expect(readFileSync(counterFile, 'utf8')).toBe('r')
+  })
+
+  it('recordGreenTestRun also writes the per-file coverage record `testRunStateKey` addresses', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-perfile-staterecord-'))
+    initTestGitRepo(dir)
+    const cache = memoryTestRunCache()
+    const file = join(dir, 'a.test.ts')
+    await recordGreenTestRun(`bun test ${file}`, '1 pass, 0 fail', dir, 'pre-push', cache)
+
+    const stateKey = await testRunStateKey(dir)
+    expect(stateKey).not.toBeNull()
+    const coverage = cache.get(`files:${stateKey}`)
+    expect(coverage?.files).toEqual([file])
+    expect(coverage?.source).toBe('pre-push')
+  })
+})
+
+// Issue #715, O3 — the body `pr report --write` produces must pass every
+// PR-body check `pr create` runs, the first time. The stale template this
+// body starts from carried a checkbox `[agent]` Test Plan item — a shape
+// `brief-validation no agent boxes` refuses outright (Principal ruling,
+// 2026-09-03) — so a freshly-drafted, freshly-written body was refused on
+// the very first `pr create --validate-only`. These tests hold the fix: a
+// body written from the corrected template's shape passes clean.
+describe('pr report --write then pr create --validate-only — the written body passes every check the first time (O3, Issue #715)', () => {
+  class ExitCalled extends Error {
+    constructor(public code: number | undefined) {
+      super(`process.exit(${code})`)
+    }
+  }
+
+  async function writeCapturingExit(args: string[], testOverrides?: { gateRunner?: GateRunner }): Promise<void> {
+    const originalExit = process.exit
+    process.exit = ((code?: number) => {
+      throw new ExitCalled(code)
+    }) as never
+    try {
+      await prReportCommand(args, testOverrides)
+    } catch (err) {
+      if (!(err instanceof ExitCalled)) throw err
+    } finally {
+      process.exit = originalExit
+    }
+  }
+
+  // Brief-shaped (>= 2 of Technical surface map / Documentation-update list
+  // / Stop conditions / Autonomy) so `checkBriefSections` — and its
+  // `checkNoAgentBoxes`/`checkPrincipalPlaceholder` rules — actually run
+  // against this body directly, exactly as they would for a standalone
+  // (non-tranche) task whose brief rides in the PR body itself, rather than
+  // short-circuiting on the "not brief-shaped, nothing to grade" bypass.
+  const DRAFT_BODY = [
+    '<!-- AEG:CLOSES:START -->',
+    'Closes #715',
+    '<!-- AEG:CLOSES:END -->',
+    '',
+    '**For:** `Sonnet` (coding-agent CLI, dispatched locally)',
+    '<!-- AEG:PROJECT:START -->',
+    '**Project:** cli',
+    '<!-- AEG:PROJECT:END -->',
+    '',
+    '## Decisions',
+    '',
+    '- No open choices.',
+    '',
+    '## Pre-flight',
+    '',
+    '```',
+    'git worktree add .worktrees/task/o3-fixture -b task/o3-fixture origin/main',
+    '```',
+    '',
+    '## Test plan',
+    '',
+    '<!-- AEG:TEST-PLAN:START -->',
+    '```',
+    'echo fixture-command → passes',
+    '```',
+    '<!-- AEG:TEST-PLAN:END -->',
+    '',
+    '## Technical surface map',
+    '',
+    '- apps/cli/src/lib/fixture.ts',
+    '',
+    '## Documentation-update list',
+    '',
+    '- none',
+    '',
+    '## Evidence',
+    '',
+    '<!-- AEG:EVIDENCE:START -->',
+    '[run the report writer to populate — do not type this block by hand]',
+    '<!-- AEG:EVIDENCE:END -->',
+    '',
+    '## Stop conditions',
+    '',
+    '- Any pre-flight failure halts the task.',
+    '',
+    '## Autonomy',
+    '',
+    'Do not stop to ask clarifying questions; choose the most reasonable option and record it.',
+    '',
+    '## Scope',
+    '',
+    'Fixture body for a fixture task.',
+    '',
+    '<!-- AEG:TIER:START -->',
+    '**Tier:** 1',
+    '<!-- AEG:TIER:END -->',
+    ''
+  ].join('\n')
+
+  it('a freshly written canonical body (correct template shape, [principal] item omitted for a fixture task with no principal-runnable surface) exits 0 on --validate-only', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-o3-fixture-'))
+    initTestGitRepo(dir)
+    const bodyPath = join(dir, 'body.md')
+    writeFileSync(bodyPath, DRAFT_BODY)
+
+    const originalCwd = process.cwd()
+    process.chdir(dir)
+    try {
+      await writeCapturingExit(['--write', bodyPath], { gateRunner: () => ({ outcomes: [], failed: false }) })
+    } finally {
+      process.chdir(originalCwd)
+    }
+
+    const written = readFileSync(bodyPath, 'utf8')
+    expect(written).toContain('AEG:EVIDENCE:START')
+    // The one shape the pre-fix template shipped by default and this fix
+    // removes — a body this command wrote must never carry it.
+    expect(written).not.toMatch(/^-\s*\[[ xX]\]\s*\*{2}\[agent\]\*{2}/im)
+
+    const result = runCli(
+      ['pr', 'create', '--body-file', bodyPath, '--title', 'Fix: o3 fixture', '--validate-only'],
+      dir
+    )
+    expect(result.stderr).toBe('')
+    expect(result.status).toBe(0)
+  })
+
+  it('the checkbox shape the stale template shipped is refused by pr create — the regression this fix closes', () => {
+    const checkboxBody = DRAFT_BODY.replace(
+      '```\necho fixture-command → passes\n```',
+      '- [ ] **[agent]** run the fixture command'
+    )
+    const dir = mkdtempSync(join(tmpdir(), 'pr-report-o3-regression-'))
+    const bodyPath = join(dir, 'body.md')
+    writeFileSync(bodyPath, checkboxBody)
+
+    const result = runCli(
+      ['pr', 'create', '--body-file', bodyPath, '--title', 'Fix: o3 regression', '--validate-only'],
+      dir
+    )
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('no agent boxes')
+  })
+})
+
 // Round-2 review, BLOCKER — O3 promises reuse "in the pre-push hook or an
 // earlier pr report", but nothing ever wrote a `source: 'pre-push'` record.
 // `recordGreenTestRun` is what the hook's own `pre-push-cache-test-run.ts`
@@ -726,8 +1017,13 @@ describe('recordGreenTestRun — the pre-push hook half of O3 reuse (round-2 rev
     const cachePath = join(runtimeDir, 'tasks-execution', 'unscoped', 'output', 'test-run-cache.json')
     const cacheContents = JSON.parse(readFileSync(cachePath, 'utf8')) as Record<string, { source: string }>
     const records = Object.values(cacheContents)
-    expect(records).toHaveLength(1)
-    expect(records[0]?.source).toBe('pre-push')
+    // Two records for one green run: the exact-command record this describe
+    // block's other tests already exercise, plus the per-file coverage
+    // record `${FILE_COVERAGE_PREFIX}${stateKey}` addresses (O1, Issue #715)
+    // — `bun test y.test.ts` parses as a file-shaped command, so
+    // `recordGreenTestRun` writes both.
+    expect(records).toHaveLength(2)
+    expect(records.every((r) => r.source === 'pre-push')).toBe(true)
   })
 })
 
