@@ -212,6 +212,30 @@ export function fetchMergeableState(prNumber: number): MergeableState {
 }
 
 /**
+ * issue-711 O4: the forge's own three-value pull-request state (`gh pr view
+ * --json state`) — `OPEN` covers every in-progress state a pause can be
+ * watched through; `MERGED`/`CLOSED` are the two forge-side terminal facts
+ * `runDriverLoop`'s own watch loop polls for (`driver-watch.ts`), alongside
+ * a `--cancel` resolution, to decide the driver has genuinely ended rather
+ * than merely paused. Never a re-derivation of `MergeableState`, above — a
+ * mergeable head can still belong to an open, unpublished pull request.
+ */
+export type PrOpenState = 'OPEN' | 'MERGED' | 'CLOSED'
+
+export function fetchPrState(prNumber: number): PrOpenState {
+  let out: string
+  try {
+    out = sh('gh', ['pr', 'view', String(prNumber), '--json', 'state'])
+  } catch (err) {
+    throw new Error(
+      `fetchPrState: could not fetch PR #${prNumber}'s state: ${err instanceof Error ? err.message : String(err)}`
+    )
+  }
+  const parsed = JSON.parse(out) as { state?: string }
+  return parsed.state === 'MERGED' || parsed.state === 'CLOSED' ? parsed.state : 'OPEN'
+}
+
+/**
  * Pure: `git merge-tree --write-tree`'s own `CONFLICT (...): ... in <path>`
  * lines — unit-testable with no git call. Sorted and de-duplicated so a
  * conflict git reports on more than one internal pass still names each file

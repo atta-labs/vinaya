@@ -14,6 +14,13 @@
  * `dispatch`'s own command takes (`apps/cli/specs/surface.md`) — exempt
  * under the same `sharedCommandShell` retirement target, not a compliant
  * one-lib-call command.
+ *
+ * issue-711 O4: this command — every flag, `--task` included — stays the
+ * one-shot debug/direct entry it always was (`apps/cli/specs/loop.md`,
+ * "The command": "`dev-review-loop` below is `task run`'s own debug/direct
+ * entry"), never the watching driver (`runDriverLoop`). `vinaya task run`
+ * (`commands/task-run.ts`) is the one "normal," unattended entry O4's
+ * watching behaviour lands on.
  */
 
 import { colourLoopLine, isAgentVendor, type AgentVendor } from '../lib/dispatch.js'

@@ -93,6 +93,7 @@ import {
   fetchConflictingFiles,
   fetchFailingCheckRuns,
   fetchMergeableState,
+  fetchPrState,
   gitCommitsTouchingDriverPaths,
   type MergeableState,
   readWorktreeHead,
@@ -122,6 +123,8 @@ import {
   buildVerdictFromReport,
   discardHeldVerdicts,
   hasObjectivesFacts,
+  type HeldCleanVerdict,
+  latestHeldCleanVerdict,
   latestHeldRequestChanges,
   missingReviewerArtifacts,
   persistManifestRecord,
@@ -165,9 +168,11 @@ import {
 import { buildReport, gh, resolveMergeBase, runReportForOpenPr } from './pr-report-engine.js'
 import { reassertPrBodyPremise } from '../checks/bin/check-pr-premise-reassert.js'
 import type { PremiseReassertResult } from '../checks/premise-reassert-logic.js'
-import { postForgeEffectOnce, publishRound } from './dev-review-loop/publication.js'
+import { postForgeEffectOnce, publishRound, unboundFields } from './dev-review-loop/publication.js'
+import { patchIdAt } from './patch-id.js'
 import { fetchLoopHistory } from './dev-review-loop/journal-history.js'
 import {
+  acquireDriverLockAtomic,
   clearDriverLock,
   escalationIdFor,
   fenceStartedEffectsAsUncertain,
@@ -180,6 +185,7 @@ import {
   readDriverLock,
   readEscalationRecord,
   readPauseState,
+  readResolutionRecord,
   recoverLoopState,
   ReplayedResolutionError,
   resolveEscalation,
@@ -205,8 +211,8 @@ export {
   readWorktreeHead,
   resolveHead
 } from './dev-review-loop/gate-reading.js'
-export type { MergeableState } from './dev-review-loop/gate-reading.js'
-export { DRIVER_OWNED_PATHS, parseMergeTreeConflictFiles } from './dev-review-loop/gate-reading.js'
+export type { MergeableState, PrOpenState } from './dev-review-loop/gate-reading.js'
+export { DRIVER_OWNED_PATHS, fetchPrState, parseMergeTreeConflictFiles } from './dev-review-loop/gate-reading.js'
 export {
   describeObjectivesEdit,
   developerBranchFor,
@@ -445,6 +451,19 @@ export type LoopDeps = {
    * dependency, so a resumed run is in the in-process harness's scope too.
    */
   fetchPrBody: typeof fetchPrBody
+  /**
+   * issue-711 O1 — a commit's patch identity against the pull request's
+   * base, `null` when git cannot answer (an unreachable commit, a fetch
+   * failure — never read as "they match"). The SAME function
+   * `check-review-gate.ts` wires into `checkReviewGate`'s own `patchIdOf`
+   * (`patch-id.ts`'s `patchIdAt`), reused here rather than a second
+   * implementation, so the loop's own patch tolerance and the merge gate's
+   * agree by construction. This driver always judges against `main` — the
+   * same base `gitRevParseOriginMain`/`defaultPullDefaultBranch` already
+   * hardcode — never the PR's own (possibly different) `baseRefName`,
+   * since the loop has no forge PR object in scope to read one from.
+   */
+  patchIdOf: (sha: string) => string | null
 }
 
 function defaultRepoRoot(): string {
@@ -473,6 +492,11 @@ function defaultGitDiffShortstat(base: string, head: string): string {
   } catch {
     return ''
   }
+}
+
+/** issue-711 O1 — this driver's base is always `main`, the same hardcoded base `gitRevParseOriginMain`/`defaultPullDefaultBranch` already use; never the PR's own `baseRefName` (the loop has no forge PR object to read one from). */
+function defaultPatchIdOf(sha: string): string | null {
+  return patchIdAt('main', sha)
 }
 
 /**
@@ -797,7 +821,8 @@ function defaultDeps(): LoopDeps {
     postPauseComment,
     postIssuePauseComment,
     publishRound,
-    fetchPrBody
+    fetchPrBody,
+    patchIdOf: defaultPatchIdOf
   }
 }
 
@@ -811,8 +836,26 @@ function defaultDeps(): LoopDeps {
  * `undefined` on the deprecated `task dispatch` path and on every direct
  * `devReviewLoop` caller that never resolved one — `dispatchRole` already
  * treats an absent `model` as "run this vendor's own default," unchanged.
+ *
+ * `retainDriverLock` (issue-711 O4, code review round 1, BLOCKER; round 2,
+ * MAJOR/security LOW) — set ONLY by `runDriverLoop`'s own internal calls
+ * (both the first and every resume attempt), never by the CLI or a direct
+ * caller: it carries the one-driver-per-task lock TOKEN `runDriverLoop`
+ * itself generated once, at its own start, and tells THIS call "keep the
+ * lock held under this exact token no matter which reason this round
+ * pauses for" (below, `keepLockAlive`), because the watching driver is not
+ * done — it is about to poll and, likely, call `devReviewLoop` again
+ * itself. The entry gate (below) treats an EXISTING lock as this call's
+ * own only when its pid AND its token both match — a bare pid match is
+ * never proof of ownership on its own (a crashed driver's exact pid can be
+ * reissued by the OS to a fresh, unrelated invocation for the same task;
+ * that invocation carries no matching token, so it is correctly treated as
+ * NOT its own, same as a genuinely different process would be). Absent
+ * (the ordinary case), a pause still clears the lock exactly as before
+ * this task: an operator's own one-shot `--task`/`--resume` call was
+ * always meant to end here.
  */
-export type LoopInput = { json?: boolean; model?: string } & (
+export type LoopInput = { json?: boolean; model?: string; retainDriverLock?: string } & (
   | { task: number; agent: AgentVendor }
   | { resumePr: number; agent?: AgentVendor }
 )
@@ -1120,18 +1163,68 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   // refuses this start outright; a dead one (crashed prior driver) is taken
   // over rather than left blocking forever (Traps to avoid: no lease, no
   // timestamp expiry — liveness is the only test).
+  //
+  // issue-711 O4 (code review round 1, BLOCKER/MEDIUM; round 2, MAJOR/
+  // security LOW): a lock naming THIS process's own pid is treated as
+  // already mine — never refused, never re-raced — ONLY when its `token`
+  // ALSO matches the one `retainDriverLock` carries. A bare pid match is
+  // NOT proof of ownership on its own: the OS can reissue a crashed
+  // driver's exact pid to a fresh, unrelated `devReviewLoop` invocation for
+  // the SAME task, and that invocation's pid would match the stale lock's
+  // pid too, with no continuity of ownership behind it at all. `lockToken`
+  // is resolved ONCE, here, for this whole call: the caller's own token
+  // when this is a driver-loop re-entry (`retainDriverLock`), else a fresh
+  // one — used at every point in THIS call that (re)writes the lock, so a
+  // takeover, a race-fallback write, and the stale-driver re-exec's own
+  // restore (below) all agree on the identity this run claims.
+  const lockToken = input.retainDriverLock ?? randomUUID()
   const existingDriverLock = readDriverLock(root, task)
-  if (existingDriverLock && isDriverPidAlive(existingDriverLock.pid)) {
-    const message = `refuses to start for task ${task} — a driver is already running (pid ${existingDriverLock.pid}, started ${existingDriverLock.startedAt})`
-    printDriverLockLine(message)
-    throw new Error(`devReviewLoop: ${message}`)
+  const ownsExistingLock =
+    existingDriverLock?.pid === process.pid &&
+    existingDriverLock.token !== undefined &&
+    input.retainDriverLock !== undefined &&
+    existingDriverLock.token === input.retainDriverLock
+  if (!ownsExistingLock) {
+    // A same-pid lock that fails the token check above falls through to
+    // exactly this same path a genuinely different pid would — its own
+    // liveness probe (`process.kill(pid, 0)`) reads `true` for THIS
+    // process's own pid unconditionally, so a same-pid/different-token
+    // lock is refused here, never silently taken over: safer than risking
+    // a genuine double-owner, and resolved the moment this exact process
+    // eventually exits and frees the pid for a later, ordinary takeover.
+    if (existingDriverLock && isDriverPidAlive(existingDriverLock.pid)) {
+      const message = `refuses to start for task ${task} — a driver is already running (pid ${existingDriverLock.pid}, started ${existingDriverLock.startedAt})`
+      printDriverLockLine(message)
+      throw new Error(`devReviewLoop: ${message}`)
+    }
+    if (existingDriverLock) {
+      printDriverLockLine(
+        `task ${task}'s driver lock names pid ${existingDriverLock.pid} (started ${existingDriverLock.startedAt}), which is no longer alive — taking over`
+      )
+      clearDriverLock(root, task)
+    }
+    const claimed = acquireDriverLockAtomic(root, task, {
+      pid: process.pid,
+      startedAt: new Date().toISOString(),
+      token: lockToken
+    })
+    if (!claimed) {
+      // Lost a genuine race for a lock nobody held a moment ago — a second,
+      // concurrent start (fresh or a takeover) won the exclusive create
+      // first. Re-read: a live, different pid is refused exactly like the
+      // ordinary case above; anything else (the winner's own process died
+      // between its write and this read, or this read raced a takeover
+      // still in flight) is a vanishingly narrow residual this single,
+      // best-effort retry closes rather than looping forever over it.
+      const racedLock = readDriverLock(root, task)
+      if (racedLock && racedLock.pid !== process.pid && isDriverPidAlive(racedLock.pid)) {
+        const message = `refuses to start for task ${task} — a driver is already running (pid ${racedLock.pid}, started ${racedLock.startedAt})`
+        printDriverLockLine(message)
+        throw new Error(`devReviewLoop: ${message}`)
+      }
+      writeDriverLock(root, task, { pid: process.pid, startedAt: new Date().toISOString(), token: lockToken })
+    }
   }
-  if (existingDriverLock) {
-    printDriverLockLine(
-      `task ${task}'s driver lock names pid ${existingDriverLock.pid} (started ${existingDriverLock.startedAt}), which is no longer alive — taking over`
-    )
-  }
-  writeDriverLock(root, task, { pid: process.pid, startedAt: new Date().toISOString() })
   // O3: restart cleanliness — a crashed or killed prior run's own
   // reviewer candidate/scratch directories never leak into this run. Safe
   // on a fresh task (nothing to remove) and mid-recovery from a stale lock
@@ -1438,6 +1531,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // bind the posted verdicts against it with the SAME `compareManifest` the
     // gate uses. Set the moment the manifest is built, read only at publish.
     let lastDispatchedManifest: ReviewInputManifest | undefined
+    /**
+     * issue-711 O3: set by the pre-loop patch-carry check (below) whenever a
+     * held clean verdict existed but did not bind to the current head —
+     * named in a later `max_rounds` pause's own detail so a human reading
+     * it can tell "the cap is genuine, the patch really did change" apart
+     * from "the patch-carry check silently missed a real match." `null`
+     * whenever no held clean verdict was ever found (the ordinary case).
+     */
+    let patchCarryNote: string | null = null
     /**
      * O1: the input-version facts an escalation record binds to
      * (`writeEscalationRecord`'s own `briefHash`/`objectivesVersion`/
@@ -2355,8 +2457,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // — this process is still the one driving the task, so the lock it
         // cleared above must come back, or a second invocation would see no
         // lock at all and start a genuinely concurrent driver against the
-        // same outbox.
-        writeDriverLock(root, task, { pid: process.pid, startedAt: new Date().toISOString() })
+        // same outbox. Restored under the SAME `lockToken` this call
+        // resolved at entry — this is still the identical process/run, so a
+        // later resume attempt (if this is a driver-loop-owned call) still
+        // recognizes it as its own.
+        writeDriverLock(root, task, { pid: process.pid, startedAt: new Date().toISOString(), token: lockToken })
         reexecFailureNote = `re-exec of \`vinaya ${reexecArgs.join(' ')}\` could not even start after pulling the updated base`
       } else {
         reexecFailureNote = `could not pull the default branch to re-exec from: ${pulled.reason}`
@@ -2685,6 +2790,104 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
        * plausible CAUSE of the crash being handled here, so this never lets
        * a secondary failure mask the original error.
        */
+
+      // issue-711 O1/O3: a verdict judges a patch, not a head. This runs at
+      // round start AND on resume — both paths (the attach branch above,
+      // and the `resumePr` branch at the top of `devReviewLoop`) have
+      // already converged into `round`/`branch`/`prNumber` by this point,
+      // so one check covers both entry points, exactly as `check-review-gate.ts`
+      // and this self-check share the SAME `compareManifest` comparison.
+      // Gated on `prNumber > 0`: a task with no open PR yet has no held
+      // verdict to carry (`latestHeldCleanVerdict` would read nothing
+      // anyway). If the held clean verdict's own head is still bound to the
+      // current one — exact identity, or a proven patch-identical rebase/
+      // merge-from-base — this publishes it directly and `runRoundLoop`
+      // never dispatches a fresh round. A field OTHER than head having
+      // drifted (most commonly `rulingOrdinal`, the ordinary case when
+      // `--resume` itself was triggered by a NEW Principal ruling) correctly
+      // fails the comparison and falls through to a genuine fresh round
+      // below — this never overrides an actual decision point, only a pure
+      // head-address move (Traps to avoid: "carry verdicts only when every
+      // other bound input … is also unchanged").
+      if (prNumber > 0) {
+        const heldClean: HeldCleanVerdict | null = latestHeldCleanVerdict(root, task)
+        if (heldClean) {
+          let currentHeadForCarry: string | null = null
+          try {
+            currentHeadForCarry = d.resolveHead(branch)
+          } catch {
+            // No remote head yet — nothing to carry against.
+          }
+          // Two guards, both required, neither redundant:
+          //  - `currentHeadForCarry !== heldClean.head` — an UNCHANGED head
+          //    is not this task's scope at all (O1 is about a head MOVE);
+          //    the existing re-run behavior for an unmoved head — a genuine
+          //    fresh round, its own `publishRound` call discovering nothing
+          //    new to post via its own idempotent effect keys — is
+          //    unaffected, on purpose (round 2 review: this exact path,
+          //    unshortcut, is load-bearing test behavior elsewhere in this
+          //    suite).
+          //  - `heldClean.round === round` — `round` here already reflects
+          //    every OTHER recovery this function ran above (the
+          //    `historyApplies` forge-marker bump, the control-store
+          //    `Math.max`); a held pair from an OLDER round than what those
+          //    already established is stale — superseded by real progress
+          //    since, never something to carry forward past it (the same
+          //    "never falls back to an older round" discipline
+          //    `latestHeldRequestChanges` already documents for its own
+          //    read).
+          if (currentHeadForCarry !== null && currentHeadForCarry !== heldClean.head && heldClean.round === round) {
+            let carryBaseSha: string | null = null
+            try {
+              carryBaseSha = await d.gitMergeBase(currentHeadForCarry)
+            } catch {
+              // Unresolvable base — the comparison below fails closed on `null`.
+            }
+            const reassessedObjectives = d.resolveIssueObjectives(task)
+            const currentManifestForCarry: ReviewInputManifest = buildReviewInputManifest({
+              headSha: currentHeadForCarry,
+              baseSha: carryBaseSha,
+              briefContent: d.fetchFrozenBrief(task),
+              objectivesVersion: reassessedObjectives.version,
+              rulingOrdinal: d.fetchNewestRulingOrdinal(prNumber),
+              policy
+            })
+            const carryBinding = compareManifest(
+              manifestAsEchoed(heldClean.manifest),
+              currentManifestForCarry,
+              d.patchIdOf
+            )
+            if (carryBinding.bound) {
+              // issue-711 O1: "publishes the held verdicts, OR treats the
+              // published ones as current" — two different actions for two
+              // different states, both read off the SAME `heldClean` round.
+              // A round whose summary is already on the forge (held files
+              // are never deleted after posting — see `HeldCleanVerdict`'s
+              // own doc comment) must never re-run `publishRound`: its
+              // `journal` argument is built from THIS process's own
+              // `state.rounds`, empty here since `assessRound` never ran on
+              // this path, so a genuine re-post would render a summary
+              // table with no row for the round it names — a real content
+              // drift `postPrCommentOnce`'s idempotency keys off, and
+              // exactly the "second run posts nothing new" invariant this
+              // driver already guarantees for the ordinary re-run case.
+              const freshHistory = d.fetchLoopHistory(prNumber)
+              if (freshHistory.journalFinalized?.result === 'merged_ready') {
+                heldResultIdentity = null
+                persistCurrentLoopState('publish')
+                return { finalDecision: { type: 'publish' }, prNumber, task }
+              }
+              round = heldClean.round
+              lastDispatchedManifest = heldClean.manifest
+              heldResultIdentity = { round: heldClean.round, head: heldClean.head }
+              decision = { type: 'publish' }
+            } else {
+              patchCarryNote = `held clean verdict from round ${heldClean.round} at head ${heldClean.head} does not cover the current head ${currentHeadForCarry} (unbound: ${unboundFields(carryBinding).join(', ')}) — starting a fresh round`
+            }
+          }
+        }
+      }
+
       return await runRoundLoop()
     } catch (err) {
       // A genuinely uncaught error — a gate error, a
@@ -3364,6 +3567,17 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                   )
                 }
               }
+              // issue-711 O3: `max_rounds` already carries its own detail
+              // from `assessRound` ("max rounds: <n>") — the guard above
+              // never touches it. Appended here, never replacing it, only
+              // when the pre-loop patch-carry check (above) actually ran
+              // and found a genuine mismatch — a human reading this pause
+              // can tell "the cap is real, the patch changed" apart from a
+              // cap that a patch-identical carry should have (and did)
+              // already avoid.
+              if (decision.type === 'pause' && decision.reason === 'max_rounds' && patchCarryNote !== null) {
+                decision = { ...decision, detail: `${decision.detail ?? ''} — ${patchCarryNote}`.trim() }
+              }
               const routed = routeCompletionEvents(result.events, decision.type)
               pendingCompletionEvents = routed.toDeferUntilPublish
               await logEvents(routed.toLogNow)
@@ -3413,7 +3627,18 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             task,
             round,
             prNumber,
-            expectedHead: d.resolveHead(branch),
+            // issue-711 O1: the round's OWN judged head — `lastDispatchedManifest`'s
+            // when one was actually dispatched or carried this run (the ONLY
+            // two ways `decision.type` ever becomes `'publish'`), never a
+            // live re-resolve. A live `d.resolveHead(branch)` is correct only
+            // by coincidence on the ordinary same-iteration
+            // `dispatch_reviewers` → `publish` path (nothing has pushed since
+            // `head` was captured) and is flatly wrong on the patch-carry
+            // path below: the verdict being posted there is the OLD text,
+            // addressed to the OLD head, and a live head that has since
+            // moved (even patch-identically) would make `publishRound`'s own
+            // exact re-parse check fail.
+            expectedHead: lastDispatchedManifest?.headSha ?? d.resolveHead(branch),
             journal: { rounds: state.rounds },
             policy,
             // The manifest this round was dispatched against (O3) —
@@ -3421,7 +3646,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // either verdict was held, so binding the posted comments against
             // it is the same field-complete check the gate applies. Non-null
             // on every real path here: a `publish` decision is only ever set
-            // inside the `dispatch_reviewers` branch that just assigned it.
+            // inside the `dispatch_reviewers` branch that just assigned it,
+            // or (issue-711 O1) the patch-carry check below, which assigns
+            // the held verdict's OWN manifest before setting `decision`.
             manifest:
               lastDispatchedManifest ??
               buildReviewInputManifest({
@@ -3453,8 +3680,18 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // decision only a Principal can make (escalation, max_rounds,
           // confidence, reappearance, no_push, objectives_changed,
           // ruling_posted, brief_superseded, policy_changed) and clears the
-          // lock exactly as before.
-          if (decision.reason === 'infrastructure' || decision.reason === 'stale_driver') {
+          // lock exactly as before — UNLESS the caller is the watching
+          // driver itself (`retainDriverLock`, issue-711 O4, code review
+          // round 1, BLOCKER): it is not done at ANY pause reason, it is
+          // about to poll and likely call back in here itself, so the lock
+          // stays held regardless of which reason this round paused for.
+          // `runDriverLoop`'s own watch loop is what releases it, once it
+          // decides the task is genuinely over (merged, closed, cancelled).
+          if (
+            decision.reason === 'infrastructure' ||
+            decision.reason === 'stale_driver' ||
+            input.retainDriverLock !== undefined
+          ) {
             keepLockAlive = true
           }
           const pauseHead = d.resolveHead(branch)
@@ -3710,6 +3947,294 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
   }
 
   return { task, escalationId, fencedEffectKeys }
+}
+
+// --- the driver watch (issue-711 O4) ---------------------------------------
+
+/**
+ * issue-711 O4 — a pause never ends the driver. After `devReviewLoop`
+ * returns a `pause` against an already-open pull request, `runDriverLoop`
+ * keeps this same process running and watches that pull request rather
+ * than handing back to an operator's own `--resume`. It polls three forge
+ * facts — the PR's own open/merged/closed state (`fetchPrState`,
+ * `gate-reading.ts`), whether a newer Principal ruling has landed since
+ * this pause was posted (`fetchNewestRulingOrdinal`, "newer than the
+ * pause" is O4's own wording), and whether THIS pause's own escalation has
+ * been resolved `'cancel'` by someone else (`--cancel`, `task_cancel`,
+ * `readResolutionRecord`) — and, the moment one of them says "continue,"
+ * calls `devReviewLoop` again with EXACTLY the `{resumePr, agent, model}`
+ * shape a human's own `dev-review-loop --resume <pr>` builds, never a
+ * second, parallel continuation path: this is what "continues from that
+ * ruling exactly as `dev-review-loop --resume <pr>` does today" (the
+ * brief's own wording) means in code — the SAME function call, not a
+ * reimplementation of what it does. `'infrastructure'`/`'stale_driver'`
+ * pauses need no ruling at all (the same bare-resume allowance `--resume`
+ * already grants them — "Pause and `--resume`", `apps/cli/specs/loop.md`)
+ * — they retry after one bounded backoff wait instead of watching for a
+ * ruling; a bare retry that itself fails (the driver's own bare-resume
+ * budget, `MAX_INFRASTRUCTURE_RETRIES`, already exhausted) falls back to
+ * watching for a real ruling from that point on, rather than hammering the
+ * same failing bare attempt every poll tick forever.
+ *
+ * The one pause this never watches: the pre-first-push escalation
+ * (`prNumber <= 0` — no pull request exists yet to poll or comment on)
+ * ends the driver exactly as before this task, printing `vinaya task run
+ * <tranche> <n>` as its own resume command ("Pause and `--resume`",
+ * `apps/cli/specs/loop.md`) — there is nothing yet to watch.
+ *
+ * This watcher holds the task's one-driver-per-task lock for its ENTIRE
+ * life — across every pause and every resume attempt it makes, never
+ * cleared and re-acquired in between (`LoopInput.retainDriverLock`,
+ * `DriverWatchDeps.clearDriverLock`'s own doc comment) — so a genuinely
+ * separate `task run`/`--resume` for the same task is refused, naming this
+ * live driver, the whole time it watches, exactly as "One driver per task"
+ * (`apps/cli/specs/loop.md`) already promises. A resume attempt this
+ * watcher makes can still fail for other reasons — a benign race against
+ * an operator's own concurrent `--resume`/`--cancel` (`ReplayedResolutionError`),
+ * or a transient forge read. Neither crashes this unattended watcher: both
+ * are reported to stderr and the SAME pause is watched again from scratch
+ * after one poll interval, never treated as this driver's own final
+ * decision.
+ *
+ * A human's own explicit `dev-review-loop --resume <pr>`/`--cancel <pr>`
+ * invocation stays exactly as it was before this task — a one-shot debug/
+ * direct entry, never itself a watcher (`apps/cli/specs/loop.md`, "The
+ * command"). `runDriverLoop` is what `task run` uses instead — the one
+ * "normal," unattended entry — so an operator never needs to type a resume
+ * command at all for the ordinary case this task exists for; `dev-review-loop`
+ * (`--task`, `--resume`, `--cancel` alike) remains there for the cases it
+ * always covered (an operator driving the loop or forcing a continuation/
+ * stop by hand).
+ */
+export type DriverEndReason = 'merged' | 'closed' | 'cancelled'
+/**
+ * `runDriverLoop`'s own terminal decision — `Decision` (`@attalabs/aeg-core`,
+ * the pure policy layer) widened by exactly the three facts above, none of
+ * which `assessRound` could ever decide (they are facts about the PULL
+ * REQUEST, never a round's verdicts) — never added to `Decision` itself,
+ * the same "driver-decided, never a policy-layer type" precedent
+ * `'infrastructure'`/`'stale_driver'` already set ("Infrastructure
+ * failures", `apps/cli/specs/loop.md`) and this task's own declared
+ * Surface keeps: `packages/aeg-core` stays untouched by this member.
+ */
+export type DriverDecision = Decision | { type: 'ended'; reason: DriverEndReason }
+export type DriverResult = { finalDecision: DriverDecision; prNumber: number; task: number }
+
+export type DriverWatchDeps = {
+  /** Defaults to the real `devReviewLoop` — every resume attempt this watcher makes goes through it unchanged, threading the SAME caller-supplied `loopDeps` every time (a test's in-process harness included). */
+  devReviewLoop: (input: LoopInput, deps?: Partial<LoopDeps>) => Promise<LoopResult>
+  fetchPrState: typeof fetchPrState
+  fetchNewestRulingOrdinal: typeof fetchNewestRulingOrdinal
+  readPauseState: typeof readPauseState
+  readResolutionRecord: typeof readResolutionRecord
+  /**
+   * issue-711 O4 (code review round 1, BLOCKER; round 2, MAJOR/security
+   * LOW): `runDriverLoop` holds the one-driver-per-task lock for its
+   * ENTIRE life, across every pause and every resume attempt this same
+   * process makes (`LoopInput.retainDriverLock` — `devReviewLoop`'s own
+   * doc comment — carrying the one random token this run generated at its
+   * own start), never clearing and re-acquiring it in between: a "clear,
+   * then call back in" gap would briefly open the task to a genuinely
+   * concurrent second `task run`, exactly the race "One driver per task"
+   * (`apps/cli/specs/loop.md`) exists to prevent. `devReviewLoop`'s own
+   * entry gate recognizes a lock as THIS run's own only when it names both
+   * this pid AND this exact token — a bare pid match is never enough (the
+   * OS can reissue a crashed driver's exact pid to a fresh, unrelated
+   * invocation for the same task) — so the same lock simply continues,
+   * unbroken, under this one process the whole time. This field's only
+   * caller is `runDriverLoop` itself, at the ONE point that actually ends
+   * the driver: once the watch loop decides the task is genuinely over
+   * (merged, closed, cancelled), releasing a lock `devReviewLoop`'s own
+   * `finally` never ran for that exit.
+   */
+  clearDriverLock: typeof clearDriverLock
+  runtimeDir: () => string
+  sleep: (ms: number) => Promise<void>
+  /** How often this watcher polls the PR/resolution/ruling while nothing is yet ready — env-overridable (`VINAYA_DEV_REVIEW_LOOP_WATCH_POLL_MS`) for a fast fixture; real usage never needs sub-second spacing. */
+  watchPollIntervalMs: number
+  /** The single bounded wait an `'infrastructure'`/`'stale_driver'` pause takes before its own bare-resume retry — env-overridable (`VINAYA_DEV_REVIEW_LOOP_WATCH_INFRA_BACKOFF_MS`). */
+  infrastructureBackoffMs: number
+}
+
+function defaultDriverWatchDeps(): DriverWatchDeps {
+  return {
+    devReviewLoop,
+    fetchPrState,
+    fetchNewestRulingOrdinal,
+    readPauseState,
+    readResolutionRecord,
+    clearDriverLock,
+    runtimeDir,
+    sleep: defaultSleep,
+    watchPollIntervalMs: gatePollEnvOverride('VINAYA_DEV_REVIEW_LOOP_WATCH_POLL_MS', 30_000),
+    infrastructureBackoffMs: gatePollEnvOverride('VINAYA_DEV_REVIEW_LOOP_WATCH_INFRA_BACKOFF_MS', 60_000)
+  }
+}
+
+/**
+ * A watch-loop forge read that fails is "cannot tell yet," never a crash —
+ * the same tolerance a resume attempt itself already gets (below): reported
+ * to stderr, `fallback` returned, so the caller's own next poll simply
+ * tries again rather than this unattended watcher dying over a transient
+ * `gh` hiccup.
+ */
+function watchReadOrFallback<T>(label: string, read: () => T, fallback: T): T {
+  try {
+    return read()
+  } catch (err) {
+    process.stderr.write(
+      `vinaya dev-review-loop: watcher's ${label} read failed — ${
+        err instanceof Error ? err.message : String(err)
+      }; still watching.\n`
+    )
+    return fallback
+  }
+}
+
+/**
+ * One pause's own watch cycle: polls until the pull request is genuinely
+ * done (merged/closed/cancelled) or a resume attempt against it returns a
+ * fresh `LoopResult` — `runDriverLoop`'s own doc comment names the three
+ * `'ended'` exits as the only other way out of this deliberately unbounded,
+ * unattended wait.
+ */
+async function watchPauseThenResume(
+  pauseResult: LoopResult,
+  loopDeps: Partial<LoopDeps>,
+  w: DriverWatchDeps,
+  driverLockToken: string
+): Promise<{ kind: 'ended'; reason: DriverEndReason } | { kind: 'result'; result: LoopResult }> {
+  const { prNumber, task } = pauseResult
+  const reason = pauseResult.finalDecision.type === 'pause' ? pauseResult.finalDecision.reason : undefined
+  const isBoundedRetry = reason === 'infrastructure' || reason === 'stale_driver'
+  // Read once, right as this pause begins being watched — this IS the
+  // pause `devReviewLoop` just wrote `pause-state.json` for, so it is never
+  // null here (unlike a `--resume` invoked well after the fact, which must
+  // tolerate a pause that has since been superseded).
+  const held = w.readPauseState(w.runtimeDir(), task)
+  const agent = held?.agent
+  const model = held?.model
+  const escalationId = held?.escalationId ?? null
+  // "Newer than the pause" (O4's own wording) — captured now, the moment
+  // this pause starts being watched, never re-derived from the pause's own
+  // recorded time: a ruling that already existed when this pause posted
+  // must not immediately re-trigger a resume this pause's own round
+  // already accounted for.
+  const baselineOrdinal = watchReadOrFallback('newest ruling ordinal', () => w.fetchNewestRulingOrdinal(prNumber), 0)
+  let backoffDone = !isBoundedRetry
+  // Set once a bare (no-ruling) retry itself fails — the driver's own
+  // bare-resume budget is almost certainly exhausted at that point
+  // (`devReviewLoop`'s own `--resume` entry says so in its thrown message),
+  // so this pause falls back to watching for a real ruling from here on,
+  // rather than re-attempting the same failing bare call every poll tick
+  // forever.
+  let bareRetryExhausted = false
+
+  while (true) {
+    const prState = watchReadOrFallback('pull-request state', () => w.fetchPrState(prNumber), 'OPEN' as const)
+    if (prState === 'MERGED') return { kind: 'ended', reason: 'merged' }
+    if (prState === 'CLOSED') return { kind: 'ended', reason: 'closed' }
+
+    if (escalationId) {
+      const resolution = watchReadOrFallback('resolution', () => w.readResolutionRecord(task, escalationId), null)
+      if (resolution?.decision === 'cancel') return { kind: 'ended', reason: 'cancelled' }
+    }
+
+    if (isBoundedRetry && !backoffDone) {
+      await w.sleep(w.infrastructureBackoffMs)
+      backoffDone = true
+      // Re-check the three exits above once more, right after the wait,
+      // before ever attempting the bare resume below — never fire a resume
+      // at a pull request that concluded while this driver slept.
+      continue
+    }
+
+    const readyForBareRetry = isBoundedRetry && !bareRetryExhausted
+    const readyForRuling =
+      watchReadOrFallback('newest ruling ordinal', () => w.fetchNewestRulingOrdinal(prNumber), baselineOrdinal) >
+      baselineOrdinal
+    if (readyForBareRetry || readyForRuling) {
+      try {
+        const result = await w.devReviewLoop(
+          {
+            resumePr: prNumber,
+            ...(agent !== undefined && isAgentVendor(agent) ? { agent } : {}),
+            ...(model ? { model } : {}),
+            // issue-711 O4 (code review round 1, BLOCKER/MEDIUM; round 2,
+            // MAJOR/security LOW): this call is the SAME process
+            // re-entering the SAME task's driver lock it has held, unbroken
+            // and under the SAME token, since it first paused — never
+            // cleared first any more (that briefly opened the task to a
+            // genuinely concurrent second driver). `devReviewLoop`'s own
+            // entry gate recognizes its own pid AND its own token on the
+            // existing lock and neither refuses nor re-races it.
+            retainDriverLock: driverLockToken
+          },
+          loopDeps
+        )
+        return { kind: 'result', result }
+      } catch (err) {
+        if (readyForBareRetry && !readyForRuling) bareRetryExhausted = true
+        // A benign race (an operator's own concurrent `--resume`, a
+        // replayed resolution, a transient forge read) — never this
+        // watcher's own final decision. Reported, then the SAME pause is
+        // watched again from scratch.
+        process.stderr.write(
+          `vinaya dev-review-loop: watcher's resume attempt for PR #${prNumber} failed — ${
+            err instanceof Error ? err.message : String(err)
+          }; still watching.\n`
+        )
+      }
+    }
+
+    await w.sleep(w.watchPollIntervalMs)
+  }
+}
+
+/**
+ * issue-711 O4's own entry point — `apps/cli/src/commands/dev-review-loop.ts`'s
+ * `--task` start and `task-run.ts`'s `runTask` both call this instead of
+ * `devReviewLoop` directly (a human's own explicit `--resume <pr>`/
+ * `--cancel <pr>` stay one-shot, unchanged — see this function's own
+ * module doc comment, above). One call in, one `DriverResult` out, however
+ * many pause/resume cycles it takes underneath.
+ */
+export async function runDriverLoop(
+  input: LoopInput,
+  loopDeps: Partial<LoopDeps> = {},
+  watchDeps: Partial<DriverWatchDeps> = {}
+): Promise<DriverResult> {
+  const w: DriverWatchDeps = { ...defaultDriverWatchDeps(), ...watchDeps }
+  // issue-711 O4 (code review round 1, BLOCKER; round 2, MAJOR/security
+  // LOW): ONE token for this whole driver run, generated once, here, and
+  // threaded into EVERY call this run makes (this first one and every
+  // resume attempt `watchPauseThenResume` makes) via `retainDriverLock` —
+  // this is what lets `devReviewLoop`'s own entry gate tell "this exact
+  // run, re-entering its own lock" apart from a same-pid coincidence with
+  // no real ownership behind it (a crashed run's pid reissued by the OS to
+  // a fresh, unrelated invocation).
+  const driverLockToken = randomUUID()
+  let result = await w.devReviewLoop({ ...input, retainDriverLock: driverLockToken }, loopDeps)
+  while (result.finalDecision.type === 'pause' && result.prNumber > 0) {
+    const outcome = await watchPauseThenResume(result, loopDeps, w, driverLockToken)
+    if (outcome.kind === 'ended') {
+      // The task is genuinely over — the ONE place this driver's own lock
+      // is released outside `devReviewLoop`'s own finally (which never ran
+      // for this exit: nothing paused or published here, the watch loop
+      // itself decided "done"). Best-effort by convention with every other
+      // `clearDriverLock` call in this file — a failed unlink here still
+      // leaves the task correctly finished; a stale lock naming a now-dead
+      // pid is taken over by the very next start, same as any crash.
+      w.clearDriverLock(w.runtimeDir(), result.task)
+      return {
+        finalDecision: { type: 'ended', reason: outcome.reason },
+        prNumber: result.prNumber,
+        task: result.task
+      }
+    }
+    result = outcome.result
+  }
+  return result
 }
 
 export const DEV_REVIEW_LOOP_AGENTS = AGENT_VENDOR_NAMES

@@ -57,6 +57,11 @@ function deps(overrides: Partial<RunTaskDeps> = {}): RunTaskDeps {
     // case that must still refuse. The dead-lock takeover tests below
     // override this to `false` explicitly.
     isDriverAlive: () => true,
+    // issue-711 O5: defaults to `false` — every EXISTING test in this file
+    // models a task that was never paused, so the `{task: issue}` dispatch
+    // path must stay unchanged for all of them. The redirect-to-`--resume`
+    // tests below override this to `true` explicitly.
+    hasPauseState: () => false,
     // Not `neverCalled`: `runTask` always calls this right after the Issue
     // is resolved (O1) — every existing test in this file exercises a
     // vendor/task pair with no rationale to read, so `undefined` (vendor
@@ -594,5 +599,90 @@ describe('runTask — O5: a dead driver lock is taken over, never refused', () =
     )
     expect(isDriverAliveCalled).toBe(false)
     expect(result.finalDecision).toEqual({ type: 'publish' })
+  })
+})
+
+describe('runTask — issue-711 O5: a paused pull request continues from the newest ruling, never a fresh attach', () => {
+  it('an open PR with a held pause state calls devReviewLoop with { resumePr }, not { task }', async () => {
+    let loopCalled = false
+    const result = await runTask(
+      { tranche: 'task-run-v1', n: 2, agent: 'claude' },
+      deps({
+        prepareTask: async () => ({ issue: 480, brief: '', commentUrl: '', version: 1 }),
+        developerBranchFor: () => 'task/task-run-v1/2',
+        findOpenPrForBranch: () => ({ number: 501, branch: 'task/task-run-v1/2' }),
+        isDriverAlive: () => false,
+        hasPauseState: (task) => {
+          expect(task).toBe(480)
+          return true
+        },
+        devReviewLoop: async (input) => {
+          loopCalled = true
+          expect(input).toEqual({ resumePr: 501, agent: 'claude' })
+          return { finalDecision: { type: 'publish' }, prNumber: 501, task: 480 }
+        }
+      })
+    )
+    expect(loopCalled).toBe(true)
+    expect(result.prNumber).toBe(501)
+  })
+
+  it('carries an explicit --model through onto the { resumePr } call, exactly like the { task } path', async () => {
+    const result = await runTask(
+      { tranche: 'task-run-v1', n: 2, agent: 'claude', model: 'opus' },
+      deps({
+        prepareTask: async () => ({ issue: 480, brief: '', commentUrl: '', version: 1 }),
+        developerBranchFor: () => 'task/task-run-v1/2',
+        findOpenPrForBranch: () => ({ number: 501, branch: 'task/task-run-v1/2' }),
+        isDriverAlive: () => false,
+        hasPauseState: () => true,
+        resolveModelForDispatch: (_agent, _issue, explicitModel) => explicitModel,
+        devReviewLoop: async (input) => {
+          expect(input).toEqual({ resumePr: 501, agent: 'claude', model: 'opus' })
+          return { finalDecision: { type: 'publish' }, prNumber: 501, task: 480 }
+        }
+      })
+    )
+    expect(result.prNumber).toBe(501)
+  })
+
+  it('no open PR at all never even asks hasPauseState — a pause is always posted against an already-open PR', async () => {
+    let hasPauseStateCalled = false
+    const result = await runTask(
+      { tranche: 'task-run-v1', n: 2, agent: 'claude' },
+      deps({
+        prepareTask: async () => ({ issue: 480, brief: '', commentUrl: '', version: 1 }),
+        developerBranchFor: () => 'task/task-run-v1/2',
+        findOpenPrForBranch: () => null,
+        hasPauseState: () => {
+          hasPauseStateCalled = true
+          return true
+        },
+        devReviewLoop: async (input) => {
+          expect(input).toEqual({ task: 480, agent: 'claude' })
+          return PUBLISH_RESULT
+        }
+      })
+    )
+    expect(hasPauseStateCalled).toBe(false)
+    expect(result.finalDecision).toEqual({ type: 'publish' })
+  })
+
+  it('an open PR with no pause state ever recorded still takes the ordinary { task } attach path', async () => {
+    const result = await runTask(
+      { tranche: 'task-run-v1', n: 2, agent: 'claude' },
+      deps({
+        prepareTask: async () => ({ issue: 480, brief: '', commentUrl: '', version: 1 }),
+        developerBranchFor: () => 'task/task-run-v1/2',
+        findOpenPrForBranch: () => ({ number: 501, branch: 'task/task-run-v1/2' }),
+        isDriverAlive: () => false,
+        hasPauseState: () => false,
+        devReviewLoop: async (input) => {
+          expect(input).toEqual({ task: 480, agent: 'claude' })
+          return { finalDecision: { type: 'publish' }, prNumber: 501, task: 480 }
+        }
+      })
+    )
+    expect(result.prNumber).toBe(501)
   })
 })
