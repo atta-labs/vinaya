@@ -1,22 +1,33 @@
 /**
  * In-process tests for issue-711 O4: a pause never ends the driver.
- * `runDriverLoop` (`dev-review-loop.ts`) is the watching driver
- * `dev-review-loop --task <n>` and `task run` compose instead of calling
- * `devReviewLoop` directly — see its own module doc comment for the full
- * design. These tests drive it through `runDriverLoopInProcess`
- * (`dev-review-loop-harness.ts`), which threads `world.prState` and fast,
- * near-zero poll/backoff intervals so a real driver-watch cycle runs in
- * test time, never a real wall-clock wait.
+ * `runDriverLoop` (`dev-review-loop.ts`) is the watching driver `task run`
+ * composes instead of calling `devReviewLoop` directly — see its own
+ * module doc comment for the full design. These tests drive it through
+ * `runDriverLoopInProcess` (`dev-review-loop-harness.ts`), which threads
+ * `world.prState` and fast, near-zero poll/backoff intervals so a real
+ * driver-watch cycle runs in test time, never a real wall-clock wait.
+ *
+ * Code review round 1 (BLOCKER/MEDIUM): the watching driver must hold the
+ * one-driver-per-task lock for its whole life, never clearing it between a
+ * pause and the resumed round — the first test below asserts the lock is
+ * present, naming this process, on every single poll tick, and that a
+ * genuinely different (but alive) pid on that lock is refused the whole
+ * time. `readDriverLock`/`isDriverPidAlive`/`writeDriverLock` are real
+ * production primitives, not `LoopDeps` fields — never faked — so a
+ * "different pid" is stood in for with `process.ppid` (this test runner's
+ * own parent, alive for the test's whole life), the one place this suite
+ * touches the lock file directly.
  */
 
 import { afterEach, describe, expect, it } from 'bun:test'
 import { escalationIdFor, type LoopDeps, resolveEscalation } from '../../../src/lib/dev-review-loop.js'
-import { readPauseState } from '../../../src/lib/dev-review-loop/pause-resume.js'
+import { readDriverLock, readPauseState, writeDriverLock } from '../../../src/lib/dev-review-loop/pause-resume.js'
 import {
   cleanupWorlds,
   makeInProcessDeps,
   makeWorld,
   runDriverLoopInProcess,
+  runLoopInProcess,
   type LoopWorld,
   type RoleOutcome
 } from '../dev-review-loop-harness.js'
@@ -36,9 +47,10 @@ function makeEscalationWorld(overrides: Partial<LoopWorld> = {}): LoopWorld {
 }
 
 describe('runDriverLoop — issue-711 O4: a pause never ends the driver; it watches the pull request and continues once a newer ruling appears', () => {
-  it('drives ONE call through a pause, a ruling posted while it waits, and on to publish — no resume command', async () => {
+  it('drives ONE call through a pause, a ruling posted while it waits, and on to publish — no resume command, and the driver lock never lapses', async () => {
     const world = makeEscalationWorld()
     let sleepCalls = 0
+    const lockNamedThisProcessOnEveryTick: boolean[] = []
 
     const result = await runDriverLoopInProcess(
       world,
@@ -47,7 +59,28 @@ describe('runDriverLoop — issue-711 O4: a pause never ends the driver; it watc
       {
         sleep: async (ms) => {
           sleepCalls += 1
+          // Code review round 1 (BLOCKER): the lock this driver's own round
+          // 1 wrote must still be here, still naming THIS process, on every
+          // single poll tick — the exact invariant a clear-then-resume gap
+          // would break.
+          const lock = readDriverLock(world.runtimeDir, world.task)
+          lockNamedThisProcessOnEveryTick.push(lock !== null && lock.pid === process.pid)
+
           if (sleepCalls === 1) {
+            // Code review round 1 (BLOCKER): a genuinely SEPARATE driver
+            // process for the SAME task, arriving while this one still
+            // watches, is refused — simulated by naming a provably alive,
+            // genuinely different pid (`process.ppid`) on the lock file,
+            // then calling `devReviewLoop` fresh exactly as a second
+            // `task run`/`dev-review-loop --task` would.
+            writeDriverLock(world.runtimeDir, world.task, { pid: process.ppid, startedAt: new Date(0).toISOString() })
+            await expect(runLoopInProcess(world, { task: world.task, agent: 'claude' })).rejects.toThrow(
+              new RegExp(`a driver is already running \\(pid ${process.ppid}`)
+            )
+            // Restores this driver's own lock — the state it actually
+            // still owns — before letting the watch continue.
+            writeDriverLock(world.runtimeDir, world.task, { pid: process.pid, startedAt: new Date(0).toISOString() })
+
             // Simulate a Principal posting a ruling ON THE PR while this
             // driver is watching it — never a resume command run against
             // it. Round 1's reviewer also comes back clean on the retry,
@@ -69,6 +102,11 @@ describe('runDriverLoop — issue-711 O4: a pause never ends the driver; it watc
     // ready to act on — proof this ran through the watch loop, never a
     // direct `devReviewLoop({resumePr})` call this test made by hand.
     expect(sleepCalls).toBeGreaterThanOrEqual(1)
+    expect(lockNamedThisProcessOnEveryTick.length).toBeGreaterThanOrEqual(1)
+    expect(lockNamedThisProcessOnEveryTick.every(Boolean)).toBe(true)
+    // Published — the task is done, and `devReviewLoop`'s own ordinary
+    // publish-path `finally` cleared the lock exactly as it always has.
+    expect(readDriverLock(world.runtimeDir, world.task)).toBeNull()
   })
 
   it('ends the driver once the pull request is merged while it watches — never a pause, never a resume attempt', async () => {
@@ -93,6 +131,11 @@ describe('runDriverLoop — issue-711 O4: a pause never ends the driver; it watc
     // Round 1 stayed paused — no resumed dispatch ever ran.
     expect(world.dispatchCountByRole['code-reviewer']).toBe(1)
     expect(world.publishedRounds).toEqual([])
+    // Code review round 1 (BLOCKER): the driver's own lock — held through
+    // the whole watch — is released the ONE place `devReviewLoop`'s own
+    // `finally` never ran for: `runDriverLoop` clears it itself once the
+    // watch loop decides the task is genuinely over.
+    expect(readDriverLock(world.runtimeDir, world.task)).toBeNull()
   })
 
   it('ends the driver once the pull request is closed while it watches', async () => {
@@ -111,6 +154,7 @@ describe('runDriverLoop — issue-711 O4: a pause never ends the driver; it watc
     )
 
     expect(result.finalDecision).toEqual({ type: 'ended', reason: 'closed' })
+    expect(readDriverLock(world.runtimeDir, world.task)).toBeNull()
   })
 
   it('ends the driver on --cancel’s own resolution, consumed while it watches — the same single-consumption escalation record `cancelDevReviewLoop` writes', async () => {
@@ -146,6 +190,12 @@ describe('runDriverLoop — issue-711 O4: a pause never ends the driver; it watc
 
     expect(result.finalDecision).toEqual({ type: 'ended', reason: 'cancelled' })
     expect(world.publishedRounds).toEqual([])
+    // Code review round 1 (BLOCKER): `--cancel` still ends the watcher AND
+    // its lock is still released — the SAME `runDriverLoop`-owned release
+    // every other `'ended'` exit gets, never left dangling because this one
+    // reason resolved through a different code path (`resolveEscalation`
+    // directly, above) than the watch loop's own merged/closed reads.
+    expect(readDriverLock(world.runtimeDir, world.task)).toBeNull()
   })
 
   it('an infrastructure pause retries on its own after a bounded backoff, with no ruling ever posted', async () => {

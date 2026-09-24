@@ -582,6 +582,32 @@ export function writeDriverLock(root: string, task: number, lock: DriverLock): v
   writeFileSync(path, JSON.stringify(lock), 'utf8')
 }
 
+/**
+ * issue-711 O4, security review (MEDIUM): an ATOMIC claim — `wx` (exclusive
+ * create) fails outright if the file already exists, so two processes
+ * racing to take an ABSENT (or just-cleared) lock can never both believe
+ * they won: the filesystem's own exclusive-create guarantee decides it, a
+ * genuine improvement over `writeDriverLock`'s plain overwrite, which a
+ * read-then-write caller could always race regardless of how carefully it
+ * checked first. Returns `true` on success (this pid now owns the lock);
+ * `false` only for `EEXIST` (a caller already lost the race, or the path is
+ * still occupied) — any OTHER write failure still throws, exactly like
+ * `writeDriverLock`. `writeDriverLock` itself stays exactly as it was —
+ * this is a second, narrower primitive for the one caller that needs the
+ * atomicity, not a replacement.
+ */
+export function acquireDriverLockAtomic(root: string, task: number, lock: DriverLock): boolean {
+  const path = driverLockPath(root, task)
+  ensureRunDir(dirname(path), root)
+  try {
+    writeFileSync(path, JSON.stringify(lock), { encoding: 'utf8', flag: 'wx' })
+    return true
+  } catch (err) {
+    if (err && typeof err === 'object' && 'code' in err && (err as { code: unknown }).code === 'EEXIST') return false
+    throw err
+  }
+}
+
 export function clearDriverLock(root: string, task: number): void {
   try {
     unlinkSync(driverLockPath(root, task))

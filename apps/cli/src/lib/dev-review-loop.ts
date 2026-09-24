@@ -172,6 +172,7 @@ import { postForgeEffectOnce, publishRound, unboundFields } from './dev-review-l
 import { patchIdAt } from './patch-id.js'
 import { fetchLoopHistory } from './dev-review-loop/journal-history.js'
 import {
+  acquireDriverLockAtomic,
   clearDriverLock,
   escalationIdFor,
   fenceStartedEffectsAsUncertain,
@@ -835,8 +836,18 @@ function defaultDeps(): LoopDeps {
  * `undefined` on the deprecated `task dispatch` path and on every direct
  * `devReviewLoop` caller that never resolved one — `dispatchRole` already
  * treats an absent `model` as "run this vendor's own default," unchanged.
+ *
+ * `retainDriverLock` (issue-711 O4, code review round 1, BLOCKER) — set
+ * ONLY by `runDriverLoop`'s own internal calls (both the first and every
+ * resume attempt), never by the CLI or a direct caller: it tells THIS call
+ * "keep the one-driver-per-task lock held no matter which reason this
+ * round pauses for" (below, `keepLockAlive`), because the watching driver
+ * is not done — it is about to poll and, likely, call `devReviewLoop`
+ * again itself. Absent (the ordinary case), a pause still clears the lock
+ * exactly as before this task: an operator's own one-shot `--task`/
+ * `--resume` call was always meant to end here.
  */
-export type LoopInput = { json?: boolean; model?: string } & (
+export type LoopInput = { json?: boolean; model?: string; retainDriverLock?: boolean } & (
   | { task: number; agent: AgentVendor }
   | { resumePr: number; agent?: AgentVendor }
 )
@@ -1144,18 +1155,48 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   // refuses this start outright; a dead one (crashed prior driver) is taken
   // over rather than left blocking forever (Traps to avoid: no lease, no
   // timestamp expiry — liveness is the only test).
+  //
+  // issue-711 O4 (code review round 1, BLOCKER/MEDIUM): a lock already
+  // naming THIS process's own pid is never refused and never re-raced — it
+  // can only mean the watching driver (`runDriverLoop`) calling back into
+  // itself (`retainDriverLock`, above) with the SAME lock it has held,
+  // unbroken, since it first acquired it; there is no other way for a live
+  // pid to match `process.pid`. Acquiring a lock nobody currently holds is
+  // now atomic (`acquireDriverLockAtomic` — exclusive create, `wx`) rather
+  // than a read-then-write a genuinely concurrent second start could always
+  // race between: a loser here re-reads and refuses naming the winner,
+  // never silently believing it also won.
   const existingDriverLock = readDriverLock(root, task)
-  if (existingDriverLock && isDriverPidAlive(existingDriverLock.pid)) {
-    const message = `refuses to start for task ${task} — a driver is already running (pid ${existingDriverLock.pid}, started ${existingDriverLock.startedAt})`
-    printDriverLockLine(message)
-    throw new Error(`devReviewLoop: ${message}`)
+  if (existingDriverLock?.pid !== process.pid) {
+    if (existingDriverLock && isDriverPidAlive(existingDriverLock.pid)) {
+      const message = `refuses to start for task ${task} — a driver is already running (pid ${existingDriverLock.pid}, started ${existingDriverLock.startedAt})`
+      printDriverLockLine(message)
+      throw new Error(`devReviewLoop: ${message}`)
+    }
+    if (existingDriverLock) {
+      printDriverLockLine(
+        `task ${task}'s driver lock names pid ${existingDriverLock.pid} (started ${existingDriverLock.startedAt}), which is no longer alive — taking over`
+      )
+      clearDriverLock(root, task)
+    }
+    const claimed = acquireDriverLockAtomic(root, task, { pid: process.pid, startedAt: new Date().toISOString() })
+    if (!claimed) {
+      // Lost a genuine race for a lock nobody held a moment ago — a second,
+      // concurrent start (fresh or a takeover) won the exclusive create
+      // first. Re-read: a live, different pid is refused exactly like the
+      // ordinary case above; anything else (the winner's own process died
+      // between its write and this read, or this read raced a takeover
+      // still in flight) is a vanishingly narrow residual this single,
+      // best-effort retry closes rather than looping forever over it.
+      const racedLock = readDriverLock(root, task)
+      if (racedLock && racedLock.pid !== process.pid && isDriverPidAlive(racedLock.pid)) {
+        const message = `refuses to start for task ${task} — a driver is already running (pid ${racedLock.pid}, started ${racedLock.startedAt})`
+        printDriverLockLine(message)
+        throw new Error(`devReviewLoop: ${message}`)
+      }
+      writeDriverLock(root, task, { pid: process.pid, startedAt: new Date().toISOString() })
+    }
   }
-  if (existingDriverLock) {
-    printDriverLockLine(
-      `task ${task}'s driver lock names pid ${existingDriverLock.pid} (started ${existingDriverLock.startedAt}), which is no longer alive — taking over`
-    )
-  }
-  writeDriverLock(root, task, { pid: process.pid, startedAt: new Date().toISOString() })
   // O3: restart cleanliness — a crashed or killed prior run's own
   // reviewer candidate/scratch directories never leak into this run. Safe
   // on a fresh task (nothing to remove) and mid-recovery from a stale lock
@@ -3608,8 +3649,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // decision only a Principal can make (escalation, max_rounds,
           // confidence, reappearance, no_push, objectives_changed,
           // ruling_posted, brief_superseded, policy_changed) and clears the
-          // lock exactly as before.
-          if (decision.reason === 'infrastructure' || decision.reason === 'stale_driver') {
+          // lock exactly as before — UNLESS the caller is the watching
+          // driver itself (`retainDriverLock`, issue-711 O4, code review
+          // round 1, BLOCKER): it is not done at ANY pause reason, it is
+          // about to poll and likely call back in here itself, so the lock
+          // stays held regardless of which reason this round paused for.
+          // `runDriverLoop`'s own watch loop is what releases it, once it
+          // decides the task is genuinely over (merged, closed, cancelled).
+          if (decision.reason === 'infrastructure' || decision.reason === 'stale_driver' || input.retainDriverLock) {
             keepLockAlive = true
           }
           const pauseHead = d.resolveHead(branch)
@@ -3900,23 +3947,29 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
  * <tranche> <n>` as its own resume command ("Pause and `--resume`",
  * `apps/cli/specs/loop.md`) — there is nothing yet to watch.
  *
- * A resume attempt this watcher makes can itself fail — a benign race
- * against an operator's own concurrent `--resume`/`--cancel` (a
- * `ReplayedResolutionError`, or the one-driver-per-task lock refusing a
- * second start under this same pid — "One driver per task",
- * `apps/cli/specs/loop.md`), or a transient forge read. Neither crashes
- * this unattended watcher: both are reported to stderr and the SAME pause
- * is watched again from scratch after one poll interval, never treated as
- * this driver's own final decision.
+ * This watcher holds the task's one-driver-per-task lock for its ENTIRE
+ * life — across every pause and every resume attempt it makes, never
+ * cleared and re-acquired in between (`LoopInput.retainDriverLock`,
+ * `DriverWatchDeps.clearDriverLock`'s own doc comment) — so a genuinely
+ * separate `task run`/`--resume` for the same task is refused, naming this
+ * live driver, the whole time it watches, exactly as "One driver per task"
+ * (`apps/cli/specs/loop.md`) already promises. A resume attempt this
+ * watcher makes can still fail for other reasons — a benign race against
+ * an operator's own concurrent `--resume`/`--cancel` (`ReplayedResolutionError`),
+ * or a transient forge read. Neither crashes this unattended watcher: both
+ * are reported to stderr and the SAME pause is watched again from scratch
+ * after one poll interval, never treated as this driver's own final
+ * decision.
  *
  * A human's own explicit `dev-review-loop --resume <pr>`/`--cancel <pr>`
  * invocation stays exactly as it was before this task — a one-shot debug/
  * direct entry, never itself a watcher (`apps/cli/specs/loop.md`, "The
- * command"). `runDriverLoop` is what a fresh driver RUN uses instead —
- * wired into `dev-review-loop --task <n>` and `task run` — so an operator
- * never needs to type a resume command at all for the ordinary case this
- * task exists for; `--resume`/`--cancel` remain there for the cases they
- * always covered (an operator forcing a continuation or a stop by hand).
+ * command"). `runDriverLoop` is what `task run` uses instead — the one
+ * "normal," unattended entry — so an operator never needs to type a resume
+ * command at all for the ordinary case this task exists for; `dev-review-loop`
+ * (`--task`, `--resume`, `--cancel` alike) remains there for the cases it
+ * always covered (an operator driving the loop or forcing a continuation/
+ * stop by hand).
  */
 export type DriverEndReason = 'merged' | 'closed' | 'cancelled'
 /**
@@ -3940,21 +3993,20 @@ export type DriverWatchDeps = {
   readPauseState: typeof readPauseState
   readResolutionRecord: typeof readResolutionRecord
   /**
-   * "One driver per task" ("the lock hands off to the child before the
-   * spawn, not after", `apps/cli/specs/loop.md`) applies here too, in a
-   * narrower form: an `'infrastructure'`/`'stale_driver'` pause deliberately
-   * leaves this SAME process's own driver lock in place (`keepLockAlive`,
-   * `devReviewLoop`'s own doc comment) so a genuinely SEPARATE `--resume`
-   * process never mistakes a live recoverable-hiccup retry for an
-   * abandoned one. This watcher's own bare-resume retry is not a separate
-   * process, though — it is the SAME pid calling `devReviewLoop` again,
-   * which would otherwise refuse itself at the entry-gate lock check
-   * ("a driver is already running (pid <this pid>)"). Cleared right before
-   * EVERY resume attempt (every reason, not only the bounded-retry ones —
-   * a harmless no-op wherever the lock was already cleared) for the exact
-   * same reason `checkStaleDriver`'s own re-exec clears it before handing
-   * off: the next `devReviewLoop` entry re-acquires it itself, under
-   * whichever pid actually continues.
+   * issue-711 O4 (code review round 1, BLOCKER): `runDriverLoop` holds the
+   * one-driver-per-task lock for its ENTIRE life, across every pause and
+   * every resume attempt this same process makes (`LoopInput.retainDriverLock`
+   * — `devReviewLoop`'s own doc comment), never clearing and re-acquiring
+   * it in between: a "clear, then call back in" gap would briefly open the
+   * task to a genuinely concurrent second `task run`, exactly the race
+   * "One driver per task" (`apps/cli/specs/loop.md`) exists to prevent.
+   * `devReviewLoop`'s own entry gate recognizes a lock already naming THIS
+   * pid and neither refuses nor re-races it — the same lock simply
+   * continues, unbroken, under this one process the whole time. This
+   * field's only caller is `runDriverLoop` itself, at the ONE point that
+   * actually ends the driver: once the watch loop decides the task is
+   * genuinely over (merged, closed, cancelled), releasing a lock
+   * `devReviewLoop`'s own `finally` never ran for that exit.
    */
   clearDriverLock: typeof clearDriverLock
   runtimeDir: () => string
@@ -4062,16 +4114,20 @@ async function watchPauseThenResume(
       watchReadOrFallback('newest ruling ordinal', () => w.fetchNewestRulingOrdinal(prNumber), baselineOrdinal) >
       baselineOrdinal
     if (readyForBareRetry || readyForRuling) {
-      // This SAME process's own driver lock, cleared right before it calls
-      // itself back into `devReviewLoop` — see `DriverWatchDeps.clearDriverLock`'s
-      // own doc comment for why this is never optional.
-      w.clearDriverLock(w.runtimeDir(), task)
       try {
         const result = await w.devReviewLoop(
           {
             resumePr: prNumber,
             ...(agent !== undefined && isAgentVendor(agent) ? { agent } : {}),
-            ...(model ? { model } : {})
+            ...(model ? { model } : {}),
+            // issue-711 O4 (code review round 1, BLOCKER/MEDIUM): this call
+            // is the SAME process re-entering the SAME task's driver lock
+            // it has held, unbroken, since it first paused — never cleared
+            // first any more (that briefly opened the task to a genuinely
+            // concurrent second driver). `devReviewLoop`'s own entry gate
+            // recognizes its own pid on the existing lock and neither
+            // refuses nor re-races it.
+            retainDriverLock: true
           },
           loopDeps
         )
@@ -4108,10 +4164,22 @@ export async function runDriverLoop(
   watchDeps: Partial<DriverWatchDeps> = {}
 ): Promise<DriverResult> {
   const w: DriverWatchDeps = { ...defaultDriverWatchDeps(), ...watchDeps }
-  let result = await w.devReviewLoop(input, loopDeps)
+  // issue-711 O4 (code review round 1, BLOCKER): this FIRST call already
+  // asks `devReviewLoop` to keep the one-driver-per-task lock held across
+  // ANY pause reason (`retainDriverLock`, above) — the watching driver is
+  // never "done" at a pause the way a one-shot `--task`/`--resume` call is.
+  let result = await w.devReviewLoop({ ...input, retainDriverLock: true }, loopDeps)
   while (result.finalDecision.type === 'pause' && result.prNumber > 0) {
     const outcome = await watchPauseThenResume(result, loopDeps, w)
     if (outcome.kind === 'ended') {
+      // The task is genuinely over — the ONE place this driver's own lock
+      // is released outside `devReviewLoop`'s own finally (which never ran
+      // for this exit: nothing paused or published here, the watch loop
+      // itself decided "done"). Best-effort by convention with every other
+      // `clearDriverLock` call in this file — a failed unlink here still
+      // leaves the task correctly finished; a stale lock naming a now-dead
+      // pid is taken over by the very next start, same as any crash.
+      w.clearDriverLock(w.runtimeDir(), result.task)
       return {
         finalDecision: { type: 'ended', reason: outcome.reason },
         prNumber: result.prNumber,
