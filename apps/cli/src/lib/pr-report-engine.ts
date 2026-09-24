@@ -15,7 +15,7 @@ import {
   writeSync
 } from 'node:fs'
 import { hostname, tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve as resolvePath } from 'node:path'
 import { promisify } from 'node:util'
 import {
   type AnchorField,
@@ -521,6 +521,46 @@ export type TestRunCacheRecord = {
   overflowed: false
   recordedAt: string
   source: 'pre-push' | 'pr-report'
+  /**
+   * The test files this run covered, when it was a `bun test <files>`
+   * invocation (`bunTestFileArgs`) — set only on the STATE-keyed
+   * file-coverage record `FILE_COVERAGE_PREFIX` reads and writes, never on
+   * the exact-command-keyed record `testRunCacheKey`
+   * addresses: that record's own key already encodes the command text, so a
+   * second, redundant file list on it would never be read. Absolute,
+   * resolved paths (`resolveFileSet`) — comparable against a later Test-plan
+   * command's own resolved file arguments regardless of which relative form
+   * either command happened to spell them in. On a coverage record carrying
+   * `runs`, this top-level field mirrors the MOST RECENT run only — every
+   * run's own files, individually, live in `runs`.
+   */
+  files?: string[]
+  /**
+   * Every distinct green `bun test <files>` run ever recorded at this exact
+   * state (head/tree/machine), oldest first — set only on the file-coverage
+   * record. A round-2 review finding: writing a SECOND run at the same
+   * state used to overwrite the coverage record wholesale, discarding a
+   * broader run's file list (the pre-push hook's own wide selection, most
+   * often) the moment ANY later, narrower `bun test <files>` command ran at
+   * the same head/tree — so a file that had already proven green minutes
+   * earlier, in the very same `pr report` invocation, was silently forced
+   * to re-run because the run that covered it was gone. `runs` is what
+   * fixes that: every run's own {files, output} stays independently
+   * queryable, so a later command missing one run's coverage can still
+   * match an EARLIER one — {@link findCoveringRun} — rather than only ever
+   * the most recent. A reuse never synthesizes output by merging two runs'
+   * text together: it always names ONE real run that alone covers every
+   * file the command asks for, never a composite no run actually produced.
+   */
+  runs?: FileCoverageRun[]
+}
+
+/** One entry in a file-coverage record's own `runs` history — the minimal shape {@link findCoveringRun} matches a request against. */
+export type FileCoverageRun = {
+  files: string[]
+  output: string
+  recordedAt: string
+  source: 'pre-push' | 'pr-report'
 }
 
 /** A place a green Test-plan run can be looked up and recorded — `get`/`set` rather than a bare object so a test can inject an in-memory stand-in without touching disk. */
@@ -706,18 +746,24 @@ function hashField(hash: ReturnType<typeof createHash>, value: string | Buffer):
   hash.update(buf)
 }
 
-export async function testRunCacheKey(command: string, cwd?: string): Promise<string | null> {
+/**
+ * Everything `testRunCacheKey`/`testRunStateKey` hash, short of the command
+ * text itself — split out so the two can share one git/filesystem read
+ * without either owning a second, divergent copy of it: the per-file reuse
+ * key must hash the identical state the exact-command key already does,
+ * hostname/head/status/diff/uncommitted-file-contents alike, differing only
+ * in whether the command text is one more field in the same sequence.
+ * `null` propagates the same "could not resolve, don't know" refusal
+ * {@link gitOrNull} already establishes for its own callers.
+ */
+async function collectStateFields(cwd?: string): Promise<(string | Buffer)[] | null> {
   const head = await gitOrNull(['rev-parse', 'HEAD'], cwd)
   if (!head) return null
   const status = await gitOrNull(['status', '--porcelain=v1', '-uall', '--ignored', '-z'], cwd)
   if (status === null) return null
   const diff = await gitOrNull(['diff', 'HEAD'], cwd)
   if (diff === null) return null
-  const hash = createHash('sha256')
-  hashField(hash, hostname())
-  hashField(hash, head)
-  hashField(hash, status)
-  hashField(hash, diff)
+  const fields: (string | Buffer)[] = [hostname(), head, status, diff]
   const uncommitted = status
     .split(NUL)
     .filter((entry) => entry.startsWith('?? ') || entry.startsWith('!! '))
@@ -725,15 +771,153 @@ export async function testRunCacheKey(command: string, cwd?: string): Promise<st
     .sort()
   const base = cwd ?? process.cwd()
   for (const f of uncommitted) {
-    hashField(hash, f)
+    fields.push(f)
     try {
-      hashField(hash, readFileSync(join(base, f)))
+      fields.push(readFileSync(join(base, f)))
     } catch {
-      hashField(hash, 'MISSING')
+      fields.push('MISSING')
     }
   }
-  hashField(hash, command)
+  return fields
+}
+
+function digestFields(fields: (string | Buffer)[]): string {
+  const hash = createHash('sha256')
+  for (const f of fields) hashField(hash, f)
   return hash.digest('hex')
+}
+
+export async function testRunCacheKey(command: string, cwd?: string): Promise<string | null> {
+  const fields = await collectStateFields(cwd)
+  if (!fields) return null
+  return digestFields([...fields, command])
+}
+
+/**
+ * The same head/working-tree/machine state {@link testRunCacheKey} hashes,
+ * WITHOUT the command text — the key a green run's per-file coverage record
+ * is filed under, so a Test-plan command whose own text
+ * never ran verbatim can still be matched against every `bun test <files>`
+ * run recorded for this exact state, never one from a different head,
+ * working tree, or machine.
+ */
+export async function testRunStateKey(cwd?: string): Promise<string | null> {
+  const fields = await collectStateFields(cwd)
+  if (!fields) return null
+  return digestFields(fields)
+}
+
+/**
+ * Prefixes the file-coverage record's own key so it can share one
+ * `TestRunCache` (a plain string-keyed store) with the exact-command
+ * records `testRunCacheKey` addresses, with no collision: a state key is a
+ * bare sha256 hex digest, which never contains `:`, so prefixing it here
+ * can never coincide with a real exact-command key.
+ */
+const FILE_COVERAGE_PREFIX = 'files:'
+
+/**
+ * The test-file arguments of a `bun test <files...>` Test-plan command — or
+ * `null` when `command` isn't shaped like one at all.
+ * Recognizes an optional leading `bun`, the `test` subcommand, then treats
+ * every remaining whitespace-separated token as either a flag (starts with
+ * `-`, including a lone `--` separator — dropped) or a file argument
+ * (kept). This is a Test-plan command's own argv, not a shell parse: a
+ * quoted path containing whitespace is not handled, matching both the
+ * pre-push hook's own recorded command (`prePushBody`'s `VINAYA_TEST_CMD`,
+ * one absolute path per selected file, space-joined, never shell-quoted)
+ * and every existing `bun test <files>` Test-plan line in this repo's own
+ * PRs. Returns `null` (not an empty array) when the command matches the
+ * `bun test` shape but names no files at all — nothing for per-file reuse
+ * to match against, same as not matching the shape in the first place.
+ */
+export function bunTestFileArgs(command: string): string[] | null {
+  const tokens = command.trim().split(/\s+/)
+  let i = 0
+  if (tokens[i] === 'bun') i++
+  if (tokens[i] !== 'test') return null
+  i++
+  const files: string[] = []
+  for (; i < tokens.length; i++) {
+    const t = tokens[i] as string
+    if (t === '' || t === '--' || t.startsWith('-')) continue
+    files.push(t)
+  }
+  return files.length > 0 ? files : null
+}
+
+/** Resolves every file argument against `cwd` (default `process.cwd()`) into an absolute path, deduplicated and sorted — the normal form both a recorded run's file list and a later command's requested files are compared in, so a repo-relative Test-plan argument matches the pre-push hook's own absolute-path recording of the identical file. */
+function resolveFileSet(files: string[], cwd?: string): string[] {
+  const base = cwd ?? process.cwd()
+  return [...new Set(files.map((f) => resolvePath(base, f)))].sort()
+}
+
+/** Describes a cache hit for `reusedFrom` — names the run's own record time and source, and, for a per-file (rather than exact-command) hit, how many files it covered, so the evidence never merely says "reused" without saying what was actually verified to cover the command it stands in for. Structural (never `TestRunCacheRecord` by name) so a single `FileCoverageRun` — one real run out of a coverage record's own history — describes itself identically to a whole record. */
+function describeReuse(hit: { recordedAt: string; source: string; files?: string[] }): string {
+  const base = `a green run recorded ${hit.recordedAt} (${hit.source})`
+  return hit.files ? `${base}, covering ${hit.files.length} file(s) including every file this command names` : base
+}
+
+/**
+ * Every run a file-coverage record has ever accumulated, oldest first —
+ * `record.runs` when present, or a one-element list synthesized from the
+ * record's own top-level fields for a record written before `runs` existed
+ * (or by a caller that never goes through {@link mergeFileCoverageRecord}).
+ * `undefined`/no-`files` records (an exact-command record read by mistake
+ * through this path) contribute nothing.
+ */
+function coverageRuns(record: TestRunCacheRecord | undefined): FileCoverageRun[] {
+  if (!record) return []
+  if (record.runs) return record.runs
+  return record.files
+    ? [{ files: record.files, output: record.output, recordedAt: record.recordedAt, source: record.source }]
+    : []
+}
+
+/**
+ * The one run, among a coverage record's own history, whose file list alone
+ * covers every file in `requestedFiles` — or `undefined` when none does.
+ * Never synthesizes a covering answer by combining two runs' file lists:
+ * O1's own reuse contract is that the evidence names THE run it reused, a
+ * single real execution, never a composite no run actually produced.
+ */
+function findCoveringRun(
+  record: TestRunCacheRecord | undefined,
+  requestedFiles: string[]
+): FileCoverageRun | undefined {
+  return coverageRuns(record).find((run) => {
+    const covered = new Set(run.files)
+    return requestedFiles.every((f) => covered.has(f))
+  })
+}
+
+/**
+ * Builds the file-coverage record a fresh green run's write should replace
+ * the existing one with — round-2 review, MAJOR: the prior code simply
+ * `cache.set` a brand-new record on every green `bun test <files>` run,
+ * which silently discarded every EARLIER run's own coverage at the same
+ * state the moment a narrower run came along, forcing a real re-run for a
+ * file that had already proven green minutes earlier in the very same `pr
+ * report` invocation. This appends the new run to `runs` (never drops an
+ * earlier one) and keeps the top-level `files`/`output`/`recordedAt`/`source`
+ * mirroring the newest run only, for a reader/caller that never looks past
+ * the top level — `runs`, not the top level, is what {@link findCoveringRun}
+ * actually searches.
+ */
+function mergeFileCoverageRecord(
+  existing: TestRunCacheRecord | undefined,
+  newRun: FileCoverageRun
+): TestRunCacheRecord {
+  return {
+    output: newRun.output,
+    exitCode: 0,
+    timedOut: false,
+    overflowed: false,
+    recordedAt: newRun.recordedAt,
+    source: newRun.source,
+    files: newRun.files,
+    runs: [...coverageRuns(existing), newRun]
+  }
 }
 
 /**
@@ -905,20 +1089,61 @@ export async function runAgentCommand(
         exitCode: 0,
         timedOut: false,
         overflowed: false,
-        reusedFrom: `a green run recorded ${hit.recordedAt} (${hit.source})`
+        reusedFrom: describeReuse(hit)
+      }
+    }
+  }
+  // Per-file reuse: a Test-plan `bun test <files>` command
+  // whose own text never ran verbatim still reuses a recorded green run at
+  // this exact head/working-tree/machine, provided every file it names was
+  // covered by that run — never a run missing even one named file, never a
+  // failing/partial/cancelled run (only a green run is ever recorded, below
+  // and in `recordGreenTestRun`), and never one from another machine (the
+  // state key hashes `hostname()` exactly as the exact-command key does).
+  const requestedFiles = cache ? bunTestFileArgs(command) : null
+  let resolvedRequested: string[] | undefined
+  if (cache && requestedFiles) {
+    const stateKey = await testRunStateKey(cwd)
+    if (stateKey) {
+      const coverage = cache.get(`${FILE_COVERAGE_PREFIX}${stateKey}`)
+      resolvedRequested = resolveFileSet(requestedFiles, cwd)
+      const covering = findCoveringRun(coverage, resolvedRequested)
+      if (covering) {
+        return {
+          command,
+          output: covering.output,
+          exitCode: 0,
+          timedOut: false,
+          overflowed: false,
+          reusedFrom: describeReuse(covering)
+        }
       }
     }
   }
   const result = await runOneAgentCommand(command, timeoutMs, cwd, extraEnv, maxBufferBytes)
   if (cache && cacheKey && result.exitCode === 0 && !result.timedOut && !result.overflowed) {
+    const recordedAt = new Date().toISOString()
     cache.set(cacheKey, {
       output: result.output,
       exitCode: 0,
       timedOut: false,
       overflowed: false,
-      recordedAt: new Date().toISOString(),
+      recordedAt,
       source: 'pr-report'
     })
+    if (requestedFiles) {
+      const stateKey = await testRunStateKey(cwd)
+      if (stateKey) {
+        const coverageKey = `${FILE_COVERAGE_PREFIX}${stateKey}`
+        const merged = mergeFileCoverageRecord(cache.get(coverageKey), {
+          files: resolvedRequested ?? resolveFileSet(requestedFiles, cwd),
+          output: result.output,
+          recordedAt,
+          source: 'pr-report'
+        })
+        cache.set(coverageKey, merged)
+      }
+    }
   }
   return result
 }
@@ -945,14 +1170,27 @@ export async function recordGreenTestRun(
 ): Promise<boolean> {
   const key = await testRunCacheKey(command, cwd)
   if (!key) return false
-  cache.set(key, {
-    output: truncateAgentOutput(output),
-    exitCode: 0,
-    timedOut: false,
-    overflowed: false,
-    recordedAt: new Date().toISOString(),
-    source
-  })
+  const truncated = truncateAgentOutput(output)
+  const recordedAt = new Date().toISOString()
+  cache.set(key, { output: truncated, exitCode: 0, timedOut: false, overflowed: false, recordedAt, source })
+  // The pre-push hook always calls this with the exact
+  // `bun test <files>` command it just ran green — this is what makes that
+  // run reusable per-file by a LATER Test-plan command naming only some of
+  // the same files, never only by one naming the identical command text.
+  const files = bunTestFileArgs(command)
+  if (files) {
+    const stateKey = await testRunStateKey(cwd)
+    if (stateKey) {
+      const coverageKey = `${FILE_COVERAGE_PREFIX}${stateKey}`
+      const merged = mergeFileCoverageRecord(cache.get(coverageKey), {
+        files: resolveFileSet(files, cwd),
+        output: truncated,
+        recordedAt,
+        source
+      })
+      cache.set(coverageKey, merged)
+    }
+  }
   return true
 }
 

@@ -25,6 +25,7 @@ export {
   anyGateFailed,
   bodiesAgreeOutsideRegions,
   buildReport,
+  bunTestFileArgs,
   collectTokensAddition,
   composeWrittenBody,
   computeGroupA,
@@ -52,6 +53,7 @@ export {
   type TestRunCache,
   type TestRunCacheRecord,
   testRunCacheKey,
+  testRunStateKey,
   UnresolvableMergeBaseError,
   writeTokensBlock
 } from '../lib/pr-report-engine.js'

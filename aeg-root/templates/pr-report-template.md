@@ -29,8 +29,13 @@ Closes #[N]
 ## Test plan
 
 <!-- AEG:TEST-PLAN:START -->
-- [ ] **[agent]** [item carried from the brief's §9 — tick only after running it; the tick is the only mark this line ever carries, never the pasted command output, which goes in the round comment headed `Head: <sha>` instead]
-- [ ] **[principal]** [item carried from the brief's §9 — the Principal ticks after verifying in a real browser/session]
+[the `[agent]` half is a fenced list of commands carried from the brief's §9 — one command per line, each with its expected observable after a literal `→`. `vinaya pr report` runs every line from the PR head and writes the command plus its actual output into the AEG:EVIDENCE block below; there is no `[agent]` checkbox to tick (an agent never ticks a box or edits a PR body). A pure-logic brief with no runtime surface uses the `Test Plan: unit-tests-only` sentinel instead of a fenced list.]
+
+```
+[<scriptable / non-auth / no-vendor-key command from the brief's §9> → <expected observable>]
+```
+
+- [ ] **[principal]** [an auth-gated / vendor-key-dependent / visual / browser check carried from the brief's §9 — the Principal ticks after verifying in a real browser/session. If the brief names no such check, OMIT this line entirely rather than writing "None": an unticked placeholder blocks the merge gate forever.]
 <!-- AEG:TEST-PLAN:END -->
 
 ## Premise
