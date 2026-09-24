@@ -441,8 +441,8 @@ export type LoopDeps = {
    * round's gate check (a real `gh pr view <n> --json body`), injected for
    * the same reason as the writes above: an in-process run must not make a
    * real network `gh` call per round. Production default is the real
-   * `fetchPrBody`. (The `--resume` path's own `fetchPrBody` read is left on
-   * the bare import — a resumed run is out of the in-process harness's scope.)
+   * `fetchPrBody`. The `--resume` entry reads its PR body through this same
+   * dependency, so a resumed run is in the in-process harness's scope too.
    */
   fetchPrBody: typeof fetchPrBody
 }
@@ -917,7 +917,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
 
   if ('resumePr' in input) {
     const resumePr = input.resumePr
-    const closesTask = taskFromPrBody(fetchPrBody(resumePr))
+    const closesTask = taskFromPrBody(d.fetchPrBody(resumePr))
     if (closesTask === null) {
       throw new Error(
         `devReviewLoop --resume: PR #${resumePr}'s body carries no \`Closes #N\` reference — cannot derive its task.`
