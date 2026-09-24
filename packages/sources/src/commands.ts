@@ -784,7 +784,7 @@ export const COMMANDS: readonly Command[] = [
       "Nothing is posted to the PR before the policy decides `publish`: each round's reviewer and security verdicts are dispatched fresh (never a resumed session) through `dispatchRole`, rendered through `review post`'s own render functions, and written to a local file under the outbox — never `gh pr comment`/`gh pr review`. Posting the held verdicts is a separate, later task.",
       "The developer's session is resumed every round via `dispatchRole`'s `resumeId` — never a fresh session — for every vendor; a round whose resume fails for a vendor that resumed successfully the round before stops the loop rather than silently falling back to a fresh developer session.",
       'Every dispatch and round transition is a log line through the Vinaya Log, flushed to the forge at each round boundary.',
-      "issue-711 O4: `--task <n>` (a fresh start) runs through the watching driver (`runDriverLoop`) — a pause never ends this process, which instead watches the pull request and continues on its own once a newer Principal ruling appears or, for an `'infrastructure'`/`'stale_driver'` pause, after a bounded backoff. `--resume <pr>`/`--cancel <pr>` (this same command's own debug/direct entries for an operator forcing a continuation or a stop by hand) stay one-shot, unaffected by this."
+      "issue-711 O4: this command — `--task <n>`, `--resume <pr>`, `--cancel <pr>` alike — stays `task run`'s own one-shot debug/direct entry; the watching driver that survives a pause and continues on its own is `task run`'s (see that command's own entry)."
     ],
     status: 'shipped'
   }

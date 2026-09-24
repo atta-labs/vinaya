@@ -3981,6 +3981,26 @@ function defaultDriverWatchDeps(): DriverWatchDeps {
 }
 
 /**
+ * A watch-loop forge read that fails is "cannot tell yet," never a crash —
+ * the same tolerance a resume attempt itself already gets (below): reported
+ * to stderr, `fallback` returned, so the caller's own next poll simply
+ * tries again rather than this unattended watcher dying over a transient
+ * `gh` hiccup.
+ */
+function watchReadOrFallback<T>(label: string, read: () => T, fallback: T): T {
+  try {
+    return read()
+  } catch (err) {
+    process.stderr.write(
+      `vinaya dev-review-loop: watcher's ${label} read failed — ${
+        err instanceof Error ? err.message : String(err)
+      }; still watching.\n`
+    )
+    return fallback
+  }
+}
+
+/**
  * One pause's own watch cycle: polls until the pull request is genuinely
  * done (merged/closed/cancelled) or a resume attempt against it returns a
  * fresh `LoopResult` — `runDriverLoop`'s own doc comment names the three
@@ -4008,7 +4028,7 @@ async function watchPauseThenResume(
   // recorded time: a ruling that already existed when this pause posted
   // must not immediately re-trigger a resume this pause's own round
   // already accounted for.
-  const baselineOrdinal = w.fetchNewestRulingOrdinal(prNumber)
+  const baselineOrdinal = watchReadOrFallback('newest ruling ordinal', () => w.fetchNewestRulingOrdinal(prNumber), 0)
   let backoffDone = !isBoundedRetry
   // Set once a bare (no-ruling) retry itself fails — the driver's own
   // bare-resume budget is almost certainly exhausted at that point
@@ -4019,12 +4039,12 @@ async function watchPauseThenResume(
   let bareRetryExhausted = false
 
   while (true) {
-    const prState = w.fetchPrState(prNumber)
+    const prState = watchReadOrFallback('pull-request state', () => w.fetchPrState(prNumber), 'OPEN' as const)
     if (prState === 'MERGED') return { kind: 'ended', reason: 'merged' }
     if (prState === 'CLOSED') return { kind: 'ended', reason: 'closed' }
 
     if (escalationId) {
-      const resolution = w.readResolutionRecord(task, escalationId)
+      const resolution = watchReadOrFallback('resolution', () => w.readResolutionRecord(task, escalationId), null)
       if (resolution?.decision === 'cancel') return { kind: 'ended', reason: 'cancelled' }
     }
 
@@ -4038,7 +4058,9 @@ async function watchPauseThenResume(
     }
 
     const readyForBareRetry = isBoundedRetry && !bareRetryExhausted
-    const readyForRuling = w.fetchNewestRulingOrdinal(prNumber) > baselineOrdinal
+    const readyForRuling =
+      watchReadOrFallback('newest ruling ordinal', () => w.fetchNewestRulingOrdinal(prNumber), baselineOrdinal) >
+      baselineOrdinal
     if (readyForBareRetry || readyForRuling) {
       // This SAME process's own driver lock, cleared right before it calls
       // itself back into `devReviewLoop` — see `DriverWatchDeps.clearDriverLock`'s
