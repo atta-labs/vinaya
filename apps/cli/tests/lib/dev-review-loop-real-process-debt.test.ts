@@ -1,27 +1,22 @@
 /**
- * Issue #709, O3 — `dev-review-loop.test.ts` drives its scenarios entirely
- * through real `runLoop`/`runResume`/`runCancel`/`runDevReviewLoopArgs`/
- * `runLoopNoPauseCommentRetry` subprocess calls today; none of its 166
- * `it(...)` blocks yet call `devReviewLoop()` in-process through its own
- * injectable `LoopDeps` (issue-709's O2). Converting the existing suite is a
- * larger, per-scenario undertaking than this task's own profile-first Part
- * could respons­ibly complete in one pass without risking a converted test
- * that silently stops exercising what it claimed to (see this task's PR —
- * Decisions section — for the sizing finding and the follow-up this leaves).
+ * Issue #709, O3 — the burn-down ceiling for `dev-review-loop.test.ts`'s
+ * real-process call sites. The file is being converted from whole-CLI
+ * subprocess spawns (`runLoop`/`runResume`/`runCancel`/`runDevReviewLoopArgs`/
+ * `runLoopNoPauseCommentRetry`) to in-process `devReviewLoop()` calls through
+ * the shared harness (`dev-review-loop-harness.ts`), one `describe` block at
+ * a time, per the round-2 ruling on this task. A test whose subject is a real
+ * process — exit status, a signal, the driver lock, the start-of-run sweep,
+ * stdio shape, or `publishRound`'s own forge round-trip — stays on a real
+ * process and carries a `// REAL PROCESS: <reason>` line naming why.
  *
- * This check does not require every existing test to carry a reason line
- * retroactively — that rewrite is the follow-up's job, not this file's. It
- * enforces the FORWARD-LOOKING half of O3 mechanically instead: a real-
- * process call site added to `dev-review-loop.test.ts` from here on must
- * either move to an in-process `devReviewLoop()` call, or carry a
- * `// REAL PROCESS: <reason>` comment on the line immediately above it
- * naming the process-level property it needs (exit codes, signals, the
- * driver lock, the start-of-run sweep, stdio shape) — the exact category
- * `roles/developer/reference.md`'s O3 language names. `TODAYS_UNREASONED_DEBT`
- * is this task's own measured count, recorded once, at this head — never
- * bumped up to make room for a new unreasoned call site; only migrating a
- * call to in-process, or adding a `// REAL PROCESS:` reason line to an
- * existing one, is allowed to move it, and only downward.
+ * This check enforces O3 mechanically and holds the conversion monotonic:
+ * `TODAYS_UNREASONED_DEBT` is the count of real-process call sites NOT yet
+ * carrying a reason line, at this head. It may only ever move DOWN — a call
+ * migrated in-process, or a kept call given its `// REAL PROCESS:` reason,
+ * lowers it; a new unreasoned real-process call added to the file fails the
+ * build. As each `describe` block converts, this number is lowered to match,
+ * until every remaining real-process call is reasoned and the ceiling is the
+ * count of reason lines exactly.
  */
 
 import { describe, expect, it } from 'bun:test'
@@ -36,14 +31,14 @@ const REAL_PROCESS_CALL = /\b(runLoop|runResume|runCancel|runDevReviewLoopArgs|r
 const REASON_MARKER = /\/\/ REAL PROCESS: \S/g
 
 /**
- * Measured on this task's own head (issue-709): every call site matching
- * `REAL_PROCESS_CALL` above, across the whole file (helper definitions call
- * each other, so this over-counts "one per test" slightly — a debt ceiling
- * only ever needs to be a stable, mechanically-recomputable number, not an
- * exact per-test census). Zero of them carry a `// REAL PROCESS:` reason
- * today, so the ceiling is this count minus zero.
+ * Current count of real-process call sites NOT yet carrying a reason line
+ * (`callSites - reasons`), across the whole file (helper definitions call
+ * each other, so this over-counts "one per test" slightly — a monotonic
+ * ceiling only needs to be stable and mechanically recomputable, not an
+ * exact per-test census). Lowered as each `describe` block converts; the
+ * `round 1 clean, ends on publish` block was the first, taking it from `135`.
  */
-const TODAYS_UNREASONED_DEBT = 135
+const TODAYS_UNREASONED_DEBT = 129
 
 describe('dev-review-loop.test.ts — real-process debt never grows unreasoned (O3)', () => {
   it('every real-process call site beyond today’s recorded debt carries a `// REAL PROCESS:` reason', () => {

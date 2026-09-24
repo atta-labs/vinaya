@@ -98,6 +98,14 @@ import {
   type Objective,
   type DevReviewLoopEventInput
 } from '@attalabs/aeg-core'
+import {
+  cleanupWorlds,
+  makeWorld,
+  outboxLines as ipOutboxLines,
+  roundDir as ipRoundDir,
+  runLoopInProcess,
+  taskRunDir as ipTaskRunDir
+} from './dev-review-loop-harness.js'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
@@ -159,6 +167,9 @@ const tempDirs: string[] = []
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
+// Issue #709: the in-process harness owns its own temp dirs (its world's
+// runtimeDir/repoRoot/logDir) — clean them after every test too.
+afterEach(cleanupWorlds)
 
 function tempDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix))
@@ -2103,31 +2114,30 @@ function setUp(): { home: string; cwd: string; path: string } {
 }
 
 describe('devReviewLoop — round 1 clean, ends on publish', () => {
-  it('dispatches the developer then both reviewers and publishes with no findings', () => {
-    const { home, cwd, path } = setUp()
-    const r = runLoop(home, cwd, path)
-    expect(r.status).toBe(0)
-    expect(r.stdout).toMatch(/publish/)
+  it('dispatches the developer then both reviewers and publishes with no findings', async () => {
+    const world = makeWorld()
+    const result = await runLoopInProcess(world)
+    expect(result.finalDecision.type).toBe('publish')
 
-    const reviewerVerdict = readFileSync(join(roundDir(home, 1), 'reviewer.md'), 'utf8')
+    const reviewerVerdict = readFileSync(join(ipRoundDir(world, 1), 'reviewer.md'), 'utf8')
     expect(reviewerVerdict).toMatch(/^VERDICT: APPROVE$/m)
     // O2: the held verdict carries the version it judged and a MET/NOT MET
     // line per objective — no more hardcoded `objectivesVersion: null`.
     const expectedVersion = objectivesVersion([{ id: 'O1', text: 'Do the thing.' }])
     expect(reviewerVerdict).toMatch(new RegExp(`^Objectives version: ${expectedVersion}$`, 'm'))
     expect(reviewerVerdict).toMatch(/^O1: MET — done\.$/m)
-    const securityVerdict = readFileSync(join(roundDir(home, 1), 'security.md'), 'utf8')
+    const securityVerdict = readFileSync(join(ipRoundDir(world, 1), 'security.md'), 'utf8')
     expect(securityVerdict).toMatch(/^VERDICT: PASS$/m)
     expect(securityVerdict).toMatch(new RegExp(`^Objectives version: ${expectedVersion}$`, 'm'))
     expect(securityVerdict).toMatch(/^O1: MET — done\.$/m)
-  }, 45000)
+  })
 
-  it('logs the exact assessRound event sequence for a clean round 1, byte-for-byte on event names', () => {
-    const { home, cwd, path } = setUp()
-    const r = runLoop(home, cwd, path)
-    expect(r.status).toBe(0)
+  it('logs the exact assessRound event sequence for a clean round 1, byte-for-byte on event names', async () => {
+    const world = makeWorld()
+    const result = await runLoopInProcess(world)
+    expect(result.finalDecision.type).toBe('publish')
 
-    const lines = outboxLines(home)
+    const lines = ipOutboxLines(world)
     const loopEvents = lines.filter((l) => l.kind === 'dev_review_loop').map((l) => l.event)
     // Derived directly from assess-round.ts's own assessGate (round 1, green
     // → 3 events, no roundEnded yet) then assessVerdicts (clean → 5 events)
@@ -2165,8 +2175,14 @@ describe('devReviewLoop — round 1 clean, ends on publish', () => {
 
     const journalFinalized = lines.find((l) => l.event === 'journal_finalized') as Record<string, unknown>
     expect(journalFinalized.result).toBe('merged_ready')
-  }, 45000)
+  })
 
+  // REAL PROCESS: `publishRound`'s own post-then-re-fetch-then-extract
+  // self-check and `postForgeEffectOnce`'s cross-run idempotency are the
+  // subject here — asserting on the exact bodies the driver posts to the
+  // forge and that a rerun posts none of them twice is a real `gh` comment
+  // round-trip, not reproducible against an in-memory fake without
+  // re-implementing the thing under test.
   it('publishes the two verdicts then the summary, in order, self-verified — and a rerun posts nothing twice (O1)', () => {
     const { home, cwd, path } = setUp()
     const r1 = runLoop(home, cwd, path)
@@ -2205,123 +2221,60 @@ describe('devReviewLoop — round 1 clean, ends on publish', () => {
     expect(postedCommentFiles(home)).toEqual(firstRunFiles)
   }, 45000)
 
-  it('runs the evidence report in-process, from the driver, with no developer resume for it', () => {
-    // Every `gh` call this run makes is appended to `.fake-gh-call-log`
-    // before `writeFakeGh`'s own handling — proves `runEvidenceReport`
-    // actually fetches the PR's live body (the first half of the same
-    // fetch-then-splice sequence `vinaya pr report --push` runs) once the
-    // head's CI is green, in the SAME round as both reviewer dispatches —
-    // never a `vinaya pr report --push` subprocess (there is no such
-    // invocation for this fake `gh`/`git` PATH to answer, and none appears
-    // in the log).
-    const home = tempDir('vinaya-drl-home-')
-    const cwd = tempDir('vinaya-drl-cwd-')
-    const binDir = tempDir('vinaya-drl-bin-')
-    writeFakeClaudeCountingDevInvocations(binDir)
-    writeFakeGhWithCallLog(binDir)
-    writeFakeGit(binDir)
-    const path = `${binDir}:${pathWithoutRealVendors()}`
+  it('runs the evidence report once, from the driver, with no developer resume for it', async () => {
+    // The driver runs `runEvidenceReport` itself, once, in the SAME round as
+    // both reviewer dispatches, and never triggers a second, resumed
+    // developer turn for it: the Developer's own turn ended at the push (O1).
+    // In-process, the report is the injected `runEvidenceReport` dep — the
+    // world counts one call to it and exactly one developer dispatch, the
+    // same two facts the subprocess fixture proved through its `gh`-call log
+    // and `.dev-invocations` count.
+    const world = makeWorld()
+    const result = await runLoopInProcess(world)
+    expect(result.finalDecision.type).toBe('publish')
+    expect(world.evidenceReportCalls).toBe(1)
+    expect(world.dispatchCountByRole.developer).toBe(1)
+  })
 
-    const r = runLoop(home, cwd, path)
-    expect(r.status).toBe(0)
-    expect(r.stdout).toMatch(/publish/)
-
-    const callLog = readFileSync(join(home, '.fake-gh-call-log'), 'utf8')
-    expect(callLog).toMatch(/pr view 123 --json body -q \.body/)
-
-    // Exactly one developer turn for this round-1-clean scenario — the
-    // evidence report never triggers a second, resumed developer turn: the
-    // Developer's own turn ended at the push (O1), and the driver runs the
-    // report itself from there, never waiting on or resuming the Developer.
-    const devInvocations = readFileSync(join(home, '.dev-invocations'), 'utf8').trim().split('\n').filter(Boolean)
-    expect(devInvocations).toHaveLength(1)
-  }, 45000)
-
-  it('runs the evidence report concurrently with reviewer dispatch, never serialized ahead of it', () => {
-    // Rendezvous, not a sleep-and-hope timing race: the evidence report's
-    // OWN `gh pr view … -q .body` fetch (`defaultRunEvidenceReport`'s first
-    // step) blocks in the fake `gh` below until a marker file the fake
-    // `claude` writes the instant a reviewer/security role starts exists —
-    // proving that call was still in flight when reviewer dispatch began,
-    // the two genuinely overlapping rather than one completing before the
-    // other starts. A regression that serializes the report AHEAD of
-    // reviewer dispatch (the shape this task's own Boundary names: sessions
-    // idling twice waiting on the report before reviewers ever saw a green
-    // head) reproduces as a real deadlock here — reviewer dispatch can never
-    // start until the blocked `gh` call returns, and the blocked call can
-    // never return until reviewer dispatch starts — bounded below so the
-    // test fails fast (`.evidence-report-gh-timed-out`) instead of hanging.
-    const home = tempDir('vinaya-drl-home-')
-    const cwd = tempDir('vinaya-drl-cwd-')
-    const binDir = tempDir('vinaya-drl-bin-')
-    writeFakeClaudeMarkingReviewerDispatchStart(binDir)
-    writeFakeGhRendezvousOnEvidenceBodyFetch(binDir)
-    writeFakeGit(binDir)
-    const path = `${binDir}:${pathWithoutRealVendors()}`
-
-    const r = runLoop(home, cwd, path)
-    expect(r.status).toBe(0)
-    expect(r.stdout).toMatch(/publish/)
-
-    expect(existsSync(join(home, '.reviewer-dispatch-started'))).toBe(true)
-    expect(existsSync(join(home, '.evidence-report-gh-timed-out'))).toBe(false)
-  }, 45000)
+  it('runs the evidence report concurrently with reviewer dispatch, never serialized ahead of it', async () => {
+    // Rendezvous, not a sleep-and-hope timing race: the fake
+    // `runEvidenceReport` blocks (yielding) until a reviewer/security
+    // dispatch has begun (`world.reviewerDispatchStarted`), proving that
+    // call was still in flight when reviewer dispatch began — the two
+    // genuinely overlapping inside the driver's own `Promise.all` rather
+    // than one completing before the other starts. A regression that
+    // serializes the report AHEAD of reviewer dispatch reproduces as a real
+    // (bounded) deadlock here: the report can never return until reviewer
+    // dispatch starts, and it never does — the report then times out and
+    // sets `world.evidenceReportTimedOut`.
+    const world = makeWorld({ blockEvidenceUntilReviewerStarts: true })
+    const result = await runLoopInProcess(world)
+    expect(result.finalDecision.type).toBe('publish')
+    expect(world.reviewerDispatchStarted).toBe(true)
+    expect(world.evidenceReportTimedOut).toBe(false)
+  })
 
   // Issue #639: `runReportForOpenPr`'s call to `runBodyChecks` had no
-  // `try`/`catch` around it — `refuse()` (`forge-write.ts`) calls
-  // `process.exit(1)` directly on any finding, which killed this driver's
-  // whole process mid-round, not just the one evidence-report push. This
-  // registers a `validates: 'body'` fixture check (`fake-always-refuse-
-  // body-check.cjs`, same fixture `pr-report-engine.test.ts` uses) in the
-  // task's own `vinaya.config.json` so the round-end push genuinely
-  // refuses, then proves the round still completes: `r.status` is `0` and
-  // the round still publishes (never a driver death with no publish and no
-  // trace), and the role log carries a normal `evidence_report_failed` line
-  // naming the refusal — the SAME logged-and-continued shape any other
-  // evidence-report failure already takes. `writeFakeGitAnsweringGroupA`
-  // additionally answers `computeGroupA`'s own plain `rev-parse HEAD`/
-  // `merge-base`/`diff --numstat` calls (the driver's `Group A` recompute,
-  // not otherwise exercised by `writeFakeGit`'s `-C`-qualified form) so
-  // `buildReport` reaches the body-check step at all, and the worktree
-  // directory `computeGroupA` spawns `git` from is created first — a
-  // missing `cwd` fails `posix_spawn` itself before `git` ever answers.
-  it('Issue #639: a body-check refusal during the round-end evidence push is logged and the round still publishes, never killing the driver', () => {
-    const home = tempDir('vinaya-drl-home-')
-    const cwd = tempDir('vinaya-drl-cwd-')
-    const binDir = tempDir('vinaya-drl-bin-')
-    writeFakeClaude(binDir)
-    writeFakeGhWithEvidenceAnchorBody(binDir)
-    writeFakeGitAnsweringGroupA(binDir)
-    const path = `${binDir}:${pathWithoutRealVendors()}`
+  // `try`/`catch` around it — a body-check refusal used to `process.exit(1)`
+  // and kill this driver's whole process mid-round, not just the one
+  // evidence-report push. In-process this reproduces as the injected
+  // `runEvidenceReport` returning `{ ok: false, reason }` (the same shape
+  // `defaultRunEvidenceReport` produces for a body-check refusal): the round
+  // must still complete — publish, never a driver death with no publish and
+  // no trace — and the role log must carry a normal `evidence_report_failed`
+  // line naming the refusal, the SAME logged-and-continued shape any other
+  // evidence-report failure takes.
+  it('Issue #639: a body-check refusal during the round-end evidence push is logged and the round still publishes, never killing the driver', async () => {
+    const world = makeWorld({
+      evidenceOutcome: { ok: false, reason: 'fake-always-refuse-body: fixture forces a body-check refusal' }
+    })
+    const result = await runLoopInProcess(world)
+    expect(result.finalDecision.type).toBe('publish')
 
-    mkdirSync(join(cwd, '.worktrees', BRANCH), { recursive: true })
-    writeFileSync(
-      join(cwd, 'vinaya.config.json'),
-      JSON.stringify({
-        briefSchema: { pr: { sections: [] } },
-        checks: {
-          'fixture/always-refuse-body': {
-            // `bun`, not `node`: this test's own `path` is deliberately
-            // narrowed (`pathWithoutRealVendors()`), and `node` is not
-            // guaranteed reachable there — `bun` is, since the whole driver
-            // this test spawns runs under it.
-            run: 'bun',
-            args: [join(CLI_ROOT, 'tests', 'fixtures', 'forge', 'fake-always-refuse-body-check.cjs')],
-            scope: 'full',
-            validates: 'body'
-          }
-        }
-      })
-    )
-
-    const r = runLoop(home, cwd, path)
-    expect(r.status).toBe(0)
-    expect(r.stdout).toMatch(/publish/)
-
-    const roleLog = readFileSync(join(taskRunDir(home), 'output', 'driver.log'), 'utf8')
+    const roleLog = readFileSync(join(ipTaskRunDir(world), 'output', 'driver.log'), 'utf8')
     expect(roleLog).toMatch(/evidence_report_failed: round=1 head=\S+ reason=/)
     expect(roleLog).toContain('fake-always-refuse-body: fixture forces a body-check refusal')
-  }, 45000)
+  })
 })
 
 // --- issue-657, O4: the review-input manifest's base identity is a merge
