@@ -423,7 +423,9 @@ const OWNED_ENV_KEYS = [
 
 /**
  * Run `devReviewLoop` in-process against `world`. Defaults to a `--task`
- * start on the world's own task.
+ * start on the world's own task. `overrides` replaces individual fakes for a
+ * scenario the world's own fields do not model (a forge read that fails once,
+ * a post that throws); every other dependency stays the world-backed fake.
  *
  * Two pieces of ambient process state are pointed at this run's isolated
  * world for the duration of the call, then restored unconditionally in
@@ -444,7 +446,8 @@ const OWNED_ENV_KEYS = [
  */
 export async function runLoopInProcess(
   world: LoopWorld,
-  input: LoopInput = { task: world.task, agent: 'claude' }
+  input: LoopInput = { task: world.task, agent: 'claude' },
+  overrides: Partial<LoopDeps> = {}
 ): Promise<LoopResult> {
   const saved: Record<string, string | undefined> = {}
   for (const key of OWNED_ENV_KEYS) saved[key] = process.env[key]
@@ -465,7 +468,7 @@ export async function runLoopInProcess(
   // resolution.
   resetRuntimeDirCache()
   try {
-    return await devReviewLoop(input, makeInProcessDeps(world))
+    return await devReviewLoop(input, { ...makeInProcessDeps(world), ...overrides })
   } finally {
     resetRuntimeDirCache()
     process.chdir(savedCwd)
