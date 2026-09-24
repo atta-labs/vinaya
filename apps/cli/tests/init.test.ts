@@ -30,8 +30,7 @@ import {
   REVIEW_WORKFLOW_PATH,
   REVIEW_VERDICT_WORKFLOW_PATH,
   SETUP_BUN_SHA,
-  starterConfig,
-  TASK_LOG_COLLECTOR_WORKFLOW_PATH
+  starterConfig
 } from '../src/lib/artifacts.js'
 import { agentSkillPath, discoverRoleNames } from '../src/lib/agents-skills-emitter.js'
 import { CLAUDE_COMMAND_PATH } from '../src/lib/claude-command-emitter.js'
@@ -153,11 +152,12 @@ describe('vinaya init', () => {
     // required run — to five with vinaya-body-checks.yml, the same
     // pull_request_target trust boundary carrying body-bare-digits'
     // Changesets-release exemption, which a plain pull_request job cannot
-    // safely resolve, and to six with vinaya-task-log-collector.yml
-    // (task-log-v1 task 4) — the trusted collector that validates and
-    // publishes a task-path job's exported outbox, on a `workflow_run`
-    // trust boundary):
-    // config + root VINAYA.md + six workflows (tracked) +
+    // safely resolve. It grew to six with vinaya-task-log-collector.yml
+    // (task-log-v1 task 4) and dropped back to five when that workflow was
+    // retired outright (task-files-v1 6, O2) — telemetry reaches its
+    // configured destination live now, so nothing uploads a log artifact or
+    // runs a collector any more:
+    // config + root VINAYA.md + five workflows (tracked) +
     // three hook stubs (pre-commit/pre-push/commit-msg, the last added by
     // Issue #63) + the .vinaya/doc-owners starter, PLUS — as of task 5
     // (#152) — the three agent-vendor emitters (tasks 2/3/4), installed by
@@ -176,7 +176,6 @@ describe('vinaya init', () => {
       REVIEW_VERDICT_WORKFLOW_PATH,
       ARCHIVIST_WORKFLOW_PATH,
       BODY_CHECKS_WORKFLOW_PATH,
-      TASK_LOG_COLLECTOR_WORKFLOW_PATH,
       '.husky/pre-commit',
       '.husky/pre-push',
       '.husky/commit-msg',
@@ -206,7 +205,6 @@ describe('vinaya init', () => {
       REVIEW_VERDICT_WORKFLOW_PATH,
       ARCHIVIST_WORKFLOW_PATH,
       BODY_CHECKS_WORKFLOW_PATH,
-      TASK_LOG_COLLECTOR_WORKFLOW_PATH,
       '.husky/pre-commit',
       '.husky/pre-push',
       '.husky/commit-msg',
@@ -225,7 +223,10 @@ describe('vinaya init', () => {
       'governance',
       'scripts/vinaya-checks',
       '.github/ISSUE_TEMPLATE/vinaya-task.md',
-      '.github/pull_request_template.md'
+      '.github/pull_request_template.md',
+      // task-files-v1 6, O2: no workflow uploads a log artifact or runs a
+      // collector any more.
+      '.github/workflows/vinaya-task-log-collector.yml'
     ]) {
       expect(existsSync(join(root, gone))).toBe(false)
     }
@@ -696,9 +697,11 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const files = generated()
 
-    // Seven pre-existing invocations plus one more (task-log-v1 task 4):
-    // vinaya-checks.yml's own new "Export task-log artifact" step.
-    expect(occurrences(files, `${PUBLISHED_RUN} `)).toBe(8)
+    // Seven invocations — the "Export task-log artifact" step task-log-v1
+    // task 4 added is deleted outright (task-files-v1 6, O1/O2): telemetry
+    // delivers live to a configured server destination now, so there is no
+    // artifact left to export.
+    expect(occurrences(files, `${PUBLISHED_RUN} `)).toBe(7)
     // …and none of them unpinned. An unpinned `npx` is NOT "latest". Where
     // the generated checks workflow carries an install step — only when the
     // adopter declares `ci.setup` — a repo carrying `@attalabs/vinaya` as a
@@ -733,10 +736,10 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     // Count, not just uniqueness: a set-only assertion would still pass if the
     // workflows lost their pin entirely and the hook alone contributed the
     // single value. Seven workflow invocations (O4, issue-545: the
-    // archivist's post-merge job now also self-archives the tranche) plus
-    // one more (task-log-v1 task 4: vinaya-checks.yml's own new "Export
-    // task-log artifact" step) plus one hook.
-    expect(specs).toHaveLength(9)
+    // archivist's post-merge job now also self-archives the tranche) plus one
+    // hook — the "Export task-log artifact" step task-log-v1 task 4 added is
+    // deleted outright (task-files-v1 6, O1/O2).
+    expect(specs).toHaveLength(8)
     expect([...new Set(specs)]).toEqual([OWN_VERSION])
   })
 
@@ -930,11 +933,11 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const files = generated()
 
-    // All eight invocations move — none left on the broken path. Seven
-    // pre-existing plus one more (task-log-v1 task 4): vinaya-checks.yml's
-    // own new "Export task-log artifact" step.
+    // All seven invocations move — none left on the broken path. The
+    // "Export task-log artifact" step task-log-v1 task 4 added is deleted
+    // outright (task-files-v1 6, O1/O2).
     expect(occurrences(files, 'npx --yes @attalabs/vinaya')).toBe(0)
-    expect(occurrences(files, VENDORED_BIN)).toBe(8)
+    expect(occurrences(files, VENDORED_BIN)).toBe(7)
     // Every job in `WORKFLOWS` installs (6 — see the setup-bun count above);
     // only the jobs that actually BUILD their own copy run the build
     // command — every one except `vinaya-checks.yml`, which downloads the

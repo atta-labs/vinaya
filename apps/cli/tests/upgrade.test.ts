@@ -10,7 +10,13 @@ import type { InitDeps } from '../src/commands/init.js'
 import { runInit } from '../src/commands/init.js'
 import type { UpgradeDeps } from '../src/commands/upgrade.js'
 import { planRingsMigration, runUpgrade } from '../src/commands/upgrade.js'
-import { CHECKS_WORKFLOW_PATH, CONFIG_PATH, MCP_JSON_PATH, REVIEW_WORKFLOW_PATH } from '../src/lib/artifacts.js'
+import {
+  CHECKS_WORKFLOW_PATH,
+  CONFIG_PATH,
+  MCP_JSON_PATH,
+  REVIEW_WORKFLOW_PATH,
+  TASK_LOG_COLLECTOR_WORKFLOW_PATH
+} from '../src/lib/artifacts.js'
 import { CLAUDE_COMMAND_PATH } from '../src/lib/claude-command-emitter.js'
 import { CLAUDE_SETTINGS_PATH, CLAUDE_STOP_HOOK_SCRIPT_PATH } from '../src/lib/claude-stop-hook-emitter.js'
 import { GEMINI_COMMAND_PATH } from '../src/lib/gemini-command-emitter.js'
@@ -122,6 +128,43 @@ describe('vinaya upgrade', () => {
 
     const after = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
     expect(after.managed.files).not.toContain(stalePath)
+  })
+
+  it('removes the retired task-log collector workflow from a repo that has it, dropping it from the manifest (task-files-v1 6, O2)', async () => {
+    await runInit(['--yes'], initDeps())
+
+    // No generator writes this file any more — simulate an adopter installed
+    // before it was retired: the workflow is on disk and the manifest still
+    // claims it, exactly the shape a real pre-task-6 install leaves behind.
+    mkdirSync(join(root, '.github/workflows'), { recursive: true })
+    writeFileSync(join(root, TASK_LOG_COLLECTOR_WORKFLOW_PATH), '# stale collector workflow\n')
+    const cfg = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    cfg.managed.files.push(TASK_LOG_COLLECTOR_WORKFLOW_PATH)
+    writeFileSync(join(root, CONFIG_PATH), `${JSON.stringify(cfg, null, 2)}\n`)
+
+    let rc = -1
+    const out = await captureStdout(async () => {
+      rc = await runUpgrade(['--yes'], upgradeDeps())
+    })
+    expect(rc).toBe(0)
+    expect(out).toContain(`remove ${TASK_LOG_COLLECTOR_WORKFLOW_PATH}`)
+    expect(existsSync(join(root, TASK_LOG_COLLECTOR_WORKFLOW_PATH))).toBe(false)
+
+    const after = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    expect(after.managed.files).not.toContain(TASK_LOG_COLLECTOR_WORKFLOW_PATH)
+  })
+
+  it('--dry-run leaves the retired task-log collector workflow on disk, only reporting it (task-files-v1 6, O2)', async () => {
+    await runInit(['--yes'], initDeps())
+    mkdirSync(join(root, '.github/workflows'), { recursive: true })
+    writeFileSync(join(root, TASK_LOG_COLLECTOR_WORKFLOW_PATH), '# stale collector workflow\n')
+    const cfg = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    cfg.managed.files.push(TASK_LOG_COLLECTOR_WORKFLOW_PATH)
+    writeFileSync(join(root, CONFIG_PATH), `${JSON.stringify(cfg, null, 2)}\n`)
+
+    const out = await captureStdout(() => runUpgrade(['--dry-run'], upgradeDeps()))
+    expect(out).toContain(`remove ${TASK_LOG_COLLECTOR_WORKFLOW_PATH}`)
+    expect(existsSync(join(root, TASK_LOG_COLLECTOR_WORKFLOW_PATH))).toBe(true)
   })
 
   it('--dry-run leaves a stale generated agent skill on disk, only reporting it', async () => {
