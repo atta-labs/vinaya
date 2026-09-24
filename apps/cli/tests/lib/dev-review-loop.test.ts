@@ -1979,13 +1979,36 @@ function disableIsolationForFixture(cwd: string): void {
  * files under the operator's own home directory this suite never created a
  * temp dir for and therefore never cleans up.
  */
+/**
+ * O1 (issue-709 profile): every fixture whose fake `gh` answers "not ready"
+ * on a first check exercises the loop's real PR/gate poll retry, whose
+ * production interval is `15` real seconds per attempt — whole multiples of
+ * it for a fixture that needs more than one poll, paid for no behaviour this
+ * suite is actually asserting on (the retry COUNT is the behaviour under
+ * test; the wall-clock gap between attempts never is). Applied to every
+ * fixture's child environment, ahead of `extraEnv`, so an individual
+ * fixture's own explicit override (several already set one, to drive a
+ * specific attempt-count scenario) still wins.
+ */
+const DEFAULT_FAST_POLL_ENV: Record<string, string> = {
+  VINAYA_DEV_REVIEW_LOOP_PR_POLL_INTERVAL_MS: '5',
+  VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '5'
+}
+
 function fixtureChildEnv(home: string, path: string, extraEnv: Record<string, string>): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env }
   for (const key of Object.keys(env)) {
     if (key.startsWith('VINAYA_')) delete env[key]
   }
   delete env.AEG_REPO
-  return { ...env, HOME: home, PATH: path, GITHUB_REPOSITORY: FIXTURE_GITHUB_REPOSITORY, ...extraEnv }
+  return {
+    ...env,
+    HOME: home,
+    PATH: path,
+    GITHUB_REPOSITORY: FIXTURE_GITHUB_REPOSITORY,
+    ...DEFAULT_FAST_POLL_ENV,
+    ...extraEnv
+  }
 }
 
 /**
