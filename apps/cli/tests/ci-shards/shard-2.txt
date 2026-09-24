@@ -39,6 +39,7 @@ tests/lib/dev-review-loop/inproc-1.test.ts
 tests/lib/dev-review-loop/inproc-3.test.ts
 tests/lib/dev-review-loop/inproc-5.test.ts
 tests/lib/dev-review-loop/inproc-7.test.ts
+tests/lib/dev-review-loop/inproc-11.test.ts
 tests/lib/dispatch-task.test.ts
 tests/lib/dispatch.test.ts
 tests/lib/log-webhook-flush.test.ts
