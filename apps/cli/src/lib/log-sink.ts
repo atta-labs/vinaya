@@ -69,12 +69,17 @@ export type LogSinkInputVersions = {
 /**
  * Where THIS process's `log()` calls land, resolved once per sink instance
  * (the sink's shared context, below) — a folder the sink appends directly to,
- * or a server drained from the local retry queue after every append
- * (`apps/cli/specs/log.md` § The destination).
+ * a server drained from the local retry queue after every append
+ * (`apps/cli/specs/log.md` § The destination), or `none` (O3): a CI run with
+ * no server configured, or holding no delivery credential for one that is —
+ * an ephemeral runner's own folder is never a real destination for CI, so
+ * `log()` records nothing rather than writing somewhere nobody reads before
+ * the runner is torn down, and `reason` is what a job-output line names.
  */
 export type ResolvedLogDestination =
   | { kind: 'folder'; folder: string }
   | { kind: 'server'; url: string; headers?: Record<string, string> }
+  | { kind: 'none'; reason: string }
 
 export type LogSinkDeps = {
   outboxRoot: () => string
@@ -185,6 +190,25 @@ async function safeLoadTrustAnchorConfig(): Promise<VinayaConfig | null> {
  * into a `logs.folder` that happens to resolve there. Falls back to
  * `defaultFolder`, the same as "no `logs` setting at all."
  */
+/**
+ * O3: a `logs.url` header referencing `${VAR_NAME}` whose named variable is
+ * absent or empty in `env` — GitHub Actions sets a secret-backed env var to
+ * an empty string for a fork pull request (the secret is withheld, never the
+ * variable), so "empty" and "unset" are the same signal here: this job holds
+ * no real delivery credential. A destination with no headers at all (no
+ * credential concept) never trips this — there is nothing to be missing.
+ */
+function logsCredentialMissing(headers: Record<string, string> | undefined, env: NodeJS.ProcessEnv): boolean {
+  if (!headers) return false
+  const varPattern = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g
+  for (const value of Object.values(headers)) {
+    for (const match of value.matchAll(varPattern)) {
+      if (!env[match[1] as string]) return true
+    }
+  }
+  return false
+}
+
 export function resolveLogDestinationFrom(input: {
   localConfig: VinayaConfig | null
   trustAnchorConfig: VinayaConfig | null
@@ -201,6 +225,29 @@ export function resolveLogDestinationFrom(input: {
       : resolveLogsSetting(input.trustAnchorConfig)
   } else {
     effective = local
+  }
+  // O3: a CI job never falls back to a folder — an ephemeral runner's own
+  // disk dies with the job, so a folder there is not a real destination, it
+  // is a silent no-op wearing delivery's clothes. CI delivers to a
+  // configured server or it records nothing and says so (Linear "Tech
+  // spec — The Vinaya Log" rev 8, § 4, Diagram K); it is never told apart
+  // from an ordinary unattended caller by anything but this host check,
+  // since the trust-anchor gate above already applies identically to both.
+  if (hostFromEnv(input.env) === 'ci') {
+    if (effective && 'url' in effective) {
+      if (logsCredentialMissing(effective.headers, input.env)) {
+        return {
+          kind: 'none',
+          reason:
+            'a logs.url server destination is configured, but this job holds no delivery credential (a fork pull request, or a missing repository secret)'
+        }
+      }
+      return { kind: 'server', url: effective.url, headers: resolveLogsHeaderValues(effective.headers, input.env) }
+    }
+    return {
+      kind: 'none',
+      reason: 'no server destination is configured for CI delivery (vinaya.config.json logs.url)'
+    }
   }
   if (effective && 'url' in effective) {
     return { kind: 'server', url: effective.url, headers: resolveLogsHeaderValues(effective.headers, input.env) }
@@ -360,7 +407,7 @@ export async function resolveLogAppendPath(
 ): Promise<string> {
   const deps = { ...defaultDeps(), ...overrides }
   const destination = await deps.resolveLogDestination(repo, deps.env())
-  const root = destination.kind === 'server' ? deps.outboxRoot() : destination.folder
+  const root = destination.kind === 'folder' ? destination.folder : deps.outboxRoot()
   return outboxPathFor({ outboxRoot: () => root }, repo, issue)
 }
 
@@ -693,6 +740,15 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
           // TS's excess-property check only fires on a fresh object literal,
           // never on a variable. Spreading `header` second means a forged
           // field in `e` is always overwritten, never honored.
+          if (resolvedDestination.kind === 'none') {
+            // O3: one visible line per process — never per event, which
+            // would spam a CI job's output once per check — naming exactly
+            // why nothing is being recorded (no server configured, or this
+            // job holds no delivery credential). Never a failure: recording
+            // nothing is the sanctioned outcome here, not a degraded one.
+            warnOnce(`vinaya: not recording — ${resolvedDestination.reason}\n`)
+            return
+          }
           const full = { ...e, ...header }
           const parsed = LogEventSchema.safeParse(full)
           if (!parsed.success) {

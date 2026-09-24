@@ -596,6 +596,22 @@ ${verifiedFetchPrBodyStep()}      - name: Run checks
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: \${{ github.event.pull_request.number }}
           BRANCH: \${{ github.head_ref }}
+          # O3: this job's gate events deliver live to the \`logs.url\` server
+          # destination the default branch's own \`vinaya.config.json\`
+          # declares — never a fork PR's own working-tree copy
+          # (\`resolveTrustAnchorLogsDestination\`). VINAYA_UNATTENDED is what
+          # makes that gate apply here at all; without it this run would be
+          # classified attended and would honour the PR's own diff directly.
+          VINAYA_UNATTENDED: '1'
+          # A write-only ingest token, never a value this job can use to read
+          # anything back — GitHub withholds every repository secret from a
+          # fork-originated pull_request run, so this resolves to an empty
+          # string there. \`log()\` treats an empty/absent value referenced by
+          # a configured \`logs.headers\` entry as "no credential" and records
+          # nothing for this run, naming why, rather than delivering with a
+          # blank credential or silently falling back to this ephemeral
+          # runner's own disk.
+          VINAYA_LOG_TOKEN: \${{ secrets.VINAYA_LOG_TOKEN }}
         # pipefail is load-bearing: this job's default shell is \`bash -e\`
         # WITHOUT pipefail, so an unguarded pipe through tee would mask the
         # check runner's exit code and report a red suite green.

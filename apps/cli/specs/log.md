@@ -189,6 +189,27 @@ The `<!-- aeg:log:… -->` marker convention, the `FORGE_COMMENT_MAX_CHARS` chun
 
 **The webhook drain survives, renamed to what it now is.** `flushOutboxToWebhook` (`apps/cli/src/lib/log-webhook-flush.ts`) used to serve two callers — `logPublish.webhookUrl`'s one-shot posting mode, and the live `logs.url` server destination's own per-event drain (below). Only the second caller is left, so the function and its module are renamed to `drainOutboxToWebhook`/`apps/cli/src/lib/log-webhook-drain.ts` — unmodified behavior, a name that no longer implies a one-shot "flush" concept that no longer exists.
 
+## CI delivery: a server or nothing (O3)
+
+A task-path CI job's own gate/operation/usage events (`runChecks` logging into `runner.ts`) are produced on an ephemeral GitHub Actions runner — its local disk dies with the job. Before this task, that gap was closed by exporting the outbox as a build artifact and validating/publishing it from a trusted collector workflow (task-log-v1 task 4); that whole round-trip is deleted along with the tracker-posting flush it fed. In its place, a CI job delivers through the exact same `logs.url` server-destination mechanism every other producer already uses (§ The destination) — with one CI-specific rule layered on top, since an ephemeral runner changes what "no destination" safely means (Linear "Tech spec — The Vinaya Log" rev 8, § 4, Diagram K):
+
+**A CI job never falls back to a folder, credentialed or not.** `resolveLogDestinationFrom` (`apps/cli/src/lib/log-sink.ts`) checks `meta.host === 'ci'` (`GITHUB_ACTIONS` set) after resolving the trust-anchor-gated destination the same way every unattended caller does: a folder there would write to a disk the job is about to discard, which is a silent no-op wearing delivery's clothes, not a real destination. A CI run that would otherwise resolve a folder resolves `{ kind: 'none', reason }` instead — nothing is recorded, and `log()` warns once per process (never once per event, which would spam a job's output once per check), naming the reason in the job's own output.
+
+**Two reasons land on `none`, both sanctioned outcomes, neither a failure:**
+
+- **No server is configured.** The default branch's `vinaya.config.json` declares no `logs.url` at all (or the working tree's own copy isn't trust-anchor-approved — the same anti-redirect rule every unattended caller already carries).
+- **This job holds no delivery credential.** A `logs.url` destination IS configured, but a `logs.headers` value referencing `${VAR_NAME}` resolves to an absent or empty environment variable. GitHub withholds every repository secret from a fork-originated `pull_request` run — the env var a generated workflow step sets from `secrets.*` is empty there, not merely unset — so "empty" and "absent" are the same signal (`logsCredentialMissing`, `log-sink.ts`). A destination declaring no `headers` at all has no credential concept and is never affected by this check.
+
+**Delivery, when both checks pass, is unmodified from § The destination:** the event appends to the local retry queue first, then `drainOutboxToWebhook` POSTs it, exactly as any other unattended `logs.url` caller. The generated `vinaya-checks.yml` job's own env carries what makes this real rather than theoretical:
+
+```yaml
+env:
+  VINAYA_UNATTENDED: '1'
+  VINAYA_LOG_TOKEN: ${{ secrets.VINAYA_LOG_TOKEN }}
+```
+
+`VINAYA_UNATTENDED` is what makes the trust-anchor gate apply to this job's `vinaya check` invocation at all — without it, the run would be classified attended and would honour a fork PR's own working-tree `logs.url`/`headers` directly, exactly the redirection the gate exists to prevent everywhere else. `VINAYA_LOG_TOKEN` is a write-only ingest credential referenced from `vinaya.config.json`'s own `logs.headers` (e.g. `{ "authorization": "Bearer ${VINAYA_LOG_TOKEN}" }`) — never read back by this job, and never a value that widens `checksWorkflow`'s own `permissions:` block, which stays exactly `contents: read, pull-requests: read, issues: read, actions: read`. A same-repository or default-branch run has the secret; a fork PR does not, and needs no code path to say so — the empty string GitHub already produces there is the signal.
+
 ## Attribution
 
 `VINAYA_RUN_ID`, `VINAYA_ROLE`, `VINAYA_TASK`, `VINAYA_ROUND` are read from `process.env` by the sink, never passed as an argument — a caller cannot override its own attribution. Absent: `role: 'unattributed'`, `issue: null`, a `run_id` generated once per process (`crypto.randomUUID()`). `host` is `'ci'` when `GITHUB_ACTIONS` is set, else `'hook'`/`'loop'` from `VINAYA_HOST`, else `'cli'`. A session not started through `vinaya dispatch` (task 3, shipped) is `unattributed`, which is the truth about it — the same class of honesty as `role: 'unattributed'` anywhere else in this doctrine.
