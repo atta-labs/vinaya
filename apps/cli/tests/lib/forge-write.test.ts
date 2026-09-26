@@ -3,10 +3,12 @@ import { execFileSync } from 'node:child_process'
 import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { buildPrincipalTestPlanWaitErrors } from '../../src/checks/bin/check-principal-test-plan-wait'
 import { CHECK_SCHEMA_VERSION, type CheckError } from '../../src/checks/contract'
 import { sha256Hex } from '../../src/lib/effects'
 import {
   collectTaskIssueErrors,
+  isPendingOnlyFailure,
   reconcileGhComment,
   runIssueChecks,
   type TaskIssueValidationDeps,
@@ -735,10 +737,25 @@ describe("runBodyChecks — a principalOwed check's pending-only failure never r
         checks: {
           'fixture/principal-owed': {
             run: 'node',
-            args: [FAKE_PRINCIPAL_OWED_CHECK],
+            args: [FAKE_PRINCIPAL_OWED_CHECK, 'fixture/principal-owed'],
             scope: 'full',
             validates: 'body',
             principalOwed: true,
+            env: { PR_BODY: { optional: true } }
+          },
+          // The same fixture binary, registered WITHOUT `principalOwed` —
+          // standing in for `principal-test-plan-wait`, whose every error is
+          // `pending: true` and which must never carry that flag (it would
+          // turn its own red green at the gate). Driven by the fixture's
+          // `CASE_UNFLAGGED_*` marker family, so the entry above stays
+          // passing for these bodies and vice versa (the fixture reads its own
+          // name from `argv[2]` to keep the two entries from ever reporting on
+          // one body together).
+          'fixture/unflagged-wait': {
+            run: 'node',
+            args: [FAKE_PRINCIPAL_OWED_CHECK, 'fixture/unflagged-wait'],
+            scope: 'full',
+            validates: 'body',
             env: { PR_BODY: { optional: true } }
           }
         }
@@ -806,5 +823,89 @@ exit 1
     const r = runPrEdit()
     expect(r.status).toBe(1)
     expect(r.stderr).toContain('"check":"fixture/principal-owed"')
+  })
+
+  // -------------------------------------------------------------------------
+  // The write path's exclusion reads `CheckError.pending` alone
+  // (`isPendingOnlyFailure`), never the `principalOwed` spec flag — so a check
+  // that reports a wait state but must KEEP making a run red (the real one:
+  // `principal-test-plan-wait`) does not refuse a body write either. Same
+  // harness, same fixture binary, one config entry without the flag.
+  // -------------------------------------------------------------------------
+
+  it('does not refuse an all-pending failure on a check that is NOT principalOwed (O1)', () => {
+    writeFileSync(bodyPath, bodyWithCase('CASE_UNFLAGGED_PENDING_ONLY'), 'utf8')
+    const r = runPrEdit()
+    expect(r.status).toBe(0)
+  })
+
+  it('still refuses a structural failure on that same unflagged check — no pending errors at all (O3)', () => {
+    writeFileSync(bodyPath, bodyWithCase('CASE_UNFLAGGED_STRUCTURAL'), 'utf8')
+    const r = runPrEdit()
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('"check":"fixture/unflagged-wait"')
+  })
+
+  it('still refuses when that same unflagged check reports a mix of pending and non-pending errors (O3)', () => {
+    writeFileSync(bodyPath, bodyWithCase('CASE_UNFLAGGED_MIXED'), 'utf8')
+    const r = runPrEdit()
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('"check":"fixture/unflagged-wait"')
+  })
+
+  // Boundary guard, not this rule's behavior: `collectBodyCheckErrors`
+  // aggregates emitted `CheckError`s, so a check that fails emitting none
+  // (a timeout, a malformed stderr) contributes no finding and lets the write
+  // through — pre-existing, true before the exclusion rule existed, recorded
+  // here so a future change to the rule cannot be mistaken for its cause.
+  it('surfaces no finding for a check that fails emitting no error at all — pre-existing, not the exclusion rule', () => {
+    writeFileSync(bodyPath, bodyWithCase('CASE_UNFLAGGED_SILENT_FAILURE'), 'utf8')
+    const r = runPrEdit()
+    expect(r.status).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The rule itself, against the REAL wait-state check's REAL errors: the
+// `pr edit` harness above can only reach `principal-test-plan-wait` through a
+// live PR (it is `requiresOpenPr`, so `--validate-only`'s `localOnly` run
+// skips it), and the production incident this closes was exactly that check
+// refusing `vinaya pr report --push`. `buildPrincipalTestPlanWaitErrors` is
+// the same function its bin calls, so this binds the real errors to the real
+// exclusion predicate with no fixture standing in for either half.
+// ---------------------------------------------------------------------------
+
+describe('isPendingOnlyFailure — the real principal wait state never refuses a body write (O1/O3)', () => {
+  const BODY_WITH_UNTICKED_PRINCIPAL = [
+    'Closes #1',
+    '',
+    '## Test Plan',
+    '',
+    '- [x] [agent] `bun test` → 0 fail',
+    '- [ ] [principal] Open the PR in a signed-in browser and confirm the block reads fresh',
+    ''
+  ].join('\n')
+
+  it("excludes principal-test-plan-wait's own errors — every one of them is pending", () => {
+    const errors = buildPrincipalTestPlanWaitErrors(BODY_WITH_UNTICKED_PRINCIPAL, 'task/x')
+    expect(errors.length).toBeGreaterThan(0)
+    expect(errors.every((e) => e.pending === true)).toBe(true)
+    expect(isPendingOnlyFailure(errors)).toBe(true)
+  })
+
+  it('never excludes an empty error list — a check that failed silently still refuses', () => {
+    expect(isPendingOnlyFailure([])).toBe(false)
+  })
+
+  it('never excludes a mix of pending and non-pending errors', () => {
+    const pendingError = buildPrincipalTestPlanWaitErrors(BODY_WITH_UNTICKED_PRINCIPAL, 'task/x')[0] as CheckError
+    const structural: CheckError = {
+      schema: CHECK_SCHEMA_VERSION,
+      check: pendingError.check,
+      severity: 'error',
+      message: 'structural failure on the same check',
+      agent_recovery_prompt: 'fix the body'
+    }
+    expect(isPendingOnlyFailure([pendingError, structural])).toBe(false)
   })
 })

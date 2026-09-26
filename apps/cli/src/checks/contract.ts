@@ -33,6 +33,14 @@ export type CheckError = {
    * `wait` from this field rather than guessing it back out of the message
    * text (Verdict Ledger spec §16 sets the same field for the same reason).
    * Absent means the ordinary case: something is wrong.
+   *
+   * Because this field says "not wrong, not yet", the forge-write path treats
+   * a failing check whose EVERY error carries it as no reason to refuse the
+   * outgoing bytes — `isPendingOnlyFailure`
+   * (`apps/cli/src/lib/forge-write.ts`), which reads this field alone and no
+   * `CheckSpec` flag. Set it only when the author genuinely cannot fix the
+   * finding by changing what they are about to write, since setting it is
+   * what waives that write-time refusal.
    */
   pending?: true
 }
@@ -123,6 +131,14 @@ export type CheckSpec = {
    * carries an unticked `[principal]` item. Never `review-gate` — that check
    * answers for the review verdicts alone and reads no Test Plan state at
    * all, so nothing there can refuse a merge over an unticked box.
+   *
+   * This flag governs the mechanical gate's red/green reading ONLY. It is not
+   * what excuses a wait state from refusing a forge-write: that is
+   * `isPendingOnlyFailure` (`apps/cli/src/lib/forge-write.ts`), which reads
+   * `CheckError.pending` alone, so a check like `principal-test-plan-wait`
+   * whose red MUST keep making a run red still never blocks a body write.
+   * Adding this flag to such a check to unblock a write would turn its red
+   * green — never do that; the write path already excludes it.
    */
   principalOwed?: true
   /**

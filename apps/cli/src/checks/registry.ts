@@ -397,6 +397,15 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // on their own entries: a second copy inside `--all` would put this
       // check's red inside another check's name.
       ownWorkflow: true,
+      // Deliberately NOT `principalOwed`, unlike `test-plan` above. That flag
+      // would make this check's red read green to the mechanical gate and the
+      // loop's CI reader — and holding the merge until the box is ticked is
+      // this check's entire job. Its one all-`pending` error still never
+      // refuses a forge-write: the write path excludes that by reading
+      // `CheckError.pending` alone (`isPendingOnlyFailure`,
+      // `apps/cli/src/lib/forge-write.ts`), so the per-round Evidence splice
+      // goes through while the box is still unticked and the Principal's tick
+      // then finds a fresh block rather than the template placeholder.
       // `process.env.PR_BODY ?? ''` / `process.env.BRANCH ?? ''` — both
       // plain absence-tolerant fall-throughs, same shape as `test-plan`'s
       // identical declaration above.
