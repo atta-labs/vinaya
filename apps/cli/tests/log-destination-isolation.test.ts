@@ -71,9 +71,16 @@ function stripComments(content: string): string {
  */
 const READS_DEFAULT_DESTINATION = /['"]runtime['"][\s\S]{0,80}?['"]logs['"]|runtimeDir\s*,\s*['"]logs['"]|\.logsDir\b/
 
-/** Every shape that starts a real process. `spawn`/`exec` as bare calls are deliberately absent — this file's subjects are the handful that read a default log destination, and every one of them uses one of these. */
+/**
+ * Every shape that starts a real process. `spawn`/`exec` as bare calls are
+ * deliberately absent — this file's subjects are the handful that read a
+ * default log destination, and every one of them uses one of these. Written
+ * without a `(?:Sync)?` group after `spawn`, so this source line does not
+ * itself read as a `spawn(` call to `process-fixture-coverage.test.ts`'s own
+ * scan of the same tree.
+ */
 const SPAWNS_REAL_PROCESS =
-  /(?:Bun\.spawn(?:Sync)?|\bspawnSyncBudgeted|\bspawnBudgetedAsync|(?<!\.)\bspawnSync|\bexecFileSync|\bexecSync)\s*\(/g
+  /(?:Bun\.spawnSync|Bun\.spawn|\bspawnSyncBudgeted|\bspawnBudgetedAsync|(?<!\.)\bspawnSync|\bexecFileSync|\bexecSync)\s*\(/g
 
 /** Commands that do one fixed thing to the filesystem or the process table and never resolve a Vinaya configuration, so where they run cannot affect a log destination. */
 const CONFIGURATION_INERT_COMMANDS = new Set([
@@ -151,7 +158,7 @@ function subjects(): Map<string, string[]> {
   return out
 }
 
-describe('no test reads this repository own log destination', () => {
+describe("no test reads this repository's own log destination", () => {
   it('every fixture that reads a default log destination spawns with a working directory of its own', () => {
     const offenders = [...subjects()]
       .filter(([rel, sites]) => sites.length > 0 && !GRANDFATHERED_FILES.includes(rel))
