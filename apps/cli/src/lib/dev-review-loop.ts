@@ -51,6 +51,7 @@ import {
   briefHash as briefHashOf,
   buildReviewInputManifest,
   compareManifest,
+  concludedLoopRefusal,
   DEFAULT_REVIEW_POLICY,
   DevReviewLoopEventSchema,
   initialLoopState,
@@ -1078,20 +1079,35 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // `pause-state.json` write never advances past the already-consumed
       // id) before the task's review actually concluded. The storage
       // guarantee still binds exactly as before whenever a driver still
-      // holds the task (Traps to avoid: never weakened for that case), or
-      // whenever the task's own durable journal already shows this review
-      // concluded — nothing left for a bare `--resume` to attach to, the
-      // exact case the pre-existing "replay refused" fixture covers.
-      // Otherwise this run continues from the pull request's CURRENT state
-      // instead, the same attach a fresh `--task <n>` itself takes onto an
-      // already-open PR — never fabricating a second resolution (Traps to
-      // avoid), and never re-deriving a round/head from this stale record.
+      // holds the task (Traps to avoid: never weakened for that case) — that
+      // branch refuses first, in the storage layer's own words, and is
+      // untouched by everything below.
+      //
+      // A review that is GENUINELY concluded — its summary on the forge AND
+      // the review gate passing against the pull request's current head,
+      // objectives version, newest ruling, frozen brief and policy
+      // (`isConcludedJournal`) — is refused too, but named for what it is:
+      // there is nothing left for a `--resume` to attach to, and the
+      // consumed-resolution text describes a storage mechanism the reader
+      // never asked about. `concludedLoopRefusal` renders that reason.
+      //
+      // What no longer refuses: a summary posted for an older head, with a
+      // Principal ruling posted after it, a superseded brief, or a red gate.
+      // Each of those is a review the forge says is NOT finished, and each
+      // one used to exit here on the summary alone — observed on an adopter
+      // pull request that could not be resumed at all. Those continue from
+      // the pull request's CURRENT state instead, the same attach a fresh
+      // `--task <n>` takes onto an already-open PR — never fabricating a
+      // second resolution (Traps to avoid), and never re-deriving a
+      // round/head from this stale record.
       const existingLock = readDriverLock(root, closesTask)
       const driverIsLive = existingLock !== null && isDriverPidAlive(existingLock.pid)
-      const history = d.fetchLoopHistory(resumePr)
-      const alreadyConcluded = history.journalFinalized?.result === 'merged_ready'
-      if (driverIsLive || err.existing?.decision !== 'resume' || alreadyConcluded) {
+      if (driverIsLive || err.existing?.decision !== 'resume') {
         throw new Error(`devReviewLoop --resume: ${err.message}`)
+      }
+      const concludedRefusal = concludedLoopRefusal(d.fetchLoopHistory(resumePr))
+      if (concludedRefusal !== null) {
+        throw new Error(`devReviewLoop --resume: ${concludedRefusal}`)
       }
       attachAfterReplayedResolution = true
     }
