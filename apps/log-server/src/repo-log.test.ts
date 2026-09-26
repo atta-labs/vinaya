@@ -302,3 +302,185 @@ describe('stats make the storage ceiling visible before it is reached', () => {
     expect(body).toMatchObject({ repo, events: 0, rejected: 0, last_seq: 0, oldest_ts: null, newest_ts: null })
   })
 })
+
+/** A live viewer's socket, with everything it has been sent and how it was closed. */
+type Viewer = {
+  socket: WebSocket
+  messages: string[]
+  closed: { code: number; reason: string } | null
+}
+
+type LiveEvent = { seq: number; status: string; event: { meta: { event_id?: string } } }
+
+type Resync = { type: string; after: number }
+
+/**
+ * A live connection to `repo`, opened the way a viewer opens one: a WebSocket
+ * upgrade carrying the feed's protocol and the read token as a second one.
+ * Every message and the close frame are collected from the moment the socket
+ * is accepted, so a replay the server sent during the handshake is not missed.
+ */
+async function openLive(repo: string, query = ''): Promise<Viewer> {
+  const response = await SELF.fetch(`${url(repo, 'live')}${query}`, {
+    headers: { upgrade: 'websocket', 'sec-websocket-protocol': `vinaya-log.v1, bearer.${READ}` }
+  })
+  expect(response.status).toBe(101)
+  expect(response.headers.get('sec-websocket-protocol')).toBe('vinaya-log.v1')
+
+  const socket = response.webSocket
+  if (socket === null) throw new Error('the live route answered 101 without a socket')
+
+  const viewer: Viewer = { socket, messages: [], closed: null }
+  socket.accept()
+  socket.addEventListener('message', (event) => {
+    viewer.messages.push(String(event.data))
+  })
+  socket.addEventListener('close', (event) => {
+    viewer.closed = { code: event.code, reason: event.reason }
+  })
+  return viewer
+}
+
+/** Wait until `viewer` has been sent at least `count` messages, or fail rather than hang. */
+async function messages(viewer: Viewer, count: number): Promise<string[]> {
+  const deadline = Date.now() + 5000
+  while (viewer.messages.length < count && Date.now() < deadline) await settle()
+  expect(viewer.messages.length).toBeGreaterThanOrEqual(count)
+  return viewer.messages
+}
+
+/** Let every message already in flight arrive, so "nothing more was sent" is a real assertion. */
+async function settle(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 25))
+}
+
+function liveEvents(viewer: Viewer): LiveEvent[] {
+  return viewer.messages.map((message) => JSON.parse(message) as LiveEvent)
+}
+
+/** A batch of `count` well-formed events for `repo`, identified `e-1` … `e-<count>`. */
+function batchOf(repo: string, count: number, from = 1): string {
+  const lines: string[] = []
+  for (let n = from; n < from + count; n += 1) lines.push(line(repo, n))
+  return lines.join('\n')
+}
+
+describe('a live viewer receives each event the moment it is stored', () => {
+  it('replays what is already stored after a position, then sends each new event as it commits', async () => {
+    const repo = freshRepo()
+    await post(repo, batchOf(repo, 2))
+
+    const viewer = await openLive(repo, '?after=0')
+    await messages(viewer, 2)
+    await post(repo, line(repo, 3))
+    await messages(viewer, 3)
+    await settle()
+
+    expect(liveEvents(viewer).map((message) => message.seq)).toEqual([1, 2, 3])
+    expect(liveEvents(viewer).map((message) => message.event.meta.event_id)).toEqual(['e-1', 'e-2', 'e-3'])
+    expect(liveEvents(viewer)[0]?.status).toBe('ok')
+    expect(viewer.closed).toBeNull()
+  })
+
+  it('starts from the position the viewer asked for, not from the head', async () => {
+    const repo = freshRepo()
+    await post(repo, batchOf(repo, 3))
+
+    const viewer = await openLive(repo, '?after=2')
+    await messages(viewer, 1)
+    await settle()
+
+    expect(liveEvents(viewer).map((message) => message.seq)).toEqual([3])
+  })
+
+  it('misses no event and repeats none when an ingest commits while a viewer is connecting', async () => {
+    const repo = freshRepo()
+    await post(repo, batchOf(repo, 5))
+
+    // Both requests are in flight together: the connection's catch-up query
+    // and the ingest's commit race inside the one object, which is the switch
+    // from catching up to live that must neither drop an event nor send one
+    // twice.
+    const connecting = openLive(repo, '?after=0')
+    const ingesting = post(repo, batchOf(repo, 2, 6))
+    const viewer = await connecting
+    await ingesting
+
+    await messages(viewer, 7)
+    await settle()
+
+    const seen = liveEvents(viewer).map((message) => message.seq)
+    expect(seen).toEqual([1, 2, 3, 4, 5, 6, 7])
+    expect(new Set(seen).size).toBe(seen.length)
+  })
+
+  it('says nothing to a viewer when an ingest stores only duplicates', async () => {
+    const repo = freshRepo()
+    await post(repo, batchOf(repo, 2))
+
+    const viewer = await openLive(repo, '?after=2')
+    await settle()
+    expect(viewer.messages).toEqual([])
+
+    const resend = await post(repo, batchOf(repo, 2))
+    expect(await resend.json()).toEqual({ accepted: 0, duplicates: 2, rejected: 0, last_seq: 2 })
+    await settle()
+    expect(viewer.messages).toEqual([])
+
+    await post(repo, [line(repo, 2), line(repo, 3)].join('\n'))
+    await messages(viewer, 1)
+    await settle()
+    expect(liveEvents(viewer).map((message) => message.seq)).toEqual([3])
+  })
+
+  it('sends a viewer only its own repositorys events', async () => {
+    const repo = freshRepo()
+    const other = freshRepo()
+
+    const viewer = await openLive(repo)
+    await post(other, batchOf(other, 2))
+    await settle()
+
+    expect(viewer.messages).toEqual([])
+  })
+
+  it('refuses a position that is not a whole number rather than opening a socket', async () => {
+    const repo = freshRepo()
+    const response = await SELF.fetch(`${url(repo, 'live')}?after=-1`, {
+      headers: { upgrade: 'websocket', 'sec-websocket-protocol': `vinaya-log.v1, bearer.${READ}` }
+    })
+
+    expect(response.status).toBe(400)
+    expect(response.webSocket).toBeNull()
+  })
+})
+
+describe('a viewer too far behind is told where to page from instead of being replayed', () => {
+  it('sends one resync naming the position to page from, and closes', async () => {
+    const repo = freshRepo()
+    await post(repo, batchOf(repo, 1001))
+
+    const viewer = await openLive(repo, '?after=0')
+    await messages(viewer, 1)
+    await settle()
+
+    expect(viewer.messages.length).toBe(1)
+    expect(JSON.parse(viewer.messages[0] as string) as Resync).toEqual({ type: 'resync', after: 0 })
+    expect(viewer.closed?.code).toBe(1013)
+  })
+
+  it('catches a viewer up over the socket when it is exactly one page behind', async () => {
+    const repo = freshRepo()
+    await post(repo, batchOf(repo, 1001))
+
+    const viewer = await openLive(repo, '?after=1')
+    await messages(viewer, 1000)
+    await settle()
+
+    const seen = liveEvents(viewer).map((message) => message.seq)
+    expect(seen.length).toBe(1000)
+    expect(seen[0]).toBe(2)
+    expect(seen[999]).toBe(1001)
+    expect(viewer.closed).toBeNull()
+  })
+})

@@ -80,9 +80,8 @@ describe('the path and method grammar', () => {
     expect(response.status).toBe(200)
   })
 
-  it('answers 404 for an unknown path, including the live route it does not serve yet', async () => {
+  it('answers 404 for an unknown path', async () => {
     expect((await SELF.fetch(url('nonsense'), { headers: bearer(READ) })).status).toBe(404)
-    expect((await SELF.fetch(url('live'), { headers: bearer(READ) })).status).toBe(404)
     expect((await SELF.fetch(`${BASE}/`, { headers: bearer(READ) })).status).toBe(404)
     expect((await SELF.fetch(`${BASE}/v1/repos/atta-labs/events`, { headers: bearer(READ) })).status).toBe(404)
   })
@@ -90,5 +89,9 @@ describe('the path and method grammar', () => {
   it('answers 405 for a known path with the wrong method', async () => {
     expect((await SELF.fetch(url('events'), { method: 'PUT', headers: bearer(INGEST) })).status).toBe(405)
     expect((await SELF.fetch(url('stats'), { method: 'POST', headers: bearer(READ) })).status).toBe(405)
+    // Without the upgrade header the method reaches the grammar as sent; the
+    // runtime turns an upgrade request into the `GET` the protocol requires
+    // whatever method was asked for, so there is no `POST` upgrade to refuse.
+    expect((await SELF.fetch(url('live'), { method: 'POST', headers: bearer(READ) })).status).toBe(405)
   })
 })
