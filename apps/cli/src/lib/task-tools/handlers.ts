@@ -96,10 +96,22 @@ export function taskStatusHandler(input: unknown): TaskToolCallResult<TaskStatus
  * `task_escalation_read` below) so `resume.ts`/`cancel.ts` resolve a
  * `TaskToolRef` through this identical read rather than a second,
  * divergent implementation.
+ *
+ * A `not_started` row (a planned task whose brief `task run`'s preparation has
+ * not frozen yet — now LISTED by `task_status` rather than omitted) is
+ * deliberately not resolvable here: this resolver serves
+ * `task_escalation_read`/`task_resume`/`task_cancel`, which only ever act on a
+ * task that has already been prepared or has a run, and a planned task has
+ * neither pause nor escalation to read. Only `task_start` acts on a planned
+ * Issue, through its own `resolveOpenTaskIssueForRef` below — so a planned task
+ * appears in the status list yet still fails these three the same "no open task
+ * matches" way it always has.
  */
 export function resolveIssueForRef(ref: TaskToolRef): number | null {
   if ('issue' in ref) return ref.issue
-  const row = currentTaskStatusRows().find((r) => r.tranche === ref.tranche && r.id === ref.id)
+  const row = currentTaskStatusRows().find(
+    (r) => r.tranche === ref.tranche && r.id === ref.id && r.state.kind !== 'not_started'
+  )
   return row ? row.issue : null
 }
 
@@ -119,11 +131,12 @@ type RawTaskIssue = { number: number; title: string; labels: Array<{ name: strin
  * `@attalabs/aeg-forge-state`) rather than a second regex.
  *
  * This lives BESIDE `resolveIssueForRef` deliberately, and reads differently:
- * `resolveIssueForRef` resolves through the task-status list, which skips
- * every task with no frozen brief (`task-status.ts`'s `buildRow` returns null
- * without one) — the reading `task_status`/`task_escalation_read`/
- * `task_resume`/`task_cancel` intend, since those only ever act on a task
- * that has already been prepared or has a run. `task_start` is the one tool
+ * `resolveIssueForRef` resolves through the task-status list but skips its
+ * `not_started` rows (a task with no frozen brief — now LISTED by `task_status`
+ * as not started, but still not resolvable by that reader) — the reading
+ * `task_status`/`task_escalation_read`/`task_resume`/`task_cancel` intend, since
+ * those only ever act on a task that has already been prepared or has a run.
+ * `task_start` is the one tool
  * that starts a task from a PLANNED Issue whose brief `task run`'s own
  * preparation has not frozen yet — so it must resolve over the pre-freeze
  * list, exactly as preparation does, or it could never confirm a launch it is

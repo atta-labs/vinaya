@@ -18,13 +18,16 @@ import { taskEscalationReadHandler, taskStatusHandler } from '../../../src/lib/t
  * `task_resume` and `task_cancel` are real handlers of their own now — see
  * `start.test.ts`, `resume.test.ts` and `cancel.test.ts`.
  *
- * The O3 regression guard at the bottom re-mocks `gh` — but out-of-process,
+ * The regression guard at the bottom re-mocks `gh` — but out-of-process,
  * in a fresh `bun` subprocess with an isolated `HOME`, never in-process:
  * `runtimeDirForRepo` memoizes per repo for the life of a process
  * (`run-paths.ts`), so an in-process `HOME` swap would read a stale, cached
- * tree. It proves both these handlers STILL omit an open, tranche-labeled
- * task whose brief is not frozen — the reading unattended-run-v1 task 10's
- * new start-side resolver (`resolveOpenTaskIssueForRef`) must NOT leak into.
+ * tree. It proves the split unattended-run-v1 task 8 (`#738`) introduced:
+ * `task_status` now LISTS an open, tranche-labeled task whose brief is not
+ * frozen — as `not started` (O4) — while `task_escalation_read`'s own resolver
+ * (`resolveIssueForRef`) STILL refuses it, since a planned task has no pause or
+ * escalation to read. Task 10's start-side resolver (`resolveOpenTaskIssueForRef`)
+ * must NOT leak into that escalation-reader path.
  */
 
 const NEVER_DISPATCHED_ISSUE = 900_000_001
@@ -76,12 +79,12 @@ function stripVinayaEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return out
 }
 
-describe('task_status / task_escalation_read still omit an unfrozen task (O3)', () => {
+describe('task_status lists an unfrozen task as not started; task_escalation_read still refuses it (O4)', () => {
   // Two open, tranche-labeled Issues: `[demo] 1` carries a principal-frozen
   // `aeg:brief:v1` comment; `[demo] 2` is planned, its brief NOT frozen (its
-  // only comment is an ordinary reply). The start-side resolver
-  // (`resolveOpenTaskIssueForRef`) would resolve BOTH — the whole point of
-  // task 10. These two read tools must still resolve ONLY the frozen one.
+  // only comment is an ordinary reply). `task_status` now lists BOTH — the
+  // planned one as `not started` (O4) — while `task_escalation_read`'s resolver
+  // resolves ONLY the frozen one.
   const stubbedGh = `#!/bin/sh
 if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
   cat <<'JSON'
@@ -125,7 +128,7 @@ const planned = taskEscalationReadHandler({ task: { tranche: 'demo', id: '2' } }
 process.stdout.write('O3_RESULT:' + JSON.stringify({ status, frozen, planned }) + '\\n')
 `
 
-  it('lists and resolves the frozen task, but never the planned one whose brief is not frozen', () => {
+  it('lists the planned task as not started, but the escalation reader resolves only the frozen one', () => {
     const repoRoot = join(import.meta.dir, '..', '..', '..', '..', '..')
     const home = mkdtempSync(join(tmpdir(), 'vinaya-o3-omit-'))
     const binDir = join(home, 'bin')
@@ -152,20 +155,21 @@ process.stdout.write('O3_RESULT:' + JSON.stringify({ status, frozen, planned }) 
       const line = stdout.split('\n').find((l) => l.startsWith('O3_RESULT:'))
       expect(line).toBeDefined()
       const parsed = JSON.parse((line as string).slice('O3_RESULT:'.length)) as {
-        status: { ok: boolean; result?: { items: Array<{ issue: number }> } }
+        status: { ok: boolean; result?: { items: Array<{ issue: number; state: string }> } }
         frozen: { ok: boolean; result?: { items: unknown[] } }
         planned: { ok: boolean; error?: { kind: string } }
       }
 
-      // task_status lists the frozen task and OMITS the planned one.
+      // task_status lists BOTH — the planned one as `not started` (O4).
       expect(parsed.status.ok).toBe(true)
-      const listed = (parsed.status.result?.items ?? []).map((i) => i.issue)
-      expect(listed).toContain(8801)
-      expect(listed).not.toContain(8802)
+      const items = parsed.status.result?.items ?? []
+      expect(items.map((i) => i.issue)).toContain(8801)
+      const plannedItem = items.find((i) => i.issue === 8802)
+      expect(plannedItem?.state).toBe('not started')
 
       // task_escalation_read resolves the frozen task's ref (empty page, no
       // pause record) but REFUSES the planned one — the resolver it uses
-      // (`resolveIssueForRef`) reads the same frozen-filtered list.
+      // (`resolveIssueForRef`) still skips a `not_started` row.
       expect(parsed.frozen.ok).toBe(true)
       expect(parsed.planned.ok).toBe(false)
       expect(parsed.planned.error?.kind).toBe('precondition')

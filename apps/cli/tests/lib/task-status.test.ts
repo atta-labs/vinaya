@@ -356,6 +356,11 @@ describe('renderTaskStatusRow', () => {
     const row: TaskStatusRow = { ...base, pr: null, state: { kind: 'no_driver' } }
     expect(renderTaskStatusRow(row)).toBe('[task-run-v1] 14 — Issue #515 — PR — — no driver')
   })
+
+  it('renders not started for a planned task with no PR yet (O4)', () => {
+    const row: TaskStatusRow = { ...base, pr: null, state: { kind: 'not_started' } }
+    expect(renderTaskStatusRow(row)).toBe('[task-run-v1] 14 — Issue #515 — PR — — not started')
+  })
 })
 
 describe('resumeCommandFor', () => {

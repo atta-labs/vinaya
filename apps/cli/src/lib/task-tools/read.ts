@@ -83,7 +83,7 @@ export function readTaskLoopStateObserved(root: string, task: number): Observed<
   return observedNow(state, classifyStateFreshness(state))
 }
 
-/** `no_driver` is the only `TaskLoopState` kind backed by no record at all; every other kind is `deriveLoopState`'s current, fresh answer (see the doc comment above). Exported so `handlers.ts` can classify a `TaskStatusRow.state` it already has in hand — computed by `gatherTaskStatusList`/`gatherSingleTaskStatus` against the same outbox — without a second, redundant outbox read. */
+/** `no_driver` is the only `TaskLoopState` kind backed by no record at all; every other kind — `not_started` (a definite current fact: the brief is not frozen) included — is a current, fresh answer. Exported so `handlers.ts` can classify a `TaskStatusRow.state` it already has in hand — computed by `gatherTaskStatusList`/`gatherSingleTaskStatus` against the same outbox — without a second, redundant outbox read. */
 export function classifyStateFreshness(state: TaskLoopState): Freshness {
   return state.kind === 'no_driver' ? 'unknown' : 'fresh'
 }
@@ -99,6 +99,8 @@ export function describeTaskLoopState(state: TaskLoopState): string {
       return 'published'
     case 'exited':
       return `exited (${state.reason}) — last decision: ${state.lastDecision}`
+    case 'not_started':
+      return 'not started'
     case 'no_driver':
       return 'no driver'
   }
