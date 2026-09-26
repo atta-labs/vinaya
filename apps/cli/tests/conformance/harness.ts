@@ -365,6 +365,9 @@ function memClaimStore(): { store: ResumeClaimStore; map: Map<string, ResumeReco
         map.set(record.escalationId, record)
         return { claimed: true, record }
       },
+      update(record) {
+        if (map.has(record.escalationId)) map.set(record.escalationId, record)
+      },
       release(escalationId) {
         map.delete(escalationId)
       }
@@ -648,9 +651,10 @@ export function defineConformanceSuite(runtime: 'claude' | 'codex', invocation: 
           fetchNewestRulingAuthor: () => 'principal-1',
           fetchNewestRulingOrdinal: () => 1,
           store: freshStore,
+          isPidAlive: () => false,
           launch: (target) => {
             launches.push(target)
-            return Promise.resolve({ alive: true })
+            return Promise.resolve({ status: 'confirmed', pid: null })
           },
           now: () => '2026-01-01T00:01:00.000Z',
           log: () => {}
