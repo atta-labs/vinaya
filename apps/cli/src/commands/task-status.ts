@@ -24,7 +24,7 @@
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import { printJson } from '../lib/envelope.js'
 import { followLoopLog, loopLogPathFor } from '../lib/loop-log.js'
-import { gatherSingleTaskStatus, gatherTaskStatusList, renderTaskStatusTable } from '../lib/task-status.js'
+import { gatherSingleTaskStatus, gatherTaskStatusList } from '../lib/task-status.js'
 
 type ParsedArgs = { json: boolean; follow: boolean; issue: string | undefined; positional: string[] }
 
@@ -44,7 +44,7 @@ function parseArgs(args: string[]): ParsedArgs {
 }
 
 function runList(json: boolean): void {
-  const rows = gatherTaskStatusList()
+  const { rows, table } = gatherTaskStatusList()
 
   if (json) {
     printJson({ tasks: rows })
@@ -54,7 +54,7 @@ function runList(json: boolean): void {
     process.stdout.write('No open task carries a frozen brief.\n')
     return
   }
-  for (const line of renderTaskStatusTable(rows)) process.stdout.write(`${line}\n`)
+  for (const line of table) process.stdout.write(`${line}\n`)
 }
 
 function runSingle(tranche: string, id: string, json: boolean): void {
@@ -76,7 +76,7 @@ function runSingle(tranche: string, id: string, json: boolean): void {
 
   // The same table the list form prints, one row wide — one shape to read,
   // whether the answer is about one task or every open one.
-  for (const line of renderTaskStatusTable([result.row])) process.stdout.write(`${line}\n`)
+  for (const line of result.table) process.stdout.write(`${line}\n`)
   const lines = result.verdictLines
   if (lines) {
     if (lines.reviewer) process.stdout.write(`  reviewer (round ${lines.round}): ${lines.reviewer}\n`)

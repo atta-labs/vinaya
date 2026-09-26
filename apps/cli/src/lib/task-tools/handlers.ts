@@ -63,7 +63,7 @@ export function describeTaskRef(ref: TaskToolRef): string {
 
 /** `task-status.ts`'s own forge-touching entry point, called once per handler invocation — the identical cost `vinaya task status` already pays for the same information. */
 function currentTaskStatusRows(): TaskStatusRow[] {
-  return gatherTaskStatusList()
+  return gatherTaskStatusList().rows
 }
 
 export function taskStatusHandler(input: unknown): TaskToolCallResult<TaskStatusResult> {

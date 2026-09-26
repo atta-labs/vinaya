@@ -727,6 +727,9 @@ function buildRow(ref: TaskRef, allowlist: readonly string[], history: PhaseHist
 
 // --- command-facing entry points --------------------------------------
 
+/** The rows and the table rendered from them — returned together so the command prints what this reader rendered rather than calling a second boundary function of its own (`apps/cli/specs/surface.md`'s one-command-one-function discipline). */
+export type TaskStatusListView = { rows: TaskStatusRow[]; table: string[] }
+
 /**
  * O1/O3, the entire read for the list form — the ONE function
  * `commands/task-status.ts` calls for it (`apps/cli/specs/surface.md`'s
@@ -738,7 +741,7 @@ function buildRow(ref: TaskRef, allowlist: readonly string[], history: PhaseHist
  * cached for the process (`task-status-history.ts`), so a listing of ten tasks
  * pays for it once.
  */
-export function gatherTaskStatusList(): TaskStatusRow[] {
+export function gatherTaskStatusList(): TaskStatusListView {
   const allowlist = principalAllowlist()
   const root = runtimeDir()
   const history = phaseHistoryLookup()
@@ -751,7 +754,7 @@ export function gatherTaskStatusList(): TaskStatusRow[] {
     if (ref.kind === 'backlog' && !hasOutboxDir(root, ref.issue)) continue
     rows.push(buildRow(ref, allowlist, history))
   }
-  return rows
+  return { rows, table: renderTaskStatusTable(rows) }
 }
 
 export type SingleTaskStatus =
@@ -763,6 +766,8 @@ export type SingleTaskStatus =
   | {
       kind: 'ok'
       row: TaskStatusRow
+      /** The same table the list form prints, one row wide — rendered here, for the same reason `TaskStatusListView` carries it. */
+      table: string[]
       verdictLines: RoundVerdictLines | null
       resumeCommand: string | null
     }
@@ -779,5 +784,5 @@ export function gatherSingleTaskStatus(tranche: string, id: string): SingleTaskS
   const pause = readPauseState(root, ref.issue)
   const resumeCommand =
     row.state.kind === 'paused' && row.pr ? resumeCommandFor(row.pr.number, pause?.agent, pause?.model) : null
-  return { kind: 'ok', row, verdictLines, resumeCommand }
+  return { kind: 'ok', row, table: renderTaskStatusTable([row]), verdictLines, resumeCommand }
 }
