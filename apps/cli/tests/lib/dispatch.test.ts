@@ -28,12 +28,13 @@ import {
   symlinkSync,
   writeFileSync
 } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { readdirSync, statSync } from 'node:fs'
 import {
+  AGENT_VENDOR_NAMES,
   DEFAULT_TIMEOUT_MS,
   identifyVendorFromModelShape,
   parseClaudeModel,
@@ -61,6 +62,8 @@ import {
   addCodexWritableDirs,
   PERMISSION_POLICY_VERSION,
   codexSpawnEnvExtras,
+  missingSubscriptionLoginReason,
+  NO_SUBSCRIPTION_LOGIN_REASON,
   codexBoundaryFailureReason,
   type DispatchTeeRecoveryDeps
 } from '../../src/lib/dispatch.js'
@@ -3658,28 +3661,57 @@ describe('unreadDocumentationSources', () => {
   })
 })
 
-describe('codexSpawnEnvExtras — round 6 security review, CRITICAL/HIGH (Issue #676)', () => {
+describe('codexSpawnEnvExtras — round 6 security review, CRITICAL (Issue #676)', () => {
   it('a staged subscription session (codexHomeDir set) carries CODEX_HOME but never CODEX_ACCESS_TOKEN — live-verified the env var breaks bearer auth once a real auth.json exists', () => {
     const extras = codexSpawnEnvExtras('codex', '/tmp/scratch/codex-home')
     expect(extras.attribution).toEqual({ CODEX_HOME: '/tmp/scratch/codex-home' })
     expect(extras.attribution).not.toHaveProperty('CODEX_ACCESS_TOKEN')
   })
 
-  it('a staged subscription session never allowlists CODEX_API_KEY/CODEX_ACCESS_TOKEN through from the controller env — an operator-set CODEX_API_KEY must never silently downgrade a staged session to API-key auth', () => {
-    const extras = codexSpawnEnvExtras('codex', '/tmp/scratch/codex-home')
-    expect(extras.extraAllowlistKeys).toEqual([])
+  it('O1: the staged CODEX_HOME is the whole environment route — there is no credential-key passthrough left to return', () => {
+    expect(Object.keys(codexSpawnEnvExtras('codex', '/tmp/scratch/codex-home'))).toEqual(['attribution'])
   })
 
-  it('no staged session (codexHomeDir null) sets no CODEX_HOME and falls back to the ordinary RUNTIME_CREDENTIAL_ENV_KEYS allowlist — the API-key-only path is unaffected', () => {
-    const extras = codexSpawnEnvExtras('codex', null)
-    expect(extras.attribution).toEqual({})
-    expect(extras.extraAllowlistKeys).toEqual(['CODEX_API_KEY', 'CODEX_ACCESS_TOKEN'])
+  it('no staged session (codexHomeDir null) sets no CODEX_HOME at all — and no key replaces it, since no agent authenticates with an API key', () => {
+    expect(codexSpawnEnvExtras('codex', null).attribution).toEqual({})
   })
 
-  it('a non-codex vendor never gets CODEX_HOME even if codexHomeDir were somehow non-null, and keeps its own RUNTIME_CREDENTIAL_ENV_KEYS allowlist', () => {
-    const extras = codexSpawnEnvExtras('claude', '/tmp/scratch/codex-home')
-    expect(extras.attribution).toEqual({})
-    expect(extras.extraAllowlistKeys).toEqual(['ANTHROPIC_API_KEY'])
+  it('a non-codex vendor never gets CODEX_HOME even if codexHomeDir were somehow non-null', () => {
+    expect(codexSpawnEnvExtras('claude', '/tmp/scratch/codex-home').attribution).toEqual({})
+  })
+})
+
+describe('missingSubscriptionLoginReason — O3 (names where Vinaya looked and how to sign in, never an API key)', () => {
+  it('claude: names the credential file in the Claude config directory and the sign-in command', () => {
+    const reason = missingSubscriptionLoginReason('claude', { CLAUDE_CONFIG_DIR: '/custom/claude' })
+    expect(reason).toContain(join('/custom/claude', '.credentials.json'))
+    expect(reason).toContain('/login')
+  })
+
+  it('claude: falls back to the documented default config directory when the operator overrides nothing', () => {
+    expect(missingSubscriptionLoginReason('claude', {})).toContain(join(homedir(), '.claude', '.credentials.json'))
+  })
+
+  it('codex: names the login this host holds and the sign-in command', () => {
+    const reason = missingSubscriptionLoginReason('codex', { CODEX_HOME: '/custom/codex' })
+    expect(reason).toContain(join('/custom/codex', 'auth.json'))
+    expect(reason).toContain('credential store')
+    expect(reason).toContain('codex login')
+  })
+
+  it('O1: no refusal ever asks the operator for an API key, or names one by variable', () => {
+    for (const agent of AGENT_VENDOR_NAMES) {
+      const reason = missingSubscriptionLoginReason(agent, {})
+      expect(reason, `${agent} names a credential variable`).not.toMatch(/[A-Z]+_API_KEY/)
+      expect(reason.toLowerCase(), `${agent} asks for a key`).not.toMatch(
+        /set .{0,20}api key|api key .{0,20}(required|missing)/
+      )
+    }
+  })
+
+  it('O2: gemini reads as the no-subscription-login refusal, not a missing credential file', () => {
+    expect(missingSubscriptionLoginReason('gemini', {})).toBe(NO_SUBSCRIPTION_LOGIN_REASON)
+    expect(NO_SUBSCRIPTION_LOGIN_REASON).toContain('no subscription login in Vinaya yet')
   })
 })
 

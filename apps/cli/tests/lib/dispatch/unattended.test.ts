@@ -268,35 +268,49 @@ function buildGitFixture(
   return { home, cwd, binDir, promptFile, markerFile, envCaptureFile }
 }
 
-/** Same shape as `runDispatch`, but strips `ANTHROPIC_API_KEY` from the spawned CLI's own environment first — the Operator's real shell may have one set, which would silently give a "no credential" fixture a real credential and defeat the test. */
-function runDispatchNoApiKey(
+/**
+ * Same shape as `runDispatch`, but drops `CLAUDE_CONFIG_DIR` from the
+ * spawned CLI's own environment first — the Operator's real shell may
+ * override it, which would point a "no subscription login" fixture at a
+ * real credential directory outside its own scratch `HOME` and defeat the
+ * test. No API-key variable needs dropping: no dispatch path reads one.
+ */
+function runDispatchNoAmbientLogin(
   fixture: Fixture,
-  extraArgs: string[]
+  extraArgs: string[],
+  agent = 'claude',
+  extraEnv: NodeJS.ProcessEnv = {}
 ): { status: number; stdout: string; stderr: string } {
-  const { ANTHROPIC_API_KEY: _drop, ...envWithoutApiKey } = process.env
+  const { CLAUDE_CONFIG_DIR: _drop, ...envWithoutConfigDir } = process.env
   return runVinayaDispatch(
     fixture.cwd,
-    ['developer', '--agent', 'claude', '--prompt-file', fixture.promptFile, ...extraArgs],
+    ['developer', '--agent', agent, '--prompt-file', fixture.promptFile, ...extraArgs],
     {
-      ...stripVinayaEnv(envWithoutApiKey),
+      ...stripVinayaEnv(envWithoutConfigDir),
       HOME: fixture.home,
-      PATH: `${fixture.binDir}:${pathWithoutRealVendors()}`
+      PATH: `${fixture.binDir}:${pathWithoutRealVendors()}`,
+      ...extraEnv
     }
   )
 }
 
 describe('vinaya dispatch --unattended — O2 fail-closed refusal (Issue #640, no resolvable credential)', () => {
   it.skipIf(process.platform !== 'darwin')(
-    'refuses before ever spawning the vendor binary, boundary resolved but no ANTHROPIC_API_KEY and no OAuth session credential to stage',
+    'refuses before ever spawning the vendor binary, boundary resolved but no subscription login to stage',
     () => {
       const fixture = buildGitFixture({ requireWorkerIsolation: true })
-      const result = runDispatchNoApiKey(fixture, ['--unattended'])
+      const result = runDispatchNoAmbientLogin(fixture, ['--unattended'])
 
       expect(result.status).not.toBe(0)
       expect(existsSync(fixture.markerFile), 'the vendor binary must never be spawned at all').toBe(false)
       expect(existsSync(fixture.envCaptureFile)).toBe(false)
       expect(result.stderr).toContain('refused')
       expect(result.stderr).toContain('no resolvable credential')
+      // O3: the refusal names where this looked and how to sign in, never
+      // an API key — the operator can act on it without reading the source.
+      expect(result.stderr).toContain(join(fixture.home, '.claude', '.credentials.json'))
+      expect(result.stderr).toContain('/login')
+      expect(result.stderr.toLowerCase()).not.toContain('api key')
 
       const lines = outboxLines(fixture.home) as Array<{ event?: string; reason?: string }>
       const failed = lines.find((l) => l.event === 'dispatch_failed')
@@ -313,7 +327,7 @@ describe('vinaya dispatch --unattended — O2 fail-closed refusal (Issue #640, n
         requireWorkerIsolation: true,
         homeCredential: JSON.stringify({ accessToken: 'fixture-not-a-real-oauth-token' })
       })
-      const result = runDispatchNoApiKey(fixture, ['--unattended'])
+      const result = runDispatchNoAmbientLogin(fixture, ['--unattended'])
 
       expect(result.status, `stderr: ${result.stderr}`).toBe(0)
       expect(existsSync(fixture.markerFile)).toBe(true)
@@ -328,23 +342,21 @@ describe('vinaya dispatch --unattended — O2 fail-closed refusal (Issue #640, n
   )
 
   it.skipIf(process.platform !== 'darwin')(
-    'succeeds without refusal when ANTHROPIC_API_KEY is set, even with no OAuth session credential at all',
+    'O1: a vendor API key on the controller environment no longer authenticates anything — the same fixture still refuses, and still never spawns',
     () => {
       const fixture = buildGitFixture({ requireWorkerIsolation: true })
-      const { ANTHROPIC_API_KEY: _drop, ...envWithoutApiKey } = process.env
-      const result = runVinayaDispatch(
-        fixture.cwd,
-        ['developer', '--agent', 'claude', '--prompt-file', fixture.promptFile, '--unattended'],
-        {
-          ...stripVinayaEnv(envWithoutApiKey),
-          HOME: fixture.home,
-          PATH: `${fixture.binDir}:${pathWithoutRealVendors()}`,
-          ANTHROPIC_API_KEY: 'sk-ant-fixture-not-real'
-        }
-      )
+      // The variable name is COMPOSED rather than written out, for the same
+      // reason `worker-boundary.test.ts`'s own allowlist test composes
+      // hers: no API-key name appears anywhere in this repository's
+      // sources, tests or specs, and a regression test must not be the one
+      // exception that reintroduces one.
+      const result = runDispatchNoAmbientLogin(fixture, ['--unattended'], 'claude', {
+        [`${'ANTHROPIC'}_API_KEY`]: 'sk-ant-fixture-not-real'
+      })
 
-      expect(result.status, `stderr: ${result.stderr}`).toBe(0)
-      expect(existsSync(fixture.markerFile)).toBe(true)
+      expect(result.status).not.toBe(0)
+      expect(existsSync(fixture.markerFile), 'an API key must not start a vendor process').toBe(false)
+      expect(result.stderr).toContain('no resolvable credential')
     }
   )
 })

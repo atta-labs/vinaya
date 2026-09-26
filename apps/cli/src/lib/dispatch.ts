@@ -90,7 +90,7 @@ import {
   tasksExecutionRoot
 } from './run-paths.js'
 import { basename, dirname, join } from 'node:path'
-import { buildWorkerEnv, resolveWorkerBoundaryLaunch, RUNTIME_CREDENTIAL_ENV_KEYS } from './worker-boundary.js'
+import { buildWorkerEnv, resolveWorkerBoundaryLaunch } from './worker-boundary.js'
 import { repoRoot } from './diff-evidence.js'
 
 /**
@@ -2927,25 +2927,18 @@ function sizeOfSafe(path: string): number {
 }
 
 /**
- * Round 6 security review: the (env, extraAllowlistKeys) decision for a
- * confined Codex child's spawn, extracted so it is unit-testable without a
- * real confined dispatch. Two live-verified defects this closes:
+ * Round 6 security review: the environment decision for a confined Codex
+ * child's spawn, extracted so it is unit-testable without a real confined
+ * dispatch. The live-verified defect this closes:
  *
  * CRITICAL — `codexHomeDir` (when set) already carries a real, working
  * `auth.json` written by `codex login --with-access-token`; ALSO setting
  * `CODEX_ACCESS_TOKEN` on that exact process breaks bearer auth entirely
  * (every turn: HTTP 401 "Missing bearer or basic authentication in
  * header"), while `CODEX_HOME` alone authenticates correctly. This never
- * sets `CODEX_ACCESS_TOKEN`.
- *
- * HIGH — `RUNTIME_CREDENTIAL_ENV_KEYS[agent]` (for codex, `CODEX_API_KEY`/
- * `CODEX_ACCESS_TOKEN`) is the API-key-only auth path, passed through from
- * the trusted controller's own env only when no subscription session was
- * staged. When one WAS staged, also copying an operator's own
- * `CODEX_API_KEY` (set for unrelated tooling) silently switches Codex's own
- * auth precedence to the API key instead, with no refusal or diagnostic
- * naming the downgrade — closed by returning no extra allowlist keys at all
- * in that case.
+ * sets `CODEX_ACCESS_TOKEN`, and no credential value of any kind reaches a
+ * confined child's environment — the staged `CODEX_HOME` is the whole
+ * route.
  */
 /**
  * Round 6 review, MAJOR: a failed `codex login --with-access-token` step
@@ -2976,15 +2969,50 @@ export function codexBoundaryFailureReason(agent: AgentVendor, boundaryFailureRe
   return 'startup-failed'
 }
 
+/**
+ * O2: Gemini has no subscription login route in Vinaya — the trusted
+ * controller has nothing to read, nothing to stage, and no API-key
+ * fallback to reach for, so an unattended dispatch refuses before any
+ * spawn rather than launching a child that cannot authenticate.
+ */
+export const NO_SUBSCRIPTION_LOGIN_REASON =
+  'this agent has no subscription login in Vinaya yet, and no agent authenticates with an API key — ' +
+  'dispatch a vendor whose subscription login Vinaya can stage (claude, codex)'
+
+/**
+ * O3: why a confined dispatch found no subscription login, as the operator
+ * reads it — where this looked, and the command that signs in. Never an API
+ * key: no agent authenticates with one, so there is no second route to
+ * suggest. Pure, so the wording is asserted without a real refusal.
+ */
+export function missingSubscriptionLoginReason(
+  agent: AgentVendor,
+  env: Readonly<Record<string, string | undefined>> = process.env
+): string {
+  if (agent === 'claude') {
+    const configDir = env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
+    return (
+      `no Claude subscription login found at ${join(configDir, '.credentials.json')} ` +
+      '(the Claude config directory — CLAUDE_CONFIG_DIR when set, else ~/.claude). ' +
+      'Sign in as the operator with `claude` and its `/login`, then dispatch again.'
+    )
+  }
+  if (agent === 'codex') {
+    const codexHome = env.CODEX_HOME ?? join(homedir(), '.codex')
+    return (
+      `no Codex subscription login found at ${join(codexHome, 'auth.json')} ` +
+      "or in this host's credential store. Sign in as the operator with `codex login`, then dispatch again."
+    )
+  }
+  return NO_SUBSCRIPTION_LOGIN_REASON
+}
+
 export function codexSpawnEnvExtras(
   agent: AgentVendor,
   codexHomeDir: string | null
-): { attribution: Record<string, string>; extraAllowlistKeys: readonly string[] } {
+): { attribution: Record<string, string> } {
   const staged = agent === 'codex' && codexHomeDir !== null
-  return {
-    attribution: staged ? { CODEX_HOME: codexHomeDir as string } : {},
-    extraAllowlistKeys: staged ? [] : (RUNTIME_CREDENTIAL_ENV_KEYS[agent] ?? [])
-  }
+  return { attribution: staged ? { CODEX_HOME: codexHomeDir as string } : {} }
 }
 
 /**
@@ -3492,21 +3520,19 @@ export async function dispatchRole(
       return { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason }
     }
 
-    // O2: the boundary resolved, but a confined `agent` child
-    // still has no way to authenticate — no vendor API key on the parent's
-    // own environment (`RUNTIME_CREDENTIAL_ENV_KEYS[agent]`), and no OAuth
-    // session credential was found to stage (`boundaryLaunch.launch.oauthConfigDir`).
-    // This is exactly this task's own Origin: a confined `claude` dispatch
-    // on a subscription/OAuth-only Mac with no `ANTHROPIC_API_KEY` launched
-    // anyway, tried OAuth/keychain (both denied by the boundary), and hung
-    // silently to the dispatch ceiling with 0-byte output. Refuse here,
-    // before any spawn, naming the reason — the same shape every other
+    // O2: the boundary resolved, but a confined `agent` child still has no
+    // way to authenticate — no subscription login was found to stage
+    // (`boundaryLaunch.launch.oauthConfigDir` for Claude,
+    // `codexAccessToken` for Codex). There is no second route to fall back
+    // to: no agent authenticates with an API key. A dispatch that launched
+    // anyway would try the real credential file and the keychain (both
+    // denied by the boundary) and hang silently to the dispatch ceiling
+    // with 0-byte output. Refuse here, before any spawn, naming where this
+    // looked and how the operator signs in — the same shape every other
     // pre-spawn refusal above already takes.
-    const runtimeCredentialKeys = RUNTIME_CREDENTIAL_ENV_KEYS[agent] ?? []
-    const hasRuntimeApiKey = runtimeCredentialKeys.some((key) => Boolean(process.env[key]))
-    const hasStagedOAuthCredential =
+    const hasStagedSubscriptionLogin =
       boundaryLaunch.launch.oauthConfigDir !== null || boundaryLaunch.launch.codexAccessToken !== null
-    if (!hasRuntimeApiKey && !hasStagedOAuthCredential) {
+    if (!hasStagedSubscriptionLogin) {
       const failureReason: DispatchFailureReason = 'authentication-failed'
       const durationMs = Date.now() - start
       const priorSize = sizeOfSafe(outboxPath)
@@ -3524,8 +3550,7 @@ export async function dispatchRole(
       })
       writeLifecycle(
         `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended start inside the worker boundary has ` +
-          `no resolvable credential (no ${runtimeCredentialKeys.length > 0 ? runtimeCredentialKeys.join('/') : 'known runtime env key'} ` +
-          'set on the parent environment, and no OAuth session credential could be staged)'
+          `no resolvable credential: ${missingSubscriptionLoginReason(agent)}`
       )
       boundaryLaunch.launch.cleanup()
       patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason })
@@ -3586,11 +3611,12 @@ export async function dispatchRole(
       stdio: ['pipe', 'pipe', 'pipe'],
       ...(spawnCwd ? { cwd: spawnCwd } : {}),
       env: resolvedBoundary
-        ? // O1 (round 2 review, BLOCKER): named-through by vendor, never a
-          // blanket credential spread — `RUNTIME_CREDENTIAL_ENV_KEYS`'s own
-          // doc comment records what is (Claude, `ANTHROPIC_API_KEY`,
-          // verified live) and is not (Codex/Gemini, disclosed as unverified
-          // on this host) confirmed.
+        ? // O1 (round 2 review, BLOCKER): an explicit allowlist, never a
+          // blanket spread — and no credential value at all, since no agent
+          // authenticates with an API key. A subscription login reaches the
+          // confined child only as a staged file the profile grants: the
+          // scoped `CLAUDE_CONFIG_DIR` copy, or the task-scoped
+          // `CODEX_HOME`, both named in `attribution` below.
           //
           // Round 2 security review, HIGH: `WORKER_ENV_ALLOWLIST_KEYS`
           // passes `TMPDIR` through from the parent unmodified, still naming
@@ -3602,29 +3628,25 @@ export async function dispatchRole(
           // confined `mkdir -p "$TMPDIR/x"` — a pattern common across
           // `bun install`/`npm`/most POSIX toolchains — resolves to a path
           // the profile actually grants.
-          buildWorkerEnv(
-            process.env,
-            {
-              ...attribution,
-              TMPDIR: resolvedBoundary.tmpDir,
-              TMP: resolvedBoundary.tmpDir,
-              TEMP: resolvedBoundary.tmpDir,
-              // O1: only set when a real OAuth session
-              // credential was actually staged (`resolveWorkerBoundaryLaunch`'s
-              // `stageOAuthCredential` opt, claude-only) — repoints the
-              // confined child's own config-dir lookup at the staged COPY
-              // (`worker-boundary.ts`'s `stageOAuthCredential`), never the
-              // real, denied `<realHome>/.claude`. The key is omitted
-              // entirely (not set to `undefined`) when nothing was staged,
-              // so an API-key-only dispatch's env is unaffected.
-              ...(resolvedBoundary.oauthConfigDir ? { CLAUDE_CONFIG_DIR: resolvedBoundary.oauthConfigDir } : {}),
-              // Round 6 security review, CRITICAL/HIGH — see
-              // `codexSpawnEnvExtras`'s own doc comment for what each half
-              // of this closes.
-              ...codexEnvExtras!.attribution
-            },
-            codexEnvExtras!.extraAllowlistKeys
-          )
+          buildWorkerEnv(process.env, {
+            ...attribution,
+            TMPDIR: resolvedBoundary.tmpDir,
+            TMP: resolvedBoundary.tmpDir,
+            TEMP: resolvedBoundary.tmpDir,
+            // O1: only set when a real OAuth session
+            // credential was actually staged (`resolveWorkerBoundaryLaunch`'s
+            // `stageOAuthCredential` opt, claude-only) — repoints the
+            // confined child's own config-dir lookup at the staged COPY
+            // (`worker-boundary.ts`'s `stageOAuthCredential`), never the
+            // real, denied `<realHome>/.claude`. The key is omitted
+            // entirely (not set to `undefined`) when nothing was staged,
+            // so a non-Claude dispatch's env is unaffected.
+            ...(resolvedBoundary.oauthConfigDir ? { CLAUDE_CONFIG_DIR: resolvedBoundary.oauthConfigDir } : {}),
+            // Round 6 security review, CRITICAL — see
+            // `codexSpawnEnvExtras`'s own doc comment for what this
+            // closes.
+            ...codexEnvExtras!.attribution
+          })
         : { ...process.env, ...attribution }
     })
 

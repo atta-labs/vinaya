@@ -57,41 +57,30 @@ export const WORKER_ENV_ALLOWLIST_KEYS = [
 ] as const
 
 /**
- * O1/O2 (round 2 review, BLOCKER): the model-runtime credential a real
- * vendor CLI needs to keep answering at all once dispatched inside the
- * boundary — `isolation.md` §3's own pre-existing "runtime authentication
- * path" contract, unimplemented by this task until this finding. Verified
- * live on this authoring host, not guessed (`claude --help`): Claude's own
- * `--bare` flag documents that "Anthropic auth is strictly
- * `ANTHROPIC_API_KEY` or `apiKeyHelper` via `--settings` (OAuth and keychain
- * are never read)" — confirming `ANTHROPIC_API_KEY` is a real, first-class
- * auth path, independent of the OAuth session file (`~/.claude/.credentials.json`
- * on this host) the sandbox profile denies. `--bare` itself is NOT threaded
- * through here — its own doc also says it skips "hooks", which would
- * silently disable the pre-existing PreToolUse background-deny mechanism
- * (`writeDispatchSettings`) this task's own brief named a trap ("Preserve
- * and test the incoming PreToolUse rule rather than duplicate it") — so a
- * confined Claude dispatch still tries OAuth/keychain first and falls
- * through to `ANTHROPIC_API_KEY` only because the sandbox denies the former;
- * this is a real but slightly less certain guarantee than `--bare` would
- * give, disclosed here rather than silently assumed.
+ * The subscription logins a dispatched vendor CLI can authenticate from
+ * inside the boundary, and the only routes this module stages. No agent
+ * ever authenticates with an API key: no API-key environment variable is
+ * read, allowlisted into a confined child, or named as a fallback anywhere
+ * on the dispatch path.
  *
- * `codex`/`gemini` entries are NOT verified live — this host has neither
- * binary installed (confirmed: `which codex`/`which gemini` both fail) — so
- * their env var names follow each vendor's own well-documented public
- * convention (`OPENAI_API_KEY`, `GEMINI_API_KEY`/`GOOGLE_API_KEY`) rather
- * than a live-confirmed reading of `--help`: disclosed as unverified rather
- * than invented, the same posture a prior task in this repo's history set
- * for an unverifiable Codex figure (marked explicitly unverified rather
- * than guessed).
- * Keyed by the plain vendor string (never `dispatch.ts`'s own `AgentVendor`
- * type) to avoid a circular import — `dispatch.ts` already imports FROM this
- * module.
+ * - `claude` — the OAuth session credential in the Claude config directory
+ *   (`resolveOAuthConfigSourceDir`), staged as a scoped copy
+ *   (`stageOAuthCredential`).
+ * - `codex` — the cached ChatGPT session (`auth.json` under `CODEX_HOME`,
+ *   or the macOS credential-store item), read by the trusted controller
+ *   (`resolveCodexAccessToken`) and replayed into a task-scoped
+ *   `CODEX_HOME` via `codex login --with-access-token`. `CODEX_ACCESS_TOKEN`
+ *   is that login's own stdin bootstrap value, never an API key and never
+ *   set on the confined child's environment — doing so breaks the staged
+ *   session's bearer auth outright (`isolation.md` §3).
+ * - `gemini` — no subscription login exists in Vinaya yet, so a dispatch
+ *   refuses rather than reaching for a key (`dispatch.ts`).
  */
-export const RUNTIME_CREDENTIAL_ENV_KEYS: Readonly<Record<string, readonly string[]>> = {
-  claude: ['ANTHROPIC_API_KEY'],
-  codex: ['CODEX_API_KEY', 'CODEX_ACCESS_TOKEN'],
-  gemini: ['GEMINI_API_KEY', 'GOOGLE_API_KEY']
+export const SUBSCRIPTION_LOGIN_AGENTS = ['claude', 'codex'] as const
+
+/** True when `agent` has a subscription login this module can stage — the negative case is the Gemini refusal `dispatch.ts` raises before any spawn. */
+export function hasSubscriptionLogin(agent: string): boolean {
+  return (SUBSCRIPTION_LOGIN_AGENTS as readonly string[]).includes(agent)
 }
 
 const CODEX_AUTH_FILE_NAME = 'auth.json'
@@ -380,8 +369,8 @@ function runRealCodexAuthPreflight(input: {
  * an OAuth-authenticated session's credential. `isolation.md` §1's HOME deny
  * rule denies this path unconditionally (it is a subpath of the real
  * `HOME`) — exactly the boundary this task must NOT widen (per this task's
- * own Traps section) — so a confined `claude` session that authenticates by
- * subscription rather than `ANTHROPIC_API_KEY` needs a scoped COPY staged
+ * own Traps section) — so a confined `claude` session, which authenticates
+ * by subscription and nothing else, needs a scoped COPY staged
  * somewhere the profile already grants access to, never a new grant onto
  * this real path.
  */
@@ -442,9 +431,7 @@ export function stageOAuthCredential(
 
 /**
  * Builds a confined child's environment from an explicit allowlist —
- * `sourceEnv`'s own `WORKER_ENV_ALLOWLIST_KEYS` values plus `extraAllowlistKeys`
- * (the dispatched vendor's own `RUNTIME_CREDENTIAL_ENV_KEYS`, named by the
- * caller — this function stays vendor-agnostic), plus every entry in
+ * `sourceEnv`'s own `WORKER_ENV_ALLOWLIST_KEYS` values, plus every entry in
  * `attribution` (dispatch's own `VINAYA_RUN_ID`/`VINAYA_ROLE`/`VINAYA_TASK`/
  * `VINAYA_ROUND` — the "scoped broker channel" a worker needs to
  * authenticate itself to `broker.ts`'s `authenticateWorkerInvocation`, see
@@ -455,14 +442,20 @@ export function stageOAuthCredential(
  * read from `sourceEnv`'s allowlist (there is no overlap today —
  * `VINAYA_*` names are not in `WORKER_ENV_ALLOWLIST_KEYS` — but a future
  * caller should not have to reason about which side wins).
+ *
+ * There is deliberately no per-vendor passthrough parameter: the allowlist
+ * is the whole list. The only keys this ever carried were API keys, and no
+ * agent authenticates with one — a subscription login reaches the confined
+ * child as a staged file the profile grants (`stageOAuthCredential`, the
+ * task-scoped `CODEX_HOME`), never as a credential value on its
+ * environment.
  */
 export function buildWorkerEnv(
   sourceEnv: Readonly<Record<string, string | undefined>>,
-  attribution: Readonly<Record<string, string | undefined>>,
-  extraAllowlistKeys: readonly string[] = []
+  attribution: Readonly<Record<string, string | undefined>>
 ): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = {}
-  for (const key of [...WORKER_ENV_ALLOWLIST_KEYS, ...extraAllowlistKeys]) {
+  for (const key of WORKER_ENV_ALLOWLIST_KEYS) {
     if (sourceEnv[key] !== undefined) env[key] = sourceEnv[key]
   }
   return { ...env, ...attribution }
@@ -614,8 +607,9 @@ function sbLiteralAllows(operations: string, files: readonly string[]): string {
  *    socket is denied specifically regardless (a unix-socket rule, disjoint
  *    from the tcp port rules), matching the probe's own documented posture
  *    for check 5. **What this does and does not close (round 3 security
- *    review, HIGH):** a credential threaded into the confined env
- *    (`RUNTIME_CREDENTIAL_ENV_KEYS`) is inherited by any subprocess a
+ *    review, HIGH):** a staged subscription credential (the scoped
+ *    `CLAUDE_CONFIG_DIR` copy, the task-scoped `CODEX_HOME`) is reachable
+ *    by any subprocess a
  *    dispatched agent runs, and Seatbelt confinement has no concept of
  *    "which process in the tree may use this socket" — only which
  *    destinations the WHOLE tree may reach. Restricting to 80/443 closes
@@ -1189,13 +1183,6 @@ export function resolveWorkerBoundaryLaunch(
           '[shell_environment_policy.filters]',
           '# Codex itself receives this brokered session; its repository commands never do.',
           '"CODEX_ACCESS_TOKEN" = "exclude"',
-          // Security review (round 5), HIGH: `CODEX_API_KEY` is the sibling
-          // credential `RUNTIME_CREDENTIAL_ENV_KEYS` names alongside
-          // `CODEX_ACCESS_TOKEN` and `buildWorkerEnv` passes through from the
-          // trusted controller's own env when set there — excluded here too,
-          // for the same reason: Codex's own repository-spawned subprocesses
-          // must never see it, only the Codex parent itself.
-          '"CODEX_API_KEY" = "exclude"',
           ''
         ].join('\n'),
         { mode: 0o600 }

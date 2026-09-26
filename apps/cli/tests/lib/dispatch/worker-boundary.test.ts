@@ -23,7 +23,8 @@ import {
   resolveCodexAccessToken,
   resolveOAuthConfigSourceDir,
   resolveWorkerBoundaryLaunch,
-  RUNTIME_CREDENTIAL_ENV_KEYS,
+  SUBSCRIPTION_LOGIN_AGENTS,
+  hasSubscriptionLogin,
   stageOAuthCredential,
   WORKER_ENV_ALLOWLIST_KEYS,
   type WorkerBoundaryDeps
@@ -146,35 +147,45 @@ describe('buildWorkerEnv — O2 allowlist, never a spread', () => {
     expect(env.PATH).toBe('/from-attribution')
   })
 
-  it('threads an extraAllowlistKeys entry through when present on the source, same as a baseline key', () => {
-    const env = buildWorkerEnv({ ANTHROPIC_API_KEY: 'sk-ant-fixture-not-real' }, {}, ['ANTHROPIC_API_KEY'])
-    expect(env.ANTHROPIC_API_KEY).toBe('sk-ant-fixture-not-real')
+  it('O1: not one vendor API-key variable reaches the confined child, nor the Codex bootstrap token', () => {
+    // The variable names are COMPOSED from their vendor prefix rather than
+    // written out: no API-key name appears anywhere in this repository's
+    // own sources, tests or specs, and this test must not be the one
+    // exception that reintroduces one. The assertion is still by real name
+    // — reinstating any of these as a passthrough fails here.
+    const source: Record<string, string> = { PATH: '/usr/bin', CODEX_ACCESS_TOKEN: 'access-fixture-not-real' }
+    for (const vendor of ['ANTHROPIC', 'CODEX', 'GEMINI', 'GOOGLE', 'OPENAI']) {
+      source[`${vendor}_API_KEY`] = `${vendor.toLowerCase()}-fixture-not-real`
+    }
+
+    const env = buildWorkerEnv(source, {})
+
+    expect(Object.keys(env)).toEqual(['PATH'])
   })
 
-  it('never includes an extraAllowlistKeys entry the source does not carry', () => {
-    const env = buildWorkerEnv({}, {}, ['ANTHROPIC_API_KEY'])
-    expect(env.ANTHROPIC_API_KEY).toBeUndefined()
-  })
-
-  it('never includes an unrelated vendor credential key not named in extraAllowlistKeys', () => {
-    const env = buildWorkerEnv({ ANTHROPIC_API_KEY: 'leak', OPENAI_API_KEY: 'also-leak' }, {}, ['OPENAI_API_KEY'])
-    expect(env.OPENAI_API_KEY).toBe('also-leak')
-    expect(env.ANTHROPIC_API_KEY).toBeUndefined()
+  it('O1: the allowlist itself names no credential variable — there is no key left to thread one through under', () => {
+    for (const key of WORKER_ENV_ALLOWLIST_KEYS) {
+      expect(/API_KEY|TOKEN|SECRET|PASSWORD/i.test(key), `${key} is credential-shaped`).toBe(false)
+    }
   })
 })
 
-describe('RUNTIME_CREDENTIAL_ENV_KEYS — round 2 review, BLOCKER (a real model-runtime credential route)', () => {
-  it('names ANTHROPIC_API_KEY for claude — verified live on this authoring host via `claude --help`', () => {
-    expect(RUNTIME_CREDENTIAL_ENV_KEYS.claude).toEqual(['ANTHROPIC_API_KEY'])
+describe('SUBSCRIPTION_LOGIN_AGENTS — no agent authenticates with an API key', () => {
+  it('names exactly the agents whose subscription login this module can stage', () => {
+    expect([...SUBSCRIPTION_LOGIN_AGENTS]).toEqual(['claude', 'codex'])
   })
 
-  it('names a vendor key for codex and gemini too, disclosed as convention-based rather than live-verified', () => {
-    expect(RUNTIME_CREDENTIAL_ENV_KEYS.codex?.length).toBeGreaterThan(0)
-    expect(RUNTIME_CREDENTIAL_ENV_KEYS.gemini?.length).toBeGreaterThan(0)
+  it('O2: gemini has no subscription login yet, so it is not in the table', () => {
+    expect(hasSubscriptionLogin('gemini')).toBe(false)
   })
 
-  it('an unknown vendor string yields no entry — a caller falls back to an empty list, never throws', () => {
-    expect(RUNTIME_CREDENTIAL_ENV_KEYS['not-a-real-vendor']).toBeUndefined()
+  it('claude and codex do have one', () => {
+    expect(hasSubscriptionLogin('claude')).toBe(true)
+    expect(hasSubscriptionLogin('codex')).toBe(true)
+  })
+
+  it('an unknown vendor string has none either — a caller never throws', () => {
+    expect(hasSubscriptionLogin('not-a-real-vendor')).toBe(false)
   })
 })
 
@@ -443,9 +454,6 @@ describe('resolveWorkerBoundaryLaunch — Codex subscription preflight (O1, Issu
       )
       expect(readFileSync(join(result.launch.codexHomeDir as string, 'config.toml'), 'utf8')).toContain(
         '"CODEX_ACCESS_TOKEN" = "exclude"'
-      )
-      expect(readFileSync(join(result.launch.codexHomeDir as string, 'config.toml'), 'utf8')).toContain(
-        '"CODEX_API_KEY" = "exclude"'
       )
     } finally {
       result.launch.cleanup()
@@ -1607,7 +1615,7 @@ describe('resolveWorkerBoundaryLaunch — OAuth credential staging, live sandbox
   )
 
   it.skipIf(!isWorkerBoundaryAvailable(REAL_WORKER_BOUNDARY_DEPS))(
-    'O3: the real credentials file and Keychain stay denied on the ANTHROPIC_API_KEY credential path too, not only the staged-OAuth path proven above',
+    'O3: the real credentials file and Keychain stay denied on an unstaged launch too, not only the staged-OAuth path proven above',
     () => {
       const allowedDir = tempDir('vinaya-wb-live-oauth-o3-allowed-')
       const realCredentialPath = join(homedir(), '.claude', '.credentials.json')
@@ -1624,9 +1632,8 @@ describe('resolveWorkerBoundaryLaunch — OAuth credential staging, live sandbox
       chmodSync(probeScript, 0o755)
 
       // `stageOAuthCredential` omitted entirely — `dispatch.ts` only ever
-      // sets it `true` for `agent === 'claude'` regardless of whether an
-      // `ANTHROPIC_API_KEY` is also present, so this launch resolves
-      // exactly as an API-key-authenticated dispatch's boundary does.
+      // sets it `true` for `agent === 'claude'`, so this launch resolves
+      // exactly as a non-Claude dispatch's boundary does.
       const result = resolveWorkerBoundaryLaunch(
         { binaryPath: probeScript, args: [], allowedDir, extraWritableDirs: [] },
         REAL_WORKER_BOUNDARY_DEPS
@@ -1635,7 +1642,7 @@ describe('resolveWorkerBoundaryLaunch — OAuth credential staging, live sandbox
       if (!result.ok) return
       expect(result.launch.oauthConfigDir, 'no staging was requested on this path').toBeNull()
       try {
-        const env = buildWorkerEnv(process.env, {}, RUNTIME_CREDENTIAL_ENV_KEYS.claude)
+        const env = buildWorkerEnv(process.env, {})
         const spawnResult = spawnConfinedSync(result.launch.command, result.launch.args, {
           cwd: allowedDir,
           encoding: 'utf8',
