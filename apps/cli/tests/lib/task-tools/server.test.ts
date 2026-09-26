@@ -23,6 +23,7 @@ function serverWith(handlers: Partial<TaskToolHandlers>) {
       ok: true,
       result: { items: [], nextCursor: null, observedAt: '2026-01-01T00:00:00.000Z', freshness: 'unknown' }
     }),
+    task_pr_read: () => ({ ok: false, error: { kind: 'capability', message: 'stub' } }),
     task_resume: () => ({ ok: false, error: { kind: 'capability', message: 'stub' } }),
     task_cancel: () => ({ ok: false, error: { kind: 'capability', message: 'stub' } }),
     task_start: () => ({ ok: false, error: { kind: 'capability', message: 'stub' } })
@@ -102,6 +103,7 @@ describe('dispatchToolCall — the grant gate runs on the real call path, before
       ok: true,
       result: { items: [], nextCursor: null, observedAt: '2026-01-01T00:00:00.000Z', freshness: 'unknown' }
     }),
+    task_pr_read: () => ({ ok: false, error: { kind: 'capability', message: 'stub' } }),
     task_resume: () => ({ ok: false, error: { kind: 'capability', message: 'stub' } }),
     task_cancel: () => ({ ok: false, error: { kind: 'capability', message: 'stub' } }),
     task_start: () => ({ ok: false, error: { kind: 'capability', message: 'stub' } })
@@ -158,6 +160,7 @@ describe('serve — two different tasks never interleave through the shared per-
         ok: true,
         result: { items: [], nextCursor: null, observedAt: '2026-01-01T00:00:00.000Z', freshness: 'unknown' }
       }),
+      task_pr_read: () => ({ ok: false, error: { kind: 'capability', message: 'stub' } }),
       task_resume: async (input) => {
         const task = String((input as { task: number }).task)
         const prev = process.env.VINAYA_TASK
@@ -232,6 +235,7 @@ describe('serve — a failure on one line never wedges dispatch for a later line
         ok: true,
         result: { items: [], nextCursor: null, observedAt: '2026-01-01T00:00:00.000Z', freshness: 'unknown' }
       }),
+      task_pr_read: () => ({ ok: false, error: { kind: 'capability', message: 'stub' } }),
       task_resume: () => ({ ok: false, error: { kind: 'capability', message: 'stub' } }),
       task_cancel: () => ({ ok: false, error: { kind: 'capability', message: 'stub' } }),
       task_start: () => ({ ok: false, error: { kind: 'capability', message: 'stub' } })

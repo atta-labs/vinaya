@@ -11,7 +11,7 @@ import { TASK_TOOLS_MCP_SERVER_NAME } from '../../../src/lib/task-tools/server.j
  * Protocol-level fixtures (O3): a REAL JSON-RPC client drives the shared server
  * over real stdio, spawned via the exact command the Claude adapter's `.mcp.json`
  * declares — and asserted identical to the Codex adapter's TOML — so both
- * adapters are proven at once. It discovers the five tools, calls `task_status`
+ * adapters are proven at once. It discovers the six tools, calls `task_status`
  * and `task_start` end to end, and is refused on malformed input, an unknown
  * run, a duplicate start, and a tool not in the catalog. A separate scenario
  * proves a disconnect leaves no second run.
@@ -277,11 +277,11 @@ describe('task-tools MCP server — protocol fixtures on the adapter command', (
     expect(toml).toContain(`args = [${claude.args.map((a) => JSON.stringify(a)).join(', ')}]`)
   })
 
-  it('discovers exactly the five catalog tools, each with an object input schema', async () => {
+  it('discovers exactly the six catalog tools, each with an object input schema', async () => {
     const res = await client.request('tools/list')
     const tools = (res.result?.tools ?? []) as Array<{ name: string; inputSchema: { type?: string } }>
     expect(tools.map((t) => t.name).sort()).toEqual(
-      ['task_cancel', 'task_escalation_read', 'task_resume', 'task_start', 'task_status'].sort()
+      ['task_cancel', 'task_escalation_read', 'task_pr_read', 'task_resume', 'task_start', 'task_status'].sort()
     )
     expect(tools.every((t) => t.inputSchema?.type === 'object')).toBe(true)
   })

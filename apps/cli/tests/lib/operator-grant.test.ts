@@ -18,6 +18,7 @@ const EXPECTED_GRANT = [
   'task_start',
   'task_status',
   'task_escalation_read',
+  'task_pr_read',
   'task_resume',
   'task_cancel',
   'task_status_follow'
@@ -39,12 +40,12 @@ const UNGRANTED = [
   'task_start ' // a trailing-space near-miss is still not the granted name
 ]
 
-describe('OPERATOR_TOOL_GRANT — the five task tools plus status follow, and nothing else', () => {
-  it('is exactly the five catalog tools plus the status-follow read', () => {
+describe('OPERATOR_TOOL_GRANT — the six task tools plus status follow, and nothing else', () => {
+  it('is exactly the six catalog tools plus the status-follow read', () => {
     expect([...OPERATOR_TOOL_GRANT] as string[]).toEqual(EXPECTED_GRANT)
     expect(OPERATOR_TOOL_GRANT).toContain(OPERATOR_STATUS_FOLLOW)
     for (const name of TASK_TOOL_NAMES) expect(OPERATOR_TOOL_GRANT).toContain(name)
-    // Six grants: five typed tools + one follow read. No more.
+    // Seven grants: six typed tools + one follow read. No more.
     expect(OPERATOR_TOOL_GRANT.length as number).toBe(TASK_TOOL_NAMES.length + 1)
   })
 

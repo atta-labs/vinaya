@@ -6,6 +6,11 @@
  * matters — cancel/resume/start are checked before status/escalation, so an
  * utterance naming a control verb ("cancel the paused task") is never
  * misread as a status question just because it also mentions a state word.
+ * `task_pr_read` is checked ahead of the escalation and status words for the
+ * same reason in the other direction: "why is the PR red?" and "which check
+ * failed?" are questions about the forge's own report on the pull request,
+ * not about the locally persisted pause packet a `why.*stuck` utterance
+ * means, and not about the one-line loop state `task_status` answers.
  *
  * This module is also where the Operator's grant check lives
  * (`refuseUngrantedTool`): it refuses any tool outside the grant declared in
@@ -25,6 +30,8 @@ import type { TaskToolName } from '@attalabs/aeg-core'
 const CANCEL_WORDS = /\b(cancel|abort|kill|stop|terminate)\b/i
 const RESUME_WORDS = /\b(resume|continue|carry on|pick .* back up|unpause)\b/i
 const START_WORDS = /\b(start|kick off|begin|dispatch|launch)\b/i
+const PR_READ_WORDS =
+  /(\bpull request\b|\bpr\b|\bci\b|\bchecks\b|\bcheck[- ]?runs?\b|\bfailing\b|\bfailed\b|\bred\b|\bverdicts?\b|\breview record\b|\bmerge gate\b)/i
 const ESCALATION_WORDS =
   /\b(escalat\w*|why.*paused|why.*stuck|packet|stuck|blocked on|needs a ruling|needs a decision)\b/i
 const STATUS_WORDS = /\b(status|state|how.*(going|coming along|doing)|progress|check on|running\??|is it done)\b/i
@@ -32,6 +39,7 @@ const STATUS_WORDS = /\b(status|state|how.*(going|coming along|doing)|progress|c
 export function routeTaskToolIntent(utterance: string): TaskToolName | null {
   if (CANCEL_WORDS.test(utterance)) return 'task_cancel'
   if (RESUME_WORDS.test(utterance)) return 'task_resume'
+  if (PR_READ_WORDS.test(utterance)) return 'task_pr_read'
   if (ESCALATION_WORDS.test(utterance)) return 'task_escalation_read'
   if (START_WORDS.test(utterance)) return 'task_start'
   if (STATUS_WORDS.test(utterance)) return 'task_status'

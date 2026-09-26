@@ -1,8 +1,9 @@
 /**
  * The shared, transport-agnostic task-tool surface (O1) — the ONE place the
  * catalog (`@attalabs/aeg-core`'s `TASK_TOOL_CATALOG`) is bound to the CLI-side
- * handlers (`handlers.ts` for the reads and refusing stubs; `start.ts` for
- * `task_start`), and the ONE place the MCP wire protocol is spoken. Both
+ * handlers (`handlers.ts` for the two outbox reads, `pr-read.ts` for the
+ * forge read; `start.ts` for `task_start`), and the ONE place the MCP wire
+ * protocol is spoken. Both
  * runtime adapters (`adapters.ts`: Claude's `.mcp.json`, Codex's `[mcp_servers]`
  * TOML) register the SAME server command; they differ only in the registration
  * file format, never in the protocol or the tools exposed. So a fixture that
@@ -38,6 +39,7 @@ import { type Readable, Writable } from 'node:stream'
 import { defaultTaskCancelHandler } from './cancel.js'
 import type { TaskToolCallResult } from './handlers.js'
 import { taskEscalationReadHandler, taskStatusHandler } from './handlers.js'
+import { taskPrReadHandler } from './pr-read.js'
 import { refuseUngrantedTool } from './router.js'
 import { defaultTaskResumeHandler } from './resume.js'
 import { defaultTaskStartHandler } from './start.js'
@@ -80,15 +82,19 @@ export type ToolHandler = (
 export type TaskToolHandlers = Record<TaskToolName, ToolHandler>
 
 /**
- * The default binding: the two pure reads from `handlers.ts`, and the three
- * real, caller-context-aware mutating handlers, each from its own module —
- * `task_start` (`start.ts`), `task_resume` (`resume.ts`), `task_cancel`
- * (`cancel.ts`). This is the single wiring point O1 names — a catalog tool
- * with no entry here is a type error, not a silent gap.
+ * The default binding: the two pure reads from `handlers.ts`, the forge read
+ * from `pr-read.ts`, and the three real, caller-context-aware mutating
+ * handlers, each from its own module — `task_start` (`start.ts`),
+ * `task_resume` (`resume.ts`), `task_cancel` (`cancel.ts`). This is the
+ * single wiring point O1 names — a catalog tool with no entry here is a type
+ * error, not a silent gap. `task_pr_read` ignores the caller context for the
+ * same reason the other reads do: it performs no effect to authenticate, and
+ * holds no credential the caller could be granted.
  */
 export const defaultTaskToolHandlers: TaskToolHandlers = {
   task_status: (input) => taskStatusHandler(input),
   task_escalation_read: (input) => taskEscalationReadHandler(input),
+  task_pr_read: (input) => taskPrReadHandler(input),
   task_resume: (input, ctx) => defaultTaskResumeHandler(input, ctx),
   task_cancel: (input, ctx) => defaultTaskCancelHandler(input, ctx),
   task_start: (input, ctx) => defaultTaskStartHandler(input, ctx)
@@ -168,6 +174,12 @@ export const TASK_TOOL_INPUT_JSON_SCHEMAS: Record<TaskToolName, Record<string, u
   task_escalation_read: {
     type: 'object',
     properties: { task: TASK_REF_JSON_SCHEMA, ...CURSOR_LIMIT_PROPS },
+    required: ['task'],
+    additionalProperties: false
+  },
+  task_pr_read: {
+    type: 'object',
+    properties: { task: TASK_REF_JSON_SCHEMA, pr: { type: 'integer', minimum: 1 } },
     required: ['task'],
     additionalProperties: false
   },

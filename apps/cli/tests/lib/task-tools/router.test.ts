@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { defaultTaskCancelHandler } from '../../../src/lib/task-tools/cancel.js'
 import { taskEscalationReadHandler, taskStatusHandler } from '../../../src/lib/task-tools/handlers.js'
+import { taskPrReadHandler } from '../../../src/lib/task-tools/pr-read.js'
 import { routeTaskToolIntent } from '../../../src/lib/task-tools/router.js'
 import { defaultTaskResumeHandler } from '../../../src/lib/task-tools/resume.js'
 import { defaultTaskStartHandler } from '../../../src/lib/task-tools/start.js'
@@ -23,6 +24,12 @@ describe('routeTaskToolIntent — read intents', () => {
     expect(routeTaskToolIntent('why did task 558 get stuck?')).toBe('task_escalation_read')
     expect(routeTaskToolIntent('what does the escalation packet say for the paused run?')).toBe('task_escalation_read')
     expect(routeTaskToolIntent('this task seems blocked on something, what does it need?')).toBe('task_escalation_read')
+  })
+
+  it('routes a question about the pull request itself to task_pr_read, not to either other read', () => {
+    expect(routeTaskToolIntent('why is the pull request for task 9 red?')).toBe('task_pr_read')
+    expect(routeTaskToolIntent('which checks are failing on it?')).toBe('task_pr_read')
+    expect(routeTaskToolIntent('did the reviewers post a verdict yet?')).toBe('task_pr_read')
   })
 })
 
@@ -59,6 +66,7 @@ describe('routing never reaches the wrong handler', () => {
     task_start: defaultTaskStartHandler,
     task_status: taskStatusHandler,
     task_escalation_read: taskEscalationReadHandler,
+    task_pr_read: taskPrReadHandler,
     task_resume: defaultTaskResumeHandler,
     task_cancel: defaultTaskCancelHandler
   } as const

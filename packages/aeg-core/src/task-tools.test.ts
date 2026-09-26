@@ -11,8 +11,10 @@ import {
 } from './task-tools'
 
 describe('TASK_TOOL_CATALOG', () => {
-  it('carries exactly the five task tools, in TASK_TOOL_NAMES order', () => {
+  it('carries exactly the six task tools, in TASK_TOOL_NAMES order', () => {
     expect(TASK_TOOL_CATALOG.map((tool) => tool.name)).toEqual([...TASK_TOOL_NAMES])
+    expect(TASK_TOOL_NAMES).toContain('task_pr_read')
+    expect(TASK_TOOL_NAMES.length).toBe(6)
   })
 
   it('every tool has a purpose, boundaries, and at least one example', () => {
