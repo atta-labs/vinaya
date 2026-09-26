@@ -47,6 +47,18 @@
  *     and relaunching it would put a second developer on one branch. Because the claim is written before the launch, a client
  *     that disconnects mid-call leaves at most one run — a reconnect replays
  *     the claim, it does not start again.
+ *   - refuses (`precondition`) a task whose run is in a state another tool
+ *     owns, naming that tool: a LIVE driver is `task_status`'s to watch, and
+ *     a PAUSED run is `task_resume`'s to continue behind a Principal ruling.
+ *     Every other state this tool starts — a task never dispatched, a run
+ *     that EXITED (killed, crashed, ended by a signal, no pause written), and
+ *     a published one — because `runTask` re-attaches to the task's own open
+ *     pull request when no driver is live, so starting an exited run
+ *     continues it rather than duplicating it. The state is read through the
+ *     SAME `deriveLoopState` derivation `task_status` reports from, so the
+ *     refusal and the state an Operator was just shown can never disagree;
+ *     reading a raw pause record instead would refuse a task that paused,
+ *     resumed and published long ago, since a pause record is never cleared.
  *   - reports a start only once the launched run is CONFIRMED ALIVE: it
  *     resolves the task's forge Issue — a standalone target names its own
  *     Issue, a tranche target is resolved over the open tranche-labeled Issues,
@@ -94,6 +106,7 @@ import { type AgentVendor, isAgentVendor } from '../dispatch.js'
 import { isDriverPidAlive, readDriverLock } from '../dev-review-loop/pause-resume.js'
 import { ensureRunDir, runPath, runtimeDirForThisRepo } from '../run-paths.js'
 import { repoRoot as gitRepoRoot } from '../diff-evidence.js'
+import { deriveLoopState, type TaskLoopState } from '../task-status.js'
 import { describeTaskRef, readTaskIssueFacts, resolveOpenTaskIssueForRef } from './handlers.js'
 import type { TaskIssueFacts, TaskToolCallResult } from './handlers.js'
 import type { CallerContext } from './server.js'
@@ -160,6 +173,8 @@ export type TaskStartDeps = {
   issueFacts: (issue: number) => TaskIssueFacts
   /** Is a live driver currently running this Issue? The SAME observable (`driver.pid.json`) a fresh launch is confirmed against. */
   isRunAlive: (issue: number) => boolean
+  /** The task's current loop state, read through the SAME derivation `task_status` reports from (`deriveLoopState`, `../task-status.js`) — never a raw pause-record read, which is never cleared on resume and so would refuse a task that paused and published long ago. It is what decides whether this start belongs to another tool. */
+  loopState: (issue: number) => TaskLoopState
   /** Is this pid still running? Asked of the pid a claim's own launch recorded — the one liveness signal that exists BEFORE a driver lock does, and so the one that tells a still-preparing run apart from a dead claim. */
   isPidAlive: (pid: number) => boolean
   /**
@@ -365,6 +380,38 @@ function resolveStartTarget(
   return { ok: true, issue: ref.issue }
 }
 
+/**
+ * The one state gate: is this task's run another tool's to act on?
+ *
+ * `null` means `task_start` owns this state and may launch. A refusal names
+ * the tool that does own it, so an Operator handed one is never left without
+ * a next action — the failure this gate exists to close was a state with NO
+ * working tool at all, and a refusal that names none recreates it.
+ *
+ * Only two states are refused. A run that EXITED — killed, crashed, ended by
+ * a signal, with no pause record written — is deliberately NOT one of them:
+ * `runTask` re-attaches to the task's own open pull request whenever no
+ * driver is live, so starting it continues that run rather than opening a
+ * second one, and it is the only tool that can (`task_resume` refuses a run
+ * with no pause to resume from). `not_started`, `no_driver` and `published`
+ * take the same launch path for the same reason.
+ */
+export function startRefusalForState(state: TaskLoopState, target: TaskToolRef): TaskToolError | null {
+  if (state.kind === 'running') {
+    return taskToolError(
+      'precondition',
+      `task_start: ${describeTaskRef(target)} already has a live driver (pid ${state.pid}) — refusing to start a second developer on one branch. Watch the run it already has with \`task_status\`.`
+    )
+  }
+  if (state.kind === 'paused') {
+    return taskToolError(
+      'precondition',
+      `task_start: ${describeTaskRef(target)}'s run is paused (${state.reason}) — a paused run is continued by \`task_resume\`, which requires a Principal ruling posted on the run's own pull request. \`task_start\` never resumes past a pause.`
+    )
+  }
+  return null
+}
+
 function claimIsStale(record: StartRecord, now: () => string): boolean {
   const startedAt = Date.parse(record.startedAt)
   const current = Date.parse(now())
@@ -504,6 +551,7 @@ export const defaultTaskStartDeps: TaskStartDeps = {
   resolveIssue: resolveOpenTaskIssueForRef,
   issueFacts: readTaskIssueFacts,
   isRunAlive: defaultIsRunAlive,
+  loopState: (issue) => deriveLoopState(runtimeDirForThisRepo(), issue),
   isPidAlive: isDriverPidAlive,
   launch: defaultLaunch,
   now: () => new Date().toISOString()
@@ -597,6 +645,15 @@ export function createTaskStartHandler(
         return { ok: false, error: resolved.error }
       }
       const issue = resolved.issue
+      // The state gate, after the Issue is known and before anything is
+      // launched. A refusal releases this call's own claim for the same
+      // reason a target refusal does: the identity must stay reclaimable by
+      // the call that finally does own this state.
+      const refusal = startRefusalForState(deps.loopState(issue), target)
+      if (refusal !== null) {
+        deps.store.release(requestId)
+        return { ok: false, error: refusal }
+      }
       let outcome: LaunchResult
       try {
         outcome = await deps.launch({ ref: target, agent, issue }, { requestId, caller: caller.id })
