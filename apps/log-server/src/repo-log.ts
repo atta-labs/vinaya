@@ -430,6 +430,23 @@ export class RepoLog extends DurableObject<Env> {
     }
   }
 
+  /**
+   * A viewer never has to send anything to stay connected (spec § 5): the
+   * runtime answers protocol pings itself, and an incoming message costs
+   * twenty times an outgoing one, so anything a viewer does send is read and
+   * ignored rather than answered.
+   */
+  override webSocketMessage(): void {}
+
+  /**
+   * Finish the closing handshake from this end. `1005` (no code in the peer's
+   * frame) and `1006` (the connection dropped without one) cannot be sent
+   * back, so those close normally instead.
+   */
+  override webSocketClose(socket: WebSocket, code: number): void {
+    socket.close(code === 1005 || code === 1006 ? 1000 : code)
+  }
+
   /** The highest stored `seq`, or `0` when nothing is stored — one row read, never a scan. */
   private lastSeq(): number {
     const row = this.sql.exec<{ seq: number }>('SELECT seq FROM events ORDER BY seq DESC LIMIT 1').toArray()[0]

@@ -23,6 +23,27 @@ function bearer(token: string): HeadersInit {
   return { authorization: `Bearer ${token}` }
 }
 
+/**
+ * The headers a viewer opens a live connection with: the feed's protocol, and
+ * the read token as a second one because a browser cannot set an
+ * `authorization` header on a WebSocket (spec § 5, "Live").
+ */
+function liveHeaders(token: string | null, extra: Record<string, string> = {}): HeadersInit {
+  const protocols = token === null ? 'vinaya-log.v1' : `vinaya-log.v1, bearer.${token}`
+  return { upgrade: 'websocket', 'sec-websocket-protocol': protocols, ...extra }
+}
+
+/** A live request, with the socket it may open closed again so no test leaves one held. */
+async function live(headers: HeadersInit): Promise<Response> {
+  const response = await SELF.fetch(url('live'), { headers })
+  const socket = response.webSocket
+  if (socket !== null) {
+    socket.accept()
+    socket.close()
+  }
+  return response
+}
+
 describe('the Workers runtime harness', () => {
   it('runs the Worker with a live SQLite-backed Durable Object behind it', async () => {
     const response = await SELF.fetch(url('events'), {
@@ -93,5 +114,47 @@ describe('the path and method grammar', () => {
     // runtime turns an upgrade request into the `GET` the protocol requires
     // whatever method was asked for, so there is no `POST` upgrade to refuse.
     expect((await SELF.fetch(url('live'), { method: 'POST', headers: bearer(READ) })).status).toBe(405)
+  })
+})
+
+/**
+ * The live route's own half of the handshake: which token opens a socket, and
+ * what the answer carries back (spec § 5, "Live"). A browser cannot set an
+ * `authorization` header on a WebSocket, so the read token arrives as a second
+ * subprotocol — which is exactly why the answer must name the feed's protocol
+ * alone and never echo the client's list.
+ */
+describe('the live route opens a socket for the read token and nothing else', () => {
+  it('refuses a live connection with no token, a wrong token or the ingest token', async () => {
+    expect((await live(liveHeaders(null))).status).toBe(401)
+    expect((await live(liveHeaders('not-the-token'))).status).toBe(401)
+    expect((await live(liveHeaders(INGEST))).status).toBe(401)
+    expect((await live({ upgrade: 'websocket', 'sec-websocket-protocol': 'vinaya-log.v1, bearer.' })).status).toBe(401)
+  })
+
+  it('opens a socket for the read token, as a subprotocol or as a header', async () => {
+    expect((await live(liveHeaders(READ))).status).toBe(101)
+    expect(
+      (await live({ upgrade: 'websocket', 'sec-websocket-protocol': 'vinaya-log.v1', ...bearer(READ) })).status
+    ).toBe(101)
+  })
+
+  it('answers with the feeds protocol alone, so the token is never in the handshake response', async () => {
+    const response = await live(liveHeaders(READ))
+
+    expect(response.headers.get('sec-websocket-protocol')).toBe('vinaya-log.v1')
+    const headers = [...response.headers].map(([name, value]) => `${name}: ${value}`).join('\n')
+    expect(headers).not.toContain(READ)
+    expect(headers).not.toContain(INGEST)
+  })
+
+  it('refuses a request that is not a websocket upgrade, or that does not speak the feeds protocol', async () => {
+    expect((await live(bearer(READ))).status).toBe(400)
+    expect((await live({ upgrade: 'websocket', 'sec-websocket-protocol': `bearer.${READ}` })).status).toBe(400)
+  })
+
+  it('refuses an untokened request before it looks at anything else about it', async () => {
+    expect((await live({})).status).toBe(401)
+    expect((await live({ 'sec-websocket-protocol': 'nothing-like-the-feed' })).status).toBe(401)
   })
 })

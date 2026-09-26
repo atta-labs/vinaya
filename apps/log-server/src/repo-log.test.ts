@@ -13,8 +13,9 @@
  * explains why the pool's own per-test storage isolation is off).
  */
 
-import { SELF } from 'cloudflare:test'
+import { env, runInDurableObject, SELF } from 'cloudflare:test'
 import { describe, expect, it } from 'vitest'
+import type { Env, RepoLog } from './repo-log'
 
 const INGEST = 'ingest-token-for-tests'
 const READ = 'read-token-for-tests'
@@ -482,5 +483,68 @@ describe('a viewer too far behind is told where to page from instead of being re
     expect(seen[0]).toBe(2)
     expect(seen[999]).toBe(1001)
     expect(viewer.closed).toBeNull()
+  })
+})
+
+/** Whether `value` is, or holds, a WebSocket — the thing an evicted object would lose. */
+function holdsSocket(value: unknown): boolean {
+  if (value instanceof WebSocket) return true
+  if (Array.isArray(value)) return value.some(holdsSocket)
+  if (value instanceof Set) return [...value].some(holdsSocket)
+  if (value instanceof Map) return [...value.values()].some(holdsSocket)
+  return false
+}
+
+/**
+ * The namespace the Worker forwards to. The pool hands tests the bindings from
+ * `vitest.config.ts` untyped, so it is read through this package's own `Env`
+ * rather than re-declared.
+ */
+function repoLogs(): DurableObjectNamespace<RepoLog> {
+  return (env as unknown as Env).REPO_LOG
+}
+
+describe('an idle viewer costs nothing', () => {
+  it('keeps every socket in the runtimes own registry and none of its own', async () => {
+    const repo = freshRepo()
+    const viewer = await openLive(repo)
+    const namespace = repoLogs()
+    // A repository name a test builds is already lower-cased, which is the form
+    // the Worker derives the object's name in.
+    const stub = namespace.get(namespace.idFromName(repo))
+
+    await runInDurableObject(stub, (instance, state) => {
+      // Only a socket accepted with `ctx.acceptWebSocket` appears here. One
+      // held with `ws.accept()` instead would be invisible to this list — and
+      // would keep the object awake and billed for as long as it stayed open.
+      expect(state.getWebSockets().length).toBe(1)
+
+      // And nothing an eviction would discard: no field of the object's own
+      // references a socket, directly or through a collection.
+      for (const held of Object.values(instance as unknown as Record<string, unknown>)) {
+        expect(holdsSocket(held)).toBe(false)
+      }
+    })
+
+    // Idle, having sent nothing — a viewer never has to — and still served by
+    // the next ingest.
+    await post(repo, batchOf(repo, 1))
+    await messages(viewer, 1)
+    expect(liveEvents(viewer).map((message) => message.seq)).toEqual([1])
+    expect(viewer.closed).toBeNull()
+  })
+
+  it('reads and ignores anything a viewer does send, and keeps serving it', async () => {
+    const repo = freshRepo()
+    const viewer = await openLive(repo)
+
+    viewer.socket.send('a viewer has nothing to say')
+    await settle()
+    expect(viewer.messages).toEqual([])
+    expect(viewer.closed).toBeNull()
+
+    await post(repo, batchOf(repo, 1))
+    await messages(viewer, 1)
+    expect(liveEvents(viewer).map((message) => message.seq)).toEqual([1])
   })
 })
