@@ -107,6 +107,10 @@ const ISSUES = [
   { number: 601, title: '[demo] 1 — Running task', labels: [{ name: 'vinaya/tranche:demo' }] },
   { number: 602, title: '[demo] 2 — Paused task', labels: [{ name: 'vinaya/tranche:demo' }] },
   { number: 603, title: '[demo] 3 — Published task', labels: [{ name: 'vinaya/tranche:demo' }] },
+  // O4: an open tranche task whose brief is NOT frozen yet — planned, never
+  // started. The stub returns it an ordinary (non-frozen) comment, so it lists
+  // as `not started` beside the others rather than being omitted.
+  { number: 606, title: '[demo] 4 — Planned task, brief not frozen', labels: [{ name: 'vinaya/tranche:demo' }] },
   // O2: a backlog Issue — no `vinaya/tranche:*` label at all.
   // 604 carries an outbox dir (a real dispatched task) and is expected to
   // list; 605 carries none and must be pre-filtered before ever costing an
@@ -144,6 +148,11 @@ if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
     605)
       echo "gh stub: issue view unexpectedly called for Issue 605 (no outbox dir — must be pre-filtered, O2)" >&2
       exit 1
+      ;;
+    606)
+      cat <<'JSON'
+${JSON.stringify({ comments: [principalComment('just an ordinary reply, no frozen brief')] })}
+JSON
       ;;
     *)
       cat <<'JSON'
@@ -207,6 +216,54 @@ function writeRunFile(home: string, task: number, name: string, content: unknown
   writeFileSync(join(dir, file), typeof content === 'string' ? content : JSON.stringify(content), 'utf8')
 }
 
+/**
+ * A published round in the control store's own layout — both verdict effects at
+ * `verified` under `<task>/control/effect/<key>.json`, plus the `loop_state`
+ * record whose `round` bounds the shared `newestPublishedRound` reader. The
+ * shape a clean publish leaves behind; retires the old flat
+ * `control/effect-<key>.json` markers this task removed.
+ */
+function writePublishedRound(home: string, task: number, round: number): void {
+  const control = join(taskRunDir(home, task), 'control')
+  mkdirSync(control, { recursive: true })
+  writeFileSync(
+    join(control, 'loop-state.json'),
+    JSON.stringify({
+      version: 1,
+      kind: 'loop_state',
+      task,
+      round,
+      phase: 'publish',
+      pauseReason: null,
+      budgets: { mechanicalRetries: 0, reviewRounds: round, infrastructureRetries: 0 },
+      heldResult: null,
+      deliveredFindings: null,
+      recordedAt: '2026-09-10T00:00:00.000Z'
+    })
+  )
+  const effectDir = join(control, 'effect')
+  mkdirSync(effectDir, { recursive: true })
+  for (const role of ['reviewer', 'security'] as const) {
+    const key = `${round}-${role}-verdict`
+    writeFileSync(
+      join(effectDir, `${key}.json`),
+      JSON.stringify({
+        version: 1,
+        kind: 'effect',
+        task,
+        key,
+        operation: 'pr-comment',
+        target: 'pr:703',
+        inputVersion: round,
+        payloadDigest: 'digest',
+        status: 'verified',
+        url: 'https://example.test/comment',
+        recordedAt: '2026-09-10T00:00:00.000Z'
+      })
+    )
+  }
+}
+
 describe('vinaya task status — router wiring', () => {
   it("the 'task' router names 'status' among its expected subcommands", () => {
     const r = runCli(['task', 'bogus'], {})
@@ -217,7 +274,7 @@ describe('vinaya task status — router wiring', () => {
 })
 
 describe('vinaya task status (O1/O3 — the list form)', () => {
-  it('prints one line per open task with a frozen brief, each in its derived state', () => {
+  it('prints one line per open task, each in its derived state — a planned task as not started (O4)', () => {
     const { home, env } = setUp()
     writeRunFile(home, 601, 'driver.pid.json', { pid: process.pid, startedAt: '2026-09-10T00:00:00.000Z' })
     writeRunFile(home, 602, 'pause-state.json', {
@@ -229,26 +286,28 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
       reason: 'escalation',
       pausedAt: '2026-09-10T00:00:00.000Z'
     })
-    writeRunFile(home, 603, 'effect-1-reviewer-verdict.json', { effectId: 'a', status: 'posted' })
-    writeRunFile(home, 603, 'effect-1-security-verdict.json', { effectId: 'b', status: 'posted' })
+    writePublishedRound(home, 603, 1)
 
     const r = runCli(['task', 'status'], env)
 
     expect(outputLines(r.stdout)).toEqual([
       `[demo] 1 — Issue #601 — PR #701 — running (pid ${process.pid})`,
       '[demo] 2 — Issue #602 — PR #702 — paused (escalation)',
-      '[demo] 3 — Issue #603 — PR #703 — published'
+      '[demo] 3 — Issue #603 — PR #703 — published',
+      // O4: the planned task (brief not frozen) lists as not started, never omitted.
+      '[demo] 4 — Issue #606 — PR — — not started'
     ])
     expect(r.status).toBe(0)
   })
 
-  it('prints no driver for a task with a frozen brief but nothing in the outbox', () => {
+  it('prints no driver for a frozen task with nothing in the outbox, and not started for a planned one', () => {
     const { env } = setUp()
     const r = runCli(['task', 'status'], env)
     expect(outputLines(r.stdout)).toEqual([
       '[demo] 1 — Issue #601 — PR #701 — no driver',
       '[demo] 2 — Issue #602 — PR #702 — no driver',
-      '[demo] 3 — Issue #603 — PR #703 — no driver'
+      '[demo] 3 — Issue #603 — PR #703 — no driver',
+      '[demo] 4 — Issue #606 — PR — — not started'
     ])
     expect(r.status).toBe(0)
   })
@@ -270,8 +329,7 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
       reason: 'escalation',
       pausedAt: '2026-09-10T00:00:00.000Z'
     })
-    writeRunFile(home, 603, 'effect-1-reviewer-verdict.json', { effectId: 'a', status: 'posted' })
-    writeRunFile(home, 603, 'effect-1-security-verdict.json', { effectId: 'b', status: 'posted' })
+    writePublishedRound(home, 603, 1)
     writeRunFile(home, 604, 'driver.pid.json', { pid: process.pid, startedAt: '2026-09-10T00:00:00.000Z' })
 
     const r = runCli(['task', 'status'], env)
@@ -280,6 +338,7 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
       `[demo] 1 — Issue #601 — PR #701 — running (pid ${process.pid})`,
       '[demo] 2 — Issue #602 — PR #702 — paused (escalation)',
       '[demo] 3 — Issue #603 — PR #703 — published',
+      '[demo] 4 — Issue #606 — PR — — not started',
       `[backlog] 604 — Issue #604 — PR #704 — running (pid ${process.pid})`
     ])
     expect(r.status).toBe(0)
@@ -297,13 +356,22 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
       }
     }
     expect(parsed.schema).toBe(1)
-    expect(parsed.data.tasks).toHaveLength(3)
+    // Three frozen tranche tasks plus the planned one (O4) — the planned task
+    // carries the structured `not_started` state in the JSON envelope too.
+    expect(parsed.data.tasks).toHaveLength(4)
     expect(parsed.data.tasks[0]).toEqual({
       tranche: 'demo',
       id: '1',
       issue: 601,
       pr: { number: 701 },
       state: { kind: 'running', pid: process.pid, startedAt: '2026-09-10T00:00:00.000Z' }
+    })
+    expect(parsed.data.tasks[3]).toEqual({
+      tranche: 'demo',
+      id: '4',
+      issue: 606,
+      pr: null,
+      state: { kind: 'not_started' }
     })
   })
 })
@@ -336,12 +404,18 @@ describe('vinaya task status <tranche> <n> (O2 — the single-task form)', () =>
 
   it('prints no resume line for a published task', () => {
     const { home, env } = setUp()
-    writeRunFile(home, 603, 'effect-1-reviewer-verdict.json', { effectId: 'a', status: 'posted' })
-    writeRunFile(home, 603, 'effect-1-security-verdict.json', { effectId: 'b', status: 'posted' })
+    writePublishedRound(home, 603, 1)
 
     const r = runCli(['task', 'status', 'demo', '3'], env)
 
     expect(outputLines(r.stdout)).toEqual(['[demo] 3 — Issue #603 — PR #703 — published'])
+    expect(r.status).toBe(0)
+  })
+
+  it('reads a planned task (brief not frozen) as not started, never a no-brief refusal (O4)', () => {
+    const { env } = setUp()
+    const r = runCli(['task', 'status', 'demo', '4'], env)
+    expect(outputLines(r.stdout)).toEqual(['[demo] 4 — Issue #606 — PR — — not started'])
     expect(r.status).toBe(0)
   })
 

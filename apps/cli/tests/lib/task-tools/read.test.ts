@@ -80,6 +80,61 @@ function deadPid(): number {
   return r.pid
 }
 
+function controlDir(root: string, task: number): string {
+  return join(taskDir(root, task), 'control')
+}
+
+/**
+ * A published round in the control store's own layout: the two verdict effect
+ * records at `verified` under `<task>/control/effect/<key>.json`, plus the
+ * `loop_state` record whose `round` bounds the shared reader's scan — raw JSON
+ * matching the schemas, the same seed-without-ownership shape
+ * `writeEscalationFixture` uses. Retires the old flat `control/effect-<key>`
+ * markers this task removed.
+ */
+function writePublishedRound(root: string, task: number, round: number): void {
+  const dir = controlDir(root, task)
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(
+    join(dir, 'loop-state.json'),
+    JSON.stringify({
+      version: 1,
+      kind: 'loop_state',
+      task,
+      round,
+      phase: 'publish',
+      pauseReason: null,
+      budgets: { mechanicalRetries: 0, reviewRounds: round, infrastructureRetries: 0 },
+      heldResult: null,
+      deliveredFindings: null,
+      recordedAt: '2026-09-15T00:00:00.000Z'
+    }),
+    'utf8'
+  )
+  const effectDir = join(dir, 'effect')
+  mkdirSync(effectDir, { recursive: true })
+  for (const role of ['reviewer', 'security'] as const) {
+    const key = `${round}-${role}-verdict`
+    writeFileSync(
+      join(effectDir, `${key}.json`),
+      JSON.stringify({
+        version: 1,
+        kind: 'effect',
+        task,
+        key,
+        operation: 'pr-comment',
+        target: 'pr:900',
+        inputVersion: round,
+        payloadDigest: 'digest',
+        status: 'verified',
+        url: 'https://example.test/comment',
+        recordedAt: '2026-09-15T00:00:00.000Z'
+      }),
+      'utf8'
+    )
+  }
+}
+
 function writePause(
   root: string,
   task: number,
@@ -162,8 +217,7 @@ describe('readEscalationPacket', () => {
   it('marks a pause record stale once the outbox shows a later round already published', () => {
     const root = tempDir()
     writePause(root, TASK, { round: 1, reason: 'max_rounds' })
-    writeRunFile(root, TASK, 'effect-2-reviewer-verdict.json', JSON.stringify({ effectId: 'a', status: 'posted' }))
-    writeRunFile(root, TASK, 'effect-2-security-verdict.json', JSON.stringify({ effectId: 'b', status: 'posted' }))
+    writePublishedRound(root, TASK, 2)
     const packet = readEscalationPacket(root, TASK)
     expect(packet?.freshness).toBe('stale')
   })

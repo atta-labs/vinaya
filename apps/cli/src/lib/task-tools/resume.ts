@@ -59,6 +59,7 @@ import {
   readPauseState
 } from '../dev-review-loop/pause-resume.js'
 import { runtimeDir } from '../dev-review-loop.js'
+import { newestPublishedRound } from '../task-status.js'
 import { ensureRunDir, runPath, runtimeDirForThisRepo, tasksExecutionRoot } from '../run-paths.js'
 import { taskFromEscalationId } from '../dev-review-loop/pause-resume.js'
 import { log } from '../log-sink.js'
@@ -356,8 +357,21 @@ export function createTaskResumeHandler(
     const controlStoreDeps: ControlStoreDeps = defaultControlStoreDeps(() => tasksExecutionRoot(root))
     const packet = readEscalationPacket(root, issue)
     if (packet === null) {
+      // O2: a run that published its verdicts and holds no pause is a
+      // finished run, not a broken one — name the round it published at (the
+      // same shared reader `task_status`/`deriveLoopState` derive `published`
+      // from) rather than the generic "no paused run" refusal an Operator
+      // reading it would mistake for a task that never ran.
+      const published = newestPublishedRound(root, issue)
       emitOperationEvent(deps.log, issue, target, 'refused', 'precondition')
-      return fail(taskToolError('precondition', `task ${issue} has no paused run recorded — nothing to resume`))
+      return fail(
+        taskToolError(
+          'precondition',
+          published !== null
+            ? `task ${issue}'s run already published at round ${published} and holds no pause — nothing to resume`
+            : `task ${issue} has no paused run recorded — nothing to resume`
+        )
+      )
     }
     if (packet.inputs === null || packet.inputs.prNumber === null) {
       emitOperationEvent(deps.log, issue, target, 'refused', 'precondition')

@@ -66,6 +66,75 @@ function writeRunFile(root: string, task: number, name: string, content: string)
   writeFileSync(join(dir, file), content, 'utf8')
 }
 
+function controlDir(root: string, task: number): string {
+  return join(taskDir(root, task), 'control')
+}
+
+/**
+ * The durable `loop_state` record whose `round` bounds the shared
+ * `newestPublishedRound` reader's scan — written as raw JSON matching
+ * `LoopStateRecordSchema` (the same seed-a-record-without-acquiring-ownership
+ * shape `read.test.ts`'s `writeEscalationFixture` uses), never through the
+ * epoch-fenced `writeLoopState`. The driver writes this at every transition,
+ * `publish` included, so a published run always has one.
+ */
+function writeLoopStateRound(root: string, task: number, round: number): void {
+  const dir = controlDir(root, task)
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(
+    join(dir, 'loop-state.json'),
+    JSON.stringify({
+      version: 1,
+      kind: 'loop_state',
+      task,
+      round,
+      phase: 'publish',
+      pauseReason: null,
+      budgets: { mechanicalRetries: 0, reviewRounds: round, infrastructureRetries: 0 },
+      heldResult: null,
+      deliveredFindings: null,
+      recordedAt: '2026-09-15T00:00:00.000Z'
+    }),
+    'utf8'
+  )
+}
+
+/**
+ * One verdict effect record at the control store's own
+ * `<task>/control/effect/<key>.json` path, at `status` — `verified` is the
+ * status a published verdict advances to. Raw JSON matching
+ * `EffectRecordSchema`, the layout `readEffect` reads (never the old flat
+ * `control/effect-<key>.json` this task retired).
+ */
+function writeEffectRecord(root: string, task: number, key: string, status: 'started' | 'verified'): void {
+  const dir = join(controlDir(root, task), 'effect')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(
+    join(dir, `${key}.json`),
+    JSON.stringify({
+      version: 1,
+      kind: 'effect',
+      task,
+      key,
+      operation: 'pr-comment',
+      target: 'pr:517',
+      inputVersion: 1,
+      payloadDigest: 'digest',
+      status,
+      ...(status === 'verified' ? { url: 'https://example.test/comment' } : {}),
+      recordedAt: '2026-09-15T00:00:00.000Z'
+    }),
+    'utf8'
+  )
+}
+
+/** Both verdict effects at `verified` for `round`, plus a `loop_state` whose round covers it — exactly what a clean publish leaves behind. */
+function writePublishedRound(root: string, task: number, round: number): void {
+  writeLoopStateRound(root, task, round)
+  writeEffectRecord(root, task, `${round}-reviewer-verdict`, 'verified')
+  writeEffectRecord(root, task, `${round}-security-verdict`, 'verified')
+}
+
 /** A pid that has definitely already exited — `spawnSync` blocks until the child is gone before returning its pid (`dev-review-loop.test.ts`'s own `deadPid`). */
 function deadPid(): number {
   const r = spawnSync('true', [])
@@ -129,17 +198,28 @@ describe('deriveLoopState', () => {
     })
   })
 
-  it('reports published when the newest round posted both verdict effect markers', () => {
+  it('reports published when the newest round verified both verdict effect records', () => {
     const root = tempDir()
-    writeRunFile(root, TASK, 'effect-1-reviewer-verdict.json', JSON.stringify({ effectId: 'a', status: 'posted' }))
-    writeRunFile(root, TASK, 'effect-1-security-verdict.json', JSON.stringify({ effectId: 'b', status: 'posted' }))
+    writePublishedRound(root, TASK, 1)
     expect(deriveLoopState(root, TASK, { repo: null, loopsRoot: root })).toEqual({ kind: 'published', round: 1 })
   })
 
-  it("does not report published when only one of the round's two markers posted", () => {
+  it("does not report published when only one of the round's two effects verified", () => {
     const root = tempDir()
-    writeRunFile(root, TASK, 'effect-1-reviewer-verdict.json', JSON.stringify({ effectId: 'a', status: 'posted' }))
-    writeRunFile(root, TASK, 'effect-1-security-verdict.json', JSON.stringify({ effectId: 'b', status: 'started' }))
+    writeLoopStateRound(root, TASK, 1)
+    writeEffectRecord(root, TASK, '1-reviewer-verdict', 'verified')
+    writeEffectRecord(root, TASK, '1-security-verdict', 'started')
+    expect(deriveLoopState(root, TASK, { repo: null, loopsRoot: root })).toEqual({ kind: 'no_driver' })
+  })
+
+  it('does not report published from verified effects with no loop_state to bound them', () => {
+    // The one case the shared reader returns null despite a verified effect on
+    // disk: no `loop_state` record means no run ever persisted state, so
+    // nothing is treated as published (the reader never enumerates effects off
+    // disk — it scans rounds bounded by loop_state.round).
+    const root = tempDir()
+    writeEffectRecord(root, TASK, '1-reviewer-verdict', 'verified')
+    writeEffectRecord(root, TASK, '1-security-verdict', 'verified')
     expect(deriveLoopState(root, TASK, { repo: null, loopsRoot: root })).toEqual({ kind: 'no_driver' })
   })
 
@@ -163,15 +243,13 @@ describe('deriveLoopState', () => {
         pausedAt: '2026-09-10T00:00:00.000Z'
       })
     )
-    writeRunFile(root, TASK, 'effect-3-reviewer-verdict.json', JSON.stringify({ effectId: 'a', status: 'posted' }))
-    writeRunFile(root, TASK, 'effect-3-security-verdict.json', JSON.stringify({ effectId: 'b', status: 'posted' }))
+    writePublishedRound(root, TASK, 3)
     expect(deriveLoopState(root, TASK, { repo: null, loopsRoot: root })).toEqual({ kind: 'published', round: 3 })
   })
 
   it('still reports the pause when it is newer than the latest publish', () => {
     const root = tempDir()
-    writeRunFile(root, TASK, 'effect-1-reviewer-verdict.json', JSON.stringify({ effectId: 'a', status: 'posted' }))
-    writeRunFile(root, TASK, 'effect-1-security-verdict.json', JSON.stringify({ effectId: 'b', status: 'posted' }))
+    writePublishedRound(root, TASK, 1)
     writeRunFile(
       root,
       TASK,
@@ -227,8 +305,7 @@ describe('deriveLoopState', () => {
       'dev-review-loop',
       'driver_exited: reason=error last_decision=dispatch_developer'
     )
-    writeRunFile(root, TASK, 'effect-1-reviewer-verdict.json', JSON.stringify({ effectId: 'a', status: 'posted' }))
-    writeRunFile(root, TASK, 'effect-1-security-verdict.json', JSON.stringify({ effectId: 'b', status: 'posted' }))
+    writePublishedRound(root, TASK, 1)
     expect(deriveLoopState(root, TASK, { repo: null, loopsRoot: root })).toEqual({ kind: 'published', round: 1 })
   })
 })
@@ -278,6 +355,11 @@ describe('renderTaskStatusRow', () => {
   it('renders no driver with no PR yet', () => {
     const row: TaskStatusRow = { ...base, pr: null, state: { kind: 'no_driver' } }
     expect(renderTaskStatusRow(row)).toBe('[task-run-v1] 14 — Issue #515 — PR — — no driver')
+  })
+
+  it('renders not started for a planned task with no PR yet (O4)', () => {
+    const row: TaskStatusRow = { ...base, pr: null, state: { kind: 'not_started' } }
+    expect(renderTaskStatusRow(row)).toBe('[task-run-v1] 14 — Issue #515 — PR — — not started')
   })
 })
 

@@ -2,8 +2,10 @@
  * The task-operator read interface (O2) — one place `task_status` and
  * `task_escalation_read` (`handlers.ts`) both read from. Every function here
  * takes an explicit `root` and a bare task/Issue number, reads only the
- * outbox and the reader `task-status.ts` already exports (`deriveLoopState`,
- * `lastRoundVerdictLines`) — never `ps` (Traps to avoid: `task_status` must
+ * outbox and the readers `task-status.ts` already exports (`deriveLoopState`,
+ * `lastRoundVerdictLines`, `newestPublishedRound` — the one shared
+ * published-round reader, no longer a second private copy here) — never `ps`
+ * (Traps to avoid: `task_status` must
  * not shell to `ps`; the driver lock file is the liveness record `
  * deriveLoopState` already reads), never a forge call, never a write. A
  * `TaskToolRef` naming `{ tranche, id }` rather than a bare Issue number is
@@ -23,7 +25,6 @@
  * which stays inside the value for a caller that wants it.
  */
 
-import { readdirSync, readFileSync } from 'node:fs'
 import { defaultControlStoreDeps, type Freshness, type TaskEscalationPacket } from '@attalabs/aeg-core'
 import {
   escalationIdFor,
@@ -35,11 +36,12 @@ import {
 import {
   deriveLoopState,
   lastRoundVerdictLines,
+  newestPublishedRound,
   resumeCommandFor,
   type RoundVerdictLines,
   type TaskLoopState
 } from '../task-status.js'
-import { runPath, tasksExecutionRoot } from '../run-paths.js'
+import { tasksExecutionRoot } from '../run-paths.js'
 
 // --- Observed<T> -------------------------------------------------------------
 
@@ -66,54 +68,6 @@ export function paginate<T>(items: readonly T[], cursor: string | undefined, lim
   return { items: slice, nextCursor: next < items.length ? String(next) : null }
 }
 
-// --- outbox primitives (private — task-status.ts's own duplicated-reader
-// convention: publication.ts's effect-marker shape is not exported, and
-// widening its Surface for one more reader is out of this task's Surface) --
-
-function readIfExists(path: string): string | null {
-  try {
-    return readFileSync(path, 'utf8')
-  } catch {
-    return null
-  }
-}
-
-type ForgeEffectRecord = { effectId: string; status: 'started' | 'posted'; url?: string }
-
-function readEffectMarker(root: string, task: number, key: string): ForgeEffectRecord | null {
-  const raw = readIfExists(runPath(root, task, { area: 'control', file: `effect-${key}.json` }))
-  if (!raw) return null
-  try {
-    return JSON.parse(raw) as ForgeEffectRecord
-  } catch {
-    return null
-  }
-}
-
-/** The highest round both verdict effect markers read `posted` for — `null` when no round has published cleanly. Same derivation as `task-status.ts`'s own private `newestPublishedRound`, duplicated for the same reason that function is not exported. */
-function newestPublishedRound(root: string, task: number): number | null {
-  let entries: string[]
-  try {
-    entries = readdirSync(runPath(root, task, { area: 'control' }))
-  } catch {
-    return null
-  }
-  const rounds = new Set<number>()
-  for (const name of entries) {
-    const m = /^effect-(\d+)-reviewer-verdict\.json$/.exec(name)
-    if (m) rounds.add(Number(m[1]))
-  }
-  let newest: number | null = null
-  for (const round of rounds) {
-    const reviewer = readEffectMarker(root, task, `${round}-reviewer-verdict`)
-    const security = readEffectMarker(root, task, `${round}-security-verdict`)
-    if (reviewer?.status === 'posted' && security?.status === 'posted' && (newest === null || round > newest)) {
-      newest = round
-    }
-  }
-  return newest
-}
-
 // --- task_status's own observation ------------------------------------------
 
 /**
@@ -129,7 +83,7 @@ export function readTaskLoopStateObserved(root: string, task: number): Observed<
   return observedNow(state, classifyStateFreshness(state))
 }
 
-/** `no_driver` is the only `TaskLoopState` kind backed by no record at all; every other kind is `deriveLoopState`'s current, fresh answer (see the doc comment above). Exported so `handlers.ts` can classify a `TaskStatusRow.state` it already has in hand — computed by `gatherTaskStatusList`/`gatherSingleTaskStatus` against the same outbox — without a second, redundant outbox read. */
+/** `no_driver` is the only `TaskLoopState` kind backed by no record at all; every other kind — `not_started` (a definite current fact: the brief is not frozen) included — is a current, fresh answer. Exported so `handlers.ts` can classify a `TaskStatusRow.state` it already has in hand — computed by `gatherTaskStatusList`/`gatherSingleTaskStatus` against the same outbox — without a second, redundant outbox read. */
 export function classifyStateFreshness(state: TaskLoopState): Freshness {
   return state.kind === 'no_driver' ? 'unknown' : 'fresh'
 }
@@ -145,6 +99,8 @@ export function describeTaskLoopState(state: TaskLoopState): string {
       return 'published'
     case 'exited':
       return `exited (${state.reason}) — last decision: ${state.lastDecision}`
+    case 'not_started':
+      return 'not started'
     case 'no_driver':
       return 'no driver'
   }

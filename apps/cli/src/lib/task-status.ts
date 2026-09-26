@@ -16,11 +16,17 @@
 
 import { execFileSync } from 'node:child_process'
 import { readFileSync, readdirSync } from 'node:fs'
-import { resolveNewestFrozenBrief, type PauseReason } from '@attalabs/aeg-core'
+import {
+  defaultControlStoreDeps,
+  readEffect,
+  readLoopState,
+  resolveNewestFrozenBrief,
+  type PauseReason
+} from '@attalabs/aeg-core'
 import { resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
 import { findOpenPrForBranch, runtimeDir } from './dev-review-loop.js'
-import { DRIVER_LOCK_FILENAME, runPath } from './run-paths.js'
+import { DRIVER_LOCK_FILENAME, runPath, tasksExecutionRoot } from './run-paths.js'
 import { loopLogPathFor, loopsRoot, type LoopLogRepo } from './loop-log.js'
 import { findRecordedControllerRun } from './task-run-background.js'
 
@@ -262,42 +268,47 @@ function readPauseState(root: string, task: number): PauseState | null {
   }
 }
 
-type ForgeEffectRecord = { effectId: string; status: 'started' | 'posted'; url?: string }
-
-function readEffect(root: string, task: number, key: string): ForgeEffectRecord | null {
-  const raw = readIfExists(runPath(root, task, { area: 'control', file: `effect-${key}.json` }))
-  if (!raw) return null
-  try {
-    return JSON.parse(raw) as ForgeEffectRecord
-  } catch {
-    return null
-  }
-}
-
 /**
  * The highest round for which BOTH the reviewer and security verdict effect
- * markers read `status: 'posted'` — `publishRound`'s own two-post contract,
- * read back from the outbox rather than the forge (Traps to avoid: never
- * read PR comments to decide `published`). `null` when no round has
+ * records read `status: 'verified'` — `publishRound`'s own two-post contract,
+ * read back through the control store's own `readEffect` (Traps to avoid:
+ * never glob file names — the effect layout already moved once, from a flat
+ * `control/effect-<key>.json` to the store's own `control/effect/<key>.json`;
+ * and never read PR comments to decide `published`). `null` when no round has
  * published cleanly.
+ *
+ * The control store advances a published verdict effect to `verified` — the
+ * one status this reads as published. A `verified` write is the record the
+ * `EffectExecutor` leaves once the comment's own return value was recorded or
+ * a recovery reconciled it against the remote (`EffectRecordSchema`). A
+ * `started` verdict effect is a post whose confirmation was interrupted — the
+ * write was persisted but never verified — and is NOT yet published;
+ * `uncertain` is a recovery that could not reconcile at all, likewise not
+ * published. Only `verified` counts.
+ *
+ * The single reader shared by `deriveLoopState` here and the task-tools read
+ * module (`task-tools/read.ts` imports this rather than keeping a second
+ * copy). Rounds are bounded above by the durable `loop_state` record's own
+ * `round` — the driver writes it at every transition, `publish` included
+ * (`persistCurrentLoopState('publish')` runs right after `publishRound`), so
+ * it is never below a round that actually published — and each round is read
+ * through `readEffect`, never enumerated off disk. No `loop_state` record
+ * means no run ever persisted state for this task, so nothing has published.
  */
-function newestPublishedRound(root: string, task: number): number | null {
-  let entries: string[]
-  try {
-    entries = readdirSync(runPath(root, task, { area: 'control' }))
-  } catch {
-    return null
-  }
-  const candidateRounds = new Set<number>()
-  for (const name of entries) {
-    const m = /^effect-(\d+)-reviewer-verdict\.json$/.exec(name)
-    if (m) candidateRounds.add(Number(m[1]))
-  }
+export function newestPublishedRound(root: string, task: number): number | null {
+  const deps = defaultControlStoreDeps(() => tasksExecutionRoot(root))
+  const loopState = readLoopState(deps, task)
+  if (loopState.status !== 'ok') return null
   let newest: number | null = null
-  for (const round of candidateRounds) {
-    const reviewer = readEffect(root, task, `${round}-reviewer-verdict`)
-    const security = readEffect(root, task, `${round}-security-verdict`)
-    if (reviewer?.status === 'posted' && security?.status === 'posted' && (newest === null || round > newest)) {
+  for (let round = 1; round <= loopState.value.round; round++) {
+    const reviewer = readEffect(deps, task, `${round}-reviewer-verdict`)
+    const security = readEffect(deps, task, `${round}-security-verdict`)
+    if (
+      reviewer.status === 'ok' &&
+      reviewer.value.status === 'verified' &&
+      security.status === 'ok' &&
+      security.value.status === 'verified'
+    ) {
       newest = round
     }
   }
@@ -309,6 +320,12 @@ export type TaskLoopState =
   | { kind: 'paused'; reason: PauseReason; detail?: string; round: number }
   | { kind: 'published'; round: number }
   | { kind: 'exited'; reason: DriverExitReason; lastDecision: string }
+  // O4: an open task Issue whose brief is not frozen yet — planned, never
+  // started. Distinct from `no_driver` (a brief WAS frozen, but nothing runs):
+  // `buildRow` sets it without reading the outbox at all, since a run freezes
+  // the brief in preparation before it ever writes a driver lock, so no frozen
+  // brief means no run has begun. `deriveLoopState` itself never returns it.
+  | { kind: 'not_started' }
   | { kind: 'no_driver' }
 
 /**
@@ -426,6 +443,8 @@ function renderStateText(state: TaskLoopState): string {
       return 'published'
     case 'exited':
       return `exited (${state.reason}) — last decision: ${state.lastDecision}`
+    case 'not_started':
+      return 'not started'
     case 'no_driver':
       return 'no driver'
   }
@@ -437,15 +456,27 @@ export function renderTaskStatusRow(row: TaskStatusRow): string {
   return `[${row.tranche}] ${row.id} — Issue #${row.issue} — ${prText} — ${renderStateText(row.state)}`
 }
 
-/** A backlog ref renders through the SAME row shape as a tranche one — `tranche` reads `backlog`, `id` reads the Issue number, everything else (PR lookup, loop state) already generalizes over `TaskRef`'s two kinds via `branchForRef`. */
-function buildRow(ref: TaskRef, allowlist: readonly string[]): TaskStatusRow | null {
-  if (!hasFrozenBrief(ref.issue, allowlist)) return null
+/**
+ * A backlog ref renders through the SAME row shape as a tranche one —
+ * `tranche` reads `backlog`, `id` reads the Issue number, everything else (PR
+ * lookup, loop state) already generalizes over `TaskRef`'s two kinds via
+ * `branchForRef`.
+ *
+ * O4: an open task Issue whose brief is not frozen yet is a PLANNED task, never
+ * started — it gets a `not_started` row rather than being omitted (before this
+ * task, returning `null` here made `task status` drop it and `task_status`
+ * answer "no open task matches" for an open task, which an Operator read as the
+ * tranche being finished). Only a frozen task reads the outbox for its real
+ * loop state and open PR; a planned one has neither yet.
+ */
+function buildRow(ref: TaskRef, allowlist: readonly string[]): TaskStatusRow {
+  const started = hasFrozenBrief(ref.issue, allowlist)
   return {
     tranche: ref.kind === 'tranche' ? ref.tranche : 'backlog',
     id: ref.kind === 'tranche' ? ref.id : String(ref.issue),
     issue: ref.issue,
-    pr: findPrForRef(ref),
-    state: deriveLoopState(runtimeDir(), ref.issue)
+    pr: started ? findPrForRef(ref) : null,
+    state: started ? deriveLoopState(runtimeDir(), ref.issue) : { kind: 'not_started' }
   }
 }
 
@@ -467,16 +498,20 @@ export function gatherTaskStatusList(): TaskStatusListRow[] {
   for (const ref of listOpenTaskIssues()) {
     // A backlog ref only ever becomes a candidate once the loop has
     // already written it an outbox directory — see `hasOutboxDir`'s own doc
-    // comment. A tranche-labeled ref carries no such gate.
+    // comment. A tranche-labeled ref carries no such gate: O4 lists every open
+    // tranche task Issue, a not-yet-frozen (planned) one as `not started`.
     if (ref.kind === 'backlog' && !hasOutboxDir(root, ref.issue)) continue
     const row = buildRow(ref, allowlist)
-    if (row) rows.push({ row, line: renderTaskStatusRow(row) })
+    rows.push({ row, line: renderTaskStatusRow(row) })
   }
   return rows
 }
 
 export type SingleTaskStatus =
   | { kind: 'not_found' }
+  // Retained for `commands/task-status.ts` (out of this task's Surface) — no
+  // longer produced: O4 gives a planned task with no frozen brief the same
+  // not-started `ok` row the list form does, rather than this refusal.
   | { kind: 'no_brief' }
   | {
       kind: 'ok'
@@ -486,13 +521,12 @@ export type SingleTaskStatus =
       resumeCommand: string | null
     }
 
-/** O2's entire read for the single-task form — the ONE function `commands/task-status.ts` calls for it, same discipline as `gatherTaskStatusList`. */
+/** O2's entire read for the single-task form — the ONE function `commands/task-status.ts` calls for it, same discipline as `gatherTaskStatusList`. O4: a planned task with no frozen brief reads as a `not_started` `ok` row here too, never the retired `no_brief` refusal. */
 export function gatherSingleTaskStatus(tranche: string, id: string): SingleTaskStatus {
   const ref = listOpenTaskIssues().find((r) => r.kind === 'tranche' && r.tranche === tranche && r.id === id)
   if (!ref) return { kind: 'not_found' }
 
   const row = buildRow(ref, principalAllowlist())
-  if (!row) return { kind: 'no_brief' }
 
   const root = runtimeDir()
   const verdictLines = lastRoundVerdictLines(root, ref.issue)
