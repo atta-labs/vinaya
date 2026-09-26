@@ -151,10 +151,14 @@ export class RepoLog extends DurableObject<Env> {
       return jsonError(413, 'body over 8 MiB')
     }
 
-    const body = await request.text()
-    if (byteLength(body) > MAX_BODY_BYTES) return jsonError(413, 'body over 8 MiB')
+    // Read as bytes, not `.text()`: the size limit is a byte limit, and a
+    // second pass over the decoded string to measure it would cost a full
+    // extra encode of every batch.
+    const bytes = await request.arrayBuffer()
+    if (bytes.byteLength > MAX_BODY_BYTES) return jsonError(413, 'body over 8 MiB')
 
-    const lines = body
+    const lines = decoder
+      .decode(bytes)
       .split('\n')
       .map((line) => line.trim())
       .filter((line) => line.length > 0)

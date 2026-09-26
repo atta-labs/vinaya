@@ -21,10 +21,10 @@
   },
   "devDependencies": {
     "@atta/typescript-config": "workspace:*",
-    "@cloudflare/vitest-pool-workers": "0.8.71",
+    "@cloudflare/vitest-pool-workers": "0.12.21",
     "@cloudflare/workers-types": "4.20250906.0",
     "typescript": "^5.7.0",
     "vitest": "2.1.9",
-    "wrangler": "4.35.0"
+    "wrangler": "4.72.0"
   }
 }

@@ -165,6 +165,8 @@ Setting `logs.url` moves local runs off the default local folder as well: a Vina
 
 The suite runs under Cloudflare's Vitest pool for Workers: every test drives the actual Worker in `workerd`, with the actual SQLite-backed Durable Object behind it, configured from this package's own `wrangler.jsonc`. There is no hand-written stand-in for the runtime, so a behaviour the tests prove is one a deployed copy has. The two secrets a deployment holds as Worker secrets are supplied to the pool as bindings, which is the one thing a test environment cannot read from a deployment.
 
+The pool's own per-test storage isolation is off, because it cannot pop a SQLite-backed object's directory: it asserts that every file it finds there is a `.sqlite`, and SQLite's `-shm` sidecar trips that assertion, failing the run whatever the tests did. The tests isolate through § 1's own boundary instead — one repository is one object, so a test that needs an empty log asks for a repository name no other test uses.
+
 ## 8. What this server is not
 
 - Not an authority: nothing reads it to decide what happens next.

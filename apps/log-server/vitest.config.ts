@@ -16,6 +16,14 @@ export default defineWorkersConfig({
     include: ['src/**/*.test.ts'],
     poolOptions: {
       workers: {
+        // The pool's per-test storage stack cannot pop a SQLite-backed
+        // Durable Object's directory — it asserts every file it finds is a
+        // `.sqlite`, and SQLite's own `-shm` sidecar file trips it, so the
+        // run ends in `Isolated storage failed` whatever the test did. The
+        // tests isolate through the product's own boundary instead: one
+        // repository is one object, so a test that wants a clean log asks
+        // for a repository name no other test used.
+        isolatedStorage: false,
         wrangler: { configPath: './wrangler.jsonc' },
         miniflare: {
           bindings: {
