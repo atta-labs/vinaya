@@ -144,13 +144,58 @@ export function parseShortstat(stat: string): { filesChanged: number; insertions
 /** Thrown when a round's resume attempt fails for a vendor whose previous round succeeded — Section 10's own stop-and-escalate, never a fallback to a fresh session. */
 export class DevReviewLoopResumeError extends Error {}
 
+/**
+ * Thrown when the vendor refuses the dispatch because nobody is signed in
+ * — the one dispatch failure that is a credential fact about this host, not
+ * a fault of the task, the round, or the worker: no session was ever
+ * started, so nothing was lost and there is nothing to diagnose beyond
+ * signing in again. The loop pauses on it like any other thrown driver-path
+ * failure, but never spends a unit of the infrastructure-retry budget on it
+ * (`spendsInfrastructureRetry`), so a host that stays signed out pauses as
+ * often as it must without ever forcing a Principal ruling to resume.
+ */
+export class DispatchSignInRefused extends Error {
+  constructor(
+    public readonly vendor: AgentVendor,
+    subject: string
+  ) {
+    super(
+      `devReviewLoop: ${subject} could not sign in — ${vendor} refused the dispatch (authentication-failed) ` +
+        `before any session started, so no work was lost. Sign ${vendor} in on this host; the next run or ` +
+        '`--resume` starts a fresh session.'
+    )
+    this.name = 'DispatchSignInRefused'
+  }
+}
+
+/**
+ * Does this round-ending error spend a unit of the loop's
+ * infrastructure-retry budget? Everything does, except a sign-in refusal:
+ * that budget bounds how often a task may be resumed past a recoverable
+ * hiccup with no genuine round in between, and a host with no credentials
+ * never produced a round to bound — counting it would exhaust the budget
+ * and demand a Principal ruling for a failure a `claude`/`codex`/`gemini`
+ * login fixes. Keyed on the sign-in cause alone, never on "a pause that
+ * came through this code path", so every other infrastructure loop keeps
+ * its bound.
+ */
+export function spendsInfrastructureRetry(err: unknown): boolean {
+  return !(err instanceof DispatchSignInRefused)
+}
+
 export async function assertDispatchOrEscalate(
   handle: DispatchHandle,
   vendor: AgentVendor,
   isResume: boolean,
-  previousRoundSucceededForVendor: boolean
+  previousRoundSucceededForVendor: boolean,
+  subject: string
 ): Promise<void> {
   if (!handle.failureReason) return
+  // Checked BEFORE the resume stop-and-escalate below: a vendor that cannot
+  // sign in refuses identically whether this round was the first or the
+  // tenth, so a credential failure on a resumed round is never read as the
+  // "this session worked last round and broke now" product escalation.
+  if (handle.failureReason === 'authentication-failed') throw new DispatchSignInRefused(vendor, subject)
   if (isResume && previousRoundSucceededForVendor) {
     throw new DevReviewLoopResumeError(
       `devReviewLoop: ${vendor}'s resume failed this round (${handle.failureReason}) after succeeding last round — ` +

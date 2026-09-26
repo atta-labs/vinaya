@@ -147,6 +147,7 @@ import {
 import {
   assertDispatchOrEscalate,
   CONFIDENCE_FILE_NAME,
+  DispatchSignInRefused,
   confidencePromptLine,
   developerRoundMarker,
   DEVELOPER_ROUND_RESPONSE_FILE_NAME,
@@ -163,6 +164,7 @@ import {
   roundResponsePromptLine,
   routeCompletionEvents,
   sizeOfSafe,
+  spendsInfrastructureRetry,
   waitForOwnLoopLine
 } from './dev-review-loop/round-assess.js'
 import { buildReport, gh, resolveMergeBase, runReportForOpenPr } from './pr-report-engine.js'
@@ -273,11 +275,13 @@ export {
   DEVELOPER_ROUND_RESPONSE_FILE_NAME,
   developerRoundMarker,
   DevReviewLoopResumeError,
+  DispatchSignInRefused,
   parseConfidenceReply,
   parseRoundResponseFindingIds,
   renderDeveloperRoundComment,
   roundResponsePromptLine,
-  routeCompletionEvents
+  routeCompletionEvents,
+  spendsInfrastructureRetry
 } from './dev-review-loop/round-assess.js'
 
 // --- deps (injectable; every field defaults to the real implementation) -----
@@ -1747,7 +1751,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           }
         ])
       }
-      await assertDispatchOrEscalate(handle, dispatchAgent, isResume, devDispatchSucceededBefore)
+      await assertDispatchOrEscalate(handle, dispatchAgent, isResume, devDispatchSucceededBefore, 'the developer')
       if (!handle.failureReason) {
         devDispatchSucceededBefore = true
         if (handle.resumeId) devResumeId = handle.resumeId
@@ -2111,7 +2115,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           extraWritableDirs: [workDir]
         })
       )
-      await assertDispatchOrEscalate(handle, dispatchAgent, false, false)
+      await assertDispatchOrEscalate(
+        handle,
+        dispatchAgent,
+        false,
+        false,
+        role === 'reviewer' ? 'the reviewer' : 'the security reviewer'
+      )
       if (missingReviewerArtifacts(workDir, hasObjectives).length > 0) {
         return { verdict: firstVerdict, findingsUncitable: true }
       }
@@ -2187,7 +2197,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             extraWritableDirs: [workDir]
           })
         )
-        await assertDispatchOrEscalate(handle, dispatchAgent, false, false)
+        await assertDispatchOrEscalate(
+          handle,
+          dispatchAgent,
+          false,
+          false,
+          role === 'reviewer' ? 'the reviewer' : 'the security reviewer'
+        )
         lastHandle = handle
         const missing = missingReviewerArtifacts(workDir, hasObjectives)
         if (missing.length > 0) {
@@ -2935,10 +2951,16 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // passed here is never posted un-redacted — this call site no longer
       // needs its own separately-sanitized copy, and neither does any other
       // `postPauseComment` call in this file.
+      // A sign-in refusal narrates itself (`DispatchSignInRefused`): the
+      // pause a reader sees says the developer could not sign in, never
+      // that an unnamed error ended the round.
       decision = {
         type: 'pause',
         reason: 'infrastructure',
-        detail: `an uncaught error ended round ${round}'s own processing: ${err instanceof Error ? err.message : String(err)}`
+        detail:
+          err instanceof DispatchSignInRefused
+            ? err.message
+            : `an uncaught error ended round ${round}'s own processing: ${err instanceof Error ? err.message : String(err)}`
       }
       keepLockAlive = true
       // The SAME durable snapshot every
@@ -2946,7 +2968,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // is — a genuinely uncaught error is exactly the case this record
       // exists for, so the next attach/resume recovers this round's
       // budgets rather than starting a fresh in-memory count at zero.
-      infrastructureRetries += 1
+      // A sign-in refusal is the one failure that spends no budget
+      // (`spendsInfrastructureRetry`): a host with no credentials never
+      // produced a round for that bound to bound, so no number of sign-in
+      // pauses should ever demand a Principal ruling to resume past.
+      if (spendsInfrastructureRetry(err)) infrastructureRetries += 1
       persistCurrentLoopState('pause', decision.reason)
       // This bookkeeping is best-effort, never a second chance for the
       // process to crash on its way out — the ORIGINAL error is already

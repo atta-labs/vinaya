@@ -11,8 +11,8 @@
  * already uses for the identical reason.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   acquireOwnership,
@@ -22,6 +22,17 @@ import {
   readEffect,
   writeEffect
 } from '@attalabs/aeg-core'
+import type { LoopDeps } from '../../../src/lib/dev-review-loop'
+import { MAX_INFRASTRUCTURE_RETRIES } from '../../../src/lib/dev-review-loop/round-assess'
+import {
+  cleanupWorlds,
+  controlDir,
+  type LoopWorld,
+  makeInProcessDeps,
+  makeWorld,
+  runLoopInProcess,
+  taskRunDir
+} from '../dev-review-loop-harness'
 import {
   fenceStartedEffectsAsUncertain,
   PAUSE_REASON_PROFILE,
@@ -293,5 +304,142 @@ describe('PAUSE_REASON_PROFILE — every reason whose next-action mentions `deta
         'policy_changed'
       ].sort()
     )
+  })
+})
+
+/**
+ * A developer launch refused before any vendor process started — the record
+ * a sign-in refusal leaves behind — never blocks the task: the next run
+ * dispatches a fresh developer session, and the pause a repeated refusal
+ * does produce says the developer could not sign in and spends none of the
+ * loop's infrastructure-retry budget, so no number of sign-in failures ever
+ * forces a Principal ruling to resume.
+ */
+describe('a pre-spawn sign-in refusal never blocks the task', () => {
+  afterEach(cleanupWorlds)
+
+  /** The launch record `dispatchRole` leaves after refusing before spawn: terminal, reasoned, no child pid, no bound session. */
+  function seedPreSpawnRefusalLaunchRecord(world: LoopWorld): void {
+    const sessionsDir = join(world.runtimeDir, 'tasks-execution', String(world.task), 'sessions')
+    mkdirSync(sessionsDir, { recursive: true })
+    writeFileSync(
+      join(sessionsDir, 'developer-claude.json'),
+      JSON.stringify({
+        runId: 'run-refused',
+        role: 'developer',
+        agent: 'claude',
+        repo: null,
+        task: world.task,
+        pr: null,
+        round: 1,
+        attempt: 1,
+        effectId: 'eff-refused',
+        dispatcherPid: process.pid,
+        childPid: null,
+        childStartedAt: null,
+        childCommand: null,
+        host: hostname(),
+        startedAt: '2026-09-26T00:00:00.000Z',
+        status: 'interrupted',
+        resumeId: null,
+        boundAt: null,
+        finishedAt: '2026-09-26T00:00:01.000Z',
+        failureReason: 'authentication-failed'
+      })
+    )
+  }
+
+  /** Deps whose developer dispatch is refused at sign-in, exactly as `dispatchRole` reports it; reviewers keep the world's own clean fakes. */
+  function signInRefusedDeps(world: LoopWorld): Partial<LoopDeps> {
+    const base = makeInProcessDeps(world)
+    return {
+      dispatchRole: async (role, agent, prompt, opts) => {
+        if (role !== 'developer') return base.dispatchRole!(role, agent, prompt, opts)
+        world.dispatchCountByRole[role] = (world.dispatchCountByRole[role] ?? 0) + 1
+        return {
+          exitCode: null,
+          durationMs: 1,
+          usage: null,
+          resumeId: null,
+          timedOut: false,
+          failureReason: 'authentication-failed'
+        }
+      }
+    }
+  }
+
+  function heldPauseState(world: LoopWorld): Record<string, unknown> {
+    return JSON.parse(readFileSync(join(controlDir(world), 'pause-state.json'), 'utf8')) as Record<string, unknown>
+  }
+
+  it("dispatches a fresh developer session over a refused launch record, instead of pausing on the worker's lost continuity", async () => {
+    const world = makeWorld()
+    seedPreSpawnRefusalLaunchRecord(world)
+
+    const result = await runLoopInProcess(world)
+
+    expect(result.finalDecision.type).toBe('publish')
+    expect(world.dispatchCountByRole.developer).toBe(1)
+  })
+
+  it('pauses saying the developer could not sign in, and every later --resume continues with no ruling — the budget is never spent', async () => {
+    // The pull request already exists and its gate is red (the adopter case
+    // this comes from): the developer signed in for an earlier round, so
+    // this round both NEEDS a developer turn and pauses against a real PR
+    // number that `--resume` can name.
+    const world = makeWorld({ developerPushed: true, gate: 'red' })
+
+    for (let attempt = 1; attempt <= MAX_INFRASTRUCTURE_RETRIES + 1; attempt++) {
+      seedPreSpawnRefusalLaunchRecord(world)
+      const input =
+        attempt === 1
+          ? { task: world.task, agent: 'claude' as const }
+          : { resumePr: world.prNumber, agent: 'claude' as const }
+
+      const result = await runLoopInProcess(world, input, signInRefusedDeps(world))
+
+      expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
+      const held = heldPauseState(world)
+      expect(String(held.detail)).toContain('could not sign in')
+      // Never counted: a bare `--resume` stays available because this
+      // number never reaches `MAX_INFRASTRUCTURE_RETRIES`, however many
+      // times the host refuses to sign in. Were it counted, the run at
+      // `MAX_INFRASTRUCTURE_RETRIES + 1` would already have thrown
+      // "carries no Principal ruling comment yet" instead of pausing.
+      expect(held.infrastructureRetries).toBe(0)
+
+      // An `'infrastructure'` pause deliberately keeps the driver lock
+      // alive; in production the driver process itself then exits and its
+      // pid dies, which is what lets the next `--resume` take over. This
+      // one process never exits, so the lock is cleared here to stand in
+      // for that.
+      rmSync(join(taskRunDir(world), 'driver.pid.json'), { force: true })
+    }
+
+    // Dispatched afresh on every one of those runs — the refused launch
+    // record never once blocked the task — and no ruling was ever posted.
+    expect(world.dispatchCountByRole.developer).toBe(MAX_INFRASTRUCTURE_RETRIES + 1)
+    expect(world.rulings).toEqual([])
+  })
+
+  it('an ordinary infrastructure failure still spends the budget — the exclusion is keyed on the sign-in cause alone', async () => {
+    const world = makeWorld()
+
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {
+        dispatchRole: async (role, agent, prompt, opts) => {
+          if (role !== 'developer') return makeInProcessDeps(world).dispatchRole!(role, agent, prompt, opts)
+          world.dispatchCountByRole[role] = (world.dispatchCountByRole[role] ?? 0) + 1
+          return { exitCode: 1, durationMs: 1, usage: null, resumeId: null, timedOut: false, failureReason: 'crash' }
+        }
+      }
+    )
+
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
+    const held = heldPauseState(world)
+    expect(String(held.detail)).not.toContain('could not sign in')
+    expect(held.infrastructureRetries).toBe(1)
   })
 })
