@@ -656,14 +656,13 @@ function resolvedRegistry(): CheckSpec[] {
  * unconditionally underneath it would silently reintroduce exactly the
  * validation the opt-out was set to remove.
  *
- * A `principalOwed` check whose every reported error is `pending: true` is
- * excluded from the refusal decision, matching `isRunFailed`'s (`commands/
- * check.ts`) own rule exactly: `test-plan`'s unticked-`[principal]` wait
- * state is enforcement `review-gate` already owns at merge, not a reason to
- * stop a body write mid-round. A structural failure on the same check — no
- * `## Test Plan` section (no `pending` errors at all), or a mix of pending
- * and non-pending errors — still refuses, because that half the Developer
- * can actually fix.
+ * A check whose every reported error is `pending: true` is excluded from the
+ * refusal decision (`isPendingOnlyFailure` below) — the wait state a
+ * `pending` error names is never a statement that these outgoing bytes are
+ * wrong, which is the only question a pre-write validation answers. A
+ * structural failure on the same check — no `pending` errors at all, or a
+ * mix of pending and non-pending errors — still refuses, because that half
+ * the author can actually fix.
  *
  * Refuses (never returns) on any other finding — same contract as
  * `refuse()` itself, which this calls.
@@ -688,11 +687,11 @@ export async function runBodyChecks(
  * `validates: 'body'` registry over `body` and returns the aggregated
  * findings as an ordinary array (empty on pass) instead of calling
  * `refuse()`. Same `ring1_forgeWriteInterception` opt-out, same
- * `localOnly`/`PR_NUMBER` handling, same `principalOwed`/`pending`
- * exclusion as `runBodyChecks` — the two must never drift apart, which is
- * why `runBodyChecks` now delegates to this rather than duplicating the
- * logic. Exists for a caller that needs the findings without the process
- * ever being able to exit underneath it (`pr-report-engine.ts`'s
+ * `localOnly`/`PR_NUMBER` handling, same `isPendingOnlyFailure` exclusion as
+ * `runBodyChecks` — the two must never drift apart, which is why
+ * `runBodyChecks` now delegates to this rather than duplicating the logic.
+ * Exists for a caller that needs the findings without the process ever being
+ * able to exit underneath it (`pr-report-engine.ts`'s
  * `bodyCheckRefusalMessage`, called from the developer-review loop's own
  * long-lived driver, where `refuse()`'s `process.exit(1)` would kill the
  * whole driver instead of just this one write, round 3 review MAJOR/HIGH).
@@ -724,10 +723,48 @@ export async function collectBodyCheckErrors(
   return outcomes
     .filter((o) => o.status === 'fail' || o.status === 'error')
     .flatMap((o) => {
-      const spec = specs.find((s) => s.name === o.name)
-      if (spec?.principalOwed && o.errors.length > 0 && o.errors.every((e) => e.pending === true)) return []
+      if (isPendingOnlyFailure(o.errors)) return []
       return o.errors
     })
+}
+
+/**
+ * The body-write path's one exclusion rule: a failing check whose EVERY
+ * reported error is `pending: true` never refuses the write.
+ *
+ * `CheckError.pending` means "has not happened YET", never "is wrong" (see
+ * its own doc comment in `apps/cli/src/checks/contract.ts`). A pre-write
+ * validation answers exactly one question — are the bytes about to reach the
+ * forge wrong? — so a wait state is never an answer to it: refusing there
+ * blocks the very write whose landing is often what clears the wait. The
+ * concrete incident: `principal-test-plan-wait` reports one all-`pending`
+ * error while a `[principal]` Test Plan box is unticked, so the per-round
+ * Evidence splice was refused for the whole life of a green loop, and the
+ * Principal's own tick then re-ran the body checks against the untouched
+ * template placeholder and turned `evidence-fresh` red.
+ *
+ * Reads the errors alone, never the `CheckSpec` — deliberately NOT gated on
+ * `principalOwed`. That flag also feeds the mechanical gate's red/green
+ * reading (`isRunFailed`, `apps/cli/src/commands/check.ts`) and, through it,
+ * the loop's CI reader; marking `principal-test-plan-wait` with it to get
+ * this write through would have changed what makes a run red, and an
+ * unticked `[principal]` box must stay a merge condition. `isRunFailed`
+ * therefore keeps its own, NARROWER rule — `principalOwed` AND pending-only
+ * — on purpose: the two are not meant to converge, because they answer
+ * different questions. Every enforcement an excluded error represents is
+ * untouched: `principal-test-plan-wait` still runs in its own CI job and
+ * stays red until the box is ticked, which is its whole job.
+ *
+ * Empty errors are never pending-only — a check that emitted nothing has said
+ * nothing about a wait state, so this never widens to "no errors at all".
+ * That is the predicate's own contract, not a claim about what such a check
+ * does to a write: `collectBodyCheckErrors` aggregates emitted `CheckError`s,
+ * so a failure carrying none (a timeout, a malformed stderr) contributes no
+ * finding here and never refused a body write before this rule existed
+ * either. Unchanged, and separate from this rule.
+ */
+export function isPendingOnlyFailure(errors: CheckError[]): boolean {
+  return errors.length > 0 && errors.every((e) => e.pending === true)
 }
 
 /**
