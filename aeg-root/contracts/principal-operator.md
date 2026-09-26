@@ -22,9 +22,11 @@ This seam sits between the seat that decides **what is true and what is allowed*
 
 **The hand-off is malformed when** — the Operator is asked to exercise content or ratification authority (rule, approve, publish a review, merge, edit an Issue, re-scope), or when a Principal-addressed escalation is cleared by the Operator rather than presented. Either way the boundary between process and content authority has been crossed, and the seam's whole purpose is to make that crossing visible and refused.
 
+**What the Operator may read of a pull request** — the selected task's own, and only that one. `task_pr_read` returns what the forge reports about that pull request: each required and reported check with its state, conclusion and, where it failed, its failure summary; and the pull request's review record — the newest principal-authored verdicts and their judged head, the round markers, the published summary table, and any pause comment. Nothing authored outside the principal allowlist crosses this seam in either direction: a drive-by comment on the task's pull request is not a record the Operator may report, and the Operator never carries one up as though it were. The read is read-only by construction — it re-runs no check, posts nothing, edits nothing, merges nothing, and carries no forge-write credential — so widening what the Operator may *see* here widens nothing about what it may *do*.
+
 **What it does not carry** — a duration. The Principal may ask "what state is it in?"; the answer is derived and durationless. "When will it be done?" has no grounded answer on this seam, and the Operator supplies none.
 
-**How it physically runs** — downward, the carrier is the Operator's tool grant: the five task tools plus the status-follow read, and nothing that could rule, approve, or merge. Upward, the carrier is the persisted escalation packet, whose `requestedAuthority` field names the Principal as the seat that must decide. Neither direction is a status write — the run's branch, pull request, and pause record are the status, read rather than restated.
+**How it physically runs** — downward, the carrier is the Operator's tool grant: the six task tools plus the status-follow read, and nothing that could rule, approve, or merge. Upward, the carrier is the persisted escalation packet, whose `requestedAuthority` field names the Principal as the seat that must decide. Neither direction is a status write — the run's branch, pull request, and pause record are the status, read rather than restated.
 
 ---
 
@@ -46,7 +48,7 @@ The Operator seat was, for a period, a set of tools with no role text: any sessi
 
 Two carriers, one per direction:
 
-1. **Downward — the tool grant.** The Operator holds `task_start`, `task_status`, `task_escalation_read`, `task_resume`, `task_cancel`, and the status-follow read. The grant is the delegation: it is exactly the process authority the Principal hands down, and it contains no tool that could rule, approve, publish a review, merge, or edit an Issue. The router refuses any call outside it, so the delegation cannot silently widen.
+1. **Downward — the tool grant.** The Operator holds `task_start`, `task_status`, `task_escalation_read`, `task_pr_read`, `task_resume`, `task_cancel`, and the status-follow read. The grant is the delegation: it is exactly the process authority the Principal hands down, and it contains no tool that could rule, approve, publish a review, merge, or edit an Issue. The router refuses any call outside it, so the delegation cannot silently widen.
 2. **Upward — the escalation packet.** A paused run's persisted packet carries a `requestedAuthority` field. When it names the Principal, the Operator presents that packet — reason, inputs, held evidence, attempted recovery, and permitted next actions, verbatim — and waits for the Principal's ruling, approval, or merge.
 
 ---
@@ -57,6 +59,7 @@ Two carriers, one per direction:
 |---|---|
 | Run a specific already-planned, dispatchable task (`task_start`, or the `task run` composition) | Rule on an escalation the packet addresses to the Principal |
 | Read a task's grounded status, or follow it (`task_status`, status-follow read) | Approve or merge — the ratification acts the Operator structurally cannot perform |
+| Read why that task's own pull request is red — its check results and its principal-authored review record (`task_pr_read`) | Decide what a red check or a held verdict means for the task — the Operator names what it read, and never rules on it |
 | Present a paused run's escalation packet (`task_escalation_read`) | Resolve a Principal-authority pause (round cap, no-progress, confidence, reappearance) with a decision, not a retry |
 | Request continuation or cancellation of a run (`task_resume`, `task_cancel`) | Address a scope or criteria change to the Planner — the Principal redirects it there, as the Operator cannot edit the Issue |
 
