@@ -48,14 +48,31 @@ function ring2AsyncAuditsDisabled(): boolean {
   return loadConfig()?.rings?.ring2_asyncAudits === false
 }
 
+/** The three lifecycles a tranche can be in, read off the one derivation `@attalabs/aeg-forge-state` owns rather than restated here. */
+type TrancheLifecycle = Awaited<ReturnType<typeof deriveTrancheFromForge>>['lifecycle']
+
 export type ArchiveDeps = {
   detectRepo: () => Promise<RepoInfo | null>
   /** Injected so the Archivist token-row decision (`renderArchiveTokensLine`) is testable without touching real transcripts/env — same seam `doctor.ts`'s `DoctorDeps` already uses for the identical probe. */
   meteringCapability: () => MeteringCapability
+  /**
+   * One declared tranche's own lifecycle, derived from its labeled Issues.
+   * Injected for the same reason the probe above is, plus one specific to
+   * this read: `@attalabs/aeg-forge-state`'s `gh` wrapper builds its child
+   * environment ONCE at import, so the fake-`gh`-on-PATH technique the rest
+   * of this file's tests use (`sh` below passes `process.env` explicitly to
+   * defeat exactly that) can never reach it — a test placing a fake `gh`
+   * ahead of the real one would silently hit the real forge here.
+   */
+  trancheLifecycle: (owner: string, repo: string, slug: string) => Promise<TrancheLifecycle>
 }
 
 function realDeps(): ArchiveDeps {
-  return { detectRepo: detectGitRepo, meteringCapability: () => resolveMeteringCapability(meteringRealDeps()) }
+  return {
+    detectRepo: detectGitRepo,
+    meteringCapability: () => resolveMeteringCapability(meteringRealDeps()),
+    trancheLifecycle: async (owner, repo, slug) => (await deriveTrancheFromForge(owner, repo, slug)).lifecycle
+  }
 }
 
 /**
@@ -503,9 +520,6 @@ export function trancheArchivalStatus(
   return { kind: 'complete' }
 }
 
-/** The three lifecycles a tranche can be in, read off the one derivation `@attalabs/aeg-forge-state` owns rather than restated here. */
-type TrancheLifecycle = Awaited<ReturnType<typeof deriveTrancheFromForge>>['lifecycle']
-
 export type DeclaredTranche = { slug: string; lifecycle: TrancheLifecycle }
 
 /**
@@ -526,7 +540,8 @@ async function declaredTranches(
   owner: string,
   repo: string,
   description: string,
-  archivedSlug: string
+  archivedSlug: string,
+  deps: ArchiveDeps
 ): Promise<DeclaredTranche[]> {
   const rows: DeclaredTranche[] = []
   for (const intent of intentLines(description)) {
@@ -534,8 +549,7 @@ async function declaredTranches(
       rows.push({ slug: intent.slug, lifecycle: 'complete' })
       continue
     }
-    const tranche = await deriveTrancheFromForge(owner, repo, intent.slug)
-    rows.push({ slug: intent.slug, lifecycle: tranche.lifecycle })
+    rows.push({ slug: intent.slug, lifecycle: await deps.trancheLifecycle(owner, repo, intent.slug) })
   }
   return rows
 }
@@ -669,7 +683,7 @@ export async function runArchiveTranche(args: string[], deps: ArchiveDeps): Prom
   const verdict = milestoneCloseDecision({
     otherWorkOpen,
     declaresIntents: hasTrancheIntentsSection(description),
-    declared: await declaredTranches(repo.owner, repo.repo, description, slug)
+    declared: await declaredTranches(repo.owner, repo.repo, description, slug, deps)
   })
 
   if (!yes) {
