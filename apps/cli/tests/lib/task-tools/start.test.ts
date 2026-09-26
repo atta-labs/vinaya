@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'bun:test'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { resolveOpenTaskIssueForRef } from '../../../src/lib/task-tools/handlers.js'
 import type { CallerContext } from '../../../src/lib/task-tools/server.js'
 import {
   createTaskStartHandler,
@@ -282,6 +283,82 @@ describe('task_start handler', () => {
     if (!second.ok) return
     expect(second.result.started).toBe(false) // still alive — a genuine replay
     expect(launches).toHaveLength(1)
+  })
+
+  /**
+   * The start-side resolver `defaultResolveIssue` binds (O1/O2): it reads the
+   * open tranche-labeled Issues directly and resolves an ordinal WITHOUT ever
+   * asking whether the task's brief is frozen — the whole point, since
+   * `task_start` starts a planned task `task run` preparation has not frozen
+   * yet. The `gh` stub below returns a bare `issue list` and FAILS LOUDLY if
+   * `issue view` is ever called, which is exactly how a frozen-brief check
+   * would show up — so a green run proves the resolver never makes one.
+   */
+  describe('resolveOpenTaskIssueForRef — the start-side resolver over open, planned Issues', () => {
+    let sandbox: string
+    let savedPath: string | undefined
+
+    function withStubbedForge(issuesJson: string, run: () => void): void {
+      sandbox = mkdtempSync(join(tmpdir(), 'vinaya-task-start-resolve-'))
+      const gh = join(sandbox, 'gh')
+      writeFileSync(
+        gh,
+        `#!/bin/sh
+if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
+  cat <<'JSON'
+${issuesJson}
+JSON
+  exit 0
+fi
+echo "gh stub: unexpected call (a frozen-brief check would land here): $*" >&2
+exit 1
+`,
+        { mode: 0o755 }
+      )
+      chmodSync(gh, 0o755)
+      savedPath = process.env.PATH
+      process.env.PATH = `${sandbox}:${process.env.PATH ?? ''}`
+      try {
+        run()
+      } finally {
+        if (savedPath === undefined) delete process.env.PATH
+        else process.env.PATH = savedPath
+        rmSync(sandbox, { recursive: true, force: true })
+      }
+    }
+
+    // A planned task Issue: open, tranche-labeled, its title carrying the
+    // ordinal — and NO frozen brief. `resolveIssueForRef`'s status-list read
+    // would skip it; this resolver must find it (O1).
+    const PLANNED_ISSUES = JSON.stringify([
+      {
+        number: 741,
+        title: '[unattended-run-v1] 10 — a planned task, brief not frozen',
+        labels: [{ name: 'vinaya/tranche:unattended-run-v1' }]
+      },
+      {
+        number: 742,
+        title: '[unattended-run-v1] 11 — another planned task',
+        labels: [{ name: 'vinaya/tranche:unattended-run-v1' }]
+      }
+    ])
+
+    it('resolves a planned task whose brief is not frozen — the open, labeled Issue task run preparation resolves (O1)', () => {
+      withStubbedForge(PLANNED_ISSUES, () => {
+        expect(resolveOpenTaskIssueForRef({ tranche: 'unattended-run-v1', id: '10' })).toBe(741)
+      })
+    })
+
+    it('refuses (null) an ordinal that names no open task Issue — never resolves blind (O2)', () => {
+      withStubbedForge(PLANNED_ISSUES, () => {
+        expect(resolveOpenTaskIssueForRef({ tranche: 'unattended-run-v1', id: '99' })).toBeNull()
+      })
+    })
+
+    it('returns a raw Issue ref unchanged, with no forge read at all', () => {
+      // No stub on PATH: an `{ issue }` ref must never shell out to `gh`.
+      expect(resolveOpenTaskIssueForRef({ issue: 741 })).toBe(741)
+    })
   })
 
   describe('defaultLaunch — the real spawn, confirmed on a real driver lock', () => {

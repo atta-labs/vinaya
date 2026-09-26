@@ -31,9 +31,11 @@
  *     that disconnects mid-call leaves at most one run — a reconnect replays
  *     the claim, it does not start again.
  *   - reports a start only once the launched run is CONFIRMED ALIVE (O1): it
- *     resolves the task's forge Issue (the same read `task_resume`/
- *     `task_status` already use, `resolveIssueForRef`), launches the run
- *     detached, and waits, bounded, for that Issue's own driver lock
+ *     resolves the task's forge Issue over the open tranche-labeled Issues,
+ *     frozen or not — the same read `vinaya task run`'s own preparation uses
+ *     to find an ordinal's Issue (`resolveOpenTaskIssueForRef`, beside
+ *     `handlers.ts`'s frozen-brief-filtered `resolveIssueForRef`) — launches
+ *     the run detached, and waits, bounded, for that Issue's own driver lock
  *     (`driver.pid.json`) to appear and name a live pid — the observable
  *     `devReviewLoop` itself produces once its entry gate clears, right after
  *     `runTask`'s own preparation step (which can take several seconds of
@@ -61,7 +63,7 @@ import { type AgentVendor, isAgentVendor } from '../dispatch.js'
 import { isDriverPidAlive, readDriverLock } from '../dev-review-loop/pause-resume.js'
 import { ensureRunDir, runPath, runtimeDirForThisRepo } from '../run-paths.js'
 import { repoRoot as gitRepoRoot } from '../diff-evidence.js'
-import { resolveIssueForRef } from './handlers.js'
+import { resolveOpenTaskIssueForRef } from './handlers.js'
 import type { TaskToolCallResult } from './handlers.js'
 import type { CallerContext } from './server.js'
 
@@ -96,7 +98,7 @@ export type TaskStartDeps = {
   store: RequestStore
   /** The repository's configured launch agent, or `null` when none is set — see this file's own header on why this tool reads config rather than accepting an agent field. */
   agent: () => AgentVendor | null
-  /** The SAME `{tranche, id}` → Issue resolution `task_resume`/`task_status` already use (`handlers.ts`'s `resolveIssueForRef`) — `null` when no open task matches. */
+  /** `{tranche, id}` → Issue over the open tranche-labeled Issues, frozen or not — the SAME resolution `vinaya task run` preparation performs for an ordinal (`handlers.ts`'s `resolveOpenTaskIssueForRef`), NOT the frozen-brief-filtered `resolveIssueForRef` `task_status`/`task_resume` use. `null` when no open task matches. */
   resolveIssue: (tranche: string, id: string) => number | null
   /** Is a live driver currently running this Issue? The SAME observable (`driver.pid.json`) a fresh launch is confirmed against. */
   isRunAlive: (issue: number) => boolean
@@ -293,7 +295,7 @@ function defaultAgent(): AgentVendor | null {
 }
 
 function defaultResolveIssue(tranche: string, id: string): number | null {
-  return resolveIssueForRef({ tranche, id })
+  return resolveOpenTaskIssueForRef({ tranche, id })
 }
 
 function defaultIsRunAlive(issue: number): boolean {
