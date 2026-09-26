@@ -360,3 +360,74 @@ describe('vinaya dispatch --unattended — O2 fail-closed refusal (Issue #640, n
     }
   )
 })
+
+describe('vinaya dispatch --unattended — O2 Gemini has no subscription login yet', () => {
+  it('refuses before any spawn, naming the missing subscription login rather than a missing API key', () => {
+    const fixture = buildGitFixture({ requireWorkerIsolation: true })
+    // A real fake `gemini` on the fixture PATH, so a refusal here can only
+    // be the no-subscription-login one — never "binary not resolvable".
+    writeFileSync(
+      join(fixture.binDir, 'gemini'),
+      `#!/bin/sh
+touch "${fixture.markerFile}"
+cat > /dev/null
+printf '%s' '{}'
+exit 0
+`
+    )
+    chmodSync(join(fixture.binDir, 'gemini'), 0o755)
+
+    const result = runDispatchNoAmbientLogin(fixture, ['--unattended'], 'gemini')
+
+    expect(result.status).not.toBe(0)
+    expect(existsSync(fixture.markerFile), 'the gemini binary must never be spawned at all').toBe(false)
+    expect(result.stderr).toContain('refused')
+    expect(result.stderr).toContain('no subscription login in Vinaya yet')
+    // The wording rules an API key OUT rather than asking for one — the
+    // failure an operator reads is a missing login, never a missing key.
+    expect(result.stderr).toContain('no agent authenticates with an API key')
+
+    const lines = outboxLines(fixture.home) as Array<{ event?: string; reason?: string }>
+    expect(lines.find((l) => l.event === 'dispatch_failed')?.reason).toBe('refused')
+    expect(lines.find((l) => l.event === 'dispatched')).toBeUndefined()
+  })
+
+  it('refuses on a host where the worker sandbox is off too — the refusal is about the login, not the boundary', () => {
+    const fixture = buildGitFixture({ requireWorkerIsolation: false })
+    writeFileSync(
+      join(fixture.binDir, 'gemini'),
+      `#!/bin/sh
+touch "${fixture.markerFile}"
+cat > /dev/null
+printf '%s' '{}'
+exit 0
+`
+    )
+    chmodSync(join(fixture.binDir, 'gemini'), 0o755)
+
+    const result = runDispatchNoAmbientLogin(fixture, ['--unattended'], 'gemini')
+
+    expect(result.status).not.toBe(0)
+    expect(existsSync(fixture.markerFile)).toBe(false)
+    expect(result.stderr).toContain('no subscription login in Vinaya yet')
+  })
+
+  it('an ATTENDED gemini dispatch is untouched — a human at their own terminal signs their vendor CLI in themselves', () => {
+    const fixture = buildGitFixture({ requireWorkerIsolation: false })
+    writeFileSync(
+      join(fixture.binDir, 'gemini'),
+      `#!/bin/sh
+touch "${fixture.markerFile}"
+cat > /dev/null
+printf '%s' '{}'
+exit 0
+`
+    )
+    chmodSync(join(fixture.binDir, 'gemini'), 0o755)
+
+    const result = runDispatchNoAmbientLogin(fixture, [], 'gemini')
+
+    expect(existsSync(fixture.markerFile), 'an attended dispatch still reaches the vendor binary').toBe(true)
+    expect(result.stderr).not.toContain('no subscription login in Vinaya yet')
+  })
+})

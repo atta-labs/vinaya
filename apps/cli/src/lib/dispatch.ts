@@ -90,7 +90,7 @@ import {
   tasksExecutionRoot
 } from './run-paths.js'
 import { basename, dirname, join } from 'node:path'
-import { buildWorkerEnv, resolveWorkerBoundaryLaunch } from './worker-boundary.js'
+import { buildWorkerEnv, hasSubscriptionLogin, resolveWorkerBoundaryLaunch } from './worker-boundary.js'
 import { repoRoot } from './diff-evidence.js'
 
 /**
@@ -3173,6 +3173,43 @@ export async function dispatchRole(
         failureReason: 'refused',
         effectId
       }
+    }
+  }
+
+  // O2: an agent with no subscription login route in Vinaya can never
+  // authenticate an unattended run — the controller has nothing to read and
+  // nothing to stage for it, and no API-key fallback exists for any agent.
+  // Refuse here, before the binary is even resolved, rather than letting a
+  // child launch and hang unauthenticated to the dispatch ceiling. Scoped to
+  // an unattended start: an attended dispatch is a human at their own
+  // terminal, whose vendor CLI signs itself in interactively.
+  if (opts.unattended === true && !hasSubscriptionLogin(agent)) {
+    const failureReason: DispatchFailureReason = 'authentication-failed'
+    const durationMs = Date.now() - start
+    const priorSize = sizeOfSafe(outboxPath)
+    log({
+      kind: 'dispatch',
+      event: 'dispatch_failed',
+      payload: {},
+      target_role: role,
+      model: resolvedModel,
+      ...roundField,
+      effect_id: effectId,
+      reason: 'refused',
+      usage: null,
+      duration_ms: durationMs
+    })
+    writeLifecycle(`[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — ${NO_SUBSCRIPTION_LOGIN_REASON}`)
+    patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason })
+    await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
+    return {
+      exitCode: null,
+      durationMs,
+      usage: null,
+      resumeId: null,
+      timedOut: false,
+      failureReason,
+      effectId
     }
   }
 
