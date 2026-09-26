@@ -191,6 +191,12 @@ A chunk the server does not accept ends the drain. The queue is left holding exa
 
 <!-- AEG:CLAIM: apps/cli/src/lib/log-webhook-drain.ts contains:if (chunk.length > 0 && chunkBytes + lineBytes > MAX_WEBHOOK_BODY_BYTES) await deliverChunk() -->
 
+### The rotation backup slot is delivered before the live file
+
+A rotation moves the live file to `<name>.1.ndjson`, and those events are older than everything in the live file, so the drain delivers that slot FIRST and only then the live file — in order, removing each chunk as the server accepts it, and deleting the file once it is empty. Nothing sits in that slot unread until the next rotation overwrites it.
+
+The rotation itself never waits on this drain: an append must not block on a network call, so `appendLine` takes no drain lock. The drain therefore renames the slot to `<name>.1.draining.ndjson` before reading a byte of it, and a rotation that lands mid-drain overwrites `<name>.1.ndjson`, which by then holds nothing anyone is reading. A drain that dies part-way leaves that file behind, and the next drain delivers it ahead of both the current backup and the live file — still oldest-first. The rotation's own overflow diagnostic is unchanged and stays truthful: it reports what a rotation is about to destroy, and it now usually has nothing to report, because the slot was delivered instead of lost.
+
 ## No path to a tracker or a code host (task-files-v1 6, O1)
 
 Logs never reach a tracker or a code host, in any form — not as an Issue or pull-request comment, not as a CI artifact. Task 5 (above) made every producer deliver live through the `logs` destination and stopped the developer-review loop's own round-end flush from calling anything; this task deletes the tracker-posting machinery that flush left behind, since nothing called it any more: `vinaya log flush --issue <n> | --pr <n>` (the comment-posting command, its chunking, its `<!-- aeg:log:… -->` marker, and its idempotent-retry read against existing comments), `vinaya log export-artifact` and `vinaya log collect-artifact` (the CI-artifact export/collect round-trip and the trusted collector workflow that published it), and the `logPublish` config key that backed all three (`issue`, `pr`, `webhookUrl`, `headers`, `maxChunksPerFlush`). A configuration that still declares `logPublish` is refused at load, naming `logs` as its replacement, rather than silently ignored.

@@ -539,6 +539,17 @@ async function waitForRequests(requests: CapturedRequest[], count: number, budge
   }
 }
 
+function siblingPath(home: string, issue: number, suffix: string): string {
+  return outboxPath(home, issue).replace(/\.ndjson$/, suffix)
+}
+
+function seedSibling(home: string, issue: number, suffix: string, lines: string[]): string {
+  const p = siblingPath(home, issue, suffix)
+  mkdirSync(dirname(p), { recursive: true })
+  writeFileSync(p, `${lines.join('\n')}\n`)
+  return p
+}
+
 describe('drainOutboxToWebhook — a queue larger than one POST catches up in chunks (O1, O4)', () => {
   it('delivers a backlog over the per-POST cap as several chunks, oldest first, and empties the queue', async () => {
     const cwd = tempDir('log-webhook-cwd-')
@@ -671,4 +682,67 @@ describe('drainOutboxToWebhook — a queue larger than one POST catches up in ch
     expect(server.requests.map((r) => runIdsOf(r.body))).toEqual([['run-1', 'run-2']])
     expect(readFileSync(path, 'utf8')).toBe(`${appended}\n`)
   }, 30000)
+})
+
+describe('drainOutboxToWebhook — the rotation backup slot is delivered, not overwritten unread (O2)', () => {
+  it('delivers the backup slot before the live file, in order, and removes it once accepted', async () => {
+    const cwd = tempDir('log-webhook-cwd-')
+    initGitRepo(cwd)
+    const home = tempDir('log-webhook-home-')
+    const server = startWebhookServer(200)
+    const backup = seedSibling(home, 720, '.1.ndjson', [ndjsonLine('old-1', 720), ndjsonLine('old-2', 720)])
+    const path = seedOutbox(home, 720, [ndjsonLine('new-1', 720)])
+
+    const { result } = await runDrainAsyncCaptured(720, server.url, undefined, cwd, home)
+    server.stop()
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('unreachable')
+    expect(result.outcome).toEqual({ flushed: true, lineCount: 3, bytes: expect.any(Number), chunks: 2 })
+    expect(server.requests.map((r) => runIdsOf(r.body))).toEqual([['old-1', 'old-2'], ['new-1']])
+    expect(existsSync(backup)).toBe(false)
+    expect(existsSync(siblingPath(home, 720, '.1.draining.ndjson'))).toBe(false)
+    expect(readFileSync(path, 'utf8')).toBe('')
+  }, 20000)
+
+  it('picks up a backup slot a crashed drain left part-way through, ahead of everything newer', async () => {
+    const cwd = tempDir('log-webhook-cwd-')
+    initGitRepo(cwd)
+    const home = tempDir('log-webhook-home-')
+    const server = startWebhookServer(200)
+    seedSibling(home, 721, '.1.draining.ndjson', [ndjsonLine('oldest-1', 721)])
+    seedSibling(home, 721, '.1.ndjson', [ndjsonLine('older-1', 721)])
+    const path = seedOutbox(home, 721, [ndjsonLine('new-1', 721)])
+
+    const { result } = await runDrainAsyncCaptured(721, server.url, undefined, cwd, home)
+    server.stop()
+
+    expect(result.ok).toBe(true)
+    expect(server.requests.map((r) => runIdsOf(r.body))).toEqual([['oldest-1'], ['older-1'], ['new-1']])
+    expect(existsSync(siblingPath(home, 721, '.1.draining.ndjson'))).toBe(false)
+    expect(existsSync(siblingPath(home, 721, '.1.ndjson'))).toBe(false)
+    expect(readFileSync(path, 'utf8')).toBe('')
+  }, 20000)
+
+  it('leaves a partly-delivered backup slot for the next drain when the server stops accepting', async () => {
+    const cwd = tempDir('log-webhook-cwd-')
+    initGitRepo(cwd)
+    const home = tempDir('log-webhook-home-')
+    const server = startWebhookServer(500)
+    const backupLine = ndjsonLine('old-1', 722)
+    seedSibling(home, 722, '.1.ndjson', [backupLine])
+    const liveLine = ndjsonLine('new-1', 722)
+    const path = seedOutbox(home, 722, [liveLine])
+
+    const { result } = await runDrainAsyncCaptured(722, server.url, undefined, cwd, home)
+    server.stop()
+
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('unreachable')
+    expect(result.code).toBe('log-webhook-drain-failed')
+    // The live file is never touched while older events are still undelivered:
+    // order survives the outage.
+    expect(readFileSync(path, 'utf8')).toBe(`${liveLine}\n`)
+    expect(readFileSync(siblingPath(home, 722, '.1.draining.ndjson'), 'utf8')).toBe(`${backupLine}\n`)
+  }, 20000)
 })

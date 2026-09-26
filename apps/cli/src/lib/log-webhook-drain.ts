@@ -15,6 +15,10 @@
  * the server deduplicates it by the stable event identity the storage
  * contract already gives every line.
  *
+ * Events the sink's rotation moved into the one `<name>.1.ndjson` backup slot
+ * are delivered BEFORE the live file, so order survives a rotation instead of
+ * the backup sitting unread until the next rotation overwrote it.
+ *
  * Every line is re-validated and re-redacted through the storage contract's
  * `classifyStoredLine` before it is ever sent, fail-closed on any corrupt or
  * unknown-version line — nothing is posted this function cannot vouch for.
@@ -23,6 +27,7 @@
 import {
   closeSync,
   constants as fsConstants,
+  existsSync,
   lstatSync,
   mkdirSync,
   openSync,
@@ -217,6 +222,27 @@ export class WebhookDrainError extends Error {
   }
 }
 
+/** The one rotation slot `log-sink.ts`'s own `appendLine` moves a full queue file into, derived the same way it derives it. */
+function backupPathFor(queuePath: string): string {
+  return queuePath.replace(/\.ndjson$/, '.1.ndjson')
+}
+
+/**
+ * The private name a backup slot is renamed to for the duration of its own
+ * drain. The rotation in `log-sink.ts` does not take this module's drain lock
+ * — it must never wait on a network call to append a line — so a rotation
+ * landing mid-drain would otherwise `renameSync` a fresh, undelivered queue
+ * file straight onto the backup this drain is part-way through removing bytes
+ * from, and the next byte removal would cut into events that were never sent.
+ * Moving the backup aside first makes that impossible: a rotation overwrites
+ * `<name>.1.ndjson`, which by then holds nothing this drain is reading. A
+ * drain that crashes leaves this file behind, and the next drain delivers it
+ * first — older than the current backup, so still oldest-first.
+ */
+function drainingBackupPathFor(queuePath: string): string {
+  return queuePath.replace(/\.ndjson$/, '.1.draining.ndjson')
+}
+
 /** One queue line, with the byte offset just past its own terminator — the coordinate head removal needs and a plain `split('\n')` throws away. */
 type QueueLine = { raw: string; end: number }
 
@@ -389,11 +415,38 @@ async function drainQueueFile(args: {
   if (pendingEnd > removed) removeQueueHead(path, pendingEnd - removed)
 }
 
+/** Delivers the rotation backup slot, if there is one, before the live file — the events in it are older, and nothing else ever reads them. */
+async function drainBackupSlot(args: {
+  path: string
+  webhookUrl: string
+  headers: Record<string, string> | undefined
+  fetchTimeoutMs: number
+  totals: DrainTotals
+}): Promise<void> {
+  const draining = drainingBackupPathFor(args.path)
+  const backup = backupPathFor(args.path)
+  // A file left behind by a drain that crashed part-way through the backup
+  // slot holds the oldest events of all, so it goes first — and it must be
+  // finished before the current backup can be moved into its place. A drain
+  // that returns has delivered or set aside every line it read, so the file
+  // is empty by then; a drain that could not goes out through a throw
+  // instead, leaving the file for the next attempt.
+  if (existsSync(draining)) {
+    await drainQueueFile({ ...args, path: draining })
+    unlinkSync(draining)
+  }
+  if (!existsSync(backup)) return
+  renameSync(backup, draining)
+  await drainQueueFile({ ...args, path: draining })
+  unlinkSync(draining)
+}
+
 /**
  * Reads `outboxTask`'s own local outbox (`null` for the `subject.issue:
  * null` case — an unattributed process still delivers) and delivers it to
- * `webhookUrl` from its head, in chunks of at most
- * `MAX_WEBHOOK_BODY_BYTES`, with every chunk's bytes leaving the queue as soon as a `2xx` acknowledges
+ * `webhookUrl`: the rotation backup slot first, then the live queue file,
+ * each from its head in chunks of at most `MAX_WEBHOOK_BODY_BYTES`, with
+ * every chunk's bytes leaving the queue as soon as a `2xx` acknowledges
  * them. Every line is validated and re-redacted through the storage
  * contract's `classifyStoredLine` first, fail-closed on any corrupt or
  * unknown-version line.
@@ -421,6 +474,7 @@ export async function drainOutboxToWebhook(
   if (lockToken === null) return { flushed: false, ...totals }
   try {
     const shared = { webhookUrl, headers, fetchTimeoutMs, totals }
+    await drainBackupSlot({ ...shared, path })
     await drainQueueFile({ ...shared, path })
     return { flushed: totals.chunks > 0, ...totals }
   } finally {
