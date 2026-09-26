@@ -267,8 +267,10 @@ export function fetchIssueLabels(issueNumber: number): string[] {
  * the Issue" as O2 actually says and `renderReviewerPrompt`'s own doc
  * comment claims. This reads the Issue's `## Objectives` section only,
  * directly off its body (never the frozen brief comment) — the current
- * objectives, nothing else, matching the facts-only contract the lint in
- * `renderReviewerDispatchPrompt` exists to enforce.
+ * objectives, nothing else, matching the facts-only contract
+ * `renderReviewerDispatchPrompt` keeps by construction: the only prose that
+ * reaches a reviewer is the facts it interpolates, and the banned-framing
+ * lint it runs reads the driver's own fixed text, never those facts.
  */
 /** Pure: the `## Objectives` section text out of a body, or `''` when there is none — unit-testable with no `gh` call. */
 export function extractObjectivesSection(body: string): string {
