@@ -12,22 +12,35 @@
  * `dev-review-loop.ts` — this file re-reads those exact same on-disk paths
  * and JSON shapes rather than exporting new surface from that file (out of
  * this task's Surface).
+ *
+ * Each row also carries WHERE the run is, not only that it is running: the
+ * round and phase from the loop's own control record, how long it has been in
+ * that phase (measured from that record's own timestamp), and the newest
+ * confidence any record still carries. Every one of those is `null` when no
+ * record carries it; none of them is ever estimated.
  */
 
 import { execFileSync } from 'node:child_process'
 import { readFileSync, readdirSync } from 'node:fs'
 import {
   defaultControlStoreDeps,
+  isPrincipal,
+  isPublishedSummaryComment,
+  parseSummaryConfidenceRows,
   readEffect,
   readLoopState,
   resolveNewestFrozenBrief,
-  type PauseReason
+  taskPhaseLabel,
+  type PauseReason,
+  type TaskConfidence,
+  type TaskPhaseHistory
 } from '@attalabs/aeg-core'
 import { resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
 import { findOpenPrForBranch, runtimeDir } from './dev-review-loop.js'
 import { DRIVER_LOCK_FILENAME, runPath, tasksExecutionRoot } from './run-paths.js'
 import { loopLogPathFor, loopsRoot, type LoopLogRepo } from './loop-log.js'
+import { CONFIDENCE_FILE_NAME, parseConfidenceReply } from './dev-review-loop/round-assess.js'
 import { findRecordedControllerRun } from './task-run-background.js'
 
 function sh(cmd: string, args: string[]): string {
@@ -423,6 +436,124 @@ export function lastRoundVerdictLines(root: string, task: number): RoundVerdictL
   }
 }
 
+// --- where the run is: round, phase, time in phase -------------------------
+
+/**
+ * The loop's own control record, read as a place rather than a state word:
+ * which round, which phase (as a reader sees it — `taskPhaseLabel`, one-to-one
+ * with the phase the loop recorded), the recorded phase itself (what the
+ * history lookup compares against), and how long the run has been there.
+ *
+ * "How long" is measured from the record's OWN `recordedAt` — the driver
+ * writes it at every transition — never from a lock's start time, a file's
+ * mtime, or any other wall-clock stand-in for when the phase began. `null`
+ * when no `loop_state` record exists: no run ever persisted state for this
+ * task, so there is no phase to report.
+ */
+export type LoopPhaseReading = {
+  round: number
+  recordedPhase: string
+  phase: string
+  minutesInPhase: number
+}
+
+export function readLoopPhase(root: string, task: number, now: () => Date = () => new Date()): LoopPhaseReading | null {
+  const deps = defaultControlStoreDeps(() => tasksExecutionRoot(root))
+  const record = readLoopState(deps, task)
+  if (record.status !== 'ok') return null
+  const recordedAtMs = Date.parse(record.value.recordedAt)
+  const elapsedMs = Number.isFinite(recordedAtMs) ? now().getTime() - recordedAtMs : Number.NaN
+  return {
+    round: record.value.round,
+    recordedPhase: record.value.phase,
+    phase: taskPhaseLabel(record.value.phase),
+    // A clock that reads behind the record (a machine whose time moved, a
+    // record written by another host) reports zero, never a negative age.
+    minutesInPhase: Number.isFinite(elapsedMs) ? Math.max(0, Math.round(elapsedMs / 60_000)) : 0
+  }
+}
+
+// --- the newest confidence on record ---------------------------------------
+
+/**
+ * The newest round whose confidence is still readable, from the two records
+ * that carry one:
+ *
+ *   - the developer's own statement for a round the driver has not consumed
+ *     yet (`.vinaya-confidence`, under that round's own Developer folder), and
+ *   - the run's published summary table, which records every round's
+ *     confidence at publish.
+ *
+ * A round the driver has already read and cleared, and never published, leaves
+ * NO confidence record behind — this reports nothing for it rather than
+ * carrying an older round's figure forward under a newer round's number.
+ */
+function readStatedConfidence(root: string, task: number): TaskConfidence | null {
+  let entries: string[]
+  try {
+    entries = readdirSync(runPath(root, task, { area: 'rounds' }))
+  } catch {
+    return null
+  }
+  const rounds = entries
+    .filter((name) => /^\d+$/.test(name))
+    .map(Number)
+    .sort((a, b) => b - a)
+  for (const round of rounds) {
+    const raw = readIfExists(runPath(root, task, { area: 'developer', round, file: CONFIDENCE_FILE_NAME }))
+    if (raw === null) continue
+    const parsed = parseConfidenceReply(raw)
+    return { round, percent: parsed === 'absent' ? null : parsed.value, source: 'stated' }
+  }
+  return null
+}
+
+/** The comments of one pull request, or `null` when the read failed — a forge hiccup costs the confidence column, never the row. */
+function fetchPrComments(prNumber: number): { body: string; author: string | null }[] | null {
+  try {
+    const raw = sh('gh', ['pr', 'view', String(prNumber), '--json', 'comments'])
+    const parsed = JSON.parse(raw) as { comments: RawComment[] }
+    return parsed.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null }))
+  } catch {
+    return null
+  }
+}
+
+/** The highest round the run's own published summary recorded a confidence for — principal-authored comments only, the same trust boundary every other forge read here applies. */
+function publishedSummaryConfidence(prNumber: number, allowlist: readonly string[]): TaskConfidence | null {
+  const comments = fetchPrComments(prNumber)
+  if (comments === null) return null
+  let newest: TaskConfidence | null = null
+  for (const comment of comments) {
+    if (!isPrincipal(comment.author, allowlist as string[])) continue
+    if (!isPublishedSummaryComment(comment.body)) continue
+    for (const row of parseSummaryConfidenceRows(comment.body)) {
+      if (newest === null || row.round >= newest.round) {
+        newest = { round: row.round, percent: row.percent, source: 'published-summary' }
+      }
+    }
+  }
+  return newest
+}
+
+/**
+ * The stated file wins over the summary when both exist: it is the newer of
+ * the two by construction (the summary is written at publish; a statement
+ * still on disk has not been consumed since). The summary is read only for a
+ * run that has PUBLISHED — the one state in which a summary exists at all —
+ * so an in-flight row costs no extra forge call for this field.
+ */
+export function readLastConfidence(
+  root: string,
+  task: number,
+  published: { prNumber: number; allowlist: readonly string[] } | null
+): TaskConfidence | null {
+  const stated = readStatedConfidence(root, task)
+  if (stated !== null) return stated
+  if (published === null) return null
+  return publishedSummaryConfidence(published.prNumber, published.allowlist)
+}
+
 // --- rendering -------------------------------------------------------------
 
 export type TaskStatusRow = {
@@ -431,6 +562,15 @@ export type TaskStatusRow = {
   issue: number
   pr: { number: number } | null
   state: TaskLoopState
+  /** The loop's own recorded round, or `null` when no control record exists for this task. */
+  round: number | null
+  /** The phase a reader sees, and the phase the loop recorded — both `null` with no control record. */
+  phase: string | null
+  recordedPhase: string | null
+  minutesInPhase: number | null
+  lastConfidence: TaskConfidence | null
+  /** What this phase has typically taken on this repository's recently merged tasks — history, never a forecast; `null` for a phase with no comparable history or too few past intervals. */
+  phaseHistory: TaskPhaseHistory | null
 }
 
 function renderStateText(state: TaskLoopState): string {
@@ -450,10 +590,77 @@ function renderStateText(state: TaskLoopState): string {
   }
 }
 
-/** One stable line per task: `[<tranche>] <id> — Issue #<n> — PR #<n>|— — <state>`. */
-export function renderTaskStatusRow(row: TaskStatusRow): string {
-  const prText = row.pr ? `PR #${row.pr.number}` : 'PR —'
-  return `[${row.tranche}] ${row.id} — Issue #${row.issue} — ${prText} — ${renderStateText(row.state)}`
+/**
+ * One table, one row per task (O3) — the same columns whether one task is
+ * named or every open one is listed. A fact with no record reads `—`: an empty
+ * cell is a recorded absence, never a zero or a guess.
+ *
+ * The typical-time column is labelled as history in the header AND carries its
+ * own sample count per row, so a reader can never mistake it for a forecast of
+ * when this run leaves this phase. `renderTaskStatusHistoryNote` is the one
+ * sentence that says so in words.
+ */
+const TABLE_HEADERS = [
+  'task',
+  'issue',
+  'pr',
+  'state',
+  'round',
+  'phase',
+  'in phase',
+  'confidence',
+  'typical (history)'
+] as const
+
+/** An absent cell. One glyph for every "no record carries this" case, so a reader learns it once. */
+const NO_VALUE = '—'
+
+function confidenceCell(confidence: TaskConfidence | null): string {
+  if (confidence === null) return NO_VALUE
+  // A round whose developer stated nothing readable: recorded as an absence by
+  // the loop itself, reported as one here rather than as a substituted zero.
+  if (confidence.percent === null) return `absent (round ${confidence.round})`
+  return `${confidence.percent}% (round ${confidence.round})`
+}
+
+function historyCell(history: TaskPhaseHistory | null): string {
+  if (history === null) return NO_VALUE
+  return `${history.typicalPhaseMinutes}m (n=${history.typicalPhaseSamples})`
+}
+
+function cellsFor(row: TaskStatusRow): string[] {
+  return [
+    `[${row.tranche}] ${row.id}`,
+    `#${row.issue}`,
+    row.pr ? `#${row.pr.number}` : NO_VALUE,
+    renderStateText(row.state),
+    row.round === null ? NO_VALUE : String(row.round),
+    row.phase ?? NO_VALUE,
+    row.minutesInPhase === null ? NO_VALUE : `${row.minutesInPhase}m`,
+    confidenceCell(row.lastConfidence),
+    historyCell(row.phaseHistory)
+  ]
+}
+
+/** The sentence that keeps the typical-time column honest in words as well as in its header — printed only when at least one row actually carries a figure. */
+export function renderTaskStatusHistoryNote(): string {
+  return "typical (history) = median time this phase took on this repository's recently merged tasks, with the number of past rounds behind it — history, not a prediction of when this run finishes."
+}
+
+/** The table as lines: a header row, then one row per task, every column padded to its widest cell. */
+export function renderTaskStatusTable(rows: readonly TaskStatusRow[]): string[] {
+  const body = rows.map(cellsFor)
+  const widths = TABLE_HEADERS.map((header, column) =>
+    Math.max(header.length, ...body.map((cells) => (cells[column] as string).length))
+  )
+  const renderCells = (cells: readonly string[]): string =>
+    cells
+      .map((cell, column) => (column === cells.length - 1 ? cell : cell.padEnd(widths[column] as number)))
+      .join('  ')
+      .trimEnd()
+  const lines = [renderCells(TABLE_HEADERS), ...body.map(renderCells)]
+  if (rows.some((row) => row.phaseHistory !== null)) lines.push('', renderTaskStatusHistoryNote())
+  return lines
 }
 
 /**
@@ -468,21 +675,54 @@ export function renderTaskStatusRow(row: TaskStatusRow): string {
  * answer "no open task matches" for an open task, which an Operator read as the
  * tranche being finished). Only a frozen task reads the outbox for its real
  * loop state and open PR; a planned one has neither yet.
+ *
+ * Round, phase, time in phase, confidence and typical time are read for a
+ * started task only: a planned one has no control record, no statement and no
+ * phase to compare against history.
  */
 function buildRow(ref: TaskRef, allowlist: readonly string[]): TaskStatusRow {
   const started = hasFrozenBrief(ref.issue, allowlist)
-  return {
+  const root = runtimeDir()
+  const base = {
     tranche: ref.kind === 'tranche' ? ref.tranche : 'backlog',
     id: ref.kind === 'tranche' ? ref.id : String(ref.issue),
-    issue: ref.issue,
-    pr: started ? findPrForRef(ref) : null,
-    state: started ? deriveLoopState(runtimeDir(), ref.issue) : { kind: 'not_started' }
+    issue: ref.issue
+  }
+  if (!started) {
+    return {
+      ...base,
+      pr: null,
+      state: { kind: 'not_started' },
+      round: null,
+      phase: null,
+      recordedPhase: null,
+      minutesInPhase: null,
+      lastConfidence: null,
+      phaseHistory: null
+    }
+  }
+  const pr = findPrForRef(ref)
+  const state = deriveLoopState(root, ref.issue)
+  const phase = readLoopPhase(root, ref.issue)
+  const confidence = readLastConfidence(
+    root,
+    ref.issue,
+    state.kind === 'published' && pr ? { prNumber: pr.number, allowlist } : null
+  )
+  return {
+    ...base,
+    pr,
+    state,
+    round: phase?.round ?? null,
+    phase: phase?.phase ?? null,
+    recordedPhase: phase?.recordedPhase ?? null,
+    minutesInPhase: phase?.minutesInPhase ?? null,
+    lastConfidence: confidence,
+    phaseHistory: null
   }
 }
 
 // --- command-facing entry points --------------------------------------
-
-export type TaskStatusListRow = { row: TaskStatusRow; line: string }
 
 /**
  * O1/O3, the entire read for the list form — the ONE function
@@ -490,19 +730,19 @@ export type TaskStatusListRow = { row: TaskStatusRow; line: string }
  * one-command-one-function discipline; every smaller piece above stays
  * unexported and reachable only from here or `gatherSingleTaskStatus`,
  * same file, so it costs no extra boundary call there).
+ *
  */
-export function gatherTaskStatusList(): TaskStatusListRow[] {
+export function gatherTaskStatusList(): TaskStatusRow[] {
   const allowlist = principalAllowlist()
   const root = runtimeDir()
-  const rows: TaskStatusListRow[] = []
+  const rows: TaskStatusRow[] = []
   for (const ref of listOpenTaskIssues()) {
     // A backlog ref only ever becomes a candidate once the loop has
     // already written it an outbox directory — see `hasOutboxDir`'s own doc
     // comment. A tranche-labeled ref carries no such gate: O4 lists every open
     // tranche task Issue, a not-yet-frozen (planned) one as `not started`.
     if (ref.kind === 'backlog' && !hasOutboxDir(root, ref.issue)) continue
-    const row = buildRow(ref, allowlist)
-    rows.push({ row, line: renderTaskStatusRow(row) })
+    rows.push(buildRow(ref, allowlist))
   }
   return rows
 }
@@ -516,7 +756,6 @@ export type SingleTaskStatus =
   | {
       kind: 'ok'
       row: TaskStatusRow
-      line: string
       verdictLines: RoundVerdictLines | null
       resumeCommand: string | null
     }
@@ -533,5 +772,5 @@ export function gatherSingleTaskStatus(tranche: string, id: string): SingleTaskS
   const pause = readPauseState(root, ref.issue)
   const resumeCommand =
     row.state.kind === 'paused' && row.pr ? resumeCommandFor(row.pr.number, pause?.agent, pause?.model) : null
-  return { kind: 'ok', row, line: renderTaskStatusRow(row), verdictLines, resumeCommand }
+  return { kind: 'ok', row, verdictLines, resumeCommand }
 }

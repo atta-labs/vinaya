@@ -25,7 +25,13 @@
  * which stays inside the value for a caller that wants it.
  */
 
-import { defaultControlStoreDeps, type Freshness, type TaskEscalationPacket } from '@attalabs/aeg-core'
+import {
+  defaultControlStoreDeps,
+  type Freshness,
+  type TaskConfidence,
+  type TaskEscalationPacket,
+  type TaskPhaseHistory
+} from '@attalabs/aeg-core'
 import {
   escalationIdFor,
   PAUSE_REASON_PROFILE,
@@ -39,7 +45,8 @@ import {
   newestPublishedRound,
   resumeCommandFor,
   type RoundVerdictLines,
-  type TaskLoopState
+  type TaskLoopState,
+  type TaskStatusRow
 } from '../task-status.js'
 import { tasksExecutionRoot } from '../run-paths.js'
 
@@ -103,6 +110,34 @@ export function describeTaskLoopState(state: TaskLoopState): string {
       return 'not started'
     case 'no_driver':
       return 'no driver'
+  }
+}
+
+/**
+ * The five `TaskStatusItemSchema` fields that say WHERE a run is, taken from
+ * the status row the reader already built — never re-read here, so the tool
+ * and `vinaya task status` can never disagree about a task's round or phase.
+ *
+ * Every field is `null` when no record carries it: a task with no control
+ * record has no round, no phase and no time in phase; a round whose confidence
+ * no record still carries has none; a phase with no comparable history — or
+ * too few past intervals of it — has no typical time. None of the five is ever
+ * estimated, and `phaseHistory` is history, not a prediction of when this run
+ * leaves this phase.
+ */
+export function whereTheRunIs(row: TaskStatusRow): {
+  round: number | null
+  phase: string | null
+  minutesInPhase: number | null
+  lastConfidence: TaskConfidence | null
+  phaseHistory: TaskPhaseHistory | null
+} {
+  return {
+    round: row.round,
+    phase: row.phase,
+    minutesInPhase: row.minutesInPhase,
+    lastConfidence: row.lastConfidence,
+    phaseHistory: row.phaseHistory
   }
 }
 

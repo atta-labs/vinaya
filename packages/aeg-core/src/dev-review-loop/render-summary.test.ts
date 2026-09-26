@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { extractCodeReviewVerdict, extractSecurityReviewVerdict } from '../verdict-extraction'
 import { blockingVerdict, cleanVerdict, fakeGate, fakeVerdicts, runScenario } from './fakes'
-import { renderSummary } from './render-summary'
+import { parseSummaryConfidenceRows, renderSummary } from './render-summary'
 import { initialLoopState } from './types'
 import type { LoopConfig } from './types'
 
@@ -99,5 +99,42 @@ describe('renderSummary — Part 4 (O4)', () => {
     expect(summary).toContain('| 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | — | changes_requested |')
     expect(summary).toContain('| 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | absent | changes_requested |')
     expect(summary).toContain('| 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 60% | green |')
+  })
+})
+
+describe('parseSummaryConfidenceRows', () => {
+  it("reads back every round's confidence from a table this module itself rendered", () => {
+    const { state } = runScenario(freshState(), [
+      fakeGate(1, true),
+      fakeVerdicts(1, [
+        blockingVerdict('reviewer', [{ id: 'F1', severity: 'blocker', state: 'open' }]),
+        cleanVerdict('security')
+      ]),
+      fakeGate(2, true, { confidence: { value: 80 } }),
+      fakeVerdicts(2, [cleanVerdict('reviewer'), cleanVerdict('security')])
+    ])
+
+    expect(parseSummaryConfidenceRows(renderSummary({ rounds: state.rounds }))).toEqual([
+      // Round 1 was never asked for a confidence — recorded as an absence,
+      // read back as one, never as a zero.
+      { round: 1, percent: null },
+      { round: 2, percent: 80 }
+    ])
+  })
+
+  it('reads a summary quoted inside a longer comment, and nothing from prose or a differently-shaped table', () => {
+    const comment = [
+      'Ready for merge.',
+      '',
+      '| round | blocker | major | minor | critical | high | medium | low | confidence | outcome |',
+      '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+      '| 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 95% | green |',
+      '',
+      '| round | confidence |',
+      '| --- | --- |',
+      '| 9 | 10% |'
+    ].join('\n')
+
+    expect(parseSummaryConfidenceRows(comment)).toEqual([{ round: 1, percent: 95 }])
   })
 })

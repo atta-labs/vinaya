@@ -88,6 +88,16 @@ function withoutTrustAnchorWarning(stdout: string): string {
     .join('\n')
 }
 
+/** The table's rows as cell arrays — the column padding is presentation (`renderTaskStatusTable` pads to the widest cell), the cells are the contract. */
+function outputCells(stdout: string): string[][] {
+  return outputLines(stdout).map((line) => line.split(/\s{2,}/))
+}
+
+/** A timestamp this many minutes before now — what a run's control record carries while it sits in a phase, so the fixture asserts a real elapsed time rather than a frozen date drifting further out every day. */
+function minutesAgo(minutes: number): string {
+  return new Date(Date.now() - minutes * 60_000).toISOString()
+}
+
 function outputLines(stdout: string): string[] {
   return withoutTrustAnchorWarning(stdout)
     .split('\n')
@@ -117,6 +127,18 @@ const ISSUES = [
   // `issue view` call (the stub below fails loudly if 605 is ever fetched).
   { number: 604, title: 'A backlog bug that grew into a real task', labels: [] },
   { number: 605, title: 'An ordinary open Issue, never dispatched', labels: [] }
+]
+
+/** The published summary table the confidence column reads for a run that has published — the same shape `renderSummary` posts. */
+const PUBLISHED_SUMMARY_COMMENTS = [
+  {
+    ...principalComment(
+      '| round | blocker | major | minor | critical | high | medium | low | confidence | outcome |\n' +
+        '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n' +
+        '| 1 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 85% | green |'
+    ),
+    createdAt: '2026-09-22T12:00:00.000Z'
+  }
 ]
 
 const PR_BY_BRANCH: Record<string, number> = {
@@ -166,6 +188,16 @@ if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
   case "$4" in
 ${prCases}
     *) echo '[]' ;;
+  esac
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  case "$3" in
+    703) cat <<'JSON'
+${JSON.stringify({ comments: PUBLISHED_SUMMARY_COMMENTS })}
+JSON
+    ;;
+    *) echo '{"comments": []}' ;;
   esac
   exit 0
 fi
@@ -223,7 +255,7 @@ function writeRunFile(home: string, task: number, name: string, content: unknown
  * shape a clean publish leaves behind; retires the old flat
  * `control/effect-<key>.json` markers this task removed.
  */
-function writePublishedRound(home: string, task: number, round: number): void {
+function writePublishedRound(home: string, task: number, round: number, recordedAt = minutesAgo(2)): void {
   const control = join(taskRunDir(home, task), 'control')
   mkdirSync(control, { recursive: true })
   writeFileSync(
@@ -238,7 +270,7 @@ function writePublishedRound(home: string, task: number, round: number): void {
       budgets: { mechanicalRetries: 0, reviewRounds: round, infrastructureRetries: 0 },
       heldResult: null,
       deliveredFindings: null,
-      recordedAt: '2026-09-10T00:00:00.000Z'
+      recordedAt
     })
   )
   const effectDir = join(control, 'effect')
@@ -262,6 +294,38 @@ function writePublishedRound(home: string, task: number, round: number): void {
       })
     )
   }
+}
+
+/** The loop's own control record for a task mid-run: which round, which phase, and when it entered it. */
+function writeLoopState(
+  home: string,
+  task: number,
+  opts: { round: number; phase: string; minutesInPhase: number }
+): void {
+  const control = join(taskRunDir(home, task), 'control')
+  mkdirSync(control, { recursive: true })
+  writeFileSync(
+    join(control, 'loop-state.json'),
+    JSON.stringify({
+      version: 1,
+      kind: 'loop_state',
+      task,
+      round: opts.round,
+      phase: opts.phase,
+      pauseReason: opts.phase === 'pause' ? 'escalation' : null,
+      budgets: { mechanicalRetries: 0, reviewRounds: opts.round, infrastructureRetries: 0 },
+      heldResult: null,
+      deliveredFindings: null,
+      recordedAt: minutesAgo(opts.minutesInPhase)
+    })
+  )
+}
+
+/** The developer's own confidence statement for a round, at the path the loop's confidence prompt names for it. */
+function writeStatedConfidence(home: string, task: number, round: number, body: string): void {
+  const dir = join(taskRunDir(home, task), 'rounds', String(round), 'developer')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, '.vinaya-confidence'), body)
 }
 
 describe('vinaya task status — router wiring', () => {
@@ -288,14 +352,21 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
     })
     writePublishedRound(home, 603, 1)
 
+    writeLoopState(home, 601, { round: 2, phase: 'dispatch_reviewers', minutesInPhase: 7 })
+    writeStatedConfidence(home, 601, 2, 'CONFIDENCE: 90 — fixed the reported issue\n')
+    writeLoopState(home, 602, { round: 1, phase: 'pause', minutesInPhase: 40 })
+
     const r = runCli(['task', 'status'], env)
 
-    expect(outputLines(r.stdout)).toEqual([
-      `[demo] 1 — Issue #601 — PR #701 — running (pid ${process.pid})`,
-      '[demo] 2 — Issue #602 — PR #702 — paused (escalation)',
-      '[demo] 3 — Issue #603 — PR #703 — published',
-      // O4: the planned task (brief not frozen) lists as not started, never omitted.
-      '[demo] 4 — Issue #606 — PR — — not started'
+    expect(outputCells(r.stdout).slice(0, 5)).toEqual([
+      ['task', 'issue', 'pr', 'state', 'round', 'phase', 'in phase', 'confidence', 'typical (history)'],
+      ['[demo] 1', '#601', '#701', `running (pid ${process.pid})`, '2', 'reviewing', '7m', '90% (round 2)', '—'],
+      ['[demo] 2', '#602', '#702', 'paused (escalation)', '1', 'paused', '40m', '—', '—'],
+      // The published run's confidence comes from its own posted summary table.
+      ['[demo] 3', '#603', '#703', 'published', '1', 'publishing', '2m', '85% (round 1)', '—'],
+      // O4: the planned task (brief not frozen) lists as not started, never
+      // omitted — and every fact it has no record for reads as one dash.
+      ['[demo] 4', '#606', '—', 'not started', '—', '—', '—', '—', '—']
     ])
     expect(r.status).toBe(0)
   })
@@ -303,11 +374,12 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
   it('prints no driver for a frozen task with nothing in the outbox, and not started for a planned one', () => {
     const { env } = setUp()
     const r = runCli(['task', 'status'], env)
-    expect(outputLines(r.stdout)).toEqual([
-      '[demo] 1 — Issue #601 — PR #701 — no driver',
-      '[demo] 2 — Issue #602 — PR #702 — no driver',
-      '[demo] 3 — Issue #603 — PR #703 — no driver',
-      '[demo] 4 — Issue #606 — PR — — not started'
+    expect(outputCells(r.stdout)).toEqual([
+      ['task', 'issue', 'pr', 'state', 'round', 'phase', 'in phase', 'confidence', 'typical (history)'],
+      ['[demo] 1', '#601', '#701', 'no driver', '—', '—', '—', '—', '—'],
+      ['[demo] 2', '#602', '#702', 'no driver', '—', '—', '—', '—', '—'],
+      ['[demo] 3', '#603', '#703', 'no driver', '—', '—', '—', '—', '—'],
+      ['[demo] 4', '#606', '—', 'not started', '—', '—', '—', '—', '—']
     ])
     expect(r.status).toBe(0)
   })
@@ -334,12 +406,13 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
 
     const r = runCli(['task', 'status'], env)
 
-    expect(outputLines(r.stdout)).toEqual([
-      `[demo] 1 — Issue #601 — PR #701 — running (pid ${process.pid})`,
-      '[demo] 2 — Issue #602 — PR #702 — paused (escalation)',
-      '[demo] 3 — Issue #603 — PR #703 — published',
-      '[demo] 4 — Issue #606 — PR — — not started',
-      `[backlog] 604 — Issue #604 — PR #704 — running (pid ${process.pid})`
+    expect(outputCells(r.stdout).map((cells) => [cells[0], cells[1], cells[2], cells[3]])).toEqual([
+      ['task', 'issue', 'pr', 'state'],
+      ['[demo] 1', '#601', '#701', `running (pid ${process.pid})`],
+      ['[demo] 2', '#602', '#702', 'paused (escalation)'],
+      ['[demo] 3', '#603', '#703', 'published'],
+      ['[demo] 4', '#606', '—', 'not started'],
+      ['[backlog] 604', '#604', '#704', `running (pid ${process.pid})`]
     ])
     expect(r.status).toBe(0)
   })
@@ -348,12 +421,12 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
     const { home, env } = setUp()
     writeRunFile(home, 601, 'driver.pid.json', { pid: process.pid, startedAt: '2026-09-10T00:00:00.000Z' })
 
+    writeLoopState(home, 601, { round: 2, phase: 'dispatch_developer', minutesInPhase: 3 })
+
     const r = runCli(['task', 'status', '--json'], env)
     const parsed = JSON.parse(withoutTrustAnchorWarning(r.stdout)) as {
       schema: number
-      data: {
-        tasks: Array<{ tranche: string; id: string; issue: number; pr: { number: number } | null; state: unknown }>
-      }
+      data: { tasks: Array<Record<string, unknown>> }
     }
     expect(parsed.schema).toBe(1)
     // Three frozen tranche tasks plus the planned one (O4) — the planned task
@@ -364,14 +437,26 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
       id: '1',
       issue: 601,
       pr: { number: 701 },
-      state: { kind: 'running', pid: process.pid, startedAt: '2026-09-10T00:00:00.000Z' }
+      state: { kind: 'running', pid: process.pid, startedAt: '2026-09-10T00:00:00.000Z' },
+      round: 2,
+      phase: 'developing',
+      recordedPhase: 'dispatch_developer',
+      minutesInPhase: 3,
+      lastConfidence: null,
+      phaseHistory: null
     })
     expect(parsed.data.tasks[3]).toEqual({
       tranche: 'demo',
       id: '4',
       issue: 606,
       pr: null,
-      state: { kind: 'not_started' }
+      state: { kind: 'not_started' },
+      round: null,
+      phase: null,
+      recordedPhase: null,
+      minutesInPhase: null,
+      lastConfidence: null,
+      phaseHistory: null
     })
   })
 })
@@ -390,14 +475,16 @@ describe('vinaya task status <tranche> <n> (O2 — the single-task form)', () =>
     })
     writeRunFile(home, 602, 'round-1-reviewer.md', 'VERDICT: REQUEST CHANGES\n\nJudged head: abc123\n')
     writeRunFile(home, 602, 'round-1-security.md', 'VERDICT: PASS\n\nJudged head: abc123\n')
+    writeLoopState(home, 602, { round: 1, phase: 'pause', minutesInPhase: 40 })
 
     const r = runCli(['task', 'status', 'demo', '2'], env)
 
-    expect(outputLines(r.stdout)).toEqual([
-      '[demo] 2 — Issue #602 — PR #702 — paused (escalation)',
-      'reviewer (round 1): VERDICT: REQUEST CHANGES',
-      'security (round 1): VERDICT: PASS',
-      'Resume with: vinaya dev-review-loop --resume 702'
+    expect(outputCells(r.stdout)).toEqual([
+      ['task', 'issue', 'pr', 'state', 'round', 'phase', 'in phase', 'confidence', 'typical (history)'],
+      ['[demo] 2', '#602', '#702', 'paused (escalation)', '1', 'paused', '40m', '—', '—'],
+      ['reviewer (round 1): VERDICT: REQUEST CHANGES'],
+      ['security (round 1): VERDICT: PASS'],
+      ['Resume with: vinaya dev-review-loop --resume 702']
     ])
     expect(r.status).toBe(0)
   })
@@ -408,14 +495,20 @@ describe('vinaya task status <tranche> <n> (O2 — the single-task form)', () =>
 
     const r = runCli(['task', 'status', 'demo', '3'], env)
 
-    expect(outputLines(r.stdout)).toEqual(['[demo] 3 — Issue #603 — PR #703 — published'])
+    expect(outputCells(r.stdout)).toEqual([
+      ['task', 'issue', 'pr', 'state', 'round', 'phase', 'in phase', 'confidence', 'typical (history)'],
+      ['[demo] 3', '#603', '#703', 'published', '1', 'publishing', '2m', '85% (round 1)', '—']
+    ])
     expect(r.status).toBe(0)
   })
 
   it('reads a planned task (brief not frozen) as not started, never a no-brief refusal (O4)', () => {
     const { env } = setUp()
     const r = runCli(['task', 'status', 'demo', '4'], env)
-    expect(outputLines(r.stdout)).toEqual(['[demo] 4 — Issue #606 — PR — — not started'])
+    expect(outputCells(r.stdout)).toEqual([
+      ['task', 'issue', 'pr', 'state', 'round', 'phase', 'in phase', 'confidence', 'typical (history)'],
+      ['[demo] 4', '#606', '—', 'not started', '—', '—', '—', '—', '—']
+    ])
     expect(r.status).toBe(0)
   })
 

@@ -20,10 +20,13 @@ import { join } from 'node:path'
 import {
   deriveLoopState,
   lastRoundVerdictLines,
-  renderTaskStatusRow,
+  readLastConfidence,
+  readLoopPhase,
+  renderTaskStatusTable,
   resumeCommandFor,
   type TaskStatusRow
 } from '../../src/lib/task-status.js'
+import { CONFIDENCE_FILE_NAME } from '../../src/lib/dev-review-loop/round-assess.js'
 import { appendRoleLine, loopLogPathFor } from '../../src/lib/loop-log.js'
 
 const TASK = 515
@@ -78,7 +81,12 @@ function controlDir(root: string, task: number): string {
  * epoch-fenced `writeLoopState`. The driver writes this at every transition,
  * `publish` included, so a published run always has one.
  */
-function writeLoopStateRound(root: string, task: number, round: number): void {
+function writeLoopStateRound(
+  root: string,
+  task: number,
+  round: number,
+  opts: { phase?: string; recordedAt?: string } = {}
+): void {
   const dir = controlDir(root, task)
   mkdirSync(dir, { recursive: true })
   writeFileSync(
@@ -88,15 +96,22 @@ function writeLoopStateRound(root: string, task: number, round: number): void {
       kind: 'loop_state',
       task,
       round,
-      phase: 'publish',
+      phase: opts.phase ?? 'publish',
       pauseReason: null,
       budgets: { mechanicalRetries: 0, reviewRounds: round, infrastructureRetries: 0 },
       heldResult: null,
       deliveredFindings: null,
-      recordedAt: '2026-09-15T00:00:00.000Z'
+      recordedAt: opts.recordedAt ?? '2026-09-15T00:00:00.000Z'
     }),
     'utf8'
   )
+}
+
+/** The developer's own confidence statement for a round, at the exact path `confidencePromptLine` names for it — that round's own Developer folder inside the task's folder. */
+function writeStatedConfidence(root: string, task: number, round: number, body: string): void {
+  const dir = join(taskDir(root, task), 'rounds', String(round), 'developer')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, CONFIDENCE_FILE_NAME), body, 'utf8')
 }
 
 /**
@@ -330,36 +345,160 @@ describe('lastRoundVerdictLines', () => {
   })
 })
 
-describe('renderTaskStatusRow', () => {
-  const base: Omit<TaskStatusRow, 'state' | 'pr'> = { tranche: 'task-run-v1', id: '14', issue: 515 }
-
-  it('renders running with the pid', () => {
-    const row: TaskStatusRow = { ...base, pr: { number: 517 }, state: { kind: 'running', pid: 4242, startedAt: 'x' } }
-    expect(renderTaskStatusRow(row)).toBe('[task-run-v1] 14 — Issue #515 — PR #517 — running (pid 4242)')
+describe('readLoopPhase (O1)', () => {
+  it('returns null when no control record exists for the task', () => {
+    const root = tempDir()
+    expect(readLoopPhase(root, TASK)).toBeNull()
   })
 
-  it('renders paused with the reason', () => {
-    const row: TaskStatusRow = {
-      ...base,
-      pr: { number: 517 },
-      state: { kind: 'paused', reason: 'escalation', round: 2 }
+  it("reads the round, the recorded phase, its shown label, and the minutes since the record's own timestamp", () => {
+    const root = tempDir()
+    writeLoopStateRound(root, TASK, 3, { phase: 'dispatch_reviewers', recordedAt: '2026-09-15T00:00:00.000Z' })
+    expect(readLoopPhase(root, TASK, () => new Date('2026-09-15T00:07:30.000Z'))).toEqual({
+      round: 3,
+      recordedPhase: 'dispatch_reviewers',
+      phase: 'reviewing',
+      minutesInPhase: 8
+    })
+  })
+
+  it('maps every phase the loop records to one shown phase, and passes an unknown one through verbatim', () => {
+    const root = tempDir()
+    const labelFor = (phase: string): string | undefined => {
+      writeLoopStateRound(root, TASK, 1, { phase })
+      return readLoopPhase(root, TASK)?.phase
     }
-    expect(renderTaskStatusRow(row)).toBe('[task-run-v1] 14 — Issue #515 — PR #517 — paused (escalation)')
+    expect(labelFor('dispatch_developer')).toBe('developing')
+    expect(labelFor('ask_confidence')).toBe('awaiting confidence')
+    expect(labelFor('dispatch_reviewers')).toBe('reviewing')
+    expect(labelFor('publish')).toBe('publishing')
+    expect(labelFor('pause')).toBe('paused')
+    expect(labelFor('some_phase_added_later')).toBe('some_phase_added_later')
   })
 
-  it('renders published', () => {
-    const row: TaskStatusRow = { ...base, pr: { number: 517 }, state: { kind: 'published', round: 1 } }
-    expect(renderTaskStatusRow(row)).toBe('[task-run-v1] 14 — Issue #515 — PR #517 — published')
+  it('reports zero rather than a negative age when the record was written ahead of this clock', () => {
+    const root = tempDir()
+    writeLoopStateRound(root, TASK, 1, { phase: 'publish', recordedAt: '2026-09-15T00:10:00.000Z' })
+    expect(readLoopPhase(root, TASK, () => new Date('2026-09-15T00:00:00.000Z'))?.minutesInPhase).toBe(0)
+  })
+})
+
+describe('readLastConfidence (O1)', () => {
+  it('returns null when no record carries a confidence for any round', () => {
+    const root = tempDir()
+    expect(readLastConfidence(root, TASK, null)).toBeNull()
   })
 
-  it('renders no driver with no PR yet', () => {
-    const row: TaskStatusRow = { ...base, pr: null, state: { kind: 'no_driver' } }
-    expect(renderTaskStatusRow(row)).toBe('[task-run-v1] 14 — Issue #515 — PR — — no driver')
+  it("reads the newest round's own stated confidence, naming the round it belongs to", () => {
+    const root = tempDir()
+    writeStatedConfidence(root, TASK, 2, 'CONFIDENCE: 90 — fixed the reported issue\n')
+    writeStatedConfidence(root, TASK, 3, 'CONFIDENCE: 75 — one finding needed a wider fix\n')
+    expect(readLastConfidence(root, TASK, null)).toEqual({ round: 3, percent: 75, source: 'stated' })
   })
 
-  it('renders not started for a planned task with no PR yet (O4)', () => {
-    const row: TaskStatusRow = { ...base, pr: null, state: { kind: 'not_started' } }
-    expect(renderTaskStatusRow(row)).toBe('[task-run-v1] 14 — Issue #515 — PR — — not started')
+  it('reports a malformed statement as a recorded absence, never as a zero', () => {
+    const root = tempDir()
+    writeStatedConfidence(root, TASK, 2, 'pretty confident, I think\n')
+    expect(readLastConfidence(root, TASK, null)).toEqual({ round: 2, percent: null, source: 'stated' })
+  })
+})
+
+describe('renderTaskStatusTable (O3)', () => {
+  const base: Omit<TaskStatusRow, 'state' | 'pr'> = {
+    tranche: 'task-run-v1',
+    id: '14',
+    issue: 515,
+    round: null,
+    phase: null,
+    recordedPhase: null,
+    minutesInPhase: null,
+    lastConfidence: null,
+    phaseHistory: null
+  }
+
+  it('renders one header row and one row per task, every recorded fact in its own column', () => {
+    const rows: TaskStatusRow[] = [
+      {
+        ...base,
+        pr: { number: 517 },
+        state: { kind: 'running', pid: 4242, startedAt: 'x' },
+        round: 2,
+        phase: 'reviewing',
+        recordedPhase: 'dispatch_reviewers',
+        minutesInPhase: 7,
+        lastConfidence: { round: 2, percent: 90, source: 'stated' },
+        phaseHistory: { typicalPhaseMinutes: 5, typicalPhaseSamples: 4 }
+      }
+    ]
+    const lines = renderTaskStatusTable(rows)
+    expect(lines[0]?.split(/\s{2,}/)).toEqual([
+      'task',
+      'issue',
+      'pr',
+      'state',
+      'round',
+      'phase',
+      'in phase',
+      'confidence',
+      'typical (history)'
+    ])
+    expect(lines[1]?.split(/\s{2,}/)).toEqual([
+      '[task-run-v1] 14',
+      '#515',
+      '#517',
+      'running (pid 4242)',
+      '2',
+      'reviewing',
+      '7m',
+      '90% (round 2)',
+      '5m (n=4)'
+    ])
+  })
+
+  it('names the typical-time column as history, in the header and in one sentence below the table', () => {
+    const lines = renderTaskStatusTable([
+      {
+        ...base,
+        pr: { number: 517 },
+        state: { kind: 'running', pid: 4242, startedAt: 'x' },
+        round: 1,
+        phase: 'developing',
+        recordedPhase: 'dispatch_developer',
+        minutesInPhase: 3,
+        phaseHistory: { typicalPhaseMinutes: 12, typicalPhaseSamples: 5 }
+      }
+    ])
+    expect(lines[0]).toContain('typical (history)')
+    const note = lines[lines.length - 1] as string
+    expect(note).toContain('history, not a prediction')
+    // Never a promise about this run: no deadline, no remaining time, no ETA.
+    for (const line of lines) {
+      expect(line.toLowerCase()).not.toContain('eta')
+      expect(line.toLowerCase()).not.toContain('remaining')
+    }
+  })
+
+  it('renders every absent fact as one dash, and prints no history sentence when no row carries a figure (O4)', () => {
+    const lines = renderTaskStatusTable([{ ...base, pr: null, state: { kind: 'not_started' } }])
+    expect(lines).toHaveLength(2)
+    expect(lines[1]?.split(/\s{2,}/)).toEqual(['[task-run-v1] 14', '#515', '—', 'not started', '—', '—', '—', '—', '—'])
+  })
+
+  it('renders a confidence the loop recorded as absent as an absence, never as a zero', () => {
+    const lines = renderTaskStatusTable([
+      {
+        ...base,
+        pr: { number: 517 },
+        state: { kind: 'paused', reason: 'confidence', round: 2 },
+        round: 2,
+        phase: 'paused',
+        recordedPhase: 'pause',
+        minutesInPhase: 40,
+        lastConfidence: { round: 2, percent: null, source: 'stated' }
+      }
+    ])
+    expect(lines[1]).toContain('absent (round 2)')
+    expect(lines[1]).toContain('paused (confidence)')
   })
 })
 

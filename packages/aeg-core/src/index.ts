@@ -23,6 +23,25 @@ export { aggregateTaskTokenRows, parseTokenReportEntries, parseTokensLines } fro
 export type { TokenSourcePr } from './parse-token-report'
 export { deriveReviewStatus, parseDeveloperRoundMarker, renderReviewStatus } from './review-status'
 export type { ReviewStatus, ReviewStatusInput } from './review-status'
+export {
+  emptyPhaseSamples,
+  isRecordedLoopPhase,
+  medianOf,
+  MIN_PHASE_HISTORY_SAMPLES,
+  phaseHistoryClassFor,
+  phaseSamplesFromPrComments,
+  summarizePhaseSamples,
+  TASK_PHASE_LABELS,
+  taskPhaseLabel
+} from './task-phase-history'
+export type {
+  HistoryComment,
+  PhaseHistory,
+  PhaseHistoryClass,
+  PhaseSamples,
+  RecordedLoopPhase,
+  TaskPhaseLabel
+} from './task-phase-history'
 export { formatBreakdown, formatTokenReportRow, formatTokensLine } from './report-tokens'
 export type { TokenReportRowInput, TokensLineInput, TranscriptSummary, UsageComponents } from './report-tokens'
 // The Claude Code collection adapter (`tranche-model.md` §12 layer 2) — one
@@ -436,6 +455,8 @@ export {
   TaskResumeInputSchema,
   TaskResumeResultSchema,
   TaskStartInputSchema,
+  TaskConfidenceSchema,
+  TaskPhaseHistorySchema,
   TaskStatusInputSchema,
   TaskStatusItemSchema,
   TaskStatusResultSchema,
@@ -461,6 +482,8 @@ export type {
   TaskResumeResult,
   TaskStartInput,
   TaskStartRequestInput,
+  TaskConfidence,
+  TaskPhaseHistory,
   TaskStartResult,
   TaskStatusInput,
   TaskStatusResult,
@@ -544,6 +567,7 @@ export {
   isConcludedJournal,
   isPublishedSummaryComment,
   nextRoundNumber,
+  parseSummaryConfidenceRows,
   reconstructRounds,
   renderSummary,
   SUMMARY_TABLE_HEADER

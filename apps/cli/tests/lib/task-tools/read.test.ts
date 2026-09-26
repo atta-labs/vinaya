@@ -3,7 +3,13 @@ import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { paginate, readEscalationPacket, readTaskLoopStateObserved } from '../../../src/lib/task-tools/read.js'
+import {
+  paginate,
+  readEscalationPacket,
+  readTaskLoopStateObserved,
+  whereTheRunIs
+} from '../../../src/lib/task-tools/read.js'
+import type { TaskStatusRow } from '../../../src/lib/task-status.js'
 
 const TASK = 558
 
@@ -361,5 +367,51 @@ describe('paginate', () => {
 
   it('treats a malformed cursor as the start rather than throwing', () => {
     expect(paginate([1, 2, 3], 'not-a-number', 10)).toEqual({ items: [1, 2, 3], nextCursor: null })
+  })
+})
+
+describe('whereTheRunIs', () => {
+  const row: TaskStatusRow = {
+    tranche: 'demo',
+    id: '1',
+    issue: 601,
+    pr: { number: 701 },
+    state: { kind: 'running', pid: 4242, startedAt: '2026-09-20T10:00:00.000Z' },
+    round: 2,
+    phase: 'reviewing',
+    recordedPhase: 'dispatch_reviewers',
+    minutesInPhase: 7,
+    lastConfidence: { round: 2, percent: 90, source: 'stated' },
+    phaseHistory: { typicalPhaseMinutes: 5, typicalPhaseSamples: 4 }
+  }
+
+  it("carries the row's round, shown phase, time in phase, confidence and typical time, as structured fields", () => {
+    expect(whereTheRunIs(row)).toEqual({
+      round: 2,
+      phase: 'reviewing',
+      minutesInPhase: 7,
+      lastConfidence: { round: 2, percent: 90, source: 'stated' },
+      phaseHistory: { typicalPhaseMinutes: 5, typicalPhaseSamples: 4 }
+    })
+  })
+
+  it("carries the recorded phase nowhere — a caller reads the shown phase, never the loop's internal word", () => {
+    expect(whereTheRunIs(row)).not.toHaveProperty('recordedPhase')
+  })
+
+  it('reports every field a planned task has no record for as null, never as a zero or an estimate', () => {
+    expect(
+      whereTheRunIs({
+        ...row,
+        pr: null,
+        state: { kind: 'not_started' },
+        round: null,
+        phase: null,
+        recordedPhase: null,
+        minutesInPhase: null,
+        lastConfidence: null,
+        phaseHistory: null
+      })
+    ).toEqual({ round: null, phase: null, minutesInPhase: null, lastConfidence: null, phaseHistory: null })
   })
 })

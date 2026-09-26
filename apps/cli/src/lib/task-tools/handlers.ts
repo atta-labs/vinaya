@@ -38,7 +38,7 @@ import {
 import { findTrancheSlug, resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
 import { runtimeDir } from '../dev-review-loop.js'
 import { gatherTaskStatusList, type TaskStatusRow } from '../task-status.js'
-import { classifyStateFreshness, describeTaskLoopState, paginate, readEscalationPacket } from './read.js'
+import { classifyStateFreshness, describeTaskLoopState, paginate, readEscalationPacket, whereTheRunIs } from './read.js'
 
 export type TaskToolCallResult<T> = { ok: true; result: T } | { ok: false; error: TaskToolError }
 
@@ -63,7 +63,7 @@ export function describeTaskRef(ref: TaskToolRef): string {
 
 /** `task-status.ts`'s own forge-touching entry point, called once per handler invocation — the identical cost `vinaya task status` already pays for the same information. */
 function currentTaskStatusRows(): TaskStatusRow[] {
-  return gatherTaskStatusList().map((entry) => entry.row)
+  return gatherTaskStatusList()
 }
 
 export function taskStatusHandler(input: unknown): TaskToolCallResult<TaskStatusResult> {
@@ -84,6 +84,10 @@ export function taskStatusHandler(input: unknown): TaskToolCallResult<TaskStatus
     issue: row.issue,
     pr: row.pr ? row.pr.number : null,
     state: describeTaskLoopState(row.state),
+    // Where the run is, straight off the same row the CLI table renders —
+    // structured, so an Operator presents its own table rather than parsing
+    // this one's state phrase (`whereTheRunIs`).
+    ...whereTheRunIs(row),
     observedAt,
     freshness: classifyStateFreshness(row.state)
   }))

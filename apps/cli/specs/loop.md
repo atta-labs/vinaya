@@ -497,6 +497,28 @@ A `SIGKILL`ed driver (or one that dies before reaching its own shutdown path) us
 
 **The published round is one reader, over the control store's own `verified` verdict effects (`unattended-run-v1` task 8, `#738`).** Both `deriveLoopState` (which reports `published`) and `readEscalationPacket` (which grades a pause `stale` once superseded) answer "which round published" through the SAME exported `task-status.ts` function, `newestPublishedRound(root, task)` — never a second private copy, and never a glob over effect file names. It reads through the control store's own `readEffect` (`@attalabs/aeg-core`), whose `effect/<key>.json` layout `publishRound`'s two `pr-comment` effects (`<round>-reviewer-verdict`, `<round>-security-verdict`) land under: a round is published only when BOTH read `status: 'verified'` — the status the executor advances a confirmed post to. A `started` effect is a post whose confirmation was interrupted, `uncertain` a recovery that could not reconcile; neither is published. Rounds are bounded above by the durable `loop_state` record's own `round` (written at every transition, `publish` included), so a run with no `loop_state` has published nothing. Before this task the reader globbed a flat `control/effect-<n>-reviewer-verdict.json` for `status: 'posted'` — records the control store had already moved into its `effect/` subdirectory at `verified`, so a run that published read as `no driver` (observed on the log-server task's own loop).
 
+### Where a run is: round, phase, time in phase, and the last confidence
+
+`task_status` and `vinaya task status` answer more than "is it running": each row carries WHERE the run is, and every field is read from a record that either exists or explicitly does not — an absent fact reads `null` (a dash, in the table), never an estimate.
+
+- **Round and phase** come from the loop's own `loop_state` record — the same record this file's "The loop's own recovery record" section describes, whose `phase` string mirrors `Decision['type']`. The shown phase maps one-to-one from the recorded one (`TASK_PHASE_LABELS`, `packages/aeg-core/src/task-phase-history.ts`):
+
+  | recorded phase | shown as |
+  | --- | --- |
+  | `dispatch_developer` | `developing` |
+  | `ask_confidence` | `awaiting confidence` |
+  | `dispatch_reviewers` | `reviewing` |
+  | `publish` | `publishing` |
+  | `pause` | `paused` |
+
+  A phase added to the driver after this mapping reads back verbatim rather than being folded into a neighbour. There is deliberately no separate `waiting for CI` phase: the driver polls the head's checks while the record still reads `dispatch_developer`, so `developing` spans the developer's own turn AND the gate wait that follows its push — splitting the two would mean inferring a phase from a second source rather than reading the loop's own record.
+
+- **Time in phase** is measured from that record's own `recordedAt` (the driver writes it at every transition), never from a lock's start time or any other wall-clock stand-in. A record written ahead of the reading clock reports zero, never a negative age.
+
+- **The last confidence** is the newest round any record still carries one for: the developer's own `.vinaya-confidence` statement for a round the driver has not consumed yet, else the run's own published summary table (read from principal-authored comments only, and only for a run that has published — the one state in which a summary exists). A round the driver read and cleared, and never published, leaves no confidence record behind, and the field reports nothing for it rather than carrying an older round's figure forward under a newer number. A statement the loop recorded as absent, or one that did not parse, reads as an absence — never a substituted zero.
+
+`vinaya task status` renders these as ONE table — the same columns whether it lists every open task or narrows to one — and the `task_status` result carries the same facts as structured fields (`round`, `phase`, `minutesInPhase`, `lastConfidence`), so an Operator presents its own table rather than parsing a state phrase. They are optional in the catalog schema, so a client written against the earlier item shape still parses every item.
+
 `apps/cli/src/lib/task-tools/handlers.ts` binds these to the catalog's `task_status`/`task_escalation_read` tools (`packages/aeg-core/src/task-tools.ts`), composing them with `task-status.ts`'s forge-touching identity/PR lookup. `task_resume` (`resume.ts`) and `task_cancel` (`cancel.ts`) are real handlers of their own — see the section below. `apps/cli/src/lib/task-tools/router.ts` classifies a caller's free-text intent to the one tool that answers it, so an agent surface built on this catalog later never routes a read request into a mutating handler.
 
 ### The third read: why the pull request is red (`task_pr_read`)
