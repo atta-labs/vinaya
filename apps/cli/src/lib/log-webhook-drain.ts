@@ -1,19 +1,23 @@
 /**
- * The one delivery mechanism a `logs.url` server destination uses: one POST
- * of a task's local retry queue, as ndjson, to any HTTP endpoint that
- * accepts one — no GitHub account or `gh` auth needed on the receiving end.
- * Renamed from the tracker-posting-era `flushOutboxToWebhook`: there is no
- * GitHub comment path left to distinguish this from, so "drain" names what
- * it actually does — empty the local queue into the
- * configured server, called by `log-sink.ts` after every append
- * (`apps/cli/specs/log.md` § The destination), never batched at a round end
- * and never reachable from a one-shot CLI command any more.
+ * The one delivery mechanism a `logs.url` server destination uses: it empties
+ * a task's local retry queue into the configured server as ndjson, called by
+ * `log-sink.ts` after every append (`apps/cli/specs/log.md` § The
+ * destination), never batched at a round end and never reachable from a
+ * one-shot CLI command any more.
  *
- * Truncation follows only a confirmed 2xx response — a failed POST leaves
- * the queue untouched, safe to retry on the next call — and every line is
- * re-validated and re-redacted through the storage contract's
+ * A queue that grew past one POST during a server outage still drains: the
+ * queue is delivered from its HEAD in chunks of at most
+ * `MAX_WEBHOOK_BODY_BYTES`, oldest first, and each chunk's bytes leave the
+ * queue the moment a `2xx` acknowledges them, so a backlog of any size
+ * catches up over as many POSTs as it takes. A chunk that fails ends the
+ * drain with the queue holding exactly what the server never confirmed —
+ * safe to retry on the next call, where the same head chunk is re-sent and
+ * the server deduplicates it by the stable event identity the storage
+ * contract already gives every line.
+ *
+ * Every line is re-validated and re-redacted through the storage contract's
  * `classifyStoredLine` before it is ever sent, fail-closed on any corrupt or
- * unknown-version line.
+ * unknown-version line — nothing is posted this function cannot vouch for.
  */
 
 import {
@@ -38,10 +42,10 @@ import { classifyStoredLine } from '@attalabs/aeg-core'
 import { outboxPathFor as sinkOutboxPathFor } from './log-sink.js'
 import { GLOBAL_VINAYA_HOME } from './config.js'
 
-/** One POST body capped well under common reverse-proxy/body-size limits (most default to 1-10 MiB) — a task that outgrows this should flush more often, not have this function silently start splitting one webhook call into several with no marker to dedupe them against on retry. */
+/** One POST body capped well under common reverse-proxy/body-size limits (most default to 1-10 MiB). A queue larger than this is not a failure any more — it is delivered as however many chunks of at most this size it takes, each acknowledged and removed on its own. */
 export const MAX_WEBHOOK_BODY_BYTES = 5 * 1024 * 1024
 
-/** Bounds the POST itself (round-2 security review, MEDIUM) — an unresponsive or intentionally slow endpoint would otherwise hang this call, and with it the round-end auto-flush and the whole dev-review-loop, indefinitely. */
+/** Bounds the POST itself (round-2 security review, MEDIUM) — an unresponsive or intentionally slow endpoint would otherwise hang this call, and with it the round-end auto-flush and the whole dev-review-loop, indefinitely. Applies per chunk: a multi-chunk drain is bounded by this per POST, never once for the whole backlog. */
 export const WEBHOOK_FETCH_TIMEOUT_MS = 30_000
 
 const SAFE_PATH_SEGMENT = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/
@@ -92,11 +96,14 @@ function tryCreateLock(lockPath: string, token: string): boolean {
  * lines. A `.flush-lock` sibling file, created with `O_EXCL` (atomic — the
  * filesystem picks exactly one winner, the same primitive
  * `control-store/local.ts` already uses for its own exclusive claims),
- * serializes the two. A caller that loses the race never blocks: it
- * returns immediately and the caller treats that exactly like "nothing to
- * flush this call" — the file is untouched, and the NEXT event's own drain
- * (this process's chained one, or another process's) retries, so delivery
- * still catches up in order, just not on this exact call.
+ * serializes the two. It is held for the WHOLE drain — every chunk of the
+ * backup slot and of the live file — so a multi-chunk catch-up is as
+ * exclusive as a single-chunk one ever was. A caller that loses the race
+ * never blocks: it returns immediately and the caller treats that exactly
+ * like "nothing to flush this call" — the file is untouched, and the NEXT
+ * event's own drain (this process's chained one, or another process's)
+ * retries, so delivery still catches up in order, just not on this exact
+ * call.
  */
 export function acquireDrainLock(lockPath: string): string | null {
   // A token unique to THIS acquisition, never the pid alone: two flushes in
@@ -177,7 +184,23 @@ export function releaseDrainLock(lockPath: string, token: string): void {
   }
 }
 
-export type WebhookDrainOutcome = { flushed: false } | { flushed: true; lineCount: number; bytes: number }
+/**
+ * What one drain did. `flushed` is true when the queue shrank at all on this
+ * call — at least one chunk acknowledged —
+ * and false when nothing moved (an empty or missing queue, or a caller that
+ * lost the cross-process lock). The counts are totals across every chunk this
+ * drain delivered, so a caller reading `chunks` sees how many POSTs a
+ * catch-up actually took.
+ */
+export type WebhookDrainOutcome = {
+  flushed: boolean
+  /** Lines the server acknowledged with a `2xx`. */
+  lineCount: number
+  /** Body bytes the server acknowledged, summed over the chunks it accepted. */
+  bytes: number
+  /** POSTs the server accepted. */
+  chunks: number
+}
 
 export type WebhookDrainErrorCode =
   | 'log-webhook-drain-symlink'
@@ -194,17 +217,191 @@ export class WebhookDrainError extends Error {
   }
 }
 
+/** One queue line, with the byte offset just past its own terminator — the coordinate head removal needs and a plain `split('\n')` throws away. */
+type QueueLine = { raw: string; end: number }
+
+/**
+ * Every non-empty line in `buf`, in file order, each carrying its own end
+ * offset. Blank segments carry no line of their own: their bytes are absorbed
+ * into the prefix of whichever line follows them, which is exact because
+ * removal is always of a byte prefix. A trailing segment with no terminator
+ * (a torn write) is still a line — it classifies as invalid and is set aside,
+ * rather than being left at the head to block every future drain.
+ */
+function queueLines(buf: Buffer): QueueLine[] {
+  const lines: QueueLine[] = []
+  let start = 0
+  for (let i = 0; i < buf.byteLength; i++) {
+    if (buf[i] !== 0x0a) continue
+    if (i > start) lines.push({ raw: buf.toString('utf8', start, i), end: i + 1 })
+    start = i + 1
+  }
+  if (start < buf.byteLength) lines.push({ raw: buf.toString('utf8', start), end: buf.byteLength })
+  return lines
+}
+
+/**
+ * Removes exactly `cut` bytes from the head of `path`, preserving everything
+ * appended since. The read and the rewrite are adjacent statements on
+ * purpose: another process's `O_APPEND` line landing between them is the one
+ * way a line can still be lost, so that window stays as narrow as a
+ * read-then-rewrite can be — a chunked drain takes this same narrow window
+ * once per acknowledged chunk, never a wider one.
+ */
+function removeQueueHead(path: string, cut: number): void {
+  const liveNow = readFileSync(path)
+  writeFileSync(path, liveNow.subarray(Math.min(cut, liveNow.byteLength)))
+}
+
+/** Reads `path`, or `null` when it does not exist; throws when it exists and is not a regular file, which is a planted target, never a queue. */
+function readQueueFile(path: string): Buffer | null {
+  let lstat: ReturnType<typeof lstatSync> | undefined
+  try {
+    lstat = lstatSync(path)
+  } catch (err) {
+    if (!isEnoent(err)) throw err
+  }
+  if (lstat === undefined) return null
+  if (!lstat.isFile()) {
+    throw new WebhookDrainError(
+      'log-webhook-drain-symlink',
+      `log webhook drain: outbox target is not a regular file (symlink, FIFO, or similar) — refusing to read: ${path}`
+    )
+  }
+  return readFileSync(path)
+}
+
+async function postChunk(
+  webhookUrl: string,
+  headers: Record<string, string> | undefined,
+  body: string,
+  fetchTimeoutMs: number,
+  chunksAlreadyDelivered: number
+): Promise<void> {
+  const delivered = chunksAlreadyDelivered > 0 ? ` after delivering ${chunksAlreadyDelivered} chunk(s)` : ''
+  let response: Response
+  try {
+    response = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-ndjson', ...headers },
+      body,
+      signal: AbortSignal.timeout(fetchTimeoutMs)
+    })
+  } catch (err) {
+    const reason =
+      err instanceof Error && err.name === 'TimeoutError'
+        ? `timed out after ${fetchTimeoutMs}ms`
+        : err instanceof Error
+          ? err.message
+          : String(err)
+    throw new WebhookDrainError(
+      'log-webhook-drain-failed',
+      `log webhook drain: POST to ${webhookUrl} failed${delivered}: ${reason}`
+    )
+  }
+  if (!response.ok) {
+    throw new WebhookDrainError(
+      'log-webhook-drain-failed',
+      `log webhook drain: POST to ${webhookUrl} returned ${response.status} ${response.statusText}${delivered}`
+    )
+  }
+}
+
+type DrainTotals = { lineCount: number; bytes: number; chunks: number }
+
+/**
+ * Delivers one queue file from its head, in chunks of at most
+ * `MAX_WEBHOOK_BODY_BYTES`, removing each chunk's bytes as soon as a `2xx`
+ * acknowledges them. Returns the number of bytes of the original read this
+ * call removed; throws on the first chunk the server does not accept, with
+ * every earlier chunk already delivered and already gone from the queue.
+ */
+async function drainQueueFile(args: {
+  path: string
+  webhookUrl: string
+  headers: Record<string, string> | undefined
+  fetchTimeoutMs: number
+  totals: DrainTotals
+}): Promise<void> {
+  const { path, webhookUrl, headers, fetchTimeoutMs, totals } = args
+  const buf = readQueueFile(path)
+  if (buf === null || buf.byteLength === 0) return
+  const lines = queueLines(buf)
+  if (lines.length === 0) {
+    // Nothing but terminators — no line to deliver, and no reason to leave
+    // the bytes at the head of every future drain either.
+    removeQueueHead(path, buf.byteLength)
+    return
+  }
+
+  // `removed` and `pendingEnd` are both offsets into the buffer read above;
+  // `removed` is what has already been cut from the head, so a cut is always
+  // `pendingEnd - removed` in the file's own current coordinates.
+  let removed = 0
+  let pendingEnd = 0
+  let chunk: string[] = []
+  let chunkBytes = 0
+
+  const deliverChunk = async (): Promise<void> => {
+    const body = `${chunk.join('\n')}\n`
+    await postChunk(webhookUrl, headers, body, fetchTimeoutMs, totals.chunks)
+    totals.chunks += 1
+    totals.lineCount += chunk.length
+    totals.bytes += Buffer.byteLength(body, 'utf8')
+    removeQueueHead(path, pendingEnd - removed)
+    removed = pendingEnd
+    chunk = []
+    chunkBytes = 0
+  }
+
+  for (const line of lines) {
+    const record = classifyStoredLine(line.raw, homedir())
+    if (record.status !== 'ok') {
+      throw new WebhookDrainError(
+        'log-webhook-drain-corrupt-line',
+        `log webhook drain: an outbox line failed schema re-validation — ${record.reason}`
+      )
+    }
+    const lineBytes = Buffer.byteLength(record.postLine, 'utf8') + 1
+    if (lineBytes > MAX_WEBHOOK_BODY_BYTES) {
+      throw new WebhookDrainError(
+        'log-webhook-drain-too-large',
+        `log webhook drain: one outbox line is ${lineBytes} byte(s), over the ${MAX_WEBHOOK_BODY_BYTES}-byte per-POST cap.`
+      )
+    }
+    if (chunk.length > 0 && chunkBytes + lineBytes > MAX_WEBHOOK_BODY_BYTES) await deliverChunk()
+    chunk.push(record.postLine)
+    chunkBytes += lineBytes
+    pendingEnd = line.end
+  }
+
+  // Every line of the read is accounted for by here, so the last cut takes
+  // the whole buffer — including any terminator-only bytes trailing the final
+  // line, which no line's own `end` covers and which would otherwise sit at
+  // the head of every future drain. Bytes a concurrent writer appended past
+  // this offset are preserved, exactly as they were before chunking.
+  pendingEnd = buf.byteLength
+  if (chunk.length > 0) {
+    await deliverChunk()
+    return
+  }
+  // Terminator-only bytes trailing the final line still have to leave.
+  if (pendingEnd > removed) removeQueueHead(path, pendingEnd - removed)
+}
+
 /**
  * Reads `outboxTask`'s own local outbox (`null` for the `subject.issue:
- * null` case — an unattributed process still delivers), validates and
- * re-redacts every line through the storage contract's `classifyStoredLine`
- * — fail closed on any corrupt or unknown-version line, never post data this
- * function cannot vouch for — then POSTs the survivors as one ndjson body to
- * `webhookUrl`. Truncates the outbox to exactly whatever was appended to the
- * live file since the read started (a concurrent writer's line) — every
- * line present at read time was either posted or the whole call threw
- * before posting anything, so there is never a partially-posted remainder
- * to preserve.
+ * null` case — an unattributed process still delivers) and delivers it to
+ * `webhookUrl` from its head, in chunks of at most
+ * `MAX_WEBHOOK_BODY_BYTES`, with every chunk's bytes leaving the queue as soon as a `2xx` acknowledges
+ * them. Every line is validated and re-redacted through the storage
+ * contract's `classifyStoredLine` first, fail-closed on any corrupt or
+ * unknown-version line.
+ *
+ * Stops at the first chunk the server does not accept, leaving the queue
+ * holding exactly what was never confirmed — the next call re-sends the same
+ * head chunk, which the server deduplicates by the stable event identity
+ * every line carries.
  */
 export async function drainOutboxToWebhook(
   outboxTask: number | null,
@@ -220,83 +417,12 @@ export async function drainOutboxToWebhook(
 
   const lockPath = `${path}.flush-lock`
   const lockToken = acquireDrainLock(lockPath)
-  if (lockToken === null) return { flushed: false }
+  const totals: DrainTotals = { lineCount: 0, bytes: 0, chunks: 0 }
+  if (lockToken === null) return { flushed: false, ...totals }
   try {
-    let lstat: ReturnType<typeof lstatSync> | undefined
-    try {
-      lstat = lstatSync(path)
-    } catch (err) {
-      if (!isEnoent(err)) throw err
-    }
-    if (lstat === undefined) return { flushed: false }
-    if (!lstat.isFile()) {
-      throw new WebhookDrainError(
-        'log-webhook-drain-symlink',
-        `log webhook drain: outbox target is not a regular file (symlink, FIFO, or similar) — refusing to read: ${path}`
-      )
-    }
-
-    const buf = readFileSync(path)
-    const startOffset = buf.byteLength
-    const rawLines = buf
-      .toString('utf8')
-      .split('\n')
-      .filter((l) => l.length > 0)
-    if (rawLines.length === 0) return { flushed: false }
-
-    const postLines: string[] = []
-    for (let i = 0; i < rawLines.length; i++) {
-      const record = classifyStoredLine(rawLines[i] as string, homedir())
-      if (record.status !== 'ok') {
-        throw new WebhookDrainError(
-          'log-webhook-drain-corrupt-line',
-          `log webhook drain: outbox line ${i} failed schema re-validation — ${record.reason}`
-        )
-      }
-      postLines.push(record.postLine)
-    }
-
-    const body = `${postLines.join('\n')}\n`
-    const bytes = Buffer.byteLength(body, 'utf8')
-    if (bytes > MAX_WEBHOOK_BODY_BYTES) {
-      throw new WebhookDrainError(
-        'log-webhook-drain-too-large',
-        `log webhook drain: outbox body is ${bytes} byte(s), over the ${MAX_WEBHOOK_BODY_BYTES}-byte per-call cap — flush more often to drain it.`
-      )
-    }
-
-    let response: Response
-    try {
-      response = await fetch(webhookUrl, {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-ndjson', ...headers },
-        body,
-        signal: AbortSignal.timeout(fetchTimeoutMs)
-      })
-    } catch (err) {
-      const reason =
-        err instanceof Error && err.name === 'TimeoutError'
-          ? `timed out after ${fetchTimeoutMs}ms`
-          : err instanceof Error
-            ? err.message
-            : String(err)
-      throw new WebhookDrainError(
-        'log-webhook-drain-failed',
-        `log webhook drain: POST to ${webhookUrl} failed: ${reason}`
-      )
-    }
-    if (!response.ok) {
-      throw new WebhookDrainError(
-        'log-webhook-drain-failed',
-        `log webhook drain: POST to ${webhookUrl} returned ${response.status} ${response.statusText}`
-      )
-    }
-
-    const liveNow = readFileSync(path)
-    const tail = liveNow.subarray(Math.min(startOffset, liveNow.byteLength))
-    writeFileSync(path, tail)
-
-    return { flushed: true, lineCount: postLines.length, bytes }
+    const shared = { webhookUrl, headers, fetchTimeoutMs, totals }
+    await drainQueueFile({ ...shared, path })
+    return { flushed: totals.chunks > 0, ...totals }
   } finally {
     releaseDrainLock(lockPath, lockToken)
   }

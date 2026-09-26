@@ -1,0 +1,5 @@
+---
+"@attalabs/vinaya": patch
+---
+
+A `logs.url` server destination's local retry queue now catches up after an outage of any length. The drain delivers the queue from its head in chunks of at most 5 MiB, oldest first, and removes each chunk's bytes as soon as the server acknowledges them — a queue that grew past one POST during an outage is an ordinary backlog delivered over several POSTs, where before every drain refused it and nothing was ever sent again. A chunk the server does not accept ends the drain with the queue holding exactly what was never confirmed, and a retry after a lost acknowledgement re-sends the identical head chunk for the server to deduplicate by event identity.

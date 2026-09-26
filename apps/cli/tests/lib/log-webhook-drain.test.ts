@@ -11,6 +11,7 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -20,10 +21,16 @@ import {
   utimesSync,
   writeFileSync
 } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { WEBHOOK_DRAIN_LOCK_STALE_MS, acquireDrainLock, releaseDrainLock } from '../../src/lib/log-webhook-drain.js'
+import {
+  MAX_WEBHOOK_BODY_BYTES,
+  WEBHOOK_DRAIN_LOCK_STALE_MS,
+  acquireDrainLock,
+  releaseDrainLock
+} from '../../src/lib/log-webhook-drain.js'
 import { spawnBudgetedAsync, spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -72,6 +79,42 @@ function ndjsonLine(runId: string, issue: number): string {
   })
 }
 
+/**
+ * A fully valid line padded to roughly `bytes` through `forge_write`'s own
+ * free-string `reason` field — the only way to build a queue that genuinely
+ * crosses `MAX_WEBHOOK_BODY_BYTES` without the padding itself making the line
+ * invalid (which would prove the rejection path, not the chunking one).
+ */
+function paddedNdjsonLine(runId: string, issue: number, bytes: number): string {
+  return JSON.stringify({
+    meta: {
+      schema: 1,
+      ts: '2026-09-16T00:00:00.000Z',
+      run_id: runId,
+      seq: 0,
+      repo: null,
+      vinaya: '0.0.0',
+      doctrine: 'unknown',
+      host: 'cli',
+      machine: 'deadbeef'
+    },
+    subject: { issue, role: 'developer' },
+    kind: 'forge_write',
+    event: 'refused',
+    reason: 'x'.repeat(bytes),
+    payload: {},
+    op: 'issue.comment',
+    target: { issue }
+  })
+}
+
+function runIdsOf(body: string): string[] {
+  return body
+    .split('\n')
+    .filter(Boolean)
+    .map((l) => JSON.parse(l).meta.run_id as string)
+}
+
 function seedOutbox(home: string, issue: number, lines: string[]): string {
   const p = outboxPath(home, issue)
   mkdirSync(dirname(p), { recursive: true })
@@ -103,6 +146,57 @@ function startWebhookServer(status = 200): {
   return { url: `http://127.0.0.1:${server.port}/ingest`, requests, stop: () => server.stop() }
 }
 
+/** Like `startWebhookServer`, but answers request `i` with `statuses[i]` (the last value repeating) — how a drain that fails PART-WAY through a backlog is staged, rather than failing on its very first POST. */
+function startSequencedWebhookServer(statuses: number[]): {
+  url: string
+  requests: CapturedRequest[]
+  stop: () => void
+} {
+  const requests: CapturedRequest[] = []
+  const server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const body = await req.text()
+      const headers: Record<string, string> = {}
+      req.headers.forEach((v, k) => {
+        headers[k] = v
+      })
+      const status = statuses[requests.length] ?? (statuses[statuses.length - 1] as number)
+      requests.push({ body, headers })
+      return new Response(status < 300 ? 'ok' : 'error', { status })
+    }
+  })
+  return { url: `http://127.0.0.1:${server.port}/ingest`, requests, stop: () => server.stop() }
+}
+
+/**
+ * Accepts every request but holds the FIRST one past the client's own fetch
+ * timeout — the lost-acknowledgement shape: the server took the chunk, the
+ * client never learned it did.
+ */
+function startLostAcknowledgementServer(firstDelayMs: number): {
+  url: string
+  requests: CapturedRequest[]
+  stop: () => void
+} {
+  const requests: CapturedRequest[] = []
+  const server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const body = await req.text()
+      const headers: Record<string, string> = {}
+      req.headers.forEach((v, k) => {
+        headers[k] = v
+      })
+      const first = requests.length === 0
+      requests.push({ body, headers })
+      if (first) await new Promise((r) => setTimeout(r, firstDelayMs))
+      return new Response('ok', { status: 200 })
+    }
+  })
+  return { url: `http://127.0.0.1:${server.port}/ingest`, requests, stop: () => server.stop() }
+}
+
 /** Like `startWebhookServer`, but holds the response for `delayMs` — long enough for a concurrently-run second drain to observe the first's lock still held. */
 function startSlowWebhookServer(
   status: number,
@@ -125,9 +219,11 @@ function startSlowWebhookServer(
   return { url: `http://127.0.0.1:${server.port}/ingest`, requests, stop: () => server.stop() }
 }
 
-type DrainResult =
-  | { ok: true; outcome: { flushed: false } | { flushed: true; lineCount: number; bytes: number } }
-  | { ok: false; code: string | null; message: string }
+type DrainOutcome = { flushed: boolean; lineCount: number; bytes: number; chunks: number }
+type DrainResult = { ok: true; outcome: DrainOutcome } | { ok: false; code: string | null; message: string }
+
+/** Nothing moved: an empty or missing queue, or a caller that lost the cross-process lock. */
+const NOTHING_DRAINED: DrainOutcome = { flushed: false, lineCount: 0, bytes: 0, chunks: 0 }
 
 /** Writes a tiny script importing `drainOutboxToWebhook` directly and running it once, so this test never depends on any CLI argv surface for a function that is no longer reachable from one. */
 function writeDrainScript(
@@ -153,29 +249,33 @@ function parseDrainOutput(stdout: string): DrainResult {
   return JSON.parse(stdout.trim().split('\n').pop() as string)
 }
 
-function runDrain(
-  issue: number,
-  url: string,
-  headers: Record<string, string> | undefined,
-  cwd: string,
-  home: string
-): DrainResult {
-  const script = join(cwd, `run-drain-${issue}.ts`)
-  writeDrainScript(script, issue, url, headers)
-  const r = spawnSyncBudgeted(
-    'bun',
-    [script],
-    { encoding: 'utf8', cwd, stdio: ['pipe', 'pipe', 'pipe'], env: { ...stripVinayaEnv(), HOME: home } },
-    undefined,
-    'drainOutboxToWebhook'
-  )
-  return parseDrainOutput(r.stdout)
-}
-
 // Async launch: the child's own POST can land on THIS process's `Bun.serve()`
 // server — a synchronous spawn here would block the one thread that server's
 // `fetch` handler also needs to run on, and on Bun 1.4.2 (a genuinely
 // blocking synchronous spawn) the request would never be answered at all.
+async function runDrainAsyncCaptured(
+  issue: number,
+  url: string,
+  headers: Record<string, string> | undefined,
+  cwd: string,
+  home: string,
+  fetchTimeoutMs?: number,
+  budgetMs = 6000
+): Promise<{ result: DrainResult; stderr: string }> {
+  // One script per call, never per issue: a test that drains the same queue
+  // twice would otherwise have its second call overwrite the first's script
+  // while that process is still reading it.
+  const script = join(cwd, `run-drain-${issue}-${randomUUID()}.ts`)
+  writeDrainScript(script, issue, url, headers, fetchTimeoutMs)
+  const r = await spawnBudgetedAsync(
+    ['bun', script],
+    { cwd, env: { ...stripVinayaEnv(), HOME: home } },
+    budgetMs,
+    'drainOutboxToWebhook (async)'
+  )
+  return { result: parseDrainOutput(r.stdout), stderr: r.stderr }
+}
+
 async function runDrainAsync(
   issue: number,
   url: string,
@@ -183,15 +283,7 @@ async function runDrainAsync(
   cwd: string,
   home: string
 ): Promise<DrainResult> {
-  const script = join(cwd, `run-drain-${issue}.ts`)
-  writeDrainScript(script, issue, url, headers)
-  const r = await spawnBudgetedAsync(
-    ['bun', script],
-    { cwd, env: { ...stripVinayaEnv(), HOME: home } },
-    6000,
-    'drainOutboxToWebhook (async)'
-  )
-  return parseDrainOutput(r.stdout)
+  return (await runDrainAsyncCaptured(issue, url, headers, cwd, home)).result
 }
 
 describe('drainOutboxToWebhook — the logs.url server-destination delivery path', () => {
@@ -208,7 +300,7 @@ describe('drainOutboxToWebhook — the logs.url server-destination delivery path
 
     expect(result.ok).toBe(true)
     if (!result.ok) throw new Error('unreachable')
-    expect(result.outcome).toEqual({ flushed: true, lineCount: 2, bytes: expect.any(Number) })
+    expect(result.outcome).toEqual({ flushed: true, lineCount: 2, bytes: expect.any(Number), chunks: 1 })
     expect(server.requests.length).toBe(1)
     expect(server.requests[0]?.headers['x-api-key']).toBe('secret123')
     expect(server.requests[0]?.headers['content-type']).toBe('application/x-ndjson')
@@ -238,14 +330,14 @@ describe('drainOutboxToWebhook — the logs.url server-destination delivery path
     expect(readFileSync(path, 'utf8')).toBe(`${line}\n`)
   })
 
-  it('refuses a corrupt line before posting anything — outbox untouched', () => {
+  it('refuses a corrupt line before posting anything — outbox untouched', async () => {
     const cwd = tempDir('log-webhook-cwd-')
     initGitRepo(cwd)
     const home = tempDir('log-webhook-home-')
     const server = startWebhookServer(200)
     const path = seedOutbox(home, 702, ['not valid json'])
 
-    const result = runDrain(702, server.url, undefined, cwd, home)
+    const result = await runDrainAsync(702, server.url, undefined, cwd, home)
     server.stop()
 
     expect(result.ok).toBe(false)
@@ -303,7 +395,7 @@ describe('drainOutboxToWebhook — the logs.url server-destination delivery path
 
     expect(result.ok).toBe(true)
     if (!result.ok) throw new Error('unreachable')
-    expect(result.outcome).toEqual({ flushed: false })
+    expect(result.outcome).toEqual(NOTHING_DRAINED)
     expect(server.requests.length).toBe(0)
   })
 
@@ -330,7 +422,12 @@ describe('drainOutboxToWebhook — the logs.url server-destination delivery path
     const loser = results.find((r) => r.ok && !r.outcome.flushed)
 
     expect(server.requests.length).toBe(1)
-    expect(winner?.ok && winner.outcome).toEqual({ flushed: true, lineCount: 2, bytes: expect.any(Number) })
+    expect(winner?.ok && winner.outcome).toEqual({
+      flushed: true,
+      lineCount: 2,
+      bytes: expect.any(Number),
+      chunks: 1
+    })
     expect(loser).toBeDefined()
     expect(readFileSync(path, 'utf8')).toBe('')
   }, 10000)
@@ -352,7 +449,7 @@ describe('drainOutboxToWebhook — the logs.url server-destination delivery path
 
     expect(result.ok).toBe(true)
     if (!result.ok) throw new Error('unreachable')
-    expect(result.outcome).toEqual({ flushed: true, lineCount: 1, bytes: expect.any(Number) })
+    expect(result.outcome).toEqual({ flushed: true, lineCount: 1, bytes: expect.any(Number), chunks: 1 })
     expect(readFileSync(path, 'utf8')).toBe('')
   })
 
@@ -428,4 +525,150 @@ describe('drainOutboxToWebhook — the logs.url server-destination delivery path
     expect(acquireDrainLock(lockPath)).toBeNull()
     expect(readFileSync(lockPath, 'utf8')).toBe(`${holder}\n`)
   })
+})
+
+/** One padded line is deliberately ~2/5 of the cap, so two fit one POST and three never do. */
+const CHUNK_FIXTURE_LINE_BYTES = 2 * 1024 * 1024
+
+/** Waits until the fixture server has actually received `count` request(s) — the only signal that proves the drain child has already read the queue file, which a fixed sleep cannot. */
+async function waitForRequests(requests: CapturedRequest[], count: number, budgetMs = 8000): Promise<void> {
+  const deadline = Date.now() + budgetMs
+  while (requests.length < count) {
+    if (Date.now() > deadline) throw new Error(`fixture server never received ${count} request(s)`)
+    await new Promise((r) => setTimeout(r, 20))
+  }
+}
+
+describe('drainOutboxToWebhook — a queue larger than one POST catches up in chunks (O1, O4)', () => {
+  it('delivers a backlog over the per-POST cap as several chunks, oldest first, and empties the queue', async () => {
+    const cwd = tempDir('log-webhook-cwd-')
+    initGitRepo(cwd)
+    const home = tempDir('log-webhook-home-')
+    const server = startWebhookServer(200)
+    const path = seedOutbox(home, 710, [
+      paddedNdjsonLine('run-1', 710, CHUNK_FIXTURE_LINE_BYTES),
+      paddedNdjsonLine('run-2', 710, CHUNK_FIXTURE_LINE_BYTES),
+      paddedNdjsonLine('run-3', 710, CHUNK_FIXTURE_LINE_BYTES)
+    ])
+    expect(readFileSync(path).byteLength).toBeGreaterThan(MAX_WEBHOOK_BODY_BYTES)
+
+    const { result } = await runDrainAsyncCaptured(710, server.url, undefined, cwd, home, undefined, 20000)
+    server.stop()
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('unreachable')
+    expect(result.outcome).toEqual({ flushed: true, lineCount: 3, bytes: expect.any(Number), chunks: 2 })
+    expect(server.requests.map((r) => runIdsOf(r.body))).toEqual([['run-1', 'run-2'], ['run-3']])
+    for (const request of server.requests) {
+      expect(Buffer.byteLength(request.body, 'utf8')).toBeLessThanOrEqual(MAX_WEBHOOK_BODY_BYTES)
+    }
+    expect(readFileSync(path, 'utf8')).toBe('')
+  }, 30000)
+
+  it('keeps exactly what the server never acknowledged when a chunk fails part-way through a backlog', async () => {
+    const cwd = tempDir('log-webhook-cwd-')
+    initGitRepo(cwd)
+    const home = tempDir('log-webhook-home-')
+    const server = startSequencedWebhookServer([200, 500])
+    const third = paddedNdjsonLine('run-3', 711, CHUNK_FIXTURE_LINE_BYTES)
+    const path = seedOutbox(home, 711, [
+      paddedNdjsonLine('run-1', 711, CHUNK_FIXTURE_LINE_BYTES),
+      paddedNdjsonLine('run-2', 711, CHUNK_FIXTURE_LINE_BYTES),
+      third
+    ])
+
+    const { result } = await runDrainAsyncCaptured(711, server.url, undefined, cwd, home, undefined, 20000)
+    server.stop()
+
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('unreachable')
+    expect(result.code).toBe('log-webhook-drain-failed')
+    expect(result.message).toContain('after delivering 1 chunk(s)')
+    expect(server.requests.map((r) => runIdsOf(r.body))).toEqual([['run-1', 'run-2'], ['run-3']])
+    // The accepted chunk is gone; the refused one is still queued, whole and in
+    // order, for the next drain to re-send.
+    expect(readFileSync(path, 'utf8')).toBe(`${third}\n`)
+  }, 30000)
+
+  it('re-sends the same head chunk after a lost acknowledgement, for the server to deduplicate', async () => {
+    const cwd = tempDir('log-webhook-cwd-')
+    initGitRepo(cwd)
+    const home = tempDir('log-webhook-home-')
+    const server = startLostAcknowledgementServer(1500)
+    const line = ndjsonLine('run-1', 712)
+    const path = seedOutbox(home, 712, [line])
+
+    // The server takes the chunk and holds its answer past this client's own
+    // bound: delivery happened, the client never learned it did.
+    const first = await runDrainAsyncCaptured(712, server.url, undefined, cwd, home, 150)
+    expect(first.result.ok).toBe(false)
+    if (first.result.ok) throw new Error('unreachable')
+    expect(first.result.code).toBe('log-webhook-drain-failed')
+    expect(readFileSync(path, 'utf8')).toBe(`${line}\n`)
+
+    const second = await runDrainAsyncCaptured(712, server.url, undefined, cwd, home)
+    server.stop()
+
+    expect(second.result.ok).toBe(true)
+    expect(server.requests.length).toBe(2)
+    // Byte-identical bodies: the retry re-sends the same HEAD chunk, which the
+    // server collapses by the stable event identity every line carries.
+    expect(server.requests[1]?.body).toBe(server.requests[0]?.body)
+    expect(readFileSync(path, 'utf8')).toBe('')
+  }, 30000)
+
+  it('never loses a line appended between two chunks of the same backlog', async () => {
+    const cwd = tempDir('log-webhook-cwd-')
+    initGitRepo(cwd)
+    const home = tempDir('log-webhook-home-')
+    const server = startSlowWebhookServer(200, 1200)
+    const path = seedOutbox(home, 714, [
+      paddedNdjsonLine('run-1', 714, CHUNK_FIXTURE_LINE_BYTES),
+      paddedNdjsonLine('run-2', 714, CHUNK_FIXTURE_LINE_BYTES),
+      paddedNdjsonLine('run-3', 714, CHUNK_FIXTURE_LINE_BYTES)
+    ])
+    const appended = ndjsonLine('run-4', 714)
+
+    const drain = runDrainAsyncCaptured(714, server.url, undefined, cwd, home, undefined, 30000)
+    // Lands while the FIRST of two chunks is in flight, so the removal that
+    // follows it is a removal of a prefix from a file that has both grown at
+    // the tail and already been cut at the head — the one place a cut computed
+    // in the wrong coordinates silently eats a live event.
+    await waitForRequests(server.requests, 1)
+    appendFileSync(path, `${appended}\n`)
+
+    const { result } = await drain
+    server.stop()
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('unreachable')
+    expect(result.outcome).toEqual({ flushed: true, lineCount: 3, bytes: expect.any(Number), chunks: 2 })
+    expect(server.requests.map((r) => runIdsOf(r.body))).toEqual([['run-1', 'run-2'], ['run-3']])
+    expect(readFileSync(path, 'utf8')).toBe(`${appended}\n`)
+  }, 45000)
+
+  it('never loses a line another process appends while a chunk is in flight', async () => {
+    const cwd = tempDir('log-webhook-cwd-')
+    initGitRepo(cwd)
+    const home = tempDir('log-webhook-home-')
+    const server = startSlowWebhookServer(200, 1200)
+    const path = seedOutbox(home, 713, [ndjsonLine('run-1', 713), ndjsonLine('run-2', 713)])
+    const appended = ndjsonLine('run-3', 713)
+
+    const drain = runDrainAsyncCaptured(713, server.url, undefined, cwd, home, undefined, 20000)
+    // The request arriving proves the drain has already read the queue file, so
+    // this append genuinely lands in the window between that read and the
+    // rewrite that removes the acknowledged chunk.
+    await waitForRequests(server.requests, 1)
+    appendFileSync(path, `${appended}\n`)
+
+    const { result } = await drain
+    server.stop()
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('unreachable')
+    expect(result.outcome).toEqual({ flushed: true, lineCount: 2, bytes: expect.any(Number), chunks: 1 })
+    expect(server.requests.map((r) => runIdsOf(r.body))).toEqual([['run-1', 'run-2']])
+    expect(readFileSync(path, 'utf8')).toBe(`${appended}\n`)
+  }, 30000)
 })
