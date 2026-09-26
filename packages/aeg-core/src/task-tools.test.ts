@@ -88,12 +88,13 @@ describe('taskStartRequestIdentity', () => {
   })
 
   it('computes a tranche identity from the same bytes it always has, so an older build’s claim is still found', () => {
-    // Pinned to the sha256 of the pre-widening canonical bytes
-    // (`{"caller":"op1","repo":"o/r","tranche":"task-operator-v1","id":"2","payloadDigest":"d1"}`),
-    // computed outside this implementation rather than recorded from it: a claim
-    // file written before `{ issue }` was a startable form lives at a path keyed
-    // by this exact string, and an upgrade that changed it would replay nothing
-    // and start a second run.
+    // Pinned to the sha256 of the pre-widening canonical bytes for `base` — a
+    // JSON object of caller, repo, the tranche target's own two fields flattened
+    // to `tranche`/`id`, then payloadDigest, in that key order — computed outside
+    // this implementation rather than recorded from it. A claim file written
+    // before `{ issue }` was a startable form lives at a path keyed by this exact
+    // string, and an upgrade that changed it would replay nothing and start a
+    // second run.
     expect(taskStartRequestIdentity(base)).toBe('req_6143a102cd1a157c71eecf0ba1ba1f75')
   })
 })

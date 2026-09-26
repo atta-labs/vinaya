@@ -3,12 +3,13 @@ import type { TaskToolRef } from '@attalabs/aeg-core'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { resolveOpenTaskIssueForRef } from '../../../src/lib/task-tools/handlers.js'
+import { readTaskIssueFacts, resolveOpenTaskIssueForRef } from '../../../src/lib/task-tools/handlers.js'
 import type { TaskIssueFacts } from '../../../src/lib/task-tools/handlers.js'
 import type { CallerContext } from '../../../src/lib/task-tools/server.js'
 import {
   createTaskStartHandler,
   defaultLaunch,
+  normalizeStartRecord,
   START_STALE_CLAIM_GRACE_MS,
   TASK_RUN_COMMAND_ENV,
   type LaunchResult,
@@ -361,6 +362,152 @@ describe('task_start handler', () => {
       const result = await handler({ tranche: 'task-operator-v1', id: '2' }, CALLER)
       expect(result.ok).toBe(true)
     })
+
+    it('supersedes a stale claim whose Issue has no live driver, and relaunches it (O3)', async () => {
+      let now = '2026-01-01T00:00:00.000Z'
+      const { handler, launches, map } = harness({
+        resolveIssue: (ref) => ('issue' in ref ? ref.issue : ISSUE),
+        isRunAlive: () => false,
+        now: () => now
+      })
+      const first = await handler({ issue: 729 }, CALLER)
+      expect(first.ok).toBe(true)
+      if (!first.ok) return
+      expect(first.result.started).toBe(true)
+
+      now = new Date(Date.parse(now) + START_STALE_CLAIM_GRACE_MS + 1_000).toISOString()
+      const second = await handler({ issue: 729 }, CALLER)
+      expect(second.ok).toBe(true)
+      if (!second.ok) return
+      expect(second.result.started).toBe(true) // superseded and relaunched, not replayed
+      expect(second.result.requestId).toBe(first.result.requestId)
+      expect(second.result.run).toEqual({ issue: 729 })
+      expect(launches).toEqual([
+        { ref: { issue: 729 }, agent: 'claude', issue: 729 },
+        { ref: { issue: 729 }, agent: 'claude', issue: 729 }
+      ])
+      expect(map.size).toBe(1)
+    })
+
+    it('replays a stale claim whose Issue still has a live driver, launching nothing new (O3)', async () => {
+      let now = '2026-01-01T00:00:00.000Z'
+      const { handler, launches } = harness({
+        resolveIssue: (ref) => ('issue' in ref ? ref.issue : ISSUE),
+        isRunAlive: () => true,
+        now: () => now
+      })
+      expect((await handler({ issue: 729 }, CALLER)).ok).toBe(true)
+      now = new Date(Date.parse(now) + START_STALE_CLAIM_GRACE_MS + 1_000).toISOString()
+      const second = await handler({ issue: 729 }, CALLER)
+      expect(second.ok).toBe(true)
+      if (!second.ok) return
+      expect(second.result.started).toBe(false)
+      expect(launches).toHaveLength(1)
+    })
+
+    it('refuses an Issue that belongs to a tranche, naming the tranche and the form to use (O3)', async () => {
+      const { handler, launches, map } = harness({
+        issueFacts: () => ({ kind: 'issue', open: true, tranche: 'unattended-run-v1' })
+      })
+      const result = await handler({ issue: 750 }, CALLER)
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error.kind).toBe('precondition')
+        expect(result.error.message).toContain('unattended-run-v1')
+        expect(result.error.message).toContain('{ tranche, id }')
+      }
+      expect(launches).toHaveLength(0)
+      expect(map.size).toBe(0) // the refusal left no claim behind
+    })
+
+    it('refuses a closed Issue (O3)', async () => {
+      const { handler, launches, map } = harness({
+        issueFacts: () => ({ kind: 'issue', open: false, tranche: null })
+      })
+      const result = await handler({ issue: 729 }, CALLER)
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error.kind).toBe('precondition')
+        expect(result.error.message).toContain('closed')
+      }
+      expect(launches).toHaveLength(0)
+      expect(map.size).toBe(0)
+    })
+
+    it('refuses a number that is no Issue at all (O3)', async () => {
+      const { handler, launches, map } = harness({ issueFacts: () => ({ kind: 'not_found' }) })
+      const result = await handler({ issue: 99999 }, CALLER)
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error.kind).toBe('precondition')
+        expect(result.error.message).toContain('does not exist')
+      }
+      expect(launches).toHaveLength(0)
+      expect(map.size).toBe(0)
+    })
+
+    it('reports a forge read that failed as infrastructure, not as a bad Issue number', async () => {
+      // The distinction matters to the caller: a retry is worth making here,
+      // and is not worth making for a closed or tranche-owned Issue.
+      const { handler, launches, map } = harness({
+        issueFacts: () => ({ kind: 'unreadable', detail: 'gh: could not connect to api.github.com' })
+      })
+      const result = await handler({ issue: 729 }, CALLER)
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error.kind).toBe('infrastructure')
+        expect(result.error.detail).toContain('api.github.com')
+      }
+      expect(launches).toHaveLength(0)
+      expect(map.size).toBe(0) // released — an identical retry launches again
+    })
+
+    it('refuses an unknown field in either form — the union stays strict', async () => {
+      const { handler, launches } = harness()
+      for (const input of [
+        { issue: 729, agent: 'claude' },
+        { tranche: 'demo', id: '1', agent: 'claude' }
+      ]) {
+        const result = await handler(input, CALLER)
+        expect(result.ok).toBe(false)
+        if (!result.ok) expect(result.error.kind).toBe('validation')
+      }
+      expect(launches).toHaveLength(0)
+    })
+  })
+
+  /**
+   * The durable store reads a record back in either shape it has ever been
+   * written: a tranche start's request identity is unchanged by the widening
+   * that added the `{ issue }` form, so a claim an older build wrote is found at
+   * the very same path by this one — and reading it as a `{ target }` record
+   * would replay a run with no identity at all.
+   */
+  describe('normalizeStartRecord — a claim file written by any build', () => {
+    const base = { requestId: 'req_x', caller: 'operator-1', startedAt: '2026-01-01T00:00:00.000Z' }
+
+    it('reads the flat tranche shape an older build wrote as a tranche target', () => {
+      expect(normalizeStartRecord({ ...base, tranche: 'demo', id: '3' })).toEqual({
+        ...base,
+        target: { tranche: 'demo', id: '3' }
+      })
+    })
+
+    it('reads both current shapes unchanged', () => {
+      expect(normalizeStartRecord({ ...base, target: { tranche: 'demo', id: '3' } })).toEqual({
+        ...base,
+        target: { tranche: 'demo', id: '3' }
+      })
+      expect(normalizeStartRecord({ ...base, target: { issue: 729 } })).toEqual({ ...base, target: { issue: 729 } })
+    })
+
+    it('reads nothing out of a record that is neither shape', () => {
+      expect(normalizeStartRecord(null)).toBeNull()
+      expect(normalizeStartRecord('a string')).toBeNull()
+      expect(normalizeStartRecord({ ...base })).toBeNull() // no target, no legacy tranche/id
+      expect(normalizeStartRecord({ ...base, target: { issue: 'not-a-number' } })).toBeNull()
+      expect(normalizeStartRecord({ target: { issue: 729 } })).toBeNull() // no identity fields
+    })
   })
 
   /**
@@ -436,6 +583,74 @@ exit 1
     it('returns a raw Issue ref unchanged, with no forge read at all', () => {
       // No stub on PATH: an `{ issue }` ref must never shell out to `gh`.
       expect(resolveOpenTaskIssueForRef({ issue: 741 })).toBe(741)
+    })
+  })
+
+  /**
+   * `deps.issueFacts` binds this: the one `gh issue view` read that decides
+   * whether a bare Issue number is startable. Driven against a `gh` stub on
+   * `PATH`, the same way the start-side resolver above is.
+   */
+  describe('readTaskIssueFacts — what the forge says about one Issue number', () => {
+    function withGh(script: string, run: () => void): void {
+      const sandbox = mkdtempSync(join(tmpdir(), 'vinaya-task-start-facts-'))
+      const gh = join(sandbox, 'gh')
+      writeFileSync(gh, `#!/bin/sh\n${script}\n`, { mode: 0o755 })
+      chmodSync(gh, 0o755)
+      const savedPath = process.env.PATH
+      process.env.PATH = `${sandbox}:${process.env.PATH ?? ''}`
+      try {
+        run()
+      } finally {
+        if (savedPath === undefined) delete process.env.PATH
+        else process.env.PATH = savedPath
+        rmSync(sandbox, { recursive: true, force: true })
+      }
+    }
+
+    it('reads an open, unlabeled Issue as a standalone one', () => {
+      withGh(`echo '{"state":"OPEN","labels":[{"name":"bug"}]}'`, () => {
+        expect(readTaskIssueFacts(729)).toEqual({ kind: 'issue', open: true, tranche: null })
+      })
+    })
+
+    it('reads the tranche off the LABEL, never off a title that happens to look like one', () => {
+      withGh(`echo '{"state":"OPEN","labels":[{"name":"vinaya/tranche:unattended-run-v1"},{"name":"bug"}]}'`, () => {
+        expect(readTaskIssueFacts(750)).toEqual({ kind: 'issue', open: true, tranche: 'unattended-run-v1' })
+      })
+      // A `[slug] 3`-shaped title with no tranche label stays standalone — the
+      // label is what decides a task's identity everywhere else in this codebase.
+      withGh(`echo '{"state":"OPEN","labels":[]}'`, () => {
+        expect(readTaskIssueFacts(729)).toEqual({ kind: 'issue', open: true, tranche: null })
+      })
+    })
+
+    it('reads a closed Issue as closed', () => {
+      withGh(`echo '{"state":"CLOSED","labels":[]}'`, () => {
+        expect(readTaskIssueFacts(729)).toEqual({ kind: 'issue', open: false, tranche: null })
+      })
+    })
+
+    it('tells a number that names no Issue apart from a forge read that failed', () => {
+      withGh(`echo 'gh: Could not resolve to an Issue with the number 99999.' >&2\nexit 1`, () => {
+        expect(readTaskIssueFacts(99999)).toEqual({ kind: 'not_found' })
+      })
+      withGh(`echo 'error connecting to api.github.com' >&2\nexit 1`, () => {
+        const facts = readTaskIssueFacts(729)
+        expect(facts.kind).toBe('unreadable')
+        if (facts.kind === 'unreadable') expect(facts.detail).toContain('api.github.com')
+      })
+    })
+
+    it('reports output it cannot parse as unreadable, never as a startable Issue', () => {
+      withGh(`echo 'not json at all'`, () => {
+        expect(readTaskIssueFacts(729).kind).toBe('unreadable')
+      })
+      // A well-formed JSON body with no `state` field is the same failure —
+      // never silently read as open.
+      withGh(`echo '{"labels":[]}'`, () => {
+        expect(readTaskIssueFacts(729).kind).toBe('unreadable')
+      })
     })
   })
 

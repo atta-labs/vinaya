@@ -54,7 +54,7 @@ function refMatchesRow(ref: TaskToolRef, row: TaskStatusRow): boolean {
   return 'issue' in ref ? row.issue === ref.issue : row.tranche === ref.tranche && row.id === ref.id
 }
 
-/** How a ref reads in a refusal message — `Issue #729` or `[a-tranche] 3`. Exported so `start.ts` names a target the same way this file's own refusals do, rather than formatting one of its own. */
+/** How a ref reads in a refusal message: an Issue number, or a bracketed tranche slug and ordinal. Exported so `start.ts` names a target the same way this file's own refusals do, rather than formatting one of its own. */
 export function describeTaskRef(ref: TaskToolRef): string {
   return 'issue' in ref ? `Issue #${ref.issue}` : `[${ref.tranche}] ${ref.id}`
 }

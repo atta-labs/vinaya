@@ -172,7 +172,7 @@ function startRecordPath(requestId: string): string {
  * a stale-claim check resolving nothing. `null` for anything that is neither
  * shape, which the caller treats as "no readable record" rather than trusting it.
  */
-function normalizeStartRecord(parsed: unknown): StartRecord | null {
+export function normalizeStartRecord(parsed: unknown): StartRecord | null {
   if (parsed === null || typeof parsed !== 'object') return null
   const raw = parsed as Record<string, unknown>
   if (typeof raw.requestId !== 'string' || typeof raw.caller !== 'string' || typeof raw.startedAt !== 'string') {
