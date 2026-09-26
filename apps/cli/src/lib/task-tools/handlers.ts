@@ -17,7 +17,9 @@
  * `resolveOpenTaskIssueForRef` — the start-side variant `task_start` uses to
  * resolve a PLANNED task whose brief is not frozen yet, over the open
  * tranche-labeled Issues the way `task run` preparation does; see that
- * function's own comment for why the two resolutions read differently.
+ * function's own comment for why the two resolutions read differently. And
+ * it exports `resolveRowForRef` — the whole status row behind a ref, which
+ * `pr-read.ts`'s `task_pr_read` resolves its pull request from.
  */
 
 import { execFileSync } from 'node:child_process'
@@ -101,6 +103,26 @@ export function resolveIssueForRef(ref: TaskToolRef): number | null {
   if ('issue' in ref) return ref.issue
   const row = currentTaskStatusRows().find((r) => r.tranche === ref.tranche && r.id === ref.id)
   return row ? row.issue : null
+}
+
+/**
+ * The whole status row behind a `TaskToolRef`, not just its Issue — the same
+ * rows `task_status` reports, matched by the same two ref shapes, so a ref
+ * that names no open task resolves to `null` here exactly as it does
+ * everywhere else. Exported for `pr-read.ts`, which needs the row's PULL
+ * REQUEST as well as its Issue: `task_pr_read` resolves the pull request it
+ * reads from the selected task's own branch, and this row is where that
+ * branch's open pull request is already recorded (`task-status.ts`'s
+ * `findPrForRef`).
+ *
+ * Deliberately NOT what `resolveIssueForRef` above is built on: that function
+ * short-circuits an `{ issue }` ref to its own number with no forge call at
+ * all, which is what lets `task_escalation_read` answer a bare Issue straight
+ * out of the outbox. A pull request cannot be read out of the outbox, so this
+ * one always reads the rows.
+ */
+export function resolveRowForRef(ref: TaskToolRef): TaskStatusRow | null {
+  return currentTaskStatusRows().find((row) => refMatchesRow(ref, row)) ?? null
 }
 
 // --- start-side resolution: open tranche-labeled Issues, frozen or not -------

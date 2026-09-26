@@ -1,8 +1,9 @@
 /**
  * The task-tool catalog — the one place a task-operator tool's name, input
- * shape, result shape, error shape and purpose are written. Five tools:
- * `task_status` and `task_escalation_read` are bound to a real read
- * interface (`apps/cli/src/lib/task-tools/read.ts` and `handlers.ts` —
+ * shape, result shape, error shape and purpose are written. Six tools:
+ * `task_status`, `task_escalation_read` and `task_pr_read` are bound to a real
+ * read interface (`apps/cli/src/lib/task-tools/read.ts`, `pr-read.ts` and
+ * `handlers.ts` —
  * `apps/cli` reads the outbox and the forge, `aeg-core` stays pure); `task_start`,
  * `task_resume` and `task_cancel` are declared here but refuse with
  * `capability_unavailable` until a control store exists to act on (Traps to
@@ -216,6 +217,97 @@ export const TaskEscalationReadResultSchema = z
 
 export type TaskEscalationReadResult = z.infer<typeof TaskEscalationReadResultSchema>
 
+// --- task_pr_read ------------------------------------------------------------
+
+/**
+ * The ceiling on any single free-text field this catalog's results carry out
+ * of the forge — a check's failure summary, a pause comment's body, the
+ * published summary table. Declared here, once, for the same reason
+ * `DEFAULT_PAGE_LIMIT` is: everything a tool returns from a pull request is
+ * adopter-influenced content, and no handler picks its own bound for it.
+ */
+export const MAX_RETURNED_TEXT_CHARS = 4000
+
+/**
+ * One check GitHub reports on the task's own head. `required` is the forge's
+ * own answer for THIS pull request (branch protection / rulesets), never a
+ * guess from the check's name. `conclusion` is `null` while `status` is not
+ * `completed`. `failureSummary` is populated only for a check that actually
+ * failed — the check's own reported output where it writes one, its failure
+ * annotations otherwise, capped at `MAX_RETURNED_TEXT_CHARS`.
+ */
+export const TaskPrCheckSchema = z.object({
+  name: z.string(),
+  required: z.boolean(),
+  status: z.string(),
+  conclusion: z.string().nullable(),
+  detailsUrl: z.string().nullable(),
+  failureSummary: z.string().nullable()
+})
+
+export type TaskPrCheck = z.infer<typeof TaskPrCheckSchema>
+
+/** One posted verdict, as the merge gate's own extractors read it — never a re-derivation of the verdict grammar. */
+export const TaskPrVerdictSchema = z.object({
+  role: z.enum(['code-review', 'security']),
+  value: z.string(),
+  judgedHead: z.string().nullable(),
+  objectivesVersion: z.string().nullable()
+})
+
+export type TaskPrVerdict = z.infer<typeof TaskPrVerdictSchema>
+
+/** The loop's own pause comment on this pull request — its reason and its body, capped. */
+export const TaskPrPauseSchema = z.object({
+  reason: z.string(),
+  body: z.string()
+})
+
+/**
+ * The pull request's review record for the task: the newest principal-authored
+ * verdicts and their judged head, the developer round markers, the published
+ * summary table, and any pause comment. Every field is derived from
+ * principal-authored comments only — a comment whose author does not resolve
+ * against the configured principal allowlist contributes nothing here, and its
+ * body is never carried out.
+ */
+export const TaskPrReviewRecordSchema = z.object({
+  verdicts: z.array(TaskPrVerdictSchema),
+  roundMarkers: z.array(z.number().int().nonnegative()),
+  summaryTable: z.string().nullable(),
+  pause: TaskPrPauseSchema.nullable()
+})
+
+export type TaskPrReviewRecord = z.infer<typeof TaskPrReviewRecordSchema>
+
+/**
+ * `pr` is a CROSS-CHECK, never the resolution: the pull request always comes
+ * from the selected task's own branch, and a supplied number that does not
+ * equal it refuses (`authority`) rather than reading the one the caller named.
+ */
+export const TaskPrReadInputSchema = z
+  .object({
+    task: TaskToolRefSchema,
+    pr: z.number().int().positive().optional()
+  })
+  .strict()
+
+export type TaskPrReadInput = z.infer<typeof TaskPrReadInputSchema>
+
+export const TaskPrReadResultSchema = z
+  .object({
+    task: TaskToolRefSchema,
+    issue: z.number().int().positive(),
+    pr: z.number().int().positive(),
+    /** The head the checks below were reported against — `null` when the forge reported none. */
+    head: z.string().nullable(),
+    checks: z.array(TaskPrCheckSchema),
+    review: TaskPrReviewRecordSchema
+  })
+  .merge(ObservedSchema)
+
+export type TaskPrReadResult = z.infer<typeof TaskPrReadResultSchema>
+
 // --- task_start / task_resume / task_cancel (stubs — O3) ------------------
 
 export const TaskStartInputSchema = z
@@ -344,6 +436,7 @@ export const TASK_TOOL_NAMES = [
   'task_start',
   'task_status',
   'task_escalation_read',
+  'task_pr_read',
   'task_resume',
   'task_cancel'
 ] as const
@@ -403,6 +496,19 @@ export const TASK_ESCALATION_READ_TOOL: TaskToolDefinition<TaskEscalationReadInp
   }
 }
 
+export const TASK_PR_READ_TOOL: TaskToolDefinition<TaskPrReadInput, TaskPrReadResult> = {
+  name: 'task_pr_read',
+  purpose:
+    "Read why the selected task's own pull request is red: every required and reported check with its state, conclusion and — for a failed one — its failure summary, alongside the pull request's principal-authored review record (the newest verdicts and their judged head, the round markers, the published summary table, and any pause comment).",
+  boundaries:
+    "Read-only and task-scoped: it re-runs nothing, posts nothing, edits nothing, merges nothing, approves nothing, and holds no forge-write credential. The pull request is ALWAYS resolved from the selected task's own branch — a `pr` argument is a cross-check, and a number that is not this task's refuses (`authority`) rather than reading someone else's pull request. Distinct from `task_status`, which names one loop state per task and nothing about CI; distinct from `task_escalation_read`, which returns the locally persisted pause packet rather than what the forge reports. Everything it returns from the pull request is derived from principal-authored comments only, each free-text field capped — a comment from outside the principal allowlist contributes nothing and its body is never carried out.",
+  inputSchema: TaskPrReadInputSchema,
+  resultSchema: TaskPrReadResultSchema,
+  errorSchema: TaskToolErrorSchema,
+  examples: [{ task: { tranche: 'unattended-run-v1', id: '9' } }, { task: { issue: 558 }, pr: 560 }],
+  handlerBinding: { kind: 'bound', module: 'apps/cli/src/lib/task-tools/pr-read.ts', export: 'taskPrReadHandler' }
+}
+
 export const TASK_START_TOOL: TaskToolDefinition<TaskStartInput, TaskStartResult> = {
   name: 'task_start',
   purpose:
@@ -445,9 +551,17 @@ export const TASK_TOOL_CATALOG: readonly [
   typeof TASK_START_TOOL,
   typeof TASK_STATUS_TOOL,
   typeof TASK_ESCALATION_READ_TOOL,
+  typeof TASK_PR_READ_TOOL,
   typeof TASK_RESUME_TOOL,
   typeof TASK_CANCEL_TOOL
-] = [TASK_START_TOOL, TASK_STATUS_TOOL, TASK_ESCALATION_READ_TOOL, TASK_RESUME_TOOL, TASK_CANCEL_TOOL]
+] = [
+  TASK_START_TOOL,
+  TASK_STATUS_TOOL,
+  TASK_ESCALATION_READ_TOOL,
+  TASK_PR_READ_TOOL,
+  TASK_RESUME_TOOL,
+  TASK_CANCEL_TOOL
+]
 
 export function taskToolByName(name: TaskToolName): TaskToolDefinition {
   const found = TASK_TOOL_CATALOG.find((tool) => tool.name === name)
@@ -458,11 +572,11 @@ export function taskToolByName(name: TaskToolName): TaskToolDefinition {
 // --- the Operator's tool grant, the boundary the router enforces -----------
 
 /**
- * The one grant the task Operator holds beyond the five catalog tools: the
+ * The one grant the task Operator holds beyond the six catalog tools: the
  * append-only `task status --follow` read (`apps/cli/src/lib/task-status.ts`'s
  * own `--follow` narration). Named as a grant token rather than a catalog
  * tool because it is a bounded status stream the Operator follows, not one of
- * the five typed task tools — but it is still part of what the router must
+ * the six typed task tools — but it is still part of what the router must
  * recognize as granted, so it lives here beside the catalog rather than as a
  * bare string a caller reinvents.
  */
@@ -470,7 +584,7 @@ export const OPERATOR_STATUS_FOLLOW = 'task_status_follow' as const
 
 /**
  * The complete, closed set of tools the task Operator is granted — the
- * five catalog tools plus the status-follow read, and nothing else. This is
+ * six catalog tools plus the status-follow read, and nothing else. This is
  * the machine-readable twin of `aeg-root/roles/operator.md`'s `allowed-tools`
  * frontmatter and of the generated skill's `allowed-tools`; a test binds all
  * three so no representation drifts from another. The router refuses every
