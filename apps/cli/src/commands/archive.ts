@@ -26,6 +26,12 @@ import {
   type MeteringCapability,
   type TranscriptSummary
 } from '@attalabs/aeg-core'
+import {
+  deriveTrancheFromForge,
+  hasTrancheIntentsSection,
+  intentLines,
+  milestoneLifecycleFromTrancheLifecycles
+} from '@attalabs/aeg-forge-state'
 import { detectGitRepo, type RepoInfo } from '../lib/detect.js'
 import { closeStdin, promptYesNo } from '../lib/prompt.js'
 import { loadConfig } from '../lib/config.js'
@@ -497,6 +503,84 @@ export function trancheArchivalStatus(
   return { kind: 'complete' }
 }
 
+/** The three lifecycles a tranche can be in, read off the one derivation `@attalabs/aeg-forge-state` owns rather than restated here. */
+type TrancheLifecycle = Awaited<ReturnType<typeof deriveTrancheFromForge>>['lifecycle']
+
+export type DeclaredTranche = { slug: string; lifecycle: TrancheLifecycle }
+
+/**
+ * Every tranche a Milestone's `### Tranche intents` section declares, with
+ * each one's lifecycle derived from its OWN labeled Issues — the same
+ * `deriveTrancheFromForge` composition `vinaya milestone status` prints, so
+ * "is that tranche done" is answered exactly once in this product, never a
+ * second time here.
+ *
+ * The tranche being archived is `complete` by construction and is never
+ * re-fetched: `trancheArchivalStatus` has already proved every Issue
+ * carrying its label is closed, and re-deriving it would read a legacy
+ * Milestone titled exactly the slug — still open, because closing it is what
+ * this command is about to do — as `active`, leaving the tranche blocking
+ * its own Milestone forever.
+ */
+async function declaredTranches(
+  owner: string,
+  repo: string,
+  description: string,
+  archivedSlug: string
+): Promise<DeclaredTranche[]> {
+  const rows: DeclaredTranche[] = []
+  for (const intent of intentLines(description)) {
+    if (intent.slug === archivedSlug) {
+      rows.push({ slug: intent.slug, lifecycle: 'complete' })
+      continue
+    }
+    const tranche = await deriveTrancheFromForge(owner, repo, intent.slug)
+    rows.push({ slug: intent.slug, lifecycle: tranche.lifecycle })
+  }
+  return rows
+}
+
+/**
+ * Whether this archival may close the Milestone, and — when it may not —
+ * every reason it stays open, in the words the prompt and the closing
+ * message both print.
+ *
+ * Two independent holds, because a Milestone is a product goal and a tranche
+ * is one slice of it. An attached Issue still open is the older hold (a
+ * shared Milestone's other tenants). A tranche the Milestone DECLARES but
+ * that has no Issues yet is the second: it is real, `planned` work the
+ * Milestone is still committed to, invisible to any count of attached
+ * Issues, and closing on that count alone marked most of a product finished
+ * the first time a tranche of it completed. `milestoneLifecycleFromTrancheLifecycles`
+ * is what reads the declared set — never `.every(...)` inline, whose
+ * vacuous truth on an empty list is the same bug in a new place.
+ *
+ * A Milestone declaring no `### Tranche intents` section at all keeps the
+ * older rule untouched: nothing declared, nothing to hold it open. A
+ * section present but carrying no line this parser can read is NOT that
+ * case — an unreadable declaration is a declaration, and it holds.
+ */
+export function milestoneCloseDecision(input: {
+  otherWorkOpen: boolean
+  declaresIntents: boolean
+  declared: readonly DeclaredTranche[]
+}): { close: true } | { close: false; reasons: string[] } {
+  const reasons: string[] = []
+  if (input.otherWorkOpen) reasons.push('other tasks remain')
+  if (
+    input.declaresIntents &&
+    milestoneLifecycleFromTrancheLifecycles(input.declared.map((d) => d.lifecycle)) !== 'complete'
+  ) {
+    const unfinished = input.declared.filter((d) => d.lifecycle !== 'complete')
+    reasons.push(
+      unfinished.length > 0
+        ? `unfinished tranches it declares: ${unfinished.map((d) => `${d.slug} (${d.lifecycle})`).join(', ')}`
+        : 'it declares a `### Tranche intents` section with no readable tranche line'
+    )
+  }
+  return reasons.length === 0 ? { close: true } : { close: false, reasons }
+}
+
 /**
  * A tranche's identity is its `vinaya/tranche:<slug>` label, not a Milestone
  * number: this command used to find an open Milestone titled the slug FIRST and list its Issues
@@ -578,10 +662,20 @@ export async function runArchiveTranche(args: string[], deps: ArchiveDeps): Prom
   const milestoneIssues = fetchMilestoneIssueStates(repoFlag, milestone.number)
   const otherWorkOpen = milestoneIssues.some((i) => i.state === 'OPEN')
 
+  // An attached Issue is not the whole of a Milestone's scope: its own
+  // `### Tranche intents` section declares tranches that may not have been
+  // cut into Issues yet, and those hold it open too.
+  const description = milestone.description ?? ''
+  const verdict = milestoneCloseDecision({
+    otherWorkOpen,
+    declaresIntents: hasTrancheIntentsSection(description),
+    declared: await declaredTranches(repo.owner, repo.repo, description, slug)
+  })
+
   if (!yes) {
-    const prompt = otherWorkOpen
-      ? `Record tranche '${slug}''s retrospective in Milestone #${milestone.number} (other tasks still open — leaving it open)?`
-      : `Close tranche '${slug}''s Milestone (#${milestone.number}, all tasks closed)?`
+    const prompt = verdict.close
+      ? `Close tranche '${slug}''s Milestone (#${milestone.number}, all tasks closed)?`
+      : `Record tranche '${slug}''s retrospective in Milestone #${milestone.number} (${verdict.reasons.join('; ')} — leaving it open)?`
     const ok = await promptYesNo(prompt, false)
     closeStdin()
     if (!ok) {
@@ -611,17 +705,17 @@ export async function runArchiveTranche(args: string[], deps: ArchiveDeps): Prom
     '200'
   ])
   const section = renderRetrospectiveSection(slug, taskPrs)
-  const newDescription = appendRetrospectiveSection(milestone.description ?? '', slug, section)
+  const newDescription = appendRetrospectiveSection(description, slug, section)
   const patch: { description: string; state?: 'closed' } = { description: newDescription }
-  if (!otherWorkOpen) patch.state = 'closed'
+  if (verdict.close) patch.state = 'closed'
   sh(
     ['gh', 'api', '-X', 'PATCH', `repos/${repoFlag}/milestones/${milestone.number}`, '--input', '-'],
     JSON.stringify(patch)
   )
   process.stdout.write(
-    otherWorkOpen
-      ? `Tranche '${slug}' retrospective recorded in Milestone #${milestone.number} (left open — other tasks remain).\n`
-      : `Tranche '${slug}' closed (Milestone #${milestone.number}), retrospective recorded.\n`
+    verdict.close
+      ? `Tranche '${slug}' closed (Milestone #${milestone.number}), retrospective recorded.\n`
+      : `Tranche '${slug}' retrospective recorded in Milestone #${milestone.number} (left open — ${verdict.reasons.join('; ')}).\n`
   )
   return 0
 }
