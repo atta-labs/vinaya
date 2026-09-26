@@ -160,12 +160,12 @@ const CURSOR_LIMIT_PROPS = {
  * catalog name has an entry here, so the two never drift.
  */
 export const TASK_TOOL_INPUT_JSON_SCHEMAS: Record<TaskToolName, Record<string, unknown>> = {
-  task_start: {
-    type: 'object',
-    properties: { tranche: { type: 'string', minLength: 1 }, id: { type: 'string', minLength: 1 } },
-    required: ['tranche', 'id'],
-    additionalProperties: false
-  },
+  // The ref union at the TOP level — `task_start` takes the two address forms
+  // bare rather than under a `task` key, the shape it has always had. The
+  // `type` stays declared beside the union: every branch is an object, and a
+  // client that reads only `type` (as `tools/list`'s own consumers do) must
+  // still see one.
+  task_start: { type: 'object', ...TASK_REF_JSON_SCHEMA },
   task_status: {
     type: 'object',
     properties: { task: TASK_REF_JSON_SCHEMA, ...CURSOR_LIMIT_PROPS },

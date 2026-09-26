@@ -53,7 +53,12 @@ describe('TASK_TOOL_CATALOG', () => {
 })
 
 describe('taskStartRequestIdentity', () => {
-  const base = { caller: 'op1', repo: 'o/r', tranche: 'task-operator-v1', id: '2', payloadDigest: 'd1' }
+  const base = {
+    caller: 'op1',
+    repo: 'o/r',
+    target: { tranche: 'task-operator-v1', id: '2' },
+    payloadDigest: 'd1'
+  }
 
   it('is deterministic — the same input always yields the same id', () => {
     expect(taskStartRequestIdentity(base)).toBe(taskStartRequestIdentity({ ...base }))
@@ -64,13 +69,33 @@ describe('taskStartRequestIdentity', () => {
     expect(taskStartRequestIdentity({ ...base, caller: 'op2' })).not.toBe(id)
     expect(taskStartRequestIdentity({ ...base, repo: 'o/other' })).not.toBe(id)
     expect(taskStartRequestIdentity({ ...base, repo: null })).not.toBe(id)
-    expect(taskStartRequestIdentity({ ...base, tranche: 'other' })).not.toBe(id)
-    expect(taskStartRequestIdentity({ ...base, id: '3' })).not.toBe(id)
+    expect(taskStartRequestIdentity({ ...base, target: { tranche: 'other', id: '2' } })).not.toBe(id)
+    expect(taskStartRequestIdentity({ ...base, target: { tranche: 'task-operator-v1', id: '3' } })).not.toBe(id)
     expect(taskStartRequestIdentity({ ...base, payloadDigest: 'd2' })).not.toBe(id)
   })
 
   it('is a stable, opaque token shape', () => {
     expect(taskStartRequestIdentity(base)).toMatch(/^req_[0-9a-f]{32}$/)
+  })
+
+  it('never lets the two address forms share an identity, whichever Issue an ordinal resolves to', () => {
+    const byIssue = taskStartRequestIdentity({ ...base, target: { issue: 729 } })
+    expect(byIssue).not.toBe(taskStartRequestIdentity(base))
+    // Nor does a tranche whose own slug/id happen to stringify like the number.
+    expect(byIssue).not.toBe(taskStartRequestIdentity({ ...base, target: { tranche: 'issue', id: '729' } }))
+    expect(byIssue).toBe(taskStartRequestIdentity({ ...base, target: { issue: 729 } }))
+    expect(byIssue).not.toBe(taskStartRequestIdentity({ ...base, target: { issue: 730 } }))
+  })
+
+  it('computes a tranche identity from the same bytes it always has, so an older build’s claim is still found', () => {
+    // Pinned to the sha256 of the pre-widening canonical bytes for `base` — a
+    // JSON object of caller, repo, the tranche target's own two fields flattened
+    // to `tranche`/`id`, then payloadDigest, in that key order — computed outside
+    // this implementation rather than recorded from it. A claim file written
+    // before `{ issue }` was a startable form lives at a path keyed by this exact
+    // string, and an upgrade that changed it would replay nothing and start a
+    // second run.
+    expect(taskStartRequestIdentity(base)).toBe('req_6143a102cd1a157c71eecf0ba1ba1f75')
   })
 })
 

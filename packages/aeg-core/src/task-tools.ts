@@ -5,8 +5,9 @@
  * read interface (`apps/cli/src/lib/task-tools/read.ts`, `pr-read.ts` and
  * `handlers.ts` —
  * `apps/cli` reads the outbox and the forge, `aeg-core` stays pure); `task_start`,
- * `task_resume` and `task_cancel` are declared here but refuse with
- * `capability_unavailable` until a control store exists to act on (Traps to
+ * `task_resume` and `task_cancel` are bound to real mutating handlers of their
+ * own (`start.ts`, `resume.ts`, `cancel.ts`) and each acts on the control store
+ * — none of the six refuses with a `capability` error any more (Traps to
  * avoid: an internal helper is not automatically an agent tool, and this
  * catalog exposes no raw shell or forge access — every field below is
  * either a schema or prose, never a live handle to a process or a write).
@@ -33,15 +34,17 @@ import { z } from 'zod'
  * caller may not do this), `precondition` (the input is well-formed but the
  * task is not in a state this call accepts — e.g. resuming a task with no
  * paused run), `capability` (the tool exists in the catalog but its handler
- * is not yet implemented — the fixed refusal `task_start`/`task_resume`/
- * `task_cancel` return today), `infrastructure` (a read or write the tool
+ * is not yet implemented — the shape a not-yet-landed tool refuses with; no
+ * tool in this catalog is in that state today), `infrastructure` (a read or write the tool
  * depends on failed for reasons outside the caller's input — a file the
  * outbox should carry could not be read), `cancellation` (a cancel request
  * could not be honored, e.g. nothing running to cancel), `timeout` (a read
  * exceeded its own bound), and `uncertain_effect` (a mutation was attempted
- * and its outcome could not be confirmed — reserved for `task_start`/
- * `task_resume`/`task_cancel` once they have a real effect to be uncertain
- * about; no handler below returns it yet).
+ * and its outcome could not be confirmed — no handler returns it: the one
+ * unconfirmable outcome the mutating tools have in practice is a cancel whose
+ * in-flight effect was fenced rather than confirmed, and `task_cancel` reports
+ * that truthfully in its own `'uncertain'` RESULT outcome rather than as a
+ * failed call).
  */
 export const TASK_TOOL_ERROR_KINDS = [
   'validation',
@@ -68,7 +71,7 @@ export function taskToolError(kind: TaskToolErrorKind, message: string, detail?:
   return detail === undefined ? { kind, message } : { kind, message, detail }
 }
 
-/** The one error every not-yet-landed mutating tool returns — same kind, same message shape, so a caller routing on `kind` never has to special-case which of the three it called. */
+/** The one error shape a not-yet-landed tool refuses with — same kind, same message, so a caller routing on `kind` never has to special-case which tool it called. No tool in this catalog returns it today; it stays the declared shape for the next one landed name-first. */
 export function capabilityUnavailable(tool: TaskToolName, becauseOf: string): TaskToolError {
   return taskToolError('capability', `${tool} is not available yet — ${becauseOf}.`)
 }
@@ -316,29 +319,36 @@ export const TaskPrReadResultSchema = z
 
 export type TaskPrReadResult = z.infer<typeof TaskPrReadResultSchema>
 
-// --- task_start / task_resume / task_cancel (stubs — O3) ------------------
+// --- task_start / task_resume / task_cancel ---------------------------------
 
-export const TaskStartInputSchema = z
-  .object({
-    tranche: z.string().min(1),
-    id: z.string().min(1)
-  })
-  .strict()
+/**
+ * Either address a task carries: a tranche task (`{ tranche, id }`, matching
+ * `task/<tranche>/<n>`) or a standalone task Issue (`{ issue }`, matching
+ * `task/issue-<n>`). This is the SAME `TaskToolRef` union every other tool in
+ * this catalog already accepts, reused rather than a third shape of its own —
+ * so an Operator addresses one task the same way across all six tools, and a
+ * standalone Issue it can already watch, resume and cancel is one it can also
+ * start. Both members stay `.strict()`: an unknown field is still refused.
+ */
+export const TaskStartInputSchema = TaskToolRefSchema
 export type TaskStartInput = z.infer<typeof TaskStartInputSchema>
 
 /**
- * `task_start`'s durable result (O2): the request identity this start was
- * scoped to, the durable run identity a caller can address it by (the task's
- * tranche/id — its `task/<tranche>/<n>` branch is the addressing scheme every
- * other tool and role already resolves through), whether THIS call started the
- * run or replayed an already-started one (`started`), when it was first
- * started, and the mode it ran in. `mode` is a literal `'attended'`: there is
- * no unattended start until the worker-isolation boundary and a capability flag
- * exist, so the field never carries any other value today.
+ * `task_start`'s durable result: the request identity this start was scoped
+ * to, the durable run identity a caller can address it by, whether THIS call
+ * started the run or replayed an already-started one (`started`), when it was
+ * first started, and the mode it ran in. `run` echoes back the SAME address
+ * form the call used — `{ tranche, id }` for a tranche task, `{ issue }` for a
+ * standalone task Issue — because that form is the addressing scheme every
+ * other tool and role already resolves through (`task/<tranche>/<n>` and
+ * `task/issue-<n>` respectively), and echoing the other form would hand the
+ * caller back an address it did not ask for. `mode` is a literal `'attended'`:
+ * there is no unattended start until the worker-isolation boundary and a
+ * capability flag exist, so the field never carries any other value today.
  */
 export const TaskStartResultSchema = z.object({
   requestId: z.string().min(1),
-  run: z.object({ tranche: z.string().min(1), id: z.string().min(1) }),
+  run: TaskToolRefSchema,
   started: z.boolean(),
   startedAt: z.string(),
   mode: z.literal('attended')
@@ -346,32 +356,51 @@ export const TaskStartResultSchema = z.object({
 export type TaskStartResult = z.infer<typeof TaskStartResultSchema>
 
 /**
- * The stable request identity a `task_start` call is idempotent on (O2) —
- * scoped to the caller, the repo, the target task, and a digest of the call's
- * own payload, so the same caller asking to start the same task twice collapses
- * to one run, while a different caller, repo, target, or payload is a distinct
+ * The stable request identity a `task_start` call is idempotent on — scoped to
+ * the caller, the repo, the target task, and a digest of the call's own
+ * payload, so the same caller asking to start the same task twice collapses to
+ * one run, while a different caller, repo, target, or payload is a distinct
  * request. Pure and deterministic: the same input always yields the same id,
  * across processes and machines, which is what lets a durable store recognise a
  * duplicate start after a disconnect. It authenticates nothing on its own — the
  * `caller` value must come from the transport's invocation context, never a
  * tool argument (this module's own header).
+ *
+ * The ADDRESS FORM is part of the identity, in two deliberate ways. A
+ * standalone-Issue target hashes an `{ form: 'issue', issue }` shape no tranche
+ * target can ever produce, so `{ issue: 729 }` and a tranche ordinal that
+ * happens to resolve to Issue 729 are different requests and never share a
+ * claim — two addresses collapsing into one claim by accident is the failure
+ * this shape rules out. A tranche target hashes exactly the shape it always
+ * has, byte for byte, so every identity a tranche start computed before
+ * standalone Issues were startable still computes the same today: a claim
+ * written by an older build is still found by a newer one, and an in-flight run
+ * is never started twice by an upgrade.
  */
 export type TaskStartRequestInput = {
   caller: string
   repo: string | null
-  tranche: string
-  id: string
+  target: TaskToolRef
   payloadDigest: string
 }
 
 export function taskStartRequestIdentity(input: TaskStartRequestInput): string {
-  const canonical = JSON.stringify({
-    caller: input.caller,
-    repo: input.repo,
-    tranche: input.tranche,
-    id: input.id,
-    payloadDigest: input.payloadDigest
-  })
+  const canonical =
+    'issue' in input.target
+      ? JSON.stringify({
+          caller: input.caller,
+          repo: input.repo,
+          form: 'issue',
+          issue: input.target.issue,
+          payloadDigest: input.payloadDigest
+        })
+      : JSON.stringify({
+          caller: input.caller,
+          repo: input.repo,
+          tranche: input.target.tranche,
+          id: input.target.id,
+          payloadDigest: input.payloadDigest
+        })
   return `req_${createHash('sha256').update(canonical).digest('hex').slice(0, 32)}`
 }
 
@@ -520,13 +549,13 @@ export const TASK_PR_READ_TOOL: TaskToolDefinition<TaskPrReadInput, TaskPrReadRe
 export const TASK_START_TOOL: TaskToolDefinition<TaskStartInput, TaskStartResult> = {
   name: 'task_start',
   purpose:
-    'Start the dev-review-loop for an explicitly selected, already-frozen task, in attended mode, under the caller’s own credentials — wrapping the existing `runTask` composition and returning the durable run identity.',
+    'Start the dev-review-loop for an explicitly selected, already-planned task — addressed either as a tranche task (`{ tranche, id }`) or as a standalone task Issue (`{ issue }`) — in attended mode, under the caller’s own credentials, wrapping the existing `runTask` composition and returning the durable run identity.',
   boundaries:
-    'Distinct from `task_resume`: this tool starts a run, it does not continue a paused one. It refuses (`authority`) unless the invocation context carries an authenticated caller — MCP is a transport, not authorization, so the caller is never taken from an argument. It is idempotent per request identity (caller + repo + target + payload digest): asking twice returns the same run and starts nothing twice. ATTENDED MODE ONLY — the run it starts inherits the caller’s own environment and credentials; there is no unattended start and no attended bypass. An unattended start waits on the worker-isolation boundary and a capability flag a later tranche adds.',
+    'Distinct from `task_resume`: this tool starts a run, it does not continue a paused one. It refuses (`authority`) unless the invocation context carries an authenticated caller — MCP is a transport, not authorization, so the caller is never taken from an argument. Either address form launches the SAME command the CLI already exposes: `task run <tranche> <n>` for a tranche task, `task run --issue <n>` for a standalone one. A task has exactly ONE address: an Issue that carries a `vinaya/tranche:*` label is refused (`precondition`) in the `{ issue }` form, naming the tranche form to use instead, because two addresses for one task would split its claims; so is a number that is not an open Issue. It is idempotent per request identity (caller + repo + target + payload digest), and the address form is part of that identity: asking twice the same way returns the same run and starts nothing twice. ATTENDED MODE ONLY — the run it starts inherits the caller’s own environment and credentials; there is no unattended start and no attended bypass. An unattended start waits on the worker-isolation boundary and a capability flag a later tranche adds.',
   inputSchema: TaskStartInputSchema,
   resultSchema: TaskStartResultSchema,
   errorSchema: TaskToolErrorSchema,
-  examples: [{ tranche: 'task-operator-v1', id: '1' }],
+  examples: [{ tranche: 'task-operator-v1', id: '1' }, { issue: 729 }],
   handlerBinding: { kind: 'bound', module: 'apps/cli/src/lib/task-tools/start.ts', export: 'defaultTaskStartHandler' }
 }
 
