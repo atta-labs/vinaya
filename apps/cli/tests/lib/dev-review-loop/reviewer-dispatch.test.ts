@@ -11,11 +11,17 @@ import {
 import type { DispatchHandle } from '../../../src/lib/dispatch'
 import {
   buildManifestRecord,
+  buildReviewerPromptPieces,
   buildVerdictFromReport,
   controlStoreRootFor,
+  driverAuthoredPromptText,
+  lintReviewerPrompt,
   persistManifestRecord,
+  renderReviewerDispatchPrompt,
+  renderReviewerPrompt,
   ReviewerReportParseFailure
 } from '../../../src/lib/dev-review-loop/reviewer-dispatch'
+import type { ReviewerPromptFacts, ReviewerPromptPiece } from '../../../src/lib/dev-review-loop/reviewer-dispatch'
 
 // --- objective-id coverage at the driver (review-validity-v1 task 4, #478, O4) ---
 
@@ -280,5 +286,105 @@ describe('buildManifestRecord / persistManifestRecord — the parent-built store
     } finally {
       rmSync(outbox, { recursive: true, force: true })
     }
+  })
+})
+
+// --- the banned-framing lint reads driver text only (#736, O1/O2) ----------
+
+describe('renderReviewerPrompt — the banned-framing lint checks only the text the driver writes', () => {
+  const MANIFEST: ReviewInputManifest = {
+    headSha: 'a'.repeat(40),
+    baseSha: 'e'.repeat(40),
+    briefHash: 'b'.repeat(64),
+    objectivesVersion: 'c'.repeat(64),
+    rulingOrdinal: 2,
+    policyDigest: 'd'.repeat(64)
+  }
+
+  const FACTS: ReviewerPromptFacts = {
+    objectives: 'O1. Do the thing.',
+    resolvedObjectives: [{ id: 'O1', text: 'Do the thing.' }],
+    rulings: [],
+    ciConclusion: 'green',
+    revision: 'f'.repeat(40),
+    manifest: MANIFEST
+  }
+
+  // Every phrase in the module's own BANNED_FRAMING list, as a Principal
+  // might actually write them in a ruling.
+  const RULING_WITH_EVERY_BANNED_PHRASE =
+    'The developer says the fix is done; according to the developer CI is green. ' +
+    'In my opinion that is not enough — I think the PR body says otherwise, and the diff clearly contradicts it.'
+
+  it('renders a ruling carrying every banned phrase, verbatim, instead of ending the round', () => {
+    const prompt = renderReviewerDispatchPrompt(
+      'reviewer',
+      { ...FACTS, rulings: [RULING_WITH_EVERY_BANNED_PHRASE] },
+      '/tmp/work'
+    )
+    expect(prompt).toContain(`1. ${RULING_WITH_EVERY_BANNED_PHRASE}`)
+  })
+
+  it("renders an Issue's objectives and a brief revision carrying banned words, rather than refusing them", () => {
+    const prompt = renderReviewerDispatchPrompt(
+      'security',
+      { ...FACTS, objectives: 'O1. The config scan clearly names every key.', revision: 'clearly-a-tag' },
+      '/tmp/work'
+    )
+    expect(prompt).toContain('O1. The config scan clearly names every key.')
+    expect(prompt).toContain('BRIEF REVISION: clearly-a-tag')
+  })
+
+  it('holds every interpolated fact out of the text the lint reads', () => {
+    const pieces = buildReviewerPromptPieces({
+      ...FACTS,
+      objectives: 'O1. I think this is clearly fine.',
+      rulings: [RULING_WITH_EVERY_BANNED_PHRASE]
+    })
+    const driverText = driverAuthoredPromptText(pieces)
+    expect(lintReviewerPrompt(driverText)).toEqual([])
+    expect(driverText).not.toContain('clearly')
+    expect(driverText).not.toContain(RULING_WITH_EVERY_BANNED_PHRASE)
+    expect(driverText).not.toContain(MANIFEST.headSha)
+  })
+
+  it("still refuses a banned word in the renderer's own fixed text", () => {
+    const regressed: ReviewerPromptPiece[] = [
+      { driver: 'OBJECTIVES (the developer says):\n' },
+      { fact: 'O1. Do the thing.' },
+      { driver: '\n\nHEAD: ' },
+      { fact: MANIFEST.headSha }
+    ]
+    expect(lintReviewerPrompt(driverAuthoredPromptText(regressed))).toEqual([
+      'banned framing matched: \\bthe developer says\\b'
+    ])
+  })
+
+  it('never lets two fixed strings either side of a held-out fact read as one banned phrase', () => {
+    const split: ReviewerPromptPiece[] = [{ driver: 'the developer ' }, { fact: 'O1' }, { driver: 'says' }]
+    expect(lintReviewerPrompt(driverAuthoredPromptText(split))).toEqual([])
+  })
+
+  it('renders the same prompt text it always did — labels, blank lines and ruling numbering unchanged', () => {
+    expect(renderReviewerPrompt({ ...FACTS, rulings: ['First ruling.', 'Second ruling.'] })).toBe(
+      [
+        'OBJECTIVES:',
+        'O1. Do the thing.',
+        '',
+        'RULINGS ON THIS PR:',
+        '1. First ruling.',
+        '2. Second ruling.',
+        '',
+        `HEAD: ${'a'.repeat(40)}`,
+        'CI: green',
+        `BRIEF REVISION: ${'f'.repeat(40)}`
+      ].join('\n')
+    )
+  })
+
+  it("keeps the driver's own fallbacks for a task with no objectives and no rulings", () => {
+    const rendered = renderReviewerPrompt({ ...FACTS, objectives: '   ', resolvedObjectives: [] })
+    expect(rendered).toContain('OBJECTIVES:\n(none found on the Issue)')
+    expect(rendered).toContain('RULINGS ON THIS PR:\n(none)')
   })
 })

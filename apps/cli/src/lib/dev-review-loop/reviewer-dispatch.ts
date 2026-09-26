@@ -72,13 +72,16 @@ export type ReviewerPromptFacts = {
 
 /**
  * Phrasing that would smuggle a conclusion, rather than a fact, into a
- * reviewer's prompt. Facts (objectives text, ruling bodies) are Principal-
- * or Planner-authored prose the driver does not control — this lint exists
- * to catch that prose leaking framing into the rendered prompt, not to
- * police this renderer's own fixed strings (which never use any of these
- * phrases — Section 10: a lint failure here is fixed in the renderer only
- * when the renderer's OWN fixed text is at fault, never by loosening the
- * lint).
+ * reviewer's prompt — the framing THIS renderer must never author itself.
+ *
+ * The lint's subject is the renderer's own fixed text (labels, fallbacks,
+ * numbering prefixes), never the facts interpolated between them: objectives
+ * text, ruling bodies and the brief's revision are Principal- or
+ * Planner-authored prose the driver does not control and must never censor,
+ * so a ruling that happens to say "clearly" is carried through verbatim
+ * rather than ending the round. A match therefore always names text written
+ * here, in this file — Section 10: it is fixed in the renderer, never by
+ * loosening the lint.
  */
 const BANNED_FRAMING: readonly RegExp[] = [
   /\bthe developer says\b/i,
@@ -94,19 +97,61 @@ export function lintReviewerPrompt(rendered: string): string[] {
   return BANNED_FRAMING.filter((re) => re.test(rendered)).map((re) => `banned framing matched: ${re.source}`)
 }
 
+/**
+ * One piece of a reviewer prompt: either `driver` text this renderer authored
+ * itself, or a `fact` interpolated verbatim from prose the driver does not
+ * control. Splitting the prompt this way is what lets the banned-framing lint
+ * read the renderer's own words without ever reading a Principal's.
+ */
+export type ReviewerPromptPiece = { readonly driver: string } | { readonly fact: string }
+
+const driverPiece = (text: string): ReviewerPromptPiece => ({ driver: text })
+const factPiece = (text: string): ReviewerPromptPiece => ({ fact: text })
+
+/**
+ * The reviewer prompt's facts block, piece by piece — the one place its shape
+ * lives. Facts only: no developer-authored text, no PR-body prose (Traps to
+ * avoid).
+ */
+export function buildReviewerPromptPieces(facts: ReviewerPromptFacts): readonly ReviewerPromptPiece[] {
+  const objectives = facts.objectives.trim()
+  const rulings: ReviewerPromptPiece[] = []
+  if (facts.rulings.length === 0) rulings.push(driverPiece('(none)'))
+  else
+    for (const [i, ruling] of facts.rulings.entries()) {
+      rulings.push(driverPiece(`${i > 0 ? '\n' : ''}${i + 1}. `), factPiece(ruling))
+    }
+  return [
+    driverPiece('OBJECTIVES:\n'),
+    objectives ? factPiece(objectives) : driverPiece('(none found on the Issue)'),
+    driverPiece('\n\nRULINGS ON THIS PR:\n'),
+    ...rulings,
+    driverPiece('\n\nHEAD: '),
+    factPiece(facts.manifest.headSha),
+    driverPiece('\nCI: '),
+    factPiece(facts.ciConclusion),
+    driverPiece('\nBRIEF REVISION: '),
+    factPiece(facts.revision)
+  ]
+}
+
+/** The prompt as the reviewer reads it — every piece, driver text and fact alike. */
+export function joinReviewerPromptPieces(pieces: readonly ReviewerPromptPiece[]): string {
+  return pieces.map((piece) => ('driver' in piece ? piece.driver : piece.fact)).join('')
+}
+
+/**
+ * Only the text the driver itself wrote — the lint's subject. Joined with
+ * newlines rather than concatenated, so two fixed strings sitting either side
+ * of a held-out fact can never read as one banned phrase.
+ */
+export function driverAuthoredPromptText(pieces: readonly ReviewerPromptPiece[]): string {
+  return pieces.flatMap((piece) => ('driver' in piece ? [piece.driver] : [])).join('\n')
+}
+
 /** Facts only — no developer-authored text, no PR-body prose (Traps to avoid). */
 export function renderReviewerPrompt(facts: ReviewerPromptFacts): string {
-  return [
-    'OBJECTIVES:',
-    facts.objectives.trim() || '(none found on the Issue)',
-    '',
-    'RULINGS ON THIS PR:',
-    facts.rulings.length > 0 ? facts.rulings.map((r, i) => `${i + 1}. ${r}`).join('\n') : '(none)',
-    '',
-    `HEAD: ${facts.manifest.headSha}`,
-    `CI: ${facts.ciConclusion}`,
-    `BRIEF REVISION: ${facts.revision}`
-  ].join('\n')
+  return joinReviewerPromptPieces(buildReviewerPromptPieces(facts))
 }
 
 // --- held-verdict outbox ---------------------------------------------------
@@ -743,11 +788,15 @@ export function renderReviewerDispatchPrompt(
   facts: ReviewerPromptFacts,
   workDir: string
 ): string {
-  const base = renderReviewerPrompt(facts)
-  const lint = lintReviewerPrompt(base)
+  const pieces = buildReviewerPromptPieces(facts)
+  const base = joinReviewerPromptPieces(pieces)
+  // The lint reads the renderer's own fixed text only. A Principal ruling or
+  // an Issue's objectives may say anything at all — that prose is carried
+  // through verbatim, never censored and never able to end the round.
+  const lint = lintReviewerPrompt(driverAuthoredPromptText(pieces))
   if (lint.length > 0) {
     throw new Error(
-      `devReviewLoop: renderReviewerPrompt produced banned framing: ${lint.join('; ')} — fix the renderer, never the lint.`
+      `devReviewLoop: renderReviewerPrompt's own fixed text carries banned framing: ${lint.join('; ')} — fix the renderer, never the lint.`
     )
   }
   const roleLine =
