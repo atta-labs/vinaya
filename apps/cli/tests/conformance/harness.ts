@@ -199,12 +199,63 @@ export function buildSandbox(): Sandbox {
   mkdirSync(runtimeDir, { recursive: true })
   const launchFile = join(sandbox, 'launches.log')
 
+  // `task_start` (O1) now confirms its launch alive on the task's own driver
+  // lock before reporting `started: true`, resolved through the SAME
+  // `{tranche, id}` → Issue read `task_resume`/`task_status` already use —
+  // so this fake `gh` must answer `gatherTaskStatusList()`'s three calls for
+  // `conformance/1` (issue list, a frozen-brief comment, an open-PR lookup),
+  // the same contract `tests/commands/task-status.test.ts`'s own stub
+  // satisfies, not just the bare `issue list` the launch path used to need.
   const gh = join(binDir, 'gh')
-  writeFileSync(gh, "#!/bin/sh\necho '[]'\n", { mode: 0o755 })
+  writeFileSync(
+    gh,
+    `#!/bin/sh
+if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
+  cat <<'JSON'
+[{"number":9301,"title":"[conformance] 1 — Clean result fixture task","labels":[{"name":"vinaya/tranche:conformance"}]}]
+JSON
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
+  cat <<'JSON'
+{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\n\\nA brief body.","author":{"login":"daniboomerang"}}]}
+JSON
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  echo '[]'
+  exit 0
+fi
+echo "gh stub: unhandled: $*" >&2
+exit 1
+`,
+    { mode: 0o755 }
+  )
   chmodSync(gh, 0o755)
 
+  // The recording launcher for `conformance/1` also writes that task's own
+  // driver lock (Issue #9301, the fake `gh` above's own mapping) and stays
+  // alive briefly under the SAME pid (`exec`, not a backgrounded subshell) —
+  // the observable `task_start`'s own confirm-wait polls for before it will
+  // ever report `started: true`.
   const launcher = join(binDir, 'record-launch')
-  writeFileSync(launcher, '#!/bin/sh\necho "launch $*" >> "$VINAYA_TEST_LAUNCH_FILE"\n', { mode: 0o755 })
+  writeFileSync(
+    launcher,
+    `#!/bin/sh
+echo "launch $*" >> "$VINAYA_TEST_LAUNCH_FILE"
+issue=""
+case "$3 $4" in
+  "conformance 1") issue=9301 ;;
+esac
+if [ -n "$issue" ]; then
+  dir="$VINAYA_RUNTIME_DIR/tasks-execution/$issue"
+  mkdir -p "$dir"
+  echo "{\\"pid\\": $$, \\"startedAt\\": \\"2026-01-01T00:00:00.000Z\\"}" > "$dir/driver.pid.json"
+  exec sleep 3
+fi
+`,
+    { mode: 0o755 }
+  )
   chmodSync(launcher, 0o755)
 
   const env: Record<string, string> = {
@@ -230,9 +281,12 @@ export function buildSandbox(): Sandbox {
 export async function launchCountFor(launchFile: string, id: string): Promise<number> {
   for (let i = 0; i < 40; i++) {
     try {
+      // The recorded line is `launch task run <tranche> <id> --agent
+      // <agent>` — matched on the `<id> --agent` segment, since `<id>` alone
+      // no longer ends the line now that O2 always appends `--agent <agent>`.
       const lines = readFileSync(launchFile, 'utf8')
         .split('\n')
-        .filter((l) => l.includes(`serve ${id}`) || l.endsWith(` ${id}`))
+        .filter((l) => l.includes(`serve ${id}`) || l.includes(`${id} --agent`))
       if (lines.length > 0) return lines.length
     } catch {
       // not written yet
@@ -596,6 +650,7 @@ export function defineConformanceSuite(runtime: 'claude' | 'codex', invocation: 
           store: freshStore,
           launch: (target) => {
             launches.push(target)
+            return Promise.resolve({ alive: true })
           },
           now: () => '2026-01-01T00:01:00.000Z',
           log: () => {}

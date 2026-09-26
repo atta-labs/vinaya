@@ -63,14 +63,69 @@ beforeAll(() => {
   mkdirSync(home, { recursive: true })
   launchFile = join(sandbox, 'launches.log')
 
-  // Fake gh: an empty issue list is all task_status's forge read needs.
+  // Fake gh: `task_status`'s forge read needs only an empty issue list, but
+  // `task_start` (O1) now confirms its launch alive on the task's own driver
+  // lock before reporting `started: true`, resolved through the SAME
+  // `{tranche, id}` → Issue read `task_resume`/`task_status` already use
+  // (`gatherTaskStatusList()`) — so this stub answers its three calls (issue
+  // list, a frozen-brief comment, an open-PR lookup) for the two demo tasks
+  // this file's own scenarios start, the same contract
+  // `tests/commands/task-status.test.ts`'s own stub satisfies.
   const gh = join(binDir, 'gh')
-  writeFileSync(gh, "#!/bin/sh\necho '[]'\n", { mode: 0o755 })
+  writeFileSync(
+    gh,
+    `#!/bin/sh
+if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
+  cat <<'JSON'
+[
+  {"number":9401,"title":"[demo] 1 — Protocol fixture task","labels":[{"name":"vinaya/tranche:demo"}]},
+  {"number":9402,"title":"[demo] 2 — Protocol fixture task","labels":[{"name":"vinaya/tranche:demo"}]}
+]
+JSON
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
+  cat <<'JSON'
+{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\n\\nA brief body.","author":{"login":"daniboomerang"}}]}
+JSON
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  echo '[]'
+  exit 0
+fi
+echo "gh stub: unhandled: $*" >&2
+exit 1
+`,
+    { mode: 0o755 }
+  )
   chmodSync(gh, 0o755)
 
-  // Recording launcher: stands in for a real detached `vinaya task run`.
+  // Recording launcher: stands in for a real detached `vinaya task run`. It
+  // also writes the launched task's own driver lock (the fake `gh` above's
+  // demo/1 → 9401, demo/2 → 9402 mapping) and stays alive briefly under the
+  // SAME pid (`exec`, not a backgrounded subshell) — the observable
+  // `task_start`'s own confirm-wait polls for before it will ever report
+  // `started: true`.
   const launcher = join(binDir, 'record-launch')
-  writeFileSync(launcher, '#!/bin/sh\necho "launch $*" >> "$VINAYA_TEST_LAUNCH_FILE"\n', { mode: 0o755 })
+  writeFileSync(
+    launcher,
+    `#!/bin/sh
+echo "launch $*" >> "$VINAYA_TEST_LAUNCH_FILE"
+issue=""
+case "$3 $4" in
+  "demo 1") issue=9401 ;;
+  "demo 2") issue=9402 ;;
+esac
+if [ -n "$issue" ]; then
+  dir="$HOME/.vinaya/runtime/attalabs-vinaya/tasks-execution/$issue"
+  mkdir -p "$dir"
+  echo "{\\"pid\\": $$, \\"startedAt\\": \\"2026-01-01T00:00:00.000Z\\"}" > "$dir/driver.pid.json"
+  exec sleep 3
+fi
+`,
+    { mode: 0o755 }
+  )
   chmodSync(launcher, 0o755)
 
   baseEnv = {
@@ -183,12 +238,15 @@ class RpcClient {
 }
 
 async function launchCountFor(id: string): Promise<number> {
-  // The launcher is a detached child; poll briefly for its append.
+  // The launcher is a detached child; poll briefly for its append. The
+  // recorded line is `launch task run demo <id> --agent <agent>` — matched
+  // on the `demo <id> --agent` segment, since `<id>` alone no longer ends
+  // the line now that O2 always appends `--agent <agent>`.
   for (let i = 0; i < 40; i++) {
     try {
       const lines = readFileSync(launchFile, 'utf8')
         .split('\n')
-        .filter((l) => l.includes(`serve ${id}`) || l.endsWith(` ${id}`))
+        .filter((l) => l.includes(`demo ${id} --agent`))
       if (lines.length > 0) return lines.length
     } catch {
       // not written yet
@@ -228,10 +286,15 @@ describe('task-tools MCP server — protocol fixtures on the adapter command', (
     expect(tools.every((t) => t.inputSchema?.type === 'object')).toBe(true)
   })
 
-  it('invokes task_status end to end — an empty forge yields an empty page', async () => {
+  it('invokes task_status end to end — the fake forge lists its two fixture tasks', async () => {
     const { isError, structured } = await client.callTool('task_status', {})
     expect(isError).toBe(false)
-    expect(structured).toEqual({ items: [], nextCursor: null })
+    const items = structured.items as Array<{ task: unknown; issue: number; pr: unknown; state: string }>
+    expect(items.map((i) => ({ task: i.task, issue: i.issue, pr: i.pr, state: i.state }))).toEqual([
+      { task: { tranche: 'demo', id: '1' }, issue: 9401, pr: null, state: 'no driver' },
+      { task: { tranche: 'demo', id: '2' }, issue: 9402, pr: null, state: 'no driver' }
+    ])
+    expect(structured.nextCursor).toBeNull()
   })
 
   it('rejects malformed input with a validation error (before any read)', async () => {
