@@ -14,6 +14,8 @@
  * resolution `task_status`/`task_escalation_read` use, so those two mutating
  * handlers resolve a `{ tranche, id }` ref through the identical forge read
  * rather than a second, divergent implementation. It also exports
+ * `readTaskIssueFacts` — the state-and-labels read `task_start` refuses a
+ * standalone `{ issue }` target on — and
  * `resolveOpenTaskIssueForRef` — the start-side variant `task_start` uses to
  * resolve a PLANNED task whose brief is not frozen yet, over the open
  * tranche-labeled Issues the way `task run` preparation does; see that
@@ -33,7 +35,7 @@ import {
   type TaskToolError,
   type TaskToolRef
 } from '@attalabs/aeg-core'
-import { resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
+import { findTrancheSlug, resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
 import { runtimeDir } from '../dev-review-loop.js'
 import { gatherTaskStatusList, type TaskStatusRow } from '../task-status.js'
 import { classifyStateFreshness, describeTaskLoopState, paginate, readEscalationPacket } from './read.js'
@@ -52,7 +54,8 @@ function refMatchesRow(ref: TaskToolRef, row: TaskStatusRow): boolean {
   return 'issue' in ref ? row.issue === ref.issue : row.tranche === ref.tranche && row.id === ref.id
 }
 
-function refDescription(ref: TaskToolRef): string {
+/** How a ref reads in a refusal message — `Issue #729` or `[a-tranche] 3`. Exported so `start.ts` names a target the same way this file's own refusals do, rather than formatting one of its own. */
+export function describeTaskRef(ref: TaskToolRef): string {
   return 'issue' in ref ? `Issue #${ref.issue}` : `[${ref.tranche}] ${ref.id}`
 }
 
@@ -71,7 +74,7 @@ export function taskStatusHandler(input: unknown): TaskToolCallResult<TaskStatus
   const rows = currentTaskStatusRows()
   const matching = task ? rows.filter((row) => refMatchesRow(task, row)) : rows
   if (task && matching.length === 0) {
-    return fail(taskToolError('precondition', `no open task matches ${refDescription(task)}`))
+    return fail(taskToolError('precondition', `no open task matches ${describeTaskRef(task)}`))
   }
 
   const page = paginate(matching, cursor, limit ?? DEFAULT_PAGE_LIMIT)
@@ -186,13 +189,71 @@ export function resolveOpenTaskIssueForRef(ref: TaskToolRef): number | null {
   return null
 }
 
+/**
+ * What the forge says about one Issue number, for a caller that was HANDED the
+ * number rather than resolving it: whether it is still open, and the tranche it
+ * belongs to (`null` for a standalone task Issue — the case `task_start`'s
+ * `{ issue }` form accepts). `not_found` and `unreadable` are kept apart because
+ * they mean opposite things to a caller: the first is a refusal the caller can
+ * fix by naming a real Issue, the second is a forge read that failed and may
+ * succeed on retry, and collapsing them would report a transient outage as a
+ * bad input.
+ */
+export type TaskIssueFacts =
+  | { kind: 'issue'; open: boolean; tranche: string | null }
+  | { kind: 'not_found' }
+  | { kind: 'unreadable'; detail: string }
+
+/** GitHub's own words when the number names nothing — matched (case-insensitively) rather than trusting the exit code, which is the same for a missing Issue and a failed network call. */
+const ISSUE_NOT_FOUND_PATTERNS = ['could not resolve to an issue', 'not found', 'no issue found']
+
+/**
+ * One `gh issue view` read — state and labels only. The tranche is read from
+ * the LABEL alone (`findTrancheSlug`), never from the title: the label is what
+ * decides a task's identity everywhere else in this codebase
+ * (`task-status.ts`'s own `TaskRef`, `developerBranchFor`'s branch shape), and a
+ * title that happens to look like `[slug] 3` on an unlabeled Issue must not
+ * turn it into a tranche task.
+ */
+export function readTaskIssueFacts(issue: number): TaskIssueFacts {
+  let raw: string
+  try {
+    raw = execFileSync('gh', ['issue', 'view', String(issue), '--json', 'state,labels'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+  } catch (err) {
+    const detail = errorOutputOf(err)
+    const haystack = detail.toLowerCase()
+    if (ISSUE_NOT_FOUND_PATTERNS.some((pattern) => haystack.includes(pattern))) return { kind: 'not_found' }
+    return { kind: 'unreadable', detail }
+  }
+  try {
+    const parsed = JSON.parse(raw) as { state: string; labels: Array<{ name: string }> }
+    return {
+      kind: 'issue',
+      open: parsed.state.toUpperCase() === 'OPEN',
+      tranche: findTrancheSlug(parsed.labels.map((l) => l.name))
+    }
+  } catch (err) {
+    return { kind: 'unreadable', detail: `could not parse gh issue view output: ${(err as Error).message}` }
+  }
+}
+
+/** `execFileSync`'s own thrown error carries the child's stderr on `.stderr`; a plain `message` is the fallback for a spawn that never ran. */
+function errorOutputOf(err: unknown): string {
+  const stderr = (err as { stderr?: Buffer | string } | null)?.stderr
+  const text = typeof stderr === 'string' ? stderr : stderr instanceof Buffer ? stderr.toString('utf8') : ''
+  return (text.trim() || (err instanceof Error ? err.message : String(err))).trim()
+}
+
 export function taskEscalationReadHandler(input: unknown): TaskToolCallResult<TaskEscalationReadResult> {
   const parsed = TaskEscalationReadInputSchema.safeParse(input)
   if (!parsed.success) return fail(taskToolError('validation', parsed.error.issues[0]?.message ?? 'invalid input'))
   const { task, cursor, limit } = parsed.data
 
   const issue = resolveIssueForRef(task)
-  if (issue === null) return fail(taskToolError('precondition', `no open task matches ${refDescription(task)}`))
+  if (issue === null) return fail(taskToolError('precondition', `no open task matches ${describeTaskRef(task)}`))
 
   // A task with no pause record ever written is not an error (the catalog's
   // own boundary note) — it answers with an empty, unknown-freshness page.

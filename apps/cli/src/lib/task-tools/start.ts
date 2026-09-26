@@ -1,7 +1,9 @@
 /**
- * `task_start` (O2) — the one mutating handler this task lands. It wraps the
- * existing `runTask` composition (`apps/cli/src/lib/task-run.ts`, `vinaya task
- * run`) for an explicitly selected, already-frozen task, and:
+ * `task_start` — the mutating handler that starts a run. It wraps the existing
+ * `runTask` composition (`apps/cli/src/lib/task-run.ts`, `vinaya task run`) for
+ * an explicitly selected, already-planned task, addressed either way a task is
+ * addressed anywhere in this catalog — `{ tranche, id }` for a tranche task,
+ * `{ issue }` for a standalone task Issue that carries no tranche label — and:
  *
  *   - requires an authenticated caller from the INVOCATION CONTEXT (the
  *     `CallerContext` the server resolved from its environment), and refuses
@@ -13,8 +15,20 @@
  *     its own (that would be a catalog change, out of this task's surface),
  *     so it reads the SAME config the CLI's own `vinaya task run` command
  *     reads, and never launches a run that would exit on a missing `--agent`.
+ *   - launches the SAME command the CLI already exposes for whichever address
+ *     form was used: `task run <tranche> <id>` for a tranche task, `task run
+ *     --issue <n>` for a standalone Issue — one launcher, one liveness
+ *     confirmation, one `VINAYA_TASK_RUN_COMMAND` override, never a second
+ *     launch path per form.
+ *   - refuses (`precondition`) an `{ issue }` target that is not an open Issue,
+ *     or that carries a `vinaya/tranche:*` label — the latter naming the
+ *     tranche form to use instead. A task has exactly one address: accepting
+ *     both for a tranche-labeled Issue would give it two request identities,
+ *     and so two claims, and so two concurrent runs.
  *   - is idempotent per REQUEST IDENTITY — caller + repo + target + payload
- *     digest (`taskStartRequestIdentity`, `@attalabs/aeg-core`). The repo
+ *     digest (`taskStartRequestIdentity`, `@attalabs/aeg-core`), with the
+ *     address FORM folded into that identity, so `{ issue: 729 }` and a tranche
+ *     ordinal resolving to Issue 729 can never share a claim. The repo
  *     component is the local checkout's git toplevel path (`repoRoot`,
  *     `../diff-evidence.js`), never a network-resolved GitHub owner/repo: a
  *     remote lookup can fail transiently and succeed on retry, which would
@@ -30,8 +44,9 @@
  *     again (O3). Because the claim is written before the launch, a client
  *     that disconnects mid-call leaves at most one run — a reconnect replays
  *     the claim, it does not start again.
- *   - reports a start only once the launched run is CONFIRMED ALIVE (O1): it
- *     resolves the task's forge Issue over the open tranche-labeled Issues,
+ *   - reports a start only once the launched run is CONFIRMED ALIVE: it
+ *     resolves the task's forge Issue — a standalone target names its own
+ *     Issue, a tranche target is resolved over the open tranche-labeled Issues,
  *     frozen or not — the same read `vinaya task run`'s own preparation uses
  *     to find an ordinal's Issue (`resolveOpenTaskIssueForRef`, beside
  *     `handlers.ts`'s frozen-brief-filtered `resolveIssueForRef`) — launches
@@ -57,22 +72,28 @@ import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { closeSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { TaskStartInputSchema, type TaskStartResult, taskStartRequestIdentity, taskToolError } from '@attalabs/aeg-core'
+import {
+  TaskStartInputSchema,
+  type TaskStartResult,
+  type TaskToolError,
+  type TaskToolRef,
+  taskStartRequestIdentity,
+  taskToolError
+} from '@attalabs/aeg-core'
 import { loadConfig } from '../config.js'
 import { type AgentVendor, isAgentVendor } from '../dispatch.js'
 import { isDriverPidAlive, readDriverLock } from '../dev-review-loop/pause-resume.js'
 import { ensureRunDir, runPath, runtimeDirForThisRepo } from '../run-paths.js'
 import { repoRoot as gitRepoRoot } from '../diff-evidence.js'
-import { resolveOpenTaskIssueForRef } from './handlers.js'
-import type { TaskToolCallResult } from './handlers.js'
+import { describeTaskRef, readTaskIssueFacts, resolveOpenTaskIssueForRef } from './handlers.js'
+import type { TaskIssueFacts, TaskToolCallResult } from './handlers.js'
 import type { CallerContext } from './server.js'
 
-/** The durable claim one `task_start` request writes before it launches — the record a duplicate start (same request identity) replays instead of starting again, unless O3 finds the run it names dead and supersedes it. */
+/** The durable claim one `task_start` request writes before it launches — the record a duplicate start (same request identity) replays instead of starting again, unless the run it names is found dead and superseded. `target` is the address the call used, so a replay answers in the same form it was asked. */
 export type StartRecord = {
   requestId: string
   caller: string
-  tranche: string
-  id: string
+  target: TaskToolRef
   startedAt: string
 }
 
@@ -98,8 +119,10 @@ export type TaskStartDeps = {
   store: RequestStore
   /** The repository's configured launch agent, or `null` when none is set — see this file's own header on why this tool reads config rather than accepting an agent field. */
   agent: () => AgentVendor | null
-  /** `{tranche, id}` → Issue over the open tranche-labeled Issues, frozen or not — the SAME resolution `vinaya task run` preparation performs for an ordinal (`handlers.ts`'s `resolveOpenTaskIssueForRef`), NOT the frozen-brief-filtered `resolveIssueForRef` `task_status`/`task_resume` use. `null` when no open task matches. */
-  resolveIssue: (tranche: string, id: string) => number | null
+  /** A target → its Issue. `{ issue }` names its own; `{tranche, id}` resolves over the open tranche-labeled Issues, frozen or not — the SAME resolution `vinaya task run` preparation performs for an ordinal (`handlers.ts`'s `resolveOpenTaskIssueForRef`), NOT the frozen-brief-filtered `resolveIssueForRef` `task_status`/`task_resume` use. `null` when no open task matches. */
+  resolveIssue: (ref: TaskToolRef) => number | null
+  /** What the forge says about a standalone `{ issue }` target — open, and which tranche (if any) claims it. Read ONLY for that form: a tranche target's own resolution already proves its Issue is open and labeled. */
+  issueFacts: (issue: number) => TaskIssueFacts
   /** Is a live driver currently running this Issue? The SAME observable (`driver.pid.json`) a fresh launch is confirmed against. */
   isRunAlive: (issue: number) => boolean
   /**
@@ -110,7 +133,7 @@ export type TaskStartDeps = {
    * (dead) — there is no third, ambiguous state for a later call to inherit.
    */
   launch: (
-    target: { tranche: string; id: string; agent: AgentVendor; issue: number },
+    target: { ref: TaskToolRef; agent: AgentVendor; issue: number },
     meta: { requestId: string; caller: string }
   ) => Promise<LaunchResult>
   now: () => string
@@ -138,6 +161,39 @@ function startRecordPath(requestId: string): string {
   })
 }
 
+/**
+ * A record read back off disk, in either shape it has ever been written: the
+ * current `{ target }` one, or the flat `{ tranche, id }` one written before a
+ * standalone Issue was startable. The migration is not hypothetical — a tranche
+ * target's request identity is deliberately unchanged by that widening
+ * (`taskStartRequestIdentity`), so a claim an older build wrote is found at the
+ * very same path by this one, and reading it as a `{ target }` record would
+ * leave `target` undefined: a replay answering with no run identity at all, and
+ * a stale-claim check resolving nothing. `null` for anything that is neither
+ * shape, which the caller treats as "no readable record" rather than trusting it.
+ */
+function normalizeStartRecord(parsed: unknown): StartRecord | null {
+  if (parsed === null || typeof parsed !== 'object') return null
+  const raw = parsed as Record<string, unknown>
+  if (typeof raw.requestId !== 'string' || typeof raw.caller !== 'string' || typeof raw.startedAt !== 'string') {
+    return null
+  }
+  const base = { requestId: raw.requestId, caller: raw.caller, startedAt: raw.startedAt }
+  const target = raw.target
+  if (target !== null && typeof target === 'object') {
+    const ref = target as Record<string, unknown>
+    if (typeof ref.tranche === 'string' && typeof ref.id === 'string') {
+      return { ...base, target: { tranche: ref.tranche, id: ref.id } }
+    }
+    if (typeof ref.issue === 'number') return { ...base, target: { issue: ref.issue } }
+    return null
+  }
+  if (typeof raw.tranche === 'string' && typeof raw.id === 'string') {
+    return { ...base, target: { tranche: raw.tranche, id: raw.id } }
+  }
+  return null
+}
+
 export const defaultRequestStore: RequestStore = {
   claim(record) {
     const path = startRecordPath(record.requestId)
@@ -152,8 +208,8 @@ export const defaultRequestStore: RequestStore = {
       // that itself fails degrades to the record we were handed, never a second
       // launch: the safe direction is always "do not start twice."
       try {
-        const existing = JSON.parse(readFileSync(path, 'utf8')) as StartRecord
-        return { claimed: false, record: existing }
+        const existing = normalizeStartRecord(JSON.parse(readFileSync(path, 'utf8')))
+        return { claimed: false, record: existing ?? record }
       } catch {
         return { claimed: false, record }
       }
@@ -185,6 +241,72 @@ export const START_CONFIRM_TIMEOUT_MS = 30_000
 const START_CONFIRM_POLL_MS = 250
 export const START_STALE_CLAIM_GRACE_MS = START_CONFIRM_TIMEOUT_MS + 15_000
 
+/**
+ * The Issue a start will be confirmed against, or the refusal that stops it
+ * before any launch. A tranche target resolves over the open tranche-labeled
+ * Issues, exactly as `task run` preparation does, and an ordinal that names no
+ * open task Issue is refused. A standalone target NAMES its Issue, so there is
+ * nothing to resolve — instead the number itself is checked: it must be an open
+ * Issue, and it must carry no `vinaya/tranche:*` label, because a tranche task
+ * already has an address of its own and accepting a second one for it would
+ * split its claims between two request identities.
+ */
+function resolveStartTarget(
+  ref: TaskToolRef,
+  deps: TaskStartDeps
+): { ok: true; issue: number } | { ok: false; error: TaskToolError } {
+  if (!('issue' in ref)) {
+    const issue = deps.resolveIssue(ref)
+    if (issue === null) {
+      return {
+        ok: false,
+        error: taskToolError(
+          'infrastructure',
+          `task_start: ${ref.tranche}/${ref.id} has no resolvable Issue to confirm a launch against — refusing to start blind.`
+        )
+      }
+    }
+    return { ok: true, issue }
+  }
+
+  const facts = deps.issueFacts(ref.issue)
+  if (facts.kind === 'not_found') {
+    return {
+      ok: false,
+      error: taskToolError('precondition', `task_start: Issue #${ref.issue} does not exist — nothing to start.`)
+    }
+  }
+  if (facts.kind === 'unreadable') {
+    return {
+      ok: false,
+      error: taskToolError(
+        'infrastructure',
+        `task_start: Issue #${ref.issue} could not be read, so this start cannot be confirmed against it: ${facts.detail}`,
+        facts.detail
+      )
+    }
+  }
+  if (!facts.open) {
+    return {
+      ok: false,
+      error: taskToolError(
+        'precondition',
+        `task_start: Issue #${ref.issue} is closed — only an open task Issue can be started.`
+      )
+    }
+  }
+  if (facts.tranche !== null) {
+    return {
+      ok: false,
+      error: taskToolError(
+        'precondition',
+        `task_start: Issue #${ref.issue} belongs to tranche \`${facts.tranche}\`, which addresses it as { tranche, id } — start it that way instead. A task has one address: starting it by Issue number too would give it a second request identity, and so a second claim.`
+      )
+    }
+  }
+  return { ok: true, issue: ref.issue }
+}
+
 function claimIsStale(record: StartRecord, now: () => string): boolean {
   const startedAt = Date.parse(record.startedAt)
   const current = Date.parse(now())
@@ -202,6 +324,11 @@ function claimIsStale(record: StartRecord, now: () => string): boolean {
  * script so a protocol test can prove exactly one launch.
  */
 export const TASK_RUN_COMMAND_ENV = 'VINAYA_TASK_RUN_COMMAND'
+
+/** The `vinaya task run` invocation for a target — the SAME two forms the command itself accepts (`apps/cli/src/commands/task-run.ts`), never a third. */
+function taskRunArgsFor(ref: TaskToolRef): string[] {
+  return 'issue' in ref ? ['task', 'run', '--issue', String(ref.issue)] : ['task', 'run', ref.tranche, ref.id]
+}
 
 function readCapturedStderr(path: string): string {
   try {
@@ -267,7 +394,7 @@ function waitForLiveDriver(
  * one (`defaultTaskStartDeps.launch` never overrides it).
  */
 export function defaultLaunch(
-  target: { tranche: string; id: string; agent: AgentVendor; issue: number },
+  target: { ref: TaskToolRef; agent: AgentVendor; issue: number },
   meta: { requestId: string; caller: string },
   root: string = runtimeDirForThisRepo()
 ): Promise<LaunchResult> {
@@ -277,7 +404,7 @@ export function defaultLaunch(
   const stderrFd = openSync(stderrPath, 'a')
   let child: ReturnType<typeof spawn>
   try {
-    child = spawn(program, ['task', 'run', target.tranche, target.id, '--agent', target.agent], {
+    child = spawn(program, [...taskRunArgsFor(target.ref), '--agent', target.agent], {
       detached: true,
       stdio: ['ignore', 'ignore', stderrFd]
     })
@@ -294,10 +421,6 @@ function defaultAgent(): AgentVendor | null {
   return configured !== undefined && isAgentVendor(configured) ? configured : null
 }
 
-function defaultResolveIssue(tranche: string, id: string): number | null {
-  return resolveOpenTaskIssueForRef({ tranche, id })
-}
-
 function defaultIsRunAlive(issue: number): boolean {
   const lock = readDriverLock(runtimeDirForThisRepo(), issue)
   return lock !== null && isDriverPidAlive(lock.pid)
@@ -310,7 +433,8 @@ export const defaultTaskStartDeps: TaskStartDeps = {
   repoRoot: () => gitRepoRoot() ?? process.cwd(),
   store: defaultRequestStore,
   agent: defaultAgent,
-  resolveIssue: defaultResolveIssue,
+  resolveIssue: resolveOpenTaskIssueForRef,
+  issueFacts: readTaskIssueFacts,
   isRunAlive: defaultIsRunAlive,
   launch: defaultLaunch,
   now: () => new Date().toISOString()
@@ -355,16 +479,15 @@ export function createTaskStartHandler(
       }
     }
 
-    const { tranche, id } = parsed.data
+    const target = parsed.data
     const caller = ctx.caller
     const requestId = taskStartRequestIdentity({
       caller: caller.id,
       repo: deps.repoRoot(),
-      tranche,
-      id,
-      payloadDigest: payloadDigestOf({ tranche, id })
+      target,
+      payloadDigest: payloadDigestOf(target)
     })
-    const buildRecord = (): StartRecord => ({ requestId, caller: caller.id, tranche, id, startedAt: deps.now() })
+    const buildRecord = (): StartRecord => ({ requestId, caller: caller.id, target, startedAt: deps.now() })
 
     let claim = deps.store.claim(buildRecord())
 
@@ -376,7 +499,7 @@ export function createTaskStartHandler(
     // may simply not have written its driver lock yet, and is not thereby
     // dead (Traps to avoid: idempotency against a live run is the point).
     if (!claim.claimed && claimIsStale(claim.record, deps.now)) {
-      const staleIssue = deps.resolveIssue(claim.record.tranche, claim.record.id)
+      const staleIssue = deps.resolveIssue(claim.record.target)
       // An Issue that fails to resolve here is a transient forge read, not
       // proof of death — treated as alive so a glitch never doubles a launch.
       const staleAlive = staleIssue === null || deps.isRunAlive(staleIssue)
@@ -387,20 +510,17 @@ export function createTaskStartHandler(
     }
 
     if (claim.claimed) {
-      const issue = deps.resolveIssue(tranche, id)
-      if (issue === null) {
+      const resolved = resolveStartTarget(target, deps)
+      if (!resolved.ok) {
+        // Refused before launching, so the claim this call just wrote must not
+        // outlive it — a released identity is one a corrected retry can reclaim.
         deps.store.release(requestId)
-        return {
-          ok: false,
-          error: taskToolError(
-            'infrastructure',
-            `task_start: ${tranche}/${id} has no resolvable Issue to confirm a launch against — refusing to start blind.`
-          )
-        }
+        return { ok: false, error: resolved.error }
       }
+      const issue = resolved.issue
       let outcome: LaunchResult
       try {
-        outcome = await deps.launch({ tranche, id, agent, issue }, { requestId, caller: caller.id })
+        outcome = await deps.launch({ ref: target, agent, issue }, { requestId, caller: caller.id })
       } catch (err) {
         // A synchronous launch failure (a missing launcher binary) must not
         // leave a claimed-but-never-started identity that blocks every
@@ -420,7 +540,7 @@ export function createTaskStartHandler(
           ok: false,
           error: taskToolError(
             'infrastructure',
-            `task_start: ${tranche}/${id} did not confirm alive: ${outcome.error.message}`,
+            `task_start: ${describeTaskRef(target)} did not confirm alive: ${outcome.error.message}`,
             outcome.error.message
           )
         }
@@ -431,7 +551,7 @@ export function createTaskStartHandler(
       ok: true,
       result: {
         requestId: claim.record.requestId,
-        run: { tranche: claim.record.tranche, id: claim.record.id },
+        run: claim.record.target,
         started: claim.claimed,
         startedAt: claim.record.startedAt,
         mode: 'attended'
