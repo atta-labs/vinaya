@@ -13,7 +13,19 @@
  * ever exercise the exact-match side of `compareManifest`.
  */
 import { describe, expect, it } from 'vitest'
-import { briefHash, policyDigest, DEFAULT_REVIEW_POLICY, type ReviewInputManifest } from '@attalabs/aeg-core'
+import {
+  briefHash,
+  checkReviewGate,
+  consequentialFindings,
+  policyDigest,
+  DEFAULT_REVIEW_POLICY,
+  evaluateCodeReview,
+  evaluateSecurityReview,
+  extractCodeReviewVerdict,
+  extractSecurityReviewVerdict,
+  type ReviewInputManifest,
+  type ReviewPolicy
+} from '@attalabs/aeg-core'
 import type { VerdictExtraction } from '@attalabs/aeg-core'
 import { bindingOfPosted, unboundFields } from '../../../src/lib/dev-review-loop/publication'
 
@@ -119,5 +131,80 @@ describe('bindingOfPosted / unboundFields — publishRound’s manifest binding 
       manifest({ rulingOrdinal: 2 })
     )
     expect(unboundFields(result)).toEqual(['ruling ordinal'])
+  })
+})
+
+/**
+ * O3: `publishRound`'s pre-publication policy re-check applies the SAME
+ * `consequentialFindings` filter the merge gate applies, so a round the gate
+ * would pass is never refused at publication and a round the gate would fail
+ * is never published. `publishRound` itself is faked in the loop harness
+ * (`dev-review-loop-harness.ts`), so it is not driven end-to-end here; this
+ * fixture instead reproduces its exact re-check expression
+ * (`evaluate*Review(consequentialFindings(extract*(body).findingSeverities),
+ * policy)` — verbatim from `publication.ts`) beside the real `checkReviewGate`
+ * on the SAME comment body, and asserts the two never disagree. Both routing
+ * through the single shared filter (O4) is what makes that guarantee
+ * structural rather than coincidental.
+ */
+describe('publish-then-gate agreement on resolved findings (O3)', () => {
+  const HEAD_SHA = '8365ca57e9f3a1b2c4d5e6f708192a3b4c5d6e7f'
+  const MAJOR_HIGH_POLICY: ReviewPolicy = { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH', maxRounds: 3 }
+  const MAJOR_HIGH_POLICY_DIGEST = policyDigest(MAJOR_HIGH_POLICY)
+
+  const codeReviewBody = (verdict: string, findingLines: string[]) =>
+    `VERDICT: ${verdict}\n\nJudged head: ${HEAD_SHA}\n\nFINDINGS (ordered by severity):\n${findingLines.length > 0 ? findingLines.join('\n') : 'None.'}\n\nPolicy digest: ${MAJOR_HIGH_POLICY_DIGEST}`
+  const securityCleanBody = `VERDICT: PASS\n\nJudged head: ${HEAD_SHA}\n\nFINDINGS (ordered by severity):\nNone.\n\nPolicy digest: ${MAJOR_HIGH_POLICY_DIGEST}`
+
+  // Verbatim from `publishRound`: a posted APPROVE is publishable only when its
+  // own consequential findings do not block under policy.
+  const publishReviewerBlocks = (body: string): boolean => {
+    const posted = extractCodeReviewVerdict([body])
+    return (
+      posted.value === 'APPROVE' &&
+      evaluateCodeReview(consequentialFindings(posted.findingSeverities), MAJOR_HIGH_POLICY).outcome === 'blocked'
+    )
+  }
+
+  const gate = (reviewerBody: string) =>
+    checkReviewGate({
+      comments: [
+        { body: reviewerBody, author: 'daniboomerang' },
+        { body: securityCleanBody, author: 'daniboomerang' }
+      ],
+      labels: [],
+      waiverLabelActor: null,
+      headSha: HEAD_SHA,
+      objectivesVersion: null,
+      rulingOrdinal: 0,
+      policy: MAJOR_HIGH_POLICY
+    })
+
+  it('an APPROVE whose only at-or-above findings are `resolved` is neither refused at publication nor blocked at the gate', () => {
+    const body = codeReviewBody('APPROVE', [
+      '1. [BLOCKER] src/foo.ts:12 — F1 correctness resolved: the off-by-one, now fixed',
+      '2. [MAJOR] src/bar.ts:5 — F5 correctness resolved: the missing null check, now guarded'
+    ])
+    expect(publishReviewerBlocks(body)).toBe(false)
+    expect(gate(body).verdict).toBe('pass')
+  })
+
+  it('the same body with F1 relabelled `open` is refused at publication AND blocked at the gate', () => {
+    const body = codeReviewBody('APPROVE', [
+      '1. [BLOCKER] src/foo.ts:12 — F1 correctness open: the off-by-one',
+      '2. [MAJOR] src/bar.ts:5 — F5 correctness resolved: the missing null check, now guarded'
+    ])
+    expect(publishReviewerBlocks(body)).toBe(true)
+    expect(gate(body).verdict).toBe('fail')
+  })
+
+  it('a security PASS with a resolved CRITICAL is neither refused nor blocked', () => {
+    const posted = extractSecurityReviewVerdict([
+      `VERDICT: PASS\n\nJudged head: ${HEAD_SHA}\n\nFINDINGS (ordered by severity):\n1. [CRITICAL] src/foo.ts:12 — F2 secret resolved: rotated and removed\n\nPolicy digest: ${MAJOR_HIGH_POLICY_DIGEST}`
+    ])
+    const securityBlocks =
+      posted.value === 'PASS' &&
+      evaluateSecurityReview(consequentialFindings(posted.findingSeverities), MAJOR_HIGH_POLICY).outcome === 'blocked'
+    expect(securityBlocks).toBe(false)
   })
 })
