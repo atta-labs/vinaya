@@ -21,6 +21,7 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  unlinkSync,
   utimesSync,
   writeFileSync
 } from 'node:fs'
@@ -32,7 +33,8 @@ import {
   MAX_WEBHOOK_BODY_BYTES,
   WEBHOOK_DRAIN_LOCK_STALE_MS,
   acquireDrainLock,
-  releaseDrainLock
+  releaseDrainLock,
+  renewDrainLock
 } from '../../src/lib/log-webhook-drain.js'
 import { OUTBOX_MAX_BYTES } from '../../src/lib/log-sink.js'
 import { spawnBudgetedAsync, spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
@@ -1069,4 +1071,111 @@ describe('drainOutboxToWebhook — claiming a bucket is one atomic step, never a
     expect(existsSync(siblingPath(home, 751, '.draining.ndjson'))).toBe(false)
     expect(queueContent(path)).toBe('')
   }, 20000)
+})
+
+describe('drainOutboxToWebhook — a long drain is not a dead one (O4)', () => {
+  it('a renewed lock is no longer stale, however long its drain has already run', () => {
+    const home = tempDir('log-webhook-home-')
+    const lockPath = join(home, 'some-task.flush-lock')
+    mkdirSync(dirname(lockPath), { recursive: true })
+    expect(acquireDrainLock(lockPath)).not.toBeNull()
+
+    // Backdated well past the window: on total-duration sizing this holder now
+    // looks dead, which is exactly the legitimate multi-bucket, multi-chunk
+    // backlog a fixed window cannot tell from a crash.
+    const stale = new Date(Date.now() - WEBHOOK_DRAIN_LOCK_STALE_MS - 60_000)
+    utimesSync(lockPath, stale, stale)
+    expect(acquireDrainLock(lockPath)).not.toBeNull()
+
+    // That takeover now holds the lock. Backdate it the same way and let its
+    // holder mark progress first: the next takeover is refused, because
+    // staleness now means idleness and this holder is not idle.
+    const holder = readFileSync(lockPath, 'utf8').trim()
+    utimesSync(lockPath, stale, stale)
+    expect(renewDrainLock(lockPath, holder)).toBe(true)
+    expect(acquireDrainLock(lockPath)).toBeNull()
+    expect(readFileSync(lockPath, 'utf8')).toBe(`${holder}\n`)
+  })
+
+  it('renewDrainLock reports the lock lost rather than renewing one this caller no longer owns', () => {
+    const home = tempDir('log-webhook-home-')
+    const lockPath = join(home, 'some-task.flush-lock')
+    mkdirSync(dirname(lockPath), { recursive: true })
+    const mine = acquireDrainLock(lockPath) as string
+
+    const theirs = `${process.pid + 1}:their-acquisition`
+    writeFileSync(lockPath, `${theirs}\n`)
+    const beforeMs = statSync(lockPath).mtimeMs
+
+    expect(renewDrainLock(lockPath, mine)).toBe(false)
+    // Never touched: renewing another owner's lock would keep it alive on their
+    // behalf and hide the takeover from the caller that needs to stop.
+    expect(readFileSync(lockPath, 'utf8')).toBe(`${theirs}\n`)
+    expect(statSync(lockPath).mtimeMs).toBe(beforeMs)
+
+    unlinkSync(lockPath)
+    expect(renewDrainLock(lockPath, mine)).toBe(false)
+  })
+
+  it('advances its own lock while a multi-chunk backlog is still delivering', async () => {
+    const cwd = tempDir('log-webhook-cwd-')
+    initGitRepo(cwd)
+    const home = tempDir('log-webhook-home-')
+    const server = startSlowWebhookServer(200, 1200)
+    const path = seedOutbox(home, 760, [
+      paddedNdjsonLine('run-1', 760, CHUNK_FIXTURE_LINE_BYTES),
+      paddedNdjsonLine('run-2', 760, CHUNK_FIXTURE_LINE_BYTES),
+      paddedNdjsonLine('run-3', 760, CHUNK_FIXTURE_LINE_BYTES)
+    ])
+    const lockPath = `${path}.flush-lock`
+
+    const drain = runDrainAsyncCaptured(760, server.url, undefined, cwd, home, undefined, 40000)
+    await waitForRequests(server.requests, 1)
+    const atFirstChunk = statSync(lockPath).mtimeMs
+    await waitForRequests(server.requests, 2)
+    const atSecondChunk = statSync(lockPath).mtimeMs
+
+    const { result } = await drain
+    server.stop()
+
+    expect(result.ok).toBe(true)
+    // The renewal is real, not merely the mtime the acquisition wrote: a
+    // second process asking whether this lock is stale gets a fresh answer for
+    // every chunk, so a backlog needing many POSTs is never mistaken for a
+    // crashed holder.
+    expect(atSecondChunk).toBeGreaterThan(atFirstChunk)
+    expect(queueContent(path)).toBe('')
+  }, 60000)
+
+  it('stops mid-backlog when its lock really was taken over, leaving the rest for the new owner', async () => {
+    const cwd = tempDir('log-webhook-cwd-')
+    initGitRepo(cwd)
+    const home = tempDir('log-webhook-home-')
+    const server = startSlowWebhookServer(200, 1200)
+    const third = paddedNdjsonLine('run-3', 761, CHUNK_FIXTURE_LINE_BYTES)
+    const path = seedOutbox(home, 761, [
+      paddedNdjsonLine('run-1', 761, CHUNK_FIXTURE_LINE_BYTES),
+      paddedNdjsonLine('run-2', 761, CHUNK_FIXTURE_LINE_BYTES),
+      third
+    ])
+    const lockPath = `${path}.flush-lock`
+
+    const drain = runDrainAsyncCaptured(761, server.url, undefined, cwd, home, undefined, 40000)
+    await waitForRequests(server.requests, 1)
+    // A takeover this drain genuinely lost — a stall long enough to look dead,
+    // or an operator's own intervention. Whatever the cause, it must stop.
+    writeFileSync(lockPath, `${process.pid}:someone-elses-acquisition\n`)
+
+    const { result } = await drain
+    server.stop()
+
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('unreachable')
+    expect(result.code).toBe('log-webhook-drain-lock-lost')
+    // The chunk already acknowledged is gone; the rest is whole and in order
+    // under the private draining name, where the new owner's own drain picks
+    // it up first. Nothing was posted twice.
+    expect(server.requests.map((r) => runIdsOf(r.body))).toEqual([['run-1', 'run-2']])
+    expect(readFileSync(siblingPath(home, 761, '.draining.ndjson'), 'utf8')).toBe(`${third}\n`)
+  }, 60000)
 })

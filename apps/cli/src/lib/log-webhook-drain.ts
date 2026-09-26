@@ -39,6 +39,7 @@ import {
   renameSync,
   statSync,
   unlinkSync,
+  utimesSync,
   writeFileSync,
   writeSync
 } from 'node:fs'
@@ -69,7 +70,25 @@ function isEnoent(err: unknown): boolean {
   return isErrnoCode(err, 'ENOENT')
 }
 
-/** A lock older than this was almost certainly abandoned by a holder that crashed mid-flush — normal completion always removes its own lock well before this — so it is stolen rather than left to jam every future drain of this queue file forever. Set well above `WEBHOOK_FETCH_TIMEOUT_MS`, the longest a healthy holder can legitimately still be inside the critical section. */
+/**
+ * How long a lock may go WITHOUT OBSERVABLE PROGRESS before it is treated as
+ * abandoned and stolen, rather than left to jam every future drain of this
+ * queue file forever. It bounds the gap between a holder's own renewals, never
+ * the total length of a drain: a healthy holder renews the lock before every
+ * chunk it POSTs (`renewDrainLock`), and a single chunk is itself bounded by
+ * `WEBHOOK_FETCH_TIMEOUT_MS`, so this leaves a healthy holder a factor of four
+ * of margin no matter how many chunks or buckets its drain turns out to need.
+ *
+ * Sizing it against the total drain instead would be wrong in both directions,
+ * and was: a drain covers up to three buckets (a leftover one, the rotation
+ * backup slot, the live file), each of which can need several chunks, so a
+ * slow-but-responding endpoint could hold this lock legitimately for many
+ * times one chunk's timeout — and a second process would then steal the lock
+ * from a holder that was still actively delivering, leaving both of them
+ * reading and truncating the same bucket. No fixed multiple of one chunk's
+ * timeout can be both large enough for an honest backlog and small enough to
+ * free a genuinely dead holder promptly; only renewal separates the two.
+ */
 export const WEBHOOK_DRAIN_LOCK_STALE_MS = 4 * WEBHOOK_FETCH_TIMEOUT_MS
 
 function tryCreateLock(lockPath: string, token: string): boolean {
@@ -182,6 +201,38 @@ export function acquireDrainLock(lockPath: string): string | null {
  * the new owner's alone to release, and the original holder's own release
  * becomes a no-op instead of a false teardown.
  */
+/**
+ * Marks progress on a lock this caller still holds, and reports whether it
+ * still holds it. Two jobs in one read, deliberately: the mtime bump is what
+ * keeps `WEBHOOK_DRAIN_LOCK_STALE_MS` a bound on idleness rather than on total
+ * drain length, and the token comparison is what tells a holder its lock was
+ * stolen anyway — after a genuine stall long enough to look dead, or a clock
+ * jump. `false` means another acquisition owns this queue now, and the caller
+ * must stop touching its files at once: the bucket is already renamed aside
+ * under the private draining name with every acknowledged chunk already cut
+ * from its head, so the new owner picks it up exactly where this one left off,
+ * in order and with nothing posted twice.
+ */
+export function renewDrainLock(lockPath: string, token: string): boolean {
+  let holder: string
+  try {
+    holder = readFileSync(lockPath, 'utf8').trim()
+  } catch (err) {
+    if (!isEnoent(err)) throw err
+    // The lock is gone entirely — a takeover removed it, or an operator did.
+    return false
+  }
+  if (holder !== token) return false
+  const now = new Date()
+  try {
+    utimesSync(lockPath, now, now)
+  } catch (err) {
+    if (!isEnoent(err)) throw err
+    return false
+  }
+  return true
+}
+
 export function releaseDrainLock(lockPath: string, token: string): void {
   try {
     const holder = readFileSync(lockPath, 'utf8').trim()
@@ -215,6 +266,7 @@ export type WebhookDrainOutcome = {
 export type WebhookDrainErrorCode =
   | 'log-webhook-drain-symlink'
   | 'log-webhook-drain-rejected-write'
+  | 'log-webhook-drain-lock-lost'
   | 'log-webhook-drain-failed'
 
 /** The one thrown-error shape `drainOutboxToWebhook` ever raises — never `process.exit`. */
@@ -432,6 +484,22 @@ async function postChunk(
 
 type DrainTotals = { lineCount: number; bytes: number; chunks: number; rejected: number }
 
+type DrainArgs = {
+  rejectedPath: string
+  webhookUrl: string
+  headers: Record<string, string> | undefined
+  fetchTimeoutMs: number
+  totals: DrainTotals
+  /**
+   * Marks progress on this drain's own lock and throws if the lock is no
+   * longer held. Called before every POST and before every bucket claim, so a
+   * long-but-healthy drain is never mistaken for a dead one, and a drain that
+   * really did lose its lock stops before it can write alongside the new
+   * owner.
+   */
+  keepLock: () => void
+}
+
 /**
  * Delivers one queue file from its head, in chunks of at most
  * `MAX_WEBHOOK_BODY_BYTES`, removing each chunk's bytes as soon as a `2xx`
@@ -439,14 +507,7 @@ type DrainTotals = { lineCount: number; bytes: number; chunks: number; rejected:
  * call removed; throws on the first chunk the server does not accept, with
  * every earlier chunk already delivered and already gone from the queue.
  */
-async function drainQueueFile(args: {
-  path: string
-  rejectedPath: string
-  webhookUrl: string
-  headers: Record<string, string> | undefined
-  fetchTimeoutMs: number
-  totals: DrainTotals
-}): Promise<void> {
+async function drainQueueFile(args: DrainArgs & { path: string }): Promise<void> {
   const { path, rejectedPath, webhookUrl, headers, fetchTimeoutMs, totals } = args
   const buf = readQueueFile(path)
   if (buf === null || buf.byteLength === 0) return
@@ -468,6 +529,10 @@ async function drainQueueFile(args: {
 
   const deliverChunk = async (): Promise<void> => {
     const body = `${chunk.join('\n')}\n`
+    // Renewed immediately before the POST, never after: the POST is the one
+    // step long enough to matter, so this is what keeps the gap between two
+    // renewals inside one chunk's own timeout.
+    args.keepLock()
     await postChunk(webhookUrl, headers, body, fetchTimeoutMs, totals.chunks)
     totals.chunks += 1
     totals.lineCount += chunk.length
@@ -532,14 +597,6 @@ async function drainQueueFile(args: {
   if (pendingEnd > removed) removeQueueHead(path, pendingEnd - removed)
 }
 
-type DrainArgs = {
-  rejectedPath: string
-  webhookUrl: string
-  headers: Record<string, string> | undefined
-  fetchTimeoutMs: number
-  totals: DrainTotals
-}
-
 /**
  * Renames one bucket — the rotation backup slot, or the live queue file — to
  * the private draining name and delivers it there, removing the file once
@@ -552,6 +609,7 @@ type DrainArgs = {
  * be churn for no delivery.
  */
 async function drainRenamedAside(args: DrainArgs, livePath: string, source: string): Promise<void> {
+  args.keepLock()
   const draining = drainingPathFor(livePath)
   // Claimed by the rename ALONE — never a size check followed by a rename.
   // `renameSync` is atomic, so the bucket this drain goes on to deliver is
@@ -608,7 +666,25 @@ export async function drainOutboxToWebhook(
   const totals: DrainTotals = { lineCount: 0, bytes: 0, chunks: 0, rejected: 0 }
   if (lockToken === null) return { flushed: false, ...totals }
   try {
-    const shared: DrainArgs = { rejectedPath: rejectedPathFor(path), webhookUrl, headers, fetchTimeoutMs, totals }
+    // A holder that has lost its lock stops at the next renewal point rather
+    // than writing alongside whoever took it: every acknowledged chunk is
+    // already cut from the bucket's head, so the new owner resumes from
+    // exactly there, in order, with nothing posted twice.
+    const keepLock = (): void => {
+      if (renewDrainLock(lockPath, lockToken)) return
+      throw new WebhookDrainError(
+        'log-webhook-drain-lock-lost',
+        `log webhook drain: this drain's lock on ${lockPath} was taken over by another process — stopping here; that process delivers the rest`
+      )
+    }
+    const shared: DrainArgs = {
+      rejectedPath: rejectedPathFor(path),
+      webhookUrl,
+      headers,
+      fetchTimeoutMs,
+      totals,
+      keepLock
+    }
     // Oldest bucket first, one at a time: whatever a previous drain left
     // behind, then the rotation backup slot, then the live file — each
     // delivered and removed before the next is renamed into its place, so the
@@ -616,6 +692,7 @@ export async function drainOutboxToWebhook(
     // produced in is never inverted.
     const draining = drainingPathFor(path)
     if (queueBucketSize(draining) !== null) {
+      keepLock()
       await drainQueueFile({ ...shared, path: draining })
       unlinkSync(draining)
     }
