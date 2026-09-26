@@ -18,7 +18,7 @@
  * head it judged. There is no second `Judged head:` regex in this file.
  */
 
-import { extractCodeReviewVerdict, extractSecurityReviewVerdict } from './verdict-extraction'
+import { extractCodeReviewVerdict, extractSecurityReviewVerdict, parseFindingState } from './verdict-extraction'
 import { isPrincipal } from './waiver-label'
 
 /**
@@ -31,14 +31,16 @@ const DEVELOPER_ROUND_MARKER = /<!--\s*aeg:developer:round-(\d+)\s*-->/i
 
 /**
  * A rendered finding line as `review-post.ts`'s `renderFindingsSection`
- * writes it — `<n>. [SEVERITY] <location> — F<id> <class> <state>: <text>` —
- * read for its id and its re-review state together. The id half deliberately
- * mirrors that renderer's own output rather than inventing a second finding
- * grammar; the state half is what round-over-round convergence is measured
- * from, and no exported parser carries it.
+ * writes it — `<n>. [SEVERITY] <location> — <description>` — matched only far
+ * enough to isolate the DESCRIPTION after the ` — ` separator; the id and
+ * re-review state are then read from that description by the shared
+ * `parseFindingState` (`verdict-extraction.ts`), the single definition of the
+ * `F<n> <class>[ <state>]:` state grammar this package carries (Traps to
+ * avoid — no second copy of the state token list). The `\S+` location match
+ * is unchanged from before this shared-parse refactor, so which lines this
+ * loop tracks is byte-for-byte what it tracked before.
  */
-const FINDING_LINE =
-  /^\d+\.\s+\[[A-Z]+\]\s+\S+\s+—\s+F(\d+)(?:\s+\S+)?(?:\s+(open|fix-claimed|reproduced|resolved))?:/gm
+const FINDING_LINE = /^\d+\.\s+\[[A-Z]+\]\s+\S+\s+—\s+(.*)$/gm
 
 export type ReviewStatus =
   | { state: 'CONTINUE' }
@@ -87,8 +89,11 @@ export type VerdictComment = {
 export function findingStates(body: string): Map<string, string | null> {
   const out = new Map<string, string | null>()
   for (const m of body.matchAll(FINDING_LINE)) {
-    const id = `F${m[1]}`
-    const state = m[2] ?? null
+    const { id, state } = parseFindingState(m[1] as string)
+    // A description with no `F<n>` head is not a tracked finding — the prior
+    // regex required `F(\d+)` on the line, so a line without one was never
+    // matched at all; skipping it here keeps that behaviour exactly.
+    if (id === null) continue
     // A round that lists the same id twice keeps the first state it declared;
     // a later id-less repeat must never erase a real `resolved`/`reproduced`.
     if (!out.has(id) || out.get(id) === null) out.set(id, state)

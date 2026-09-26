@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
   compareManifest,
+  consequentialFindings,
   defaultControlStoreDeps,
   type EchoedManifest,
   evaluateCodeReview,
@@ -237,11 +238,12 @@ export function publishRound(root: string, input: PublishInput): void {
     )
   }
   // O3: the reviewer's own posted APPROVE never overrides the evaluator —
-  // re-evaluate the posted comment's own FINDINGS block against policy
+  // re-evaluate the posted comment's own CONSEQUENTIAL findings against policy
   // before treating this round as publishable, mirroring the merge gate's
-  // identical check (`checkReviewGate`) rather than trusting construction
-  // alone.
-  const postedReviewerPolicy = evaluateCodeReview(postedReviewer.findingSeverities, policy)
+  // identical check (`checkReviewGate`) — the SAME `consequentialFindings`
+  // filter, so a finding the reviewer marked `resolved` no longer refuses a
+  // round the gate would pass, and a non-resolved blocker still does.
+  const postedReviewerPolicy = evaluateCodeReview(consequentialFindings(postedReviewer.findingSeverities), policy)
   if (postedReviewer.value === 'APPROVE' && postedReviewerPolicy.outcome === 'blocked') {
     throw new Error(
       `publishRound: posted reviewer verdict says APPROVE but carries a finding (${postedReviewerPolicy.blockingFindings.map((f) => f.severity).join(', ')}) at or above this repository's code-review policy threshold (${policy.codeReviewThreshold}) — refusing to publish.`
@@ -261,7 +263,7 @@ export function publishRound(root: string, input: PublishInput): void {
       `publishRound: posted security verdict does not bind to the round's manifest on: ${securityUnbound.join(', ')} — refusing to publish a verdict that does not cover the state it was dispatched against.`
     )
   }
-  const postedSecurityPolicy = evaluateSecurityReview(postedSecurity.findingSeverities, policy)
+  const postedSecurityPolicy = evaluateSecurityReview(consequentialFindings(postedSecurity.findingSeverities), policy)
   if (postedSecurity.value === 'PASS' && postedSecurityPolicy.outcome === 'blocked') {
     throw new Error(
       `publishRound: posted security verdict says PASS but carries a finding (${postedSecurityPolicy.blockingFindings.map((f) => f.severity).join(', ')}) at or above this repository's security policy threshold (${policy.securityThreshold}) — refusing to publish.`

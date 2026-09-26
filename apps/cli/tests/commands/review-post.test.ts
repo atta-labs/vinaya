@@ -288,6 +288,36 @@ describe('deriveCodeReviewVerdict — the command decides, not the caller', () =
       deriveCodeReviewVerdict([{ severity: 'MINOR', location: 'a.ts:1', description: 'x' }], THIS_REPO_POLICY)
     ).toBe('APPROVE')
   })
+
+  // O4: derivation reads `resolved` through the SAME `consequentialFindings`
+  // filter aeg-core exports (no local `isResolved` any more), so it agrees
+  // with the gate and publication about which findings count.
+  it('a BLOCKER marked `resolved` → APPROVE — resolved keeps its severity but never drives the verdict', () => {
+    expect(
+      deriveCodeReviewVerdict(
+        [{ severity: 'BLOCKER', location: 'b.ts:2', description: 'F1 correctness resolved: fixed' }],
+        DEFAULT_REVIEW_POLICY
+      )
+    ).toBe('APPROVE')
+  })
+  for (const state of ['open', 'fix-claimed', 'reproduced'] as const) {
+    it(`a BLOCKER marked \`${state}\` still → REQUEST_CHANGES`, () => {
+      expect(
+        deriveCodeReviewVerdict(
+          [{ severity: 'BLOCKER', location: 'b.ts:2', description: `F1 correctness ${state}: still open` }],
+          DEFAULT_REVIEW_POLICY
+        )
+      ).toBe('REQUEST_CHANGES')
+    })
+  }
+  it('a BLOCKER with no state token still → REQUEST_CHANGES (fail-closed)', () => {
+    expect(
+      deriveCodeReviewVerdict(
+        [{ severity: 'BLOCKER', location: 'b.ts:2', description: 'F1 correctness: unstated' }],
+        DEFAULT_REVIEW_POLICY
+      )
+    ).toBe('REQUEST_CHANGES')
+  })
 })
 
 describe('deriveSecurityVerdict — the command decides, not the caller', () => {
@@ -313,6 +343,23 @@ describe('deriveSecurityVerdict — the command decides, not the caller', () => 
   it('a CRITICAL → FAIL', () => {
     expect(
       deriveSecurityVerdict([{ severity: 'CRITICAL', location: 'a.ts:1', description: 'x' }], DEFAULT_REVIEW_POLICY)
+    ).toBe('FAIL')
+  })
+  // O4: the security shape reads `resolved` through the same shared filter.
+  it('a CRITICAL marked `resolved` → PASS', () => {
+    expect(
+      deriveSecurityVerdict(
+        [{ severity: 'CRITICAL', location: 'a.ts:1', description: 'F2 secret resolved: rotated' }],
+        DEFAULT_REVIEW_POLICY
+      )
+    ).toBe('PASS')
+  })
+  it('a CRITICAL marked `reproduced` still → FAIL', () => {
+    expect(
+      deriveSecurityVerdict(
+        [{ severity: 'CRITICAL', location: 'a.ts:1', description: 'F2 secret reproduced: still there' }],
+        DEFAULT_REVIEW_POLICY
+      )
     ).toBe('FAIL')
   })
 })

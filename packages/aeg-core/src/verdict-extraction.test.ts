@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { extractCodeReviewVerdict, extractSecurityReviewVerdict, VERDICT_MARKER_SOURCE } from './verdict-extraction'
+import {
+  extractCodeReviewVerdict,
+  extractSecurityReviewVerdict,
+  parseFindingState,
+  VERDICT_MARKER_SOURCE
+} from './verdict-extraction'
 
 /**
  * The post-merge Archivist's real, auto-generated DANGLING placeholder text
@@ -130,7 +135,7 @@ describe('extractCodeReviewVerdict', () => {
       briefHash: null,
       policyDigest: null,
       baseSha: null,
-      findingSeverities: [{ severity: 'MINOR', location: 'src/foo.ts:12' }],
+      findingSeverities: [{ severity: 'MINOR', location: 'src/foo.ts:12', id: null, state: null }],
       danglingNote: null
     })
   })
@@ -327,7 +332,7 @@ describe('extractSecurityReviewVerdict', () => {
       briefHash: null,
       policyDigest: null,
       baseSha: null,
-      findingSeverities: [{ severity: 'LOW', location: 'src/foo.ts:12' }],
+      findingSeverities: [{ severity: 'LOW', location: 'src/foo.ts:12', id: null, state: null }],
       danglingNote: null
     })
   })
@@ -757,7 +762,7 @@ describe('candidate selection stays whole-body — a later unclear candidate sha
 describe('findingSeverities — the FINDINGS block, read whole-body', () => {
   it('extracts every severity from a real rendered FINDINGS block', () => {
     const result = extractCodeReviewVerdict([REAL_CODE_REVIEWER_REPORT])
-    expect(result.findingSeverities).toEqual([{ severity: 'MINOR', location: 'src/foo.ts:12' }])
+    expect(result.findingSeverities).toEqual([{ severity: 'MINOR', location: 'src/foo.ts:12', id: null, state: null }])
   })
 
   it('extracts a mixed-severity FINDINGS block in rendered order', () => {
@@ -773,9 +778,9 @@ describe('findingSeverities — the FINDINGS block, read whole-body', () => {
     ].join('\n')
     const result = extractCodeReviewVerdict([comment])
     expect(result.findingSeverities).toEqual([
-      { severity: 'BLOCKER', location: 'a.ts:1' },
-      { severity: 'MAJOR', location: 'b.ts:2' },
-      { severity: 'MINOR', location: 'c.ts:3' }
+      { severity: 'BLOCKER', location: 'a.ts:1', id: null, state: null },
+      { severity: 'MAJOR', location: 'b.ts:2', id: null, state: null },
+      { severity: 'MINOR', location: 'c.ts:3', id: null, state: null }
     ])
   })
 
@@ -802,7 +807,63 @@ describe('findingSeverities — the FINDINGS block, read whole-body', () => {
 
   it('security-review findings extract identically via extractSecurityReviewVerdict', () => {
     const result = extractSecurityReviewVerdict([REAL_SECURITY_REVIEWER_REPORT])
-    expect(result.findingSeverities).toEqual([{ severity: 'LOW', location: 'src/foo.ts:12' }])
+    expect(result.findingSeverities).toEqual([{ severity: 'LOW', location: 'src/foo.ts:12', id: null, state: null }])
+  })
+
+  it("reads each finding's id and re-review state from its `F<n> <class> <state>:` description (O1/O2)", () => {
+    const comment = [
+      'VERDICT: APPROVE',
+      '',
+      'Judged head: 8365ca57e9f3a1b2c4d5e6f708192a3b4c5d6e7f',
+      '',
+      'FINDINGS (ordered by severity):',
+      '1. [BLOCKER] src/foo.ts:12 — F1 correctness resolved: the off-by-one, now fixed',
+      '2. [MAJOR] src/bar.ts:5 — F5 correctness open: still broken',
+      '3. [MINOR] src/baz.ts:9 — F7 doc-correctness: a stateless nit'
+    ].join('\n')
+    const result = extractCodeReviewVerdict([comment])
+    expect(result.findingSeverities).toEqual([
+      { severity: 'BLOCKER', location: 'src/foo.ts:12', id: 'F1', state: 'resolved' },
+      { severity: 'MAJOR', location: 'src/bar.ts:5', id: 'F5', state: 'open' },
+      { severity: 'MINOR', location: 'src/baz.ts:9', id: 'F7', state: null }
+    ])
+  })
+
+  it('captures a multi-word prose location whole AND its state — the prose cap and resolved rule both key off the extraction', () => {
+    const comment = [
+      'VERDICT: APPROVE',
+      '',
+      'Judged head: 8365ca57e9f3a1b2c4d5e6f708192a3b4c5d6e7f',
+      '',
+      'FINDINGS (ordered by severity):',
+      '1. [BLOCKER] PR body — F1 doc-correctness reproduced: the false claim is still there'
+    ].join('\n')
+    const result = extractCodeReviewVerdict([comment])
+    expect(result.findingSeverities).toEqual([
+      { severity: 'BLOCKER', location: 'PR body', id: 'F1', state: 'reproduced' }
+    ])
+  })
+})
+
+describe('parseFindingState — the single F<n> <class>[ <state>]: grammar', () => {
+  it('reads id and each of the four states', () => {
+    expect(parseFindingState('F1 correctness open: text')).toEqual({ id: 'F1', state: 'open' })
+    expect(parseFindingState('F2 correctness fix-claimed: text')).toEqual({ id: 'F2', state: 'fix-claimed' })
+    expect(parseFindingState('F3 correctness reproduced: text')).toEqual({ id: 'F3', state: 'reproduced' })
+    expect(parseFindingState('F44 correctness resolved: text')).toEqual({ id: 'F44', state: 'resolved' })
+  })
+
+  it('reads a stateless finding as state null (still consequential, fail-closed)', () => {
+    expect(parseFindingState('F1 correctness: text')).toEqual({ id: 'F1', state: null })
+  })
+
+  it('a description with no F<n> head is neither an id nor a state', () => {
+    expect(parseFindingState('a plain nit, not blocking')).toEqual({ id: null, state: null })
+    expect(parseFindingState('')).toEqual({ id: null, state: null })
+  })
+
+  it('an other:<slug> class still parses id and state', () => {
+    expect(parseFindingState('F9 other:flaky resolved: text')).toEqual({ id: 'F9', state: 'resolved' })
   })
 })
 

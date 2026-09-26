@@ -65,10 +65,12 @@ export {
   blockingSeverities,
   CODE_REVIEW_SEVERITY_ORDER,
   codeReviewBlockingSeverities,
+  consequentialFindings,
   DEFAULT_REVIEW_POLICY,
   evaluateCodeReview,
   evaluateReviewFindings,
   evaluateSecurityReview,
+  isConsequentialFinding,
   isKnownSeverity,
   isProseLocation,
   PROSE_CAP_SEVERITY,
@@ -190,7 +192,12 @@ export {
   taskRefFromBranch
 } from './archive-task'
 export type { MergedPrFacts } from './archive-task'
-export { extractCodeReviewVerdict, extractSecurityReviewVerdict, VERDICT_MARKER_SOURCE } from './verdict-extraction'
+export {
+  extractCodeReviewVerdict,
+  extractSecurityReviewVerdict,
+  parseFindingState,
+  VERDICT_MARKER_SOURCE
+} from './verdict-extraction'
 export type { VerdictExtraction } from './verdict-extraction'
 export {
   CHANGESET_RELEASE_BRANCH,

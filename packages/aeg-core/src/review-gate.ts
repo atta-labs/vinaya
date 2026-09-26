@@ -75,7 +75,13 @@
 
 import { isPrincipal, isWaiverLabelActorVerified, PRINCIPAL_ALLOWLIST, WAIVER_LABEL_REVIEW } from './waiver-label'
 import { extractCodeReviewVerdict, extractSecurityReviewVerdict } from './verdict-extraction'
-import { DEFAULT_REVIEW_POLICY, evaluateCodeReview, evaluateSecurityReview, type ReviewPolicy } from './review-policy'
+import {
+  consequentialFindings,
+  DEFAULT_REVIEW_POLICY,
+  evaluateCodeReview,
+  evaluateSecurityReview,
+  type ReviewPolicy
+} from './review-policy'
 import {
   compareManifest,
   policyDigest as computePolicyDigest,
@@ -311,11 +317,20 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
   // returns a named `fail` result; an uncaught throw here would crash the
   // check-run instead, on nothing worse than a typo in a manually-posted
   // comment. Caught and failed closed the same way.
+  //
+  // O1/O4: only CONSEQUENTIAL findings are evaluated — a finding the reviewer
+  // marked `resolved` keeps its severity in the record but no longer blocks,
+  // the SAME `consequentialFindings` filter `deriveCodeReviewVerdict` applies
+  // before it derives APPROVE/PASS, so an APPROVE whose only blocking findings
+  // are `resolved` passes the gate exactly as it made derivation approve. A
+  // finding at or above the threshold in any other state — `open`,
+  // `fix-claimed`, `reproduced`, or no state token — is untouched by the
+  // filter and still blocks (O2).
   let codeReviewPolicyEvaluation: ReturnType<typeof evaluateCodeReview>
   let securityPolicyEvaluation: ReturnType<typeof evaluateSecurityReview>
   try {
-    codeReviewPolicyEvaluation = evaluateCodeReview(codeReview.findingSeverities, policy)
-    securityPolicyEvaluation = evaluateSecurityReview(security.findingSeverities, policy)
+    codeReviewPolicyEvaluation = evaluateCodeReview(consequentialFindings(codeReview.findingSeverities), policy)
+    securityPolicyEvaluation = evaluateSecurityReview(consequentialFindings(security.findingSeverities), policy)
   } catch (err) {
     return {
       verdict: 'fail',
