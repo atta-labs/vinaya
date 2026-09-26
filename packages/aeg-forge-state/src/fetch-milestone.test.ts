@@ -11,6 +11,7 @@ const { ghApiGet, ghApiGetAsync, ghApiGetAllPagesAsync, ghIssueListByLabel, ghIs
 const {
   findMilestoneForSlug,
   hasExplicitMilestoneFlag,
+  hasTrancheIntentsSection,
   indexTrancheMilestonesAsync,
   listActiveTrancheSlugs,
   listArchivedTrancheSlugs,
@@ -313,6 +314,30 @@ describe('intentGoalForSlug', () => {
   it('returns empty string when the section exists but no line matches this slug', () => {
     const description = ['Goal.', '', '### Tranche intents', '- other-slug: unrelated.'].join('\n')
     expect(intentGoalForSlug(description, 'a-slug')).toBe('')
+  })
+})
+
+describe('hasTrancheIntentsSection', () => {
+  it('false when the description carries no intents heading at all', () => {
+    expect(hasTrancheIntentsSection('Just a goal, no intents.')).toBe(false)
+  })
+
+  it('true for a section holding readable bullets', () => {
+    expect(hasTrancheIntentsSection('Goal.\n\n### Tranche intents\n- one-v1: do a thing')).toBe(true)
+  })
+
+  it('true for a section whose every line is unreadable — a declaration this parser cannot read is still a declaration', () => {
+    const description = ['Goal.', '', '### Tranche intents', '', 'TBD — slugs not chosen yet'].join('\n')
+    expect(intentLines(description)).toEqual([])
+    expect(hasTrancheIntentsSection(description)).toBe(true)
+  })
+
+  it('true for an empty section', () => {
+    expect(hasTrancheIntentsSection('Goal.\n\n### Tranche intents\n\n## Next\n\nmore prose')).toBe(true)
+  })
+
+  it('false when the only intents heading is inside a fenced code block', () => {
+    expect(hasTrancheIntentsSection('Goal.\n\n```md\n### Tranche intents\n- one-v1: a thing\n```\n')).toBe(false)
   })
 })
 

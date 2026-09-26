@@ -14,6 +14,7 @@ import {
   resolveTaskMilestone,
   roundsForTaskPr,
   runArchive,
+  milestoneCloseDecision,
   runArchiveTranche,
   trancheArchivalStatus
 } from '../src/commands/archive.js'
@@ -28,6 +29,9 @@ function archiveDeps(overrides: Partial<ArchiveDeps> = {}): ArchiveDeps {
   return {
     detectRepo: async () => ({ repoRoot: '/tmp/does-not-matter', owner: 'acme', repo: 'widget' }),
     meteringCapability: () => INCAPABLE,
+    // A declared tranche nothing has been cut for yet — the default a test
+    // that declares no lifecycles at all should see.
+    trancheLifecycle: async () => 'planned',
     ...overrides
   }
 }
@@ -732,6 +736,211 @@ describe('runArchiveTranche — Milestone resolved from the tasks, not a same-ti
         expect(exit).toBe(0)
         const patched = patchedBody()
         expect(patched?.state).toBeUndefined()
+      }
+    )
+  })
+})
+
+/** Captures everything written to stdout during `fn` — the close decision's own reasons are printed there, not returned. */
+async function captureStdout(fn: () => Promise<void>): Promise<string> {
+  const original = process.stdout.write.bind(process.stdout)
+  let buf = ''
+  process.stdout.write = ((chunk: string) => {
+    buf += chunk
+    return true
+  }) as typeof process.stdout.write
+  try {
+    await fn()
+  } finally {
+    process.stdout.write = original
+  }
+  return buf
+}
+
+/** A `### Tranche intents` section declaring `slugs`, in the grammar a Milestone body really carries. */
+function intentsBody(slugs: string[]): string {
+  return [
+    '## Goal',
+    '',
+    'Ship the product.',
+    '',
+    '### Tranche intents',
+    '',
+    ...slugs.map((s) => `- ${s}: do a thing`)
+  ].join('\n')
+}
+
+describe('milestoneCloseDecision', () => {
+  it('closes when nothing is open and the Milestone declares nothing', () => {
+    expect(milestoneCloseDecision({ otherWorkOpen: false, declaresIntents: false, declared: [] })).toEqual({
+      close: true
+    })
+  })
+
+  it('closes when every tranche the Milestone declares is complete', () => {
+    expect(
+      milestoneCloseDecision({
+        otherWorkOpen: false,
+        declaresIntents: true,
+        declared: [
+          { slug: 'one-v1', lifecycle: 'complete' },
+          { slug: 'two-v1', lifecycle: 'complete' }
+        ]
+      })
+    ).toEqual({ close: true })
+  })
+
+  it('holds the Milestone open for a declared tranche with no Issues yet, and names it', () => {
+    const verdict = milestoneCloseDecision({
+      otherWorkOpen: false,
+      declaresIntents: true,
+      declared: [
+        { slug: 'one-v1', lifecycle: 'complete' },
+        { slug: 'two-v1', lifecycle: 'planned' }
+      ]
+    })
+    expect(verdict.close).toBe(false)
+    expect(verdict.close === false && verdict.reasons.join(' ')).toContain('two-v1 (planned)')
+    expect(verdict.close === false && verdict.reasons.join(' ')).not.toContain('one-v1')
+  })
+
+  it('holds the Milestone open for a declared tranche still active', () => {
+    const verdict = milestoneCloseDecision({
+      otherWorkOpen: false,
+      declaresIntents: true,
+      declared: [{ slug: 'one-v1', lifecycle: 'active' }]
+    })
+    expect(verdict.close).toBe(false)
+    expect(verdict.close === false && verdict.reasons.join(' ')).toContain('one-v1 (active)')
+  })
+
+  it('never reads an empty declared list as complete — a section declaring nothing readable holds', () => {
+    const verdict = milestoneCloseDecision({ otherWorkOpen: false, declaresIntents: true, declared: [] })
+    expect(verdict.close).toBe(false)
+    expect(verdict.close === false && verdict.reasons.join(' ')).toContain('no readable tranche line')
+  })
+
+  it('reports both holds at once — open attached work AND an unfinished declared tranche', () => {
+    const verdict = milestoneCloseDecision({
+      otherWorkOpen: true,
+      declaresIntents: true,
+      declared: [{ slug: 'one-v1', lifecycle: 'planned' }]
+    })
+    expect(verdict.close).toBe(false)
+    expect(verdict.close === false && verdict.reasons).toEqual([
+      'other tasks remain',
+      'unfinished tranches it declares: one-v1 (planned)'
+    ])
+  })
+})
+
+describe('runArchiveTranche — a Milestone stays open while a tranche it declares is unfinished', () => {
+  it('records the retrospective and leaves the Milestone open when five declared tranches have no Issues yet, naming all five', async () => {
+    const empty = ['first-v1', 'second-v1', 'third-v1', 'fourth-v1', 'fifth-v1']
+    await withFakeGhForTranche(
+      {
+        // The tranche being archived is attached to the Milestone but is NOT
+        // one of the tranches it declares; one declared tranche is complete,
+        // and the other five have no Issues at all.
+        issues: [
+          {
+            number: 1,
+            title: 'task one',
+            state: 'CLOSED',
+            milestone: { number: 34, title: 'The shared product goal' }
+          }
+        ],
+        milestone: {
+          number: 34,
+          title: 'The shared product goal',
+          description: intentsBody(['done-v1', ...empty])
+        },
+        milestoneIssueStates: ['CLOSED', 'CLOSED']
+      },
+      async (patchedBody) => {
+        let exit = -1
+        const out = await captureStdout(async () => {
+          exit = await runArchiveTranche(
+            ['attached-but-undeclared-v1', '--yes'],
+            archiveDeps({
+              trancheLifecycle: async (_owner, _repo, slug) => (slug === 'done-v1' ? 'complete' : 'planned')
+            })
+          )
+        })
+        expect(exit).toBe(0)
+        const patched = patchedBody()
+        expect(patched?.state).toBeUndefined()
+        expect(String(patched?.description)).toContain('### Retrospective: attached-but-undeclared-v1')
+        for (const slug of empty) expect(out).toContain(`${slug} (planned)`)
+        expect(out).not.toContain('done-v1 (')
+      }
+    )
+  })
+
+  it('closes the Milestone once every tranche it declares is complete', async () => {
+    await withFakeGhForTranche(
+      {
+        issues: [
+          { number: 1, title: 'task one', state: 'CLOSED', milestone: { number: 34, title: 'The shared product goal' } }
+        ],
+        milestone: {
+          number: 34,
+          title: 'The shared product goal',
+          description: intentsBody(['done-v1', 'also-done-v1'])
+        },
+        milestoneIssueStates: ['CLOSED']
+      },
+      async (patchedBody) => {
+        const exit = await runArchiveTranche(
+          ['attached-but-undeclared-v1', '--yes'],
+          archiveDeps({ trancheLifecycle: async () => 'complete' })
+        )
+        expect(exit).toBe(0)
+        expect(patchedBody()?.state).toBe('closed')
+      }
+    )
+  })
+
+  it('closes a Milestone whose description carries no `### Tranche intents` section at all — the older rule, untouched', async () => {
+    await withFakeGhForTranche(
+      {
+        issues: [
+          { number: 1, title: 'task one', state: 'CLOSED', milestone: { number: 34, title: 'The shared product goal' } }
+        ],
+        milestone: { number: 34, title: 'The shared product goal', description: '## Goal\n\nShip the product.' },
+        milestoneIssueStates: ['CLOSED']
+      },
+      async (patchedBody) => {
+        const exit = await runArchiveTranche(['my-tranche', '--yes'], archiveDeps())
+        expect(exit).toBe(0)
+        expect(patchedBody()?.state).toBe('closed')
+      }
+    )
+  })
+
+  it('never re-derives the tranche being archived from the forge — it is complete by construction', async () => {
+    await withFakeGhForTranche(
+      {
+        issues: [
+          { number: 1, title: 'task one', state: 'CLOSED', milestone: { number: 34, title: 'The shared product goal' } }
+        ],
+        milestone: {
+          number: 34,
+          title: 'The shared product goal',
+          description: intentsBody(['self-v1'])
+        },
+        milestoneIssueStates: ['CLOSED']
+      },
+      async (patchedBody) => {
+        // The injected read would report `self-v1` — the tranche being
+        // archived — as `planned`, holding its own Milestone open forever if
+        // the archived tranche were re-derived rather than taken as complete.
+        const exit = await runArchiveTranche(
+          ['self-v1', '--yes'],
+          archiveDeps({ trancheLifecycle: async () => 'planned' })
+        )
+        expect(exit).toBe(0)
+        expect(patchedBody()?.state).toBe('closed')
       }
     )
   })

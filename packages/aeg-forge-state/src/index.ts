@@ -7,6 +7,7 @@ export {
   findMilestoneAttachTargetForSlug,
   findMilestoneForSlug,
   hasExplicitMilestoneFlag,
+  hasTrancheIntentsSection,
   indexTrancheMilestonesAsync,
   intentGoalForSlug,
   intentLines,

@@ -78,6 +78,20 @@ export function intentGoalForSlug(description: string, slug: string): string {
   return ''
 }
 
+/**
+ * Whether a Milestone's description carries a `### Tranche intents` section
+ * at all — the question `intentLines` cannot answer, since it returns `[]`
+ * both for a Milestone that declares nothing and for one whose section holds
+ * only unreadable lines. A reader deciding whether a Milestone's declared
+ * scope is finished must tell those apart: the first declares no scope and
+ * is governed by whatever rule applied before intents existed; the second
+ * declares a scope this parser could not read, and must never be taken for
+ * an empty one.
+ */
+export function hasTrancheIntentsSection(description: string): boolean {
+  return intentsSection(stripCode(description, { inlineSpans: 'keep' })) !== null
+}
+
 export type MilestoneIntentLine = { slug: string; goal: string }
 
 /**
@@ -116,13 +130,12 @@ export function intentLines(description: string): MilestoneIntentLine[] {
  * guard exists to close: a freshly created, empty milestone must not report
  * itself finished.
  *
- * No production caller aggregates a live Milestone's tranches into this yet
- * — that requires enumerating which tranches a Milestone declares and
- * fetching each one's own lifecycle, the adopt-a-Milestone read pipeline
- * this task does not build (out of surface). Proven directly against its
- * own unit tests instead, which is what the zero-tranche case actually
- * needs today: a Milestone declaring no intents derives `planned` by
- * construction, with nothing to fetch.
+ * `vinaya archive tranche` aggregates a live Milestone's tranches into this:
+ * it enumerates what the Milestone declares (`intentLines`), derives each
+ * declared tranche's own lifecycle from its labeled Issues
+ * (`deriveTrancheFromForge`), and closes the Milestone only on `complete`.
+ * A Milestone declaring tranches that have no Issues yet derives `planned`
+ * here and stays open, which is the whole point of the guard above.
  */
 export function milestoneLifecycleFromTrancheLifecycles(lifecycles: Lifecycle[]): Lifecycle {
   if (lifecycles.length === 0 || lifecycles.every((l) => l === 'planned')) return 'planned'
