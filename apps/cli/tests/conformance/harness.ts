@@ -226,6 +226,15 @@ export function buildSandbox(): Sandbox {
     `${JSON.stringify({ ...repositoryConfig, logs: { folder: join(runtimeDir, 'logs') } }, null, 2)}\n`
   )
 
+  // `task_start` (O1) confirms its launch alive on the task's own driver lock,
+  // resolved through the SAME `{tranche, id}` → Issue read `task_resume` and
+  // `task_status` already use — so this fake `gh` must answer
+  // `gatherTaskStatusList()`'s three calls for `conformance/1` (issue list, a
+  // frozen-brief comment, an open-PR lookup), the same contract
+  // `tests/commands/task-status.test.ts`'s own stub satisfies, not just the
+  // bare `issue list` the launch path used to need. (Restored: the sandbox
+  // configuration comment above replaced this rationale instead of joining it —
+  // round 5 review, MINOR.)
   const gh = join(binDir, 'gh')
   writeFileSync(
     gh,

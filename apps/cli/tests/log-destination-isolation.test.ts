@@ -78,6 +78,14 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const TESTS_ROOT = join(fileURLToPath(new URL('.', import.meta.url)))
+/**
+ * Test files living beside the code they cover, rather than under this
+ * directory. They run in the same suite and can read a default destination or
+ * spawn exactly as the files here do, so scanning only this directory left them
+ * unguarded (round 5 security review, LOW). Only `*.test.ts` is taken from
+ * there: the production sources beside them are not this rule's subjects.
+ */
+const COLOCATED_TESTS_ROOT = join(TESTS_ROOT, '..', 'src')
 /** The shared fixture helper itself: it DEFINES the isolation (and the budgeted spawn wrappers), so it is never one of its own subjects. */
 const HELPER_FILE = 'lib/process-fixture.ts'
 /** This file: it defines the rule, and carries a synthetic sample of every shape the rule forbids, so it is never one of its own subjects either. */
@@ -86,13 +94,17 @@ const GUARD_FILE = 'log-destination-isolation.test.ts'
 /**
  * How many files the scan must still find. A number that DROPS means a subject
  * quietly left it — the same staleness the grandfather list's own test catches.
- * The ten today: `checks/runner/cancelled.test.ts`, `lib/dev-review-loop.test.ts`,
- * `lib/dispatch.test.ts`, `lib/dev-review-loop-harness.ts`,
- * `lib/log-destination.test.ts`, `lib/dispatch/unattended.test.ts`,
- * `lib/log-webhook-drain.test.ts`, `lib/task-tools/cancel.test.ts`,
- * `commands/dispatch.test.ts` and `conformance/live-smoke.ts`.
+ * The eleven today: `checks/runner/cancelled.test.ts`,
+ * `lib/dev-review-loop.test.ts`, `lib/dispatch.test.ts`,
+ * `lib/dev-review-loop-harness.ts`, `lib/log-destination.test.ts`,
+ * `lib/dispatch/unattended.test.ts`, `lib/log-webhook-drain.test.ts`,
+ * `lib/task-tools/cancel.test.ts`, `commands/dispatch.test.ts`,
+ * `conformance/live-smoke.ts` and `conformance/harness.ts` — the last of which
+ * became one when it started declaring its sandbox's own `logs` folder, and was
+ * left out of this count for a round (round 5 review, MINOR). No colocated
+ * `src/**` test reads a default destination today; the scan walks them anyway.
  */
-const SUBJECT_FLOOR = 10
+const SUBJECT_FLOOR = 11
 
 /** Files whose own calls still run in this repository's working directory. Empty — see this file's own header. */
 const GRANDFATHERED_FILES: string[] = []
@@ -522,7 +534,9 @@ function locallyBoundRepositoryRoots(code: string): string[] {
 
 /** A relative import's own source, resolved against `rel`'s own directory — `null` when the specifier is not a file in this tree (a package, or a path this scan cannot see). */
 function siblingModuleCode(rel: string, specifier: string): string | null {
-  const dir = join(TESTS_ROOT, rel, '..')
+  const dir = rel.startsWith('src/')
+    ? join(COLOCATED_TESTS_ROOT, rel.slice('src/'.length), '..')
+    : join(TESTS_ROOT, rel, '..')
   for (const candidate of [specifier, `${specifier}.ts`, `${specifier}/index.ts`, specifier.replace(/\.js$/, '.ts')]) {
     const abs = join(dir, candidate)
     if (/\.tsx?$/.test(abs) && existsSync(abs)) return scanSource(readFileSync(abs, 'utf8')).withStrings
@@ -578,7 +592,14 @@ function withOptionsObjectsCarrying(roots: string[], code: string): string[] {
       const initializer = initializerFrom(code, m.index + m[0].length)
       for (const carrier of carriers) {
         const escaped = escapeForRegExp(carrier)
+        // A `cwd` key, a spread, or a plain re-binding: `const where = repoRoot`
+        // carries this repository exactly as far as the original name does
+        // (round 5 security review, LOW).
         if (new RegExp(`(?:cwd\\s*:\\s*|\\.\\.\\.\\s*)${escaped}\\b`).test(initializer)) {
+          carriers.add(name)
+          break
+        }
+        if (new RegExp(`^${escaped}\\s*$`).test(initializer.trim())) {
           carriers.add(name)
           break
         }
@@ -620,6 +641,79 @@ const CALLEES_THAT_RUN_NOTHING = new Set([
   // in — the most literal form of the offence — and listing it here made the
   // scan skip exactly that (round 3 review, MAJOR).
 ])
+
+/** The call whose own argument list `index` sits directly inside: its callee's name (`null` for an anonymous one) and the offset of its opening parenthesis, so a caller can step outward to the call that encloses THAT one. */
+function enclosingCall(code: string, index: number): { callee: string | null; open: number } | null {
+  let depth = 0
+  for (let i = index; i >= 0; i--) {
+    const ch = code[i]
+    if (ch === ')') depth++
+    else if (ch === '(') {
+      if (depth > 0) {
+        depth--
+        continue
+      }
+      const m = code.slice(Math.max(0, i - 60), i).match(/([A-Za-z_$][\w$]*)\s*$/)
+      return { callee: m ? (m[1] as string) : null, open: i }
+    }
+  }
+  return null
+}
+
+/** Callees that only BUILD a path — the scan walks outward through them to find whatever the path is finally handed to. */
+const PATH_BUILDERS = new Set(['join', 'resolve', 'normalize', 'relative', 'fileURLToPath', 'URL', 'pathToFileURL'])
+
+/**
+ * Every repository-rooted DIRECTORY written inline and handed to something
+ * that runs: `runFixtureScript(script, join(import.meta.dir, '..', '..'), env)`,
+ * `{ cwd: join(import.meta.dir, '..') }`, `process.chdir(join(import.meta.dir, '..'))`.
+ *
+ * Tracking only NAMED roots left the offence this whole task is about
+ * defeatable by inlining one expression — no `const` to bind, so nothing to
+ * recognise (round 5 review, MAJOR twice; round 5 security review, MEDIUM
+ * twice, each proved against the real scan). The walk starts at the module-path
+ * anchor, steps outward through the path builders wrapping it, and asks what
+ * the finished path is given to: a `cwd` key is by definition handed to
+ * something that runs, and any other non-inert callee runs it too.
+ */
+function inlineRepositoryRootedRunSites(source: ScannedSource): string[] {
+  const out = new Set<string>()
+  for (const m of source.withStrings.matchAll(MODULE_PATH_ANCHOR_ALL)) {
+    if (m.index === undefined) continue
+    let at = m.index
+    let path: { callee: string | null; open: number } | null = null
+    for (;;) {
+      const call = enclosingCall(source.codeOnly, at)
+      if (call === null || call.callee === null || !PATH_BUILDERS.has(call.callee)) break
+      path = call
+      // Step PAST the parenthesis just found: scanning outward from the same
+      // offset re-finds the same call, which never terminates.
+      at = call.open - 1
+      if (at < 0) break
+    }
+    const expression = path === null ? source.withStrings.slice(m.index, m.index + 120) : pathExpressionAt(source, path)
+    if (!isRepositoryRootedExpression(expression) || NAMES_A_FILE.test(expression.trim())) continue
+    const consumer = enclosingCall(source.codeOnly, at)
+    const handedToACwd = /\bcwd\s*:\s*$/.test(source.codeOnly.slice(Math.max(0, at - 40), at + 1).replace(/\($/, ''))
+    if (
+      !handedToACwd &&
+      (consumer === null || consumer.callee === null || CALLEES_THAT_RUN_NOTHING.has(consumer.callee))
+    )
+      continue
+    const label = consumer?.callee ?? 'cwd'
+    out.add(`${label}(… ${expression.replace(/\s+/g, ' ').slice(0, 48)}…`)
+  }
+  return [...out]
+}
+
+/** The text of the path expression a builder call produces, callee and closing parenthesis included. */
+function pathExpressionAt(source: ScannedSource, path: { callee: string | null; open: number }): string {
+  const args = callArguments(source.codeOnly, path.open)
+  return source.withStrings.slice(path.open - (path.callee?.length ?? 0), path.open + args.length)
+}
+
+/** Every module-path anchor occurrence, as a global matcher (the single-match `MODULE_PATH_ANCHOR` is used for whole-expression tests). */
+const MODULE_PATH_ANCHOR_ALL = /import\.meta\.dir|import\.meta\.url|__dirname|__filename/g
 
 /** The callee whose own argument list `index` sits directly inside, skipping the nested calls between them — `null` when `index` is not inside any call. */
 function enclosingCallee(code: string, index: number): string | null {
@@ -751,13 +845,24 @@ function capturedWorkingDirectories(code: string): Set<string> {
  * Was this process moved OUT of the repository before `index`, in a block that
  * encloses it? A `chdir` into this repository, or back into a captured
  * directory, is not a move out — it is the offence, or the restore.
+ *
+ * The target is read as a whole EXPRESSION, in the view that still holds its
+ * path literals. Matching only a bare identifier meant an inline
+ * `process.chdir(join(import.meta.dir, '..', '..'))` — the most literal form of
+ * the offence — captured `join`, which is in neither set, and so counted as a
+ * move OUT and positively waived every producer call after it (round 5 review,
+ * MAJOR; round 5 security review, MEDIUM).
  */
-function movedOutOfRepositoryBefore(index: number, code: string, repoRooted: Set<string>): boolean {
+function movedOutOfRepositoryBefore(index: number, source: ScannedSource, repoRooted: Set<string>): boolean {
+  const code = source.codeOnly
   const restores = capturedWorkingDirectories(code)
-  for (const m of code.matchAll(/process\.chdir\s*\(\s*([A-Za-z_$][\w$.]*)?/g)) {
+  for (const m of code.matchAll(/process\.chdir\s*\(/g)) {
     if (m.index === undefined) continue
-    const target = m[1]
+    const open = code.indexOf('(', m.index)
+    const args = callArguments(code, open)
+    const target = /^\(\s*([A-Za-z_$][\w$.]*)\s*\)$/.exec(args)?.[1]
     if (target !== undefined && (repoRooted.has(target) || restores.has(target))) continue
+    if (isRepositoryRootedExpression(source.withStrings.slice(open, open + args.length))) continue
     if (inScopeFor(code, m.index, index)) return true
   }
   return false
@@ -775,24 +880,27 @@ function movedOutOfRepositoryBefore(index: number, code: string, repoRooted: Set
  * the name alone: a wrapper this file does not define, or one that does not
  * itself chdir, vouches for nothing.
  */
-function calledInsideARelocatingWrapper(code: string, index: number, repoRooted: Set<string>): boolean {
+function calledInsideARelocatingWrapper(source: ScannedSource, index: number, repoRooted: Set<string>): boolean {
+  const code = source.codeOnly
+  const relocates = (callee: string | null): boolean => {
+    if (callee === null || CALLEES_THAT_RUN_NOTHING.has(callee)) return false
+    const body = definitionBodyOf(callee, code)
+    if (body === null) return false
+    const bodySource = {
+      codeOnly: body.code,
+      withStrings: source.withStrings.slice(body.from, body.from + body.code.length)
+    }
+    return movedOutOfRepositoryBefore(body.end, bodySource, repoRooted)
+  }
   for (const [from] of enclosingBlocks(code, index)) {
-    const callee = enclosingCallee(code, from)
-    if (callee === null || CALLEES_THAT_RUN_NOTHING.has(callee)) continue
-    const body = definitionBodyOf(callee, code)
-    if (body === null) continue
-    if (movedOutOfRepositoryBefore(body.end, body.code, repoRooted)) return true
+    if (relocates(enclosingCallee(code, from))) return true
   }
-  const callee = enclosingCallee(code, index)
-  if (callee !== null && !CALLEES_THAT_RUN_NOTHING.has(callee)) {
-    const body = definitionBodyOf(callee, code)
-    if (body !== null && movedOutOfRepositoryBefore(body.end, body.code, repoRooted)) return true
-  }
+  if (relocates(enclosingCallee(code, index))) return true
   return false
 }
 
 /** The body of `name`'s own definition in `code` — a `function name(…) { … }` or a `const name = (…) => { … }` — as its own text, with the offset its end sits at inside it. */
-function definitionBodyOf(name: string, code: string): { code: string; end: number } | null {
+function definitionBodyOf(name: string, code: string): { code: string; end: number; from: number } | null {
   const escaped = escapeForRegExp(name)
   const declaration = new RegExp(`(?:function\\s+${escaped}\\s*[(<]|(?:const|let|var)\\s+${escaped}\\s*=)`)
   const m = declaration.exec(code)
@@ -800,7 +908,7 @@ function definitionBodyOf(name: string, code: string): { code: string; end: numb
   const open = code.indexOf('{', m.index)
   if (open === -1) return null
   const body = code.slice(open, endOfBlock(code, open))
-  return { code: body, end: body.length }
+  return { code: body, end: body.length, from: open }
 }
 
 /**
@@ -953,10 +1061,29 @@ function producerCallSites(code: string): { index: number; calledAs: string; pro
 }
 
 /** A `log` dependency the call itself is handed — how a test drives a boundary producer without writing anywhere real. */
-function callIsHandedALogDependency(code: string, index: number): boolean {
+function callIsHandedALogDependency(code: string, index: number, producerNames: Set<string>): boolean {
   const open = code.indexOf('(', index)
   if (open === -1) return false
-  return /(?<!\.)\blog\s*:/.test(callArguments(code, open))
+  const args = callArguments(code, open)
+  let depth = 0
+  for (let i = 0; i < args.length; i++) {
+    const c = args[i] as string
+    if ('([{'.includes(c)) depth++
+    else if (')]}'.includes(c)) depth--
+    // Depth 2 is a property of an OBJECT that is itself an argument: `(` opens
+    // the call, `{` the deps object. Deeper than that is a property of some
+    // nested object, which decides nothing about where this call writes (round
+    // 5 security review, LOW).
+    else if (depth === 2 && /(?<![.\w$])log\s*:/.test(args.slice(i, i + 6))) {
+      const value = args.slice(i + args.slice(i).indexOf(':') + 1, i + 60).trim()
+      const named = /^([A-Za-z_$][\w$.]*)\s*[,}]/.exec(value)?.[1]
+      // `log: log` hands the call the module-level producer — the default sink
+      // under another name, not a destination of the caller's own.
+      if (named !== undefined && producerNames.has(named)) continue
+      return true
+    }
+  }
+  return false
 }
 
 /**
@@ -976,26 +1103,35 @@ function callIsHandedALogDependency(code: string, index: number): boolean {
  */
 function repositoryWorkingDirectorySites(rel: string, source: ScannedSource): string[] {
   const code = source.codeOnly
-  const out = [...unisolatedCallSites(source), ...repositoryRootedRunSites(rel, source)]
+  const out = [
+    ...unisolatedCallSites(source),
+    ...repositoryRootedRunSites(rel, source),
+    ...inlineRepositoryRootedRunSites(source)
+  ]
   const repoRooted = new Set(repositoryRootedIdentifiers(rel, source))
   for (const site of producerCallSites(code)) {
-    if (movedOutOfRepositoryBefore(site.index, code, repoRooted)) continue
-    if (calledInsideARelocatingWrapper(code, site.index, repoRooted)) continue
+    if (movedOutOfRepositoryBefore(site.index, source, repoRooted)) continue
+    if (calledInsideARelocatingWrapper(source, site.index, repoRooted)) continue
     const isolated = (SINK_PRODUCERS as readonly string[]).includes(site.producer)
       ? site.producer === 'createLogSink'
         ? /createLogSink\s*\(\s*[^)\s]/.test(code.slice(site.index, site.index + 40))
         : usesASinkOfItsOwn(site.calledAs, site.index, code)
-      : callIsHandedALogDependency(code, site.index)
+      : callIsHandedALogDependency(code, site.index, new Set(producerCallNames(code).keys()))
     if (isolated) continue
     out.push(`${IN_PROCESS_SITE}: ${site.calledAs}(…`)
   }
   return out
 }
 
+/** Every file this scan walks: everything under this directory, plus the `*.test.ts` files colocated with the sources. */
+function everyTestTreeFile(): [string, string][] {
+  return [...walk(TESTS_ROOT, ''), ...walk(COLOCATED_TESTS_ROOT, 'src').filter(([rel]) => rel.endsWith('.test.ts'))]
+}
+
 /** Every file under `apps/cli/tests` that reads a default log destination, paired with its own offending sites. */
 function subjects(): Map<string, string[]> {
   const out = new Map<string, string[]>()
-  for (const [rel, abs] of walk(TESTS_ROOT, '')) {
+  for (const [rel, abs] of everyTestTreeFile()) {
     if (rel === HELPER_FILE || rel === GUARD_FILE) continue
     const source = scanSource(readFileSync(abs, 'utf8'))
     if (!readsDefaultDestination(source)) continue
@@ -1020,6 +1156,12 @@ describe("no test reads this repository's own log destination", () => {
 
   it('the scan finds the fixtures it is meant to cover — an empty subject set would make it vacuous', () => {
     expect(subjects().size).toBeGreaterThanOrEqual(SUBJECT_FLOOR)
+  })
+
+  it('the scan walks the tests colocated with the sources too, not only this directory', () => {
+    const walked = everyTestTreeFile().map(([rel]) => rel)
+    expect(walked.filter((rel) => rel.startsWith('src/')).length).toBeGreaterThan(0)
+    expect(walked.every((rel) => !rel.startsWith('src/') || rel.endsWith('.test.ts'))).toBe(true)
   })
 
   it("the shared fixture's own configuration declares a destination — an empty one leaves the default branch's own setting in scope", () => {
@@ -1101,12 +1243,49 @@ describe("no test reads this repository's own log destination", () => {
     }
   })
 
+  it('…and so does one written INLINE, with no name for the scan to bind', () => {
+    const forms = [
+      "const out = runFixtureScript(scriptPath, join(import.meta.dir, '..', '..'), env)",
+      "const r = spawnSyncBudgeted('bun', [bin], { cwd: join(import.meta.dir, '..', '..'), env })",
+      "const r = spawnSyncBudgeted('bun', [bin], { cwd: fileURLToPath(new URL('../..', import.meta.url)), env })"
+    ]
+    for (const form of forms) {
+      const sample = `
+      const found = findOutboxFile(join(home, '.vinaya'), '991.ndjson')
+      ${form}
+    `
+      expect(sitesFor(sample), form).not.toEqual([])
+    }
+  })
+
+  it('an INLINE chdir into this repository is the offence too — never read as a move out of it', () => {
+    const sample = `
+      import { log } from '../src/lib/log-sink.js'
+      process.chdir(join(import.meta.dir, '..', '..'))
+      ${AN_IN_PROCESS_PRODUCER}
+      ${A_DEFAULT_READ}
+    `
+    const sites = sitesFor(sample)
+    expect(sites.filter((site) => site.startsWith(IN_PROCESS_SITE))).toHaveLength(1)
+    expect(sites.some((site) => site.includes('chdir'))).toBe(true)
+  })
+
   it('…and so does one threaded through a spread options object, which satisfied the spawn rule by shape alone', () => {
     const sample = `
       const repoRoot = join(import.meta.dir, '..', '..')
       const opts = { cwd: repoRoot }
       const found = findOutboxFile(join(home, '.vinaya'), '991.ndjson')
       const r = spawnSyncBudgeted('bun', [bin, 'dispatch'], { ...opts, env })
+    `
+    expect(sitesFor(sample)).not.toEqual([])
+  })
+
+  it('…and so is a repository root re-bound to a plain alias before it is handed on', () => {
+    const sample = `
+      const repoRoot = join(import.meta.dir, '..', '..')
+      const where = repoRoot
+      const found = findOutboxFile(join(home, '.vinaya'), '991.ndjson')
+      const out = runFixtureScript(scriptPath, where, env)
     `
     expect(sitesFor(sample)).not.toEqual([])
   })
@@ -1142,6 +1321,17 @@ describe("no test reads this repository's own log destination", () => {
       ${A_DEFAULT_READ}
     `
     expect(inProcessSites(sample)).toHaveLength(1)
+  })
+
+  it('…and so is one whose only log dependency is the module producer itself, or a key nested in an unrelated object', () => {
+    for (const deps of ['{ log: log }', "{ checks: { log: 'x' } }"]) {
+      const sample = `
+        import { devReviewLoop, log } from '../src/lib/dev-review-loop.js'
+        await devReviewLoop(input, ${deps})
+        ${A_DEFAULT_READ}
+      `
+      expect(inProcessSites(sample), deps).toHaveLength(1)
+    }
   })
 
   it('a boundary producer handed a log dependency is accepted — that is how a test drives one writing nowhere real', () => {
