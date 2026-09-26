@@ -21,6 +21,7 @@ is derived from the folder tree.
 | aeg-forge-state | `packages/aeg-forge-state` | `packages/aeg-forge-state/specs/` | (state tracked globally for now) |
 | aeg-types | `packages/aeg-types` | `packages/aeg-types/specs/` | (state tracked globally for now) |
 | sources | `packages/sources` | `packages/sources/specs/` | (state tracked globally for now) |
+| log-server | `apps/log-server` | `apps/log-server/specs/` | (state tracked globally for now) |
 | vinaya | `.` | `specs/` | (state tracked globally) |
 
 Each workspace package that is a work surface gets its own row, so a task's
