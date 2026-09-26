@@ -21,7 +21,16 @@ import { buildPrincipalTestPlanWaitErrors } from '../../src/checks/bin/check-pri
 import { compareEvidenceBlock, EVIDENCE_PLACEHOLDER_TEXT } from '../../src/checks/evidence-fresh-logic'
 import { resolveAnchoredRegion, ScanContext } from '../../src/checks/scan-context'
 import { agentCommandText, extractAgentCommandLines } from '../../src/commands/pr-report'
-import { buildReport, type GateRunResult, runReportForOpenPr, spliceIntoLiveBody } from '../../src/lib/pr-report-engine'
+import { checkBareDigits } from '../../src/checks/body-bare-digits-logic'
+import {
+  buildReport,
+  describeReuse,
+  type GateRunResult,
+  type GroupC,
+  renderGroupC,
+  runReportForOpenPr,
+  spliceIntoLiveBody
+} from '../../src/lib/pr-report-engine'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const ALWAYS_REFUSE_BODY_CHECK = join(CLI_ROOT, 'tests', 'fixtures', 'forge', 'fake-always-refuse-body-check.cjs')
@@ -245,4 +254,122 @@ describe('a pushed evidence block survives the [principal] tick — evidence-fre
     // the loop, so the tick landed on the untouched placeholder instead.
     expect(evidenceVerdict(tick(BODY_WITH_UNTICKED_PRINCIPAL))).toBe('fail')
   }, 20000)
+})
+
+// ---------------------------------------------------------------------------
+// A Test-plan command whose result was reused from a cached green run gets a
+// prose note after its fence naming that run — its record time, its source,
+// and, for a per-file hit, how many files it covered. Those digits sit in
+// ordinary prose inside the `AEG:EVIDENCE` region, where `body-bare-digits`
+// exempts only the `Head:`/`Summary:` lines and the headings: unbackticked,
+// `pr report --write`/`--push` refused the very body it had just generated,
+// on the ordinary path (the pre-push hook writes that cache on the one push
+// every Developer makes). The check below is the REAL check over a REAL
+// generated block — never a regex of this test's own.
+// ---------------------------------------------------------------------------
+
+describe('the evidence block a reused Test-plan entry produces passes body-bare-digits (O1)', () => {
+  const REUSED_FILES = Array.from(
+    { length: 14 },
+    (_, i) => `/repo/apps/cli/tests/lib/f${String.fromCharCode(97 + i)}.test.ts`
+  )
+  const PER_FILE_HIT = { recordedAt: '2026-09-26T04:45:06.812Z', source: 'pre-push', files: REUSED_FILES }
+  const EXACT_COMMAND_HIT = { recordedAt: '2026-09-26T04:45:06.812Z', source: 'pr-report' }
+
+  // `body-bare-digits` blanks an `AEG:EVIDENCE` region's `Head:` line and its
+  // headings only when the region sits under its own canonical `## Evidence`
+  // section (`isInCanonicalSection`) — so the block is graded where a real PR
+  // body carries it, spliced into a live body, never as a bare string.
+  const LIVE_BODY = [
+    '## Evidence',
+    '',
+    '<!-- AEG:EVIDENCE:START -->',
+    EVIDENCE_PLACEHOLDER_TEXT,
+    '<!-- AEG:EVIDENCE:END -->',
+    ''
+  ].join('\n')
+
+  async function bodyWithReuseNote(reusedFrom: string): Promise<string> {
+    const groupC: GroupC = {
+      commands: [
+        {
+          command: 'bun test apps/cli/tests/lib/pr-report-engine.test.ts',
+          output: '14 pass, 0 fail',
+          exitCode: 0,
+          timedOut: false,
+          overflowed: false,
+          reusedFrom
+        },
+        {
+          command: 'bun apps/cli/src/index.ts check --all',
+          output: 'all checks green',
+          exitCode: 0,
+          timedOut: false,
+          overflowed: false
+        }
+      ]
+    }
+    const result = await buildReport({
+      groupA: FIXED_GROUP_A,
+      gateRunner: () => PASSING_GATES,
+      groupC,
+      body: LIVE_BODY,
+      cwd: tempCwd()
+    })
+    return spliceIntoLiveBody(LIVE_BODY, result.blockInner, { collected: false, refusal: '' }).body
+  }
+
+  it('a per-file hit names its run — time, source and file count — with every digit inside a code span', async () => {
+    const body = await bodyWithReuseNote(describeReuse(PER_FILE_HIT))
+
+    // The note keeps every fact a reviewer judges the evidence by.
+    expect(body).toContain('Reused from a green run recorded `2026-09-26T04:45:06.812Z` (pre-push)')
+    expect(body).toContain('`covering 14 file(s)` including every file this command names')
+    expect(checkBareDigits(body).violations).toEqual([])
+  }, 20000)
+
+  it('an exact-command hit — no file count at all — also passes', async () => {
+    const body = await bodyWithReuseNote(describeReuse(EXACT_COMMAND_HIT))
+
+    expect(body).toContain('Reused from a green run recorded `2026-09-26T04:45:06.812Z` (pr-report) — not re-run.')
+    expect(checkBareDigits(body).violations).toEqual([])
+  }, 20000)
+
+  it('the unbackticked note this replaced really is refused — the assertions above have teeth', async () => {
+    const body = await bodyWithReuseNote(
+      `a green run recorded ${PER_FILE_HIT.recordedAt} (${PER_FILE_HIT.source}), covering ${REUSED_FILES.length} file(s) including every file this command names`
+    )
+
+    const refused = checkBareDigits(body).violations
+    expect(refused.length).toBeGreaterThan(0)
+    expect(refused.some((v) => v.text.startsWith('_Reused from a green run recorded'))).toBe(true)
+  }, 20000)
+})
+
+describe('a Test-plan entry that really ran renders exactly as before (O2)', () => {
+  it('no reuse note, and the heading/fence shape is byte-identical', () => {
+    const groupC: GroupC = {
+      commands: [
+        {
+          command: 'bun test apps/cli/tests/lib/pr-report-engine.test.ts',
+          output: '14 pass, 0 fail',
+          exitCode: 0,
+          timedOut: false,
+          overflowed: false
+        }
+      ]
+    }
+
+    expect(renderGroupC(groupC)).toBe(
+      [
+        '### Group C — Test Plan commands',
+        '',
+        '#### C1: `bun test apps/cli/tests/lib/pr-report-engine.test.ts`',
+        '',
+        '```',
+        '14 pass, 0 fail',
+        '```'
+      ].join('\n')
+    )
+  })
 })

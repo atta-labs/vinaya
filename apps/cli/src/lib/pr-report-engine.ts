@@ -852,10 +852,33 @@ function resolveFileSet(files: string[], cwd?: string): string[] {
   return [...new Set(files.map((f) => resolvePath(base, f)))].sort()
 }
 
-/** Describes a cache hit for `reusedFrom` — names the run's own record time and source, and, for a per-file (rather than exact-command) hit, how many files it covered, so the evidence never merely says "reused" without saying what was actually verified to cover the command it stands in for. Structural (never `TestRunCacheRecord` by name) so a single `FileCoverageRun` — one real run out of a coverage record's own history — describes itself identically to a whole record. */
-function describeReuse(hit: { recordedAt: string; source: string; files?: string[] }): string {
-  const base = `a green run recorded ${hit.recordedAt} (${hit.source})`
-  return hit.files ? `${base}, covering ${hit.files.length} file(s) including every file this command names` : base
+/**
+ * Describes a cache hit for `reusedFrom` — names the run's own record time and
+ * source, and, for a per-file (rather than exact-command) hit, how many files
+ * it covered, so the evidence never merely says "reused" without saying what
+ * was actually verified to cover the command it stands in for. Structural
+ * (never `TestRunCacheRecord` by name) so a single `FileCoverageRun` — one real
+ * run out of a coverage record's own history — describes itself identically to
+ * a whole record.
+ *
+ * **Every digit-bearing part sits inside an inline code span, and that is
+ * load-bearing rather than cosmetic.** This string is rendered by
+ * `renderGroupC` as prose AFTER the command's own fence (so the fence stays
+ * byte-identical to a fresh run's — see there), which puts its digits in the
+ * one place `body-bare-digits` refuses them: `maskCode` blanks fenced blocks
+ * and inline code spans and nothing else. Unbackticked, the note made
+ * `pr report --write`/`--push` refuse the very body it had just generated
+ * (`bare digit outside a fenced block: _Reused from a green run recorded
+ * 2026-…Z (pre-push), covering 14 file(s) …_`) on the ordinary path — the
+ * pre-push hook writes that cache on the one push every Developer makes, so
+ * the second `pr report` of a branch always hit it. The count's span covers
+ * the whole `covering N file(s)` phrase rather than the bare number: a span
+ * boundary between `covering ` and the digit would make the rendered note read
+ * `covering ` + a separately-quoted number, and the phrase is one fact.
+ */
+export function describeReuse(hit: { recordedAt: string; source: string; files?: string[] }): string {
+  const base = `a green run recorded \`${hit.recordedAt}\` (${hit.source})`
+  return hit.files ? `${base}, \`covering ${hit.files.length} file(s)\` including every file this command names` : base
 }
 
 /**
