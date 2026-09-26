@@ -1,17 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { acquireOwnership, defaultControlStoreDeps, type EscalationInput, writeEscalation } from '@attalabs/aeg-core'
+import type { AgentVendor } from '../../../src/lib/dispatch.js'
 import type { CallerContext } from '../../../src/lib/task-tools/server.js'
 import {
   createTaskResumeHandler,
+  defaultResumeLaunch,
+  RESUME_COMMAND_ENV,
   RESUME_STALE_CLAIM_GRACE_MS,
   type LaunchResult,
   type ResumeClaimStore,
   type ResumeRecord
 } from '../../../src/lib/task-tools/resume.js'
-import { writePauseState } from '../../../src/lib/dev-review-loop/pause-resume.js'
+import { isDriverPidAlive, readDriverLock, writePauseState } from '../../../src/lib/dev-review-loop/pause-resume.js'
 
 /**
  * `task_resume` (task-operator-v1 4, O1) driven in-process with injected
@@ -159,13 +162,16 @@ function harness(
   overrides: {
     rulings?: string[]
     newestRulingOrdinal?: number
-    launch?: (target: { pr: number; agent: string; issue: number }) => LaunchResult | Promise<LaunchResult>
+    launch?: (
+      target: { pr: number; agent: AgentVendor; issue: number },
+      meta: { escalationId: string; caller: string }
+    ) => LaunchResult | Promise<LaunchResult>
     resolveIssue?: (ref: unknown) => number | null
     isPidAlive?: (pid: number) => boolean
     now?: () => string
   } = {}
 ) {
-  const launches: Array<{ pr: number; agent: string; issue: number }> = []
+  const launches: Array<{ pr: number; agent: AgentVendor; issue: number }> = []
   const events: Array<{ operation: string; target: string; result: string; error_class: string | null }> = []
   const { store, map } = memClaimStore()
   const handler = createTaskResumeHandler({
@@ -176,9 +182,11 @@ function harness(
     fetchNewestRulingOrdinal: () => overrides.newestRulingOrdinal ?? 1,
     store,
     isPidAlive: overrides.isPidAlive ?? (() => false),
-    launch: async (target) => {
+    launch: async (target, meta) => {
       launches.push(target)
-      return (overrides.launch?.(target) ?? { status: 'confirmed', pid: null }) as LaunchResult | Promise<LaunchResult>
+      return (overrides.launch?.(target, meta) ?? { status: 'confirmed', pid: null }) as
+        | LaunchResult
+        | Promise<LaunchResult>
     },
     now: overrides.now ?? (() => '2026-01-01T00:00:00.000Z'),
     log: (e) => {
@@ -441,6 +449,75 @@ describe('task_resume handler', () => {
     if (!second.ok) return
     expect(second.result.outcome).toBe('started') // superseded and relaunched
     expect(launches).toHaveLength(2)
+  })
+
+  /**
+   * The same rule against a REAL detached continuation: a launcher whose own
+   * driver lock lands after the confirm wait has ended. The wait is shortened
+   * here so the fixture costs a second rather than the shipped ten; the spawn,
+   * the race and the liveness reads are the real ones.
+   */
+  it('a continuation slower than the wait is started, keeps its claim, and a repeat call launches nothing (O3)', async () => {
+    writePause()
+    writeEscalationFixture()
+    const argvLog = join(sandbox, 'argv.log')
+    const script = join(sandbox, 'slow-continuation.sh')
+    const taskDir = join(outbox, 'tasks-execution', String(ISSUE))
+    mkdirSync(taskDir, { recursive: true })
+    // Sleeps well past both the shortened wait and the repeat call below, so
+    // the repeat is decided by the claim — not by a driver lock that has
+    // already appeared, which the gate above would refuse on instead.
+    writeFileSync(
+      script,
+      `#!/bin/sh\necho "$@" >> "${argvLog}"\nsleep 2\necho '{"pid": '"$$"', "startedAt": "2026-01-01T00:00:00.000Z"}' > "${taskDir}/driver.pid.json"\nexec sleep 5\n`,
+      { mode: 0o755 }
+    )
+    const original = process.env[RESUME_COMMAND_ENV]
+    let launched: number | null = null
+    try {
+      process.env[RESUME_COMMAND_ENV] = script
+      const { handler, launches } = harness({
+        launch: (target, meta) =>
+          defaultResumeLaunch(target, meta, outbox, 200).then((result) => {
+            if (result.status !== 'exited') launched = result.pid
+            return result
+          }),
+        isPidAlive: isDriverPidAlive
+      })
+
+      const first = await handler({ task: { issue: ISSUE } }, CALLER)
+      expect(first.ok).toBe(true)
+      if (!first.ok) return
+      expect(first.result.outcome).toBe('started') // still coming up, never a failed start
+
+      const second = await handler({ task: { issue: ISSUE } }, CALLER)
+      expect(second.ok).toBe(true)
+      if (!second.ok) return
+      expect(second.result.outcome).toBe('already_resumed')
+      expect(launches).toHaveLength(1)
+
+      // Let it finish coming up: the run is there, and the launcher's own
+      // record shows one invocation, never a second continuation.
+      const deadline = Date.now() + 8_000
+      while (Date.now() < deadline && readDriverLock(outbox, ISSUE) === null) {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      }
+      const lock = readDriverLock(outbox, ISSUE)
+      expect(lock !== null && isDriverPidAlive(lock.pid)).toBe(true)
+      expect(readFileSync(argvLog, 'utf8').trim().split('\n')).toEqual([
+        `dev-review-loop --resume ${PR} --agent claude`
+      ])
+    } finally {
+      if (launched !== null) {
+        try {
+          process.kill(-launched, 'SIGKILL')
+        } catch {
+          // Already gone.
+        }
+      }
+      if (original === undefined) delete process.env[RESUME_COMMAND_ENV]
+      else process.env[RESUME_COMMAND_ENV] = original
+    }
   })
 
   it('replays a claim still within its own confirm window without relaunching (O3, no race)', async () => {

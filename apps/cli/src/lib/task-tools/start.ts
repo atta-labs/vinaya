@@ -456,12 +456,15 @@ function waitForLiveDriver(
 /**
  * `root` defaults to this repo's own resolution but is overridable so a test
  * can point the confirm-wait at a temporary tree without touching the real
- * one (`defaultTaskStartDeps.launch` never overrides it).
+ * one; `timeoutMs` likewise, so a fixture can drive a REAL launcher that is
+ * slower than its wait in a fraction of a second rather than the 30 the
+ * shipped bound takes (`defaultTaskStartDeps.launch` overrides neither).
  */
 export function defaultLaunch(
   target: { ref: TaskToolRef; agent: AgentVendor; issue: number },
   meta: { requestId: string; caller: string },
-  root: string = runtimeDirForThisRepo()
+  root: string = runtimeDirForThisRepo(),
+  timeoutMs: number = START_CONFIRM_TIMEOUT_MS
 ): Promise<LaunchResult> {
   const program = process.env[TASK_RUN_COMMAND_ENV]?.trim() || 'vinaya'
   const stderrPath = runPath(root, target.issue, { area: 'output', file: `task-start-${meta.requestId}.stderr.log` })
@@ -478,7 +481,7 @@ export function defaultLaunch(
     // immediately, whether spawn succeeded or threw synchronously.
     closeSync(stderrFd)
   }
-  return waitForLiveDriver(child, root, target.issue, stderrPath, START_CONFIRM_TIMEOUT_MS, START_CONFIRM_POLL_MS)
+  return waitForLiveDriver(child, root, target.issue, stderrPath, timeoutMs, START_CONFIRM_POLL_MS)
 }
 
 function defaultAgent(): AgentVendor | null {

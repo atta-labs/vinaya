@@ -3,8 +3,10 @@ import type { TaskToolRef } from '@attalabs/aeg-core'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { isDriverPidAlive, readDriverLock } from '../../../src/lib/dev-review-loop/pause-resume.js'
 import { readTaskIssueFacts, resolveOpenTaskIssueForRef } from '../../../src/lib/task-tools/handlers.js'
 import type { TaskIssueFacts } from '../../../src/lib/task-tools/handlers.js'
+import type { AgentVendor } from '../../../src/lib/dispatch.js'
 import type { CallerContext } from '../../../src/lib/task-tools/server.js'
 import {
   createTaskStartHandler,
@@ -60,11 +62,11 @@ function memStore(): { store: RequestStore; map: Map<string, StartRecord> } {
   }
 }
 
-type LaunchRecord = { ref: TaskToolRef; agent: string; issue: number }
+type LaunchRecord = { ref: TaskToolRef; agent: AgentVendor; issue: number }
 
 function harness(
   overrides: {
-    launch?: (target: LaunchRecord) => LaunchResult | Promise<LaunchResult>
+    launch?: (target: LaunchRecord, meta: { requestId: string; caller: string }) => LaunchResult | Promise<LaunchResult>
     repoRoot?: string | null
     agent?: 'claude' | 'codex' | 'gemini' | null
     resolveIssue?: (ref: TaskToolRef) => number | null
@@ -84,9 +86,11 @@ function harness(
     issueFacts: overrides.issueFacts ?? (() => STANDALONE),
     isRunAlive: overrides.isRunAlive ?? (() => true),
     isPidAlive: overrides.isPidAlive ?? (() => false),
-    launch: async (target) => {
+    launch: async (target, meta) => {
       launches.push(target)
-      return (overrides.launch?.(target) ?? { status: 'confirmed', pid: null }) as LaunchResult | Promise<LaunchResult>
+      return (overrides.launch?.(target, meta) ?? { status: 'confirmed', pid: null }) as
+        | LaunchResult
+        | Promise<LaunchResult>
     },
     now: overrides.now ?? (() => '2026-01-01T00:00:00.000Z')
   })
@@ -818,6 +822,141 @@ exit 1
       } finally {
         cleanup()
       }
+    })
+
+    /**
+     * The whole failure, end to end, against a REAL detached process: a
+     * launcher whose preparation outlasts the confirm wait — exactly what
+     * `task run` does on a real repository, where posting the frozen brief
+     * and the start-of-run sweep are forge-bound steps that run before the
+     * loop writes any lock. The wait is shortened here so the fixture takes
+     * a second rather than the shipped thirty; nothing else is faked.
+     */
+    describe('a launcher slower than the confirm wait', () => {
+      /** Writes its driver lock only AFTER the wait below has ended, then stays alive — and records every argv it was called with, so "launched nothing" is an observation, not an assumption. */
+      function slowLauncher(root: string, argvLog: string): string {
+        const script = join(root, 'slow-launcher.sh')
+        const dir = join(root, 'tasks-execution', String(ISSUE))
+        mkdirSync(dir, { recursive: true })
+        writeFileSync(
+          script,
+          `#!/bin/sh\necho "$@" >> "${argvLog}"\nsleep 1\necho '{"pid": '"$$"', "startedAt": "2026-01-01T00:00:00.000Z"}' > "${dir}/driver.pid.json"\nexec sleep 5\n`,
+          { mode: 0o755 }
+        )
+        return script
+      }
+
+      function killGroup(pid: number | null): void {
+        if (pid === null) return
+        try {
+          // Detached, so the child leads its own process group — the whole
+          // group goes, never a stray `sleep` left on the machine.
+          process.kill(-pid, 'SIGKILL')
+        } catch {
+          // Already gone.
+        }
+      }
+
+      async function until(predicate: () => boolean, budgetMs: number): Promise<boolean> {
+        const deadline = Date.now() + budgetMs
+        while (Date.now() < deadline) {
+          if (predicate()) return true
+          await new Promise((resolve) => setTimeout(resolve, 50))
+        }
+        return predicate()
+      }
+
+      it('is reported as starting with its process alive, and is confirmed on the next read (O3)', async () => {
+        sandbox = mkdtempSync(join(tmpdir(), 'vinaya-task-start-slow-'))
+        const original = process.env[TASK_RUN_COMMAND_ENV]
+        let launched: number | null = null
+        try {
+          process.env[TASK_RUN_COMMAND_ENV] = slowLauncher(sandbox, join(sandbox, 'argv.log'))
+          const outcome = await defaultLaunch(
+            { ref: { tranche: 'unattended-run-v1', id: '14' }, agent: 'claude', issue: ISSUE },
+            { requestId: 'req_slow', caller: 'operator-1' },
+            sandbox,
+            200
+          )
+          expect(outcome.status).toBe('starting')
+          if (outcome.status !== 'starting') return
+          launched = outcome.pid
+          // The wait genuinely ended first: no lock yet…
+          expect(readDriverLock(sandbox, ISSUE)).toBeNull()
+          // …and the process it launched is alive, which is what makes this a
+          // started run rather than a failed one.
+          expect(outcome.pid).not.toBeNull()
+          expect(outcome.pid === null || isDriverPidAlive(outcome.pid)).toBe(true)
+
+          // The run comes up after the call returned — the next read finds it.
+          expect(await until(() => readDriverLock(sandbox, ISSUE) !== null, 8_000)).toBe(true)
+          const lock = readDriverLock(sandbox, ISSUE)
+          expect(lock !== null && isDriverPidAlive(lock.pid)).toBe(true)
+        } finally {
+          killGroup(launched)
+          if (original === undefined) delete process.env[TASK_RUN_COMMAND_ENV]
+          else process.env[TASK_RUN_COMMAND_ENV] = original
+          cleanup()
+        }
+      })
+
+      it('keeps its claim, so a repeat call replays it and launches nothing (O2, O3)', async () => {
+        sandbox = mkdtempSync(join(tmpdir(), 'vinaya-task-start-slow-'))
+        const argvLog = join(sandbox, 'argv.log')
+        const original = process.env[TASK_RUN_COMMAND_ENV]
+        let launched: number | null = null
+        try {
+          process.env[TASK_RUN_COMMAND_ENV] = slowLauncher(sandbox, argvLog)
+          let now = '2026-01-01T00:00:00.000Z'
+          const { handler, launches } = harness({
+            // The real launcher, the real spawn, the real confirm race — only
+            // the wait is shortened.
+            launch: (target, meta) => {
+              const outcome = defaultLaunch(target, meta, sandbox, 200)
+              return outcome.then((result) => {
+                if (result.status !== 'exited') launched = result.pid
+                return result
+              })
+            },
+            // The real observables the shipped deps bind, pointed at the sandbox.
+            isRunAlive: (issue) => {
+              const lock = readDriverLock(sandbox, issue)
+              return lock !== null && isDriverPidAlive(lock.pid)
+            },
+            isPidAlive: isDriverPidAlive,
+            now: () => now
+          })
+
+          const first = await handler({ tranche: 'unattended-run-v1', id: '14' }, CALLER)
+          expect(first.ok).toBe(true)
+          if (!first.ok) return
+          expect(first.result.started).toBe(true)
+
+          // Past even the stale-claim grace, while the launcher is still
+          // preparing: the only thing that can say the run is alive is the
+          // process itself, and it does.
+          now = new Date(Date.parse(now) + START_STALE_CLAIM_GRACE_MS + 60_000).toISOString()
+          const second = await handler({ tranche: 'unattended-run-v1', id: '14' }, CALLER)
+          expect(second.ok).toBe(true)
+          if (!second.ok) return
+          expect(second.result.started).toBe(false) // replayed
+          expect(second.result.requestId).toBe(first.result.requestId)
+          expect(launches).toHaveLength(1)
+
+          // Let the launcher finish coming up, then read its own record of
+          // what it was asked to do: ONE invocation, never two developers on
+          // one branch.
+          expect(await until(() => readDriverLock(sandbox, ISSUE) !== null, 8_000)).toBe(true)
+          expect(readFileSync(argvLog, 'utf8').trim().split('\n')).toEqual([
+            'task run unattended-run-v1 14 --agent claude'
+          ])
+        } finally {
+          killGroup(launched)
+          if (original === undefined) delete process.env[TASK_RUN_COMMAND_ENV]
+          else process.env[TASK_RUN_COMMAND_ENV] = original
+          cleanup()
+        }
+      })
     })
 
     it('reports a real ENOENT through its own LaunchResult, never as an unhandled error', async () => {

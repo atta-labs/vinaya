@@ -261,13 +261,16 @@ function waitForLiveDriver(
 
 /**
  * `root` defaults to the SAME resolution `devReviewLoop` itself uses but is
- * overridable so a test can point the confirm-wait at a temporary tree
- * (`defaultTaskResumeDeps.launch` never overrides it).
+ * overridable so a test can point the confirm-wait at a temporary tree;
+ * `timeoutMs` likewise, so a fixture can drive a REAL continuation slower
+ * than its own wait in a fraction of a second (`defaultTaskResumeDeps.launch`
+ * overrides neither).
  */
 export function defaultResumeLaunch(
   target: { pr: number; agent: AgentVendor; issue: number },
   meta: { escalationId: string; caller: string },
-  root: string = runtimeDir()
+  root: string = runtimeDir(),
+  timeoutMs: number = RESUME_CONFIRM_TIMEOUT_MS
 ): Promise<LaunchResult> {
   const program = process.env[RESUME_COMMAND_ENV]?.trim() || 'vinaya'
   const stderrPath = runPath(root, target.issue, {
@@ -287,7 +290,7 @@ export function defaultResumeLaunch(
     // immediately, whether spawn succeeded or threw synchronously.
     closeSync(stderrFd)
   }
-  return waitForLiveDriver(child, root, target.issue, stderrPath, RESUME_CONFIRM_TIMEOUT_MS, RESUME_CONFIRM_POLL_MS)
+  return waitForLiveDriver(child, root, target.issue, stderrPath, timeoutMs, RESUME_CONFIRM_POLL_MS)
 }
 
 // --- deps ---------------------------------------------------------------------
