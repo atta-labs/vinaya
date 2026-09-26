@@ -221,6 +221,13 @@ function scanSource(content: string): ScannedSource {
         continue
       }
     }
+    if (/[A-Za-z_$]/.test(c)) {
+      const word = (/^[A-Za-z_$][\w$]*/.exec(content.slice(i))?.[0] ?? c) as string
+      code(word)
+      previousMeaningful = word
+      i += word.length
+      continue
+    }
     code(c)
     if (!/\s/.test(c)) previousMeaningful = c
     i++
@@ -228,10 +235,38 @@ function scanSource(content: string): ScannedSource {
   return { withStrings: withStrings.join(''), codeOnly: codeOnly.join('') }
 }
 
-/** Where a value cannot already have ended, a `/` opens a regex rather than dividing. */
-function beginsRegexLiteral(previousMeaningful: string): boolean {
-  return previousMeaningful === '' || REGEX_MAY_FOLLOW.has(previousMeaningful)
+/**
+ * Where a value cannot already have ended, a `/` opens a regex rather than
+ * dividing. The previous meaningful TOKEN decides it, not the previous
+ * character: a regex in keyword position — `return /…/.test(x)`, `await`,
+ * `typeof`, `case` — follows a letter, and reading that as division opened a
+ * spurious string on the first quote inside the pattern and blanked the rest
+ * of the line. `tests/run-paths-only.test.ts` already had one (round 4
+ * review, MINOR).
+ */
+function beginsRegexLiteral(previousToken: string): boolean {
+  if (previousToken === '') return true
+  if (previousToken.length === 1) return REGEX_MAY_FOLLOW.has(previousToken)
+  return KEYWORDS_A_VALUE_FOLLOWS.has(previousToken)
 }
+
+/** Keywords a value — and so a regex literal — may directly follow. */
+const KEYWORDS_A_VALUE_FOLLOWS = new Set([
+  'return',
+  'typeof',
+  'case',
+  'await',
+  'yield',
+  'in',
+  'of',
+  'new',
+  'delete',
+  'void',
+  'instanceof',
+  'do',
+  'else',
+  'throw'
+])
 
 /** The tokens a value cannot follow: after any of them, a `/` opens a regex rather than dividing. A set of single characters rather than one packed string — a packed one reads as retired vocabulary to the architecture test that scans this tree. */
 const REGEX_MAY_FOLLOW = new Set([
@@ -404,22 +439,43 @@ function literalCommand(args: string): string | null {
   return line.trim().split(/\s+/)[0] as string
 }
 
-/** A working directory this call names: `{ cwd }`, `{ cwd: dir }`, or a threaded options object (`{ ...opts }`) whose own callers name it. */
-function namesWorkingDirectory(args: string): boolean {
-  return /\bcwd\s*[,:}]/.test(args) || /\.\.\.\s*(?:opts|options|spawnOpts|spawnOptions)\b/.test(args)
+/**
+ * A working directory this call names: `{ cwd }`, `{ cwd: dir }`, a threaded
+ * options object (`{ ...opts }`) whose own callers name it, or a `--cwd`
+ * ARGUMENT — `bun run --cwd <dir> build` chooses where it runs as explicitly as
+ * the option does, and `conformance/harness.ts`'s own build spawn is written
+ * that way. `argsWithStrings` carries the string content the flag lives in;
+ * `args` is the code-only view the rest of the rule reads.
+ */
+function namesWorkingDirectory(args: string, argsWithStrings: string): boolean {
+  return (
+    /\bcwd\s*[,:}]/.test(args) ||
+    /\.\.\.\s*(?:opts|options|spawnOpts|spawnOptions)\b/.test(args) ||
+    /--cwd\b/.test(argsWithStrings)
+  )
 }
 
 /**
- * An expression that resolves to this repository: a module's own path walked
- * up — `join(import.meta.dir, '..', …)`, or the `fileURLToPath(new URL('.',
- * import.meta.url))` form this very file uses. A captured `process.cwd()` is
- * deliberately NOT one of these: a fixture captures it to restore it
- * afterwards, which is the opposite of running something there. Handing
- * `process.cwd()` straight to a child is caught on its own, below.
+ * An expression that resolves to this repository: a module-path anchor walked
+ * up. Both halves are required and their ORDER is not, because the real shapes
+ * put them either way round — `join(import.meta.dir, '..', '..')` and
+ * `fileURLToPath(new URL('../..', import.meta.url))` — and requiring the `..`
+ * to come second meant the second form, which this file's own doc comment
+ * claimed to recognise, never matched at all (round 4 security review,
+ * MEDIUM). `__dirname` is an anchor too: `resolve(__dirname, '..', '..')` is
+ * the same walk in the other module system.
+ *
+ * A captured `process.cwd()` is deliberately NOT one of these: a fixture
+ * captures it to restore it afterwards, which is the opposite of choosing to
+ * run something there. Handing `process.cwd()` straight to a child is caught
+ * on its own, below.
  */
-const REPOSITORY_ROOTED_EXPRESSION = new RegExp(
-  `(?:import\\.meta\\.dir|import\\.meta\\.url)[\\s\\S]{0,160}?${QUOTE}\\.\\.${QUOTE}`
-)
+const MODULE_PATH_ANCHOR = /import\.meta\.dir|import\.meta\.url|__dirname|__filename/
+const WALKS_UP = new RegExp(`${QUOTE}\\.\\.(?:\\/[^\\u0027\\u0022\\u0060]*)?${QUOTE}`)
+
+function isRepositoryRootedExpression(expression: string): boolean {
+  return MODULE_PATH_ANCHOR.test(expression) && WALKS_UP.test(expression)
+}
 
 /** A binding that READS a repository-rooted path holds that file's CONTENTS, not a directory — `const source = readFileSync(join(import.meta.dir, '..', 'src', …))` is a source-text assertion, and handing it to `indexOf` runs nothing. */
 const READS_THE_PATH = /\b(?:readFileSync|readdirSync|existsSync|statSync|readFile)\s*\(/
@@ -427,12 +483,36 @@ const READS_THE_PATH = /\b(?:readFileSync|readdirSync|existsSync|statSync|readFi
 /** A path whose last literal segment carries an extension names a FILE, never a working directory — `join(import.meta.dir, '..', 'src', 'lib', 'log-sink.ts')` is a module this file imports or interpolates, and nothing runs IN it. */
 const NAMES_A_FILE = new RegExp(`${QUOTE}[^\\u0027\\u0022\\u0060/]+\\.[A-Za-z0-9]+${QUOTE}\\s*\\)?\\s*$`)
 
+/**
+ * A binding's whole initializer, however many lines it spans: from the `=` to
+ * the `;` or line end that closes it at bracket depth zero. Reading only to
+ * the end of the physical line meant a `const repoRoot = join(` wrapped by the
+ * formatter bound no name at all, and every use of it escaped the scan (round
+ * 4 review, MINOR; round 4 security review, MEDIUM) — the offence this file
+ * exists to catch, silenced by a reformat.
+ */
+function initializerFrom(code: string, start: number): string {
+  let depth = 0
+  for (let i = start; i < code.length; i++) {
+    const c = code[i] as string
+    if ('([{'.includes(c)) depth++
+    else if (')]}'.includes(c)) {
+      if (depth === 0) return code.slice(start, i)
+      depth--
+    } else if (depth === 0 && (c === ';' || (c === '\n' && !/[=+,?:&|(]\s*$/.test(code.slice(start, i))))) {
+      return code.slice(start, i)
+    }
+  }
+  return code.slice(start)
+}
+
 /** Every name a file binds — with `const`/`let`/`var`, exported or not — to a repository-rooted DIRECTORY. */
 function locallyBoundRepositoryRoots(code: string): string[] {
   const out: string[] = []
-  for (const m of code.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([^\n]*)/g)) {
-    const expression = m[2] as string
-    if (!REPOSITORY_ROOTED_EXPRESSION.test(expression)) continue
+  for (const m of code.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*/g)) {
+    if (m.index === undefined) continue
+    const expression = initializerFrom(code, m.index + m[0].length)
+    if (!isRepositoryRootedExpression(expression)) continue
     if (READS_THE_PATH.test(expression)) continue
     if (NAMES_A_FILE.test(expression.trim())) continue
     out.push(m[1] as string)
@@ -474,7 +554,39 @@ function repositoryRootedIdentifiers(rel: string, source: ScannedSource): string
     const bound = new Set(locallyBoundRepositoryRoots(moduleSource))
     for (const name of names) if (bound.has(name)) out.push(name)
   }
-  return out
+  return withOptionsObjectsCarrying(out, code)
+}
+
+/**
+ * Every name above, plus every OPTIONS object built around one:
+ * `const opts = { cwd: repoRoot }` carries this repository into whatever
+ * receives it, and `{ ...opts }` then satisfied the spawn rule's own
+ * `namesWorkingDirectory` while the binding site itself sat inside a
+ * `describe` body, whose callee runs nothing — so the directory reached the
+ * child with neither half of the rule seeing it (round 4 security review,
+ * LOW). Iterated to a fixed point, so an options object built from another one
+ * carries it too.
+ */
+function withOptionsObjectsCarrying(roots: string[], code: string): string[] {
+  const carriers = new Set(roots)
+  for (let pass = 0; pass < 3; pass++) {
+    const before = carriers.size
+    for (const m of code.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*/g)) {
+      if (m.index === undefined) continue
+      const name = m[1] as string
+      if (carriers.has(name)) continue
+      const initializer = initializerFrom(code, m.index + m[0].length)
+      for (const carrier of carriers) {
+        const escaped = escapeForRegExp(carrier)
+        if (new RegExp(`(?:cwd\\s*:\\s*|\\.\\.\\.\\s*)${escaped}\\b`).test(initializer)) {
+          carriers.add(name)
+          break
+        }
+      }
+    }
+    if (carriers.size === before) break
+  }
+  return [...carriers]
 }
 
 /**
@@ -562,64 +674,159 @@ function escapeForRegExp(value: string): string {
 }
 
 /**
- * Does this file move THIS process out of the repository — `process.chdir(dir)`
- * with a directory that is not the repository itself? That is the only way
- * in-process code can run anywhere else: a `cwd` option hands a directory to a
- * CHILD and says nothing about the caller.
- *
- * The first version of this predicate accepted the bare substring `cwd`
- * anywhere in the file, so any incidental token waived the whole in-process
- * rule — a destructured `const { cwd } = fixture`, a `{ cwd: string }` type,
- * the word inside a quoted sentence, even a literal `cwd: REPO_ROOT` (round 2
- * review; round 3 review, MINOR; round 3 security review, MEDIUM, which
- * planted real files at HEAD to prove each one). Nothing about a `cwd` is
- * evidence of where THIS process runs, so no form of it is consulted here any
- * more.
+ * The brace blocks containing `index`, innermost first, and finally the whole
+ * file. An approximation of lexical scope good enough for this scan's two
+ * questions — is there a `process.chdir` before this call in a block that
+ * encloses it, and is the producer this call names bound to a sink of the
+ * file's own there — and the reason both are decided PER CALL now: every
+ * waiver here used to be file-wide, so one `chdir` or one injected dependency
+ * anywhere in a file excused every producer call in it, including calls in
+ * other functions and calls made after the process had been moved back (round
+ * 4 review, MAJOR/MINOR; round 4 security review, MEDIUM twice, each proved
+ * live by appending a real leaking call to a file the scan then kept passing).
  */
-function relocatesThisProcess(rel: string, source: ScannedSource): boolean {
-  const repoRooted = new Set(repositoryRootedIdentifiers(rel, source))
-  for (const m of source.codeOnly.matchAll(/process\.chdir\s*\(\s*([A-Za-z_$][\w$.]*)?/g)) {
+function enclosingBlocks(code: string, index: number): [number, number][] {
+  const out: [number, number][] = []
+  let depth = 0
+  for (let i = index; i >= 0; i--) {
+    const c = code[i]
+    if (c === '}') depth++
+    else if (c === '{') {
+      if (depth > 0) {
+        depth--
+        continue
+      }
+      out.push([i, endOfBlock(code, i)])
+    }
+  }
+  out.push([0, code.length])
+  return out
+}
+
+/**
+ * Is `evidence` in the SAME block as `index`, or in one that encloses it?
+ * Comparing the evidence's own innermost block against the call's enclosing
+ * set is what makes this a scope question rather than a file-order one — the
+ * whole-file block is in every call's set, so "appears earlier in the file"
+ * would put a `chdir` in one function, or a sink built in another test case, in
+ * scope for a call it can never reach.
+ */
+function inScopeFor(code: string, evidence: number, index: number): boolean {
+  if (evidence >= index) return false
+  const [innermost] = enclosingBlocks(code, evidence)
+  const enclosing = enclosingBlocks(code, index)
+  return innermost !== undefined && enclosing.some(([from, to]) => from === innermost[0] && to === innermost[1])
+}
+
+/** The index just past the `}` closing the block that opens at `start`. */
+function endOfBlock(code: string, start: number): number {
+  let depth = 0
+  for (let i = start; i < code.length; i++) {
+    const c = code[i]
+    if (c === '{') depth++
+    else if (c === '}') {
+      depth--
+      if (depth === 0) return i + 1
+    }
+  }
+  return code.length
+}
+
+/**
+ * Names bound to a captured working directory — `const original = process.cwd()`.
+ * A `process.chdir` back into one of these is the standard `afterEach` restore:
+ * it puts the process back where it started, which in a test run is this
+ * repository, so treating it as proof the process left was an inversion of the
+ * rule (round 4 review, MAJOR; round 4 security review, MEDIUM).
+ */
+function capturedWorkingDirectories(code: string): Set<string> {
+  const out = new Set<string>()
+  for (const m of code.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*process\.cwd\s*\(\s*\)/g)) {
+    out.add(m[1] as string)
+  }
+  return out
+}
+
+/**
+ * Was this process moved OUT of the repository before `index`, in a block that
+ * encloses it? A `chdir` into this repository, or back into a captured
+ * directory, is not a move out — it is the offence, or the restore.
+ */
+function movedOutOfRepositoryBefore(index: number, code: string, repoRooted: Set<string>): boolean {
+  const restores = capturedWorkingDirectories(code)
+  for (const m of code.matchAll(/process\.chdir\s*\(\s*([A-Za-z_$][\w$.]*)?/g)) {
+    if (m.index === undefined) continue
     const target = m[1]
-    // A chdir INTO this repository is the offence, not the isolation; an
-    // unnamed target (an expression) is read as a directory of its own, and
-    // `repositoryRootedRunSites` reports it separately if it is not.
-    if (target !== undefined && repoRooted.has(target)) continue
-    return true
+    if (target !== undefined && (repoRooted.has(target) || restores.has(target))) continue
+    if (inScopeFor(code, m.index, index)) return true
   }
   return false
 }
 
 /**
- * Calls that write a Vinaya Log event in the process that makes them — the
- * producer boundaries `apps/cli/specs/log.md` § "Producer coverage is
- * enforced, not assumed" already names, plus the sink constructors behind
- * them. A member call is never one of these (`(?<!\.)`): `console.log(…)` is
- * not `log(…)`, and a handler called through an injected dependency
- * (`deps.log`) writes wherever the test told it to.
+ * Was this call made inside a callback handed to a wrapper in this same file
+ * whose own body moves the process out of the repository? That is how
+ * `lib/dev-review-loop-harness.ts` drives the loop:
+ * `withWorldEnv(world, () => devReviewLoop(…))`, and the `process.chdir` into
+ * that world's own scratch root lives in `withWorldEnv`, not in any block that
+ * lexically encloses the call.
  *
- * This is what decides the in-process case, instead of "the file starts no
- * process at all". A file that spawns ONE isolated child was exempted
- * wholesale before, so a spawn anywhere in it hid every in-process call it
- * also made, and the rule fired on no real file in the tree (round 3 review,
- * MINOR). Read against the code-only view, so a `log()` inside a fixture
- * SCRIPT — a template literal holding a program a child runs — is correctly
- * not this file's own in-process call.
+ * Resolved one hop, by NAME resolved to a definition in this file — never by
+ * the name alone: a wrapper this file does not define, or one that does not
+ * itself chdir, vouches for nothing.
  */
-/**
- * The file hands a producer its OWN destination, so nothing about this
- * repository is in scope for the events it writes: an injected
- * `resolveLogDestination`, or an `outboxRoot` of its own
- * (`lib/log-destination.test.ts`'s `sinkDeps`, which builds every sink it
- * exercises out of a temp directory). A property key in real code, never a
- * quoted phrase — the code-only view is what this is read against.
- *
- * This is the in-process counterpart of a spawned child's `cwd`: the child
- * gets a directory, and an in-process producer gets its destination directly.
- */
-const SUPPLIES_ITS_OWN_SINK_DESTINATION = /\b(?:resolveLogDestination|outboxRoot)\s*:/
+function calledInsideARelocatingWrapper(code: string, index: number, repoRooted: Set<string>): boolean {
+  for (const [from] of enclosingBlocks(code, index)) {
+    const callee = enclosingCallee(code, from)
+    if (callee === null || CALLEES_THAT_RUN_NOTHING.has(callee)) continue
+    const body = definitionBodyOf(callee, code)
+    if (body === null) continue
+    if (movedOutOfRepositoryBefore(body.end, body.code, repoRooted)) return true
+  }
+  const callee = enclosingCallee(code, index)
+  if (callee !== null && !CALLEES_THAT_RUN_NOTHING.has(callee)) {
+    const body = definitionBodyOf(callee, code)
+    if (body !== null && movedOutOfRepositoryBefore(body.end, body.code, repoRooted)) return true
+  }
+  return false
+}
 
-const CALLS_A_LOG_PRODUCER_IN_PROCESS =
-  /(?<!\.)\b(?:log|createLogSink|drainLogSink|dispatchRole|devReviewLoop|cancelDevReviewLoop|assessRound|runChecks|drainOutboxToWebhook)\s*\(/
+/** The body of `name`'s own definition in `code` — a `function name(…) { … }` or a `const name = (…) => { … }` — as its own text, with the offset its end sits at inside it. */
+function definitionBodyOf(name: string, code: string): { code: string; end: number } | null {
+  const escaped = escapeForRegExp(name)
+  const declaration = new RegExp(`(?:function\\s+${escaped}\\s*[(<]|(?:const|let|var)\\s+${escaped}\\s*=)`)
+  const m = declaration.exec(code)
+  if (m === null || m.index === undefined) return null
+  const open = code.indexOf('{', m.index)
+  if (open === -1) return null
+  const body = code.slice(open, endOfBlock(code, open))
+  return { code: body, end: body.length }
+}
+
+/**
+ * Is the producer this call names a sink the FILE built, with a destination of
+ * its own — `const { log } = createLogSink(deps)` — rather than the module-level
+ * default one? Resolved per call, in the blocks that enclose it, so a sink
+ * built inside one test case does not vouch for a call in another
+ * (`lib/log-destination.test.ts` builds one per case, and a call appended
+ * outside them all resolves this repository's own configuration — the round 4
+ * security review's own live proof).
+ *
+ * `createLogSink()` with no argument at all is the default-deps sink and is not
+ * one of these: it resolves exactly what the module-level `log()` resolves.
+ */
+function usesASinkOfItsOwn(name: string, index: number, code: string): boolean {
+  const escaped = escapeForRegExp(name)
+  const binding = new RegExp(
+    `(?:const|let|var)\\s*(?:\\{[^}]*\\b${escaped}\\b[^}]*\\}|${escaped})\\s*=\\s*createLogSink\\s*\\(\\s*[^)\\s]`,
+    'g'
+  )
+  for (const m of code.matchAll(binding)) {
+    if (m.index === undefined) continue
+    if (inScopeFor(code, m.index, index)) return true
+  }
+  return false
+}
 
 /**
  * Every real-process call site, found in the code-only view and read back in
@@ -642,7 +849,8 @@ function unisolatedCallSites(source: ScannedSource): string[] {
   const out: string[] = []
   for (const site of realProcessCallSites(source)) {
     if (site.command && CONFIGURATION_INERT_COMMANDS.has(site.command)) continue
-    if (namesWorkingDirectory(site.args)) continue
+    const open = source.codeOnly.indexOf('(', site.index)
+    if (namesWorkingDirectory(site.args, source.withStrings.slice(open, open + site.args.length))) continue
     out.push(`${source.withStrings.slice(site.index, site.index + 60).replace(/\s+/g, ' ')}…`)
   }
   return out
@@ -656,22 +864,131 @@ function readsDefaultDestination(source: ScannedSource): boolean {
 const IN_PROCESS_SITE = 'calls a Vinaya Log producer in this process without moving this process out of the repository'
 
 /**
+ * Every call that writes a Vinaya Log event in the process that makes it. Two
+ * families, because what isolates them differs:
+ *
+ *   - a SINK producer (`log`, `drainLogSink`, `createLogSink`) — isolated when
+ *     the name resolves to a sink this file built with deps of its own;
+ *   - a BOUNDARY producer (the drivers, the executor, the broker, the
+ *     task-tools handler factories) — isolated when the call itself is handed
+ *     a `log` dependency, which is how a test drives one without writing
+ *     anywhere real.
+ *
+ * The vocabulary is cross-checked against `lib/log-callers.test.ts`'s own
+ * `PRODUCER_BOUNDARIES` by a test below, since that table is what
+ * `apps/cli/specs/log.md` treats as the authoritative producer list and this
+ * one silently missed four of its boundaries (round 4 security review, LOW).
+ */
+const SINK_PRODUCERS = ['log', 'drainLogSink', 'createLogSink'] as const
+const BOUNDARY_PRODUCERS = [
+  'dispatchRole',
+  'devReviewLoop',
+  'cancelDevReviewLoop',
+  'assessRound',
+  'runChecks',
+  'runOne',
+  'requestEffect',
+  'authenticateWorkerInvocation',
+  'authenticateOperatorInvocation',
+  'EffectExecutor',
+  'drainOutboxToWebhook',
+  'createTaskCancelHandler',
+  'createTaskResumeHandler'
+] as const
+const LOG_PRODUCERS: readonly string[] = [...SINK_PRODUCERS, ...BOUNDARY_PRODUCERS]
+
+/**
+ * A boundary `PRODUCER_BOUNDARIES` names in prose rather than by symbol,
+ * paired with the symbols this scan watches for it. Source-visible so a new
+ * prose-named boundary cannot be covered by a silent assumption.
+ */
+const BOUNDARIES_NAMED_IN_PROSE: Record<string, readonly string[]> = {
+  'task-tools': ['createTaskCancelHandler', 'createTaskResumeHandler'],
+  broker: ['requestEffect', 'authenticateWorkerInvocation', 'authenticateOperatorInvocation']
+}
+
+/** A name that table uses for its OWN self-test fixture rather than for a producer — never a boundary this scan could watch. */
+const SELF_TEST_BOUNDARY_TOKENS = new Set(['planted'])
+
+/**
+ * Every name that reaches a producer inside this file, mapped to the producer
+ * it reaches: the producer's own name, an alias it was imported under
+ * (`import { log as writeLog }`), and a namespace import's member call
+ * (`import * as sink` … `sink.log(…)`). Both aliases scanned clean before
+ * (round 4 security review, LOW).
+ */
+function producerCallNames(code: string): Map<string, string> {
+  const out = new Map<string, string>()
+  for (const producer of LOG_PRODUCERS) out.set(producer, producer)
+  for (const m of code.matchAll(/import\s*\{([^}]*)\}\s*from/g)) {
+    for (const clause of (m[1] as string).split(',')) {
+      const parts = clause.split(/\s+as\s+/).map((part) => part.trim())
+      const [original, alias] = parts
+      if (original && alias && LOG_PRODUCERS.includes(original)) out.set(alias, original)
+    }
+  }
+  for (const m of code.matchAll(/import\s*\*\s*as\s+([A-Za-z_$][\w$]*)\s*from/g)) {
+    const namespace = m[1] as string
+    for (const producer of LOG_PRODUCERS) out.set(`${namespace}.${producer}`, producer)
+  }
+  return out
+}
+
+/** Every in-process producer call in `code`: where it is, the name it was called by, and the producer that name reaches. */
+function producerCallSites(code: string): { index: number; calledAs: string; producer: string }[] {
+  const out: { index: number; calledAs: string; producer: string }[] = []
+  for (const [calledAs, producer] of producerCallNames(code)) {
+    const escaped = escapeForRegExp(calledAs)
+    // A bare name is never a member call (`console.log` is not `log`); a
+    // namespace member call is matched with its own dot already in the name.
+    const pattern = calledAs.includes('.')
+      ? new RegExp(`\\b${escaped}\\s*\\(`, 'g')
+      : new RegExp(`(?<!\\.)\\b${escaped}\\s*\\(`, 'g')
+    for (const m of code.matchAll(pattern)) {
+      if (m.index === undefined) continue
+      out.push({ index: m.index, calledAs, producer })
+    }
+  }
+  return out.sort((a, b) => a.index - b.index)
+}
+
+/** A `log` dependency the call itself is handed — how a test drives a boundary producer without writing anywhere real. */
+function callIsHandedALogDependency(code: string, index: number): boolean {
+  const open = code.indexOf('(', index)
+  if (open === -1) return false
+  return /(?<!\.)\blog\s*:/.test(callArguments(code, open))
+}
+
+/**
  * Every way the file runs Vinaya code in this repository's own working
  * directory: a spawn naming no working directory, anything handed this
- * checkout's own root (a `cwd`, a positional argument, or a `chdir`), and a
- * log producer called in this process by a file that never relocates it.
+ * checkout's own root (a `cwd`, a positional argument, or a `chdir`), and
+ * every in-process producer call that is neither handed a destination of its
+ * own nor made with this process moved out of the repository.
  *
- * Every one of these reads the code-only view. A `logs.folder` a file writes
- * for a CHILD no longer excuses its own in-process read either — that
- * declaration pins where the child delivers, not where this process resolves
- * its own destination (round 3 review, MINOR; round 3 security review, LOW,
- * which reached the same waiver with nothing but the phrase in a string).
+ * Each producer call is judged on its own, in its own scope. Every earlier
+ * version of this decided it once per FILE, and every one of those waivers was
+ * demonstrated live: a `chdir` in one function excusing a call in another, a
+ * sink built in one test case excusing a call outside every case, a bare
+ * `outboxRoot:` key — even one written into a config for a CHILD, or in a type
+ * annotation — excusing the whole file (round 4 review, MAJOR and MINOR; round
+ * 4 security review, MEDIUM twice).
  */
 function repositoryWorkingDirectorySites(rel: string, source: ScannedSource): string[] {
+  const code = source.codeOnly
   const out = [...unisolatedCallSites(source), ...repositoryRootedRunSites(rel, source)]
-  const producesInProcess =
-    CALLS_A_LOG_PRODUCER_IN_PROCESS.test(source.codeOnly) && !SUPPLIES_ITS_OWN_SINK_DESTINATION.test(source.codeOnly)
-  if (producesInProcess && !relocatesThisProcess(rel, source)) out.push(IN_PROCESS_SITE)
+  const repoRooted = new Set(repositoryRootedIdentifiers(rel, source))
+  for (const site of producerCallSites(code)) {
+    if (movedOutOfRepositoryBefore(site.index, code, repoRooted)) continue
+    if (calledInsideARelocatingWrapper(code, site.index, repoRooted)) continue
+    const isolated = (SINK_PRODUCERS as readonly string[]).includes(site.producer)
+      ? site.producer === 'createLogSink'
+        ? /createLogSink\s*\(\s*[^)\s]/.test(code.slice(site.index, site.index + 40))
+        : usesASinkOfItsOwn(site.calledAs, site.index, code)
+      : callIsHandedALogDependency(code, site.index)
+    if (isolated) continue
+    out.push(`${IN_PROCESS_SITE}: ${site.calledAs}(…`)
+  }
   return out
 }
 
@@ -715,13 +1032,45 @@ describe("no test reads this repository's own log destination", () => {
     expect(helper).toContain('logsDir: join(logsFolder, FIXTURE_REPO_SEGMENT)')
   })
 
+  it('the producer vocabulary covers every boundary log-callers.test.ts names — that table is the authoritative list', () => {
+    const callers = scanSource(readFileSync(join(TESTS_ROOT, 'lib/log-callers.test.ts'), 'utf8')).withStrings
+    const boundaries = [...callers.matchAll(/name:\s*['"`]([^'"`]+)['"`]/g)].map((m) => m[1] as string)
+    expect(boundaries.length).toBeGreaterThanOrEqual(7)
+    const uncovered = boundaries.filter((boundary) => {
+      const token = /^[A-Za-z_$][\w$-]*/.exec(boundary)?.[0] ?? ''
+      if (LOG_PRODUCERS.includes(token) || SELF_TEST_BOUNDARY_TOKENS.has(token)) return false
+      const named = BOUNDARIES_NAMED_IN_PROSE[token]
+      return !named?.every((symbol) => LOG_PRODUCERS.includes(symbol))
+    })
+    expect(uncovered).toEqual([])
+  })
+
   // Every case below is a shape this rule exists to reject or to accept, run
   // through the real scan. Each was reported against a version of this file
-  // that got it wrong, so each stays as the standing proof of one defect. None
-  // of them spells a budgeted-spawn call out: `process-fixture-coverage.test.ts`
-  // scans this same tree, and reads a spawn named inside one of these samples
-  // as a real, unhardened call site of this file's own.
+  // that got it wrong, so each stays as the standing proof of one defect.
+  //
+  // Their spawns are written as `spawnSyncBudgeted`, which this file's own
+  // `SPAWNS_REAL_PROCESS_SOURCE` matches and
+  // `process-fixture-coverage.test.ts`'s own pattern does not — the same care
+  // that pattern's own comment already takes with its shape. That scanner pairs
+  // string delimiters and cannot see through a template literal's
+  // interpolations, so an unbudgeted spawn named inside one of these samples
+  // read to it as a real, unhardened call site of this file's own — and a name
+  // its pattern matches is avoided even in this prose, since a delimiter it
+  // mis-pairs can expose a comment to it as code.
   const sitesFor = (sample: string): string[] => repositoryWorkingDirectorySites(GUARD_FILE, scanSource(sample))
+  const inProcessSites = (sample: string): string[] =>
+    sitesFor(sample).filter((site) => site.startsWith(IN_PROCESS_SITE))
+  // Samples that need a quote or a backtick CHARACTER build it rather than
+  // writing it, and none of them nests a template inside another: both keep
+  // every string delimiter in this file balanced for the OTHER scans that read
+  // this same tree, which pair delimiters without understanding a template's
+  // interpolations.
+  const SINGLE = String.fromCharCode(39)
+  const DOUBLE = String.fromCharCode(34)
+  const BACKTICK = String.fromCharCode(96)
+  const quoted = (text: string): string => `${SINGLE}${text}${SINGLE}`
+
   const A_DEFAULT_READ =
     "const landed = readFileSync(join(home, '.vinaya', 'runtime', 'r', 'logs', 'r', '558.ndjson'), 'utf8')"
   const AN_IN_PROCESS_PRODUCER = "await log({ operation: 'task_start' })"
@@ -736,13 +1085,72 @@ describe("no test reads this repository's own log destination", () => {
     expect(sitesFor(sample)).not.toEqual([])
   })
 
+  it('…and so does the URL form of the same walk, and the __dirname one, and one the formatter wrapped across lines', () => {
+    const forms = [
+      "const repoRoot = fileURLToPath(new URL('../..', import.meta.url))",
+      "const repoRoot = resolve(__dirname, '..', '..')",
+      "const repoRoot = join(\n        import.meta.dir,\n        '..',\n        '..'\n      )"
+    ]
+    for (const binding of forms) {
+      const sample = `
+      ${binding}
+      const found = findOutboxFile(join(home, '.vinaya'), '991.ndjson')
+      const out = runFixtureScript(scriptPath, repoRoot, env)
+    `
+      expect(sitesFor(sample), binding).not.toEqual([])
+    }
+  })
+
+  it('…and so does one threaded through a spread options object, which satisfied the spawn rule by shape alone', () => {
+    const sample = `
+      const repoRoot = join(import.meta.dir, '..', '..')
+      const opts = { cwd: repoRoot }
+      const found = findOutboxFile(join(home, '.vinaya'), '991.ndjson')
+      const r = spawnSyncBudgeted('bun', [bin, 'dispatch'], { ...opts, env })
+    `
+    expect(sitesFor(sample)).not.toEqual([])
+  })
+
   it('a log producer called in this process is flagged: the test runner runs in the repository', () => {
     const sample = `
       import { log } from '../src/lib/log-sink.js'
       ${AN_IN_PROCESS_PRODUCER}
       ${A_DEFAULT_READ}
     `
-    expect(sitesFor(sample)).toEqual([IN_PROCESS_SITE])
+    expect(inProcessSites(sample)).toHaveLength(1)
+  })
+
+  it('…and so is one reached through an import alias, or through a namespace import', () => {
+    const aliased = `
+      import { log as writeLog } from '../src/lib/log-sink.js'
+      await writeLog({ operation: 'task_start' })
+      ${A_DEFAULT_READ}
+    `
+    expect(inProcessSites(aliased)).toHaveLength(1)
+    const namespaced = `
+      import * as sink from '../src/lib/log-sink.js'
+      await sink.log({ operation: 'task_start' })
+      ${A_DEFAULT_READ}
+    `
+    expect(inProcessSites(namespaced)).toHaveLength(1)
+  })
+
+  it('…and so is a boundary producer driven with no log dependency of the caller’s own', () => {
+    const sample = `
+      import { devReviewLoop } from '../src/lib/dev-review-loop.js'
+      await devReviewLoop(input, { fetchPrBody: () => 'x' })
+      ${A_DEFAULT_READ}
+    `
+    expect(inProcessSites(sample)).toHaveLength(1)
+  })
+
+  it('a boundary producer handed a log dependency is accepted — that is how a test drives one writing nowhere real', () => {
+    const sample = `
+      import { createTaskCancelHandler } from '../src/lib/task-tools/cancel.js'
+      const handler = createTaskCancelHandler({ runtimeDir: () => outbox, log: (e) => { seen.push(e) } })
+      ${A_DEFAULT_READ}
+    `
+    expect(inProcessSites(sample)).toEqual([])
   })
 
   it('…and still flagged when the same file also spawns a properly isolated child, which used to excuse it wholesale', () => {
@@ -753,7 +1161,7 @@ describe("no test reads this repository's own log destination", () => {
       ${AN_IN_PROCESS_PRODUCER}
       ${A_DEFAULT_READ}
     `
-    expect(sitesFor(sample)).toEqual([IN_PROCESS_SITE])
+    expect(inProcessSites(sample)).toHaveLength(1)
   })
 
   it('a chdir INTO this repository is the offence, never the isolation', () => {
@@ -765,18 +1173,104 @@ describe("no test reads this repository's own log destination", () => {
       ${A_DEFAULT_READ}
     `
     const sites = sitesFor(sample)
-    expect(sites).toContain(IN_PROCESS_SITE)
+    expect(sites.filter((site) => site.startsWith(IN_PROCESS_SITE))).toHaveLength(1)
     expect(sites.some((site) => site.includes('chdir'))).toBe(true)
   })
 
-  it('a chdir into a directory of its own does excuse it — that is what moving this process means', () => {
+  it('a chdir BACK into a captured directory is the restore idiom, not a move out', () => {
     const sample = `
       import { log } from '../src/lib/log-sink.js'
-      process.chdir(world.repoRoot)
+      const original = process.cwd()
+      afterEach(() => {
+        process.chdir(original)
+      })
       ${AN_IN_PROCESS_PRODUCER}
       ${A_DEFAULT_READ}
     `
-    expect(sitesFor(sample)).toEqual([])
+    expect(inProcessSites(sample)).toHaveLength(1)
+  })
+
+  it('a chdir in one function excuses nothing in another — every call is judged where it sits', () => {
+    const sample = `
+      import { log } from '../src/lib/log-sink.js'
+      function inItsOwnWorld() {
+        process.chdir(world.repoRoot)
+      }
+      export async function leaked() {
+        ${AN_IN_PROCESS_PRODUCER}
+      }
+      ${A_DEFAULT_READ}
+    `
+    expect(inProcessSites(sample)).toHaveLength(1)
+  })
+
+  it('a chdir out of the repository before the call, in a block that encloses it, does excuse it', () => {
+    const sample = `
+      import { log } from '../src/lib/log-sink.js'
+      async function run() {
+        process.chdir(world.repoRoot)
+        ${AN_IN_PROCESS_PRODUCER}
+      }
+      ${A_DEFAULT_READ}
+    `
+    expect(inProcessSites(sample)).toEqual([])
+  })
+
+  it('…and so does a wrapper this file defines whose own body moves the process, one hop away', () => {
+    const sample = `
+      import { log } from '../src/lib/log-sink.js'
+      export async function withWorldEnv(world, fn) {
+        process.chdir(world.repoRoot)
+        try {
+          return await fn()
+        } finally {
+          process.chdir(savedCwd)
+        }
+      }
+      const result = withWorldEnv(world, () => log({ operation: 'task_start' }))
+      ${A_DEFAULT_READ}
+    `
+    expect(inProcessSites(sample)).toEqual([])
+  })
+
+  it('a sink built from deps of its own excuses the calls in its own scope — and nothing outside them', () => {
+    const inScope = `
+      import { createLogSink } from '../src/lib/log-sink.js'
+      it('writes where it was told', () => {
+        const { log } = createLogSink({ outboxRoot: () => join(dir, 'queue'), home: () => dir })
+        log(DISPATCHED)
+      })
+      ${A_DEFAULT_READ}
+    `
+    expect(inProcessSites(inScope)).toEqual([])
+    const leakedOutside = `
+      import { createLogSink, log } from '../src/lib/log-sink.js'
+      it('writes where it was told', () => {
+        const { log: ownLog } = createLogSink({ outboxRoot: () => join(dir, 'queue') })
+        ownLog(DISPATCHED)
+      })
+      export async function leakedProducerCall() {
+        ${AN_IN_PROCESS_PRODUCER}
+      }
+      ${A_DEFAULT_READ}
+    `
+    expect(inProcessSites(leakedOutside)).toHaveLength(1)
+  })
+
+  it('a bare outboxRoot key excuses nothing — not one written for a child, not one in a type', () => {
+    for (const token of [
+      "writeFileSync(cfgPath, JSON.stringify({ outboxRoot: join(tmp, 'child') }))",
+      'type Deps = { outboxRoot: () => string }',
+      'const childConfig = { resolveLogDestination: () => ({ kind: 0 }) }'
+    ]) {
+      const sample = `
+        import { log } from '../src/lib/log-sink.js'
+        ${token}
+        ${AN_IN_PROCESS_PRODUCER}
+        ${A_DEFAULT_READ}
+      `
+      expect(inProcessSites(sample), token).toHaveLength(1)
+    }
   })
 
   it('no incidental cwd token excuses an in-process producer — a destructured one, a type, or a quoted sentence', () => {
@@ -792,7 +1286,7 @@ describe("no test reads this repository's own log destination", () => {
         ${AN_IN_PROCESS_PRODUCER}
         ${A_DEFAULT_READ}
       `
-      expect(sitesFor(sample), token).toEqual([IN_PROCESS_SITE])
+      expect(inProcessSites(sample), token).toHaveLength(1)
     }
   })
 
@@ -807,31 +1301,21 @@ describe("no test reads this repository's own log destination", () => {
         ${AN_IN_PROCESS_PRODUCER}
         ${A_DEFAULT_READ}
       `
-      expect(sitesFor(sample), declaration).toEqual([IN_PROCESS_SITE])
+      expect(inProcessSites(sample), declaration).toHaveLength(1)
     }
   })
 
   it('a producer call inside a fixture SCRIPT belongs to the child that runs it, not to this file', () => {
     const sample = [
-      "const fixture = isolatedConfigFixture('x-')",
-      'const script = `',
-      "import { log } from '../../src/lib/log-sink.js'",
-      "await log({ operation: 'task_start' })",
-      '`',
+      `const fixture = isolatedConfigFixture(${quoted('x-')})`,
+      `const script = ${BACKTICK}`,
+      `import { log } from ${quoted('../../src/lib/log-sink.js')}`,
+      `await log({ operation: ${quoted('task_start')} })`,
+      BACKTICK,
       'const out = runFixtureScript(scriptPath, fixture.cwd, fixture.env)',
       A_DEFAULT_READ
     ].join('\n')
     expect(readsDefaultDestination(scanSource(sample))).toBe(true)
-    expect(sitesFor(sample)).toEqual([])
-  })
-
-  it('a producer built from injected deps is accepted — its destination is the one the file handed it', () => {
-    const sample = `
-      import { createLogSink } from '../src/lib/log-sink.js'
-      const { log } = createLogSink({ outboxRoot: () => join(dir, 'queue'), home: () => dir })
-      log(DISPATCHED)
-      ${A_DEFAULT_READ}
-    `
     expect(sitesFor(sample)).toEqual([])
   })
 
@@ -845,28 +1329,44 @@ describe("no test reads this repository's own log destination", () => {
   })
 
   it('a URL in a string no longer ends the line for the scan — what follows it is still code', () => {
-    const scheme = `${'ht'}tps:${'//'}example.com/x`
+    const scheme = `ht${'tp'}s:${'//'}example.com/x`
     const sample = [
-      `const endpoint = '${scheme}'; Bun.spawnSync([bin, 'check'], { env: process.env })`,
+      `const endpoint = ${quoted(scheme)}; spawnSyncBudgeted('bun', [bin], { env: process.env })`,
       A_DEFAULT_READ
     ].join('\n')
     const sites = sitesFor(sample)
     expect(sites).toHaveLength(1)
-    expect(sites[0]).toContain('spawnSync')
+    expect(sites[0]).toContain('spawnSyncBudgeted')
   })
 
   it('a block-comment opener inside a string blanks nothing after it either', () => {
     const opener = `${'/'}${'*'}`
     const sample = [
-      `const pattern = '${opener} not a comment'; Bun.spawnSync([bin, 'check'], { env: process.env })`,
+      `const pattern = ${quoted(`${opener} not a comment`)}; spawnSyncBudgeted('bun', [bin], { env: process.env })`,
       A_DEFAULT_READ
     ].join('\n')
     expect(sitesFor(sample)).toHaveLength(1)
   })
 
+  it('a regex in keyword position is a regex, not a division — a quote inside it blanks nothing', () => {
+    const sample = [
+      `  return /(?:^|\\})\\s*from\\s*[${SINGLE}${DOUBLE}]/.test(line); spawnSyncBudgeted('bun', [bin], { env })`,
+      A_DEFAULT_READ
+    ].join('\n')
+    expect(sitesFor(sample)).toHaveLength(1)
+  })
+
+  it('…held against the real file that carried one: its own line survives the scan intact', () => {
+    const raw = readFileSync(join(TESTS_ROOT, 'run-paths-only.test.ts'), 'utf8')
+    const lines = raw.split('\n')
+    const line = lines.findIndex((text) => text.trimStart().startsWith('return /') && text.includes('.test(line)'))
+    expect(line).toBeGreaterThan(0)
+    expect(scanSource(raw).codeOnly.split('\n')[line]).toBe(lines[line] as string)
+  })
+
   it('a real comment still blanks — a doc comment naming a spawn is not a spawn', () => {
     const sample = [
-      '// Bun.spawnSync([bin, "check"], { env })',
+      `// spawnSyncBudgeted('bun', [bin], { env })`,
       '/* and process.chdir(repoRoot) named in prose */',
       A_DEFAULT_READ
     ].join('\n')
@@ -875,14 +1375,14 @@ describe("no test reads this repository's own log destination", () => {
 
   it("one file's scan never moves another's starting point — the matcher carries no state between them", () => {
     const offending = scanSource(`
-      Bun.spawnSync([bin, 'check'], { env })
+      spawnSyncBudgeted('bun', [bin], { env })
       ${A_DEFAULT_READ}
     `)
     const alone = unisolatedCallSites(offending)
     expect(alone).toHaveLength(1)
     // A longer, compliant file scanned first: a shared global matcher would
     // leave its own lastIndex past this sample's only call site.
-    unisolatedCallSites(scanSource(`${' '.repeat(2000)}\nBun.spawnSync([bin, 'check'], { cwd: dir, env })\n`))
+    unisolatedCallSites(scanSource(`${' '.repeat(2000)}\nspawnSyncBudgeted('bun', [bin], { cwd: dir, env })\n`))
     expect(unisolatedCallSites(offending)).toEqual(alone)
   })
 })

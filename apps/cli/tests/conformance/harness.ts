@@ -199,13 +199,33 @@ export function buildSandbox(): Sandbox {
   mkdirSync(runtimeDir, { recursive: true })
   const launchFile = join(sandbox, 'launches.log')
 
-  // `task_start` (O1) now confirms its launch alive on the task's own driver
-  // lock before reporting `started: true`, resolved through the SAME
-  // `{tranche, id}` → Issue read `task_resume`/`task_status` already use —
-  // so this fake `gh` must answer `gatherTaskStatusList()`'s three calls for
-  // `conformance/1` (issue list, a frozen-brief comment, an open-PR lookup),
-  // the same contract `tests/commands/task-status.test.ts`'s own stub
-  // satisfies, not just the bare `issue list` the launch path used to need.
+  // A `vinaya.config.json` of the sandbox's own: this repository's, with its
+  // `logs` destination replaced by one inside the sandbox. Every other setting
+  // is copied verbatim, because these scenarios read them — a sandbox holding
+  // only a `logs` key made `task_start` refuse outright.
+  //
+  // Two things need this file. `findLocalConfig()` walks up from the server's
+  // working directory and stops only at a directory holding a
+  // `vinaya.config.json` or a `.git`, so a server pointed at a bare temp
+  // directory walks past it to the filesystem root — and on a host whose
+  // `tmpdir` is the shared `/tmp`, a config planted there by any local user
+  // becomes that server's TRUSTED repo-local configuration. And whatever
+  // configuration is found decides the destination: run from this checkout, as
+  // every client below used to be, these conformance servers resolved this
+  // repository's own `logs.url` and POSTed their fixture events to the real log
+  // server (round 4 security review, LOW). The declared folder is the one the
+  // sandbox's own `VINAYA_RUNTIME_DIR` already makes the default, so an
+  // unattended classification — whose local value the trust-anchor gate
+  // refuses — lands in exactly the same place.
+  const repositoryConfig = JSON.parse(readFileSync(join(REPO_ROOT, 'vinaya.config.json'), 'utf8')) as Record<
+    string,
+    unknown
+  >
+  writeFileSync(
+    join(sandbox, 'vinaya.config.json'),
+    `${JSON.stringify({ ...repositoryConfig, logs: { folder: join(runtimeDir, 'logs') } }, null, 2)}\n`
+  )
+
   const gh = join(binDir, 'gh')
   writeFileSync(
     gh,
@@ -405,7 +425,7 @@ export function defineConformanceSuite(runtime: 'claude' | 'codex', invocation: 
     it('Clean result — task_start launches exactly once and returns the durable run identity', async () => {
       const sb = buildSandbox()
       try {
-        const client = new SpawnRpcClient(invocation, sb.env, REPO_ROOT)
+        const client = new SpawnRpcClient(invocation, sb.env, sb.sandbox)
         await client.request('initialize', {})
         const { isError, structured } = await client.callTool('task_start', { tranche: 'conformance', id: '1' })
         expect(isError).toBe(false)
@@ -444,7 +464,7 @@ export function defineConformanceSuite(runtime: 'claude' | 'codex', invocation: 
           reason: 'infrastructure',
           detail: 'reviewer.md was never written for round 1'
         })
-        const client = new SpawnRpcClient(invocation, sb.env, REPO_ROOT)
+        const client = new SpawnRpcClient(invocation, sb.env, sb.sandbox)
         await client.request('initialize', {})
         const { isError, structured } = await client.callTool('task_escalation_read', {
           task: { issue: ISSUE_MECHANICAL }
@@ -469,7 +489,7 @@ export function defineConformanceSuite(runtime: 'claude' | 'codex', invocation: 
           reason: 'no_push',
           detail: 'worktree task/conformance/1'
         })
-        const client = new SpawnRpcClient(invocation, sb.env, REPO_ROOT)
+        const client = new SpawnRpcClient(invocation, sb.env, sb.sandbox)
         await client.request('initialize', {})
         const { isError, structured } = await client.callTool('task_escalation_read', {
           task: { issue: ISSUE_RETRIES }
@@ -494,7 +514,7 @@ export function defineConformanceSuite(runtime: 'claude' | 'codex', invocation: 
           head: 'headsha1',
           escalationId: `${ISSUE_FRESH}-1-headsha1`
         })
-        const client = new SpawnRpcClient(invocation, sb.env, REPO_ROOT)
+        const client = new SpawnRpcClient(invocation, sb.env, sb.sandbox)
         await client.request('initialize', {})
 
         const first = await client.callTool('task_escalation_read', { task: { issue: ISSUE_FRESH } })
@@ -522,7 +542,7 @@ export function defineConformanceSuite(runtime: 'claude' | 'codex', invocation: 
       const sb = buildSandbox()
       try {
         writePauseFixture(sb.runtimeDir, { task: ISSUE_INPUT_CHANGE, reason: 'objectives_changed' })
-        const client = new SpawnRpcClient(invocation, sb.env, REPO_ROOT)
+        const client = new SpawnRpcClient(invocation, sb.env, sb.sandbox)
         await client.request('initialize', {})
         const { structured } = await client.callTool('task_escalation_read', { task: { issue: ISSUE_INPUT_CHANGE } })
         const items = structured.items as Array<Record<string, unknown>>
@@ -547,7 +567,7 @@ export function defineConformanceSuite(runtime: 'claude' | 'codex', invocation: 
           detail: 'security reviewer raised ESCALATE'
         })
         writeEscalationFixture(sb.runtimeDir, ISSUE_HANDOFF, { rulingOrdinal: 0 })
-        const client = new SpawnRpcClient(invocation, sb.env, REPO_ROOT)
+        const client = new SpawnRpcClient(invocation, sb.env, sb.sandbox)
         await client.request('initialize', {})
         const { structured } = await client.callTool('task_escalation_read', { task: { issue: ISSUE_HANDOFF } })
         const items = structured.items as Array<Record<string, unknown>>

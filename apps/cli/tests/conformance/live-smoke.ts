@@ -99,9 +99,9 @@ async function main(): Promise<void> {
     const mcpConfigPath = join(sb.sandbox, '.mcp.json')
     writeFileSync(mcpConfigPath, claudeMcpJsonFile({ dir: 'apps/cli', bin: ABS_BIN } as never))
 
-    // The server's own working directory is the sandbox, never this checkout,
-    // and the sandbox carries a `vinaya.config.json` of its own. Both halves
-    // are load-bearing. `config.ts`'s `findLocalConfig()` walks up from the
+    // The server's own working directory is the sandbox, never this checkout.
+    // `buildSandbox()` writes the `vinaya.config.json` that makes that
+    // meaningful — both halves are load-bearing. `config.ts`'s `findLocalConfig()` walks up from the
     // server's working directory, so a server spawned in this checkout reads
     // THIS repository's `logs` setting and delivers the one event this script
     // writes to whatever `logs.url` is declared there, not to
@@ -120,10 +120,6 @@ async function main(): Promise<void> {
     // to the default folder — `<runtimeDir>/logs`, the same path.
     const serverCwd = sb.sandbox
     const sandboxLogsFolder = join(sb.runtimeDir, 'logs')
-    writeFileSync(
-      join(serverCwd, 'vinaya.config.json'),
-      `${JSON.stringify({ logs: { folder: sandboxLogsFolder } }, null, 2)}\n`
-    )
     const client = new SpawnRpcClient({ command: 'node', args: [ABS_BIN, 'task-tools', 'serve'] }, sb.env, serverCwd)
     await client.request('initialize', {})
     const { isError, structured } = await client.callTool('task_resume', { task: { issue: ISSUE } })
