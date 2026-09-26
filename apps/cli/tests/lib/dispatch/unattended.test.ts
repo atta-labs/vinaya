@@ -431,3 +431,42 @@ exit 0
     expect(result.stderr).not.toContain('no subscription login in Vinaya yet')
   })
 })
+
+describe('vinaya dispatch — O4 the worker sandbox off behaves exactly as today', () => {
+  it('an unconfined dispatch inherits the operator environment unchanged, so the agent signs in with its own subscription login', () => {
+    const fixture = buildGitFixture({ requireWorkerIsolation: false })
+    // The fake vendor reports back, through a shell probe rather than a
+    // `process.env` read, what its own environment actually carried — a
+    // confined child's `bun`/`node` reads `process.env` back empty under
+    // Seatbelt, so only a shell probe answers the same way on both paths.
+    writeFileSync(
+      join(fixture.binDir, 'claude'),
+      [
+        '#!/bin/bash',
+        `touch "${fixture.markerFile}"`,
+        `printf '{"inherited":"%s","home":"%s"}' "$ISOLATION_FIXTURE_MARKER" "$HOME" > "${fixture.envCaptureFile}"`,
+        'cat > /dev/null',
+        `printf '%s' '{"session_id":"sess-x","usage":{"input_tokens":1,"output_tokens":1}}'`,
+        'exit 0'
+      ].join('\n')
+    )
+    chmodSync(join(fixture.binDir, 'claude'), 0o755)
+
+    const result = runDispatchNoAmbientLogin(fixture, ['--unattended'], 'claude', {
+      ISOLATION_FIXTURE_MARKER: 'inherited-from-the-operator'
+    })
+
+    expect(result.status, `stderr: ${result.stderr}`).toBe(0)
+    expect(existsSync(fixture.markerFile)).toBe(true)
+    const captured = JSON.parse(readFileSync(fixture.envCaptureFile, 'utf8')) as {
+      inherited: string
+      home: string
+    }
+    // A variable no allowlist names: only a whole-environment spread
+    // carries it, which is exactly the sandbox-off path's own shape.
+    expect(captured.inherited).toBe('inherited-from-the-operator')
+    // And the child's HOME is the operator's real one, never a staged or
+    // synthetic directory — nothing about this path is rewritten.
+    expect(captured.home).toBe(fixture.home)
+  })
+})
