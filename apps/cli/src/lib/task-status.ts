@@ -16,11 +16,17 @@
 
 import { execFileSync } from 'node:child_process'
 import { readFileSync, readdirSync } from 'node:fs'
-import { resolveNewestFrozenBrief, type PauseReason } from '@attalabs/aeg-core'
+import {
+  defaultControlStoreDeps,
+  readEffect,
+  readLoopState,
+  resolveNewestFrozenBrief,
+  type PauseReason
+} from '@attalabs/aeg-core'
 import { resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
 import { findOpenPrForBranch, runtimeDir } from './dev-review-loop.js'
-import { DRIVER_LOCK_FILENAME, runPath } from './run-paths.js'
+import { DRIVER_LOCK_FILENAME, runPath, tasksExecutionRoot } from './run-paths.js'
 import { loopLogPathFor, loopsRoot, type LoopLogRepo } from './loop-log.js'
 import { findRecordedControllerRun } from './task-run-background.js'
 
@@ -262,42 +268,47 @@ function readPauseState(root: string, task: number): PauseState | null {
   }
 }
 
-type ForgeEffectRecord = { effectId: string; status: 'started' | 'posted'; url?: string }
-
-function readEffect(root: string, task: number, key: string): ForgeEffectRecord | null {
-  const raw = readIfExists(runPath(root, task, { area: 'control', file: `effect-${key}.json` }))
-  if (!raw) return null
-  try {
-    return JSON.parse(raw) as ForgeEffectRecord
-  } catch {
-    return null
-  }
-}
-
 /**
  * The highest round for which BOTH the reviewer and security verdict effect
- * markers read `status: 'posted'` — `publishRound`'s own two-post contract,
- * read back from the outbox rather than the forge (Traps to avoid: never
- * read PR comments to decide `published`). `null` when no round has
+ * records read `status: 'verified'` — `publishRound`'s own two-post contract,
+ * read back through the control store's own `readEffect` (Traps to avoid:
+ * never glob file names — the effect layout already moved once, from a flat
+ * `control/effect-<key>.json` to the store's own `control/effect/<key>.json`;
+ * and never read PR comments to decide `published`). `null` when no round has
  * published cleanly.
+ *
+ * The control store advances a published verdict effect to `verified` — the
+ * one status this reads as published. A `verified` write is the record the
+ * `EffectExecutor` leaves once the comment's own return value was recorded or
+ * a recovery reconciled it against the remote (`EffectRecordSchema`). A
+ * `started` verdict effect is a post whose confirmation was interrupted — the
+ * write was persisted but never verified — and is NOT yet published;
+ * `uncertain` is a recovery that could not reconcile at all, likewise not
+ * published. Only `verified` counts.
+ *
+ * The single reader shared by `deriveLoopState` here and the task-tools read
+ * module (`task-tools/read.ts` imports this rather than keeping a second
+ * copy). Rounds are bounded above by the durable `loop_state` record's own
+ * `round` — the driver writes it at every transition, `publish` included
+ * (`persistCurrentLoopState('publish')` runs right after `publishRound`), so
+ * it is never below a round that actually published — and each round is read
+ * through `readEffect`, never enumerated off disk. No `loop_state` record
+ * means no run ever persisted state for this task, so nothing has published.
  */
-function newestPublishedRound(root: string, task: number): number | null {
-  let entries: string[]
-  try {
-    entries = readdirSync(runPath(root, task, { area: 'control' }))
-  } catch {
-    return null
-  }
-  const candidateRounds = new Set<number>()
-  for (const name of entries) {
-    const m = /^effect-(\d+)-reviewer-verdict\.json$/.exec(name)
-    if (m) candidateRounds.add(Number(m[1]))
-  }
+export function newestPublishedRound(root: string, task: number): number | null {
+  const deps = defaultControlStoreDeps(() => tasksExecutionRoot(root))
+  const loopState = readLoopState(deps, task)
+  if (loopState.status !== 'ok') return null
   let newest: number | null = null
-  for (const round of candidateRounds) {
-    const reviewer = readEffect(root, task, `${round}-reviewer-verdict`)
-    const security = readEffect(root, task, `${round}-security-verdict`)
-    if (reviewer?.status === 'posted' && security?.status === 'posted' && (newest === null || round > newest)) {
+  for (let round = 1; round <= loopState.value.round; round++) {
+    const reviewer = readEffect(deps, task, `${round}-reviewer-verdict`)
+    const security = readEffect(deps, task, `${round}-security-verdict`)
+    if (
+      reviewer.status === 'ok' &&
+      reviewer.value.status === 'verified' &&
+      security.status === 'ok' &&
+      security.value.status === 'verified'
+    ) {
       newest = round
     }
   }
