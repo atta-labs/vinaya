@@ -1,6 +1,8 @@
 # Log server — the reference destination for Vinaya log events
 
-Status: shipped, except the live route (§ 5, "Live"), which is designed here and arrives with the WebSocket hub. Until it does, `/live` is an unknown path and answers `404`.
+Status: draft
+
+Everything below ships, except the live route (§ 5, "Live"), which is designed here and arrives with the WebSocket hub. Until it does, `/live` is an unknown path and answers `404`.
 
 A small server that receives the events a Vinaya installation delivers to a `logs.url` destination (`apps/cli/specs/log.md` § The destination), keeps every one of them, lets a reader page through them from any position, and pushes each new one to live viewers as it arrives. It runs on Cloudflare's free plan and costs nothing at the volume measured below. Any Vinaya adopter can deploy their own copy; the sending side needs no change, because the server accepts exactly what the CLI already sends.
 
