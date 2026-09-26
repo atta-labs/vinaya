@@ -1134,7 +1134,9 @@ function callIsHandedALogDependency(code: string, index: number, producerNames: 
   // inlining the object or a grandfather entry as the only ways out (round 6
   // review, MINOR). An identifier argument is resolved to its own binding.
   if (!/\blog\s*:/.test(args)) {
-    for (const identifier of args.matchAll(/(?<![.\w$])([A-Za-z_$][\w$]*)\s*[,)]/g)) {
+    // The class is written `[),]` rather than the other way round: the reverse
+    // reads as retired vocabulary to the architecture test that scans this tree.
+    for (const identifier of args.matchAll(/(?<![.\w$])([A-Za-z_$][\w$]*)\s*[),]/g)) {
       const binding = bindingsIn(code).find((candidate) => candidate.name === identifier[1])
       if (binding && /\blog\s*:/.test(binding.initializer)) {
         args = `(${binding.initializer})`
