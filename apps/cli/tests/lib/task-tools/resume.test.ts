@@ -84,11 +84,52 @@ function writeEscalationFixture(overrides: Partial<EscalationInput> = {}) {
   })
 }
 
+/**
+ * A published round in the control store's own layout — both verdict effects
+ * at `verified` under `<task>/control/effect/<key>.json`, plus the `loop_state`
+ * record whose `round` bounds the shared `newestPublishedRound` reader — the
+ * same shape a clean publish leaves behind (retires the old flat
+ * `control/effect-<key>.json` markers this task removed).
+ */
 function markRoundPublished(round: number) {
-  const dir = join(outbox, 'tasks-execution', String(ISSUE), 'control')
-  mkdirSync(dir, { recursive: true })
-  writeFileSync(join(dir, `effect-${round}-reviewer-verdict.json`), JSON.stringify({ effectId: 'r', status: 'posted' }))
-  writeFileSync(join(dir, `effect-${round}-security-verdict.json`), JSON.stringify({ effectId: 's', status: 'posted' }))
+  const control = join(outbox, 'tasks-execution', String(ISSUE), 'control')
+  mkdirSync(control, { recursive: true })
+  writeFileSync(
+    join(control, 'loop-state.json'),
+    JSON.stringify({
+      version: 1,
+      kind: 'loop_state',
+      task: ISSUE,
+      round,
+      phase: 'publish',
+      pauseReason: null,
+      budgets: { mechanicalRetries: 0, reviewRounds: round, infrastructureRetries: 0 },
+      heldResult: null,
+      deliveredFindings: null,
+      recordedAt: '2026-01-01T00:00:00.000Z'
+    })
+  )
+  const effectDir = join(control, 'effect')
+  mkdirSync(effectDir, { recursive: true })
+  for (const role of ['reviewer', 'security'] as const) {
+    const key = `${round}-${role}-verdict`
+    writeFileSync(
+      join(effectDir, `${key}.json`),
+      JSON.stringify({
+        version: 1,
+        kind: 'effect',
+        task: ISSUE,
+        key,
+        operation: 'pr-comment',
+        target: `pr:${PR}`,
+        inputVersion: round,
+        payloadDigest: 'digest',
+        status: 'verified',
+        url: 'https://example.test/comment',
+        recordedAt: '2026-01-01T00:00:00.000Z'
+      })
+    )
+  }
 }
 
 function memClaimStore(): { store: ResumeClaimStore; map: Map<string, ResumeRecord> } {
@@ -163,6 +204,27 @@ describe('task_resume handler', () => {
     const result = await handler({ task: { issue: ISSUE } }, CALLER)
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.error.kind).toBe('precondition')
+  })
+
+  it('refuses a published run that holds no pause, naming the round it published at (O2)', async () => {
+    // The log-server failure: the loop published clean verdicts and cleared
+    // nothing else, so there is no pause on disk — a generic "no paused run"
+    // refusal reads as a task that never ran. The refusal names the published
+    // round instead.
+    markRoundPublished(1)
+    const { handler, launches, events } = harness()
+    const result = await handler({ task: { issue: ISSUE } }, CALLER)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.kind).toBe('precondition')
+      expect(result.error.message).toBe(
+        `task ${ISSUE}'s run already published at round 1 and holds no pause — nothing to resume`
+      )
+    }
+    expect(launches).toHaveLength(0)
+    expect(events).toEqual([
+      { operation: 'task_resume', target: `task:${ISSUE}`, result: 'refused', error_class: 'precondition' }
+    ])
   })
 
   it('refuses when the pause carries no PR yet', async () => {
