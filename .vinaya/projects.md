@@ -17,6 +17,7 @@ is derived from the folder tree.
 | Project | Path | Specs | Per-project state |
 |---------|------|-------|---------------------|
 | cli | `apps/cli` | `apps/cli/specs/` | (state tracked globally for now) |
+| log-server | `apps/log-server` | `apps/log-server/specs/` | (state tracked globally for now) |
 | aeg-core | `packages/aeg-core` | `packages/aeg-core/specs/` | (state tracked globally for now) |
 | aeg-forge-state | `packages/aeg-forge-state` | `packages/aeg-forge-state/specs/` | (state tracked globally for now) |
 | aeg-types | `packages/aeg-types` | `packages/aeg-types/specs/` | (state tracked globally for now) |

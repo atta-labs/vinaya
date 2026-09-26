@@ -1,0 +1,3 @@
+# Wrangler's local state: the dev/test SQLite files and build cache workerd
+# writes under here. Machine-local, rebuilt on demand, never tracked.
+.wrangler/
