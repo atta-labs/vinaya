@@ -15,6 +15,7 @@ import {
   discoverWorkspacePackages,
   extractImportSpecifiers,
   isTestFile,
+  ROOT_CONFIG_FILENAME,
   selectAffectedTestFiles,
   walkFiles
 } from '../../src/lib/test-selector'
@@ -2200,5 +2201,84 @@ describe('selectAffectedTestFiles depth: "one" — reference change-set ceilings
     const changed = join(REPO_ROOT, 'packages/aeg-core/src/sum-ledger.ts')
     const { selected } = selectAffectedTestFiles(REPO_ROOT, [changed], { depth: 'one' })
     expect(selected.length).toBeLessThanOrEqual(5)
+  })
+})
+
+// A push that changes the repository-root `vinaya.config.json` runs the CLI's
+// whole suite. That file configures every command a test spawns — where
+// telemetry is delivered above all — and no test imports it, so the import
+// graph can never reach it: before this rule, a push that changed only it
+// selected nothing, which is how a `logs.url` added there passed pre-push
+// and failed CI. Proved on a throwaway workspace whose own CLI entrypoint is
+// named through `cliEntrypoint`, so the rule is exercised by its real
+// mechanism rather than against this repository's own tree.
+describe('the repository-root configuration selects the whole CLI suite', () => {
+  function configFixture(): { root: string; cliEntrypoint: string } {
+    const root = mkdtempSync(join(tmpdir(), 'vinaya-rootcfg-'))
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ workspaces: ['apps/*', 'packages/*'] }))
+    writeFileSync(join(root, ROOT_CONFIG_FILENAME), '{}\n')
+
+    const cli = join(root, 'apps', 'cli')
+    mkdirSync(join(cli, 'src'), { recursive: true })
+    mkdirSync(join(cli, 'tests'), { recursive: true })
+    writeFileSync(join(cli, 'package.json'), JSON.stringify({ name: '@fx/cli', main: './src/index.ts' }))
+    writeFileSync(join(cli, 'src', 'index.ts'), 'export function run() { return 1 }\n')
+    writeFileSync(join(cli, 'src', 'unrelated.ts'), 'export function unrelated() { return 2 }\n')
+    writeFileSync(join(cli, 'tests', 'importer.test.ts'), "import { run } from '../src/index.js'\nrun()\n")
+    // Imports nothing at all: reachability alone would never select it, so
+    // its selection is the rule's own doing and nothing else's.
+    writeFileSync(join(cli, 'tests', 'orphan.test.ts'), 'const x = 1\nexport default x\n')
+
+    const other = join(root, 'packages', 'other')
+    mkdirSync(join(other, 'src'), { recursive: true })
+    writeFileSync(join(other, 'package.json'), JSON.stringify({ name: '@fx/other', main: './src/index.ts' }))
+    writeFileSync(join(other, 'src', 'index.ts'), 'export function other() { return 3 }\n')
+    writeFileSync(join(other, 'src', 'other.test.ts'), "import { other } from './index.js'\nother()\n")
+
+    return { root, cliEntrypoint: 'apps/cli/src/index.ts' }
+  }
+
+  it('a push that changes only it selects every test in the CLI package, importer and orphan alike', () => {
+    const { root, cliEntrypoint } = configFixture()
+    try {
+      const { selected, totalTestFiles } = selectAffectedTestFiles(root, [join(root, ROOT_CONFIG_FILENAME)], {
+        cliEntrypoint,
+        depth: 'one'
+      })
+      expect(totalTestFiles).toBe(3)
+      expect(new Set(selected)).toEqual(
+        new Set([
+          join(root, 'apps', 'cli', 'tests', 'importer.test.ts'),
+          join(root, 'apps', 'cli', 'tests', 'orphan.test.ts')
+        ])
+      )
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a configuration file that is not the repository root one selects nothing — the rule matches one path, not every JSON file', () => {
+    const { root, cliEntrypoint } = configFixture()
+    try {
+      const nested = join(root, 'apps', 'cli', 'tests', ROOT_CONFIG_FILENAME)
+      writeFileSync(nested, '{}\n')
+      const other = join(root, 'packages', 'other', 'package.json')
+      for (const changed of [nested, other, join(root, 'tsconfig.json')]) {
+        const { selected } = selectAffectedTestFiles(root, [changed], { cliEntrypoint, depth: 'one' })
+        expect(selected.filter((f) => f.startsWith(join(root, 'apps', 'cli')))).toEqual([])
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it("this repository's own root configuration selects its whole CLI suite, every file in it", () => {
+    const { selected, totalTestFiles } = selectAffectedTestFiles(REPO_ROOT, [join(REPO_ROOT, ROOT_CONFIG_FILENAME)], {
+      depth: 'one'
+    })
+    const cliTests = selected.filter((f) => f.startsWith(join(REPO_ROOT, 'apps', 'cli')))
+    const onDisk = walkFiles(join(REPO_ROOT, 'apps', 'cli')).filter(isTestFile)
+    expect(new Set(cliTests)).toEqual(new Set(onDisk))
+    expect(cliTests.length).toBeLessThanOrEqual(totalTestFiles)
   })
 })

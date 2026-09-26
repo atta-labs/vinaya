@@ -984,6 +984,14 @@ export type SelectionOptions = {
 export const DEFAULT_CLI_ENTRYPOINT = 'apps/cli/src/index.ts'
 
 /**
+ * The repository-root configuration file whose change selects the CLI's
+ * whole suite (see the rule's own comment in `selectAffectedTestFiles`).
+ * Named rather than inlined so a test asserts against the same string this
+ * module matches on.
+ */
+export const ROOT_CONFIG_FILENAME = 'vinaya.config.json'
+
+/**
  * The whole pipeline: given the changed files (repo-root-relative or absolute,
  * either works) and the repo root, builds one global forward-import graph across
  * every workspace package, resolving relative imports to files and bare
@@ -991,7 +999,11 @@ export const DEFAULT_CLI_ENTRYPOINT = 'apps/cli/src/index.ts'
  * returns every test file — in ANY package — whose transitive import closure
  * reaches a changed file (directly, through a resolved named export, or through
  * the whole-package fallback for an unresolved import shape), plus every test
- * file `options.alwaysRun` names or that `options.addedOrRenamed` itself is.
+ * file `options.alwaysRun` names or that `options.addedOrRenamed` itself is,
+ * plus — when the changed set contains the repository-root
+ * `vinaya.config.json` — every test in the package that owns the CLI
+ * entrypoint, whose behaviour that file configures without any test
+ * importing it.
  */
 export function selectAffectedTestFiles(
   repoRoot: string,
@@ -1224,6 +1236,22 @@ export function selectAffectedTestFiles(
   const depthOneDefault = options.depth === 'one' ? 'ignore' : 'select'
   const repoTreeScanners = options.repoTreeScanners ?? depthOneDefault
   const cliSpawnDetection = options.cliSpawnDetection ?? depthOneDefault
+  const cliEntrypoint = join(repoRoot, options.cliEntrypoint ?? DEFAULT_CLI_ENTRYPOINT)
+
+  // The repository-root configuration file, changed. It is an input to every
+  // command the CLI's own tests spawn — where telemetry is delivered, which
+  // checks are registered, what the review policy is — and no test imports
+  // it, so reachability can never select one of them on the merits: it is
+  // not a graph node at all, and a `pkgmeta:` edge only ever covers a
+  // non-source file INSIDE a package. Before this rule a push that changed
+  // only this file selected nothing at all, which is how a `logs.url` added
+  // here passed pre-push and then failed CI in a check-runner test that read
+  // the local log folder. The whole CLI suite is the answer because the file
+  // is the whole CLI's input; the rule matches this one path exactly, never
+  // a `vinaya.config.json` sitting in a fixture directory and never another
+  // root-level JSON file.
+  const rootConfigChanged = absChanged.has(join(repoRoot, ROOT_CONFIG_FILENAME))
+  const cliPackage = packages.find((pkg) => cliEntrypoint.startsWith(`${pkg.dir}/`)) ?? null
 
   // Tests whose input is the repository TREE, not their own imports. Their
   // `scan:` edges are added to the graph here rather than to a configured list,
@@ -1246,7 +1274,6 @@ export function selectAffectedTestFiles(
   // coarse `scan:` edge over the entrypoint's own source directory instead —
   // the whole-package edge for this file, never silence.
   if (typescript && cliSpawnDetection !== 'ignore') {
-    const cliEntrypoint = join(repoRoot, options.cliEntrypoint ?? DEFAULT_CLI_ENTRYPOINT)
     const cliEntrypointSourceRoot = dirname(cliEntrypoint)
     for (const file of allSourceFiles) {
       if (!isTestFile(file)) continue
@@ -1273,7 +1300,10 @@ export function selectAffectedTestFiles(
 
     const maxDepth = options.depth === 'one' ? 1 : Number.POSITIVE_INFINITY
     for (const test of testFiles) {
-      const forced = alwaysRunRegexes.some((re) => re.test(test.slice(repoRoot.length + 1))) || addedOrRenamed.has(test)
+      const forced =
+        alwaysRunRegexes.some((re) => re.test(test.slice(repoRoot.length + 1))) ||
+        addedOrRenamed.has(test) ||
+        (rootConfigChanged && pkg === cliPackage)
       if (forced || (anythingChanged && reaches(`${ALL_PREFIX}${test}`, edges, changeFacts, maxDepth))) {
         selected.push(test)
       }
