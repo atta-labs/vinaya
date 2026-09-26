@@ -143,6 +143,11 @@ function memClaimStore(): { store: ResumeClaimStore; map: Map<string, ResumeReco
         map.set(record.escalationId, record)
         return { claimed: true, record }
       },
+      update(record) {
+        // Never creates a claim — the same rule the durable store's own `r+`
+        // write enforces.
+        if (map.has(record.escalationId)) map.set(record.escalationId, record)
+      },
       release(escalationId) {
         map.delete(escalationId)
       }
@@ -156,6 +161,7 @@ function harness(
     newestRulingOrdinal?: number
     launch?: (target: { pr: number; agent: string; issue: number }) => LaunchResult | Promise<LaunchResult>
     resolveIssue?: (ref: unknown) => number | null
+    isPidAlive?: (pid: number) => boolean
     now?: () => string
   } = {}
 ) {
@@ -169,9 +175,10 @@ function harness(
     fetchNewestRulingAuthor: () => 'principal-1',
     fetchNewestRulingOrdinal: () => overrides.newestRulingOrdinal ?? 1,
     store,
+    isPidAlive: overrides.isPidAlive ?? (() => false),
     launch: async (target) => {
       launches.push(target)
-      return (overrides.launch?.(target) ?? { alive: true }) as LaunchResult | Promise<LaunchResult>
+      return (overrides.launch?.(target) ?? { status: 'confirmed', pid: null }) as LaunchResult | Promise<LaunchResult>
     },
     now: overrides.now ?? (() => '2026-01-01T00:00:00.000Z'),
     log: (e) => {
@@ -343,7 +350,10 @@ describe('task_resume handler', () => {
     writePause()
     writeEscalationFixture()
     const { handler, launches, map } = harness({
-      launch: () => ({ alive: false, error: new Error('process exited before its driver confirmed alive (code 2)') })
+      launch: () => ({
+        status: 'exited',
+        error: new Error('process exited before its driver confirmed alive (code 2)')
+      })
     })
     const result = await handler({ task: { issue: ISSUE } }, CALLER)
     expect(result.ok).toBe(false)
@@ -361,7 +371,7 @@ describe('task_resume handler', () => {
     writeEscalationFixture()
     let alive = false
     const { handler, launches } = harness({
-      launch: () => (alive ? { alive: true } : { alive: false, error: new Error('no agent') })
+      launch: () => (alive ? { status: 'confirmed', pid: null } : { status: 'exited', error: new Error('no agent') })
     })
     const first = await handler({ task: { issue: ISSUE } }, CALLER)
     expect(first.ok).toBe(false)
@@ -370,6 +380,66 @@ describe('task_resume handler', () => {
     const retry = await handler({ task: { issue: ISSUE } }, CALLER)
     expect(retry.ok).toBe(true)
     if (retry.ok) expect(retry.result.outcome).toBe('started')
+    expect(launches).toHaveLength(2)
+  })
+
+  it('reports a continuation still alive when the confirm wait ends as started, and keeps its claim (O1)', async () => {
+    // A continuation whose driver lock has not appeared inside the bounded
+    // wait is still a launched, live process — reporting it failed and
+    // releasing its claim is what would let a repeat call hand the same
+    // escalation to a second continuation.
+    writePause()
+    writeEscalationFixture()
+    const { handler, launches, map } = harness({ launch: () => ({ status: 'starting', pid: 4242 }) })
+    const result = await handler({ task: { issue: ISSUE } }, CALLER)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.result.outcome).toBe('started')
+    expect(launches).toHaveLength(1)
+    expect(map.size).toBe(1) // the claim is KEPT
+    expect([...map.values()][0]?.pid).toBe(4242) // …and names the process it launched
+  })
+
+  it('never launches a second continuation while the one it launched is still alive (O2)', async () => {
+    writePause()
+    writeEscalationFixture()
+    let now = '2026-01-01T00:00:00.000Z'
+    const { handler, launches } = harness({
+      launch: () => ({ status: 'starting', pid: 4242 }),
+      isPidAlive: (pid) => pid === 4242,
+      now: () => now
+    })
+    expect((await handler({ task: { issue: ISSUE } }, CALLER)).ok).toBe(true)
+
+    // Past the stale grace, with no driver lock ever written for this
+    // fixture's task — the launched process is the only liveness signal
+    // there is, and it says the continuation is still coming up.
+    now = new Date(Date.parse(now) + RESUME_STALE_CLAIM_GRACE_MS + 60_000).toISOString()
+    const second = await handler({ task: { issue: ISSUE } }, CALLER)
+    expect(second.ok).toBe(true)
+    if (!second.ok) return
+    expect(second.result.outcome).toBe('already_resumed')
+    expect(launches).toHaveLength(1)
+  })
+
+  it('supersedes a stale claim once the continuation it launched has exited too (O2)', async () => {
+    writePause()
+    writeEscalationFixture()
+    let now = '2026-01-01T00:00:00.000Z'
+    let childAlive = true
+    const { handler, launches } = harness({
+      launch: () => ({ status: 'starting', pid: 4242 }),
+      isPidAlive: () => childAlive,
+      now: () => now
+    })
+    expect((await handler({ task: { issue: ISSUE } }, CALLER)).ok).toBe(true)
+
+    now = new Date(Date.parse(now) + RESUME_STALE_CLAIM_GRACE_MS + 60_000).toISOString()
+    childAlive = false
+    const second = await handler({ task: { issue: ISSUE } }, CALLER)
+    expect(second.ok).toBe(true)
+    if (!second.ok) return
+    expect(second.result.outcome).toBe('started') // superseded and relaunched
     expect(launches).toHaveLength(2)
   })
 
