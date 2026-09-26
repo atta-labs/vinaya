@@ -40,6 +40,15 @@
  *     has this repository's working directory by construction and cannot be
  *     handed another one.
  *
+ * A working directory is only half of the resolution, and this file scans that
+ * half. The other half is the trust anchor: an unattended caller whose local
+ * configuration declares no `logs` setting at all still honours the DEFAULT
+ * BRANCH's own declared destination, read over the forge with an identity that
+ * comes from the Actions runner rather than from any directory. No working
+ * directory closes that one — a configuration that DECLARES a destination
+ * does, which is why `isolatedConfigFixture` writes one and why the test below
+ * refuses to let that regress to an empty object.
+ *
  * The list is data, not a waiver: a new non-compliant file fails the build,
  * and so does a listed file that has since been fixed, so the list can
  * neither grow silently nor go stale. It is empty — every fixture that
@@ -410,6 +419,16 @@ describe("no test reads this repository's own log destination", () => {
   // left the scan — the same staleness the grandfather list's own test catches.
   it('the scan finds the fixtures it is meant to cover — an empty subject set would make it vacuous', () => {
     expect(subjects().size).toBeGreaterThanOrEqual(9)
+  })
+
+  it("the shared fixture's own configuration declares a destination — an empty one leaves the default branch's own setting in scope", () => {
+    const helper = stripComments(readFileSync(join(TESTS_ROOT, HELPER_FILE), 'utf8'))
+    expect(DECLARES_OWN_DESTINATION.test(helper)).toBe(true)
+    // And the declared folder is the SAME place the fixture advertises as its
+    // own `logsDir`, so an attended child (which honours the declared value)
+    // and an unattended one (whose local value the trust-anchor gate refuses,
+    // falling back to the default folder) write to one path, not two.
+    expect(helper).toContain('logsDir: join(logsFolder, FIXTURE_REPO_SEGMENT)')
   })
 
   // The samples below are the scan's own positive controls: each is a

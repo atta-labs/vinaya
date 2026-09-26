@@ -152,21 +152,41 @@ export type ConfigIsolatedFixture = {
  * the CLI honours the configured server and writes no file at all, and the
  * fixture fails for a reason that has nothing to do with what it tests.
  *
- * This gives the child a working directory whose own `vinaya.config.json`
- * declares nothing, which is where that walk stops — no repository setting,
- * present or future, is in scope for it — plus the `$HOME` its default
- * destination hangs off and an explicit `AEG_REPO` so the path is known up
- * front rather than discovered by listing the runtime root.
+ * This gives the child a working directory of its own, which is where that
+ * walk stops, plus the `$HOME` its destination hangs off and an explicit
+ * `AEG_REPO` so the path is known up front rather than discovered by listing
+ * the runtime root.
+ *
+ * **That configuration DECLARES its own `logs.folder`; an empty one is not
+ * isolation.** The walk is only half of the resolution. An UNATTENDED caller
+ * — and `cancelDevReviewLoop`, `devReviewLoop` and `runTask` all classify
+ * their own process that way — whose local configuration declares no `logs`
+ * setting at all still honours the DEFAULT BRANCH's own declared destination
+ * (`resolveLogDestinationFrom`, `apps/cli/src/lib/log-sink.ts`), read over
+ * the forge with an identity taken from the Actions runner's own
+ * `GITHUB_REPOSITORY` and the `origin` remote — never from the working
+ * directory. So a child given an EMPTY configuration still delivered to
+ * whatever `logs.url` this repository's default branch declares: on a CI
+ * runner (a real repository identity and a real token) it resolved that
+ * server and the local outbox held its line only until the drain took it,
+ * while on a laptop the same fixture passed, because `$HOME` is the fixture's
+ * own and the anchor read finds no credential there. Declaring a folder is
+ * what closes that: the trust-anchor gate honours a local value only when the
+ * default branch declares the IDENTICAL one, so a folder is refused there and
+ * falls back to the default folder — and the folder declared here IS that
+ * default folder, so an attended child and an unattended one write to exactly
+ * the same place, `logsDir`, with no repository setting in scope for either.
  */
 export function isolatedConfigFixture(prefix: string): ConfigIsolatedFixture {
   const home = mkdtempSync(join(tmpdir(), prefix))
   const cwd = join(home, 'workspace')
   mkdirSync(cwd, { recursive: true })
-  writeFileSync(join(cwd, 'vinaya.config.json'), '{}\n')
+  const logsFolder = join(home, '.vinaya', 'runtime', FIXTURE_REPO_SEGMENT, 'logs')
+  writeFileSync(join(cwd, 'vinaya.config.json'), `${JSON.stringify({ logs: { folder: logsFolder } }, null, 2)}\n`)
   return {
     home,
     cwd,
-    logsDir: join(home, '.vinaya', 'runtime', FIXTURE_REPO_SEGMENT, 'logs', FIXTURE_REPO_SEGMENT),
+    logsDir: join(logsFolder, FIXTURE_REPO_SEGMENT),
     env: { ...stripVinayaEnv(), HOME: home, AEG_REPO: FIXTURE_REPO }
   }
 }
