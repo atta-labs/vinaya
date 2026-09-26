@@ -48,3 +48,4 @@
 apps/cli/src/lib/ops.ts  apps/cli/specs/self-hosting.md
 apps/cli/src/lib/log-sink.ts  apps/cli/specs/log.md
 apps/cli/src/lib/dev-review-loop.ts  apps/cli/specs/loop.md
+apps/log-server/src/**  apps/log-server/specs/server.md

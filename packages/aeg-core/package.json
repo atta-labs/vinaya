@@ -14,7 +14,8 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./docs": "./src/docs/index.ts"
+    "./docs": "./src/docs/index.ts",
+    "./log": "./src/log/index.ts"
   },
   "files": [
     "src",

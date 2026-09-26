@@ -1,0 +1,21 @@
+{
+  // The log server: one Worker, one SQLite-backed Durable Object per
+  // repository. See apps/log-server/specs/server.md.
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "vinaya-log-server",
+  // A build or a dry-run is run by CI and by the pull request's own evidence
+  // pass; neither should phone home.
+  "send_metrics": false,
+  "main": "src/worker.ts",
+  "compatibility_date": "2025-09-06",
+  // `@attalabs/aeg-core`'s log module reaches `node:crypto` for the header
+  // builder it also exports; without this flag the bundle does not build.
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [{ "name": "REPO_LOG", "class_name": "RepoLog" }]
+  },
+  // `new_sqlite_classes`, never `new_classes`: SQLite-backed objects are the
+  // only kind the free plan offers, and a key-value class declared here would
+  // fail to deploy.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RepoLog"] }]
+}
