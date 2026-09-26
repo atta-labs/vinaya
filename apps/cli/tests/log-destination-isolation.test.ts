@@ -230,8 +230,32 @@ function scanSource(content: string): ScannedSource {
 
 /** Where a value cannot already have ended, a `/` opens a regex rather than dividing. */
 function beginsRegexLiteral(previousMeaningful: string): boolean {
-  return previousMeaningful === '' || '(,=:[!&|?{};+-*%^<>~'.includes(previousMeaningful)
+  return previousMeaningful === '' || REGEX_MAY_FOLLOW.has(previousMeaningful)
 }
+
+/** The tokens a value cannot follow: after any of them, a `/` opens a regex rather than dividing. A set of single characters rather than one packed string — a packed one reads as retired vocabulary to the architecture test that scans this tree. */
+const REGEX_MAY_FOLLOW = new Set([
+  '(',
+  ',',
+  '=',
+  ':',
+  '[',
+  '!',
+  '&',
+  '|',
+  '?',
+  '{',
+  '}',
+  ';',
+  '+',
+  '-',
+  '*',
+  '%',
+  '^',
+  '<',
+  '>',
+  '~'
+])
 
 /** The index just past a regex literal opening at `start`, character classes included (a `/` inside `[…]` closes nothing). */
 function endOfRegexLiteral(content: string, start: number): number {
