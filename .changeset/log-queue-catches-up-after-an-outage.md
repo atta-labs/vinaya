@@ -1,0 +1,11 @@
+---
+"@attalabs/vinaya": patch
+---
+
+A `logs.url` server destination's local retry queue now catches up after an outage of any length. The drain delivers the queue from its head in chunks of at most 5 MiB, oldest first, and removes each chunk's bytes as soon as the server acknowledges them — a queue that grew past one POST during an outage is an ordinary backlog delivered over several POSTs, where before every drain refused it and nothing was ever sent again. A chunk the server does not accept ends the drain with the queue holding exactly what was never confirmed, and a retry after a lost acknowledgement re-sends the identical head chunk for the server to deduplicate by event identity.
+
+Events the queue's rotation moved into its one backup slot are now delivered too, ahead of the live queue file and in order, instead of waiting there unread until the next rotation overwrote them. Each bucket of the queue — that backup slot and the live file alike — is claimed by renaming it to a private `<name>.draining.ndjson`, in one atomic step, before it is read, so a producer's own append or rotation can no longer land on the file a drain is part-way through removing bytes from; appends go to a fresh live file and are delivered by the next drain. The rotation's own single-slot retention is unchanged: a batch in the backup slot that no drain has claimed yet is still replaced by the next rotation, reported as before through the sink's overflow diagnostic.
+
+A queued line the storage contract cannot vouch for — one that fails re-validation, carries an unknown schema version, or is by itself larger than one POST — is moved to a `<name>.rejected.ndjson` file beside the queue, with its reason, and the lines after it keep delivering. Before, any one such line made every drain throw before posting anything, forever. One line reaches stderr per process for this, however many lines are set aside.
+
+The drain lock is renewed before every chunk, so a stale lock now means one that has made no progress rather than one whose drain has simply run a long time. A multi-chunk catch-up after an outage can legitimately outlast the old fixed window, and a second process would have stolen the lock from a holder that was still delivering; a holder that does lose its lock now stops at its next renewal instead of writing alongside the new owner.

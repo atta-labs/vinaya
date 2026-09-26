@@ -465,6 +465,34 @@ function guardedAppendOpen(path: string): number | undefined {
 }
 
 /**
+ * One hardened append, with no rotation: the `0o700` directory, the
+ * `O_NOFOLLOW`/`O_NONBLOCK` open, the `fstat` of the already-open descriptor
+ * and the `0o600` mode `appendLine` below uses, minus the rotation only a
+ * queue file wants. Returns `null` on success, or the reason it could not
+ * write — never throws, and never decides for its caller what a failure
+ * means. `log-webhook-drain.ts` writes the rejected file beside the queue
+ * through this, so a line the storage contract cannot vouch for is kept with
+ * exactly the hardening the queue itself carries rather than a second,
+ * drifting copy of these flags.
+ */
+export function appendHardenedLine(path: string, line: string): string | null {
+  try {
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+    const fd = guardedAppendOpen(path)
+    if (fd === undefined) return `target could not be opened (symlink, FIFO, or unwritable): ${path}`
+    try {
+      if (!fstatSync(fd).isFile()) return `target is not a regular file: ${path}`
+      writeSync(fd, line)
+    } finally {
+      closeSync(fd)
+    }
+    return null
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err)
+  }
+}
+
+/**
  * Before a rotation overwrites `<name>.1.ndjson`, reads whatever that backup
  * currently holds and reports the identities about to be permanently
  * destroyed — an `OverflowDiagnostic` (the typed storage contract's own
@@ -647,11 +675,12 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
   // queue right after it — chained onto this SAME promise, never fired
   // concurrently with a prior drain, so two drains can never race each
   // other's read-then-truncate of the identical queue file (Traps: "serialize
-  // drains so order is preserved"). A failed drain (the server unreachable)
-  // leaves the queue exactly as `drainOutboxToWebhook` already guarantees —
-  // untouched, picked up whole by the NEXT event's own drain — so delivery
-  // catches back up in order once the server is back, with no separate
-  // retry timer of this sink's own.
+  // drains so order is preserved"). A failed drain leaves the queue holding
+  // exactly what the server never acknowledged — whole, when the server was
+  // unreachable from the first chunk; minus the chunks it did accept, when a
+  // backlog was part-way delivered — and the NEXT event's own drain resumes
+  // from that same head, so delivery catches back up in order once the server
+  // is back, with no separate retry timer of this sink's own.
   let drainChain: Promise<void> = Promise.resolve()
 
   // O3: the set of `log()` calls whose write has not yet landed — `context()`
