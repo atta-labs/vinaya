@@ -34,12 +34,12 @@ bunx wrangler secret put INGEST_TOKEN
 bunx wrangler secret put READ_TOKEN
 ```
 
-`INGEST_TOKEN` is write-only and accepted on the ingest route alone; `READ_TOKEN` is read-only and accepted on the read, stats and live routes alone. A live viewer carries the read token as a second subprotocol, because a browser cannot set a header on a WebSocket:
+`INGEST_TOKEN` is write-only and accepted on the ingest route alone; `READ_TOKEN` is read-only and accepted on the read, stats and live routes alone. Both are Worker secrets and never live in this repository. A live viewer carries the read token as a second subprotocol, because a browser cannot set a header on a WebSocket:
 
 ```
 GET /v1/repos/<owner>/<repo>/live?after=<seq>
 sec-websocket-protocol: vinaya-log.v1, bearer.<READ_TOKEN>
-``` Both are Worker secrets and never live in this repository.
+```
 
 Then point `logs.url` at the ingest route on your default branch, and give CI the ingest token as `VINAYA_LOG_TOKEN`:
 
