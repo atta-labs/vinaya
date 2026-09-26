@@ -20,8 +20,12 @@
  * the backup sitting unread until the next rotation overwrote it.
  *
  * Every line is re-validated and re-redacted through the storage contract's
- * `classifyStoredLine` before it is ever sent, fail-closed on any corrupt or
- * unknown-version line — nothing is posted this function cannot vouch for.
+ * `classifyStoredLine` before it is ever sent — nothing is posted this
+ * function cannot vouch for. A line that fails that re-validation, carries a
+ * schema version this build does not know, or is by itself larger than one
+ * POST is moved to a `<name>.rejected.ndjson` file beside the queue, with its
+ * reason, and the lines after it keep delivering: one bad line degrades one
+ * line's worth of telemetry, never all of it.
  */
 
 import {
@@ -44,7 +48,7 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import { classifyStoredLine } from '@attalabs/aeg-core'
-import { outboxPathFor as sinkOutboxPathFor } from './log-sink.js'
+import { appendHardenedLine, outboxPathFor as sinkOutboxPathFor } from './log-sink.js'
 import { GLOBAL_VINAYA_HOME } from './config.js'
 
 /** One POST body capped well under common reverse-proxy/body-size limits (most default to 1-10 MiB). A queue larger than this is not a failure any more — it is delivered as however many chunks of at most this size it takes, each acknowledged and removed on its own. */
@@ -191,11 +195,11 @@ export function releaseDrainLock(lockPath: string, token: string): void {
 
 /**
  * What one drain did. `flushed` is true when the queue shrank at all on this
- * call — at least one chunk acknowledged —
+ * call — at least one chunk acknowledged, or at least one line set aside —
  * and false when nothing moved (an empty or missing queue, or a caller that
- * lost the cross-process lock). The counts are totals across every chunk this
- * drain delivered, so a caller reading `chunks` sees how many POSTs a
- * catch-up actually took.
+ * lost the cross-process lock). The counts are totals across every chunk and
+ * both files this drain touched, so a caller reading `chunks` sees how many
+ * POSTs a catch-up actually took.
  */
 export type WebhookDrainOutcome = {
   flushed: boolean
@@ -205,12 +209,13 @@ export type WebhookDrainOutcome = {
   bytes: number
   /** POSTs the server accepted. */
   chunks: number
+  /** Lines moved to the rejected file, which are never posted. */
+  rejected: number
 }
 
 export type WebhookDrainErrorCode =
   | 'log-webhook-drain-symlink'
-  | 'log-webhook-drain-corrupt-line'
-  | 'log-webhook-drain-too-large'
+  | 'log-webhook-drain-rejected-write'
   | 'log-webhook-drain-failed'
 
 /** The one thrown-error shape `drainOutboxToWebhook` ever raises — never `process.exit`. */
@@ -241,6 +246,27 @@ function backupPathFor(queuePath: string): string {
  */
 function drainingBackupPathFor(queuePath: string): string {
   return queuePath.replace(/\.ndjson$/, '.1.draining.ndjson')
+}
+
+/** Where a line the storage contract cannot vouch for is kept, with its reason — beside the queue, under the same machine-local outbox directory, never in the repository. */
+function rejectedPathFor(queuePath: string): string {
+  return queuePath.replace(/\.ndjson$/, '.rejected.ndjson')
+}
+
+// One visible warning per PROCESS for a set-aside line (O3) — the same bound
+// the sink's own `warnOnce` keeps, and a separate flag rather than the sink's,
+// so a rejection is never swallowed by an unrelated earlier sink warning (nor
+// the reverse). A rejected line is a real, rare fault an operator must see
+// once; it is not a per-line stream that could spam a gate's output.
+let rejectionWarnedThisProcess = false
+function warnRejectionOnce(message: string): void {
+  if (rejectionWarnedThisProcess) return
+  rejectionWarnedThisProcess = true
+  try {
+    process.stderr.write(message)
+  } catch {
+    // Telemetry never fails the run producing it, not even on its own warning.
+  }
 }
 
 /** One queue line, with the byte offset just past its own terminator — the coordinate head removal needs and a plain `split('\n')` throws away. */
@@ -297,6 +323,35 @@ function readQueueFile(path: string): Buffer | null {
   return readFileSync(path)
 }
 
+/**
+ * Sets one line aside with its reason, in the same hardened append the queue
+ * itself is written with (`log-sink.ts`'s `appendHardenedLine`: `0o700`
+ * directory, `O_NOFOLLOW`, `0o600`) — a rejected line is still telemetry, so
+ * it is kept, never dropped. An append that cannot be made ends the drain
+ * instead: the line stays in the queue, where the next attempt finds it,
+ * rather than being removed with nowhere to have gone.
+ */
+function rejectLine(rejectedPath: string, reason: string, status: string, identity: string | null, raw: string): void {
+  const record = JSON.stringify({
+    rejected_at: new Date().toISOString(),
+    status,
+    reason,
+    identity,
+    bytes: Buffer.byteLength(raw, 'utf8'),
+    raw
+  })
+  const failure = appendHardenedLine(rejectedPath, `${record}\n`)
+  if (failure !== null) {
+    throw new WebhookDrainError(
+      'log-webhook-drain-rejected-write',
+      `log webhook drain: a queued line failed re-validation (${reason}) and could not be set aside in ${rejectedPath} — ${failure}; the line stays queued`
+    )
+  }
+  warnRejectionOnce(
+    `vinaya: log delivery set a queued line aside in ${rejectedPath} — ${reason}; later lines keep delivering\n`
+  )
+}
+
 async function postChunk(
   webhookUrl: string,
   headers: Record<string, string> | undefined,
@@ -333,7 +388,7 @@ async function postChunk(
   }
 }
 
-type DrainTotals = { lineCount: number; bytes: number; chunks: number }
+type DrainTotals = { lineCount: number; bytes: number; chunks: number; rejected: number }
 
 /**
  * Delivers one queue file from its head, in chunks of at most
@@ -344,12 +399,13 @@ type DrainTotals = { lineCount: number; bytes: number; chunks: number }
  */
 async function drainQueueFile(args: {
   path: string
+  rejectedPath: string
   webhookUrl: string
   headers: Record<string, string> | undefined
   fetchTimeoutMs: number
   totals: DrainTotals
 }): Promise<void> {
-  const { path, webhookUrl, headers, fetchTimeoutMs, totals } = args
+  const { path, rejectedPath, webhookUrl, headers, fetchTimeoutMs, totals } = args
   const buf = readQueueFile(path)
   if (buf === null || buf.byteLength === 0) return
   const lines = queueLines(buf)
@@ -383,17 +439,34 @@ async function drainQueueFile(args: {
   for (const line of lines) {
     const record = classifyStoredLine(line.raw, homedir())
     if (record.status !== 'ok') {
-      throw new WebhookDrainError(
-        'log-webhook-drain-corrupt-line',
-        `log webhook drain: an outbox line failed schema re-validation — ${record.reason}`
-      )
+      rejectLine(rejectedPath, record.reason, record.status, record.identity, line.raw)
+      totals.rejected += 1
+      pendingEnd = line.end
+      // With no chunk accumulating, this line's bytes are the whole pending
+      // prefix and leave now — so a bad line at the head of the queue is set
+      // aside exactly once, not re-read by every later drain.
+      if (chunk.length === 0) {
+        removeQueueHead(path, pendingEnd - removed)
+        removed = pendingEnd
+      }
+      continue
     }
     const lineBytes = Buffer.byteLength(record.postLine, 'utf8') + 1
     if (lineBytes > MAX_WEBHOOK_BODY_BYTES) {
-      throw new WebhookDrainError(
-        'log-webhook-drain-too-large',
-        `log webhook drain: one outbox line is ${lineBytes} byte(s), over the ${MAX_WEBHOOK_BODY_BYTES}-byte per-POST cap.`
+      rejectLine(
+        rejectedPath,
+        `one line is ${lineBytes} byte(s), over the ${MAX_WEBHOOK_BODY_BYTES}-byte per-POST cap — no chunking can carry it`,
+        'too_large',
+        record.identity,
+        line.raw
       )
+      totals.rejected += 1
+      pendingEnd = line.end
+      if (chunk.length === 0) {
+        removeQueueHead(path, pendingEnd - removed)
+        removed = pendingEnd
+      }
+      continue
     }
     if (chunk.length > 0 && chunkBytes + lineBytes > MAX_WEBHOOK_BODY_BYTES) await deliverChunk()
     chunk.push(record.postLine)
@@ -411,13 +484,15 @@ async function drainQueueFile(args: {
     await deliverChunk()
     return
   }
-  // Terminator-only bytes trailing the final line still have to leave.
+  // Every remaining line was set aside while a chunk was accumulating ahead
+  // of it; its bytes still have to leave the queue.
   if (pendingEnd > removed) removeQueueHead(path, pendingEnd - removed)
 }
 
 /** Delivers the rotation backup slot, if there is one, before the live file — the events in it are older, and nothing else ever reads them. */
 async function drainBackupSlot(args: {
   path: string
+  rejectedPath: string
   webhookUrl: string
   headers: Record<string, string> | undefined
   fetchTimeoutMs: number
@@ -448,8 +523,9 @@ async function drainBackupSlot(args: {
  * each from its head in chunks of at most `MAX_WEBHOOK_BODY_BYTES`, with
  * every chunk's bytes leaving the queue as soon as a `2xx` acknowledges
  * them. Every line is validated and re-redacted through the storage
- * contract's `classifyStoredLine` first, fail-closed on any corrupt or
- * unknown-version line.
+ * contract's `classifyStoredLine` first; a line it cannot vouch for, or one
+ * larger than a single POST, is moved to the rejected file beside the queue
+ * and the lines after it keep delivering.
  *
  * Stops at the first chunk the server does not accept, leaving the queue
  * holding exactly what was never confirmed — the next call re-sends the same
@@ -470,13 +546,13 @@ export async function drainOutboxToWebhook(
 
   const lockPath = `${path}.flush-lock`
   const lockToken = acquireDrainLock(lockPath)
-  const totals: DrainTotals = { lineCount: 0, bytes: 0, chunks: 0 }
+  const totals: DrainTotals = { lineCount: 0, bytes: 0, chunks: 0, rejected: 0 }
   if (lockToken === null) return { flushed: false, ...totals }
   try {
-    const shared = { webhookUrl, headers, fetchTimeoutMs, totals }
+    const shared = { rejectedPath: rejectedPathFor(path), webhookUrl, headers, fetchTimeoutMs, totals }
     await drainBackupSlot({ ...shared, path })
     await drainQueueFile({ ...shared, path })
-    return { flushed: totals.chunks > 0, ...totals }
+    return { flushed: totals.chunks > 0 || totals.rejected > 0, ...totals }
   } finally {
     releaseDrainLock(lockPath, lockToken)
   }

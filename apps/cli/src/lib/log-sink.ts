@@ -465,6 +465,34 @@ function guardedAppendOpen(path: string): number | undefined {
 }
 
 /**
+ * One hardened append, with no rotation: the `0o700` directory, the
+ * `O_NOFOLLOW`/`O_NONBLOCK` open, the `fstat` of the already-open descriptor
+ * and the `0o600` mode `appendLine` below uses, minus the rotation only a
+ * queue file wants. Returns `null` on success, or the reason it could not
+ * write — never throws, and never decides for its caller what a failure
+ * means. `log-webhook-drain.ts` writes the rejected file beside the queue
+ * through this, so a line the storage contract cannot vouch for is kept with
+ * exactly the hardening the queue itself carries rather than a second,
+ * drifting copy of these flags.
+ */
+export function appendHardenedLine(path: string, line: string): string | null {
+  try {
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+    const fd = guardedAppendOpen(path)
+    if (fd === undefined) return `target could not be opened (symlink, FIFO, or unwritable): ${path}`
+    try {
+      if (!fstatSync(fd).isFile()) return `target is not a regular file: ${path}`
+      writeSync(fd, line)
+    } finally {
+      closeSync(fd)
+    }
+    return null
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err)
+  }
+}
+
+/**
  * Before a rotation overwrites `<name>.1.ndjson`, reads whatever that backup
  * currently holds and reports the identities about to be permanently
  * destroyed — an `OverflowDiagnostic` (the typed storage contract's own

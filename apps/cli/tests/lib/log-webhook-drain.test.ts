@@ -18,6 +18,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   utimesSync,
   writeFileSync
 } from 'node:fs'
@@ -108,11 +109,27 @@ function paddedNdjsonLine(runId: string, issue: number, bytes: number): string {
   })
 }
 
+/** A line whose `meta.schema` is outside `KNOWN_SCHEMA_VERSIONS` — a real event from a newer producer, which this build must keep rather than post or drop. */
+function unknownVersionLine(runId: string, issue: number): string {
+  const parsed = JSON.parse(ndjsonLine(runId, issue)) as { meta: { schema: number } }
+  parsed.meta.schema = 99
+  return JSON.stringify(parsed)
+}
+
 function runIdsOf(body: string): string[] {
   return body
     .split('\n')
     .filter(Boolean)
     .map((l) => JSON.parse(l).meta.run_id as string)
+}
+
+function rejectedRecords(home: string, issue: number): { status: string; reason: string; raw: string }[] {
+  const p = outboxPath(home, issue).replace(/\.ndjson$/, '.rejected.ndjson')
+  if (!existsSync(p)) return []
+  return readFileSync(p, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((l) => JSON.parse(l))
 }
 
 function seedOutbox(home: string, issue: number, lines: string[]): string {
@@ -219,11 +236,11 @@ function startSlowWebhookServer(
   return { url: `http://127.0.0.1:${server.port}/ingest`, requests, stop: () => server.stop() }
 }
 
-type DrainOutcome = { flushed: boolean; lineCount: number; bytes: number; chunks: number }
+type DrainOutcome = { flushed: boolean; lineCount: number; bytes: number; chunks: number; rejected: number }
 type DrainResult = { ok: true; outcome: DrainOutcome } | { ok: false; code: string | null; message: string }
 
 /** Nothing moved: an empty or missing queue, or a caller that lost the cross-process lock. */
-const NOTHING_DRAINED: DrainOutcome = { flushed: false, lineCount: 0, bytes: 0, chunks: 0 }
+const NOTHING_DRAINED: DrainOutcome = { flushed: false, lineCount: 0, bytes: 0, chunks: 0, rejected: 0 }
 
 /** Writes a tiny script importing `drainOutboxToWebhook` directly and running it once, so this test never depends on any CLI argv surface for a function that is no longer reachable from one. */
 function writeDrainScript(
@@ -300,7 +317,7 @@ describe('drainOutboxToWebhook — the logs.url server-destination delivery path
 
     expect(result.ok).toBe(true)
     if (!result.ok) throw new Error('unreachable')
-    expect(result.outcome).toEqual({ flushed: true, lineCount: 2, bytes: expect.any(Number), chunks: 1 })
+    expect(result.outcome).toEqual({ flushed: true, lineCount: 2, bytes: expect.any(Number), chunks: 1, rejected: 0 })
     expect(server.requests.length).toBe(1)
     expect(server.requests[0]?.headers['x-api-key']).toBe('secret123')
     expect(server.requests[0]?.headers['content-type']).toBe('application/x-ndjson')
@@ -330,7 +347,7 @@ describe('drainOutboxToWebhook — the logs.url server-destination delivery path
     expect(readFileSync(path, 'utf8')).toBe(`${line}\n`)
   })
 
-  it('refuses a corrupt line before posting anything — outbox untouched', async () => {
+  it('posts nothing at all when the only queued line is corrupt — it is set aside, never sent', async () => {
     const cwd = tempDir('log-webhook-cwd-')
     initGitRepo(cwd)
     const home = tempDir('log-webhook-home-')
@@ -340,11 +357,12 @@ describe('drainOutboxToWebhook — the logs.url server-destination delivery path
     const result = await runDrainAsync(702, server.url, undefined, cwd, home)
     server.stop()
 
-    expect(result.ok).toBe(false)
-    if (result.ok) throw new Error('unreachable')
-    expect(result.code).toBe('log-webhook-drain-corrupt-line')
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('unreachable')
+    expect(result.outcome).toEqual({ flushed: true, lineCount: 0, bytes: 0, chunks: 0, rejected: 1 })
     expect(server.requests.length).toBe(0)
-    expect(readFileSync(path, 'utf8')).toBe('not valid json\n')
+    expect(readFileSync(path, 'utf8')).toBe('')
+    expect(rejectedRecords(home, 702).map((r) => [r.status, r.raw])).toEqual([['invalid', 'not valid json']])
   })
 
   it('round-2 security review, MEDIUM: bounds the POST — a slow/unresponsive endpoint fails fast rather than hanging the drain indefinitely, and the outbox stays untouched', async () => {
@@ -426,7 +444,8 @@ describe('drainOutboxToWebhook — the logs.url server-destination delivery path
       flushed: true,
       lineCount: 2,
       bytes: expect.any(Number),
-      chunks: 1
+      chunks: 1,
+      rejected: 0
     })
     expect(loser).toBeDefined()
     expect(readFileSync(path, 'utf8')).toBe('')
@@ -449,7 +468,7 @@ describe('drainOutboxToWebhook — the logs.url server-destination delivery path
 
     expect(result.ok).toBe(true)
     if (!result.ok) throw new Error('unreachable')
-    expect(result.outcome).toEqual({ flushed: true, lineCount: 1, bytes: expect.any(Number), chunks: 1 })
+    expect(result.outcome).toEqual({ flushed: true, lineCount: 1, bytes: expect.any(Number), chunks: 1, rejected: 0 })
     expect(readFileSync(path, 'utf8')).toBe('')
   })
 
@@ -568,7 +587,7 @@ describe('drainOutboxToWebhook — a queue larger than one POST catches up in ch
 
     expect(result.ok).toBe(true)
     if (!result.ok) throw new Error('unreachable')
-    expect(result.outcome).toEqual({ flushed: true, lineCount: 3, bytes: expect.any(Number), chunks: 2 })
+    expect(result.outcome).toEqual({ flushed: true, lineCount: 3, bytes: expect.any(Number), chunks: 2, rejected: 0 })
     expect(server.requests.map((r) => runIdsOf(r.body))).toEqual([['run-1', 'run-2'], ['run-3']])
     for (const request of server.requests) {
       expect(Buffer.byteLength(request.body, 'utf8')).toBeLessThanOrEqual(MAX_WEBHOOK_BODY_BYTES)
@@ -653,7 +672,7 @@ describe('drainOutboxToWebhook — a queue larger than one POST catches up in ch
 
     expect(result.ok).toBe(true)
     if (!result.ok) throw new Error('unreachable')
-    expect(result.outcome).toEqual({ flushed: true, lineCount: 3, bytes: expect.any(Number), chunks: 2 })
+    expect(result.outcome).toEqual({ flushed: true, lineCount: 3, bytes: expect.any(Number), chunks: 2, rejected: 0 })
     expect(server.requests.map((r) => runIdsOf(r.body))).toEqual([['run-1', 'run-2'], ['run-3']])
     expect(readFileSync(path, 'utf8')).toBe(`${appended}\n`)
   }, 45000)
@@ -678,7 +697,7 @@ describe('drainOutboxToWebhook — a queue larger than one POST catches up in ch
 
     expect(result.ok).toBe(true)
     if (!result.ok) throw new Error('unreachable')
-    expect(result.outcome).toEqual({ flushed: true, lineCount: 2, bytes: expect.any(Number), chunks: 1 })
+    expect(result.outcome).toEqual({ flushed: true, lineCount: 2, bytes: expect.any(Number), chunks: 1, rejected: 0 })
     expect(server.requests.map((r) => runIdsOf(r.body))).toEqual([['run-1', 'run-2']])
     expect(readFileSync(path, 'utf8')).toBe(`${appended}\n`)
   }, 30000)
@@ -698,7 +717,7 @@ describe('drainOutboxToWebhook — the rotation backup slot is delivered, not ov
 
     expect(result.ok).toBe(true)
     if (!result.ok) throw new Error('unreachable')
-    expect(result.outcome).toEqual({ flushed: true, lineCount: 3, bytes: expect.any(Number), chunks: 2 })
+    expect(result.outcome).toEqual({ flushed: true, lineCount: 3, bytes: expect.any(Number), chunks: 2, rejected: 0 })
     expect(server.requests.map((r) => runIdsOf(r.body))).toEqual([['old-1', 'old-2'], ['new-1']])
     expect(existsSync(backup)).toBe(false)
     expect(existsSync(siblingPath(home, 720, '.1.draining.ndjson'))).toBe(false)
@@ -744,5 +763,100 @@ describe('drainOutboxToWebhook — the rotation backup slot is delivered, not ov
     // order survives the outage.
     expect(readFileSync(path, 'utf8')).toBe(`${liveLine}\n`)
     expect(readFileSync(siblingPath(home, 722, '.1.draining.ndjson'), 'utf8')).toBe(`${backupLine}\n`)
+  }, 20000)
+})
+
+describe('drainOutboxToWebhook — a line the storage contract cannot vouch for blocks nothing (O3)', () => {
+  it('sets a corrupt line aside, keeps delivering the lines after it, and warns once per process', async () => {
+    const cwd = tempDir('log-webhook-cwd-')
+    initGitRepo(cwd)
+    const home = tempDir('log-webhook-home-')
+    const server = startWebhookServer(200)
+    const path = seedOutbox(home, 730, [
+      'not valid json',
+      ndjsonLine('run-1', 730),
+      '{"meta":{"schema":1},"kind":"forge_write"}',
+      ndjsonLine('run-2', 730)
+    ])
+
+    const { result, stderr } = await runDrainAsyncCaptured(730, server.url, undefined, cwd, home)
+    server.stop()
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('unreachable')
+    expect(result.outcome).toEqual({ flushed: true, lineCount: 2, bytes: expect.any(Number), chunks: 1, rejected: 2 })
+    expect(server.requests.map((r) => runIdsOf(r.body))).toEqual([['run-1', 'run-2']])
+    expect(readFileSync(path, 'utf8')).toBe('')
+    const rejected = rejectedRecords(home, 730)
+    expect(rejected.map((r) => r.status)).toEqual(['invalid', 'invalid'])
+    expect(rejected.map((r) => r.raw)).toEqual(['not valid json', '{"meta":{"schema":1},"kind":"forge_write"}'])
+    expect(rejected[0]?.reason).toBe('not valid JSON')
+    // Two rejections, one line on stderr: a broken line must never spam a gate.
+    expect(stderr.split('set a queued line aside').length - 1).toBe(1)
+  }, 20000)
+
+  it('keeps a line whose schema version this build does not know, and posts everything else', async () => {
+    const cwd = tempDir('log-webhook-cwd-')
+    initGitRepo(cwd)
+    const home = tempDir('log-webhook-home-')
+    const server = startWebhookServer(200)
+    const unknown = unknownVersionLine('future-1', 731)
+    const path = seedOutbox(home, 731, [unknown, ndjsonLine('run-1', 731)])
+
+    const { result } = await runDrainAsyncCaptured(731, server.url, undefined, cwd, home)
+    server.stop()
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('unreachable')
+    expect(result.outcome).toEqual({ flushed: true, lineCount: 1, bytes: expect.any(Number), chunks: 1, rejected: 1 })
+    expect(server.requests.map((r) => runIdsOf(r.body))).toEqual([['run-1']])
+    const rejected = rejectedRecords(home, 731)
+    expect(rejected.map((r) => [r.status, r.raw])).toEqual([['unknown_version', unknown]])
+    expect(rejected[0]?.reason).toContain('schema version 99')
+    expect(readFileSync(path, 'utf8')).toBe('')
+  }, 20000)
+
+  it('sets aside a single line larger than one POST instead of jamming every future drain on it', async () => {
+    const cwd = tempDir('log-webhook-cwd-')
+    initGitRepo(cwd)
+    const home = tempDir('log-webhook-home-')
+    const server = startWebhookServer(200)
+    const oversize = paddedNdjsonLine('huge-1', 732, MAX_WEBHOOK_BODY_BYTES + 1024)
+    const path = seedOutbox(home, 732, [oversize, ndjsonLine('run-1', 732)])
+
+    const { result } = await runDrainAsyncCaptured(732, server.url, undefined, cwd, home, undefined, 20000)
+    server.stop()
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('unreachable')
+    expect(result.outcome).toEqual({ flushed: true, lineCount: 1, bytes: expect.any(Number), chunks: 1, rejected: 1 })
+    expect(server.requests.map((r) => runIdsOf(r.body))).toEqual([['run-1']])
+    const rejected = rejectedRecords(home, 732)
+    expect(rejected.map((r) => r.status)).toEqual(['too_large'])
+    expect(rejected[0]?.reason).toContain(`over the ${MAX_WEBHOOK_BODY_BYTES}-byte per-POST cap`)
+    expect(readFileSync(path, 'utf8')).toBe('')
+  }, 30000)
+
+  it('keeps the bad line queued, and says so, when it cannot be set aside at all', async () => {
+    const cwd = tempDir('log-webhook-cwd-')
+    initGitRepo(cwd)
+    const home = tempDir('log-webhook-home-')
+    const server = startWebhookServer(200)
+    const path = seedOutbox(home, 733, ['not valid json', ndjsonLine('run-1', 733)])
+    // A planted symlink where the rejected file belongs: the hardened append
+    // refuses it (`O_NOFOLLOW`), which must never become a silent drop.
+    const elsewhere = join(home, 'elsewhere.ndjson')
+    writeFileSync(elsewhere, '')
+    symlinkSync(elsewhere, siblingPath(home, 733, '.rejected.ndjson'))
+
+    const { result } = await runDrainAsyncCaptured(733, server.url, undefined, cwd, home)
+    server.stop()
+
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('unreachable')
+    expect(result.code).toBe('log-webhook-drain-rejected-write')
+    expect(server.requests.length).toBe(0)
+    expect(readFileSync(path, 'utf8')).toBe(`not valid json\n${ndjsonLine('run-1', 733)}\n`)
+    expect(readFileSync(elsewhere, 'utf8')).toBe('')
   }, 20000)
 })
