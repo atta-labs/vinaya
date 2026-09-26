@@ -2,7 +2,7 @@
 
 Status: draft
 
-Everything below ships, except the live route (§ 5, "Live"), which is designed here and arrives with the WebSocket hub. Until it does, `/live` is an unknown path and answers `404`.
+Everything below ships.
 
 A small server that receives the events a Vinaya installation delivers to a `logs.url` destination (`apps/cli/specs/log.md` § The destination), keeps every one of them, lets a reader page through them from any position, and pushes each new one to live viewers as it arrives. It runs on Cloudflare's free plan and costs nothing at the volume measured below. Any Vinaya adopter can deploy their own copy; the sending side needs no change, because the server accepts exactly what the CLI already sends.
 
@@ -139,15 +139,19 @@ authorization: Bearer <READ_TOKEN>
 
 ### Live
 
-**Not yet served — this section is the design the WebSocket hub implements. Until it lands, `/live` is an unknown path and answers `404`.**
-
 ```
 GET /v1/repos/<owner>/<repo>/live?after=<seq>
 upgrade: websocket
 sec-websocket-protocol: vinaya-log.v1, bearer.<READ_TOKEN>
 ```
 
-A browser cannot set an `authorization` header on a WebSocket, so the read token travels as a second subprotocol; the server answers with `vinaya-log.v1` alone and never echoes the token. On connect the server first sends every stored event after `after` (at most 1,000; when more are waiting it sends `{"type":"resync","after":<seq>}` and closes, and the viewer pages with the read route before reconnecting), then each new event the moment its ingest commits, in `seq` order, with no gap and no repeat between the catch-up and the live part. Connections use the Durable Object hibernation API, so an idle viewer costs nothing, and viewers never need to send anything: protocol pings are answered by the runtime.
+A browser cannot set an `authorization` header on a WebSocket, so the read token travels as a second subprotocol; the server answers with `vinaya-log.v1` alone and never echoes the token. A client that can set headers — a test, `curl`, a server-side reader — may present the token as `authorization: Bearer <READ_TOKEN>` instead, exactly as on the read route. Either way a missing token, a wrong one and the ingest token are all `401`, checked before anything else about the request, so a caller with no token learns nothing else about the route. A request that is not a WebSocket upgrade, or one that does not ask for `vinaya-log.v1`, is `400`; `after` must be a non-negative integer when present, or `400`, and no socket is opened.
+
+On connect the server sends every stored event after `after`, in `seq` order, as one message per event in the same line shape the read route returns. When more than 1,000 are waiting it sends `{"type":"resync","after":<seq>}` — the position to resume paging from, which is the one the viewer asked for — and closes with code `1013`, rather than replaying an unbounded stretch of the log down one socket; the viewer pages with the read route until it is within 1,000 of the head and reconnects.
+
+Then each new event follows the moment its ingest commits, in `seq` order: only the rows that ingest actually inserted, never the duplicates it counted, and never before they are durably stored. **There is no gap and no repeat between the catch-up and the live part.** The catch-up query and the socket's registration happen in one synchronous turn of the object, with no `await` between them, so no ingest can commit in between: the object is single-threaded only for as long as it does not yield. The replay ends at the head the object had in that turn, and a broadcast only ever carries rows inserted after it. A send to a viewer that has gone away never fails the ingest that is broadcasting — its events are already stored.
+
+Connections use the Durable Object hibernation API, so an idle viewer costs nothing: sockets are accepted with `ctx.acceptWebSocket`, the runtime's own registry is the only place they live, and they survive the object being evicted from memory. Viewers never need to send anything — protocol pings are answered by the runtime, and an incoming message costs twenty times an outgoing one, so anything a viewer does send is ignored.
 
 ## 6. Deploying a copy
 

@@ -9,10 +9,13 @@
  * here would spend the scarce budget doing work the object is sized for;
  * handing the request stream straight to the stub costs none of it.
  *
- * A token is never logged and never echoed in a response.
+ * A token is never logged and never echoed in a response. On the live route
+ * the read token arrives as a subprotocol rather than a header — a browser
+ * cannot set one on a WebSocket — and the upgrade is forwarded to the object,
+ * which accepts the socket and answers with the feed's protocol name alone.
  */
 
-import { parseRoute, repoName } from './route'
+import { asksForLiveSubprotocol, liveSubprotocolToken, LIVE_SUBPROTOCOL, parseRoute, repoName } from './route'
 import { RepoLog, type Env } from './repo-log'
 
 export { RepoLog }
@@ -36,6 +39,19 @@ async function tokenMatches(presented: string, expected: string): Promise<boolea
 
 async function sha256(value: string): Promise<Uint8Array> {
   return new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)))
+}
+
+/**
+ * The read token a live request presents. A browser cannot set an
+ * `authorization` header on a WebSocket, so the token travels as a second
+ * subprotocol (spec § 5, "Live"); a client that can set headers — the CLI, a
+ * test, `curl` — may present it exactly as it does on the read route instead.
+ */
+function liveToken(request: Request): string | null {
+  return (
+    liveSubprotocolToken(request.headers.get('sec-websocket-protocol')) ??
+    bearerToken(request.headers.get('authorization'))
+  )
 }
 
 /** The bearer value of an `authorization` header, or `null` when there is no well-formed one. */
@@ -68,9 +84,21 @@ export default {
       return refuse(500, 'server is missing its token configuration')
     }
 
-    const presented = bearerToken(request.headers.get('authorization'))
+    const presented =
+      parsed.route.kind === 'live' ? liveToken(request) : bearerToken(request.headers.get('authorization'))
     if (presented === null || !(await tokenMatches(presented, expected))) {
       return refuse(401, 'missing or wrong token for this route')
+    }
+
+    // Shape checks come after the token check, so an unauthenticated caller
+    // learns nothing about the route from the refusal it gets.
+    if (parsed.route.kind === 'live') {
+      if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket') {
+        return refuse(400, 'the live route is a websocket upgrade')
+      }
+      if (!asksForLiveSubprotocol(request.headers.get('sec-websocket-protocol'))) {
+        return refuse(400, `the live route speaks ${LIVE_SUBPROTOCOL}`)
+      }
     }
 
     const name = repoName(parsed.route)
