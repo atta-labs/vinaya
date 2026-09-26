@@ -31,7 +31,6 @@
 import {
   closeSync,
   constants as fsConstants,
-  existsSync,
   lstatSync,
   mkdirSync,
   openSync,
@@ -233,19 +232,37 @@ function backupPathFor(queuePath: string): string {
 }
 
 /**
- * The private name a backup slot is renamed to for the duration of its own
- * drain. The rotation in `log-sink.ts` does not take this module's drain lock
- * — it must never wait on a network call to append a line — so a rotation
- * landing mid-drain would otherwise `renameSync` a fresh, undelivered queue
- * file straight onto the backup this drain is part-way through removing bytes
- * from, and the next byte removal would cut into events that were never sent.
- * Moving the backup aside first makes that impossible: a rotation overwrites
- * `<name>.1.ndjson`, which by then holds nothing this drain is reading. A
- * drain that crashes leaves this file behind, and the next drain delivers it
- * first — older than the current backup, so still oldest-first.
+ * The one private name every bucket of the queue — the rotation backup slot
+ * AND the live file itself — is renamed to for the duration of its own drain.
+ * Nothing but a drain ever opens this name, and that is what makes removing
+ * bytes safe at all.
+ *
+ * `log-sink.ts`'s append and its rotation both act on `<name>.ndjson`, and
+ * neither takes this module's drain lock — an append must never wait on a
+ * network call. So a drain that removed bytes from a shared path could have
+ * that path renamed out from under it at any moment, including while a chunk
+ * is in flight (up to `WEBHOOK_FETCH_TIMEOUT_MS`): the rotation moves the
+ * file this drain is part-way through to `<name>.1.ndjson` and creates a
+ * fresh one at the same path, and the next byte removal then truncates THAT
+ * file using offsets computed against the old one — destroying every line
+ * appended since, while the bytes the server had already acknowledged sit in
+ * the new backup slot waiting to be posted a second time. A queue big enough
+ * to need several chunks is by definition near the rotation cap, so this is
+ * the ordinary case of an outage recovery, not a remote one.
+ *
+ * Renaming the bucket aside first removes the shared path from the drain
+ * entirely: appends land on a fresh `<name>.ndjson` this drain never reads or
+ * writes, and the next drain delivers them.
+ *
+ * Exactly one such file exists at a time, and it always holds the oldest
+ * undelivered events: a bucket is renamed in only after the previous one has
+ * been delivered and unlinked, and every failure throws before the next
+ * rename — so a rotation that fills the backup slot while a backlog is still
+ * waiting here can never overwrite it. A drain that dies leaves this file for
+ * the next drain, which delivers it before anything newer.
  */
-function drainingBackupPathFor(queuePath: string): string {
-  return queuePath.replace(/\.ndjson$/, '.1.draining.ndjson')
+function drainingPathFor(queuePath: string): string {
+  return queuePath.replace(/\.ndjson$/, '.draining.ndjson')
 }
 
 /** Where a line the storage contract cannot vouch for is kept, with its reason — beside the queue, under the same machine-local outbox directory, never in the repository. */
@@ -293,20 +310,26 @@ function queueLines(buf: Buffer): QueueLine[] {
 }
 
 /**
- * Removes exactly `cut` bytes from the head of `path`, preserving everything
- * appended since. The read and the rewrite are adjacent statements on
- * purpose: another process's `O_APPEND` line landing between them is the one
- * way a line can still be lost, so that window stays as narrow as a
- * read-then-rewrite can be — a chunked drain takes this same narrow window
- * once per acknowledged chunk, never a wider one.
+ * Removes exactly `cut` bytes from the head of the bucket being drained. This
+ * only ever runs against the private `drainingPathFor` file, which no
+ * producer can open, so the bytes at `cut` are always the ones this drain
+ * planned and the rewrite can lose nothing — the guarantee comes from the
+ * rename, not from keeping a read-then-rewrite window narrow. It is done per
+ * acknowledged chunk rather than once at the end so that a drain killed
+ * part-way never re-sends what the server already took.
  */
 function removeQueueHead(path: string, cut: number): void {
-  const liveNow = readFileSync(path)
-  writeFileSync(path, liveNow.subarray(Math.min(cut, liveNow.byteLength)))
+  const remaining = readFileSync(path)
+  writeFileSync(path, remaining.subarray(Math.min(cut, remaining.byteLength)))
 }
 
-/** Reads `path`, or `null` when it does not exist; throws when it exists and is not a regular file, which is a planted target, never a queue. */
-function readQueueFile(path: string): Buffer | null {
+/**
+ * `null` when `path` does not exist, else its size in bytes; throws when it
+ * exists and is not a regular file. Checked BEFORE any rename, so a planted
+ * symlink or FIFO is refused where it stands rather than moved to the private
+ * draining name, where it would refuse every later drain instead.
+ */
+function queueBucketSize(path: string): number | null {
   let lstat: ReturnType<typeof lstatSync> | undefined
   try {
     lstat = lstatSync(path)
@@ -320,6 +343,12 @@ function readQueueFile(path: string): Buffer | null {
       `log webhook drain: outbox target is not a regular file (symlink, FIFO, or similar) — refusing to read: ${path}`
     )
   }
+  return Number(lstat.size)
+}
+
+/** Reads `path`, or `null` when it does not exist; throws when it exists and is not a regular file, which is a planted target, never a queue. */
+function readQueueFile(path: string): Buffer | null {
+  if (queueBucketSize(path) === null) return null
   return readFileSync(path)
 }
 
@@ -436,36 +465,40 @@ async function drainQueueFile(args: {
     chunkBytes = 0
   }
 
+  /**
+   * Whatever is already accumulated is delivered FIRST, so a line being set
+   * aside is always at the head of the queue and its bytes leave immediately
+   * after it lands in the rejected file. The gap in which a crash could make
+   * the next drain classify and file the same bad line a second time is then
+   * two adjacent statements rather than a chunk's whole network round trip —
+   * a duplicate rejected record is still possible there, and is the side of
+   * that trade-off to be on: the line is never removed before it is filed, so
+   * it can be recorded twice but never lost. The cost is that a bad line ends
+   * the chunk it interrupts, which is the right price for a rare fault.
+   */
+  const setAside = async (reason: string, status: string, identity: string | null, line: QueueLine): Promise<void> => {
+    if (chunk.length > 0) await deliverChunk()
+    rejectLine(rejectedPath, reason, status, identity, line.raw)
+    totals.rejected += 1
+    pendingEnd = line.end
+    removeQueueHead(path, pendingEnd - removed)
+    removed = pendingEnd
+  }
+
   for (const line of lines) {
     const record = classifyStoredLine(line.raw, homedir())
     if (record.status !== 'ok') {
-      rejectLine(rejectedPath, record.reason, record.status, record.identity, line.raw)
-      totals.rejected += 1
-      pendingEnd = line.end
-      // With no chunk accumulating, this line's bytes are the whole pending
-      // prefix and leave now — so a bad line at the head of the queue is set
-      // aside exactly once, not re-read by every later drain.
-      if (chunk.length === 0) {
-        removeQueueHead(path, pendingEnd - removed)
-        removed = pendingEnd
-      }
+      await setAside(record.reason, record.status, record.identity, line)
       continue
     }
     const lineBytes = Buffer.byteLength(record.postLine, 'utf8') + 1
     if (lineBytes > MAX_WEBHOOK_BODY_BYTES) {
-      rejectLine(
-        rejectedPath,
+      await setAside(
         `one line is ${lineBytes} byte(s), over the ${MAX_WEBHOOK_BODY_BYTES}-byte per-POST cap — no chunking can carry it`,
         'too_large',
         record.identity,
-        line.raw
+        line
       )
-      totals.rejected += 1
-      pendingEnd = line.end
-      if (chunk.length === 0) {
-        removeQueueHead(path, pendingEnd - removed)
-        removed = pendingEnd
-      }
       continue
     }
     if (chunk.length > 0 && chunkBytes + lineBytes > MAX_WEBHOOK_BODY_BYTES) await deliverChunk()
@@ -477,41 +510,39 @@ async function drainQueueFile(args: {
   // Every line of the read is accounted for by here, so the last cut takes
   // the whole buffer — including any terminator-only bytes trailing the final
   // line, which no line's own `end` covers and which would otherwise sit at
-  // the head of every future drain. Bytes a concurrent writer appended past
-  // this offset are preserved, exactly as they were before chunking.
+  // the head of every future drain.
   pendingEnd = buf.byteLength
   if (chunk.length > 0) {
     await deliverChunk()
     return
   }
-  // Every remaining line was set aside while a chunk was accumulating ahead
-  // of it; its bytes still have to leave the queue.
   if (pendingEnd > removed) removeQueueHead(path, pendingEnd - removed)
 }
 
-/** Delivers the rotation backup slot, if there is one, before the live file — the events in it are older, and nothing else ever reads them. */
-async function drainBackupSlot(args: {
-  path: string
+type DrainArgs = {
   rejectedPath: string
   webhookUrl: string
   headers: Record<string, string> | undefined
   fetchTimeoutMs: number
   totals: DrainTotals
-}): Promise<void> {
-  const draining = drainingBackupPathFor(args.path)
-  const backup = backupPathFor(args.path)
-  // A file left behind by a drain that crashed part-way through the backup
-  // slot holds the oldest events of all, so it goes first — and it must be
-  // finished before the current backup can be moved into its place. A drain
-  // that returns has delivered or set aside every line it read, so the file
-  // is empty by then; a drain that could not goes out through a throw
-  // instead, leaving the file for the next attempt.
-  if (existsSync(draining)) {
-    await drainQueueFile({ ...args, path: draining })
-    unlinkSync(draining)
-  }
-  if (!existsSync(backup)) return
-  renameSync(backup, draining)
+}
+
+/**
+ * Renames one bucket — the rotation backup slot, or the live queue file — to
+ * the private draining name and delivers it there, removing the file once
+ * every line has been delivered or set aside. Called only when no draining
+ * file is present, so the rename can never overwrite an undelivered backlog;
+ * a drain that cannot finish throws, leaving the file for the next one.
+ *
+ * An empty or absent bucket is left exactly as it is: the live file is
+ * re-created by the next append anyway, and renaming it on every event would
+ * be churn for no delivery.
+ */
+async function drainRenamedAside(args: DrainArgs, livePath: string, source: string): Promise<void> {
+  const size = queueBucketSize(source)
+  if (size === null || size === 0) return
+  const draining = drainingPathFor(livePath)
+  renameSync(source, draining)
   await drainQueueFile({ ...args, path: draining })
   unlinkSync(draining)
 }
@@ -549,9 +580,19 @@ export async function drainOutboxToWebhook(
   const totals: DrainTotals = { lineCount: 0, bytes: 0, chunks: 0, rejected: 0 }
   if (lockToken === null) return { flushed: false, ...totals }
   try {
-    const shared = { rejectedPath: rejectedPathFor(path), webhookUrl, headers, fetchTimeoutMs, totals }
-    await drainBackupSlot({ ...shared, path })
-    await drainQueueFile({ ...shared, path })
+    const shared: DrainArgs = { rejectedPath: rejectedPathFor(path), webhookUrl, headers, fetchTimeoutMs, totals }
+    // Oldest bucket first, one at a time: whatever a previous drain left
+    // behind, then the rotation backup slot, then the live file — each
+    // delivered and removed before the next is renamed into its place, so the
+    // one private name is never overwritten and the order events were
+    // produced in is never inverted.
+    const draining = drainingPathFor(path)
+    if (queueBucketSize(draining) !== null) {
+      await drainQueueFile({ ...shared, path: draining })
+      unlinkSync(draining)
+    }
+    await drainRenamedAside(shared, path, backupPathFor(path))
+    await drainRenamedAside(shared, path, path)
     return { flushed: totals.chunks > 0 || totals.rejected > 0, ...totals }
   } finally {
     releaseDrainLock(lockPath, lockToken)

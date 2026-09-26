@@ -17,7 +17,9 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
+  statSync,
   symlinkSync,
   utimesSync,
   writeFileSync
@@ -32,6 +34,7 @@ import {
   acquireDrainLock,
   releaseDrainLock
 } from '../../src/lib/log-webhook-drain.js'
+import { OUTBOX_MAX_BYTES } from '../../src/lib/log-sink.js'
 import { spawnBudgetedAsync, spawnSyncBudgeted, stripVinayaEnv } from './process-fixture'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -130,6 +133,15 @@ function rejectedRecords(home: string, issue: number): { status: string; reason:
     .split('\n')
     .filter(Boolean)
     .map((l) => JSON.parse(l))
+}
+
+/** What the queue holds — a drain that empties a bucket removes its file outright, so "nothing queued" is a missing file just as legitimately as an empty one. */
+function queueContent(path: string): string {
+  try {
+    return readFileSync(path, 'utf8')
+  } catch {
+    return ''
+  }
 }
 
 function seedOutbox(home: string, issue: number, lines: string[]): string {
@@ -327,10 +339,10 @@ describe('drainOutboxToWebhook — the logs.url server-destination delivery path
       .map((l) => JSON.parse(l).meta.run_id)
     expect(posted).toEqual(['run-1', 'run-2'])
 
-    expect(readFileSync(path, 'utf8')).toBe('')
+    expect(queueContent(path)).toBe('')
   })
 
-  it('leaves the outbox untouched and refuses when the webhook does not answer 2xx', async () => {
+  it('keeps every unacknowledged line queued, and delivers it on the next drain, when the webhook does not answer 2xx', async () => {
     const cwd = tempDir('log-webhook-cwd-')
     initGitRepo(cwd)
     const home = tempDir('log-webhook-home-')
@@ -344,8 +356,20 @@ describe('drainOutboxToWebhook — the logs.url server-destination delivery path
     expect(result.ok).toBe(false)
     if (result.ok) throw new Error('unreachable')
     expect(result.code).toBe('log-webhook-drain-failed')
-    expect(readFileSync(path, 'utf8')).toBe(`${line}\n`)
-  })
+    // The bucket being drained is held under its own private name, out of
+    // reach of the producer's own appends and rotation, so what the server
+    // refused waits there rather than at the live path.
+    expect(readFileSync(siblingPath(home, 701, '.draining.ndjson'), 'utf8')).toBe(`${line}\n`)
+
+    const accepting = startWebhookServer(200)
+    const retry = await runDrainAsync(701, accepting.url, undefined, cwd, home)
+    accepting.stop()
+
+    expect(retry.ok).toBe(true)
+    expect(accepting.requests.map((r) => runIdsOf(r.body))).toEqual([['run-1']])
+    expect(queueContent(path)).toBe('')
+    expect(existsSync(siblingPath(home, 701, '.draining.ndjson'))).toBe(false)
+  }, 20000)
 
   it('posts nothing at all when the only queued line is corrupt — it is set aside, never sent', async () => {
     const cwd = tempDir('log-webhook-cwd-')
@@ -361,7 +385,7 @@ describe('drainOutboxToWebhook — the logs.url server-destination delivery path
     if (!result.ok) throw new Error('unreachable')
     expect(result.outcome).toEqual({ flushed: true, lineCount: 0, bytes: 0, chunks: 0, rejected: 1 })
     expect(server.requests.length).toBe(0)
-    expect(readFileSync(path, 'utf8')).toBe('')
+    expect(queueContent(path)).toBe('')
     expect(rejectedRecords(home, 702).map((r) => [r.status, r.raw])).toEqual([['invalid', 'not valid json']])
   })
 
@@ -399,7 +423,8 @@ describe('drainOutboxToWebhook — the logs.url server-destination delivery path
     if (result.ok) throw new Error('unreachable')
     expect(result.code).toBe('log-webhook-drain-failed')
     expect(result.message).toContain('timed out after 200ms')
-    expect(readFileSync(path, 'utf8')).toBe(`${line}\n`)
+    expect(readFileSync(siblingPath(home, 704, '.draining.ndjson'), 'utf8')).toBe(`${line}\n`)
+    expect(queueContent(path)).toBe('')
   }, 10000)
 
   it('reports nothing to flush for a missing outbox, without contacting the webhook', async () => {
@@ -448,7 +473,7 @@ describe('drainOutboxToWebhook — the logs.url server-destination delivery path
       rejected: 0
     })
     expect(loser).toBeDefined()
-    expect(readFileSync(path, 'utf8')).toBe('')
+    expect(queueContent(path)).toBe('')
   }, 10000)
 
   it('round-2 security review, BLOCKER: a lock abandoned by a crashed holder is stolen once stale, not left to jam every future drain', async () => {
@@ -469,7 +494,7 @@ describe('drainOutboxToWebhook — the logs.url server-destination delivery path
     expect(result.ok).toBe(true)
     if (!result.ok) throw new Error('unreachable')
     expect(result.outcome).toEqual({ flushed: true, lineCount: 1, bytes: expect.any(Number), chunks: 1, rejected: 0 })
-    expect(readFileSync(path, 'utf8')).toBe('')
+    expect(queueContent(path)).toBe('')
   })
 
   it('round-3 security review, MEDIUM: releaseDrainLock never deletes a lock another process now owns — a holder stalled past the stale window, then resumed, cannot tear down the lock its own lock was stolen from', () => {
@@ -592,7 +617,7 @@ describe('drainOutboxToWebhook — a queue larger than one POST catches up in ch
     for (const request of server.requests) {
       expect(Buffer.byteLength(request.body, 'utf8')).toBeLessThanOrEqual(MAX_WEBHOOK_BODY_BYTES)
     }
-    expect(readFileSync(path, 'utf8')).toBe('')
+    expect(queueContent(path)).toBe('')
   }, 30000)
 
   it('keeps exactly what the server never acknowledged when a chunk fails part-way through a backlog', async () => {
@@ -617,7 +642,8 @@ describe('drainOutboxToWebhook — a queue larger than one POST catches up in ch
     expect(server.requests.map((r) => runIdsOf(r.body))).toEqual([['run-1', 'run-2'], ['run-3']])
     // The accepted chunk is gone; the refused one is still queued, whole and in
     // order, for the next drain to re-send.
-    expect(readFileSync(path, 'utf8')).toBe(`${third}\n`)
+    expect(readFileSync(siblingPath(home, 711, '.draining.ndjson'), 'utf8')).toBe(`${third}\n`)
+    expect(queueContent(path)).toBe('')
   }, 30000)
 
   it('re-sends the same head chunk after a lost acknowledgement, for the server to deduplicate', async () => {
@@ -634,7 +660,7 @@ describe('drainOutboxToWebhook — a queue larger than one POST catches up in ch
     expect(first.result.ok).toBe(false)
     if (first.result.ok) throw new Error('unreachable')
     expect(first.result.code).toBe('log-webhook-drain-failed')
-    expect(readFileSync(path, 'utf8')).toBe(`${line}\n`)
+    expect(readFileSync(siblingPath(home, 712, '.draining.ndjson'), 'utf8')).toBe(`${line}\n`)
 
     const second = await runDrainAsyncCaptured(712, server.url, undefined, cwd, home)
     server.stop()
@@ -644,7 +670,7 @@ describe('drainOutboxToWebhook — a queue larger than one POST catches up in ch
     // Byte-identical bodies: the retry re-sends the same HEAD chunk, which the
     // server collapses by the stable event identity every line carries.
     expect(server.requests[1]?.body).toBe(server.requests[0]?.body)
-    expect(readFileSync(path, 'utf8')).toBe('')
+    expect(queueContent(path)).toBe('')
   }, 30000)
 
   it('never loses a line appended between two chunks of the same backlog', async () => {
@@ -720,8 +746,8 @@ describe('drainOutboxToWebhook — the rotation backup slot is delivered, not ov
     expect(result.outcome).toEqual({ flushed: true, lineCount: 3, bytes: expect.any(Number), chunks: 2, rejected: 0 })
     expect(server.requests.map((r) => runIdsOf(r.body))).toEqual([['old-1', 'old-2'], ['new-1']])
     expect(existsSync(backup)).toBe(false)
-    expect(existsSync(siblingPath(home, 720, '.1.draining.ndjson'))).toBe(false)
-    expect(readFileSync(path, 'utf8')).toBe('')
+    expect(existsSync(siblingPath(home, 720, '.draining.ndjson'))).toBe(false)
+    expect(queueContent(path)).toBe('')
   }, 20000)
 
   it('picks up a backup slot a crashed drain left part-way through, ahead of everything newer', async () => {
@@ -729,7 +755,7 @@ describe('drainOutboxToWebhook — the rotation backup slot is delivered, not ov
     initGitRepo(cwd)
     const home = tempDir('log-webhook-home-')
     const server = startWebhookServer(200)
-    seedSibling(home, 721, '.1.draining.ndjson', [ndjsonLine('oldest-1', 721)])
+    seedSibling(home, 721, '.draining.ndjson', [ndjsonLine('oldest-1', 721)])
     seedSibling(home, 721, '.1.ndjson', [ndjsonLine('older-1', 721)])
     const path = seedOutbox(home, 721, [ndjsonLine('new-1', 721)])
 
@@ -738,9 +764,9 @@ describe('drainOutboxToWebhook — the rotation backup slot is delivered, not ov
 
     expect(result.ok).toBe(true)
     expect(server.requests.map((r) => runIdsOf(r.body))).toEqual([['oldest-1'], ['older-1'], ['new-1']])
-    expect(existsSync(siblingPath(home, 721, '.1.draining.ndjson'))).toBe(false)
+    expect(existsSync(siblingPath(home, 721, '.draining.ndjson'))).toBe(false)
     expect(existsSync(siblingPath(home, 721, '.1.ndjson'))).toBe(false)
-    expect(readFileSync(path, 'utf8')).toBe('')
+    expect(queueContent(path)).toBe('')
   }, 20000)
 
   it('leaves a partly-delivered backup slot for the next drain when the server stops accepting', async () => {
@@ -762,7 +788,7 @@ describe('drainOutboxToWebhook — the rotation backup slot is delivered, not ov
     // The live file is never touched while older events are still undelivered:
     // order survives the outage.
     expect(readFileSync(path, 'utf8')).toBe(`${liveLine}\n`)
-    expect(readFileSync(siblingPath(home, 722, '.1.draining.ndjson'), 'utf8')).toBe(`${backupLine}\n`)
+    expect(readFileSync(siblingPath(home, 722, '.draining.ndjson'), 'utf8')).toBe(`${backupLine}\n`)
   }, 20000)
 })
 
@@ -784,9 +810,12 @@ describe('drainOutboxToWebhook — a line the storage contract cannot vouch for 
 
     expect(result.ok).toBe(true)
     if (!result.ok) throw new Error('unreachable')
-    expect(result.outcome).toEqual({ flushed: true, lineCount: 2, bytes: expect.any(Number), chunks: 1, rejected: 2 })
-    expect(server.requests.map((r) => runIdsOf(r.body))).toEqual([['run-1', 'run-2']])
-    expect(readFileSync(path, 'utf8')).toBe('')
+    // Two chunks, not one: a line being set aside first flushes whatever is
+    // already accumulated, so its own bytes can leave the queue immediately
+    // after it is filed rather than waiting out a POST.
+    expect(result.outcome).toEqual({ flushed: true, lineCount: 2, bytes: expect.any(Number), chunks: 2, rejected: 2 })
+    expect(server.requests.map((r) => runIdsOf(r.body))).toEqual([['run-1'], ['run-2']])
+    expect(queueContent(path)).toBe('')
     const rejected = rejectedRecords(home, 730)
     expect(rejected.map((r) => r.status)).toEqual(['invalid', 'invalid'])
     expect(rejected.map((r) => r.raw)).toEqual(['not valid json', '{"meta":{"schema":1},"kind":"forge_write"}'])
@@ -813,7 +842,7 @@ describe('drainOutboxToWebhook — a line the storage contract cannot vouch for 
     const rejected = rejectedRecords(home, 731)
     expect(rejected.map((r) => [r.status, r.raw])).toEqual([['unknown_version', unknown]])
     expect(rejected[0]?.reason).toContain('schema version 99')
-    expect(readFileSync(path, 'utf8')).toBe('')
+    expect(queueContent(path)).toBe('')
   }, 20000)
 
   it('sets aside a single line larger than one POST instead of jamming every future drain on it', async () => {
@@ -834,7 +863,7 @@ describe('drainOutboxToWebhook — a line the storage contract cannot vouch for 
     const rejected = rejectedRecords(home, 732)
     expect(rejected.map((r) => r.status)).toEqual(['too_large'])
     expect(rejected[0]?.reason).toContain(`over the ${MAX_WEBHOOK_BODY_BYTES}-byte per-POST cap`)
-    expect(readFileSync(path, 'utf8')).toBe('')
+    expect(queueContent(path)).toBe('')
   }, 30000)
 
   it('keeps the bad line queued, and says so, when it cannot be set aside at all', async () => {
@@ -856,7 +885,103 @@ describe('drainOutboxToWebhook — a line the storage contract cannot vouch for 
     if (result.ok) throw new Error('unreachable')
     expect(result.code).toBe('log-webhook-drain-rejected-write')
     expect(server.requests.length).toBe(0)
-    expect(readFileSync(path, 'utf8')).toBe(`not valid json\n${ndjsonLine('run-1', 733)}\n`)
+    expect(readFileSync(siblingPath(home, 733, '.draining.ndjson'), 'utf8')).toBe(
+      `not valid json\n${ndjsonLine('run-1', 733)}\n`
+    )
+    expect(queueContent(path)).toBe('')
     expect(readFileSync(elsewhere, 'utf8')).toBe('')
   }, 20000)
+})
+
+describe('drainOutboxToWebhook — a rotation landing mid-drain of the live file loses nothing and posts nothing twice (O4)', () => {
+  /**
+   * Reproduces `log-sink.ts`'s own `appendLine` exactly, for the one case
+   * that matters here: it opens the live path with `O_CREAT`, and when that
+   * file is ALREADY over `OUTBOX_MAX_BYTES` it renames it to the backup slot
+   * and appends into a fresh file at the same path. It takes no drain lock —
+   * an append must never wait on a network call — so this can land at any
+   * moment, including while a chunk of a multi-chunk drain is in flight.
+   */
+  function appendThroughRotation(livePath: string, line: string): void {
+    let size = 0
+    try {
+      size = statSync(livePath).size
+    } catch {
+      size = 0
+    }
+    if (size > OUTBOX_MAX_BYTES) renameSync(livePath, livePath.replace(/\.ndjson$/, '.1.ndjson'))
+    appendFileSync(livePath, `${line}\n`)
+  }
+
+  it('delivers every line exactly once when a concurrent append rotates the live file between two chunks', async () => {
+    const cwd = tempDir('log-webhook-cwd-')
+    initGitRepo(cwd)
+    const home = tempDir('log-webhook-home-')
+    const server = startSlowWebhookServer(200, 1500)
+    // Past the rotation cap on purpose: this is the exact recovery scenario
+    // the chunked drain exists for, and at this size ANY concurrent append
+    // rotates rather than merely appending.
+    const seeded = ['run-1', 'run-2', 'run-3', 'run-4', 'run-5'].map((id) =>
+      paddedNdjsonLine(id, 740, CHUNK_FIXTURE_LINE_BYTES)
+    )
+    const path = seedOutbox(home, 740, seeded)
+    expect(readFileSync(path).byteLength).toBeGreaterThan(OUTBOX_MAX_BYTES)
+
+    const drain = runDrainAsyncCaptured(740, server.url, undefined, cwd, home, undefined, 40000)
+    // The first request arriving proves the drain has read the queue and is
+    // mid-POST, which is when a producer's own append is most damaging.
+    await waitForRequests(server.requests, 1)
+    appendThroughRotation(path, ndjsonLine('run-6', 740))
+
+    const first = await drain
+    expect(first.result.ok).toBe(true)
+    // A second drain, exactly as the next event's own drain would: whatever
+    // the rotation moved aside, and whatever was appended after it, still has
+    // to arrive.
+    const second = await runDrainAsyncCaptured(740, server.url, undefined, cwd, home, undefined, 40000)
+    server.stop()
+    expect(second.result.ok).toBe(true)
+
+    const delivered = server.requests.flatMap((r) => runIdsOf(r.body))
+    // Exactly once each: a rotation must neither destroy the line appended
+    // into the fresh live file nor strand already-delivered bytes in the new
+    // backup slot for a later drain to post a second time.
+    expect([...delivered].sort()).toEqual(['run-1', 'run-2', 'run-3', 'run-4', 'run-5', 'run-6'])
+    expect(queueContent(path)).toBe('')
+    expect(existsSync(siblingPath(home, 740, '.1.ndjson'))).toBe(false)
+    expect(existsSync(siblingPath(home, 740, '.draining.ndjson'))).toBe(false)
+  }, 90000)
+
+  it('never overwrites a backlog waiting in the draining file when a later rotation happens', async () => {
+    const cwd = tempDir('log-webhook-cwd-')
+    initGitRepo(cwd)
+    const home = tempDir('log-webhook-home-')
+    const refusing = startWebhookServer(500)
+    const stranded = ndjsonLine('old-1', 741)
+    const path = seedOutbox(home, 741, [stranded])
+
+    // A refused drain leaves the remainder in the private draining file.
+    const failed = await runDrainAsyncCaptured(741, refusing.url, undefined, cwd, home)
+    refusing.stop()
+    expect(failed.result.ok).toBe(false)
+    expect(readFileSync(siblingPath(home, 741, '.draining.ndjson'), 'utf8')).toBe(`${stranded}\n`)
+
+    // The producer keeps logging, and its own rotation fills the backup slot
+    // while that backlog is still undelivered.
+    const rotatedAway = ndjsonLine('mid-1', 741)
+    seedSibling(home, 741, '.1.ndjson', [rotatedAway])
+    const live = ndjsonLine('new-1', 741)
+    writeFileSync(path, `${live}\n`)
+
+    const accepting = startWebhookServer(200)
+    const ok = await runDrainAsyncCaptured(741, accepting.url, undefined, cwd, home)
+    accepting.stop()
+
+    expect(ok.result.ok).toBe(true)
+    // Oldest first, nothing overwritten, nothing skipped.
+    expect(accepting.requests.map((r) => runIdsOf(r.body))).toEqual([['old-1'], ['mid-1'], ['new-1']])
+    expect(existsSync(siblingPath(home, 741, '.draining.ndjson'))).toBe(false)
+    expect(existsSync(siblingPath(home, 741, '.1.ndjson'))).toBe(false)
+    expect(queueContent(path)).toBe('')
+  }, 30000)
 })

@@ -565,6 +565,26 @@ function queuePath(home: string): string {
   return join(home, '.vinaya', 'outbox', 'test-owner-test-repo', '404.ndjson')
 }
 
+/**
+ * Every line the queue still holds, in the order a drain would deliver them.
+ * A drain renames the bucket it is working on to its own private
+ * `<name>.draining.ndjson` before reading it (`log-webhook-drain.ts`), so a
+ * drain that failed leaves what the server never took there rather than at
+ * the live path, and a bucket delivered in full is removed outright rather
+ * than truncated — both of which "what is still queued" has to account for.
+ */
+function queuedLines(home: string): string[] {
+  const read = (path: string): string[] => {
+    try {
+      return readFileSync(path, 'utf8').split('\n').filter(Boolean)
+    } catch {
+      return []
+    }
+  }
+  const live = queuePath(home)
+  return [...read(live.replace(/\.ndjson$/, '.draining.ndjson')), ...read(live)]
+}
+
 describe('log-sink — a server destination appends locally first, then drains (O2)', () => {
   it('a single event lands in the queue and reaches the server, which truncates it', async () => {
     const cwd = tempDir()
@@ -579,9 +599,9 @@ describe('log-sink — a server destination appends locally first, then drains (
     const posted = JSON.parse(server.requests[0]!.trim())
     expect(posted.effect_id).toBe('e1')
 
-    // Drained on success — the local queue is truncated, exactly the
-    // durability rule `flushOutboxToWebhook` already guarantees.
-    expect(readFileSync(queuePath(home), 'utf8')).toBe('')
+    // Drained on success — the local queue holds nothing afterwards, exactly
+    // the durability rule `drainOutboxToWebhook` already guarantees.
+    expect(queuedLines(home)).toEqual([])
   })
 
   it('an event queues locally and survives an unreachable server — nothing lost, nothing thrown', async () => {
@@ -591,7 +611,7 @@ describe('log-sink — a server destination appends locally first, then drains (
 
     await runServerDestinationScript(home, cwd, 'http://127.0.0.1:1/never-reached', 'e2')
 
-    const afterFailure = readFileSync(queuePath(home), 'utf8').trim().split('\n')
+    const afterFailure = queuedLines(home)
     expect(afterFailure).toHaveLength(1)
     expect(JSON.parse(afterFailure[0]!).effect_id).toBe('e2')
   })
@@ -603,20 +623,22 @@ describe('log-sink — a server destination appends locally first, then drains (
 
     // First attempt: server unreachable, the line stays queued.
     await runServerDestinationScript(home, cwd, 'http://127.0.0.1:1/never-reached', 'first')
-    expect(readFileSync(queuePath(home), 'utf8').trim().split('\n')).toHaveLength(1)
+    expect(queuedLines(home)).toHaveLength(1)
 
-    // Second attempt, same queue file, server now live: its own drain reads
-    // the WHOLE file — both the backlogged first line and this one.
+    // Second attempt, same queue, server now live: its own drain delivers
+    // every bucket oldest-first — the backlogged first line, then this one.
     const server = startWebhookServer(200)
     await runServerDestinationScript(home, cwd, server.url, 'second')
     server.stop()
 
-    expect(server.requests).toHaveLength(1)
-    const delivered = server.requests[0]!.trim()
-      .split('\n')
-      .map((l) => JSON.parse(l).effect_id)
+    const delivered = server.requests.flatMap((r) =>
+      r
+        .trim()
+        .split('\n')
+        .map((l) => JSON.parse(l).effect_id)
+    )
     expect(delivered).toEqual(['first', 'second'])
-    expect(readFileSync(queuePath(home), 'utf8')).toBe('')
+    expect(queuedLines(home)).toEqual([])
   })
 })
 
