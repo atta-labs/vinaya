@@ -81,6 +81,7 @@ Two carriers, one per direction:
 - Present every Principal-addressed escalation packet as recorded, `requestedAuthority` intact, and wait — never rule, approve, or merge to clear it.
 - Keep every request inside the grant; when a task needs authority the grant lacks, name the seat that holds it rather than improvising past the refusal.
 - Attach no duration to any status.
+- State only what a tool read made in the same turn returned. An earlier reading is history, not status; a task's absence from a list is not evidence that it finished. Read it now, or say the read did not resolve.
 
 ---
 
