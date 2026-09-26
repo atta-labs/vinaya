@@ -985,3 +985,88 @@ describe('drainOutboxToWebhook — a rotation landing mid-drain of the live file
     expect(queueContent(path)).toBe('')
   }, 30000)
 })
+
+describe('drainOutboxToWebhook — claiming a bucket is one atomic step, never a check then an act (O4)', () => {
+  /**
+   * A rotation racing the instant a drain claims the backup slot. The drain
+   * claims by `renameSync` alone, so whichever of the two renames the
+   * filesystem orders first, the drain delivers exactly one whole bucket —
+   * the one its own rename moved. What this pins down is that no interleaving
+   * can make it deliver a mixture of the two, deliver a line twice, or deliver
+   * a torn line, which a size check taken before the rename could: the drain
+   * would have measured one file and gone on to deliver another.
+   *
+   * One outcome is deliberately NOT asserted per iteration: whether the batch
+   * already sitting in the backup slot survives at all. `appendLine`'s
+   * rotation replaces that slot unconditionally and takes no drain lock, so a
+   * rotation winning the race destroys it — the single-slot retention policy
+   * the rotation has always had, reported through the sink's own overflow
+   * diagnostic (`log-sink.test.ts` holds that report, naming the lost
+   * identities). Closing that would mean changing the rotation itself, which
+   * this task's boundary puts out of scope.
+   */
+  it('never mixes, duplicates or tears a bucket when a rotation races the claim', async () => {
+    const cwd = tempDir('log-webhook-cwd-')
+    initGitRepo(cwd)
+    const home = tempDir('log-webhook-home-')
+    const path = outboxPath(home, 750)
+    mkdirSync(dirname(path), { recursive: true })
+    const backup = siblingPath(home, 750, '.1.ndjson')
+
+    for (let round = 0; round < 6; round++) {
+      const waiting = ndjsonLine(`waiting-${round}`, 750)
+      const rotating = ndjsonLine(`rotating-${round}`, 750)
+      writeFileSync(backup, `${waiting}\n`)
+      writeFileSync(path, `${rotating}\n`)
+
+      const server = startWebhookServer(200)
+      // No `await` between launching the drain and firing the rotation: the
+      // child's own claim and this rename are genuinely in flight together.
+      const drain = runDrainAsyncCaptured(750, server.url, undefined, cwd, home, undefined, 20000)
+      renameSync(path, backup)
+      const { result } = await drain
+      expect(result.ok).toBe(true)
+
+      // Whatever the interleaving, a second drain against a healthy server
+      // finishes the queue, so nothing is left half-claimed.
+      const finish = await runDrainAsyncCaptured(750, server.url, undefined, cwd, home, undefined, 20000)
+      server.stop()
+      expect(finish.result.ok).toBe(true)
+
+      const delivered = server.requests.flatMap((r) => runIdsOf(r.body))
+      // Every line whole and parseable (runIdsOf would throw on a torn line),
+      // never posted twice, and never a line nobody produced.
+      expect(new Set(delivered).size).toBe(delivered.length)
+      for (const id of delivered) expect([`waiting-${round}`, `rotating-${round}`]).toContain(id)
+      // The batch the rotation moved in is always delivered — it is either
+      // claimed by this drain or waiting in the slot for the next one.
+      expect(delivered).toContain(`rotating-${round}`)
+      expect(queueContent(path)).toBe('')
+      expect(existsSync(siblingPath(home, 750, '.draining.ndjson'))).toBe(false)
+      expect(existsSync(backup)).toBe(false)
+    }
+  }, 120000)
+
+  it('claims a bucket that appears only after the size check a previous revision took', async () => {
+    const cwd = tempDir('log-webhook-cwd-')
+    initGitRepo(cwd)
+    const home = tempDir('log-webhook-home-')
+    const server = startWebhookServer(200)
+    const live = ndjsonLine('run-1', 751)
+    const path = seedOutbox(home, 751, [live])
+    // A genuinely zero-length backup slot — what a rotation leaves behind when
+    // the file it moved in was itself empty. A revision that measured a bucket
+    // before renaming it skipped this one, leaving the file behind forever,
+    // since nothing else ever removes it.
+    writeFileSync(siblingPath(home, 751, '.1.ndjson'), '')
+
+    const { result } = await runDrainAsyncCaptured(751, server.url, undefined, cwd, home)
+    server.stop()
+
+    expect(result.ok).toBe(true)
+    expect(server.requests.map((r) => runIdsOf(r.body))).toEqual([['run-1']])
+    expect(existsSync(siblingPath(home, 751, '.1.ndjson'))).toBe(false)
+    expect(existsSync(siblingPath(home, 751, '.draining.ndjson'))).toBe(false)
+    expect(queueContent(path)).toBe('')
+  }, 20000)
+})

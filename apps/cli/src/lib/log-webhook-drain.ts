@@ -257,9 +257,22 @@ function backupPathFor(queuePath: string): string {
  * Exactly one such file exists at a time, and it always holds the oldest
  * undelivered events: a bucket is renamed in only after the previous one has
  * been delivered and unlinked, and every failure throws before the next
- * rename — so a rotation that fills the backup slot while a backlog is still
- * waiting here can never overwrite it. A drain that dies leaves this file for
- * the next drain, which delivers it before anything newer.
+ * rename, so nothing this drain has claimed can be overwritten by anything —
+ * a rotation, or another bucket's own claim. A drain that dies leaves this
+ * file for the next drain, which delivers it before anything newer.
+ *
+ * What this does NOT protect is a bucket nobody has claimed yet. `appendLine`
+ * replaces `<name>.1.ndjson` on every rotation, unconditionally and without
+ * the drain lock, so a batch sitting in that slot is destroyed if a rotation
+ * arrives before a drain claims it — which is what happens while the server
+ * is refusing, since a failed drain throws before it ever reaches the slot.
+ * That is the rotation's own single-slot retention policy, unchanged by this
+ * module and reported rather than silent: `log-sink.ts`'s
+ * `reportRotationOverflow` names the identities each overwrite destroys.
+ * Delivering that slot when a drain does reach it, as this module now does,
+ * strictly reduces that loss; removing it altogether would mean the rotation
+ * keeping more than one slot, and so is a change to the retention policy
+ * rather than to this drain.
  */
 function drainingPathFor(queuePath: string): string {
   return queuePath.replace(/\.ndjson$/, '.draining.ndjson')
@@ -539,10 +552,25 @@ type DrainArgs = {
  * be churn for no delivery.
  */
 async function drainRenamedAside(args: DrainArgs, livePath: string, source: string): Promise<void> {
-  const size = queueBucketSize(source)
-  if (size === null || size === 0) return
   const draining = drainingPathFor(livePath)
-  renameSync(source, draining)
+  // Claimed by the rename ALONE — never a size check followed by a rename.
+  // `renameSync` is atomic, so the bucket this drain goes on to deliver is
+  // exactly the one the rename moved, whatever a concurrent rotation does to
+  // `source` on either side of it. A check-then-act pair let a rotation land
+  // in the gap and leave the drain reasoning about content it no longer held:
+  // it had measured one file and would then deliver another. An absent bucket
+  // is the ordinary case for the backup slot, so `ENOENT` is a return, not an
+  // error. A bucket that exists but is not a regular file is refused by the
+  // read below, after the rename rather than before it — the atomicity of the
+  // claim is worth more than refusing a planted target at its original path,
+  // and either way that target jams this queue's drains until an operator
+  // removes it.
+  try {
+    renameSync(source, draining)
+  } catch (err) {
+    if (isEnoent(err)) return
+    throw err
+  }
   await drainQueueFile({ ...args, path: draining })
   unlinkSync(draining)
 }
