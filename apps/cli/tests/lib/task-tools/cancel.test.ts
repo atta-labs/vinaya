@@ -425,12 +425,15 @@ function findOutboxFile(root: string, name: string): string {
  * `findLocalConfig()` walks up from the CHILD's `cwd`, so a child run from
  * this repository reads THIS repository's `logs` setting: declare a
  * `logs.url` here and the child delivers every event to that server and
- * writes no local file at all — and the env-restore case below, which reads
+ * writes no lasting local file — and the env-restore case below, which reads
  * `<task>.ndjson` under its own temporary `$HOME`, fails for a reason that
- * has nothing to do with what it tests. The fixture directory's own empty
- * `vinaya.config.json` is where that walk stops instead, so no repository
- * setting, present or future, is in scope for these children. Nothing about
- * what they assert changes — only where they run.
+ * has nothing to do with what it tests. The fixture directory's own
+ * `vinaya.config.json` is where that walk stops instead, and it DECLARES a
+ * `logs.folder`: an empty configuration would leave the default branch's own
+ * declared destination in scope for an unattended child, which is what these
+ * two fixtures are (`cancelDevReviewLoop` classifies its own process that
+ * way). So no repository setting, present or future, reaches these children.
+ * Nothing about what they assert changes — only where they run.
  */
 describe('cancelDevReviewLoop — real subprocess, real control store (security review round 3)', () => {
   it('a replayed cancel throws an error still instanceof ReplayedResolutionError, not a generic Error', () => {

@@ -131,9 +131,9 @@ export const FIXTURE_REPO_SEGMENT = 'fixture-owner-fixture-repo'
 export type ConfigIsolatedFixture = {
   /** The child's `$HOME` — where its default `runtimeDir` (and so its default `logs` folder) lands. */
   home: string
-  /** The child's working directory: the empty fixture configuration's own folder. */
+  /** The child's working directory: the folder holding the fixture's own `vinaya.config.json`, which declares a `logs.folder` of its own — never an empty configuration, for the reason `isolatedConfigFixture` below sets out. */
   cwd: string
-  /** `<home>/.vinaya/runtime/<segment>/logs/<segment>` — the folder the child's own `log()` writes its `<task>.ndjson` into when the fixture configuration declares no `logs` destination. */
+  /** `<home>/.vinaya/runtime/<segment>/logs/<segment>` — the folder the child's own `log()` writes its `<task>.ndjson` into. The fixture configuration DECLARES it, and it is also the default folder that configuration falls back to when the child is classified unattended, so both classifications write here. */
   logsDir: string
   /** `{ ...stripVinayaEnv(), HOME, AEG_REPO }` — merge a `VINAYA_TASK` (or anything else the case needs) on top. */
   env: NodeJS.ProcessEnv

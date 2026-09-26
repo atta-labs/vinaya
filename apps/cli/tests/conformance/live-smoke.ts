@@ -99,13 +99,31 @@ async function main(): Promise<void> {
     const mcpConfigPath = join(sb.sandbox, '.mcp.json')
     writeFileSync(mcpConfigPath, claudeMcpJsonFile({ dir: 'apps/cli', bin: ABS_BIN } as never))
 
-    // The server's own working directory is the sandbox, never this
-    // checkout: `config.ts`'s `findLocalConfig()` walks up from it, so a
-    // server spawned here would read THIS repository's `logs` setting and
-    // deliver the one event this script writes to whatever `logs.url` is
-    // declared there — not to `sb.runtimeDir`'s own folder, which is the
-    // isolation this script's own header promises.
+    // The server's own working directory is the sandbox, never this checkout,
+    // and the sandbox carries a `vinaya.config.json` of its own. Both halves
+    // are load-bearing. `config.ts`'s `findLocalConfig()` walks up from the
+    // server's working directory, so a server spawned in this checkout reads
+    // THIS repository's `logs` setting and delivers the one event this script
+    // writes to whatever `logs.url` is declared there, not to
+    // `sb.runtimeDir`'s own folder — the isolation this script's own header
+    // promises. But that walk stops only at a directory holding a
+    // `vinaya.config.json` or a `.git`, and `buildSandbox()` writes neither:
+    // pointed at a bare temp directory it would walk clean past it to the
+    // filesystem root, so on a host whose `tmpdir` is the shared `/tmp` a
+    // config planted there by any local user would become this server's
+    // TRUSTED repo-local configuration — the one place `checks.*.run`
+    // commands are honoured (round 2 security review, MEDIUM). The sandbox's
+    // own configuration ends the walk inside the sandbox, and declares the
+    // destination this script then reads, which also settles it for an
+    // unattended classification: a local folder the default branch does not
+    // declare identically is refused by the trust-anchor gate and falls back
+    // to the default folder — `<runtimeDir>/logs`, the same path.
     const serverCwd = sb.sandbox
+    const sandboxLogsFolder = join(sb.runtimeDir, 'logs')
+    writeFileSync(
+      join(serverCwd, 'vinaya.config.json'),
+      `${JSON.stringify({ logs: { folder: sandboxLogsFolder } }, null, 2)}\n`
+    )
     const client = new SpawnRpcClient({ command: 'node', args: [ABS_BIN, 'task-tools', 'serve'] }, sb.env, serverCwd)
     await client.request('initialize', {})
     const { isError, structured } = await client.callTool('task_resume', { task: { issue: ISSUE } })
@@ -125,7 +143,7 @@ async function main(): Promise<void> {
     // for, never hardcoded. `sb.runtimeDir` is handed down via the
     // sandboxed `VINAYA_RUNTIME_DIR` ([task-files-v1] 5), so the default
     // `logs` folder sits directly under it, never under `HOME`.
-    const outboxRoot = join(sb.runtimeDir, 'logs')
+    const outboxRoot = sandboxLogsFolder
     const eventFile = existsSync(outboxRoot)
       ? readdirSync(outboxRoot)
           .map((repoDir) => join(outboxRoot, repoDir, `${ISSUE}.ndjson`))
