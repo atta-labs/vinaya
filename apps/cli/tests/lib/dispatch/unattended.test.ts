@@ -268,35 +268,49 @@ function buildGitFixture(
   return { home, cwd, binDir, promptFile, markerFile, envCaptureFile }
 }
 
-/** Same shape as `runDispatch`, but strips `ANTHROPIC_API_KEY` from the spawned CLI's own environment first — the Operator's real shell may have one set, which would silently give a "no credential" fixture a real credential and defeat the test. */
-function runDispatchNoApiKey(
+/**
+ * Same shape as `runDispatch`, but drops `CLAUDE_CONFIG_DIR` from the
+ * spawned CLI's own environment first — the Operator's real shell may
+ * override it, which would point a "no subscription login" fixture at a
+ * real credential directory outside its own scratch `HOME` and defeat the
+ * test. No API-key variable needs dropping: no dispatch path reads one.
+ */
+function runDispatchNoAmbientLogin(
   fixture: Fixture,
-  extraArgs: string[]
+  extraArgs: string[],
+  agent = 'claude',
+  extraEnv: NodeJS.ProcessEnv = {}
 ): { status: number; stdout: string; stderr: string } {
-  const { ANTHROPIC_API_KEY: _drop, ...envWithoutApiKey } = process.env
+  const { CLAUDE_CONFIG_DIR: _drop, ...envWithoutConfigDir } = process.env
   return runVinayaDispatch(
     fixture.cwd,
-    ['developer', '--agent', 'claude', '--prompt-file', fixture.promptFile, ...extraArgs],
+    ['developer', '--agent', agent, '--prompt-file', fixture.promptFile, ...extraArgs],
     {
-      ...stripVinayaEnv(envWithoutApiKey),
+      ...stripVinayaEnv(envWithoutConfigDir),
       HOME: fixture.home,
-      PATH: `${fixture.binDir}:${pathWithoutRealVendors()}`
+      PATH: `${fixture.binDir}:${pathWithoutRealVendors()}`,
+      ...extraEnv
     }
   )
 }
 
 describe('vinaya dispatch --unattended — O2 fail-closed refusal (Issue #640, no resolvable credential)', () => {
   it.skipIf(process.platform !== 'darwin')(
-    'refuses before ever spawning the vendor binary, boundary resolved but no ANTHROPIC_API_KEY and no OAuth session credential to stage',
+    'refuses before ever spawning the vendor binary, boundary resolved but no subscription login to stage',
     () => {
       const fixture = buildGitFixture({ requireWorkerIsolation: true })
-      const result = runDispatchNoApiKey(fixture, ['--unattended'])
+      const result = runDispatchNoAmbientLogin(fixture, ['--unattended'])
 
       expect(result.status).not.toBe(0)
       expect(existsSync(fixture.markerFile), 'the vendor binary must never be spawned at all').toBe(false)
       expect(existsSync(fixture.envCaptureFile)).toBe(false)
       expect(result.stderr).toContain('refused')
       expect(result.stderr).toContain('no resolvable credential')
+      // O3: the refusal names where this looked and how to sign in, never
+      // an API key — the operator can act on it without reading the source.
+      expect(result.stderr).toContain(join(fixture.home, '.claude', '.credentials.json'))
+      expect(result.stderr).toContain('/login')
+      expect(result.stderr.toLowerCase()).not.toContain('api key')
 
       const lines = outboxLines(fixture.home) as Array<{ event?: string; reason?: string }>
       const failed = lines.find((l) => l.event === 'dispatch_failed')
@@ -313,7 +327,7 @@ describe('vinaya dispatch --unattended — O2 fail-closed refusal (Issue #640, n
         requireWorkerIsolation: true,
         homeCredential: JSON.stringify({ accessToken: 'fixture-not-a-real-oauth-token' })
       })
-      const result = runDispatchNoApiKey(fixture, ['--unattended'])
+      const result = runDispatchNoAmbientLogin(fixture, ['--unattended'])
 
       expect(result.status, `stderr: ${result.stderr}`).toBe(0)
       expect(existsSync(fixture.markerFile)).toBe(true)
@@ -328,23 +342,131 @@ describe('vinaya dispatch --unattended — O2 fail-closed refusal (Issue #640, n
   )
 
   it.skipIf(process.platform !== 'darwin')(
-    'succeeds without refusal when ANTHROPIC_API_KEY is set, even with no OAuth session credential at all',
+    'O1: a vendor API key on the controller environment no longer authenticates anything — the same fixture still refuses, and still never spawns',
     () => {
       const fixture = buildGitFixture({ requireWorkerIsolation: true })
-      const { ANTHROPIC_API_KEY: _drop, ...envWithoutApiKey } = process.env
-      const result = runVinayaDispatch(
-        fixture.cwd,
-        ['developer', '--agent', 'claude', '--prompt-file', fixture.promptFile, '--unattended'],
-        {
-          ...stripVinayaEnv(envWithoutApiKey),
-          HOME: fixture.home,
-          PATH: `${fixture.binDir}:${pathWithoutRealVendors()}`,
-          ANTHROPIC_API_KEY: 'sk-ant-fixture-not-real'
-        }
-      )
+      // The variable name is COMPOSED rather than written out, for the same
+      // reason `worker-boundary.test.ts`'s own allowlist test composes
+      // hers: no API-key name appears anywhere in this repository's
+      // sources, tests or specs, and a regression test must not be the one
+      // exception that reintroduces one.
+      const result = runDispatchNoAmbientLogin(fixture, ['--unattended'], 'claude', {
+        [`${'ANTHROPIC'}_API_KEY`]: 'sk-ant-fixture-not-real'
+      })
 
-      expect(result.status, `stderr: ${result.stderr}`).toBe(0)
-      expect(existsSync(fixture.markerFile)).toBe(true)
+      expect(result.status).not.toBe(0)
+      expect(existsSync(fixture.markerFile), 'an API key must not start a vendor process').toBe(false)
+      expect(result.stderr).toContain('no resolvable credential')
     }
   )
+})
+
+describe('vinaya dispatch --unattended — O2 Gemini has no subscription login yet', () => {
+  it('refuses before any spawn, naming the missing subscription login rather than a missing API key', () => {
+    const fixture = buildGitFixture({ requireWorkerIsolation: true })
+    // A real fake `gemini` on the fixture PATH, so a refusal here can only
+    // be the no-subscription-login one — never "binary not resolvable".
+    writeFileSync(
+      join(fixture.binDir, 'gemini'),
+      `#!/bin/sh
+touch "${fixture.markerFile}"
+cat > /dev/null
+printf '%s' '{}'
+exit 0
+`
+    )
+    chmodSync(join(fixture.binDir, 'gemini'), 0o755)
+
+    const result = runDispatchNoAmbientLogin(fixture, ['--unattended'], 'gemini')
+
+    expect(result.status).not.toBe(0)
+    expect(existsSync(fixture.markerFile), 'the gemini binary must never be spawned at all').toBe(false)
+    expect(result.stderr).toContain('refused')
+    expect(result.stderr).toContain('no subscription login in Vinaya yet')
+    // The wording rules an API key OUT rather than asking for one — the
+    // failure an operator reads is a missing login, never a missing key.
+    expect(result.stderr).toContain('no agent authenticates with an API key')
+
+    const lines = outboxLines(fixture.home) as Array<{ event?: string; reason?: string }>
+    expect(lines.find((l) => l.event === 'dispatch_failed')?.reason).toBe('refused')
+    expect(lines.find((l) => l.event === 'dispatched')).toBeUndefined()
+  })
+
+  it('refuses on a host where the worker sandbox is off too — the refusal is about the login, not the boundary', () => {
+    const fixture = buildGitFixture({ requireWorkerIsolation: false })
+    writeFileSync(
+      join(fixture.binDir, 'gemini'),
+      `#!/bin/sh
+touch "${fixture.markerFile}"
+cat > /dev/null
+printf '%s' '{}'
+exit 0
+`
+    )
+    chmodSync(join(fixture.binDir, 'gemini'), 0o755)
+
+    const result = runDispatchNoAmbientLogin(fixture, ['--unattended'], 'gemini')
+
+    expect(result.status).not.toBe(0)
+    expect(existsSync(fixture.markerFile)).toBe(false)
+    expect(result.stderr).toContain('no subscription login in Vinaya yet')
+  })
+
+  it('an ATTENDED gemini dispatch is untouched — a human at their own terminal signs their vendor CLI in themselves', () => {
+    const fixture = buildGitFixture({ requireWorkerIsolation: false })
+    writeFileSync(
+      join(fixture.binDir, 'gemini'),
+      `#!/bin/sh
+touch "${fixture.markerFile}"
+cat > /dev/null
+printf '%s' '{}'
+exit 0
+`
+    )
+    chmodSync(join(fixture.binDir, 'gemini'), 0o755)
+
+    const result = runDispatchNoAmbientLogin(fixture, [], 'gemini')
+
+    expect(existsSync(fixture.markerFile), 'an attended dispatch still reaches the vendor binary').toBe(true)
+    expect(result.stderr).not.toContain('no subscription login in Vinaya yet')
+  })
+})
+
+describe('vinaya dispatch — O4 the worker sandbox off behaves exactly as today', () => {
+  it('an unconfined dispatch inherits the operator environment unchanged, so the agent signs in with its own subscription login', () => {
+    const fixture = buildGitFixture({ requireWorkerIsolation: false })
+    // The fake vendor reports back, through a shell probe rather than a
+    // `process.env` read, what its own environment actually carried — a
+    // confined child's `bun`/`node` reads `process.env` back empty under
+    // Seatbelt, so only a shell probe answers the same way on both paths.
+    writeFileSync(
+      join(fixture.binDir, 'claude'),
+      [
+        '#!/bin/bash',
+        `touch "${fixture.markerFile}"`,
+        `printf '{"inherited":"%s","home":"%s"}' "$ISOLATION_FIXTURE_MARKER" "$HOME" > "${fixture.envCaptureFile}"`,
+        'cat > /dev/null',
+        `printf '%s' '{"session_id":"sess-x","usage":{"input_tokens":1,"output_tokens":1}}'`,
+        'exit 0'
+      ].join('\n')
+    )
+    chmodSync(join(fixture.binDir, 'claude'), 0o755)
+
+    const result = runDispatchNoAmbientLogin(fixture, ['--unattended'], 'claude', {
+      ISOLATION_FIXTURE_MARKER: 'inherited-from-the-operator'
+    })
+
+    expect(result.status, `stderr: ${result.stderr}`).toBe(0)
+    expect(existsSync(fixture.markerFile)).toBe(true)
+    const captured = JSON.parse(readFileSync(fixture.envCaptureFile, 'utf8')) as {
+      inherited: string
+      home: string
+    }
+    // A variable no allowlist names: only a whole-environment spread
+    // carries it, which is exactly the sandbox-off path's own shape.
+    expect(captured.inherited).toBe('inherited-from-the-operator')
+    // And the child's HOME is the operator's real one, never a staged or
+    // synthetic directory — nothing about this path is rewritten.
+    expect(captured.home).toBe(fixture.home)
+  })
 })
