@@ -73,9 +73,10 @@
  */
 
 import { describe, expect, it } from 'bun:test'
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { FIXTURE_REPO_SEGMENT, isolatedConfigFixture } from './lib/process-fixture'
 
 const TESTS_ROOT = join(fileURLToPath(new URL('.', import.meta.url)))
 /**
@@ -371,7 +372,12 @@ const NOT_QUOTE = '[^\\u0027\\u0022\\u0060]'
  */
 const READS_DEFAULT_DESTINATION = new RegExp(
   `['"]runtime['"][\\s\\S]{0,80}?['"]logs['"]|runtimeDir\\s*,\\s*['"]logs['"]|\\.logsDir\\b|` +
-    `${QUOTE}${NOT_QUOTE}*\\.vinaya${QUOTE}[\\s\\S]{0,4000}?\\.ndjson`
+    `${QUOTE}${NOT_QUOTE}*\\.vinaya${QUOTE}[\\s\\S]{0,4000}?\\.ndjson|` +
+    // A read assembled from the exported helpers rather than spelled out:
+    // `join(runtimeDirForThisRepo(), 'logs', segment, task + '.ndjson')` named
+    // the same folder while matching none of the shapes above (round 6 security
+    // review, LOW).
+    `runtimeDir[A-Za-z]*\\s*\\([^)]*\\)\\s*,\\s*${QUOTE}logs${QUOTE}|loopsRoot\\s*\\(`
 )
 
 /**
@@ -405,6 +411,22 @@ const SPAWNS_REAL_PROCESS_SOURCE =
  */
 function spawnMatcher(): RegExp {
   return new RegExp(SPAWNS_REAL_PROCESS_SOURCE, 'g')
+}
+
+/**
+ * `bun run … build` — this repository's own build, which compiles sources and
+ * writes no log event, so where it runs cannot affect a destination. It runs IN
+ * the repository by necessity (that is what it builds), and is the one
+ * repository-rooted working directory this scan accepts. Matched on the real
+ * argument list, never on the command name alone: `bun` stays risk-bearing
+ * everywhere else.
+ */
+const BUILDS_THIS_REPOSITORY = new RegExp(`${QUOTE}run${QUOTE}[\\s\\S]{0,120}${QUOTE}build${QUOTE}`)
+
+/** Does the call whose arguments open at `open` build this repository? */
+function buildsThisRepository(source: ScannedSource, open: number): boolean {
+  const args = callArguments(source.codeOnly, open)
+  return BUILDS_THIS_REPOSITORY.test(source.withStrings.slice(open, open + args.length))
 }
 
 /** Commands that do one fixed thing to the filesystem or the process table and never resolve a Vinaya configuration, so where they run cannot affect a log destination. */
@@ -485,8 +507,30 @@ function namesWorkingDirectory(args: string, argsWithStrings: string): boolean {
 const MODULE_PATH_ANCHOR = /import\.meta\.dir|import\.meta\.url|__dirname|__filename/
 const WALKS_UP = new RegExp(`${QUOTE}\\.\\.(?:\\/[^\\u0027\\u0022\\u0060]*)?${QUOTE}`)
 
-function isRepositoryRootedExpression(expression: string): boolean {
-  return MODULE_PATH_ANCHOR.test(expression) && WALKS_UP.test(expression)
+/**
+ * A repository root a file ASKS for rather than walks to: this repository's own
+ * `repoRootSync`/`repoRoot` helpers, or `git rev-parse --show-toplevel`. Both
+ * idioms already exist in this tree, and neither carries a module-path anchor,
+ * so a root obtained either way was no root at all to this scan (round 6
+ * review, MINOR).
+ */
+const CALL_DERIVED_ROOT = /\brepoRoot(?:Sync|Async)?\s*\(|rev-parse[^\n]{0,40}--show-toplevel/
+
+/**
+ * Is this expression a directory inside this repository? Three ways, and the
+ * third is what makes the answer transitive: a module-path anchor walked up, a
+ * call that returns this repository's root, or ANY name already known to hold
+ * one — so `join(REPO_ROOT, 'apps', 'cli')` is inside the repository, and a
+ * `chdir` into it is not a move out of it (round 6 security review, MEDIUM
+ * twice).
+ */
+function isRepositoryRootedExpression(expression: string, roots: ReadonlySet<string> = new Set()): boolean {
+  if (MODULE_PATH_ANCHOR.test(expression) && WALKS_UP.test(expression)) return true
+  if (CALL_DERIVED_ROOT.test(expression)) return true
+  for (const root of roots) {
+    if (new RegExp(`(?<![\\w$.])${escapeForRegExp(root)}\\b`).test(expression)) return true
+  }
+  return false
 }
 
 /** A binding that READS a repository-rooted path holds that file's CONTENTS, not a directory — `const source = readFileSync(join(import.meta.dir, '..', 'src', …))` is a source-text assertion, and handing it to `indexOf` runs nothing. */
@@ -518,18 +562,47 @@ function initializerFrom(code: string, start: number): string {
   return code.slice(start)
 }
 
-/** Every name a file binds — with `const`/`let`/`var`, exported or not — to a repository-rooted DIRECTORY. */
-function locallyBoundRepositoryRoots(code: string): string[] {
-  const out: string[] = []
+/** Every `const`/`let`/`var` binding in `code`, as a name paired with its whole initializer. */
+function bindingsIn(code: string): { name: string; initializer: string }[] {
+  const out: { name: string; initializer: string }[] = []
   for (const m of code.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*/g)) {
     if (m.index === undefined) continue
-    const expression = initializerFrom(code, m.index + m[0].length)
-    if (!isRepositoryRootedExpression(expression)) continue
-    if (READS_THE_PATH.test(expression)) continue
-    if (NAMES_A_FILE.test(expression.trim())) continue
-    out.push(m[1] as string)
+    out.push({ name: m[1] as string, initializer: initializerFrom(code, m.index + m[0].length) })
   }
   return out
+}
+
+/**
+ * Every name a file binds to a repository-rooted directory, or to something
+ * carrying one — grown to a fixed point from the roots already known, so a
+ * derived subdirectory (`join(REPO_ROOT, 'apps', 'cli')`), a plain re-binding
+ * (`const where = repoRoot`) and an options object (`{ cwd: repoRoot }`) all
+ * carry this repository as far as the first name does. Each of those three was
+ * its own escape at some point (round 4 security review, LOW; round 5 security
+ * review, LOW; round 6 security review, MEDIUM).
+ */
+function namesCarryingARepositoryRoot(code: string, seeds: ReadonlySet<string>): Set<string> {
+  const roots = new Set(seeds)
+  const bindings = bindingsIn(code)
+  for (let pass = 0; pass < 4; pass++) {
+    const before = roots.size
+    for (const { name, initializer } of bindings) {
+      if (roots.has(name)) continue
+      if (READS_THE_PATH.test(initializer)) continue
+      if (NAMES_A_FILE.test(initializer.trim())) continue
+      // A value produced by RUNNING something is a result, not a directory:
+      // `const build = spawnSyncBudgeted('bun', ['run', '--cwd', CLI_ROOT, …])`
+      // mentions a root without being one, and every later `build.status` read
+      // would otherwise report as a place this repository is run in. The one
+      // exception is a spawn that ASKS for the root — `git rev-parse
+      // --show-toplevel` returns exactly this repository.
+      if (!CALL_DERIVED_ROOT.test(initializer) && spawnMatcher().test(initializer)) continue
+      if (!isRepositoryRootedExpression(initializer, roots)) continue
+      roots.add(name)
+    }
+    if (roots.size === before) break
+  }
+  return roots
 }
 
 /** A relative import's own source, resolved against `rel`'s own directory — `null` when the specifier is not a file in this tree (a package, or a path this scan cannot see). */
@@ -555,59 +628,36 @@ function siblingModuleCode(rel: string, specifier: string): string | null {
  */
 function repositoryRootedIdentifiers(rel: string, source: ScannedSource): string[] {
   const code = source.withStrings
-  const out = [...locallyBoundRepositoryRoots(code)]
+  const seeds = new Set<string>()
   const relativeImport = new RegExp(`import\\s*\\{([^}]*)\\}\\s*from\\s*${QUOTE}(\\.${NOT_QUOTE}*)${QUOTE}`, 'g')
   for (const m of code.matchAll(relativeImport)) {
-    const names = (m[1] as string)
-      .split(',')
-      .map((n) => (n.split(/\s+as\s+/).pop() ?? '').trim())
-      .filter(Boolean)
-    if (names.length === 0) continue
     const moduleSource = siblingModuleCode(rel, m[2] as string)
     if (moduleSource === null) continue
-    const bound = new Set(locallyBoundRepositoryRoots(moduleSource))
-    for (const name of names) if (bound.has(name)) out.push(name)
-  }
-  return withOptionsObjectsCarrying(out, code)
-}
-
-/**
- * Every name above, plus every OPTIONS object built around one:
- * `const opts = { cwd: repoRoot }` carries this repository into whatever
- * receives it, and `{ ...opts }` then satisfied the spawn rule's own
- * `namesWorkingDirectory` while the binding site itself sat inside a
- * `describe` body, whose callee runs nothing — so the directory reached the
- * child with neither half of the rule seeing it (round 4 security review,
- * LOW). Iterated to a fixed point, so an options object built from another one
- * carries it too.
- */
-function withOptionsObjectsCarrying(roots: string[], code: string): string[] {
-  const carriers = new Set(roots)
-  for (let pass = 0; pass < 3; pass++) {
-    const before = carriers.size
-    for (const m of code.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*/g)) {
-      if (m.index === undefined) continue
-      const name = m[1] as string
-      if (carriers.has(name)) continue
-      const initializer = initializerFrom(code, m.index + m[0].length)
-      for (const carrier of carriers) {
-        const escaped = escapeForRegExp(carrier)
-        // A `cwd` key, a spread, or a plain re-binding: `const where = repoRoot`
-        // carries this repository exactly as far as the original name does
-        // (round 5 security review, LOW).
-        if (new RegExp(`(?:cwd\\s*:\\s*|\\.\\.\\.\\s*)${escaped}\\b`).test(initializer)) {
-          carriers.add(name)
-          break
-        }
-        if (new RegExp(`^${escaped}\\s*$`).test(initializer.trim())) {
-          carriers.add(name)
-          break
-        }
-      }
+    const bound = namesCarryingARepositoryRoot(moduleSource, new Set())
+    for (const clause of (m[1] as string).split(',')) {
+      const parts = clause.split(/\s+as\s+/).map((part) => part.trim())
+      const original = parts[0]
+      const local = parts[parts.length - 1]
+      // The sibling module binds the ORIGINAL name; this file uses the LOCAL
+      // one. Looking the local name up over there resolved nothing the moment an
+      // import was renamed — and a `chdir` into that name was then read as a
+      // move OUT of the repository (round 6 review, MAJOR; round 6 security
+      // review, MEDIUM).
+      if (original && local && bound.has(original)) seeds.add(local)
     }
-    if (carriers.size === before) break
   }
-  return [...carriers]
+  const namespaceImport = new RegExp(
+    `import\\s*\\*\\s*as\\s+([A-Za-z_$][\\w$]*)\\s*from\\s*${QUOTE}(\\.${NOT_QUOTE}*)${QUOTE}`,
+    'g'
+  )
+  for (const m of code.matchAll(namespaceImport)) {
+    const moduleSource = siblingModuleCode(rel, m[2] as string)
+    if (moduleSource === null) continue
+    for (const bound of namesCarryingARepositoryRoot(moduleSource, new Set())) {
+      seeds.add(`${m[1] as string}.${bound}`)
+    }
+  }
+  return [...namesCarryingARepositoryRoot(code, seeds)]
 }
 
 /**
@@ -676,7 +726,7 @@ const PATH_BUILDERS = new Set(['join', 'resolve', 'normalize', 'relative', 'file
  * the finished path is given to: a `cwd` key is by definition handed to
  * something that runs, and any other non-inert callee runs it too.
  */
-function inlineRepositoryRootedRunSites(source: ScannedSource): string[] {
+function inlineRepositoryRootedRunSites(source: ScannedSource, roots: ReadonlySet<string>): string[] {
   const out = new Set<string>()
   for (const m of source.withStrings.matchAll(MODULE_PATH_ANCHOR_ALL)) {
     if (m.index === undefined) continue
@@ -692,8 +742,15 @@ function inlineRepositoryRootedRunSites(source: ScannedSource): string[] {
       if (at < 0) break
     }
     const expression = path === null ? source.withStrings.slice(m.index, m.index + 120) : pathExpressionAt(source, path)
-    if (!isRepositoryRootedExpression(expression) || NAMES_A_FILE.test(expression.trim())) continue
+    if (!isRepositoryRootedExpression(expression, roots) || NAMES_A_FILE.test(expression.trim())) continue
     const consumer = enclosingCall(source.codeOnly, at)
+    if (
+      consumer !== null &&
+      BUILDS_THIS_REPOSITORY.test(
+        source.withStrings.slice(consumer.open, consumer.open + callArguments(source.codeOnly, consumer.open).length)
+      )
+    )
+      continue
     const handedToACwd = /\bcwd\s*:\s*$/.test(source.codeOnly.slice(Math.max(0, at - 40), at + 1).replace(/\($/, ''))
     if (
       !handedToACwd &&
@@ -755,9 +812,10 @@ function repositoryRootedRunSites(rel: string, source: ScannedSource): string[] 
   for (const id of ids) {
     for (const m of code.matchAll(new RegExp(id, 'g'))) {
       if (m.index === undefined) continue
-      const callee = enclosingCallee(code, m.index)
-      if (callee === null || CALLEES_THAT_RUN_NOTHING.has(callee)) continue
-      out.add(`${callee}(… ${code.slice(m.index, m.index + 48).replace(/\s+/g, ' ')}…`)
+      const call = enclosingCall(code, m.index)
+      if (call === null || call.callee === null || CALLEES_THAT_RUN_NOTHING.has(call.callee)) continue
+      if (buildsThisRepository(source, call.open)) continue
+      out.add(`${call.callee}(… ${code.slice(m.index, m.index + 48).replace(/\s+/g, ' ')}…`)
     }
   }
   return [...out]
@@ -862,7 +920,7 @@ function movedOutOfRepositoryBefore(index: number, source: ScannedSource, repoRo
     const args = callArguments(code, open)
     const target = /^\(\s*([A-Za-z_$][\w$.]*)\s*\)$/.exec(args)?.[1]
     if (target !== undefined && (repoRooted.has(target) || restores.has(target))) continue
-    if (isRepositoryRootedExpression(source.withStrings.slice(open, open + args.length))) continue
+    if (isRepositoryRootedExpression(source.withStrings.slice(open, open + args.length), repoRooted)) continue
     if (inScopeFor(code, m.index, index)) return true
   }
   return false
@@ -958,7 +1016,9 @@ function unisolatedCallSites(source: ScannedSource): string[] {
   for (const site of realProcessCallSites(source)) {
     if (site.command && CONFIGURATION_INERT_COMMANDS.has(site.command)) continue
     const open = source.codeOnly.indexOf('(', site.index)
-    if (namesWorkingDirectory(site.args, source.withStrings.slice(open, open + site.args.length))) continue
+    const argsWithStrings = source.withStrings.slice(open, open + site.args.length)
+    if (buildsThisRepository(source, open)) continue
+    if (namesWorkingDirectory(site.args, argsWithStrings)) continue
     out.push(`${source.withStrings.slice(site.index, site.index + 60).replace(/\s+/g, ' ')}…`)
   }
   return out
@@ -1039,6 +1099,19 @@ function producerCallNames(code: string): Map<string, string> {
     const namespace = m[1] as string
     for (const producer of LOG_PRODUCERS) out.set(`${namespace}.${producer}`, producer)
   }
+  // A plain local re-binding reaches the same producer: `const emit = log` then
+  // `emit({…})`. The repository-root half of this file already follows one, and
+  // the two halves disagreeing on the same evasion is how it was found (round 6
+  // review, MINOR). Iterated, so a re-binding of a re-binding counts too.
+  for (let pass = 0; pass < 3; pass++) {
+    const before = out.size
+    for (const { name, initializer } of bindingsIn(code)) {
+      if (out.has(name)) continue
+      const reached = out.get(initializer.trim())
+      if (reached !== undefined) out.set(name, reached)
+    }
+    if (out.size === before) break
+  }
   return out
 }
 
@@ -1064,7 +1137,21 @@ function producerCallSites(code: string): { index: number; calledAs: string; pro
 function callIsHandedALogDependency(code: string, index: number, producerNames: Set<string>): boolean {
   const open = code.indexOf('(', index)
   if (open === -1) return false
-  const args = callArguments(code, open)
+  let args = callArguments(code, open)
+  // The ordinary idiom builds the deps object first: `const deps = { log: spy }`
+  // then `await devReviewLoop(input, deps)`. Reading only the literal argument
+  // list reported that as an offender though it writes nowhere real, leaving
+  // inlining the object or a grandfather entry as the only ways out (round 6
+  // review, MINOR). An identifier argument is resolved to its own binding.
+  if (!/\blog\s*:/.test(args)) {
+    for (const identifier of args.matchAll(/(?<![.\w$])([A-Za-z_$][\w$]*)\s*[,)]/g)) {
+      const binding = bindingsIn(code).find((candidate) => candidate.name === identifier[1])
+      if (binding && /\blog\s*:/.test(binding.initializer)) {
+        args = `(${binding.initializer})`
+        break
+      }
+    }
+  }
   let depth = 0
   for (let i = 0; i < args.length; i++) {
     const c = args[i] as string
@@ -1103,12 +1190,12 @@ function callIsHandedALogDependency(code: string, index: number, producerNames: 
  */
 function repositoryWorkingDirectorySites(rel: string, source: ScannedSource): string[] {
   const code = source.codeOnly
+  const repoRooted = new Set(repositoryRootedIdentifiers(rel, source))
   const out = [
     ...unisolatedCallSites(source),
     ...repositoryRootedRunSites(rel, source),
-    ...inlineRepositoryRootedRunSites(source)
+    ...inlineRepositoryRootedRunSites(source, repoRooted)
   ]
-  const repoRooted = new Set(repositoryRootedIdentifiers(rel, source))
   for (const site of producerCallSites(code)) {
     if (movedOutOfRepositoryBefore(site.index, source, repoRooted)) continue
     if (calledInsideARelocatingWrapper(source, site.index, repoRooted)) continue
@@ -1165,13 +1252,23 @@ describe("no test reads this repository's own log destination", () => {
   })
 
   it("the shared fixture's own configuration declares a destination — an empty one leaves the default branch's own setting in scope", () => {
-    const helper = scanSource(readFileSync(join(TESTS_ROOT, HELPER_FILE), 'utf8')).codeOnly
-    expect(DECLARES_OWN_DESTINATION.test(helper)).toBe(true)
-    // And the declared folder is the SAME place the fixture advertises as its
-    // own `logsDir`, so an attended child (which honours the declared value)
-    // and an unattended one (whose local value the trust-anchor gate refuses,
-    // falling back to the default folder) write to one path, not two.
-    expect(helper).toContain('logsDir: join(logsFolder, FIXTURE_REPO_SEGMENT)')
+    const fixture = isolatedConfigFixture('vinaya-isolation-guard-')
+    try {
+      const declared = JSON.parse(readFileSync(join(fixture.cwd, 'vinaya.config.json'), 'utf8')) as {
+        logs?: { folder?: string }
+      }
+      expect(declared.logs?.folder).toBeTypeOf('string')
+      // And the declared folder is the SAME place the fixture advertises as its
+      // own `logsDir`, so an attended child (which honours the declared value)
+      // and an unattended one (whose local value the trust-anchor gate refuses,
+      // falling back to the default folder) write to one path, not two. Asserted
+      // by RUNNING the fixture rather than by pinning its source text, which
+      // failed on a rename or a reflow while the isolation was intact (round 6
+      // review, MINOR).
+      expect(fixture.logsDir).toBe(join(declared.logs?.folder as string, FIXTURE_REPO_SEGMENT))
+    } finally {
+      rmSync(fixture.home, { recursive: true, force: true })
+    }
   })
 
   it('the producer vocabulary covers every boundary log-callers.test.ts names — that table is the authoritative list', () => {
@@ -1217,6 +1314,13 @@ describe("no test reads this repository's own log destination", () => {
     "const landed = readFileSync(join(home, '.vinaya', 'runtime', 'r', 'logs', 'r', '558.ndjson'), 'utf8')"
   const AN_IN_PROCESS_PRODUCER = "await log({ operation: 'task_start' })"
 
+  it('a default-destination read assembled from the exported helpers is a subject too, not only a spelled-out path', () => {
+    const sample = `
+      const landed = readFileSync(join(runtimeDirForThisRepo(), 'logs', segment, task + '.ndjson'), 'utf8')
+    `
+    expect(readsDefaultDestination(scanSource(sample))).toBe(true)
+  })
+
   it('a spawn whose named working directory resolves to this repository is flagged, not accepted for naming one', () => {
     const sample = `
       const repoRoot = join(import.meta.dir, '..', '..')
@@ -1258,6 +1362,63 @@ describe("no test reads this repository's own log destination", () => {
     }
   })
 
+  it('…and so does a root imported under a different name, or through a namespace — the sibling module binds the ORIGINAL', () => {
+    // `conformance/harness.ts` really does export a `REPO_ROOT`, so these
+    // resolve against a module in the tree rather than against a fixture.
+    const aliased = `
+      import { REPO_ROOT as ROOT } from './conformance/harness'
+      const found = findOutboxFile(join(home, '.vinaya'), '991.ndjson')
+      const client = new SpawnRpcClient(invocation, env, ROOT)
+    `
+    expect(sitesFor(aliased)).not.toEqual([])
+    const namespaced = `
+      import * as harness from './conformance/harness'
+      const found = findOutboxFile(join(home, '.vinaya'), '991.ndjson')
+      const client = new SpawnRpcClient(invocation, env, harness.REPO_ROOT)
+    `
+    expect(sitesFor(namespaced)).not.toEqual([])
+    const chdired = `
+      import { REPO_ROOT as ROOT } from './conformance/harness'
+      import { log } from './src/lib/log-sink.js'
+      process.chdir(ROOT)
+      ${AN_IN_PROCESS_PRODUCER}
+      ${A_DEFAULT_READ}
+    `
+    expect(inProcessSites(chdired)).toHaveLength(1)
+  })
+
+  it('…and so does a subdirectory derived from a known root, and a chdir into one', () => {
+    const handedOn = `
+      const repoRoot = join(import.meta.dir, '..', '..')
+      const cliRoot = join(repoRoot, 'apps', 'cli')
+      const found = findOutboxFile(join(home, '.vinaya'), '991.ndjson')
+      const out = runFixtureScript(scriptPath, cliRoot, env)
+    `
+    expect(sitesFor(handedOn)).not.toEqual([])
+    const chdired = `
+      import { log } from '../src/lib/log-sink.js'
+      const repoRoot = join(import.meta.dir, '..', '..')
+      process.chdir(join(repoRoot, 'apps'))
+      ${AN_IN_PROCESS_PRODUCER}
+      ${A_DEFAULT_READ}
+    `
+    expect(inProcessSites(chdired)).toHaveLength(1)
+  })
+
+  it('…and so does a root obtained from a call rather than walked to', () => {
+    for (const binding of [
+      'const root = repoRootSync()',
+      "const root = execSync('git rev-parse --show-toplevel').trim()"
+    ]) {
+      const sample = `
+      ${binding}
+      const found = findOutboxFile(join(home, '.vinaya'), '991.ndjson')
+      const out = runFixtureScript(scriptPath, root, env)
+    `
+      expect(sitesFor(sample), binding).not.toEqual([])
+    }
+  })
+
   it('an INLINE chdir into this repository is the offence too — never read as a move out of it', () => {
     const sample = `
       import { log } from '../src/lib/log-sink.js'
@@ -1288,6 +1449,26 @@ describe("no test reads this repository's own log destination", () => {
       const out = runFixtureScript(scriptPath, where, env)
     `
     expect(sitesFor(sample)).not.toEqual([])
+  })
+
+  it('a producer reached through a plain re-binding is flagged too — the two halves of this scan agree', () => {
+    const sample = `
+      import { log } from '../src/lib/log-sink.js'
+      const emit = log
+      await emit({ operation: 'task_start' })
+      ${A_DEFAULT_READ}
+    `
+    expect(inProcessSites(sample)).toHaveLength(1)
+  })
+
+  it('a deps object built before the call still counts as that call’s own log dependency', () => {
+    const sample = `
+      import { devReviewLoop } from '../src/lib/dev-review-loop.js'
+      const deps = { log: spy }
+      await devReviewLoop(input, deps)
+      ${A_DEFAULT_READ}
+    `
+    expect(inProcessSites(sample)).toEqual([])
   })
 
   it('a log producer called in this process is flagged: the test runner runs in the repository', () => {
