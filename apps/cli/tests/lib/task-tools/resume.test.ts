@@ -6,6 +6,8 @@ import { acquireOwnership, defaultControlStoreDeps, type EscalationInput, writeE
 import type { CallerContext } from '../../../src/lib/task-tools/server.js'
 import {
   createTaskResumeHandler,
+  RESUME_STALE_CLAIM_GRACE_MS,
+  type LaunchResult,
   type ResumeClaimStore,
   type ResumeRecord
 } from '../../../src/lib/task-tools/resume.js'
@@ -111,11 +113,12 @@ function harness(
   overrides: {
     rulings?: string[]
     newestRulingOrdinal?: number
-    launch?: () => void
+    launch?: (target: { pr: number; agent: string; issue: number }) => LaunchResult | Promise<LaunchResult>
     resolveIssue?: (ref: unknown) => number | null
+    now?: () => string
   } = {}
 ) {
-  const launches: Array<{ pr: number; agent: string }> = []
+  const launches: Array<{ pr: number; agent: string; issue: number }> = []
   const events: Array<{ operation: string; target: string; result: string; error_class: string | null }> = []
   const { store, map } = memClaimStore()
   const handler = createTaskResumeHandler({
@@ -125,12 +128,11 @@ function harness(
     fetchNewestRulingAuthor: () => 'principal-1',
     fetchNewestRulingOrdinal: () => overrides.newestRulingOrdinal ?? 1,
     store,
-    launch: (target, _meta, onAsyncFailure) => {
-      overrides.launch?.()
+    launch: async (target) => {
       launches.push(target)
-      void onAsyncFailure
+      return (overrides.launch?.(target) ?? { alive: true }) as LaunchResult | Promise<LaunchResult>
     },
-    now: () => '2026-01-01T00:00:00.000Z',
+    now: overrides.now ?? (() => '2026-01-01T00:00:00.000Z'),
     log: (e) => {
       if (e.kind === 'operation')
         events.push({ operation: e.operation, target: e.target ?? '', result: e.result, error_class: e.error_class })
@@ -242,7 +244,7 @@ describe('task_resume handler', () => {
     expect(result.result.outcome).toBe('started')
     expect(result.result.pr).toBe(PR)
     expect(result.result.authenticatedBy).toBe('principal-1')
-    expect(launches).toEqual([{ pr: PR, agent: 'claude' }])
+    expect(launches).toEqual([{ pr: PR, agent: 'claude', issue: ISSUE }])
     expect(events).toEqual([{ operation: 'task_resume', target: `task:${ISSUE}`, result: 'ok', error_class: null }])
   })
 
@@ -273,5 +275,77 @@ describe('task_resume handler', () => {
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.error.message).toContain('second worker')
     expect(launches).toHaveLength(0)
+  })
+
+  it("reports a failed start carrying the continuation's own error output, and releases the claim (O1)", async () => {
+    writePause()
+    writeEscalationFixture()
+    const { handler, launches, map } = harness({
+      launch: () => ({ alive: false, error: new Error('process exited before its driver confirmed alive (code 2)') })
+    })
+    const result = await handler({ task: { issue: ISSUE } }, CALLER)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.kind).toBe('infrastructure')
+      expect(result.error.message).toContain('code 2')
+      expect(result.error.detail).toContain('code 2')
+    }
+    expect(map.size).toBe(0) // released — an identical retry launches again
+    expect(launches).toHaveLength(1)
+  })
+
+  it('a retry after a failed start launches again rather than replaying the dead attempt', async () => {
+    writePause()
+    writeEscalationFixture()
+    let alive = false
+    const { handler, launches } = harness({
+      launch: () => (alive ? { alive: true } : { alive: false, error: new Error('no agent') })
+    })
+    const first = await handler({ task: { issue: ISSUE } }, CALLER)
+    expect(first.ok).toBe(false)
+
+    alive = true
+    const retry = await handler({ task: { issue: ISSUE } }, CALLER)
+    expect(retry.ok).toBe(true)
+    if (retry.ok) expect(retry.result.outcome).toBe('started')
+    expect(launches).toHaveLength(2)
+  })
+
+  it('replays a claim still within its own confirm window without relaunching (O3, no race)', async () => {
+    // The driver-lock gate above already proves no live driver exists before
+    // this call ever reaches the claim step; without the staleness guard, a
+    // second call racing the first's own in-flight confirm-wait would
+    // wrongly treat the first's claim as dead and launch a second worker.
+    writePause()
+    writeEscalationFixture()
+    const { handler, launches } = harness()
+    const first = await handler({ task: { issue: ISSUE } }, CALLER)
+    const second = await handler({ task: { issue: ISSUE } }, CALLER)
+    expect(first.ok && second.ok).toBe(true)
+    if (!first.ok || !second.ok) return
+    expect(second.result.outcome).toBe('already_resumed')
+    expect(launches).toHaveLength(1)
+  })
+
+  it('supersedes a stale claim once its task has no live driver, and relaunches (O3)', async () => {
+    writePause()
+    writeEscalationFixture()
+    let now = '2026-01-01T00:00:00.000Z'
+    const { handler, launches } = harness({ now: () => now })
+    const first = await handler({ task: { issue: ISSUE } }, CALLER)
+    expect(first.ok).toBe(true)
+    if (!first.ok) return
+    expect(first.result.outcome).toBe('started')
+
+    // Time passes well past the confirm window — no driver lock was ever
+    // written for this fixture's `ISSUE`, so the run this claim named is
+    // (and always was) dead by the time this second call arrives.
+    now = new Date(Date.parse(now) + RESUME_STALE_CLAIM_GRACE_MS + 1_000).toISOString()
+    const second = await handler({ task: { issue: ISSUE } }, CALLER)
+    expect(second.ok).toBe(true)
+    if (!second.ok) return
+    expect(second.result.outcome).toBe('started') // superseded and relaunched, not replayed
+    expect(second.result.escalationId).toBe(first.result.escalationId)
+    expect(launches).toHaveLength(2)
   })
 })

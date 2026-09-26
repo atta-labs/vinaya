@@ -18,10 +18,22 @@
  * concurrent continuations. "No retry loop": this handler attempts the
  * launch exactly once and returns — every round/retry decision after that is
  * the existing loop's own, never a second layer built here.
+ *
+ * O1: this call reports `outcome: 'started'` only once the launched
+ * continuation is CONFIRMED ALIVE — the same driver-lock observable
+ * `task_start` confirms against (`start.ts`'s own header), bounded to a
+ * shorter wait than `task_start`'s own, since `--resume` carries no
+ * preparation step of its own to size the wait for. A continuation that
+ * exits first is reported as a failed start carrying its own captured
+ * stderr, and the claim is released so an identical retry launches again.
+ * O3: a claim old enough that its own launch must already have concluded,
+ * naming a task the driver-lock gate just above already proved has no live
+ * driver, is superseded — released and re-claimed — so this call launches
+ * again rather than replaying `'already_resumed'` forever.
  */
 
 import { spawn } from 'node:child_process'
-import { readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { closeSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import {
   type ControlStoreDeps,
@@ -117,23 +129,125 @@ export const defaultResumeClaimStore: ResumeClaimStore = {
   }
 }
 
-// --- default detached launcher (the existing continuation) ------------------
+// --- O3: a claim old enough that its own launch must have concluded --------
+
+/**
+ * `defaultResumeLaunch`'s own bounded confirm-wait, below, plus a margin —
+ * shorter than `task_start`'s own (`start.ts`'s `START_STALE_CLAIM_GRACE_MS`),
+ * since `--resume` carries no preparation step to size a longer wait for.
+ * A record still younger than this can only be one call's own launch still
+ * in flight — its driver lock may simply not have been written yet, and it
+ * is not thereby dead (Traps to avoid: idempotency against a live run is the
+ * point).
+ */
+export const RESUME_CONFIRM_TIMEOUT_MS = 10_000
+const RESUME_CONFIRM_POLL_MS = 250
+export const RESUME_STALE_CLAIM_GRACE_MS = RESUME_CONFIRM_TIMEOUT_MS + 10_000
+
+function claimIsStale(record: ResumeRecord, now: () => string): boolean {
+  const startedAt = Date.parse(record.startedAt)
+  const current = Date.parse(now())
+  return Number.isFinite(startedAt) && Number.isFinite(current) && current - startedAt > RESUME_STALE_CLAIM_GRACE_MS
+}
+
+// --- default detached launcher (the existing continuation), confirmed on the driver lock ------------------
 
 /** Reuses `task_start`'s own resolvable-launcher override — this task's launch is a DIFFERENT existing command (`dev-review-loop --resume`, not `task run`), not a second launcher mechanism. */
 export const RESUME_COMMAND_ENV = 'VINAYA_TASK_RUN_COMMAND'
 
-export function defaultResumeLaunch(
-  target: { pr: number; agent: AgentVendor },
-  _meta: { escalationId: string; caller: string },
-  onAsyncFailure: (err: Error) => void
-): void {
-  const program = process.env[RESUME_COMMAND_ENV]?.trim() || 'vinaya'
-  const child = spawn(program, ['dev-review-loop', '--resume', String(target.pr), '--agent', target.agent], {
-    detached: true,
-    stdio: 'ignore'
+function readCapturedStderr(path: string): string {
+  try {
+    const raw = readFileSync(path, 'utf8').trim()
+    return raw ? ` — captured stderr:\n${raw}` : ''
+  } catch {
+    return ''
+  }
+}
+
+/** What launching a run and waiting for its own confirmation produced — the same shape `start.ts`'s own `LaunchResult` carries. */
+export type LaunchResult = { alive: true } | { alive: false; error: Error }
+
+/**
+ * Races the spawned child's own `error`/`exit` against the task's driver
+ * lock appearing and naming a live pid — never a sleep-then-assume. Whichever
+ * happens first decides the outcome; the loser's listeners/timers are torn
+ * down so this never resolves twice. Identical in shape to `start.ts`'s own
+ * `waitForLiveDriver` — kept as a sibling copy rather than a shared import
+ * across two files this task's Surface keeps independently modifiable
+ * (`Conflicts-with: 8` on this exact file).
+ */
+function waitForLiveDriver(
+  child: ReturnType<typeof spawn>,
+  root: string,
+  task: number,
+  stderrPath: string,
+  timeoutMs: number,
+  pollMs: number
+): Promise<LaunchResult> {
+  return new Promise((resolve) => {
+    let settled = false
+    const finishAlive = () => {
+      if (settled) return
+      settled = true
+      clearInterval(poll)
+      clearTimeout(timer)
+      child.removeAllListeners('error')
+      child.removeAllListeners('exit')
+      // Confirmed and must outlive this server — unref only now, never
+      // before confirmation, so a premature exit is still observed.
+      child.unref()
+      resolve({ alive: true })
+    }
+    const finishDead = (reason: string) => {
+      if (settled) return
+      settled = true
+      clearInterval(poll)
+      clearTimeout(timer)
+      resolve({ alive: false, error: new Error(`${reason}${readCapturedStderr(stderrPath)}`) })
+    }
+    child.on('error', (err) => finishDead(`spawn failed: ${err instanceof Error ? err.message : String(err)}`))
+    child.on('exit', (code, signal) =>
+      finishDead(
+        `process exited before its driver confirmed alive (code ${code ?? 'null'}, signal ${signal ?? 'null'})`
+      )
+    )
+    const poll = setInterval(() => {
+      const lock = readDriverLock(root, task)
+      if (lock && isDriverPidAlive(lock.pid)) finishAlive()
+    }, pollMs)
+    const timer = setTimeout(() => finishDead(`driver lock did not appear within ${timeoutMs}ms`), timeoutMs)
   })
-  child.on('error', (err) => onAsyncFailure(err instanceof Error ? err : new Error(String(err))))
-  child.unref()
+}
+
+/**
+ * `root` defaults to the SAME resolution `devReviewLoop` itself uses but is
+ * overridable so a test can point the confirm-wait at a temporary tree
+ * (`defaultTaskResumeDeps.launch` never overrides it).
+ */
+export function defaultResumeLaunch(
+  target: { pr: number; agent: AgentVendor; issue: number },
+  meta: { escalationId: string; caller: string },
+  root: string = runtimeDir()
+): Promise<LaunchResult> {
+  const program = process.env[RESUME_COMMAND_ENV]?.trim() || 'vinaya'
+  const stderrPath = runPath(root, target.issue, {
+    area: 'output',
+    file: `task-resume-${meta.escalationId}.stderr.log`
+  })
+  ensureRunDir(dirname(stderrPath), root)
+  const stderrFd = openSync(stderrPath, 'a')
+  let child: ReturnType<typeof spawn>
+  try {
+    child = spawn(program, ['dev-review-loop', '--resume', String(target.pr), '--agent', target.agent], {
+      detached: true,
+      stdio: ['ignore', 'ignore', stderrFd]
+    })
+  } finally {
+    // Spawn dup's the fd into the child; our own copy is safe to close
+    // immediately, whether spawn succeeded or threw synchronously.
+    closeSync(stderrFd)
+  }
+  return waitForLiveDriver(child, root, target.issue, stderrPath, RESUME_CONFIRM_TIMEOUT_MS, RESUME_CONFIRM_POLL_MS)
 }
 
 // --- deps ---------------------------------------------------------------------
@@ -145,11 +259,15 @@ export type TaskResumeDeps = {
   fetchNewestRulingAuthor: (pr: number) => string | null
   fetchNewestRulingOrdinal: (pr: number) => number
   store: ResumeClaimStore
+  /**
+   * Starts the continuation detached and resolves once EITHER its own driver
+   * lock confirms it alive, or it exits/errors first (O1) — see this file's
+   * own header.
+   */
   launch: (
-    target: { pr: number; agent: AgentVendor },
-    meta: { escalationId: string; caller: string },
-    onAsyncFailure: (err: Error) => void
-  ) => void
+    target: { pr: number; agent: AgentVendor; issue: number },
+    meta: { escalationId: string; caller: string }
+  ) => Promise<LaunchResult>
   now: () => string
   /** The Vinaya Log chokepoint (`log-sink.ts`) — injectable so a fixture can capture the typed `operation` event this handler emits without touching the real, machine-global outbox. */
   log: typeof log
@@ -223,6 +341,7 @@ export function createTaskResumeHandler(
         )
       )
     }
+    const caller = ctx.caller
 
     const issue = deps.resolveIssueForRef(parsed.data.task)
     if (issue === null) {
@@ -352,25 +471,46 @@ export function createTaskResumeHandler(
 
     const agent: AgentVendor = escalation.agent && isAgentVendor(escalation.agent) ? escalation.agent : 'claude'
 
-    const claim = deps.store.claim({ escalationId, caller: ctx.caller.id, pr, startedAt: deps.now() })
+    const buildRecord = (): ResumeRecord => ({ escalationId, caller: caller.id, pr, startedAt: deps.now() })
+    let claim = deps.store.claim(buildRecord())
+
+    // O3: a claim old enough that its own launch must already have
+    // concluded, naming a task the driver-lock gate above already proved
+    // has no live driver, is dead — superseded rather than replayed as
+    // `'already_resumed'` forever. A claim still within its own confirm
+    // window is left alone: it may simply not have written its driver lock
+    // yet, and the gate above already refused the genuinely-alive case.
+    if (!claim.claimed && claimIsStale(claim.record, deps.now)) {
+      deps.store.release(claim.record.escalationId)
+      claim = deps.store.claim(buildRecord())
+    }
+
     if (!claim.claimed) {
       emitOperationEvent(deps.log, issue, target, 'ok', null)
       return ok({ task: issue, pr, escalationId, outcome: 'already_resumed', authenticatedBy, authenticatedFrom })
     }
 
+    let outcome: LaunchResult
     try {
-      deps.launch({ pr, agent }, { escalationId, caller: ctx.caller.id }, (err) => {
-        try {
-          deps.store.release(escalationId)
-        } catch {
-          // best-effort
-        }
-        console.error(`task_resume: task ${issue} (PR ${pr}) failed to launch: ${err.message}`)
-      })
+      outcome = await deps.launch({ pr, agent, issue }, { escalationId, caller: caller.id })
     } catch (err) {
       deps.store.release(escalationId)
       emitOperationEvent(deps.log, issue, target, 'error', 'infrastructure')
       return fail(taskToolError('infrastructure', `task_resume could not launch the run: ${(err as Error).message}`))
+    }
+    if (!outcome.alive) {
+      // The launch never confirmed alive — release the claim so an
+      // identical retry, once the underlying problem is fixed, launches
+      // again instead of replaying a start that never happened.
+      deps.store.release(escalationId)
+      emitOperationEvent(deps.log, issue, target, 'error', 'infrastructure')
+      return fail(
+        taskToolError(
+          'infrastructure',
+          `task_resume: task ${issue} (PR ${pr}) did not confirm alive: ${outcome.error.message}`,
+          outcome.error.message
+        )
+      )
     }
 
     emitOperationEvent(deps.log, issue, target, 'ok', null)
