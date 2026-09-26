@@ -18,6 +18,7 @@ import {
 import type { CallerContext } from '../../../src/lib/task-tools/server.js'
 import { createTaskCancelHandler } from '../../../src/lib/task-tools/cancel.js'
 import { writePauseState } from '../../../src/lib/dev-review-loop/pause-resume.js'
+import { isolatedConfigFixture } from '../process-fixture'
 
 /**
  * `task_cancel` (task-operator-v1 4, O2) driven in-process against a real,
@@ -400,10 +401,10 @@ describe('task_cancel handler', () => {
 /**
  * `log()`'s own default `resolveRepo` (unlike `cancelDeps.resolveRepo`
  * above, which only affects `cancelDevReviewLoop`'s own repo lookups) reads
- * the REAL git remote of whatever `cwd` the fixture script runs in — this
- * repo's own real `owner-repo` directory, never `unresolved` — so a test
- * asserting on the outbox layout searches for the file by name instead of
- * assuming a fixed directory.
+ * the repo identity of whatever `cwd` the fixture script runs in — here the
+ * isolated fixture's own declared `AEG_REPO` — so a test asserting on the
+ * outbox layout searches for the file by name instead of assuming a fixed
+ * directory.
  */
 function findOutboxFile(root: string, name: string): string {
   const stack = [root]
@@ -418,10 +419,23 @@ function findOutboxFile(root: string, name: string): string {
   throw new Error(`no file named ${name} found under ${root}`)
 }
 
+/**
+ * Both fixtures below spawn their child with `isolatedConfigFixture`'s own
+ * working directory rather than this checkout's. `config.ts`'s
+ * `findLocalConfig()` walks up from the CHILD's `cwd`, so a child run from
+ * this repository reads THIS repository's `logs` setting: declare a
+ * `logs.url` here and the child delivers every event to that server and
+ * writes no local file at all — and the env-restore case below, which reads
+ * `<task>.ndjson` under its own temporary `$HOME`, fails for a reason that
+ * has nothing to do with what it tests. The fixture directory's own empty
+ * `vinaya.config.json` is where that walk stops instead, so no repository
+ * setting, present or future, is in scope for these children. Nothing about
+ * what they assert changes — only where they run.
+ */
 describe('cancelDevReviewLoop — real subprocess, real control store (security review round 3)', () => {
   it('a replayed cancel throws an error still instanceof ReplayedResolutionError, not a generic Error', () => {
-    const home = mkdtempSync(join(tmpdir(), 'vinaya-cancel-integration-'))
-    const repoRoot = join(import.meta.dir, '..', '..', '..', '..', '..')
+    const fixture = isolatedConfigFixture('vinaya-cancel-integration-')
+    const home = fixture.home
     const scriptPath = join(import.meta.dir, `.cancel-integration-fixture-${process.pid}-${Date.now()}.ts`)
     const script = `
 import { acquireOwnership, defaultControlStoreDeps, writeEscalation } from '@attalabs/aeg-core'
@@ -496,9 +510,9 @@ try {
       // `VINAYA_RUNTIME_DIR`-only delete — merged from origin/main's
       // independent issue-657 O5 fix, same root cause. Both agree `AEG_REPO`
       // must survive: `stripVinayaEnv` only ever strips `VINAYA_*`-prefixed
-      // keys, so it already preserves the real, legitimate `AEG_REPO`
-      // short-circuit these `cwd: repoRoot` subprocesses depend on.
-      const output = runFixtureScript(scriptPath, repoRoot, stripVinayaEnv({ ...process.env, HOME: home }))
+      // keys, so the fixture's own declared `AEG_REPO` — spread in last —
+      // is the repo identity these subprocesses resolve.
+      const output = runFixtureScript(scriptPath, fixture.cwd, stripVinayaEnv({ ...process.env, ...fixture.env }))
       expect(output).toContain('FIRST_OK')
       expect(output).toContain('SECOND_IS_REPLAYED:true')
       expect(output).toContain('SECOND_MESSAGE:devReviewLoop --cancel:')
@@ -530,8 +544,8 @@ try {
     // fix. Driving the real handler here means this test would have failed
     // against that unfixed code (the ambient sentinel would have leaked into
     // the 991 event) and now proves the fix.
-    const home = mkdtempSync(join(tmpdir(), 'vinaya-cancel-env-restore-'))
-    const repoRoot = join(import.meta.dir, '..', '..', '..', '..', '..')
+    const fixture = isolatedConfigFixture('vinaya-cancel-env-restore-')
+    const home = fixture.home
     const scriptPath = join(import.meta.dir, `.cancel-env-restore-fixture-${process.pid}-${Date.now()}.ts`)
     const script = `
 import { existsSync, readdirSync, statSync } from 'node:fs'
@@ -651,7 +665,7 @@ console.log('DONE')
 `
     writeFileSync(scriptPath, script)
     try {
-      const output = runFixtureScript(scriptPath, repoRoot, stripVinayaEnv({ ...process.env, HOME: home }))
+      const output = runFixtureScript(scriptPath, fixture.cwd, stripVinayaEnv({ ...process.env, ...fixture.env }))
       expect(output).toContain('TASK_AFTER:sentinel-task')
       expect(output).toContain('RUN_AFTER:sentinel-run')
       expect(output).toContain('RESUME_REFUSED:true')
