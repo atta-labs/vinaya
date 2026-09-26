@@ -155,7 +155,9 @@ Connections use the Durable Object hibernation API, so an idle viewer costs noth
 
 ## 6. Deploying a copy
 
-From `apps/log-server`, logged in to Cloudflare with `wrangler login`:
+This repository's own instance runs at `https://vinaya-log-server.estevez-dani.workers.dev`, one Worker deployed from this package to the account that also holds `atta-labs/vinaya`'s repository secrets. The default branch's `vinaya.config.json` points `logs.url` at that Worker's ingest route for `atta-labs/vinaya` (§ 5); the ingest credential is never in that file — it is read from the `VINAYA_LOG_TOKEN` environment variable, set as a repository secret for CI and exported in the shell for local runs.
+
+An adopter points their own repository at their own copy the same way, from `apps/log-server`, logged in to Cloudflare with `wrangler login`:
 
 ```bash
 bunx wrangler deploy
@@ -163,7 +165,7 @@ bunx wrangler secret put INGEST_TOKEN
 bunx wrangler secret put READ_TOKEN
 ```
 
-The Durable Object class is declared with `new_sqlite_classes` in its migration: SQLite-backed objects are the only kind the free plan offers. Then point `logs.url` at the ingest route (§ 5) on the default branch, set `VINAYA_LOG_TOKEN` to the ingest token as a repository secret for CI and in the shell environment for local runs.
+The Durable Object class is declared with `new_sqlite_classes` in its migration: SQLite-backed objects are the only kind the free plan offers. Then point `logs.url` at the ingest route (§ 5) for their own `<owner>/<repo>` on the default branch, set `VINAYA_LOG_TOKEN` to the ingest token as a repository secret for CI and in the shell environment for local runs.
 
 Setting `logs.url` moves local runs off the default local folder as well: a Vinaya installation delivers to exactly one destination.
 
