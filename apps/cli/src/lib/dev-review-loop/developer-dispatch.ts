@@ -557,16 +557,22 @@ export function fetchPrBody(pr: number): string {
  *   - `resume`   — the launch is over, this worker's continuity IS required,
  *                  and its exact vendor session is available: resume THAT
  *                  session, never a fresh one.
- *   - `pause`    — continuity is required but the session is gone (never
- *                  bound, or the record is corrupt): pause explicitly rather
- *                  than silently starting a fresh session that would lose the
- *                  worker's continuity.
+ *   - `fresh`    — the launch was refused before any vendor process was ever
+ *                  spawned, so no session, and no turn state, ever existed to
+ *                  lose: dispatch fresh, exactly like `none`, but carrying the
+ *                  refused record so the caller can narrate what it recovered
+ *                  from.
+ *   - `pause`    — continuity is required, the launch DID spawn, and its
+ *                  session is gone (never bound, or the record is corrupt):
+ *                  pause explicitly rather than silently starting a fresh
+ *                  session that would lose the worker's continuity.
  */
 export type LaunchReconciliation =
   | { kind: 'none' }
   | { kind: 'live'; record: LaunchRecord }
   | { kind: 'finished'; record: LaunchRecord; outcome: NormalizedOutcome }
   | { kind: 'resume'; record: LaunchRecord; resumeId: string; outcome: NormalizedOutcome }
+  | { kind: 'fresh'; record: LaunchRecord; outcome: NormalizedOutcome }
   | { kind: 'pause'; reason: 'infrastructure'; detail: string }
 
 export type ReconcileLaunchDeps = {
@@ -662,6 +668,36 @@ function outcomeSignalsFor(record: LaunchRecord, artifactsPresent: boolean): Out
 }
 
 /**
+ * Pure: did this launch end without ever spawning a vendor process at all?
+ *
+ * Decided from the record's own lifecycle facts, never from which
+ * `DispatchFailureReason` it carries — every pre-spawn refusal
+ * `dispatchRole` can raise (an authentication refusal, a sandbox/boundary
+ * start-up refusal, a hook-setup refusal, a capability refusal, a `spawn`
+ * that threw) already writes this same shape, and a future one will too,
+ * with no new case to add here:
+ *
+ *   - `childPid === null` — the child pid is stamped the instant `spawn`
+ *     returns, so no pid on record means no spawn identity was ever
+ *     captured.
+ *   - `status === 'interrupted'` with a `failureReason` — the dispatcher
+ *     itself stayed alive long enough to reach its own failure path and
+ *     write a terminal record. Together with the missing pid that is proof
+ *     of "refused before spawn", not merely "we cannot tell": a dispatcher
+ *     killed in the window between `spawn` returning and the pid being
+ *     stamped leaves a non-terminal `'launched'` record instead, which is
+ *     read here as possibly-spawned and keeps the continuity pause.
+ *
+ * A record with a bound session is never asked this question (a session
+ * exists only after a spawn), and a launch that DID spawn is never treated
+ * as having nothing to lose — its turn state is exactly what the continuity
+ * pause protects.
+ */
+export function launchNeverSpawned(record: LaunchRecord): boolean {
+  return record.childPid === null && record.status === 'interrupted' && record.failureReason !== null
+}
+
+/**
  * Pure (O3): reconcile a prior launch — live, finished, or uncertain — into
  * one disposition, from its parsed record plus injected pid-liveness. Never
  * reads disk or probes a process itself; `recoverDeveloperLaunch` below is the
@@ -711,6 +747,12 @@ export function reconcileLaunch(
   // interruption (O1). When none was ever bound, the session is genuinely gone
   // and there is nothing to resume: pause explicitly rather than start fresh.
   if (record.resumeId !== null) return { kind: 'resume', record, resumeId: record.resumeId, outcome }
+  // Refused before any vendor process started (`launchNeverSpawned`): there
+  // is no session AND no turn state — nothing a fresh dispatch could lose —
+  // so this is dispatched fresh rather than paused. Without this, a launch
+  // that never ran blocked its task forever behind a continuity rule with no
+  // continuity to protect.
+  if (launchNeverSpawned(record)) return { kind: 'fresh', record, outcome }
   return {
     kind: 'pause',
     reason: 'infrastructure',
