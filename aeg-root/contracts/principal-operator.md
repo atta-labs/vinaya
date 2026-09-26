@@ -22,7 +22,7 @@ This seam sits between the seat that decides **what is true and what is allowed*
 
 **The hand-off is malformed when** — the Operator is asked to exercise content or ratification authority (rule, approve, publish a review, merge, edit an Issue, re-scope), or when a Principal-addressed escalation is cleared by the Operator rather than presented. Either way the boundary between process and content authority has been crossed, and the seam's whole purpose is to make that crossing visible and refused.
 
-**What the Operator may read of a pull request** — the selected task's own, and only that one. `task_pr_read` returns what the forge reports about that pull request: each required and reported check with its state, conclusion and, where it failed, its failure summary; and the pull request's review record — the newest principal-authored verdicts and their judged head, the round markers, the published summary table, and any pause comment. Nothing authored outside the principal allowlist crosses this seam in either direction: a drive-by comment on the task's pull request is not a record the Operator may report, and the Operator never carries one up as though it were. The read is read-only by construction — it re-runs no check, posts nothing, edits nothing, merges nothing, and carries no forge-write credential — so widening what the Operator may *see* here widens nothing about what it may *do*.
+**What the Operator may read of a pull request** — the selected task's own, and no other. It may read what the forge reports there and the principal-authored review record, and nothing authored outside the principal allowlist crosses this seam in either direction. Reading is not doing: the read re-runs, posts, edits and merges nothing, so widening what the Operator may see widens nothing about what it may do. The reference below names the fields.
 
 **What it does not carry** — a duration. The Principal may ask "what state is it in?"; the answer is derived and durationless. "When will it be done?" has no grounded answer on this seam, and the Operator supplies none.
 
@@ -62,6 +62,15 @@ Two carriers, one per direction:
 | Read why that task's own pull request is red — its check results and its principal-authored review record (`task_pr_read`) | Decide what a red check or a held verdict means for the task — the Operator names what it read, and never rules on it |
 | Present a paused run's escalation packet (`task_escalation_read`) | Resolve a Principal-authority pause (round cap, no-progress, confidence, reappearance) with a decision, not a retry |
 | Request continuation or cancellation of a run (`task_resume`, `task_cancel`) | Address a scope or criteria change to the Planner — the Principal redirects it there, as the Operator cannot edit the Issue |
+
+### What the pull-request read carries
+
+The pull request the Operator may read is the one on the selected task's own branch, resolved from the task; a request naming any other is refused, not answered. What crosses is bounded to two things, and both are reports, never instructions:
+
+1. **What the forge reports about that head** — each required and reported check with its state and conclusion, and for a failed one its failure summary.
+2. **The principal-authored review record** — the newest verdicts and the head they judged, the round markers, the published summary table, and any pause comment.
+
+A comment authored outside the principal allowlist is not part of the record: it casts no verdict the Operator may report, and the Operator never carries one up to the Principal as though it were. The read holds no forge-write credential, so nothing in this widening gives the Operator an act it did not already lack.
 
 **The Principal may NOT ask the Operator to** plan or size a task, edit its Issue or criteria, write code, approve or publish a review, merge, or state how long a run will take — the Operator has no grant for any of these, and asking does not create one.
 
