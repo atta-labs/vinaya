@@ -301,6 +301,36 @@ function extractBaseSha(comment: string): string | null {
 }
 
 /**
+ * The re-review-state grammar `roles/reviewer.md`/`roles/security.md` define
+ * for a finding's description head — `F<n> <class>[ <state>]:`, states exactly
+ * `open|fix-claimed|reproduced|resolved` — captured as the SINGLE definition
+ * of that grammar in this package. `review-status.ts` (the loop's finding
+ * comparison) and `review-post.ts` (verdict derivation, re-review reference
+ * matching) both read a finding's id and state through `parseFindingState`
+ * rather than each embedding their own copy of the state token list — this is
+ * the one regex; there is no third (Traps to avoid). The class token is
+ * `\S+` (single-word by construction), matched non-capturing between the id
+ * and the optional state so `F1 correctness resolved:` reads state `resolved`
+ * while `F1 correctness:` reads state `null`.
+ */
+const FINDING_DESCRIPTION_STATE = /^F(\d+)(?:\s+\S+)?(?:\s+(open|fix-claimed|reproduced|resolved))?:/
+
+/**
+ * Parses the `F<n> <class>[ <state>]:` head of a finding's DESCRIPTION (the
+ * text after the rendered line's ` — ` separator, or a raw findings-file
+ * description) into its id and re-review state. Both `null` when the
+ * description carries no `F<n>` head at all — a new, id-less finding, or a
+ * hand-typed line outside the grammar. A finding with an id but no state token
+ * reads `state: null` — which every consequential-finding rule treats as
+ * still-blocking, the fail-closed direction (O2).
+ */
+export function parseFindingState(description: string): { id: string | null; state: string | null } {
+  const m = FINDING_DESCRIPTION_STATE.exec(description.trim())
+  if (!m) return { id: null, state: null }
+  return { id: `F${m[1]}`, state: m[2] ?? null }
+}
+
+/**
  * O2/O3: the FINDINGS block's own
  * severities, read from the WHOLE comment body — never `firstFiveLines`'s
  * window, since `renderFindingsSection` (`review-post.ts`) always renders
@@ -324,14 +354,30 @@ function extractBaseSha(comment: string): string | null {
  * re-parsed, hand-posted comment exactly as it does to a freshly-derived
  * finding, so the gate and the loop never disagree about a body/comment/
  * role-file finding either.
+ *
+ * The DESCRIPTION after the separator is captured too and run through
+ * `parseFindingState` for the finding's id and re-review state (O1/O2): this
+ * is what lets `checkReviewGate` and `publishRound` drop a `resolved` finding
+ * from the policy evaluation exactly as `deriveCodeReviewVerdict` already
+ * does, so a reviewer marking a blocker `resolved` clears it from the gate.
+ * The description is optional in the match (`— ` with nothing after still
+ * yields a severity) so a malformed finding line never silently drops its
+ * severity — a stateless finding still blocks, fail-closed.
  */
-const FINDING_SEVERITY_LINE = /^\d+\.\s+\[([A-Z][A-Z]*)\]\s+(.+?)\s+—/gm
+const FINDING_SEVERITY_LINE = /^\d+\.\s+\[([A-Z][A-Z]*)\]\s+(.+?)\s+—(?:\s+(.*))?$/gm
 
-function extractFindingSeverities(comment: string): { severity: string; location: string }[] {
-  return [...comment.matchAll(FINDING_SEVERITY_LINE)].map((m) => ({
-    severity: m[1] as string,
-    location: m[2] as string
-  }))
+function extractFindingSeverities(
+  comment: string
+): { severity: string; location: string; id: string | null; state: string | null }[] {
+  return [...comment.matchAll(FINDING_SEVERITY_LINE)].map((m) => {
+    const { id, state } = parseFindingState((m[3] as string | undefined) ?? '')
+    return {
+      severity: m[1] as string,
+      location: m[2] as string,
+      id,
+      state
+    }
+  })
 }
 
 /**
@@ -357,8 +403,16 @@ export type VerdictExtraction = {
   policyDigest: string | null
   /** `null` when no `Judged base:` line was found (O1) — legacy stock, or no base resolvable at cast time; every comment rendered from this task forward carries it unconditionally. */
   baseSha: string | null
-  /** The winning comment's own FINDINGS block severities and locations, whole-body read (O2/O3; location added O5) — `[]` on a DANGLING extraction (`danglingNote` set) or a comment with no findings at all. */
-  findingSeverities: { severity: string; location: string }[]
+  /**
+   * The winning comment's own FINDINGS block severities and locations,
+   * whole-body read (O2/O3; location added O5; id and re-review state added
+   * this task) — `[]` on a DANGLING extraction (`danglingNote` set) or a
+   * comment with no findings at all. `id`/`state` are `null` for a finding
+   * whose description carries no `F<n> <class>[ <state>]:` head (a hand-typed
+   * line, or a stateless finding); a `resolved` state is what the merge gate
+   * and the loop's publication self-check drop from the policy evaluation.
+   */
+  findingSeverities: { severity: string; location: string; id: string | null; state: string | null }[]
   danglingNote: string | null
 }
 

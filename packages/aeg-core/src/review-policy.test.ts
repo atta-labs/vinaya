@@ -3,10 +3,12 @@ import {
   blockingSeverities,
   CODE_REVIEW_SEVERITY_ORDER,
   codeReviewBlockingSeverities,
+  consequentialFindings,
   DEFAULT_REVIEW_POLICY,
   evaluateCodeReview,
   evaluateReviewFindings,
   evaluateSecurityReview,
+  isConsequentialFinding,
   isKnownSeverity,
   isProseLocation,
   type ReviewPolicy,
@@ -206,6 +208,41 @@ describe('evaluateReviewFindings — prose cap (#543 O5)', () => {
   test('a finding with no location at all is never capped — treated exactly as before this task', () => {
     const result = evaluateReviewFindings([{ severity: 'BLOCKER' }], CODE_REVIEW_SEVERITY_ORDER, 'MAJOR')
     expect(result.outcome).toBe('blocked')
+  })
+})
+
+describe('isConsequentialFinding / consequentialFindings (O4) — the single "counts toward policy" rule', () => {
+  test('only `resolved` is non-consequential; every other state and no state blocks', () => {
+    expect(isConsequentialFinding({ state: 'resolved' })).toBe(false)
+    expect(isConsequentialFinding({ state: 'open' })).toBe(true)
+    expect(isConsequentialFinding({ state: 'fix-claimed' })).toBe(true)
+    expect(isConsequentialFinding({ state: 'reproduced' })).toBe(true)
+    expect(isConsequentialFinding({ state: null })).toBe(true)
+    expect(isConsequentialFinding({})).toBe(true)
+  })
+
+  test('consequentialFindings drops only resolved findings, preserving order and element shape', () => {
+    const findings = [
+      { severity: 'BLOCKER', location: 'a.ts:1', state: 'resolved' },
+      { severity: 'MAJOR', location: 'b.ts:2', state: 'open' },
+      { severity: 'MINOR', location: 'c.ts:3', state: null }
+    ]
+    expect(consequentialFindings(findings)).toEqual([
+      { severity: 'MAJOR', location: 'b.ts:2', state: 'open' },
+      { severity: 'MINOR', location: 'c.ts:3', state: null }
+    ])
+  })
+
+  test('the filter — not the evaluator — is what clears an all-resolved blocking set', () => {
+    const policy = { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH', maxRounds: 3 } as const
+    const findings = [
+      { severity: 'BLOCKER', state: 'resolved' },
+      { severity: 'MAJOR', state: 'resolved' }
+    ]
+    // The evaluator ignores state, so the raw set still blocks — proving the
+    // consequential filter, applied before evaluation, is doing the work.
+    expect(evaluateCodeReview(findings, policy).outcome).toBe('blocked')
+    expect(evaluateCodeReview(consequentialFindings(findings), policy).outcome).toBe('clean')
   })
 })
 

@@ -1171,3 +1171,126 @@ describe('checkReviewGate — policy evaluation (O2/O3)', () => {
     expect(result.reason).toContain('does not recognize')
   })
 })
+
+// ---- O1/O2: a finding the reviewer marks `resolved` no longer blocks the
+// gate — the SAME `consequentialFindings` filter verdict derivation applies —
+// while a finding at or above the threshold in ANY other state still blocks.
+// Reproduces the adopter incident: an APPROVE listing F1 [BLOCKER] and F5
+// [MAJOR], both `resolved`, whose gate used to fail on the resolved findings.
+
+describe('checkReviewGate — resolved findings never block (O1/O2)', () => {
+  const findings = (lines: string[]) => (lines.length > 0 ? lines.join('\n') : 'None.')
+  const MAJOR_HIGH_POLICY = { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH', maxRounds: 3 } as const
+  const MAJOR_HIGH_POLICY_DIGEST = policyDigest(MAJOR_HIGH_POLICY)
+
+  const codeReviewComment = (verdictLine: string, findingLines: string[] = [], digest = DEFAULT_POLICY_DIGEST) =>
+    principal(
+      `VERDICT: ${verdictLine}\n\nJudged head: ${HEAD_SHA}\n\nFINDINGS (ordered by severity):\n${findings(findingLines)}\n\nPolicy digest: ${digest}`
+    )
+  const securityComment = (verdictLine: string, findingLines: string[] = [], digest = DEFAULT_POLICY_DIGEST) =>
+    principal(
+      `VERDICT: ${verdictLine}\n\nJudged head: ${HEAD_SHA}\n\nFINDINGS (ordered by severity):\n${findings(findingLines)}\n\nPolicy digest: ${digest}`
+    )
+
+  const BASE_INPUT = {
+    labels: [],
+    waiverLabelActor: null,
+    headSha: HEAD_SHA,
+    objectivesVersion: null,
+    rulingOrdinal: 0
+  }
+
+  // The adopter's real round-3 shape: F1 [BLOCKER] and F5 [MAJOR], both
+  // `resolved`, beside an APPROVE, under this repo's own MAJOR/HIGH policy.
+  const ADOPTER_RESOLVED_FINDINGS = [
+    '1. [BLOCKER] src/foo.ts:12 — F1 correctness resolved: the off-by-one, now fixed',
+    '2. [MAJOR] src/bar.ts:5 — F5 correctness resolved: the missing null check, now guarded'
+  ]
+
+  it("the adopter's APPROVE whose only at-or-above findings are `resolved` passes the gate (O1)", () => {
+    const result = checkReviewGate({
+      ...BASE_INPUT,
+      comments: [
+        codeReviewComment('APPROVE', ADOPTER_RESOLVED_FINDINGS, MAJOR_HIGH_POLICY_DIGEST),
+        securityComment('PASS', [], MAJOR_HIGH_POLICY_DIGEST)
+      ],
+      policy: MAJOR_HIGH_POLICY
+    })
+    expect(result.verdict).toBe('pass')
+  })
+
+  it('a resolved BLOCKER passes even under the DEFAULT (BLOCKER) policy — resolved clears the most severe rung too', () => {
+    const result = checkReviewGate({
+      ...BASE_INPUT,
+      comments: [
+        codeReviewComment('APPROVE', ['1. [BLOCKER] src/foo.ts:12 — F1 correctness resolved: fixed']),
+        securityComment('PASS')
+      ]
+      // policy omitted — defaults to BLOCKER/HIGH.
+    })
+    expect(result.verdict).toBe('pass')
+  })
+
+  it('a resolved CRITICAL security finding passes under the default HIGH policy', () => {
+    const result = checkReviewGate({
+      ...BASE_INPUT,
+      comments: [
+        codeReviewComment('APPROVE'),
+        securityComment('PASS', ['1. [CRITICAL] src/foo.ts:12 — F2 secret resolved: rotated and removed'])
+      ]
+    })
+    expect(result.verdict).toBe('pass')
+  })
+
+  for (const state of ['open', 'fix-claimed', 'reproduced'] as const) {
+    it(`the same BLOCKER marked \`${state}\` (not resolved) still blocks the gate (O2)`, () => {
+      const result = checkReviewGate({
+        ...BASE_INPUT,
+        comments: [
+          codeReviewComment('APPROVE', [
+            `1. [BLOCKER] src/foo.ts:12 — F1 correctness ${state}: the off-by-one`,
+            '2. [MAJOR] src/bar.ts:5 — F5 correctness resolved: the missing null check, now guarded'
+          ]),
+          securityComment('PASS')
+        ]
+      })
+      expect(result.verdict).toBe('fail')
+      expect(result.reason).toContain('never overrides policy')
+      expect(result.reason).toContain('BLOCKER')
+    })
+  }
+
+  it('a BLOCKER carrying NO state token at all still blocks — only an explicit `resolved` clears a finding (O2, fail-closed)', () => {
+    const result = checkReviewGate({
+      ...BASE_INPUT,
+      comments: [
+        codeReviewComment('APPROVE', ['1. [BLOCKER] src/foo.ts:12 — F1 correctness: the off-by-one']),
+        securityComment('PASS')
+      ]
+    })
+    expect(result.verdict).toBe('fail')
+    expect(result.reason).toContain('never overrides policy')
+    expect(result.reason).toContain('BLOCKER')
+  })
+
+  it('a resolved MAJOR beside a still-open BLOCKER blocks on the BLOCKER alone — only the non-resolved finding is named', () => {
+    const result = checkReviewGate({
+      ...BASE_INPUT,
+      comments: [
+        codeReviewComment(
+          'APPROVE',
+          [
+            '1. [BLOCKER] src/foo.ts:12 — F1 correctness open: still broken',
+            '2. [MAJOR] src/bar.ts:5 — F5 correctness resolved: now guarded'
+          ],
+          MAJOR_HIGH_POLICY_DIGEST
+        ),
+        securityComment('PASS', [], MAJOR_HIGH_POLICY_DIGEST)
+      ],
+      policy: MAJOR_HIGH_POLICY
+    })
+    expect(result.verdict).toBe('fail')
+    expect(result.reason).toContain('BLOCKER')
+    expect(result.reason).not.toContain('BLOCKER, MAJOR')
+  })
+})

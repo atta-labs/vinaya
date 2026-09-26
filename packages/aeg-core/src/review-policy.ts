@@ -146,6 +146,30 @@ export function evaluateReviewFindings<F extends PolicyFinding>(
   return { outcome: blockingFindings.length > 0 ? 'blocked' : 'clean', blockingFindings }
 }
 
+/**
+ * O4: the SINGLE definition of "does this finding count toward policy." A
+ * finding is consequential — evaluated by `evaluateReviewFindings` and able to
+ * block — unless the reviewer marked it `resolved`. Any other state (`open`,
+ * `fix-claimed`, `reproduced`) and a finding carrying no state token at all
+ * stay consequential and still block (O2, fail-closed): only an explicit
+ * `resolved` clears a finding from the gate, so a reviewer cannot clear a real
+ * blocker by relabelling it anything else. Imported by verdict derivation
+ * (`deriveCodeReviewVerdict`/`deriveSecurityVerdict`), the merge gate
+ * (`checkReviewGate`), and the loop's publication self-check (`publishRound`)
+ * alike, so the three can never disagree about the same verdict comment. The
+ * re-review-state grammar itself is parsed once, by `parseFindingState`
+ * (`verdict-extraction.ts`); this rule only decides what a parsed state means
+ * for policy.
+ */
+export function isConsequentialFinding(finding: { state?: string | null }): boolean {
+  return finding.state !== 'resolved'
+}
+
+/** Every consequential finding (see `isConsequentialFinding`), preserving order and element type. */
+export function consequentialFindings<F extends { state?: string | null }>(findings: readonly F[]): F[] {
+  return findings.filter((f) => isConsequentialFinding(f))
+}
+
 /** `evaluateReviewFindings` fixed to the code-review scale and `policy.codeReviewThreshold`. */
 export function evaluateCodeReview<F extends PolicyFinding>(
   findings: readonly F[],
