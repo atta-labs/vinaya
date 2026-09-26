@@ -129,6 +129,27 @@ const ISSUES = [
   { number: 605, title: 'An ordinary open Issue, never dispatched', labels: [] }
 ]
 
+/**
+ * Three merged task pull requests — the history the typical-time column is
+ * computed from. Three is exactly the minimum number of past intervals the
+ * reader answers at all, so a fixture with two would (correctly) report no
+ * typical time.
+ */
+const MERGED_TASK_PRS = [
+  { number: 801, headRefName: 'task/demo/past-1', mergedAt: '2026-09-20T12:00:00.000Z' },
+  { number: 802, headRefName: 'task/demo/past-2', mergedAt: '2026-09-21T12:00:00.000Z' },
+  { number: 803, headRefName: 'task/demo/past-3', mergedAt: '2026-09-22T12:00:00.000Z' },
+  // Not a task branch — carries no round markers and is no task's history.
+  { number: 804, headRefName: 'changeset-release/main', mergedAt: '2026-09-23T12:00:00.000Z' }
+]
+
+/** One past round: its marker, then its two verdicts six minutes later — a six-minute reviewing interval. */
+const MERGED_PR_COMMENTS = [
+  { ...principalComment('<!-- aeg:developer:round-1 -->\nHead: abc123'), createdAt: '2026-09-20T10:00:00.000Z' },
+  { ...principalComment('VERDICT: APPROVE\n\nJudged head: abc123'), createdAt: '2026-09-20T10:06:00.000Z' },
+  { ...principalComment('VERDICT: PASS\n\nJudged head: abc123'), createdAt: '2026-09-20T10:06:00.000Z' }
+]
+
 /** The published summary table the confidence column reads for a run that has published — the same shape `renderSummary` posts. */
 const PUBLISHED_SUMMARY_COMMENTS = [
   {
@@ -186,6 +207,10 @@ JSON
 fi
 if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
   case "$4" in
+    merged) cat <<'JSON'
+${JSON.stringify(MERGED_TASK_PRS)}
+JSON
+    ;;
 ${prCases}
     *) echo '[]' ;;
   esac
@@ -197,7 +222,10 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
 ${JSON.stringify({ comments: PUBLISHED_SUMMARY_COMMENTS })}
 JSON
     ;;
-    *) echo '{"comments": []}' ;;
+    *) cat <<'JSON'
+${JSON.stringify({ comments: MERGED_PR_COMMENTS })}
+JSON
+    ;;
   esac
   exit 0
 fi
@@ -360,7 +388,19 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
 
     expect(outputCells(r.stdout).slice(0, 5)).toEqual([
       ['task', 'issue', 'pr', 'state', 'round', 'phase', 'in phase', 'confidence', 'typical (history)'],
-      ['[demo] 1', '#601', '#701', `running (pid ${process.pid})`, '2', 'reviewing', '7m', '90% (round 2)', '—'],
+      [
+        '[demo] 1',
+        '#601',
+        '#701',
+        `running (pid ${process.pid})`,
+        '2',
+        'reviewing',
+        '7m',
+        '90% (round 2)',
+        // Three merged task pull requests of history, each a six-minute
+        // reviewing interval — history, never a claim about this run.
+        '6m (n=3)'
+      ],
       ['[demo] 2', '#602', '#702', 'paused (escalation)', '1', 'paused', '40m', '—', '—'],
       // The published run's confidence comes from its own posted summary table.
       ['[demo] 3', '#603', '#703', 'published', '1', 'publishing', '2m', '85% (round 1)', '—'],
@@ -368,6 +408,7 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
       // omitted — and every fact it has no record for reads as one dash.
       ['[demo] 4', '#606', '—', 'not started', '—', '—', '—', '—', '—']
     ])
+    expect(withoutTrustAnchorWarning(r.stdout)).toContain('history, not a prediction')
     expect(r.status).toBe(0)
   })
 
@@ -381,6 +422,9 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
       ['[demo] 3', '#603', '#703', 'no driver', '—', '—', '—', '—', '—'],
       ['[demo] 4', '#606', '—', 'not started', '—', '—', '—', '—', '—']
     ])
+    // No row is in a phase, so no row carries a typical time — and the
+    // history sentence is not printed at all (O4).
+    expect(withoutTrustAnchorWarning(r.stdout)).not.toContain('history, not a prediction')
     expect(r.status).toBe(0)
   })
 
@@ -443,6 +487,8 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
       recordedPhase: 'dispatch_developer',
       minutesInPhase: 3,
       lastConfidence: null,
+      // Every past interval this fixture's history carries is a REVIEWING one;
+      // developing has none, so this phase reports no typical time (O4).
       phaseHistory: null
     })
     expect(parsed.data.tasks[3]).toEqual({

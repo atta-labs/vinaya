@@ -15,9 +15,11 @@
  *
  * Each row also carries WHERE the run is, not only that it is running: the
  * round and phase from the loop's own control record, how long it has been in
- * that phase (measured from that record's own timestamp), and the newest
- * confidence any record still carries. Every one of those is `null` when no
- * record carries it; none of them is ever estimated.
+ * that phase (measured from that record's own timestamp), the newest
+ * confidence any record still carries, and what the same phase has typically
+ * taken on this repository's recently merged tasks (`task-status-history.ts`
+ * — history, never a forecast). Every one of those is `null` when no record
+ * carries it; none of them is ever estimated.
  */
 
 import { execFileSync } from 'node:child_process'
@@ -41,6 +43,7 @@ import { findOpenPrForBranch, runtimeDir } from './dev-review-loop.js'
 import { DRIVER_LOCK_FILENAME, runPath, tasksExecutionRoot } from './run-paths.js'
 import { loopLogPathFor, loopsRoot, type LoopLogRepo } from './loop-log.js'
 import { CONFIDENCE_FILE_NAME, parseConfidenceReply } from './dev-review-loop/round-assess.js'
+import { phaseHistoryLookup, type PhaseHistoryLookup } from './task-status-history.js'
 import { findRecordedControllerRun } from './task-run-background.js'
 
 function sh(cmd: string, args: string[]): string {
@@ -680,7 +683,7 @@ export function renderTaskStatusTable(rows: readonly TaskStatusRow[]): string[] 
  * started task only: a planned one has no control record, no statement and no
  * phase to compare against history.
  */
-function buildRow(ref: TaskRef, allowlist: readonly string[]): TaskStatusRow {
+function buildRow(ref: TaskRef, allowlist: readonly string[], history: PhaseHistoryLookup): TaskStatusRow {
   const started = hasFrozenBrief(ref.issue, allowlist)
   const root = runtimeDir()
   const base = {
@@ -718,7 +721,7 @@ function buildRow(ref: TaskRef, allowlist: readonly string[]): TaskStatusRow {
     recordedPhase: phase?.recordedPhase ?? null,
     minutesInPhase: phase?.minutesInPhase ?? null,
     lastConfidence: confidence,
-    phaseHistory: null
+    phaseHistory: phase ? history(phase.recordedPhase) : null
   }
 }
 
@@ -731,10 +734,14 @@ function buildRow(ref: TaskRef, allowlist: readonly string[]): TaskStatusRow {
  * unexported and reachable only from here or `gatherSingleTaskStatus`,
  * same file, so it costs no extra boundary call there).
  *
+ * The history read happens once for the whole list, not once per row — it is
+ * cached for the process (`task-status-history.ts`), so a listing of ten tasks
+ * pays for it once.
  */
 export function gatherTaskStatusList(): TaskStatusRow[] {
   const allowlist = principalAllowlist()
   const root = runtimeDir()
+  const history = phaseHistoryLookup()
   const rows: TaskStatusRow[] = []
   for (const ref of listOpenTaskIssues()) {
     // A backlog ref only ever becomes a candidate once the loop has
@@ -742,7 +749,7 @@ export function gatherTaskStatusList(): TaskStatusRow[] {
     // comment. A tranche-labeled ref carries no such gate: O4 lists every open
     // tranche task Issue, a not-yet-frozen (planned) one as `not started`.
     if (ref.kind === 'backlog' && !hasOutboxDir(root, ref.issue)) continue
-    rows.push(buildRow(ref, allowlist))
+    rows.push(buildRow(ref, allowlist, history))
   }
   return rows
 }
@@ -765,7 +772,7 @@ export function gatherSingleTaskStatus(tranche: string, id: string): SingleTaskS
   const ref = listOpenTaskIssues().find((r) => r.kind === 'tranche' && r.tranche === tranche && r.id === id)
   if (!ref) return { kind: 'not_found' }
 
-  const row = buildRow(ref, principalAllowlist())
+  const row = buildRow(ref, principalAllowlist(), phaseHistoryLookup())
 
   const root = runtimeDir()
   const verdictLines = lastRoundVerdictLines(root, ref.issue)
