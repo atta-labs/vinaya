@@ -57,7 +57,6 @@ import {
   ABS_BIN,
   buildSandbox,
   ensureCliBuilt,
-  REPO_ROOT,
   SpawnRpcClient,
   writeEscalationFixture,
   writePauseFixture
@@ -100,7 +99,14 @@ async function main(): Promise<void> {
     const mcpConfigPath = join(sb.sandbox, '.mcp.json')
     writeFileSync(mcpConfigPath, claudeMcpJsonFile({ dir: 'apps/cli', bin: ABS_BIN } as never))
 
-    const client = new SpawnRpcClient({ command: 'node', args: [ABS_BIN, 'task-tools', 'serve'] }, sb.env, REPO_ROOT)
+    // The server's own working directory is the sandbox, never this
+    // checkout: `config.ts`'s `findLocalConfig()` walks up from it, so a
+    // server spawned here would read THIS repository's `logs` setting and
+    // deliver the one event this script writes to whatever `logs.url` is
+    // declared there — not to `sb.runtimeDir`'s own folder, which is the
+    // isolation this script's own header promises.
+    const serverCwd = sb.sandbox
+    const client = new SpawnRpcClient({ command: 'node', args: [ABS_BIN, 'task-tools', 'serve'] }, sb.env, serverCwd)
     await client.request('initialize', {})
     const { isError, structured } = await client.callTool('task_resume', { task: { issue: ISSUE } })
     console.log('live-smoke: task_resume result —', JSON.stringify({ isError, structured }))
