@@ -17,12 +17,21 @@
  *    this tool's whole safety rests on is unit-testable against fixtures.
  *
  * The trust boundary: everything read off a pull request is DATA, not
- * instruction. Every comment is filtered through the same `isPrincipal`
- * allowlist the loop's own forge reads use (the filter `checkReviewGate`
- * itself applies before either verdict extractor) before a single byte of it
- * is read for meaning, and no body from outside that allowlist is ever
- * carried out of this module. Every free-text field is capped at the
- * catalog's own `MAX_RETURNED_TEXT_CHARS`.
+ * instruction, and it splits in two by whether it has an AUTHOR.
+ *
+ * - **Authored** — a pull request comment. Filtered through the same
+ *   `isPrincipal` allowlist the loop's own forge reads use (the filter
+ *   `checkReviewGate` itself applies before either verdict extractor) before
+ *   a single byte of it is read for meaning; no body from outside that
+ *   allowlist is ever carried out of this module.
+ * - **Unauthored** — a check name, a check's own reported output, a failure
+ *   annotation, a job log. No allowlist can apply, because there is nobody to
+ *   check: anyone who can land a workflow file or a build step on the task's
+ *   branch writes these. Every one of them leaves through
+ *   `sanitizeForgeText`/`sanitizeForgeLogTail`, which redact secrets through
+ *   `redact()` — this codebase's single redaction chokepoint — neutralize the
+ *   two grammars that carry authority here (an AEG control comment, a
+ *   `VERDICT:` line), and cap what remains.
  *
  * Read-only, structurally: there is no forge-write function imported here,
  * no `--resume`, no re-run, no merge. The only pull request it will read is
@@ -47,7 +56,9 @@ import {
   taskToolError,
   type TaskToolRef
 } from '@attalabs/aeg-core'
-import { principalAllowlist } from '../dev-review-loop/developer-dispatch.js'
+import { homedir } from 'node:os'
+import { redact } from '@attalabs/aeg-core'
+import { markerComments, principalAllowlist } from '../dev-review-loop/developer-dispatch.js'
 import { sh } from '../dev-review-loop/gate-reading.js'
 import { resolveRowForRef, type TaskToolCallResult } from './handlers.js'
 
@@ -56,6 +67,9 @@ export type PrComment = { body: string; author: string | null }
 
 /** Exactly `<!-- aeg:loop:paused:<reason> -->`, the marker `pause-resume.ts`'s `pauseMarker` renders — matched, never re-rendered, so the two can only drift by one of them changing the literal. */
 const PAUSE_MARKER = /<!--\s*aeg:loop:paused:([a-z_]+)\s*-->/i
+
+/** A check name, a status and a conclusion are labels, not prose — bounded far below the free-text ceiling so a workflow file cannot spend a whole result on one. */
+const MAX_CHECK_NAME_CHARS = 200
 
 /** At most this many failed checks get their failing job's log read — a read tool must stay a read, and a pull request with a dozen red checks has its answer in the first few. */
 const MAX_FAILURE_LOG_READS = 3
@@ -104,6 +118,63 @@ const ANSI_SEQUENCE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;?]*[ -/]*[@-
 
 export function stripAnsi(raw: string): string {
   return raw.replace(ANSI_SEQUENCE, '')
+}
+
+/**
+ * An HTML comment opener, the syntax every AEG control marker is written in
+ * (`<!-- aeg:principal:ruling … -->`, `<!-- aeg:loop:paused:… -->`,
+ * `<!-- aeg:developer:round-N -->`). Neutralized in forge text by escaping
+ * the opening angle bracket: the text still reads as itself, and no reader
+ * — this module's own marker regexes, the loop's, or a human scanning the
+ * result — can mistake it for a real marker.
+ */
+const HTML_COMMENT_OPENER = /<!--/g
+
+/**
+ * A line-anchored `VERDICT:` label, the one grammar the merge gate's own
+ * extractors read as a cast verdict. Defanged by separating the label from
+ * its colon: every extractor pattern requires the colon immediately after
+ * the word, so the text survives legibly while parsing as prose.
+ */
+const VERDICT_LABEL = /^([ \t]*(?:\*{1,3}|_{1,3})?)VERDICT:/gim
+
+/**
+ * The one exit every byte of forge-controlled text takes before it becomes
+ * part of a tool result. Four steps, in this order:
+ *
+ * 1. **Strip terminal colouring** — a runner colours its own log, and the
+ *    escape bytes are noise at best.
+ * 2. **Redact secrets** through `redact()` (`packages/aeg-core/src/log/redact.ts`),
+ *    this codebase's single redaction chokepoint — the same one the Vinaya
+ *    Log applies before an event leaves the machine. A CI step that prints a
+ *    token, an environment dump or a credential during a failing run must not
+ *    hand it to a caller just because the run was red.
+ * 3. **Neutralize control grammar** — this text is UNATTRIBUTABLE. A pull
+ *    request comment has an author, which is what lets `buildReviewRecord`
+ *    filter it through the principal allowlist; a check name, a check's own
+ *    reported output, an annotation and a job log have no author at all, and
+ *    anyone who can land a workflow file or a build step on the task's branch
+ *    can write them. So the two grammars that carry authority in this system
+ *    — an AEG control comment and a `VERDICT:` line — are defanged here,
+ *    leaving text that reads as itself and parses as nothing.
+ * 4. **Cap** at the catalog's own ceiling, so no single field is unbounded.
+ *
+ * What this is NOT: a guarantee that the text is safe to ACT on. It is
+ * untrusted CI output, and the Operator's own doctrine says so — the seat
+ * quotes what a failed check said, it never follows it.
+ */
+export function sanitizeForgeText(raw: string, max: number = MAX_RETURNED_TEXT_CHARS): string {
+  return capText(scrubForgeText(raw), max)
+}
+
+/** `sanitizeForgeText`'s steps 1–3 with step 4 taken from the TAIL instead of the head — where a job log's failure actually is. */
+export function sanitizeForgeLogTail(raw: string, max: number = MAX_RETURNED_TEXT_CHARS): string {
+  return capTail(scrubForgeText(raw), max)
+}
+
+/** Steps 1–3 of `sanitizeForgeText`, uncapped — the one place the strip/redact/defang order is written, so the head-capped and tail-capped exits can never diverge on it. */
+function scrubForgeText(raw: string): string {
+  return redact(stripAnsi(raw), homedir()).replace(HTML_COMMENT_OPENER, '&lt;!--').replace(VERDICT_LABEL, '$1VERDICT :')
 }
 
 // --- the pure half: the review record, from comment bodies alone -------------
@@ -292,12 +363,12 @@ export function toChecks(
     if (node.__typename === 'StatusContext') {
       const conclusion = node.state ?? null
       checks.push({
-        name: node.context ?? '(unnamed status)',
+        name: sanitizeForgeText(node.context ?? '(unnamed status)', MAX_CHECK_NAME_CHARS),
         required: node.isRequired === true,
         status: 'COMPLETED',
         conclusion,
-        detailsUrl: node.targetUrl ?? null,
-        failureSummary: isFailed(conclusion) && node.description ? capText(node.description) : null
+        detailsUrl: node.targetUrl === undefined || node.targetUrl === null ? null : sanitizeForgeText(node.targetUrl),
+        failureSummary: isFailed(conclusion) && node.description ? sanitizeForgeText(node.description) : null
       })
       continue
     }
@@ -307,17 +378,17 @@ export function toChecks(
       ? [node.title, node.summary].filter((text): text is string => typeof text === 'string' && text.trim() !== '')
       : []
     let failureSummary: string | null = null
-    if (reported.length > 0) failureSummary = capText(reported.join('\n\n'))
+    if (reported.length > 0) failureSummary = sanitizeForgeText(reported.join('\n\n'))
     else if (failed && typeof node.databaseId === 'number' && detailReads < MAX_FAILURE_LOG_READS) {
       detailReads++
       failureSummary = failureDetail(node.databaseId)
     }
     checks.push({
-      name: node.name ?? '(unnamed check)',
+      name: sanitizeForgeText(node.name ?? '(unnamed check)', MAX_CHECK_NAME_CHARS),
       required: node.isRequired === true,
-      status: node.status ?? 'UNKNOWN',
-      conclusion,
-      detailsUrl: node.detailsUrl ?? null,
+      status: sanitizeForgeText(node.status ?? 'UNKNOWN', MAX_CHECK_NAME_CHARS),
+      conclusion: conclusion === null ? null : sanitizeForgeText(conclusion, MAX_CHECK_NAME_CHARS),
+      detailsUrl: node.detailsUrl === undefined || node.detailsUrl === null ? null : sanitizeForgeText(node.detailsUrl),
       failureSummary
     })
   }
@@ -356,7 +427,9 @@ function readFailureAnnotations(checkRunId: number): string | null {
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line !== '' && !GENERIC_EXIT_ANNOTATION.test(line))
-  return lines.length === 0 ? null : capText(lines.join('\n'))
+  if (lines.length === 0) return null
+  const text = sanitizeForgeText(lines.join('\n'))
+  return text === '' ? null : text
 }
 
 /**
@@ -378,14 +451,13 @@ function readJobLogTail(jobId: number): string | null {
       return null
     }
   }
-  const text = capTail(stripAnsi(raw))
+  const text = sanitizeForgeLogTail(raw)
   return text === '' ? null : text
 }
 
+/** The PR's comments, parsed by the loop's OWN parser (`markerComments`, `developer-dispatch.ts`) rather than a second `author.login` mapping beside it — one parse, so the two cannot drift. */
 function fetchCommentsFromForge(pr: number): PrComment[] {
-  const raw = sh('gh', ['pr', 'view', String(pr), '--json', 'comments'])
-  const parsed = JSON.parse(raw) as { comments?: { body?: string; author?: { login?: string } | null }[] }
-  return (parsed.comments ?? []).map((c) => ({ body: c.body ?? '', author: c.author?.login ?? null }))
+  return markerComments(sh('gh', ['pr', 'view', String(pr), '--json', 'comments']))
 }
 
 export const defaultPrReadForge: PrReadForge = {
