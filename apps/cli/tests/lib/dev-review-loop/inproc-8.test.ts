@@ -73,7 +73,13 @@ function driverLockPath(world: LoopWorld): string {
   return join(ipTaskRunDir(world), 'driver.pid.json')
 }
 
-const EMPTY_HISTORY: ReconstructedJournal = { rounds: [], totalWallMs: 0, totalFilesChanged: 0, journalFinalized: null }
+const EMPTY_HISTORY: ReconstructedJournal = {
+  rounds: [],
+  totalWallMs: 0,
+  totalFilesChanged: 0,
+  summaryUrl: null,
+  journalFinalized: null
+}
 
 /**
  * The world's own `fetchLoopHistory` fake (`makeInProcessDeps`) is a static

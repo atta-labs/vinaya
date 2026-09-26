@@ -60,16 +60,24 @@ function contentAfterOneLine(body: string): string {
   return idx === -1 ? '' : body.slice(idx + 1)
 }
 
-export type MarkerComment = { body: string; author: string | null }
+export type MarkerComment = {
+  body: string
+  author: string | null
+  /** The comment's own address on the forge, when the read carried one — optional, so a hand-built fixture never has to invent a url it does not need. */
+  url?: string | null
+}
 
 /**
- * `gh {pr,issue} view --json comments` returns `author.login` on every
- * comment by default — no extra field flag needed (confirmed against
- * `review-post.ts`'s own identical `c.author?.login ?? null` read).
+ * `gh {pr,issue} view --json comments` returns `author.login` and `url` on
+ * every comment by default — no extra field flag needed (confirmed against
+ * `review-post.ts`'s own identical `c.author?.login ?? null` read, and
+ * against `gh pr view --json comments`'s own key list).
  */
 export function markerComments(raw: string): MarkerComment[] {
-  const parsed = JSON.parse(raw) as { comments: { body: string; author?: { login?: string } | null }[] }
-  return parsed.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null }))
+  const parsed = JSON.parse(raw) as {
+    comments: { body: string; author?: { login?: string } | null; url?: string | null }[]
+  }
+  return parsed.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null, url: c.url ?? null }))
 }
 
 /**

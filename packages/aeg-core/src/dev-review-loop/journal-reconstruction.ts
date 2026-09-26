@@ -10,14 +10,18 @@
  * those events stopped going to the tracker.
  *
  * This module is the PURE half of the rebuild: given the round numbers the
- * forge's own principal-authored developer round markers carry, and whether a
- * ready-for-merge summary was actually published to the forge, hand back one
+ * forge's own principal-authored developer round markers carry, whether a
+ * ready-for-merge summary was actually published to the forge, and whether the
+ * review gate passes on the pull request's current state, hand back one
  * `RoundRecord` per round plus where the next round should start numbering.
  * The impure caller (`journal-history.ts`, `@attalabs/vinaya`) gathers those
- * two facts: it reads the pull request's principal-authored comments and the
- * control store, never a log line. The control store's own authoritative
- * round is recovered separately by the driver (`recoverLoopState`), and is
- * deliberately NOT folded into the numbering here — see `reconstructRounds`.
+ * facts: it reads the pull request's principal-authored comments and evaluates
+ * the gate, never a log line. Nothing here performs a forge read or a gate
+ * evaluation of its own — the gate's verdict arrives as an input fact, which is
+ * what keeps this half pure and testable in every combination. The control
+ * store's own authoritative round is recovered separately by the driver
+ * (`recoverLoopState`), and is deliberately NOT folded into the numbering here
+ * — see `reconstructRounds`.
  *
  * Honest about what the forge markers carry: a developer round marker
  * (`<!-- aeg:developer:round-<n> -->`) names only the round's own number and
@@ -51,14 +55,29 @@ export function isPublishedSummaryComment(body: string): boolean {
 }
 
 /**
- * The two forge-derived facts a rebuild is handed. `roundMarkers` are the
- * round numbers read off every principal-authored developer round marker on
- * the pull request (order and duplicates irrelevant — deduplicated here).
- * `summaryPublished` is whether a principal-authored summary comment exists.
+ * The forge-derived facts a rebuild is handed. `roundMarkers` are the round
+ * numbers read off every principal-authored developer round marker on the
+ * pull request (order and duplicates irrelevant — deduplicated here).
+ * `summaryPublished` is whether a principal-authored summary comment exists,
+ * and `summaryUrl` is that comment's own address when one does.
+ * `reviewGatePasses` is the review gate's verdict on the pull request's
+ * CURRENT state.
  */
 export type ReconstructionInput = {
   roundMarkers: readonly number[]
   summaryPublished: boolean
+  /** The published summary comment's own url, or `null` when none is on the forge (or the caller could not resolve one). */
+  summaryUrl?: string | null
+  /**
+   * Whether the review gate evaluates PASS against the pull request's current
+   * head, objectives version, newest ruling, frozen brief and policy — the
+   * second half of "concluded" (see `journalFinalized`). The caller evaluates
+   * it (`checkReviewGate`, never a forge read from here) and passes `false`
+   * whenever it could not: an unresolvable head, a failed forge read, a
+   * thrown evaluation. `false` reads as "not concluded", so an unevaluable
+   * gate reopens a pull request rather than crashing or holding it shut.
+   */
+  reviewGatePasses: boolean
 }
 
 export type ReconstructedJournal = {
@@ -67,16 +86,31 @@ export type ReconstructedJournal = {
   totalWallMs: number
   /** Deliberately `0`: per-round files-changed has no control-record or forge source, so it is reported unavailable rather than a fabricated sum (O3). */
   totalFilesChanged: number
+  /** The published summary comment's own url, or `null` when no summary is on the forge (or the caller could not resolve one). Carried even when the gate is red, so a refusal can name where the summary was posted. */
+  summaryUrl: string | null
   /**
-   * `{ result: 'merged_ready' }` ONLY when a principal-authored ready-for-
-   * merge summary comment is actually on the forge — the one honest signal a
-   * run reached publication. A round that decided `publish` but crashed before
-   * the summary landed (a `gh` failure mid-publish) leaves NO summary comment,
-   * so this reads `null` and the caller never mistakes that crash for a
-   * completion — the exact distinction the old log-derived `journal_finalized`
-   * deferral drew, now drawn from the forge instead. Consumers only ever test
-   * `=== 'merged_ready'`; `'stopped'` is retained in the type for parity with
-   * the shape this replaces but is never produced here.
+   * `{ result: 'merged_ready' }` ONLY while BOTH facts hold: a principal-
+   * authored ready-for-merge summary comment is actually on the forge, AND
+   * the review gate passes against the pull request's CURRENT state
+   * (`reviewGatePasses`). Concluded is a property of the pull request now, not
+   * a one-way latch it once passed through.
+   *
+   * The summary alone was the old signal, and it is sticky in a way the forge
+   * is not: the summary table records no head, so a summary posted for an
+   * older head keeps reading "done forever" after a red gate, a newer
+   * Principal ruling, a superseded brief or a moved head — observed on an
+   * adopter pull request whose every `--resume` was refused while the gate was
+   * red and a ruling sat unaddressed. The gate is the one evaluation already
+   * bound to all of those, so asking it about the current state is what makes
+   * this reopen when any of them moves.
+   *
+   * A round that decided `publish` but crashed before the summary landed (a
+   * `gh` failure mid-publish) still leaves NO summary comment, so this still
+   * reads `null` and no caller mistakes that crash for a completion — the
+   * distinction the old log-derived `journal_finalized` deferral drew is
+   * unchanged, now with a second condition in front of it. Consumers test this
+   * through `isConcludedJournal` below; `'stopped'` is retained in the type
+   * for parity with the shape this replaces but is never produced here.
    */
   journalFinalized: { result: 'merged_ready' | 'stopped' } | null
 }
@@ -108,12 +142,47 @@ export function reconstructRounds(input: ReconstructionInput): ReconstructedJour
     confidence: null,
     outcome: 'changes_requested'
   }))
+  const concluded = input.summaryPublished && input.reviewGatePasses
   return {
     rounds,
     totalWallMs: 0,
     totalFilesChanged: 0,
-    journalFinalized: input.summaryPublished ? { result: 'merged_ready' } : null
+    summaryUrl: input.summaryUrl ?? null,
+    journalFinalized: concluded ? { result: 'merged_ready' } : null
   }
+}
+
+/**
+ * The ONE predicate every reader of "is this task's review concluded?" calls
+ * — the `--resume` replayed-resolution refusal, the attach's round-history
+ * seeding, and the held-clean carry path's "already published?" check alike.
+ * A second hand-written `=== 'merged_ready'` test at any of those sites is how
+ * they drifted apart before: two of them treated a posted summary as final
+ * while the pull request's own gate said otherwise.
+ */
+export function isConcludedJournal(journal: ReconstructedJournal): boolean {
+  return journal.journalFinalized?.result === 'merged_ready'
+}
+
+/**
+ * The refusal text for a resume against a genuinely concluded review — `null`
+ * when the journal is not concluded, so a caller reads "no refusal owed" from
+ * the same call that renders one. Names the round the summary concluded at and
+ * where that summary is, rather than the storage layer's own
+ * consumed-resolution wording, which describes a mechanism the reader did not
+ * ask about and hid the real reason the loop would not continue.
+ *
+ * Degrades rather than inventing: a journal with no round markers at all (a
+ * summary posted on a pull request whose round comments were deleted) names no
+ * round, and an unresolvable summary url says so.
+ */
+export function concludedLoopRefusal(journal: ReconstructedJournal): string | null {
+  if (!isConcludedJournal(journal)) return null
+  const newest = journal.rounds[journal.rounds.length - 1]
+  const at = newest === undefined ? '' : ` at round ${newest.round}`
+  const where =
+    journal.summaryUrl === null ? 'summary posted, comment url unavailable' : `summary posted ${journal.summaryUrl}`
+  return `loop already concluded${at} (${where})`
 }
 
 /** Where a fresh round should start numbering after reconstruction — `1` when there is no prior history at all. */

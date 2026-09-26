@@ -1437,7 +1437,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * round 1 live (the "rerun posts nothing twice" idempotency case), would
      * double it in the published table.
      */
-    let loopHistory: ReconstructedJournal = { rounds: [], totalWallMs: 0, totalFilesChanged: 0, journalFinalized: null }
+    let loopHistory: ReconstructedJournal = {
+      rounds: [],
+      totalWallMs: 0,
+      totalFilesChanged: 0,
+      summaryUrl: null,
+      journalFinalized: null
+    }
     /** Whether `seedLoopHistory` actually applied — the round-bump below reuses this instead of re-deriving the same "already published?" check a second time. */
     let historyApplies = false
     function seedLoopHistory(): void {

@@ -2,6 +2,8 @@ export { assessRound } from './assess-round'
 export { renderSummary } from './render-summary'
 export { initialLoopState } from './types'
 export {
+  concludedLoopRefusal,
+  isConcludedJournal,
   isPublishedSummaryComment,
   nextRoundNumber,
   reconstructRounds,
