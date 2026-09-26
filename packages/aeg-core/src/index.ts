@@ -549,6 +549,7 @@ export type {
   PendingRound,
   ReconstructedJournal,
   ReconstructionInput,
+  ReviewGateFact,
   RoundOutcome,
   RoundRecord,
   RoundStats,

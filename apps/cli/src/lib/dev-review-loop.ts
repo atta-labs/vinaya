@@ -1472,6 +1472,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       totalWallMs: 0,
       totalFilesChanged: 0,
       summaryUrl: null,
+      reviewGate: 'unknown',
       journalFinalized: null
     }
     /** Whether `seedLoopHistory` actually applied — the round-bump below reuses this instead of re-deriving the same "already concluded?" check a second time. */

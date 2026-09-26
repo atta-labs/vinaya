@@ -11,22 +11,23 @@ import { renderSummary } from './render-summary'
 
 describe('reconstructRounds — from the forge markers, never a log event', () => {
   it('returns an empty journal for no markers and no published summary', () => {
-    expect(reconstructRounds({ roundMarkers: [], summaryPublished: false, reviewGatePasses: false })).toEqual({
+    expect(reconstructRounds({ roundMarkers: [], summaryPublished: false, reviewGate: 'unknown' })).toEqual({
       rounds: [],
       totalWallMs: 0,
       totalFilesChanged: 0,
       summaryUrl: null,
+      reviewGate: 'unknown',
       journalFinalized: null
     })
   })
 
   it('rebuilds one RoundRecord per distinct developer round marker', () => {
-    const { rounds } = reconstructRounds({ roundMarkers: [1], summaryPublished: false, reviewGatePasses: false })
+    const { rounds } = reconstructRounds({ roundMarkers: [1], summaryPublished: false, reviewGate: 'unknown' })
     expect(rounds).toEqual([{ round: 1, countsBySeverity: {}, confidence: null, outcome: 'changes_requested' }])
   })
 
   it('a reconstructed round carries no per-severity counts, no confidence — a marker names neither (O3)', () => {
-    const { rounds } = reconstructRounds({ roundMarkers: [1], summaryPublished: false, reviewGatePasses: false })
+    const { rounds } = reconstructRounds({ roundMarkers: [1], summaryPublished: false, reviewGate: 'unknown' })
     expect(rounds[0]?.countsBySeverity).toEqual({})
     expect(rounds[0]?.confidence).toBeNull()
   })
@@ -35,7 +36,7 @@ describe('reconstructRounds — from the forge markers, never a log event', () =
     const { totalWallMs, totalFilesChanged } = reconstructRounds({
       roundMarkers: [1, 2, 3],
       summaryPublished: true,
-      reviewGatePasses: true
+      reviewGate: 'pass'
     })
     expect(totalWallMs).toBe(0)
     expect(totalFilesChanged).toBe(0)
@@ -45,7 +46,7 @@ describe('reconstructRounds — from the forge markers, never a log event', () =
     const { rounds } = reconstructRounds({
       roundMarkers: [3, 1, 2, 1, 3],
       summaryPublished: false,
-      reviewGatePasses: false
+      reviewGate: 'unknown'
     })
     expect(rounds.map((r) => r.round)).toEqual([1, 2, 3])
   })
@@ -53,19 +54,19 @@ describe('reconstructRounds — from the forge markers, never a log event', () =
   // The five run shapes this task keeps parity on, at the pure-function level.
 
   it('shape 1 — a green single round that published: its summary is the honest merged_ready signal', () => {
-    const j = reconstructRounds({ roundMarkers: [1], summaryPublished: true, reviewGatePasses: true })
+    const j = reconstructRounds({ roundMarkers: [1], summaryPublished: true, reviewGate: 'pass' })
     expect(j.journalFinalized).toEqual({ result: 'merged_ready' })
   })
 
   it('shape 2 — a revised multi-round run in progress: every round a row, not yet published', () => {
-    const j = reconstructRounds({ roundMarkers: [1, 2, 3], summaryPublished: false, reviewGatePasses: false })
+    const j = reconstructRounds({ roundMarkers: [1, 2, 3], summaryPublished: false, reviewGate: 'unknown' })
     expect(j.rounds.map((r) => r.round)).toEqual([1, 2, 3])
     expect(j.journalFinalized).toBeNull()
     expect(nextRoundNumber(j.rounds)).toBe(4)
   })
 
   it('shape 4 — an attach holding a request-changes round: the markers give the next round to run', () => {
-    const j = reconstructRounds({ roundMarkers: [1, 2], summaryPublished: false, reviewGatePasses: false })
+    const j = reconstructRounds({ roundMarkers: [1, 2], summaryPublished: false, reviewGate: 'unknown' })
     expect(nextRoundNumber(j.rounds)).toBe(3)
     expect(j.journalFinalized).toBeNull()
   })
@@ -77,13 +78,13 @@ describe('reconstructRounds — from the forge markers, never a log event', () =
   describe('shape 5 — journalFinalized is the crash-vs-published signal', () => {
     it('is null when no summary was published, even though a round marker exists', () => {
       expect(
-        reconstructRounds({ roundMarkers: [1], summaryPublished: false, reviewGatePasses: false }).journalFinalized
+        reconstructRounds({ roundMarkers: [1], summaryPublished: false, reviewGate: 'unknown' }).journalFinalized
       ).toBeNull()
     })
 
     it('is merged_ready only once the summary comment is actually on the forge, with the gate passing on the current state', () => {
       expect(
-        reconstructRounds({ roundMarkers: [1], summaryPublished: true, reviewGatePasses: true }).journalFinalized
+        reconstructRounds({ roundMarkers: [1], summaryPublished: true, reviewGate: 'pass' }).journalFinalized
       ).toEqual({
         result: 'merged_ready'
       })
@@ -97,23 +98,28 @@ describe('reconstructRounds — from the forge markers, never a log event', () =
 // every one of which the gate itself already evaluates.
 describe('journalFinalized — concluded is the summary AND a passing gate on the current state (O1)', () => {
   it('a summary posted while the gate is red is NOT concluded — the pull request reopens', () => {
-    const j = reconstructRounds({ roundMarkers: [1, 2, 3], summaryPublished: true, reviewGatePasses: false })
+    const j = reconstructRounds({ roundMarkers: [1, 2, 3], summaryPublished: true, reviewGate: 'fail' })
     expect(j.journalFinalized).toBeNull()
     expect(isConcludedJournal(j)).toBe(false)
   })
 
   it('a passing gate with no summary posted is NOT concluded either — publication is still its own fact', () => {
-    const j = reconstructRounds({ roundMarkers: [1], summaryPublished: false, reviewGatePasses: true })
+    const j = reconstructRounds({ roundMarkers: [1], summaryPublished: false, reviewGate: 'pass' })
     expect(isConcludedJournal(j)).toBe(false)
   })
 
+  it('an UNKNOWN gate never reopens a published review — the absence of an answer is not evidence the review moved on', () => {
+    const j = reconstructRounds({ roundMarkers: [1], summaryPublished: true, reviewGate: 'unknown' })
+    expect(isConcludedJournal(j)).toBe(true)
+  })
+
   it('both facts together are the only concluded state', () => {
-    const j = reconstructRounds({ roundMarkers: [1], summaryPublished: true, reviewGatePasses: true })
+    const j = reconstructRounds({ roundMarkers: [1], summaryPublished: true, reviewGate: 'pass' })
     expect(isConcludedJournal(j)).toBe(true)
   })
 
   it('keeps every prior round when a summary plus a red gate reopens the review, so numbering continues past the last marker (O3)', () => {
-    const j = reconstructRounds({ roundMarkers: [1, 2, 3], summaryPublished: true, reviewGatePasses: false })
+    const j = reconstructRounds({ roundMarkers: [1, 2, 3], summaryPublished: true, reviewGate: 'fail' })
     expect(j.rounds.map((r) => r.round)).toEqual([1, 2, 3])
     expect(nextRoundNumber(j.rounds)).toBe(4)
   })
@@ -121,12 +127,11 @@ describe('journalFinalized — concluded is the summary AND a passing gate on th
   it("carries the summary comment's url whether or not the gate passes", () => {
     const url = 'https://forge.example/pr/7#issuecomment-1'
     expect(
-      reconstructRounds({ roundMarkers: [1], summaryPublished: true, summaryUrl: url, reviewGatePasses: false })
+      reconstructRounds({ roundMarkers: [1], summaryPublished: true, summaryUrl: url, reviewGate: 'unknown' })
         .summaryUrl
     ).toBe(url)
     expect(
-      reconstructRounds({ roundMarkers: [1], summaryPublished: true, summaryUrl: url, reviewGatePasses: true })
-        .summaryUrl
+      reconstructRounds({ roundMarkers: [1], summaryPublished: true, summaryUrl: url, reviewGate: 'pass' }).summaryUrl
     ).toBe(url)
   })
 })
@@ -137,7 +142,7 @@ describe('concludedLoopRefusal — the refusal a resume against a truly conclude
       roundMarkers: [1, 2, 3],
       summaryPublished: true,
       summaryUrl: 'https://forge.example/pr/7#issuecomment-1',
-      reviewGatePasses: true
+      reviewGate: 'pass'
     })
     expect(concludedLoopRefusal(j)).toBe(
       'loop already concluded at round 3 (summary posted https://forge.example/pr/7#issuecomment-1)'
@@ -149,14 +154,26 @@ describe('concludedLoopRefusal — the refusal a resume against a truly conclude
       roundMarkers: [1, 2, 3],
       summaryPublished: true,
       summaryUrl: 'https://forge.example/pr/7#issuecomment-1',
-      reviewGatePasses: false
+      reviewGate: 'fail'
     })
     expect(concludedLoopRefusal(j)).toBeNull()
   })
 
   it('says the url is unavailable rather than inventing one', () => {
-    const j = reconstructRounds({ roundMarkers: [2], summaryPublished: true, reviewGatePasses: true })
+    const j = reconstructRounds({ roundMarkers: [2], summaryPublished: true, reviewGate: 'pass' })
     expect(concludedLoopRefusal(j)).toBe('loop already concluded at round 2 (summary posted, comment url unavailable)')
+  })
+
+  it('names an unevaluable gate, so a refusal never implies the gate was asked and passed', () => {
+    const j = reconstructRounds({
+      roundMarkers: [2],
+      summaryPublished: true,
+      summaryUrl: 'https://forge.example/pr/7#issuecomment-1',
+      reviewGate: 'unknown'
+    })
+    expect(concludedLoopRefusal(j)).toBe(
+      'loop already concluded at round 2 (summary posted https://forge.example/pr/7#issuecomment-1; review gate could not be evaluated)'
+    )
   })
 
   it('names no round when the pull request carries no round markers at all', () => {
@@ -164,7 +181,7 @@ describe('concludedLoopRefusal — the refusal a resume against a truly conclude
       roundMarkers: [],
       summaryPublished: true,
       summaryUrl: 'https://forge.example/pr/7#issuecomment-1',
-      reviewGatePasses: true
+      reviewGate: 'pass'
     })
     expect(concludedLoopRefusal(j)).toBe(
       'loop already concluded (summary posted https://forge.example/pr/7#issuecomment-1)'
@@ -204,7 +221,7 @@ describe('nextRoundNumber', () => {
   })
 
   it('is one past the highest reconstructed round', () => {
-    const { rounds } = reconstructRounds({ roundMarkers: [1, 3], summaryPublished: false, reviewGatePasses: false })
+    const { rounds } = reconstructRounds({ roundMarkers: [1, 3], summaryPublished: false, reviewGate: 'unknown' })
     expect(nextRoundNumber(rounds)).toBe(4)
   })
 })

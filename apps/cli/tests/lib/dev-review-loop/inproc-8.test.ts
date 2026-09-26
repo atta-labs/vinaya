@@ -80,6 +80,7 @@ const EMPTY_HISTORY: ReconstructedJournal = {
   totalWallMs: 0,
   totalFilesChanged: 0,
   summaryUrl: null,
+  reviewGate: 'unknown',
   journalFinalized: null
 }
 
@@ -114,6 +115,7 @@ function fetchLoopHistoryReflectingPublish(world: LoopWorld, gateStillPasses = t
             outcome: 'changes_requested' as const
           })),
           summaryUrl: SUMMARY_URL,
+          reviewGate: gateStillPasses ? ('pass' as const) : ('fail' as const),
           journalFinalized: gateStillPasses ? ({ result: 'merged_ready' } as const) : null
         }
       : EMPTY_HISTORY

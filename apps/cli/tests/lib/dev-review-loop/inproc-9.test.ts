@@ -166,6 +166,7 @@ describe('devReviewLoop — issue-711 O1: an already-published clean verdict is 
       totalWallMs: 0,
       totalFilesChanged: 0,
       summaryUrl: 'https://forge.example/pr/1#issuecomment-1',
+      reviewGate: 'pass',
       journalFinalized: { result: 'merged_ready' }
     })
 
@@ -205,6 +206,7 @@ describe('devReviewLoop — the held-clean carry path reads the same concluded p
       totalWallMs: 0,
       totalFilesChanged: 0,
       summaryUrl: 'https://forge.example/pr/1#issuecomment-1',
+      reviewGate: 'fail',
       journalFinalized: null
     })
 

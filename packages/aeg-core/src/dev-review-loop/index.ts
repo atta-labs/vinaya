@@ -9,7 +9,7 @@ export {
   reconstructRounds,
   SUMMARY_TABLE_HEADER
 } from './journal-reconstruction'
-export type { ReconstructedJournal, ReconstructionInput } from './journal-reconstruction'
+export type { ReconstructedJournal, ReconstructionInput, ReviewGateFact } from './journal-reconstruction'
 export type {
   Confidence,
   Decision,

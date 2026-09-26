@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { nextRoundNumber, renderSummary } from '@attalabs/aeg-core'
+import { nextRoundNumber, renderSummary, type ReviewGateFact } from '@attalabs/aeg-core'
 import { loopHistoryFromComments } from '../../../src/lib/dev-review-loop/journal-history'
 import type { MarkerComment } from '../../../src/lib/dev-review-loop/developer-dispatch'
 
@@ -24,10 +24,12 @@ function summaryComment(rounds: number[], author: string = PRINCIPAL): MarkerCom
   }
 }
 
-/** The review gate's verdict on the pull request's current state — passing, the only way a posted summary reads as concluded. */
-const GATE_PASSES = () => true
-/** The gate red (or unevaluable) on the current state — a posted summary then reopens the review. */
-const GATE_RED = () => false
+/** The review gate's verdict on the pull request's current state — passing, so a posted summary reads as concluded. */
+const GATE_PASSES = (): ReviewGateFact => 'pass'
+/** The gate genuinely red on the current state — a posted summary then reopens the review. */
+const GATE_RED = (): ReviewGateFact => 'fail'
+/** The gate could not be evaluated at all — never a reopen, since the absence of an answer is not evidence the review moved on. */
+const GATE_UNKNOWN = (): ReviewGateFact => 'unknown'
 
 describe("loopHistoryFromComments — the task journal, rebuilt from the PR's own forge markers", () => {
   it('no comments → an empty journal', () => {
@@ -36,6 +38,7 @@ describe("loopHistoryFromComments — the task journal, rebuilt from the PR's ow
       totalWallMs: 0,
       totalFilesChanged: 0,
       summaryUrl: null,
+      reviewGate: 'unknown',
       journalFinalized: null
     })
   })
@@ -126,11 +129,17 @@ describe('loopHistoryFromComments — the review gate decides whether a posted s
     expect(j.journalFinalized).toEqual({ result: 'merged_ready' })
   })
 
+  it('a posted summary with a gate that could not be evaluated stays concluded — no reopen on the absence of an answer', () => {
+    const j = loopHistoryFromComments([roundMarker(1), summaryComment([1])], ALLOWLIST, GATE_UNKNOWN)
+    expect(j.journalFinalized).toEqual({ result: 'merged_ready' })
+    expect(j.reviewGate).toBe('unknown')
+  })
+
   it('never evaluates the gate at all when no summary is on the forge — the ordinary attach pays for no gate read', () => {
     let evaluations = 0
-    const gate = () => {
+    const gate = (): ReviewGateFact => {
       evaluations += 1
-      return true
+      return 'pass'
     }
     loopHistoryFromComments([roundMarker(1), roundMarker(2)], ALLOWLIST, gate)
     expect(evaluations).toBe(0)
@@ -138,9 +147,9 @@ describe('loopHistoryFromComments — the review gate decides whether a posted s
 
   it('evaluates the gate exactly once when a summary IS on the forge', () => {
     let evaluations = 0
-    const gate = () => {
+    const gate = (): ReviewGateFact => {
       evaluations += 1
-      return true
+      return 'pass'
     }
     loopHistoryFromComments([roundMarker(1), summaryComment([1])], ALLOWLIST, gate)
     expect(evaluations).toBe(1)
@@ -148,9 +157,9 @@ describe('loopHistoryFromComments — the review gate decides whether a posted s
 
   it("a non-principal author's summary comment never reaches the gate either", () => {
     let evaluations = 0
-    const gate = () => {
+    const gate = (): ReviewGateFact => {
       evaluations += 1
-      return true
+      return 'pass'
     }
     const j = loopHistoryFromComments([roundMarker(1), summaryComment([1], 'stranger')], ALLOWLIST, gate)
     expect(evaluations).toBe(0)

@@ -43,6 +43,7 @@ import {
   resolveNewestFrozenBrief,
   resolveObjectivesSource,
   WAIVER_LABEL_REVIEW,
+  type ReviewGateFact,
   type ReviewGateInput
 } from '@attalabs/aeg-core'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist, resolveReviewPolicy } from './config.js'
@@ -428,31 +429,31 @@ export function assembleReviewGateInput(prNumber: number): ReviewGateInputAssemb
 }
 
 /**
- * Whether the review gate passes against PR `prNumber`'s CURRENT state — the
- * driver's own question, answered in-process (never by shelling out to `vinaya
- * check review-gate`) through the same assembly the check itself uses.
+ * The review gate's verdict on PR `prNumber`'s CURRENT state — the driver's own
+ * question, answered in-process (never by shelling out to `vinaya check
+ * review-gate`) through the same assembly the check itself uses.
  *
- * `false` for every unevaluable case, each narrated once to stderr: an
+ * `'unknown'` for every unevaluable case, each narrated once to stderr: an
  * unresolvable input fact (the assembly's own failure), or a thrown evaluation.
- * The caller reads a `false` here as "not concluded", so an unevaluable gate
- * reopens a pull request rather than holding it shut on a fact nobody could
- * check — reconstruction is a recovery aid, never a merge gate, and the merge
- * gate's own copy of this evaluation is unaffected by anything decided here.
+ * `'unknown'` is deliberately NOT `'fail'` — see `ReviewGateFact`'s own doc for
+ * why the absence of an answer must not reopen a published review, and for why
+ * the merge gate is unaffected either way (it fails closed on these same
+ * facts). Never throws: this is a recovery aid, not a gate.
  */
-export function reviewGatePassesForCurrentState(prNumber: number): boolean {
+export function reviewGateFactForCurrentState(prNumber: number): ReviewGateFact {
   try {
     const assembly = assembleReviewGateInput(prNumber)
     if (!assembly.ok) {
       process.stderr.write(
-        `Note: PR #${prNumber}'s review gate could not be evaluated (${assembly.failure.message}) — reading the review as not concluded.\n`
+        `Note: PR #${prNumber}'s review gate could not be evaluated (${assembly.failure.message}) — reading the gate as unknown, which never reopens a published review.\n`
       )
-      return false
+      return 'unknown'
     }
-    return checkReviewGate(assembly.input).verdict === 'pass'
+    return checkReviewGate(assembly.input).verdict === 'pass' ? 'pass' : 'fail'
   } catch (err) {
     process.stderr.write(
-      `Note: PR #${prNumber}'s review gate could not be evaluated (${err instanceof Error ? err.message : String(err)}) — reading the review as not concluded.\n`
+      `Note: PR #${prNumber}'s review gate could not be evaluated (${err instanceof Error ? err.message : String(err)}) — reading the gate as unknown, which never reopens a published review.\n`
     )
-    return false
+    return 'unknown'
   }
 }

@@ -8,9 +8,9 @@
  *     (`<!-- aeg:developer:round-<n> -->`, `parseDeveloperRoundMarker`) carries,
  *   - whether a ready-for-merge summary comment
  *     (`isPublishedSummaryComment`) has actually been posted, and where,
- *   - whether the review gate passes against the pull request's CURRENT head,
- *     objectives version, newest ruling, frozen brief and policy
- *     (`reviewGatePassesForCurrentState`, the shared assembly the `review-gate`
+ *   - the review gate's verdict on the pull request's CURRENT head, objectives
+ *     version, newest ruling, frozen brief and policy
+ *     (`reviewGateFactForCurrentState`, the shared assembly the `review-gate`
  *     check itself uses — called in-process, never by shelling out to `vinaya
  *     check`). A posted summary alone is sticky: it records no head, so it kept
  *     reading "concluded" through a red gate, a newer ruling and a superseded
@@ -41,11 +41,12 @@ import {
   isPublishedSummaryComment,
   parseDeveloperRoundMarker,
   reconstructRounds,
-  type ReconstructedJournal
+  type ReconstructedJournal,
+  type ReviewGateFact
 } from '@attalabs/aeg-core'
 import { markerComments, principalAllowlist, type MarkerComment } from './developer-dispatch.js'
 import { sh } from './gate-reading.js'
-import { reviewGatePassesForCurrentState } from '../review-gate-input.js'
+import { reviewGateFactForCurrentState } from '../review-gate-input.js'
 
 /** An empty journal — no PR to read, or a `gh` read that failed: reconstruction is a display/recovery aid, never a dispatch gate, so it degrades to "no history" rather than throwing. */
 const EMPTY_JOURNAL: ReconstructedJournal = {
@@ -53,6 +54,7 @@ const EMPTY_JOURNAL: ReconstructedJournal = {
   totalWallMs: 0,
   totalFilesChanged: 0,
   summaryUrl: null,
+  reviewGate: 'unknown',
   journalFinalized: null
 }
 
@@ -67,7 +69,7 @@ const EMPTY_JOURNAL: ReconstructedJournal = {
 export function loopHistoryFromComments(
   comments: readonly MarkerComment[],
   allowlist: readonly string[],
-  reviewGatePasses: () => boolean
+  reviewGate: () => ReviewGateFact
 ): ReconstructedJournal {
   const roundMarkers: number[] = []
   let summaryPublished = false
@@ -89,7 +91,7 @@ export function loopHistoryFromComments(
     roundMarkers,
     summaryPublished,
     summaryUrl,
-    reviewGatePasses: summaryPublished ? reviewGatePasses() : false
+    reviewGate: summaryPublished ? reviewGate() : 'unknown'
   })
 }
 
@@ -108,9 +110,11 @@ export function loopHistoryFromComments(
  * The gate evaluation is passed as a thunk and runs only when a summary is
  * actually on the forge — a task with no summary is not concluded whatever the
  * gate would say, and this function is called on every entry, so the ordinary
- * attach pays for no gate read at all. An evaluation that cannot be made reads
- * as "not concluded" (`reviewGatePassesForCurrentState`), never as a crash: a
- * failed forge read must not stop a recovery aid.
+ * attach pays for no gate read at all (which is also why the no-summary case
+ * passes `'unknown'` rather than a verdict nobody computed). An evaluation that
+ * cannot be made is `'unknown'` too, never a crash and never a `'fail'`
+ * (`ReviewGateFact`): a failed forge read must not stop a recovery aid, and it
+ * must not reopen a review on the absence of an answer either.
  */
 export function fetchLoopHistory(prNumber: number | null): ReconstructedJournal {
   if (prNumber === null) return EMPTY_JOURNAL
@@ -124,6 +128,6 @@ export function fetchLoopHistory(prNumber: number | null): ReconstructedJournal 
     return EMPTY_JOURNAL
   }
   return loopHistoryFromComments(markerComments(out), principalAllowlist(), () =>
-    reviewGatePassesForCurrentState(prNumber)
+    reviewGateFactForCurrentState(prNumber)
   )
 }
