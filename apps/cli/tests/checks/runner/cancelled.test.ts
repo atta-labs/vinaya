@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'bun:test'
-import { mkdtempSync, readFileSync, readdirSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { stripVinayaEnv } from '../../lib/process-fixture'
+import { isolatedConfigFixture } from '../../lib/process-fixture'
 
 const FIXTURES = join(import.meta.dir, '..', '..', 'fixtures', 'checks')
 const RUN_AND_HANG = join(FIXTURES, 'run-and-hang.ts')
@@ -15,11 +14,18 @@ const RUN_AND_HANG = join(FIXTURES, 'run-and-hang.ts')
  * sending SIGINT to the test runner itself would kill the whole suite. The
  * wrapper calls the REAL, un-injected `runChecks` (no `log` override), so
  * this is the real production singleton (`apps/cli/src/lib/log-sink.ts`'s
- * `log`) actually writing — redirecting `HOME` is what makes its output
- * readable without touching the real machine's `~/.vinaya`.
+ * `log`) actually writing — `isolatedConfigFixture`'s `HOME` is what makes
+ * its output readable without touching the real machine's `~/.vinaya`.
  *
- * `stripVinayaEnv` (`../../lib/process-fixture.ts`) matters more than it
- * used to ([task-files-v1] 5): `log()`'s own default destination is now
+ * That same fixture's working directory is what keeps the destination the
+ * wrapper writes to knowable at all: the child resolves its configuration by
+ * walking up from its own `cwd`, so run inside this repository it reads this
+ * repository's `logs` setting, and the day that setting names a server this
+ * file's reads find nothing on disk. The fixture's own directory holds an
+ * empty `vinaya.config.json`, which is where that walk stops.
+ *
+ * `stripVinayaEnv`, which the fixture's env also carries, matters for a
+ * third reason ([task-files-v1] 5): `log()`'s own default destination is
  * resolved through `runtimeDirForRepo`, which honours a leaked
  * `VINAYA_RUNTIME_DIR` from THIS test process's own environment ahead of
  * `$HOME` entirely — the exact cross-run collision Issue #660 closed for
@@ -30,10 +36,11 @@ const RUN_AND_HANG = join(FIXTURES, 'run-and-hang.ts')
  */
 describe('runChecks — SIGINT/SIGTERM records every in-flight check as cancelled', () => {
   it('an interrupted check gets one gate line with outcome cancelled, not silence', async () => {
-    const home = mkdtempSync(join(tmpdir(), 'vinaya-gate-cancelled-'))
+    const fixture = isolatedConfigFixture('vinaya-gate-cancelled-')
     const wrapper = Bun.spawn(['bun', RUN_AND_HANG], {
+      cwd: fixture.cwd,
       stdio: ['ignore', 'ignore', 'ignore'],
-      env: { ...stripVinayaEnv(), HOME: home, VINAYA_TASK: '905' }
+      env: { ...fixture.env, VINAYA_TASK: '905' }
     })
 
     // Give the wrapper time to start and spawn its own (detached) check
@@ -47,15 +54,11 @@ describe('runChecks — SIGINT/SIGTERM records every in-flight check as cancelle
     // SIGKILL escalation to finish.
     await new Promise((resolve) => setTimeout(resolve, 500))
 
-    // [task-files-v1] 5, O1: the default `logs` destination is now a
-    // folder under this repository's own `runtimeDir` — `<runtimeDir>/logs/
-    // <repo>/<task>.ndjson` — never `~/.vinaya/outbox/`. The same repo
-    // segment names both the `runtimeDir` and the inner `logs/` folder.
-    const runtimeRoot = join(home, '.vinaya', 'runtime')
-    const repoDirs = readdirSync(runtimeRoot)
-    expect(repoDirs.length).toBeGreaterThan(0)
-    const path = join(runtimeRoot, repoDirs[0] as string, 'logs', repoDirs[0] as string, '905.ndjson')
-    const lines = readFileSync(path, 'utf8')
+    // The default `logs` destination is a folder under the fixture's own
+    // `runtimeDir` — `<runtimeDir>/logs/<repo>/<task>.ndjson`. Both the
+    // `runtimeDir` and the inner `logs/` folder are named by the same repo
+    // segment, the one the fixture's own `AEG_REPO` declares.
+    const lines = readFileSync(join(fixture.logsDir, '905.ndjson'), 'utf8')
       .trim()
       .split('\n')
       .filter(Boolean)
@@ -68,10 +71,11 @@ describe('runChecks — SIGINT/SIGTERM records every in-flight check as cancelle
   }, 10_000)
 
   it('a second SIGINT before the kill-grace exit does not double-emit the cancelled observation', async () => {
-    const home = mkdtempSync(join(tmpdir(), 'vinaya-gate-cancelled-double-'))
+    const fixture = isolatedConfigFixture('vinaya-gate-cancelled-double-')
     const wrapper = Bun.spawn(['bun', RUN_AND_HANG], {
+      cwd: fixture.cwd,
       stdio: ['ignore', 'ignore', 'ignore'],
-      env: { ...stripVinayaEnv(), HOME: home, VINAYA_TASK: '905' }
+      env: { ...fixture.env, VINAYA_TASK: '905' }
     })
 
     await new Promise((resolve) => setTimeout(resolve, 500))
@@ -84,15 +88,11 @@ describe('runChecks — SIGINT/SIGTERM records every in-flight check as cancelle
 
     await new Promise((resolve) => setTimeout(resolve, 500))
 
-    // [task-files-v1] 5, O1: the default `logs` destination is now a
-    // folder under this repository's own `runtimeDir` — `<runtimeDir>/logs/
-    // <repo>/<task>.ndjson` — never `~/.vinaya/outbox/`. The same repo
-    // segment names both the `runtimeDir` and the inner `logs/` folder.
-    const runtimeRoot = join(home, '.vinaya', 'runtime')
-    const repoDirs = readdirSync(runtimeRoot)
-    expect(repoDirs.length).toBeGreaterThan(0)
-    const path = join(runtimeRoot, repoDirs[0] as string, 'logs', repoDirs[0] as string, '905.ndjson')
-    const lines = readFileSync(path, 'utf8')
+    // The default `logs` destination is a folder under the fixture's own
+    // `runtimeDir` — `<runtimeDir>/logs/<repo>/<task>.ndjson`. Both the
+    // `runtimeDir` and the inner `logs/` folder are named by the same repo
+    // segment, the one the fixture's own `AEG_REPO` declares.
+    const lines = readFileSync(join(fixture.logsDir, '905.ndjson'), 'utf8')
       .trim()
       .split('\n')
       .filter(Boolean)

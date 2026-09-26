@@ -1,12 +1,17 @@
 import { describe, expect, it } from 'bun:test'
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import type { TaskToolRef } from '@attalabs/aeg-core'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { resolveOpenTaskIssueForRef } from '../../../src/lib/task-tools/handlers.js'
+import { isDriverPidAlive, readDriverLock } from '../../../src/lib/dev-review-loop/pause-resume.js'
+import { readTaskIssueFacts, resolveOpenTaskIssueForRef } from '../../../src/lib/task-tools/handlers.js'
+import type { TaskIssueFacts } from '../../../src/lib/task-tools/handlers.js'
+import type { AgentVendor } from '../../../src/lib/dispatch.js'
 import type { CallerContext } from '../../../src/lib/task-tools/server.js'
 import {
   createTaskStartHandler,
   defaultLaunch,
+  normalizeStartRecord,
   START_STALE_CLAIM_GRACE_MS,
   TASK_RUN_COMMAND_ENV,
   type LaunchResult,
@@ -15,20 +20,24 @@ import {
 } from '../../../src/lib/task-tools/start.js'
 
 /**
- * `task_start` (O1/O2/O3) driven in-process with injected deps: an
- * in-memory idempotency store and a recording launcher, so every branch —
- * validation, the absent-caller refusal, the missing-agent refusal, a
- * confirmed-alive first start, the idempotent replay, a launch that never
- * confirms alive, and a dead claim's own supersede-and-relaunch — is
- * exercised with no real forge, git, or detached process. The protocol-level
- * end-to-end path (a real client over stdio, disconnect leaves one run) is
- * `protocol.test.ts`.
+ * `task_start` driven in-process with injected deps: an in-memory idempotency
+ * store and a recording launcher, so every branch — validation, the
+ * absent-caller refusal, the missing-agent refusal, a confirmed-alive first
+ * start, the idempotent replay, a launch that never confirms alive, and a dead
+ * claim's own supersede-and-relaunch — is exercised with no real forge, git, or
+ * detached process. Both address forms are driven through every one of those:
+ * `{ tranche, id }` and a standalone `{ issue }`, which launches `task run
+ * --issue <n>` instead and is refused when its number is closed, missing, or
+ * claimed by a tranche. The protocol-level end-to-end path (a real client over
+ * stdio, disconnect leaves one run) is `protocol.test.ts`.
  */
 
 const REPO_ROOT = '/repo/checkout-a'
 const CALLER: CallerContext = { caller: { id: 'operator-1' } }
 const NO_CALLER: CallerContext = { caller: null }
 const ISSUE = 601
+/** A standalone task Issue: open, and claimed by no tranche — the one shape `{ issue }` accepts. */
+const STANDALONE: TaskIssueFacts = { kind: 'issue', open: true, tranche: null }
 
 function memStore(): { store: RequestStore; map: Map<string, StartRecord> } {
   const map = new Map<string, StartRecord>()
@@ -41,6 +50,11 @@ function memStore(): { store: RequestStore; map: Map<string, StartRecord> } {
         map.set(record.requestId, record)
         return { claimed: true, record }
       },
+      update(record) {
+        // Never creates a claim — the same rule the durable store's own `r+`
+        // write enforces.
+        if (map.has(record.requestId)) map.set(record.requestId, record)
+      },
       release(requestId) {
         map.delete(requestId)
       }
@@ -48,27 +62,35 @@ function memStore(): { store: RequestStore; map: Map<string, StartRecord> } {
   }
 }
 
+type LaunchRecord = { ref: TaskToolRef; agent: AgentVendor; issue: number }
+
 function harness(
   overrides: {
-    launch?: (target: { tranche: string; id: string }) => LaunchResult | Promise<LaunchResult>
+    launch?: (target: LaunchRecord, meta: { requestId: string; caller: string }) => LaunchResult | Promise<LaunchResult>
     repoRoot?: string | null
     agent?: 'claude' | 'codex' | 'gemini' | null
-    resolveIssue?: (tranche: string, id: string) => number | null
+    resolveIssue?: (ref: TaskToolRef) => number | null
+    issueFacts?: (issue: number) => TaskIssueFacts
     isRunAlive?: (issue: number) => boolean
+    isPidAlive?: (pid: number) => boolean
     now?: () => string
   } = {}
 ) {
-  const launches: Array<{ tranche: string; id: string; agent: string; issue: number }> = []
+  const launches: LaunchRecord[] = []
   const { store, map } = memStore()
   const handler = createTaskStartHandler({
     repoRoot: () => overrides.repoRoot ?? REPO_ROOT,
     store,
     agent: () => (overrides.agent === undefined ? 'claude' : overrides.agent),
     resolveIssue: overrides.resolveIssue ?? (() => ISSUE),
+    issueFacts: overrides.issueFacts ?? (() => STANDALONE),
     isRunAlive: overrides.isRunAlive ?? (() => true),
-    launch: async (target) => {
+    isPidAlive: overrides.isPidAlive ?? (() => false),
+    launch: async (target, meta) => {
       launches.push(target)
-      return (overrides.launch?.(target) ?? { alive: true }) as LaunchResult | Promise<LaunchResult>
+      return (overrides.launch?.(target, meta) ?? { status: 'confirmed', pid: null }) as
+        | LaunchResult
+        | Promise<LaunchResult>
     },
     now: overrides.now ?? (() => '2026-01-01T00:00:00.000Z')
   })
@@ -113,7 +135,7 @@ describe('task_start handler', () => {
     expect(result.result.run).toEqual({ tranche: 'task-operator-v1', id: '2' })
     expect(result.result.mode).toBe('attended')
     expect(result.result.requestId).toMatch(/^req_/)
-    expect(launches).toEqual([{ tranche: 'task-operator-v1', id: '2', agent: 'claude', issue: ISSUE }])
+    expect(launches).toEqual([{ ref: { tranche: 'task-operator-v1', id: '2' }, agent: 'claude', issue: ISSUE }])
   })
 
   it('is idempotent per request identity — a duplicate start returns the same run and launches nothing new', async () => {
@@ -139,7 +161,7 @@ describe('task_start handler', () => {
   })
 
   it('scopes the request identity to the local checkout — two repos sharing the durable store never collide', async () => {
-    const launches: Array<{ tranche: string; id: string }> = []
+    const launches: LaunchRecord[] = []
     const { store: sharedStore } = memStore()
     const handlerFor = (root: string) =>
       createTaskStartHandler({
@@ -147,10 +169,12 @@ describe('task_start handler', () => {
         store: sharedStore,
         agent: () => 'claude',
         resolveIssue: () => ISSUE,
+        issueFacts: () => STANDALONE,
         isRunAlive: () => true,
+        isPidAlive: () => false,
         launch: async (target) => {
           launches.push(target)
-          return { alive: true }
+          return { status: 'confirmed', pid: null }
         },
         now: () => '2026-01-01T00:00:00.000Z'
       })
@@ -192,7 +216,7 @@ describe('task_start handler', () => {
     const { handler, launches, map } = harness({
       launch: () => {
         if (fail) throw new Error('launcher missing')
-        return { alive: true }
+        return { status: 'confirmed', pid: null }
       }
     })
     const first = await handler({ tranche: 'task-operator-v1', id: '2' }, CALLER)
@@ -209,7 +233,10 @@ describe('task_start handler', () => {
 
   it('reports a failed start carrying the run’s own error output, and releases the claim (O1)', async () => {
     const { handler, launches, map } = harness({
-      launch: () => ({ alive: false, error: new Error('process exited before its driver confirmed alive (code 2)') })
+      launch: () => ({
+        status: 'exited',
+        error: new Error('process exited before its driver confirmed alive (code 2)')
+      })
     })
     const result = await handler({ tranche: 'task-operator-v1', id: '2' }, CALLER)
     expect(result.ok).toBe(false)
@@ -225,7 +252,7 @@ describe('task_start handler', () => {
   it('a retry after a failed start launches again rather than replaying the dead attempt', async () => {
     let alive = false
     const { handler, launches } = harness({
-      launch: () => (alive ? { alive: true } : { alive: false, error: new Error('no agent') })
+      launch: () => (alive ? { status: 'confirmed', pid: null } : { status: 'exited', error: new Error('no agent') })
     })
     const first = await handler({ tranche: 'task-operator-v1', id: '2' }, CALLER)
     expect(first.ok).toBe(false)
@@ -234,6 +261,70 @@ describe('task_start handler', () => {
     const retry = await handler({ tranche: 'task-operator-v1', id: '2' }, CALLER)
     expect(retry.ok).toBe(true)
     if (retry.ok) expect(retry.result.started).toBe(true)
+    expect(launches).toHaveLength(2)
+  })
+
+  it('reports a launch still alive when the confirm wait ends as started, and keeps its claim (O1)', async () => {
+    // The failure this closes: `task run` renders and posts the frozen brief
+    // and runs its start-of-run sweep BEFORE the loop writes its driver lock,
+    // so a real launch routinely outlasts a bounded wait. The process is
+    // alive — the run is coming up, and reporting it failed (and releasing
+    // its claim) is what let a repeat call put a second developer on the
+    // branch.
+    const { handler, launches, map } = harness({
+      launch: () => ({ status: 'starting', pid: 4242 }),
+      isRunAlive: () => false // no driver lock yet — that is the whole case
+    })
+    const result = await handler({ tranche: 'unattended-run-v1', id: '14' }, CALLER)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.result.started).toBe(true)
+    expect(launches).toHaveLength(1)
+    expect(map.size).toBe(1) // the claim is KEPT — a repeat call has something to replay
+    expect([...map.values()][0]?.pid).toBe(4242) // …and it names the process it launched
+  })
+
+  it('never launches a second run while the launched process is still alive, however old the claim (O2)', async () => {
+    let now = '2026-01-01T00:00:00.000Z'
+    const { handler, launches } = harness({
+      launch: () => ({ status: 'starting', pid: 4242 }),
+      isRunAlive: () => false, // still preparing: no driver lock has appeared
+      isPidAlive: (pid) => pid === 4242,
+      now: () => now
+    })
+    const first = await handler({ tranche: 'unattended-run-v1', id: '14' }, CALLER)
+    expect(first.ok).toBe(true)
+
+    // Past even the stale-claim grace, with the run still preparing: the
+    // driver lock cannot answer yet, and the launched process can.
+    now = new Date(Date.parse(now) + START_STALE_CLAIM_GRACE_MS + 60_000).toISOString()
+    const second = await handler({ tranche: 'unattended-run-v1', id: '14' }, CALLER)
+    expect(second.ok).toBe(true)
+    if (!second.ok) return
+    expect(second.result.started).toBe(false) // replayed, never relaunched
+    expect(launches).toHaveLength(1)
+  })
+
+  it('supersedes a stale claim once the process it launched has exited too (O2)', async () => {
+    // The other half of the same rule: a recorded pid is a liveness signal,
+    // never a permanent block. Once it is gone and no driver lock exists, the
+    // claim is dead and an identical call launches again.
+    let now = '2026-01-01T00:00:00.000Z'
+    let childAlive = true
+    const { handler, launches } = harness({
+      launch: () => ({ status: 'starting', pid: 4242 }),
+      isRunAlive: () => false,
+      isPidAlive: () => childAlive,
+      now: () => now
+    })
+    expect((await handler({ tranche: 'unattended-run-v1', id: '14' }, CALLER)).ok).toBe(true)
+
+    now = new Date(Date.parse(now) + START_STALE_CLAIM_GRACE_MS + 60_000).toISOString()
+    childAlive = false
+    const second = await handler({ tranche: 'unattended-run-v1', id: '14' }, CALLER)
+    expect(second.ok).toBe(true)
+    if (!second.ok) return
+    expect(second.result.started).toBe(true)
     expect(launches).toHaveLength(2)
   })
 
@@ -283,6 +374,234 @@ describe('task_start handler', () => {
     if (!second.ok) return
     expect(second.result.started).toBe(false) // still alive — a genuine replay
     expect(launches).toHaveLength(1)
+  })
+
+  describe('a standalone task Issue — the `{ issue }` address form', () => {
+    it('launches the run that Issue number names, and reports it only once confirmed alive', async () => {
+      const { handler, launches } = harness({ resolveIssue: (ref) => ('issue' in ref ? ref.issue : ISSUE) })
+      const result = await handler({ issue: 729 }, CALLER)
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.result.started).toBe(true)
+      expect(result.result.run).toEqual({ issue: 729 })
+      expect(result.result.mode).toBe('attended')
+      // The Issue it confirms against is the number itself — nothing resolved
+      // over the tranche-labeled list, which would not contain it.
+      expect(launches).toEqual([{ ref: { issue: 729 }, agent: 'claude', issue: 729 }])
+    })
+
+    it('is idempotent per request identity exactly as a tranche start is', async () => {
+      const { handler, launches } = harness({ resolveIssue: (ref) => ('issue' in ref ? ref.issue : ISSUE) })
+      const first = await handler({ issue: 729 }, CALLER)
+      const second = await handler({ issue: 729 }, CALLER)
+      expect(first.ok && second.ok).toBe(true)
+      if (!first.ok || !second.ok) return
+      expect(second.result.requestId).toBe(first.result.requestId)
+      expect(second.result.started).toBe(false)
+      expect(second.result.run).toEqual({ issue: 729 })
+      expect(launches).toHaveLength(1)
+    })
+
+    it('never shares a claim with a tranche ref that resolves to the same Issue', async () => {
+      // The trap this rules out: both forms addressing Issue 729 would collapse
+      // into one claim, and the second call would replay a run it never started.
+      const { handler, launches } = harness({ resolveIssue: () => 729 })
+      const byIssue = await handler({ issue: 729 }, CALLER)
+      const byOrdinal = await handler({ tranche: 'unattended-run-v1', id: '14' }, CALLER)
+      expect(byIssue.ok && byOrdinal.ok).toBe(true)
+      if (!byIssue.ok || !byOrdinal.ok) return
+      expect(byIssue.result.requestId).not.toBe(byOrdinal.result.requestId)
+      expect(byIssue.result.started).toBe(true)
+      expect(byOrdinal.result.started).toBe(true)
+      expect(launches).toHaveLength(2)
+    })
+
+    it('leaves the tranche form byte-for-byte as it was — same launch, same Issue resolution (O2)', async () => {
+      const seen: TaskToolRef[] = []
+      const { handler, launches } = harness({
+        resolveIssue: (ref) => {
+          seen.push(ref)
+          return ISSUE
+        }
+      })
+      const result = await handler({ tranche: 'task-operator-v1', id: '2' }, CALLER)
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.result.run).toEqual({ tranche: 'task-operator-v1', id: '2' })
+      expect(seen).toEqual([{ tranche: 'task-operator-v1', id: '2' }])
+      expect(launches).toEqual([{ ref: { tranche: 'task-operator-v1', id: '2' }, agent: 'claude', issue: ISSUE }])
+    })
+
+    it('never reads the forge for a tranche target — the labeled-Issue resolution already proves that one', async () => {
+      const { handler } = harness({
+        issueFacts: () => {
+          throw new Error('issueFacts must not be consulted for a tranche target')
+        }
+      })
+      const result = await handler({ tranche: 'task-operator-v1', id: '2' }, CALLER)
+      expect(result.ok).toBe(true)
+    })
+
+    it('supersedes a stale claim whose Issue has no live driver, and relaunches it (O3)', async () => {
+      let now = '2026-01-01T00:00:00.000Z'
+      const { handler, launches, map } = harness({
+        resolveIssue: (ref) => ('issue' in ref ? ref.issue : ISSUE),
+        isRunAlive: () => false,
+        now: () => now
+      })
+      const first = await handler({ issue: 729 }, CALLER)
+      expect(first.ok).toBe(true)
+      if (!first.ok) return
+      expect(first.result.started).toBe(true)
+
+      now = new Date(Date.parse(now) + START_STALE_CLAIM_GRACE_MS + 1_000).toISOString()
+      const second = await handler({ issue: 729 }, CALLER)
+      expect(second.ok).toBe(true)
+      if (!second.ok) return
+      expect(second.result.started).toBe(true) // superseded and relaunched, not replayed
+      expect(second.result.requestId).toBe(first.result.requestId)
+      expect(second.result.run).toEqual({ issue: 729 })
+      expect(launches).toEqual([
+        { ref: { issue: 729 }, agent: 'claude', issue: 729 },
+        { ref: { issue: 729 }, agent: 'claude', issue: 729 }
+      ])
+      expect(map.size).toBe(1)
+    })
+
+    it('replays a stale claim whose Issue still has a live driver, launching nothing new (O3)', async () => {
+      let now = '2026-01-01T00:00:00.000Z'
+      const { handler, launches } = harness({
+        resolveIssue: (ref) => ('issue' in ref ? ref.issue : ISSUE),
+        isRunAlive: () => true,
+        now: () => now
+      })
+      expect((await handler({ issue: 729 }, CALLER)).ok).toBe(true)
+      now = new Date(Date.parse(now) + START_STALE_CLAIM_GRACE_MS + 1_000).toISOString()
+      const second = await handler({ issue: 729 }, CALLER)
+      expect(second.ok).toBe(true)
+      if (!second.ok) return
+      expect(second.result.started).toBe(false)
+      expect(launches).toHaveLength(1)
+    })
+
+    it('refuses an Issue that belongs to a tranche, naming the tranche and the form to use (O3)', async () => {
+      const { handler, launches, map } = harness({
+        issueFacts: () => ({ kind: 'issue', open: true, tranche: 'unattended-run-v1' })
+      })
+      const result = await handler({ issue: 750 }, CALLER)
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error.kind).toBe('precondition')
+        expect(result.error.message).toContain('unattended-run-v1')
+        expect(result.error.message).toContain('{ tranche, id }')
+      }
+      expect(launches).toHaveLength(0)
+      expect(map.size).toBe(0) // the refusal left no claim behind
+    })
+
+    it('refuses a closed Issue (O3)', async () => {
+      const { handler, launches, map } = harness({
+        issueFacts: () => ({ kind: 'issue', open: false, tranche: null })
+      })
+      const result = await handler({ issue: 729 }, CALLER)
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error.kind).toBe('precondition')
+        expect(result.error.message).toContain('closed')
+      }
+      expect(launches).toHaveLength(0)
+      expect(map.size).toBe(0)
+    })
+
+    it('refuses a number that is no Issue at all (O3)', async () => {
+      const { handler, launches, map } = harness({ issueFacts: () => ({ kind: 'not_found' }) })
+      const result = await handler({ issue: 99999 }, CALLER)
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error.kind).toBe('precondition')
+        expect(result.error.message).toContain('does not exist')
+      }
+      expect(launches).toHaveLength(0)
+      expect(map.size).toBe(0)
+    })
+
+    it('reports a forge read that failed as infrastructure, not as a bad Issue number', async () => {
+      // The distinction matters to the caller: a retry is worth making here,
+      // and is not worth making for a closed or tranche-owned Issue.
+      const { handler, launches, map } = harness({
+        issueFacts: () => ({ kind: 'unreadable', detail: 'gh: could not connect to api.github.com' })
+      })
+      const result = await handler({ issue: 729 }, CALLER)
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error.kind).toBe('infrastructure')
+        expect(result.error.detail).toContain('api.github.com')
+      }
+      expect(launches).toHaveLength(0)
+      expect(map.size).toBe(0) // released — an identical retry launches again
+    })
+
+    it('refuses an unknown field in either form — the union stays strict', async () => {
+      const { handler, launches } = harness()
+      for (const input of [
+        { issue: 729, agent: 'claude' },
+        { tranche: 'demo', id: '1', agent: 'claude' }
+      ]) {
+        const result = await handler(input, CALLER)
+        expect(result.ok).toBe(false)
+        if (!result.ok) expect(result.error.kind).toBe('validation')
+      }
+      expect(launches).toHaveLength(0)
+    })
+  })
+
+  /**
+   * The durable store reads a record back in either shape it has ever been
+   * written: a tranche start's request identity is unchanged by the widening
+   * that added the `{ issue }` form, so a claim an older build wrote is found at
+   * the very same path by this one — and reading it as a `{ target }` record
+   * would replay a run with no identity at all.
+   */
+  describe('normalizeStartRecord — a claim file written by any build', () => {
+    const base = { requestId: 'req_x', caller: 'operator-1', startedAt: '2026-01-01T00:00:00.000Z' }
+
+    it('reads the flat tranche shape an older build wrote as a tranche target', () => {
+      expect(normalizeStartRecord({ ...base, tranche: 'demo', id: '3' })).toEqual({
+        ...base,
+        target: { tranche: 'demo', id: '3' }
+      })
+    })
+
+    it('reads back the launched pid a live claim recorded, and ignores one that is not a whole number', () => {
+      expect(normalizeStartRecord({ ...base, target: { issue: 729 }, pid: 4242 })).toEqual({
+        ...base,
+        target: { issue: 729 },
+        pid: 4242
+      })
+      // A record from a build that never wrote one, or a junk value, simply
+      // carries no pid — the supersede path then falls back to the driver
+      // lock alone, exactly as it did before.
+      expect(normalizeStartRecord({ ...base, target: { issue: 729 }, pid: 'nope' })).toEqual({
+        ...base,
+        target: { issue: 729 }
+      })
+    })
+
+    it('reads both current shapes unchanged', () => {
+      expect(normalizeStartRecord({ ...base, target: { tranche: 'demo', id: '3' } })).toEqual({
+        ...base,
+        target: { tranche: 'demo', id: '3' }
+      })
+      expect(normalizeStartRecord({ ...base, target: { issue: 729 } })).toEqual({ ...base, target: { issue: 729 } })
+    })
+
+    it('reads nothing out of a record that is neither shape', () => {
+      expect(normalizeStartRecord(null)).toBeNull()
+      expect(normalizeStartRecord('a string')).toBeNull()
+      expect(normalizeStartRecord({ ...base })).toBeNull() // no target, no legacy tranche/id
+      expect(normalizeStartRecord({ ...base, target: { issue: 'not-a-number' } })).toBeNull()
+      expect(normalizeStartRecord({ target: { issue: 729 } })).toBeNull() // no identity fields
+    })
   })
 
   /**
@@ -361,6 +680,74 @@ exit 1
     })
   })
 
+  /**
+   * `deps.issueFacts` binds this: the one `gh issue view` read that decides
+   * whether a bare Issue number is startable. Driven against a `gh` stub on
+   * `PATH`, the same way the start-side resolver above is.
+   */
+  describe('readTaskIssueFacts — what the forge says about one Issue number', () => {
+    function withGh(script: string, run: () => void): void {
+      const sandbox = mkdtempSync(join(tmpdir(), 'vinaya-task-start-facts-'))
+      const gh = join(sandbox, 'gh')
+      writeFileSync(gh, `#!/bin/sh\n${script}\n`, { mode: 0o755 })
+      chmodSync(gh, 0o755)
+      const savedPath = process.env.PATH
+      process.env.PATH = `${sandbox}:${process.env.PATH ?? ''}`
+      try {
+        run()
+      } finally {
+        if (savedPath === undefined) delete process.env.PATH
+        else process.env.PATH = savedPath
+        rmSync(sandbox, { recursive: true, force: true })
+      }
+    }
+
+    it('reads an open, unlabeled Issue as a standalone one', () => {
+      withGh(`echo '{"state":"OPEN","labels":[{"name":"bug"}]}'`, () => {
+        expect(readTaskIssueFacts(729)).toEqual({ kind: 'issue', open: true, tranche: null })
+      })
+    })
+
+    it('reads the tranche off the LABEL, never off a title that happens to look like one', () => {
+      withGh(`echo '{"state":"OPEN","labels":[{"name":"vinaya/tranche:unattended-run-v1"},{"name":"bug"}]}'`, () => {
+        expect(readTaskIssueFacts(750)).toEqual({ kind: 'issue', open: true, tranche: 'unattended-run-v1' })
+      })
+      // A `[slug] 3`-shaped title with no tranche label stays standalone — the
+      // label is what decides a task's identity everywhere else in this codebase.
+      withGh(`echo '{"state":"OPEN","labels":[]}'`, () => {
+        expect(readTaskIssueFacts(729)).toEqual({ kind: 'issue', open: true, tranche: null })
+      })
+    })
+
+    it('reads a closed Issue as closed', () => {
+      withGh(`echo '{"state":"CLOSED","labels":[]}'`, () => {
+        expect(readTaskIssueFacts(729)).toEqual({ kind: 'issue', open: false, tranche: null })
+      })
+    })
+
+    it('tells a number that names no Issue apart from a forge read that failed', () => {
+      withGh(`echo 'gh: Could not resolve to an Issue with the number 99999.' >&2\nexit 1`, () => {
+        expect(readTaskIssueFacts(99999)).toEqual({ kind: 'not_found' })
+      })
+      withGh(`echo 'error connecting to api.github.com' >&2\nexit 1`, () => {
+        const facts = readTaskIssueFacts(729)
+        expect(facts.kind).toBe('unreadable')
+        if (facts.kind === 'unreadable') expect(facts.detail).toContain('api.github.com')
+      })
+    })
+
+    it('reports output it cannot parse as unreadable, never as a startable Issue', () => {
+      withGh(`echo 'not json at all'`, () => {
+        expect(readTaskIssueFacts(729).kind).toBe('unreadable')
+      })
+      // A well-formed JSON body with no `state` field is the same failure —
+      // never silently read as open.
+      withGh(`echo '{"labels":[]}'`, () => {
+        expect(readTaskIssueFacts(729).kind).toBe('unreadable')
+      })
+    })
+  })
+
   describe('defaultLaunch — the real spawn, confirmed on a real driver lock', () => {
     let sandbox: string
 
@@ -383,11 +770,11 @@ exit 1
         process.env[TASK_RUN_COMMAND_ENV] = script
         try {
           const outcome = await defaultLaunch(
-            { tranche: 'task-operator-v1', id: '2', agent: 'claude', issue: ISSUE },
+            { ref: { tranche: 'task-operator-v1', id: '2' }, agent: 'claude', issue: ISSUE },
             { requestId: 'req_x', caller: 'operator-1' },
             sandbox
           )
-          expect(outcome.alive).toBe(true)
+          expect(outcome.status).toBe('confirmed')
         } finally {
           if (original === undefined) delete process.env[TASK_RUN_COMMAND_ENV]
           else process.env[TASK_RUN_COMMAND_ENV] = original
@@ -397,6 +784,181 @@ exit 1
       }
     })
 
+    it('spawns `task run --issue <n>` for a standalone Issue, and `task run <tranche> <id>` for a tranche task', async () => {
+      sandbox = mkdtempSync(join(tmpdir(), 'vinaya-task-start-launch-'))
+      try {
+        const argvLog = join(sandbox, 'argv.log')
+        const script = join(sandbox, 'record-argv.sh')
+        const dir = join(sandbox, 'tasks-execution', String(ISSUE))
+        mkdirSync(dir, { recursive: true })
+        writeFileSync(
+          script,
+          `#!/bin/sh\necho "$@" >> "${argvLog}"\necho '{"pid": '"$$"', "startedAt": "2026-01-01T00:00:00.000Z"}' > "${dir}/driver.pid.json"\nexec sleep 3\n`,
+          { mode: 0o755 }
+        )
+        const original = process.env[TASK_RUN_COMMAND_ENV]
+        process.env[TASK_RUN_COMMAND_ENV] = script
+        try {
+          const byIssue = await defaultLaunch(
+            { ref: { issue: ISSUE }, agent: 'claude', issue: ISSUE },
+            { requestId: 'req_issue', caller: 'operator-1' },
+            sandbox
+          )
+          expect(byIssue.status).toBe('confirmed')
+          const byTranche = await defaultLaunch(
+            { ref: { tranche: 'demo', id: '3' }, agent: 'codex', issue: ISSUE },
+            { requestId: 'req_tranche', caller: 'operator-1' },
+            sandbox
+          )
+          expect(byTranche.status).toBe('confirmed')
+          expect(readFileSync(argvLog, 'utf8').trim().split('\n')).toEqual([
+            `task run --issue ${ISSUE} --agent claude`,
+            'task run demo 3 --agent codex'
+          ])
+        } finally {
+          if (original === undefined) delete process.env[TASK_RUN_COMMAND_ENV]
+          else process.env[TASK_RUN_COMMAND_ENV] = original
+        }
+      } finally {
+        cleanup()
+      }
+    })
+
+    /**
+     * The whole failure, end to end, against a REAL detached process: a
+     * launcher whose preparation outlasts the confirm wait — exactly what
+     * `task run` does on a real repository, where posting the frozen brief
+     * and the start-of-run sweep are forge-bound steps that run before the
+     * loop writes any lock. The wait is shortened here so the fixture takes
+     * a second rather than the shipped thirty; nothing else is faked.
+     */
+    describe('a launcher slower than the confirm wait', () => {
+      /** Writes its driver lock only AFTER the wait below has ended, then stays alive — and records every argv it was called with, so "launched nothing" is an observation, not an assumption. */
+      function slowLauncher(root: string, argvLog: string): string {
+        const script = join(root, 'slow-launcher.sh')
+        const dir = join(root, 'tasks-execution', String(ISSUE))
+        mkdirSync(dir, { recursive: true })
+        writeFileSync(
+          script,
+          `#!/bin/sh\necho "$@" >> "${argvLog}"\nsleep 1\necho '{"pid": '"$$"', "startedAt": "2026-01-01T00:00:00.000Z"}' > "${dir}/driver.pid.json"\nexec sleep 5\n`,
+          { mode: 0o755 }
+        )
+        return script
+      }
+
+      function killGroup(pid: number | null): void {
+        if (pid === null) return
+        try {
+          // Detached, so the child leads its own process group — the whole
+          // group goes, never a stray `sleep` left on the machine.
+          process.kill(-pid, 'SIGKILL')
+        } catch {
+          // Already gone.
+        }
+      }
+
+      async function until(predicate: () => boolean, budgetMs: number): Promise<boolean> {
+        const deadline = Date.now() + budgetMs
+        while (Date.now() < deadline) {
+          if (predicate()) return true
+          await new Promise((resolve) => setTimeout(resolve, 50))
+        }
+        return predicate()
+      }
+
+      it('is reported as starting with its process alive, and is confirmed on the next read (O3)', async () => {
+        sandbox = mkdtempSync(join(tmpdir(), 'vinaya-task-start-slow-'))
+        const original = process.env[TASK_RUN_COMMAND_ENV]
+        let launched: number | null = null
+        try {
+          process.env[TASK_RUN_COMMAND_ENV] = slowLauncher(sandbox, join(sandbox, 'argv.log'))
+          const outcome = await defaultLaunch(
+            { ref: { tranche: 'unattended-run-v1', id: '14' }, agent: 'claude', issue: ISSUE },
+            { requestId: 'req_slow', caller: 'operator-1' },
+            sandbox,
+            200
+          )
+          expect(outcome.status).toBe('starting')
+          if (outcome.status !== 'starting') return
+          launched = outcome.pid
+          // The wait genuinely ended first: no lock yet…
+          expect(readDriverLock(sandbox, ISSUE)).toBeNull()
+          // …and the process it launched is alive, which is what makes this a
+          // started run rather than a failed one.
+          expect(outcome.pid).not.toBeNull()
+          expect(outcome.pid === null || isDriverPidAlive(outcome.pid)).toBe(true)
+
+          // The run comes up after the call returned — the next read finds it.
+          expect(await until(() => readDriverLock(sandbox, ISSUE) !== null, 8_000)).toBe(true)
+          const lock = readDriverLock(sandbox, ISSUE)
+          expect(lock !== null && isDriverPidAlive(lock.pid)).toBe(true)
+        } finally {
+          killGroup(launched)
+          if (original === undefined) delete process.env[TASK_RUN_COMMAND_ENV]
+          else process.env[TASK_RUN_COMMAND_ENV] = original
+          cleanup()
+        }
+      })
+
+      it('keeps its claim, so a repeat call replays it and launches nothing (O2, O3)', async () => {
+        sandbox = mkdtempSync(join(tmpdir(), 'vinaya-task-start-slow-'))
+        const argvLog = join(sandbox, 'argv.log')
+        const original = process.env[TASK_RUN_COMMAND_ENV]
+        let launched: number | null = null
+        try {
+          process.env[TASK_RUN_COMMAND_ENV] = slowLauncher(sandbox, argvLog)
+          let now = '2026-01-01T00:00:00.000Z'
+          const { handler, launches } = harness({
+            // The real launcher, the real spawn, the real confirm race — only
+            // the wait is shortened.
+            launch: (target, meta) => {
+              const outcome = defaultLaunch(target, meta, sandbox, 200)
+              return outcome.then((result) => {
+                if (result.status !== 'exited') launched = result.pid
+                return result
+              })
+            },
+            // The real observables the shipped deps bind, pointed at the sandbox.
+            isRunAlive: (issue) => {
+              const lock = readDriverLock(sandbox, issue)
+              return lock !== null && isDriverPidAlive(lock.pid)
+            },
+            isPidAlive: isDriverPidAlive,
+            now: () => now
+          })
+
+          const first = await handler({ tranche: 'unattended-run-v1', id: '14' }, CALLER)
+          expect(first.ok).toBe(true)
+          if (!first.ok) return
+          expect(first.result.started).toBe(true)
+
+          // Past even the stale-claim grace, while the launcher is still
+          // preparing: the only thing that can say the run is alive is the
+          // process itself, and it does.
+          now = new Date(Date.parse(now) + START_STALE_CLAIM_GRACE_MS + 60_000).toISOString()
+          const second = await handler({ tranche: 'unattended-run-v1', id: '14' }, CALLER)
+          expect(second.ok).toBe(true)
+          if (!second.ok) return
+          expect(second.result.started).toBe(false) // replayed
+          expect(second.result.requestId).toBe(first.result.requestId)
+          expect(launches).toHaveLength(1)
+
+          // Let the launcher finish coming up, then read its own record of
+          // what it was asked to do: ONE invocation, never two developers on
+          // one branch.
+          expect(await until(() => readDriverLock(sandbox, ISSUE) !== null, 8_000)).toBe(true)
+          expect(readFileSync(argvLog, 'utf8').trim().split('\n')).toEqual([
+            'task run unattended-run-v1 14 --agent claude'
+          ])
+        } finally {
+          killGroup(launched)
+          if (original === undefined) delete process.env[TASK_RUN_COMMAND_ENV]
+          else process.env[TASK_RUN_COMMAND_ENV] = original
+          cleanup()
+        }
+      })
+    })
+
     it('reports a real ENOENT through its own LaunchResult, never as an unhandled error', async () => {
       sandbox = mkdtempSync(join(tmpdir(), 'vinaya-task-start-launch-'))
       try {
@@ -404,12 +966,12 @@ exit 1
         process.env[TASK_RUN_COMMAND_ENV] = '/does/not/exist/vinaya-launcher-fixture'
         try {
           const outcome = await defaultLaunch(
-            { tranche: 'task-operator-v1', id: '2', agent: 'claude', issue: ISSUE },
+            { ref: { tranche: 'task-operator-v1', id: '2' }, agent: 'claude', issue: ISSUE },
             { requestId: 'req_x', caller: 'operator-1' },
             sandbox
           )
-          expect(outcome.alive).toBe(false)
-          if (!outcome.alive) expect(outcome.error.message).toContain('ENOENT')
+          expect(outcome.status).toBe('exited')
+          if (outcome.status === 'exited') expect(outcome.error.message).toContain('ENOENT')
         } finally {
           if (original === undefined) delete process.env[TASK_RUN_COMMAND_ENV]
           else process.env[TASK_RUN_COMMAND_ENV] = original

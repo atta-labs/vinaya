@@ -23,6 +23,9 @@
  */
 
 import { spawnSync, type SpawnSyncOptionsWithStringEncoding } from 'node:child_process'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 /**
  * A copy of `env` (defaulting to this process's own) with every `VINAYA_*`
@@ -111,4 +114,59 @@ export async function spawnBudgetedAsync(
     )
   }
   return { status, stdout, stderr }
+}
+
+/**
+ * The `owner/repo` an isolated fixture's spawned command reports as its own.
+ * Explicit rather than resolved from the working directory's git remote: the
+ * fixture directory is not a git checkout at all, and a caller that has to
+ * `readdirSync` the runtime root to discover which segment its own child
+ * chose is reading the answer out of the machine instead of asserting it.
+ */
+export const FIXTURE_REPO = 'fixture-owner/fixture-repo'
+
+/** `FIXTURE_REPO`'s `runtimeDir`/`logs` path segment — `run-paths.ts`'s `repoSegment`, for the one repo this fixture declares. */
+export const FIXTURE_REPO_SEGMENT = 'fixture-owner-fixture-repo'
+
+export type ConfigIsolatedFixture = {
+  /** The child's `$HOME` — where its default `runtimeDir` (and so its default `logs` folder) lands. */
+  home: string
+  /** The child's working directory: the empty fixture configuration's own folder. */
+  cwd: string
+  /** `<home>/.vinaya/runtime/<segment>/logs/<segment>` — the folder the child's own `log()` writes its `<task>.ndjson` into when the fixture configuration declares no `logs` destination. */
+  logsDir: string
+  /** `{ ...stripVinayaEnv(), HOME, AEG_REPO }` — merge a `VINAYA_TASK` (or anything else the case needs) on top. */
+  env: NodeJS.ProcessEnv
+}
+
+/**
+ * The third isolation half, alongside `stripVinayaEnv`'s environment and
+ * `spawnSyncBudgeted`'s kill budget: a spawned command's own CONFIGURATION.
+ *
+ * `config.ts`'s `findLocalConfig()` walks up from the child's working
+ * directory until it finds a `vinaya.config.json` — so a child spawned with
+ * this repository's own `cwd` reads THIS repository's settings, including
+ * where its telemetry is delivered. A fixture that then reads the default
+ * local logs folder under its temporary `$HOME` is asserting against a
+ * destination the repository's own `logs.url` can move out from under it:
+ * the CLI honours the configured server and writes no file at all, and the
+ * fixture fails for a reason that has nothing to do with what it tests.
+ *
+ * This gives the child a working directory whose own `vinaya.config.json`
+ * declares nothing, which is where that walk stops — no repository setting,
+ * present or future, is in scope for it — plus the `$HOME` its default
+ * destination hangs off and an explicit `AEG_REPO` so the path is known up
+ * front rather than discovered by listing the runtime root.
+ */
+export function isolatedConfigFixture(prefix: string): ConfigIsolatedFixture {
+  const home = mkdtempSync(join(tmpdir(), prefix))
+  const cwd = join(home, 'workspace')
+  mkdirSync(cwd, { recursive: true })
+  writeFileSync(join(cwd, 'vinaya.config.json'), '{}\n')
+  return {
+    home,
+    cwd,
+    logsDir: join(home, '.vinaya', 'runtime', FIXTURE_REPO_SEGMENT, 'logs', FIXTURE_REPO_SEGMENT),
+    env: { ...stripVinayaEnv(), HOME: home, AEG_REPO: FIXTURE_REPO }
+  }
 }
