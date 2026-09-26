@@ -20,10 +20,20 @@ import { join } from 'node:path'
 import {
   deriveLoopState,
   lastRoundVerdictLines,
-  renderTaskStatusRow,
+  readLastConfidence,
+  readLoopPhase,
+  renderTaskStatusTable,
   resumeCommandFor,
   type TaskStatusRow
 } from '../../src/lib/task-status.js'
+import {
+  mergedTaskPrNumbers,
+  phaseHistoryLookupFor,
+  phaseSamplesFromMergedPrs,
+  readPhaseSamples,
+  MERGED_TASK_PR_READ_CAP
+} from '../../src/lib/task-status-history.js'
+import { CONFIDENCE_FILE_NAME } from '../../src/lib/dev-review-loop/round-assess.js'
 import { appendRoleLine, loopLogPathFor } from '../../src/lib/loop-log.js'
 
 const TASK = 515
@@ -78,7 +88,12 @@ function controlDir(root: string, task: number): string {
  * epoch-fenced `writeLoopState`. The driver writes this at every transition,
  * `publish` included, so a published run always has one.
  */
-function writeLoopStateRound(root: string, task: number, round: number): void {
+function writeLoopStateRound(
+  root: string,
+  task: number,
+  round: number,
+  opts: { phase?: string; recordedAt?: string } = {}
+): void {
   const dir = controlDir(root, task)
   mkdirSync(dir, { recursive: true })
   writeFileSync(
@@ -88,15 +103,42 @@ function writeLoopStateRound(root: string, task: number, round: number): void {
       kind: 'loop_state',
       task,
       round,
-      phase: 'publish',
+      phase: opts.phase ?? 'publish',
       pauseReason: null,
       budgets: { mechanicalRetries: 0, reviewRounds: round, infrastructureRetries: 0 },
       heldResult: null,
       deliveredFindings: null,
-      recordedAt: '2026-09-15T00:00:00.000Z'
+      recordedAt: opts.recordedAt ?? '2026-09-15T00:00:00.000Z'
     }),
     'utf8'
   )
+}
+
+/** The developer's own confidence statement for a round, at the exact path `confidencePromptLine` names for it — that round's own Developer folder inside the task's folder. */
+function writeStatedConfidence(root: string, task: number, round: number, body: string): void {
+  const dir = join(taskDir(root, task), 'rounds', String(round), 'developer')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, CONFIDENCE_FILE_NAME), body, 'utf8')
+}
+
+/** A principal-authored comment as a history read sees it. */
+function historyComment(body: string, createdAt: string, author = 'principal') {
+  return { body, author, createdAt }
+}
+
+const ROUND_MARKER = (round: number): string => `<!-- aeg:developer:round-${round} -->\nHead: abc123`
+const REVIEWER_VERDICT = 'VERDICT: APPROVE\n\nJudged head: abc123'
+const SECURITY_VERDICT = 'VERDICT: PASS\n\nJudged head: abc123'
+
+/** One merged pull request's comments: a round marker, then that round's two verdicts `reviewMinutes` later. */
+function mergedPrComments(startIso: string, reviewMinutes: number) {
+  const start = Date.parse(startIso)
+  const verdictAt = new Date(start + reviewMinutes * 60_000).toISOString()
+  return [
+    historyComment(ROUND_MARKER(1), startIso),
+    historyComment(REVIEWER_VERDICT, verdictAt),
+    historyComment(SECURITY_VERDICT, verdictAt)
+  ]
 }
 
 /**
@@ -330,36 +372,284 @@ describe('lastRoundVerdictLines', () => {
   })
 })
 
-describe('renderTaskStatusRow', () => {
-  const base: Omit<TaskStatusRow, 'state' | 'pr'> = { tranche: 'task-run-v1', id: '14', issue: 515 }
-
-  it('renders running with the pid', () => {
-    const row: TaskStatusRow = { ...base, pr: { number: 517 }, state: { kind: 'running', pid: 4242, startedAt: 'x' } }
-    expect(renderTaskStatusRow(row)).toBe('[task-run-v1] 14 — Issue #515 — PR #517 — running (pid 4242)')
+describe('readLoopPhase (O1)', () => {
+  it('returns null when no control record exists for the task', () => {
+    const root = tempDir()
+    expect(readLoopPhase(root, TASK)).toBeNull()
   })
 
-  it('renders paused with the reason', () => {
-    const row: TaskStatusRow = {
-      ...base,
-      pr: { number: 517 },
-      state: { kind: 'paused', reason: 'escalation', round: 2 }
+  it("reads the round, the recorded phase, its shown label, and the minutes since the record's own timestamp", () => {
+    const root = tempDir()
+    writeLoopStateRound(root, TASK, 3, { phase: 'dispatch_reviewers', recordedAt: '2026-09-15T00:00:00.000Z' })
+    expect(readLoopPhase(root, TASK, () => new Date('2026-09-15T00:07:30.000Z'))).toEqual({
+      round: 3,
+      recordedPhase: 'dispatch_reviewers',
+      phase: 'reviewing',
+      minutesInPhase: 8
+    })
+  })
+
+  it('maps every phase the loop records to one shown phase, and passes an unknown one through verbatim', () => {
+    const root = tempDir()
+    const labelFor = (phase: string): string | undefined => {
+      writeLoopStateRound(root, TASK, 1, { phase })
+      return readLoopPhase(root, TASK)?.phase
     }
-    expect(renderTaskStatusRow(row)).toBe('[task-run-v1] 14 — Issue #515 — PR #517 — paused (escalation)')
+    expect(labelFor('dispatch_developer')).toBe('developing')
+    expect(labelFor('ask_confidence')).toBe('awaiting confidence')
+    expect(labelFor('dispatch_reviewers')).toBe('reviewing')
+    expect(labelFor('publish')).toBe('publishing')
+    expect(labelFor('pause')).toBe('paused')
+    expect(labelFor('some_phase_added_later')).toBe('some_phase_added_later')
   })
 
-  it('renders published', () => {
-    const row: TaskStatusRow = { ...base, pr: { number: 517 }, state: { kind: 'published', round: 1 } }
-    expect(renderTaskStatusRow(row)).toBe('[task-run-v1] 14 — Issue #515 — PR #517 — published')
+  it('reports zero rather than a negative age when the record was written ahead of this clock', () => {
+    const root = tempDir()
+    writeLoopStateRound(root, TASK, 1, { phase: 'publish', recordedAt: '2026-09-15T00:10:00.000Z' })
+    expect(readLoopPhase(root, TASK, () => new Date('2026-09-15T00:00:00.000Z'))?.minutesInPhase).toBe(0)
+  })
+})
+
+describe('readLastConfidence (O1)', () => {
+  it('returns null when no record carries a confidence for any round', () => {
+    const root = tempDir()
+    expect(readLastConfidence(root, TASK, null)).toBeNull()
   })
 
-  it('renders no driver with no PR yet', () => {
-    const row: TaskStatusRow = { ...base, pr: null, state: { kind: 'no_driver' } }
-    expect(renderTaskStatusRow(row)).toBe('[task-run-v1] 14 — Issue #515 — PR — — no driver')
+  it("reads the newest round's own stated confidence, naming the round it belongs to", () => {
+    const root = tempDir()
+    writeStatedConfidence(root, TASK, 2, 'CONFIDENCE: 90 — fixed the reported issue\n')
+    writeStatedConfidence(root, TASK, 3, 'CONFIDENCE: 75 — one finding needed a wider fix\n')
+    expect(readLastConfidence(root, TASK, null)).toEqual({ round: 3, percent: 75, source: 'stated' })
   })
 
-  it('renders not started for a planned task with no PR yet (O4)', () => {
-    const row: TaskStatusRow = { ...base, pr: null, state: { kind: 'not_started' } }
-    expect(renderTaskStatusRow(row)).toBe('[task-run-v1] 14 — Issue #515 — PR — — not started')
+  it('reports a malformed statement as a recorded absence, never as a zero', () => {
+    const root = tempDir()
+    writeStatedConfidence(root, TASK, 2, 'pretty confident, I think\n')
+    expect(readLastConfidence(root, TASK, null)).toEqual({ round: 2, percent: null, source: 'stated' })
+  })
+})
+
+describe('typical phase times from history (O2/O4)', () => {
+  const ALLOWLIST = ['principal']
+
+  it("measures a round's review interval from its marker to the last of its verdicts", () => {
+    const samples = phaseSamplesFromMergedPrs([mergedPrComments('2026-09-20T10:00:00.000Z', 6)], ALLOWLIST)
+    expect(samples.reviewing).toEqual([6])
+    // No later round marker followed those verdicts, so the record says
+    // nothing about time spent developing after them.
+    expect(samples.developing).toEqual([])
+  })
+
+  it("measures a developing interval from a round's verdicts to the next round's marker", () => {
+    const samples = phaseSamplesFromMergedPrs(
+      [
+        [
+          historyComment(ROUND_MARKER(1), '2026-09-20T10:00:00.000Z'),
+          historyComment(REVIEWER_VERDICT, '2026-09-20T10:05:00.000Z'),
+          historyComment(SECURITY_VERDICT, '2026-09-20T10:06:00.000Z'),
+          historyComment(ROUND_MARKER(2), '2026-09-20T10:26:00.000Z'),
+          historyComment(REVIEWER_VERDICT, '2026-09-20T10:30:00.000Z')
+        ]
+      ],
+      ALLOWLIST
+    )
+    expect(samples.reviewing).toEqual([6, 4])
+    expect(samples.developing).toEqual([20])
+  })
+
+  it('ignores a round marker and a verdict posted by anyone outside the principal allowlist', () => {
+    const impostor = [
+      historyComment(ROUND_MARKER(1), '2026-09-20T10:00:00.000Z', 'passer-by'),
+      historyComment(REVIEWER_VERDICT, '2026-09-20T18:00:00.000Z', 'passer-by')
+    ]
+    expect(phaseSamplesFromMergedPrs([impostor], ALLOWLIST)).toEqual({ developing: [], reviewing: [] })
+  })
+
+  it('answers with the median of every merged pull request it read, and its sample count', () => {
+    const samples = phaseSamplesFromMergedPrs(
+      [
+        mergedPrComments('2026-09-20T10:00:00.000Z', 4),
+        mergedPrComments('2026-09-21T10:00:00.000Z', 6),
+        mergedPrComments('2026-09-22T10:00:00.000Z', 20)
+      ],
+      ALLOWLIST
+    )
+    // The median, never the mean: the 20-minute outlier would have pulled a
+    // mean to 10 minutes.
+    expect(phaseHistoryLookupFor(samples)('dispatch_reviewers')).toEqual({
+      typicalPhaseMinutes: 6,
+      typicalPhaseSamples: 3
+    })
+  })
+
+  it('shows no typical time for a phase with too few past intervals, and for one with no history class at all (O4)', () => {
+    const thin = phaseSamplesFromMergedPrs(
+      [mergedPrComments('2026-09-20T10:00:00.000Z', 4), mergedPrComments('2026-09-21T10:00:00.000Z', 6)],
+      ALLOWLIST
+    )
+    const lookup = phaseHistoryLookupFor(thin)
+    expect(lookup('dispatch_reviewers')).toBeNull()
+    expect(lookup('dispatch_developer')).toBeNull()
+    // Publishing, pausing and a confidence re-ask have no comparable interval
+    // on a merged pull request at all.
+    expect(lookup('publish')).toBeNull()
+    expect(lookup('pause')).toBeNull()
+    expect(lookup('ask_confidence')).toBeNull()
+  })
+
+  it('reads only task branches, newest merge first, and never more pull requests than its cap', () => {
+    const merged = JSON.stringify([
+      { number: 10, headRefName: 'task/demo/1', mergedAt: '2026-09-20T10:00:00.000Z' },
+      { number: 11, headRefName: 'changeset-release/main', mergedAt: '2026-09-21T10:00:00.000Z' },
+      { number: 12, headRefName: 'task/demo/2', mergedAt: '2026-09-22T10:00:00.000Z' },
+      { number: 13, headRefName: 'task/demo/3', mergedAt: '2026-09-23T10:00:00.000Z' }
+    ])
+    expect(mergedTaskPrNumbers(merged)).toEqual([13, 12, 10])
+    expect(mergedTaskPrNumbers(merged, 2)).toEqual([13, 12])
+    expect(MERGED_TASK_PR_READ_CAP).toBeGreaterThan(0)
+  })
+
+  it('degrades to no typical time when the forge read fails, never to an error', () => {
+    const samples = readPhaseSamples({
+      listMergedPrs: () => {
+        throw new Error('gh: could not reach the forge')
+      },
+      fetchPrComments: () => {
+        throw new Error('never called')
+      },
+      allowlist: () => ALLOWLIST
+    })
+    expect(phaseHistoryLookupFor(samples)('dispatch_reviewers')).toBeNull()
+  })
+
+  it("keeps the pull requests it could read when one of them fails, and reads each one's comments once", () => {
+    const reads: number[] = []
+    const samples = readPhaseSamples({
+      listMergedPrs: () =>
+        JSON.stringify([
+          { number: 10, headRefName: 'task/demo/1', mergedAt: '2026-09-20T10:00:00.000Z' },
+          { number: 11, headRefName: 'task/demo/2', mergedAt: '2026-09-21T10:00:00.000Z' },
+          { number: 12, headRefName: 'task/demo/3', mergedAt: '2026-09-22T10:00:00.000Z' },
+          { number: 13, headRefName: 'task/demo/4', mergedAt: '2026-09-23T10:00:00.000Z' }
+        ]),
+      fetchPrComments: (pr) => {
+        reads.push(pr)
+        if (pr === 12) throw new Error('gh: comment read failed')
+        return JSON.stringify({
+          comments: mergedPrComments('2026-09-20T10:00:00.000Z', 5).map((c) => ({
+            body: c.body,
+            author: { login: c.author },
+            createdAt: c.createdAt
+          }))
+        })
+      },
+      allowlist: () => ALLOWLIST
+    })
+    expect(reads).toEqual([13, 12, 11, 10])
+    expect(phaseHistoryLookupFor(samples)('dispatch_reviewers')).toEqual({
+      typicalPhaseMinutes: 5,
+      typicalPhaseSamples: 3
+    })
+  })
+})
+
+describe('renderTaskStatusTable (O3)', () => {
+  const base: Omit<TaskStatusRow, 'state' | 'pr'> = {
+    tranche: 'task-run-v1',
+    id: '14',
+    issue: 515,
+    round: null,
+    phase: null,
+    recordedPhase: null,
+    minutesInPhase: null,
+    lastConfidence: null,
+    phaseHistory: null
+  }
+
+  it('renders one header row and one row per task, every recorded fact in its own column', () => {
+    const rows: TaskStatusRow[] = [
+      {
+        ...base,
+        pr: { number: 517 },
+        state: { kind: 'running', pid: 4242, startedAt: 'x' },
+        round: 2,
+        phase: 'reviewing',
+        recordedPhase: 'dispatch_reviewers',
+        minutesInPhase: 7,
+        lastConfidence: { round: 2, percent: 90, source: 'stated' },
+        phaseHistory: { typicalPhaseMinutes: 5, typicalPhaseSamples: 4 }
+      }
+    ]
+    const lines = renderTaskStatusTable(rows)
+    expect(lines[0]?.split(/\s{2,}/)).toEqual([
+      'task',
+      'issue',
+      'pr',
+      'state',
+      'round',
+      'phase',
+      'in phase',
+      'confidence',
+      'typical (history)'
+    ])
+    expect(lines[1]?.split(/\s{2,}/)).toEqual([
+      '[task-run-v1] 14',
+      '#515',
+      '#517',
+      'running (pid 4242)',
+      '2',
+      'reviewing',
+      '7m',
+      '90% (round 2)',
+      '5m (n=4)'
+    ])
+  })
+
+  it('names the typical-time column as history, in the header and in one sentence below the table', () => {
+    const lines = renderTaskStatusTable([
+      {
+        ...base,
+        pr: { number: 517 },
+        state: { kind: 'running', pid: 4242, startedAt: 'x' },
+        round: 1,
+        phase: 'developing',
+        recordedPhase: 'dispatch_developer',
+        minutesInPhase: 3,
+        phaseHistory: { typicalPhaseMinutes: 12, typicalPhaseSamples: 5 }
+      }
+    ])
+    expect(lines[0]).toContain('typical (history)')
+    const note = lines[lines.length - 1] as string
+    expect(note).toContain('history, not a prediction')
+    // Never a promise about this run: no deadline, no remaining time, no ETA.
+    for (const line of lines) {
+      expect(line.toLowerCase()).not.toContain('eta')
+      expect(line.toLowerCase()).not.toContain('remaining')
+    }
+  })
+
+  it('renders every absent fact as one dash, and prints no history sentence when no row carries a figure (O4)', () => {
+    const lines = renderTaskStatusTable([{ ...base, pr: null, state: { kind: 'not_started' } }])
+    expect(lines).toHaveLength(2)
+    expect(lines[1]?.split(/\s{2,}/)).toEqual(['[task-run-v1] 14', '#515', '—', 'not started', '—', '—', '—', '—', '—'])
+  })
+
+  it('renders a confidence the loop recorded as absent as an absence, never as a zero', () => {
+    const lines = renderTaskStatusTable([
+      {
+        ...base,
+        pr: { number: 517 },
+        state: { kind: 'paused', reason: 'confidence', round: 2 },
+        round: 2,
+        phase: 'paused',
+        recordedPhase: 'pause',
+        minutesInPhase: 40,
+        lastConfidence: { round: 2, percent: null, source: 'stated' }
+      }
+    ])
+    expect(lines[1]).toContain('absent (round 2)')
+    expect(lines[1]).toContain('paused (confidence)')
   })
 })
 
