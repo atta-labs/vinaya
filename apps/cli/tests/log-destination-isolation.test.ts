@@ -381,16 +381,6 @@ const READS_DEFAULT_DESTINATION = new RegExp(
 )
 
 /**
- * A configuration that declares its own `logs.folder`. No longer a waiver for
- * anything in the scan — a declaration this file writes could be for a CHILD,
- * and reading it as the parent's own isolation was a way through (round 3
- * review, MINOR; round 3 security review, LOW). It survives as the vocabulary
- * of one assertion: that the shared fixture helper still declares a
- * destination rather than writing an empty configuration.
- */
-const DECLARES_OWN_DESTINATION = new RegExp(`logs${QUOTE}?\\s*:\\s*\\{[^}]*folder`)
-
-/**
  * Every shape that starts a real process. `spawn`/`exec` as bare calls are
  * deliberately absent — this file's subjects are the handful that read a
  * default log destination, and every one of them uses one of these. Written
