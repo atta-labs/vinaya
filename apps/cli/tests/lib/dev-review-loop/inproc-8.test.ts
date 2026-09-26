@@ -21,14 +21,16 @@
  */
 
 import { afterEach, describe, expect, it } from 'bun:test'
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { CONFIDENCE_FILE_NAME } from '../../../src/lib/dev-review-loop.js'
 import { escalationIdFor } from '../../../src/lib/dev-review-loop/pause-resume.js'
 import type { LoopDeps } from '../../../src/lib/dev-review-loop.js'
 import type { ReconstructedJournal } from '@attalabs/aeg-core'
 import {
   cleanupWorlds,
   controlDir as ipControlDir,
+  developerDir,
   makeInProcessDeps,
   makeWorld,
   runLoopInProcess,
@@ -73,24 +75,49 @@ function driverLockPath(world: LoopWorld): string {
   return join(ipTaskRunDir(world), 'driver.pid.json')
 }
 
-const EMPTY_HISTORY: ReconstructedJournal = { rounds: [], totalWallMs: 0, totalFilesChanged: 0, journalFinalized: null }
+const EMPTY_HISTORY: ReconstructedJournal = {
+  rounds: [],
+  totalWallMs: 0,
+  totalFilesChanged: 0,
+  summaryUrl: null,
+  reviewGate: 'unknown',
+  journalFinalized: null
+}
+
+const SUMMARY_URL = 'https://forge.example/pr/1#issuecomment-99'
 
 /**
  * The world's own `fetchLoopHistory` fake (`makeInProcessDeps`) is a static
- * stub that always answers "nothing published" — the harness never models
- * the real `gh`-read fact a genuine publish leaves on the forge (a
- * principal-authored ready-for-merge SUMMARY comment,
- * `journalFinalized.result === 'merged_ready'`). `resolveEscalation`'s own
- * "is this task actually already concluded?" check (`devReviewLoop`'s
- * `--resume` replay-recovery branch) reads exactly that fact, so a test
- * whose SECOND `--resume` must see the round as genuinely finished overrides
- * it here, keyed off `world.publishedRounds` — the one true "did this world
- * actually publish?" signal every fake `publishRound` already records to.
+ * stub that always answers "not concluded" — the harness models neither the
+ * `gh`-read fact a genuine publish leaves on the forge (a principal-authored
+ * ready-for-merge SUMMARY comment) nor the review gate's verdict on the pull
+ * request's current state. `devReviewLoop`'s `--resume` replay-recovery
+ * branch asks whether the task is CONCLUDED, which is both facts together
+ * (`isConcludedJournal`), so a test whose SECOND `--resume` must see the
+ * round as genuinely finished overrides it here, keyed off
+ * `world.publishedRounds` — the one true "did this world actually publish?"
+ * signal every fake `publishRound` already records to.
+ *
+ * `gateStillPasses` is the second fact, the one this task added: `false`
+ * models the real shape the fix exists for — a summary posted for an older
+ * head, with a red gate, a newer ruling or a superseded brief since, which
+ * must REOPEN rather than refuse.
  */
-function fetchLoopHistoryReflectingPublish(world: LoopWorld): LoopDeps['fetchLoopHistory'] {
+function fetchLoopHistoryReflectingPublish(world: LoopWorld, gateStillPasses = true): LoopDeps['fetchLoopHistory'] {
   return (_pr) =>
     world.publishedRounds.length > 0
-      ? { ...EMPTY_HISTORY, journalFinalized: { result: 'merged_ready' } }
+      ? {
+          ...EMPTY_HISTORY,
+          rounds: world.publishedRounds.map((round) => ({
+            round,
+            countsBySeverity: {},
+            confidence: null,
+            outcome: 'changes_requested' as const
+          })),
+          summaryUrl: SUMMARY_URL,
+          reviewGate: gateStillPasses ? ('pass' as const) : ('fail' as const),
+          journalFinalized: gateStillPasses ? ({ result: 'merged_ready' } as const) : null
+        }
       : EMPTY_HISTORY
 }
 
@@ -123,9 +150,12 @@ describe('devReviewLoop — resolution consumed once, replay refused (O2)', () =
     const dispatchCountsBeforeReplay = { ...world.dispatchCountByRole }
 
     // Replay: the SAME PR, the SAME pause instance already consumed above —
-    // refused rather than silently re-dispatching a second time.
+    // refused rather than silently re-dispatching a second time. The refusal
+    // now names the real reason — this review IS concluded, its summary
+    // posted and the gate passing on the current state — rather than the
+    // storage layer's own consumed-resolution wording (O2).
     await expect(runLoopInProcess(world, { resumePr: world.prNumber, agent: 'claude' }, overrides)).rejects.toThrow(
-      /already has a consumed resolution|replay refused/
+      new RegExp(`loop already concluded at round 1 \\(summary posted ${SUMMARY_URL}\\)`)
     )
 
     // Never re-dispatched: the refusal is thrown before the round loop ever
@@ -195,6 +225,118 @@ describe("devReviewLoop — O1 (#674): a resume continues from the pull request'
     // --resume — a live pid (this test process's own) on the task's driver
     // lock, exactly as the real subprocess fixture's own
     // `writeDriverLockFixture` does.
+    writeFileSync(driverLockPath(world), JSON.stringify({ pid: process.pid, startedAt: new Date(0).toISOString() }))
+
+    await expect(runLoopInProcess(world, { resumePr: world.prNumber, agent: 'claude' })).rejects.toThrow(
+      /already has a consumed resolution|replay refused/
+    )
+  })
+})
+
+// --- O1/O2/O3: a posted summary is not a latch — the gate on the current
+// state decides, and a reopened pull request keeps its round history -------
+
+describe('devReviewLoop — a pull request counts as concluded only while the review gate passes on its current state', () => {
+  it('a summary posted for an older head, with the gate no longer passing, RESUMES instead of refusing as a replay (O1)', async () => {
+    const world = makeEscalationWorld()
+
+    const paused = await runLoopInProcess(world)
+    expect(paused.finalDecision).toMatchObject({ type: 'pause', reason: 'escalation' })
+
+    seedRuling(world)
+    world.roleOutcomes[1]!.reviewer = undefined
+
+    // The first --resume consumes the escalation's resolution and publishes:
+    // a real summary comment lands on the forge for round 1's head.
+    const resumed = await runLoopInProcess(
+      world,
+      { resumePr: world.prNumber, agent: 'claude' },
+      { fetchLoopHistory: fetchLoopHistoryReflectingPublish(world) }
+    )
+    expect(resumed.finalDecision.type).toBe('publish')
+    expect(world.publishedRounds).toEqual([1])
+
+    // The state this task exists for: that same summary is still on the
+    // forge, but the review gate no longer passes against the pull request's
+    // current state (a red gate, a Principal ruling posted after the summary,
+    // a superseded brief, or a moved head — the gate evaluates all of them).
+    // The escalation's resolution is still consumed, so before this fix every
+    // `--resume` exited with a replay refusal and the task could not be
+    // continued at all.
+    // Round 2's own confidence answer — an attach at round 2 gates on
+    // developer confidence before dispatching reviewers, and this world's fake
+    // developer writes no file of its own.
+    mkdirSync(developerDir(world, 2), { recursive: true })
+    writeFileSync(join(developerDir(world, 2), CONFIDENCE_FILE_NAME), 'CONFIDENCE: 90 — the ruling is addressed\n')
+
+    const publishedJournalRounds: number[][] = []
+    const reopened = await runLoopInProcess(
+      world,
+      { resumePr: world.prNumber, agent: 'claude' },
+      {
+        fetchLoopHistory: fetchLoopHistoryReflectingPublish(world, false),
+        // Records what the real `publishRound` would render into the summary
+        // table, which the harness's own fake does not keep.
+        publishRound: ((_root: string, input: { round: number; journal: { rounds: { round: number }[] } }) => {
+          publishedJournalRounds.push(input.journal.rounds.map((r) => r.round))
+          world.publishedRounds.push(input.round)
+        }) as unknown as LoopDeps['publishRound']
+      }
+    )
+
+    // It attached and ran a real round rather than exiting.
+    expect(reopened.finalDecision).toEqual({ type: 'publish' })
+    // O3: numbered after the last round marker on the forge, never back at 1.
+    expect(world.publishedRounds).toEqual([1, 2])
+    // O3: the published summary table carries every prior round, not only the
+    // one this process computed.
+    expect(publishedJournalRounds).toEqual([[1, 2]])
+  })
+
+  it('a truly concluded review — summary posted, gate still passing — is refused with a message that says so, not the consumed-resolution text (O2)', async () => {
+    const world = makeEscalationWorld()
+
+    const paused = await runLoopInProcess(world)
+    expect(paused.finalDecision).toMatchObject({ type: 'pause', reason: 'escalation' })
+
+    seedRuling(world)
+    world.roleOutcomes[1]!.reviewer = undefined
+
+    const overrides: Partial<LoopDeps> = { fetchLoopHistory: fetchLoopHistoryReflectingPublish(world) }
+    const resumed = await runLoopInProcess(world, { resumePr: world.prNumber, agent: 'claude' }, overrides)
+    expect(resumed.finalDecision.type).toBe('publish')
+
+    const dispatchCountsBeforeReplay = { ...world.dispatchCountByRole }
+
+    let refusal: unknown
+    try {
+      await runLoopInProcess(world, { resumePr: world.prNumber, agent: 'claude' }, overrides)
+    } catch (err) {
+      refusal = err
+    }
+    expect((refusal as Error | undefined)?.message).toBe(
+      `devReviewLoop --resume: loop already concluded at round 1 (summary posted ${SUMMARY_URL})`
+    )
+    // The storage layer's own wording is exactly what this replaces.
+    expect((refusal as Error).message).not.toMatch(/already has a consumed resolution|replay refused/)
+    // Still refused before the round loop: no role was dispatched again.
+    expect(world.dispatchCountByRole).toEqual(dispatchCountsBeforeReplay)
+  })
+
+  it("a live driver on a NOT-concluded task is still refused in the storage layer's own words — the single-consumption guarantee is never weakened (Traps to avoid)", async () => {
+    const world = makeEscalationWorld()
+
+    const paused = await runLoopInProcess(world)
+    expect(paused.finalDecision).toMatchObject({ type: 'pause', reason: 'escalation' })
+
+    seedRuling(world)
+
+    const firstResume = await runLoopInProcess(world, { resumePr: world.prNumber, agent: 'claude' })
+    expect(firstResume.finalDecision).toMatchObject({ type: 'pause', reason: 'escalation' })
+
+    // A driver that still owns the task at the moment of the next --resume —
+    // nothing has published, so the concluded predicate is false here and the
+    // ONLY thing refusing is the live-driver branch.
     writeFileSync(driverLockPath(world), JSON.stringify({ pid: process.pid, startedAt: new Date(0).toISOString() }))
 
     await expect(runLoopInProcess(world, { resumePr: world.prNumber, agent: 'claude' })).rejects.toThrow(

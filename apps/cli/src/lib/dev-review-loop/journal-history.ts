@@ -1,12 +1,21 @@
 /**
- * The impure half of round-journal reconstruction — gathering the two facts
- * the pure rebuild needs (`journal-reconstruction.ts`, `@attalabs/aeg-core`)
- * from the forge's own principal-authored markers on the pull request:
+ * The impure half of round-journal reconstruction — gathering the facts the
+ * pure rebuild needs (`journal-reconstruction.ts`, `@attalabs/aeg-core`) from
+ * the forge's own principal-authored markers on the pull request, plus the
+ * review gate's verdict on its current state:
  *
  *   - the round numbers every developer round marker
  *     (`<!-- aeg:developer:round-<n> -->`, `parseDeveloperRoundMarker`) carries,
  *   - whether a ready-for-merge summary comment
- *     (`isPublishedSummaryComment`) has actually been posted.
+ *     (`isPublishedSummaryComment`) has actually been posted, and where,
+ *   - the review gate's verdict on the pull request's CURRENT head, objectives
+ *     version, newest ruling, frozen brief and policy
+ *     (`reviewGateFactForCurrentState`, the shared assembly the `review-gate`
+ *     check itself uses — called in-process, never by shelling out to `vinaya
+ *     check`). A posted summary alone is sticky: it records no head, so it kept
+ *     reading "concluded" through a red gate, a newer ruling and a superseded
+ *     brief. Conclusion now needs both facts, and the gate is the evaluation
+ *     already bound to every one of them.
  *
  * It reads NO log event, NO flushed `dev_review_loop` log comment, and NO
  * telemetry outbox. The Vinaya Log is telemetry and "is never the authority
@@ -15,7 +24,8 @@
  * tracker, which is the whole reason this reads the principal-authored markers
  * instead. The control store's own
  * authoritative round is recovered separately by the driver
- * (`recoverLoopState`), so this file's one job is the forge read.
+ * (`recoverLoopState`), so this file's one job is reading the forge and asking
+ * the gate.
  *
  * Same trust boundary every other forge read in this directory already
  * applies (a security-review finding): only principal-authored comments are
@@ -31,16 +41,20 @@ import {
   isPublishedSummaryComment,
   parseDeveloperRoundMarker,
   reconstructRounds,
-  type ReconstructedJournal
+  type ReconstructedJournal,
+  type ReviewGateFact
 } from '@attalabs/aeg-core'
 import { markerComments, principalAllowlist, type MarkerComment } from './developer-dispatch.js'
 import { sh } from './gate-reading.js'
+import { reviewGateFactForCurrentState } from '../review-gate-input.js'
 
 /** An empty journal — no PR to read, or a `gh` read that failed: reconstruction is a display/recovery aid, never a dispatch gate, so it degrades to "no history" rather than throwing. */
 const EMPTY_JOURNAL: ReconstructedJournal = {
   rounds: [],
   totalWallMs: 0,
   totalFilesChanged: 0,
+  summaryUrl: null,
+  reviewGate: 'unknown',
   journalFinalized: null
 }
 
@@ -54,17 +68,31 @@ const EMPTY_JOURNAL: ReconstructedJournal = {
  */
 export function loopHistoryFromComments(
   comments: readonly MarkerComment[],
-  allowlist: readonly string[]
+  allowlist: readonly string[],
+  reviewGate: () => ReviewGateFact
 ): ReconstructedJournal {
   const roundMarkers: number[] = []
   let summaryPublished = false
+  let summaryUrl: string | null = null
   for (const comment of comments) {
     if (!isPrincipal(comment.author, allowlist as string[])) continue
     const round = parseDeveloperRoundMarker(comment.body)
     if (round !== null) roundMarkers.push(round)
-    if (isPublishedSummaryComment(comment.body)) summaryPublished = true
+    if (isPublishedSummaryComment(comment.body)) {
+      summaryPublished = true
+      summaryUrl = comment.url ?? summaryUrl
+    }
   }
-  return reconstructRounds({ roundMarkers, summaryPublished })
+  // Evaluated ONLY when a summary is actually on the forge: with no summary
+  // the review is not concluded whatever the gate says, and the gate costs
+  // several forge and remote reads. Lazy here rather than at the caller so
+  // this one function stays the whole "did this review conclude?" decision.
+  return reconstructRounds({
+    roundMarkers,
+    summaryPublished,
+    summaryUrl,
+    reviewGate: summaryPublished ? reviewGate() : 'unknown'
+  })
 }
 
 /**
@@ -78,6 +106,15 @@ export function loopHistoryFromComments(
  * `prNumber === null` (a `--resume` whose PR could not be resolved) reads
  * nothing and returns the empty journal: the control store's own round
  * recovery (`recoverLoopState`) still covers this run regardless.
+ *
+ * The gate evaluation is passed as a thunk and runs only when a summary is
+ * actually on the forge — a task with no summary is not concluded whatever the
+ * gate would say, and this function is called on every entry, so the ordinary
+ * attach pays for no gate read at all (which is also why the no-summary case
+ * passes `'unknown'` rather than a verdict nobody computed). An evaluation that
+ * cannot be made is `'unknown'` too, never a crash and never a `'fail'`
+ * (`ReviewGateFact`): a failed forge read must not stop a recovery aid, and it
+ * must not reopen a review on the absence of an answer either.
  */
 export function fetchLoopHistory(prNumber: number | null): ReconstructedJournal {
   if (prNumber === null) return EMPTY_JOURNAL
@@ -90,5 +127,7 @@ export function fetchLoopHistory(prNumber: number | null): ReconstructedJournal 
     // aid, not a dispatch gate. The control store still recovers the round.
     return EMPTY_JOURNAL
   }
-  return loopHistoryFromComments(markerComments(out), principalAllowlist())
+  return loopHistoryFromComments(markerComments(out), principalAllowlist(), () =>
+    reviewGateFactForCurrentState(prNumber)
+  )
 }

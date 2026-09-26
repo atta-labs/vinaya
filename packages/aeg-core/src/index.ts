@@ -526,7 +526,9 @@ export {
 export type { Objective, ObjectivesSource, ParsedObjectives } from './objectives'
 export {
   assessRound,
+  concludedLoopRefusal,
   initialLoopState,
+  isConcludedJournal,
   isPublishedSummaryComment,
   nextRoundNumber,
   reconstructRounds,
@@ -547,6 +549,7 @@ export type {
   PendingRound,
   ReconstructedJournal,
   ReconstructionInput,
+  ReviewGateFact,
   RoundOutcome,
   RoundRecord,
   RoundStats,

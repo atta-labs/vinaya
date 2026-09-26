@@ -51,9 +51,11 @@ import {
   briefHash as briefHashOf,
   buildReviewInputManifest,
   compareManifest,
+  concludedLoopRefusal,
   DEFAULT_REVIEW_POLICY,
   DevReviewLoopEventSchema,
   initialLoopState,
+  isConcludedJournal,
   manifestAsEchoed,
   nextRoundNumber,
   policyDigest as policyDigestOf,
@@ -1078,20 +1080,35 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // `pause-state.json` write never advances past the already-consumed
       // id) before the task's review actually concluded. The storage
       // guarantee still binds exactly as before whenever a driver still
-      // holds the task (Traps to avoid: never weakened for that case), or
-      // whenever the task's own durable journal already shows this review
-      // concluded — nothing left for a bare `--resume` to attach to, the
-      // exact case the pre-existing "replay refused" fixture covers.
-      // Otherwise this run continues from the pull request's CURRENT state
-      // instead, the same attach a fresh `--task <n>` itself takes onto an
-      // already-open PR — never fabricating a second resolution (Traps to
-      // avoid), and never re-deriving a round/head from this stale record.
+      // holds the task (Traps to avoid: never weakened for that case) — that
+      // branch refuses first, in the storage layer's own words, and is
+      // untouched by everything below.
+      //
+      // A review that is GENUINELY concluded — its summary on the forge AND
+      // the review gate passing against the pull request's current head,
+      // objectives version, newest ruling, frozen brief and policy
+      // (`isConcludedJournal`) — is refused too, but named for what it is:
+      // there is nothing left for a `--resume` to attach to, and the
+      // consumed-resolution text describes a storage mechanism the reader
+      // never asked about. `concludedLoopRefusal` renders that reason.
+      //
+      // What no longer refuses: a summary posted for an older head, with a
+      // Principal ruling posted after it, a superseded brief, or a red gate.
+      // Each of those is a review the forge says is NOT finished, and each
+      // one used to exit here on the summary alone — observed on an adopter
+      // pull request that could not be resumed at all. Those continue from
+      // the pull request's CURRENT state instead, the same attach a fresh
+      // `--task <n>` takes onto an already-open PR — never fabricating a
+      // second resolution (Traps to avoid), and never re-deriving a
+      // round/head from this stale record.
       const existingLock = readDriverLock(root, closesTask)
       const driverIsLive = existingLock !== null && isDriverPidAlive(existingLock.pid)
-      const history = d.fetchLoopHistory(resumePr)
-      const alreadyConcluded = history.journalFinalized?.result === 'merged_ready'
-      if (driverIsLive || err.existing?.decision !== 'resume' || alreadyConcluded) {
+      if (driverIsLive || err.existing?.decision !== 'resume') {
         throw new Error(`devReviewLoop --resume: ${err.message}`)
+      }
+      const concludedRefusal = concludedLoopRefusal(d.fetchLoopHistory(resumePr))
+      if (concludedRefusal !== null) {
+        throw new Error(`devReviewLoop --resume: ${concludedRefusal}`)
       }
       attachAfterReplayedResolution = true
     }
@@ -1418,27 +1435,47 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * resume and accumulates only the rounds this process itself computes
      * from here on.
      *
-     * Applied whenever this task has NOT actually reached a real terminal
-     * publish — never gated on a round having merely decided `publish` (round
-     * 2 review, BLOCKER): the control store's own `loop_state.phase` reads
-     * `'publish'` the moment `assessRound` decides it, written before
-     * `publishRound` ever runs, so it can never stand for "actually
-     * published." The one honest signal is a principal-authored ready-for-
-     * merge SUMMARY comment on the forge (`journalFinalized.result ===
-     * 'merged_ready'`): `publishRound` posts it last, after both verdicts, so
-     * a crash mid-publish (a `gh` failure) leaves NO summary and this reads
-     * `null` — never mistaking that crash for a completion, the exact case
-     * that once silently dropped every round from the published table and
-     * restarted numbering at `1` on the next attach. Guards the one real
-     * hazard seeding would otherwise create even when genuinely finalized:
-     * `assessRound` always APPENDS to `state.rounds` (`assess-round.ts`'s
-     * `buildRoundRecord` call sites), never deduplicates by round number —
-     * seeding round 1's record here, then letting THIS SAME run recompute
-     * round 1 live (the "rerun posts nothing twice" idempotency case), would
-     * double it in the published table.
+     * Applied whenever this task's review has NOT CONCLUDED —
+     * `isConcludedJournal`, the SAME predicate the `--resume` replayed-
+     * resolution refusal and the held-clean carry path below both call, never
+     * a second hand-written test of the same field. Concluded is two facts at
+     * once: the ready-for-merge SUMMARY comment is on the forge AND the review
+     * gate passes against the pull request's CURRENT head, objectives version,
+     * newest ruling, frozen brief and policy.
+     *
+     * Never gated on a round having merely decided `publish` (round 2 review,
+     * BLOCKER): the control store's own `loop_state.phase` reads `'publish'`
+     * the moment `assessRound` decides it, written before `publishRound` ever
+     * runs, so it can never stand for "actually published." `publishRound`
+     * posts the summary last, after both verdicts, so a crash mid-publish (a
+     * `gh` failure) leaves NO summary and the rounds still seed — never
+     * mistaking that crash for a completion, the exact case that once silently
+     * dropped every round from the published table and restarted numbering at
+     * `1` on the next attach.
+     *
+     * The gate half is what makes a REOPENED pull request seed too: a summary
+     * posted for an older head, with a red gate, a ruling posted after it or a
+     * superseded brief since, is not a concluded review, so its prior rounds
+     * seed and the next round is numbered after the last marker on the forge
+     * rather than restarting at `1` (which is what a run against exactly that
+     * state did before).
+     *
+     * Guards the one real hazard seeding would otherwise create even when
+     * genuinely concluded: `assessRound` always APPENDS to `state.rounds`
+     * (`assess-round.ts`'s `buildRoundRecord` call sites), never deduplicates
+     * by round number — seeding round 1's record here, then letting THIS SAME
+     * run recompute round 1 live (the "rerun posts nothing twice" idempotency
+     * case), would double it in the published table.
      */
-    let loopHistory: ReconstructedJournal = { rounds: [], totalWallMs: 0, totalFilesChanged: 0, journalFinalized: null }
-    /** Whether `seedLoopHistory` actually applied — the round-bump below reuses this instead of re-deriving the same "already published?" check a second time. */
+    let loopHistory: ReconstructedJournal = {
+      rounds: [],
+      totalWallMs: 0,
+      totalFilesChanged: 0,
+      summaryUrl: null,
+      reviewGate: 'unknown',
+      journalFinalized: null
+    }
+    /** Whether `seedLoopHistory` actually applied — the round-bump below reuses this instead of re-deriving the same "already concluded?" check a second time. */
     let historyApplies = false
     function seedLoopHistory(): void {
       // The forge markers on this task's own pull request — never a log
@@ -1446,8 +1483,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // PR's number by the one call site below.
       loopHistory = d.fetchLoopHistory(prNumber)
       const newest = loopHistory.rounds[loopHistory.rounds.length - 1]
-      const actuallyPublished = loopHistory.journalFinalized?.result === 'merged_ready'
-      historyApplies = newest !== undefined && !actuallyPublished
+      historyApplies = newest !== undefined && !isConcludedJournal(loopHistory)
       if (!historyApplies) return
       state = {
         ...state,
@@ -2896,18 +2932,25 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               // issue-711 O1: "publishes the held verdicts, OR treats the
               // published ones as current" — two different actions for two
               // different states, both read off the SAME `heldClean` round.
-              // A round whose summary is already on the forge (held files
-              // are never deleted after posting — see `HeldCleanVerdict`'s
-              // own doc comment) must never re-run `publishRound`: its
-              // `journal` argument is built from THIS process's own
-              // `state.rounds`, empty here since `assessRound` never ran on
-              // this path, so a genuine re-post would render a summary
-              // table with no row for the round it names — a real content
-              // drift `postPrCommentOnce`'s idempotency keys off, and
-              // exactly the "second run posts nothing new" invariant this
-              // driver already guarantees for the ordinary re-run case.
+              // A round whose review has already CONCLUDED (held files are
+              // never deleted after posting — see `HeldCleanVerdict`'s own doc
+              // comment) must never re-run `publishRound`: its `journal`
+              // argument is built from THIS process's own `state.rounds`,
+              // empty here since `assessRound` never ran on this path, so a
+              // genuine re-post would render a summary table with no row for
+              // the round it names — a real content drift
+              // `postPrCommentOnce`'s idempotency keys off, and exactly the
+              // "second run posts nothing new" invariant this driver already
+              // guarantees for the ordinary re-run case.
+              //
+              // `isConcludedJournal` is the SAME predicate `seedLoopHistory`
+              // and the `--resume` replayed-resolution refusal use, so all
+              // three agree about this pull request: a summary posted while
+              // the gate no longer passes on the current state is NOT
+              // concluded, and this path falls through to a genuine round
+              // rather than treating a reopened review as published.
               const freshHistory = d.fetchLoopHistory(prNumber)
-              if (freshHistory.journalFinalized?.result === 'merged_ready') {
+              if (isConcludedJournal(freshHistory)) {
                 heldResultIdentity = null
                 persistCurrentLoopState('publish')
                 return { finalDecision: { type: 'publish' }, prNumber, task }

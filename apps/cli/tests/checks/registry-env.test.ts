@@ -20,7 +20,12 @@ import { VinayaConfigSchema } from '../../src/lib/config'
  * explanatory prose.
  */
 function readCode(binName: string): string {
-  return readFileSync(join(import.meta.dir, '..', '..', 'src', 'checks', 'bin', binName), 'utf-8')
+  return readSource(join('checks', 'bin', binName))
+}
+
+/** The same comment-stripped read for any source file under `apps/cli/src`, not only a check bin — the review gate's own input assembly lives in `lib/`, shared with the dev-review-loop driver. */
+function readSource(relPathFromSrc: string): string {
+  return readFileSync(join(import.meta.dir, '..', '..', 'src', relPathFromSrc), 'utf-8')
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/^\s*\/\/.*$/gm, '')
 }
@@ -172,20 +177,25 @@ describe('registry env declarations', () => {
     expect(Object.keys(reviewGate?.env ?? {})).not.toContain('BASE_SHA')
   })
 
-  it('every principals-resolving bin calls loadTrustAnchorConfig() with NO arguments, and never a local-git/env-derived config', () => {
-    const bins = [
-      'check-review-gate.ts',
-      'check-doc-coverage.ts',
-      'check-doc-coverage-push.ts',
-      'check-body-bare-digits.ts'
+  it('every principals-resolving source calls loadTrustAnchorConfig() with NO arguments, and never a local-git/env-derived config', () => {
+    const sources = [
+      // The review gate's own input assembly — the `review-gate` check bin is
+      // now the thin contract adapter over it, and the dev-review-loop
+      // driver's "is this review concluded?" read calls the SAME assembly, so
+      // this rule binds where the resolution actually happens. The bin itself
+      // is asserted to hold no copy of it, just below.
+      join('lib', 'review-gate-input.ts'),
+      join('checks', 'bin', 'check-doc-coverage.ts'),
+      join('checks', 'bin', 'check-doc-coverage-push.ts'),
+      join('checks', 'bin', 'check-body-bare-digits.ts')
       // `test-plan` (task 12, #387) no longer resolves principals at all: it
       // grades `[principal]` boxes from the body alone, and the `[agent]`
       // half it used to count a Developer round comment for is now a fenced
       // command list `vinaya pr report` grades against AEG:EVIDENCE — no
       // comment fetch, no allowlist, left in this bin at all.
     ]
-    for (const name of bins) {
-      const src = readCode(name)
+    for (const name of sources) {
+      const src = readSource(name)
       const calls = src.match(/loadTrustAnchorConfig\(([^)]*)\)/g) ?? []
       expect(calls.length, `${name} should call loadTrustAnchorConfig exactly once`).toBe(1)
       expect(calls[0], `${name} must pass no argument — the fetcher param is test-only`).toBe('loadTrustAnchorConfig()')
@@ -195,6 +205,13 @@ describe('registry env declarations', () => {
         /resolvePrincipalAllowlist\(\s*loadConfig\(\)/
       )
     }
+  })
+
+  it('check-review-gate.ts resolves principals only through the shared assembly — never a second copy of its own', () => {
+    const src = readCode('check-review-gate.ts')
+    expect(src, 'the bin must not re-resolve the trust anchor itself').not.toContain('loadTrustAnchorConfig')
+    expect(src, 'the bin must not build its own principal allowlist').not.toContain('resolvePrincipalAllowlist')
+    expect(src, 'the bin reaches the gate input through the one shared assembly').toContain('assembleReviewGateInput')
   })
 
   // Perf regression, PR #862 round 4: the waiver check is an eagerly

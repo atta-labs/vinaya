@@ -165,6 +165,8 @@ describe('devReviewLoop — issue-711 O1: an already-published clean verdict is 
       rounds: [],
       totalWallMs: 0,
       totalFilesChanged: 0,
+      summaryUrl: 'https://forge.example/pr/1#issuecomment-1',
+      reviewGate: 'pass',
       journalFinalized: { result: 'merged_ready' }
     })
 
@@ -183,6 +185,44 @@ describe('devReviewLoop — issue-711 O1: an already-published clean verdict is 
     // Already on the forge — this run posts nothing new.
     expect(world.postedComments).toEqual([])
     expect(world.publishedRounds).toEqual([])
+  })
+})
+
+describe('devReviewLoop — the held-clean carry path reads the same concluded predicate: a summary posted while the gate no longer passes is not published', () => {
+  it('posts the held pair for a reopened pull request instead of returning clean on the stale summary', async () => {
+    const HELD_HEAD = sha('a')
+    const NEW_HEAD = sha('c')
+    const world = makeWorld({ developerPushed: true, head: NEW_HEAD })
+    seedCleanHeldRound1(world, HELD_HEAD)
+
+    // The summary comment IS on the forge — but the review gate no longer
+    // passes against the pull request's current state (a red gate, a ruling
+    // posted after the summary, a superseded brief), so `journalFinalized`
+    // reads `null` and this review has NOT concluded. Reading the summary
+    // alone here would return clean with no write at all, leaving a reopened
+    // review looking finished.
+    const fetchLoopHistory: LoopDeps['fetchLoopHistory'] = () => ({
+      rounds: [],
+      totalWallMs: 0,
+      totalFilesChanged: 0,
+      summaryUrl: 'https://forge.example/pr/1#issuecomment-1',
+      reviewGate: 'fail',
+      journalFinalized: null
+    })
+
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {
+        patchIdOf: (s: string) => (s === HELD_HEAD || s === NEW_HEAD ? 'same-patch' : null),
+        fetchLoopHistory
+      }
+    )
+
+    expect(result.finalDecision).toEqual({ type: 'publish' })
+    // The held pair is published for real this time — the carry path did not
+    // short-circuit on the stale summary.
+    expect(world.publishedRounds).toEqual([1])
   })
 })
 
