@@ -85,6 +85,7 @@ import {
   briefHash,
   CODE_REVIEW_SEVERITY_ORDER,
   codeReviewBlockingSeverities,
+  consequentialFindings,
   evaluateCodeReview,
   evaluateSecurityReview,
   extractCodeReviewVerdict,
@@ -97,6 +98,7 @@ import {
   type Objective,
   objectivesOf,
   objectivesVersion,
+  parseFindingState,
   policyDigest as reviewPolicyDigest,
   resolveNewestFrozenBrief,
   type ReviewGateComment,
@@ -419,18 +421,16 @@ const CODE_REVIEW_VERDICT_TEXT: Record<CodeReviewVerdict, string> = {
   REQUEST_CHANGES: 'REQUEST CHANGES'
 }
 
-const FINDING_DESCRIPTION_ID = /^F(\d+)\s+\S+(?:\s+(open|fix-claimed|reproduced|resolved))?:/
-
-/** `null` when the description carries no `F<n>` id at all (an id-less new finding is never a re-review reference). */
-function findingIdState(description: string): { id: string; state: string | null } | null {
-  const m = description.match(FINDING_DESCRIPTION_ID)
-  if (!m) return null
-  return { id: `F${m[1]}`, state: m[2] ?? null }
-}
-
-/** True when a finding's description carries the re-review state `resolved` — kept in the record, but never blocking. */
-function isResolved(finding: Finding): boolean {
-  return findingIdState(finding.description)?.state === 'resolved'
+/**
+ * A finding's id and re-review state, read from its description through the
+ * shared `parseFindingState` (`@attalabs/aeg-core`) — the single definition of
+ * the `F<n> <class>[ <state>]:` grammar this repo carries, reused here rather
+ * than a second local copy (Traps to avoid). `id` is `null` when the
+ * description carries no `F<n>` head at all (an id-less new finding is never a
+ * re-review reference).
+ */
+function findingIdState(description: string): { id: string | null; state: string | null } {
+  return parseFindingState(description)
 }
 
 /**
@@ -442,10 +442,14 @@ function isResolved(finding: Finding): boolean {
  * caller and passed in. The severity vocabulary itself is unchanged — a
  * finding whose re-review state is `resolved` keeps its severity for the
  * record but never drives the verdict — a fix-claimed or reproduced blocking
- * finding still does.
+ * finding still does. `consequentialFindings` (`@attalabs/aeg-core`) is the
+ * SAME filter the merge gate and the loop's publication self-check apply (O4),
+ * so all three agree about which findings a verdict comment counts.
  */
 export function deriveCodeReviewVerdict(findings: readonly Finding[], policy: ReviewPolicy): CodeReviewVerdict {
-  const consequential = findings.filter((f) => !isResolved(f))
+  const consequential = consequentialFindings(
+    findings.map((f) => ({ ...f, state: findingIdState(f.description).state }))
+  )
   return evaluateCodeReview(consequential, policy).outcome === 'blocked' ? 'REQUEST_CHANGES' : 'APPROVE'
 }
 
@@ -539,7 +543,9 @@ export type SecurityInput = TokensInput & {
  * verdict, same as the code-review shape.
  */
 export function deriveSecurityVerdict(findings: readonly Finding[], policy: ReviewPolicy): SecurityVerdict {
-  const consequential = findings.filter((f) => !isResolved(f))
+  const consequential = consequentialFindings(
+    findings.map((f) => ({ ...f, state: findingIdState(f.description).state }))
+  )
   return evaluateSecurityReview(consequential, policy).outcome === 'blocked' ? 'FAIL' : 'PASS'
 }
 
@@ -949,7 +955,7 @@ export function missingPriorIds(priorIds: readonly string[], findings: readonly 
   const carried = new Set(
     findings
       .map((f) => findingIdState(f.description))
-      .filter((p): p is { id: string; state: string } => p !== null && p.state !== null)
+      .filter((p): p is { id: string; state: string } => p.id !== null && p.state !== null)
       .map((p) => p.id)
   )
   return priorIds.filter((id) => !carried.has(id))
@@ -1705,8 +1711,8 @@ function checkRoundTwo(
   // A ruling on the comment-window finding demands every prior id restated, and restating one at
   // its true location must not then be refused by the very filter that demanded it).
   const newlyRaised = findings.filter((f) => {
-    const id = findingIdState(f.description)?.id
-    return id === undefined || !priorIds.includes(id)
+    const id = findingIdState(f.description).id
+    return id === null || !priorIds.includes(id)
   })
   const nonBlocking = newlyRaised.filter((f) => !blockingSeverities.includes(f.severity))
   const changedRanges = computeChangedRanges(pr, judgedHead, resolvedHead)
