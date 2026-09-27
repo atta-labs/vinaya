@@ -12,7 +12,6 @@ import {
   writeEscalation
 } from '@attalabs/aeg-core'
 import { escalationIdFor } from '../../../src/lib/dev-review-loop/pause-resume.js'
-import { tasksExecutionRoot } from '../../../src/lib/run-paths.js'
 import { taskPrReadHandler } from '../../../src/lib/task-tools/pr-read.js'
 import { appendRoleLine, loopLogPathFor } from '../../../src/lib/loop-log.js'
 import { deriveLoopState, type TaskLoopState } from '../../../src/lib/task-status.js'
@@ -68,8 +67,21 @@ function tempDir(): string {
   return dir
 }
 
+/**
+ * The runtime directory's task area, written out by hand rather than imported
+ * from `run-paths.ts`. Two reasons, and the second is load-bearing: these
+ * fixtures assert against a literal layout rather than against the function
+ * under test, and `depth: 'one'` selection counts DIRECT importers — a test
+ * file that imports `run-paths.ts` joins the pre-push selection for every
+ * change to it, and `test-selector.test.ts` pins a ceiling on exactly that
+ * set. Nothing here needs the function, so nothing here pays for it.
+ */
+function tasksExecutionDir(root: string): string {
+  return join(root, 'tasks-execution')
+}
+
 function taskDir(root: string, task: number): string {
-  return join(root, 'tasks-execution', String(task))
+  return join(tasksExecutionDir(root), String(task))
 }
 
 function writeControlFile(root: string, task: number, name: string, body: unknown): void {
@@ -149,7 +161,7 @@ function writePause(root: string, task: number, round: number, reason: PauseReas
     pausedAt: '2026-09-26T00:00:00.000Z',
     escalationId
   })
-  const deps = defaultControlStoreDeps(() => tasksExecutionRoot(root))
+  const deps = defaultControlStoreDeps(() => tasksExecutionDir(root))
   const acquired = acquireOwnership(deps, task, 'conformance-fixture')
   if (!acquired.acquired) throw new Error('fixture: could not acquire the epoch')
   writeEscalation(deps, task, acquired.epoch, {
