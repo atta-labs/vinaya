@@ -789,6 +789,26 @@ describe('reader-resolvable-prose: the spec class checks a root spec, context an
     }
   })
 
+  it('a task number copied out of a plan fails a root spec, and a numbered section does not', () => {
+    const root = fixtureWithConfig('spec-defaults-task-number', null)
+    try {
+      writeFileSync(
+        join(root, 'SPEC.md'),
+        '# Spec\n\nDelivered by task 4.\n\n## Section 3\n\nStep 2 of Part 1 is not a citation.\n'
+      )
+      commitAll(root, 'Chore: add a root spec carrying a task number')
+
+      const { exitCode, stderr } = runReaderBin(root)
+      expect(exitCode).toBe(1)
+      expect(stderr).toContain('a task number')
+      expect(stderr).toContain('task 4')
+      expect(stderr).not.toContain('Section 3')
+      expect(stderr).not.toContain('Step 2')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('proseGates.specPaths adds a folder to the class without replacing the defaults', () => {
     const root = fixtureWithConfig('spec-defaults-configured-paths', {
       proseGates: { specPaths: ['design'] }

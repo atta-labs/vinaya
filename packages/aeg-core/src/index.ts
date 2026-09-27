@@ -355,7 +355,8 @@ export {
   legacySlugPattern,
   parseGlossaryTerms,
   PRODUCT_SLUG_SCOPE,
-  stripNonProse
+  stripNonProse,
+  TASK_NUMBER_PATTERN
 } from './reader-resolvable-prose'
 export type { ProseFileClass, ProseFinding, ProseSourceFile } from './reader-resolvable-prose'
 export {

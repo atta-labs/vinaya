@@ -481,10 +481,16 @@ function main(): void {
         ? 'This page uses AEG/Vinaya-internal vocabulary a first-time reader cannot resolve. Either define the term ' +
           'inline (the same "Term — one-sentence definition" shape the glossary uses) at its first use on this page, ' +
           'or link to the glossary. Do not simply delete the word if the sentence needs it.'
-        : finding.blocking && finding.file.includes('/specs/')
-          ? 'This product spec cites a tranche, an Issue/PR number, or names a document outside this repository as ' +
-            'its authority — a reader with no forge to resolve it against (a fork, an export, someone reading this ' +
-            'spec after the Issue is closed) gets nothing from the citation. Rewrite the sentence to state the fact ' +
+        : // A product-code finding names itself in its own message; every
+          // other blocking finding is a spec-class one. Keyed on the message
+          // rather than on the path, since a spec-class file is no longer
+          // always under a `specs/` folder — a root spec, a root context
+          // document and a decision record are all read by default now.
+          finding.blocking && !finding.message.includes('in product code')
+          ? 'This spec cites a tranche, a task number, an Issue/PR number, or names a document outside this ' +
+            'repository as its authority — a reader with no forge to resolve it against (a fork, an export, someone ' +
+            'reading this spec after the Issue is closed) gets nothing from the citation, and a copied task number ' +
+            'goes stale the moment the plan is renumbered. Rewrite the sentence to state the fact ' +
             'plainly instead. If this spec is pre-existing backlog, list its path in ' +
             '`proseGates.specGrandfather` rather than fixing it as a drive-by in an unrelated PR — do not add a ' +
             'NEW citation to a spec even while it is grandfathered.'

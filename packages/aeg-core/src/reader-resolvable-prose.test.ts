@@ -299,6 +299,58 @@ describe('class 1 — unresolvable references — the gate can see what it bans'
     expect(findings.map((f) => f.file)).toEqual(['design/architecture.md'])
   })
 
+  it('blocks a task number in a spec, beside the Issue numbers and slugs it already blocks', () => {
+    const findings = checkUnresolvableReferences(
+      [{ path: 'SPEC.md', content: 'Delivered by task 4.\nTasks 11 and 12 follow.\nSee task #7 too.' }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    const taskFindings = findings.filter((f) => f.message.includes('a task number'))
+    expect(taskFindings).toHaveLength(3)
+    expect(taskFindings.every((f) => f.blocking)).toBe(true)
+    expect(taskFindings[0]!.message).toContain('"task 4"')
+    expect(taskFindings[1]!.message).toContain('"Tasks 11"')
+    expect(taskFindings[2]!.message).toContain('"task #7"')
+  })
+
+  it("never reads a spec's own numbered structure as a task number", () => {
+    const findings = checkUnresolvableReferences(
+      [
+        {
+          path: 'apps/vinaya/specs/vinaya-spec.md',
+          content: 'Section 3 covers step 2 of Part 1. Multitasking 2 is not a citation, nor is a tasking 3 run.'
+        }
+      ],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings).toEqual([])
+  })
+
+  it('leaves a doctrine page and product code untouched by the task-number rule', () => {
+    const findings = checkUnresolvableReferences(
+      [
+        { path: 'aeg-root/roles/developer.md', content: 'Delivered by task 4.' },
+        { path: 'apps/cli/src/commands/dispatch.ts', content: '// delivered by task 4' }
+      ],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings.filter((f) => f.message.includes('a task number'))).toEqual([])
+  })
+
+  it('a grandfathered spec is exempt from the task-number rule too', () => {
+    const findings = checkUnresolvableReferences(
+      [{ path: 'SPEC.md', content: 'Delivered by task 4.' }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX,
+      [],
+      undefined,
+      ['SPEC.md']
+    )
+    expect(findings).toEqual([])
+  })
+
   it('a spec explicitly grandfathered by path is skipped entirely, even with a real citation', () => {
     const findings = checkUnresolvableReferences(
       [{ path: 'apps/vinaya/specs/vinaya-spec.md', content: 'closed by (#365), see aeg-coherence-v1' }],

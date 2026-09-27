@@ -229,6 +229,24 @@ export const FORGE_NUMBER_PATTERN = /#[0-9]{2,4}/g
 export const TRANCHE_SLUG_VN_PATTERN = /[a-z][a-z-]+-v[0-9]/g
 
 /**
+ * `task 4`/`tasks 12`/`task #4`-shaped — a task's number out of a plan, which
+ * only that plan's own tracker resolves, and which moves the moment the plan
+ * is renumbered. The shape a durable document copies when it repeats a plan
+ * it should have pointed at instead, so it is checked wherever a spec is.
+ *
+ * Deliberately narrow: the word `task` or `tasks` immediately followed by a
+ * number. A document's own numbered structure — "Section 3", "step 2", "Part
+ * 1" — is not a citation and never matches, and neither does a longer word
+ * that merely contains these letters (`multitasking 2`), since the leading
+ * boundary rejects a preceding letter, digit or hyphen. Case-insensitive, so
+ * a heading (`## Task 4`) is caught alongside mid-sentence prose. Group 1 is
+ * the leading boundary character (or start-of-string) and group 2 the
+ * citation itself — the caller reports group 2, so the boundary character
+ * never leaks into a finding's message.
+ */
+export const TASK_NUMBER_PATTERN = /(^|[^a-z0-9-])(tasks?[ \t]+#?[0-9]+)/gi
+
+/**
  * Builds the legacy-slug pattern from the real archived-tranche filenames
  * the adapter reads (mirrors `retired-vocabulary.test.ts`'s `legacySlugs()` —
  * derived from `aeg-root/tranches/completed/*.md`, never a shape guess).
@@ -284,6 +302,17 @@ export function checkUnresolvableReferences(
     { pattern: TRANCHE_SLUG_VN_PATTERN, what: 'an internal tranche slug in product code' }
   ]
 
+  // A spec carries the doctrine-page patterns AND the task-number one: a
+  // durable document that copies a plan's task numbers goes stale the moment
+  // the plan is renumbered, which is the failure this class was widened for.
+  // The doctrine pages themselves are deliberately left out of it — their own
+  // report-only sweep names a much larger standing backlog, and a rule that
+  // blocks belongs where it can be satisfied file by file.
+  const specPatterns: { pattern: RegExp; what: string; group?: number }[] = [
+    ...patterns,
+    { pattern: TASK_NUMBER_PATTERN, what: 'a task number', group: 2 }
+  ]
+
   for (const file of files) {
     const cls = classifyProseFile(file.path, readerFacingPrefix, readerFacingSuffix, shipsPrefix, specPaths)
     if (!cls || cls === 'internal') continue
@@ -300,9 +329,10 @@ export function checkUnresolvableReferences(
     const blocking = cls === 'product' || cls === 'spec'
     const scrubbed =
       cls === 'product' ? stripNonProseForProduct(file.path, file.content) : stripNonProse(file.path, file.content)
-    // A spec is checked with the SAME rules a doctrine page is (O6) — the
-    // full reference pattern set, never the narrower product-code list.
-    const patternsToRun = cls === 'product' ? productPatterns : patterns
+    // A spec is checked with the SAME rules a doctrine page is — the full
+    // reference pattern set, never the narrower product-code list — plus the
+    // task-number rule that applies to this class alone.
+    const patternsToRun = cls === 'product' ? productPatterns : cls === 'spec' ? specPatterns : patterns
     for (const { pattern, what, group } of patternsToRun) {
       pattern.lastIndex = 0
       let match: RegExpExecArray | null = pattern.exec(scrubbed)
