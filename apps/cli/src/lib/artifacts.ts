@@ -32,6 +32,7 @@ import { buildClaudeStopHookOps } from './claude-stop-hook-emitter.js'
 import type { VinayaConfig } from './config.js'
 import { buildGeminiCommandOp } from './gemini-command-emitter.js'
 import type { CreateLabelOp, Op } from './ops.js'
+import { ownVersion } from './own-version.js'
 import { packageRoot } from './package-root.js'
 import type { VendoredVinaya } from './self-host.js'
 
@@ -162,54 +163,14 @@ export function starterConfig(): VinayaConfig {
 
 // ---------------------------------------------------------------------------
 // The version both command emitters pin to — ONE source, shared by the four
-// workflows via `vinayaRun` and the two git hooks via `hookRun`. There is
-// deliberately no second source for a generated artifact's pin: the two
-// surfaces drifting apart is a real defect that was fixed (the hooks
-// pinned, the workflows did not). `doctor.ts` and `quickstart.ts` read the
-// same `package.json` for display, but neither feeds a generated artifact, so
-// neither can cause that drift — nor can `index.ts`'s own `readVersion()`,
-// the third such display reader. The root `VINAYA.md` doctrine pointer
-// (`doctrinePointer`) is deliberately left unpinned — it is a reading-order
-// hint a human runs by hand, not a CI invocation.
-//
-// Why exact, and never bare or `@latest`:
-//
-//   - **Bare is not "latest" — and which way it resolves depends on the
-//     adopter.** Where the generated `vinaya-checks.yml` carries an install
-//     step — which it does only when the adopter declares `ci.setup` — a
-//     devDependency copy of `@attalabs/vinaya` puts `node_modules/.bin/vinaya`
-//     on disk and npx prefers it over the registry. Measured 2026-08-17 in
-//     atta-labs/attalabs, which declares `ci.setup`: the same bare command
-//     resolved 0.8.2 inside that repo and 0.9.0 in /tmp. There, CI's version
-//     was an accident of a devDependency no workflow referenced — change or
-//     drop it and CI jumps to registry latest with no commit and no diff.
-//     An adopter that declares no `ci.setup` gets no install step at all
-//     (`adopterSetupStep` returns `''`), so for them a bare spec resolved
-//     registry latest in all four workflows, not only the archivist.
-//   - **The archivist workflow resolves the other way, and is the sharp end.**
-//     It emits no install step (its jobs spawn no adopter code), so an
-//     unpinned spec there really did mean registry latest — in three jobs
-//     that all hold `issues: write` (two of them `pull-requests: write`, one
-//     `pull-requests: read`), covering between them every push to main
-//     and nightly. A compromised publish of this package would have run with
-//     that token in every adopter, unreviewed. (Origin: a security
-//     review of a real published workflow.)
-//   - **`@latest` is a different product decision** (deliberately floating CI)
-//     and is not what the hooks do.
-//   - For the hooks the pin is additionally load-bearing on npx's cache key —
-//     see the git-hook section below.
-//
-// The cost is the same one the hooks already pay and `upgrade` already exists
-// to settle: the pinned bytes go stale when the CLI is bumped, `doctor` reports
-// that as drift, and `vinaya upgrade` re-pins.
+// workflows via `vinayaRun`, the two git hooks via `hookRun`, and a rendered
+// task brief via `briefCliInvocation`. It lives in `lib/own-version.ts`, whose
+// own comment carries the whole why: why exact, and never bare or `@latest`.
+// Re-exported here because this module was its home before the brief renderer
+// needed it too, and `lib/brief-assembly.ts` cannot import this file without
+// closing an import cycle through the task-tools server.
 // ---------------------------------------------------------------------------
-/** This installed package's own version — the hooks and the workflows pin to it. */
-export function ownVersion(): string {
-  const pkg = JSON.parse(readFileSync(join(packageRoot(import.meta.url), 'package.json'), 'utf-8')) as {
-    version: string
-  }
-  return pkg.version
-}
+export { ownVersion } from './own-version.js'
 
 // ---------------------------------------------------------------------------
 // Workflow files (four, all refuse-if-foreign, all vinaya-prefixed)
@@ -221,7 +182,7 @@ export function ownVersion(): string {
 //     @attalabs/vinaya@<exact-installed-version>`, no build step. An adopter
 //     has no local copy to build and must not pay for a problem they do not
 //     have, so the shape stays npx; the version spec is exact for the reason
-//     in `ownVersion()` above.
+//     in `ownVersion()` (lib/own-version.ts).
 //   - repo that vendors the CLI — build the workspace member and invoke the
 //     built file by path. NEVER `npx` here: npx is the thing that misresolves
 //     (it matches on the package NAME against the workspace before reading any
@@ -397,27 +358,6 @@ ${bunInstallCacheStep()}      # This repo declares the \`@attalabs/vinaya\` work
  */
 function vinayaRun(selfHost: VendoredVinaya | null, args: string): string {
   return selfHost ? `node ${selfHost.bin} ${args}` : `npx --yes @attalabs/vinaya@${ownVersion()} ${args}`
-}
-
-/**
- * How a task brief tells its Developer to invoke the CLI — the brief analogue
- * of `vinayaRun`, reusing the same `selfHost` decision so a brief and a
- * generated hook never disagree about how the CLI is reached in a given
- * repository. A brief that named a path only the authoring repository has was
- * unrunnable for every adopter, and read as spoofed instructions to at least
- * one Developer that received one.
- *
- * The published shape is `vinayaRun`'s, for `ownVersion()`'s reasons.
- *
- * The vendored shape deliberately differs from `vinayaRun`'s `node <bin>`:
- * the brief's first act is `git worktree add`, `dist/` is gitignored, and the
- * fresh worktree is where every command the brief names then runs — so the
- * built file does not exist yet. The source entry — the same
- * `<dir>/src/index.ts` `resolveAuthorRepoSourceEntry` resolves — needs no
- * build and is what the vendoring repository's own briefs have always named.
- */
-export function briefCliInvocation(selfHost: VendoredVinaya | null): string {
-  return selfHost ? `bun ${selfHost.dir}/src/index.ts` : `npx --yes @attalabs/vinaya@${ownVersion()}`
 }
 
 /**

@@ -49,8 +49,8 @@ import {
 import { parseRationaleDeps } from '@attalabs/aeg-forge-state'
 import { createForgeSource } from '@attalabs/vinaya-sources'
 import { type EdgeFactsSubset, type EdgeTaskRef, resolveEdge } from '../checks/edge-resolve.js'
-import { briefCliInvocation } from './artifacts.js'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
+import { briefCliInvocation } from './own-version.js'
 import { packageRoot } from './package-root.js'
 import { detectVendoredVinaya } from './self-host.js'
 
