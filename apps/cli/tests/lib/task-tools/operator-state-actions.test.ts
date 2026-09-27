@@ -96,6 +96,28 @@ function writeControlFile(root: string, task: number, name: string, body: unknow
   writeFileSync(join(dir, name), JSON.stringify(body), 'utf8')
 }
 
+/**
+ * A `task_start` claim as its own store writes it — one file per request
+ * identity, in the unscoped control folder. `startedAt` decides which side of
+ * the start handler's own stale-claim window the claim falls on, so a fresh one
+ * reads as a start coming up and an old one as a start that never did.
+ */
+function writeStartClaim(root: string, task: number, startedAt: string, pid?: number): void {
+  const dir = join(tasksExecutionDir(root), 'unscoped', 'control')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(
+    join(dir, 'start-request-a1b2c3d4e5f60718.json'),
+    JSON.stringify({
+      requestId: 'a1b2c3d4e5f60718',
+      caller: 'principal-1',
+      target: { issue: task },
+      startedAt,
+      ...(pid === undefined ? {} : { pid })
+    }),
+    'utf8'
+  )
+}
+
 function writeDriverLock(root: string, task: number, pid: number): void {
   mkdirSync(taskDir(root, task), { recursive: true })
   writeFileSync(
@@ -243,6 +265,14 @@ const FIXTURES: Record<TaskLoopState['kind'], { build: (root: string) => void; d
   not_started: { build: () => {}, derivable: false },
   no_driver: { build: () => {}, derivable: true },
   running: { build: (root) => writeDriverLock(root, TASK, process.pid), derivable: true },
+  // A start this machine accepted, read on either side of the start handler's
+  // own stale-claim window: fresh (a driver still coming up), and past it with
+  // the process it launched gone (a start that never came up).
+  starting: { build: (root) => writeStartClaim(root, TASK, new Date().toISOString()), derivable: true },
+  start_did_not_come_up: {
+    build: (root) => writeStartClaim(root, TASK, '2026-09-26T00:00:00.000Z', deadPid()),
+    derivable: true
+  },
   paused: { build: (root) => writePause(root, TASK, 2), derivable: true },
   published: { build: (root) => writePublishedRound(root, TASK, 3), derivable: true },
   exited: {
