@@ -646,7 +646,10 @@ describe('devReviewLoop — a refusal/escalation posted before any push ends the
     const body = pauseFiles[0]!.body
     expect(body).toMatch(/^<!-- aeg:loop:paused:escalation -->$/m)
     expect(body).toMatch(/brief is missing tier\/scope\/stop-conditions/)
-    expect(body).toMatch(/vinaya task run/)
+    // The one continuation this pause has, named in a form the reader can run
+    // verbatim — the Issue number in `--issue`, never an unfilled `<tranche>`.
+    expect(body).toContain(`vinaya task run --issue ${world.task}`)
+    expect(body).not.toContain('<tranche>')
 
     const pauseState = JSON.parse(readFileSync(join(controlDir(world), 'pause-state.json'), 'utf8')) as Record<
       string,
@@ -654,7 +657,10 @@ describe('devReviewLoop — a refusal/escalation posted before any push ends the
     >
     expect(pauseState.reason).toBe('escalation')
     expect(pauseState.head).toBe('unknown')
-    expect(pauseState.prNumber).toBe(-1)
+    // No pull request exists, and the record says exactly that: a `-1`
+    // sentinel here read as a real pull request to every consumer and reached
+    // `gh pr view -1`, which no tool could recover from.
+    expect(pauseState.prNumber).toBeNull()
 
     const recordPath = escalationRecordPath(world, 1, 'unknown')
     expect(existsSync(recordPath)).toBe(true)

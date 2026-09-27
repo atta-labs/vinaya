@@ -1,8 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { acquireOwnership, defaultControlStoreDeps, type EscalationInput, writeEscalation } from '@attalabs/aeg-core'
+import {
+  acquireOwnership,
+  defaultControlStoreDeps,
+  type EscalationInput,
+  readResolution,
+  writeEscalation
+} from '@attalabs/aeg-core'
 import type { AgentVendor } from '../../../src/lib/dispatch.js'
 import type { CallerContext } from '../../../src/lib/task-tools/server.js'
 import {
@@ -14,7 +20,12 @@ import {
   type ResumeClaimStore,
   type ResumeRecord
 } from '../../../src/lib/task-tools/resume.js'
-import { isDriverPidAlive, readDriverLock, writePauseState } from '../../../src/lib/dev-review-loop/pause-resume.js'
+import {
+  isDriverPidAlive,
+  readDriverLock,
+  resolveEscalation,
+  writePauseState
+} from '../../../src/lib/dev-review-loop/pause-resume.js'
 
 /**
  * `task_resume` (task-operator-v1 4, O1) driven in-process with injected
@@ -162,8 +173,11 @@ function harness(
   overrides: {
     rulings?: string[]
     newestRulingOrdinal?: number
+    /** Rulings read off the task ISSUE — the only place a pause with no pull request could carry one. Defaults to none, so a test that posts nothing there proves the refusal. */
+    issueRulings?: string[]
+    newestIssueRulingOrdinal?: number
     launch?: (
-      target: { pr: number; agent: AgentVendor; issue: number },
+      target: { pr: number | null; agent: AgentVendor; issue: number },
       meta: { escalationId: string; caller: string }
     ) => LaunchResult | Promise<LaunchResult>
     resolveIssue?: (ref: unknown) => number | null
@@ -171,15 +185,33 @@ function harness(
     now?: () => string
   } = {}
 ) {
-  const launches: Array<{ pr: number; agent: AgentVendor; issue: number }> = []
+  const launches: Array<{ pr: number | null; agent: AgentVendor; issue: number }> = []
+  const prRulingReads: number[] = []
   const events: Array<{ operation: string; target: string; result: string; error_class: string | null }> = []
   const { store, map } = memClaimStore()
   const handler = createTaskResumeHandler({
     runtimeDir: () => outbox,
     resolveIssueForRef: (overrides.resolveIssue as never) ?? (() => ISSUE),
-    fetchRulings: () => overrides.rulings ?? ['LGTM, resume.'],
-    fetchNewestRulingAuthor: () => 'principal-1',
-    fetchNewestRulingOrdinal: () => overrides.newestRulingOrdinal ?? 1,
+    fetchRulings: (pr) => {
+      prRulingReads.push(pr)
+      return overrides.rulings ?? ['LGTM, resume.']
+    },
+    fetchNewestRulingAuthor: (pr) => {
+      prRulingReads.push(pr)
+      return 'principal-1'
+    },
+    fetchNewestRulingOrdinal: (pr) => {
+      prRulingReads.push(pr)
+      return overrides.newestRulingOrdinal ?? 1
+    },
+    fetchIssueRulings: () => overrides.issueRulings ?? [],
+    fetchNewestIssueRulingAuthor: () => 'principal-1',
+    fetchNewestIssueRulingOrdinal: () => overrides.newestIssueRulingOrdinal ?? 0,
+    // The REAL single-consumption write, against this suite's own sandboxed
+    // control store — never the machine-global one, and never a fake: O4's
+    // whole claim is that a second resume is refused by that real guard.
+    resolveEscalation: (task, escalationId, expectedPr, decision, by, from) =>
+      resolveEscalation(task, escalationId, expectedPr, decision, by, from, controlStoreDeps),
     store,
     isPidAlive: overrides.isPidAlive ?? (() => false),
     launch: async (target, meta) => {
@@ -194,7 +226,7 @@ function harness(
         events.push({ operation: e.operation, target: e.target ?? '', result: e.result, error_class: e.error_class })
     }
   })
-  return { handler, launches, map, events }
+  return { handler, launches, map, events, prRulingReads }
 }
 
 describe('task_resume handler', () => {
@@ -242,12 +274,19 @@ describe('task_resume handler', () => {
     ])
   })
 
-  it('refuses when the pause carries no PR yet', async () => {
-    writePause({ prNumber: null as unknown as number })
-    const { handler } = harness()
+  it('refuses when the pause carries no PR and no ruling was posted on its Issue either', async () => {
+    writePause({ prNumber: null })
+    writeEscalationFixture({ pr: null })
+    const { handler, launches, prRulingReads } = harness({ issueRulings: [] })
     const result = await handler({ task: { issue: ISSUE } }, CALLER)
     expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.error.kind).toBe('precondition')
+    if (!result.ok) {
+      expect(result.error.kind).toBe('authority')
+      expect(result.error.message).toContain(`Issue ${ISSUE} carries no Principal ruling comment yet`)
+    }
+    expect(launches).toHaveLength(0)
+    // Never the pull-request read this pause has no number for.
+    expect(prRulingReads).toEqual([])
   })
 
   it('refuses a stale pause — a later round has already published', async () => {
@@ -556,5 +595,179 @@ describe('task_resume handler', () => {
     expect(second.result.outcome).toBe('started') // superseded and relaunched, not replayed
     expect(second.result.escalationId).toBe(first.result.escalationId)
     expect(launches).toHaveLength(2)
+  })
+})
+
+/**
+ * O4 — a pause recorded before its pull request existed. `dev-review-loop
+ * --resume` derives its task from a pull request body and so has no entry for
+ * it at all; the continuation that does exist is `vinaya task run --issue <n>`.
+ * The handler therefore consumes the ruling itself, as this escalation's own
+ * resolution, and only then relaunches — the order that makes a second resume a
+ * replay rather than a second run of the same task.
+ */
+describe('task_resume handler — a pause recorded before its pull request existed', () => {
+  function readResolutionRecord() {
+    return readResolution(controlStoreDeps, ISSUE, `${ISSUE}-1-headsha1`)
+  }
+
+  it('consumes the Issue ruling as the resolution, then relaunches through `task run`', async () => {
+    writePause({ prNumber: null })
+    writeEscalationFixture({ pr: null })
+    const { handler, launches, prRulingReads } = harness({
+      issueRulings: ['Ruling: proceed as briefed.'],
+      newestIssueRulingOrdinal: 1
+    })
+    const result = await handler({ task: { issue: ISSUE } }, CALLER)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.result.outcome).toBe('started')
+    // Reported as having no pull request, never as a number nothing was opened
+    // against — and the resolution names where its decision was read from.
+    expect(result.result.pr).toBeNull()
+    expect(result.result.authenticatedBy).toBe('principal-1')
+    expect(result.result.authenticatedFrom).toBe(`issue-${ISSUE}-1`)
+    // The launch target carries no pull request, so `defaultResumeLaunch`
+    // builds the `task run --issue` argv rather than `--resume <pr>`.
+    expect(launches).toEqual([{ pr: null, agent: 'claude', issue: ISSUE }])
+    expect(prRulingReads).toEqual([])
+
+    // Consumed durably, by this handler — nothing else was going to.
+    const consumed = readResolutionRecord()
+    expect(consumed.status).toBe('ok')
+    if (consumed.status !== 'ok') return
+    expect(consumed.value.decision).toBe('resume')
+    expect(consumed.value.authenticatedBy).toBe('principal-1')
+    expect(consumed.value.authenticatedFrom).toBe(`issue-${ISSUE}-1`)
+  })
+
+  it('consumes the ruling BEFORE launching — a launch that never confirms leaves the resolution spent, and says so', async () => {
+    writePause({ prNumber: null })
+    writeEscalationFixture({ pr: null })
+    const { handler } = harness({
+      issueRulings: ['Ruling: proceed as briefed.'],
+      newestIssueRulingOrdinal: 1,
+      launch: () => ({ status: 'exited', error: new Error('process exited before its driver confirmed alive') })
+    })
+    const result = await handler({ task: { issue: ISSUE } }, CALLER)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.kind).toBe('infrastructure')
+      expect(result.error.message).toContain('Its ruling was already consumed')
+      expect(result.error.message).toContain(`a new Principal ruling on Issue ${ISSUE}`)
+    }
+    expect(readResolutionRecord().status).toBe('ok')
+  })
+
+  it('refuses a second resume of the same escalation as a replay, launching nothing twice', async () => {
+    writePause({ prNumber: null })
+    writeEscalationFixture({ pr: null })
+    const { handler, launches } = harness({
+      issueRulings: ['Ruling: proceed as briefed.'],
+      newestIssueRulingOrdinal: 1
+    })
+    const first = await handler({ task: { issue: ISSUE } }, CALLER)
+    expect(first.ok).toBe(true)
+
+    const second = await handler({ task: { issue: ISSUE } }, CALLER)
+    expect(second.ok).toBe(false)
+    if (!second.ok) {
+      expect(second.error.kind).toBe('precondition')
+      expect(second.error.message).toContain('replay refused')
+      expect(second.error.message).toContain('A new Principal ruling')
+    }
+    expect(launches).toHaveLength(1)
+  })
+
+  it('refuses when the escalation records a real pull request the pause does not — never resolving the wrong target', async () => {
+    writePause({ prNumber: null })
+    writeEscalationFixture({ pr: PR })
+    const { handler, launches } = harness({
+      issueRulings: ['Ruling: proceed as briefed.'],
+      newestIssueRulingOrdinal: 1
+    })
+    const result = await handler({ task: { issue: ISSUE } }, CALLER)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error.kind).toBe('precondition')
+    expect(launches).toHaveLength(0)
+    expect(readResolutionRecord().status).not.toBe('ok')
+  })
+
+  it('rejects a stale Issue ruling whose ordinal has not advanced past the one this escalation was raised under', async () => {
+    writePause({ prNumber: null })
+    writeEscalationFixture({ pr: null, rulingOrdinal: 2 })
+    const { handler, launches } = harness({
+      issueRulings: ['An older ruling, already accounted for.'],
+      newestIssueRulingOrdinal: 2
+    })
+    const result = await handler({ task: { issue: ISSUE } }, CALLER)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.kind).toBe('authority')
+      expect(result.error.message).toContain('no newer than the ruling this escalation was already raised under')
+    }
+    expect(launches).toHaveLength(0)
+    expect(readResolutionRecord().status).not.toBe('ok')
+  })
+})
+
+describe('defaultResumeLaunch — the argv each pause shape continues through', () => {
+  it('launches `task run --issue <n>` for a pause with no pull request, and `dev-review-loop --resume <pr>` otherwise', async () => {
+    // One recorder per launch, each writing to its OWN log — never one shared
+    // append target two concurrently-alive children both write into, whose
+    // interleaving is not this case's subject. The log path is baked into the
+    // script rather than passed through the environment: a confined `bun` reads
+    // its own `process.env` back empty, so an env-carried path is not a
+    // reliable channel to a spawned child here. `sleep` outlasts the
+    // confirm-wait below on purpose — the child must still be alive when that
+    // wait ends, which is the `'starting'` outcome.
+    function recorderWriting(logPath: string, name: string): string {
+      const script = join(sandbox, name)
+      writeFileSync(script, `#!/bin/sh\nprintf '%s\\n' "$@" > '${logPath}'\nsleep 3\n`, { mode: 0o755 })
+      return script
+    }
+    async function argvOf(target: { pr: number | null; agent: AgentVendor }, name: string): Promise<string[]> {
+      const logPath = join(sandbox, `${name}.log`)
+      const prev = process.env[RESUME_COMMAND_ENV]
+      process.env[RESUME_COMMAND_ENV] = recorderWriting(logPath, `${name}.sh`)
+      try {
+        // A real detached spawn, its own bounded confirm-wait cut to a fraction
+        // of a second: no driver lock is ever written for this fixture, so the
+        // launch resolves `'starting'` — alive, which is all this case needs.
+        const launched = await defaultResumeLaunch(
+          { ...target, issue: ISSUE },
+          { escalationId: `${ISSUE}-1-headsha1`, caller: 'operator-1' },
+          outbox,
+          300
+        )
+        expect(launched.status).toBe('starting')
+        // The launch resolves on its own bounded wait, which can end before a
+        // just-spawned child has finished exec'ing and written anything —
+        // waited for here rather than assumed, so this case never reads an
+        // empty (or half-written) log as a wrong argv.
+        const written = () => (existsSync(logPath) ? readFileSync(logPath, 'utf8').trim() : '')
+        for (let i = 0; i < 200 && written() === ''; i++) await new Promise((r) => setTimeout(r, 25))
+        return written().split('\n')
+      } finally {
+        if (prev === undefined) delete process.env[RESUME_COMMAND_ENV]
+        else process.env[RESUME_COMMAND_ENV] = prev
+      }
+    }
+
+    expect(await argvOf({ pr: null, agent: 'claude' }, 'no-pr')).toEqual([
+      'task',
+      'run',
+      '--issue',
+      String(ISSUE),
+      '--agent',
+      'claude'
+    ])
+    expect(await argvOf({ pr: PR, agent: 'codex' }, 'with-pr')).toEqual([
+      'dev-review-loop',
+      '--resume',
+      String(PR),
+      '--agent',
+      'codex'
+    ])
   })
 })

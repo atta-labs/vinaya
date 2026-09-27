@@ -10,7 +10,11 @@ import {
   type EscalationInput,
   writeEscalation
 } from '@attalabs/aeg-core'
-import { ReplayedResolutionError, writePauseState } from '../../src/lib/dev-review-loop/pause-resume.js'
+import {
+  ReplayedResolutionError,
+  resolveEscalation,
+  writePauseState
+} from '../../src/lib/dev-review-loop/pause-resume.js'
 import { tasksExecutionRoot } from '../../src/lib/run-paths.js'
 import { createTaskCancelHandler } from '../../src/lib/task-tools/cancel.js'
 import { createTaskResumeHandler, type ResumeClaimStore, type ResumeRecord } from '../../src/lib/task-tools/resume.js'
@@ -674,13 +678,17 @@ export function defineConformanceSuite(runtime: 'claude' | 'codex', invocation: 
         // from whatever process wrote the resolution above, the same as a
         // real process restart.
         const { store: freshStore } = memClaimStore()
-        const launches: Array<{ pr: number; agent: string }> = []
+        const launches: Array<{ pr: number | null; agent: string }> = []
         const resumeHandler = createTaskResumeHandler({
           runtimeDir: () => sb.runtimeDir,
           resolveIssueForRef: () => ISSUE,
           fetchRulings: () => ['LGTM, resume.'],
           fetchNewestRulingAuthor: () => 'principal-1',
           fetchNewestRulingOrdinal: () => 1,
+          fetchIssueRulings: () => [],
+          fetchNewestIssueRulingAuthor: () => null,
+          fetchNewestIssueRulingOrdinal: () => 0,
+          resolveEscalation,
           store: freshStore,
           isPidAlive: () => false,
           launch: (target) => {
