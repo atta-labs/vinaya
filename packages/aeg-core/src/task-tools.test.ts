@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   isTaskToolName,
+  TASK_START_TOOL,
   TASK_TOOL_CATALOG,
   TASK_TOOL_ERROR_KINDS,
   TASK_TOOL_NAMES,
@@ -45,6 +46,40 @@ describe('TASK_TOOL_CATALOG', () => {
     for (const tool of TASK_TOOL_CATALOG) {
       expect(taskToolByName(tool.name).handlerBinding.kind).toBe('bound')
     }
+  })
+
+  // The catalog text is the only documentation the Operator is served for this
+  // tool, and the handler continues more states than a fresh start: an exited
+  // or driverless run, a pause whose ruling was already consumed as a resume,
+  // an `infrastructure` pause inside the loop's own retry bound. Text that
+  // denied that stranded a run with no working action.
+  //
+  // The refusal half is where this text went wrong twice, so both corrections
+  // are pinned too. The continuation this tool launches is NOT as strict as
+  // `task_resume`: it accepts any ruling standing on the pull request rather
+  // than one newer than the pause's own, and it cannot reach a pause recorded
+  // before any pull request existed, so that pause is continued by the
+  // fresh-attach path with its escalation unresolved. Text that promised a
+  // flat refusal of every awaiting-decision pause described a gate that is not
+  // there. And the loop's bare no-ruling allowance covers `infrastructure`
+  // only, never `stale_driver` — naming the bound without naming the reason
+  // over-promised by one pause reason.
+  it('task_start says which runs it continues, who owns a pause it will not, and where its own path is weaker', () => {
+    const text = `${TASK_START_TOOL.purpose}\n${TASK_START_TOOL.boundaries}`
+    expect(text).toMatch(/continue/i)
+    expect(text).toMatch(/exited or driverless run/)
+    expect(text).toMatch(/already consumed as a resume/)
+    expect(text).toMatch(/`infrastructure` pause still under the loop’s own retry bound/)
+    expect(text).toMatch(/`stale_driver` pause is outside that allowance/)
+    expect(text).toMatch(/A pause still awaiting a decision belongs to `task_resume`/)
+    expect(text).toMatch(/NEWER than the one the pause was already raised under/)
+    expect(text).toMatch(/does not make that check itself/)
+    expect(text).toMatch(/before any pull request existed/)
+    expect(text).toMatch(/resolved as cancel is `task_cancel`|`task_cancel` reports a pause already resolved as cancel/)
+    // The two claims the handler falsified, in the order they were written:
+    // start-only, then a flat refusal of every awaiting-decision pause.
+    expect(text).not.toContain('it does not continue a paused one')
+    expect(text).not.toContain('never this tool’s to continue')
   })
 
   it('taskToolByName throws for an unknown name', () => {
