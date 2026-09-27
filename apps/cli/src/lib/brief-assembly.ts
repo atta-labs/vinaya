@@ -49,7 +49,7 @@ import {
 import { parseRationaleDeps } from '@attalabs/aeg-forge-state'
 import { createForgeSource } from '@attalabs/vinaya-sources'
 import { type EdgeFactsSubset, type EdgeTaskRef, resolveEdge } from '../checks/edge-resolve.js'
-import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
+import { loadConfig, loadTrustAnchorConfig, resolveGateCutovers, resolvePrincipalAllowlist } from './config.js'
 import { briefCliInvocation } from './own-version.js'
 import { packageRoot } from './package-root.js'
 import { detectVendoredVinaya } from './self-host.js'
@@ -594,6 +594,10 @@ export async function assembleAndRenderBrief(
     testPlan,
     stopConditions,
     documentation,
+    // An absent `gateCutovers` key resolves to no cutover, so the renderer's
+    // missing-`## Objectives`/`## Documentation` refusal grandfathers exactly
+    // the class the Issue gate does (O1); this repo restates its own (O2).
+    cutovers: resolveGateCutovers(loadConfig()),
     dispatchReady: gate.ready,
     dispatchBlockers: gate.blockers,
     surfaceFiles,
@@ -858,6 +862,8 @@ export async function assembleAndRenderBriefForIssue(
     testPlan,
     stopConditions,
     documentation,
+    // See the tranche-task facts above — absent `gateCutovers` → no cutover (O1).
+    cutovers: resolveGateCutovers(loadConfig()),
     dispatchReady: gate.ready,
     dispatchBlockers: gate.blockers,
     surfaceFiles,

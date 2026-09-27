@@ -270,18 +270,27 @@ export function isIssueNotFoundError(err: unknown): boolean {
  * substitutes its own fetcher for the `'issue'` case rather than this
  * function reading anything itself.
  *
- * `cutoverIssue` is `OBJECTIVES_SINCE_ISSUE` (`issue-validation.ts`) — passed
- * in, not imported, because `issue-validation.ts` already imports FROM this
- * module (`objectivesOf`); importing the constant back would be circular.
+ * `cutoverIssue` is the resolved Objectives cutover (`gateCutovers.objectivesSinceIssue`,
+ * resolved by `resolveGateCutovers`, `apps/cli/src/lib/config.ts`) — passed in,
+ * not imported, because `issue-validation.ts` already imports FROM this module
+ * (`objectivesOf`); importing the constant back would be circular. A number
+ * grandfathers Issues below it; `null` means NO cutover — objectives grading
+ * applies to every Issue, from 1 (a repository that declares no `gateCutovers`,
+ * O1).
  */
 export type ObjectivesSource = { kind: 'issue'; issue: number } | { kind: 'body' } | { kind: 'none' }
 
-export function resolveObjectivesSource(prBody: string, issue: number | null, cutoverIssue: number): ObjectivesSource {
+export function resolveObjectivesSource(
+  prBody: string,
+  issue: number | null,
+  cutoverIssue: number | null
+): ObjectivesSource {
   // Checked first and unconditionally: a pre-cutover Issue is `'none'`
   // regardless of what the PR body itself carries — a pre-cutover PR must
   // keep passing unchanged, never picking up a body-level objectives list
-  // the Issue-linked case was never subject to.
-  if (issue !== null && issue < cutoverIssue) return { kind: 'none' }
+  // the Issue-linked case was never subject to. A `null` cutover means no
+  // grandfathering, so this branch never fires and every Issue is graded.
+  if (issue !== null && cutoverIssue !== null && issue < cutoverIssue) return { kind: 'none' }
   if (issue !== null) return { kind: 'issue', issue }
   if (hasObjectivesHeading(prBody)) return { kind: 'body' }
   return { kind: 'none' }

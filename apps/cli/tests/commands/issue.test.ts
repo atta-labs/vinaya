@@ -335,7 +335,10 @@ describe('vinaya issue edit --validate-only — URL-form ref reaches the Objecti
   // `parseIssueNumberFromRef`'s number, not just `null`, decides the
   // cutover through the real command, not only at the unit level.
   const OBJECTIVES_CONFIG = {
-    briefSchema: { issue: { sections: [{ builtin: 'issueRationale' }, { builtin: 'objectives' }] } }
+    briefSchema: { issue: { sections: [{ builtin: 'issueRationale' }, { builtin: 'objectives' }] } },
+    // The Objectives cutover now comes from config (an absent key = no cutover,
+    // O1); this repo's historical value makes the grandfather test below hold.
+    gateCutovers: { objectivesSinceIssue: 404 }
   }
   let cwd: string
   let ghDir: string
@@ -477,7 +480,11 @@ describe('vinaya issue create --validate-only — briefSections builtin', () => 
 
 describe('vinaya issue edit --validate-only — briefSections builtin reaches the cutover end-to-end', () => {
   const BRIEF_SECTIONS_CONFIG = {
-    briefSchema: { issue: { sections: [{ builtin: 'issueRationale' }, { builtin: 'briefSections' }] } }
+    briefSchema: { issue: { sections: [{ builtin: 'issueRationale' }, { builtin: 'briefSections' }] } },
+    // The brief-sections/documentation cutovers now come from config (an absent
+    // key = no cutover, O1); this repo's historical values make the two
+    // grandfather tests below (425, 625) hold.
+    gateCutovers: { briefSectionsSinceIssue: 426, documentationSinceIssue: 626 }
   }
   let cwd: string
   let ghDir: string

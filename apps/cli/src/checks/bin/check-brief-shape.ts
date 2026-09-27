@@ -19,7 +19,6 @@
 import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
 import {
-  BRIEF_RULES_SINCE_PR,
   buildConsumersOf as buildConsumersOfShared,
   checkBriefSections,
   extractIssue,
@@ -28,7 +27,6 @@ import {
   isIssueNotFoundError,
   isTaskBranch,
   type Objective,
-  OBJECTIVES_SINCE_ISSUE,
   type PackageManifest,
   objectivesOf,
   partitionBriefErrorsByRollout,
@@ -36,7 +34,7 @@ import {
   resolveNewestFrozenBrief
 } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
-import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
+import { loadConfig, loadTrustAnchorConfig, resolveGateCutovers, resolvePrincipalAllowlist } from '../../lib/config'
 
 const CHECK_NAME = 'brief-shape'
 
@@ -159,8 +157,9 @@ type ObjectivesResolution =
 /**
  * Same applicability rule `verify-brief.ts`'s `resolveIssueObjectives`
  * uses — `applies: false` skips the objectives checks entirely: a task
- * branch whose `Closes #N` is missing/malformed, an Issue below
- * `OBJECTIVES_SINCE_ISSUE`, a standalone brief with no `## Objectives`
+ * branch whose `Closes #N` is missing/malformed, an Issue below the resolved
+ * Objectives cutover (`objectivesSinceIssue`; `null` = no cutover, every Issue
+ * graded, O1), a standalone brief with no `## Objectives`
  * section at all, or an Issue number that does not resolve (a fixture's
  * placeholder `Closes #NNN`, a deleted Issue) — additive exemptions, never
  * a new hard-failure mode for a resource nothing required before this
@@ -169,14 +168,19 @@ type ObjectivesResolution =
  * not be run, not that it passed, and CI must report that rather than
  * silently passing on exactly the failure mode most likely in practice.
  */
-function resolveObjectivesApplicability(prBody: string, taskBranch: boolean): ObjectivesResolution {
+function resolveObjectivesApplicability(
+  prBody: string,
+  taskBranch: boolean,
+  objectivesSinceIssue: number | null
+): ObjectivesResolution {
   if (!taskBranch) {
     if (!hasObjectivesHeading(prBody)) return { applies: false }
     const own = objectivesOf(prBody)
     return { applies: true, objectives: own.ok ? own.objectives : [] }
   }
   const { issue } = extractIssue(prBody)
-  if (issue === null || issue < OBJECTIVES_SINCE_ISSUE) return { applies: false }
+  // A `null` cutover means no grandfathering — every Issue is graded (O1).
+  if (issue === null || (objectivesSinceIssue !== null && issue < objectivesSinceIssue)) return { applies: false }
   try {
     const parsed = objectivesOf(fetchIssueBody(issue))
     // A malformed section on an at/above-cutover Issue is `checkIssueObjectives`'s
@@ -207,6 +211,13 @@ function main(): void {
   const branch = process.env.BRANCH ?? ''
   const taskBranch = isTaskBranch(branch)
 
+  // The resolved gate cutovers from the working-tree config — an absent
+  // `gateCutovers` key resolves every field to `null` (no cutover: the gates
+  // apply from Issue/PR 1, O1); this repo restates its own historical values
+  // (O2). Read from `loadConfig`, not the trust anchor, for the reason in
+  // `resolveGateCutovers`'s own doc comment.
+  const gateCutovers = resolveGateCutovers(loadConfig())
+
   // A non-task branch whose body isn't brief-shaped has no brief to grade —
   // an ordinary one-line dependency-bump PR must not be forced to grow one
   // (mirrors verify-brief.ts's identical bypass).
@@ -228,7 +239,7 @@ function main(): void {
   }
   const gradedBody = gradedBodyResolution.body
 
-  const objectivesResolution = resolveObjectivesApplicability(prBody, taskBranch)
+  const objectivesResolution = resolveObjectivesApplicability(prBody, taskBranch, gateCutovers.objectivesSinceIssue)
   if (objectivesResolution.applies && 'fetchError' in objectivesResolution) {
     emitCheckError({
       schema: CHECK_SCHEMA_VERSION,
@@ -246,20 +257,22 @@ function main(): void {
     issueObjectives: objectivesResolution.applies ? objectivesResolution.objectives : undefined
   })
 
-  // Grandfathering (task 10 round-2 ruling addendum 1) — a PR opened before
-  // BRIEF_RULES_SINCE_PR predates the four rules `checkBriefSections` added
-  // this task; a finding from one of them is informational there, never a
-  // failure. `verify-brief.ts` (no PR number, authoring time) has no such
-  // exemption — grandfathering is a CI rollout concern, not a grammar
-  // relaxation. A missing/unparseable PR_NUMBER parses to `null`, which
-  // `partitionBriefErrorsByRollout` treats as NOT grandfathered (fail-closed).
+  // Grandfathering (task 10 round-2 ruling addendum 1) — a PR opened before a
+  // configured rollout cutover predates the rules `checkBriefSections` added; a
+  // finding from one of them is informational there, never a failure.
+  // `verify-brief.ts` (no PR number, authoring time) has no such exemption —
+  // grandfathering is a CI rollout concern, not a grammar relaxation. The
+  // cutovers come from `gateCutovers` (an absent key → all `null` → nothing
+  // grandfathered, every finding blocks from PR 1, O1). A missing/unparseable
+  // PR_NUMBER parses to `null`, which `partitionBriefErrorsByRollout` treats as
+  // NOT grandfathered (fail-closed).
   const parsedPrNumber = Number.parseInt(process.env.PR_NUMBER ?? '', 10)
   const prNumber = Number.isInteger(parsedPrNumber) ? parsedPrNumber : null
-  const { blocking, info } = partitionBriefErrorsByRollout(errors, prNumber)
+  const { blocking, info } = partitionBriefErrorsByRollout(errors, prNumber, gateCutovers)
 
   if (info.length > 0) {
     process.stdout.write(
-      `${CHECK_NAME}: PR #${prNumber} is below BRIEF_RULES_SINCE_PR #${BRIEF_RULES_SINCE_PR} — ${info.length} finding(s) grandfathered, not a failure:\n${info.join('\n')}\n`
+      `${CHECK_NAME}: PR #${prNumber} predates a configured gate cutover — ${info.length} finding(s) grandfathered, not a failure:\n${info.join('\n')}\n`
     )
   }
 

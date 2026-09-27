@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import {
   checkBriefSections,
   checkConsumerTests,
+  NO_GATE_CUTOVERS,
   objectivesOf,
   parseIssueParts,
   parseIssueStopConditions,
@@ -68,6 +69,17 @@ function baseFacts(overrides: Partial<BriefFacts> = {}): BriefFacts {
     },
     stopConditions: ['If the fixture ever needs a second file, STOP and escalate severity: execution.'],
     documentation: { kind: 'sources', sources: [] },
+    // This repo's historical cutovers (`gateCutovers` in its own
+    // `vinaya.config.json`) — the grandfather tests below assert the render
+    // refusal against these; a separate test overrides them to all-`null` (no
+    // cutover) to assert the O1 render behaviour.
+    cutovers: {
+      objectivesSinceIssue: 404,
+      briefSectionsSinceIssue: 426,
+      documentationSinceIssue: 626,
+      briefRulesSincePr: 394,
+      agentBoxesRefusedSincePr: 396
+    },
     dispatchReady: true,
     dispatchBlockers: [],
     surfaceFiles: [
@@ -187,6 +199,13 @@ describe('renderBrief', () => {
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.brief).not.toContain('## Objectives')
+  })
+
+  it('with NO cutover (all `null`, O1), refuses a low-numbered Issue with no `## Objectives` section', () => {
+    const result = renderBrief(baseFacts({ objectives: [], issue: 3, cutovers: NO_GATE_CUTOVERS }), '')
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.missing.join(' ')).toMatch(/Objectives/)
   })
 
   it('emits the `## Objectives` section between the header and §2, copied from the Issue verbatim', () => {

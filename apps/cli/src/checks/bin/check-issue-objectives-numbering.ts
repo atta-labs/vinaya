@@ -14,6 +14,7 @@
 
 import { checkIssueObjectives } from '@attalabs/aeg-core'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
+import { loadConfig, resolveGateCutovers } from '../../lib/config'
 import { readIssueCheckEnv } from '../issue-check-env'
 
 const CHECK_NAME = 'issue-objectives-numbering'
@@ -22,7 +23,10 @@ function main(): void {
   const { body, issueNumber } = readIssueCheckEnv()
   if (!body) process.exit(0)
 
-  const result = checkIssueObjectives(body, issueNumber)
+  // An absent `gateCutovers.objectivesSinceIssue` resolves to `null` (no
+  // cutover — grade every Issue from 1, O1); this repo restates its own (O2).
+  const { objectivesSinceIssue } = resolveGateCutovers(loadConfig())
+  const result = checkIssueObjectives(body, issueNumber, objectivesSinceIssue)
   if (result.status === 'pass') process.exit(0)
 
   for (const message of result.errors) {

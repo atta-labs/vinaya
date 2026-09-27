@@ -532,6 +532,12 @@ export const COMMAND_WORDS = ['export', 'bun', 'gh', 'git', 'grep', 'sed', 'cat'
  * pre-dispatch) has no PR number and applies all four unconditionally —
  * grandfathering is a CI-only rollout concern, not a grammar relaxation
  * (round-2 ruling addendum 1).
+ *
+ * Now this repository's own historical value, exported as the DEFAULT for
+ * `partitionBriefErrorsByRollout`'s `cutovers`, not the value the gate reads:
+ * the cutover is `vinaya.config.json`'s optional `gateCutovers.briefRulesSincePr`
+ * (absent → `null` → no grandfathering, block from PR 1, O1), restated as this
+ * repo's own value (O2).
  */
 export const BRIEF_RULES_SINCE_PR = 394
 
@@ -546,6 +552,12 @@ export const BRIEF_RULES_SINCE_PR = 394
  * (authoring time, pre-dispatch) has no PR number and applies the rule
  * unconditionally, same grandfathering-is-CI-only posture as
  * `BRIEF_RULES_SINCE_PR`.
+ *
+ * Now this repository's own historical value, exported as a DEFAULT for
+ * `partitionBriefErrorsByRollout`'s `cutovers`, not the value the gate reads:
+ * the cutover is `vinaya.config.json`'s optional
+ * `gateCutovers.agentBoxesRefusedSincePr` (absent → `null` → no grandfathering,
+ * block from PR 1, O1), restated as this repo's own value (O2).
  */
 export const AGENT_BOXES_REFUSED_SINCE_PR = 396
 
@@ -569,36 +581,68 @@ export function checkNoAgentBoxes(prBody: string): BriefSectionResult {
   }
 }
 
-/**
- * True for an error message produced by one of the five grandfatherable
- * rules below (the original four, plus `checkNoAgentBoxes`) — classified by
- * each rule's own distinct message prefix, since `checkBriefSections`
- * aggregates every sub-check's errors into one flat `string[]` and this is
- * the only reader that ever needs to tell them apart from the rest.
- */
-export function isGrandfatherableBriefRuleError(message: string): boolean {
-  return rolloutThresholdFor(message) !== null
-}
+/** Which rollout rule an error message belongs to (by its distinct prefix), or `null` for an always-blocking message no rollout covers. */
+type BriefRolloutRule = 'briefRules' | 'agentBoxes'
 
-/**
- * The rollout constant a given error message is grandfathered against, or
- * `null` for a message this rollout scheme does not cover (always blocking,
- * on every PR). Two thresholds exist today (`BRIEF_RULES_SINCE_PR`,
- * `AGENT_BOXES_REFUSED_SINCE_PR`) — a message is matched to whichever rule
- * produced it, never a single global cutover, so a later third threshold
- * can be added here without touching either existing one's grandfather
- * window.
- */
-function rolloutThresholdFor(message: string): number | null {
+function rolloutRuleFor(message: string): BriefRolloutRule | null {
   if (
     message.startsWith('brief-validation unpinned code claim:') ||
     message.startsWith('brief-validation commands carry output:') ||
     message.startsWith('brief-validation consumer tests:') ||
     message.startsWith('brief-validation defeat cases:')
   ) {
-    return BRIEF_RULES_SINCE_PR
+    return 'briefRules'
   }
-  if (message.startsWith('brief-validation no agent boxes:')) return AGENT_BOXES_REFUSED_SINCE_PR
+  if (message.startsWith('brief-validation no agent boxes:')) return 'agentBoxes'
+  return null
+}
+
+/**
+ * True for an error message produced by one of the five grandfatherable
+ * rules below (the original four, plus `checkNoAgentBoxes`) — classified by
+ * each rule's own distinct message prefix, since `checkBriefSections`
+ * aggregates every sub-check's errors into one flat `string[]`. A pure
+ * classification of the message, independent of any actual cutover value.
+ */
+export function isGrandfatherableBriefRuleError(message: string): boolean {
+  return rolloutRuleFor(message) !== null
+}
+
+/**
+ * The two PR rollout cutovers, `null` meaning NO cutover for that rule (its
+ * findings block on every PR, from PR 1 — a repository that declares no
+ * `gateCutovers`, O1). Resolved from `vinaya.config.json`'s optional
+ * `gateCutovers` key by `resolveGateCutovers` (`apps/cli/src/lib/config.ts`)
+ * and passed into `partitionBriefErrorsByRollout`; this module reads no config.
+ */
+export type BriefRolloutCutovers = {
+  briefRulesSincePr: number | null
+  agentBoxesRefusedSincePr: number | null
+}
+
+/**
+ * This repository's own historical rollout cutovers — the DEFAULT for a caller
+ * that does not resolve config (a test). Every enforcement path
+ * (`check-brief-shape.ts`) passes the resolved values, which are `null` when
+ * the key is absent.
+ */
+const DEFAULT_BRIEF_ROLLOUT_CUTOVERS: BriefRolloutCutovers = {
+  briefRulesSincePr: BRIEF_RULES_SINCE_PR,
+  agentBoxesRefusedSincePr: AGENT_BOXES_REFUSED_SINCE_PR
+}
+
+/**
+ * The rollout cutover a given error message is grandfathered against, or
+ * `null` — either because the message belongs to no rollout rule (always
+ * blocking), or because that rule's own cutover is `null` (no cutover
+ * configured, so nothing below it is grandfathered). A message is matched to
+ * whichever rule produced it, never a single global cutover, so a later third
+ * threshold can be added without touching either existing one's window.
+ */
+function rolloutThresholdFor(message: string, cutovers: BriefRolloutCutovers): number | null {
+  const rule = rolloutRuleFor(message)
+  if (rule === 'briefRules') return cutovers.briefRulesSincePr
+  if (rule === 'agentBoxes') return cutovers.agentBoxesRefusedSincePr
   return null
 }
 
@@ -606,7 +650,11 @@ function rolloutThresholdFor(message: string): number | null {
  * Splits `checkBriefSections`'s flat error list into `blocking` (fails the
  * check) and `info` (printed, never a failure) — the CI shim
  * (`check-brief-shape.ts`) is the only caller, but the split is a pure
- * function of `(errors, prNumber)` so it is unit-testable directly.
+ * function of `(errors, prNumber, cutovers)` so it is unit-testable directly.
+ *
+ * `cutovers` is the resolved rollout cutovers; a `null` field means that
+ * rule's findings are never grandfathered (block from PR 1, O1). Defaults to
+ * this repo's historical constants for a caller that does not resolve config.
  *
  * `prNumber === null` (no `PR_NUMBER`, or an unparseable one) is NOT
  * grandfathered — only a real, parsed number below a message's own
@@ -616,12 +664,13 @@ function rolloutThresholdFor(message: string): number | null {
  */
 export function partitionBriefErrorsByRollout(
   errors: string[],
-  prNumber: number | null
+  prNumber: number | null,
+  cutovers: BriefRolloutCutovers = DEFAULT_BRIEF_ROLLOUT_CUTOVERS
 ): { blocking: string[]; info: string[] } {
   const blocking: string[] = []
   const info: string[] = []
   for (const e of errors) {
-    const threshold = rolloutThresholdFor(e)
+    const threshold = rolloutThresholdFor(e, cutovers)
     const grandfathered = threshold !== null && prNumber !== null && prNumber < threshold
     ;(grandfathered ? info : blocking).push(e)
   }

@@ -21,15 +21,13 @@
 
 import { packagesNamedIn } from './brief-validation'
 import { deriveSection7 } from './derive-section7'
+import type { GateCutovers } from './gate-cutovers'
 import {
-  BRIEF_SECTIONS_SINCE_ISSUE,
-  DOCUMENTATION_SINCE_ISSUE,
   globCoversPath,
   type IssueDocumentation,
   type IssuePart,
   type IssueSurface,
-  type IssueTestPlan,
-  OBJECTIVES_SINCE_ISSUE
+  type IssueTestPlan
 } from './issue-validation'
 import { type Objective, renderObjectives } from './objectives'
 import { applyTierFloor, deriveTierFromDiff, readTierFromPrBody } from './pr-tier'
@@ -252,6 +250,16 @@ export type BriefFacts = {
    * legitimate explicit opt-out and is rendered, never treated as absent.
    */
   documentation: IssueDocumentation
+  /**
+   * The resolved gate cutovers (`resolveGateCutovers`, `apps/cli/src/lib/config.ts`).
+   * The renderer's missing-fact refusal for a missing `## Objectives`/
+   * `## Documentation` section grandfathers exactly the same class the Issue
+   * gate itself does — an Issue below the cutover legitimately has no such
+   * section — so the two never disagree. A `null` field means NO cutover: the
+   * section is expected on every Issue, from 1 (a repository that declares no
+   * `gateCutovers`, O1).
+   */
+  cutovers: GateCutovers
   dispatchReady: boolean
   dispatchBlockers: string[]
   surfaceFiles: SurfaceFileFact[]
@@ -869,6 +877,11 @@ function renderSection12(facts: BriefFacts): string {
  * is absent: never a default, per this rule that a brief states no
  * fact it did not actually derive.
  */
+/** Whether an Issue is at or above a resolved cutover — `true` for a `null` cutover (no grandfathering: every Issue is at or above "no cutover", O1). */
+function atOrAboveCutover(issue: number, cutover: number | null): boolean {
+  return cutover === null || issue >= cutover
+}
+
 export function renderBrief(facts: BriefFacts, template: string): RenderResult {
   const missing: string[] = []
 
@@ -884,10 +897,11 @@ export function renderBrief(facts: BriefFacts, template: string): RenderResult {
     )
   }
   // Grandfathered the same as the Issue gate itself (`checkIssueObjectives`):
-  // an Issue below `OBJECTIVES_SINCE_ISSUE` legitimately has no `## Objectives`
-  // section, and the renderer must not newly refuse a class of Issue every
-  // other consumer in this task already exempts.
-  if (facts.objectives.length === 0 && facts.issue >= OBJECTIVES_SINCE_ISSUE) {
+  // an Issue below the resolved Objectives cutover legitimately has no
+  // `## Objectives` section, and the renderer must not newly refuse a class of
+  // Issue every other consumer in this task already exempts. A `null` cutover
+  // means no grandfathering — every Issue is expected to carry the section (O1).
+  if (facts.objectives.length === 0 && atOrAboveCutover(facts.issue, facts.cutovers.objectivesSinceIssue)) {
     missing.push('Objectives (Issue has no `## Objectives` section)')
   }
   // Same grandfather posture as Objectives, not the four judgment sections
@@ -898,7 +912,7 @@ export function renderBrief(facts: BriefFacts, template: string): RenderResult {
   if (
     facts.documentation.kind === 'sources' &&
     facts.documentation.sources.length === 0 &&
-    facts.issue >= DOCUMENTATION_SINCE_ISSUE
+    atOrAboveCutover(facts.issue, facts.cutovers.documentationSinceIssue)
   ) {
     missing.push('Documentation (Issue has no `## Documentation` section)')
   }
@@ -910,7 +924,10 @@ export function renderBrief(facts: BriefFacts, template: string): RenderResult {
   // ISSUE CREATION gate starts requiring the section, not whether a brief
   // can be rendered without one. The message names the cutover so a
   // pre-cutover Issue reads this as "add the section", not as a gate bug.
-  const cutoverNote = `the Issue predates the \`## Surface\`/\`## Parts\`/\`## Test plan\`/\`## Stop conditions\` gate cutover at #${BRIEF_SECTIONS_SINCE_ISSUE}, but a brief still needs it to render`
+  const cutoverNote =
+    facts.cutovers.briefSectionsSinceIssue !== null
+      ? `the Issue predates the \`## Surface\`/\`## Parts\`/\`## Test plan\`/\`## Stop conditions\` gate cutover at #${facts.cutovers.briefSectionsSinceIssue}, but a brief still needs it to render`
+      : 'a brief still needs the `## Surface`/`## Parts`/`## Test plan`/`## Stop conditions` section to render'
   if (facts.surface.in.length === 0) {
     missing.push(`Surface (Issue has no \`## Surface\` section with a non-empty \`in:\` list — ${cutoverNote})`)
   }

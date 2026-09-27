@@ -93,6 +93,7 @@ import {
   type TaskIssueFacts
 } from '../src/issue-validation'
 import { classifyLeftover } from '../src/leftover-detection'
+import { readConfigObjectivesSinceIssue } from '../src/objectives-cutover-config'
 import { parseRegistry } from '../src/parse-registry'
 
 const REPO_ROOT = join(import.meta.dirname, '../../..')
@@ -943,7 +944,7 @@ export function main(): void {
       ).errors,
       ...checkNoBriefContent(body).errors,
       ...checkRationaleNamesDocs(body).errors,
-      ...checkIssueObjectives(body, issueNumber).errors,
+      ...checkIssueObjectives(body, issueNumber, readConfigObjectivesSinceIssue(REPO_ROOT)).errors,
       ...checkPartsCiteDefinedObjectives(body).errors,
       ...checkSurfaceGlobsResolve(body, globResolvesToFile).errors,
       // The three Boundary/ownership/Parts-coverage predicates, wired here

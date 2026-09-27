@@ -35,6 +35,13 @@
     "securityThreshold": "HIGH",
     "maxRounds": 7
   },
+  "gateCutovers": {
+    "objectivesSinceIssue": 404,
+    "briefSectionsSinceIssue": 426,
+    "documentationSinceIssue": 626,
+    "briefRulesSincePr": 394,
+    "agentBoxesRefusedSincePr": 396
+  },
   "dispatch": {
     "agent": "claude",
     "requireWorkerIsolation": false

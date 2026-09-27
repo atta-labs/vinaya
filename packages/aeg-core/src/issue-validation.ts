@@ -127,22 +127,36 @@ export function checkEdgeIdsWholeNumbers(body: string): IssueSectionResult {
 }
 
 /**
- * The Issue number from which `## Objectives` becomes mandatory (a real
- * incident: a merged PR left two brief Parts
- * undelivered and nothing named what the work had to do in a form a machine
- * could compare). Every task
- * Issue at or above this cutover number already carries the section by hand. Same shape as
- * `BRIEF_RULES_SINCE_PR` (`brief-validation.ts`) — a cutover by Issue number,
- * never a retroactive requirement on the pre-gate stock.
+ * This repository's own historical Objectives cutover (a real incident: a
+ * merged PR left two brief Parts undelivered and nothing named what the work
+ * had to do in a form a machine could compare). Every task Issue at or above
+ * this number already carries the section by hand.
+ *
+ * **This is now the DEFAULT parameter value of `checkIssueObjectives`, not the
+ * value the gate reads.** The cutover is an optional `vinaya.config.json` key
+ * (`gateCutovers.objectivesSinceIssue`, resolved by `resolveGateCutovers` in
+ * `apps/cli/src/lib/config.ts`) passed into this gate as `sinceIssue`; an
+ * absent key resolves to `null` (NO cutover — the gate applies from Issue 1,
+ * O1), never to this constant. This repository restates this number as its own
+ * `gateCutovers.objectivesSinceIssue` so its behaviour is unchanged (O2). The
+ * constant stays exported as the parameter default so a caller that does not
+ * resolve config (a test, an authoring path) keeps this repo's behaviour. Same
+ * shape as `BRIEF_RULES_SINCE_PR` (`brief-validation.ts`).
  */
 export const OBJECTIVES_SINCE_ISSUE = 404
 
 /**
- * **The Objectives gate.** A task Issue numbered at or above
- * `OBJECTIVES_SINCE_ISSUE` must carry a well-formed `## Objectives` section
- * (`objectives.ts`'s `objectivesOf`) — one numbered, observable-outcome
- * sentence per line, contiguous from `O1`. Below the cutover, an Issue passes
- * unconditionally — the stock of older Issues stays green.
+ * **The Objectives gate.** A task Issue numbered at or above `sinceIssue` must
+ * carry a well-formed `## Objectives` section (`objectives.ts`'s
+ * `objectivesOf`) — one numbered, observable-outcome sentence per line,
+ * contiguous from `O1`. Below the cutover, an Issue passes unconditionally.
+ *
+ * `sinceIssue` is the resolved cutover: a number (grandfather Issues below it),
+ * or `null` for NO cutover — the gate then applies to every Issue, from 1 (a
+ * repository that declares no `gateCutovers`, O1). It defaults to
+ * `OBJECTIVES_SINCE_ISSUE` (this repo's historical value) only for a caller
+ * that does not resolve config; every enforcement path passes the resolved
+ * value, which is `null` when the key is absent.
  *
  * `issueNumber === null` (not yet known — an Issue being created has no
  * number until the write completes) is NOT exempted: fail-closed, the same
@@ -151,8 +165,12 @@ export const OBJECTIVES_SINCE_ISSUE = 404
  * far past the cutover, so this never blocks a legitimate create; what it
  * refuses is guessing an unknown number is old enough to skip.
  */
-export function checkIssueObjectives(body: string, issueNumber: number | null): IssueSectionResult {
-  if (issueNumber !== null && issueNumber < OBJECTIVES_SINCE_ISSUE) return { status: 'pass', errors: [] }
+export function checkIssueObjectives(
+  body: string,
+  issueNumber: number | null,
+  sinceIssue: number | null = OBJECTIVES_SINCE_ISSUE
+): IssueSectionResult {
+  if (sinceIssue !== null && issueNumber !== null && issueNumber < sinceIssue) return { status: 'pass', errors: [] }
   const result = objectivesOf(body)
   if (result.ok) return { status: 'pass', errors: [] }
   return { status: 'fail', errors: result.errors.map((e) => `issue-validation objectives: ${e}`) }
@@ -701,41 +719,59 @@ export function checkDocumentationCitesObjective(body: string): IssueSectionResu
 }
 
 /**
- * The Issue number from which the four judgment sections above become
- * mandatory — this Issue's own number, the first Issue this tranche cut.
- * Same cutover-by-Issue-number shape as `OBJECTIVES_SINCE_ISSUE`; a task
- * Issue below this number legitimately carries none of the four.
+ * This repository's own historical brief-sections cutover — the first Issue
+ * this tranche cut, from which the four judgment sections became mandatory.
+ * Now the DEFAULT parameter value of `checkIssueBriefSections`, not the value
+ * the gate reads: the cutover is `vinaya.config.json`'s optional
+ * `gateCutovers.briefSectionsSinceIssue` (absent → `null` → gate from Issue 1,
+ * O1), restated as this repo's own value (O2). Same shape as
+ * `OBJECTIVES_SINCE_ISSUE`.
  */
 export const BRIEF_SECTIONS_SINCE_ISSUE = 426
 
 /**
- * The Issue number from which `## Documentation` becomes mandatory alongside
- * the four sections above — deliberately one past this requirement's own
- * Issue (the highest Issue number in existence when it was authored),
- * so no open or historical Issue is invalidated by the new requirement and
- * `issue edit` on one never starts refusing a body it could not have carried
- * the section in. Never grandfathered further back than that: unlike
- * `BRIEF_SECTIONS_SINCE_ISSUE`'s 426, there is no stock of Issues that
- * already carry a literal `## Documentation` heading by hand to preserve.
+ * This repository's own historical `## Documentation` cutover — one past that
+ * requirement's own Issue (the highest Issue number in existence when it was
+ * authored), so no open or historical Issue was invalidated by the new
+ * requirement. Now the DEFAULT parameter value of `checkIssueBriefSections`'s
+ * `sinceDocumentation`, not the value the gate reads: the cutover is
+ * `vinaya.config.json`'s optional `gateCutovers.documentationSinceIssue`
+ * (absent → `null` → gate from Issue 1, O1), restated as this repo's own value
+ * (O2). Never grandfathered further back than this: unlike
+ * `BRIEF_SECTIONS_SINCE_ISSUE`'s 426, there is no stock of Issues that already
+ * carry a literal `## Documentation` heading by hand to preserve.
  */
 export const DOCUMENTATION_SINCE_ISSUE = 626
 
 /**
  * **The brief-sections gate.** A task Issue numbered at or above
- * `BRIEF_SECTIONS_SINCE_ISSUE` must carry all four of `## Surface`,
- * `## Parts`, `## Test plan`, `## Stop conditions`, each well-formed per its
- * own parser above. Below the cutover, an Issue passes unconditionally.
- * `issueNumber === null` is NOT exempted — fail-closed, the same posture
- * `checkIssueObjectives` takes for an Issue with no number yet.
+ * `sinceBriefSections` must carry all four of `## Surface`, `## Parts`,
+ * `## Test plan`, `## Stop conditions`, each well-formed per its own parser
+ * above. Below the cutover, an Issue passes unconditionally.
+ *
+ * `sinceBriefSections`/`sinceDocumentation` are the resolved cutovers: a number
+ * (grandfather Issues below it), or `null` for NO cutover — the gate then
+ * applies to every Issue, from 1 (a repository that declares no `gateCutovers`,
+ * O1). They default to this repo's historical constants only for a caller that
+ * does not resolve config; every enforcement path passes the resolved values,
+ * which are `null` when the key is absent. `issueNumber === null` is NOT
+ * exempted — fail-closed, the same posture `checkIssueObjectives` takes.
  *
  * A fifth section, `## Documentation`, is folded into this same gate rather
- * than a new builtin (O1) — it is graded on its own, later
- * cutover (`DOCUMENTATION_SINCE_ISSUE`), since no pre-existing Issue ever
- * carried it and requiring it retroactively on an `issue edit` would refuse a
- * body no author had reason to write that way.
+ * than a new builtin — it is graded on its own, later cutover
+ * (`sinceDocumentation`), since no pre-existing Issue ever carried it and
+ * requiring it retroactively on an `issue edit` would refuse a body no author
+ * had reason to write that way.
  */
-export function checkIssueBriefSections(body: string, issueNumber: number | null): IssueSectionResult {
-  if (issueNumber !== null && issueNumber < BRIEF_SECTIONS_SINCE_ISSUE) return { status: 'pass', errors: [] }
+export function checkIssueBriefSections(
+  body: string,
+  issueNumber: number | null,
+  sinceBriefSections: number | null = BRIEF_SECTIONS_SINCE_ISSUE,
+  sinceDocumentation: number | null = DOCUMENTATION_SINCE_ISSUE
+): IssueSectionResult {
+  if (sinceBriefSections !== null && issueNumber !== null && issueNumber < sinceBriefSections) {
+    return { status: 'pass', errors: [] }
+  }
 
   const errors: string[] = []
   const surface = parseIssueSurface(body)
@@ -747,7 +783,7 @@ export function checkIssueBriefSections(body: string, issueNumber: number | null
   const stopConditions = parseIssueStopConditions(body)
   if (!stopConditions.ok) errors.push(...stopConditions.errors.map((e) => `issue-validation Stop conditions: ${e}`))
 
-  if (issueNumber === null || issueNumber >= DOCUMENTATION_SINCE_ISSUE) {
+  if (sinceDocumentation === null || issueNumber === null || issueNumber >= sinceDocumentation) {
     const documentation = parseIssueDocumentation(body)
     if (!documentation.ok) errors.push(...documentation.errors.map((e) => `issue-validation Documentation: ${e}`))
     else errors.push(...checkDocumentationCitesObjective(body).errors)
@@ -1291,11 +1327,15 @@ const BLAST_RADIUS_ACK_RE = /(?:\*\*)?blast-radius-ack(?:\*\*)?\s*[:—–-]/i
  * touch `packages/ui`") — a negation the text scan below cannot tell apart
  * from a real touch-claim, and a heuristic in a blocking gate is wrong in
  * both directions. `## Surface`'s `in:` glob list is parsed structure with
- * no negation to misread: at or above `BRIEF_SECTIONS_SINCE_ISSUE`, where
+ * no negation to misread: at or above the brief-sections cutover, where
  * every task Issue carries one, a shared domain is "named" iff a declared
  * `in:` glob covers it (`globCoversPath`) — never by scanning prose for the
  * domain's name. Below the cutover, an Issue legitimately carries no
- * `## Surface` at all, so the original prose scan is unchanged.
+ * `## Surface` at all, so the original prose scan is unchanged. The cutover is
+ * the resolved `sinceBriefSections` (`gateCutovers.briefSectionsSinceIssue`,
+ * an absent key → `null` → NO cutover, so `## Surface` decides from Issue 1,
+ * O1); it defaults to `BRIEF_SECTIONS_SINCE_ISSUE` only for a caller that does
+ * not resolve config.
  * `issueNumber` follows the same fail-closed posture as
  * `checkIssueObjectives`/`checkIssueBriefSections`: `null` (not yet known,
  * e.g. `issue create`) is NOT treated as "at or above the cutover" — it
@@ -1307,10 +1347,11 @@ export function checkBlastRadiusScope(
   _labels: string[],
   sharedPackages: string[],
   projectPaths: ProjectPath[],
-  issueNumber: number | null = null
+  issueNumber: number | null = null,
+  sinceBriefSections: number | null = BRIEF_SECTIONS_SINCE_ISSUE
 ): IssueSectionResult {
   if (sharedPackages.length === 0) return { status: 'pass', errors: [] }
-  const decideFromSurface = issueNumber !== null && issueNumber >= BRIEF_SECTIONS_SINCE_ISSUE
+  const decideFromSurface = issueNumber !== null && (sinceBriefSections === null || issueNumber >= sinceBriefSections)
   let named: string[]
   if (decideFromSurface) {
     const surface = parseIssueSurface(body)
@@ -1501,15 +1542,24 @@ export function checkRationaleNamesDocs(body: string): IssueSectionResult {
  * simply does not enclose is now accepted; a pointer the surface explicitly
  * excludes still is not.
  *
- * At or above `BRIEF_SECTIONS_SINCE_ISSUE` only — below it an Issue
+ * At or above the brief-sections cutover only — below it an Issue
  * legitimately carries no `## Surface` to compare against, same cutover
- * every other Surface-aware check in this module uses. Passes trivially
- * when the Surface itself doesn't parse (`checkIssueBriefSections` already
- * reports that malformation) or the docs field carries the `no-doc-surface`
- * sentinel (nothing to compare).
+ * every other Surface-aware check in this module uses. The cutover is the
+ * resolved `sinceBriefSections` (`gateCutovers.briefSectionsSinceIssue`, an
+ * absent key → `null` → NO cutover, so this gate applies from Issue 1 wherever
+ * `## Surface` is itself required from Issue 1, O1); it defaults to
+ * `BRIEF_SECTIONS_SINCE_ISSUE` only for a caller that does not resolve config.
+ * Passes trivially when the Surface itself doesn't parse
+ * (`checkIssueBriefSections` already reports that malformation) or the docs
+ * field carries the `no-doc-surface` sentinel (nothing to compare).
  */
-export function checkDocsWithinSurface(body: string, issueNumber: number | null): IssueSectionResult {
-  if (issueNumber !== null && issueNumber < BRIEF_SECTIONS_SINCE_ISSUE) return { status: 'pass', errors: [] }
+export function checkDocsWithinSurface(
+  body: string,
+  issueNumber: number | null,
+  sinceBriefSections: number | null = BRIEF_SECTIONS_SINCE_ISSUE
+): IssueSectionResult {
+  if (sinceBriefSections !== null && issueNumber !== null && issueNumber < sinceBriefSections)
+    return { status: 'pass', errors: [] }
   const surface = parseIssueSurface(body)
   if (!surface.ok) return { status: 'pass', errors: [] }
 
@@ -1584,11 +1634,20 @@ function nearestInGlob(path: string, inGlobs: string[]): string {
  * decision undid; Boundary is where "what this task touches" is actually
  * declared.
  *
- * At or above `BRIEF_SECTIONS_SINCE_ISSUE` only — below it an Issue
- * legitimately carries no `## Surface` to compare against.
+ * At or above the brief-sections cutover only — below it an Issue
+ * legitimately carries no `## Surface` to compare against. The cutover is the
+ * resolved `sinceBriefSections` (`gateCutovers.briefSectionsSinceIssue`, an
+ * absent key → `null` → NO cutover, so this gate applies from Issue 1 wherever
+ * `## Surface` is itself required from Issue 1, O1); it defaults to
+ * `BRIEF_SECTIONS_SINCE_ISSUE` only for a caller that does not resolve config.
  */
-export function checkRationaleSurfaceCoverage(body: string, issueNumber: number | null): IssueSectionResult {
-  if (issueNumber !== null && issueNumber < BRIEF_SECTIONS_SINCE_ISSUE) return { status: 'pass', errors: [] }
+export function checkRationaleSurfaceCoverage(
+  body: string,
+  issueNumber: number | null,
+  sinceBriefSections: number | null = BRIEF_SECTIONS_SINCE_ISSUE
+): IssueSectionResult {
+  if (sinceBriefSections !== null && issueNumber !== null && issueNumber < sinceBriefSections)
+    return { status: 'pass', errors: [] }
   const surface = parseIssueSurface(body)
   if (!surface.ok) return { status: 'pass', errors: [] }
 

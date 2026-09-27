@@ -579,6 +579,64 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     example: `{ "reviewPolicy": { "maxRounds": 5 } }`
   },
   {
+    key: 'gateCutovers',
+    type: 'object (optional)',
+    semantics: [
+      "The Issue/PR number below which each of five gates is grandfathered — an Issue or pull request older than a gate's cutover passes it unconditionally. Every field is optional; **an absent key, or an absent field within it, means NO cutover for that gate — it applies to every Issue/PR from number 1.** A brand-new repository declares none, so its Issue 1 is refused without `## Objectives`, the brief sections, and `## Documentation` exactly as a high-numbered Issue is, and its pull requests are held to the brief-shape rules from PR 1.",
+      "This key exists ONLY for a repository whose Issues or pull requests PREDATE a gate: set it to the number from which that gate first applied, so the older stock keeps passing while everything from the cutover on is enforced. A repository that has always had the gates leaves this unset. The values were once hardcoded constants inside `@attalabs/aeg-core` (`OBJECTIVES_SINCE_ISSUE` etc.); moving them here is what lets every adopter's gates apply from Issue 1 by default.",
+      "Read from the working-tree `vinaya.config.json` (not the default-branch trust anchor) by the Issue-write, coherence, and brief-shape gates, and from the default-branch trust anchor by the review-gate's own objectives grading (the same source as `reviewPolicy`/`principals`) — these are content-shape cutovers of the same reviewed-committed trust class as the source constants they replace, never a merge-authority lever like `reviewPolicy`."
+    ],
+    example: `{
+  "gateCutovers": {
+    "objectivesSinceIssue": 404,
+    "briefSectionsSinceIssue": 426,
+    "documentationSinceIssue": 626,
+    "briefRulesSincePr": 394,
+    "agentBoxesRefusedSincePr": 396
+  }
+}`
+  },
+  {
+    key: 'gateCutovers.objectivesSinceIssue',
+    type: 'number (optional, non-negative integer)',
+    semantics: [
+      'The Issue number from which the `## Objectives` gate (`checkIssueObjectives`, `vinaya issue create|edit`, and `vinaya check coherence`’s R1) applies. Absent → no cutover: every task Issue must carry `## Objectives`, from Issue 1.'
+    ],
+    example: `{ "gateCutovers": { "objectivesSinceIssue": 404 } }`
+  },
+  {
+    key: 'gateCutovers.briefSectionsSinceIssue',
+    type: 'number (optional, non-negative integer)',
+    semantics: [
+      'The Issue number from which the four judgment sections (`## Surface`, `## Parts`, `## Test plan`, `## Stop conditions`, via `checkIssueBriefSections`) are required. Absent → no cutover: required from Issue 1.'
+    ],
+    example: `{ "gateCutovers": { "briefSectionsSinceIssue": 426 } }`
+  },
+  {
+    key: 'gateCutovers.documentationSinceIssue',
+    type: 'number (optional, non-negative integer)',
+    semantics: [
+      'The Issue number from which `## Documentation` is required (folded into `checkIssueBriefSections`). Absent → no cutover: required from Issue 1. Typically higher than `briefSectionsSinceIssue`, since `## Documentation` shipped later.'
+    ],
+    example: `{ "gateCutovers": { "documentationSinceIssue": 626 } }`
+  },
+  {
+    key: 'gateCutovers.briefRulesSincePr',
+    type: 'number (optional, non-negative integer)',
+    semantics: [
+      'The pull-request number from which the four brief-shape rules (unpinned code claim, commands-carry-output, consumer-tests, defeat-cases) block in CI (`brief-shape` / `partitionBriefErrorsByRollout`). A PR below it has those findings reported as informational, never a failure. Absent → no cutover: the rules block from PR 1.'
+    ],
+    example: `{ "gateCutovers": { "briefRulesSincePr": 394 } }`
+  },
+  {
+    key: 'gateCutovers.agentBoxesRefusedSincePr',
+    type: 'number (optional, non-negative integer)',
+    semantics: [
+      'The pull-request number from which a checkbox `[agent]` Test Plan item is refused (`checkNoAgentBoxes`, via the same `brief-shape` rollout). A PR below it is grandfathered. Absent → no cutover: refused from PR 1. A distinct number from `briefRulesSincePr` — each rule keeps its own rollout window.'
+    ],
+    example: `{ "gateCutovers": { "agentBoxesRefusedSincePr": 396 } }`
+  },
+  {
     key: 'prePush',
     type: 'object (optional)',
     semantics: [

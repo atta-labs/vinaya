@@ -511,11 +511,18 @@ export type { ForgeIssue }
  * (aeg-core is pure). Defaults to `[]`, which leaves the registry half
  * dormant — so a caller that has no registry to hand keeps R1's prior
  * behaviour exactly.
+ * `objectivesSinceIssue`: the resolved Objectives cutover
+ * (`gateCutovers.objectivesSinceIssue`, resolved by the caller from
+ * `vinaya.config.json` — aeg-core is pure), threaded into `checkIssueObjectives`.
+ * `null` means NO cutover (grade every open Issue from 1, O1); `undefined`
+ * (an omitting caller, e.g. a test) falls through to `checkIssueObjectives`'s
+ * own default (this repo's historical cutover).
  */
 export function checkR1(
   issuesBySlug: Map<string, ForgeIssue[]>,
   grandfatheredIssues: ReadonlySet<number>,
-  registeredNames: string[] = []
+  registeredNames: string[] = [],
+  objectivesSinceIssue?: number | null
 ): CheckResult {
   const failures: CheckFailure[] = []
   for (const [slug, issues] of issuesBySlug) {
@@ -524,7 +531,7 @@ export function checkR1(
       const errors = [
         ...checkIssueRationale(issue.body).errors,
         ...checkProjectsRegistered(issue.body, issue.labels, registeredNames).errors,
-        ...checkIssueObjectives(issue.body, issue.number).errors,
+        ...checkIssueObjectives(issue.body, issue.number, objectivesSinceIssue).errors,
         // task 17, O2 — Parts coverage joins the sweep here: same
         // dormant-when-absent posture as the other two, zero new inputs.
         ...checkPartsCiteDefinedObjectives(issue.body).errors
