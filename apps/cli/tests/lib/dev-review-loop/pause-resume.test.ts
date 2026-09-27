@@ -18,7 +18,9 @@ import {
   acquireOwnership,
   type ControlStoreDeps,
   defaultControlStoreDeps,
+  newestPrincipalRulingOrdinal,
   type PauseReason,
+  principalRulingMarker,
   readEffect,
   writeEffect
 } from '@attalabs/aeg-core'
@@ -190,17 +192,47 @@ describe('renderNoPushStopComment (pure) — the no-PR-yet variant carries detai
     expect(body).not.toContain('--issue 781')
   })
 
-  it('names the ruling marker a Principal must write, at an ordinal above the one this pause recorded', () => {
+  /**
+   * The marker the comment prints is fed back through the REAL parser the
+   * authority gates use, and the assertion is the property that matters —
+   * the parsed ordinal exceeds the recorded baseline. A literal string compare
+   * is what let the slots be swapped: the marker is `<ref>-<ordinal>` and the
+   * ordinal is the SECOND number, so a rendered `ruling:5-1` for a baseline of
+   * `4` parsed as ordinal `1` and the gate refused every ruling written exactly
+   * as instructed. Round-tripping cannot pass while the two disagree.
+   */
+  function parsedOrdinalOf(body: string): number {
+    const marker = body.split('\n').find((l) => l.startsWith('<!-- aeg:principal:ruling:')) ?? ''
+    return newestPrincipalRulingOrdinal([{ body: marker, author: 'principal-1' }], ['principal-1'])
+  }
+
+  it.each([0, 1, 4, 37])('names a ruling marker whose PARSED ordinal exceeds the recorded baseline %s', (baseline) => {
+    const body = renderNoPushStopComment(781, 'task/unattended-run-v1/22', 'escalation', undefined, undefined, baseline)
+    expect(parsedOrdinalOf(body)).toBeGreaterThan(baseline)
+  })
+
+  it('names the task as the marker reference, so the printed marker is the one `principalRulingMarker` builds', () => {
     const body = renderNoPushStopComment(781, 'task/unattended-run-v1/22', 'escalation', undefined, undefined, 4)
-    // No shipped command posts a ruling on an Issue, so the marker format and
-    // the ordinal to beat both have to be in the comment or the Principal
-    // cannot authorize anything.
-    expect(body).toContain('<!-- aeg:principal:ruling:5-1 -->')
+    expect(body).toContain(principalRulingMarker(781, 5))
   })
 
   it('starts the marker ordinal at one when the escalation recorded no ruling baseline', () => {
     const body = renderNoPushStopComment(781, 'task/unattended-run-v1/22', 'escalation')
-    expect(body).toContain('<!-- aeg:principal:ruling:1-1 -->')
+    expect(parsedOrdinalOf(body)).toBe(1)
+  })
+
+  it('never prints an injectable command line for a tranche segment taken from an Issue title', () => {
+    // `developerBranchFor` builds the tranche segment from the Issue title's
+    // own `[^\]]+`, so it is unvalidated forge input — and this command sits
+    // in a fenced block a human or an Operator agent is told to run.
+    const hostile = 'task/; echo pwned | sh/22'
+    const body = renderNoPushStopComment(781, hostile, 'escalation')
+    const printed = body.split('\n').find((l) => l.startsWith('vinaya task run')) ?? ''
+    // The payload survives as DATA — one shell-quoted argument — never as a
+    // command separator and a pipe the reader's shell would act on.
+    expect(printed).toBe("vinaya task run '; echo pwned | sh' 22")
+    // And it is exactly the argv the launcher spawns, not a weaker rendering.
+    expect(noPushResumeArgv(781, hostile)).toEqual(['task', 'run', '; echo pwned | sh', '22'])
   })
 })
 
@@ -253,6 +285,21 @@ describe('readPauseState — a record with no pull request reads as having none'
 })
 
 describe('noPushResumeCommandFor / noPushResumeArgv — the address form comes from the branch', () => {
+  it('shell-quotes a token the argv carries verbatim, so the printed form is that argv and not a weaker join', () => {
+    // A space-joined render produced a DIFFERENT command than the one that
+    // runs for any tranche carrying whitespace — the same single-builder claim
+    // the module documents, broken by the rendering step rather than the argv.
+    const argv = noPushResumeArgv(781, 'task/two words/22', 'claude')
+    expect(argv).toEqual(['task', 'run', 'two words', '22', '--agent', 'claude'])
+    expect(noPushResumeCommandFor(781, 'task/two words/22', 'claude')).toBe(
+      "vinaya task run 'two words' 22 --agent claude"
+    )
+  })
+
+  it('leaves an ordinary slug unquoted', () => {
+    expect(noPushResumeCommandFor(781, 'task/unattended-run-v1/22', 'claude', 'opus')).not.toContain("'")
+  })
+
   it('addresses a backlog task by its Issue number', () => {
     expect(noPushResumeCommandFor(781, 'task/issue-781')).toBe('vinaya task run --issue 781')
     expect(noPushResumeCommandFor(781, 'task/issue-781', 'claude')).toBe('vinaya task run --issue 781 --agent claude')

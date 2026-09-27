@@ -7,6 +7,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
+import { newestPrincipalRulingOrdinal } from '@attalabs/aeg-core'
 import {
   cleanupWorlds,
   controlDir,
@@ -26,6 +27,12 @@ afterEach(cleanupWorlds)
 
 function escalationRecordPath(world: LoopWorld, round: number, head: string): string {
   return join(controlDir(world), 'escalation', `${world.task}-${round}-${head}.json`)
+}
+
+/** The ruling marker a pause comment prints, read back through the SAME parser `task_resume`/`task_cancel` authenticate with — so a marker whose slots disagree with that parser cannot pass. */
+function parsedMarkerOrdinal(body: string): number {
+  const marker = body.split('\n').find((l) => l.startsWith('<!-- aeg:principal:ruling:')) ?? ''
+  return newestPrincipalRulingOrdinal([{ body: marker, author: 'principal-1' }], ['principal-1'])
 }
 
 function fakeHandle(resumeId: string | null, effectId: string): DispatchHandle {
@@ -656,8 +663,11 @@ describe('devReviewLoop — a refusal/escalation posted before any push ends the
     expect(body).not.toContain('<tranche>')
     expect(body).not.toContain('--issue')
     // No shipped command posts a ruling on an Issue, so the marker the
-    // Principal must hand-write is named here or nothing can authorize this.
-    expect(body).toContain('<!-- aeg:principal:ruling:1-1 -->')
+    // Principal must hand-write is named here or nothing can authorize this —
+    // and it is asserted by feeding it back through the parser the authority
+    // gates use, never as a literal, which is what let the two slots be
+    // swapped while CI stayed green.
+    expect(parsedMarkerOrdinal(body)).toBe(1)
 
     const pauseState = JSON.parse(readFileSync(join(controlDir(world), 'pause-state.json'), 'utf8')) as Record<
       string,
@@ -701,9 +711,42 @@ describe('devReviewLoop — a refusal/escalation posted before any push ends the
     expect(record.rulingOrdinal).toBe(4)
 
     // And the comment tells the Principal which ordinal to beat, since that is
-    // now a real number rather than always zero.
+    // now a real number rather than always zero — read back through the gates'
+    // own parser, so the marker it prints is one they would accept.
     const pauseBody = world.postedComments.find((c) => c.body.includes('aeg:loop:paused:escalation'))?.body ?? ''
-    expect(pauseBody).toContain('<!-- aeg:principal:ruling:5-1 -->')
+    expect(parsedMarkerOrdinal(pauseBody)).toBeGreaterThan(4)
+  })
+
+  it('writes NO escalation record when the Issue ruling baseline cannot be read, so both tools fail closed', async () => {
+    // `0` is not a missing value for this field — it is the positive claim
+    // "this Issue carries no rulings". A failed read never established that,
+    // and recording it anyway reopens the vacuous freshness gate on nothing
+    // more than a transient `gh` failure. So the read propagates, the
+    // best-effort escalation write swallows it, and no record is written —
+    // which is the state `task_resume` refuses as "no durable record" and
+    // `task_cancel` refuses as a stale escalation. The pause itself is still
+    // fully recorded, and its printed command needs no ruling at all.
+    const world = makeWorld({
+      developerStop: 'Entry gate refused: brief is missing tier/scope/stop-conditions.' as never
+    })
+    const { deps } = controlledDeveloperDeps(world, {})
+    const result = await runLoopInProcessSafe(world, {
+      ...deps,
+      fetchNewestIssueRulingOrdinal: () => {
+        throw new Error('gh issue view: could not reach the forge')
+      }
+    })
+
+    expect(result.finalDecision.type).toBe('pause')
+    expect(existsSync(escalationRecordPath(world, 1, 'unknown'))).toBe(false)
+
+    // The pause record itself still lands, with no pull request.
+    const pauseState = JSON.parse(readFileSync(join(controlDir(world), 'pause-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
+    expect(pauseState.reason).toBe('escalation')
+    expect(pauseState.prNumber).toBeNull()
   })
 })
 

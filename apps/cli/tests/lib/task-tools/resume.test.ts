@@ -177,7 +177,7 @@ function harness(
     issueRulings?: string[]
     newestIssueRulingOrdinal?: number
     launch?: (
-      target: { pr: number | null; agent: AgentVendor; issue: number; branch: string },
+      target: { pr: number | null; agent: AgentVendor; issue: number; branch: string; model?: string },
       meta: { escalationId: string; caller: string }
     ) => LaunchResult | Promise<LaunchResult>
     resolveIssue?: (ref: unknown) => number | null
@@ -185,7 +185,7 @@ function harness(
     now?: () => string
   } = {}
 ) {
-  const launches: Array<{ pr: number | null; agent: AgentVendor; issue: number; branch: string }> = []
+  const launches: Array<{ pr: number | null; agent: AgentVendor; issue: number; branch: string; model?: string }> = []
   const prRulingReads: number[] = []
   const events: Array<{ operation: string; target: string; result: string; error_class: string | null }> = []
   const { store, map } = memClaimStore()
@@ -611,6 +611,18 @@ describe('task_resume handler — a pause recorded before its pull request exist
     return readResolution(controlStoreDeps, ISSUE, `${ISSUE}-1-headsha1`)
   }
 
+  it('carries the agent AND model the pause recorded into the launch, not only into the printed command', async () => {
+    writePause({ prNumber: null, agent: 'codex', model: 'gpt-5.6-terra' })
+    writeEscalationFixture({ host: 'test-host', pr: null, agent: 'codex' })
+    const { handler, launches } = harness({
+      issueRulings: ['Ruling: proceed as briefed.'],
+      newestIssueRulingOrdinal: 1
+    })
+    const result = await handler({ task: { issue: ISSUE } }, CALLER)
+    expect(result.ok).toBe(true)
+    expect(launches).toEqual([{ pr: null, agent: 'codex', issue: ISSUE, branch: 'task/x/1', model: 'gpt-5.6-terra' }])
+  })
+
   it('consumes the Issue ruling as the resolution, then relaunches through `task run`', async () => {
     writePause({ prNumber: null })
     writeEscalationFixture({ pr: null })
@@ -739,7 +751,7 @@ describe('defaultResumeLaunch — the argv each pause shape continues through', 
       return script
     }
     async function argvOf(
-      target: { pr: number | null; agent: AgentVendor; branch: string },
+      target: { pr: number | null; agent: AgentVendor; branch: string; model?: string },
       name: string
     ): Promise<string[]> {
       const logPath = join(sandbox, `${name}.log`)
@@ -795,5 +807,14 @@ describe('defaultResumeLaunch — the argv each pause shape continues through', 
       '--agent',
       'codex'
     ])
+    // The model the paused run was dispatched under travels with the launch,
+    // not only with the printed command. Dropping it silently re-resolved a
+    // model from the Issue's own agent-class mapping instead.
+    expect(
+      await argvOf(
+        { pr: null, agent: 'codex', branch: 'task/unattended-run-v1/22', model: 'gpt-5.6-terra' },
+        'no-pr-model'
+      )
+    ).toEqual(['task', 'run', 'unattended-run-v1', '22', '--agent', 'codex', '--model', 'gpt-5.6-terra'])
   })
 })

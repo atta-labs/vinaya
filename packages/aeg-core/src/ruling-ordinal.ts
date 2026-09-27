@@ -18,6 +18,22 @@ import { isPrincipal } from './waiver-label'
 /** The marker `apps/cli/src/commands/pr-rule.ts` posts: `<!-- aeg:principal:ruling:<pr>-<k> -->`, one line, nothing else on it. */
 const RULING_MARKER_ORDINAL = /^<!-- aeg:principal:ruling:\d+-(\d+) -->$/
 
+/**
+ * The marker line a principal ruling carries, built from the two numbers it
+ * encodes — `<ref>-<ordinal>`, where `ref` is the pull request or Issue the
+ * ruling is about and `ordinal` is the strictly-increasing `k` every reader
+ * here compares. It lives beside `RULING_MARKER_ORDINAL` because the two
+ * cannot be allowed to disagree about which slot the ordinal sits in: a
+ * renderer that swapped them emitted a marker that parsed as ordinal `1`
+ * forever, so a ruling written exactly as instructed failed the very
+ * freshness gate it was posted to satisfy. Any caller that WRITES a marker a
+ * reader here will parse should build it with this rather than by
+ * interpolating its own template.
+ */
+export function principalRulingMarker(ref: number, ordinal: number): string {
+  return `<!-- aeg:principal:ruling:${ref}-${ordinal} -->`
+}
+
 export type RulingComment = {
   body: string
   /** The comment author's GitHub login, or `null` when the caller could not resolve one. */

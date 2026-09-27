@@ -292,7 +292,7 @@ function waitForLiveDriver(
  * overrides neither).
  */
 export function defaultResumeLaunch(
-  target: { pr: number | null; agent: AgentVendor; issue: number; branch: string },
+  target: { pr: number | null; agent: AgentVendor; issue: number; branch: string; model?: string },
   meta: { escalationId: string; caller: string },
   root: string = runtimeDir(),
   timeoutMs: number = RESUME_CONFIRM_TIMEOUT_MS
@@ -313,10 +313,11 @@ export function defaultResumeLaunch(
   // picks matters: `--issue <n>` is the tranche-LESS backlog path and is
   // refused outright for an Issue carrying a `vinaya/tranche:*` label, so a
   // tranche task is addressed `task run <tranche> <n>`, read off this pause's
-  // own branch. Both forms are commands the CLI already exposes.
+  // own branch. Both forms are commands the CLI already exposes, and the
+  // agent AND model the paused run was dispatched under both travel with it.
   const argv =
     target.pr === null
-      ? noPushResumeArgv(target.issue, target.branch, target.agent)
+      ? noPushResumeArgv(target.issue, target.branch, target.agent, target.model)
       : ['dev-review-loop', '--resume', String(target.pr), '--agent', target.agent]
   let child: ReturnType<typeof spawn>
   try {
@@ -361,7 +362,7 @@ export type TaskResumeDeps = {
    * the process still alive (O1) — see this file's own header.
    */
   launch: (
-    target: { pr: number | null; agent: AgentVendor; issue: number; branch: string },
+    target: { pr: number | null; agent: AgentVendor; issue: number; branch: string; model?: string },
     meta: { escalationId: string; caller: string }
   ) => Promise<LaunchResult>
   now: () => string
@@ -693,7 +694,16 @@ export function createTaskResumeHandler(
 
     let outcome: LaunchResult
     try {
-      outcome = await deps.launch({ pr, agent, issue, branch: held.branch }, { escalationId, caller: caller.id })
+      // `model` travels with the launch, not only with the printed command: the
+      // paused run was dispatched under a specific model, and relaunching
+      // without it silently re-resolved one from the Issue's own agent-class
+      // mapping instead. It also made the single-builder claim false for one
+      // flag — the comment and `permittedNextActions` both rendered `--model`
+      // while the spawned argv dropped it.
+      outcome = await deps.launch(
+        { pr, agent, issue, branch: held.branch, ...(held.model ? { model: held.model } : {}) },
+        { escalationId, caller: caller.id }
+      )
     } catch (err) {
       deps.store.release(escalationId)
       emitOperationEvent(deps.log, issue, target, 'error', 'infrastructure')

@@ -1637,19 +1637,40 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       } catch {
         // Best-effort — objectives unresolvable this early.
       }
-      try {
-        // The baseline a later resume/cancel must postdate, read from
-        // WHEREVER this pause's own ruling will be posted. A pause with no
-        // pull request used to record `0` unconditionally, which made the
-        // Issue-side freshness gate vacuous: `newestIssueRulingOrdinal > 0`
-        // is satisfied by ANY ruling ever posted on the Issue, including one
-        // an earlier pause on this same task already consumed, so a single
-        // stale approval could authenticate every later before-any-push
-        // resume or cancel. The pull-request path always captured a real
-        // baseline; this makes the Issue path capture one too.
-        ordinal = prNumber > 0 ? d.fetchNewestRulingOrdinal(prNumber) : d.fetchNewestIssueRulingOrdinal(task)
-      } catch {
-        // Best-effort — no ruling yet, or the forge read failed.
+      // The baseline a later resume/cancel must postdate, read from WHEREVER
+      // this pause's own ruling will be posted. A pause with no pull request
+      // used to record `0` unconditionally, which made the Issue-side
+      // freshness gate vacuous: `newestIssueRulingOrdinal > 0` is satisfied by
+      // ANY ruling ever posted on the Issue, including one an earlier pause on
+      // this same task already consumed, so a single stale approval could
+      // authenticate every later before-any-push resume or cancel. The
+      // pull-request path always captured a real baseline; this makes the
+      // Issue path capture one too.
+      //
+      // Best-effort in OPPOSITE directions for the two sources, deliberately.
+      // A failed pull-request read still falls through to `0`, as it always
+      // has: that path's own `--resume` gate re-reads the live ordinal against
+      // a pull request the caller had to name, and a `0` there is the same
+      // permissive default it was before this task. A failed ISSUE read cannot
+      // fall through, because `0` there is not a missing value — it is the
+      // positive claim "this Issue carries no rulings", which a failed read did
+      // not establish, and recording it reopens exactly the vacuous gate above
+      // on nothing more than a transient `gh` failure. So it propagates: the
+      // caller's own best-effort `try` around `writeEscalationRecord` swallows
+      // it, no escalation record is written, and BOTH tools then fail closed on
+      // machinery that already exists — `task_resume` refuses "no durable
+      // record — cannot authenticate a resume", and `task_cancel`'s
+      // `resolveEscalation` refuses `StaleEscalationError`. The pause is still
+      // fully recorded and still continuable by running its printed command
+      // directly, which needs no ruling at all.
+      if (prNumber > 0) {
+        try {
+          ordinal = d.fetchNewestRulingOrdinal(prNumber)
+        } catch {
+          // Best-effort — no PR ruling yet, or the forge read failed.
+        }
+      } else {
+        ordinal = d.fetchNewestIssueRulingOrdinal(task)
       }
       let digest = 'unknown'
       try {
@@ -3866,7 +3887,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             round,
             head: pauseHead,
             branch,
-            prNumber,
+            // The SAME normalization the other two pause writers apply. This
+            // site is only ever reached with a resolved pull request today, so
+            // nothing is broken without it — but leaving it as the one writer
+            // that stores `prNumber` raw made the sentinel-to-`null` conversion
+            // rest entirely on `readPauseState`'s read side for this path, and
+            // a future path arriving here before the pull request resolves
+            // would write `-1` straight back into the record.
+            prNumber: prNumber > 0 ? prNumber : null,
             reason: decision.reason,
             detail: decision.detail,
             pausedAt: new Date().toISOString(),
@@ -3881,12 +3909,25 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // driver or reach the outer catch, which would otherwise
           // overwrite `writePauseState`'s already-correct reason, above,
           // with a synthetic 'infrastructure' one.
+          //
+          // The `prNumber <= 0` branch is the same one the crash handler
+          // already takes, for the same reason: a comment can only be posted
+          // against a pull request that exists, and this site is not
+          // structurally guaranteed to have one.
+          const pauseInvocation = { agent: dispatchAgent, ...(dispatchModel ? { model: dispatchModel } : {}) }
           await logPauseCommentRetryIfNotable(
             round,
-            d.postPauseComment(task, round, pauseHead, prNumber, decision.reason, decision.detail, {
-              agent: dispatchAgent,
-              ...(dispatchModel ? { model: dispatchModel } : {})
-            })
+            prNumber <= 0
+              ? d.postIssuePauseComment(
+                  task,
+                  branch,
+                  round,
+                  decision.reason,
+                  decision.detail,
+                  pauseInvocation,
+                  escalationRecord?.rulingOrdinal
+                )
+              : d.postPauseComment(task, round, pauseHead, prNumber, decision.reason, decision.detail, pauseInvocation)
           )
           // Every pause, regardless of
           // which branch above decided it, funnels through here exactly
