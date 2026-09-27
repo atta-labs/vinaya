@@ -38,6 +38,7 @@ import {
   checkIssueBriefSections,
   checkIssueObjectives,
   checkIssueRationale,
+  type GateCutovers,
   checkMilestoneShape,
   checkNoBriefContent,
   checkNoForeignTaskOwnership,
@@ -104,8 +105,10 @@ import {
   type BriefBuiltin,
   type BriefSection,
   VinayaConfigSchema,
+  loadConfig,
   loadConfigChecked,
   loadTrustAnchorConfig,
+  resolveGateCutovers,
   resolvePrincipalAllowlist
 } from './config'
 import { printJson } from './envelope'
@@ -417,6 +420,14 @@ export type ForgeValidationInput = {
    * `partitionBriefErrorsByRollout` takes for an unparseable PR number.
    */
   issueNumber?: number | null
+  /**
+   * The resolved gate cutovers for the `objectives`/`briefSections` builtins.
+   * Injectable (tests); when omitted, `validateForgeWrite` resolves it from the
+   * working-tree config (`resolveGateCutovers(loadConfig())`), so an absent
+   * `gateCutovers` key means no cutover — the Issue gate applies from Issue 1
+   * (O1) — and this repo's own key restates its historical cutovers (O2).
+   */
+  gateCutovers?: GateCutovers
 }
 
 const CHECK_BRIEF_SCHEMA = 'brief-schema'
@@ -439,7 +450,7 @@ function nameTheFix(message: string, fixInstruction: string): string {
  * it. The `Record<BriefBuiltin, …>` type makes this exhaustive — adding a name
  * to `BRIEF_BUILTINS` without wiring it here is a compile error.
  */
-function runBuiltin(name: BriefBuiltin, input: ForgeValidationInput): string[] {
+function runBuiltin(name: BriefBuiltin, input: ForgeValidationInput, cutovers: GateCutovers): string[] {
   const { body, changedFiles } = input
   const table: Record<BriefBuiltin, () => { errors: string[] }> = {
     tier: () => checkTierField(body, readTierFromPrBody),
@@ -456,8 +467,14 @@ function runBuiltin(name: BriefBuiltin, input: ForgeValidationInput): string[] {
     closesN: () => checkBriefClosesN(body),
     premiseCoverage: () => checkPremiseCoverage(body, changedFiles),
     issueRationale: () => checkIssueRationale(body),
-    objectives: () => checkIssueObjectives(body, input.issueNumber ?? null),
-    briefSections: () => checkIssueBriefSections(body, input.issueNumber ?? null),
+    objectives: () => checkIssueObjectives(body, input.issueNumber ?? null, cutovers.objectivesSinceIssue),
+    briefSections: () =>
+      checkIssueBriefSections(
+        body,
+        input.issueNumber ?? null,
+        cutovers.briefSectionsSinceIssue,
+        cutovers.documentationSinceIssue
+      ),
     milestoneShape: () => {
       const result = checkMilestoneShape(body)
       return { errors: result.status === 'fail' ? result.errors : [] }
@@ -545,6 +562,10 @@ function customRecovery(section: CustomSection, retryCommand: string): string {
  */
 export function validateForgeWrite(input: ForgeValidationInput): CheckError[] {
   const errors: CheckError[] = []
+  // Resolved once per write from the working-tree config (an absent
+  // `gateCutovers` key → no cutover → the `objectives`/`briefSections`
+  // builtins apply from Issue 1, O1); injectable for tests via `input`.
+  const cutovers = input.gateCutovers ?? resolveGateCutovers(loadConfig())
 
   if (input.title !== null) {
     const t = checkForgeTitle(input.title)
@@ -599,7 +620,7 @@ export function validateForgeWrite(input: ForgeValidationInput): CheckError[] {
     }
     if ('builtin' in section) {
       const instruction = BUILTIN_RECOVERY[section.builtin].replace('{cmd}', input.retryCommand)
-      for (const message of runBuiltin(section.builtin, input)) {
+      for (const message of runBuiltin(section.builtin, input, cutovers)) {
         errors.push(makeCheckError(CHECK_BRIEF_SCHEMA, message, nameTheFix(message, instruction)))
       }
     } else {

@@ -9,7 +9,9 @@ import {
   CODE_REVIEW_SEVERITY_ORDER,
   DEFAULT_RELEASE_ACTOR,
   DEFAULT_REVIEW_POLICY,
+  type GateCutovers,
   isKnownSeverity,
+  NO_GATE_CUTOVERS,
   PRINCIPAL_ALLOWLIST,
   type ReviewPolicy,
   SECURITY_SEVERITY_ORDER
@@ -668,6 +670,33 @@ export const VinayaConfigSchema = z.object({
       maxRounds: z.number().optional()
     })
     .optional(),
+  // The five Issue/PR gate cutovers — one Issue/PR number per gate below
+  // which that gate is grandfathered (an older Issue/PR passes
+  // unconditionally). These were hardcoded constants in `@attalabs/aeg-core`
+  // (`OBJECTIVES_SINCE_ISSUE` etc.); they are now this optional key so a
+  // repository can set its own, and — crucially — an ABSENT key means NO
+  // cutover: `resolveGateCutovers` resolves every field to `null`, and each
+  // pure gate then applies to every Issue/PR from number 1 (a new repository's
+  // Issue 1 is refused without `## Objectives` exactly as a high-numbered
+  // Issue is, O1). Only a repository whose Issues/PRs predate a gate sets these
+  // — this monorepo does, restating its own historical numbers so its older
+  // Issues and pull requests are judged exactly as before (O2). Every field is
+  // an optional non-negative integer; an omitted field within the block is
+  // itself "no cutover" for that one gate. Read from the working-tree config
+  // (`loadConfig`/`loadConfigChecked`), not the trust anchor: the value must be
+  // present on THIS branch for the transition to work (the default branch does
+  // not carry the key until this merges), and it is the same reviewed-committed
+  // trust class the source constants it replaces already had, never a
+  // merge-authority decision like `principals`/`reviewPolicy`.
+  gateCutovers: z
+    .object({
+      objectivesSinceIssue: z.number().int().nonnegative().optional(),
+      briefSectionsSinceIssue: z.number().int().nonnegative().optional(),
+      documentationSinceIssue: z.number().int().nonnegative().optional(),
+      briefRulesSincePr: z.number().int().nonnegative().optional(),
+      agentBoxesRefusedSincePr: z.number().int().nonnegative().optional()
+    })
+    .optional(),
   // The pre-push hook's test-file selector (`lib/test-selector.ts`) chooses
   // what to run by import-graph reachability from the diff — a rule whose
   // own INPUT is the repository itself (scans `.github/workflows`, walks
@@ -1026,6 +1055,38 @@ export function resolveReviewPolicy(config: VinayaConfig | null): ReviewPolicy {
     codeReviewThreshold: codeReviewThreshold as ReviewPolicy['codeReviewThreshold'],
     securityThreshold: securityThreshold as ReviewPolicy['securityThreshold'],
     maxRounds
+  }
+}
+
+/**
+ * Resolves the five gate cutovers: each field of `config?.gateCutovers` when
+ * set, else `null`. **An absent key — or an absent field within it — resolves
+ * to `null`, which every pure gate reads as NO cutover: the gate applies to
+ * every Issue/PR, from number 1 (O1).** This is deliberately the OPPOSITE of
+ * `resolveReviewPolicy`'s "absent → the built-in default" — the built-in
+ * constants (`OBJECTIVES_SINCE_ISSUE` etc.) are NOT the fallback here; they
+ * survive only as each pure validator's own parameter default for a caller
+ * that does not resolve config. Every enforcement path calls this and passes
+ * the result, so a repository that declares no `gateCutovers` gets no cutover
+ * on any gate, while this monorepo restates its historical numbers in its own
+ * `vinaya.config.json` and is judged exactly as before (O2).
+ *
+ * Read from the working-tree config the caller hands in (`loadConfig`/
+ * `loadConfigChecked`), never the trust anchor: unlike `principals`/
+ * `reviewPolicy` this is not a merge-authority decision, it is the same
+ * reviewed-committed trust class the source constants already had, and the
+ * value must be present on the CURRENT branch for the migration to hold (the
+ * default branch does not carry the key until this change merges).
+ */
+export function resolveGateCutovers(config: VinayaConfig | null): GateCutovers {
+  const raw = config?.gateCutovers
+  if (!raw) return NO_GATE_CUTOVERS
+  return {
+    objectivesSinceIssue: raw.objectivesSinceIssue ?? null,
+    briefSectionsSinceIssue: raw.briefSectionsSinceIssue ?? null,
+    documentationSinceIssue: raw.documentationSinceIssue ?? null,
+    briefRulesSincePr: raw.briefRulesSincePr ?? null,
+    agentBoxesRefusedSincePr: raw.agentBoxesRefusedSincePr ?? null
   }
 }
 

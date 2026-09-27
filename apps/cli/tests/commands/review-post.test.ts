@@ -70,6 +70,19 @@ function runCli(args: string[], opts: { cwd: string; env?: Record<string, string
 }
 
 /**
+ * The Objectives cutover now comes from `vinaya.config.json` (`gateCutovers`,
+ * read by `review post` from the working tree — an absent key means no cutover,
+ * O1). These end-to-end tests run in throwaway dirs with a `Closes #1` PR, and
+ * rely on #1 being PRE-cutover (objectives grading skipped) so their unrelated
+ * assertions aren't perturbed — so each writes this repo's own historical
+ * cutover into its own working dir, restoring the pre-config behaviour.
+ */
+const GATE_CUTOVERS_CONFIG = JSON.stringify({ gateCutovers: { objectivesSinceIssue: 404 } })
+function writeGateCutoversConfig(dir: string): void {
+  writeFileSync(join(dir, 'vinaya.config.json'), GATE_CUTOVERS_CONFIG, 'utf8')
+}
+
+/**
  * A deliberately broken `gh`, placed ahead of the real one on `PATH` — the
  * same trick `pr-verify-evidence-cwd.test.ts` uses. Any refusal test that
  * claims "before any forge contact" runs against this: if the command ever
@@ -630,6 +643,7 @@ describe('review post — escalation refusals (brief Part 2)', () => {
   let cwd: string
   beforeEach(() => {
     cwd = mkdtempSync(join(tmpdir(), 'vinaya-review-post-escalate-'))
+    writeGateCutoversConfig(cwd)
   })
   afterEach(() => {
     rmSync(cwd, { recursive: true, force: true })
@@ -820,6 +834,7 @@ describe('review post — verdict binds to the true branch head, not a stale hea
 
     execFileSync('git', ['remote', 'add', 'origin', repo], { cwd: repo })
     const branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim()
+    writeGateCutoversConfig(repo) // untracked — keeps #1 pre-cutover (O1), never perturbs the git delta
 
     const stateDir = mkdtempSync(join(tmpdir(), 'gh-state-truehead-'))
     writeFileSync(join(stateDir, 'comments.json'), '[]')
@@ -1078,6 +1093,7 @@ describe('review post — round-two refusals (brief Part 3), end-to-end against 
     // that fetch a real, successful no-op: every commit it could ask for
     // already exists locally.
     execFileSync('git', ['remote', 'add', 'origin', repo], { cwd: repo })
+    writeGateCutoversConfig(repo) // untracked — keeps #1 pre-cutover (O1), never perturbs the git delta
 
     stateDir = mkdtempSync(join(tmpdir(), 'gh-state-round2-'))
   })
@@ -1664,6 +1680,7 @@ describe('review post — --scope-evidence-file: a fence directly below the verd
   let cwd: string
   beforeEach(() => {
     cwd = mkdtempSync(join(tmpdir(), 'vinaya-review-post-scope-evidence-'))
+    writeGateCutoversConfig(cwd)
   })
   afterEach(() => {
     rmSync(cwd, { recursive: true, force: true })

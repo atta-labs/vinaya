@@ -50,7 +50,7 @@ import {
 } from '@attalabs/aeg-core'
 import { createForgeSource } from '@attalabs/vinaya-sources'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
-import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from '../../lib/config'
+import { loadConfig, loadTrustAnchorConfig, resolveGateCutovers, resolvePrincipalAllowlist } from '../../lib/config'
 
 const CHECK_NAME = 'coherence'
 
@@ -323,7 +323,12 @@ async function main(): Promise<void> {
         "If this repo has more than one project, register them with `vinaya init product <name> --path <folder>` so R1 can resolve each task's `Project:` field. A single-project repo has no registry by design — no action needed."
     })
   }
-  results.push(checkR1(openIssuesBySlug, R1_GRANDFATHERED_ISSUES, registeredNames))
+  // An absent `gateCutovers.objectivesSinceIssue` resolves to `null` (no
+  // cutover — R1 grades every open Issue's `## Objectives` from Issue 1, O1);
+  // this repo restates its own historical value so its pre-gate stock stays
+  // green (O2).
+  const { objectivesSinceIssue } = resolveGateCutovers(loadConfig())
+  results.push(checkR1(openIssuesBySlug, R1_GRANDFATHERED_ISSUES, registeredNames, objectivesSinceIssue))
 
   const failed = results.filter((r) => r.status === 'fail')
   if (failed.length > 0) {

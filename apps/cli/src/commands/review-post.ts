@@ -94,7 +94,6 @@ import {
   isIssueNotFoundError,
   isPrincipal,
   newestPrincipalRulingOrdinal,
-  OBJECTIVES_SINCE_ISSUE,
   type Objective,
   objectivesOf,
   objectivesVersion,
@@ -108,7 +107,13 @@ import {
   securityBlockingSeverities,
   type VerdictExtraction
 } from '@attalabs/aeg-core'
-import { loadTrustAnchorConfig, resolvePrincipalAllowlist, resolveReviewPolicy } from '../lib/config'
+import {
+  loadConfig,
+  loadTrustAnchorConfig,
+  resolveGateCutovers,
+  resolvePrincipalAllowlist,
+  resolveReviewPolicy
+} from '../lib/config'
 import { printJson } from '../lib/envelope'
 import { makeCheckError, refuse } from '../lib/forge-write'
 
@@ -1294,7 +1299,18 @@ export type ObjectivesResolution =
 function resolveObjectivesForPr(pr: string): ObjectivesResolution {
   const prBody = fetchPrBody(pr)
   const { issue } = extractIssue(prBody)
-  const source = resolveObjectivesSource(prBody, issue, OBJECTIVES_SINCE_ISSUE)
+  // The Objectives cutover from the working-tree config — an absent
+  // `gateCutovers.objectivesSinceIssue` resolves to `null` (no cutover: render
+  // the objectives block for every Issue, from 1, O1); this repo restates its
+  // own (O2). Working tree, not the trust anchor: this command RENDERS a
+  // verdict (the reviewer's own act), it does not DECIDE merge — and it always
+  // agrees with `review-gate`'s own trust-anchor read for the only cases that
+  // matter (a repo with no key resolves both to no cutover; a high-numbered
+  // Issue is graded either way). The one way they can diverge — a working-tree
+  // cutover raised past the Issue — makes `review-gate` refuse the missing
+  // block, never accept it, so the safe direction.
+  const { objectivesSinceIssue } = resolveGateCutovers(loadConfig())
+  const source = resolveObjectivesSource(prBody, issue, objectivesSinceIssue)
 
   if (source.kind === 'none') return { kind: 'skip' }
 

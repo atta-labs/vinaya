@@ -90,6 +90,18 @@ if (args[0] === 'api' && String(args[1]).includes('/timeline')) {
   process.stdout.write(process.env.STUB_TIMELINE_JSON ?? '[]')
   process.exit(0)
 }
+// The trust-anchor config read (\`gh api repos/<repo>/contents/vinaya.config.json --jq .content\`)
+// — where \`review-gate\` resolves \`gateCutovers.objectivesSinceIssue\`. A test
+// sets STUB_TRUST_ANCHOR_CONFIG_B64 (base64 of the config JSON) to make a
+// cutover active; unset, the read fails and resolves to no cutover (O1).
+if (args[0] === 'api' && String(args[1]).includes('/contents/')) {
+  if (process.env.STUB_TRUST_ANCHOR_CONFIG_B64) {
+    process.stdout.write(process.env.STUB_TRUST_ANCHOR_CONFIG_B64)
+    process.exit(0)
+  }
+  process.stderr.write('gh stub: no trust-anchor config\\n')
+  process.exit(1)
+}
 process.stderr.write('gh stub: unhandled invocation: ' + args.join(' ') + '\\n')
 process.exit(1)
 `
@@ -383,8 +395,19 @@ process.exit(1)
       body: 'Closes #1\n\n## Objectives\n\nO1. Unrelated leftover text.\n'
     }
 
+    // The Objectives cutover now comes from the trust-anchor `gateCutovers`
+    // key. Configure this repo's own historical value (404) via the trust
+    // anchor so #1 is genuinely pre-cutover and the binding is skipped — the
+    // behaviour this test asserts. `GITHUB_REPOSITORY` lets the trust-anchor
+    // read resolve the repo identity so the stubbed `contents` call is reached.
+    const trustAnchorConfigB64 = Buffer.from(
+      JSON.stringify({ gateCutovers: { objectivesSinceIssue: 404 } }),
+      'utf8'
+    ).toString('base64')
     const { exitCode } = await run(d, ghDir, {
-      STUB_PR_VIEW_JSON: JSON.stringify(prView)
+      STUB_PR_VIEW_JSON: JSON.stringify(prView),
+      GITHUB_REPOSITORY: 'atta-labs/vinaya',
+      STUB_TRUST_ANCHOR_CONFIG_B64: trustAnchorConfigB64
     })
 
     expect(exitCode).toBe(0)

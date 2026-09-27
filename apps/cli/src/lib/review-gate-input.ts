@@ -37,7 +37,6 @@ import {
   isIssueNotFoundError,
   isWaiverLabelActorVerified,
   newestPrincipalRulingOrdinal,
-  OBJECTIVES_SINCE_ISSUE,
   objectivesOf,
   objectivesVersion,
   resolveNewestFrozenBrief,
@@ -46,7 +45,7 @@ import {
   type ReviewGateFact,
   type ReviewGateInput
 } from '@attalabs/aeg-core'
-import { loadTrustAnchorConfig, resolvePrincipalAllowlist, resolveReviewPolicy } from './config.js'
+import { loadTrustAnchorConfig, resolveGateCutovers, resolvePrincipalAllowlist, resolveReviewPolicy } from './config.js'
 import { patchIdAt } from './patch-id.js'
 
 export type PrView = {
@@ -187,9 +186,9 @@ function resolveBriefHash(pr: PrView, principalAllowlist: readonly string[]): Re
  * a linked Issue that got deleted or renumbered (a security-review MAJOR
  * finding).
  */
-function resolveObjectivesVersion(pr: PrView): Resolved<string | null> {
+function resolveObjectivesVersion(pr: PrView, objectivesSinceIssue: number | null): Resolved<string | null> {
   const { issue } = extractIssue(pr.body)
-  const source = resolveObjectivesSource(pr.body, issue, OBJECTIVES_SINCE_ISSUE)
+  const source = resolveObjectivesSource(pr.body, issue, objectivesSinceIssue)
 
   if (source.kind === 'none') return { ok: true, value: null }
 
@@ -392,7 +391,15 @@ export function assembleReviewGateInput(prNumber: number): ReviewGateInputAssemb
 
   const comments = pr.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null }))
 
-  const resolvedObjectivesVersion = waived ? ({ ok: true, value: null } as const) : resolveObjectivesVersion(pr)
+  // The Objectives cutover comes from the SAME default-branch trust anchor as
+  // `principals`/`reviewPolicy` above, never the PR's own checkout, so a PR
+  // cannot opt its own review out of objectives grading by editing the key. An
+  // absent key resolves to `null` — objectives grading applies to every Issue,
+  // from 1 (O1).
+  const { objectivesSinceIssue } = resolveGateCutovers(trustAnchorConfig)
+  const resolvedObjectivesVersion = waived
+    ? ({ ok: true, value: null } as const)
+    : resolveObjectivesVersion(pr, objectivesSinceIssue)
   if (!resolvedObjectivesVersion.ok) return resolvedObjectivesVersion
 
   const resolvedBriefHash = waived ? ({ ok: true, value: null } as const) : resolveBriefHash(pr, principalAllowlist)
