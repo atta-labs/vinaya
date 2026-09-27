@@ -26,7 +26,7 @@ import { join } from 'node:path'
 import { hardenedMeteringDeps, resolveMeteringCapability } from '@attalabs/aeg-core'
 import { runDemoBreak } from './demo.js'
 import type { DoctorDeps } from './doctor.js'
-import { runDoctor } from './doctor.js'
+import { probeLogDestinationServer, resolveLogDestinationForDoctor, runDoctor } from './doctor.js'
 import type { InitDeps } from './init.js'
 import { runInit, runInitProduct } from './init.js'
 import { applyDocOwnersBinding, planDocOwnersBinding, renderDocOwnersBindingDiffLine } from '../lib/doc-owners-write.js'
@@ -242,7 +242,9 @@ export function realDeps(): QuickstartDeps {
       nodeVersion: () => process.version,
       bunVersion: () => (typeof Bun === 'undefined' ? null : Bun.version),
       packageVersion: readPackageVersion,
-      meteringCapability: () => resolveMeteringCapability(hardenedMeteringDeps())
+      meteringCapability: () => resolveMeteringCapability(hardenedMeteringDeps()),
+      resolveLogDestination: resolveLogDestinationForDoctor,
+      probeLogServer: probeLogDestinationServer
     },
     confirm: async (q, defaultYes) => promptYesNo(q, defaultYes),
     ask: async (q) => promptAsk(q),

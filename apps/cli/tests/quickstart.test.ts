@@ -128,7 +128,13 @@ function makeDeps(
     nodeVersion: () => 'v99.0.0',
     bunVersion: () => 'test-bun',
     packageVersion: () => '0.1.0-test',
-    meteringCapability: () => ({ capable: false, reason: 'no-transcript-resolved', detail: 'fixture' })
+    meteringCapability: () => ({ capable: false, reason: 'no-transcript-resolved', detail: 'fixture' }),
+    // This fixture declares no destination: doctor's log-destination check then reads nothing real — no folder, no network.
+    resolveLogDestination: async () => ({
+      destination: { kind: 'none', reason: 'this fixture declares no destination' },
+      credentialVars: []
+    }),
+    probeLogServer: async () => ({ kind: 'accepted', status: 200 })
   }
   let hookSwapped = false
   const deps: QuickstartDeps = {
