@@ -2167,19 +2167,27 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
 // Issue #707, O1 — `depth: 'one'` (the pre-push hook's own mode) stops at
 // direct importers, never the full transitive closure. Three reference
 // change sets, pinned against this repository's own real tree, each with a
-// ceiling: exceeding it is a regression in the depth rule itself (a caller
+// ceiling: exceeding it is a regression in the depth rule itself — a caller
 // widening what "direct" means, or reinstating an unbounded category under
-// `depth: 'one'`), not a fact about these three files that could drift on
-// its own — none of them changes shape from a change ELSEWHERE in the repo.
+// `depth: 'one'`.
+//
+// One other thing moves these numbers, and it is not a regression: a new
+// source file importing one of the reference files directly adds that file's
+// own suite to the selection, by one. That is the rule working. So a raised
+// ceiling has to come with the importer that raised it — here, the doctor
+// command's log-destination check, which reads the sink's own destination
+// decision rather than parsing the `logs` setting a second time, and whose
+// suite therefore belongs in a log-sink change's selection. A ceiling raised
+// with no such importer to point at is the regression this describes.
 describe('selectAffectedTestFiles depth: "one" — reference change-set ceilings (Issue #707, O1)', () => {
-  it('a change to the log sink (log-sink.ts/config.ts/run-paths.ts) selects at most 20 files', () => {
+  it('a change to the log sink (log-sink.ts/config.ts/run-paths.ts) selects at most 21 files', () => {
     const changed = [
       join(REPO_ROOT, 'apps/cli/src/lib/log-sink.ts'),
       join(REPO_ROOT, 'apps/cli/src/lib/config.ts'),
       join(REPO_ROOT, 'apps/cli/src/lib/run-paths.ts')
     ]
     const { selected } = selectAffectedTestFiles(REPO_ROOT, changed, { depth: 'one' })
-    expect(selected.length).toBeLessThanOrEqual(20)
+    expect(selected.length).toBeLessThanOrEqual(21)
   })
 
   it('a change to a widely imported export of the shared core package selects at most 25 files', () => {
