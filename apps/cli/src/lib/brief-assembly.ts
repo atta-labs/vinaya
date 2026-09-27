@@ -100,7 +100,7 @@ export function repoBriefCommandFacts(repoRoot: string): {
   const ownsAegCore = vendored !== null && typeof aegCoreName === 'string' && aegCoreName === AEG_CORE_PACKAGE_NAME
   const program = (rel: string): string | null => (ownsAegCore && existsSync(join(repoRoot, rel)) ? `bun ${rel}` : null)
   return {
-    cliInvocation: briefCliInvocation(vendored),
+    cliInvocation: briefCliInvocation(vendored, repoRoot),
     localGateCommands: {
       dispatchReadiness: program(`${AEG_CORE_DIR}/bin/verify-dispatch.ts`),
       docCoverage: program(`${AEG_CORE_DIR}/bin/verify-docs.ts`)

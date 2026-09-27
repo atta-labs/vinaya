@@ -461,8 +461,11 @@ describe('repoBriefCommandFacts', () => {
         join(dir, 'package.json'),
         JSON.stringify({ name: 'lookalike', workspaces: ['apps/*', 'packages/*'] })
       )
-      mkdirSync(join(dir, 'apps', 'cli'), { recursive: true })
+      mkdirSync(join(dir, 'apps', 'cli', 'src'), { recursive: true })
       writeFileSync(join(dir, 'apps', 'cli', 'package.json'), JSON.stringify({ name: '@attalabs/vinaya' }))
+      // A real entry, so this case isolates the package-name identity check
+      // rather than also tripping the entry-existence one below.
+      writeFileSync(join(dir, 'apps', 'cli', 'src', 'index.ts'), '')
       mkdirSync(join(dir, 'packages', 'aeg-core', 'bin'), { recursive: true })
       writeFileSync(join(dir, 'packages', 'aeg-core', 'package.json'), JSON.stringify({ name: 'not-aeg-core' }))
       writeFileSync(join(dir, 'packages', 'aeg-core', 'bin', 'verify-dispatch.ts'), '')
@@ -471,6 +474,26 @@ describe('repoBriefCommandFacts', () => {
       const facts = repoBriefCommandFacts(dir)
       expect(facts.cliInvocation).toBe('bun apps/cli/src/index.ts')
       expect(facts.localGateCommands).toEqual({ dispatchReadiness: null, docCoverage: null })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('a vendored member with no src/index.ts falls back to the registry form rather than naming a missing file (round 3, security F2)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'brief-cli-layout-'))
+    try {
+      // `detectVendoredVinaya` matches on the member's package NAME, which says
+      // nothing about where its sources live. Without the entry check, every
+      // command in this repository's brief named a file that is not there.
+      writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'odd-layout', workspaces: ['tools/*'] }))
+      mkdirSync(join(dir, 'tools', 'vinaya'), { recursive: true })
+      writeFileSync(
+        join(dir, 'tools', 'vinaya', 'package.json'),
+        JSON.stringify({ name: '@attalabs/vinaya', bin: 'lib/main.js' })
+      )
+
+      const facts = repoBriefCommandFacts(dir)
+      expect(facts.cliInvocation).toMatch(/^npx --yes @attalabs\/vinaya@\d+\.\d+\.\d+$/)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

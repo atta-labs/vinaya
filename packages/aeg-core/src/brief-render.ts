@@ -370,15 +370,15 @@ function withCliInvocation(text: string, invocation: string): string {
 
 function renderHeader(facts: BriefFacts, template: string): string {
   const introMatch = template.match(/^You are the AEG Developer\.[^\n]*$/m)
-  const intro = withCliInvocation(
-    introMatch
-      ? (introMatch[0] as string)
-          .replace(/\s*\[[^\]]*\]/g, '')
-          .replace(/\bBoth mandatory\.$/, 'Mandatory.')
-          .trim()
-      : 'You are the AEG Developer. Run `vinaya doctrine --role developer --print` and read its output first. Mandatory.',
-    facts.cliInvocation
-  )
+  // Left as the template's own bare `vinaya`: `renderBrief` runs
+  // `withCliInvocation` over this whole section once every section is composed,
+  // so rewriting here too would be a second application point to keep in sync.
+  const intro = introMatch
+    ? (introMatch[0] as string)
+        .replace(/\s*\[[^\]]*\]/g, '')
+        .replace(/\bBoth mandatory\.$/, 'Mandatory.')
+        .trim()
+    : 'You are the AEG Developer. Run `vinaya doctrine --role developer --print` and read its output first. Mandatory.'
 
   const reason = facts.rationale.suggestedAgentClass ?? ''
   // The declared tier is a floor, not a default: raised to the mechanical
@@ -414,8 +414,8 @@ function renderSection2(facts: BriefFacts): string {
   const branch = developerBranchForFacts(facts)
   const identityLine =
     facts.trancheSlug !== null
-      ? `- **Tranche:** \`${facts.trancheSlug}\`, task ${facts.taskId}, Issue #${facts.issue}. Branch \`${branch}\`. \`Depends-on: ${depends}\`, \`Conflicts-with: ${conflicts}\`. Confirm \`READY TO DISPATCH\` at your own Step 0.`
-      : `- **Backlog Issue:** #${facts.issue}, no tranche. Branch \`${branch}\`. \`Depends-on: ${depends}\`, \`Conflicts-with: ${conflicts}\`. Confirm \`READY TO DISPATCH\` at your own Step 0.`
+      ? `- **Tranche:** \`${facts.trancheSlug}\`, task ${facts.taskId}, Issue #${facts.issue}. Branch \`${branch}\`. \`Depends-on: ${depends}\`, \`Conflicts-with: ${conflicts}\`. Confirm dispatch readiness at your own Step 0, with the command §5 names.`
+      : `- **Backlog Issue:** #${facts.issue}, no tranche. Branch \`${branch}\`. \`Depends-on: ${depends}\`, \`Conflicts-with: ${conflicts}\`. Confirm dispatch readiness at your own Step 0, with the command §5 names.`
   const lines = [
     '## 2. Context — read before doing anything',
     '',
@@ -968,34 +968,47 @@ export function renderBrief(facts: BriefFacts, template: string): RenderResult {
       )
     : []
 
+  // `withCliInvocation` over every section the renderer composes, not only the
+  // ones whose commands it writes itself: a Planner's own prose (a Traps line,
+  // a Boundary, a Test plan entry) names `vinaya` commands too, and those were
+  // copied into an adopter's brief unrewritten — the same defect on the
+  // caller-supplied side, found by review.
+  //
+  // `## Objectives` is the one section held out, and the reason is a gate:
+  // `checkObjectivesCopy` refuses a brief whose Objectives do not match the
+  // Issue's word for word. An objective naming a command keeps the Issue's own
+  // spelling; §6's Parts cite it by id, so nothing there depends on the
+  // command form.
+  const withCli = (section: string): string => withCliInvocation(section, facts.cliInvocation)
+
   const brief = [
-    renderHeader(scopedFacts, template),
+    withCli(renderHeader(scopedFacts, template)),
     '',
     ...(facts.objectives.length > 0 ? [renderObjectives(facts.objectives), ''] : []),
     ...(facts.documentation.kind === 'none' || facts.documentation.sources.length > 0
-      ? [renderDocumentation(facts.documentation), '']
+      ? [withCli(renderDocumentation(facts.documentation)), '']
       : []),
-    renderSection2(facts),
+    withCli(renderSection2(facts)),
     '',
-    renderSection3(facts),
+    withCli(renderSection3(facts)),
     '',
-    renderSection4(scopedFacts),
+    withCli(renderSection4(scopedFacts)),
     '',
-    renderSection5(facts),
+    withCli(renderSection5(facts)),
     '',
-    renderSection6(scopedFacts),
+    withCli(renderSection6(scopedFacts)),
     '',
-    renderSection7(section7Pointers),
+    withCli(renderSection7(section7Pointers)),
     '',
-    renderSection8(facts),
+    withCli(renderSection8(facts)),
     '',
-    renderSection9(facts),
+    withCli(renderSection9(facts)),
     '',
-    renderSection10(facts),
+    withCli(renderSection10(facts)),
     '',
-    renderSection11(template, facts),
+    withCli(renderSection11(template, facts)),
     '',
-    renderSection12(facts)
+    withCli(renderSection12(facts))
   ].join('\n')
 
   return { ok: true, brief }

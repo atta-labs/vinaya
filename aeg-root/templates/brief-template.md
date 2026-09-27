@@ -30,7 +30,7 @@ You are the AEG Developer. Run `vinaya doctrine --role developer --print` and re
 
 ## 2. Context — read before doing anything
 
-- **Tranche:** [`tranche-slug`], task [n], Issue #[N]. Branch `task/[tranche-slug]/[n]`. `Depends-on: [—|ids]`, `Conflicts-with: [—|ids]`. Confirm `READY TO DISPATCH` at your own Step 0.
+- **Tranche:** [`tranche-slug`], task [n], Issue #[N]. Branch `task/[tranche-slug]/[n]`. `Depends-on: [—|ids]`, `Conflicts-with: [—|ids]`. Confirm dispatch readiness at your own Step 0, with the command §5 names.
 - **Read Issue #[N] in full** for the complete rationale — do not re-derive it.
 - [CONTEXT — the Planner's rationale carried forward (boundary, blast radius, traps), what was previously validated, what is settled and must not be re-litigated, and everything your own Dig confirmed about the current surface. If it isn't in the brief, it doesn't exist. No behavioural fact about code belongs here as prose — a `Premise:` pin or a fenced command with its executed output is the only form (skill §2's rule).]
 

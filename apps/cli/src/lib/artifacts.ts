@@ -20,8 +20,6 @@
 // repo's own battle-tested gates, not invented blanks — the failure it
 // kills is blank-config paralysis.
 
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { DOC_OWNERS_PATH, LABELS, type LabelKey, VERDICT_MARKER_SOURCE, WAIVER_LABEL_REVIEW } from '@attalabs/aeg-core'
 import { resolveDoctrineRoot } from '../commands/doctrine.js'
 import type { AgentVendor } from './agent-vendors.js'
@@ -33,7 +31,6 @@ import type { VinayaConfig } from './config.js'
 import { buildGeminiCommandOp } from './gemini-command-emitter.js'
 import type { CreateLabelOp, Op } from './ops.js'
 import { ownVersion } from './own-version.js'
-import { packageRoot } from './package-root.js'
 import type { VendoredVinaya } from './self-host.js'
 
 /**

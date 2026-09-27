@@ -767,6 +767,39 @@ describe('renderBrief', () => {
       expect(result.brief).toContain('`npx --yes @attalabs/vinaya@9.9.9 pr report --write`')
     })
 
+    it('§2 asks for a confirmation §5 can actually produce (round 3, F2)', () => {
+      const result = renderBrief(baseFacts(ADOPTER), TEMPLATE)
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      // `check dispatch-readiness` prints `✓ dispatch-readiness: pass`, never
+      // `READY TO DISPATCH` — which only this repository's own unabridged
+      // derivation emits, and an adopter's §5 does not name it.
+      expect(result.brief).toContain('Confirm dispatch readiness at your own Step 0, with the command §5 names.')
+      expect(result.brief).not.toContain('READY TO DISPATCH')
+    })
+
+    it('a command the Planner wrote into an Issue field is rewritten too, not copied bare (round 3, security F1)', () => {
+      const issueBody = ISSUE_BODY.replace(
+        '**Traps to avoid** — (1) Do NOT skip the test.',
+        '**Traps to avoid** — (1) Run `vinaya check doc-coverage` before pushing.'
+      )
+      const result = renderBrief(baseFacts({ ...ADOPTER, rationale: parseRationaleFields(issueBody) }), TEMPLATE)
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.brief).toContain('Run `npx --yes @attalabs/vinaya@9.9.9 check doc-coverage` before pushing')
+      expect(result.brief).not.toContain('`vinaya ')
+    })
+
+    it("the Objectives section keeps the Issue's own words, so `checkObjectivesCopy` still matches (round 3, security F1)", () => {
+      const objectives = [{ id: 'O1', text: 'Run `vinaya check doc-coverage` in the fixture.' }]
+      const result = renderBrief(baseFacts({ ...ADOPTER, objectives }), TEMPLATE)
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      // The one held-out section: a gate compares it word for word against the
+      // Issue, so a rewritten command there would refuse the brief.
+      expect(result.brief).toContain('O1. Run `vinaya check doc-coverage` in the fixture.')
+    })
+
     it('an invocation carrying a substitution pattern is copied literally, never expanded (round 2, security F3)', () => {
       const result = renderBrief(
         baseFacts({ cliInvocation: 'npx $& $` x', localGateCommands: { dispatchReadiness: null, docCoverage: null } }),

@@ -51,7 +51,7 @@
 // to settle: the pinned bytes go stale when the CLI is bumped, `doctor` reports
 // that as drift, and `vinaya upgrade` re-pins.
 
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { packageRoot } from './package-root.js'
 import type { VendoredVinaya } from './self-host.js'
@@ -80,7 +80,20 @@ export function ownVersion(): string {
  * built file does not exist yet. The source entry — the same
  * `<dir>/src/index.ts` `resolveAuthorRepoSourceEntry` resolves — needs no
  * build and is what the vendoring repository's own briefs have always named.
+ *
+ * And, like that function, the entry is only named once it is confirmed to
+ * exist. `detectVendoredVinaya` matches on the member's package NAME, which
+ * says nothing about its layout: a member declaring `@attalabs/vinaya` with
+ * its sources somewhere other than `src/index.ts` would otherwise have every
+ * command in its brief written through a file that is not there, with no
+ * degradation to the published form. A repository whose vendored member does
+ * not carry that entry is served the registry invocation instead — wrong for
+ * it in the way an extra `npx` download is wrong, rather than in the way a
+ * brief of unrunnable commands is.
  */
-export function briefCliInvocation(selfHost: VendoredVinaya | null): string {
-  return selfHost ? `bun ${selfHost.dir}/src/index.ts` : `npx --yes @attalabs/vinaya@${ownVersion()}`
+export function briefCliInvocation(selfHost: VendoredVinaya | null, repoRoot: string): string {
+  const published = `npx --yes @attalabs/vinaya@${ownVersion()}`
+  if (selfHost === null) return published
+  const entry = `${selfHost.dir}/src/index.ts`
+  return existsSync(join(repoRoot, entry)) ? `bun ${entry}` : published
 }
