@@ -169,6 +169,19 @@ describe('checkIssueObjectives', () => {
     const r = checkIssueObjectives(PRE_CUTOVER_BODY, null)
     expect(r.status).toBe('fail')
   })
+
+  it('with NO cutover (sinceIssue=null, O1), refuses even a low-numbered Issue with no `## Objectives`', () => {
+    // A repository that declares no `gateCutovers` resolves to `null`, so the
+    // gate applies to Issue 1 exactly as it does to a high-numbered Issue.
+    expect(checkIssueObjectives(PRE_CUTOVER_BODY, 1, null).status).toBe('fail')
+    expect(checkIssueObjectives(PRE_CUTOVER_BODY, 403, null).status).toBe('fail')
+  })
+
+  it('with an explicit cutover (O2), grandfathers below it and enforces at/above it', () => {
+    // A repository that sets its own cutover is judged against that number.
+    expect(checkIssueObjectives(PRE_CUTOVER_BODY, 99, 100).status).toBe('pass')
+    expect(checkIssueObjectives(PRE_CUTOVER_BODY, 100, 100).status).toBe('fail')
+  })
 })
 
 describe('isTaskIssueLabelSet', () => {
@@ -2164,6 +2177,26 @@ describe('checkIssueBriefSections', () => {
   it('passes a null-numbered (create) body at the Documentation cutover when the `None` sentinel is used', () => {
     const withNone = ISSUE_426_BODY.replace('## Objectives', '## Documentation\n\nNone.\n\n## Objectives')
     const r = checkIssueBriefSections(withNone, null)
+    expect(r.status).toBe('pass')
+  })
+
+  it('with NO brief-sections cutover (null, O1), refuses a low-numbered Issue carrying none of the four', () => {
+    // A repository that declares no `gateCutovers` holds Issue 1 to the gate.
+    const r = checkIssueBriefSections('a body with nothing but a title.', 1, null, null)
+    expect(r.status).toBe('fail')
+    expect(r.errors.length).toBeGreaterThan(0)
+  })
+
+  it('with NO documentation cutover (null, O1), requires `## Documentation` on a low-numbered Issue', () => {
+    // ISSUE_426_BODY carries the four sections but no `## Documentation`; with
+    // a null documentation cutover the section is required from Issue 1.
+    const r = checkIssueBriefSections(ISSUE_426_BODY, 1, 1, null)
+    expect(r.status).toBe('fail')
+    expect(r.errors.join(' ')).toMatch(/Documentation/)
+  })
+
+  it('with an explicit brief-sections cutover (O2), grandfathers below it', () => {
+    const r = checkIssueBriefSections('a body with nothing but a title.', 99, 100, 100)
     expect(r.status).toBe('pass')
   })
 })

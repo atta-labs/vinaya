@@ -161,6 +161,7 @@ export {
   resolveNewestFrozenBrief
 } from './brief-validation'
 export type {
+  BriefRolloutCutovers,
   BriefSectionResult,
   BriefSectionsOptions,
   FencedBlock,
@@ -549,6 +550,8 @@ export { findWorkspaceEscapes } from './workspace-escape'
 export type { WorkspaceEscapeFinding, WorkspaceEscapeReason, WorkspaceEscapeSourceFile } from './workspace-escape'
 export { extractBoundaryFilePaths, extractSourceRevision, parseRationaleFields, renderBrief } from './brief-render'
 export type { BriefFacts, RationaleFieldKey, RenderResult, SurfaceFileFact } from './brief-render'
+export { NO_GATE_CUTOVERS } from './gate-cutovers'
+export type { GateCutovers } from './gate-cutovers'
 export {
   hasObjectivesHeading,
   isIssueNotFoundError,

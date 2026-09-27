@@ -54,13 +54,33 @@ import {
   isBriefShaped,
   isIssueNotFoundError,
   type Objective,
-  OBJECTIVES_SINCE_ISSUE,
   type PackageManifest,
   objectivesOf,
   PRINCIPAL_ALLOWLIST,
   readTierFromPrBody,
   resolveNewestFrozenBrief
 } from '../src/index'
+
+/**
+ * `vinaya.config.json`'s `gateCutovers.objectivesSinceIssue` — the Objectives
+ * cutover, read the same plain-JSON way `open-issue.ts` reads it (aeg-core
+ * cannot depend on `apps/cli`'s zod resolver). `null` for an absent key OR a
+ * malformed/missing config: NO cutover, so a brief for any Issue is held to
+ * the objectives comparison, from Issue 1 (a repository that declares no
+ * `gateCutovers`, O1). This repository restates its historical value (O2), so
+ * this returns `404` here and behaviour is unchanged.
+ */
+function readConfigObjectivesSinceIssue(): number | null {
+  try {
+    const raw = JSON.parse(readFileSync('vinaya.config.json', 'utf8')) as {
+      gateCutovers?: { objectivesSinceIssue?: unknown }
+    }
+    const value = raw.gateCutovers?.objectivesSinceIssue
+    return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null
+  } catch {
+    return null
+  }
+}
 
 /** Immediate child directory names of `dir` — `deriveWorkspaceMemberDirs`'s injected filesystem access. Missing/unreadable `dir` degrades to `[]`, never throws. */
 function listDirs(dir: string): string[] {
@@ -211,9 +231,11 @@ function resolveGradedBody(prBody: string, taskBranch: boolean): GradedBodyResol
  * with nothing to compare:
  *   - a task branch whose `Closes #N` is missing/malformed (`checkClosesN`,
  *     wired separately in `checkBriefSections`, already refuses that);
- *   - a task branch whose linked Issue is below `OBJECTIVES_SINCE_ISSUE` —
- *     the cutover that keeps the pre-gate stock green flows down to the
- *     brief that closes it, the same as it does to the Issue itself;
+ *   - a task branch whose linked Issue is below the resolved Objectives
+ *     cutover (`gateCutovers.objectivesSinceIssue`, read from `vinaya.config.json`;
+ *     `null` = no cutover, every Issue graded, O1) — the cutover that keeps the
+ *     pre-gate stock green flows down to the brief that closes it, the same as
+ *     it does to the Issue itself;
  *   - a standalone (non-task) brief carrying no `## Objectives` section at
  *     all — the quick lane never had this obligation before this task, and
  *     nothing forces it to grow one now.
@@ -240,7 +262,8 @@ function resolveIssueObjectives(prBody: string, isTaskBranch: boolean): Objectiv
     return own.ok ? own.objectives : []
   }
   const { issue } = extractIssue(prBody)
-  if (issue === null || issue < OBJECTIVES_SINCE_ISSUE) return null
+  const cutover = readConfigObjectivesSinceIssue()
+  if (issue === null || (cutover !== null && issue < cutover)) return null
   try {
     const parsed = objectivesOf(fetchIssueBodyForObjectives(issue))
     return parsed.ok ? parsed.objectives : null

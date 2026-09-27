@@ -1002,6 +1002,26 @@ describe('partitionBriefErrorsByRollout', () => {
     expect(result.blocking).toEqual([CONSUMER_TESTS_ERROR])
     expect(result.info).toEqual([AGENT_BOXES_ERROR])
   })
+
+  it('with NO cutovers (both null, O1), grandfathers nothing — every rule finding blocks even on PR 1', () => {
+    // A repository that declares no `gateCutovers` resolves both PR cutovers to
+    // `null`, so a low-numbered PR is held to the rules the same as a high one.
+    const result = partitionBriefErrorsByRollout([CONSUMER_TESTS_ERROR, AGENT_BOXES_ERROR], 1, {
+      briefRulesSincePr: null,
+      agentBoxesRefusedSincePr: null
+    })
+    expect(result.blocking).toEqual([CONSUMER_TESTS_ERROR, AGENT_BOXES_ERROR])
+    expect(result.info).toEqual([])
+  })
+
+  it('with an explicit cutover (O2), grandfathers a rule finding below the configured number', () => {
+    const result = partitionBriefErrorsByRollout([CONSUMER_TESTS_ERROR], 99, {
+      briefRulesSincePr: 100,
+      agentBoxesRefusedSincePr: 100
+    })
+    expect(result.blocking).toEqual([])
+    expect(result.info).toEqual([CONSUMER_TESTS_ERROR])
+  })
 })
 
 describe('checkNoAgentBoxes', () => {
