@@ -461,6 +461,35 @@ describe('readStartClaim', () => {
     }
   })
 
+  it("skips the asking request's own claim, and only that one", () => {
+    // `task_start` writes its claim before it reads any state, so a reading
+    // that counted it would find a start coming up for every start — its own —
+    // and refuse every launch as a duplicate of itself.
+    const root = tempDir()
+    writeStartClaim(root, {
+      requestId: REQUEST_ID,
+      caller: 'operator',
+      target: { issue: TASK },
+      startedAt: CLAIM_ACCEPTED_AT
+    })
+    expect(readStartClaim(root, TASK, null, claimDeps(WHILE_CLAIM_IS_FRESH), REQUEST_ID)).toBeNull()
+    // Another caller's claim for the same task is still read: that one IS a
+    // start in flight, and it is what the gate exists to see.
+    writeStartClaim(root, {
+      requestId: 'b2c3d4e5f6071829',
+      caller: 'operator-2',
+      target: { issue: TASK },
+      startedAt: CLAIM_ACCEPTED_AT
+    })
+    expect(readStartClaim(root, TASK, null, claimDeps(WHILE_CLAIM_IS_FRESH), REQUEST_ID)).toEqual({
+      kind: 'starting',
+      requestId: 'b2c3d4e5f6071829',
+      startedAt: CLAIM_ACCEPTED_AT
+    })
+    // A pure reader passes no identity and sees both.
+    expect(readStartClaim(root, TASK, null, claimDeps(WHILE_CLAIM_IS_FRESH))?.kind).toBe('starting')
+  })
+
   it('never lets a claim field forge a state phrase — the time reaches the phrase as an instant, not as characters', () => {
     // The Operator doctrine keys its single action off this exact string, so a
     // field carrying the punctuation the phrases are built from could name a

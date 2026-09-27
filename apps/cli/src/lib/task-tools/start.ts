@@ -231,8 +231,13 @@ export type TaskStartDeps = {
    * passed no address could never match a claim for the address form every
    * tranche task uses — and the gate's own `starting` refusal would then be
    * dead code for exactly the tasks it exists to protect.
+   *
+   * And the calling request's OWN identity, which the reading excludes: this
+   * call's claim is on disk before any state is read, so a read that counted
+   * it would find a start coming up for every start — this one — and refuse
+   * every launch as a duplicate of itself.
    */
-  loopState: (issue: number, ref: TaskToolRef) => TaskLoopState
+  loopState: (issue: number, ref: TaskToolRef, ownRequestId: string) => TaskLoopState
   /** For a paused task, what that pause is waiting for — read from the same records the continuation reads, so this gate never names a tool that would not move the run. See `PauseDisposition`. */
   pauseDisposition: (issue: number) => PauseDisposition
   /** The agent a held run was dispatched with, from its own pause record — `null` when there is no pause record or it names none. What a CONTINUATION must be relaunched under; the loop refuses any other. */
@@ -790,7 +795,10 @@ export function defaultHeldAgent(issue: number, root: string = runtimeDirForThis
  * from another caller, or for the same task under a different payload, has a
  * different identity, finds no claim to replay, and used to read past a state
  * that was already saying a launch was in flight. Refusing it narrows the
- * duplicate-developer race by exactly the span the claim can see — and it is
+ * duplicate-developer race by exactly the span the claim can see. The one
+ * claim this reading never counts is the calling request's own: it is written
+ * before any state is read, so counting it would make every start a duplicate
+ * of itself. And the refusal is
  * bounded from both ends: the claim stops reading `starting` once its process
  * is gone and its grace has passed, and `start_did_not_come_up` is not refused
  * at all, so the Operator is never left with nothing that starts the task.
@@ -1135,9 +1143,11 @@ export const defaultTaskStartDeps: TaskStartDeps = {
   resolveIssue: resolveOpenTaskIssueForRef,
   issueFacts: readTaskIssueFacts,
   isRunAlive: defaultIsRunAlive,
-  loopState: (issue, ref) => {
+  loopState: (issue, ref, ownRequestId) => {
     const root = runtimeDirForThisRepo()
-    return deriveLoopState(root, issue, undefined, () => readStartClaim(root, issue, claimAddressFor(ref)))
+    return deriveLoopState(root, issue, undefined, () =>
+      readStartClaim(root, issue, claimAddressFor(ref), undefined, ownRequestId)
+    )
   },
   pauseDisposition: (issue) => defaultPauseDisposition(issue),
   heldAgent: (issue) => defaultHeldAgent(issue),
@@ -1259,7 +1269,7 @@ export function createTaskStartHandler(
       let refusal: TaskToolError | null
       let disposition: PauseDisposition = 'none'
       try {
-        const state = deps.loopState(issue, target)
+        const state = deps.loopState(issue, target, requestId)
         disposition = state.kind === 'running' ? 'none' : deps.pauseDisposition(issue)
         refusal = startRefusalForState(state, target, disposition)
       } catch (err) {

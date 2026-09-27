@@ -500,15 +500,23 @@ function claimMatchesTask(record: StartRecord, task: number, address: TaskAddres
  *     bound it cannot tell a launch that never came up from a run that came up,
  *     worked, and left nothing behind. Asserting the first about the second is
  *     the same false report — with the sign flipped — that `no driver` was.
+ *
+ * `exceptRequestId` drops one claim from the reading: the caller's OWN. A
+ * writer that asks this question asks it about OTHER starts — `task_start`
+ * writes its claim before it reads any state, so without this it would find
+ * the claim it wrote a moment ago and refuse its own launch as a duplicate of
+ * itself. A pure reader passes none, and sees every claim.
  */
 export function readStartClaim(
   root: string,
   task: number,
   address: TaskAddress,
-  deps: StartClaimDeps = defaultStartClaimDeps
+  deps: StartClaimDeps = defaultStartClaimDeps,
+  exceptRequestId?: string
 ): StartClaimState | null {
   let newest: { record: StartRecord; at: number } | null = null
   for (const record of deps.claims(root)) {
+    if (record.requestId === exceptRequestId) continue
     if (!claimMatchesTask(record, task, address)) continue
     const parsed = Date.parse(record.startedAt)
     // A record whose own timestamp does not parse sorts oldest, so it never

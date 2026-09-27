@@ -75,7 +75,7 @@ function harness(
     resolveIssue?: (ref: TaskToolRef) => number | null
     issueFacts?: (issue: number) => TaskIssueFacts
     isRunAlive?: (issue: number) => boolean
-    loopState?: (issue: number, ref: TaskToolRef) => TaskLoopState
+    loopState?: (issue: number, ref: TaskToolRef, ownRequestId: string) => TaskLoopState
     pauseDisposition?: (issue: number) => PauseDisposition
     heldAgent?: (issue: number) => AgentVendor | null
     isPidAlive?: (pid: number) => boolean
@@ -561,20 +561,28 @@ describe('task_start handler', () => {
       expect(launches).toHaveLength(1)
     })
 
-    it('reads the state for the ADDRESS this start names, not only for its Issue', async () => {
+    it("reads the state for the ADDRESS this start names, and excludes this call's own claim", async () => {
       // A claim written against a tranche ordinal names that ordinal, not the
       // Issue number, so a state read that was handed no address could never
       // match one — and the `starting` refusal above would be dead code for
-      // the address form every tranche task uses.
-      const seen: TaskToolRef[] = []
-      const { handler } = harness({
-        loopState: (_issue, ref) => {
-          seen.push(ref)
+      // the address form every tranche task uses. The request identity goes
+      // with it because this call's OWN claim is already on disk by now:
+      // counted, it would make every start a duplicate of itself.
+      const seen: Array<{ ref: TaskToolRef; ownRequestId: string }> = []
+      const { handler, launches, map } = harness({
+        loopState: (_issue, ref, ownRequestId) => {
+          seen.push({ ref, ownRequestId })
           return { kind: 'not_started' }
         }
       })
-      await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
-      expect(seen).toEqual([{ tranche: 'unattended-run-v1', id: '17' }])
+      const result = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(result.ok).toBe(true)
+      expect(launches).toHaveLength(1)
+      expect(seen).toHaveLength(1)
+      expect(seen[0]?.ref).toEqual({ tranche: 'unattended-run-v1', id: '17' })
+      // The identity this call claimed and the one it hands the reader are the
+      // same string — the claim it must not be refused by.
+      expect(seen[0]?.ownRequestId).toBe([...map.keys()][0] as string)
     })
 
     it('refuses a pause still awaiting a decision, naming `task_resume`, and never claims the identity', async () => {
