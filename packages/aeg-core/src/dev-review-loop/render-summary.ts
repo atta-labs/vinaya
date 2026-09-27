@@ -13,6 +13,12 @@ import { SEVERITY_COLUMNS, type Confidence, type Journal, type RoundRecord } fro
  * reads the same literals the renderer wrote. They are DIFFERENT facts: the
  * loop never asked this round for a confidence at all (round 1 never is), or
  * it asked and the developer stated nothing readable.
+ *
+ * `CONFIDENCE_NOT_ASKED_CELL`'s glyph is also the count columns' own
+ * "nothing to report" cell (`countCells` below) — one glyph for one meaning
+ * across the table, rather than a second literal saying the same thing. Only
+ * the confidence column is read back out of a posted table, so the shared
+ * glyph never makes a count cell parseable as a confidence.
  */
 export const CONFIDENCE_NOT_ASKED_CELL = '—'
 export const CONFIDENCE_ABSENT_CELL = 'absent'
@@ -26,9 +32,29 @@ function confidenceCell(confidence: Confidence | null): string {
   return `${confidence.value}%`
 }
 
+/**
+ * One round's count cells — numbers when the loop recorded this round's
+ * findings, the not-reported glyph when it never recorded them at all.
+ *
+ * A round the loop ASSESSED records every severity column, zeros included
+ * (`buildRoundRecord`, `assess-round.ts`), so a record carrying none of them
+ * is one whose counts have no source: a round rebuilt from the pull request's
+ * own round markers after a restart, which name a round's number and head and
+ * carry no finding breakdown at all (`journal-reconstruction.ts`). Writing `0`
+ * for those cells told a reader the round was clean — four rounds of a real
+ * task's published table read as zero findings when the truth was that nobody
+ * knew. The distinction is whether the counts were recorded, never whether
+ * they are zero: a round the loop assessed and found nothing in still reads
+ * `0`, because that zero is a measurement.
+ */
+function countCells(record: RoundRecord): string[] {
+  const recorded = SEVERITY_COLUMNS.some((key) => record.countsBySeverity[key] !== undefined)
+  if (!recorded) return SEVERITY_COLUMNS.map(() => CONFIDENCE_NOT_ASKED_CELL)
+  return SEVERITY_COLUMNS.map((key) => String(record.countsBySeverity[key] ?? 0))
+}
+
 function row(record: RoundRecord): string {
-  const counts = SEVERITY_COLUMNS.map((key) => String(record.countsBySeverity[key] ?? 0))
-  return `| ${record.round} | ${counts.join(' | ')} | ${confidenceCell(record.confidence)} | ${record.outcome} |`
+  return `| ${record.round} | ${countCells(record).join(' | ')} | ${confidenceCell(record.confidence)} | ${record.outcome} |`
 }
 
 export function renderSummary(journal: Journal): string {
