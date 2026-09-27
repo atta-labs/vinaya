@@ -2,7 +2,9 @@
  * `dispatchRole` — the Vinaya Log's `dispatch` family chokepoint (Linear
  * "Tech spec — The Vinaya Log" rev 4, §8, §20; `apps/cli/specs/log.md`).
  * Starts one of three vendors' headless CLI as a child process with
- * attribution (`VINAYA_RUN_ID`/`VINAYA_ROLE`/`VINAYA_TASK`/`VINAYA_ROUND`) set
+ * attribution (`VINAYA_RUN_ID`/`VINAYA_ROLE`/`VINAYA_TASK`/`VINAYA_ROUND`) plus
+ * this driver's own pid (`VINAYA_DRIVER_PID`, so a role that lists processes
+ * recognizes its own launcher rather than reading it as a competing run) set
  * on its environment only — never on this process's own `process.env` — and
  * records `dispatched` / `outcome_received` / `dispatch_failed` through
  * `log()`, using the SAME `run_id` the child's own later `vinaya` calls (its
@@ -3634,6 +3636,16 @@ export async function dispatchRole(
       VINAYA_ROLE: role,
       VINAYA_TASK: opts.task !== undefined ? String(opts.task) : undefined,
       VINAYA_ROUND: opts.round !== undefined ? String(opts.round) : undefined,
+      // This process — the one that launched this role, and so the role's own
+      // driver: the `vinaya task run` / `dev-review-loop` process whose own
+      // loop-log header already names this same `process.pid` (`loop-log.ts`'s
+      // `appendRunStartMarker`), and the same value this launch record's
+      // `dispatcherPid` carries. A dispatched role that lists processes finds
+      // that driver and, without this value, has no way to tell its own
+      // launcher from a second, competing run on the same branch — so it
+      // stops to ask. Set for EVERY dispatched role, beside the attribution
+      // above, never only the developer.
+      VINAYA_DRIVER_PID: String(process.pid),
       // Round 2 review, MAJOR: the runtime directory THIS trusted controller
       // already resolved, so the child never resolves one of its own and the
       // two can never disagree. A child that re-derived it would reach a

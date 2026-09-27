@@ -1,0 +1,5 @@
+---
+'@attalabs/vinaya': patch
+---
+
+A dispatched role knows its own driver's process id. Every role the loop starts already receives its run attribution — its run id, its role, its task and its round — but nothing told it which running process was the one that launched it. A Developer that listed processes found a `vinaya task run` process working on its own task, read it as a second run racing on the same branch, and stopped before its first step to ask; the loop then timed out waiting for a pull request that was never going to be opened. `dispatchRole` now sets `VINAYA_DRIVER_PID` on the child's environment beside that attribution, for every role it dispatches, carrying the launching process's own pid — the same value the loop log's own run-start header names and the same one the launch record records as its dispatcher. A process whose id matches it is the role's own driver, and only a second driver on the same task with a different id is a conflict worth escalating; the Developer doctrine now says so, beside its existing worktree-and-branch discipline.
