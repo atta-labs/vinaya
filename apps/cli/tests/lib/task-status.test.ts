@@ -38,6 +38,7 @@ import {
   resetPhaseHistoryCache,
   prCommentReaderForOneStatusRead,
   MERGED_TASK_PR_READ_CAP,
+  REMEMBERED_PR_COMMENTS_MAX,
   PHASE_HISTORY_CACHE_TTL_MS,
   PHASE_HISTORY_FAILURE_BACKOFF_MS,
   SUMMARY_CONFIDENCE_READS_PER_STATUS_READ
@@ -412,6 +413,15 @@ describe('readLoopPhase (O1)', () => {
     expect(labelFor('some_phase_added_later')).toBe('some_phase_added_later')
   })
 
+  it("reports no time in phase at all when the record's own timestamp does not parse", () => {
+    const root = tempDir()
+    // `isoTimestamp` is only a non-empty string, so a corrupted or hand-edited
+    // record reaches the reader; inventing `0m` would state an age no record
+    // carries.
+    writeLoopStateRound(root, TASK, 1, { phase: 'publish', recordedAt: 'not a timestamp' })
+    expect(readLoopPhase(root, TASK)?.minutesInPhase).toBeNull()
+  })
+
   it('reports zero rather than a negative age when the record was written ahead of this clock', () => {
     const root = tempDir()
     writeLoopStateRound(root, TASK, 1, { phase: 'publish', recordedAt: '2026-09-15T00:10:00.000Z' })
@@ -427,14 +437,17 @@ function summaryConfidenceFor(body: string) {
 describe('readLastConfidence (O1)', () => {
   it('returns null when no record carries a confidence for any round', () => {
     const root = tempDir()
-    expect(readLastConfidence(root, TASK, null)).toBeNull()
+    expect(readLastConfidence(root, TASK, null)).toEqual({ kind: 'none' })
   })
 
   it("reads the newest round's own stated confidence, naming the round it belongs to", () => {
     const root = tempDir()
     writeStatedConfidence(root, TASK, 2, 'CONFIDENCE: 90 — fixed the reported issue\n')
     writeStatedConfidence(root, TASK, 3, 'CONFIDENCE: 75 — one finding needed a wider fix\n')
-    expect(readLastConfidence(root, TASK, null)).toEqual({ round: 3, percent: 75, source: 'stated' })
+    expect(readLastConfidence(root, TASK, null)).toEqual({
+      kind: 'confidence',
+      confidence: { round: 3, percent: 75, source: 'stated' }
+    })
   })
 
   it('never reports a summary round the loop never asked as an absence — that round has no confidence at all', () => {
@@ -454,7 +467,10 @@ describe('readLastConfidence (O1)', () => {
   it('reports a malformed statement as a recorded absence, never as a zero', () => {
     const root = tempDir()
     writeStatedConfidence(root, TASK, 2, 'pretty confident, I think\n')
-    expect(readLastConfidence(root, TASK, null)).toEqual({ round: 2, percent: null, source: 'stated' })
+    expect(readLastConfidence(root, TASK, null)).toEqual({
+      kind: 'confidence',
+      confidence: { round: 2, percent: null, source: 'stated' }
+    })
   })
 })
 
@@ -539,14 +555,13 @@ describe('typical phase times from history (O2/O4)', () => {
   })
 
   it('degrades to no typical time when the forge read fails, never to an error, and reports the read as failed', () => {
-    const read = readPhaseSamples({
+    const read = readPhaseSamples(ALLOWLIST, {
       listMergedPrs: () => {
         throw new Error('gh: could not reach the forge')
       },
       fetchPrComments: () => {
         throw new Error('never called')
-      },
-      allowlist: () => ALLOWLIST
+      }
     })
     expect(phaseHistoryLookupFor(read.samples)('dispatch_reviewers')).toBeNull()
     // `ok: false` is what keeps this emptiness out of the cache — the forge
@@ -556,7 +571,7 @@ describe('typical phase times from history (O2/O4)', () => {
 
   it("keeps the pull requests it could read when one of them fails, and reads each one's comments once", () => {
     const reads: number[] = []
-    const read = readPhaseSamples({
+    const read = readPhaseSamples(ALLOWLIST, {
       listMergedPrs: () =>
         JSON.stringify([
           { number: 10, headRefName: 'task/demo/1', mergedAt: '2026-09-20T10:00:00.000Z' },
@@ -574,8 +589,7 @@ describe('typical phase times from history (O2/O4)', () => {
             createdAt: c.createdAt
           }))
         })
-      },
-      allowlist: () => ALLOWLIST
+      }
     })
     expect(reads).toEqual([13, 12, 11, 10])
     expect(phaseHistoryLookupFor(read.samples)('dispatch_reviewers')).toEqual({
@@ -607,13 +621,12 @@ describe('typical phase times from history (O2/O4)', () => {
   })
 
   it('reports the read as failed when every pull request it named could not be read', () => {
-    const read = readPhaseSamples({
+    const read = readPhaseSamples(ALLOWLIST, {
       listMergedPrs: () =>
         JSON.stringify([{ number: 10, headRefName: 'task/demo/1', mergedAt: '2026-09-20T10:00:00.000Z' }]),
       fetchPrComments: () => {
         throw new Error('gh: comment read failed')
-      },
-      allowlist: () => ALLOWLIST
+      }
     })
     expect(read.ok).toBe(false)
   })
@@ -625,10 +638,9 @@ describe('typical phase times from history (O2/O4)', () => {
         reads += 1
         return JSON.stringify([])
       },
-      fetchPrComments: () => JSON.stringify({ comments: [] }),
-      allowlist: () => ALLOWLIST
+      fetchPrComments: () => JSON.stringify({ comments: [] })
     }
-    const lookup = phaseHistoryLookup(deps, () => 0)
+    const lookup = phaseHistoryLookup(ALLOWLIST, deps, () => 0)
     expect(lookup('publish')).toBeNull()
     expect(lookup('pause')).toBeNull()
     expect(lookup('ask_confidence')).toBeNull()
@@ -654,17 +666,16 @@ describe('typical phase times from history (O2/O4)', () => {
             author: { login: c.author },
             createdAt: c.createdAt
           }))
-        }),
-      allowlist: () => ALLOWLIST
+        })
     }
     let clock = 1_000
     // Two status reads inside the lifetime share one forge read…
-    expect(phaseHistoryLookup(deps, () => clock)('dispatch_reviewers')).toEqual({
+    expect(phaseHistoryLookup(ALLOWLIST, deps, () => clock)('dispatch_reviewers')).toEqual({
       typicalPhaseMinutes: 5,
       typicalPhaseSamples: 3
     })
     clock += PHASE_HISTORY_CACHE_TTL_MS - 1
-    expect(phaseHistoryLookup(deps, () => clock)('dispatch_reviewers')).toEqual({
+    expect(phaseHistoryLookup(ALLOWLIST, deps, () => clock)('dispatch_reviewers')).toEqual({
       typicalPhaseMinutes: 5,
       typicalPhaseSamples: 3
     })
@@ -672,7 +683,7 @@ describe('typical phase times from history (O2/O4)', () => {
     // …and a read past it goes to the forge again, so a long-lived session
     // picks up newly merged tasks.
     clock += 1
-    expect(phaseHistoryLookup(deps, () => clock)('dispatch_reviewers')).toEqual({
+    expect(phaseHistoryLookup(ALLOWLIST, deps, () => clock)('dispatch_reviewers')).toEqual({
       typicalPhaseMinutes: 5,
       typicalPhaseSamples: 3
     })
@@ -700,27 +711,26 @@ describe('typical phase times from history (O2/O4)', () => {
             author: { login: c.author },
             createdAt: c.createdAt
           }))
-        }),
-      allowlist: () => ALLOWLIST
+        })
     }
     let clock = 5_000
     // One status read of ten rows, against a forge that is refusing: the whole
     // read attempts the forge ONCE. Retrying per row is what turns a rate
     // limit into a worse rate limit.
-    const failing = phaseHistoryLookup(deps, () => clock)
+    const failing = phaseHistoryLookup(ALLOWLIST, deps, () => clock)
     for (let row = 0; row < 10; row++) expect(failing('dispatch_reviewers')).toBeNull()
     expect(attempts).toBe(1)
 
     // A second status read inside the back-off window does not ask again
     // either — the failure is remembered, not cached for the process.
     clock += PHASE_HISTORY_FAILURE_BACKOFF_MS - 1
-    expect(phaseHistoryLookup(deps, () => clock)('dispatch_reviewers')).toBeNull()
+    expect(phaseHistoryLookup(ALLOWLIST, deps, () => clock)('dispatch_reviewers')).toBeNull()
     expect(attempts).toBe(1)
 
     // Past the back-off the forge is asked again, and one transient failure has
     // not emptied the column for the life of a long-lived server session.
     clock += 1
-    expect(phaseHistoryLookup(deps, () => clock)('dispatch_reviewers')).toEqual({
+    expect(phaseHistoryLookup(ALLOWLIST, deps, () => clock)('dispatch_reviewers')).toEqual({
       typicalPhaseMinutes: 7,
       typicalPhaseSamples: 3
     })
@@ -750,10 +760,9 @@ describe('typical phase times from history (O2/O4)', () => {
             createdAt: c.createdAt
           }))
         })
-      },
-      allowlist: () => ALLOWLIST
+      }
     }
-    const lookup = phaseHistoryLookup(deps, () => 9_000)
+    const lookup = phaseHistoryLookup(ALLOWLIST, deps, () => 9_000)
     for (let row = 0; row < 10; row++) lookup(row % 2 === 0 ? 'dispatch_developer' : 'dispatch_reviewers')
     expect(listReads).toBe(1)
     expect(commentReads).toBe(3)
@@ -761,7 +770,7 @@ describe('typical phase times from history (O2/O4)', () => {
   })
 
   it('answers rather than throwing when a comment carries no readable body', () => {
-    const read = readPhaseSamples({
+    const read = readPhaseSamples(ALLOWLIST, {
       listMergedPrs: () =>
         JSON.stringify([{ number: 10, headRefName: 'task/demo/1', mergedAt: '2026-09-20T10:00:00.000Z' }]),
       // A changed `gh` output shape: `body` is not a string. Reaching the
@@ -769,8 +778,7 @@ describe('typical phase times from history (O2/O4)', () => {
       fetchPrComments: () =>
         JSON.stringify({
           comments: [{ body: null, author: { login: 'principal' }, createdAt: '2026-09-20T10:00:00.000Z' }]
-        }),
-      allowlist: () => ALLOWLIST
+        })
     })
     expect(read.samples).toEqual({ developing: [], reviewing: [] })
     // The forge WAS reached and its answer parsed — the comments simply carried
@@ -810,8 +818,7 @@ describe('the summary-confidence comment reader (O1)', () => {
       fetchPrComments: (pr: number) => {
         reads.push(pr)
         return comments('published summary')
-      },
-      allowlist: () => ['principal']
+      }
     }
   }
 
@@ -819,22 +826,33 @@ describe('the summary-confidence comment reader (O1)', () => {
     resetPhaseHistoryCache()
     const reads: number[] = []
     const deps = depsCounting(reads)
-    expect(prCommentReaderForOneStatusRead(deps, () => 1_000)(703)).not.toBeNull()
-    // A second status read, well inside the lifetime — a published run's
-    // summary never changes, so an Operator polling re-pays nothing.
-    expect(prCommentReaderForOneStatusRead(deps, () => 2_000)(703)).not.toBeNull()
+    expect(prCommentReaderForOneStatusRead(deps, () => 1_000)(703).kind).toBe('read')
+    // A second status read, well inside the lifetime — a published run's summary
+    // never changes, so an Operator polling re-pays nothing.
+    expect(prCommentReaderForOneStatusRead(deps, () => 2_000)(703).kind).toBe('read')
     expect(reads).toEqual([703])
     resetPhaseHistoryCache()
   })
 
-  it('caps how many fresh reads one status read may make, reporting no record past the cap', () => {
+  it('tells a spent budget apart from a read it made, so an unknown is never reported as an absence', () => {
     resetPhaseHistoryCache()
     const reads: number[] = []
     const reader = prCommentReaderForOneStatusRead(depsCounting(reads), () => 1_000)
     const asked = SUMMARY_CONFIDENCE_READS_PER_STATUS_READ + 3
     const answers = Array.from({ length: asked }, (_, i) => reader(800 + i))
     expect(reads).toHaveLength(SUMMARY_CONFIDENCE_READS_PER_STATUS_READ)
-    expect(answers.filter((a) => a === null)).toHaveLength(asked - SUMMARY_CONFIDENCE_READS_PER_STATUS_READ)
+    expect(answers.filter((a) => a.kind === 'read')).toHaveLength(SUMMARY_CONFIDENCE_READS_PER_STATUS_READ)
+    expect(answers.filter((a) => a.kind === 'unread')).toHaveLength(asked - SUMMARY_CONFIDENCE_READS_PER_STATUS_READ)
+    resetPhaseHistoryCache()
+  })
+
+  it('refuses a pull-request number that is not a positive integer on this path too', () => {
+    resetPhaseHistoryCache()
+    const reads: number[] = []
+    const reader = prCommentReaderForOneStatusRead(depsCounting(reads), () => 1_000)
+    expect(reader(-1).kind).toBe('failed')
+    expect(reader(1.5).kind).toBe('failed')
+    expect(reads).toEqual([])
     resetPhaseHistoryCache()
   })
 
@@ -846,15 +864,50 @@ describe('the summary-confidence comment reader (O1)', () => {
       fetchPrComments: () => {
         attempts += 1
         throw new Error('gh: comment read failed')
-      },
-      allowlist: () => ['principal']
+      }
     }
-    expect(prCommentReaderForOneStatusRead(deps, () => 1_000)(703)).toBeNull()
-    expect(prCommentReaderForOneStatusRead(deps, () => 1_000 + PHASE_HISTORY_FAILURE_BACKOFF_MS - 1)(703)).toBeNull()
+    expect(prCommentReaderForOneStatusRead(deps, () => 1_000)(703).kind).toBe('failed')
+    expect(prCommentReaderForOneStatusRead(deps, () => 1_000 + PHASE_HISTORY_FAILURE_BACKOFF_MS - 1)(703).kind).toBe(
+      'failed'
+    )
     expect(attempts).toBe(1)
-    expect(prCommentReaderForOneStatusRead(deps, () => 1_000 + PHASE_HISTORY_FAILURE_BACKOFF_MS)(703)).toBeNull()
+    expect(prCommentReaderForOneStatusRead(deps, () => 1_000 + PHASE_HISTORY_FAILURE_BACKOFF_MS)(703).kind).toBe(
+      'failed'
+    )
     expect(attempts).toBe(2)
     resetPhaseHistoryCache()
+  })
+
+  it('remembers no more pull requests than its own bound, freeing the oldest read first', () => {
+    resetPhaseHistoryCache()
+    const reads: number[] = []
+    const deps = depsCounting(reads)
+    // Each read is its own status read, so the per-read budget never bites and
+    // only the remembered-count bound can.
+    for (let pr = 1; pr <= REMEMBERED_PR_COMMENTS_MAX + 2; pr++) {
+      prCommentReaderForOneStatusRead(deps, () => 1_000)(pr)
+    }
+    expect(reads).toHaveLength(REMEMBERED_PR_COMMENTS_MAX + 2)
+    // The oldest entries were freed, so asking about the first one again costs a
+    // fresh read rather than hitting an entry the session never released.
+    prCommentReaderForOneStatusRead(deps, () => 1_000)(1)
+    expect(reads.filter((pr) => pr === 1)).toHaveLength(2)
+    resetPhaseHistoryCache()
+  })
+
+  it('answers rather than throwing when a comment author is not a readable login', () => {
+    const read = readPhaseSamples(['principal'], {
+      listMergedPrs: () =>
+        JSON.stringify([{ number: 10, headRefName: 'task/demo/1', mergedAt: '2026-09-20T10:00:00.000Z' }]),
+      // A changed `gh` output shape: `author.login` is not a string. Reaching
+      // the trust boundary with it would throw out of the whole status read.
+      fetchPrComments: () =>
+        JSON.stringify({
+          comments: [{ body: 'hello', author: { login: 42 }, createdAt: '2026-09-20T10:00:00.000Z' }]
+        })
+    })
+    expect(read.samples).toEqual({ developing: [], reviewing: [] })
+    expect(read.ok).toBe(true)
   })
 })
 
@@ -869,6 +922,7 @@ describe('renderTaskStatusTable (O3)', () => {
     minutesInPhase: null,
     phaseIsCurrent: null,
     lastConfidence: null,
+    lastConfidenceUnread: false,
     phaseHistory: null
   }
 
@@ -1029,6 +1083,24 @@ describe('renderTaskStatusTable (O3)', () => {
       }
     ])
     expect(finished[1]).toContain('publishing (last recorded)')
+  })
+
+  it('says a confidence was not read when a bound stopped the read, never showing it as an absence', () => {
+    const lines = renderTaskStatusTable([
+      {
+        ...base,
+        pr: { number: 517 },
+        state: { kind: 'published', round: 1 },
+        round: 1,
+        phase: 'publishing',
+        recordedPhase: 'publish',
+        minutesInPhase: 30,
+        phaseIsCurrent: false,
+        lastConfidenceUnread: true
+      }
+    ])
+    expect(lines[1]).toContain('not read')
+    expect(lines[1]?.split(/\s{2,}/)[7]).toBe('not read')
   })
 
   it('renders a confidence the loop recorded as absent as an absence, never as a zero', () => {

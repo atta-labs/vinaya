@@ -479,7 +479,8 @@ export type LoopPhaseReading = {
   round: number
   recordedPhase: string
   phase: string
-  minutesInPhase: number
+  /** `null` when the record's own timestamp does not parse — an unrecorded fact, reported as one rather than as a zero the record never carried. */
+  minutesInPhase: number | null
 }
 
 export function readLoopPhase(root: string, task: number, now: () => Date = () => new Date()): LoopPhaseReading | null {
@@ -487,14 +488,19 @@ export function readLoopPhase(root: string, task: number, now: () => Date = () =
   const record = readLoopState(deps, task)
   if (record.status !== 'ok') return null
   const recordedAtMs = Date.parse(record.value.recordedAt)
-  const elapsedMs = Number.isFinite(recordedAtMs) ? now().getTime() - recordedAtMs : Number.NaN
   return {
     round: record.value.round,
     recordedPhase: record.value.phase,
     phase: taskPhaseLabel(record.value.phase),
     // A clock that reads behind the record (a machine whose time moved, a
-    // record written by another host) reports zero, never a negative age.
-    minutesInPhase: Number.isFinite(elapsedMs) ? Math.max(0, Math.round(elapsedMs / 60_000)) : 0
+    // record written by another host) reports zero, never a negative age. A
+    // timestamp that does not parse at all reports NOTHING: the record's
+    // `isoTimestamp` is only a non-empty string, so a corrupted or hand-edited
+    // record reaches here, and inventing `0m` for it would state an age no
+    // record carries.
+    minutesInPhase: Number.isFinite(recordedAtMs)
+      ? Math.max(0, Math.round((now().getTime() - recordedAtMs) / 60_000))
+      : null
   }
 }
 
@@ -575,11 +581,21 @@ function publishedSummaryConfidence(
   prNumber: number,
   allowlist: readonly string[],
   readComments: PrCommentReader
-): TaskConfidence | null {
-  const comments = readComments(prNumber)
-  if (comments === null) return null
-  return confidenceFromSummaryComments(comments, allowlist)
+): LastConfidence {
+  const answer = readComments(prNumber)
+  if (answer.kind === 'unread') return { kind: 'unread' }
+  if (answer.kind === 'failed') return { kind: 'none' }
+  const confidence = confidenceFromSummaryComments(answer.comments, allowlist)
+  return confidence === null ? { kind: 'none' } : { kind: 'confidence', confidence }
 }
+
+/**
+ * What the confidence column knows about a row. `none` is a real absence — no
+ * record carries a figure — while `unread` is an UNKNOWN: a bound stopped this
+ * status read from asking at all, and reporting that as an absence would be the
+ * one invented fact every other cell in this table avoids.
+ */
+export type LastConfidence = { kind: 'confidence'; confidence: TaskConfidence } | { kind: 'none' } | { kind: 'unread' }
 
 /**
  * The stated file wins over the summary when both exist: it is the newer of
@@ -592,10 +608,10 @@ export function readLastConfidence(
   root: string,
   task: number,
   published: { prNumber: number; allowlist: readonly string[]; readComments: PrCommentReader } | null
-): TaskConfidence | null {
+): LastConfidence {
   const stated = readStatedConfidence(root, task)
-  if (stated !== null) return stated
-  if (published === null) return null
+  if (stated !== null) return { kind: 'confidence', confidence: stated }
+  if (published === null) return { kind: 'none' }
   return publishedSummaryConfidence(published.prNumber, published.allowlist, published.readComments)
 }
 
@@ -616,6 +632,8 @@ export type TaskStatusRow = {
   /** `false` when no driver is running: the phase is the last one the run RECORDED, not a place it is in now, and `minutesInPhase` is time since that record. `null` with no control record at all. */
   phaseIsCurrent: boolean | null
   lastConfidence: TaskConfidence | null
+  /** `true` when a bound stopped this row's confidence from being READ at all — an unknown, not the absence `lastConfidence: null` reports. */
+  lastConfidenceUnread: boolean
   /** What this phase has typically taken on this repository's recently merged tasks — history, never a forecast; `null` for a phase with no comparable history or too few past intervals. */
   phaseHistory: TaskPhaseHistory | null
 }
@@ -695,7 +713,10 @@ const NO_VALUE = '—'
  * confidence record), so `absent` never blames a developer for a statement
  * nothing requested.
  */
-function confidenceCell(confidence: TaskConfidence | null): string {
+function confidenceCell(confidence: TaskConfidence | null, unread: boolean): string {
+  // A read this status read never made is not an absence: saying `—` here would
+  // tell a reader no record carries a figure when nothing looked.
+  if (unread) return 'not read'
   if (confidence === null) return NO_VALUE
   const qualifier = confidence.source === 'stated' ? `round ${confidence.round}, stated` : `round ${confidence.round}`
   if (confidence.percent === null) return `absent (${qualifier})`
@@ -722,7 +743,7 @@ function cellsFor(row: TaskStatusRow): string[] {
     row.round === null ? NO_VALUE : String(row.round),
     phaseCell(row),
     row.minutesInPhase === null ? NO_VALUE : `${row.minutesInPhase}m`,
-    confidenceCell(row.lastConfidence),
+    confidenceCell(row.lastConfidence, row.lastConfidenceUnread),
     historyCell(row.phaseHistory)
   ]
 }
@@ -789,6 +810,7 @@ function buildRow(
       minutesInPhase: null,
       phaseIsCurrent: null,
       lastConfidence: null,
+      lastConfidenceUnread: false,
       phaseHistory: null
     }
   }
@@ -800,6 +822,7 @@ function buildRow(
     ref.issue,
     state.kind === 'published' && pr ? { prNumber: pr.number, allowlist, readComments } : null
   )
+  const phaseIsCurrent = phase === null ? null : phaseIsCurrentFor(state, phase.recordedPhase)
   return {
     ...base,
     pr,
@@ -808,9 +831,14 @@ function buildRow(
     phase: phase?.phase ?? null,
     recordedPhase: phase?.recordedPhase ?? null,
     minutesInPhase: phase?.minutesInPhase ?? null,
-    phaseIsCurrent: phase === null ? null : phaseIsCurrentFor(state, phase.recordedPhase),
-    lastConfidence: confidence,
-    phaseHistory: phase ? history(phase.recordedPhase) : null
+    phaseIsCurrent,
+    lastConfidence: confidence.kind === 'confidence' ? confidence.confidence : null,
+    lastConfidenceUnread: confidence.kind === 'unread',
+    // A typical time answers "how long does THIS phase usually take" — a
+    // question only a run actually in that phase is asking. A stopped run's
+    // last recorded phase gets none, which is also what keeps the forge read
+    // out of a listing where nothing is in flight.
+    phaseHistory: phase !== null && phaseIsCurrent === true ? history(phase.recordedPhase) : null
   }
 }
 
@@ -835,7 +863,7 @@ export type TaskStatusListView = { rows: TaskStatusRow[]; table: string[] }
 export function gatherTaskStatusList(): TaskStatusListView {
   const allowlist = principalAllowlist()
   const root = runtimeDir()
-  const history = phaseHistoryLookup()
+  const history = phaseHistoryLookup(allowlist)
   const readComments = prCommentReaderForOneStatusRead()
   const rows: TaskStatusRow[] = []
   for (const ref of listOpenTaskIssues()) {
@@ -869,7 +897,8 @@ export function gatherSingleTaskStatus(tranche: string, id: string): SingleTaskS
   const ref = listOpenTaskIssues().find((r) => r.kind === 'tranche' && r.tranche === tranche && r.id === id)
   if (!ref) return { kind: 'not_found' }
 
-  const row = buildRow(ref, principalAllowlist(), phaseHistoryLookup(), prCommentReaderForOneStatusRead())
+  const allowlist = principalAllowlist()
+  const row = buildRow(ref, allowlist, phaseHistoryLookup(allowlist), prCommentReaderForOneStatusRead())
 
   const root = runtimeDir()
   const verdictLines = lastRoundVerdictLines(root, ref.issue)

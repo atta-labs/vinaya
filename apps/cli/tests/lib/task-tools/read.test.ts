@@ -383,6 +383,7 @@ describe('whereTheRunIs', () => {
     minutesInPhase: 7,
     phaseIsCurrent: true,
     lastConfidence: { round: 2, percent: 90, source: 'stated' },
+    lastConfidenceUnread: false,
     phaseHistory: { typicalPhaseMinutes: 5, typicalPhaseSamples: 4 }
   }
 
@@ -393,6 +394,7 @@ describe('whereTheRunIs', () => {
       minutesInPhase: 7,
       phaseIsCurrent: true,
       lastConfidence: { round: 2, percent: 90, source: 'stated' },
+      lastConfidenceUnread: false,
       phaseHistory: { typicalPhaseMinutes: 5, typicalPhaseSamples: 4 }
     })
   })
@@ -413,6 +415,7 @@ describe('whereTheRunIs', () => {
         minutesInPhase: null,
         phaseIsCurrent: null,
         lastConfidence: null,
+        lastConfidenceUnread: false,
         phaseHistory: null
       })
     ).toEqual({
@@ -421,6 +424,7 @@ describe('whereTheRunIs', () => {
       minutesInPhase: null,
       phaseIsCurrent: null,
       lastConfidence: null,
+      lastConfidenceUnread: false,
       phaseHistory: null
     })
   })

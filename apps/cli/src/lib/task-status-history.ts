@@ -25,11 +25,12 @@
  * status read) attempts the forge at most once whatever happens, so the
  * `1 + MERGED_TASK_PR_READ_CAP` bound holds for a whole read of any number of
  * rows, failing or healthy — a read that keeps retrying is exactly what a
- * secondary rate limit punishes.
+ * secondary rate limit punishes. That count is the whole cost: the principal
+ * allowlist is resolved by the caller and passed in, never re-fetched here.
  *
  * Nothing is read at all until a row actually asks about a phase that HAS a
- * history class: a listing in which every task is `no driver`, or a single
- * planned task, pays no forge call for this.
+ * history class AND is where its run currently is: a listing of planned, paused,
+ * published or driverless tasks pays no forge call for this.
  *
  * A forge failure is never an error here — `task status` and `task_status`
  * still answer, with the typical-time column empty.
@@ -49,7 +50,6 @@ import {
   type PhaseSamples,
   type TaskPhaseHistory
 } from '@attalabs/aeg-core'
-import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
 
 /** How many merged task pull requests the history read may open. Bounded on purpose: a status read is a glance, and the newest few merged tasks are what "typical in this repository, lately" means. */
 export const MERGED_TASK_PR_READ_CAP = 5
@@ -114,20 +114,26 @@ export function mergedTaskPrNumbers(raw: string, cap: number = MERGED_TASK_PR_RE
 }
 
 /**
- * Both fields a comment contributes are checked against the parsed JSON rather
+ * EVERY field a comment contributes is checked against the parsed JSON rather
  * than trusted from the cast — the same reason `mergedTaskPrNumbers` checks its
  * own: this is forge output, and a changed `gh` shape (or a binary of that name
- * on `PATH`) must not hand a non-string `body` to a parser that calls
- * `body.match`, which would throw out of the read and take the whole status
- * answer down with it rather than costing one column.
+ * on `PATH`) must not hand a non-string value to a parser that calls
+ * `body.match` or `login.toLowerCase()`. Those calls sit OUTSIDE this module's
+ * own try, so a throw there would escape the read and take the whole status
+ * answer down with it rather than costing one column. An unreadable author is
+ * `null`, which the trust boundary already treats as not a principal.
  */
 function parseComments(raw: string): HistoryComment[] {
   const parsed = JSON.parse(raw) as {
-    comments: { body?: unknown; author?: { login?: string } | null; createdAt?: unknown }[]
+    comments: { body?: unknown; author?: { login?: unknown } | null; createdAt?: unknown }[]
   }
   return parsed.comments
     .filter((c) => typeof c.body === 'string' && typeof c.createdAt === 'string')
-    .map((c) => ({ body: c.body as string, author: c.author?.login ?? null, createdAt: c.createdAt as string }))
+    .map((c) => ({
+      body: c.body as string,
+      author: typeof c.author?.login === 'string' ? c.author.login : null,
+      createdAt: c.createdAt as string
+    }))
 }
 
 /**
@@ -139,6 +145,11 @@ function parseComments(raw: string): HistoryComment[] {
  * costs whichever column asked, never the row.
  */
 export function readPrComments(pr: number, deps: HistoryReadDeps = defaultHistoryReadDeps): HistoryComment[] | null {
+  // Checked HERE, not only where the merged list is parsed: the confidence path
+  // arrives with a pull-request number read off an open pull request's own JSON,
+  // and the rule is the same wherever a value crosses into an argument list —
+  // one beginning with a dash would be read by `gh` as a flag.
+  if (!Number.isInteger(pr) || pr <= 0) return null
   try {
     return parseComments(deps.fetchPrComments(pr))
   } catch {
@@ -165,6 +176,15 @@ export const SUMMARY_CONFIDENCE_READS_PER_STATUS_READ = 5
 
 type RememberedComments = { comments: HistoryComment[] | null; readAt: number }
 
+/**
+ * How many pull requests' comments are remembered at once. The long-lived
+ * task-tool server answers a whole Operator session from this one process, and
+ * each entry holds a pull request's fully parsed comment bodies, so the memory
+ * is bounded by count as well as by time: expired entries are dropped on every
+ * read, and the oldest goes when a fresh read would pass this many.
+ */
+export const REMEMBERED_PR_COMMENTS_MAX = 32
+
 const rememberedComments = new Map<number, RememberedComments>()
 
 function rememberedIsCurrent(entry: RememberedComments, at: number): boolean {
@@ -172,8 +192,30 @@ function rememberedIsCurrent(entry: RememberedComments, at: number): boolean {
   return at - entry.readAt < lifetime
 }
 
-/** One status read's own comment reader: remembered across reads, capped within this one. `null` is "no comments to read from" — a failed read, or a budget already spent. */
-export type PrCommentReader = (pr: number) => HistoryComment[] | null
+/** Frees what time has already invalidated, then what count no longer allows — `Map` keeps insertion order, so the first key is the oldest read. */
+function pruneRememberedComments(at: number): void {
+  for (const [pr, entry] of rememberedComments) {
+    if (!rememberedIsCurrent(entry, at)) rememberedComments.delete(pr)
+  }
+  while (rememberedComments.size >= REMEMBERED_PR_COMMENTS_MAX) {
+    const oldest = rememberedComments.keys().next()
+    if (oldest.done) break
+    rememberedComments.delete(oldest.value)
+  }
+}
+
+/**
+ * What one status read's own comment reader answers with. The three cases are
+ * deliberately distinct: comments that were read (`read`, whose list can be
+ * empty), a read that was ATTEMPTED and failed (`failed`), and a read this
+ * status read never made because its budget was already spent (`unread`). A
+ * caller must be able to tell an absence it can report from an unknown it
+ * cannot — the table renders the last case as "not read", never as the dash
+ * that means no record carries this.
+ */
+export type PrCommentsAnswer = { kind: 'read'; comments: HistoryComment[] } | { kind: 'failed' } | { kind: 'unread' }
+
+export type PrCommentReader = (pr: number) => PrCommentsAnswer
 
 export function prCommentReaderForOneStatusRead(
   deps: HistoryReadDeps = defaultHistoryReadDeps,
@@ -183,12 +225,15 @@ export function prCommentReaderForOneStatusRead(
   return (pr: number) => {
     const at = now()
     const remembered = rememberedComments.get(pr)
-    if (remembered !== undefined && rememberedIsCurrent(remembered, at)) return remembered.comments
-    if (freshReads >= SUMMARY_CONFIDENCE_READS_PER_STATUS_READ) return null
+    if (remembered !== undefined && rememberedIsCurrent(remembered, at)) {
+      return remembered.comments === null ? { kind: 'failed' } : { kind: 'read', comments: remembered.comments }
+    }
+    if (freshReads >= SUMMARY_CONFIDENCE_READS_PER_STATUS_READ) return { kind: 'unread' }
     freshReads += 1
+    pruneRememberedComments(at)
     const comments = readPrComments(pr, deps)
     rememberedComments.set(pr, { comments, readAt: at })
-    return comments
+    return comments === null ? { kind: 'failed' } : { kind: 'read', comments }
   }
 }
 
@@ -217,11 +262,17 @@ export function phaseHistoryLookupFor(samples: PhaseSamples): PhaseHistoryLookup
   }
 }
 
-/** Every `gh` read this module makes, so a test can hand it fixtures instead of a forge. */
+/**
+ * Every `gh` read this module makes, so a test can hand it fixtures instead of a
+ * forge. The principal allowlist is deliberately NOT one of them: it is resolved
+ * once by the status read that owns the request and passed in, because resolving
+ * it here would spawn a second trust-anchor read (`gh api …/contents/…`) per
+ * status read, carrying neither this module's timeout nor its output ceiling,
+ * and would print the fallback warning twice on a failure.
+ */
 export type HistoryReadDeps = {
   listMergedPrs: () => string
   fetchPrComments: (pr: number) => string
-  allowlist: () => string[]
 }
 
 export const defaultHistoryReadDeps: HistoryReadDeps = {
@@ -236,8 +287,7 @@ export const defaultHistoryReadDeps: HistoryReadDeps = {
       '--limit',
       String(MERGED_PR_LIST_LIMIT)
     ]),
-  fetchPrComments: (pr: number) => sh('gh', ['pr', 'view', String(pr), '--json', 'comments']),
-  allowlist: () => resolvePrincipalAllowlist(loadTrustAnchorConfig())
+  fetchPrComments: (pr: number) => sh('gh', ['pr', 'view', String(pr), '--json', 'comments'])
 }
 
 /**
@@ -256,14 +306,16 @@ export const defaultHistoryReadDeps: HistoryReadDeps = {
  */
 export type PhaseSamplesRead = { samples: PhaseSamples; ok: boolean }
 
-export function readPhaseSamples(deps: HistoryReadDeps = defaultHistoryReadDeps): PhaseSamplesRead {
+export function readPhaseSamples(
+  allowlist: readonly string[],
+  deps: HistoryReadDeps = defaultHistoryReadDeps
+): PhaseSamplesRead {
   let numbers: number[]
   try {
     numbers = mergedTaskPrNumbers(deps.listMergedPrs())
   } catch {
     return { samples: emptyPhaseSamples(), ok: false }
   }
-  const allowlist = deps.allowlist()
   const perPr: HistoryComment[][] = []
   for (const pr of numbers) {
     const comments = readPrComments(pr, deps)
@@ -307,6 +359,7 @@ function stillCurrent(entry: CachedSamples, at: number): boolean {
  *     refusing forge again on every call.
  */
 export function phaseHistoryLookup(
+  allowlist: readonly string[],
   deps: HistoryReadDeps = defaultHistoryReadDeps,
   now: () => number = () => Date.now()
 ): PhaseHistoryLookup {
@@ -318,7 +371,7 @@ export function phaseHistoryLookup(
       if (cached !== null && stillCurrent(cached, at)) {
         thisRead = cached.samples
       } else {
-        const read = readPhaseSamples(deps)
+        const read = readPhaseSamples(allowlist, deps)
         cached = { samples: read.samples, readAt: at, ok: read.ok }
         thisRead = read.samples
       }

@@ -386,13 +386,22 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
     })
     writePublishedRound(home, 603, 1)
 
-    writeLoopState(home, 601, { round: 2, phase: 'dispatch_reviewers', minutesInPhase: 7 })
+    // The driver clears the statement file at gate-green, before it persists a
+    // `dispatch_reviewers` decision, so a `stated` figure only ever coexists
+    // with `developing` — pairing it with `reviewing` would assert a state the
+    // loop cannot produce.
+    writeLoopState(home, 601, { round: 2, phase: 'dispatch_developer', minutesInPhase: 7 })
     writeStatedConfidence(home, 601, 2, 'CONFIDENCE: 90 — fixed the reported issue\n')
     writeLoopState(home, 602, { round: 1, phase: 'pause', minutesInPhase: 40 })
+    // A live run actually IN the reviewing phase — the one shape a typical time
+    // from history applies to, since history is only ever compared against a
+    // phase a run is currently in.
+    writeRunFile(home, 604, 'driver.pid.json', { pid: process.pid, startedAt: '2026-09-10T00:00:00.000Z' })
+    writeLoopState(home, 604, { round: 3, phase: 'dispatch_reviewers', minutesInPhase: 4 })
 
     const r = runCli(['task', 'status'], env)
 
-    expect(outputCells(r.stdout).slice(0, 5)).toEqual([
+    expect(outputCells(r.stdout).slice(0, 6)).toEqual([
       ['task', 'issue', 'pr', 'state', 'round', 'phase', 'in phase', 'confidence', 'typical (history)'],
       [
         '[demo] 1',
@@ -400,14 +409,14 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
         '#701',
         `running (pid ${process.pid})`,
         '2',
-        'reviewing',
+        'developing',
         '7m',
         // The developer's own statement, for a round whose review has not
         // completed — marked, so it never reads as a round's outcome.
         '90% (round 2, stated)',
-        // Three merged task pull requests of history, each a six-minute
-        // reviewing interval — history, never a claim about this run.
-        '6m (n=3)'
+        // The fixture's merged pull requests carry reviewing intervals only, so
+        // `developing` has no history to compare against (O4).
+        '—'
       ],
       ['[demo] 2', '#602', '#702', 'paused (escalation)', '1', 'paused', '40m', '—', '—'],
       // A one-round published run: its summary's own round-1 cell is the
@@ -417,7 +426,10 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
       ['[demo] 3', '#603', '#703', 'published', '1', 'publishing (last recorded)', '2m', '—', '—'],
       // O4: the planned task (brief not frozen) lists as not started, never
       // omitted — and every fact it has no record for reads as one dash.
-      ['[demo] 4', '#606', '—', 'not started', '—', '—', '—', '—', '—']
+      ['[demo] 4', '#606', '—', 'not started', '—', '—', '—', '—', '—'],
+      // Three merged task pull requests of history, each a six-minute reviewing
+      // interval — history, never a claim about this run.
+      ['[backlog] 604', '#604', '#704', `running (pid ${process.pid})`, '3', 'reviewing', '4m', '—', '6m (n=3)']
     ])
     expect(withoutTrustAnchorWarning(r.stdout)).toContain('history, not a prediction')
     expect(r.status).toBe(0)
@@ -499,6 +511,7 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
       minutesInPhase: 3,
       phaseIsCurrent: true,
       lastConfidence: null,
+      lastConfidenceUnread: false,
       // Every past interval this fixture's history carries is a REVIEWING one;
       // developing has none, so this phase reports no typical time (O4).
       phaseHistory: null
@@ -515,6 +528,7 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
       minutesInPhase: null,
       phaseIsCurrent: null,
       lastConfidence: null,
+      lastConfidenceUnread: false,
       phaseHistory: null
     })
   })

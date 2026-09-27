@@ -114,7 +114,7 @@ export function describeTaskLoopState(state: TaskLoopState): string {
 }
 
 /**
- * The six `TaskStatusItemSchema` fields that say WHERE a run is, taken from
+ * The seven `TaskStatusItemSchema` fields that say WHERE a run is, taken from
  * the status row the reader already built — never re-read here, so the tool
  * and `vinaya task status` can never disagree about a task's round or phase.
  *
@@ -122,7 +122,7 @@ export function describeTaskLoopState(state: TaskLoopState): string {
  * record has no round, no phase, no time in phase and no `phaseIsCurrent`; a
  * round whose confidence no record still carries has none; a phase with no
  * comparable history — or too few past intervals of it — has no typical time.
- * None of the six is ever estimated, `phaseIsCurrent: false` marks a phase a
+ * None of them is ever estimated, `phaseIsCurrent: false` marks a phase a
  * stopped run only RECORDED rather than one it is in, and `phaseHistory` is
  * history, not a prediction of when this run leaves this phase.
  */
@@ -132,6 +132,7 @@ export function whereTheRunIs(row: TaskStatusRow): {
   minutesInPhase: number | null
   phaseIsCurrent: boolean | null
   lastConfidence: TaskConfidence | null
+  lastConfidenceUnread: boolean
   phaseHistory: TaskPhaseHistory | null
 } {
   return {
@@ -143,6 +144,9 @@ export function whereTheRunIs(row: TaskStatusRow): {
     // stale phase as a place the run is in now.
     phaseIsCurrent: row.phaseIsCurrent,
     lastConfidence: row.lastConfidence,
+    // An absence a caller may report, told apart from a read a bound stopped
+    // this status read from making at all.
+    lastConfidenceUnread: row.lastConfidenceUnread,
     phaseHistory: row.phaseHistory
   }
 }

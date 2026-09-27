@@ -175,8 +175,8 @@ export const TaskPhaseHistorySchema = z
 export type TaskPhaseHistory = z.infer<typeof TaskPhaseHistorySchema>
 
 /**
- * `state` is the one-phrase loop state this tool always carried. The six fields
- * after it are where the run actually is, each read from a record and each
+ * `state` is the one-phrase loop state this tool always carried. The seven
+ * fields after it are where the run actually is, each read from a record and each
  * `null` when no record carries it: the loop's own control record holds
  * `round`/`phase`, the timestamp `minutesInPhase` is measured from, and whether
  * a live run is still in that phase (`phaseIsCurrent`); the outbox or the
@@ -198,6 +198,8 @@ export const TaskStatusItemSchema = z
     /** Whether the phase is where the run actually is. `true` for a live driver, and for a paused run whose own recorded phase is the pause (it waits there for a person). `false` for every other stopped run — a published one (nothing is publishing), a driver that vanished mid-flight, and a pause record a later round has already moved past — where the phase is the LAST one the run wrote and `minutesInPhase` counts time since that record rather than time being spent. `null` when no control record exists at all. */
     phaseIsCurrent: z.boolean().nullable().optional(),
     lastConfidence: TaskConfidenceSchema.nullable().optional(),
+    /** `true` when a bound stopped this row's confidence from being READ at all — an unknown, not the absence `lastConfidence: null` reports. A caller presenting a table should say so rather than showing an empty cell. */
+    lastConfidenceUnread: z.boolean().optional(),
     phaseHistory: TaskPhaseHistorySchema.nullable().optional()
   })
   .merge(ObservedSchema)
