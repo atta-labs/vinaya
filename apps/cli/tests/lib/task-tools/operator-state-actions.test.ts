@@ -3,12 +3,22 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { OPERATOR_STATUS_FOLLOW, TASK_TOOL_NAMES } from '@attalabs/aeg-core'
+import {
+  acquireOwnership,
+  defaultControlStoreDeps,
+  OPERATOR_STATUS_FOLLOW,
+  type PauseReason,
+  TASK_TOOL_NAMES,
+  writeEscalation
+} from '@attalabs/aeg-core'
+import { escalationIdFor } from '../../../src/lib/dev-review-loop/pause-resume.js'
+import { tasksExecutionRoot } from '../../../src/lib/run-paths.js'
+import { taskPrReadHandler } from '../../../src/lib/task-tools/pr-read.js'
 import { appendRoleLine, loopLogPathFor } from '../../../src/lib/loop-log.js'
 import { deriveLoopState, type TaskLoopState } from '../../../src/lib/task-status.js'
 import { describeTaskLoopState, readTaskLoopStateObserved } from '../../../src/lib/task-tools/read.js'
 import { createTaskResumeHandler, type TaskResumeDeps } from '../../../src/lib/task-tools/resume.js'
-import { createTaskStartHandler } from '../../../src/lib/task-tools/start.js'
+import { createTaskStartHandler, defaultPauseDisposition } from '../../../src/lib/task-tools/start.js'
 import type { CallerContext } from '../../../src/lib/task-tools/server.js'
 
 /**
@@ -34,7 +44,17 @@ import type { CallerContext } from '../../../src/lib/task-tools/server.js'
  */
 
 const CALLER: CallerContext = { caller: { id: 'operator-1' } }
-const TASK = 772
+/**
+ * Deliberately far outside any Issue number this repository will ever issue.
+ * `deriveLoopState` calls `findRecordedControllerRun(task)` with no injectable
+ * root (`task-status.ts`), so that one read always goes to this machine's REAL
+ * control store however isolated the rest of the fixture is: a live recorded
+ * controller run for the number used here would make every fixture derive as
+ * `running` and the state assertions fail for a reason that has nothing to do
+ * with the doctrine. A number the forge cannot have issued can have no such
+ * record.
+ */
+const TASK = 99000772
 const DOCTRINE = join(import.meta.dir, '../../../../../aeg-root/roles/operator.md')
 
 const tempDirs: string[] = []
@@ -111,16 +131,68 @@ function writePublishedRound(root: string, task: number, round: number): void {
   }
 }
 
-function writePause(root: string, task: number, round: number): void {
+/**
+ * A pause, plus the escalation record its continuation authenticates against.
+ * Both, not just the first: `task_resume` refuses a pause whose escalation
+ * has no durable record, so a pause-only fixture could never show the paused
+ * row's own action working — it would only ever show it refusing.
+ */
+function writePause(root: string, task: number, round: number, reason: PauseReason = 'escalation'): void {
+  const escalationId = escalationIdFor(task, round, 'abc123')
   writeControlFile(root, task, 'pause-state.json', {
     task,
     round,
     head: 'abc123',
     branch: `task/issue-${task}`,
     prNumber: 900,
-    reason: 'escalation',
-    pausedAt: '2026-09-26T00:00:00.000Z'
+    reason,
+    pausedAt: '2026-09-26T00:00:00.000Z',
+    escalationId
   })
+  const deps = defaultControlStoreDeps(() => tasksExecutionRoot(root))
+  const acquired = acquireOwnership(deps, task, 'conformance-fixture')
+  if (!acquired.acquired) throw new Error('fixture: could not acquire the epoch')
+  writeEscalation(deps, task, acquired.epoch, {
+    escalationId,
+    round,
+    head: 'abc123',
+    branch: `task/issue-${task}`,
+    pr: 900,
+    runId: 'run-1',
+    pid: 12345,
+    host: 'conformance-host',
+    agent: 'claude',
+    reason,
+    attemptedRecovery: 'none',
+    requestedDecision: 'resume or cancel',
+    recipient: 'principal',
+    briefHash: null,
+    objectivesVersion: null,
+    rulingOrdinal: 0,
+    policyDigest: 'digest',
+    recordedAt: '2026-09-26T00:00:00.000Z'
+  })
+}
+
+/** A consumed Principal decision, in the shape `readResolution` parses — what a pause looks like once it has already been ruled on. */
+function writeResolution(root: string, task: number, round: number, decision: 'resume' | 'cancel'): void {
+  const escalationId = escalationIdFor(task, round, 'abc123')
+  const dir = join(taskDir(root, task), 'control', 'resolution')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(
+    join(dir, `${escalationId}.json`),
+    JSON.stringify({
+      version: 1,
+      kind: 'resolution',
+      task,
+      escalationId,
+      decision,
+      authenticatedBy: 'principal-1',
+      authenticatedFrom: '900-9',
+      consumedAt: '2026-09-26T00:00:00.000Z'
+    }),
+    'utf8'
+  )
 }
 
 /**
@@ -216,6 +288,10 @@ async function taskStartAccepts(root: string, state: TaskLoopState): Promise<{ o
     issueFacts: () => ({ kind: 'issue', open: true, tranche: null }),
     isRunAlive: () => false,
     loopState: () => state,
+    // The REAL disposition reader, over the fixture's own records — so the
+    // gate's paused branch is exercised against the same files the
+    // continuation reads, never a hand-written answer.
+    pauseDisposition: (issue) => defaultPauseDisposition(issue, root),
     isPidAlive: () => false,
     launch: async (target) => {
       launches.push(target)
@@ -228,40 +304,55 @@ async function taskStartAccepts(root: string, state: TaskLoopState): Promise<{ o
 }
 
 /**
- * `task_resume`'s own state precondition, driven against the real runtime
- * directory. A refusal naming "nothing to resume" is this tool saying the
- * state is not its own — the exact answer that left the exited state
- * stranded when the doctrine still pointed at it.
+ * `task_resume` driven for real against the fixture's own runtime directory.
+ *
+ * Acceptance here means the tool LAUNCHED a continuation — `ok`, with an
+ * outcome that names a started run. It deliberately does NOT mean "the
+ * refusal did not contain one particular phrase": an earlier version of this
+ * probe scored any message without "nothing to resume" as acceptance, so a
+ * real `precondition`/`authority` refusal counted as the action working, and
+ * the paused row — the one row this tool owns — asserted nothing at all.
+ *
+ * A Principal ruling is supplied through the injected forge reads, because
+ * that is what the paused row's action IS: authenticating a pause against a
+ * ruling. Withholding it would test the absence of a ruling, not the action.
  */
 async function taskResumeAccepts(root: string): Promise<{ ok: boolean; message: string }> {
   const deps: Partial<TaskResumeDeps> & Pick<TaskResumeDeps, 'runtimeDir'> = { runtimeDir: () => root }
+  const launches: unknown[] = []
   const handler = createTaskResumeHandler({
     ...({
       resolveIssueForRef: () => TASK,
-      fetchRulings: () => [],
-      fetchNewestRulingAuthor: () => null,
-      fetchNewestRulingOrdinal: () => 0,
+      fetchRulings: () => ['RULING: resume.'],
+      fetchNewestRulingAuthor: () => 'principal-1',
+      fetchNewestRulingOrdinal: () => 9,
       store: { claim: (r: unknown) => ({ claimed: true, record: r }), update: () => {}, release: () => {} },
       isPidAlive: () => false,
-      launch: async () => ({ status: 'confirmed', pid: 1 }),
+      launch: async (target: unknown) => {
+        launches.push(target)
+        return { status: 'confirmed', pid: 1 }
+      },
       now: () => '2026-09-26T00:00:00.000Z',
       log: () => {}
     } as unknown as TaskResumeDeps),
     ...deps
   })
   const result = await handler({ task: { issue: TASK } }, CALLER)
-  if (result.ok) return { ok: true, message: 'resumed' }
-  return { ok: !/nothing to resume/.test(result.error.message), message: result.error.message }
+  if (!result.ok) return { ok: false, message: `refused (${result.error.kind}): ${result.error.message}` }
+  const outcome = (result.result as { outcome?: string }).outcome ?? 'unknown'
+  return outcome === 'started' && launches.length === 1
+    ? { ok: true, message: 'resumed' }
+    : { ok: false, message: `answered '${outcome}' and launched ${launches.length} continuation(s)` }
 }
 
 /**
  * Does the tool the doctrine names accept this state?
  *
- * `task_status` and `task_pr_read` are the two reads in the table. The status
- * read is driven for real below. `task_pr_read` reads the task's own pull
- * request and nothing about the run — an assertion the test makes mechanically
- * rather than by assumption (see "reads no loop state", below) — so there is
- * no run state it can refuse.
+ * Every branch drives the REAL handler and asserts something that state could
+ * make fail: `task_start` must launch, `task_resume` must answer `started`
+ * having launched exactly one continuation, `task_status` must read back this
+ * row's own state, and `task_pr_read` must answer rather than refuse. None of
+ * them scores acceptance on a string that is true whatever happens.
  */
 async function toolAccepts(
   action: string,
@@ -274,11 +365,33 @@ async function toolAccepts(
     case 'task_resume':
       return await taskResumeAccepts(root)
     case 'task_status': {
+      // Binding, not merely non-empty: the read must answer with THIS row's
+      // own state. A non-empty string is true of every kind, so scoring on
+      // length asserted nothing a regression could break.
       const observed = readTaskLoopStateObserved(root, TASK)
-      return { ok: describeTaskLoopState(observed.value).length > 0, message: describeTaskLoopState(observed.value) }
+      const rendered = describeTaskLoopState(observed.value)
+      return observed.value.kind === state.kind
+        ? { ok: true, message: rendered }
+        : { ok: false, message: `read back '${observed.value.kind}' (${rendered}), not '${state.kind}'` }
     }
-    case 'task_pr_read':
-      return { ok: true, message: 'a pull-request read, independent of run state' }
+    case 'task_pr_read': {
+      // The REAL handler, over an injected forge — not a hardcoded `true`.
+      // It reads the task's own pull request and nothing about the run, so
+      // it answers in every state; driving it is what would catch the day
+      // that stops being true.
+      const result = taskPrReadHandler(
+        { task: { issue: TASK } },
+        {
+          resolveTask: () => ({ issue: TASK, pr: 900 }),
+          fetchChecks: () => ({ head: 'abc123', checks: [] }),
+          fetchComments: () => [],
+          principalAllowlist: () => ['principal-1']
+        }
+      )
+      return result.ok
+        ? { ok: true, message: 'read the pull request' }
+        : { ok: false, message: `refused (${result.error.kind}): ${result.error.message}` }
+    }
     default:
       throw new Error(`the doctrine names "${action}", which this test has no way to drive`)
   }
@@ -331,6 +444,85 @@ describe("the Operator's doctrine and the Operator's tools agree, state for stat
     expect(resume.message).toContain('nothing to resume')
     // The tool it names now: accepted.
     expect((await taskStartAccepts(root, state)).message).toBe('launched')
+  })
+
+  /**
+   * The paused row is one table row over FOUR situations, and the table's
+   * single named action is right for only one of them. This is where the
+   * rest are held: whatever a pause is waiting for, some tool moves it, and
+   * when `task_start` declines it names the tool that does.
+   *
+   * The stranding this closes was invisible before because the doctrine's
+   * row said `task_resume` and nothing checked that `task_resume` would
+   * actually launch: for a pause already ruled on it replays
+   * `already_resumed` and launches nothing, and for a recoverable
+   * infrastructure pause it refuses for want of a ruling nobody posts.
+   */
+  describe('every pause shape has a tool that moves it', () => {
+    const shapes = [
+      { name: 'awaiting a decision', reason: 'escalation' as const, resolution: null, mover: 'task_resume' },
+      {
+        name: 'already ruled resume',
+        reason: 'escalation' as const,
+        resolution: 'resume' as const,
+        mover: 'task_start'
+      },
+      { name: 'recoverable infrastructure', reason: 'infrastructure' as const, resolution: null, mover: 'task_start' },
+      {
+        name: 'already ruled cancel',
+        reason: 'escalation' as const,
+        resolution: 'cancel' as const,
+        mover: 'task_cancel'
+      }
+    ]
+
+    for (const shape of shapes) {
+      it(`a pause ${shape.name} is moved by \`${shape.mover}\``, async () => {
+        const root = tempDir()
+        writePause(root, TASK, 2, shape.reason)
+        if (shape.resolution) writeResolution(root, TASK, 2, shape.resolution)
+        const state = deriveLoopState(root, TASK, { repo: null, loopsRoot: root })
+        expect(state.kind).toBe('paused')
+
+        const start = await taskStartAccepts(root, state)
+        if (shape.mover === 'task_start') {
+          // No Principal act is owed, so the start path is the continuation.
+          expect(`${shape.name}: ${start.message}`).toBe(`${shape.name}: launched`)
+          return
+        }
+        // Declined here — and the refusal must hand over the tool that moves
+        // it, never leave the Operator without one.
+        expect(start.ok).toBe(false)
+        expect(start.message).toContain(shape.mover)
+        if (shape.mover === 'task_resume') {
+          const resume = await taskResumeAccepts(root)
+          expect(`${shape.name}: ${resume.ok ? 'resumed' : resume.message}`).toBe(`${shape.name}: resumed`)
+        }
+      })
+    }
+
+    it('reads the disposition from the same records the continuation reads', () => {
+      const awaiting = tempDir()
+      writePause(awaiting, TASK, 2, 'escalation')
+      expect(defaultPauseDisposition(TASK, awaiting)).toBe('awaiting_ruling')
+
+      const selfResuming = tempDir()
+      writePause(selfResuming, TASK, 2, 'infrastructure')
+      expect(defaultPauseDisposition(TASK, selfResuming)).toBe('self_resuming')
+
+      const ruled = tempDir()
+      writePause(ruled, TASK, 2, 'escalation')
+      writeResolution(ruled, TASK, 2, 'resume')
+      expect(defaultPauseDisposition(TASK, ruled)).toBe('resolved_resume')
+
+      const cancelled = tempDir()
+      writePause(cancelled, TASK, 2, 'escalation')
+      writeResolution(cancelled, TASK, 2, 'cancel')
+      expect(defaultPauseDisposition(TASK, cancelled)).toBe('resolved_cancel')
+
+      // No pause record at all — every non-paused state.
+      expect(defaultPauseDisposition(TASK, tempDir())).toBe('none')
+    })
   })
 
   it('reads no loop state in `task_pr_read`, which is why every row may name it', () => {

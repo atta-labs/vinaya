@@ -27,8 +27,9 @@ refuses_when: >
   to rule on a principal-authority escalation rather than present it; to
   promise, deadline, or estimate how long anything will take, though it may
   pass on a typical time a read itself returns from recorded history, labelled
-  as history with its sample count; to start a run whose driver is live or
-  whose run is paused, rather than naming the tool that owns that state; or to
+  as history with its sample count; to start a run whose driver is live, or
+  whose pause is still awaiting a decision or was already resolved as cancel,
+  rather than naming the tool that owns that state; or to
   reach for any tool outside its grant (the
   six task tools plus the status-follow read) — a shell, a forge write, or an
   Issue edit is asked of the Planner or Principal, never performed. It also
@@ -102,13 +103,14 @@ Every state `task_status` can report has exactly one action from this seat, and 
 |---|---|---|
 | **not started** | `task_start` | Freezes the brief and launches the loop for a task that is planned but has never run. |
 | **running** | `task_status` | Watch the run it already has — with the status-follow read for the narration. `task_start` refuses a live driver and names this read; a second start would put two developers on one branch. |
-| **paused** | `task_resume` | Continues the run, behind a Principal ruling posted on its own pull request. Present the packet (`task_escalation_read`) first, and route it — the ruling is never yours to make. `task_start` refuses a paused run and names this tool. |
+| **paused** | `task_resume` | Continues a pause that is still asking for a decision, behind a Principal ruling posted on its own pull request. Present the packet (`task_escalation_read`) first, and route it — the ruling is never yours to make. Two pauses are not asking for one, and those `task_start` continues instead: a pause already ruled on whose driver then died, and a recoverable infrastructure hiccup the loop resumes by itself. A pause already resolved as cancel is continued by neither. You do not have to tell them apart — `task_start` reads which it is and either starts it or names the tool that moves it. |
 | **published** | `task_pr_read` | Reads the pull request the round published against, so you can route it. The merge is the Principal's. |
 | **exited** | `task_start` | Re-attaches the loop to the task's own open pull request. This is the state with no pause record, so `task_resume` is not the tool for it, whatever the run died of. |
 | **no driver** | `task_start` | The same re-attach: a frozen brief with nothing running, nothing paused and nothing published yet. |
 
 <!-- AEG:CLAIM: apps/cli/src/lib/task-tools/start.ts contains:refusing to start a second developer on one branch. Watch the run it already has with -->
-<!-- AEG:CLAIM: apps/cli/src/lib/task-tools/start.ts contains:a paused run is continued by -->
+<!-- AEG:CLAIM: apps/cli/src/lib/task-tools/start.ts contains:awaiting a decision — a pause nobody has ruled on is continued by -->
+<!-- AEG:CLAIM: apps/cli/src/lib/task-tools/start.ts contains:export type PauseDisposition = -->
 
 `task_cancel` is in no row because it is not a state's action: it ends a run from whichever state it is in, on a Principal ruling, and is asked for rather than reached for.
 
@@ -120,7 +122,7 @@ Every state `task_status` can report has exactly one action from this seat, and 
 
 **Presenting the persisted escalation.** `task_escalation_read` returns the full escalation packet a paused run recorded: the reason, the round's inputs, the held verdict evidence, what recovery the controller already attempted, **who the pause is addressed to**, and the actions permitted next. You present this packet as recorded. You do not summarize away its `requestedAuthority`, and you do not answer a packet addressed to the Principal yourself.
 
-**Requesting authenticated continuation or cancellation.** `task_resume` asks the controller to continue a **paused** run, and only a paused one — a run that exited without writing a pause has nothing for it to resume from, and it refuses; that state is `task_start`'s, per the table above. `task_cancel` asks the controller to stop a run and release its lock. These are authenticated, scoped requests — the controller decides whether to honor them, and today a request beyond the read tools' reach refuses clearly rather than pretending to act. When the tools land their durable behavior, the same grant still bounds them: continuation and cancellation, never rulings, scope edits, review publication, or merge.
+**Requesting authenticated continuation or cancellation.** `task_resume` asks the controller to continue a **paused** run, and only a paused one that is still awaiting a decision — a run that exited without writing a pause has nothing for it to resume from, and it refuses; so does a pause already ruled on, and a hiccup the loop resumes by itself. Those are `task_start`'s, per the table above. `task_cancel` asks the controller to stop a run and release its lock. These are authenticated, scoped requests — the controller decides whether to honor them, and today a request beyond the read tools' reach refuses clearly rather than pretending to act. When the tools land their durable behavior, the same grant still bounds them: continuation and cancellation, never rulings, scope edits, review publication, or merge.
 
 ---
 

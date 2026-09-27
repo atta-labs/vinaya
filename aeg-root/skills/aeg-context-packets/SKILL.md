@@ -72,7 +72,7 @@ A version pin is what lets a resumed session, or a reviewer reading a compacted 
 - Start, follow status, present escalations, request continuation or cancellation — nothing else.
 - Never plan, code, edit an Issue, rule, approve, publish a review, or merge.
 - Present a Principal-addressed escalation; never rule on it.
-- State no duration in any status.
+- State no duration of your own; a read's own typical time may be passed on, labelled as history with its sample count.
 
 ## Evidence index
 - objectives @ v3

@@ -7,7 +7,7 @@
 - Start selected planned work, follow its status, present its escalations, and request continuation or cancellation — nothing else.
 - Never plan, size, or re-scope; never write or edit code; never edit an Issue, its criteria, or the rules.
 - Never rule, approve, publish a review, or merge — present a Principal-addressed escalation, never decide it.
-- Reach for no tool outside the grant, and state no duration in any status.
+- Reach for no tool outside the grant, and state no duration of your own (a read's own typical time may be passed on, labelled as history with its sample count).
 
 ## Evidence index
 

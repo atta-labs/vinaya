@@ -11,6 +11,7 @@ import type { TaskLoopState } from '../../../src/lib/task-status.js'
 import type { CallerContext } from '../../../src/lib/task-tools/server.js'
 import {
   createTaskStartHandler,
+  type PauseDisposition,
   defaultLaunch,
   normalizeStartRecord,
   START_STALE_CLAIM_GRACE_MS,
@@ -74,6 +75,7 @@ function harness(
     issueFacts?: (issue: number) => TaskIssueFacts
     isRunAlive?: (issue: number) => boolean
     loopState?: (issue: number) => TaskLoopState
+    pauseDisposition?: (issue: number) => PauseDisposition
     isPidAlive?: (pid: number) => boolean
     now?: () => string
   } = {}
@@ -90,6 +92,9 @@ function harness(
     // `not_started` by default: every pre-existing case here drives a task
     // `task_start` owns, so the state gate must be transparent to them.
     loopState: overrides.loopState ?? (() => ({ kind: 'not_started' })),
+    // A pause nobody has ruled on is the only shape `task_start` refuses, so
+    // it is what the existing paused case expects by default.
+    pauseDisposition: overrides.pauseDisposition ?? (() => 'awaiting_ruling'),
     isPidAlive: overrides.isPidAlive ?? (() => false),
     launch: async (target, meta) => {
       launches.push(target)
@@ -177,6 +182,7 @@ describe('task_start handler', () => {
         issueFacts: () => STANDALONE,
         isRunAlive: () => true,
         loopState: () => ({ kind: 'not_started' }),
+        pauseDisposition: () => 'none',
         isPidAlive: () => false,
         launch: async (target) => {
           launches.push(target)
@@ -414,12 +420,13 @@ describe('task_start handler', () => {
       expect(map.size).toBe(0) // released — the refusal never blocks the tool that does own this state
     })
 
-    it('refuses a paused run, naming `task_resume` and its Principal ruling, and never claims the identity', async () => {
+    it('refuses a pause still awaiting a decision, naming `task_resume`, and never claims the identity', async () => {
       // Load-bearing, not cosmetic: `runTask` continues a paused task from its
       // pause, so without this gate `task_start` would walk straight past the
       // ruling `task_resume` exists to require.
       const { handler, launches, map } = harness({
-        loopState: () => ({ kind: 'paused', reason: 'escalation', round: 2 })
+        loopState: () => ({ kind: 'paused', reason: 'escalation', round: 2 }),
+        pauseDisposition: () => 'awaiting_ruling'
       })
       const result = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
       expect(result.ok).toBe(false)
@@ -430,6 +437,66 @@ describe('task_start handler', () => {
       }
       expect(launches).toHaveLength(0)
       expect(map.size).toBe(0)
+    })
+
+    it('continues a pause whose ruling was already given and whose driver then died', async () => {
+      // The stranding this closes: the resolution record already holds the
+      // Principal's `resume`, so `task_resume` replays `already_resumed` and
+      // launches nothing at all. Refusing here too left that run with no tool.
+      const { handler, launches } = harness({
+        loopState: () => ({ kind: 'paused', reason: 'escalation', round: 2 }),
+        pauseDisposition: () => 'resolved_resume'
+      })
+      const result = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(result.ok).toBe(true)
+      if (result.ok) expect(result.result.started).toBe(true)
+      expect(launches).toHaveLength(1)
+    })
+
+    it('continues a recoverable infrastructure pause, which no Principal ever rules on', async () => {
+      // The loop waives a ruling for this reason inside its own retry bound
+      // and recovers itself. `task_resume` carries no such waiver and refuses
+      // `authority` for a ruling nobody posts for an automatic hiccup, so
+      // this tool is the one that moves it.
+      const { handler, launches } = harness({
+        loopState: () => ({ kind: 'paused', reason: 'infrastructure', round: 2 }),
+        pauseDisposition: () => 'self_resuming'
+      })
+      const result = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(result.ok).toBe(true)
+      if (result.ok) expect(result.result.started).toBe(true)
+      expect(launches).toHaveLength(1)
+    })
+
+    it('refuses a pause already resolved as cancel, naming `task_cancel` rather than restarting it', async () => {
+      const { handler, launches, map } = harness({
+        loopState: () => ({ kind: 'paused', reason: 'escalation', round: 2 }),
+        pauseDisposition: () => 'resolved_cancel'
+      })
+      const result = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error.kind).toBe('precondition')
+        expect(result.error.message).toContain('task_cancel')
+      }
+      expect(launches).toHaveLength(0)
+      expect(map.size).toBe(0)
+    })
+
+    it('asks for a pause disposition only when the state is actually paused', async () => {
+      // The read touches the control store, so a state that can never be
+      // refused for it must not pay for it.
+      const asked: number[] = []
+      const { handler } = harness({
+        loopState: () => ({ kind: 'exited', reason: 'signal', lastDecision: 'dispatch_developer' }),
+        pauseDisposition: (issue) => {
+          asked.push(issue)
+          return 'none'
+        }
+      })
+      const result = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(result.ok).toBe(true)
+      expect(asked).toEqual([])
     })
 
     it('launches for every state neither of those two names — never started, no driver, published', async () => {

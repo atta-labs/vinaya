@@ -24,7 +24,7 @@ This seam sits between the seat that decides **what is true and what is allowed*
 
 **What the Operator may read of a pull request** — the selected task's own, and no other. It may read what the forge reports there and the principal-authored review record, and nothing authored outside the principal allowlist crosses this seam in either direction. Reading is not doing: the read re-runs, posts, edits and merges nothing, so widening what the Operator may see widens nothing about what it may do. The reference below names the fields.
 
-**What it does not carry** — a duration. The Principal may ask "what state is it in?"; the answer is derived and durationless. "When will it be done?" has no grounded answer on this seam, and the Operator supplies none.
+**What it does not carry** — a duration the Operator authored. The Principal may ask "what state is it in?"; the answer is derived, and "when will it be done?" has no grounded answer on this seam, so the Operator promises, deadlines and estimates nothing of its own. A typical time a status read itself returns, computed from this repository's recorded history, is not one of those: it is a fact the read carried, and it crosses this seam labelled as history with the sample count it was computed over, never rewritten into a claim about what will happen.
 
 **How it physically runs** — downward, the carrier is the Operator's tool grant: the six task tools plus the status-follow read, and nothing that could rule, approve, or merge. Upward, the carrier is the persisted escalation packet, whose `requestedAuthority` field names the Principal as the seat that must decide. Neither direction is a status write — the run's branch, pull request, and pause record are the status, read rather than restated.
 
@@ -89,7 +89,7 @@ A comment authored outside the principal allowlist is not part of the record: it
 - Confirm the task is already dispatchable before running it; refuse to plan it into readiness.
 - Present every Principal-addressed escalation packet as recorded, `requestedAuthority` intact, and wait — never rule, approve, or merge to clear it.
 - Keep every request inside the grant; when a task needs authority the grant lacks, name the seat that holds it rather than improvising past the refusal.
-- Attach no duration to any status.
+- Attach no duration of its own to any status — no promise, no deadline, no estimate. A typical time a read itself returned may be passed on, labelled as history with its sample count.
 - State only what a tool read made in the same turn returned. An earlier reading is history, not status; a task's absence from a list is not evidence that it finished. Read it now, or say the read did not resolve.
 
 ---
