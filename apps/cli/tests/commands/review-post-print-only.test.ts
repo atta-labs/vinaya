@@ -94,6 +94,15 @@ afterEach(() => {
 function tempDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix))
   tempDirs.push(dir)
+  // The Objectives cutover now comes from `vinaya.config.json` (`gateCutovers`,
+  // an absent key = no cutover, O1). These tests use a `Closes #1` PR and rely
+  // on #1 being PRE-cutover (objectives grading skipped); this repo's own
+  // historical cutover restores that when the command reads config from cwd.
+  writeFileSync(
+    join(dir, 'vinaya.config.json'),
+    JSON.stringify({ gateCutovers: { objectivesSinceIssue: 404 } }),
+    'utf8'
+  )
   return dir
 }
 
