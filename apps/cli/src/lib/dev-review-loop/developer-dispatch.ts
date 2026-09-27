@@ -212,6 +212,39 @@ export function fetchNewestRulingAuthor(prNumber: number): string | null {
   return newestPrincipalRulingAuthor(markerComments(out), principalAllowlist())
 }
 
+/**
+ * The Issue-target counterparts of the three readers above — for the one pause
+ * that has no pull request to read a ruling from (the before-any-push
+ * escalation, whose pause comment goes on the task Issue). Each reads the
+ * SAME `fetchIssueComments` this file's frozen-brief/objectives/developer-stop
+ * readers already use, and hands it to the IDENTICAL pure parser and the
+ * IDENTICAL `principalAllowlist()` its pull-request sibling uses — never a
+ * second parser and never a wider trust boundary, so an Issue comment
+ * authenticates a resume or a cancel on exactly the terms a pull-request one
+ * does: principal-authored, and carrying the `aeg:principal:ruling:<k>-<n>`
+ * marker on its own first line. A non-principal Issue commenter is refused
+ * here for the same reason `filterDeveloperStops` refuses one.
+ */
+export function fetchIssueRulings(issueNumber: number): string[] {
+  return filterPrincipalRulings(fetchIssueComments(issueNumber, 'fetchIssueRulings'), principalAllowlist())
+}
+
+/** The newest principal ruling ordinal on Issue `issueNumber` — `0` when none. `fetchNewestRulingOrdinal`'s Issue-target counterpart; see `fetchIssueRulings`. */
+export function fetchNewestIssueRulingOrdinal(issueNumber: number): number {
+  return newestPrincipalRulingOrdinal(
+    fetchIssueComments(issueNumber, 'fetchNewestIssueRulingOrdinal'),
+    principalAllowlist()
+  )
+}
+
+/** The GitHub login that authored Issue `issueNumber`'s newest principal ruling, or `null`. `fetchNewestRulingAuthor`'s Issue-target counterpart; see `fetchIssueRulings`. */
+export function fetchNewestIssueRulingAuthor(issueNumber: number): string | null {
+  return newestPrincipalRulingAuthor(
+    fetchIssueComments(issueNumber, 'fetchNewestIssueRulingAuthor'),
+    principalAllowlist()
+  )
+}
+
 function fetchIssueComments(issueNumber: number, caller: string): MarkerComment[] {
   let out: string
   try {

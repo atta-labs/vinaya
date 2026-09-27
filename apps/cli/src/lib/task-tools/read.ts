@@ -28,6 +28,7 @@
 import { defaultControlStoreDeps, type Freshness, type TaskEscalationPacket } from '@attalabs/aeg-core'
 import {
   escalationIdFor,
+  noPushResumeCommandFor,
   PAUSE_REASON_PROFILE,
   readEscalationRecord,
   readPauseState,
@@ -168,7 +169,17 @@ export function readEscalationPacket(root: string, task: number): TaskEscalation
         : { round: verdictLines.round, reviewer: verdictLines.reviewer, security: verdictLines.security },
     attemptedRecovery: profile.attemptedRecovery,
     requestedAuthority: profile.requestedAuthority,
-    permittedNextActions: [...profile.nextActions, `Or run: ${resumeCommandFor(pause.prNumber)}`],
+    // A pause with no pull request has no `--resume <pr>` to name: naming one
+    // anyway is how the `-1` sentinel used to reach a reader as `vinaya
+    // dev-review-loop --resume -1`. `vinaya task run` is the continuation that
+    // exists for it, in whichever of its two address forms this task's own
+    // branch says it takes — `noPushResumeCommandFor`'s single builder
+    // (`pause-resume.ts`), the same one that pause's Issue comment prints and
+    // `task_resume`'s launcher spawns, so none of the three can disagree.
+    permittedNextActions: [
+      ...profile.nextActions,
+      `Or run: ${pause.prNumber === null ? noPushResumeCommandFor(pause.task, pause.branch, pause.agent, pause.model) : resumeCommandFor(pause.prNumber)}`
+    ],
     runIdentity: escalation ? { runId: escalation.runId, pid: escalation.pid, host: escalation.host } : null,
     inputVersions: escalation
       ? {

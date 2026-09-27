@@ -108,6 +108,9 @@ import {
   DeveloperStopSignal,
   fetchDeveloperStop,
   fetchFrozenBrief,
+  fetchIssueRulings,
+  fetchNewestIssueRulingAuthor,
+  fetchNewestIssueRulingOrdinal,
   fetchNewestRulingAuthor,
   fetchNewestRulingOrdinal,
   fetchPrBody,
@@ -181,6 +184,7 @@ import {
   escalationIdFor,
   fenceStartedEffectsAsUncertain,
   isDriverPidAlive,
+  noPushResumeCommandFor,
   type PauseCommentPostResult,
   type PauseState,
   postIssuePauseComment,
@@ -224,7 +228,10 @@ export {
   extractObjectivesSection,
   fetchDeveloperStop,
   fetchFrozenBrief,
+  fetchIssueRulings,
   fetchIssueTitle,
+  fetchNewestIssueRulingAuthor,
+  fetchNewestIssueRulingOrdinal,
   fetchNewestRulingAuthor,
   fetchNewestRulingOrdinal,
   fetchRulings,
@@ -260,6 +267,7 @@ export type { PublishInput } from './dev-review-loop/publication.js'
 export {
   escalationIdFor,
   fenceStartedEffectsAsUncertain,
+  noPushResumeCommandFor,
   readEscalationRecord,
   readResolutionRecord,
   renderNoPushStopComment,
@@ -298,6 +306,8 @@ export type LoopDeps = {
   fetchNewestRulingOrdinal: typeof fetchNewestRulingOrdinal
   /** O2: the GitHub login that authored the newest principal ruling — a resolution record's `authenticatedBy`. */
   fetchNewestRulingAuthor: typeof fetchNewestRulingAuthor
+  /** The newest principal ruling ordinal on the TASK ISSUE — the freshness baseline an escalation with no pull request records, since a ruling answering it can only be posted there. Its pull-request sibling above covers every other pause. */
+  fetchNewestIssueRulingOrdinal: typeof fetchNewestIssueRulingOrdinal
   fetchFrozenBrief: typeof fetchFrozenBrief
   resolveIssueObjectives: typeof resolveIssueObjectives
   /** O2: the frozen brief's own source revision, named to the reviewer as a fact. */
@@ -784,6 +794,7 @@ function defaultDeps(): LoopDeps {
     fetchRulings,
     fetchNewestRulingOrdinal,
     fetchNewestRulingAuthor,
+    fetchNewestIssueRulingOrdinal,
     fetchFrozenBrief,
     resolveIssueObjectives,
     fetchSourceRevision,
@@ -976,6 +987,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     if (!held) {
       throw new Error(
         `devReviewLoop --resume: no held pause state found for task ${closesTask} (PR #${resumePr}) — nothing to resume.`
+      )
+    }
+    if (held.prNumber === null) {
+      // `--resume <pr>` derives its task from a pull request's own body, so it
+      // has no entry at all for a pause recorded before one existed: that
+      // pause is continued by `vinaya task run --issue <n>` (the command its
+      // own Issue comment names), or through the Operator's `task_resume`.
+      throw new Error(
+        `devReviewLoop --resume: task ${closesTask}'s held pause state records no pull request — it paused before one existed. Continue it with \`${noPushResumeCommandFor(closesTask, held.branch, held.agent, held.model)}\`.`
       )
     }
     if (held.prNumber !== resumePr) {
@@ -1617,10 +1637,40 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       } catch {
         // Best-effort — objectives unresolvable this early.
       }
-      try {
-        ordinal = prNumber > 0 ? d.fetchNewestRulingOrdinal(prNumber) : 0
-      } catch {
-        // Best-effort — no PR yet, or the forge read failed.
+      // The baseline a later resume/cancel must postdate, read from WHEREVER
+      // this pause's own ruling will be posted. A pause with no pull request
+      // used to record `0` unconditionally, which made the Issue-side
+      // freshness gate vacuous: `newestIssueRulingOrdinal > 0` is satisfied by
+      // ANY ruling ever posted on the Issue, including one an earlier pause on
+      // this same task already consumed, so a single stale approval could
+      // authenticate every later before-any-push resume or cancel. The
+      // pull-request path always captured a real baseline; this makes the
+      // Issue path capture one too.
+      //
+      // Best-effort in OPPOSITE directions for the two sources, deliberately.
+      // A failed pull-request read still falls through to `0`, as it always
+      // has: that path's own `--resume` gate re-reads the live ordinal against
+      // a pull request the caller had to name, and a `0` there is the same
+      // permissive default it was before this task. A failed ISSUE read cannot
+      // fall through, because `0` there is not a missing value — it is the
+      // positive claim "this Issue carries no rulings", which a failed read did
+      // not establish, and recording it reopens exactly the vacuous gate above
+      // on nothing more than a transient `gh` failure. So it propagates: the
+      // caller's own best-effort `try` around `writeEscalationRecord` swallows
+      // it, no escalation record is written, and BOTH tools then fail closed on
+      // machinery that already exists — `task_resume` refuses "no durable
+      // record — cannot authenticate a resume", and `task_cancel`'s
+      // `resolveEscalation` refuses `StaleEscalationError`. The pause is still
+      // fully recorded and still continuable by running its printed command
+      // directly, which needs no ruling at all.
+      if (prNumber > 0) {
+        try {
+          ordinal = d.fetchNewestRulingOrdinal(prNumber)
+        } catch {
+          // Best-effort — no PR ruling yet, or the forge read failed.
+        }
+      } else {
+        ordinal = d.fetchNewestIssueRulingOrdinal(task)
       }
       let digest = 'unknown'
       try {
@@ -2778,7 +2828,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 round,
                 head: 'unknown',
                 branch,
-                prNumber: -1,
+                // No pull request exists — recorded as having none, the same
+                // `null` the escalation record above already writes for `pr`.
+                // This used to be a `-1` sentinel, which every reader's own
+                // "no pull request" guard then failed to recognize and handed
+                // to `gh pr view -1` verbatim.
+                prNumber: null,
                 reason: 'escalation',
                 detail,
                 pausedAt: new Date().toISOString(),
@@ -2787,7 +2842,18 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 escalationId: escalationRecord?.escalationId,
                 infrastructureRetries
               })
-              await logPauseCommentRetryIfNotable(round, d.postIssuePauseComment(task, round, 'escalation', detail))
+              await logPauseCommentRetryIfNotable(
+                round,
+                d.postIssuePauseComment(
+                  task,
+                  branch,
+                  round,
+                  'escalation',
+                  detail,
+                  { agent: dispatchAgent, ...(dispatchModel ? { model: dispatchModel } : {}) },
+                  escalationRecord?.rulingOrdinal
+                )
+              )
               return { finalDecision: { type: 'pause', reason: 'escalation', detail }, prNumber: 0, task }
             }
           }
@@ -3057,7 +3123,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           round,
           head,
           branch,
-          prNumber,
+          // The SAME normalization the escalation record above already
+          // applies to its own `pr` — a crash this early leaves the local
+          // `prNumber` at its `-1` sentinel, and the pause record must say
+          // "no pull request", not name one nothing was opened against.
+          prNumber: prNumber > 0 ? prNumber : null,
           reason: decision.reason,
           detail: decision.detail,
           pausedAt: new Date().toISOString(),
@@ -3072,13 +3142,19 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // nothing was ever opened against. Recorded on the task Issue
         // instead, the one forge location that is always addressable for a
         // task with no open PR yet.
+        const invocation = { agent: dispatchAgent, ...(dispatchModel ? { model: dispatchModel } : {}) }
         const postResult =
-          prNumber < 0
-            ? d.postIssuePauseComment(task, round, decision.reason, decision.detail)
-            : d.postPauseComment(task, round, head, prNumber, decision.reason, decision.detail, {
-                agent: dispatchAgent,
-                ...(dispatchModel ? { model: dispatchModel } : {})
-              })
+          prNumber <= 0
+            ? d.postIssuePauseComment(
+                task,
+                branch,
+                round,
+                decision.reason,
+                decision.detail,
+                invocation,
+                escalationRecord?.rulingOrdinal
+              )
+            : d.postPauseComment(task, round, head, prNumber, decision.reason, decision.detail, invocation)
         await logPauseCommentRetryIfNotable(round, postResult)
       } catch {
         // Swallowed deliberately — see above. The role log's own
@@ -3811,7 +3887,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             round,
             head: pauseHead,
             branch,
-            prNumber,
+            // The SAME normalization the other two pause writers apply. This
+            // site is only ever reached with a resolved pull request today, so
+            // nothing is broken without it — but leaving it as the one writer
+            // that stores `prNumber` raw made the sentinel-to-`null` conversion
+            // rest entirely on `readPauseState`'s read side for this path, and
+            // a future path arriving here before the pull request resolves
+            // would write `-1` straight back into the record.
+            prNumber: prNumber > 0 ? prNumber : null,
             reason: decision.reason,
             detail: decision.detail,
             pausedAt: new Date().toISOString(),
@@ -3826,12 +3909,25 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // driver or reach the outer catch, which would otherwise
           // overwrite `writePauseState`'s already-correct reason, above,
           // with a synthetic 'infrastructure' one.
+          //
+          // The `prNumber <= 0` branch is the same one the crash handler
+          // already takes, for the same reason: a comment can only be posted
+          // against a pull request that exists, and this site is not
+          // structurally guaranteed to have one.
+          const pauseInvocation = { agent: dispatchAgent, ...(dispatchModel ? { model: dispatchModel } : {}) }
           await logPauseCommentRetryIfNotable(
             round,
-            d.postPauseComment(task, round, pauseHead, prNumber, decision.reason, decision.detail, {
-              agent: dispatchAgent,
-              ...(dispatchModel ? { model: dispatchModel } : {})
-            })
+            prNumber <= 0
+              ? d.postIssuePauseComment(
+                  task,
+                  branch,
+                  round,
+                  decision.reason,
+                  decision.detail,
+                  pauseInvocation,
+                  escalationRecord?.rulingOrdinal
+                )
+              : d.postPauseComment(task, round, pauseHead, prNumber, decision.reason, decision.detail, pauseInvocation)
           )
           // Every pause, regardless of
           // which branch above decided it, funnels through here exactly
@@ -3847,7 +3943,16 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
 
 // --- cancel (O3) -------------------------------------------------------
 
-export type CancelInput = { cancelPr: number; agent: AgentVendor }
+/**
+ * A cancel names EITHER the paused run's pull request (`cancelPr`, the
+ * ordinary case — the task itself is derived from that pull request's own
+ * `Closes #N`) or, for a pause recorded before any pull request existed, the
+ * task directly (`cancelTask`): there is no pull request body to derive a task
+ * from, and no pull request to read a ruling off, so that pause is addressed
+ * and authenticated through its own Issue. Passing the absent pull request as
+ * a `-1` sentinel is what made such a pause uncancellable.
+ */
+export type CancelInput = { agent: AgentVendor } & ({ cancelPr: number } | { cancelTask: number })
 export type CancelResult = { task: number; escalationId: string; fencedEffectKeys: string[] }
 
 export type CancelDeps = {
@@ -3857,6 +3962,10 @@ export type CancelDeps = {
   fetchRulings: typeof fetchRulings
   fetchNewestRulingOrdinal: typeof fetchNewestRulingOrdinal
   fetchNewestRulingAuthor: typeof fetchNewestRulingAuthor
+  /** The Issue-target ruling readers — used only for a pause that has no pull request, and gated by the identical principal allowlist their pull-request siblings above apply (`developer-dispatch.ts`). */
+  fetchIssueRulings: typeof fetchIssueRulings
+  fetchNewestIssueRulingOrdinal: typeof fetchNewestIssueRulingOrdinal
+  fetchNewestIssueRulingAuthor: typeof fetchNewestIssueRulingAuthor
   runtimeDir: () => string
   resolveLogAppendPath: (repo: { owner: string; repo: string } | null, issue: number) => string | Promise<string>
   resolveRepo: () => Promise<{ owner: string; repo: string } | null>
@@ -3876,6 +3985,9 @@ function defaultCancelDeps(): CancelDeps {
     fetchRulings,
     fetchNewestRulingOrdinal,
     fetchNewestRulingAuthor,
+    fetchIssueRulings,
+    fetchNewestIssueRulingOrdinal,
+    fetchNewestIssueRulingAuthor,
     runtimeDir,
     resolveLogAppendPath,
     resolveRepo: () => resolveRepo().catch(() => null),
@@ -3910,28 +4022,44 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
   // inherits its environment.
   markProcessUnattended()
   const d: CancelDeps = { ...defaultCancelDeps(), ...deps }
-  const task = d.taskFromPrBody(d.fetchPrBody(input.cancelPr))
-  if (task === null) {
-    throw new Error(
-      `devReviewLoop --cancel: PR #${input.cancelPr}'s body carries no \`Closes #N\` reference — cannot derive its task.`
-    )
+  // A no-pull-request cancel is addressed by its task directly; every other
+  // one derives the task from the pull request it names, unchanged.
+  let cancelPr: number | null = null
+  let task: number
+  if ('cancelPr' in input) {
+    cancelPr = input.cancelPr
+    const derived = d.taskFromPrBody(d.fetchPrBody(cancelPr))
+    if (derived === null) {
+      throw new Error(
+        `devReviewLoop --cancel: PR #${cancelPr}'s body carries no \`Closes #N\` reference — cannot derive its task.`
+      )
+    }
+    task = derived
+  } else {
+    task = input.cancelTask
   }
+  /** `PR #<n>`, or the task's own Issue for a pause that never had one — the one phrase every refusal below names its target by. */
+  const targetLabel = cancelPr === null ? `Issue #${task}` : `PR #${cancelPr}`
   const root = d.runtimeDir()
   const held = d.readPauseState(root, task)
   if (!held) {
     throw new Error(
-      `devReviewLoop --cancel: no held pause state found for task ${task} (PR #${input.cancelPr}) — nothing to cancel.`
+      `devReviewLoop --cancel: no held pause state found for task ${task} (${targetLabel}) — nothing to cancel.`
     )
   }
-  if (held.prNumber !== input.cancelPr) {
+  if (held.prNumber !== cancelPr) {
     throw new Error(
-      `devReviewLoop --cancel: task ${task}'s held pause state names PR #${held.prNumber}, not PR #${input.cancelPr}.`
+      `devReviewLoop --cancel: task ${task}'s held pause state names PR #${held.prNumber ?? '(none)'}, not ${targetLabel}.`
     )
   }
-  const rulings = d.fetchRulings(input.cancelPr)
+  // The ruling is read from wherever this pause's own comment was posted — the
+  // pull request when one exists, the task Issue when the pause predates one.
+  // Same parser, same principal allowlist, either way
+  // (`developer-dispatch.ts`'s own `fetchIssueRulings`).
+  const rulings = cancelPr === null ? d.fetchIssueRulings(task) : d.fetchRulings(cancelPr)
   if (rulings.length === 0) {
     throw new Error(
-      `devReviewLoop --cancel: PR #${input.cancelPr} carries no Principal ruling comment yet — nothing authenticates this cancel.`
+      `devReviewLoop --cancel: ${targetLabel} carries no Principal ruling comment yet — nothing authenticates this cancel.`
     )
   }
   // See the identical comment on the `--resume` path above.
@@ -3956,11 +4084,19 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
   }
   const terminateAgent: AgentVendor =
     dispatchedAgent !== undefined && isAgentVendor(dispatchedAgent) ? dispatchedAgent : input.agent
-  const authenticatedBy = d.fetchNewestRulingAuthor(input.cancelPr) ?? 'unknown-principal'
-  const authenticatedFrom = `${input.cancelPr}-${d.fetchNewestRulingOrdinal(input.cancelPr)}`
+  const authenticatedBy =
+    (cancelPr === null ? d.fetchNewestIssueRulingAuthor(task) : d.fetchNewestRulingAuthor(cancelPr)) ??
+    'unknown-principal'
+  // `<pr>-<ordinal>` for a pull-request ruling; `issue-<n>-<ordinal>` for one
+  // read off the task Issue, so a resolution record names WHERE its decision
+  // was read from and never reads as a pull request number that does not exist.
+  const authenticatedFrom =
+    cancelPr === null
+      ? `issue-${task}-${d.fetchNewestIssueRulingOrdinal(task)}`
+      : `${cancelPr}-${d.fetchNewestRulingOrdinal(cancelPr)}`
   let resolved: ResolveEscalationResult
   try {
-    resolved = resolveEscalation(task, escalationId, input.cancelPr, 'cancel', authenticatedBy, authenticatedFrom)
+    resolved = resolveEscalation(task, escalationId, cancelPr, 'cancel', authenticatedBy, authenticatedFrom)
   } catch (err) {
     if (
       err instanceof WrongTargetResolutionError ||
@@ -4066,9 +4202,10 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
  *
  * The one pause this never watches: the pre-first-push escalation
  * (`prNumber <= 0` — no pull request exists yet to poll or comment on)
- * ends the driver exactly as before this task, printing `vinaya task run
- * <tranche> <n>` as its own resume command ("Pause and `--resume`",
- * `apps/cli/specs/loop.md`) — there is nothing yet to watch.
+ * ends the driver unwatched — there is nothing yet to watch. Its own Issue
+ * comment names the command that continues it, in whichever address form
+ * this task's branch says `task run` takes for it (`noPushResumeArgv`,
+ * `pause-resume.ts`; "Pause and `--resume`", `apps/cli/specs/loop.md`).
  *
  * This watcher holds the task's one-driver-per-task lock for its ENTIRE
  * life — across every pause and every resume attempt it makes, never

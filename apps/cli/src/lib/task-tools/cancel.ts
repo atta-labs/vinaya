@@ -2,7 +2,11 @@
  * The real handler behind the catalog's `task_cancel` binding. It delegates
  * the entire authenticated consumption to the EXISTING `cancelDevReviewLoop`
  * (`dev-review-loop.ts`) unchanged: authentication from a fresh Principal
- * ruling read off the run's own PR, `resolveEscalation`'s wrong-target/
+ * ruling read off the run's own PR — or, for a pause recorded before any pull
+ * request existed, off the task Issue where that pause's own comment was
+ * posted and where the only ruling answering it can be (same parser, same
+ * principal allowlist; an Issue comment never authenticates a cancel on
+ * easier terms than a pull-request one) — `resolveEscalation`'s wrong-target/
  * stale/replayed refusals, in-flight-role termination, and fencing every
  * still-`'started'` effect as `'uncertain'`. This handler's own job is
  * translating that into the catalog's typed result: resolving the caller's
@@ -27,9 +31,14 @@ import {
   type TaskToolRef
 } from '@attalabs/aeg-core'
 import { type AgentVendor, isAgentVendor } from '../dispatch.js'
-import { cancelDevReviewLoop, type CancelResult, runtimeDir } from '../dev-review-loop.js'
+import { cancelDevReviewLoop, type CancelInput, type CancelResult, runtimeDir } from '../dev-review-loop.js'
 import { tasksExecutionRoot } from '../run-paths.js'
-import { fetchNewestRulingOrdinal, fetchRulings } from '../dev-review-loop/developer-dispatch.js'
+import {
+  fetchIssueRulings,
+  fetchNewestIssueRulingOrdinal,
+  fetchNewestRulingOrdinal,
+  fetchRulings
+} from '../dev-review-loop/developer-dispatch.js'
 import { appendRoleLine, loopLogPathFor } from '../loop-log.js'
 import {
   escalationIdFor,
@@ -57,7 +66,10 @@ export type TaskCancelDeps = {
   resolveIssueForRef: (ref: TaskToolRef) => number | null
   fetchRulings: (pr: number) => string[]
   fetchNewestRulingOrdinal: (pr: number) => number
-  cancelDevReviewLoop: (input: { cancelPr: number; agent: AgentVendor }) => Promise<CancelResult>
+  /** The Issue-target ruling readers, for a pause recorded before any pull request existed — whose ruling was posted on the task Issue, the only place it could be. Same parser, same principal allowlist as their pull-request siblings above (`developer-dispatch.ts`'s own `fetchIssueRulings`). */
+  fetchIssueRulings: (issue: number) => string[]
+  fetchNewestIssueRulingOrdinal: (issue: number) => number
+  cancelDevReviewLoop: (input: CancelInput) => Promise<CancelResult>
   hostname: () => string
   /** The Vinaya Log chokepoint (`log-sink.ts`) — injectable so a fixture can capture the typed `operation` event this handler emits without touching the real, machine-global outbox. */
   log: typeof log
@@ -68,6 +80,8 @@ export const defaultTaskCancelDeps: TaskCancelDeps = {
   resolveIssueForRef,
   fetchRulings,
   fetchNewestRulingOrdinal,
+  fetchIssueRulings,
+  fetchNewestIssueRulingOrdinal,
   cancelDevReviewLoop: (input) => cancelDevReviewLoop(input),
   hostname: osHostname,
   log
@@ -140,11 +154,18 @@ export function createTaskCancelHandler(
     // default, so a fixture's injected `runtimeDir` fully isolates every read.
     const controlStoreDeps: ControlStoreDeps = defaultControlStoreDeps(() => tasksExecutionRoot(root))
     const packet = readEscalationPacket(root, issue)
-    if (packet === null || packet.inputs === null || packet.inputs.prNumber === null) {
+    if (packet === null || packet.inputs === null) {
       emitOperationEvent(deps.log, issue, target, 'refused', 'precondition')
-      return fail(taskToolError('precondition', `task ${issue} has no paused run with a PR — nothing to cancel`))
+      return fail(taskToolError('precondition', `task ${issue} has no paused run recorded — nothing to cancel`))
     }
+    // `null` is a cancellable pause, not a missing one: the run paused before
+    // any pull request existed, so its ruling is on the task Issue and the
+    // cancel is addressed by task. This used to refuse here — and, before the
+    // pause record could say "no pull request" at all, it did not even refuse:
+    // it read the `-1` sentinel as a real number and shelled `gh pr view -1`.
     const pr = packet.inputs.prNumber
+    /** Where this pause's ruling was posted, and so where it is read from — the pull request when one exists, the task Issue when the pause predates one. */
+    const rulingSource = pr === null ? `Issue ${issue}` : `PR ${pr}`
 
     const held = readPauseState(root, issue)
     const escalationId = held?.escalationId ?? escalationIdFor(issue, packet.inputs.round, packet.inputs.head)
@@ -161,16 +182,17 @@ export function createTaskCancelHandler(
     // the plain any-ruling check — `cancelDevReviewLoop`'s own
     // `resolveEscalation` call below refuses that case on its own terms
     // (`StaleEscalationError`) regardless of what this gate decides.
-    const rulings = deps.fetchRulings(pr)
-    const newestRulingOrdinal = deps.fetchNewestRulingOrdinal(pr)
+    const rulings = pr === null ? deps.fetchIssueRulings(issue) : deps.fetchRulings(pr)
+    const newestRulingOrdinal =
+      pr === null ? deps.fetchNewestIssueRulingOrdinal(issue) : deps.fetchNewestRulingOrdinal(pr)
     if (rulings.length === 0 || (peekedEscalation !== null && newestRulingOrdinal <= peekedEscalation.rulingOrdinal)) {
       emitOperationEvent(deps.log, issue, target, 'refused', 'authority')
       return fail(
         taskToolError(
           'authority',
           rulings.length === 0
-            ? `PR ${pr} carries no Principal ruling comment yet — nothing authenticates this cancel`
-            : `PR ${pr}'s newest ruling (ordinal ${newestRulingOrdinal}) is no newer than the ruling this escalation was already raised under (ordinal ${peekedEscalation?.rulingOrdinal}) — nothing new authenticates cancelling this pause`
+            ? `${rulingSource} carries no Principal ruling comment yet — nothing authenticates this cancel`
+            : `${rulingSource}'s newest ruling (ordinal ${newestRulingOrdinal}) is no newer than the ruling this escalation was already raised under (ordinal ${peekedEscalation?.rulingOrdinal}) — nothing new authenticates cancelling this pause`
         )
       )
     }
@@ -181,7 +203,9 @@ export function createTaskCancelHandler(
     appendRoleLine(loopLogPathFor(null, issue), 'operator', `task_cancel requested: ${parsed.data.reason}`)
 
     try {
-      const result = await deps.cancelDevReviewLoop({ cancelPr: pr, agent })
+      const result = await deps.cancelDevReviewLoop(
+        pr === null ? { cancelTask: issue, agent } : { cancelPr: pr, agent }
+      )
       const resolutionRead = readResolution(controlStoreDeps, issue, result.escalationId)
       const resolution = resolutionRead.status === 'ok' ? resolutionRead.value : null
       const outcome: TaskCancelOutcome =
@@ -197,7 +221,7 @@ export function createTaskCancelHandler(
         escalationId: result.escalationId,
         outcome,
         authenticatedBy: resolution?.authenticatedBy ?? 'unknown-principal',
-        authenticatedFrom: resolution?.authenticatedFrom ?? `${pr}-unknown`,
+        authenticatedFrom: resolution?.authenticatedFrom ?? (pr === null ? `issue-${issue}-unknown` : `${pr}-unknown`),
         fencedEffectKeys: result.fencedEffectKeys
       })
     } catch (err) {

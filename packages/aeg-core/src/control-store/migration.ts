@@ -65,7 +65,8 @@ type LegacyPauseState = {
   round: number
   reason: string
   detail?: string
-  prNumber: number
+  /** `null` for a pause recorded before any pull request existed — the same shape the live pause record now writes. */
+  prNumber: number | null
   pausedAt: string
 }
 function isLegacyPauseState(json: unknown): json is LegacyPauseState {
@@ -75,7 +76,12 @@ function isLegacyPauseState(json: unknown): json is LegacyPauseState {
     json !== null &&
     typeof rec.round === 'number' &&
     typeof rec.reason === 'string' &&
-    typeof rec.prNumber === 'number' &&
+    // A `null` here is a real pause with no pull request, not a malformed
+    // record. Requiring a number made exactly that pause fail this guard, so
+    // the migration recorded it as `source: 'fresh'` at round `0` and appended
+    // no `paused` transition — silently losing the one pause shape that is
+    // hardest to recover by hand.
+    (typeof rec.prNumber === 'number' || rec.prNumber === null) &&
     typeof rec.pausedAt === 'string' &&
     (rec.detail === undefined || typeof rec.detail === 'string')
   )
@@ -183,7 +189,11 @@ export function migrateLegacyTask(
   writeInput(deps, task, epoch, {
     runId: ownerId,
     source: pauseState.status === 'ok' ? 'resume' : 'fresh',
-    pr: pauseState.status === 'ok' ? pauseState.value.prNumber : null,
+    // A non-positive legacy sentinel (`-1`, written before the record could
+    // say "no pull request") is normalized here the same way the live reader
+    // normalizes it, so no migrated input carries a number the forge would
+    // reject.
+    pr: pauseState.status === 'ok' && (pauseState.value.prNumber ?? 0) > 0 ? pauseState.value.prNumber : null,
     round: pauseState.status === 'ok' ? pauseState.value.round : 0,
     recordedAt: now
   })

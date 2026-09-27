@@ -3,14 +3,29 @@
  * re-derives or re-consumes a decision itself: it reads the SAME durable
  * records `dev-review-loop --resume` already reads (the pause state, the
  * durable `EscalationRecord`, a `ResolutionRecord` if one already exists,
- * the driver lock), requires a CURRENT Principal ruling read fresh from the
- * run's own PR (never a caller-supplied approval — no free-text approved
- * boolean, the Operator never creates a ruling), and — once every check
- * passes — triggers the existing `vinaya dev-review-loop --resume <pr>`
- * continuation exactly as a human typing that command would. The actual
+ * the driver lock), requires a CURRENT Principal ruling read fresh from where
+ * this pause's own comment was posted (never a caller-supplied approval — no
+ * free-text approved boolean, the Operator never creates a ruling), and — once
+ * every check passes — triggers the existing `vinaya dev-review-loop --resume
+ * <pr>` continuation exactly as a human typing that command would. The actual
  * authenticated consumption (`resolveEscalation`) happens inside THAT
  * continuation, unchanged; this handler never calls it itself, so there is
  * no double-consumption risk between a peek here and the real write there.
+ *
+ * ONE pause is different, because no existing continuation covers it: the one
+ * recorded before any pull request existed (`pr: null` — the before-any-push
+ * escalation, whose comment the loop posts on the task Issue). Its ruling is
+ * read from that Issue, by the same parser under the same principal allowlist
+ * a pull-request ruling is read by. And `dev-review-loop --resume` cannot
+ * continue it at all — that entry derives its task from a pull request's body
+ * — so for that one case this handler consumes the ruling ITSELF, as that
+ * escalation's own resolution through the same single-consumption
+ * `resolveEscalation`, and then relaunches through `vinaya task run --issue
+ * <n>`, the one continuation such a pause has. The consumption comes FIRST,
+ * which is what makes a second resume of the same escalation a replay rather
+ * than a second run; the price is that a launch failing after it needs a new
+ * ruling to retry, and the refusal says so rather than leaving it to be
+ * discovered.
  *
  * "No new worker": an idempotent, escalation-scoped claim (mirroring
  * `start.ts`'s own request-identity claim) and a driver-lock liveness check
@@ -52,6 +67,9 @@ import {
 } from '@attalabs/aeg-core'
 import { type AgentVendor, isAgentVendor } from '../dispatch.js'
 import {
+  fetchIssueRulings,
+  fetchNewestIssueRulingAuthor,
+  fetchNewestIssueRulingOrdinal,
   fetchNewestRulingAuthor,
   fetchNewestRulingOrdinal,
   fetchRulings
@@ -61,7 +79,13 @@ import {
   isDriverPidAlive,
   readDriverLock,
   readEscalationRecord,
-  readPauseState
+  noPushResumeArgv,
+  noPushResumeCommandFor,
+  readPauseState,
+  ReplayedResolutionError,
+  resolveEscalation,
+  StaleEscalationError,
+  WrongTargetResolutionError
 } from '../dev-review-loop/pause-resume.js'
 import { runtimeDir } from '../dev-review-loop.js'
 import { newestPublishedRound } from '../task-status.js'
@@ -87,7 +111,8 @@ function fail<T>(error: ReturnType<typeof taskToolError>): TaskToolCallResult<T>
 export type ResumeRecord = {
   escalationId: string
   caller: string
-  pr: number
+  /** `null` for a pause recorded before any pull request existed. */
+  pr: number | null
   startedAt: string
   /** The pid of the continuation this claim's own launch spawned, recorded once that launch is known alive — the one liveness signal that exists before its driver lock does, so a continuation still coming up is never mistaken for a dead claim and superseded (`start.ts`'s own `StartRecord.pid`). */
   pid?: number
@@ -267,7 +292,7 @@ function waitForLiveDriver(
  * overrides neither).
  */
 export function defaultResumeLaunch(
-  target: { pr: number; agent: AgentVendor; issue: number },
+  target: { pr: number | null; agent: AgentVendor; issue: number; branch: string; model?: string },
   meta: { escalationId: string; caller: string },
   root: string = runtimeDir(),
   timeoutMs: number = RESUME_CONFIRM_TIMEOUT_MS
@@ -279,9 +304,24 @@ export function defaultResumeLaunch(
   })
   ensureRunDir(dirname(stderrPath), root)
   const stderrFd = openSync(stderrPath, 'a')
+  // A pause with no pull request has no `--resume <pr>` to continue through
+  // (that entry derives its task from a pull request's body), so the
+  // continuation is `task run` — built by `noPushResumeArgv`, the SAME builder
+  // that pause's own Issue comment and `task_escalation_read`'s permitted
+  // next actions render, so the command a reader is told to run and the argv
+  // spawned here cannot diverge. Which of `task run`'s two address forms it
+  // picks matters: `--issue <n>` is the tranche-LESS backlog path and is
+  // refused outright for an Issue carrying a `vinaya/tranche:*` label, so a
+  // tranche task is addressed `task run <tranche> <n>`, read off this pause's
+  // own branch. Both forms are commands the CLI already exposes, and the
+  // agent AND model the paused run was dispatched under both travel with it.
+  const argv =
+    target.pr === null
+      ? noPushResumeArgv(target.issue, target.branch, target.agent, target.model)
+      : ['dev-review-loop', '--resume', String(target.pr), '--agent', target.agent]
   let child: ReturnType<typeof spawn>
   try {
-    child = spawn(program, ['dev-review-loop', '--resume', String(target.pr), '--agent', target.agent], {
+    child = spawn(program, argv, {
       detached: true,
       stdio: ['ignore', 'ignore', stderrFd]
     })
@@ -301,6 +341,18 @@ export type TaskResumeDeps = {
   fetchRulings: (pr: number) => string[]
   fetchNewestRulingAuthor: (pr: number) => string | null
   fetchNewestRulingOrdinal: (pr: number) => number
+  /** The Issue-target ruling readers, for a pause recorded before any pull request existed — whose ruling is on the task Issue, where that pause's own comment was posted. Same parser, same principal allowlist as their pull-request siblings above (`developer-dispatch.ts`'s own `fetchIssueRulings`). */
+  fetchIssueRulings: (issue: number) => string[]
+  fetchNewestIssueRulingAuthor: (issue: number) => string | null
+  fetchNewestIssueRulingOrdinal: (issue: number) => number
+  /**
+   * O4: the single-consumption resolution write — used ONLY on the
+   * no-pull-request path, where no `dev-review-loop --resume` continuation
+   * exists to perform it (see this file's header). Every other path still
+   * leaves the consumption entirely to that continuation, so there is still no
+   * double-consumption anywhere.
+   */
+  resolveEscalation: typeof resolveEscalation
   store: ResumeClaimStore
   /** Is this pid still running? Asked of the pid a claim's own launch recorded — the one liveness signal that exists before a driver lock does. */
   isPidAlive: (pid: number) => boolean
@@ -310,7 +362,7 @@ export type TaskResumeDeps = {
    * the process still alive (O1) — see this file's own header.
    */
   launch: (
-    target: { pr: number; agent: AgentVendor; issue: number },
+    target: { pr: number | null; agent: AgentVendor; issue: number; branch: string; model?: string },
     meta: { escalationId: string; caller: string }
   ) => Promise<LaunchResult>
   now: () => string
@@ -324,6 +376,10 @@ export const defaultTaskResumeDeps: TaskResumeDeps = {
   fetchRulings,
   fetchNewestRulingAuthor,
   fetchNewestRulingOrdinal,
+  fetchIssueRulings,
+  fetchNewestIssueRulingAuthor,
+  fetchNewestIssueRulingOrdinal,
+  resolveEscalation,
   store: defaultResumeClaimStore,
   isPidAlive: isDriverPidAlive,
   launch: defaultResumeLaunch,
@@ -418,11 +474,9 @@ export function createTaskResumeHandler(
         )
       )
     }
-    if (packet.inputs === null || packet.inputs.prNumber === null) {
+    if (packet.inputs === null) {
       emitOperationEvent(deps.log, issue, target, 'refused', 'precondition')
-      return fail(
-        taskToolError('precondition', `task ${issue}'s pause carries no PR yet — resume it with \`vinaya task run\``)
-      )
+      return fail(taskToolError('precondition', `task ${issue}'s pause record carries no round inputs to resume from`))
     }
     if (packet.freshness === 'stale') {
       emitOperationEvent(deps.log, issue, target, 'refused', 'precondition')
@@ -431,7 +485,15 @@ export function createTaskResumeHandler(
       )
     }
 
+    // O4: `null` is a RESUMABLE pause, not an unresumable one — the run paused
+    // before any pull request existed (the before-any-push escalation), so its
+    // ruling is on the task Issue and its continuation is `vinaya task run`.
+    // This used to refuse outright, and before the pause record could say "no
+    // pull request" at all it did worse: the `-1` sentinel read as a real
+    // number and reached `gh pr view -1`.
     const pr = packet.inputs.prNumber
+    /** Where this pause's own comment was posted, and so where its ruling is read from. */
+    const rulingSource = pr === null ? `Issue ${issue}` : `PR ${pr}`
     const held = readPauseState(root, issue)
     if (held === null) {
       emitOperationEvent(deps.log, issue, target, 'refused', 'precondition')
@@ -448,6 +510,33 @@ export function createTaskResumeHandler(
           taskToolError(
             'precondition',
             `task ${issue}'s escalation '${escalationId}' was already resolved as 'cancel', not 'resume'`
+          )
+        )
+      }
+      if (pr === null) {
+        // O4: on this path THIS handler is what consumed the ruling (there is
+        // no `dev-review-loop --resume` continuation to do it), so an existing
+        // `'resume'` resolution means this exact escalation's decision is
+        // already spent. Launching again off it would be a replay — refused, in
+        // `resolveEscalation`'s own single-consumption terms. A pause WITH a
+        // pull request still reports the truthful `'already_resumed'` below:
+        // there the consumption belongs to the continuation, and a repeat call
+        // is an idempotent replay of a launch that really happened.
+        //
+        // What the refusal must NOT say is that a new ruling lifts it. It
+        // does not: this gate fires before any ruling is read, and
+        // `resolveEscalation` refuses the same `escalationId` forever after
+        // (`consumeResolutionOnce`) no matter how many rulings land. An
+        // identical pause raised again even reuses the same id
+        // (`sameEscalationInstance` matches on round/head/branch/pr/reason/
+        // detail), so this tool is permanently done with this escalation. The
+        // continuation that IS still available is the command itself, which is
+        // why the message names it rather than an action that cannot work.
+        emitOperationEvent(deps.log, issue, target, 'refused', 'precondition')
+        return fail(
+          taskToolError(
+            'precondition',
+            `task ${issue}'s escalation '${escalationId}' already has a consumed 'resume' resolution (by ${existingResolution.authenticatedBy}, from ${existingResolution.authenticatedFrom}) — replay refused. This escalation's decision is spent for good: no later ruling reopens it. Continue the task by running \`${noPushResumeCommandFor(issue, held.branch, held.agent, held.model)}\` directly, and the run's next pause will carry the next decision.`
           )
         )
       }
@@ -512,21 +601,26 @@ export function createTaskResumeHandler(
     // a ruling that authorizes resuming THIS pause must postdate that — its
     // ordinal must have moved, exactly the inequality `compareManifest`'s own
     // `binding.rulingOrdinal` already checks for "a new ruling landed."
-    const rulings = deps.fetchRulings(pr)
-    const newestRulingOrdinal = deps.fetchNewestRulingOrdinal(pr)
+    const rulings = pr === null ? deps.fetchIssueRulings(issue) : deps.fetchRulings(pr)
+    const newestRulingOrdinal =
+      pr === null ? deps.fetchNewestIssueRulingOrdinal(issue) : deps.fetchNewestRulingOrdinal(pr)
     if (rulings.length === 0 || newestRulingOrdinal <= escalation.rulingOrdinal) {
       emitOperationEvent(deps.log, issue, target, 'refused', 'authority')
       return fail(
         taskToolError(
           'authority',
           rulings.length === 0
-            ? `PR ${pr} carries no Principal ruling comment yet — nothing authenticates this resume`
-            : `PR ${pr}'s newest ruling (ordinal ${newestRulingOrdinal}) is no newer than the ruling this escalation was already raised under (ordinal ${escalation.rulingOrdinal}) — nothing new authenticates resuming this pause`
+            ? `${rulingSource} carries no Principal ruling comment yet — nothing authenticates this resume`
+            : `${rulingSource}'s newest ruling (ordinal ${newestRulingOrdinal}) is no newer than the ruling this escalation was already raised under (ordinal ${escalation.rulingOrdinal}) — nothing new authenticates resuming this pause`
         )
       )
     }
-    const authenticatedBy = deps.fetchNewestRulingAuthor(pr) ?? 'unknown-principal'
-    const authenticatedFrom = `${pr}-${newestRulingOrdinal}`
+    const authenticatedBy =
+      (pr === null ? deps.fetchNewestIssueRulingAuthor(issue) : deps.fetchNewestRulingAuthor(pr)) ?? 'unknown-principal'
+    // `issue-<n>-<ordinal>` names WHERE an Issue-read decision came from, the
+    // same form `cancelDevReviewLoop` records for its own no-pull-request
+    // cancel — never a pull-request number the run does not have.
+    const authenticatedFrom = pr === null ? `issue-${issue}-${newestRulingOrdinal}` : `${pr}-${newestRulingOrdinal}`
 
     const agent: AgentVendor = escalation.agent && isAgentVendor(escalation.agent) ? escalation.agent : 'claude'
 
@@ -556,9 +650,60 @@ export function createTaskResumeHandler(
       return ok({ task: issue, pr, escalationId, outcome: 'already_resumed', authenticatedBy, authenticatedFrom })
     }
 
+    // O4, and ONLY for a pause with no pull request: consume the ruling as this
+    // escalation's own resolution BEFORE launching. `dev-review-loop --resume`
+    // performs this consumption itself on every other path, and still does —
+    // but it derives its task from a pull request's body, so it has no entry
+    // here, and without this step nothing would ever record that this pause's
+    // ruling was spent. Consumed FIRST, never after the launch: the durable
+    // resolution is what makes a second resume of the same escalation a replay
+    // rather than a second run of the same task. The cost is stated in the
+    // failure message below — a launch that then fails needs a NEW ruling to
+    // retry, because this one is already consumed. Written through the SAME
+    // fixture-testable control store every other read in this handler uses.
+    if (pr === null) {
+      try {
+        deps.resolveEscalation(
+          issue,
+          escalationId,
+          null,
+          'resume',
+          authenticatedBy,
+          authenticatedFrom,
+          controlStoreDeps
+        )
+      } catch (err) {
+        deps.store.release(escalationId)
+        if (
+          err instanceof ReplayedResolutionError ||
+          err instanceof StaleEscalationError ||
+          err instanceof WrongTargetResolutionError
+        ) {
+          emitOperationEvent(deps.log, issue, target, 'refused', 'precondition')
+          return fail(taskToolError('precondition', err.message))
+        }
+        emitOperationEvent(deps.log, issue, target, 'error', 'infrastructure')
+        return fail(
+          taskToolError(
+            'infrastructure',
+            `task_resume could not consume the ruling as task ${issue}'s resolution: ${(err as Error).message}`
+          )
+        )
+      }
+    }
+
     let outcome: LaunchResult
     try {
-      outcome = await deps.launch({ pr, agent, issue }, { escalationId, caller: caller.id })
+      // `model` travels with the launch, not only with the printed command: the
+      // paused run was dispatched under a specific model, and relaunching
+      // without it silently re-resolved one from the Issue's own agent-class
+      // mapping instead. It also made the single-builder claim false for one
+      // flag — the comment and `permittedNextActions` both rendered `--model`
+      // while the spawned argv dropped it.
+      outcome = await deps.launch(
+        { pr, agent, issue, branch: held.branch, ...(held.model ? { model: held.model } : {}) },
+        { escalationId, caller: caller.id }
+      )
     } catch (err) {
       deps.store.release(escalationId)
       emitOperationEvent(deps.log, issue, target, 'error', 'infrastructure')
@@ -574,7 +719,9 @@ export function createTaskResumeHandler(
       return fail(
         taskToolError(
           'infrastructure',
-          `task_resume: task ${issue} (PR ${pr}) did not confirm alive: ${outcome.error.message}`,
+          pr === null
+            ? `task_resume: task ${issue} did not confirm alive: ${outcome.error.message}. Its ruling was already consumed as this escalation's resolution and no later ruling reopens that escalation, so this tool cannot retry it — run \`${noPushResumeCommandFor(issue, held.branch, held.agent, held.model)}\` directly once the cause is fixed.`
+            : `task_resume: task ${issue} (PR ${pr}) did not confirm alive: ${outcome.error.message}`,
           outcome.error.message
         )
       )
