@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   isTaskToolName,
+  TASK_START_TOOL,
   TASK_TOOL_CATALOG,
   TASK_TOOL_ERROR_KINDS,
   TASK_TOOL_NAMES,
@@ -45,6 +46,25 @@ describe('TASK_TOOL_CATALOG', () => {
     for (const tool of TASK_TOOL_CATALOG) {
       expect(taskToolByName(tool.name).handlerBinding.kind).toBe('bound')
     }
+  })
+
+  // The catalog text is the only documentation the Operator is served for this
+  // tool, and the handler continues more states than a fresh start: an exited
+  // run, a pause a ruling resolved to resume, a pause inside the loop's own
+  // retry bound. Text that denied that stranded a run with no working action,
+  // so these are pinned — a future reword that drops the continue cases, or
+  // stops naming who owns a pause, fails here.
+  it('task_start says it continues a stopped run and names who owns a pause it will not', () => {
+    const text = `${TASK_START_TOOL.purpose}\n${TASK_START_TOOL.boundaries}`
+    expect(text).toMatch(/continue/i)
+    expect(text).toMatch(/exited run/)
+    expect(text).toMatch(/resolved to resume/)
+    expect(text).toMatch(/retry bound/)
+    expect(text).toContain('`task_resume` owns it')
+    expect(text).toMatch(/resolved as cancel is `task_cancel`/)
+    // The claim the handler falsified: it does continue a paused run, for
+    // every pause whose decision is already made or never needed.
+    expect(text).not.toContain('it does not continue a paused one')
   })
 
   it('taskToolByName throws for an unknown name', () => {
