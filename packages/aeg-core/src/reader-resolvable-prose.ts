@@ -95,9 +95,9 @@ function shipsArchivePrefix(shipsPrefix: string): string {
  *
  * A folder entry matches every `.md` file under it; a file entry matches
  * that one file. `README.md` is deliberately absent and must stay absent:
- * the tranche-slug pattern matches an ordinary stack badge (`next-v1`), so
- * a default that swept READMEs would refuse a shape that is not a citation
- * at all.
+ * the tranche-slug pattern matches the version badge a README carries for
+ * each framework it is built on, so a default that swept READMEs would
+ * refuse a shape that is not a citation at all.
  */
 export const DEFAULT_SPEC_PATHS: readonly string[] = ['SPEC.md', 'CONTEXT.md', 'docs/adr']
 

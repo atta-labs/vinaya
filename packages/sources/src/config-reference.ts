@@ -391,7 +391,7 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     semantics: [
       "De-hardcodes the two prose/vocabulary core checks — `reader-resolvable-prose` and `retired-vocabulary` — behind adopter configuration, so both can run for real in an adopter repo instead of only inside this monorepo's own dev loop. Read fresh on every `vinaya check` run (not at generation time), so an edit takes effect on the very next run with no `vinaya upgrade` needed.",
       "Every field is optional; unset entirely, both checks behave exactly as they did when this key did not exist — this repo's own prior hardcoded doctrine layout.",
-      "Both checks are report-only for the classes these fields configure — a finding prints as a `warning`, and the check's own exit code stays `0` for them — except `reader-resolvable-prose`'s one blocking class (Issue #435): a tranche-slug citation in product code (a fixed `PRODUCT_SLUG_SCOPE`, not configurable by this key) fails with `severity: 'error'` and a non-zero exit."
+      "Both checks are report-only for the classes these fields configure — a finding prints as a `warning`, and the check's own exit code stays `0` for them — except `reader-resolvable-prose`'s two blocking classes, which fail with `severity: 'error'` and a non-zero exit: a tranche-slug citation in product code (a fixed `PRODUCT_SLUG_SCOPE`, not configurable by this key), and any citation in a spec-class file (`specPaths` below, whose defaults need no configuration at all; `specGrandfather` is its only exemption)."
     ],
     example: `{
   "proseGates": {
@@ -474,6 +474,30 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
       'Defaults to `"warning"` (reports, exit `0`) — the same rollout precedent every class in this key follows. `"error"` fails the check\'s exit code on a reportable finding, same as the `product` class already does unconditionally.'
     ],
     example: `{ "severity": "error" }`
+  },
+  {
+    key: 'proseGates.specPaths',
+    type: 'string[] (optional)',
+    semantics: [
+      "Repo-relative files or folders ADDED to `reader-resolvable-prose`'s spec class — the blocking class that refuses a citation only this repository's own tracker can resolve. A folder entry is swept recursively for `.md` files; a file entry names that one file.",
+      'Additive: the class already reads, with no configuration at all, a root `SPEC.md`, a root `CONTEXT.md`, every `.md` under `docs/adr/`, and every `apps/<app>/specs/**/*.md`. A repository carrying none of those files has nothing new to report. Setting this key adds to that set and never replaces it.',
+      'The class blocks four shapes in every file it reads: an Issue or PR number (`#NNN`), an internal tranche slug (`<slug>-vN`), an archived-tranche slug, and a task number — the word `task` or `tasks` followed by a number (`task 4`, `tasks 11`, `task #7`), which a durable document copies out of a plan and which goes stale the moment that plan is renumbered. A document\'s own numbered structure ("Section 3", "step 2") is never a match.',
+      '`README.md` is deliberately not a default and should not be added lightly: the tranche-slug pattern matches an ordinary stack badge, which is not a citation at all.'
+    ],
+    example: `{
+  "proseGates": {
+    "specPaths": ["docs/architecture", "PRODUCT.md"]
+  }
+}`
+  },
+  {
+    key: 'proseGates.specGrandfather',
+    type: 'string[] (optional)',
+    semantics: [
+      'Exact repo-relative paths skipped entirely by the spec class — pre-existing prose that already carried citations when this class started reading it, listed so the class can block on day one without failing every open pull request against that backlog. Not a pattern; every entry is a full path.',
+      "Exempts a file the defaults brought in (a root spec, a decision record) exactly as it exempts one under an app's own `specs/**`, and exempts it from every rule the class runs, the task-number one included. The list is meant to shrink as each document is rewritten to state its facts plainly — a file on it should still never gain a NEW citation."
+    ],
+    example: `{ "specGrandfather": ["apps/cli/specs/loop.md"] }`
   },
   {
     key: 'dispatch',
