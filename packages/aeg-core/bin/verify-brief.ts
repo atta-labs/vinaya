@@ -60,27 +60,7 @@ import {
   readTierFromPrBody,
   resolveNewestFrozenBrief
 } from '../src/index'
-
-/**
- * `vinaya.config.json`'s `gateCutovers.objectivesSinceIssue` — the Objectives
- * cutover, read the same plain-JSON way `open-issue.ts` reads it (aeg-core
- * cannot depend on `apps/cli`'s zod resolver). `null` for an absent key OR a
- * malformed/missing config: NO cutover, so a brief for any Issue is held to
- * the objectives comparison, from Issue 1 (a repository that declares no
- * `gateCutovers`, O1). This repository restates its historical value (O2), so
- * this returns `404` here and behaviour is unchanged.
- */
-function readConfigObjectivesSinceIssue(): number | null {
-  try {
-    const raw = JSON.parse(readFileSync('vinaya.config.json', 'utf8')) as {
-      gateCutovers?: { objectivesSinceIssue?: unknown }
-    }
-    const value = raw.gateCutovers?.objectivesSinceIssue
-    return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null
-  } catch {
-    return null
-  }
-}
+import { readConfigObjectivesSinceIssue } from '../src/objectives-cutover-config'
 
 /** Immediate child directory names of `dir` — `deriveWorkspaceMemberDirs`'s injected filesystem access. Missing/unreadable `dir` degrades to `[]`, never throws. */
 function listDirs(dir: string): string[] {

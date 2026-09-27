@@ -93,6 +93,7 @@ import {
   type TaskIssueFacts
 } from '../src/issue-validation'
 import { classifyLeftover } from '../src/leftover-detection'
+import { readConfigObjectivesSinceIssue } from '../src/objectives-cutover-config'
 import { parseRegistry } from '../src/parse-registry'
 
 const REPO_ROOT = join(import.meta.dirname, '../../..')
@@ -636,27 +637,6 @@ function readConfigExtraDomains(repoRoot: string = REPO_ROOT): string[] {
 }
 
 /**
- * `vinaya.config.json`'s `gateCutovers.objectivesSinceIssue` — the Objectives
- * gate's cutover, resolved the same plain-JSON way as `readConfigExtraDomains`
- * (aeg-core cannot depend on `apps/cli`'s zod resolver). `null` for an absent
- * key OR a malformed/missing config: NO cutover, so the ring-0 Objectives gate
- * applies to every task Issue, from Issue 1 (a repository that declares no
- * `gateCutovers`, O1). This repository restates its historical value in its own
- * config (O2), so this returns `404` here and the gate is unchanged.
- */
-function readConfigObjectivesSinceIssue(repoRoot: string = REPO_ROOT): number | null {
-  try {
-    const raw = JSON.parse(readFileSync(join(repoRoot, 'vinaya.config.json'), 'utf8')) as {
-      gateCutovers?: { objectivesSinceIssue?: unknown }
-    }
-    const value = raw.gateCutovers?.objectivesSinceIssue
-    return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null
-  } catch {
-    return null
-  }
-}
-
-/**
  * The full collision-domain list checks A/C consume: every `packages/*`
  * workspace member (live-derived from `package.json`, §Part 1), the
  * built-in cross-cutting defaults (lockfile/monorepo-config/CI/git-hooks
@@ -964,7 +944,7 @@ export function main(): void {
       ).errors,
       ...checkNoBriefContent(body).errors,
       ...checkRationaleNamesDocs(body).errors,
-      ...checkIssueObjectives(body, issueNumber, readConfigObjectivesSinceIssue()).errors,
+      ...checkIssueObjectives(body, issueNumber, readConfigObjectivesSinceIssue(REPO_ROOT)).errors,
       ...checkPartsCiteDefinedObjectives(body).errors,
       ...checkSurfaceGlobsResolve(body, globResolvesToFile).errors,
       // The three Boundary/ownership/Parts-coverage predicates, wired here
