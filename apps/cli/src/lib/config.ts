@@ -1257,7 +1257,8 @@ function trustAnchorRepoFromRemoteUrl(url: string): string | null {
 const execFileAsync = promisify(execFile)
 
 // ---------------------------------------------------------------------------
-// The pre-merge trust-anchor probe (Issue #783).
+// The pre-merge trust-anchor probe — proving a root-`vinaya.config.json`
+// change before merge (`apps/cli/specs/self-hosting.md`).
 //
 // The trust-anchor read below deliberately reads `vinaya.config.json` from the
 // repository's DEFAULT BRANCH via the GitHub API, never local git or the
