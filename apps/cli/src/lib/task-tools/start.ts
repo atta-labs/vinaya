@@ -99,7 +99,7 @@
 
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { closeSync, existsSync, ftruncateSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { closeSync, existsSync, ftruncateSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import {
   defaultControlStoreDeps,
@@ -228,11 +228,59 @@ export type TaskStartDeps = {
  * layout instead of keeping a machine-wide directory of its own. Owner-only,
  * same hardening posture as `dispatch.ts`'s own machine-local records.
  */
-function startRecordPath(requestId: string): string {
-  return runPath(runtimeDirForThisRepo(), 'unscoped', {
+const START_RECORD_PREFIX = 'start-request-'
+const START_RECORD_SUFFIX = '.json'
+
+function startRecordPath(requestId: string, root: string = runtimeDirForThisRepo()): string {
+  return runPath(root, 'unscoped', {
     area: 'control',
-    file: `start-request-${requestId}.json`
+    file: `${START_RECORD_PREFIX}${requestId}${START_RECORD_SUFFIX}`
   })
+}
+
+/** The request identity a claim file's own name carries, or `null` for a file this store never wrote — the inverse of `startRecordPath`'s naming, kept beside it so the two can never disagree about the shape. */
+function requestIdFromRecordFilename(name: string): string | null {
+  if (!name.startsWith(START_RECORD_PREFIX) || !name.endsWith(START_RECORD_SUFFIX)) return null
+  const requestId = name.slice(START_RECORD_PREFIX.length, name.length - START_RECORD_SUFFIX.length)
+  return requestId.length > 0 ? requestId : null
+}
+
+/**
+ * Every start claim this machine currently holds — read through the SAME path
+ * builder and the SAME parser the store above writes and replays them with, so
+ * the claim layout stays known in exactly one place. A reader that listed the
+ * control directory and parsed the JSON itself would be a second copy of that
+ * layout, free to drift from this one (as a flat effect-record glob once drifted
+ * from the control store's own `effect/` layout).
+ *
+ * This is the one read that must enumerate: a claim is keyed by request
+ * identity — caller, repo, target and payload digest, hashed — so a reader
+ * holding a task number has no path to derive. `root` defaults to this repo's
+ * own runtime directory and is overridable so a fixture reads a temp tree.
+ *
+ * A file that does not parse, or parses to neither record shape, is skipped
+ * rather than raised: to a reader an unreadable claim is no claim at all, the
+ * same reading `claim`'s own replay path already takes.
+ */
+export function readStartClaims(root: string = runtimeDirForThisRepo()): StartRecord[] {
+  let entries: string[]
+  try {
+    entries = readdirSync(runPath(root, 'unscoped', { area: 'control' }))
+  } catch {
+    return []
+  }
+  const records: StartRecord[] = []
+  for (const name of entries) {
+    const requestId = requestIdFromRecordFilename(name)
+    if (requestId === null) continue
+    try {
+      const record = normalizeStartRecord(JSON.parse(readFileSync(startRecordPath(requestId, root), 'utf8')))
+      if (record !== null) records.push(record)
+    } catch {
+      // Unreadable or malformed — see this function's own doc comment.
+    }
+  }
+  return records
 }
 
 /**
@@ -636,7 +684,16 @@ export function startRefusalForState(
   return null
 }
 
-function claimIsStale(record: StartRecord, now: () => string): boolean {
+/**
+ * Whether a claim is old enough that its own launch must already have concluded
+ * one way or the other. Exported because the status reader asks the very same
+ * question of the very same records (`task-status.ts`'s `readStartClaim`): a
+ * claim this predicate calls fresh is a start still coming up, and one it calls
+ * stale is a start whose outcome is decided. Sharing the predicate — not just
+ * `START_STALE_CLAIM_GRACE_MS` — is what keeps "starting" and "supersedable"
+ * from ever meaning two different windows.
+ */
+export function claimIsStale(record: StartRecord, now: () => string): boolean {
   const startedAt = Date.parse(record.startedAt)
   const current = Date.parse(now())
   return Number.isFinite(startedAt) && Number.isFinite(current) && current - startedAt > START_STALE_CLAIM_GRACE_MS

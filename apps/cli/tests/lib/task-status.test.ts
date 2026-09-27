@@ -25,10 +25,14 @@ import {
   phaseIsCurrentFor,
   readLastConfidence,
   readLoopPhase,
+  readStartClaim,
   renderTaskStatusTable,
   resumeCommandFor,
+  type StartClaimDeps,
+  type StartClaimState,
   type TaskStatusRow
 } from '../../src/lib/task-status.js'
+import { readStartClaims } from '../../src/lib/task-tools/start.js'
 import {
   mergedTaskPrNumbers,
   phaseHistoryLookup,
@@ -193,6 +197,158 @@ function deadPid(): number {
   if (typeof r.pid !== 'number') throw new Error('spawnSync did not report a pid')
   return r.pid
 }
+
+// --- a start claim, as `task_start`'s own store writes it -------------------
+
+/** When the fixture's start was accepted, and two readings of "now": one inside the start handler's own stale-claim window, one past it. */
+const CLAIM_ACCEPTED_AT = '2026-09-26T10:00:00.000Z'
+const WHILE_CLAIM_IS_FRESH = '2026-09-26T10:00:10.000Z'
+const AFTER_CLAIM_WENT_STALE = '2026-09-26T10:02:00.000Z'
+const REQUEST_ID = 'a1b2c3d4e5f60718'
+
+/**
+ * One claim file at the exact path `start.ts`'s `startRecordPath` names for it —
+ * the unscoped control folder, one file per request identity — written out by
+ * hand so this fixture asserts against the literal layout rather than through
+ * the reader under test.
+ */
+function writeStartClaim(root: string, record: Record<string, unknown>): void {
+  const dir = join(root, 'tasks-execution', 'unscoped', 'control')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, `start-request-${String(record.requestId)}.json`), JSON.stringify(record, null, 2), 'utf8')
+}
+
+/** The real store reader, a fixed clock, and an explicit set of live pids — everything a start claim's reading depends on, none of it this machine's own state. */
+function claimDeps(now: string, livePids: readonly number[] = []): StartClaimDeps {
+  return { claims: readStartClaims, isPidAlive: (pid) => livePids.includes(pid), now: () => now }
+}
+
+/** The thunk `deriveLoopState` consults last — the production wiring, with the fixture's clock in place of the wall clock. */
+function claimThunk(
+  root: string,
+  task: number,
+  address: { tranche: string; id: string } | null,
+  now: string,
+  livePids: readonly number[] = []
+): () => StartClaimState | null {
+  return () => readStartClaim(root, task, address, claimDeps(now, livePids))
+}
+
+describe('readStartClaim', () => {
+  it('reads a claim that named this Issue directly, inside its own window, as starting', () => {
+    const root = tempDir()
+    writeStartClaim(root, {
+      requestId: REQUEST_ID,
+      caller: 'operator',
+      target: { issue: TASK },
+      startedAt: CLAIM_ACCEPTED_AT
+    })
+    expect(readStartClaim(root, TASK, null, claimDeps(WHILE_CLAIM_IS_FRESH))).toEqual({
+      kind: 'starting',
+      requestId: REQUEST_ID,
+      startedAt: CLAIM_ACCEPTED_AT
+    })
+  })
+
+  it("matches a claim written against a tranche ordinal by this task's own address", () => {
+    const root = tempDir()
+    writeStartClaim(root, {
+      requestId: REQUEST_ID,
+      caller: 'operator',
+      target: { tranche: 'unattended-run-v1', id: '20' },
+      startedAt: CLAIM_ACCEPTED_AT
+    })
+    expect(
+      readStartClaim(root, TASK, { tranche: 'unattended-run-v1', id: '20' }, claimDeps(WHILE_CLAIM_IS_FRESH))
+    ).toEqual({ kind: 'starting', requestId: REQUEST_ID, startedAt: CLAIM_ACCEPTED_AT })
+  })
+
+  it("never matches another task's claim — a different ordinal, or an ordinal claim read with no address", () => {
+    const root = tempDir()
+    writeStartClaim(root, {
+      requestId: REQUEST_ID,
+      caller: 'operator',
+      target: { tranche: 'unattended-run-v1', id: '20' },
+      startedAt: CLAIM_ACCEPTED_AT
+    })
+    expect(
+      readStartClaim(root, TASK, { tranche: 'unattended-run-v1', id: '21' }, claimDeps(WHILE_CLAIM_IS_FRESH))
+    ).toBeNull()
+    expect(readStartClaim(root, TASK, null, claimDeps(WHILE_CLAIM_IS_FRESH))).toBeNull()
+  })
+
+  it('reads the newest claim when one task has been started more than once', () => {
+    const root = tempDir()
+    writeStartClaim(root, {
+      requestId: 'older00000000000',
+      caller: 'operator',
+      target: { issue: TASK },
+      startedAt: '2026-09-26T09:00:00.000Z'
+    })
+    writeStartClaim(root, {
+      requestId: REQUEST_ID,
+      caller: 'operator',
+      target: { issue: TASK },
+      startedAt: CLAIM_ACCEPTED_AT
+    })
+    expect(readStartClaim(root, TASK, null, claimDeps(WHILE_CLAIM_IS_FRESH))?.requestId).toBe(REQUEST_ID)
+  })
+
+  it('reads a claim past its window whose launched process is still alive as starting, not as a failure', () => {
+    // The same reading `task_start`'s own supersede path takes of this record: a
+    // live pid with no driver lock is a preparation outlasting any fixed wait.
+    const root = tempDir()
+    writeStartClaim(root, {
+      requestId: REQUEST_ID,
+      caller: 'operator',
+      target: { issue: TASK },
+      startedAt: CLAIM_ACCEPTED_AT,
+      pid: 4242
+    })
+    expect(readStartClaim(root, TASK, null, claimDeps(AFTER_CLAIM_WENT_STALE, [4242]))).toEqual({
+      kind: 'starting',
+      requestId: REQUEST_ID,
+      startedAt: CLAIM_ACCEPTED_AT
+    })
+  })
+
+  it('reads a claim past its window whose process is gone as a start that did not come up', () => {
+    const root = tempDir()
+    writeStartClaim(root, {
+      requestId: REQUEST_ID,
+      caller: 'operator',
+      target: { issue: TASK },
+      startedAt: CLAIM_ACCEPTED_AT,
+      pid: 4242
+    })
+    expect(readStartClaim(root, TASK, null, claimDeps(AFTER_CLAIM_WENT_STALE))).toEqual({
+      kind: 'start_did_not_come_up',
+      requestId: REQUEST_ID,
+      startedAt: CLAIM_ACCEPTED_AT
+    })
+  })
+
+  it('reads a claim past its window that recorded no pid at all as a start that did not come up', () => {
+    // An older build's record, or a launch that never reported a pid: the driver
+    // lock is the only other signal, and this read is reached only when there is
+    // none.
+    const root = tempDir()
+    writeStartClaim(root, {
+      requestId: REQUEST_ID,
+      caller: 'operator',
+      target: { issue: TASK },
+      startedAt: CLAIM_ACCEPTED_AT
+    })
+    expect(readStartClaim(root, TASK, null, claimDeps(AFTER_CLAIM_WENT_STALE))?.kind).toBe('start_did_not_come_up')
+  })
+
+  it('returns null when no claim file exists, and when one exists for nobody this reader can parse', () => {
+    const root = tempDir()
+    expect(readStartClaim(root, TASK, null, claimDeps(WHILE_CLAIM_IS_FRESH))).toBeNull()
+    writeStartClaim(root, { requestId: REQUEST_ID, caller: 'operator', startedAt: CLAIM_ACCEPTED_AT })
+    expect(readStartClaim(root, TASK, null, claimDeps(WHILE_CLAIM_IS_FRESH))).toBeNull()
+  })
+})
 
 describe('deriveLoopState', () => {
   it('reports no_driver when the outbox carries nothing for this task', () => {
@@ -359,6 +515,97 @@ describe('deriveLoopState', () => {
     )
     writePublishedRound(root, TASK, 1)
     expect(deriveLoopState(root, TASK, { repo: null, loopsRoot: root })).toEqual({ kind: 'published', round: 1 })
+  })
+
+  it('reports starting, never no_driver, while an accepted start has no driver lock yet', () => {
+    const root = tempDir()
+    writeStartClaim(root, {
+      requestId: REQUEST_ID,
+      caller: 'operator',
+      target: { tranche: 'unattended-run-v1', id: '20' },
+      startedAt: CLAIM_ACCEPTED_AT
+    })
+    expect(
+      deriveLoopState(
+        root,
+        TASK,
+        { repo: null, loopsRoot: root },
+        claimThunk(root, TASK, { tranche: 'unattended-run-v1', id: '20' }, WHILE_CLAIM_IS_FRESH)
+      )
+    ).toEqual({ kind: 'starting', requestId: REQUEST_ID, startedAt: CLAIM_ACCEPTED_AT })
+  })
+
+  it('reports running once the driver lock names a live pid, whatever the claim still says', () => {
+    const root = tempDir()
+    writeStartClaim(root, {
+      requestId: REQUEST_ID,
+      caller: 'operator',
+      target: { issue: TASK },
+      startedAt: CLAIM_ACCEPTED_AT
+    })
+    writeRunFile(
+      root,
+      TASK,
+      'driver.pid.json',
+      JSON.stringify({ pid: process.pid, startedAt: '2026-09-26T10:00:20.000Z' })
+    )
+    expect(
+      deriveLoopState(root, TASK, { repo: null, loopsRoot: root }, claimThunk(root, TASK, null, WHILE_CLAIM_IS_FRESH))
+    ).toEqual({ kind: 'running', pid: process.pid, startedAt: '2026-09-26T10:00:20.000Z' })
+  })
+
+  it('leaves every record-backed state ahead of a start claim — a pause still reads paused', () => {
+    const root = tempDir()
+    writeStartClaim(root, {
+      requestId: REQUEST_ID,
+      caller: 'operator',
+      target: { issue: TASK },
+      startedAt: CLAIM_ACCEPTED_AT
+    })
+    writeRunFile(
+      root,
+      TASK,
+      'pause-state.json',
+      JSON.stringify({
+        task: TASK,
+        round: 2,
+        head: 'abc123',
+        branch: 'task/unattended-run-v1/20',
+        prNumber: 517,
+        reason: 'escalation',
+        pausedAt: '2026-09-10T00:00:00.000Z'
+      })
+    )
+    expect(
+      deriveLoopState(root, TASK, { repo: null, loopsRoot: root }, claimThunk(root, TASK, null, WHILE_CLAIM_IS_FRESH))
+    ).toEqual({ kind: 'paused', reason: 'escalation', detail: undefined, round: 2 })
+  })
+
+  it('reports a start that did not come up, naming its request, for a stale claim with no lock and no process', () => {
+    const root = tempDir()
+    writeStartClaim(root, {
+      requestId: REQUEST_ID,
+      caller: 'operator',
+      target: { issue: TASK },
+      startedAt: CLAIM_ACCEPTED_AT,
+      pid: 4242
+    })
+    expect(
+      deriveLoopState(root, TASK, { repo: null, loopsRoot: root }, claimThunk(root, TASK, null, AFTER_CLAIM_WENT_STALE))
+    ).toEqual({ kind: 'start_did_not_come_up', requestId: REQUEST_ID, startedAt: CLAIM_ACCEPTED_AT })
+  })
+
+  it('still reports no_driver when no start claim names this task at all', () => {
+    const root = tempDir()
+    writeStartClaim(root, {
+      requestId: REQUEST_ID,
+      caller: 'operator',
+      target: { issue: TASK + 1 },
+      startedAt: CLAIM_ACCEPTED_AT
+    })
+    expect(
+      deriveLoopState(root, TASK, { repo: null, loopsRoot: root }, claimThunk(root, TASK, null, WHILE_CLAIM_IS_FRESH))
+    ).toEqual({ kind: 'no_driver' })
   })
 })
 
@@ -994,6 +1241,24 @@ describe('renderTaskStatusTable (O3)', () => {
     const lines = renderTaskStatusTable([{ ...base, pr: null, state: { kind: 'not_started' } }])
     expect(lines).toHaveLength(2)
     expect(lines[1]?.split(/\s{2,}/)).toEqual(['[task-run-v1] 14', '#515', '—', 'not started', '—', '—', '—', '—', '—'])
+  })
+
+  it('reads a start that is coming up as starting, and one that never did as a start that did not come up', () => {
+    const starting = renderTaskStatusTable([
+      { ...base, pr: null, state: { kind: 'starting', requestId: REQUEST_ID, startedAt: CLAIM_ACCEPTED_AT } }
+    ])
+    expect(starting[1]).toContain(`starting (start request ${REQUEST_ID})`)
+    expect(starting[1]).not.toContain('no driver')
+
+    const failed = renderTaskStatusTable([
+      {
+        ...base,
+        pr: null,
+        state: { kind: 'start_did_not_come_up', requestId: REQUEST_ID, startedAt: CLAIM_ACCEPTED_AT }
+      }
+    ])
+    expect(failed[1]).toContain(`start did not come up (start request ${REQUEST_ID}, accepted ${CLAIM_ACCEPTED_AT})`)
+    expect(failed[1]).not.toContain('no driver')
   })
 
   it("marks a figure the developer has only just stated, whose round's review has not completed", () => {

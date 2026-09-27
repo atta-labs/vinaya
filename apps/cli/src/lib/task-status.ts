@@ -50,6 +50,7 @@ import {
   type PrCommentReader
 } from './task-status-history.js'
 import { findRecordedControllerRun } from './task-run-background.js'
+import { claimIsStale, readStartClaims, type StartRecord } from './task-tools/start.js'
 
 /**
  * The ceiling on one `gh` read this file makes — the SAME bounds
@@ -357,6 +358,94 @@ export function newestPublishedRound(root: string, task: number): number | null 
   return newest
 }
 
+// --- a start that was accepted, before its driver is confirmed --------------
+
+/**
+ * What a start claim says about a task no driver lock accounts for yet.
+ *
+ * `task_start` answers as soon as the process it launched is alive, and keeps
+ * its claim; the run's own driver lock appears only after `task run` has
+ * rendered and posted the frozen brief and run its start-of-run sweep — forge-
+ * bound steps that routinely take tens of seconds. Reading nothing in that
+ * window and reporting `no driver` told a caller its successful start had not
+ * happened, and the obvious next thing to do about that is start the task
+ * again.
+ *
+ * `startedAt` is the claim's own accepted-at timestamp, `requestId` the start
+ * request it belongs to — the same identity `task_start` returned to whoever
+ * asked for the start, so a reader can tie the two together.
+ */
+export type StartClaimState =
+  | { kind: 'starting'; requestId: string; startedAt: string }
+  | { kind: 'start_did_not_come_up'; requestId: string; startedAt: string }
+
+/** This task's tranche address, for matching a claim written against an ordinal — `null` for a task addressed only by its Issue number. */
+export type TaskAddress = { tranche: string; id: string } | null
+
+export type StartClaimDeps = {
+  /** The claims this machine holds, through the start handler's own store (`task-tools/start.ts`'s `readStartClaims`) — never a second listing of the control directory. */
+  claims: (root: string) => StartRecord[]
+  /** Is the process a claim's own launch spawned still running? The one liveness signal that exists BEFORE a driver lock does. */
+  isPidAlive: (pid: number) => boolean
+  now: () => string
+}
+
+export const defaultStartClaimDeps: StartClaimDeps = {
+  claims: readStartClaims,
+  isPidAlive: isDriverPidAlive,
+  now: () => new Date().toISOString()
+}
+
+/**
+ * A claim names a task the way the call that wrote it addressed one: a
+ * standalone target carries the Issue number itself, a tranche target carries
+ * the ordinal it was started by. Matching the ordinal needs this task's own
+ * address, which the caller already holds — resolving it here would be a forge
+ * read inside a reader whose whole contract is that it makes none.
+ */
+function claimMatchesTask(record: StartRecord, task: number, address: TaskAddress): boolean {
+  const target = record.target
+  if ('issue' in target) return target.issue === task
+  return address !== null && target.tranche === address.tranche && target.id === address.id
+}
+
+/**
+ * The newest start claim for this task, read as a state — or `null` when no
+ * claim names it at all, which is the one case that is genuinely `no_driver`.
+ *
+ * A claim still inside the start handler's own stale-claim window is a start
+ * coming up (`starting`), and so is one past that window whose launched process
+ * is still alive: that is a preparation outlasting any fixed wait, exactly the
+ * reading `task_start`'s own supersede path takes of the same record (its
+ * `claimIsStale`, shared rather than re-derived, so both places mean one
+ * window). A claim past the window whose process is gone, with no driver lock to
+ * show for it, is a start that did not come up — reported as that, naming its
+ * request, rather than as the absence it looks like.
+ */
+export function readStartClaim(
+  root: string,
+  task: number,
+  address: TaskAddress,
+  deps: StartClaimDeps = defaultStartClaimDeps
+): StartClaimState | null {
+  let newest: { record: StartRecord; at: number } | null = null
+  for (const record of deps.claims(root)) {
+    if (!claimMatchesTask(record, task, address)) continue
+    const parsed = Date.parse(record.startedAt)
+    // A record whose own timestamp does not parse sorts oldest — it is still a
+    // real claim, and `claimIsStale` reads it as not-stale, so it never
+    // silently outranks a claim that carries a readable time.
+    const at = Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY
+    if (newest === null || at >= newest.at) newest = { record, at }
+  }
+  if (newest === null) return null
+  const record = newest.record
+  const launchedPid = record.pid
+  const alive = launchedPid !== undefined && deps.isPidAlive(launchedPid)
+  const kind = !claimIsStale(record, deps.now) || alive ? 'starting' : 'start_did_not_come_up'
+  return { kind, requestId: record.requestId, startedAt: record.startedAt }
+}
+
 export type TaskLoopState =
   | { kind: 'running'; pid: number; startedAt: string }
   | { kind: 'paused'; reason: PauseReason; detail?: string; round: number }
@@ -368,6 +457,10 @@ export type TaskLoopState =
   // the brief in preparation before it ever writes a driver lock, so no frozen
   // brief means no run has begun. `deriveLoopState` itself never returns it.
   | { kind: 'not_started' }
+  // A start this machine accepted, before its driver lock exists — the two
+  // readings above are the only records that can say so, and they are consulted
+  // last, where nothing else carries a fact about this task at all.
+  | StartClaimState
   | { kind: 'no_driver' }
 
 /**
@@ -386,11 +479,22 @@ export type TaskLoopState =
  * lock naming a dead pid, checked BEFORE the published/paused reading below,
  * means the last run's own `driver_exited` role-log trace — if one exists —
  * is more informative than a possibly much older pause/publish record.
+ *
+ * A start claim is the LEAST authoritative signal here and is read last, on the
+ * one path that used to end in `no_driver`: every state above it is backed by a
+ * record of something that actually happened to a run — a live lock, a pause, a
+ * published round, a driver that exited — while a claim only says a start was
+ * accepted. So a live driver still reads `running` whatever a claim says, a
+ * pause still reads `paused`, and the claim decides only where there was
+ * otherwise nothing to read. `startClaim` is a thunk for that reason: the claim
+ * directory is listed only when the read reaches it, so a running task pays
+ * nothing for it.
  */
 export function deriveLoopState(
   root: string,
   task: number,
-  loopLog: LoopLogLookup = { repo: resolveRepoSync(), loopsRoot: loopsRoot() }
+  loopLog: LoopLogLookup = { repo: resolveRepoSync(), loopsRoot: loopsRoot() },
+  startClaim: () => StartClaimState | null = () => readStartClaim(root, task, null)
 ): TaskLoopState {
   const lock = readDriverLock(root, task)
   if (lock && isDriverPidAlive(lock.pid)) return { kind: 'running', pid: lock.pid, startedAt: lock.startedAt }
@@ -415,7 +519,7 @@ export function deriveLoopState(
     return { kind: 'paused', reason: pause.reason, detail: pause.detail, round: pause.round }
   }
   if (published !== null) return { kind: 'published', round: published }
-  return { kind: 'no_driver' }
+  return startClaim() ?? { kind: 'no_driver' }
 }
 
 /** `vinaya dev-review-loop --resume <pr>` — the exact string `renderPauseComment`/`task run` already print, rendered fresh from the pr number rather than duplicated as a literal in each caller. */
@@ -675,6 +779,10 @@ function renderStateText(state: TaskLoopState): string {
       return `exited (${state.reason}) — last decision: ${state.lastDecision}`
     case 'not_started':
       return 'not started'
+    case 'starting':
+      return `starting (start request ${state.requestId})`
+    case 'start_did_not_come_up':
+      return `start did not come up (start request ${state.requestId}, accepted ${state.startedAt})`
     case 'no_driver':
       return 'no driver'
   }
@@ -803,11 +911,20 @@ function buildRow(
     id: ref.kind === 'tranche' ? ref.id : String(ref.issue),
     issue: ref.issue
   }
+  // A claim written against a tranche ordinal is matched by that ordinal — the
+  // address this row already carries — so a start is never missed for want of a
+  // forge read inside the outbox reader.
+  const startClaim = () =>
+    readStartClaim(root, ref.issue, ref.kind === 'tranche' ? { tranche: ref.tranche, id: ref.id } : null)
   if (!started) {
+    // A start this machine has already accepted makes this task started,
+    // whatever the forge says about its brief: `task run` renders and posts the
+    // frozen brief inside its own preparation, so a launch that has not reached
+    // that step yet would otherwise read as a task nobody had started.
     return {
       ...base,
       pr: null,
-      state: { kind: 'not_started' },
+      state: startClaim() ?? { kind: 'not_started' },
       round: null,
       phase: null,
       recordedPhase: null,
@@ -819,7 +936,7 @@ function buildRow(
     }
   }
   const pr = findPrForRef(ref)
-  const state = deriveLoopState(root, ref.issue)
+  const state = deriveLoopState(root, ref.issue, undefined, startClaim)
   const phase = readLoopPhase(root, ref.issue)
   const confidence = readLastConfidence(
     root,
