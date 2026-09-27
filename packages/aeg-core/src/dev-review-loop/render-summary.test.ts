@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { extractCodeReviewVerdict, extractSecurityReviewVerdict } from '../verdict-extraction'
 import { blockingVerdict, cleanVerdict, fakeGate, fakeVerdicts, runScenario } from './fakes'
 import { parseSummaryConfidenceRows, renderSummary } from './render-summary'
-import { initialLoopState } from './types'
-import type { LoopConfig } from './types'
+import { initialLoopState, SEVERITY_COLUMNS } from './types'
+import type { LoopConfig, RoundRecord } from './types'
 
 const CONFIG: LoopConfig = {
   loopId: 'loop-1',
@@ -15,6 +15,23 @@ const CONFIG: LoopConfig = {
 
 function freshState() {
   return initialLoopState(CONFIG)
+}
+
+/**
+ * A round the loop assessed and found nothing in — every severity column
+ * recorded at zero, exactly as `buildRoundRecord` writes one. Distinct from a
+ * round rebuilt from the pull request's markers, whose counts have no source
+ * at all and which `recordedCounts` therefore never stands in for.
+ */
+function recordedCounts(findings: Partial<Record<(typeof SEVERITY_COLUMNS)[number], number>> = {}) {
+  const counts: Record<string, number> = {}
+  for (const key of SEVERITY_COLUMNS) counts[key] = findings[key] ?? 0
+  return counts
+}
+
+/** A round rebuilt from a round marker after a restart — no counts recorded, as `reconstructRounds` builds it. */
+function rebuiltRound(round: number, outcome: RoundRecord['outcome'] = 'changes_requested'): RoundRecord {
+  return { round, countsBySeverity: {}, confidence: null, outcome }
 }
 
 describe('renderSummary — Part 4 (O4)', () => {
@@ -76,10 +93,10 @@ describe('renderSummary — Part 4 (O4)', () => {
   it('defeat: outcome words never include APPROVE — only green, changes_requested, escalated, stopped', () => {
     const summary = renderSummary({
       rounds: [
-        { round: 1, countsBySeverity: {}, confidence: null, outcome: 'green' },
-        { round: 2, countsBySeverity: {}, confidence: null, outcome: 'changes_requested' },
-        { round: 3, countsBySeverity: {}, confidence: null, outcome: 'escalated' },
-        { round: 4, countsBySeverity: {}, confidence: null, outcome: 'stopped' }
+        rebuiltRound(1, 'green'),
+        rebuiltRound(2, 'changes_requested'),
+        rebuiltRound(3, 'escalated'),
+        rebuiltRound(4, 'stopped')
       ]
     })
     expect(summary).not.toMatch(/APPROVE/)
@@ -91,14 +108,67 @@ describe('renderSummary — Part 4 (O4)', () => {
   it('renders `absent` confidence distinctly from a numeric value or no confidence at all', () => {
     const summary = renderSummary({
       rounds: [
-        { round: 1, countsBySeverity: {}, confidence: null, outcome: 'changes_requested' },
-        { round: 2, countsBySeverity: {}, confidence: 'absent', outcome: 'changes_requested' },
-        { round: 3, countsBySeverity: {}, confidence: { value: 60 }, outcome: 'green' }
+        { round: 1, countsBySeverity: recordedCounts(), confidence: null, outcome: 'changes_requested' },
+        { round: 2, countsBySeverity: recordedCounts(), confidence: 'absent', outcome: 'changes_requested' },
+        { round: 3, countsBySeverity: recordedCounts(), confidence: { value: 60 }, outcome: 'green' }
       ]
     })
     expect(summary).toContain('| 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | — | changes_requested |')
     expect(summary).toContain('| 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | absent | changes_requested |')
     expect(summary).toContain('| 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 60% | green |')
+  })
+})
+
+describe('renderSummary — a round whose counts are unknown never reads as a clean round', () => {
+  it('reports nothing for a round rebuilt from a marker, and numbers — zero included — for rounds the loop recorded', () => {
+    const summary = renderSummary({
+      rounds: [
+        rebuiltRound(1),
+        rebuiltRound(2),
+        {
+          round: 3,
+          countsBySeverity: recordedCounts({ blocker: 2, minor: 1 }),
+          confidence: null,
+          outcome: 'changes_requested'
+        },
+        { round: 4, countsBySeverity: recordedCounts(), confidence: { value: 90 }, outcome: 'green' }
+      ]
+    })
+
+    // Rounds 1-2 have no counts to report at all: the markers they were rebuilt
+    // from carry none. Reporting `0` there claimed the rounds were clean.
+    expect(summary).toContain('| 1 | — | — | — | — | — | — | — | — | changes_requested |')
+    expect(summary).toContain('| 2 | — | — | — | — | — | — | — | — | changes_requested |')
+    expect(summary).toContain('| 3 | 2 | 0 | 1 | 0 | 0 | 0 | 0 | — | changes_requested |')
+    // Round 4's zeros are a measurement the loop made, and still read as zeros.
+    expect(summary).toContain('| 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 90% | green |')
+  })
+
+  it('a round the loop really assessed and found nothing in reads `0`, not the unknown glyph', () => {
+    const { state } = runScenario(freshState(), [
+      fakeGate(1, true, { confidence: { value: 80 } }),
+      fakeVerdicts(1, [cleanVerdict('reviewer'), cleanVerdict('security')])
+    ])
+
+    const summary = renderSummary({ rounds: state.rounds })
+
+    expect(summary).toContain('| 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 80% | green |')
+  })
+
+  it('defeat: the header row is untouched, so a published summary is still detected', () => {
+    const rendered = renderSummary({ rounds: [rebuiltRound(1)] })
+
+    expect(rendered.split('\n')[0]).toBe(
+      '| round | blocker | major | minor | critical | high | medium | low | confidence | outcome |'
+    )
+  })
+
+  it('defeat: an unknown count cell is never read back as a confidence figure', () => {
+    const rendered = renderSummary({ rounds: [rebuiltRound(1)] })
+
+    // Every cell but the outcome reads `—`; the parser still reports exactly
+    // one row, and reads it as a round that was never asked for a confidence.
+    expect(parseSummaryConfidenceRows(rendered)).toEqual([{ round: 1, percent: null, asked: false }])
   })
 })
 

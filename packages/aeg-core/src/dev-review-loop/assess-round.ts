@@ -233,7 +233,14 @@ function buildRoundRecord(
   confidence: Confidence | null,
   outcome: RoundOutcome
 ): RoundRecord {
+  // Every column this round MEASURED, seeded at zero before a single finding
+  // is counted — so a round the loop assessed and found nothing in is a
+  // recorded zero, not an absent count. The published table needs the two told
+  // apart (`countCells`, `render-summary.ts`): a round rebuilt from the pull
+  // request's markers after a restart has no counts at all, and must report
+  // nothing rather than a zero a reader would take for a clean round.
   const countsBySeverity: Record<string, number> = {}
+  for (const key of SEVERITY_COLUMNS) countsBySeverity[key] = 0
   for (const v of verdicts) {
     for (const f of v.findings) {
       const key = f.severity.toLowerCase()
