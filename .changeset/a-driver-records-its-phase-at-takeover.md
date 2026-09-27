@@ -1,7 +1,0 @@
----
-'@attalabs/vinaya': patch
----
-
-A driver that takes a task over records its phase at once, so an earlier run's pause never reads as current. The loop writes its `loop_state`/`pause-state.json` records only when its phase changes, so a run that paused left `loop_state` reading `phase: 'pause'`. A driver that later took the task over — after a `--resume`, a re-attach, or a fresh start over a killed run — wrote nothing of its own until its own first transition, which on a fresh developing turn can be an hour away. For that whole window `vinaya task status` and the Operator's `task_status`, which read `loop_state.phase` for the "phase" column, reported the live, coding run as `paused` — observed three times in one day, on two task pull requests after a resume and on a new adopter after a fresh start over a killed run.
-
-`devReviewLoop` now records the phase it is taking the task over into — `dispatch_developer` — once, right after its setup and before the resume/attach/fresh-dispatch branch, ahead of every dispatch site and on every entry point the watching driver funnels through. The recovered round is preserved, so this supersedes only the stale phase, never the round the earlier run reached. The older pause record is left untouched and kept as history: while the new driver's lock is alive the state already reads `running` over it, and this write is what stops the phase column from still reading `paused` underneath that running state. The status reader is unchanged — the fix is where the record is written, at takeover.
