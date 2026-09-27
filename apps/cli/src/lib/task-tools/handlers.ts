@@ -37,7 +37,12 @@ import {
 } from '@attalabs/aeg-core'
 import { findTrancheSlug, resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
 import { runtimeDir } from '../dev-review-loop.js'
-import { gatherTaskStatusList, type TaskStatusRow } from '../task-status.js'
+import {
+  gatherTaskStatusList,
+  taskStatusIdentityMatches,
+  type TaskStatusRow,
+  type TaskStatusSelector
+} from '../task-status.js'
 import { classifyStateFreshness, describeTaskLoopState, paginate, readEscalationPacket, whereTheRunIs } from './read.js'
 
 export type TaskToolCallResult<T> = { ok: true; result: T } | { ok: false; error: TaskToolError }
@@ -50,8 +55,9 @@ function fail<T>(error: TaskToolError): TaskToolCallResult<T> {
   return { ok: false, error }
 }
 
+/** The ONE matching rule, shared with the reader that decides which rows to build at all (`task-status.ts`'s `taskStatusIdentityMatches`) — so a ref can never select a different row here than the row the gather built for it. */
 function refMatchesRow(ref: TaskToolRef, row: TaskStatusRow): boolean {
-  return 'issue' in ref ? row.issue === ref.issue : row.tranche === ref.tranche && row.id === ref.id
+  return taskStatusIdentityMatches(ref, row)
 }
 
 /** How a ref reads in a refusal message: an Issue number, or a bracketed tranche slug and ordinal. Exported so `start.ts` names a target the same way this file's own refusals do, rather than formatting one of its own. */
@@ -61,9 +67,22 @@ export function describeTaskRef(ref: TaskToolRef): string {
 
 // --- task_status -------------------------------------------------------------
 
-/** `task-status.ts`'s own forge-touching entry point, called once per handler invocation — the identical cost `vinaya task status` already pays for the same information. */
-function currentTaskStatusRows(): TaskStatusRow[] {
-  return gatherTaskStatusList().rows
+/**
+ * `task-status.ts`'s own forge-touching entry point, called once per handler
+ * invocation — the identical cost `vinaya task status` already pays for the same
+ * information.
+ *
+ * A ref is passed STRAIGHT THROUGH to the reader rather than filtered out of a
+ * full listing afterwards: the reader's per-row budgets (the pull-request facts
+ * read, the confidence read) are spent in listing order, so a named read that
+ * filtered after the fact could spend every slot on rows the caller never asked
+ * about and then report the named row's own columns as unread.
+ */
+function currentTaskStatusRows(selector: TaskStatusSelector = null): TaskStatusRow[] {
+  // `'skip'`: every caller of this function reads a row's Issue and its
+  // pull-request NUMBER and nothing else, so the pull-request columns' own forge
+  // read would be one `gh pr view` per invocation whose payload is discarded.
+  return gatherTaskStatusList(selector, 'skip').rows
 }
 
 export function taskStatusHandler(input: unknown): TaskToolCallResult<TaskStatusResult> {
@@ -71,8 +90,14 @@ export function taskStatusHandler(input: unknown): TaskToolCallResult<TaskStatus
   if (!parsed.success) return fail(taskToolError('validation', parsed.error.issues[0]?.message ?? 'invalid input'))
   const { task, cursor, limit } = parsed.data
 
-  const rows = currentTaskStatusRows()
-  const matching = task ? rows.filter((row) => refMatchesRow(task, row)) : rows
+  // The one read this handler makes — its rows AND the table rendered from them.
+  // `task_status` is the one caller that wants the pull-request columns, so it is
+  // the one that asks for them.
+  const view = gatherTaskStatusList(task ?? null, 'read')
+  // `view.rows` already carries only what `task` selected (the reader filtered
+  // before building), and this keeps the same rule as the one predicate either
+  // side of that boundary applies.
+  const matching = task ? view.rows.filter((row) => refMatchesRow(task, row)) : view.rows
   if (task && matching.length === 0) {
     return fail(taskToolError('precondition', `no open task matches ${describeTaskRef(task)}`))
   }
@@ -92,7 +117,13 @@ export function taskStatusHandler(input: unknown): TaskToolCallResult<TaskStatus
     freshness: classifyStateFreshness(row.state)
   }))
 
-  return ok({ items, nextCursor: page.nextCursor })
+  // The reader's OWN table, not a second rendering of the same rows: it already
+  // built one from these rows with the command's own renderer, over every MATCHED
+  // row rather than the page above (a call with no `task` shows every open task in
+  // the repository, whatever `limit` does to the structured items beside it).
+  // Re-rendering took a second `now()` and `hostname()` for a footer already
+  // computed, and threw the reader's own away.
+  return ok({ items, nextCursor: page.nextCursor, table: view.table.join('\n') })
 }
 
 // --- task_escalation_read ------------------------------------------------
@@ -129,7 +160,9 @@ export function taskStatusHandler(input: unknown): TaskToolCallResult<TaskStatus
  */
 export function resolveIssueForRef(ref: TaskToolRef): number | null {
   if ('issue' in ref) return ref.issue
-  const { rows, briefFrozenIssues } = gatherTaskStatusList()
+  // `'skip'` for the same reason `currentTaskStatusRows` skips: this resolution
+  // reads an Issue number and the frozen-brief set, never a column.
+  const { rows, briefFrozenIssues } = gatherTaskStatusList(ref, 'skip')
   const row = rows.find((r) => r.tranche === ref.tranche && r.id === ref.id && briefFrozenIssues.has(r.issue))
   return row ? row.issue : null
 }
@@ -151,7 +184,7 @@ export function resolveIssueForRef(ref: TaskToolRef): number | null {
  * one always reads the rows.
  */
 export function resolveRowForRef(ref: TaskToolRef): TaskStatusRow | null {
-  return currentTaskStatusRows().find((row) => refMatchesRow(ref, row)) ?? null
+  return currentTaskStatusRows(ref).find((row) => refMatchesRow(ref, row)) ?? null
 }
 
 // --- start-side resolution: open tranche-labeled Issues, frozen or not -------

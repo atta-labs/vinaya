@@ -204,9 +204,44 @@ export const TaskStatusItemSchema = z
   })
   .merge(ObservedSchema)
 
+/**
+ * The closed set of next actions one status row may name, in the fixed order
+ * the Operator doctrine's own state-to-action table lists them under its
+ * `Next` column. It is the vocabulary of ONE column, not a grant: naming
+ * `merge` tells the Principal the row is ready to merge, and merging is still
+ * the Principal's own act through a tool the Operator never holds.
+ *
+ * - `wait` — the run is moving on its own; read it again rather than acting.
+ * - `merge` — the review gate is green and both verdicts on this head are clean.
+ * - `rule` — a pause is awaiting a Principal decision.
+ * - `start` — nothing is running and a continuation is what moves it.
+ * - `cancel` — a pause already decided as cancel, which no continuation may reverse.
+ * - `investigate` — a record this host cannot read: a defect to report, never a state to act on.
+ */
+export const TASK_NEXT_ACTIONS = ['wait', 'merge', 'rule', 'start', 'cancel', 'investigate'] as const
+
+export type TaskNextAction = (typeof TASK_NEXT_ACTIONS)[number]
+
+export function isTaskNextAction(value: string): value is TaskNextAction {
+  return (TASK_NEXT_ACTIONS as readonly string[]).includes(value)
+}
+
 export const TaskStatusResultSchema = z.object({
   items: z.array(TaskStatusItemSchema),
-  nextCursor: z.string().nullable()
+  nextCursor: z.string().nullable(),
+  /**
+   * The rows above as ONE fixed table, rendered by the same function
+   * `vinaya task status` prints — so the tool and the command carry the same
+   * columns, in the same order, for the same records, and an Operator shows
+   * this string as returned instead of laying a table out itself. Markdown,
+   * padded, ending in one footer line naming the read time in UTC, the host
+   * that read it, and how many tasks it lists.
+   *
+   * It lists every task the call MATCHED, not just the page `items` carries:
+   * a call with no `task` lists every open task in the repository, whatever
+   * `limit` and `cursor` do to the structured rows beside it.
+   */
+  table: z.string()
 })
 
 export type TaskStatusResult = z.infer<typeof TaskStatusResultSchema>
@@ -579,9 +614,9 @@ export type TaskToolDefinition<Input = unknown, Result = unknown> = {
 export const TASK_STATUS_TOOL: TaskToolDefinition<TaskStatusInput, TaskStatusResult> = {
   name: 'task_status',
   purpose:
-    'Read where every task in flight is — its loop state (running, paused, published, exited, or no driver), its round, the phase it is in and how long it has been there, the newest confidence on record, and what that phase typically takes in this repository — plus its Issue/PR identity, without shelling to `ps` or re-parsing posted verdict comments.',
+    "Read where every task in flight is — its loop state (running, paused, published, exited, or no driver), its round, the phase it is in and how long it has been there, the newest confidence on record, what that phase typically takes in this repository, and its own pull request's head, CI summary, newest code-review and security verdicts and review-gate conclusion — plus its Issue/PR identity, without shelling to `ps` or re-parsing posted verdict comments. It returns those rows twice: as structured `items`, and as `table`, one fixed markdown table an Operator shows exactly as returned.",
   boundaries:
-    'Terse and always-answerable: one row per task, from records that either exist or explicitly do not — a fact with no record reads `null`, never an estimate. `phase` is a place a record names, not a claim that work is happening there: `phaseIsCurrent: false` means the run stopped in it (published, or a driver that vanished), and then `minutesInPhase` is time since that record rather than time being spent. It never explains WHY a paused task is paused beyond naming the reason — that full packet is `task_escalation_read`. `phaseHistory` is HISTORY: the median of the same phase on recently merged task pull requests, with its sample count, and it says nothing about when this run will leave this phase — there is no ETA, no remaining time and no deadline in this result. Omitting `task` lists every open task, paginated; it never starts, resumes or cancels anything.',
+    "Terse and always-answerable: one row per task, from records that either exist or explicitly do not — a fact with no record reads `null`, never an estimate. `phase` is a place a record names, not a claim that work is happening there: `phaseIsCurrent: false` means the run stopped in it (published, or a driver that vanished), and then `minutesInPhase` is time since that record rather than time being spent. It never explains WHY a paused task is paused beyond naming the reason — that full packet is `task_escalation_read`. `phaseHistory` is HISTORY: the median of the same phase on recently merged task pull requests, with its sample count, and it says nothing about when this run will leave this phase — there is no ETA, no remaining time and no deadline in this result, and none in `table` either. The pull-request columns are a SUMMARY, not a diagnosis: a green/red/running CI word, the newest verdict value on that head, and the review gate's own conclusion — never why a check failed, which stays `task_pr_read`'s to answer and is the tool to reach for on a red word here. `table` is the same rows the `items` carry, rendered once by the command's own renderer, and it lists every MATCHED task rather than only the page: pagination bounds `items`, never the table. Omitting `task` lists every open task; it never starts, resumes or cancels anything.",
   inputSchema: TaskStatusInputSchema,
   resultSchema: TaskStatusResultSchema,
   errorSchema: TaskToolErrorSchema,

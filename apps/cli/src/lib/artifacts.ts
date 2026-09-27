@@ -31,6 +31,7 @@ import type { VinayaConfig } from './config.js'
 import { buildGeminiCommandOp } from './gemini-command-emitter.js'
 import type { CreateLabelOp, Op } from './ops.js'
 import { ownVersion } from './own-version.js'
+import { REVIEW_GATE_WORKFLOW_NAME } from './review-gate-check-name.js'
 import type { VendoredVinaya } from './self-host.js'
 
 /**
@@ -644,8 +645,8 @@ function reviewWorkflow(selfHost: VendoredVinaya | null): string {
 # PR, carrying the waiver label, went red at the gate in four seconds,
 # never having learned the waiver the full gate downstream already
 # honoured).
-name: Vinaya Review Gate
-run-name: "Vinaya Review Gate PR #\${{ github.event.pull_request.number }} @ \${{ github.event.pull_request.head.sha }}"
+name: ${REVIEW_GATE_WORKFLOW_NAME}
+run-name: "${REVIEW_GATE_WORKFLOW_NAME} PR #\${{ github.event.pull_request.number }} @ \${{ github.event.pull_request.head.sha }}"
 
 on:
   pull_request_target:

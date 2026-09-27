@@ -8,6 +8,7 @@ import {
   defaultControlStoreDeps,
   OPERATOR_STATUS_FOLLOW,
   type PauseReason,
+  TASK_NEXT_ACTIONS,
   TASK_TOOL_NAMES,
   writeEscalation
 } from '@attalabs/aeg-core'
@@ -15,14 +16,20 @@ import { escalationIdFor } from '../../../src/lib/dev-review-loop/pause-resume.j
 import { MAX_INFRASTRUCTURE_RETRIES } from '../../../src/lib/dev-review-loop/round-assess.js'
 import { taskPrReadHandler } from '../../../src/lib/task-tools/pr-read.js'
 import { appendRoleLine, loopLogPathFor } from '../../../src/lib/loop-log.js'
-import { deriveLoopState, type TaskLoopState } from '../../../src/lib/task-status.js'
+import {
+  deriveLoopState,
+  NEXT_ACTION_BY_PAUSE_DISPOSITION,
+  NEXT_ACTION_BY_STATE_KIND,
+  type TaskLoopState
+} from '../../../src/lib/task-status.js'
 import { describeTaskLoopState, readTaskLoopStateObserved } from '../../../src/lib/task-tools/read.js'
 import { createTaskResumeHandler, type TaskResumeDeps } from '../../../src/lib/task-tools/resume.js'
 import {
   createTaskStartHandler,
   defaultHeldAgent,
   defaultPauseDisposition,
-  INFRASTRUCTURE_RETRY_BOUND
+  INFRASTRUCTURE_RETRY_BOUND,
+  type PauseDisposition
 } from '../../../src/lib/task-tools/start.js'
 import type { CallerContext } from '../../../src/lib/task-tools/server.js'
 
@@ -302,7 +309,7 @@ function realStateFor(kind: TaskLoopState['kind']): { root: string; state: TaskL
 
 // --- the doctrine's own table, parsed ---------------------------------------
 
-type DoctrineRow = { state: string; action: string }
+type DoctrineRow = { state: string; action: string; next: string }
 
 /**
  * Reads the state-to-action table out of `aeg-root/roles/operator.md` — the
@@ -322,9 +329,54 @@ function readDoctrineTable(): DoctrineRow[] {
     if (actions.length !== 1) {
       throw new Error(`the doctrine's row for "${state}" names ${actions.length} actions — it must name exactly one`)
     }
-    rows.push({ state, action: actions[0] as string })
+    // The third cell is what the PRINCIPAL does about the row — the same word
+    // the status table's own `next` column renders. One per row, same rule.
+    const nexts = [...(cells[2] ?? '').matchAll(/`([a-z_]+)`/g)].map((m) => m[1] as string)
+    if (nexts.length !== 1) {
+      throw new Error(`the doctrine's row for "${state}" names ${nexts.length} next actions — it must name exactly one`)
+    }
+    rows.push({ state, action: actions[0] as string, next: nexts[0] as string })
   }
   return rows
+}
+
+/**
+ * The doctrine's second table: what a pause is waiting for, and what the
+ * Principal does about it. Read out of the same file, for the same reason — the
+ * paused row has one state and four answers, and a copy of that mapping kept
+ * here is exactly the duplication that would let the two drift.
+ */
+function readDoctrinePauseTable(): { waitingFor: string; next: string }[] {
+  const lines = readFileSync(DOCTRINE, 'utf8').split('\n')
+  const header = lines.findIndex((line) => line.startsWith('| the pause is waiting for |'))
+  if (header === -1) throw new Error(`${DOCTRINE} carries no pause-disposition table`)
+  const rows: { waitingFor: string; next: string }[] = []
+  for (const line of lines.slice(header + 2)) {
+    if (!line.startsWith('|')) break
+    const cells = line.split('|').slice(1, -1)
+    const nexts = [...(cells[1] ?? '').matchAll(/`([a-z_]+)`/g)].map((m) => m[1] as string)
+    if (nexts.length !== 1) {
+      throw new Error(`the doctrine's pause row "${cells[0]}" names ${nexts.length} next actions — it must name one`)
+    }
+    rows.push({ waitingFor: (cells[0] ?? '').trim(), next: nexts[0] as string })
+  }
+  return rows
+}
+
+/**
+ * Which disposition each row of the doctrine's pause table is about. This
+ * translation is the one thing this file is allowed to hold: the doctrine
+ * describes a pause in words a Principal reads, the code names it with a token,
+ * and binding the two is what this conformance layer is FOR. Both sides are
+ * still read rather than assumed — the phrases come out of the file, the tokens
+ * out of the mapping under test, and a row on either side with no partner fails.
+ */
+const PAUSE_ROW_DISPOSITION: Record<string, PauseDisposition> = {
+  'a decision nobody has made yet': 'awaiting_ruling',
+  'a decision already taken as resume': 'resolved_resume',
+  'an automatic hiccup the loop resumes itself': 'self_resuming',
+  'a decision already taken as cancel': 'resolved_cancel',
+  'a record this host cannot read': 'unreadable'
 }
 
 // --- does the named tool accept this state? ---------------------------------
@@ -782,5 +834,72 @@ describe("the Operator's doctrine and the Operator's tools agree, state for stat
     for (const reader of ['deriveLoopState', 'readPauseState', 'readDriverLock', 'newestPublishedRound']) {
       expect(source).not.toContain(reader)
     }
+  })
+})
+
+/**
+ * The `next` column the status table renders IS this doctrine table's own
+ * column — not a second opinion beside it. The mapping under test is a `Record`
+ * over the state kinds and another over the pause dispositions, so a new state
+ * or disposition cannot land without a value; these cases are what keep those
+ * values equal to what the doctrine tells the Principal.
+ */
+describe("the status table's `next` column is the doctrine's own", () => {
+  it('names, for every state, a next action inside the catalog’s closed vocabulary', () => {
+    const rows = readDoctrineTable()
+    expect(rows.length).toBeGreaterThan(0)
+    for (const row of rows) expect(TASK_NEXT_ACTIONS).toContain(row.next as (typeof TASK_NEXT_ACTIONS)[number])
+  })
+
+  it('gives every state the same next action the renderer derives for it', () => {
+    for (const row of readDoctrineTable()) {
+      const kind = row.state as TaskLoopState['kind']
+      expect(NEXT_ACTION_BY_STATE_KIND[kind]).not.toBeUndefined()
+      // The paused row's own cell is the default the renderer takes when a
+      // pause's disposition says a decision is still owed — the doctrine's
+      // pause table below is what covers the other three.
+      const expected =
+        NEXT_ACTION_BY_STATE_KIND[kind] === 'by_pause_disposition'
+          ? NEXT_ACTION_BY_PAUSE_DISPOSITION.awaiting_ruling
+          : NEXT_ACTION_BY_STATE_KIND[kind]
+      expect(row.next).toBe(expected)
+    }
+  })
+
+  it('covers exactly the state kinds the renderer maps — no more, no fewer', () => {
+    const doctrine = new Set(readDoctrineTable().map((row) => row.state))
+    expect(doctrine).toEqual(new Set(Object.keys(NEXT_ACTION_BY_STATE_KIND)))
+  })
+
+  it('routes every pause disposition the same way the renderer does, and covers them all', () => {
+    const rows = readDoctrinePauseTable()
+    const covered = new Set<PauseDisposition>()
+    for (const row of rows) {
+      const disposition = PAUSE_ROW_DISPOSITION[row.waitingFor]
+      if (disposition === undefined) {
+        throw new Error(
+          `the doctrine's pause table names "${row.waitingFor}", which this test cannot map to a disposition`
+        )
+      }
+      covered.add(disposition)
+      expect(row.next).toBe(NEXT_ACTION_BY_PAUSE_DISPOSITION[disposition])
+    }
+    // `none` is the one disposition the doctrine's table does not list: it means
+    // the pause record names a round the run has already published past, which
+    // is not a pause a reader is ever shown — the state stops reading `paused`
+    // at all. Every other disposition must be in the table.
+    const expected = (Object.keys(NEXT_ACTION_BY_PAUSE_DISPOSITION) as PauseDisposition[]).filter((d) => d !== 'none')
+    expect([...covered].sort()).toEqual(expected.sort())
+  })
+
+  it('renders that next action for a REAL paused run, off the same records the continuation reads', async () => {
+    const { root, state } = realStateFor('paused')
+    expect(state.kind).toBe('paused')
+    // The fixture's pause is the awaiting-a-decision shape, and the disposition
+    // reader agrees — so the row's own cell is the doctrine's paused value.
+    expect(defaultPauseDisposition(TASK, root)).toBe('awaiting_ruling')
+    const doctrinePaused = readDoctrineTable().find((row) => row.state === 'paused')
+    expect(doctrinePaused).not.toBeUndefined()
+    expect(doctrinePaused?.next).toBe(NEXT_ACTION_BY_PAUSE_DISPOSITION[defaultPauseDisposition(TASK, root)])
   })
 })
