@@ -29,6 +29,7 @@
  */
 
 import { parseDeveloperRoundMarker } from './review-status'
+import type { TaskPhaseHistory } from './task-tools'
 import { extractCodeReviewVerdict, extractSecurityReviewVerdict } from './verdict-extraction'
 import { isPrincipal } from './waiver-label'
 
@@ -171,8 +172,10 @@ export function phaseSamplesFromPrComments(
 /** Below this many past intervals, a phase reports no typical time at all: two samples from two pull requests describe those two pull requests, not this repository. */
 export const MIN_PHASE_HISTORY_SAMPLES = 3
 
-/** The median of a phase's past intervals, with the count it was computed from. The MEDIAN, never the mean: one pull request left open over a weekend would drag a mean into uselessness. */
-export type PhaseHistory = { typicalPhaseMinutes: number; typicalPhaseSamples: number }
+// The median of a phase's past intervals, with the count it was computed
+// from, is `TaskPhaseHistory` (`task-tools.ts`) — the shape the `task_status`
+// result schema declares. One name for the fact, derived from the schema
+// itself, so the reader and the published contract cannot drift apart.
 
 export function medianOf(values: readonly number[]): number | null {
   if (values.length === 0) return null
@@ -183,7 +186,7 @@ export function medianOf(values: readonly number[]): number | null {
 }
 
 /** `null` — no typical time, never an invented one — for a phase with fewer than `MIN_PHASE_HISTORY_SAMPLES` past intervals, and for one with none at all. */
-export function summarizePhaseSamples(minutes: readonly number[]): PhaseHistory | null {
+export function summarizePhaseSamples(minutes: readonly number[]): TaskPhaseHistory | null {
   if (minutes.length < MIN_PHASE_HISTORY_SAMPLES) return null
   const median = medianOf(minutes)
   if (median === null) return null

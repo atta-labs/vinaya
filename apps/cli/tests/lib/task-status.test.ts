@@ -1,6 +1,7 @@
 /**
  * `task-status.ts`'s pure outbox-reading half — `deriveLoopState`,
- * `lastRoundVerdictLines`, `renderTaskStatusRow`, `resumeCommandFor` — all
+ * `lastRoundVerdictLines`, `readLoopPhase`, `readLastConfidence`,
+ * `renderTaskStatusTable`, `resumeCommandFor` — all
  * take an explicit `root`, so these run in-process against a plain temp
  * directory rather than a subprocess with a faked `$HOME` (unlike
  * `dev-review-loop.test.ts`'s own driver-lock tests, which must use a
@@ -18,6 +19,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  confidenceFromSummaryComments,
   deriveLoopState,
   lastRoundVerdictLines,
   readLastConfidence,
@@ -28,10 +30,13 @@ import {
 } from '../../src/lib/task-status.js'
 import {
   mergedTaskPrNumbers,
+  phaseHistoryLookup,
   phaseHistoryLookupFor,
   phaseSamplesFromMergedPrs,
   readPhaseSamples,
-  MERGED_TASK_PR_READ_CAP
+  resetPhaseHistoryCache,
+  MERGED_TASK_PR_READ_CAP,
+  PHASE_HISTORY_CACHE_TTL_MS
 } from '../../src/lib/task-status-history.js'
 import { CONFIDENCE_FILE_NAME } from '../../src/lib/dev-review-loop/round-assess.js'
 import { appendRoleLine, loopLogPathFor } from '../../src/lib/loop-log.js'
@@ -410,6 +415,11 @@ describe('readLoopPhase (O1)', () => {
   })
 })
 
+/** The summary-table half of the confidence read, over one principal-authored comment — the same rule `publishedSummaryConfidence` applies after its forge read. */
+function summaryConfidenceFor(body: string) {
+  return confidenceFromSummaryComments([{ body, author: 'principal' }], ['principal'])
+}
+
 describe('readLastConfidence (O1)', () => {
   it('returns null when no record carries a confidence for any round', () => {
     const root = tempDir()
@@ -421,6 +431,20 @@ describe('readLastConfidence (O1)', () => {
     writeStatedConfidence(root, TASK, 2, 'CONFIDENCE: 90 — fixed the reported issue\n')
     writeStatedConfidence(root, TASK, 3, 'CONFIDENCE: 75 — one finding needed a wider fix\n')
     expect(readLastConfidence(root, TASK, null)).toEqual({ round: 3, percent: 75, source: 'stated' })
+  })
+
+  it('never reports a summary round the loop never asked as an absence — that round has no confidence at all', () => {
+    // The published summary's own table: round 1 is never asked for a
+    // confidence (its cell is the not-asked glyph), round 2 stated one.
+    const notAskedOnly = [
+      '| round | blocker | major | minor | critical | high | medium | low | confidence | outcome |',
+      '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+      '| 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | — | green |'
+    ].join('\n')
+    expect(summaryConfidenceFor(notAskedOnly)).toBeNull()
+
+    const askedLater = `${notAskedOnly}\n| 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 80% | green |`
+    expect(summaryConfidenceFor(askedLater)).toEqual({ round: 2, percent: 80, source: 'published-summary' })
   })
 
   it('reports a malformed statement as a recorded absence, never as a zero', () => {
@@ -510,8 +534,8 @@ describe('typical phase times from history (O2/O4)', () => {
     expect(MERGED_TASK_PR_READ_CAP).toBeGreaterThan(0)
   })
 
-  it('degrades to no typical time when the forge read fails, never to an error', () => {
-    const samples = readPhaseSamples({
+  it('degrades to no typical time when the forge read fails, never to an error, and reports the read as failed', () => {
+    const read = readPhaseSamples({
       listMergedPrs: () => {
         throw new Error('gh: could not reach the forge')
       },
@@ -520,12 +544,15 @@ describe('typical phase times from history (O2/O4)', () => {
       },
       allowlist: () => ALLOWLIST
     })
-    expect(phaseHistoryLookupFor(samples)('dispatch_reviewers')).toBeNull()
+    expect(phaseHistoryLookupFor(read.samples)('dispatch_reviewers')).toBeNull()
+    // `ok: false` is what keeps this emptiness out of the cache — the forge
+    // never reported it, so the next read tries again.
+    expect(read.ok).toBe(false)
   })
 
   it("keeps the pull requests it could read when one of them fails, and reads each one's comments once", () => {
     const reads: number[] = []
-    const samples = readPhaseSamples({
+    const read = readPhaseSamples({
       listMergedPrs: () =>
         JSON.stringify([
           { number: 10, headRefName: 'task/demo/1', mergedAt: '2026-09-20T10:00:00.000Z' },
@@ -547,10 +574,117 @@ describe('typical phase times from history (O2/O4)', () => {
       allowlist: () => ALLOWLIST
     })
     expect(reads).toEqual([13, 12, 11, 10])
-    expect(phaseHistoryLookupFor(samples)('dispatch_reviewers')).toEqual({
+    expect(phaseHistoryLookupFor(read.samples)('dispatch_reviewers')).toEqual({
       typicalPhaseMinutes: 5,
       typicalPhaseSamples: 3
     })
+    // Three of four pull requests read is real history, so this result IS
+    // cacheable — only a read that reached nothing is not.
+    expect(read.ok).toBe(true)
+  })
+
+  it('refuses a pull-request number that is not a positive integer, never passing it to a subprocess argument list', () => {
+    const merged = JSON.stringify([
+      { number: 13, headRefName: 'task/demo/1', mergedAt: '2026-09-23T10:00:00.000Z' },
+      { number: -1, headRefName: 'task/demo/2', mergedAt: '2026-09-22T10:00:00.000Z' },
+      { number: 1.5, headRefName: 'task/demo/3', mergedAt: '2026-09-21T10:00:00.000Z' },
+      { number: '12', headRefName: 'task/demo/4', mergedAt: '2026-09-20T10:00:00.000Z' }
+    ])
+    expect(mergedTaskPrNumbers(merged)).toEqual([13])
+  })
+
+  it('reports the read as failed when every pull request it named could not be read', () => {
+    const read = readPhaseSamples({
+      listMergedPrs: () =>
+        JSON.stringify([{ number: 10, headRefName: 'task/demo/1', mergedAt: '2026-09-20T10:00:00.000Z' }]),
+      fetchPrComments: () => {
+        throw new Error('gh: comment read failed')
+      },
+      allowlist: () => ALLOWLIST
+    })
+    expect(read.ok).toBe(false)
+  })
+
+  it('reads nothing at all for a phase with no history class — the forge is never touched', () => {
+    let reads = 0
+    const deps = {
+      listMergedPrs: () => {
+        reads += 1
+        return JSON.stringify([])
+      },
+      fetchPrComments: () => JSON.stringify({ comments: [] }),
+      allowlist: () => ALLOWLIST
+    }
+    const lookup = phaseHistoryLookup(deps, () => 0)
+    expect(lookup('publish')).toBeNull()
+    expect(lookup('pause')).toBeNull()
+    expect(lookup('ask_confidence')).toBeNull()
+    expect(reads).toBe(0)
+  })
+
+  it('caches a successful read for its lifetime, and reads again once that lifetime passes', () => {
+    resetPhaseHistoryCache()
+    let reads = 0
+    const deps = {
+      listMergedPrs: () => {
+        reads += 1
+        return JSON.stringify([
+          { number: 10, headRefName: 'task/demo/1', mergedAt: '2026-09-20T10:00:00.000Z' },
+          { number: 11, headRefName: 'task/demo/2', mergedAt: '2026-09-21T10:00:00.000Z' },
+          { number: 12, headRefName: 'task/demo/3', mergedAt: '2026-09-22T10:00:00.000Z' }
+        ])
+      },
+      fetchPrComments: () =>
+        JSON.stringify({
+          comments: mergedPrComments('2026-09-20T10:00:00.000Z', 5).map((c) => ({
+            body: c.body,
+            author: { login: c.author },
+            createdAt: c.createdAt
+          }))
+        }),
+      allowlist: () => ALLOWLIST
+    }
+    let clock = 1_000
+    const lookup = phaseHistoryLookup(deps, () => clock)
+    expect(lookup('dispatch_reviewers')).toEqual({ typicalPhaseMinutes: 5, typicalPhaseSamples: 3 })
+    expect(lookup('dispatch_reviewers')).toEqual({ typicalPhaseMinutes: 5, typicalPhaseSamples: 3 })
+    expect(reads).toBe(1)
+    clock += PHASE_HISTORY_CACHE_TTL_MS
+    expect(lookup('dispatch_reviewers')).toEqual({ typicalPhaseMinutes: 5, typicalPhaseSamples: 3 })
+    expect(reads).toBe(2)
+    resetPhaseHistoryCache()
+  })
+
+  it('never caches a failed read — the next call tries the forge again', () => {
+    resetPhaseHistoryCache()
+    let attempts = 0
+    const deps = {
+      listMergedPrs: () => {
+        attempts += 1
+        if (attempts === 1) throw new Error('gh: transient failure')
+        return JSON.stringify([
+          { number: 10, headRefName: 'task/demo/1', mergedAt: '2026-09-20T10:00:00.000Z' },
+          { number: 11, headRefName: 'task/demo/2', mergedAt: '2026-09-21T10:00:00.000Z' },
+          { number: 12, headRefName: 'task/demo/3', mergedAt: '2026-09-22T10:00:00.000Z' }
+        ])
+      },
+      fetchPrComments: () =>
+        JSON.stringify({
+          comments: mergedPrComments('2026-09-20T10:00:00.000Z', 7).map((c) => ({
+            body: c.body,
+            author: { login: c.author },
+            createdAt: c.createdAt
+          }))
+        }),
+      allowlist: () => ALLOWLIST
+    }
+    // One long-lived server session: the first call hits a transient failure
+    // and must not empty the column for every later call.
+    const lookup = phaseHistoryLookup(deps, () => 5_000)
+    expect(lookup('dispatch_reviewers')).toBeNull()
+    expect(lookup('dispatch_reviewers')).toEqual({ typicalPhaseMinutes: 7, typicalPhaseSamples: 3 })
+    expect(attempts).toBe(2)
+    resetPhaseHistoryCache()
   })
 })
 
@@ -563,6 +697,7 @@ describe('renderTaskStatusTable (O3)', () => {
     phase: null,
     recordedPhase: null,
     minutesInPhase: null,
+    phaseIsCurrent: null,
     lastConfidence: null,
     phaseHistory: null
   }
@@ -577,7 +712,8 @@ describe('renderTaskStatusTable (O3)', () => {
         phase: 'reviewing',
         recordedPhase: 'dispatch_reviewers',
         minutesInPhase: 7,
-        lastConfidence: { round: 2, percent: 90, source: 'stated' },
+        phaseIsCurrent: true,
+        lastConfidence: { round: 2, percent: 90, source: 'published-summary' },
         phaseHistory: { typicalPhaseMinutes: 5, typicalPhaseSamples: 4 }
       }
     ]
@@ -616,6 +752,7 @@ describe('renderTaskStatusTable (O3)', () => {
         phase: 'developing',
         recordedPhase: 'dispatch_developer',
         minutesInPhase: 3,
+        phaseIsCurrent: true,
         phaseHistory: { typicalPhaseMinutes: 12, typicalPhaseSamples: 5 }
       }
     ])
@@ -635,6 +772,81 @@ describe('renderTaskStatusTable (O3)', () => {
     expect(lines[1]?.split(/\s{2,}/)).toEqual(['[task-run-v1] 14', '#515', '—', 'not started', '—', '—', '—', '—', '—'])
   })
 
+  it("marks a figure the developer has only just stated, whose round's review has not completed", () => {
+    const lines = renderTaskStatusTable([
+      {
+        ...base,
+        pr: { number: 517 },
+        state: { kind: 'running', pid: 4242, startedAt: 'x' },
+        round: 3,
+        phase: 'developing',
+        recordedPhase: 'dispatch_developer',
+        minutesInPhase: 2,
+        phaseIsCurrent: true,
+        lastConfidence: { round: 3, percent: 95, source: 'stated' }
+      }
+    ])
+    // Read without the qualifier, this looks like round 3's review outcome.
+    expect(lines[1]).toContain('95% (round 3, stated)')
+  })
+
+  it("marks the phase as last recorded when the driver vanished mid-flight, and doesn't for a live or resting run", () => {
+    const stale = renderTaskStatusTable([
+      {
+        ...base,
+        pr: { number: 517 },
+        state: { kind: 'no_driver' },
+        round: 2,
+        phase: 'developing',
+        recordedPhase: 'dispatch_developer',
+        minutesInPhase: 2880,
+        phaseIsCurrent: false
+      }
+    ])
+    expect(stale[1]?.split(/\s{2,}/)).toEqual([
+      '[task-run-v1] 14',
+      '#515',
+      '#517',
+      'no driver',
+      '2',
+      'developing (last recorded)',
+      '2880m',
+      '—',
+      '—'
+    ])
+
+    const live = renderTaskStatusTable([
+      {
+        ...base,
+        pr: { number: 517 },
+        state: { kind: 'running', pid: 4242, startedAt: 'x' },
+        round: 2,
+        phase: 'developing',
+        recordedPhase: 'dispatch_developer',
+        minutesInPhase: 2,
+        phaseIsCurrent: true
+      }
+    ])
+    expect(live[1]).toContain('developing ')
+    expect(live[1]).not.toContain('last recorded')
+
+    // A decided resting state agrees with its own record — the run IS paused —
+    // so its phase carries no qualifier either.
+    const resting = renderTaskStatusTable([
+      {
+        ...base,
+        pr: { number: 517 },
+        state: { kind: 'paused', reason: 'escalation', round: 2 },
+        round: 2,
+        phase: 'paused',
+        recordedPhase: 'pause',
+        minutesInPhase: 40,
+        phaseIsCurrent: true
+      }
+    ])
+    expect(resting[1]).not.toContain('last recorded')
+  })
+
   it('renders a confidence the loop recorded as absent as an absence, never as a zero', () => {
     const lines = renderTaskStatusTable([
       {
@@ -645,7 +857,8 @@ describe('renderTaskStatusTable (O3)', () => {
         phase: 'paused',
         recordedPhase: 'pause',
         minutesInPhase: 40,
-        lastConfidence: { round: 2, percent: null, source: 'stated' }
+        phaseIsCurrent: true,
+        lastConfidence: { round: 2, percent: null, source: 'published-summary' }
       }
     ])
     expect(lines[1]).toContain('absent (round 2)')

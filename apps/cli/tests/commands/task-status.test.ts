@@ -396,7 +396,9 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
         '2',
         'reviewing',
         '7m',
-        '90% (round 2)',
+        // The developer's own statement, for a round whose review has not
+        // completed — marked, so it never reads as a round's outcome.
+        '90% (round 2, stated)',
         // Three merged task pull requests of history, each a six-minute
         // reviewing interval — history, never a claim about this run.
         '6m (n=3)'
@@ -486,6 +488,7 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
       phase: 'developing',
       recordedPhase: 'dispatch_developer',
       minutesInPhase: 3,
+      phaseIsCurrent: true,
       lastConfidence: null,
       // Every past interval this fixture's history carries is a REVIEWING one;
       // developing has none, so this phase reports no typical time (O4).
@@ -501,6 +504,7 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
       phase: null,
       recordedPhase: null,
       minutesInPhase: null,
+      phaseIsCurrent: null,
       lastConfidence: null,
       phaseHistory: null
     })

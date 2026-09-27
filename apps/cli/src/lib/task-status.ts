@@ -43,7 +43,7 @@ import { findOpenPrForBranch, runtimeDir } from './dev-review-loop.js'
 import { DRIVER_LOCK_FILENAME, runPath, tasksExecutionRoot } from './run-paths.js'
 import { loopLogPathFor, loopsRoot, type LoopLogRepo } from './loop-log.js'
 import { CONFIDENCE_FILE_NAME, parseConfidenceReply } from './dev-review-loop/round-assess.js'
-import { phaseHistoryLookup, type PhaseHistoryLookup } from './task-status-history.js'
+import { phaseHistoryLookup, readPrComments, type PhaseHistoryLookup } from './task-status-history.js'
 import { findRecordedControllerRun } from './task-run-background.js'
 
 function sh(cmd: string, args: string[]): string {
@@ -511,32 +511,40 @@ function readStatedConfidence(root: string, task: number): TaskConfidence | null
   return null
 }
 
-/** The comments of one pull request, or `null` when the read failed — a forge hiccup costs the confidence column, never the row. */
-function fetchPrComments(prNumber: number): { body: string; author: string | null }[] | null {
-  try {
-    const raw = sh('gh', ['pr', 'view', String(prNumber), '--json', 'comments'])
-    const parsed = JSON.parse(raw) as { comments: RawComment[] }
-    return parsed.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null }))
-  } catch {
-    return null
-  }
-}
-
-/** The highest round the run's own published summary recorded a confidence for — principal-authored comments only, the same trust boundary every other forge read here applies. */
-function publishedSummaryConfidence(prNumber: number, allowlist: readonly string[]): TaskConfidence | null {
-  const comments = fetchPrComments(prNumber)
-  if (comments === null) return null
+/**
+ * The highest round a run's own published summary recorded a confidence FOR —
+ * principal-authored comments only, the same trust boundary every other forge
+ * read here applies. Pure over the comments it is handed, so the rule below is
+ * unit-testable without a forge.
+ *
+ * A row the loop never asked for a confidence at all is SKIPPED rather than
+ * reported: round 1 is never asked, so its own summary cell is the table's
+ * not-asked glyph, and reporting that as a confidence would tell a reader the
+ * developer skipped a statement nothing ever requested.
+ */
+export function confidenceFromSummaryComments(
+  comments: readonly { body: string; author: string | null }[],
+  allowlist: readonly string[]
+): TaskConfidence | null {
   let newest: TaskConfidence | null = null
   for (const comment of comments) {
     if (!isPrincipal(comment.author, allowlist as string[])) continue
     if (!isPublishedSummaryComment(comment.body)) continue
     for (const row of parseSummaryConfidenceRows(comment.body)) {
+      if (!row.asked) continue
       if (newest === null || row.round >= newest.round) {
         newest = { round: row.round, percent: row.percent, source: 'published-summary' }
       }
     }
   }
   return newest
+}
+
+/** The forge half of the read above — one `gh pr view … --json comments` call through the reader this feature owns (`task-status-history.ts`'s `readPrComments`), `null` when it failed. */
+function publishedSummaryConfidence(prNumber: number, allowlist: readonly string[]): TaskConfidence | null {
+  const comments = readPrComments(prNumber)
+  if (comments === null) return null
+  return confidenceFromSummaryComments(comments, allowlist)
 }
 
 /**
@@ -571,6 +579,8 @@ export type TaskStatusRow = {
   phase: string | null
   recordedPhase: string | null
   minutesInPhase: number | null
+  /** `false` when no driver is running: the phase is the last one the run RECORDED, not a place it is in now, and `minutesInPhase` is time since that record. `null` with no control record at all. */
+  phaseIsCurrent: boolean | null
   lastConfidence: TaskConfidence | null
   /** What this phase has typically taken on this repository's recently merged tasks — history, never a forecast; `null` for a phase with no comparable history or too few past intervals. */
   phaseHistory: TaskPhaseHistory | null
@@ -618,12 +628,29 @@ const TABLE_HEADERS = [
 /** An absent cell. One glyph for every "no record carries this" case, so a reader learns it once. */
 const NO_VALUE = '—'
 
+/**
+ * A `stated` figure is the developer's OWN statement for a round whose review
+ * has not completed — the driver clears the statement the moment it assesses
+ * the round — so the cell says so: read as a completed round's outcome it would
+ * overstate what happened. A `published-summary` figure is a completed round's
+ * own recorded confidence and needs no qualifier.
+ *
+ * A round the loop asked and whose statement was missing or unreadable reads
+ * `absent`; a round it never asked never reaches this cell at all (it carries no
+ * confidence record), so `absent` never blames a developer for a statement
+ * nothing requested.
+ */
 function confidenceCell(confidence: TaskConfidence | null): string {
   if (confidence === null) return NO_VALUE
-  // A round whose developer stated nothing readable: recorded as an absence by
-  // the loop itself, reported as one here rather than as a substituted zero.
-  if (confidence.percent === null) return `absent (round ${confidence.round})`
-  return `${confidence.percent}% (round ${confidence.round})`
+  const qualifier = confidence.source === 'stated' ? `round ${confidence.round}, stated` : `round ${confidence.round}`
+  if (confidence.percent === null) return `absent (${qualifier})`
+  return `${confidence.percent}% (${qualifier})`
+}
+
+/** The phase a run RECORDED, marked when no driver is running it any more — the state cell already says the driver is gone, and this stops the phase cell from asserting a place the run is still in. */
+function phaseCell(row: TaskStatusRow): string {
+  if (row.phase === null) return NO_VALUE
+  return row.phaseIsCurrent === false ? `${row.phase} (last recorded)` : row.phase
 }
 
 function historyCell(history: TaskPhaseHistory | null): string {
@@ -638,7 +665,7 @@ function cellsFor(row: TaskStatusRow): string[] {
     row.pr ? `#${row.pr.number}` : NO_VALUE,
     renderStateText(row.state),
     row.round === null ? NO_VALUE : String(row.round),
-    row.phase ?? NO_VALUE,
+    phaseCell(row),
     row.minutesInPhase === null ? NO_VALUE : `${row.minutesInPhase}m`,
     confidenceCell(row.lastConfidence),
     historyCell(row.phaseHistory)
@@ -700,6 +727,7 @@ function buildRow(ref: TaskRef, allowlist: readonly string[], history: PhaseHist
       phase: null,
       recordedPhase: null,
       minutesInPhase: null,
+      phaseIsCurrent: null,
       lastConfidence: null,
       phaseHistory: null
     }
@@ -720,6 +748,11 @@ function buildRow(ref: TaskRef, allowlist: readonly string[], history: PhaseHist
     phase: phase?.phase ?? null,
     recordedPhase: phase?.recordedPhase ?? null,
     minutesInPhase: phase?.minutesInPhase ?? null,
+    // `paused` and `published` are resting states the loop DECIDED and the
+    // record agrees with, so the phase they name is current. `no_driver` and
+    // `exited` are not: the driver vanished mid-flight and the record is the
+    // last phase it wrote, not a place anything is still working in.
+    phaseIsCurrent: phase === null ? null : state.kind !== 'no_driver' && state.kind !== 'exited',
     lastConfidence: confidence,
     phaseHistory: phase ? history(phase.recordedPhase) : null
   }
@@ -737,9 +770,11 @@ export type TaskStatusListView = { rows: TaskStatusRow[]; table: string[] }
  * unexported and reachable only from here or `gatherSingleTaskStatus`,
  * same file, so it costs no extra boundary call there).
  *
- * The history read happens once for the whole list, not once per row — it is
- * cached for the process (`task-status-history.ts`), so a listing of ten tasks
- * pays for it once.
+ * The history read is made once for the whole list, lazily and at most once:
+ * `phaseHistoryLookup` (`task-status-history.ts`) reads the forge only when a
+ * row's phase actually has a history class, and caches a successful read for a
+ * bounded lifetime — so a listing of ten tasks pays for it once, and a listing
+ * in which nothing is in a comparable phase pays nothing at all.
  */
 export function gatherTaskStatusList(): TaskStatusListView {
   const allowlist = principalAllowlist()

@@ -134,12 +134,17 @@ export const TaskStatusInputSchema = z
 export type TaskStatusInput = z.infer<typeof TaskStatusInputSchema>
 
 /**
- * A round's confidence as the records carry it. `percent` is `null` for a
- * round whose developer stated none (or stated a malformed line) — a real,
- * recorded absence, never a substituted zero. `source` names WHICH record it
- * came from: `stated` is the developer's own statement for a round the driver
- * has not consumed yet, `published-summary` the figure the run's own published
- * summary table recorded for that round.
+ * A round's confidence as the records carry it. `percent` is `null` only for a
+ * round the loop DID ask and whose statement was missing or unreadable — a
+ * real, recorded absence, never a substituted zero. A round the loop never
+ * asked (round 1 is never asked) produces no value here at all, so an absence
+ * can never be read as a developer's omission.
+ *
+ * `source` names WHICH record it came from, and the two mean different things
+ * to a reader: `stated` is the developer's own statement for a round the driver
+ * has NOT consumed yet — this round's review has not completed — while
+ * `published-summary` is the figure the run's own published summary table
+ * recorded for a round whose review did complete.
  */
 export const TaskConfidenceSchema = z
   .object({
@@ -189,6 +194,8 @@ export const TaskStatusItemSchema = z
     phase: z.string().min(1).nullable().optional(),
     /** How long the run has been in that phase, measured from the control record's own timestamp — never from a wall-clock guess about when the phase began. */
     minutesInPhase: z.number().nonnegative().nullable().optional(),
+    /** Whether the phase is where the run actually is. `false` means the driver vanished mid-flight (no driver, or an exited one) and the record is the LAST phase it wrote — not a place anything is still working in, with `minutesInPhase` counting time since that record rather than time being spent. A decided resting state (paused, published) agrees with its own record and reads `true`. `null` when no control record exists at all. */
+    phaseIsCurrent: z.boolean().nullable().optional(),
     lastConfidence: TaskConfidenceSchema.nullable().optional(),
     phaseHistory: TaskPhaseHistorySchema.nullable().optional()
   })

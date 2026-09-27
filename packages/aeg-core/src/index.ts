@@ -36,7 +36,6 @@ export {
 } from './task-phase-history'
 export type {
   HistoryComment,
-  PhaseHistory,
   PhaseHistoryClass,
   PhaseSamples,
   RecordedLoopPhase,

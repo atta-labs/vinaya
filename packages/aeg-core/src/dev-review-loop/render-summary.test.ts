@@ -115,10 +115,11 @@ describe('parseSummaryConfidenceRows', () => {
     ])
 
     expect(parseSummaryConfidenceRows(renderSummary({ rounds: state.rounds }))).toEqual([
-      // Round 1 was never asked for a confidence — recorded as an absence,
-      // read back as one, never as a zero.
-      { round: 1, percent: null },
-      { round: 2, percent: 80 }
+      // Round 1 is never ASKED for a confidence — read back as not asked,
+      // which is a different fact from a round that was asked and stated
+      // nothing, and must never be reported as the developer's omission.
+      { round: 1, percent: null, asked: false },
+      { round: 2, percent: 80, asked: true }
     ])
   })
 
@@ -135,6 +136,33 @@ describe('parseSummaryConfidenceRows', () => {
       '| 9 | 10% |'
     ].join('\n')
 
-    expect(parseSummaryConfidenceRows(comment)).toEqual([{ round: 1, percent: 95 }])
+    expect(parseSummaryConfidenceRows(comment)).toEqual([{ round: 1, percent: 95, asked: true }])
+  })
+
+  it('tells a round that was asked and stated nothing apart from one that was never asked', () => {
+    const comment = [
+      '| round | blocker | major | minor | critical | high | medium | low | confidence | outcome |',
+      '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+      '| 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | — | changes_requested |',
+      '| 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | absent | green |'
+    ].join('\n')
+
+    expect(parseSummaryConfidenceRows(comment)).toEqual([
+      { round: 1, percent: null, asked: false },
+      { round: 2, percent: null, asked: true }
+    ])
+  })
+
+  it('drops a row whose confidence cell exceeds the percentage a caller is allowed to publish', () => {
+    const comment = [
+      '| round | blocker | major | minor | critical | high | medium | low | confidence | outcome |',
+      '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+      '| 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 500% | green |',
+      '| 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 100% | green |'
+    ].join('\n')
+
+    // Comment text is not a trusted source of a figure a tool result declares
+    // as 0-100, so the out-of-range row contributes nothing at all.
+    expect(parseSummaryConfidenceRows(comment)).toEqual([{ round: 2, percent: 100, asked: true }])
   })
 })

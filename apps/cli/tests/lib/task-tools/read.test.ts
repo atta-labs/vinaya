@@ -381,6 +381,7 @@ describe('whereTheRunIs', () => {
     phase: 'reviewing',
     recordedPhase: 'dispatch_reviewers',
     minutesInPhase: 7,
+    phaseIsCurrent: true,
     lastConfidence: { round: 2, percent: 90, source: 'stated' },
     phaseHistory: { typicalPhaseMinutes: 5, typicalPhaseSamples: 4 }
   }
@@ -390,6 +391,7 @@ describe('whereTheRunIs', () => {
       round: 2,
       phase: 'reviewing',
       minutesInPhase: 7,
+      phaseIsCurrent: true,
       lastConfidence: { round: 2, percent: 90, source: 'stated' },
       phaseHistory: { typicalPhaseMinutes: 5, typicalPhaseSamples: 4 }
     })
@@ -409,9 +411,17 @@ describe('whereTheRunIs', () => {
         phase: null,
         recordedPhase: null,
         minutesInPhase: null,
+        phaseIsCurrent: null,
         lastConfidence: null,
         phaseHistory: null
       })
-    ).toEqual({ round: null, phase: null, minutesInPhase: null, lastConfidence: null, phaseHistory: null })
+    ).toEqual({
+      round: null,
+      phase: null,
+      minutesInPhase: null,
+      phaseIsCurrent: null,
+      lastConfidence: null,
+      phaseHistory: null
+    })
   })
 })

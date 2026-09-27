@@ -119,7 +119,7 @@ export function describeTaskLoopState(state: TaskLoopState): string {
  * and `vinaya task status` can never disagree about a task's round or phase.
  *
  * Every field is `null` when no record carries it: a task with no control
- * record has no round, no phase and no time in phase; a round whose confidence
+ * record has no round, no phase, no time in phase and no `phaseIsCurrent`; a round whose confidence
  * no record still carries has none; a phase with no comparable history — or
  * too few past intervals of it — has no typical time. None of the five is ever
  * estimated, and `phaseHistory` is history, not a prediction of when this run
@@ -129,6 +129,7 @@ export function whereTheRunIs(row: TaskStatusRow): {
   round: number | null
   phase: string | null
   minutesInPhase: number | null
+  phaseIsCurrent: boolean | null
   lastConfidence: TaskConfidence | null
   phaseHistory: TaskPhaseHistory | null
 } {
@@ -136,6 +137,10 @@ export function whereTheRunIs(row: TaskStatusRow): {
     round: row.round,
     phase: row.phase,
     minutesInPhase: row.minutesInPhase,
+    // Whether a driver is still in that phase — `false` marks the record as the
+    // last phase the run wrote before it stopped, so a caller never presents a
+    // stale phase as a place the run is in now.
+    phaseIsCurrent: row.phaseIsCurrent,
     lastConfidence: row.lastConfidence,
     phaseHistory: row.phaseHistory
   }
