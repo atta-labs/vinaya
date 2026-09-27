@@ -84,18 +84,44 @@ function shipsArchivePrefix(shipsPrefix: string): string {
 }
 
 /**
- * A per-product specs file (`apps/<product>/specs/**`) — issue-657, O6:
+ * The spec class's default file set, repository-relative: a root product
+ * spec, a root context document, and every decision record under
+ * `docs/adr/`. These are the durable documents a repository with no `apps/`
+ * tree of its own actually keeps — a spec class that collected only
+ * `apps/<product>/specs/**` never read them, so a root spec was free to
+ * carry a copy of a plan (a task list, the Issue numbers behind it) that
+ * went stale the moment the plan moved, which is exactly the citation this
+ * class exists to refuse.
+ *
+ * A folder entry matches every `.md` file under it; a file entry matches
+ * that one file. `README.md` is deliberately absent and must stay absent:
+ * the tranche-slug pattern matches an ordinary stack badge (`next-v1`), so
+ * a default that swept READMEs would refuse a shape that is not a citation
+ * at all.
+ */
+export const DEFAULT_SPEC_PATHS: readonly string[] = ['SPEC.md', 'CONTEXT.md', 'docs/adr']
+
+/**
+ * A spec-class file: a per-product specs file (`apps/<product>/specs/**`),
+ * or any `.md` file at — or under — one of `specPaths`' entries. Both are
  * swept with the SAME rules `ships`/doctrine pages already carry (a spec is
  * as reader-facing as a doctrine page; a fork or an export reads it with no
- * forge to resolve a citation against, same as `aeg-root/**`). Formerly
- * classified `internal` (exempt) on the theory that "this reader has this
- * forge" — the wrong reader: a spec ships to the SAME audience doctrine
- * does, and a spec that opened with a tranche name, an Issue number, and
- * external documents as its authority reached a pull request unflagged
- * under the old exemption (found live, 2026-09-19).
+ * forge to resolve a citation against, same as `aeg-root/**`). The
+ * `apps/<product>/specs/**` half was formerly classified `internal`
+ * (exempt) on the theory that "this reader has this forge" — the wrong
+ * reader: a spec ships to the SAME audience doctrine does, and a spec that
+ * opened with a tranche name, an Issue number, and external documents as
+ * its authority reached a pull request unflagged under the old exemption
+ * (found live, 2026-09-19).
+ *
+ * `.md` is required of an entry-matched path so a folder entry carrying
+ * non-prose files (a fixture, an image) widens the class to its markdown
+ * only.
  */
-function isSpecFile(path: string): boolean {
-  return path.startsWith('apps/') && path.includes('/specs/') && path.endsWith('.md')
+function isSpecFile(path: string, specPaths: readonly string[]): boolean {
+  if (path.startsWith('apps/') && path.includes('/specs/') && path.endsWith('.md')) return true
+  if (!path.endsWith('.md')) return false
+  return specPaths.some((entry) => isUnderOrEqual(path, entry))
 }
 
 /** Any `CLAUDE.md`, at any depth — same reasoning as specs: this reader has this forge. */
@@ -117,12 +143,20 @@ function isClaudeMdFile(path: string): boolean {
  * illustrations using fictional PR numbers as flavor text) that are not
  * prose in the sense this check means, hence a suffix-scoped match rather
  * than a bare prefix.
+ *
+ * `specPaths` is the spec class's own repository-relative file set beyond
+ * `apps/<product>/specs/**` — `DEFAULT_SPEC_PATHS` when the caller says
+ * nothing, so a repository that configures nothing still has its root spec,
+ * root context document and decision records read. A caller adding
+ * configured paths passes the defaults alongside them; this parameter is the
+ * whole set, never a delta.
  */
 export function classifyProseFile(
   path: string,
   readerFacingPrefix: string,
   readerFacingSuffix: string,
-  shipsPrefix: string = SHIPS_PREFIX
+  shipsPrefix: string = SHIPS_PREFIX,
+  specPaths: readonly string[] = DEFAULT_SPEC_PATHS
 ): ProseFileClass | null {
   if (path.startsWith(shipsPrefix)) {
     return path.startsWith(shipsArchivePrefix(shipsPrefix)) ? 'internal' : 'ships'
@@ -131,7 +165,7 @@ export function classifyProseFile(
     return 'reader-facing'
   }
   if (isClaudeMdFile(path)) return 'internal'
-  if (isSpecFile(path)) return 'spec'
+  if (isSpecFile(path, specPaths)) return 'spec'
   if (isProductScopeFile(path)) return 'product'
   return null
 }
@@ -230,7 +264,8 @@ export function checkUnresolvableReferences(
   readerFacingSuffix: string,
   legacySlugs: readonly string[] = [],
   shipsPrefix: string = SHIPS_PREFIX,
-  specGrandfather: readonly string[] = []
+  specGrandfather: readonly string[] = [],
+  specPaths: readonly string[] = DEFAULT_SPEC_PATHS
 ): ProseFinding[] {
   const findings: ProseFinding[] = []
   const legacyPattern = legacySlugPattern(legacySlugs)
@@ -250,13 +285,17 @@ export function checkUnresolvableReferences(
   ]
 
   for (const file of files) {
-    const cls = classifyProseFile(file.path, readerFacingPrefix, readerFacingSuffix, shipsPrefix)
+    const cls = classifyProseFile(file.path, readerFacingPrefix, readerFacingSuffix, shipsPrefix, specPaths)
     if (!cls || cls === 'internal') continue
     if (cls !== 'product' && cls !== 'spec' && !SWEPT_CLASSES.has(cls)) continue
-    // issue-657, O6 — a spec explicitly listed by path is grandfathered
-    // stock (already failing when this sweep was extended to specs) and is
-    // skipped entirely, not merely down-graded: the list shrinks as later
-    // tasks rewrite each spec's prose, never grows.
+    // A spec explicitly listed by path is grandfathered stock (already
+    // failing when this sweep was extended to specs) and is skipped
+    // entirely, not merely down-graded: the list shrinks as each spec's
+    // prose is rewritten to state its facts plainly, never grows. The list
+    // is matched against every spec-class file, so it exempts a default path
+    // (a root spec, a decision record) exactly as it exempts a
+    // per-product one — one exemption for the class, not one per path
+    // source.
     if (cls === 'spec' && grandfathered.has(file.path)) continue
     const blocking = cls === 'product' || cls === 'spec'
     const scrubbed =
@@ -540,7 +579,8 @@ export function checkReaderResolvableProse(
   readerFacingSuffix: string,
   legacySlugs: readonly string[] = [],
   shipsPrefix: string = SHIPS_PREFIX,
-  specGrandfather: readonly string[] = []
+  specGrandfather: readonly string[] = [],
+  specPaths: readonly string[] = DEFAULT_SPEC_PATHS
 ): ProseFinding[] {
   return [
     ...checkUnresolvableReferences(
@@ -549,7 +589,8 @@ export function checkReaderResolvableProse(
       readerFacingSuffix,
       legacySlugs,
       shipsPrefix,
-      specGrandfather
+      specGrandfather,
+      specPaths
     ),
     ...checkUndefinedVocabulary(files, glossaryTerms, readerFacingPrefix, readerFacingSuffix, shipsPrefix)
   ]

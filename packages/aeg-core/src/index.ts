@@ -350,6 +350,7 @@ export {
   checkUndefinedVocabulary,
   checkUnresolvableReferences,
   classifyProseFile,
+  DEFAULT_SPEC_PATHS,
   extractComments,
   legacySlugPattern,
   parseGlossaryTerms,

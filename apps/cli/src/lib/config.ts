@@ -583,14 +583,23 @@ export const VinayaConfigSchema = z.object({
           severity: z.enum(['warning', 'error']).optional()
         })
         .optional(),
-      // issue-657, O6 — exact repo-relative paths (under any app's own
-      // `specs/**`) skipped entirely by the spec class below: stock already
-      // failing the day this sweep was extended to specs, listed here so
-      // the sweep can turn blocking on day one without failing every open
-      // PR against the existing backlog. Shrinks as later tasks rewrite
-      // each spec's prose to state its facts plainly instead of citing a
-      // tranche, an Issue, or a document outside this repository.
-      specGrandfather: z.array(z.string().min(1)).optional()
+      // Exact repo-relative paths skipped entirely by the spec class below:
+      // stock already failing the day this sweep was extended to specs,
+      // listed here so the sweep can turn blocking on day one without
+      // failing every open PR against the existing backlog. Shrinks as each
+      // spec's prose is rewritten to state its facts plainly instead of
+      // citing a tranche, an Issue, or a document outside this repository.
+      // Exempts a path the defaults below brought in exactly as it exempts
+      // one under an app's own `specs/**`.
+      specGrandfather: z.array(z.string().min(1)).optional(),
+      // Repo-relative files or folders ADDED to the spec class, on top of
+      // the defaults every repository gets with no configuration at all: a
+      // root `SPEC.md`, a root `CONTEXT.md`, every `.md` under `docs/adr/`,
+      // and every `apps/<app>/specs/**/*.md`. A folder entry is swept
+      // recursively for `.md` files; a file entry names that one file.
+      // `README.md` is never a default and should not be added lightly — the
+      // tranche-slug pattern the class runs matches an ordinary stack badge.
+      specPaths: z.array(z.string().min(1)).optional()
     })
     .optional(),
   // Config-native project metadata — see the `ProjectEntrySchema` comment

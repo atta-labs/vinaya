@@ -8,6 +8,7 @@ import {
   checkUndefinedVocabulary,
   checkUnresolvableReferences,
   classifyProseFile,
+  DEFAULT_SPEC_PATHS,
   extractComments,
   legacySlugPattern,
   parseGlossaryTerms,
@@ -79,6 +80,49 @@ describe('classifyProseFile — the three-class map', () => {
     expect(classifyProseFile('apps/vinaya/specs/vinaya-spec.md', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBe(
       'spec'
     )
+  })
+
+  // The spec class's defaults: the durable documents a repository with no
+  // `apps/` tree of its own actually keeps. Without them, a root spec was
+  // free to carry a copy of a plan nothing ever read.
+  it('classifies a root SPEC.md, a root CONTEXT.md and a docs/adr record as spec by default', () => {
+    expect(classifyProseFile('SPEC.md', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBe('spec')
+    expect(classifyProseFile('CONTEXT.md', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBe('spec')
+    expect(classifyProseFile('docs/adr/0001-pick-a-runtime.md', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBe(
+      'spec'
+    )
+  })
+
+  it('never classifies README.md as spec by default — a stack badge is not a citation', () => {
+    expect(classifyProseFile('README.md', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBeNull()
+  })
+
+  it('classifies a configured specPaths file or folder as spec, markdown only', () => {
+    expect(
+      classifyProseFile('design/architecture.md', READER_FACING_PREFIX, READER_FACING_SUFFIX, undefined, [
+        ...DEFAULT_SPEC_PATHS,
+        'design'
+      ])
+    ).toBe('spec')
+    expect(
+      classifyProseFile('design/diagram.svg', READER_FACING_PREFIX, READER_FACING_SUFFIX, undefined, [
+        ...DEFAULT_SPEC_PATHS,
+        'design'
+      ])
+    ).toBeNull()
+  })
+
+  it('a specPaths prefix matches only its own path or a child of it', () => {
+    expect(
+      classifyProseFile('designs/other.md', READER_FACING_PREFIX, READER_FACING_SUFFIX, undefined, ['design'])
+    ).toBeNull()
+  })
+
+  it('classifies nothing extra as spec when specPaths is empty — a repo with none of these files reports nothing new', () => {
+    expect(classifyProseFile('SPEC.md', READER_FACING_PREFIX, READER_FACING_SUFFIX, undefined, [])).toBeNull()
+    expect(
+      classifyProseFile('apps/vinaya/specs/vinaya-spec.md', READER_FACING_PREFIX, READER_FACING_SUFFIX, undefined, [])
+    ).toBe('spec')
   })
 
   it('classifies any CLAUDE.md as internal', () => {
@@ -210,6 +254,49 @@ describe('class 1 — unresolvable references — the gate can see what it bans'
     expect(findings.every((f) => f.blocking)).toBe(true)
     expect(findings.map((f) => f.message).join(' ')).toMatch(/a forge number/)
     expect(findings.map((f) => f.message).join(' ')).toMatch(/an internal tranche slug/)
+  })
+
+  it('sweeps a root SPEC.md and a docs/adr record with the same blocking rules, no configuration at all', () => {
+    const findings = checkUnresolvableReferences(
+      [
+        { path: 'SPEC.md', content: 'closed by (#365), see aeg-coherence-v1' },
+        { path: 'docs/adr/0002-store-logs-remotely.md', content: 'decided in (#365)' }
+      ],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings.every((f) => f.blocking)).toBe(true)
+    expect(findings.map((f) => f.file)).toContain('SPEC.md')
+    expect(findings.map((f) => f.file)).toContain('docs/adr/0002-store-logs-remotely.md')
+  })
+
+  it('grandfathers a default-path spec by path exactly as it grandfathers a per-product one', () => {
+    const findings = checkUnresolvableReferences(
+      [{ path: 'SPEC.md', content: 'closed by (#365), see aeg-coherence-v1' }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX,
+      [],
+      undefined,
+      ['SPEC.md']
+    )
+    expect(findings).toEqual([])
+  })
+
+  it('sweeps a file named only by specPaths, and reports nothing for a README with a badge-shaped slug', () => {
+    const files = [
+      { path: 'design/architecture.md', content: 'see aeg-coherence-v1' },
+      { path: 'README.md', content: 'Built with next-v1 and bun-v1.' }
+    ]
+    const findings = checkUnresolvableReferences(
+      files,
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX,
+      [],
+      undefined,
+      [],
+      [...DEFAULT_SPEC_PATHS, 'design']
+    )
+    expect(findings.map((f) => f.file)).toEqual(['design/architecture.md'])
   })
 
   it('a spec explicitly grandfathered by path is skipped entirely, even with a real citation', () => {

@@ -66,6 +66,7 @@ import { extname, join } from 'node:path'
 import {
   checkReaderResolvableProse,
   checkSourceComments,
+  DEFAULT_SPEC_PATHS,
   parseGlossaryTerms,
   PRODUCT_SLUG_SCOPE,
   type ProseSourceFile
@@ -146,8 +147,20 @@ const SOURCE_COMMENTS_GLOBS = proseGates?.sourceComments?.globs ?? []
 const SOURCE_COMMENTS_ALLOWLIST = proseGates?.sourceComments?.allowlist ?? []
 const SOURCE_COMMENTS_SEVERITY: 'warning' | 'error' = proseGates?.sourceComments?.severity ?? 'warning'
 
-/** issue-657, O6 — exact repo-relative spec paths skipped entirely by the spec class (below), same "declared, not silent" discipline every other exemption list in this file already uses. */
+/** Exact repo-relative spec paths skipped entirely by the spec class (below) — a default path as readily as a per-product one — same "declared, not silent" discipline every other exemption list in this file already uses. */
 const SPEC_GRANDFATHER = proseGates?.specGrandfather ?? []
+
+/**
+ * The spec class's whole file set beyond `apps/<app>/specs/**`: the
+ * defaults every repository gets (`DEFAULT_SPEC_PATHS` — a root spec, a root
+ * context document, the decision records under `docs/adr/`) plus whatever
+ * `proseGates.specPaths` adds. Configured entries ADD to the defaults rather
+ * than replacing them, so a repository naming one extra document does not
+ * silently stop reading its own root spec; an entry naming a path that does
+ * not exist contributes nothing, the same dormancy `collect` already applies
+ * to a missing directory.
+ */
+const SPEC_PATHS = [...DEFAULT_SPEC_PATHS, ...(proseGates?.specPaths ?? [])]
 
 /** Recursively collects repo-relative paths under `dir`. Missing/unreadable `dir` degrades to `[]`, never throws — the same dormancy discipline `legacySlugs()` below documents. */
 function collect(dir: string, out: string[] = []): string[] {
@@ -217,17 +230,41 @@ function readProductFiles(root: string, relPaths: string[]): ProseSourceFile[] {
 }
 
 /**
- * issue-657, O6 — every `apps/<app>/specs/**\/*.md` file, across EVERY app
- * directory (never hardcoded to `apps/cli`, since the same exemption gap
- * applies wherever a future app grows its own `specs/`), returned
- * repo-relative to `root` — the same coordinate system `isSpecFile`
- * (`@attalabs/aeg-core`) compares against. A repo with no `apps/` directory
- * at all (an adopter whose product tree lives elsewhere) degrades to `[]`,
- * never a thrown error — the same dormancy discipline `collect` itself
- * already uses for a missing directory.
+ * The spec class's file set: every `apps/<app>/specs/**\/*.md` file, across
+ * EVERY app directory (never hardcoded to `apps/cli`, since the same
+ * exemption gap applies wherever a future app grows its own `specs/`), PLUS
+ * every `.md` file at — or under — each `specPaths` entry (the defaults every
+ * repository gets, plus whatever `proseGates.specPaths` adds). Returned
+ * repo-relative to `root` — the same coordinate system the spec-class
+ * predicate (`@attalabs/aeg-core`) compares against, and de-duplicated, since
+ * a configured entry may name a path the `apps/` walk already found.
+ *
+ * A repo with no `apps/` directory at all (an adopter whose product tree
+ * lives elsewhere) contributes nothing from that half — and is exactly the
+ * shape the defaults exist for: its root spec is the only spec it has. A
+ * missing default or configured path degrades to `[]`, never a thrown error —
+ * the same dormancy discipline `collect` itself already uses for a missing
+ * directory.
  */
-function collectSpecFiles(root: string): string[] {
+function collectSpecFiles(root: string, specPaths: readonly string[]): string[] {
   const out: string[] = []
+  for (const entry of specPaths) {
+    const abs = join(root, entry)
+    let isDir: boolean
+    try {
+      isDir = statSync(abs).isDirectory()
+    } catch {
+      continue
+    }
+    if (isDir) {
+      for (const f of collect(abs)) {
+        const rel = f.slice(root.length + 1)
+        if (rel.endsWith('.md')) out.push(rel)
+      }
+    } else if (entry.endsWith('.md')) {
+      out.push(entry)
+    }
+  }
   const appsDir = join(root, 'apps')
   let appNames: string[]
   try {
@@ -239,7 +276,7 @@ function collectSpecFiles(root: string): string[] {
       }
     })
   } catch {
-    return out
+    return [...new Set(out)]
   }
   for (const app of appNames) {
     const specsDir = join(appsDir, app, 'specs')
@@ -255,7 +292,7 @@ function collectSpecFiles(root: string): string[] {
       if (rel.endsWith('.md')) out.push(rel)
     }
   }
-  return out
+  return [...new Set(out)]
 }
 
 /**
@@ -360,7 +397,7 @@ function main(): void {
   const sourceCommentRelPaths = collectSourceCommentFiles(productRoot, SOURCE_COMMENTS_GLOBS)
   const sourceCommentFiles = readProductFiles(productRoot, sourceCommentRelPaths)
 
-  const specRelPaths = collectSpecFiles(productRoot)
+  const specRelPaths = collectSpecFiles(productRoot, SPEC_PATHS)
   const specFiles = readProductFiles(productRoot, specRelPaths)
 
   const files = [...readAll([...shipsPaths, ...readerFacingPaths]), ...productFiles, ...specFiles]
@@ -380,7 +417,8 @@ function main(): void {
     readerFacingSuffix,
     slugs,
     shipsPrefix,
-    SPEC_GRANDFATHER
+    SPEC_GRANDFATHER,
+    SPEC_PATHS
   )
 
   // `resolveChangedFiles()` returns absolute paths, resolved against the
