@@ -20,6 +20,7 @@ import {
   lintEnvDeclarations,
   loadTrustAnchorConfig,
   readRepoCiSetup,
+  resolveCiTrustAnchorProbeRef,
   resolveAgentVendors,
   resolvePrincipalAllowlist as resolvePrincipalAllowlistStatic,
   resolveReviewPolicy,
@@ -532,6 +533,127 @@ describe('trustAnchorRepo — repo identity for the trust-anchor read', () => {
     delete process.env.GITHUB_REPOSITORY
     const result = trustAnchorRepo()
     if (result !== null) expect(result).toMatch(/^[^/\s]+\/[^/\s]+$/)
+  })
+})
+
+describe('resolveCiTrustAnchorProbeRef — the pre-merge trust-anchor probe seam (security, Issue #783)', () => {
+  // The one environment shape that turns the seam ON: the unprivileged CI job
+  // that proves a root-`vinaya.config.json` change before merge — an explicit
+  // ref opt-in, the Actions runner's own marker, and NO forge credential.
+  const CI_JOB_ENV = { VINAYA_CI_CONFIG_PROBE_REF: 'HEAD', GITHUB_ACTIONS: 'true' } as NodeJS.ProcessEnv
+
+  it('returns the named ref in that one job — the only shape that turns it on', () => {
+    expect(resolveCiTrustAnchorProbeRef(CI_JOB_ENV)).toBe('HEAD')
+    // Trimmed, so a stray newline from a workflow expression still resolves.
+    expect(resolveCiTrustAnchorProbeRef({ ...CI_JOB_ENV, VINAYA_CI_CONFIG_PROBE_REF: '  abc123\n' })).toBe('abc123')
+  })
+
+  it('is inert with no ref opt-in — the default everywhere, including in Actions with no token', () => {
+    expect(resolveCiTrustAnchorProbeRef({ GITHUB_ACTIONS: 'true' })).toBeNull()
+    expect(resolveCiTrustAnchorProbeRef({ ...CI_JOB_ENV, VINAYA_CI_CONFIG_PROBE_REF: '' })).toBeNull()
+    expect(resolveCiTrustAnchorProbeRef({ ...CI_JOB_ENV, VINAYA_CI_CONFIG_PROBE_REF: '   ' })).toBeNull()
+  })
+
+  it('is inert in a developer shell — a set ref alone never turns it on outside the Actions runner', () => {
+    // A dev shell (or an unattended run on an operator host) that happens to
+    // export the ref, but is not the Actions runner: the seam stays off, so a
+    // poisoned local ref can never be read this way.
+    expect(resolveCiTrustAnchorProbeRef({ VINAYA_CI_CONFIG_PROBE_REF: 'HEAD' })).toBeNull()
+    expect(resolveCiTrustAnchorProbeRef({ VINAYA_CI_CONFIG_PROBE_REF: 'HEAD', GITHUB_ACTIONS: 'false' })).toBeNull()
+  })
+
+  it('is inert whenever a forge credential is present — a real unattended run always carries one', () => {
+    expect(resolveCiTrustAnchorProbeRef({ ...CI_JOB_ENV, GH_TOKEN: 'ghp_x' })).toBeNull()
+    expect(resolveCiTrustAnchorProbeRef({ ...CI_JOB_ENV, GITHUB_TOKEN: 'ghs_x' })).toBeNull()
+    // Empty-string credentials are not credentials — the seam still resolves.
+    expect(resolveCiTrustAnchorProbeRef({ ...CI_JOB_ENV, GH_TOKEN: '', GITHUB_TOKEN: '' })).toBe('HEAD')
+  })
+})
+
+describe('loadTrustAnchorConfig — pre-merge probe reads the local ref, but ONLY in that one job (Issue #783)', () => {
+  let repoDir: string
+  let originalCwd: string
+  const saved: Record<string, string | undefined> = {}
+  const b64 = (o: unknown) => Buffer.from(JSON.stringify(o), 'utf-8').toString('base64')
+
+  function git(args: string[]): void {
+    execFileSync('git', args, { cwd: repoDir, encoding: 'utf8' })
+  }
+
+  beforeEach(() => {
+    for (const k of ['VINAYA_CI_CONFIG_PROBE_REF', 'GITHUB_ACTIONS', 'GH_TOKEN', 'GITHUB_TOKEN'])
+      saved[k] = process.env[k]
+    repoDir = mkdtempSync(join(tmpdir(), 'vinaya-probe-'))
+    originalCwd = process.cwd()
+    git(['init', '-q', '-b', 'main'])
+    git(['config', 'user.email', 'test@example.com'])
+    git(['config', 'user.name', 'Test'])
+    writeFileSync(join(repoDir, 'vinaya.config.json'), JSON.stringify({ principals: ['pr-added-reviewer'] }), 'utf-8')
+    git(['add', '.'])
+    git(['commit', '-q', '-m', 'PR: set principals'])
+    process.chdir(repoDir)
+  })
+
+  afterEach(() => {
+    process.chdir(originalCwd)
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k]
+      else process.env[k] = v
+    }
+    rmSync(repoDir, { recursive: true, force: true })
+  })
+
+  function enterCiJob(): void {
+    process.env.VINAYA_CI_CONFIG_PROBE_REF = 'HEAD'
+    process.env.GITHUB_ACTIONS = 'true'
+    delete process.env.GH_TOKEN
+    delete process.env.GITHUB_TOKEN
+  }
+
+  it('the REAL production read (no injected fetcher) resolves the checked-out ref as the default branch, in the job', () => {
+    enterCiJob()
+    // No fetcher passed: this is exactly the call every production caller makes.
+    const result = loadTrustAnchorConfig()
+    expect(result?.principals).toEqual(['pr-added-reviewer'])
+  })
+
+  it('reads the COMMITTED blob, never the working tree — an uncommitted edit in the clone cannot leak in', () => {
+    enterCiJob()
+    writeFileSync(
+      join(repoDir, 'vinaya.config.json'),
+      JSON.stringify({ principals: ['uncommitted-attacker'] }),
+      'utf-8'
+    )
+    const result = loadTrustAnchorConfig()
+    expect(result?.principals).toEqual(['pr-added-reviewer'])
+    expect(result?.principals).not.toContain('uncommitted-attacker')
+  })
+
+  it('with a forge credential present, the seam is off and the local config is NEVER read — the gh path is used', () => {
+    enterCiJob()
+    process.env.GH_TOKEN = 'ghp_present'
+    let injected = false
+    const result = loadTrustAnchorConfig(() => {
+      injected = true
+      return b64({ principals: ['legit-default-branch'] })
+    })
+    // The real read fell through to the fetcher (gh path), never the local blob.
+    expect(injected).toBe(true)
+    expect(result?.principals).toEqual(['legit-default-branch'])
+    expect(result?.principals).not.toContain('pr-added-reviewer')
+  })
+
+  it('outside the Actions runner, a set ref pointing at attacker content is never consulted', () => {
+    // The dev-shell / unattended-host abuse attempt: export the ref at a
+    // poisoned local commit, but with no `GITHUB_ACTIONS` marker. The seam
+    // stays off, so the real read uses the fetcher, not the local blob.
+    process.env.VINAYA_CI_CONFIG_PROBE_REF = 'HEAD'
+    delete process.env.GITHUB_ACTIONS
+    delete process.env.GH_TOKEN
+    delete process.env.GITHUB_TOKEN
+    const result = loadTrustAnchorConfig(() => b64({ principals: ['legit-default-branch'] }))
+    expect(result?.principals).toEqual(['legit-default-branch'])
+    expect(result?.principals).not.toContain('pr-added-reviewer')
   })
 })
 
