@@ -978,7 +978,7 @@ const ISSUE_CONTENT_RECOVERY = {
   surfaceExcludesBoundDoc:
     'Either move the named `out:` glob so it no longer covers the bound document, or narrow the `in:` glob so it no longer reaches the doc-owners binding — the Issue cannot declare both at once. Then re-run `{cmd}`.',
   rationaleSurfaceCoverage:
-    'Widen the named `## Surface` `in:` glob to cover the Boundary path (nearest entry named above), or correct the path if it was mistyped, then re-run `{cmd}`.',
+    'Widen the named `## Surface` `in:` directory glob to cover the Boundary path (nearest entry named above) — `## Surface` lists directories, never a file path, so widen the glob rather than adding the file path itself — or correct the path if it was mistyped, then re-run `{cmd}`.',
   surfaceOverlap:
     'Narrow the named `## Surface` `in:` glob so it no longer overlaps the other task, or declare a `Conflicts-with` entry naming one task in the other (either direction is enough), then re-run `{cmd}`.',
   objectivesRespectBoundary:

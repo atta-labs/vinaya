@@ -1604,7 +1604,7 @@ export function checkRationaleSurfaceCoverage(body: string, issueNumber: number 
     if (surface.value.out.some((g) => globCoversPath(g, path))) continue
     const nearest = nearestInGlob(path, surface.value.in)
     errors.push(
-      `issue-validation Boundary: \`${path}\` is named in the Boundary rationale, but no \`## Surface\` \`in:\` glob covers it — nearest is \`${nearest}\`. Widen the Surface's \`in:\` list to cover it, or correct the path if it was mistyped.`
+      `issue-validation Boundary: \`${path}\` is named in the Boundary rationale, but no \`## Surface\` \`in:\` glob covers it — nearest is \`${nearest}\`. Widen an \`in:\` directory glob to cover it (\`## Surface\` lists directories, never a file path), or correct the path if it was mistyped.`
     )
   }
   return { status: errors.length > 0 ? 'fail' : 'pass', errors }

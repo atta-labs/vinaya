@@ -1657,6 +1657,17 @@ describe('checkRationaleSurfaceCoverage (task-run-v1 11, O4)', () => {
     expect(r.errors[0]).toMatch(/apps\/cli\/src\/lib/)
   })
 
+  it('tells the author to widen a directory glob and that Surface never lists a file path (issue-809, O2)', () => {
+    const body = `${surface}\n**Boundary** — Edits \`packages/aeg-core/src/issue-validation.ts\`.\n`
+    const r = checkRationaleSurfaceCoverage(body, 500)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/directory glob/)
+    expect(r.errors[0]).toMatch(/never a file path/)
+    // The old wording said "widen the Surface's `in:` list to cover it", which
+    // read as "add the file path" — it must not return.
+    expect(r.errors[0]).not.toMatch(/list to cover it/)
+  })
+
   it('picks the `in:` glob sharing the most leading path segments as "nearest"', () => {
     const body =
       '## Surface\n\nin: apps/cli/src/lib, apps/cli/src/commands\nout: —\n\n' +
