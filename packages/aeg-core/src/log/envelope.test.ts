@@ -33,6 +33,22 @@ describe('buildHeader', () => {
     expect(subject.role).toBe('unattributed')
   })
 
+  it('falls back to the branch-derived Issue when the env names no task (log-quality-v1 1, O1)', () => {
+    const { subject, meta } = buildHeader({ ...baseInput, branchIssue: 792 })
+    expect(subject.issue).toBe(792)
+    // A branch is not an environment correlation — provenance is untouched.
+    expect(meta.schema === 2 && meta.provenance).toBe('unavailable')
+  })
+
+  it('never lets a branch-derived Issue override one the env actually names (O3)', () => {
+    const { subject } = buildHeader({ ...baseInput, env: { role: 'developer', task: '412' }, branchIssue: 792 })
+    expect(subject.issue).toBe(412)
+  })
+
+  it('keeps issue null when the branch named none', () => {
+    expect(buildHeader({ ...baseInput, branchIssue: null }).subject.issue).toBeNull()
+  })
+
   it('leaves issue null for an unparseable VINAYA_TASK', () => {
     const { subject } = buildHeader({ ...baseInput, env: { task: 'abc' } })
     expect(subject.issue).toBeNull()

@@ -65,7 +65,7 @@ meta: {
   machine: string      // sha256 of the hostname; never the name itself
 }
 subject: {
-  issue: number | null          // VINAYA_TASK; null when absent or unparseable
+  issue: number | null          // VINAYA_TASK; the checked-out task branch's Issue when that is unset; null when neither names one
   pr?: number
   sha?: string
   role: Role | 'unattributed'   // VINAYA_ROLE; never self-declared by the caller
@@ -257,6 +257,10 @@ env:
 ## Attribution
 
 `VINAYA_RUN_ID`, `VINAYA_ROLE`, `VINAYA_TASK`, `VINAYA_ROUND` are read from `process.env` by the sink, never passed as an argument — a caller cannot override its own attribution. Absent: `role: 'unattributed'`, `issue: null`, a `run_id` generated once per process (`crypto.randomUUID()`). `host` is `'ci'` when `GITHUB_ACTIONS` is set, else `'hook'`/`'loop'` from `VINAYA_HOST`, else `'cli'`. A session not started through `vinaya dispatch` (task 3, shipped) is `unattributed`, which is the truth about it — the same class of honesty as `role: 'unattributed'` anywhere else in this doctrine.
+
+**The branch names the task when the environment does not.** Most of what a log server actually holds is produced with no `VINAYA_TASK` at all — a `vinaya check` run by the pre-push hook or by CI carries no dispatch identity — and those events used to read `issue: null`. When, and only when, `VINAYA_TASK` is absent, the sink asks the checked-out branch instead: `task/issue-<n>` names Issue `<n>` directly, and `task/<tranche>/<n>` names the Issue whose `vinaya/tranche:<slug>` label and `[<slug>] <n> — …` title resolve to that task ordinal (`resolveTaskIssueRef`, the same parser the task list and the task tools share; `--state all`, since a branch stays checked out after its Issue closes). An event whose environment already names its task keeps that number — the branch is a fallback, never an override — and a branch that names no task, a checkout `git` cannot read, or a tranche task the forge will not name all stay `issue: null`, never a guessed number.
+
+The lookup runs at most **once per process**, lazily: a process whose events already name their task never makes the call at all, and one that does caches the answer — `null` included — for every later event. It is bounded by the same `LOG_CONTEXT_LOOKUP_DEADLINE_MS` the sink's other context lookups carry, so a slow, missing or unauthenticated `gh` costs one deadline for the whole process and then answers `null`; no event is ever delayed past it and none is dropped. A branch-derived issue does not change `meta.provenance`: a checkout is not an environment correlation, so such an event stays `'unavailable'` unless the environment itself carried a claim.
 
 `VINAYA_RUN`, `VINAYA_ATTEMPT`, `VINAYA_PARENT_EVENT` (`task-log-v1` 1) are read the same way, into `meta.lineage` on a `schema: 2` header. `VINAYA_ATTEMPT`/`VINAYA_PARENT_EVENT` read back `null` on every current line, honestly, until a later task sets them.
 

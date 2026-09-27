@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import { mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createLogSink, OUTBOX_MAX_BYTES, type LogSinkDeps } from '../../src/lib/log-sink.js'
+import { createLogSink, OUTBOX_MAX_BYTES, taskRefFromBranch, type LogSinkDeps } from '../../src/lib/log-sink.js'
 
 // `resolveDoctrine`'s `git` calls run inside `log()`'s `.then()` chain; in a
 // non-repo temp dir the first call fails (fast, but not instant), and a
@@ -37,6 +37,11 @@ function testDeps(overrides: Partial<LogSinkDeps> = {}): { dir: string; deps: Pa
       now: () => new Date('2026-09-05T00:00:00.000Z'),
       env: () => ({ VINAYA_ROLE: 'developer', VINAYA_TASK: '404' }),
       resolveRepo: () => Promise.resolve({ owner: 'atta-labs', repo: 'vinaya' }),
+      // Injected like every other read this harness stubs: left to the real
+      // default, a test running inside this repository's own task worktree
+      // would shell out to `git`/`gh` and attribute its fixture events to
+      // whatever task the checkout happens to be on.
+      resolveBranchIssue: () => Promise.resolve(null),
       vinayaVersion: () => '0.24.1',
       stderr: () => {},
       ...overrides
@@ -278,5 +283,98 @@ describe('log-sink — defeat cases', () => {
     const path = join(dir, 'outbox', 'unresolved', '404.ndjson')
     const line = JSON.parse(readFileSync(path, 'utf8').trim())
     expect(line.meta.repo).toBeNull()
+  })
+})
+
+describe('log-sink — the Issue a branch names (log-quality-v1 1, O1/O3)', () => {
+  it('parses the two branch shapes this doctrine addresses a task by, and nothing else', () => {
+    expect(taskRefFromBranch('task/issue-792')).toEqual({ kind: 'issue', issue: 792 })
+    expect(taskRefFromBranch('task/log-quality-v1/1')).toEqual({
+      kind: 'tranche',
+      tranche: 'log-quality-v1',
+      taskId: '1'
+    })
+    expect(taskRefFromBranch('main')).toBeNull()
+    expect(taskRefFromBranch('feature/task/issue-1')).toBeNull()
+    expect(taskRefFromBranch('task/issue-abc')).toBeNull()
+    expect(taskRefFromBranch('task/a/b/c')).toBeNull()
+  })
+
+  it('refuses a tranche segment that is not a plain slug — a branch name never reaches gh argv unchecked', () => {
+    expect(taskRefFromBranch('task/--label=x/1')).toBeNull()
+    expect(taskRefFromBranch('task/ semi colon/1')).toBeNull()
+  })
+
+  it('fills subject.issue from the branch when the process carries no VINAYA_TASK', async () => {
+    const { dir, deps } = testDeps({ env: () => ({}), resolveBranchIssue: () => Promise.resolve(792) })
+    const { log } = createLogSink(deps)
+    log(DISPATCHED)
+    await flush()
+    const line = JSON.parse(readFileSync(join(dir, 'outbox', 'atta-labs-vinaya', '792.ndjson'), 'utf8').trim())
+    expect(line.subject.issue).toBe(792)
+    // The branch is not an environment correlation: naming the issue never
+    // strengthens the claim about who attributed the event.
+    expect(line.meta.provenance).toBe('unavailable')
+  })
+
+  it('leaves subject.issue null when the branch names no resolvable task — never a guessed number', async () => {
+    const { dir, deps } = testDeps({ env: () => ({}), resolveBranchIssue: () => Promise.resolve(null) })
+    const { log } = createLogSink(deps)
+    log(DISPATCHED)
+    await flush()
+    const line = JSON.parse(readFileSync(join(dir, 'outbox', 'atta-labs-vinaya', 'none.ndjson'), 'utf8').trim())
+    expect(line.subject.issue).toBeNull()
+  })
+
+  it('O3: an event that already names its task and role is unchanged, and the branch is never consulted', async () => {
+    let calls = 0
+    const { dir, deps } = testDeps({
+      resolveBranchIssue: () => {
+        calls += 1
+        return Promise.resolve(999)
+      }
+    })
+    const { log } = createLogSink(deps)
+    log(DISPATCHED)
+    await flush()
+    const line = JSON.parse(readFileSync(join(dir, 'outbox', 'atta-labs-vinaya', '404.ndjson'), 'utf8').trim())
+    expect(line.subject.issue).toBe(404)
+    expect(line.subject.role).toBe('developer')
+    expect(calls).toBe(0)
+  })
+
+  it('resolves the branch at most once per process, however many events it logs', async () => {
+    let calls = 0
+    const { dir, deps } = testDeps({
+      env: () => ({}),
+      resolveBranchIssue: () => {
+        calls += 1
+        return Promise.resolve(792)
+      }
+    })
+    const { log } = createLogSink(deps)
+    log(DISPATCHED)
+    log(DISPATCHED)
+    log(DISPATCHED)
+    await flush()
+    const lines = readFileSync(join(dir, 'outbox', 'atta-labs-vinaya', '792.ndjson'), 'utf8')
+      .trim()
+      .split('\n')
+    expect(lines).toHaveLength(3)
+    expect(lines.map((l) => JSON.parse(l).meta.seq)).toEqual([0, 1, 2])
+    expect(calls).toBe(1)
+  })
+
+  it('a failed lookup never drops the event — the line lands with issue null', async () => {
+    const { dir, deps } = testDeps({
+      env: () => ({}),
+      resolveBranchIssue: () => Promise.reject(new Error('gh: not authenticated'))
+    })
+    const { log } = createLogSink(deps)
+    log(DISPATCHED)
+    await flush()
+    const line = JSON.parse(readFileSync(join(dir, 'outbox', 'atta-labs-vinaya', 'none.ndjson'), 'utf8').trim())
+    expect(line.subject.issue).toBeNull()
+    expect(line.kind).toBe('dispatch')
   })
 })

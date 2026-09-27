@@ -24,7 +24,7 @@ import {
 import { hostname as osHostname, homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
-import { resolveRepo as resolveRepoDefault } from '@attalabs/aeg-forge-state'
+import { resolveRepo as resolveRepoDefault, resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
 import {
   buildHeader,
   type Host,
@@ -100,6 +100,14 @@ export type LogSinkDeps = {
    * fields as optional, `null` for whichever it isn't given).
    */
   inputVersions: () => LogSinkInputVersions | undefined
+  /**
+   * The Issue the checked-out branch names, for an event whose process
+   * carries no `VINAYA_TASK` — the real default is `resolveBranchIssue`
+   * (one `git` read, and for a tranche branch one `gh` read). Called at
+   * most once per sink instance, lazily: a process whose events already
+   * name their task never calls it at all.
+   */
+  resolveBranchIssue: () => Promise<number | null>
   /**
    * The `logs` setting's resolved destination for this process (O1/O4) —
    * `vinaya.config.json`'s `logs`, trust-anchor-gated for an unattended
@@ -332,6 +340,111 @@ async function resolveDoctrine(cwd: string, vinayaVersion: string): Promise<stri
   }
 }
 
+/**
+ * The two branch shapes this doctrine addresses a task by — `task/issue-<n>`
+ * for a tranche-less backlog Issue, `task/<tranche>/<n>` for a tranche task
+ * (`apps/cli/src/lib/task-status.ts`'s `branchForRef`, the same two shapes
+ * `developerBranchFor` derives). Pure: a branch name in, a claim about what
+ * it names out — no I/O, so the shape rule itself is testable without a
+ * checkout or a forge.
+ */
+export type TaskBranchRef = { kind: 'issue'; issue: number } | { kind: 'tranche'; tranche: string; taskId: string }
+
+/** Only these characters may reach `gh`'s argv as a label segment — a branch name is not a trusted value, and a tranche slug is always this shape. */
+const TRANCHE_SLUG_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+
+export function taskRefFromBranch(branch: string): TaskBranchRef | null {
+  const backlog = /^task\/issue-(\d+)$/.exec(branch)
+  if (backlog) return { kind: 'issue', issue: Number(backlog[1]) }
+  const tranche = /^task\/([^/]+)\/([^/]+)$/.exec(branch)
+  if (tranche && TRANCHE_SLUG_PATTERN.test(tranche[1] ?? '')) {
+    return { kind: 'tranche', tranche: tranche[1] as string, taskId: tranche[2] as string }
+  }
+  return null
+}
+
+/** Generous, not a bound — the same limit `task-status.ts` reads open task Issues with; one tranche has never held more. */
+const TRANCHE_ISSUE_LIST_LIMIT = 200
+
+/**
+ * The Issue a `task/<tranche>/<n>` branch names, read from the forge the one
+ * way this doctrine derives it anywhere else: the `vinaya/tranche:<slug>`
+ * label plus the `[<slug>] <n> — …` title, parsed by the SAME
+ * `resolveTaskIssueRef` the task list and the task tools already share
+ * rather than a second, drifting copy of the title rule here. `--state all`,
+ * not `open`: a branch stays checked out after its Issue closes, and an
+ * event emitted there still belongs to that task.
+ */
+async function issueForTrancheTask(tranche: string, taskId: string): Promise<number | null> {
+  let stdout: string
+  try {
+    ;({ stdout } = await execFileAsync(
+      'gh',
+      [
+        'issue',
+        'list',
+        '--state',
+        'all',
+        '--label',
+        `vinaya/tranche:${tranche}`,
+        '--json',
+        'number,title,labels',
+        '--limit',
+        String(TRANCHE_ISSUE_LIST_LIMIT)
+      ],
+      { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 }
+    ))
+  } catch {
+    return null
+  }
+  let issues: Array<{ number: number; title: string; labels: Array<{ name: string }> }>
+  try {
+    issues = JSON.parse(stdout)
+  } catch {
+    return null
+  }
+  for (const issue of issues) {
+    const ref = resolveTaskIssueRef(
+      issue.title,
+      issue.labels.map((l) => l.name)
+    )
+    if (ref && ref.trancheSlug === tranche && ref.taskId === taskId) return issue.number
+  }
+  return null
+}
+
+/**
+ * The Issue the CHECKED-OUT branch names, or `null` when it names none —
+ * what fills `subject.issue` for an event whose process carries no
+ * `VINAYA_TASK` (the pre-push hook's and CI's own `vinaya check` runs, which
+ * is most of what a log server actually holds). `null` is the honest answer
+ * for a branch that is not a task branch, a checkout `git` cannot read, and
+ * a tranche task whose Issue the forge will not name — never a guessed
+ * number.
+ *
+ * Called at most ONCE per sink (memoised in `createLogSink`, `null` included)
+ * and only when an event's own `VINAYA_TASK` is absent, so a process that
+ * already knows its task makes no forge call at all; the one call it can
+ * make is bounded by `LOG_CONTEXT_LOOKUP_DEADLINE_MS` at the call site, so a
+ * slow or unauthenticated `gh` delays no event past that deadline and drops
+ * none. Async throughout (`execFileAsync`, never `execFileSync`) — the same
+ * no-synchronous-spawn rule the sink's shared context already holds
+ * (`tests/lib/log-sink-no-sync-spawn.test.ts`).
+ */
+export async function resolveBranchIssue(cwd: string): Promise<number | null> {
+  let branch: string
+  try {
+    branch = (
+      await execFileAsync('git', ['-C', cwd, 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8' })
+    ).stdout.trim()
+  } catch {
+    return null
+  }
+  const ref = taskRefFromBranch(branch)
+  if (ref === null) return null
+  return ref.kind === 'issue' ? ref.issue : await issueForTrancheTask(ref.tranche, ref.taskId)
+}
+
 function readVinayaVersion(): string {
   try {
     const pkg = JSON.parse(readFileSync(join(packageRoot(import.meta.url), 'package.json'), 'utf8')) as {
@@ -443,6 +556,7 @@ function defaultDeps(): LogSinkDeps {
     vinayaVersion: () => readVinayaVersion(),
     stderr: defaultStderr,
     inputVersions: () => undefined,
+    resolveBranchIssue: () => resolveBranchIssue(process.cwd()),
     resolveLogDestination: defaultResolveLogDestination
   }
 }
@@ -614,6 +728,26 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
     return doctrineCache
   }
 
+  // The Issue the checked-out branch names — resolved at most ONCE per
+  // sink, its result (a `null` "this branch names none" included) reused by
+  // every later event, and only ever reached for by an event whose own
+  // `VINAYA_TASK` is absent. Bounded here, at the one call site, by the same
+  // deadline the shared context's own lookups carry: a `gh` that is slow,
+  // unauthenticated, or missing altogether costs one deadline for the whole
+  // process and then answers `null` for good — never a per-event forge call,
+  // never a dropped event.
+  let branchIssueCache: Promise<number | null> | undefined
+  const branchIssueOnce = (): Promise<number | null> => {
+    if (branchIssueCache === undefined) {
+      branchIssueCache = withDeadline(
+        Promise.resolve().then(() => deps.resolveBranchIssue()),
+        LOG_CONTEXT_LOOKUP_DEADLINE_MS,
+        null
+      )
+    }
+    return branchIssueCache
+  }
+
   // `deps.resolveRepo()` (the real default is `@attalabs/aeg-forge-state`'s
   // `resolveRepo`) is called at most ONCE per sink, its result — including a
   // failed `null` — cached for every later `log()` call in this process.
@@ -747,7 +881,14 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
         parent: env.VINAYA_PARENT_EVENT
       }
       const written: Promise<void> = context()
-        .then(({ repo, doctrine: doctrineValue, destination: resolvedDestination }) => {
+        .then(async ({ repo, doctrine: doctrineValue, destination: resolvedDestination }) => {
+          // Only an event whose own snapshot carries no task asks the
+          // branch what task this is; every `log()` call that does await
+          // the SAME memoised promise, subscribed in the order their
+          // `context()` continuations ran — which is call order — so lines
+          // still land in call order, exactly as the shared context alone
+          // used to guarantee.
+          const branchIssue = envFields.task ? null : await branchIssueOnce()
           const header = buildHeader({
             now,
             runId,
@@ -758,6 +899,7 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
             host,
             hostname: deps.hostname(),
             env: envFields,
+            branchIssue,
             eventId: randomUUID(),
             processId,
             inputVersions: deps.inputVersions()
