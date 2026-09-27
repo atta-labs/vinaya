@@ -61,7 +61,7 @@ import {
   type PauseDisposition,
   type StartRecord
 } from './task-tools/start.js'
-import { readTaskPrFacts, type TaskPrFacts, type TaskPrRead } from './task-tools/pr-read.js'
+import { readTaskPrFacts, sanitizeForgeText, type TaskPrFacts, type TaskPrRead } from './task-tools/pr-read.js'
 import { getProcessSnapshot, type ProcessSnapshot } from './dispatch.js'
 
 /**
@@ -415,8 +415,9 @@ export const defaultStartClaimDeps: StartClaimDeps = {
  * The most a claim's own strings may say in a status cell.
  *
  * `requestId` and `startedAt` come off a file on disk and are rendered into
- * `renderTaskStatusTable`'s fixed-width rows and into the `task_status` state
- * string — the exact string the Operator doctrine keys its single action off.
+ * `renderTaskStatusTable`'s padded markdown rows and into the `task_status`
+ * state string — the exact string the Operator doctrine keys its single action
+ * off.
  * Replacing only the non-printable characters is not enough: the whole
  * printable range includes the punctuation the state phrases themselves are
  * built from, so a `requestId` reading `abc) — running (pid 4242` would render
@@ -1226,26 +1227,46 @@ export type TaskStatusTableDeps = { now: () => Date; host: () => string }
 export const defaultTaskStatusTableDeps: TaskStatusTableDeps = { now: () => new Date(), host: () => hostname() }
 
 /**
- * The one character that ends a markdown table cell, and the ones that end a
- * row — neutralized in every cell before it is rendered, because a cell's own
- * value is not this renderer's to trust.
+ * The most one cell may say. The longest phrase this table renders is a start
+ * that did not come up — a bounded request identity, a timestamp and their
+ * labels — comfortably inside this, so no legitimate cell is ever shortened;
+ * what it bounds is a value off a forge label or a record on disk, which is a
+ * LABEL and never prose. The same reasoning `MAX_CHECK_NAME_CHARS` applies to a
+ * check's own name in `task_pr_read`.
+ */
+const CELL_DISPLAY_MAX = 200
+
+/**
+ * Every cell's one exit before it is rendered, because a cell's value is not
+ * this renderer's to trust and the table is relayed VERBATIM into the
+ * Principal's view.
  *
- * Most cells come from a closed vocabulary, but two do not: the tranche slug is
- * whatever the forge label carried (`findTrancheSlug` strips the prefix and
+ * Most cells come from a closed vocabulary, but some do not: the tranche slug is
+ * whatever the forge label carried (`findTrancheSlug` slices the label prefix and
  * validates nothing at read time) and a state phrase can carry a pause reason or
- * a last-decision word off a record on disk. A single vertical bar in either
- * silently adds a column to a table the Operator doctrine now requires be
- * relayed exactly as returned, so the header and the row stop lining up and a
- * reader is shown a value under the wrong name. The padded layout this replaced
- * was immune to that, and the pipes must not cost it.
+ * a last-decision word off a record on disk. That is UNAUTHORED text in the same
+ * sense `task_pr_read`'s own trust boundary means it — nobody to allowlist — so
+ * it leaves through the same neutralization that boundary prescribes, and then
+ * through the two characters that break a markdown table:
  *
- * A bar is ESCAPED (`\|`, which markdown renders as the bar itself) rather than
- * dropped — the value still reads as itself. A newline or a carriage return is
- * replaced by a space instead: there is no escape that keeps a line break
- * inside one cell, and a cell that ends its own row is the same defect.
+ * 1. `sanitizeForgeText` — strip terminal colouring, redact secrets through this
+ *    codebase's single `redact()` chokepoint, defang the two grammars that carry
+ *    authority here (an AEG control comment's `<!--` opener, a line-anchored
+ *    `VERDICT:` label), and cap. Without the defang, a label beginning `<!--`
+ *    swallowed every cell and row after it in any markdown or HTML renderer —
+ *    hiding columns from a reader while the Operator believed it had relayed the
+ *    table intact — and the same cell could carry a control-comment shape into
+ *    the Operator's own context.
+ * 2. A vertical bar is ESCAPED (`\|`, which markdown renders as the bar itself)
+ *    rather than dropped, so the value still reads as itself; one unescaped bar
+ *    silently adds a column and the header stops naming what the row carries.
+ * 3. A newline or carriage return becomes a space: no escape keeps a line break
+ *    inside one cell, and a cell that ends its own row is the same defect.
  */
 function cellSafe(value: string): string {
-  return value.replaceAll('|', '\\|').replaceAll(/[\r\n]+/g, ' ')
+  return sanitizeForgeText(value, CELL_DISPLAY_MAX)
+    .replaceAll('|', '\\|')
+    .replaceAll(/[\r\n]+/g, ' ')
 }
 
 /** The table as lines: a header row, a markdown separator, then one row per task, every column padded to its widest cell, and one footer line last. */
@@ -1320,9 +1341,13 @@ export function claimDepsForOneRead(): StartClaimDeps {
  *
  * Past the budget the remaining rows read `not read` — the word this table
  * already uses for a read nothing made — and the answer for the row an Operator
- * is actually acting on is to read that task by name, which is one row and
- * always inside the budget. That is the same remedy the doctrine already gives
- * for a task missing from a listing.
+ * is actually acting on is to read that task by NAME. That is one row and always
+ * inside the budget, but only because the reader FILTERS BEFORE IT BUILDS
+ * (`gatherTaskStatusList`'s own selector): a named read that filtered afterwards
+ * would have spent every slot in listing order first and then reported the named
+ * row's own columns as unread, which is the promise this paragraph made before
+ * that filter existed. The remedy itself is the same one the doctrine already
+ * gives for a task missing from a listing.
  */
 export const PR_FACTS_READS_PER_STATUS_READ = 5
 
@@ -1369,6 +1394,15 @@ function commentsAlreadyRead(comments: readonly { body: string; author: string |
   return () => ({ kind: 'read', comments })
 }
 
+/** The three identity fields a row carries, derived from a ref the same way for every caller — `buildRow`'s own row and the selector that decides which refs are worth building at all. */
+function rowIdentityFor(ref: TaskRef): TaskStatusIdentity {
+  return {
+    tranche: ref.kind === 'tranche' ? ref.tranche : 'backlog',
+    id: ref.kind === 'tranche' ? ref.id : String(ref.issue),
+    issue: ref.issue
+  }
+}
+
 function buildRow(
   ref: TaskRef,
   allowlist: readonly string[],
@@ -1379,11 +1413,7 @@ function buildRow(
 ): { row: TaskStatusRow; briefFrozen: boolean } {
   const started = hasFrozenBrief(ref.issue, allowlist)
   const root = runtimeDir()
-  const base = {
-    tranche: ref.kind === 'tranche' ? ref.tranche : 'backlog',
-    id: ref.kind === 'tranche' ? ref.id : String(ref.issue),
-    issue: ref.issue
-  }
+  const base = rowIdentityFor(ref)
   // A claim written against a tranche ordinal is matched by that ordinal — the
   // address this row already carries — so a start is never missed for want of a
   // forge read inside the outbox reader.
@@ -1470,6 +1500,29 @@ function buildRow(
 
 // --- command-facing entry points --------------------------------------
 
+/** A row's own identity, the three fields every selector matches against. */
+export type TaskStatusIdentity = { tranche: string; id: string; issue: number }
+
+/**
+ * Which task a status read is about: one named task, or (`null`) every open one.
+ *
+ * Structurally the same two shapes the task tools address a task by, so a caller
+ * hands its own ref straight in rather than translating it.
+ */
+export type TaskStatusSelector = { tranche: string; id: string } | { issue: number } | null
+
+/**
+ * Does this identity answer that selector? The ONE rule every caller matches by
+ * — the gather, which uses it to decide which refs are worth building, and the
+ * task tools, which use it to pick the rows a call matched. An `{ issue }` ref
+ * matches by Issue number alone, so a tranche task addressed by its own Issue
+ * number still resolves; a `{ tranche, id }` ref matches a tranche row only,
+ * since a backlog row's `tranche` is the literal `backlog`.
+ */
+export function taskStatusIdentityMatches(selector: NonNullable<TaskStatusSelector>, row: TaskStatusIdentity): boolean {
+  return 'issue' in selector ? row.issue === selector.issue : row.tranche === selector.tranche && row.id === selector.id
+}
+
 /** The rows and the table rendered from them — returned together so the command prints what this reader rendered rather than calling a second boundary function of its own (`apps/cli/specs/surface.md`'s one-command-one-function discipline). */
 export type TaskStatusListView = {
   rows: TaskStatusRow[]
@@ -1503,7 +1556,7 @@ export type TaskStatusListView = {
  * bounded lifetime — so a listing of ten tasks pays for it once, and a listing
  * in which nothing is in a comparable phase pays nothing at all.
  */
-export function gatherTaskStatusList(): TaskStatusListView {
+export function gatherTaskStatusList(selector: TaskStatusSelector = null): TaskStatusListView {
   const allowlist = principalAllowlist()
   const root = runtimeDir()
   const history = phaseHistoryLookup(allowlist)
@@ -1513,6 +1566,15 @@ export function gatherTaskStatusList(): TaskStatusListView {
   const rows: TaskStatusRow[] = []
   const briefFrozenIssues = new Set<number>()
   for (const ref of listOpenTaskIssues()) {
+    // A named read builds ONLY the row it named — before any per-row read is
+    // made, so the pull-request budget is spent on that row rather than on
+    // whatever happened to list ahead of it. Filtering the rows AFTER building
+    // them made the read-it-by-name remedy this file's own budget note promises
+    // untrue: a named task listing sixth or later still read `not read` in every
+    // pull-request column, with no way for an Operator to get them at all. It
+    // also drops the forge cost of a named read from one Issue read per open task
+    // to one.
+    if (selector !== null && !taskStatusIdentityMatches(selector, rowIdentityFor(ref))) continue
     // A backlog ref only ever becomes a candidate once the loop has
     // already written it an outbox directory — see `hasOutboxDir`'s own doc
     // comment. A tranche-labeled ref carries no such gate: O4 lists every open

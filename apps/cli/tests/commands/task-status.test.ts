@@ -194,8 +194,15 @@ function headOf(pr: number): string {
   return `${pr}${'a'.repeat(37)}`
 }
 
-function checkRun(name: string, status: string, conclusion: string | null) {
-  return { __typename: 'CheckRun', name, status, conclusion, startedAt: '2026-09-22T12:00:00Z' }
+function checkRun(name: string, status: string, conclusion: string | null, workflowName?: string) {
+  return {
+    __typename: 'CheckRun',
+    name,
+    status,
+    conclusion,
+    startedAt: '2026-09-22T12:00:00Z',
+    ...(workflowName === undefined ? {} : { workflowName })
+  }
 }
 
 /**
@@ -213,7 +220,10 @@ const PR_ROLLUP: Record<number, ReturnType<typeof checkRun>[]> = {
   702: [checkRun('Build, lint & typecheck', 'COMPLETED', 'FAILURE')],
   703: [
     checkRun('Build, lint & typecheck', 'COMPLETED', 'SUCCESS'),
-    checkRun('vinaya review gate', 'COMPLETED', 'SUCCESS')
+    // The gate's own run carries the workflow that posts it beside its check
+    // name — the pair the gate cell requires, so a run that merely claims the
+    // name is neither the gate nor able to suppress it.
+    checkRun('vinaya review gate', 'COMPLETED', 'SUCCESS', 'Vinaya Review Gate')
   ],
   704: [checkRun('Build, lint & typecheck', 'COMPLETED', 'SUCCESS')]
 }

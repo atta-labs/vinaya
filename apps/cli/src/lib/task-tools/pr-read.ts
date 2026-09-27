@@ -61,7 +61,7 @@ import { redact } from '@attalabs/aeg-core'
 import { markerComments, principalAllowlist } from '../dev-review-loop/developer-dispatch.js'
 import { sh } from '../dev-review-loop/gate-reading.js'
 import { PRINCIPAL_TEST_PLAN_WAIT_CHECK_RUN_NAME } from '../principal-test-plan-wait-check-name.js'
-import { REVIEW_GATE_CHECK_RUN_NAME } from '../review-gate-check-name.js'
+import { REVIEW_GATE_CHECK_RUN_NAME, REVIEW_GATE_WORKFLOW_NAME } from '../review-gate-check-name.js'
 import { resolveRowForRef, type TaskToolCallResult } from './handlers.js'
 
 /** One comment as the forge reports it — body plus the login that authored it, the only two fields any derivation below reads. */
@@ -315,6 +315,33 @@ function isCheckRun(node: RollupNode): boolean {
 }
 
 /**
+ * Is this the review gate's OWN check run — its check name AND the workflow that
+ * posts it?
+ *
+ * The name alone is a free string. Anything able to create a check run on the
+ * head can carry it, and `latestNodeRunPerName` hands the newest run under a name
+ * the cell, so a later-started run named `vinaya review gate` concluding
+ * `SUCCESS` read as a green gate — and with both clean verdicts already on that
+ * head, the table then named `merge` for a head the real gate was refusing. That
+ * is a merge instruction a Principal acts on, which is why a name match is not
+ * enough here even though it is enough for the mechanical set (where a run
+ * merely NAMED like the gate is excluded either way).
+ *
+ * The workflow name is read from the same payload — no extra forge call — and a
+ * run created through the checks API outside Actions carries none at all. It is
+ * attribution by what the forge reports, not authentication: see
+ * `REVIEW_GATE_WORKFLOW_NAME`'s own note for what closing that would cost and
+ * why the merge gate re-evaluating before any merge is what actually decides.
+ *
+ * The gate run is selected from the gate-shaped runs FIRST and only then deduped
+ * to the newest of them, so a run that claims the name without the workflow
+ * cannot suppress the real gate's own conclusion either.
+ */
+function isReviewGateRun(node: RollupNode): boolean {
+  return node.name === REVIEW_GATE_CHECK_RUN_NAME && node.workflowName === REVIEW_GATE_WORKFLOW_NAME
+}
+
+/**
  * One node per check name — the newest run by `startedAt`, so a check re-run
  * after a failure is judged by the run that superseded it rather than by both.
  * The same dedupe rule `gate-reading.ts` applies to the driver's own check-run
@@ -405,22 +432,30 @@ export function taskPrFactsFrom(
 ): TaskPrFacts {
   // Check runs only, before anything else reads a name or a conclusion — see
   // `isCheckRun` for the green gate a commit status could otherwise claim.
-  const checks = toChecks(latestNodeRunPerName(nodes.filter(isCheckRun)), () => null)
-  const gate = checks.find((check) => check.name === REVIEW_GATE_CHECK_RUN_NAME) ?? null
-  const mechanical = checks.filter(
-    (check) => check.name !== REVIEW_GATE_CHECK_RUN_NAME && check.name !== PRINCIPAL_TEST_PLAN_WAIT_CHECK_RUN_NAME
+  const runs = nodes.filter(isCheckRun)
+  // The gate's own run, chosen among the runs that carry BOTH its check name and
+  // its workflow (`isReviewGateRun`) and only then deduped to the newest of
+  // those — never the newest run that merely claims the name.
+  const gate = latestNodeRunPerName(runs.filter(isReviewGateRun)).at(0) ?? null
+  // The mechanical set still excludes both the gate's name and the
+  // principal-test-plan wait's by NAME: neither is CI, and a run merely named
+  // like one of them must not move this word either.
+  const mechanical = toChecks(
+    latestNodeRunPerName(runs).filter(
+      (node) => node.name !== REVIEW_GATE_CHECK_RUN_NAME && node.name !== PRINCIPAL_TEST_PLAN_WAIT_CHECK_RUN_NAME
+    ),
+    () => null
   )
   const review = buildReviewRecord(comments, allowlist)
   return {
     head,
     ci: summarizeChecks(mechanical),
-    gate: gate === null ? null : summarizeChecks([gate]),
+    gate: gate === null ? null : summarizeChecks(toChecks([gate], () => null)),
     codeReview: verdictOnHead(review.verdicts, 'code-review', head),
     security: verdictOnHead(review.verdicts, 'security', head)
   }
 }
 
-/**
 /**
  * The facts a pull request's own read produced, WITH the comments it read them
  * from. The comments ride along so a caller that needs them for a second column
@@ -456,21 +491,45 @@ export type TaskPrRead = { facts: TaskPrFacts; comments: PrComment[] }
  * call per row, which is the unbounded fan-out the budget above exists to
  * prevent, and the merge gate re-checks the real head before any merge lands.
  */
-export function readTaskPrFacts(pr: number, allowlist: readonly string[]): TaskPrRead | null {
+/** The one `gh` call this read makes, behind a parameter — so the guard, the page bound and every parse failure are testable with no `gh` on `PATH`. */
+export function fetchPrFactsPayload(pr: number): string {
+  return sh('gh', ['pr', 'view', String(pr), '--json', 'headRefOid,statusCheckRollup,comments'])
+}
+
+export function readTaskPrFacts(
+  pr: number,
+  allowlist: readonly string[],
+  fetchPayload: (pr: number) => string = fetchPrFactsPayload
+): TaskPrRead | null {
+  // Checked HERE, before the number reaches an argument list — the same guard
+  // `readPrComments` (`task-status-history.ts`) states at the identical
+  // boundary: a number beginning with a dash would be read by `gh` as a flag.
+  if (!Number.isInteger(pr) || pr <= 0) return null
   let raw: string
   try {
-    raw = sh('gh', ['pr', 'view', String(pr), '--json', 'headRefOid,statusCheckRollup,comments'])
+    raw = fetchPayload(pr)
   } catch {
     return null
   }
   try {
     const parsed = JSON.parse(raw) as { headRefOid?: string | null; statusCheckRollup?: RollupNode[] | null }
+    const nodes = parsed.statusCheckRollup ?? []
+    // `gh pr view` returns ONE unpaginated rollup page, unlike both readers this
+    // function keeps parity with (`task_pr_read`'s own rollup read walks
+    // `pageInfo`/`endCursor`; the driver's `fetchMechanicalCheckRuns` passes
+    // `--paginate`). A head that fills the page may carry checks outside it, and
+    // a `ci` word summarized over a partial set could read green beside a red
+    // check this read never saw, or report the gate absent for a gate that ran.
+    // Neither is something to guess at, so a full page is reported as a read that
+    // could not answer — `not read` in every column — and the whole answer stays
+    // one forge call. `task_pr_read` is the paginated read for such a head.
+    if (nodes.length >= ROLLUP_SINGLE_PAGE_MAX) return null
     // The comments are parsed by the loop's OWN parser, out of the same raw
     // payload — one parser for a comment's author, never a second
     // `author.login` mapping beside it.
     const comments = markerComments(raw)
     return {
-      facts: taskPrFactsFrom(parsed.headRefOid ?? null, parsed.statusCheckRollup ?? [], comments, allowlist),
+      facts: taskPrFactsFrom(parsed.headRefOid ?? null, nodes, comments, allowlist),
       comments
     }
   } catch {
@@ -505,6 +564,8 @@ export type RollupNode = {
   name?: string | null
   /** When this run started, as the forge reports it — read only by `latestNodeRunPerName`, which needs it to tell a re-run from the run it superseded. Absent on a `StatusContext`, and on a read that never asked for it. */
   startedAt?: string | null
+  /** The workflow a check run belongs to, as the forge reports it — `null`/absent for a check run created outside Actions, and for a `StatusContext`, which has no workflow at all. Read only by `isReviewGateRun`. */
+  workflowName?: string | null
   status?: string | null
   conclusion?: string | null
   isRequired?: boolean | null
@@ -537,6 +598,15 @@ const ROLLUP_QUERY = `query($owner: String!, $repo: String!, $pr: Int!, $after: 
 
 /** Generous, not a bound: 100 contexts a page, and a pull request reporting more than a thousand checks has a problem this tool cannot answer anyway. */
 const MAX_ROLLUP_PAGES = 10
+
+/**
+ * The size of `gh pr view --json statusCheckRollup`'s own single rollup page —
+ * its query asks for one page of contexts and exposes no cursor, so a payload
+ * carrying this many nodes is a page that may be full rather than a head that
+ * happens to report exactly this many checks. `readTaskPrFacts` treats that as a
+ * read it cannot answer; nothing else reads it.
+ */
+const ROLLUP_SINGLE_PAGE_MAX = 100
 
 /**
  * The forge's own status-check rollup for this pull request. `isRequired` is

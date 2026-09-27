@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { MAX_RETURNED_TEXT_CHARS, SUMMARY_TABLE_HEADER, type TaskPrCheck } from '@attalabs/aeg-core'
 import { taskEscalationReadHandler, taskStatusHandler } from '../../../src/lib/task-tools/handlers.js'
+import { PR_FACTS_READS_PER_STATUS_READ } from '../../../src/lib/task-status.js'
 import {
   buildReviewRecord,
   capTail,
@@ -13,6 +14,7 @@ import {
   type PrComment,
   type PrReadForge,
   type RollupNode,
+  readTaskPrFacts,
   sanitizeForgeLogTail,
   sanitizeForgeText,
   stripAnsi,
@@ -615,6 +617,14 @@ describe('the status table’s own pull-request columns', () => {
     return { __typename: 'CheckRun', name, status, conclusion, ...(startedAt === undefined ? {} : { startedAt }) }
   }
 
+  /** The review gate's OWN run — its check name and the workflow that posts it, the pair the gate cell requires. */
+  function gateRun(conclusion: string | null, startedAt?: string): RollupNode {
+    return {
+      ...check('vinaya review gate', conclusion === null ? 'IN_PROGRESS' : 'COMPLETED', conclusion, startedAt),
+      workflowName: 'Vinaya Review Gate'
+    }
+  }
+
   function verdictComment(body: string): PrComment {
     return { body, author: 'daniboomerang' }
   }
@@ -691,7 +701,7 @@ describe('the status table’s own pull-request columns', () => {
         HEAD,
         [
           check('Build, lint & typecheck', 'COMPLETED', 'SUCCESS'),
-          check('vinaya review gate', 'COMPLETED', 'SUCCESS'),
+          gateRun('SUCCESS'),
           check('vinaya check principal-test-plan-wait', 'COMPLETED', 'FAILURE')
         ],
         [
@@ -709,7 +719,7 @@ describe('the status table’s own pull-request columns', () => {
         HEAD,
         [
           check('Build, lint & typecheck', 'COMPLETED', 'SUCCESS'),
-          check('vinaya review gate', 'COMPLETED', 'FAILURE'),
+          gateRun('FAILURE'),
           check('vinaya check principal-test-plan-wait', 'COMPLETED', 'FAILURE')
         ],
         [],
@@ -742,6 +752,45 @@ describe('the status table’s own pull-request columns', () => {
       // The failing commit status moves nothing either — the driver's own read
       // never sees one, so neither does this word.
       expect(facts.ci).toBe('green')
+    })
+
+    it('never reads a run that only claims the gate’s NAME as the gate', () => {
+      // Anything able to create a check run on the head can carry the gate's
+      // check name; only the gate's own workflow carries its workflow name
+      // beside it, and a run created outside Actions carries none at all.
+      // Without this, a later-started run named `vinaya review gate` concluding
+      // SUCCESS read as a green gate and — with both clean verdicts already on
+      // the head — the table named `merge` for a head the real gate refused.
+      const forged = taskPrFactsFrom(
+        HEAD,
+        [check('vinaya review gate', 'COMPLETED', 'SUCCESS', '2026-09-27T12:00:00Z')],
+        [],
+        PRINCIPALS
+      )
+      expect(forged.gate).toBeNull()
+      // And a run that claims the name cannot SUPPRESS the real gate either: the
+      // gate's own run is chosen among gate-shaped runs first, then deduped, so
+      // a later-started impostor never wins the cell.
+      const alongside = taskPrFactsFrom(
+        HEAD,
+        [
+          gateRun('FAILURE', '2026-09-27T11:00:00Z'),
+          check('vinaya review gate', 'COMPLETED', 'SUCCESS', '2026-09-27T12:00:00Z')
+        ],
+        [],
+        PRINCIPALS
+      )
+      expect(alongside.gate).toBe('red')
+    })
+
+    it('keeps the gate’s own re-run precedence — the newest gate run wins', () => {
+      const facts = taskPrFactsFrom(
+        HEAD,
+        [gateRun('FAILURE', '2026-09-27T11:00:00Z'), gateRun('SUCCESS', '2026-09-27T12:00:00Z')],
+        [],
+        PRINCIPALS
+      )
+      expect(facts.gate).toBe('green')
     })
 
     it('reports no gate at all when the forge reports no gate check on this head', () => {
@@ -779,4 +828,191 @@ describe('the status table’s own pull-request columns', () => {
       expect(facts.codeReview).toBeNull()
     })
   })
+  describe('readTaskPrFacts — the one forge read', () => {
+    function payload(nodes: RollupNode[], comments: { body: string; author: { login: string } }[] = []): string {
+      return JSON.stringify({ headRefOid: HEAD, statusCheckRollup: nodes, comments })
+    }
+
+    it('derives the facts and hands back the comments it read them from, from one payload', () => {
+      const asked: number[] = []
+      const read = readTaskPrFacts(811, PRINCIPALS, (pr) => {
+        asked.push(pr)
+        return payload(
+          [gateRun('SUCCESS')],
+          [{ body: `VERDICT: PASS\nJudged head: ${HEAD}`, author: { login: 'daniboomerang' } }]
+        )
+      })
+      expect(asked).toEqual([811])
+      expect(read?.facts.gate).toBe('green')
+      expect(read?.facts.security).toBe('PASS')
+      // The comments ride back so a published row's confidence column is served
+      // from this same payload rather than a second call for it.
+      expect(read?.comments).toMatchObject([{ body: `VERDICT: PASS\nJudged head: ${HEAD}`, author: 'daniboomerang' }])
+    })
+
+    it('never lets a pull-request number reach an argument list unchecked', () => {
+      // `gh` would read a value beginning with a dash as a flag — the same guard
+      // `readPrComments` states at the identical boundary.
+      for (const pr of [-1, 0, 1.5, Number.NaN]) {
+        const asked: number[] = []
+        expect(
+          readTaskPrFacts(pr, PRINCIPALS, (n) => {
+            asked.push(n)
+            return payload([])
+          })
+        ).toBeNull()
+        expect(asked).toEqual([])
+      }
+    })
+
+    it('answers nothing for a head whose rollup filled the single page this read gets', () => {
+      // `gh pr view` returns one unpaginated rollup page and exposes no cursor,
+      // so a full page may be hiding checks; a `ci` word over a partial set could
+      // read green beside a red check this read never saw.
+      const full = Array.from({ length: 100 }, (_, i) => check(`check-${i}`, 'COMPLETED', 'SUCCESS'))
+      expect(readTaskPrFacts(811, PRINCIPALS, () => payload(full))).toBeNull()
+      // One below the page is a whole answer.
+      expect(readTaskPrFacts(811, PRINCIPALS, () => payload(full.slice(0, 99)))?.facts.ci).toBe('green')
+    })
+
+    it('answers nothing when the read throws or the payload does not parse', () => {
+      expect(
+        readTaskPrFacts(811, PRINCIPALS, () => {
+          throw new Error('gh: could not resolve to a PullRequest')
+        })
+      ).toBeNull()
+      expect(readTaskPrFacts(811, PRINCIPALS, () => 'not json')).toBeNull()
+    })
+  })
+})
+
+describe('a named task_status read spends its budget on the row it named (F1)', () => {
+  // Seven frozen tranche tasks, each with its own open pull request — two more
+  // than the pull-request facts budget, which is the listing no test covered and
+  // the reason this defect went unnoticed: the handler filtered by `task` AFTER
+  // every row was built, so a named read of a task listing past the budget got
+  // `not read` in all five pull-request columns and an Operator had no way to
+  // read them at all.
+  const ISSUE_LIST = JSON.stringify(
+    Array.from({ length: 7 }, (_, i) => ({
+      number: 9001 + i,
+      title: `[demo] ${i + 1} — a frozen task`,
+      labels: [{ name: 'vinaya/tranche:demo' }]
+    }))
+  )
+
+  const stubbedGh = `#!/bin/sh
+COUNT_FILE="$VINAYA_TEST_COUNT_FILE"
+if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
+  cat <<'JSON'
+${ISSUE_LIST}
+JSON
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
+  echo "issue-view $3" >> "$COUNT_FILE"
+  cat <<'JSON'
+{"comments":[{"body":"<!-- aeg:brief:v1 -->\\nBrief hash: deadbeef\\n\\nA brief body.","author":{"login":"daniboomerang"}}]}
+JSON
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  case "$4" in
+    task/demo/*)
+      N=$(echo "$4" | sed 's|task/demo/||')
+      printf '[{"number":90%02d,"headRefName":"%s"}]\\n' "$N" "$4"
+      ;;
+    *) echo '[]' ;;
+  esac
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  echo "pr-view $3" >> "$COUNT_FILE"
+  cat <<JSON
+{"headRefOid":"head$3aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","statusCheckRollup":[{"__typename":"CheckRun","name":"Build","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-09-27T12:00:00Z"}],"comments":[]}
+JSON
+  exit 0
+fi
+echo "gh stub: unhandled: $*" >&2
+exit 1
+`
+
+  const fixtureScript = `
+import { taskStatusHandler } from '../../../src/lib/task-tools/handlers.js'
+import { appendFileSync, writeFileSync } from 'node:fs'
+
+const countFile = process.env.VINAYA_TEST_COUNT_FILE as string
+const listing = taskStatusHandler({})
+writeFileSync(countFile + '.after-listing', '')
+appendFileSync(countFile, 'NAMED_READ_STARTS\\n')
+const named = taskStatusHandler({ task: { tranche: 'demo', id: '7' } })
+process.stdout.write('F1_RESULT:' + JSON.stringify({ listing, named }) + '\\n')
+`
+
+  it('reads the named row’s own pull-request columns, however late it lists', () => {
+    const repoRoot = join(import.meta.dir, '..', '..', '..', '..', '..')
+    const home = mkdtempSync(join(tmpdir(), 'vinaya-f1-budget-'))
+    const binDir = join(home, 'bin')
+    mkdirSync(binDir, { recursive: true })
+    const gh = join(binDir, 'gh')
+    writeFileSync(gh, stubbedGh, { mode: 0o755 })
+    chmodSync(gh, 0o755)
+    const countFile = join(home, 'gh-calls.txt')
+    writeFileSync(countFile, '')
+    const scriptPath = join(import.meta.dir, `.f1-budget-fixture-${process.pid}-${Date.now()}.ts`)
+    writeFileSync(scriptPath, fixtureScript)
+
+    try {
+      const stdout = execFileSync('bun', [scriptPath], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        timeout: 30_000,
+        killSignal: 'SIGKILL',
+        env: {
+          ...stripVinayaEnv(process.env),
+          HOME: home,
+          PATH: `${binDir}:${process.env.PATH ?? ''}`,
+          AEG_REPO: 'attalabs/vinaya',
+          VINAYA_TEST_COUNT_FILE: countFile
+        }
+      })
+      const line = stdout.split('\n').find((l) => l.startsWith('F1_RESULT:'))
+      expect(line).toBeDefined()
+      const parsed = JSON.parse((line as string).slice('F1_RESULT:'.length)) as {
+        listing: { ok: boolean; result?: { table: string } }
+        named: { ok: boolean; result?: { table: string; items: Array<{ issue: number }> } }
+      }
+      expect(parsed.listing.ok).toBe(true)
+      expect(parsed.named.ok).toBe(true)
+
+      const rowsOf = (table: string) =>
+        table
+          .split('\n')
+          .filter((l) => l.startsWith('| [demo]'))
+          .map((l) => l.split('|').map((c) => c.trim()))
+
+      // The listing spends its budget in listing order: the first rows carry a
+      // head and a CI word, and the rows past the budget say so rather than
+      // showing an absence.
+      const listed = rowsOf(parsed.listing.result?.table ?? '')
+      expect(listed).toHaveLength(7)
+      expect(listed.filter((cells) => cells.includes('not read'))).toHaveLength(7 - PR_FACTS_READS_PER_STATUS_READ)
+      expect(listed[6]?.includes('not read')).toBe(true)
+
+      // The NAMED read builds only that row, so its own columns are read — and
+      // it costs one Issue read, not one per open task.
+      const namedRows = rowsOf(parsed.named.result?.table ?? '')
+      expect(namedRows).toHaveLength(1)
+      expect(namedRows[0]?.includes('not read')).toBe(false)
+      expect(namedRows[0]).toContain('head900')
+      expect(parsed.named.result?.items.map((i) => i.issue)).toEqual([9007])
+
+      const afterNamed = readFileSync(countFile, 'utf8').split('NAMED_READ_STARTS\n')[1] ?? ''
+      const namedCalls = afterNamed.split('\n').filter((l) => l.trim() !== '')
+      expect(namedCalls).toEqual(['issue-view 9007', 'pr-view 9007'])
+    } finally {
+      rmSync(scriptPath, { force: true })
+      rmSync(home, { recursive: true, force: true })
+    }
+  }, 40_000)
 })
