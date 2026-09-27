@@ -212,6 +212,26 @@ describe('validateIssueContent — the content checks', () => {
     expect(errors[0]?.message).toContain('Technical surface map')
   })
 
+  it('refuses a Dependency rationale edge naming a lettered task id (issue-809, O1)', () => {
+    const body = '**Dependency rationale** — `Depends-on: 2a`.\n\n**Traps to avoid** — none.'
+    const errors = validateIssueContent({
+      body,
+      labels: ['vinaya/tranche:demo'],
+      sharedPackages: [],
+      projectPaths: [],
+      retryCommand: cmd,
+      issueNumber: null,
+      resolvesToFile: () => true,
+      docOwnersContent: null,
+      milestoneSiblings: null,
+      subjectRef: ''
+    })
+    const edge = errors.find((e) => e.message.includes('`2a`') && /whole number/.test(e.message))
+    expect(edge).toBeDefined()
+    expect(edge?.check).toBe('issue-content')
+    expect(edge?.agent_recovery_prompt).toContain('vinaya issue create')
+  })
+
   it('refuses a rationale naming no concrete doc/skill path', () => {
     const errors = validateIssueContent({
       body: noDocPathIssue,

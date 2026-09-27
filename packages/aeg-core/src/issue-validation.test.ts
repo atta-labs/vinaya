@@ -7,6 +7,7 @@ import {
   BRIEF_SECTIONS_SINCE_ISSUE,
   checkBlastRadiusScope,
   checkConflictCompleteness,
+  checkEdgeIdsWholeNumbers,
   checkIssueBriefSections,
   checkIssueObjectives,
   checkIssueRationale,
@@ -143,6 +144,36 @@ describe('checkIssueRationale', () => {
   it('does not accept a field name mentioned in plain prose (needs bold or heading form)', () => {
     const body = 'The boundary of this task is unclear and the sizing was never done.'
     expect(checkIssueRationale(body).status).toBe('fail')
+  })
+})
+
+// issue-809, O1 — a lettered edge id is refused at authoring, naming the
+// whole-number rule, so no plan the gates accept names a task `task run` refuses.
+describe('checkEdgeIdsWholeNumbers', () => {
+  it('passes edges naming only whole-number and `#NNN` ids', () => {
+    const body = '**Dependency rationale** — `Depends-on: 1, 2`, `Conflicts-with: #570`.\n\n**Traps to avoid** — none.'
+    expect(checkEdgeIdsWholeNumbers(body)).toEqual({ status: 'pass', errors: [] })
+  })
+
+  it('passes a body with no Dependency rationale section', () => {
+    expect(checkEdgeIdsWholeNumbers('**Boundary** — nothing here.').status).toBe('pass')
+  })
+
+  it('fails a lettered `Depends-on` id, naming the token and the whole-number rule', () => {
+    const body = '**Dependency rationale** — `Depends-on: 2a`.\n\n**Traps to avoid** — none.'
+    const r = checkEdgeIdsWholeNumbers(body)
+    expect(r.status).toBe('fail')
+    expect(r.errors).toHaveLength(1)
+    expect(r.errors[0]).toContain('`2a`')
+    expect(r.errors[0]).toMatch(/whole number/)
+    expect(r.errors[0]).toMatch(/task run/)
+  })
+
+  it('fails once per lettered id across both fields', () => {
+    const body = '**Dependency rationale** — `Depends-on: 7a, 2`, `Conflicts-with: 3b`.\n\n**Traps to avoid** — none.'
+    const r = checkEdgeIdsWholeNumbers(body)
+    expect(r.status).toBe('fail')
+    expect(r.errors).toHaveLength(2)
   })
 })
 

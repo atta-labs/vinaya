@@ -1,7 +1,12 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { AmbiguousBareEdgeError, parseRationaleDeps, requireTrancheQualifiedEdges } from './parse-rationale-deps'
+import {
+  AmbiguousBareEdgeError,
+  findLetteredEdgeIds,
+  parseRationaleDeps,
+  requireTrancheQualifiedEdges
+} from './parse-rationale-deps'
 
 const FIXTURES = join(__dirname, '..', 'tests', 'fixtures')
 /** Captured verbatim via `gh issue view <n> --json body` on 2026-07-06 — the
@@ -105,6 +110,57 @@ describe('parseRationaleDeps', () => {
       dependsOn: [],
       conflictsWith: []
     })
+  })
+
+  // issue-809, O1 — the grammar no longer accepts a lettered task id. The
+  // tolerant reader drops it (the refusal lives in `findLetteredEdgeIds` + the
+  // aeg-core gate); it must not be scavenged as an edge.
+  it('drops a lettered task id from a labeled edge span rather than declaring it', () => {
+    const body = '**Dependency rationale** — `Depends-on: 7a, 2`, `Conflicts-with: 3b`.\n\n**Traps to avoid** — none.'
+    expect(parseRationaleDeps(body)).toEqual({ dependsOn: ['2'], conflictsWith: [] })
+  })
+
+  it('drops a slug-qualified lettered id, keeping only the whole-number references', () => {
+    const body =
+      '**Dependency rationale** — `Depends-on: aeg-governance-hardening 3c, #372`.\n\n**Traps to avoid** — none.'
+    expect(parseRationaleDeps(body)).toEqual({ dependsOn: ['#372'], conflictsWith: [] })
+  })
+})
+
+// issue-809, O1 — the refusal's eyes: name a lettered edge id so a gate can
+// refuse it, rather than leaving the tolerant reader to drop it unremarked.
+describe('findLetteredEdgeIds', () => {
+  it('is empty when every declared edge id is a whole number or `#NNN`', () => {
+    const body = '**Dependency rationale** — `Depends-on: 1, 2`, `Conflicts-with: #570`.\n\n**Traps to avoid** — none.'
+    expect(findLetteredEdgeIds(body)).toEqual([])
+  })
+
+  it('is empty when there is no Dependency rationale section at all', () => {
+    expect(findLetteredEdgeIds('**Boundary** — nothing here.')).toEqual([])
+  })
+
+  it('names a bare lettered id (`7a`) in a Depends-on span', () => {
+    const body = '**Dependency rationale** — `Depends-on: 7a, 2`.\n\n**Traps to avoid** — none.'
+    expect(findLetteredEdgeIds(body)).toEqual(['7a'])
+  })
+
+  it('names lettered ids across both fields, including a slug-qualified one', () => {
+    const body =
+      '**Dependency rationale** — `Depends-on: aeg-governance-hardening 3c`, `Conflicts-with: 2b`.\n\n**Traps to avoid** — none.'
+    expect(findLetteredEdgeIds(body)).toEqual(['aeg-governance-hardening 3c', '2b'])
+  })
+
+  it('reads only the FIRST labeled span per field, so a later prose re-mention of a dropped `2b` is not flagged', () => {
+    // Mirrors `parseRationaleDeps`: an Amendment citing a removed historical
+    // value in backticks is prose, not a fresh declaration.
+    const body =
+      '**Dependency rationale** — `Depends-on: 1`. Amendment: the old `Depends-on: 2b` edge was dropped.\n\n**Traps to avoid** — none.'
+    expect(findLetteredEdgeIds(body)).toEqual([])
+  })
+
+  it('de-duplicates a repeated lettered id within a span', () => {
+    const body = '**Dependency rationale** — `Conflicts-with: 4e, 4e`.\n\n**Traps to avoid** — none.'
+    expect(findLetteredEdgeIds(body)).toEqual(['4e'])
   })
 })
 

@@ -665,9 +665,19 @@ describe('checkForgeTitle', () => {
     expect(checkForgeTitle('Docs: Update the readme').status).toBe('pass')
     expect(checkForgeTitle('Plan(aeg): Add task 5d — post-merge Archivist').status).toBe('pass')
   })
-  it('passes task-style titles', () => {
-    expect(checkForgeTitle('[aeg-governance-hardening] 5d — Post-merge Archivist automation').status).toBe('pass')
+  it('passes task-style titles with a whole-number id', () => {
+    expect(checkForgeTitle('[aeg-governance-hardening] 5 — Post-merge Archivist automation').status).toBe('pass')
     expect(checkForgeTitle('[aeg-studio-cleanup] 2 — Remove dependency-graph + board view').status).toBe('pass')
+    expect(checkForgeTitle('[log-quality-v1] 12 — a two-digit id still passes').status).toBe('pass')
+  })
+  it('fails a task-style title whose id carries a letter, naming the whole-number rule', () => {
+    const r = checkForgeTitle('[aeg-governance-hardening] 5d — Post-merge Archivist automation')
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toContain('5d')
+    expect(r.errors[0]).toMatch(/whole numbers/)
+    expect(r.errors[0]).toMatch(/task run/)
+    // The generic "matches neither grammar" line is NOT what a lettered id gets.
+    expect(r.errors[0]).not.toMatch(/matches neither title grammar/)
   })
   it('fails freeform titles', () => {
     expect(checkForgeTitle('fixed some stuff').status).toBe('fail')
