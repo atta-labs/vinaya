@@ -646,10 +646,10 @@ export async function resolveLogAppendPath(
   // no task, and only for a process where the fallback is on at all.
   const branchIssue =
     issue === null && !deps.env().VINAYA_TASK && branchIssueFallbackEnabled
-      ? await withDeadline(
-          (overrides.resolveBranchIssue ?? (() => resolveBranchIssue(deps.cwd(), deps.env())))(),
-          LOG_CONTEXT_LOOKUP_DEADLINE_MS,
-          null
+      ? await branchIssueRead(
+          deps.cwd(),
+          overrides.resolveBranchIssue ?? (() => resolveBranchIssue(deps.cwd(), deps.env())),
+          overrides.resolveBranchIssue === undefined
         )
       : null
   return outboxPathFor({ outboxRoot: () => root }, repo, issue ?? branchIssue)
@@ -714,6 +714,27 @@ let branchIssueFallbackEnabled = true
  * fallback off (`setBranchIssueFallback`) instead of relying on a re-read.
  */
 const branchIssueByCwd = new Map<string, Promise<number | null>>()
+
+/**
+ * The bounded read, shared across this process when it is the REAL one and
+ * kept private when a caller injected its own.
+ *
+ * The distinction is not a test affordance: "what branch is checked out in
+ * this directory" is a process-wide FACT, so the real read is shared, while
+ * an injected reader is a caller's own seam whose answer is that caller's
+ * alone — sharing it under a directory key would let one caller's stub decide
+ * another's attribution (this is exactly how a shared key crossed two callers
+ * in one test process and resolved a real Issue for a caller that had asked
+ * for none).
+ */
+function branchIssueRead(cwd: string, read: () => Promise<number | null>, shared: boolean): Promise<number | null> {
+  if (!shared) return withDeadline(Promise.resolve().then(read), LOG_CONTEXT_LOOKUP_DEADLINE_MS, null)
+  const cached = branchIssueByCwd.get(cwd)
+  if (cached !== undefined) return cached
+  const reading = withDeadline(Promise.resolve().then(read), LOG_CONTEXT_LOOKUP_DEADLINE_MS, null)
+  branchIssueByCwd.set(cwd, reading)
+  return reading
+}
 
 /** Set once, at a process's own entry point, before it builds any sink. */
 export function setBranchIssueFallback(enabled: boolean): void {
@@ -918,29 +939,27 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
     return doctrineCache
   }
 
-  // The Issue the checked-out branch names — resolved at most ONCE per
-  // process per working directory (`branchIssueByCwd`), its result (a `null`
-  // "this branch names none" included) reused by every later event and by
-  // every other sink this process builds, and only ever reached for by an
-  // event whose own `VINAYA_TASK` is absent. Bounded here, at the one call site, by the same
+  // The Issue the checked-out branch names — the REAL read resolved at most
+  // ONCE per process per working directory (`branchIssueByCwd`), its result
+  // (a `null` "this branch names none" included) reused by every later event
+  // and by every other sink this process builds, and only ever reached for by
+  // an event whose own `VINAYA_TASK` is absent. A sink given a reader of its
+  // own keeps that answer to itself — see `branchIssueRead`. Bounded here, at the one call site, by the same
   // deadline the shared context's own lookups carry: a `gh` that is slow,
   // unauthenticated, or missing altogether costs one deadline for the whole
   // process and then answers `null` for good — never a per-event forge call,
   // never a dropped event.
+  const readerIsReal = overrides.resolveBranchIssue === undefined
+  let ownBranchIssue: Promise<number | null> | undefined
   const branchIssueOnce = (): Promise<number | null> => {
     // A process that serves several tasks answers `null` here without ever
     // reading a branch — see `setBranchIssueFallback`.
     if (!branchIssueFallbackEnabled) return Promise.resolve(null)
-    const key = deps.cwd()
-    const cached = branchIssueByCwd.get(key)
-    if (cached !== undefined) return cached
-    const reading = withDeadline(
-      Promise.resolve().then(() => deps.resolveBranchIssue()),
-      LOG_CONTEXT_LOOKUP_DEADLINE_MS,
-      null
-    )
-    branchIssueByCwd.set(key, reading)
-    return reading
+    if (readerIsReal) return branchIssueRead(deps.cwd(), () => deps.resolveBranchIssue(), true)
+    if (ownBranchIssue === undefined) {
+      ownBranchIssue = branchIssueRead(deps.cwd(), () => deps.resolveBranchIssue(), false)
+    }
+    return ownBranchIssue
   }
 
   // `deps.resolveRepo()` (the real default is `@attalabs/aeg-forge-state`'s

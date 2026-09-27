@@ -408,10 +408,31 @@ describe('resolveLogAppendPath — mirrors log()’s own destination resolution'
     expect(path).toBe('/queue/atta-labs-vinaya/404.ndjson')
   })
 
-  it('a null issue resolves to none.ndjson, for either destination kind', async () => {
+  it('a null issue resolves to none.ndjson when the branch names no task either', async () => {
+    // The branch read is injected, not left to the real one: this mirror
+    // makes the SAME branch-fallback decision `log()` does (log-quality-v1 1,
+    // O1), so a real read would answer whatever task the checkout — or, in
+    // CI, the head ref of the pull request under test — happens to name, and
+    // the pure mapping this case is about would be untestable.
     expect(
-      await resolveLogAppendPath(REPO, null, { resolveLogDestination: () => ({ kind: 'folder', folder: '/srv/logs' }) })
+      await resolveLogAppendPath(REPO, null, {
+        resolveLogDestination: () => ({ kind: 'folder', folder: '/srv/logs' }),
+        // Both reads pinned: the ambient environment of whatever process runs
+        // this suite must not decide the answer either way.
+        env: () => ({}),
+        resolveBranchIssue: () => Promise.resolve(null)
+      })
     ).toBe('/srv/logs/atta-labs-vinaya/none.ndjson')
+  })
+
+  it('a null issue follows the branch when the branch does name a task — the file log() writes', async () => {
+    expect(
+      await resolveLogAppendPath(REPO, null, {
+        resolveLogDestination: () => ({ kind: 'folder', folder: '/srv/logs' }),
+        env: () => ({}),
+        resolveBranchIssue: () => Promise.resolve(792)
+      })
+    ).toBe('/srv/logs/atta-labs-vinaya/792.ndjson')
   })
 })
 

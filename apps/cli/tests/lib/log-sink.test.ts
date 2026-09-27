@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture.js'
 import {
   createLogSink,
   OUTBOX_MAX_BYTES,
@@ -551,11 +552,13 @@ describe('log-sink — what the branch lookup costs, and when (log-quality-v1 1,
           'const dir = outbox + "/atta-labs-vinaya"\n' +
           'console.log(JSON.stringify({ verified, landedIn: readdirSync(dir) }))\n'
       )
-      const run = spawnSync('bun', [probe, repoDir, outbox], {
-        encoding: 'utf8',
-        env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ''}` },
-        timeout: 60_000
-      })
+      const run = spawnSyncBudgeted(
+        'bun',
+        [probe, repoDir, outbox],
+        { encoding: 'utf8', env: { ...stripVinayaEnv(), PATH: `${binDir}:${process.env.PATH ?? ''}` } },
+        60_000,
+        'branch-confirmation probe'
+      )
       if (run.status !== 0) throw new Error(`probe failed: ${run.stderr}`)
       return JSON.parse(run.stdout.trim().split('\n').pop() as string)
     }
@@ -611,11 +614,13 @@ describe('log-sink — CI has no branch checked out (log-quality-v1 1, O1)', () 
         "const notATask = await resolveBranchIssue(repoDir, { GITHUB_HEAD_REF: 'main' })\n" +
         'console.log(JSON.stringify({ withHeadRef, withoutHeadRef, notATask }))\n'
     )
-    const run = spawnSync('bun', [probe, repoDir], {
-      encoding: 'utf8',
-      env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ''}` },
-      timeout: 60_000
-    })
+    const run = spawnSyncBudgeted(
+      'bun',
+      [probe, repoDir],
+      { encoding: 'utf8', env: { ...stripVinayaEnv(), PATH: `${binDir}:${process.env.PATH ?? ''}` } },
+      60_000,
+      'detached-HEAD probe'
+    )
     if (run.status !== 0) throw new Error(`probe failed: ${run.stderr}`)
     const answer = JSON.parse(run.stdout.trim().split('\n').pop() as string)
     expect(answer.withHeadRef).toBe(321)
@@ -627,43 +632,84 @@ describe('log-sink — CI has no branch checked out (log-quality-v1 1, O1)', () 
 })
 
 describe('log-sink — one read per process, not per sink (log-quality-v1 1, O1)', () => {
-  it("a second sink reading the same directory reuses the first one's answer", async () => {
-    let calls = 0
-    const { dir, deps } = testDeps({
-      env: () => ({}),
-      resolveBranchIssue: () => {
-        calls += 1
-        return Promise.resolve(792)
+  it("a second sink reading the same directory reuses the first one's read; another directory reads for itself", () => {
+    // The REAL read, in a child, with a counting `gh` on `PATH`: the shape a
+    // process dispatching task-less roles takes is several sinks over one
+    // checkout, and each used to pay its own `git` read and `gh` round trip.
+    // An injected reader is deliberately NOT shared across sinks, so this can
+    // only be proven against the real one.
+    const scratch = mkdtempSync(join(tmpdir(), 'vinaya-shared-read-'))
+    const binDir = join(scratch, 'bin')
+    const calls = join(scratch, 'gh-calls')
+    mkdirSync(binDir)
+    const repoOn = (name: string, branch: string): string => {
+      const dir = join(scratch, name)
+      mkdirSync(dir)
+      const git = (...args: string[]): void => {
+        const r = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' })
+        if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr}`)
       }
+      git('init', '--initial-branch=main')
+      git('config', 'user.email', 'test@example.com')
+      git('config', 'user.name', 'Test')
+      writeFileSync(join(dir, 'a.txt'), 'a')
+      git('add', 'a.txt')
+      git('commit', '-m', 'init')
+      git('checkout', '-b', branch)
+      return dir
+    }
+    const first = repoOn('first', 'task/issue-321')
+    const second = repoOn('second', 'task/issue-654')
+    writeFileSync(join(binDir, 'gh'), `#!/bin/sh\necho "$3" >> ${JSON.stringify(calls)}\necho "{\\"number\\":$3}"\n`, {
+      mode: 0o755
     })
-    // The shape a process dispatching task-less roles takes: several sinks,
-    // one checkout. Each used to pay its own `git` read and `gh` round trip.
-    createLogSink(deps).log(DISPATCHED)
-    createLogSink(deps).log(DISPATCHED)
-    await flush()
-    const lines = readFileSync(join(dir, 'outbox', 'atta-labs-vinaya', '792.ndjson'), 'utf8')
-      .trim()
-      .split('\n')
-    expect(lines).toHaveLength(2)
-    expect(calls).toBe(1)
-  })
 
-  it('a sink reading a different directory reads for itself', async () => {
-    const seen: string[] = []
-    const first = testDeps({ env: () => ({}), resolveBranchIssue: () => Promise.resolve(792) })
-    const second = testDeps({ env: () => ({}), resolveBranchIssue: () => Promise.resolve(404) })
-    seen.push(first.dir, second.dir)
-    expect(seen[0]).not.toBe(seen[1])
-    createLogSink(first.deps).log(DISPATCHED)
-    createLogSink(second.deps).log(DISPATCHED)
-    await flush()
-    expect(
-      readFileSync(join(first.dir, 'outbox', 'atta-labs-vinaya', '792.ndjson'), 'utf8').trim().length
-    ).toBeGreaterThan(0)
-    expect(
-      readFileSync(join(second.dir, 'outbox', 'atta-labs-vinaya', '404.ndjson'), 'utf8').trim().length
-    ).toBeGreaterThan(0)
-  })
+    const sinkModule = new URL('../../src/lib/log-sink.ts', import.meta.url).pathname
+    const probe = join(scratch, 'probe.ts')
+    writeFileSync(
+      probe,
+      `import { createLogSink } from ${JSON.stringify(sinkModule)}\n` +
+        'const [first, second, outbox] = process.argv.slice(2) as [string, string, string]\n' +
+        'const sinkFor = (cwd: string) =>\n' +
+        '  createLogSink({\n' +
+        '    cwd: () => cwd,\n' +
+        '    outboxRoot: () => outbox,\n' +
+        '    home: () => cwd,\n' +
+        "    hostname: () => 'probe-host',\n" +
+        '    env: () => ({}),\n' +
+        "    now: () => new Date('2026-09-05T00:00:00.000Z'),\n" +
+        "    resolveRepo: async () => ({ owner: 'atta-labs', repo: 'vinaya' }),\n" +
+        "    resolveLogDestination: () => ({ kind: 'folder', folder: outbox }),\n" +
+        "    vinayaVersion: () => '0.0.0',\n" +
+        '    inputVersions: () => undefined,\n' +
+        '    stderr: () => {}\n' +
+        '  })\n' +
+        'const a = sinkFor(first)\n' +
+        'const b = sinkFor(first)\n' +
+        'const c = sinkFor(second)\n' +
+        `a.log(${JSON.stringify(DISPATCHED)})\n` +
+        `b.log(${JSON.stringify(DISPATCHED)})\n` +
+        `c.log(${JSON.stringify(DISPATCHED)})\n` +
+        'await Promise.all([a.drain(), b.drain(), c.drain()])\n' +
+        "const { readdirSync } = await import('node:fs')\n" +
+        'const dir = outbox + "/atta-labs-vinaya"\n' +
+        'console.log(JSON.stringify({ landedIn: readdirSync(dir).sort() }))\n'
+    )
+    const outbox = join(scratch, 'outbox')
+    const run = spawnSyncBudgeted(
+      'bun',
+      [probe, first, second, outbox],
+      { encoding: 'utf8', env: { ...stripVinayaEnv(), PATH: `${binDir}:${process.env.PATH ?? ''}` } },
+      60_000,
+      'shared-read probe'
+    )
+    if (run.status !== 0) throw new Error(`probe failed: ${run.stderr}`)
+    const answer = JSON.parse(run.stdout.trim().split('\n').pop() as string)
+    // Two sinks over the first checkout, one over the second: three events,
+    // two files, and exactly one forge confirmation per DIRECTORY.
+    expect(answer.landedIn).toEqual(['321.ndjson', '654.ndjson'])
+    expect(readFileSync(calls, 'utf8').trim().split('\n').sort()).toEqual(['321', '654'])
+  }, 120_000)
 })
 
 describe('log-sink — a process that serves several tasks (log-quality-v1 1, O1)', () => {
@@ -759,11 +805,13 @@ describe('log-sink — the branch read outlives nothing (log-quality-v1 1, O1)',
         'console.log(JSON.stringify({ issue, ms: Date.now() - started }))\n'
     )
     const started = Date.now()
-    const run = spawnSync('bun', [probe, binDir], {
-      encoding: 'utf8',
-      env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ''}` },
-      timeout: 25_000
-    })
+    const run = spawnSyncBudgeted(
+      'bun',
+      [probe, binDir],
+      { encoding: 'utf8', env: { ...stripVinayaEnv(), PATH: `${binDir}:${process.env.PATH ?? ''}` } },
+      25_000,
+      'branch-read probe'
+    )
     const elapsed = Date.now() - started
     expect(run.status).toBe(0)
     const answer = JSON.parse(run.stdout.trim().split('\n').pop() as string)
