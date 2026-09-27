@@ -115,12 +115,22 @@ export function taskStatusHandler(input: unknown): TaskToolCallResult<TaskStatus
  * Issue, through its own `resolveOpenTaskIssueForRef` below — so a planned task
  * appears in the status list yet still fails these three the same "no open task
  * matches" way it always has.
+ *
+ * The gate is the view's own `briefFrozenIssues`, not a state kind. Once a
+ * planned task with an accepted start reads `starting` rather than
+ * `not_started`, no state kind means "prepared" any more — a PREPARED task
+ * whose driver has not written its lock yet reads `starting` too, and it has a
+ * pause and an escalation to read like any other prepared task. Gating on the
+ * kinds instead would answer "no open task matches" for a task that is open,
+ * listed and readable, purely because a start was in flight. The frozen-brief
+ * set is the fact the invariant is actually about, and the reader already knows
+ * it (see `TaskStatusListView.briefFrozenIssues` on why it rides on the view
+ * rather than on each row).
  */
 export function resolveIssueForRef(ref: TaskToolRef): number | null {
   if ('issue' in ref) return ref.issue
-  const row = currentTaskStatusRows().find(
-    (r) => r.tranche === ref.tranche && r.id === ref.id && r.state.kind !== 'not_started'
-  )
+  const { rows, briefFrozenIssues } = gatherTaskStatusList()
+  const row = rows.find((r) => r.tranche === ref.tranche && r.id === ref.id && briefFrozenIssues.has(r.issue))
   return row ? row.issue : null
 }
 

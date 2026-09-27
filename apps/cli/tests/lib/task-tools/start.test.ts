@@ -6,13 +6,14 @@ import { join } from 'node:path'
 import { isDriverPidAlive, readDriverLock } from '../../../src/lib/dev-review-loop/pause-resume.js'
 import { readTaskIssueFacts, resolveOpenTaskIssueForRef } from '../../../src/lib/task-tools/handlers.js'
 import type { TaskIssueFacts } from '../../../src/lib/task-tools/handlers.js'
-import type { AgentVendor } from '../../../src/lib/dispatch.js'
+import type { AgentVendor, ProcessSnapshot } from '../../../src/lib/dispatch.js'
 import type { TaskLoopState } from '../../../src/lib/task-status.js'
 import type { CallerContext } from '../../../src/lib/task-tools/server.js'
 import {
   createTaskStartHandler,
   type PauseDisposition,
   defaultLaunch,
+  isSafeRequestId,
   normalizeStartRecord,
   START_STALE_CLAIM_GRACE_MS,
   TASK_RUN_COMMAND_ENV,
@@ -74,10 +75,13 @@ function harness(
     resolveIssue?: (ref: TaskToolRef) => number | null
     issueFacts?: (issue: number) => TaskIssueFacts
     isRunAlive?: (issue: number) => boolean
-    loopState?: (issue: number) => TaskLoopState
+    loopState?: (issue: number, ref: TaskToolRef, ownRequestId: string) => TaskLoopState
     pauseDisposition?: (issue: number) => PauseDisposition
     heldAgent?: (issue: number) => AgentVendor | null
     isPidAlive?: (pid: number) => boolean
+    processSnapshot?: (pid: number) => ProcessSnapshot | null
+    captureChildSnapshot?: (pid: number) => ProcessSnapshot | null
+    pruneClaims?: () => void
     now?: () => string
   } = {}
 ) {
@@ -101,6 +105,11 @@ function harness(
     // No pause record by default, so the configured agent is the one used.
     heldAgent: overrides.heldAgent ?? (() => null),
     isPidAlive: overrides.isPidAlive ?? (() => false),
+    processSnapshot: overrides.processSnapshot ?? (() => null),
+    // The capture and the later check answer the same table by default, so a
+    // fixture that sets one identity gets a claim that matches itself.
+    captureChildSnapshot: overrides.captureChildSnapshot ?? overrides.processSnapshot ?? (() => null),
+    pruneClaims: overrides.pruneClaims ?? (() => {}),
     launch: async (target, meta) => {
       launches.push(target)
       return (overrides.launch?.(target, meta) ?? { status: 'confirmed', pid: null }) as
@@ -190,6 +199,9 @@ describe('task_start handler', () => {
         pauseDisposition: () => 'none',
         heldAgent: () => null,
         isPidAlive: () => false,
+        processSnapshot: () => null,
+        captureChildSnapshot: () => null,
+        pruneClaims: () => {},
         launch: async (target) => {
           launches.push(target)
           return { status: 'confirmed', pid: null }
@@ -323,6 +335,92 @@ describe('task_start handler', () => {
     expect(launches).toHaveLength(1)
   })
 
+  it("records the child's identity beside its pid, so a recycled pid is not read as the launch still coming up", async () => {
+    let now = '2026-01-01T00:00:00.000Z'
+    const child = { ppid: 1, startedAt: 'Wed Jan  1 00:00:00 2026', command: 'bun' }
+    let snapshot: ProcessSnapshot | null = child
+    const { handler, map, launches } = harness({
+      launch: () => ({ status: 'starting', pid: 4242 }),
+      isRunAlive: () => false,
+      isPidAlive: (pid) => pid === 4242, // the NUMBER is live either way
+      processSnapshot: () => snapshot,
+      now: () => now
+    })
+    const first = await handler({ tranche: 'unattended-run-v1', id: '14' }, CALLER)
+    expect(first.ok).toBe(true)
+    expect([...map.values()][0]?.childStartedAt).toBe(child.startedAt)
+    expect([...map.values()][0]?.childCommand).toBe(child.command)
+
+    // Same pid, different process: the claim is dead and an identical call
+    // launches again rather than replaying a start that is gone.
+    snapshot = { ppid: 1, startedAt: 'Wed Jan  1 09:00:00 2026', command: 'nginx' }
+    now = new Date(Date.parse(now) + START_STALE_CLAIM_GRACE_MS + 60_000).toISOString()
+    const second = await handler({ tranche: 'unattended-run-v1', id: '14' }, CALLER)
+    expect(second.ok).toBe(true)
+    if (!second.ok) return
+    expect(second.result.started).toBe(true)
+    expect(launches).toHaveLength(2)
+  })
+
+  it('captures the child identity through the SETTLING read, never the plain one', async () => {
+    // A `#!/usr/bin/env node` launcher execs twice, so `comm` read the instant
+    // spawn returns can name `env` rather than the image that survives — and a
+    // capture that never matches a later re-read makes `claimLaunchIsAlive`
+    // call a live launch gone, which is how the supersede path stops refusing
+    // a second launch.
+    const settled = { ppid: 1, startedAt: 'Wed Jan  1 00:00:00 2026', command: 'bun' }
+    const midExec = { ppid: 1, startedAt: 'Wed Jan  1 00:00:00 2026', command: 'env' }
+    const { handler, map } = harness({
+      launch: () => ({ status: 'starting', pid: 4242 }),
+      processSnapshot: () => midExec,
+      captureChildSnapshot: () => settled
+    })
+    expect((await handler({ tranche: 'unattended-run-v1', id: '14' }, CALLER)).ok).toBe(true)
+    expect([...map.values()][0]?.childCommand).toBe('bun')
+  })
+
+  it('prunes the claims already proven dead before writing another', async () => {
+    let pruned = 0
+    const { handler } = harness({
+      launch: () => ({ status: 'starting', pid: 4242 }),
+      pruneClaims: () => {
+        pruned += 1
+      }
+    })
+    expect((await handler({ tranche: 'unattended-run-v1', id: '14' }, CALLER)).ok).toBe(true)
+    expect(pruned).toBe(1)
+  })
+
+  it('marks a claim whose launch was CONFIRMED, so no later read calls that run a start still coming up', async () => {
+    const { handler, map } = harness({
+      launch: () => ({ status: 'confirmed', pid: 4242 }),
+      now: () => '2026-01-01T00:00:00.000Z'
+    })
+    const result = await handler({ tranche: 'unattended-run-v1', id: '14' }, CALLER)
+    expect(result.ok).toBe(true)
+    expect([...map.values()][0]?.confirmedAt).toBe('2026-01-01T00:00:00.000Z')
+  })
+
+  it('marks a confirmed launch that reported no pid at all', async () => {
+    const { handler, map } = harness({
+      launch: () => ({ status: 'confirmed', pid: null }),
+      now: () => '2026-01-01T00:00:00.000Z'
+    })
+    const result = await handler({ tranche: 'unattended-run-v1', id: '14' }, CALLER)
+    expect(result.ok).toBe(true)
+    expect([...map.values()][0]?.confirmedAt).toBe('2026-01-01T00:00:00.000Z')
+  })
+
+  it('leaves a launch that only ever reported `starting` unmarked — its driver has not appeared', async () => {
+    const { handler, map } = harness({
+      launch: () => ({ status: 'starting', pid: 4242 }),
+      now: () => '2026-01-01T00:00:00.000Z'
+    })
+    const result = await handler({ tranche: 'unattended-run-v1', id: '14' }, CALLER)
+    expect(result.ok).toBe(true)
+    expect([...map.values()][0]?.confirmedAt).toBeUndefined()
+  })
+
   it('supersedes a stale claim once the process it launched has exited too (O2)', async () => {
     // The other half of the same rule: a recorded pid is a liveness signal,
     // never a permanent block. Once it is gone and no driver lock exists, the
@@ -424,6 +522,67 @@ describe('task_start handler', () => {
       }
       expect(launches).toHaveLength(0)
       expect(map.size).toBe(0) // released — the refusal never blocks the tool that does own this state
+    })
+
+    it('refuses a start already coming up, naming `task_status`, and never claims the identity', async () => {
+      // The same request never reaches this gate — its own claim replays
+      // before any state is read — so a call that DOES reach it with a start
+      // in flight is a different caller or a different payload, about to put
+      // a second developer on one branch in the window before the first
+      // start's driver lock exists.
+      const { handler, launches, map } = harness({
+        loopState: () => ({ kind: 'starting', requestId: 'a1b2c3d4e5f60718', startedAt: '2026-01-01T00:00:00.000Z' })
+      })
+      const result = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error.kind).toBe('precondition')
+        expect(result.error.message).toContain('task_status')
+        expect(result.error.message).toContain('a1b2c3d4e5f60718')
+      }
+      expect(launches).toHaveLength(0)
+      expect(map.size).toBe(0)
+    })
+
+    it('starts a start that did not come up — the one claim state whose own action is this tool', async () => {
+      // What bounds the refusal above: a claim stops reading `starting` once
+      // its grace has passed with its process gone, and this state is the
+      // doctrine's `task_start` row. Refusing both would stand the Operator
+      // in front of a task with no driver and nothing that starts one.
+      const { handler, launches } = harness({
+        loopState: () => ({
+          kind: 'start_did_not_come_up',
+          requestId: 'a1b2c3d4e5f60718',
+          startedAt: '2026-01-01T00:00:00.000Z'
+        })
+      })
+      const result = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(result.ok).toBe(true)
+      expect(launches).toHaveLength(1)
+    })
+
+    it("reads the state for the ADDRESS this start names, and excludes this call's own claim", async () => {
+      // A claim written against a tranche ordinal names that ordinal, not the
+      // Issue number, so a state read that was handed no address could never
+      // match one — and the `starting` refusal above would be dead code for
+      // the address form every tranche task uses. The request identity goes
+      // with it because this call's OWN claim is already on disk by now:
+      // counted, it would make every start a duplicate of itself.
+      const seen: Array<{ ref: TaskToolRef; ownRequestId: string }> = []
+      const { handler, launches, map } = harness({
+        loopState: (_issue, ref, ownRequestId) => {
+          seen.push({ ref, ownRequestId })
+          return { kind: 'not_started' }
+        }
+      })
+      const result = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(result.ok).toBe(true)
+      expect(launches).toHaveLength(1)
+      expect(seen).toHaveLength(1)
+      expect(seen[0]?.ref).toEqual({ tranche: 'unattended-run-v1', id: '17' })
+      // The identity this call claimed and the one it hands the reader are the
+      // same string — the claim it must not be refused by.
+      expect(seen[0]?.ownRequestId).toBe([...map.keys()][0] as string)
     })
 
     it('refuses a pause still awaiting a decision, naming `task_resume`, and never claims the identity', async () => {
@@ -888,6 +1047,17 @@ describe('task_start handler', () => {
         target: { tranche: 'demo', id: '3' }
       })
       expect(normalizeStartRecord({ ...base, target: { issue: 729 } })).toEqual({ ...base, target: { issue: 729 } })
+    })
+
+    it('reads nothing out of a record whose own requestId could name a path', () => {
+      // `release` hands this identity to `rmSync` through the store's own path
+      // builder, so a body carrying a traversal sequence — or anything that is
+      // not a request identity — is never a record this store reads back.
+      for (const requestId of ['../../../etc/passwd', 'a b', 'a/b', '', 'x'.repeat(200)]) {
+        expect(normalizeStartRecord({ ...base, requestId, target: { issue: 729 } })).toBeNull()
+      }
+      expect(isSafeRequestId('a1b2c3d4e5f60718')).toBe(true)
+      expect(isSafeRequestId('../escape')).toBe(false)
     })
 
     it('reads nothing out of a record that is neither shape', () => {
