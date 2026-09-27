@@ -49,6 +49,21 @@ describe('buildHeader', () => {
     expect(buildHeader({ ...baseInput, branchIssue: null }).subject.issue).toBeNull()
   })
 
+  it('never reads env_correlated over a branch-guessed issue, even when the env named a role', () => {
+    // The shape a refused invocation takes: the role is recognised, the
+    // task is absent or unparseable, and the number beside it came only
+    // from the checkout. Saying `env_correlated` there would present a
+    // guess as a correlation.
+    const guessedWithRole = buildHeader({ ...baseInput, env: { role: 'developer' }, branchIssue: 792 })
+    expect(guessedWithRole.meta.schema === 2 && guessedWithRole.meta.provenance).toBe('unavailable')
+    const guessedWithBadTask = buildHeader({ ...baseInput, env: { role: 'developer', task: 'abc' }, branchIssue: 792 })
+    expect(guessedWithBadTask.subject.issue).toBe(792)
+    expect(guessedWithBadTask.meta.schema === 2 && guessedWithBadTask.meta.provenance).toBe('unavailable')
+    // An env-named task keeps the correlation it really has.
+    const named = buildHeader({ ...baseInput, env: { role: 'developer', task: '412' }, branchIssue: 792 })
+    expect(named.meta.schema === 2 && named.meta.provenance).toBe('env_correlated')
+  })
+
   it('marks an event produced inside a test run (log-quality-v1 1, O2)', () => {
     const { meta } = buildHeader({ ...baseInput, env: { test: '1' } })
     expect(meta.schema === 2 && meta.test).toBe(true)

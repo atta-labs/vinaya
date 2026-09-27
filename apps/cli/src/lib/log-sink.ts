@@ -103,9 +103,10 @@ export type LogSinkDeps = {
   /**
    * The Issue the checked-out branch names, for an event whose process
    * carries no `VINAYA_TASK` — the real default is `resolveBranchIssue`
-   * (one `git` read, and for a tranche branch one `gh` read). Called at
-   * most once per sink instance, lazily: a process whose events already
-   * name their task never calls it at all.
+   * (one `git` read, and one `gh` read to confirm what it named). Called at
+   * most once per process per working directory, lazily: a process whose
+   * events already name their task never calls it at all, and a second sink
+   * reading the same directory reuses the first one's answer.
    */
   resolveBranchIssue: () => Promise<number | null>
   /**
@@ -355,7 +356,18 @@ const TRANCHE_SLUG_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
 export function taskRefFromBranch(branch: string): TaskBranchRef | null {
   const backlog = /^task\/issue-(\d+)$/.exec(branch)
-  if (backlog) return { kind: 'issue', issue: Number(backlog[1]) }
+  if (backlog) {
+    // A branch name is a value a role types, not a bounded number: ~310
+    // digits parse to `Infinity` and 20 digits to a non-integer float, and
+    // `LogEventSchema`'s `subject.issue: z.number().int()` refuses both —
+    // which drops the WHOLE event, for every event this process logs, since
+    // the resolved value is cached. So an unbounded parse here would let a
+    // branch name silence a process's entire audit trail. The environment
+    // path guards exactly this on the same field (`issueFromTask`'s
+    // `Number.isInteger`, `envelope.ts`); this is that guard, on this path.
+    const issue = Number(backlog[1])
+    return Number.isSafeInteger(issue) && issue > 0 ? { kind: 'issue', issue } : null
+  }
   const tranche = /^task\/([^/]+)\/([^/]+)$/.exec(branch)
   if (tranche && TRANCHE_SLUG_PATTERN.test(tranche[1] ?? '')) {
     return { kind: 'tranche', tranche: tranche[1] as string, taskId: tranche[2] as string }
@@ -374,8 +386,14 @@ const TRANCHE_ISSUE_LIST_LIMIT = 200
  * rather than a second, drifting copy of the title rule here. `--state all`,
  * not `open`: a branch stays checked out after its Issue closes, and an
  * event emitted there still belongs to that task.
+ *
+ * Run IN the sink's own working directory, never the process's: `gh`
+ * resolves which repository to ask from the git remote of the directory it
+ * runs in, and a sink configured with a `cwd` of its own (the shape the loop
+ * harness and the log fixtures use) must not read one checkout's branch and
+ * another checkout's Issues.
  */
-async function issueForTrancheTask(tranche: string, taskId: string): Promise<number | null> {
+async function issueForTrancheTask(tranche: string, taskId: string, cwd: string): Promise<number | null> {
   let stdout: string
   try {
     ;({ stdout } = await execFileAsync(
@@ -392,7 +410,19 @@ async function issueForTrancheTask(tranche: string, taskId: string): Promise<num
         '--limit',
         String(TRANCHE_ISSUE_LIST_LIMIT)
       ],
-      { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 }
+      {
+        cwd,
+        encoding: 'utf8',
+        maxBuffer: 8 * 1024 * 1024,
+        // The child dies WITH the deadline, not just the promise the caller
+        // is waiting on: `withDeadline` answers `null` at the call site, but
+        // a hanging, proxied or unauthenticated `gh` left running holds the
+        // event loop open and delays this process's own exit long past it —
+        // on the pre-push-hook path, the very path this feature exists for
+        // (round 3 security review, LOW).
+        timeout: LOG_CONTEXT_LOOKUP_DEADLINE_MS,
+        killSignal: 'SIGKILL'
+      }
     ))
   } catch {
     return null
@@ -414,6 +444,37 @@ async function issueForTrancheTask(tranche: string, taskId: string): Promise<num
 }
 
 /**
+ * The Issue a `task/issue-<n>` branch names, confirmed to exist in the
+ * repository `gh` resolves from this directory — or `null`.
+ *
+ * A branch name is caller-supplied (a contributor's pushed branch, a fork's,
+ * a reviewer checking out a pull request), so an UNVERIFIED number would file
+ * a whole process's telemetry under whatever Issue that name happened to
+ * mention, where it reads as that task's own history (round 4 security
+ * review, LOW). The `task/<tranche>/<n>` path already confirms its answer
+ * against the forge's own labels and titles; this makes the backlog path
+ * symmetric. Existence in THIS repository is what is checked, deliberately
+ * not "is a vinaya task Issue": a backlog task Issue carries no tranche
+ * label, so requiring one would refuse exactly the branch shape this exists
+ * to read. A `gh` that cannot answer — missing, unauthenticated, offline —
+ * yields `null`, the same honest empty field every other unresolvable case
+ * returns, on the same terms the tranche path has always had.
+ */
+async function verifiedBacklogIssue(issue: number, cwd: string): Promise<number | null> {
+  try {
+    const { stdout } = await execFileAsync('gh', ['issue', 'view', String(issue), '--json', 'number'], {
+      cwd,
+      encoding: 'utf8',
+      timeout: LOG_CONTEXT_LOOKUP_DEADLINE_MS,
+      killSignal: 'SIGKILL'
+    })
+    return (JSON.parse(stdout) as { number?: unknown }).number === issue ? issue : null
+  } catch {
+    return null
+  }
+}
+
+/**
  * The Issue the CHECKED-OUT branch names, or `null` when it names none —
  * what fills `subject.issue` for an event whose process carries no
  * `VINAYA_TASK` (the pre-push hook's and CI's own `vinaya check` runs, which
@@ -431,18 +492,70 @@ async function issueForTrancheTask(tranche: string, taskId: string): Promise<num
  * no-synchronous-spawn rule the sink's shared context already holds
  * (`tests/lib/log-sink-no-sync-spawn.test.ts`).
  */
-export async function resolveBranchIssue(cwd: string): Promise<number | null> {
+export async function resolveBranchIssue(cwd: string, env: NodeJS.ProcessEnv = process.env): Promise<number | null> {
   let branch: string
   try {
     branch = (
-      await execFileAsync('git', ['-C', cwd, 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8' })
+      await execFileAsync('git', ['-C', cwd, 'rev-parse', '--abbrev-ref', 'HEAD'], {
+        encoding: 'utf8',
+        // Same rule as the `gh` read below: the child dies with the
+        // deadline rather than outliving the answer.
+        timeout: LOG_CONTEXT_LOOKUP_DEADLINE_MS,
+        killSignal: 'SIGKILL'
+      })
     ).stdout.trim()
   } catch {
     return null
   }
-  const ref = taskRefFromBranch(branch)
+  // A CI job triggered by a pull request checks out the merge commit in
+  // DETACHED HEAD, where `rev-parse --abbrev-ref HEAD` answers the literal
+  // string `HEAD` and no branch is checked out at all — so CI, named
+  // alongside the pre-push hook as the reason this fallback exists, would
+  // record `issue: null` forever without this line. The head ref the CI
+  // system itself reports for the pull request is the branch that checkout
+  // came from (`GITHUB_HEAD_REF`, set on a `pull_request` event and empty on
+  // every other), and it goes through the IDENTICAL shape rules and the
+  // identical verification below. It is not a stronger claim than a local
+  // branch name — both are caller-supplied, both leave
+  // `meta.provenance: 'unavailable'` — it is the same claim, read where git
+  // cannot make it.
+  const named = branch === 'HEAD' ? (env.GITHUB_HEAD_REF ?? '') : branch
+  const ref = taskRefFromBranch(named)
   if (ref === null) return null
-  return ref.kind === 'issue' ? ref.issue : await issueForTrancheTask(ref.tranche, ref.taskId)
+  return ref.kind === 'issue'
+    ? await verifiedBacklogIssue(ref.issue, cwd)
+    : await issueForTrancheTask(ref.tranche, ref.taskId, cwd)
+}
+
+/**
+ * Whether the process producing this event is a test run (`meta.test`).
+ *
+ * TWO signals, because one of them is not reliably present. The explicit one
+ * is `AEG_LOG_TEST`, set by this repository's own test preload
+ * (`apps/cli/tests/lib/test-env-preload.ts` — deliberately outside the
+ * `VINAYA_` prefix, since fixtures that spawn a real `vinaya` child strip
+ * every `VINAYA_*` key from its environment and a marker stripped there
+ * would leave exactly the subprocess traffic this exists to mark unmarked).
+ * But a preload is registered in ONE `bunfig.toml`, and Bun resolves
+ * `bunfig.toml` from the process's working directory alone: `apps/cli`'s
+ * preload does not load for a run started at the repository root — which is
+ * precisely how git runs the pre-push hook, the biggest single producer of
+ * real server traffic there is. Relying on the preload alone would leave
+ * that run unmarked.
+ *
+ * So the second signal is `NODE_ENV=test`, which every test runner in use
+ * here sets on its own process (Bun's `bun test`, Vitest) and which every
+ * child it spawns inherits, whatever directory the runner was started from.
+ * It is a declaration, not a proof — a `vinaya.config.json` check declaring
+ * `"env": { "NODE_ENV": "test" }` marks that check's own events too, and a
+ * process that exports either name marks itself. That is the honest reading
+ * of the field either way: `meta.test` says "this process said it was a
+ * test", never "this process was proved to be one" (`apps/cli/specs/log.md`,
+ * § Test traffic is marked, never suppressed).
+ */
+export function testMarkerFrom(env: NodeJS.ProcessEnv): string | undefined {
+  if (env.AEG_LOG_TEST) return env.AEG_LOG_TEST
+  return env.NODE_ENV === 'test' ? '1' : undefined
 }
 
 function readVinayaVersion(): string {
@@ -516,12 +629,30 @@ export function outboxPathFor(
 export async function resolveLogAppendPath(
   repo: { owner: string; repo: string } | null,
   issue: number | null,
-  overrides: Partial<Pick<LogSinkDeps, 'resolveLogDestination' | 'outboxRoot' | 'env'>> = {}
+  overrides: Partial<
+    Pick<LogSinkDeps, 'resolveLogDestination' | 'outboxRoot' | 'env' | 'cwd' | 'resolveBranchIssue'>
+  > = {}
 ): Promise<string> {
   const deps = { ...defaultDeps(), ...overrides }
   const destination = await deps.resolveLogDestination(repo, deps.env())
   const root = destination.kind === 'folder' ? destination.folder : deps.outboxRoot()
-  return outboxPathFor({ outboxRoot: () => root }, repo, issue)
+  // The branch fallback decides which FILE an event lands in, so this
+  // mirror has to make the same decision or it stops naming the file
+  // `log()` writes — a caller polling for its own line would watch
+  // `none.ndjson` while the sink wrote `<branch issue>.ndjson`, and a
+  // confined caller would grant the sandbox one exact file while its child
+  // appended to another (round 3 review, MAJOR). Same condition `log()`
+  // applies: only when the caller named no issue AND the environment names
+  // no task, and only for a process where the fallback is on at all.
+  const branchIssue =
+    issue === null && !deps.env().VINAYA_TASK && branchIssueFallbackEnabled
+      ? await withDeadline(
+          (overrides.resolveBranchIssue ?? (() => resolveBranchIssue(deps.cwd(), deps.env())))(),
+          LOG_CONTEXT_LOOKUP_DEADLINE_MS,
+          null
+        )
+      : null
+  return outboxPathFor({ outboxRoot: () => root }, repo, issue ?? branchIssue)
 }
 
 function hostFromEnv(env: NodeJS.ProcessEnv): Host {
@@ -544,7 +675,58 @@ function defaultStderr(message: string): void {
   process.stderr.write(message)
 }
 
-function defaultDeps(): LogSinkDeps {
+/**
+ * Whether ANY sink in this process may fall back to the checked-out branch
+ * for an event that names no task.
+ *
+ * On by default: the process this feature exists for is a one-task one — a
+ * `vinaya check` run by the pre-push hook or by CI, on a task's branch, with
+ * no `VINAYA_TASK` anywhere. A process that serves SEVERAL tasks in one
+ * lifetime is the opposite case and turns it off (`setBranchIssueFallback(
+ * false)`): `vinaya task-tools serve` holds calls for different tasks in
+ * flight, runs in the MAIN checkout, and emits events that carry no task by
+ * design (the broker's own Operator-channel `authenticate-invocation`
+ * lines, including its refusals of forged invocations). Letting those fall
+ * back would file them under whatever unrelated task the main checkout
+ * happens to be on — and the answer is memoised, so one early lookup would
+ * fix that wrong Issue for the life of the server, surviving every branch
+ * switch. `issue: null` is the honest record there (round 3 security
+ * review, HIGH).
+ */
+let branchIssueFallbackEnabled = true
+
+/**
+ * The branch answer, memoised for the PROCESS rather than for one sink, keyed
+ * by the directory it was read from.
+ *
+ * Per-sink was the earlier bound, and it was one lookup short of the claim
+ * this doctrine makes: a process builds several sinks — the module-level
+ * default one, the loop driver's, a cancel's, one per `dispatchRole` call
+ * whose own synthetic env drops `VINAYA_TASK` — so a process dispatching N
+ * task-less roles paid N+1 `git rev-parse` reads and, on a tranche branch,
+ * N+1 `gh` round trips, each against its own deadline (round 4 review,
+ * MINOR; round 4 security review, LOW). Keyed by `cwd` because that is the
+ * only input the read has: two sinks reading the same directory cannot
+ * honestly disagree, and two reading different worktrees must not share.
+ *
+ * A branch switch inside one process's lifetime is therefore not observed —
+ * which is exactly why a process that serves several tasks turns the whole
+ * fallback off (`setBranchIssueFallback`) instead of relying on a re-read.
+ */
+const branchIssueByCwd = new Map<string, Promise<number | null>>()
+
+/** Set once, at a process's own entry point, before it builds any sink. */
+export function setBranchIssueFallback(enabled: boolean): void {
+  branchIssueFallbackEnabled = enabled
+}
+
+/**
+ * `resolveBranchIssue` is deliberately NOT one of these: its real default
+ * has to follow the SINK's own `cwd`, which only exists once the overrides
+ * are merged, so `createLogSink` binds it there (and `resolveLogAppendPath`
+ * binds its own, below, against the same `cwd`).
+ */
+function defaultDeps(): Omit<LogSinkDeps, 'resolveBranchIssue'> {
   return {
     outboxRoot: () => join(GLOBAL_VINAYA_HOME, 'outbox'),
     home: () => homedir(),
@@ -556,7 +738,6 @@ function defaultDeps(): LogSinkDeps {
     vinayaVersion: () => readVinayaVersion(),
     stderr: defaultStderr,
     inputVersions: () => undefined,
-    resolveBranchIssue: () => resolveBranchIssue(process.cwd()),
     resolveLogDestination: defaultResolveLogDestination
   }
 }
@@ -699,7 +880,16 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
   warmup: () => void
   drain: () => Promise<void>
 } {
-  const deps: LogSinkDeps = { ...defaultDeps(), ...overrides }
+  const deps: LogSinkDeps = {
+    ...defaultDeps(),
+    // Bound here, not in `defaultDeps`, so the branch and the repository an
+    // event is attributed to are read from the SAME directory every other
+    // read this sink makes uses (`resolveDoctrine(deps.cwd(), …)`) — a sink
+    // given a `cwd` of its own never reports its own `meta.repo` from one
+    // checkout and its branch-derived `subject.issue` from another.
+    resolveBranchIssue: () => resolveBranchIssue(deps.cwd(), deps.env()),
+    ...overrides
+  }
   const runId = deps.env().VINAYA_RUN_ID || randomUUID()
   // Opaque per-process identifier (O1) — one per sink instance, same
   // lifetime as `runId`, but a distinct concept: `runId` correlates a
@@ -729,23 +919,28 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
   }
 
   // The Issue the checked-out branch names — resolved at most ONCE per
-  // sink, its result (a `null` "this branch names none" included) reused by
-  // every later event, and only ever reached for by an event whose own
-  // `VINAYA_TASK` is absent. Bounded here, at the one call site, by the same
+  // process per working directory (`branchIssueByCwd`), its result (a `null`
+  // "this branch names none" included) reused by every later event and by
+  // every other sink this process builds, and only ever reached for by an
+  // event whose own `VINAYA_TASK` is absent. Bounded here, at the one call site, by the same
   // deadline the shared context's own lookups carry: a `gh` that is slow,
   // unauthenticated, or missing altogether costs one deadline for the whole
   // process and then answers `null` for good — never a per-event forge call,
   // never a dropped event.
-  let branchIssueCache: Promise<number | null> | undefined
   const branchIssueOnce = (): Promise<number | null> => {
-    if (branchIssueCache === undefined) {
-      branchIssueCache = withDeadline(
-        Promise.resolve().then(() => deps.resolveBranchIssue()),
-        LOG_CONTEXT_LOOKUP_DEADLINE_MS,
-        null
-      )
-    }
-    return branchIssueCache
+    // A process that serves several tasks answers `null` here without ever
+    // reading a branch — see `setBranchIssueFallback`.
+    if (!branchIssueFallbackEnabled) return Promise.resolve(null)
+    const key = deps.cwd()
+    const cached = branchIssueByCwd.get(key)
+    if (cached !== undefined) return cached
+    const reading = withDeadline(
+      Promise.resolve().then(() => deps.resolveBranchIssue()),
+      LOG_CONTEXT_LOOKUP_DEADLINE_MS,
+      null
+    )
+    branchIssueByCwd.set(key, reading)
+    return reading
   }
 
   // `deps.resolveRepo()` (the real default is `@attalabs/aeg-forge-state`'s
@@ -828,6 +1023,9 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
   // per event, so `log()` itself stays exactly as fire-and-forget as it was.
   const pendingWrites = new Set<Promise<void>>()
 
+  /** The tail of this sink's serialized writes — see `log()`'s own comment on why order is held here rather than by the shared context. */
+  let writeChain: Promise<void> = Promise.resolve()
+
   const scheduleWebhookDrain = (
     issue: number | null,
     url: string,
@@ -879,84 +1077,96 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
         run: env.VINAYA_RUN || runId,
         attempt: env.VINAYA_ATTEMPT,
         parent: env.VINAYA_PARENT_EVENT,
-        // Set by this repository's own test preload and by nothing else, so
-        // an event carrying it really did come from a test run.
-        // Deliberately NOT a `VINAYA_`-prefixed name: the fixtures that
-        // spawn a real `vinaya` child strip every `VINAYA_*` key from its
-        // environment first (to keep a dispatched session's own identity
-        // out of the child), and a marker stripped there would leave
-        // exactly the subprocess traffic this marks unmarked.
-        test: env.AEG_LOG_TEST
+        test: testMarkerFrom(env)
       }
-      const written: Promise<void> = context()
-        .then(async ({ repo, doctrine: doctrineValue, destination: resolvedDestination }) => {
-          // Only an event whose own snapshot carries no task asks the
-          // branch what task this is; every `log()` call that does await
-          // the SAME memoised promise, subscribed in the order their
-          // `context()` continuations ran — which is call order — so lines
-          // still land in call order, exactly as the shared context alone
-          // used to guarantee.
-          const branchIssue = envFields.task ? null : await branchIssueOnce()
-          const header = buildHeader({
-            now,
-            runId,
-            seq: mySeq,
-            repo: repo ? `${repo.owner}/${repo.repo}` : null,
-            vinaya: deps.vinayaVersion(),
-            doctrine: doctrineValue,
-            host,
-            hostname: deps.hostname(),
-            env: envFields,
-            branchIssue,
-            eventId: randomUUID(),
-            processId,
-            inputVersions: deps.inputVersions()
-          })
-          // `header` spreads LAST: it carries the only trusted `meta`/`subject`
-          // values (environment/remote/package/tree-derived), and `e`'s type
-          // excludes those keys but a caller passing a wider-typed or `as any`
-          // value could still smuggle a `meta`/`subject` property through —
-          // TS's excess-property check only fires on a fresh object literal,
-          // never on a variable. Spreading `header` second means a forged
-          // field in `e` is always overwritten, never honored.
-          if (resolvedDestination.kind === 'none') {
-            // O3: one visible line per process — never per event, which
-            // would spam a CI job's output once per check — naming exactly
-            // why nothing is being recorded (no server configured, or this
-            // job holds no delivery credential). Never a failure: recording
-            // nothing is the sanctioned outcome here, not a degraded one.
-            warnOnce(`vinaya: not recording — ${resolvedDestination.reason}\n`)
-            return
-          }
-          const full = { ...e, ...header }
-          const parsed = LogEventSchema.safeParse(full)
-          if (!parsed.success) {
-            warnOnce(
-              `vinaya: log() refused an invalid payload — ${parsed.error.issues[0]?.message ?? 'schema violation'}\n`
-            )
-            return
-          }
-          const line = `${JSON.stringify(redact(parsed.data, deps.home()))}\n`
-          const destination = resolvedDestination
-          if (destination.kind === 'server') {
-            // The local outbox is the retry queue for a server destination
-            // (O2) — appended first, synchronously with every other
-            // destination, THEN drained: the append itself never waits on
-            // the network (Traps: "append locally first, drain
-            // asynchronously").
-            appendLine(outboxPathFor(deps, repo, header.subject.issue), line, warnOnce)
-            scheduleWebhookDrain(header.subject.issue, destination.url, destination.headers)
-          } else {
-            appendLine(
-              outboxPathFor({ outboxRoot: () => destination.folder }, repo, header.subject.issue),
-              line,
-              warnOnce
-            )
-          }
+      const write = async (): Promise<void> => {
+        const { repo, doctrine: doctrineValue, destination: resolvedDestination } = await context()
+        if (resolvedDestination.kind === 'none') {
+          // O3: one visible line per process — never per event, which would
+          // spam a CI job's output once per check — naming exactly why
+          // nothing is being recorded (no server configured, or this job
+          // holds no delivery credential). Never a failure: recording
+          // nothing is the sanctioned outcome here, not a degraded one.
+          //
+          // Checked BEFORE the branch lookup below, never after: a process
+          // recording nothing must spend no `git rev-parse`, and above all
+          // no credentialed `gh issue list`, resolving an attribution no
+          // event will ever carry (round 1 security review, LOW) — the CI
+          // job deliberately built to hold no delivery credential is
+          // exactly the one that would otherwise pay that forge call on
+          // every check it runs.
+          warnOnce(`vinaya: not recording — ${resolvedDestination.reason}\n`)
+          return
+        }
+        // Only an event whose own snapshot carries no task asks the branch
+        // what task this is; every `log()` call that does await the SAME
+        // memoised promise. Call order is held by the write chain below,
+        // not by this await, so an event that skips the lookup can never
+        // overtake an earlier one that waited for it.
+        const branchIssue = envFields.task ? null : await branchIssueOnce()
+        const header = buildHeader({
+          now,
+          runId,
+          seq: mySeq,
+          repo: repo ? `${repo.owner}/${repo.repo}` : null,
+          vinaya: deps.vinayaVersion(),
+          doctrine: doctrineValue,
+          host,
+          hostname: deps.hostname(),
+          env: envFields,
+          branchIssue,
+          eventId: randomUUID(),
+          processId,
+          inputVersions: deps.inputVersions()
         })
-        .catch((err) => {
-          warnOnce(`vinaya: log() failed — ${err instanceof Error ? err.message : String(err)}\n`)
-        })
+        // `header` spreads LAST: it carries the only trusted `meta`/`subject`
+        // values (environment/remote/package/tree-derived), and `e`'s type
+        // excludes those keys but a caller passing a wider-typed or `as any`
+        // value could still smuggle a `meta`/`subject` property through —
+        // TS's excess-property check only fires on a fresh object literal,
+        // never on a variable. Spreading `header` second means a forged
+        // field in `e` is always overwritten, never honored.
+        const full = { ...e, ...header }
+        const parsed = LogEventSchema.safeParse(full)
+        if (!parsed.success) {
+          warnOnce(
+            `vinaya: log() refused an invalid payload — ${parsed.error.issues[0]?.message ?? 'schema violation'}\n`
+          )
+          return
+        }
+        const line = `${JSON.stringify(redact(parsed.data, deps.home()))}\n`
+        const destination = resolvedDestination
+        if (destination.kind === 'server') {
+          // The local outbox is the retry queue for a server destination
+          // (O2) — appended first, synchronously with every other
+          // destination, THEN drained: the append itself never waits on
+          // the network (Traps: "append locally first, drain
+          // asynchronously").
+          appendLine(outboxPathFor(deps, repo, header.subject.issue), line, warnOnce)
+          scheduleWebhookDrain(header.subject.issue, destination.url, destination.headers)
+        } else {
+          appendLine(
+            outboxPathFor({ outboxRoot: () => destination.folder }, repo, header.subject.issue),
+            line,
+            warnOnce
+          )
+        }
+      }
+      // Every event's write is queued behind the one before it, so the
+      // outbox holds them in `log()` call order — the order `meta.seq`
+      // already numbers them in. The shared `context()` promise used to
+      // give that for free (one promise, continuations run in subscription
+      // order), but it no longer can on its own: an event that names its
+      // own task skips the branch lookup and would otherwise run a
+      // microtask ahead of an earlier event that awaited it, landing its
+      // line first with the higher `seq`. `log()` itself stays
+      // fire-and-forget — nothing here is awaited by the caller — and one
+      // failing write never stalls the chain, because each link catches
+      // its own error before the next begins.
+      const written: Promise<void> = writeChain.then(write).catch((err) => {
+        warnOnce(`vinaya: log() failed — ${err instanceof Error ? err.message : String(err)}\n`)
+      })
+      writeChain = written
       pendingWrites.add(written)
       written.finally(() => pendingWrites.delete(written))
     } catch (err) {

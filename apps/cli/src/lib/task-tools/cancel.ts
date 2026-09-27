@@ -98,6 +98,15 @@ export const defaultTaskCancelDeps: TaskCancelDeps = {
  * server (`server.ts`) — not just a concurrent one — misfiles into whatever
  * task (or none) the process's ambient env happened to carry (round 2
  * review, HIGH).
+ *
+ * `subject.issue` has a second source now — the checked-out branch, for an
+ * event whose process names no task at all (`log-sink.ts`'s
+ * `resolveBranchIssue`). It is not a second source HERE: this server turns
+ * that fallback off for its whole process (`setBranchIssueFallback(false)`,
+ * `server.ts`), precisely because it serves many tasks from one checkout, so
+ * an event emitted outside this save/restore window still reads `issue:
+ * null` rather than the main checkout's branch. The discipline below remains
+ * the only thing that files this event under the task it is about.
  */
 function emitOperationEvent(
   emit: typeof log,

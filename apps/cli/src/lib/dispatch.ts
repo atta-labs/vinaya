@@ -3055,6 +3055,18 @@ export async function dispatchRole(
   const repo = await resolveRepo().catch(() => null)
   const issue = opts.task ?? null
   const outboxPath = await resolveLogAppendPath(repo, issue, { env: sinkEnv })
+  // A task-less dispatch's CHILD resolves its own attribution from the
+  // branch of the directory IT runs in, which is `opts.cwd` when the caller
+  // named one — a different worktree, and so possibly a different Issue,
+  // from the one this parent's own lines land under. The sandbox grant
+  // below names exact FILES, never the directory, so a child appending to
+  // an ungranted path loses its whole telemetry stream to a swallowed
+  // `Operation not permitted` (round 3 review, MAJOR). Resolved here, once,
+  // and granted alongside this process's own file.
+  const childOutboxPath =
+    issue === null && opts.cwd !== undefined && opts.cwd !== process.cwd()
+      ? await resolveLogAppendPath(repo, null, { env: sinkEnv, cwd: () => opts.cwd as string })
+      : null
 
   const effectId = randomUUID()
   const vendor = VENDOR_TABLE[agent]
@@ -3473,6 +3485,7 @@ export async function dispatchRole(
               // outbox line stays under the Vinaya home. Two roots, so a
               // single base to resolve against can no longer name both.
               const files = [outboxPath, resumePath]
+              if (childOutboxPath !== null && childOutboxPath !== outboxPath) files.push(childOutboxPath)
               // Round 6 review, security CRITICAL fix: `documentationLogHookScript`'s
               // own `PostToolUse` hook (`writeDispatchSettings`, above) appends one
               // line per `WebFetch` call to `documentation-log-<runId>.jsonl` inside

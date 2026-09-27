@@ -151,6 +151,18 @@ const EFFECTS_PATH = 'apps/cli/src/lib/effects.ts'
 const BROKER_PATH = 'apps/cli/src/lib/broker.ts'
 const SCHEMA_PATH = 'packages/aeg-core/src/log/schema.ts'
 const ASSESS_ROUND_PATH = 'packages/aeg-core/src/dev-review-loop/assess-round.ts'
+/**
+ * `task-tools/server.ts` imports this module for ONE symbol —
+ * `setBranchIssueFallback`, the process-wide switch a server that holds
+ * calls for several tasks at once turns the branch fallback off with
+ * (log-quality-v1 1, O1). It produces no event of its own, so it is
+ * deliberately NOT a `CALLER_ALLOWLIST` member: the producer boundary that
+ * table enforces stays exactly as narrow as it was, and a file that starts
+ * calling `log()` from here would still have to be argued into the caller
+ * table above.
+ */
+const TASK_TOOLS_SERVER_PATH = 'apps/cli/src/lib/task-tools/server.ts'
+const SINK_CONFIGURATION_ALLOWLIST = new Set([TASK_TOOLS_SERVER_PATH])
 const FUTURE_CALLER_ALLOWLIST = new Set<string>([])
 const CALLER_ALLOWLIST = new Set([
   ...FUTURE_CALLER_ALLOWLIST,
@@ -290,7 +302,7 @@ describe('log-callers — O2', () => {
       .filter(([rel]) => rel !== SINK_PATH)
       .filter(([, abs]) => importPattern.test(readFileSync(abs, 'utf8')))
       .map(([rel]) => rel)
-      .filter((rel) => !CALLER_ALLOWLIST.has(rel))
+      .filter((rel) => !CALLER_ALLOWLIST.has(rel) && !SINK_CONFIGURATION_ALLOWLIST.has(rel))
     expect(offenders).toEqual([])
   })
 

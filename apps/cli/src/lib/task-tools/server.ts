@@ -41,6 +41,7 @@ import type { TaskToolCallResult } from './handlers.js'
 import { taskEscalationReadHandler, taskStatusHandler } from './handlers.js'
 import { taskPrReadHandler } from './pr-read.js'
 import { refuseUngrantedTool } from './router.js'
+import { setBranchIssueFallback } from '../log-sink.js'
 import { defaultTaskResumeHandler } from './resume.js'
 import { defaultTaskStartHandler } from './start.js'
 
@@ -443,6 +444,17 @@ export function createTaskToolsMcpServer(opts: CreateTaskToolsMcpServerOptions):
  * server` import cycle.
  */
 export async function serveTaskToolsStdio(serverVersion: string): Promise<void> {
+  // This process serves MANY tasks in one lifetime, so no event of its own
+  // may be attributed by the branch the checkout happens to be on: the
+  // handlers set and restore `VINAYA_TASK` around their own `log()` calls,
+  // and everything outside those windows — the broker's Operator-channel
+  // `authenticate-invocation` lines, its refusals of forged invocations —
+  // genuinely belongs to no task. `issue: null` is the honest record for
+  // those; a branch fallback would file them under whatever unrelated task
+  // the main checkout sits on, and memoise that wrong answer for the life
+  // of the server (round 3 security review, HIGH).
+  setBranchIssueFallback(false)
+
   const realStdoutWrite = process.stdout.write.bind(process.stdout)
   const protocolOut = new Writable({
     write(chunk, _encoding, callback) {

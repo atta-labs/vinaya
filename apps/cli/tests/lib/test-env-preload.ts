@@ -57,11 +57,16 @@ for (const key of ['GITHUB_ACTIONS', 'VINAYA_HOST', 'VINAYA_ROLE', 'VINAYA_ATTEM
  * design: the marker labels those events, it never suppresses or redirects
  * them.
  *
+ * This is the EXPLICIT half of the marker. The sink also reads `NODE_ENV`
+ * (`testMarkerFrom`, `apps/cli/src/lib/log-sink.ts`), which is what covers
+ * a run this preload never loads for at all: Bun resolves `bunfig.toml`
+ * from the process's working directory alone, and git runs the pre-push
+ * hook from the working tree root, not from `apps/cli`.
+ *
  * Set here rather than per fixture, and deliberately NOT under the
  * `VINAYA_` prefix: the many fixtures that spawn a real `vinaya` child
  * delete every `VINAYA_*` key from its environment first, and a marker
  * stripped there would leave exactly the subprocess traffic this exists to
- * mark unmarked. Nothing outside this preload sets it, so a real run's
- * events simply never carry it.
+ * mark unmarked.
  */
 process.env.AEG_LOG_TEST = '1'

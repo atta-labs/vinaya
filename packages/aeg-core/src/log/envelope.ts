@@ -24,13 +24,20 @@ function attemptFromEnv(value: string | undefined): number | null {
  * Only a value the caller actually asserts becomes
  * `parent_attributed`/`self_reported` — `buildHeader` never upgrades trust
  * on its own (see `schema.ts`'s `ProvenanceSchema` doc). A `branchIssue`
- * deliberately does NOT count here: nothing about a checked-out branch is an
- * environment correlation, so an event attributed only by its branch keeps
- * `'unavailable'` — the issue is named, the claim about WHO named it is not
- * strengthened by having guessed it from the checkout.
+ * deliberately does NOT count as an environment correlation: nothing about a
+ * checked-out branch is one. An event whose `subject.issue` came from the
+ * branch therefore reads `'unavailable'` EVEN WHEN the environment named a
+ * role, because this one field describes the whole subject and there is no
+ * way to say "the role was env-correlated, the issue was guessed" — reading
+ * `'env_correlated'` beside a branch-guessed number would present a guess as
+ * a correlation, and a process with `VINAYA_ROLE` set and `VINAYA_TASK`
+ * absent or unparseable is exactly that shape (the broker's own
+ * forged-invocation refusal, round 3 security review, MEDIUM). Under-claiming
+ * about the role is the safe direction; over-claiming about the issue is not.
  */
-function provenanceFor(input: Pick<HeaderInput, 'provenance' | 'env'>): Provenance {
+function provenanceFor(input: Pick<HeaderInput, 'provenance' | 'env' | 'branchIssue'>): Provenance {
   if (input.provenance) return input.provenance
+  if (issueFromTask(input.env.task) === null && (input.branchIssue ?? null) !== null) return 'unavailable'
   if (input.env.role || input.env.task) return 'env_correlated'
   return 'unavailable'
 }
@@ -65,7 +72,7 @@ export type HeaderInput = {
     run?: string
     attempt?: string
     parent?: string
-    /** `AEG_LOG_TEST` — any non-empty value marks this event as produced inside a repository's own test run (`meta.test`). Read from the environment like every other field here, so the caller (the sink) snapshots it the same way. */
+    /** Any non-empty value marks this event as produced inside a repository's own test run (`meta.test`). WHICH environment signals mean that is the caller's decision (`testMarkerFrom`, `apps/cli/src/lib/log-sink.ts`: `AEG_LOG_TEST`, else `NODE_ENV=test`); this module only reads the answer, snapshotted like every other field here. */
     test?: string
   }
   /**

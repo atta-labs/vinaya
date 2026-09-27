@@ -147,13 +147,24 @@ const HeaderMetaV2Schema = z
      * `true` on an event produced inside a repository's own test run, absent
      * on every other event — a label a reader separates fixture traffic from
      * real traffic by, never a switch: it changes nothing about where the
-     * event is delivered or whether it is delivered at all. Only ever set by
-     * a test preload (`apps/cli/tests/lib/test-env-preload.ts`, via
-     * `AEG_LOG_TEST`), so a real run's events simply never carry it; there is
-     * deliberately no `false` to write, because "this is real traffic" is
-     * said by the field's absence and cannot be forged into silence.
-     * Optional and additive — every line written before this field existed
-     * still validates unchanged, so no new `meta.schema` version is needed.
+     * event is delivered or whether it is delivered at all. Set from the
+     * producing process's own environment (`testMarkerFrom`,
+     * `apps/cli/src/lib/log-sink.ts`), so it is a SELF-REPORTED claim, not a
+     * proven one: there is deliberately no `false` to write — "this is real
+     * traffic" is said by the field's absence, so no run can mark itself
+     * real to vanish from a reader's view — but any process CAN mark its own
+     * events, which is why a reader separates marked traffic rather than
+     * dropping it (`apps/cli/specs/log.md`, § Test traffic is marked, never
+     * suppressed).
+     *
+     * Additive for a reader at or past this version — every line written
+     * before this field existed still validates unchanged — but NOT
+     * forward-compatible: this object is `.strict()`, so a reader running an
+     * EARLIER build refuses a marked `schema: 2` line as `invalid` instead
+     * of storing it. A deployed `apps/log-server` is upgraded by hand, so it
+     * must be redeployed at or past this version; bumping `meta.schema`
+     * instead would be the wider break, making that same older reader
+     * classify EVERY line, real traffic included, as `unknown_version`.
      */
     test: z.literal(true).optional()
   })
