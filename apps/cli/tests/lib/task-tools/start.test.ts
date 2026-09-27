@@ -7,9 +7,11 @@ import { isDriverPidAlive, readDriverLock } from '../../../src/lib/dev-review-lo
 import { readTaskIssueFacts, resolveOpenTaskIssueForRef } from '../../../src/lib/task-tools/handlers.js'
 import type { TaskIssueFacts } from '../../../src/lib/task-tools/handlers.js'
 import type { AgentVendor } from '../../../src/lib/dispatch.js'
+import type { TaskLoopState } from '../../../src/lib/task-status.js'
 import type { CallerContext } from '../../../src/lib/task-tools/server.js'
 import {
   createTaskStartHandler,
+  type PauseDisposition,
   defaultLaunch,
   normalizeStartRecord,
   START_STALE_CLAIM_GRACE_MS,
@@ -72,6 +74,9 @@ function harness(
     resolveIssue?: (ref: TaskToolRef) => number | null
     issueFacts?: (issue: number) => TaskIssueFacts
     isRunAlive?: (issue: number) => boolean
+    loopState?: (issue: number) => TaskLoopState
+    pauseDisposition?: (issue: number) => PauseDisposition
+    heldAgent?: (issue: number) => AgentVendor | null
     isPidAlive?: (pid: number) => boolean
     now?: () => string
   } = {}
@@ -85,6 +90,16 @@ function harness(
     resolveIssue: overrides.resolveIssue ?? (() => ISSUE),
     issueFacts: overrides.issueFacts ?? (() => STANDALONE),
     isRunAlive: overrides.isRunAlive ?? (() => true),
+    // `not_started` by default: every pre-existing case here drives a task
+    // `task_start` owns, so the state gate must be transparent to them.
+    loopState: overrides.loopState ?? (() => ({ kind: 'not_started' })),
+    // No pause holding the run — the disposition that matches the
+    // `not_started` default above. It is read for every state but a live
+    // driver now, so anything else here would refuse every case that does
+    // not set its own.
+    pauseDisposition: overrides.pauseDisposition ?? (() => 'none'),
+    // No pause record by default, so the configured agent is the one used.
+    heldAgent: overrides.heldAgent ?? (() => null),
     isPidAlive: overrides.isPidAlive ?? (() => false),
     launch: async (target, meta) => {
       launches.push(target)
@@ -171,6 +186,9 @@ describe('task_start handler', () => {
         resolveIssue: () => ISSUE,
         issueFacts: () => STANDALONE,
         isRunAlive: () => true,
+        loopState: () => ({ kind: 'not_started' }),
+        pauseDisposition: () => 'none',
+        heldAgent: () => null,
         isPidAlive: () => false,
         launch: async (target) => {
           launches.push(target)
@@ -374,6 +392,283 @@ describe('task_start handler', () => {
     if (!second.ok) return
     expect(second.result.started).toBe(false) // still alive — a genuine replay
     expect(launches).toHaveLength(1)
+  })
+
+  describe('the state gate — every run state has one tool, and this one names it', () => {
+    it('re-attaches a run that exited with no pause record, rather than refusing it', async () => {
+      // The live failure this closes: a driver ended by a signal mid developer
+      // dispatch wrote no pause, so `task_resume` refused it for want of one —
+      // and the doctrine named no other tool. `runTask` re-attaches to the
+      // task's own open pull request whenever no driver is live, so the start
+      // path is the continuation path for this state.
+      const { handler, launches } = harness({
+        loopState: () => ({ kind: 'exited', reason: 'signal', lastDecision: 'developer_dispatched' })
+      })
+      const result = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.result.started).toBe(true)
+      expect(launches).toHaveLength(1)
+    })
+
+    it('refuses a task whose driver is live, naming `task_status`, and never claims the identity', async () => {
+      const { handler, launches, map } = harness({
+        loopState: () => ({ kind: 'running', pid: 9091, startedAt: '2026-01-01T00:00:00.000Z' })
+      })
+      const result = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error.kind).toBe('precondition')
+        expect(result.error.message).toContain('task_status')
+        expect(result.error.message).toContain('9091')
+      }
+      expect(launches).toHaveLength(0)
+      expect(map.size).toBe(0) // released — the refusal never blocks the tool that does own this state
+    })
+
+    it('refuses a pause still awaiting a decision, naming `task_resume`, and never claims the identity', async () => {
+      // Load-bearing, not cosmetic: `runTask` continues a paused task from its
+      // pause, so without this gate `task_start` would walk straight past the
+      // ruling `task_resume` exists to require.
+      const { handler, launches, map } = harness({
+        loopState: () => ({ kind: 'paused', reason: 'escalation', round: 2 }),
+        pauseDisposition: () => 'awaiting_ruling'
+      })
+      const result = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error.kind).toBe('precondition')
+        expect(result.error.message).toContain('task_resume')
+        expect(result.error.message).toContain('Principal ruling')
+      }
+      expect(launches).toHaveLength(0)
+      expect(map.size).toBe(0)
+    })
+
+    it('continues a pause whose ruling was already given and whose driver then died', async () => {
+      // The stranding this closes: the resolution record already holds the
+      // Principal's `resume`, so `task_resume` replays `already_resumed` and
+      // launches nothing at all. Refusing here too left that run with no tool.
+      const { handler, launches } = harness({
+        loopState: () => ({ kind: 'paused', reason: 'escalation', round: 2 }),
+        pauseDisposition: () => 'resolved_resume'
+      })
+      const result = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(result.ok).toBe(true)
+      if (result.ok) expect(result.result.started).toBe(true)
+      expect(launches).toHaveLength(1)
+    })
+
+    it('continues a recoverable infrastructure pause, which no Principal ever rules on', async () => {
+      // The loop waives a ruling for this reason inside its own retry bound
+      // and recovers itself. `task_resume` carries no such waiver and refuses
+      // `authority` for a ruling nobody posts for an automatic hiccup, so
+      // this tool is the one that moves it.
+      const { handler, launches } = harness({
+        loopState: () => ({ kind: 'paused', reason: 'infrastructure', round: 2 }),
+        pauseDisposition: () => 'self_resuming'
+      })
+      const result = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(result.ok).toBe(true)
+      if (result.ok) expect(result.result.started).toBe(true)
+      expect(launches).toHaveLength(1)
+    })
+
+    it('continues a held pause under the agent that run was dispatched with, not the configured one', async () => {
+      // `runTask` takes its resume path for any task with a pause record,
+      // and the loop refuses outright when the agent it is handed is not the
+      // one that pause was dispatched with. Relaunching under whatever
+      // `dispatch.agent` the repository configures today kills the run on
+      // arrival — and `task_resume` answers `already_resumed` without
+      // launching for a ruled pause, so that state would have nothing left
+      // that moves it.
+      for (const disposition of ['resolved_resume', 'self_resuming'] as const) {
+        const { handler, launches } = harness({
+          agent: 'claude',
+          loopState: () => ({ kind: 'paused', reason: 'escalation', round: 2 }),
+          pauseDisposition: () => disposition,
+          heldAgent: () => 'codex'
+        })
+        const result = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+        expect(result.ok).toBe(true)
+        expect(`${disposition}: ${launches[0]?.agent}`).toBe(`${disposition}: codex`)
+      }
+    })
+
+    it('falls back to the configured agent for a pause whose record names none', async () => {
+      // A legacy pause records no agent, and the loop accepts the one it is
+      // handed in that case.
+      const { handler, launches } = harness({
+        agent: 'codex',
+        loopState: () => ({ kind: 'paused', reason: 'escalation', round: 2 }),
+        pauseDisposition: () => 'resolved_resume',
+        heldAgent: () => null
+      })
+      const result = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(result.ok).toBe(true)
+      expect(launches[0]?.agent).toBe('codex')
+    })
+
+    it("starts a fresh run under the configured agent — a held run's agent is not consulted", async () => {
+      const asked: number[] = []
+      const { handler, launches } = harness({
+        agent: 'claude',
+        loopState: () => ({ kind: 'not_started' }),
+        pauseDisposition: () => 'none',
+        heldAgent: (issue) => {
+          asked.push(issue)
+          return 'codex'
+        }
+      })
+      const result = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(result.ok).toBe(true)
+      expect(launches[0]?.agent).toBe('claude')
+      expect(asked).toEqual([])
+    })
+
+    it('refuses a pause already resolved as cancel, naming `task_cancel` rather than restarting it', async () => {
+      const { handler, launches, map } = harness({
+        loopState: () => ({ kind: 'paused', reason: 'escalation', round: 2 }),
+        pauseDisposition: () => 'resolved_cancel'
+      })
+      const result = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error.kind).toBe('precondition')
+        expect(result.error.message).toContain('task_cancel')
+      }
+      expect(launches).toHaveLength(0)
+      expect(map.size).toBe(0)
+    })
+
+    it('refuses a pause whose driver was killed, though the state reads exited, not paused', async () => {
+      // `task run` composes the WATCHING driver, which retains its lock at
+      // every pause reason, so a killed pause leaves a dead lock plus an
+      // exit trace and derives `exited` while its record still holds the
+      // run. Asking for the disposition only when the state read `paused`
+      // let exactly this pause launch past the ruling the refusal requires.
+      const { handler, launches, map } = harness({
+        loopState: () => ({ kind: 'exited', reason: 'signal', lastDecision: 'dispatch_developer' }),
+        pauseDisposition: () => 'awaiting_ruling'
+      })
+      const result = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error.kind).toBe('precondition')
+        expect(result.error.message).toContain('task_resume')
+      }
+      expect(launches).toHaveLength(0)
+      expect(map.size).toBe(0)
+    })
+
+    it('reads the disposition for every state but a live driver — a running task needs no pause read', async () => {
+      const asked: number[] = []
+      const record = (kind: 'exited' | 'running') =>
+        harness({
+          loopState: () =>
+            kind === 'running'
+              ? { kind: 'running', pid: 9091, startedAt: '2026-01-01T00:00:00.000Z' }
+              : { kind: 'exited', reason: 'signal', lastDecision: 'dispatch_developer' },
+          pauseDisposition: (issue) => {
+            asked.push(issue)
+            return 'none'
+          }
+        })
+
+      const live = record('running')
+      await live.handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(asked).toEqual([]) // a live driver is refused on the state alone
+
+      const dead = record('exited')
+      const result = await dead.handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(result.ok).toBe(true)
+      expect(asked).toHaveLength(1) // …every other state asks the record itself
+    })
+
+    it('refuses when the pause record or its resolution cannot be read, rather than guessing', async () => {
+      const { handler, launches, map } = harness({
+        loopState: () => ({ kind: 'paused', reason: 'escalation', round: 2 }),
+        pauseDisposition: () => 'unreadable'
+      })
+      const result = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error.kind).toBe('precondition')
+        expect(result.error.message).toContain('could not read')
+      }
+      expect(launches).toHaveLength(0)
+      expect(map.size).toBe(0)
+    })
+
+    it('releases its claim when a state read throws, so a retry is not stuck replaying a run that never began', async () => {
+      // `readIfExists` rethrows anything that is not ENOENT, so a real
+      // filesystem error here would otherwise escape the handler with the
+      // claim already written.
+      let fail = true
+      const { handler, launches, map } = harness({
+        loopState: () => ({ kind: 'paused', reason: 'escalation', round: 2 }),
+        pauseDisposition: () => {
+          if (fail) throw new Error('EACCES: permission denied')
+          return 'self_resuming'
+        }
+      })
+      const first = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(first.ok).toBe(false)
+      if (!first.ok) {
+        expect(first.error.kind).toBe('infrastructure')
+        expect(first.error.message).toContain('EACCES')
+      }
+      expect(map.size).toBe(0) // released — no claim held over a run that never started
+      expect(launches).toHaveLength(0)
+
+      fail = false
+      const retry = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(retry.ok).toBe(true)
+      if (retry.ok) expect(retry.result.started).toBe(true)
+      expect(launches).toHaveLength(1)
+    })
+
+    it('launches for every state neither of those two names — never started, no driver, published', async () => {
+      const states: TaskLoopState[] = [{ kind: 'not_started' }, { kind: 'no_driver' }, { kind: 'published', round: 3 }]
+      for (const state of states) {
+        const { handler, launches } = harness({ loopState: () => state })
+        const result = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+        expect(result.ok).toBe(true)
+        expect(launches).toHaveLength(1)
+      }
+    })
+
+    it('reads the state after the Issue resolves, so an unresolvable target still refuses first', async () => {
+      // Ordering matters: the state read is keyed by Issue number, so a target
+      // that resolves to none must never reach it.
+      let stateReads = 0
+      const { handler } = harness({
+        resolveIssue: () => null,
+        loopState: () => {
+          stateReads += 1
+          return { kind: 'not_started' }
+        }
+      })
+      const result = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(result.ok).toBe(false)
+      if (!result.ok) expect(result.error.kind).toBe('infrastructure')
+      expect(stateReads).toBe(0)
+    })
+
+    it('never re-reads the state on an idempotent replay — the gate guards a launch, not an answer', async () => {
+      let state: TaskLoopState = { kind: 'not_started' }
+      const { handler, launches } = harness({ loopState: () => state })
+      const first = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(first.ok).toBe(true)
+      // The very run this call started is now live; a replay of the same
+      // identity must still answer with it rather than refuse its own run.
+      state = { kind: 'running', pid: 9091, startedAt: '2026-01-01T00:00:00.000Z' }
+      const second = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(second.ok).toBe(true)
+      if (!second.ok) return
+      expect(second.result.started).toBe(false)
+      expect(launches).toHaveLength(1)
+    })
   })
 
   describe('a standalone task Issue — the `{ issue }` address form', () => {
