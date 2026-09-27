@@ -84,18 +84,63 @@ function shipsArchivePrefix(shipsPrefix: string): string {
 }
 
 /**
- * A per-product specs file (`apps/<product>/specs/**`) — issue-657, O6:
+ * The spec class's default file set, repository-relative: a root product
+ * spec, a root context document, and every decision record under
+ * `docs/adr/`. These are the durable documents a repository with no `apps/`
+ * tree of its own actually keeps — a spec class that collected only
+ * `apps/<product>/specs/**` never read them, so a root spec was free to
+ * carry a copy of a plan (a task list, the Issue numbers behind it) that
+ * went stale the moment the plan moved, which is exactly the citation this
+ * class exists to refuse.
+ *
+ * A folder entry matches every `.md` file under it; a file entry matches
+ * that one file. `README.md` is deliberately absent and must stay absent:
+ * the tranche-slug pattern matches the version badge a README carries for
+ * each framework it is built on, so a default that swept READMEs would
+ * refuse a shape that is not a citation at all.
+ */
+export const DEFAULT_SPEC_PATHS: readonly string[] = ['SPEC.md', 'CONTEXT.md', 'docs/adr']
+
+/**
+ * One spec-path entry in the single spelling the class matches against: no
+ * leading `./`, no trailing slash, no doubled separators. A configured entry
+ * is written by hand, so `docs/adr/` and `./docs/adr` both reach here and
+ * both mean the folder `docs/adr` — normalized, they match; unnormalized,
+ * the prefix compare below silently answered "not a spec" and the entry
+ * checked nothing at all. Every caller normalizes with THIS function so the
+ * collector's paths and the classifier's entries cannot disagree about a
+ * spelling.
+ */
+export function normalizeSpecPath(entry: string): string {
+  let out = entry.replace(/\\/g, '/')
+  while (out.startsWith('./')) out = out.slice(2)
+  out = out.replace(/\/{2,}/g, '/')
+  while (out.endsWith('/')) out = out.slice(0, -1)
+  return out
+}
+
+/**
+ * A spec-class file: a per-product specs file (`apps/<product>/specs/**`),
+ * or any `.md` file at — or under — one of `specPaths`' entries. Both are
  * swept with the SAME rules `ships`/doctrine pages already carry (a spec is
  * as reader-facing as a doctrine page; a fork or an export reads it with no
- * forge to resolve a citation against, same as `aeg-root/**`). Formerly
- * classified `internal` (exempt) on the theory that "this reader has this
- * forge" — the wrong reader: a spec ships to the SAME audience doctrine
- * does, and a spec that opened with a tranche name, an Issue number, and
- * external documents as its authority reached a pull request unflagged
- * under the old exemption (found live, 2026-09-19).
+ * forge to resolve a citation against, same as `aeg-root/**`). The
+ * `apps/<product>/specs/**` half was formerly classified `internal`
+ * (exempt) on the theory that "this reader has this forge" — the wrong
+ * reader: a spec ships to the SAME audience doctrine does, and a spec that
+ * opened with a tranche name, an Issue number, and external documents as
+ * its authority reached a pull request unflagged under the old exemption
+ * (found live, 2026-09-19).
+ *
+ * `.md` is required of an entry-matched path so a folder entry carrying
+ * non-prose files (a fixture, an image) widens the class to its markdown
+ * only. Each entry is normalized before it is compared, so a hand-written
+ * `docs/adr/` or `./docs/adr` names the same folder a bare `docs/adr` does.
  */
-function isSpecFile(path: string): boolean {
-  return path.startsWith('apps/') && path.includes('/specs/') && path.endsWith('.md')
+function isSpecFile(path: string, specPaths: readonly string[]): boolean {
+  if (path.startsWith('apps/') && path.includes('/specs/') && path.endsWith('.md')) return true
+  if (!path.endsWith('.md')) return false
+  return specPaths.some((entry) => isUnderOrEqual(path, normalizeSpecPath(entry)))
 }
 
 /** Any `CLAUDE.md`, at any depth — same reasoning as specs: this reader has this forge. */
@@ -117,12 +162,20 @@ function isClaudeMdFile(path: string): boolean {
  * illustrations using fictional PR numbers as flavor text) that are not
  * prose in the sense this check means, hence a suffix-scoped match rather
  * than a bare prefix.
+ *
+ * `specPaths` is the spec class's own repository-relative file set beyond
+ * `apps/<product>/specs/**` — `DEFAULT_SPEC_PATHS` when the caller says
+ * nothing, so a repository that configures nothing still has its root spec,
+ * root context document and decision records read. A caller adding
+ * configured paths passes the defaults alongside them; this parameter is the
+ * whole set, never a delta.
  */
 export function classifyProseFile(
   path: string,
   readerFacingPrefix: string,
   readerFacingSuffix: string,
-  shipsPrefix: string = SHIPS_PREFIX
+  shipsPrefix: string = SHIPS_PREFIX,
+  specPaths: readonly string[] = DEFAULT_SPEC_PATHS
 ): ProseFileClass | null {
   if (path.startsWith(shipsPrefix)) {
     return path.startsWith(shipsArchivePrefix(shipsPrefix)) ? 'internal' : 'ships'
@@ -131,7 +184,7 @@ export function classifyProseFile(
     return 'reader-facing'
   }
   if (isClaudeMdFile(path)) return 'internal'
-  if (isSpecFile(path)) return 'spec'
+  if (isSpecFile(path, specPaths)) return 'spec'
   if (isProductScopeFile(path)) return 'product'
   return null
 }
@@ -195,6 +248,24 @@ export const FORGE_NUMBER_PATTERN = /#[0-9]{2,4}/g
 export const TRANCHE_SLUG_VN_PATTERN = /[a-z][a-z-]+-v[0-9]/g
 
 /**
+ * `task 4`/`tasks 12`/`task #4`-shaped — a task's number out of a plan, which
+ * only that plan's own tracker resolves, and which moves the moment the plan
+ * is renumbered. The shape a durable document copies when it repeats a plan
+ * it should have pointed at instead, so it is checked wherever a spec is.
+ *
+ * Deliberately narrow: the word `task` or `tasks` immediately followed by a
+ * number. A document's own numbered structure — "Section 3", "step 2", "Part
+ * 1" — is not a citation and never matches, and neither does a longer word
+ * that merely contains these letters (`multitasking 2`), since the leading
+ * boundary rejects a preceding letter, digit or hyphen. Case-insensitive, so
+ * a heading (`## Task 4`) is caught alongside mid-sentence prose. Group 1 is
+ * the leading boundary character (or start-of-string) and group 2 the
+ * citation itself — the caller reports group 2, so the boundary character
+ * never leaks into a finding's message.
+ */
+export const TASK_NUMBER_PATTERN = /(^|[^a-z0-9-])(tasks?[ \t]+#?[0-9]+)/gi
+
+/**
  * Builds the legacy-slug pattern from the real archived-tranche filenames
  * the adapter reads (mirrors `retired-vocabulary.test.ts`'s `legacySlugs()` —
  * derived from `aeg-root/tranches/completed/*.md`, never a shape guess).
@@ -230,7 +301,8 @@ export function checkUnresolvableReferences(
   readerFacingSuffix: string,
   legacySlugs: readonly string[] = [],
   shipsPrefix: string = SHIPS_PREFIX,
-  specGrandfather: readonly string[] = []
+  specGrandfather: readonly string[] = [],
+  specPaths: readonly string[] = DEFAULT_SPEC_PATHS
 ): ProseFinding[] {
   const findings: ProseFinding[] = []
   const legacyPattern = legacySlugPattern(legacySlugs)
@@ -249,29 +321,54 @@ export function checkUnresolvableReferences(
     { pattern: TRANCHE_SLUG_VN_PATTERN, what: 'an internal tranche slug in product code' }
   ]
 
+  // A spec carries the doctrine-page patterns AND the task-number one: a
+  // durable document that copies a plan's task numbers goes stale the moment
+  // the plan is renumbered, which is the failure this class was widened for.
+  // The doctrine pages themselves are deliberately left out of it — their own
+  // report-only sweep names a much larger standing backlog, and a rule that
+  // blocks belongs where it can be satisfied file by file.
+  const specPatterns: { pattern: RegExp; what: string; group?: number }[] = [
+    ...patterns,
+    { pattern: TASK_NUMBER_PATTERN, what: 'a task number', group: 2 }
+  ]
+
   for (const file of files) {
-    const cls = classifyProseFile(file.path, readerFacingPrefix, readerFacingSuffix, shipsPrefix)
+    const cls = classifyProseFile(file.path, readerFacingPrefix, readerFacingSuffix, shipsPrefix, specPaths)
     if (!cls || cls === 'internal') continue
     if (cls !== 'product' && cls !== 'spec' && !SWEPT_CLASSES.has(cls)) continue
-    // issue-657, O6 — a spec explicitly listed by path is grandfathered
-    // stock (already failing when this sweep was extended to specs) and is
-    // skipped entirely, not merely down-graded: the list shrinks as later
-    // tasks rewrite each spec's prose, never grows.
+    // A spec explicitly listed by path is grandfathered stock (already
+    // failing when this sweep was extended to specs) and is skipped
+    // entirely, not merely down-graded: the list shrinks as each spec's
+    // prose is rewritten to state its facts plainly, never grows. The list
+    // is matched against every spec-class file, so it exempts a default path
+    // (a root spec, a decision record) exactly as it exempts a
+    // per-product one — one exemption for the class, not one per path
+    // source.
     if (cls === 'spec' && grandfathered.has(file.path)) continue
     const blocking = cls === 'product' || cls === 'spec'
     const scrubbed =
       cls === 'product' ? stripNonProseForProduct(file.path, file.content) : stripNonProse(file.path, file.content)
-    // A spec is checked with the SAME rules a doctrine page is (O6) — the
-    // full reference pattern set, never the narrower product-code list.
-    const patternsToRun = cls === 'product' ? productPatterns : patterns
+    // A spec is checked with the SAME rules a doctrine page is — the full
+    // reference pattern set, never the narrower product-code list — plus the
+    // task-number rule that applies to this class alone.
+    const patternsToRun = cls === 'product' ? productPatterns : cls === 'spec' ? specPatterns : patterns
     for (const { pattern, what, group } of patternsToRun) {
       pattern.lastIndex = 0
       let match: RegExpExecArray | null = pattern.exec(scrubbed)
       while (match !== null) {
         const cited = group !== undefined ? (match[group] ?? match[0]) : match[0]
+        // The line is the CITED text's own line, not the whole match's. A
+        // boundary-checked pattern consumes the character before the
+        // citation, and where that character is the newline ending the
+        // previous line — a citation that opens a line — the match begins on
+        // the previous line and a finding sent the reader there instead.
+        // `indexOf` is exact for both shapes in use: the leading boundary is
+        // one character that can never itself start the cited text, and an
+        // empty boundary (start of file) resolves to offset zero.
+        const citedIndex = match.index + match[0].indexOf(cited)
         findings.push({
           file: file.path,
-          line: lineAt(scrubbed, match.index),
+          line: lineAt(scrubbed, citedIndex),
           message: `references ${what} ("${cited}") a reader outside this repo's tracker cannot resolve`,
           blocking
         })
@@ -540,7 +637,8 @@ export function checkReaderResolvableProse(
   readerFacingSuffix: string,
   legacySlugs: readonly string[] = [],
   shipsPrefix: string = SHIPS_PREFIX,
-  specGrandfather: readonly string[] = []
+  specGrandfather: readonly string[] = [],
+  specPaths: readonly string[] = DEFAULT_SPEC_PATHS
 ): ProseFinding[] {
   return [
     ...checkUnresolvableReferences(
@@ -549,7 +647,8 @@ export function checkReaderResolvableProse(
       readerFacingSuffix,
       legacySlugs,
       shipsPrefix,
-      specGrandfather
+      specGrandfather,
+      specPaths
     ),
     ...checkUndefinedVocabulary(files, glossaryTerms, readerFacingPrefix, readerFacingSuffix, shipsPrefix)
   ]

@@ -60,6 +60,9 @@ You are the Developer when you are running in a coding-agent surface, a task bri
 <!-- AEG:CLAIM: packages/aeg-core/src/log/envelope.ts contains:isRole(input.env.role) ? input.env.role : 'unattributed' -->
 A turn started via `vinaya dispatch developer --agent <vendor>` carries its role and task in every `vinaya` call it makes; one started by hand in a terminal reads `unattributed` in the Vinaya Log, which is the truth about it.
 
+<!-- AEG:CLAIM: apps/cli/src/lib/dispatch.ts contains:VINAYA_DRIVER_PID: String(process.pid), -->
+**Your own driver is not a competing run.** That same turn carries its driver's process id as `VINAYA_DRIVER_PID`. A `vinaya task run` or review-loop process whose process id is that value is your OWN driver — the process that launched you, and whose log header names the same id — never a second run on your branch, and finding it is never a reason to stop. Only a second driver for the same task, with a DIFFERENT process id, is a conflict; escalate that one rather than proceeding.
+
 > **Toolchain is per-repo.** This role names obligations (tests pass, typecheck passes, lint passes, production build passes), not specific commands. Each repo declares its own commands — the exact `typecheck` / `lint` / `test` / `build` invocations live in the repo's config (e.g. `package.json` scripts, a Makefile, the brief's verification section). Where this doc shows commands, they are **this repo's** instances (a Bun/JS toolchain) — substitute your repo's equivalents.
 
 ---

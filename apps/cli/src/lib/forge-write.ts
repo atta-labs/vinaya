@@ -33,6 +33,7 @@ import {
   checkBriefSections,
   checkDocsWithinSurface,
   checkDocUpdateList,
+  checkEdgeIdsWholeNumbers,
   checkForField,
   checkForgeTitle,
   checkIssueBriefSections,
@@ -991,12 +992,14 @@ const ISSUE_CONTENT_RECOVERY = {
     'Fix the named `## Surface` `in:` glob so it matches at least one real tracked file (a typo, or a directory that does not exist yet), then re-run `{cmd}`.',
   partsCiteObjectives:
     'Fix the named Part to cite an objective id the `## Objectives` section actually defines, or add the missing objective, then re-run `{cmd}`.',
+  edgeIdsWholeNumbers:
+    'Rewrite the named `Depends-on`/`Conflicts-with` edge to a whole-number task id (`1`, `2`), a `#<NNN>` Issue ref, or a `<slug> <n>` cross-tranche reference — task ids are never lettered — then re-run `{cmd}`.',
   docsWithinSurface:
     'Move the named doc pointer to a path `## Surface`\'s `in:` globs actually cover (never widen the surface just to fit the pointer — that renders an unusable brief), or drop it from "Docs to keep coherent" if this task does not really keep it coherent, then re-run `{cmd}`.',
   surfaceExcludesBoundDoc:
     'Either move the named `out:` glob so it no longer covers the bound document, or narrow the `in:` glob so it no longer reaches the doc-owners binding — the Issue cannot declare both at once. Then re-run `{cmd}`.',
   rationaleSurfaceCoverage:
-    'Widen the named `## Surface` `in:` glob to cover the Boundary path (nearest entry named above), or correct the path if it was mistyped, then re-run `{cmd}`.',
+    'Widen the named `## Surface` `in:` directory glob to cover the Boundary path (nearest entry named above) — `## Surface` lists directories, never a file path, so widen the glob rather than adding the file path itself — or correct the path if it was mistyped, then re-run `{cmd}`.',
   surfaceOverlap:
     'Narrow the named `## Surface` `in:` glob so it no longer overlaps the other task, or declare a `Conflicts-with` entry naming one task in the other (either direction is enough), then re-run `{cmd}`.',
   objectivesRespectBoundary:
@@ -1058,6 +1061,7 @@ export function validateIssueContent(input: IssueContentInput): CheckError[] {
     [checkRationaleNamesDocs(input.body).errors, 'rationaleNamesDocs'],
     [checkSurfaceGlobsResolve(input.body, input.resolvesToFile).errors, 'surfaceGlobsResolve'],
     [checkPartsCiteDefinedObjectives(input.body).errors, 'partsCiteObjectives'],
+    [checkEdgeIdsWholeNumbers(input.body).errors, 'edgeIdsWholeNumbers'],
     [checkDocsWithinSurface(input.body, input.issueNumber).errors, 'docsWithinSurface'],
     [checkSurfaceExcludesBoundDoc(input.body, input.docOwnersContent).errors, 'surfaceExcludesBoundDoc'],
     [checkRationaleSurfaceCoverage(input.body, input.issueNumber).errors, 'rationaleSurfaceCoverage'],

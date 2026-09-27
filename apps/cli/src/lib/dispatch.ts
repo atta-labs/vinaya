@@ -2,7 +2,9 @@
  * `dispatchRole` — the Vinaya Log's `dispatch` family chokepoint (Linear
  * "Tech spec — The Vinaya Log" rev 4, §8, §20; `apps/cli/specs/log.md`).
  * Starts one of three vendors' headless CLI as a child process with
- * attribution (`VINAYA_RUN_ID`/`VINAYA_ROLE`/`VINAYA_TASK`/`VINAYA_ROUND`) set
+ * attribution (`VINAYA_RUN_ID`/`VINAYA_ROLE`/`VINAYA_TASK`/`VINAYA_ROUND`) plus
+ * this driver's own pid (`VINAYA_DRIVER_PID`, so a role that lists processes
+ * recognizes its own launcher rather than reading it as a competing run) set
  * on its environment only — never on this process's own `process.env` — and
  * records `dispatched` / `outcome_received` / `dispatch_failed` through
  * `log()`, using the SAME `run_id` the child's own later `vinaya` calls (its
@@ -3022,6 +3024,32 @@ export function codexSpawnEnvExtras(
  * returned promise with a `DispatchHandle` describing the failure, matching
  * `log()`'s own "never throws" posture (`log-sink.ts`).
  */
+/**
+ * The exact FILES a confined dispatch may write, de-duplicated and in a
+ * stable order: this process's own outbox line, its resume record, and every
+ * other outbox file the CHILD could honestly land in.
+ *
+ * There is more than one because the child does not always reach the same
+ * answer this controller did. A task-less dispatch's child derives its
+ * attribution from the branch of the directory IT runs in (another worktree,
+ * when the caller named `opts.cwd`), and a CONFINED child cannot derive it at
+ * all — the boundary denies read over the real HOME where `gh` keeps its
+ * credential and passes no forge token, so its own read answers `null` and
+ * its events land in the `none` bucket (round 5 security review, MEDIUM).
+ * Naming only the branch-derived file would cost that child its whole
+ * telemetry stream to an `Operation not permitted` that `appendLine`
+ * swallows. Every entry stays an exact `(literal …)` grant — never the
+ * directory these files share, which holds every sibling task's and role's
+ * own records.
+ */
+export function outboxGrantsFor(own: string, resumeRecord: string, alternates: (string | null)[]): string[] {
+  const files = [own, resumeRecord]
+  for (const alternate of alternates) {
+    if (alternate !== null && !files.includes(alternate)) files.push(alternate)
+  }
+  return files
+}
+
 export async function dispatchRole(
   role: Role,
   agent: AgentVendor,
@@ -3055,6 +3083,34 @@ export async function dispatchRole(
   const repo = await resolveRepo().catch(() => null)
   const issue = opts.task ?? null
   const outboxPath = await resolveLogAppendPath(repo, issue, { env: sinkEnv })
+  // A task-less dispatch's CHILD resolves its own attribution from the
+  // branch of the directory IT runs in, which is `opts.cwd` when the caller
+  // named one — a different worktree, and so possibly a different Issue,
+  // from the one this parent's own lines land under. The sandbox grant
+  // below names exact FILES, never the directory, so a child appending to
+  // an ungranted path loses its whole telemetry stream to a swallowed
+  // `Operation not permitted` (round 3 review, MAJOR). Resolved here, once,
+  // and granted alongside this process's own file.
+  const childOutboxPath =
+    issue === null && opts.cwd !== undefined && opts.cwd !== process.cwd()
+      ? await resolveLogAppendPath(repo, null, { env: sinkEnv, cwd: () => opts.cwd as string })
+      : null
+  // The same child, when CONFINED, cannot reach the answer at all: the
+  // boundary denies read over the real HOME where `gh` keeps its credential
+  // and passes no forge token, so its own branch read fails and its events
+  // land in the `none` bucket — a file the branch-derived grant above does
+  // not name, which would cost the confined worker its whole telemetry
+  // stream to a swallowed `Operation not permitted` (round 5 security
+  // review, MEDIUM). Granting BOTH is what makes the grant correct for a
+  // child that resolves the branch and for one that cannot: two exact
+  // files, never the directory they share.
+  const unattributedOutboxPath =
+    issue === null
+      ? await resolveLogAppendPath(repo, null, {
+          env: sinkEnv,
+          resolveBranchIssue: () => Promise.resolve(null)
+        })
+      : null
 
   const effectId = randomUUID()
   const vendor = VENDOR_TABLE[agent]
@@ -3472,7 +3528,7 @@ export async function dispatchRole(
               // repository can configure anywhere, while the telemetry
               // outbox line stays under the Vinaya home. Two roots, so a
               // single base to resolve against can no longer name both.
-              const files = [outboxPath, resumePath]
+              const files = outboxGrantsFor(outboxPath, resumePath, [childOutboxPath, unattributedOutboxPath])
               // Round 6 review, security CRITICAL fix: `documentationLogHookScript`'s
               // own `PostToolUse` hook (`writeDispatchSettings`, above) appends one
               // line per `WebFetch` call to `documentation-log-<runId>.jsonl` inside
@@ -3634,6 +3690,16 @@ export async function dispatchRole(
       VINAYA_ROLE: role,
       VINAYA_TASK: opts.task !== undefined ? String(opts.task) : undefined,
       VINAYA_ROUND: opts.round !== undefined ? String(opts.round) : undefined,
+      // This process — the one that launched this role, and so the role's own
+      // driver: the `vinaya task run` / `dev-review-loop` process whose own
+      // loop-log header already names this same `process.pid` (`loop-log.ts`'s
+      // `appendRunStartMarker`), and the same value this launch record's
+      // `dispatcherPid` carries. A dispatched role that lists processes finds
+      // that driver and, without this value, has no way to tell its own
+      // launcher from a second, competing run on the same branch — so it
+      // stops to ask. Set for EVERY dispatched role, beside the attribution
+      // above, never only the developer.
+      VINAYA_DRIVER_PID: String(process.pid),
       // Round 2 review, MAJOR: the runtime directory THIS trusted controller
       // already resolved, so the child never resolves one of its own and the
       // two can never disagree. A child that re-derived it would reach a

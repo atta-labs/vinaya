@@ -10,6 +10,7 @@ import {
   checkDirtyPinnedFiles,
   checkStaleAgainstRemote,
   DRAFT_ISSUE_SENTINEL,
+  repoBriefCommandFacts,
   resolveBoundaryPaths,
   resolveRemoteDefaultBranch,
   resolveTrancheTaskId,
@@ -431,5 +432,82 @@ describe('resolveTrancheTaskId', () => {
         if (originalAegRepo === undefined) delete process.env.AEG_REPO
         else process.env.AEG_REPO = originalAegRepo
       })
+  })
+})
+
+/**
+ * Issue #807 — a brief's commands are written the way the repository it is
+ * rendered for reaches the CLI, so an adopter never receives one naming a path
+ * only this repository has.
+ */
+describe('repoBriefCommandFacts', () => {
+  it('this repository vendors the CLI: the source entry, plus the unabridged gate derivations it ships', () => {
+    const facts = repoBriefCommandFacts(REPO_ROOT)
+    expect(facts.cliInvocation).toBe('bun apps/cli/src/index.ts')
+    expect(facts.localGateCommands).toEqual({
+      dispatchReadiness: 'bun packages/aeg-core/bin/verify-dispatch.ts',
+      docCoverage: 'bun packages/aeg-core/bin/verify-docs.ts'
+    })
+  })
+
+  it('a repository is not credited with a derivation it merely has a file at the path of (round 2, security F4)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'brief-cli-lookalike-'))
+    try {
+      // Vendors the CLI, so the invocation is the vendored one — but its
+      // `packages/aeg-core` declares someone else's name, so the bin files it
+      // carries are not this package's own derivations and are never named to
+      // a Developer as commands to run.
+      writeFileSync(
+        join(dir, 'package.json'),
+        JSON.stringify({ name: 'lookalike', workspaces: ['apps/*', 'packages/*'] })
+      )
+      mkdirSync(join(dir, 'apps', 'cli', 'src'), { recursive: true })
+      writeFileSync(join(dir, 'apps', 'cli', 'package.json'), JSON.stringify({ name: '@attalabs/vinaya' }))
+      // A real entry, so this case isolates the package-name identity check
+      // rather than also tripping the entry-existence one below.
+      writeFileSync(join(dir, 'apps', 'cli', 'src', 'index.ts'), '')
+      mkdirSync(join(dir, 'packages', 'aeg-core', 'bin'), { recursive: true })
+      writeFileSync(join(dir, 'packages', 'aeg-core', 'package.json'), JSON.stringify({ name: 'not-aeg-core' }))
+      writeFileSync(join(dir, 'packages', 'aeg-core', 'bin', 'verify-dispatch.ts'), '')
+      writeFileSync(join(dir, 'packages', 'aeg-core', 'bin', 'verify-docs.ts'), '')
+
+      const facts = repoBriefCommandFacts(dir)
+      expect(facts.cliInvocation).toBe('bun apps/cli/src/index.ts')
+      expect(facts.localGateCommands).toEqual({ dispatchReadiness: null, docCoverage: null })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('a vendored member with no src/index.ts falls back to the registry form rather than naming a missing file (round 3, security F2)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'brief-cli-layout-'))
+    try {
+      // `detectVendoredVinaya` matches on the member's package NAME, which says
+      // nothing about where its sources live. Without the entry check, every
+      // command in this repository's brief named a file that is not there.
+      writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'odd-layout', workspaces: ['tools/*'] }))
+      mkdirSync(join(dir, 'tools', 'vinaya'), { recursive: true })
+      writeFileSync(
+        join(dir, 'tools', 'vinaya', 'package.json'),
+        JSON.stringify({ name: '@attalabs/vinaya', bin: 'lib/main.js' })
+      )
+
+      const facts = repoBriefCommandFacts(dir)
+      expect(facts.cliInvocation).toMatch(/^npx --yes @attalabs\/vinaya@\d+\.\d+\.\d+$/)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('a repository that installs from the registry: the pinned npx form, and no local derivation', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'brief-cli-adopter-'))
+    try {
+      writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'adopter' }))
+      const facts = repoBriefCommandFacts(dir)
+      expect(facts.cliInvocation).toMatch(/^npx --yes @attalabs\/vinaya@\d+\.\d+\.\d+$/)
+      expect(facts.localGateCommands).toEqual({ dispatchReadiness: null, docCoverage: null })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

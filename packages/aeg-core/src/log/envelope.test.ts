@@ -33,6 +33,37 @@ describe('buildHeader', () => {
     expect(subject.role).toBe('unattributed')
   })
 
+  it('falls back to the branch-derived Issue when the env names no task (O1)', () => {
+    const { subject, meta } = buildHeader({ ...baseInput, branchIssue: 792 })
+    expect(subject.issue).toBe(792)
+    // A branch is not an environment correlation — provenance is untouched.
+    expect(meta.schema === 2 && meta.provenance).toBe('unavailable')
+  })
+
+  it('never lets a branch-derived Issue override one the env actually names (O2)', () => {
+    const { subject } = buildHeader({ ...baseInput, env: { role: 'developer', task: '412' }, branchIssue: 792 })
+    expect(subject.issue).toBe(412)
+  })
+
+  it('keeps issue null when the branch named none', () => {
+    expect(buildHeader({ ...baseInput, branchIssue: null }).subject.issue).toBeNull()
+  })
+
+  it('never reads env_correlated over a branch-guessed issue, even when the env named a role', () => {
+    // The shape a refused invocation takes: the role is recognised, the
+    // task is absent or unparseable, and the number beside it came only
+    // from the checkout. Saying `env_correlated` there would present a
+    // guess as a correlation.
+    const guessedWithRole = buildHeader({ ...baseInput, env: { role: 'developer' }, branchIssue: 792 })
+    expect(guessedWithRole.meta.schema === 2 && guessedWithRole.meta.provenance).toBe('unavailable')
+    const guessedWithBadTask = buildHeader({ ...baseInput, env: { role: 'developer', task: 'abc' }, branchIssue: 792 })
+    expect(guessedWithBadTask.subject.issue).toBe(792)
+    expect(guessedWithBadTask.meta.schema === 2 && guessedWithBadTask.meta.provenance).toBe('unavailable')
+    // An env-named task keeps the correlation it really has.
+    const named = buildHeader({ ...baseInput, env: { role: 'developer', task: '412' }, branchIssue: 792 })
+    expect(named.meta.schema === 2 && named.meta.provenance).toBe('env_correlated')
+  })
+
   it('leaves issue null for an unparseable VINAYA_TASK', () => {
     const { subject } = buildHeader({ ...baseInput, env: { task: 'abc' } })
     expect(subject.issue).toBeNull()

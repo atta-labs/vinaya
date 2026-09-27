@@ -42,6 +42,7 @@ import {
   type IssuePart,
   type IssueSurface,
   type IssueTestPlan,
+  type LocalGateCommands,
   type SurfaceFileFact,
   type Task
 } from '@attalabs/aeg-core'
@@ -49,15 +50,68 @@ import { parseRationaleDeps } from '@attalabs/aeg-forge-state'
 import { createForgeSource } from '@attalabs/vinaya-sources'
 import { type EdgeFactsSubset, type EdgeTaskRef, resolveEdge } from '../checks/edge-resolve.js'
 import { loadConfig, loadTrustAnchorConfig, resolveGateCutovers, resolvePrincipalAllowlist } from './config.js'
+import { briefCliInvocation } from './own-version.js'
 import { packageRoot } from './package-root.js'
+import { detectVendoredVinaya } from './self-host.js'
 
 const DOC_OWNERS_PATH = '.vinaya/doc-owners'
+/** The workspace member that owns the unabridged gate derivations a brief may name, and the name it must declare for this repository to be the one that owns them. */
+const AEG_CORE_DIR = 'packages/aeg-core'
+const AEG_CORE_PACKAGE_NAME = '@attalabs/aeg-core'
 const WORKSPACE_TEMPLATE_PATH = 'aeg-root/templates/brief-template.md'
 const PACKAGE_ROOT = packageRoot(import.meta.url)
 const PACKAGED_TEMPLATE_PATH = join(PACKAGE_ROOT, 'aeg-root', 'templates', 'brief-template.md')
 const TEMPLATE_PATH = existsSync(PACKAGED_TEMPLATE_PATH)
   ? PACKAGED_TEMPLATE_PATH
   : join(PACKAGE_ROOT, '..', '..', 'aeg-root', 'templates', 'brief-template.md')
+
+/**
+ * The two command facts every rendered brief needs about the repository it is
+ * rendered for: how that repository invokes the CLI, and which unabridged
+ * gate derivations it ships itself. Both are `renderBrief` inputs rather than
+ * anything it detects — that module reads no filesystem — and both are
+ * derived here, once, for the two `assembleAndRenderBrief*` entry points.
+ *
+ * The invocation reuses `briefCliInvocation`, i.e. the SAME vendored-CLI
+ * detection the generated hooks and workflows make their own choice with, so a
+ * brief and a hook in one repository never disagree about how the CLI is
+ * reached.
+ *
+ * A local gate program is named only when this repository is identified, by
+ * PACKAGE NAME, as one that owns that derivation: the CLI itself is vendored
+ * here (`detectVendoredVinaya`, which matches on `@attalabs/vinaya`), the
+ * `packages/aeg-core` member declares `@attalabs/aeg-core`, and the bin file
+ * is present. The file's presence alone is deliberately not enough — a brief
+ * names these to a Developer as commands to run with `bun`, and directory
+ * shape is not identity: any repository (a fork, a single contributed commit)
+ * carrying a file at that path would otherwise have it named as this
+ * package's own derivation. `self-host.ts`'s `resolveAuthorRepoSourceEntry`
+ * added the same package-name check to the same class of inference after a
+ * security review, and this surface must not reintroduce the shape-only form.
+ * A repository that identifies as neither gets `null` and a brief naming only
+ * the shipped checks, which is exactly right for it.
+ */
+export function repoBriefCommandFacts(repoRoot: string): {
+  cliInvocation: string
+  localGateCommands: LocalGateCommands
+} {
+  const vendored = detectVendoredVinaya(repoRoot)
+  const aegCoreName = readJson(join(repoRoot, AEG_CORE_DIR, 'package.json')).name
+  const ownsAegCore = vendored !== null && typeof aegCoreName === 'string' && aegCoreName === AEG_CORE_PACKAGE_NAME
+  const program = (rel: string): string | null => (ownsAegCore && existsSync(join(repoRoot, rel)) ? `bun ${rel}` : null)
+  return {
+    cliInvocation: briefCliInvocation(vendored, repoRoot),
+    localGateCommands: {
+      dispatchReadiness: program(`${AEG_CORE_DIR}/bin/verify-dispatch.ts`),
+      docCoverage: program(`${AEG_CORE_DIR}/bin/verify-docs.ts`)
+    }
+  }
+}
+
+/** This checkout's git toplevel — the anchor every path in `repoBriefCommandFacts` resolves against. Falls back to the process cwd when `git` cannot answer, the same degradation `git()` itself takes. */
+function repoRootOrCwd(): string {
+  return git(['rev-parse', '--show-toplevel']) || process.cwd()
+}
 
 function git(args: string[]): string {
   try {
@@ -549,7 +603,8 @@ export async function assembleAndRenderBrief(
     surfaceFiles,
     consumersOf,
     docOwnersContent: existsSync(DOC_OWNERS_PATH) ? readFileSync(DOC_OWNERS_PATH, 'utf8') : null,
-    sourceRevision: headSha
+    sourceRevision: headSha,
+    ...repoBriefCommandFacts(repoRootOrCwd())
   }
 
   const template = readFileSync(TEMPLATE_PATH, 'utf8')
@@ -814,7 +869,8 @@ export async function assembleAndRenderBriefForIssue(
     surfaceFiles,
     consumersOf,
     docOwnersContent: existsSync(DOC_OWNERS_PATH) ? readFileSync(DOC_OWNERS_PATH, 'utf8') : null,
-    sourceRevision: headSha
+    sourceRevision: headSha,
+    ...repoBriefCommandFacts(repoRootOrCwd())
   }
 
   const template = readFileSync(TEMPLATE_PATH, 'utf8')

@@ -2638,6 +2638,30 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       repoRoot = d.repoRoot()
       baseHeadAtStart = d.gitRevParseOriginMain()
 
+      // issue-812 (O1/O2): the phase this driver is taking the task over into,
+      // recorded BEFORE it dispatches anything — a fresh start, a re-attach or
+      // a resume all pass through here, ahead of every dispatch site below
+      // (the fresh round-1 `dispatchDeveloper`, the branch-exists resume, the
+      // attach redelivery, and the whole `runRoundLoop`). The bug this closes:
+      // the loop writes `loop_state`/`pause-state.json` only when its phase
+      // CHANGES, so a run that paused and was later taken over left `loop_state`
+      // reading `phase: 'pause'` for the whole first turn of the new run — up to
+      // an hour of live developing — and `task status`/`task_status` read that
+      // stale phase and reported the live run as paused. The recovered round is
+      // preserved (`Math.max` — the same non-regressing seed line 2888 below
+      // re-applies after the held-verdict/forge-marker recovery, harmless to
+      // repeat here), so this supersedes only the phase, never the round the
+      // earlier run reached; budgets/held/delivered ride the same recovered
+      // defaults every `persistCurrentLoopState` call already uses. The older
+      // pause record itself is never touched (O2: kept as history) — while this
+      // driver's lock is alive `deriveLoopState` already reads `running` over it,
+      // and this write is what stops the phase column from still saying `paused`.
+      // Every genuine transition below overwrites this in place, so a run that
+      // goes straight to reviewers or publish records that within its own first
+      // phase change.
+      if (recoveredLoopState.status === 'ok') round = Math.max(round, recoveredLoopState.value.round)
+      persistCurrentLoopState('dispatch_developer')
+
       // O8: `resumeHeadAlreadyMoved` widens this exactly like a fresh round-1
       // attach — the developer already pushed the fix a ruling asked for, so
       // this run dispatches no developer at all and goes straight to the

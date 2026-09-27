@@ -279,6 +279,43 @@ export type BriefFacts = {
    * for the review loop's reviewer-prompt facts.
    */
   sourceRevision: string
+  /**
+   * How the repository this brief is rendered for invokes the Vinaya CLI —
+   * `npx --yes @attalabs/vinaya@<version>` for a repository that installs it
+   * from the registry, `bun <dir>/src/index.ts` for one that vendors it.
+   * Every command this renderer tells the Developer to run is written through
+   * it, so no brief ever names a path that exists only in the authoring
+   * repository.
+   *
+   * Passed in as a fact, never detected here: this module reads no
+   * environment and no filesystem, and the decision already has one owner —
+   * `apps/cli`'s `briefCliInvocation`, over the same vendored-CLI detection
+   * the generated hooks and workflows use. Empty refuses the render, the same
+   * as `sourceRevision`: a brief whose commands nobody can run is worse than
+   * no brief.
+   */
+  cliInvocation: string
+  /**
+   * Commands the rendered-for repository ships itself that run an unabridged
+   * version of a CLI check this brief names — the CLI's own check being the
+   * portable form every reader has, and these being the fuller derivation the
+   * authoring repository additionally carries (`dispatch-readiness`'s shipped
+   * predicate reports prior-tranche-archival empty; `doc-coverage` evaluates
+   * C5 alone, not C1/C3). Each is the program alone, with no arguments — this
+   * renderer holds the task's own facts and appends them.
+   *
+   * `null` for a repository that has only the CLI's own checks, which is every
+   * adopter — the brief then names the CLI check and nothing else.
+   */
+  localGateCommands: LocalGateCommands
+}
+
+/** See `BriefFacts.localGateCommands`. */
+export type LocalGateCommands = {
+  /** e.g. `bun packages/aeg-core/bin/verify-dispatch.ts`, or `null`. */
+  dispatchReadiness: string | null
+  /** e.g. `bun packages/aeg-core/bin/verify-docs.ts`, or `null`. */
+  docCoverage: string | null
 }
 
 export type RenderResult = { ok: true; brief: string } | { ok: false; missing: string[] }
@@ -319,14 +356,37 @@ function isTestFile(path: string): boolean {
   return /\.test\.[jt]sx?$/i.test(path)
 }
 
+/**
+ * A command the template (or this module) writes as a bare `vinaya <args>`,
+ * rewritten to the way the rendered-for repository actually invokes the CLI.
+ *
+ * Scoped to an inline code span's own opening backtick, deliberately: the word
+ * `vinaya` also occurs in ordinary prose the Planner wrote (`.vinaya/`, "the
+ * Vinaya Log", a Boundary quoting a command by name), and none of that is a
+ * command this brief is telling anyone to run.
+ */
+function withCliInvocation(text: string, invocation: string): string {
+  // The replacement is a REPLACER FUNCTION, never a string: in a string
+  // replacement `$&`, `` $` ``, `$'` and `$<name>` are substitution patterns,
+  // so an invocation carrying any of them would be expanded rather than
+  // copied. `cliInvocation` is an unconstrained `string` on the exported
+  // `BriefFacts` — the guards that keep it clean today (`self-host.ts`'s
+  // `SAFE_PATH`, `ownVersion`'s semver) live in another package, and this
+  // module must not depend on them holding.
+  return text.replaceAll('`vinaya ', () => `\`${invocation} `)
+}
+
 function renderHeader(facts: BriefFacts, template: string): string {
   const introMatch = template.match(/^You are the AEG Developer\.[^\n]*$/m)
+  // Left as the template's own bare `vinaya`: `renderBrief` runs
+  // `withCliInvocation` over this whole section once every section is composed,
+  // so rewriting here too would be a second application point to keep in sync.
   const intro = introMatch
     ? (introMatch[0] as string)
         .replace(/\s*\[[^\]]*\]/g, '')
         .replace(/\bBoth mandatory\.$/, 'Mandatory.')
         .trim()
-    : 'You are the AEG Developer. Read `aeg-root/roles/developer.md` first. Mandatory.'
+    : 'You are the AEG Developer. Run `vinaya doctrine --role developer --print` and read its output first. Mandatory.'
 
   const reason = facts.rationale.suggestedAgentClass ?? ''
   // The declared tier is a floor, not a default: raised to the mechanical
@@ -362,8 +422,8 @@ function renderSection2(facts: BriefFacts): string {
   const branch = developerBranchForFacts(facts)
   const identityLine =
     facts.trancheSlug !== null
-      ? `- **Tranche:** \`${facts.trancheSlug}\`, task ${facts.taskId}, Issue #${facts.issue}. Branch \`${branch}\`. \`Depends-on: ${depends}\`, \`Conflicts-with: ${conflicts}\`. Confirm \`READY TO DISPATCH\` at your own Step 0.`
-      : `- **Backlog Issue:** #${facts.issue}, no tranche. Branch \`${branch}\`. \`Depends-on: ${depends}\`, \`Conflicts-with: ${conflicts}\`. Confirm \`READY TO DISPATCH\` at your own Step 0.`
+      ? `- **Tranche:** \`${facts.trancheSlug}\`, task ${facts.taskId}, Issue #${facts.issue}. Branch \`${branch}\`. \`Depends-on: ${depends}\`, \`Conflicts-with: ${conflicts}\`. Confirm dispatch readiness at your own Step 0, with the command §5 names.`
+      : `- **Backlog Issue:** #${facts.issue}, no tranche. Branch \`${branch}\`. \`Depends-on: ${depends}\`, \`Conflicts-with: ${conflicts}\`. Confirm dispatch readiness at your own Step 0, with the command §5 names.`
   const lines = [
     '## 2. Context — read before doing anything',
     '',
@@ -562,10 +622,20 @@ function renderSection4(facts: BriefFacts): string {
 
 function renderSection5(facts: BriefFacts): string {
   const branch = developerBranchForFacts(facts)
+  // The portable form first — `dispatch-readiness` is a shipped check every
+  // reader of this brief can run. The authoring repository's own fuller
+  // derivation follows only when `facts` says that repository has one, and
+  // takes the task arguments from this render rather than from a placeholder.
+  const unabridgedTarget =
+    facts.trancheSlug !== null ? `${facts.trancheSlug} ${facts.taskId}` : `--issue ${facts.issue}`
+  const unabridged =
+    facts.localGateCommands.dispatchReadiness !== null
+      ? ` This repository also ships the unabridged derivation — \`${facts.localGateCommands.dispatchReadiness} ${unabridgedTarget}\` → \`READY TO DISPATCH\`.`
+      : ''
   const verifyLine =
-    facts.trancheSlug !== null
-      ? '2. `bun packages/aeg-core/bin/verify-dispatch.ts <tranche> <n>` → `READY TO DISPATCH` (re-derived at render time: it was).'
-      : `2. \`bun packages/aeg-core/bin/verify-dispatch.ts --issue ${facts.issue}\` → \`READY TO DISPATCH\` (re-derived at render time: it was).`
+    `2. \`${facts.cliInvocation} check dispatch-readiness\` → pass (re-derived at render time: it was ready).` +
+    ' Known gap: its prior-tranche-archival predicate always reports empty — confirm that predicate yourself.' +
+    unabridged
   const lines = [
     '## 5. Pre-flight checks',
     '',
@@ -672,7 +742,20 @@ function renderSection7(section7Pointers: string[]): string {
   return lines.join('\n')
 }
 
-function renderSection8(): string {
+/**
+ * The pre-open documentation gate, as one command the reader can run — cited
+ * by both §8 and §12, so it is written once. `check doc-coverage` is the
+ * portable form; the authoring repository's fuller `--pr` derivation is
+ * appended only when `facts` says that repository ships one.
+ */
+function docGateCommand(facts: BriefFacts): string {
+  const portable = `\`PR_BODY="$(cat <body-file>)" ${facts.cliInvocation} check doc-coverage\` green`
+  return facts.localGateCommands.docCoverage !== null
+    ? `${portable} (this repository also ships \`PR_BODY="$(cat <body-file>)" ${facts.localGateCommands.docCoverage} --pr\`, which additionally evaluates the spec-status and code-requires-docs contracts)`
+    : portable
+}
+
+function renderSection8(facts: BriefFacts): string {
   return [
     '## 8. Verification before claiming done',
     '',
@@ -681,10 +764,10 @@ function renderSection8(): string {
     // never a command a check or `pr report` executes — `evidence-fresh`
     // re-running it under the twenty-six sibling checks CI had just built
     // deleted their own `dist` out from under them.
-    '- The pre-push hook already ran the affected suite on your one push and refused it on failure — do not additionally run it yourself; `vinaya pr report --write`/`--push` separately re-runs it with `--force` to attest the command and its output in the Evidence block.',
+    `- The pre-push hook already ran the affected suite on your one push and refused it on failure — do not additionally run it yourself; \`${facts.cliInvocation} pr report --write\`/\`--push\` separately re-runs it with \`--force\` to attest the command and its output in the Evidence block.`,
     "- The full `bun run test` suite is CI's to run, on the one push — never run it locally.",
     '- Every blast-radius consumer named in §4, re-verified by name.',
-    '- `roles/developer.md`\'s tier checklist genuinely satisfied, and `PR_BODY="$(cat <body-file>)" bun packages/aeg-core/bin/verify-docs.ts --pr` green.'
+    `- The tier checklist in \`${facts.cliInvocation} doctrine --role developer --print\` genuinely satisfied, and ${docGateCommand(facts)}.`
   ].join('\n')
 }
 
@@ -775,11 +858,9 @@ function renderSection12(facts: BriefFacts): string {
     '## 12. Deliverable',
     '',
     `- PR title (exact): \`${prTitle}\``,
-    '- Open the PR only via `bun apps/cli/src/index.ts pr create --body-file <path> --title "<title above>"`.',
-    "- PR body = the Developer's PR report (start from `aeg-root/templates/pr-report-template.md`), with this entire brief pasted as the reference copy inside a collapsed `<details>` block, and `Closes #" +
-      facts.issue +
-      '` at the top of the header block.',
-    '- Pre-open gate: tier checklist satisfied, and `PR_BODY="$(cat <body-file>)" bun packages/aeg-core/bin/verify-docs.ts --pr` green.',
+    `- Open the PR only via \`${facts.cliInvocation} pr create --body-file <path> --title "<title above>"\`.`,
+    `- PR body = the Developer's PR report (print it with \`${facts.cliInvocation} doctrine --template pr-report --print\`), with this entire brief pasted as the reference copy inside a collapsed \`<details>\` block, and \`Closes #${facts.issue}\` at the top of the header block.`,
+    `- Pre-open gate: tier checklist satisfied, and ${docGateCommand(facts)}.`,
     '- Include `git diff main --stat` and a token report (if unavailable, state so).',
     '- Then STOP. Review and Verification are separate invocations.'
   ].join('\n')
@@ -808,6 +889,11 @@ export function renderBrief(facts: BriefFacts, template: string): RenderResult {
   if (!facts.sourceRevision) {
     missing.push(
       'Revision (no source revision resolved — the caller must refuse before render, never render with an empty one)'
+    )
+  }
+  if (!facts.cliInvocation) {
+    missing.push(
+      'CLI invocation (the caller must state how this repository invokes the CLI — every command this brief names is written through it)'
     )
   }
   // Grandfathered the same as the Issue gate itself (`checkIssueObjectives`):
@@ -899,34 +985,47 @@ export function renderBrief(facts: BriefFacts, template: string): RenderResult {
       )
     : []
 
+  // `withCliInvocation` over every section the renderer composes, not only the
+  // ones whose commands it writes itself: a Planner's own prose (a Traps line,
+  // a Boundary, a Test plan entry) names `vinaya` commands too, and those were
+  // copied into an adopter's brief unrewritten — the same defect on the
+  // caller-supplied side, found by review.
+  //
+  // `## Objectives` is the one section held out, and the reason is a gate:
+  // `checkObjectivesCopy` refuses a brief whose Objectives do not match the
+  // Issue's word for word. An objective naming a command keeps the Issue's own
+  // spelling; §6's Parts cite it by id, so nothing there depends on the
+  // command form.
+  const withCli = (section: string): string => withCliInvocation(section, facts.cliInvocation)
+
   const brief = [
-    renderHeader(scopedFacts, template),
+    withCli(renderHeader(scopedFacts, template)),
     '',
     ...(facts.objectives.length > 0 ? [renderObjectives(facts.objectives), ''] : []),
     ...(facts.documentation.kind === 'none' || facts.documentation.sources.length > 0
-      ? [renderDocumentation(facts.documentation), '']
+      ? [withCli(renderDocumentation(facts.documentation)), '']
       : []),
-    renderSection2(facts),
+    withCli(renderSection2(facts)),
     '',
-    renderSection3(facts),
+    withCli(renderSection3(facts)),
     '',
-    renderSection4(scopedFacts),
+    withCli(renderSection4(scopedFacts)),
     '',
-    renderSection5(facts),
+    withCli(renderSection5(facts)),
     '',
-    renderSection6(scopedFacts),
+    withCli(renderSection6(scopedFacts)),
     '',
-    renderSection7(section7Pointers),
+    withCli(renderSection7(section7Pointers)),
     '',
-    renderSection8(),
+    withCli(renderSection8(facts)),
     '',
-    renderSection9(facts),
+    withCli(renderSection9(facts)),
     '',
-    renderSection10(facts),
+    withCli(renderSection10(facts)),
     '',
-    renderSection11(template, facts),
+    withCli(renderSection11(template, facts)),
     '',
-    renderSection12(facts)
+    withCli(renderSection12(facts))
   ].join('\n')
 
   return { ok: true, brief }

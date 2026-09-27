@@ -14,20 +14,37 @@ export const SECTION_HEADER = /\*\*Dependency rationale\*\*/i
 export const NEXT_HEADER = /\*\*[A-Z][^*]*\*\*/
 export const FIELD_LABEL = /^(Depends-on|Conflicts-with)\s*:\s*(.*)$/i
 
-/** A valid edge id: a bare task id (`1`, `7a`), a bare Issue ref (`#NNN`), or
- * a cross-tranche reference (`<slug> #NNN` / `<slug> 25`).
+/** A valid edge id: a bare task id (`1`, `2` — a whole number, never `2a`), a
+ * bare Issue ref (`#NNN`), or a cross-tranche reference (`<slug> #NNN` /
+ * `<slug> 25`).
+ *
+ * A trailing letter is deliberately NOT accepted. `vinaya task run` and `task
+ * dispatch` refuse any non-numeric id, so a lettered edge (`7a`) names a task
+ * the Operator can never start — the exact plan-the-gates-accept /
+ * tool-refuses split this grammar used to permit. `findLetteredEdgeIds` reads
+ * the same spans this token filters and names the offending id in a refusal at
+ * authoring time, rather than letting a silently-dropped `7a` reach the forge.
  *
  * It filters the comma list INSIDE a labeled span — a value there that is not
  * id-shaped is dropped rather than declared. It is no longer what protects the
  * parse from unrelated prose elsewhere in the paragraph (a `` `vinaya check` ``
  * command-name mention, confirmed live in a real Issue body): a bare,
  * unlabeled span is not read at all any more, whatever its shape. */
-export const ID_TOKEN = /^(?:[\w.-]+\s+)?#?\d+[a-z]?$/i
+export const ID_TOKEN = /^(?:[\w.-]+\s+)?#?\d+$/i
 
 /** Splits a qualified id (`aeg-governance-hardening #NNN`) into its slug and
  * the bare remainder (`#NNN`); `null` slug for an already-bare id (`#NNN`,
- * `3`). */
-const SLUG_QUALIFIED_ID = /^([\w.-]+)\s+(#?\d+[a-z]?)$/i
+ * `3`). Like `ID_TOKEN`, the number is whole — a trailing letter never
+ * qualifies. */
+const SLUG_QUALIFIED_ID = /^([\w.-]+)\s+(#?\d+)$/i
+
+/** A comma-list token shaped like a task id but carrying a trailing letter
+ * (`7a`, `2b`, `aeg-foo 3c`, and their `#`-prefixed forms) — what a planner
+ * reaches for on splitting one task in two, and precisely what
+ * `ID_TOKEN`/`SLUG_QUALIFIED_ID` above no longer accept. Used only by
+ * `findLetteredEdgeIds` to NAME the offending token in a refusal; the tolerant
+ * reader drops it silently instead. */
+const LETTERED_EDGE_ID = /^(?:[\w.-]+\s+)?#?\d+[a-z]+$/i
 
 export type SlugQualifiedEdge = { slug: string; bareId: string }
 
@@ -182,6 +199,48 @@ export function parseRationaleDeps(body: string): ParsedRationaleDeps {
 }
 
 /**
+ * Every lettered-id token (`7a`) declared in a `Depends-on`/`Conflicts-with`
+ * comma list of a body's "Dependency rationale" section — the ids the tightened
+ * `ID_TOKEN`/`SLUG_QUALIFIED_ID` grammar refuses. Reads the FIRST labeled span
+ * per field, the same span `parseRationaleDeps` reads as the declared edges, so
+ * a later prose re-mention (an Amendment citing a dropped `Depends-on: 2b` in
+ * backticks) is not flagged. Empty when every declared edge id is a whole
+ * number.
+ *
+ * This is the refusal's eyes: `parseRationaleDeps` stays tolerant and simply
+ * omits a lettered id, so a plan-authoring gate (`checkEdgeIdsWholeNumbers`,
+ * `@attalabs/aeg-core`) calls this to NAME the offending token instead of
+ * letting the edge vanish unremarked. Order-preserving and de-duplicated within
+ * a body, so a repeated `7a` is reported once.
+ */
+export function findLetteredEdgeIds(body: string): string[] {
+  const section = extractSection(body)
+  const found: string[] = []
+  const assignedFields = new Set<'dependsOn' | 'conflictsWith'>()
+
+  const spanPattern = /`([^`]*)`/g
+  let match: RegExpExecArray | null = spanPattern.exec(section)
+  while (match !== null) {
+    const content = (match[1] ?? '').trim()
+    const labelMatch = content.match(FIELD_LABEL)
+    if (labelMatch) {
+      const field = labelMatch[1]?.toLowerCase() === 'conflicts-with' ? 'conflictsWith' : 'dependsOn'
+      if (!assignedFields.has(field)) {
+        assignedFields.add(field)
+        for (const raw of (labelMatch[2] ?? '').split(',')) {
+          const token = raw.trim()
+          if (token.length > 0 && !isEmptyMarker(token) && LETTERED_EDGE_ID.test(token) && !found.includes(token)) {
+            found.push(token)
+          }
+        }
+      }
+    }
+    match = spanPattern.exec(section)
+  }
+  return found
+}
+
+/**
  * Thrown by `requireTrancheQualifiedEdges` for a bare edge id that has
  * become ambiguous — `token` is the exact id as written (never re-formatted,
  * so the refusal quotes what the author actually typed), `tranches` is
@@ -204,7 +263,7 @@ export class AmbiguousBareEdgeError extends Error {
 }
 
 /**
- * A bare task number (`1`, `7a` — no `#`) resolves unambiguously against
+ * A bare task number (`1`, `2` — no `#`) resolves unambiguously against
  * "this tranche" only while its Issue's Milestone holds exactly one tranche.
  * Once a Milestone holds two or more (a real tranche's shared Milestone), the
  * same bare token could belong to any of them, and silently resolving it

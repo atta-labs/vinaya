@@ -17,6 +17,7 @@
  */
 
 import {
+  findLetteredEdgeIds,
   hasLabel,
   LABELS,
   projectFieldFromBody,
@@ -99,6 +100,30 @@ export function checkIssueRationale(body: string): IssueSectionResult {
     }
   }
   return { status: errors.length > 0 ? 'fail' : 'pass', errors }
+}
+
+/**
+ * **A `Depends-on`/`Conflicts-with` edge names a whole-number task id.** A
+ * lettered id (`7a`, `2b`) clears no gate downstream — `vinaya task run` and
+ * `task dispatch` refuse any non-numeric id — so a plan naming one in an edge
+ * builds a dependency the Operator can never start, the exact split that let a
+ * new adopter's `2a`/`2b` plan pass every gate and then stall. The edge grammar
+ * (`parse-rationale-deps.ts`'s `ID_TOKEN`/`SLUG_QUALIFIED_ID`) no longer accepts
+ * a lettered id; this NAMES the offending token at authoring time rather than
+ * silently dropping it. `findLetteredEdgeIds` reads the same declared-edge spans
+ * `parseRationaleDeps` does, so this can never disagree with what the parser
+ * treats as an edge. One error line per lettered id.
+ */
+export function checkEdgeIdsWholeNumbers(body: string): IssueSectionResult {
+  const lettered = findLetteredEdgeIds(body)
+  if (lettered.length === 0) return { status: 'pass', errors: [] }
+  return {
+    status: 'fail',
+    errors: lettered.map(
+      (id) =>
+        `issue-validation edge id: \`${id}\` in a \`Depends-on\`/\`Conflicts-with\` edge is not a whole number — task ids are whole numbers (\`1\`, \`2\`), never lettered (\`2a\`). \`vinaya task run\` and \`task dispatch\` refuse a non-numeric id, so a plan naming one names a task that cannot be started.`
+    )
+  }
 }
 
 /**
@@ -1615,7 +1640,7 @@ export function checkRationaleSurfaceCoverage(body: string, issueNumber: number 
     if (surface.value.out.some((g) => globCoversPath(g, path))) continue
     const nearest = nearestInGlob(path, surface.value.in)
     errors.push(
-      `issue-validation Boundary: \`${path}\` is named in the Boundary rationale, but no \`## Surface\` \`in:\` glob covers it — nearest is \`${nearest}\`. Widen the Surface's \`in:\` list to cover it, or correct the path if it was mistyped.`
+      `issue-validation Boundary: \`${path}\` is named in the Boundary rationale, but no \`## Surface\` \`in:\` glob covers it — nearest is \`${nearest}\`. Widen an \`in:\` directory glob to cover it (\`## Surface\` lists directories, never a file path), or correct the path if it was mistyped.`
     )
   }
   return { status: errors.length > 0 ? 'fail' : 'pass', errors }
