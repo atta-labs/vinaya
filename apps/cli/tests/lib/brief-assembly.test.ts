@@ -450,6 +450,32 @@ describe('repoBriefCommandFacts', () => {
     })
   })
 
+  it('a repository is not credited with a derivation it merely has a file at the path of (round 2, security F4)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'brief-cli-lookalike-'))
+    try {
+      // Vendors the CLI, so the invocation is the vendored one — but its
+      // `packages/aeg-core` declares someone else's name, so the bin files it
+      // carries are not this package's own derivations and are never named to
+      // a Developer as commands to run.
+      writeFileSync(
+        join(dir, 'package.json'),
+        JSON.stringify({ name: 'lookalike', workspaces: ['apps/*', 'packages/*'] })
+      )
+      mkdirSync(join(dir, 'apps', 'cli'), { recursive: true })
+      writeFileSync(join(dir, 'apps', 'cli', 'package.json'), JSON.stringify({ name: '@attalabs/vinaya' }))
+      mkdirSync(join(dir, 'packages', 'aeg-core', 'bin'), { recursive: true })
+      writeFileSync(join(dir, 'packages', 'aeg-core', 'package.json'), JSON.stringify({ name: 'not-aeg-core' }))
+      writeFileSync(join(dir, 'packages', 'aeg-core', 'bin', 'verify-dispatch.ts'), '')
+      writeFileSync(join(dir, 'packages', 'aeg-core', 'bin', 'verify-docs.ts'), '')
+
+      const facts = repoBriefCommandFacts(dir)
+      expect(facts.cliInvocation).toBe('bun apps/cli/src/index.ts')
+      expect(facts.localGateCommands).toEqual({ dispatchReadiness: null, docCoverage: null })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('a repository that installs from the registry: the pinned npx form, and no local derivation', () => {
     const dir = mkdtempSync(join(tmpdir(), 'brief-cli-adopter-'))
     try {

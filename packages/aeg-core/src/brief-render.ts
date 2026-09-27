@@ -358,7 +358,14 @@ function isTestFile(path: string): boolean {
  * command this brief is telling anyone to run.
  */
 function withCliInvocation(text: string, invocation: string): string {
-  return text.replaceAll('`vinaya ', `\`${invocation} `)
+  // The replacement is a REPLACER FUNCTION, never a string: in a string
+  // replacement `$&`, `` $` ``, `$'` and `$<name>` are substitution patterns,
+  // so an invocation carrying any of them would be expanded rather than
+  // copied. `cliInvocation` is an unconstrained `string` on the exported
+  // `BriefFacts` — the guards that keep it clean today (`self-host.ts`'s
+  // `SAFE_PATH`, `ownVersion`'s semver) live in another package, and this
+  // module must not depend on them holding.
+  return text.replaceAll('`vinaya ', () => `\`${invocation} `)
 }
 
 function renderHeader(facts: BriefFacts, template: string): string {
@@ -611,7 +618,8 @@ function renderSection5(facts: BriefFacts): string {
   // reader of this brief can run. The authoring repository's own fuller
   // derivation follows only when `facts` says that repository has one, and
   // takes the task arguments from this render rather than from a placeholder.
-  const unabridgedTarget = facts.trancheSlug !== null ? '<tranche> <n>' : `--issue ${facts.issue}`
+  const unabridgedTarget =
+    facts.trancheSlug !== null ? `${facts.trancheSlug} ${facts.taskId}` : `--issue ${facts.issue}`
   const unabridged =
     facts.localGateCommands.dispatchReadiness !== null
       ? ` This repository also ships the unabridged derivation — \`${facts.localGateCommands.dispatchReadiness} ${unabridgedTarget}\` → \`READY TO DISPATCH\`.`
@@ -748,7 +756,7 @@ function renderSection8(facts: BriefFacts): string {
     // never a command a check or `pr report` executes — `evidence-fresh`
     // re-running it under the twenty-six sibling checks CI had just built
     // deleted their own `dist` out from under them.
-    '- The pre-push hook already ran the affected suite on your one push and refused it on failure — do not additionally run it yourself; `vinaya pr report --write`/`--push` separately re-runs it with `--force` to attest the command and its output in the Evidence block.',
+    `- The pre-push hook already ran the affected suite on your one push and refused it on failure — do not additionally run it yourself; \`${facts.cliInvocation} pr report --write\`/\`--push\` separately re-runs it with \`--force\` to attest the command and its output in the Evidence block.`,
     "- The full `bun run test` suite is CI's to run, on the one push — never run it locally.",
     '- Every blast-radius consumer named in §4, re-verified by name.',
     `- The tier checklist in \`${facts.cliInvocation} doctrine --role developer --print\` genuinely satisfied, and ${docGateCommand(facts)}.`

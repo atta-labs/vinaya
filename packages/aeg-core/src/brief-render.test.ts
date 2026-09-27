@@ -756,14 +756,37 @@ describe('renderBrief', () => {
       expect(result.brief).not.toContain('also ships')
     })
 
+    it('no command is left as a bare `vinaya` — an adopter has none on PATH (round 2, F1)', () => {
+      const result = renderBrief(baseFacts(ADOPTER), TEMPLATE)
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      // §8's `pr report` line was the one command this sweep did not catch
+      // before: it writes the Evidence block the PR report template requires,
+      // and read `vinaya pr report --write` in every adopter's brief.
+      expect(result.brief).not.toContain('`vinaya ')
+      expect(result.brief).toContain('`npx --yes @attalabs/vinaya@9.9.9 pr report --write`')
+    })
+
+    it('an invocation carrying a substitution pattern is copied literally, never expanded (round 2, security F3)', () => {
+      const result = renderBrief(
+        baseFacts({ cliInvocation: 'npx $& $` x', localGateCommands: { dispatchReadiness: null, docCoverage: null } }),
+        TEMPLATE
+      )
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.brief).toContain('Run `npx $& $` x doctrine --role developer --print`')
+      expect(result.brief).not.toContain('`vinaya ')
+    })
+
     it('a repository that vendors the CLI keeps every command it runs today, plus its own unabridged derivations (O3)', () => {
       const result = renderBrief(baseFacts(), TEMPLATE)
       expect(result.ok).toBe(true)
       if (!result.ok) return
       expect(result.brief).toContain('`bun apps/cli/src/index.ts check dispatch-readiness`')
-      expect(result.brief).toContain('`bun packages/aeg-core/bin/verify-dispatch.ts <tranche> <n>`')
+      expect(result.brief).toContain('`bun packages/aeg-core/bin/verify-dispatch.ts review-convergence-v1 42`')
       expect(result.brief).toContain('`PR_BODY="$(cat <body-file>)" bun packages/aeg-core/bin/verify-docs.ts --pr`')
       expect(result.brief).toContain('`bun apps/cli/src/index.ts pr create --body-file <path>')
+      expect(result.brief).toContain('`bun apps/cli/src/index.ts pr report --write`')
     })
 
     it("a backlog task's unabridged dispatch derivation names the Issue it re-derives (O3)", () => {

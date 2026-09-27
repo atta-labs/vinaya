@@ -120,6 +120,43 @@ describe('vinaya doctrine', () => {
     expect(stderr).toContain('brief')
   })
 
+  it('a templates/ file that is not *-template.md is never enumerated as a name (round 2, F3)', () => {
+    const root = resolveDoctrineRoot()
+    if (root === null) throw new Error('no doctrine root on this machine — cannot exercise --template')
+    const stray = join(root, 'templates', 'round-2-stray.md')
+    const strayDir = join(root, 'templates', 'round-2-stray-template.md')
+    writeFileSync(stray, '# not a template\n')
+    mkdirSync(strayDir, { recursive: true })
+    try {
+      // The name a caller is offered and the path this command rebuilds from
+      // it must be exact inverses: an optional-suffix strip offered `stray`
+      // and then died on an uncaught ENOENT for `stray-template.md`, and a
+      // DIRECTORY named `*-template.md` passes a name test and fails the read.
+      let stderr = ''
+      const originalWrite = process.stderr.write.bind(process.stderr)
+      const originalExit = process.exit.bind(process)
+      process.stderr.write = ((chunk: string) => {
+        stderr += chunk
+        return true
+      }) as typeof process.stderr.write
+      process.exit = ((code?: number) => {
+        throw new Error(`exit:${code}`)
+      }) as typeof process.exit
+      try {
+        expect(() => doctrineCommand(['--template', 'round-2-stray'])).toThrow('exit:1')
+        expect(() => doctrineCommand(['--template', 'round-2-stray-template'])).toThrow('exit:1')
+      } finally {
+        process.stderr.write = originalWrite
+        process.exit = originalExit
+      }
+      expect(stderr).toContain("'round-2-stray' is not a known template")
+      expect(stderr).not.toContain('round-2-stray,')
+    } finally {
+      rmSync(stray, { force: true })
+      rmSync(strayDir, { recursive: true, force: true })
+    }
+  })
+
   it('--template together with --role is refused rather than silently preferring one (Issue #807)', async () => {
     const proc = Bun.spawn(['bun', CLI_ENTRY, 'doctrine', '--template', 'pr-report', '--role', 'developer'], {
       stdout: 'pipe',
