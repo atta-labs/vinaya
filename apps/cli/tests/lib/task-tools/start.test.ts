@@ -76,6 +76,7 @@ function harness(
     isRunAlive?: (issue: number) => boolean
     loopState?: (issue: number) => TaskLoopState
     pauseDisposition?: (issue: number) => PauseDisposition
+    heldAgent?: (issue: number) => AgentVendor | null
     isPidAlive?: (pid: number) => boolean
     now?: () => string
   } = {}
@@ -97,6 +98,8 @@ function harness(
     // driver now, so anything else here would refuse every case that does
     // not set its own.
     pauseDisposition: overrides.pauseDisposition ?? (() => 'none'),
+    // No pause record by default, so the configured agent is the one used.
+    heldAgent: overrides.heldAgent ?? (() => null),
     isPidAlive: overrides.isPidAlive ?? (() => false),
     launch: async (target, meta) => {
       launches.push(target)
@@ -185,6 +188,7 @@ describe('task_start handler', () => {
         isRunAlive: () => true,
         loopState: () => ({ kind: 'not_started' }),
         pauseDisposition: () => 'none',
+        heldAgent: () => null,
         isPidAlive: () => false,
         launch: async (target) => {
           launches.push(target)
@@ -468,6 +472,58 @@ describe('task_start handler', () => {
       expect(result.ok).toBe(true)
       if (result.ok) expect(result.result.started).toBe(true)
       expect(launches).toHaveLength(1)
+    })
+
+    it('continues a held pause under the agent that run was dispatched with, not the configured one', async () => {
+      // `runTask` takes its resume path for any task with a pause record,
+      // and the loop refuses outright when the agent it is handed is not the
+      // one that pause was dispatched with. Relaunching under whatever
+      // `dispatch.agent` the repository configures today kills the run on
+      // arrival — and `task_resume` answers `already_resumed` without
+      // launching for a ruled pause, so that state would have nothing left
+      // that moves it.
+      for (const disposition of ['resolved_resume', 'self_resuming'] as const) {
+        const { handler, launches } = harness({
+          agent: 'claude',
+          loopState: () => ({ kind: 'paused', reason: 'escalation', round: 2 }),
+          pauseDisposition: () => disposition,
+          heldAgent: () => 'codex'
+        })
+        const result = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+        expect(result.ok).toBe(true)
+        expect(`${disposition}: ${launches[0]?.agent}`).toBe(`${disposition}: codex`)
+      }
+    })
+
+    it('falls back to the configured agent for a pause whose record names none', async () => {
+      // A legacy pause records no agent, and the loop accepts the one it is
+      // handed in that case.
+      const { handler, launches } = harness({
+        agent: 'codex',
+        loopState: () => ({ kind: 'paused', reason: 'escalation', round: 2 }),
+        pauseDisposition: () => 'resolved_resume',
+        heldAgent: () => null
+      })
+      const result = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(result.ok).toBe(true)
+      expect(launches[0]?.agent).toBe('codex')
+    })
+
+    it("starts a fresh run under the configured agent — a held run's agent is not consulted", async () => {
+      const asked: number[] = []
+      const { handler, launches } = harness({
+        agent: 'claude',
+        loopState: () => ({ kind: 'not_started' }),
+        pauseDisposition: () => 'none',
+        heldAgent: (issue) => {
+          asked.push(issue)
+          return 'codex'
+        }
+      })
+      const result = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(result.ok).toBe(true)
+      expect(launches[0]?.agent).toBe('claude')
+      expect(asked).toEqual([])
     })
 
     it('refuses a pause already resolved as cancel, naming `task_cancel` rather than restarting it', async () => {

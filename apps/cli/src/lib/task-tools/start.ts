@@ -111,8 +111,13 @@ import {
 } from '@attalabs/aeg-core'
 import { loadConfig } from '../config.js'
 import { type AgentVendor, isAgentVendor } from '../dispatch.js'
-import { escalationIdFor, isDriverPidAlive, readDriverLock, readPauseState } from '../dev-review-loop/pause-resume.js'
-import { MAX_INFRASTRUCTURE_RETRIES } from '../dev-review-loop/round-assess.js'
+import {
+  escalationIdFor,
+  isDriverPidAlive,
+  pauseStatePath,
+  readDriverLock,
+  readPauseState
+} from '../dev-review-loop/pause-resume.js'
 import { ensureRunDir, runPath, runtimeDirForThisRepo, tasksExecutionRoot } from '../run-paths.js'
 import { repoRoot as gitRepoRoot } from '../diff-evidence.js'
 import { deriveLoopState, newestPublishedRound, type TaskLoopState } from '../task-status.js'
@@ -186,6 +191,8 @@ export type TaskStartDeps = {
   loopState: (issue: number) => TaskLoopState
   /** For a paused task, what that pause is waiting for — read from the same records the continuation reads, so this gate never names a tool that would not move the run. See `PauseDisposition`. */
   pauseDisposition: (issue: number) => PauseDisposition
+  /** The agent a held run was dispatched with, from its own pause record — `null` when there is no pause record or it names none. What a CONTINUATION must be relaunched under; the loop refuses any other. */
+  heldAgent: (issue: number) => AgentVendor | null
   /** Is this pid still running? Asked of the pid a claim's own launch recorded — the one liveness signal that exists BEFORE a driver lock does, and so the one that tells a still-preparing run apart from a dead claim. */
   isPidAlive: (pid: number) => boolean
   /**
@@ -417,6 +424,20 @@ function resolveStartTarget(
  *   - `none` — no pause holding this run: no pause record at all, or one a
  *     later published round has already superseded.
  */
+/**
+ * The loop's own `MAX_INFRASTRUCTURE_RETRIES`, restated rather than imported.
+ *
+ * Importing it would pull the loop's round-assessment module into this one's
+ * import graph, and the pre-push selector walks that graph at `depth: 'one'`
+ * to decide which tests a change runs: the extra edge pushed three pinned
+ * reference change-sets past their own time budget
+ * (`test-selector.test.ts`). A restated literal is only safe if it cannot
+ * drift, so it does not rest on care — `operator-state-actions.test.ts`
+ * asserts this equals the loop's own constant, and a change to either side
+ * alone fails there.
+ */
+export const INFRASTRUCTURE_RETRY_BOUND = 5
+
 export type PauseDisposition =
   | 'awaiting_ruling'
   | 'resolved_resume'
@@ -458,8 +479,7 @@ export function defaultPauseDisposition(issue: number, root: string = runtimeDir
     // straight past a hold, as a FRESH dispatch rather than a resume, since
     // `runTask`'s own `hasPauseState` reads the identical null. So the file's
     // own existence is checked first, separately from its contents.
-    const pausePath = runPath(root, issue, { area: 'control', file: 'pause-state.json' })
-    if (!existsSync(pausePath)) return 'none'
+    if (!existsSync(pauseStatePath(root, issue))) return 'none'
     const held = readPauseState(root, issue)
     if (held === null) return 'unreadable'
     // A pause record is never cleared on resume, so one naming a round the
@@ -500,7 +520,7 @@ export function defaultPauseDisposition(issue: number, root: string = runtimeDir
           ? Number.POSITIVE_INFINITY
           : 0
     const retriesSoFar = Math.max(storeRetries, held.infrastructureRetries ?? 0)
-    return retriesSoFar < MAX_INFRASTRUCTURE_RETRIES ? 'self_resuming' : 'awaiting_ruling'
+    return retriesSoFar < INFRASTRUCTURE_RETRY_BOUND ? 'self_resuming' : 'awaiting_ruling'
   } catch {
     // Every read above can throw on a real filesystem error (`readIfExists`
     // rethrows anything that is not ENOENT). Throwing out of here would
@@ -510,6 +530,24 @@ export function defaultPauseDisposition(issue: number, root: string = runtimeDir
     // answer that keeps the claim releasable and tells the Operator the
     // truth.
     return 'unreadable'
+  }
+}
+
+/**
+ * The agent a held run was dispatched with, read off its own pause record —
+ * the same field `task_resume` resolves its continuation's agent from, so
+ * the two continuations of one paused run can never disagree about which
+ * agent it belongs to. `null` for no pause record, one that will not parse,
+ * or one recording no agent (a legacy pause), each of which the loop
+ * tolerates by falling back to the agent it is handed.
+ */
+export function defaultHeldAgent(issue: number, root: string = runtimeDirForThisRepo()): AgentVendor | null {
+  try {
+    const held = readPauseState(root, issue)
+    if (held?.agent === undefined) return null
+    return isAgentVendor(held.agent) ? held.agent : null
+  } catch {
+    return null
   }
 }
 
@@ -735,6 +773,7 @@ export const defaultTaskStartDeps: TaskStartDeps = {
   isRunAlive: defaultIsRunAlive,
   loopState: (issue) => deriveLoopState(runtimeDirForThisRepo(), issue),
   pauseDisposition: (issue) => defaultPauseDisposition(issue),
+  heldAgent: (issue) => defaultHeldAgent(issue),
   isPidAlive: isDriverPidAlive,
   launch: defaultLaunch,
   now: () => new Date().toISOString()
@@ -838,9 +877,11 @@ export function createTaskStartHandler(
       // record still holds the run, so asking only when the state reads
       // `paused` is how that hold went unseen.
       let refusal: TaskToolError | null
+      let disposition: PauseDisposition = 'none'
       try {
         const state = deps.loopState(issue)
-        refusal = startRefusalForState(state, target, state.kind === 'running' ? 'none' : deps.pauseDisposition(issue))
+        disposition = state.kind === 'running' ? 'none' : deps.pauseDisposition(issue)
+        refusal = startRefusalForState(state, target, disposition)
       } catch (err) {
         // Neither read is allowed to escape past the claim this call already
         // wrote: an identity claimed with nothing launched replays
@@ -859,9 +900,21 @@ export function createTaskStartHandler(
         deps.store.release(requestId)
         return { ok: false, error: refusal }
       }
+      // Continuing a pause is not the same as starting fresh. `runTask` takes
+      // its resume path for any task with a pause record, and the loop
+      // refuses outright when the agent it is handed is not the one that
+      // pause was dispatched with — so relaunching a held run under whatever
+      // `dispatch.agent` the repository configures TODAY kills it on arrival,
+      // and `task_resume` answers `already_resumed` without launching for a
+      // ruled pause, leaving that state with nothing that moves it. The run's
+      // own record is what says which agent it belongs to, the same source
+      // `task_resume` reads; config is the fallback for a pause that records
+      // none, which the loop accepts.
+      const launchAgent =
+        disposition === 'resolved_resume' || disposition === 'self_resuming' ? (deps.heldAgent(issue) ?? agent) : agent
       let outcome: LaunchResult
       try {
-        outcome = await deps.launch({ ref: target, agent, issue }, { requestId, caller: caller.id })
+        outcome = await deps.launch({ ref: target, agent: launchAgent, issue }, { requestId, caller: caller.id })
       } catch (err) {
         // A synchronous launch failure (a missing launcher binary) must not
         // leave a claimed-but-never-started identity that blocks every

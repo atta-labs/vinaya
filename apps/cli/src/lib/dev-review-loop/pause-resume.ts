@@ -492,7 +492,16 @@ export type PauseState = {
   infrastructureRetries?: number
 }
 
-function pauseStatePath(root: string, task: number): string {
+/**
+ * Exported because a caller outside this module has to ask whether the
+ * record EXISTS separately from what it contains: `readPauseState` answers
+ * the same `null` for "no record" and "a record that will not parse", and
+ * those are not the same answer to whoever is deciding whether a pause still
+ * holds a run. A second hand-written copy of this path would fail open the
+ * day the file or its area moved — the existence check would simply stop
+ * finding it, and a held pause would read as no pause.
+ */
+export function pauseStatePath(root: string, task: number): string {
   return runPath(root, task, { area: 'control', file: 'pause-state.json' })
 }
 

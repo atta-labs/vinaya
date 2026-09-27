@@ -18,7 +18,12 @@ import { appendRoleLine, loopLogPathFor } from '../../../src/lib/loop-log.js'
 import { deriveLoopState, type TaskLoopState } from '../../../src/lib/task-status.js'
 import { describeTaskLoopState, readTaskLoopStateObserved } from '../../../src/lib/task-tools/read.js'
 import { createTaskResumeHandler, type TaskResumeDeps } from '../../../src/lib/task-tools/resume.js'
-import { createTaskStartHandler, defaultPauseDisposition } from '../../../src/lib/task-tools/start.js'
+import {
+  createTaskStartHandler,
+  defaultHeldAgent,
+  defaultPauseDisposition,
+  INFRASTRUCTURE_RETRY_BOUND
+} from '../../../src/lib/task-tools/start.js'
 import type { CallerContext } from '../../../src/lib/task-tools/server.js'
 
 /**
@@ -321,6 +326,7 @@ async function taskStartAccepts(root: string, state: TaskLoopState): Promise<{ o
     // gate's paused branch is exercised against the same files the
     // continuation reads, never a hand-written answer.
     pauseDisposition: (issue) => defaultPauseDisposition(issue, root),
+    heldAgent: (issue) => defaultHeldAgent(issue, root),
     isPidAlive: () => false,
     launch: async (target) => {
       launches.push(target)
@@ -626,6 +632,15 @@ describe("the Operator's doctrine and the Operator's tools agree, state for stat
       expect(start.message).toContain('could not read')
     })
 
+    it("pins its restated retry bound to the loop's own constant", () => {
+      // The gate restates the bound rather than importing it, to keep the
+      // loop's round-assessment module out of this one's import graph — the
+      // pre-push selector walks that graph and three pinned change-sets went
+      // past their time budget with the extra edge. This is what stops the
+      // restated literal from drifting.
+      expect(INFRASTRUCTURE_RETRY_BOUND).toBe(MAX_INFRASTRUCTURE_RETRIES)
+    })
+
     it("holds an infrastructure pause once it is at the loop's own retry bound", async () => {
       // Inside the bound the loop continues this reason with no ruling, so
       // `task_start` is its mover. AT the bound it does not: it falls through
@@ -636,7 +651,7 @@ describe("the Operator's doctrine and the Operator's tools agree, state for stat
       // the tool that authenticates one.
       const under = tempDir()
       writePause(under, TASK, 2, 'infrastructure')
-      writeRecordedRetries(under, TASK, MAX_INFRASTRUCTURE_RETRIES - 1)
+      writeRecordedRetries(under, TASK, INFRASTRUCTURE_RETRY_BOUND - 1)
       expect(defaultPauseDisposition(TASK, under)).toBe('self_resuming')
       expect(
         (await taskStartAccepts(under, deriveLoopState(under, TASK, { repo: null, loopsRoot: under }))).message
@@ -644,7 +659,7 @@ describe("the Operator's doctrine and the Operator's tools agree, state for stat
 
       const atBound = tempDir()
       writePause(atBound, TASK, 2, 'infrastructure')
-      writeRecordedRetries(atBound, TASK, MAX_INFRASTRUCTURE_RETRIES)
+      writeRecordedRetries(atBound, TASK, INFRASTRUCTURE_RETRY_BOUND)
       expect(defaultPauseDisposition(TASK, atBound)).toBe('awaiting_ruling')
       const refused = await taskStartAccepts(
         atBound,
@@ -668,7 +683,7 @@ describe("the Operator's doctrine and the Operator's tools agree, state for stat
         reason: 'infrastructure',
         pausedAt: '2026-09-26T00:00:00.000Z',
         escalationId: escalationIdFor(TASK, 2, 'abc123'),
-        infrastructureRetries: MAX_INFRASTRUCTURE_RETRIES
+        infrastructureRetries: INFRASTRUCTURE_RETRY_BOUND
       })
       expect(defaultPauseDisposition(TASK, fromPauseRecord)).toBe('awaiting_ruling')
 

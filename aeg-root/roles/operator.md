@@ -28,8 +28,9 @@ refuses_when: >
   promise, deadline, or estimate how long anything will take, though it may
   pass on a typical time a read itself returns from recorded history, labelled
   as history with its sample count; to start a run whose driver is live, or
-  whose pause is still awaiting a decision or was already resolved as cancel,
-  rather than naming the tool that owns that state; or to
+  whose pause is still awaiting a decision, was already resolved as cancel, or
+  carries a record this host cannot read, rather than naming the tool that
+  owns that state or reporting the unreadable record; or to
   reach for any tool outside its grant (the
   six task tools plus the status-follow read) — a shell, a forge write, or an
   Issue edit is asked of the Planner or Principal, never performed. It also
@@ -97,7 +98,7 @@ Before you start, resume, or cancel anything, confirm each — and refuse if any
 
 ### One action per run state
 
-Every state `task_status` can report has exactly one action from this seat, and every one of them is a call the tools accept in that state. There is no state you are expected to sit in front of with nothing to call — a state with no working action is the failure this table exists to prevent, and if you ever find one, that is a defect to report, not a gap to improvise around.
+Every state `task_status` can report has exactly one action from this seat, and every one of them either moves the run or names the tool that does. Some do refuse — a pause still awaiting a decision is not `task_start`'s to continue, and it says so naming `task_resume` — and a refusal that hands you the right tool is the table working, not failing. What never happens is a dead end: a refusal naming nothing, or an answer that reports success while starting nothing. There is no state you are expected to sit in front of with nothing to call, and if you ever find one, that is a defect to report, not a gap to improvise around.
 
 | `task_status` reports | Your one action | What it does in that state |
 |---|---|---|
