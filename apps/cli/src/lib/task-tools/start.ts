@@ -113,7 +113,7 @@ import { type AgentVendor, isAgentVendor } from '../dispatch.js'
 import { escalationIdFor, isDriverPidAlive, readDriverLock, readPauseState } from '../dev-review-loop/pause-resume.js'
 import { ensureRunDir, runPath, runtimeDirForThisRepo, tasksExecutionRoot } from '../run-paths.js'
 import { repoRoot as gitRepoRoot } from '../diff-evidence.js'
-import { deriveLoopState, type TaskLoopState } from '../task-status.js'
+import { deriveLoopState, newestPublishedRound, type TaskLoopState } from '../task-status.js'
 import { describeTaskRef, readTaskIssueFacts, resolveOpenTaskIssueForRef } from './handlers.js'
 import type { TaskIssueFacts, TaskToolCallResult } from './handlers.js'
 import type { CallerContext } from './server.js'
@@ -408,9 +408,20 @@ function resolveStartTarget(
  *     that bound the loop requires a ruling like any other pause and says so
  *     in its own refusal — which is why the bound is read where it is
  *     enforced rather than second-guessed here.
- *   - `none` — no pause record at all (every non-paused state).
+ *   - `unreadable` — a pause record or a resolution that could not be read
+ *     or did not parse. Not the same as "no decision recorded": we do not
+ *     know whose the run is, so the gate refuses rather than guessing, and
+ *     says what it could not read.
+ *   - `none` — no pause holding this run: no pause record at all, or one a
+ *     later published round has already superseded.
  */
-export type PauseDisposition = 'awaiting_ruling' | 'resolved_resume' | 'resolved_cancel' | 'self_resuming' | 'none'
+export type PauseDisposition =
+  | 'awaiting_ruling'
+  | 'resolved_resume'
+  | 'resolved_cancel'
+  | 'self_resuming'
+  | 'unreadable'
+  | 'none'
 
 /**
  * Reads the disposition from the SAME two records the continuation itself
@@ -429,18 +440,49 @@ export type PauseDisposition = 'awaiting_ruling' | 'resolved_resume' | 'resolved
  * named `task_resume` for a pause `task_resume` would not have moved either.
  */
 export function defaultPauseDisposition(issue: number, root: string = runtimeDirForThisRepo()): PauseDisposition {
-  const held = readPauseState(root, issue)
-  if (held === null) return 'none'
-  const escalationId = held.escalationId ?? escalationIdFor(issue, held.round, held.head)
-  const resolution = readResolution(
-    defaultControlStoreDeps(() => tasksExecutionRoot(root)),
-    issue,
-    escalationId
-  )
-  if (resolution.status === 'ok' && resolution.value) {
-    return resolution.value.decision === 'cancel' ? 'resolved_cancel' : 'resolved_resume'
+  try {
+    const held = readPauseState(root, issue)
+    if (held === null) return 'none'
+    // A pause record is never cleared on resume, so one naming a round the
+    // outbox has since published past is history, not a hold — the SAME
+    // supersede rule `deriveLoopState` applies before it will report
+    // `paused` at all. Without it, reading the record directly (which the
+    // gate must, see below) would refuse a task that paused, resumed and
+    // published rounds ago.
+    const published = newestPublishedRound(root, issue)
+    if (published !== null && held.round <= published) return 'none'
+
+    const escalationId = held.escalationId ?? escalationIdFor(issue, held.round, held.head)
+    const resolution = readResolution(
+      defaultControlStoreDeps(() => tasksExecutionRoot(root)),
+      issue,
+      escalationId
+    )
+    // `absent` is a real answer — nobody has decided yet. `corrupt` is not:
+    // a resolution that will not parse might be the `cancel` this gate
+    // exists to protect, so it is never read as "no decision recorded".
+    if (resolution.status === 'corrupt') return 'unreadable'
+    if (resolution.status === 'ok') {
+      return resolution.value.decision === 'cancel' ? 'resolved_cancel' : 'resolved_resume'
+    }
+    // `infrastructure` alone, deliberately: it is the one reason the loop's
+    // own gate continues without a ruling. `stale_driver` reads as a
+    // bounded automatic retry in the loop's watcher, but its bare-resume
+    // gate still demands a ruling for it, so classing it self-resuming here
+    // would launch a run the loop then refuses. Awaiting a ruling is the
+    // truthful answer for it, and `task_resume` does move it once one is
+    // posted.
+    return held.reason === 'infrastructure' ? 'self_resuming' : 'awaiting_ruling'
+  } catch {
+    // Every read above can throw on a real filesystem error (`readIfExists`
+    // rethrows anything that is not ENOENT). Throwing out of here would
+    // escape the handler with its start claim already written and nothing
+    // launched, so every identical retry inside the stale window would
+    // replay `started: false` for a run that never began. Refusing is the
+    // answer that keeps the claim releasable and tells the Operator the
+    // truth.
+    return 'unreadable'
   }
-  return held.reason === 'infrastructure' ? 'self_resuming' : 'awaiting_ruling'
 }
 
 /**
@@ -451,19 +493,28 @@ export function defaultPauseDisposition(issue: number, root: string = runtimeDir
  * a next action — the failure this gate exists to close was a state with NO
  * working tool at all, and a refusal that names none recreates it.
  *
- * A run that EXITED — killed, crashed, ended by a signal, with no pause
- * record written — is deliberately never refused: `runTask` re-attaches to
- * the task's own open pull request whenever no driver is live, so starting it
- * continues that run rather than opening a second one, and it is the only
- * tool that can (`task_resume` refuses a run with no pause to resume from).
- * `not_started`, `no_driver` and `published` take the same launch path for
- * the same reason.
+ * A live driver is the one refusal the derived STATE decides. Everything
+ * else is decided by the pause record's DISPOSITION, and deliberately NOT by
+ * whether the state reads `paused`: a pause is not one situation, and — the
+ * reason this is not merely tidier — a paused run whose driver is then
+ * killed does not read as `paused` at all. `task run` composes the watching
+ * driver, which retains its lock at EVERY pause reason, so a killed pause
+ * leaves a dead lock plus an exit trace, and `deriveLoopState` answers
+ * `exited` while the pause record is still on disk holding the run. Gating
+ * on the state name let that pause launch straight past the very ruling the
+ * refusal below exists to require. The disposition reads the record itself,
+ * so it sees the hold whatever the state is called.
  *
- * PAUSED is not one refusal but four answers, because a pause is not one
- * situation. Refusing every pause was itself a way of stranding a run: two
- * paused shapes need no Principal act at all, and `task_resume` launches
- * nothing for either, so refusing them named a tool that would not move.
- * What decides is the pause's DISPOSITION — see `PauseDisposition`.
+ * `none` — no pause record, or one a later published round superseded — is
+ * what lets `not_started`, `no_driver`, `published` and a genuinely
+ * pause-less `exited` run launch: `runTask` re-attaches to the task's own
+ * open pull request whenever no driver is live, so starting one continues it
+ * rather than opening a second, and for an exited run it is the only tool
+ * that can (`task_resume` refuses a run with no pause to resume from).
+ *
+ * Refusing every pause was itself a way of stranding a run: two of the
+ * shapes need no Principal act at all, and `task_resume` launches nothing
+ * for either, so refusing them named a tool that would not move.
  */
 export function startRefusalForState(
   state: TaskLoopState,
@@ -476,11 +527,16 @@ export function startRefusalForState(
       `task_start: ${describeTaskRef(target)} already has a live driver (pid ${state.pid}) — refusing to start a second developer on one branch. Watch the run it already has with \`task_status\`.`
     )
   }
-  if (state.kind !== 'paused') return null
+  if (disposition === 'unreadable') {
+    return taskToolError(
+      'precondition',
+      `task_start: ${describeTaskRef(target)} has a pause record or resolution this host could not read, so which tool owns this run cannot be decided — refusing rather than guessing past a decision that may already have been made. Read the run with \`task_status\` and \`task_escalation_read\`, and route the unreadable record to the Principal.`
+    )
+  }
   if (disposition === 'awaiting_ruling') {
     return taskToolError(
       'precondition',
-      `task_start: ${describeTaskRef(target)}'s run is paused (${state.reason}) awaiting a decision — a pause nobody has ruled on is continued by \`task_resume\`, which authenticates it against a Principal ruling posted on the run's own pull request. \`task_start\` never resumes past a pause that is still asking for one.`
+      `task_start: ${describeTaskRef(target)} is held by a pause awaiting a decision${state.kind === 'paused' ? ` (${state.reason})` : ' (its driver has since exited, but the pause still holds the run)'} — a pause nobody has ruled on is continued by \`task_resume\`, which authenticates it against a Principal ruling posted on the run's own pull request. \`task_start\` never resumes past a pause that is still asking for one.`
     )
   }
   if (disposition === 'resolved_cancel') {
@@ -737,12 +793,29 @@ export function createTaskStartHandler(
       // launched. A refusal releases this call's own claim for the same
       // reason a target refusal does: the identity must stay reclaimable by
       // the call that finally does own this state.
-      const state = deps.loopState(issue)
-      const refusal = startRefusalForState(
-        state,
-        target,
-        state.kind === 'paused' ? deps.pauseDisposition(issue) : 'none'
-      )
+      //
+      // Both reads happen for every state but `running`, the disposition
+      // included: a pause whose driver was killed derives `exited` while its
+      // record still holds the run, so asking only when the state reads
+      // `paused` is how that hold went unseen.
+      let refusal: TaskToolError | null
+      try {
+        const state = deps.loopState(issue)
+        refusal = startRefusalForState(state, target, state.kind === 'running' ? 'none' : deps.pauseDisposition(issue))
+      } catch (err) {
+        // Neither read is allowed to escape past the claim this call already
+        // wrote: an identity claimed with nothing launched replays
+        // `started: false` for every retry inside the stale window, reporting
+        // a run that never began. Release it, and say what failed.
+        deps.store.release(requestId)
+        return {
+          ok: false,
+          error: taskToolError(
+            'infrastructure',
+            `task_start could not read ${describeTaskRef(target)}'s current state: ${(err as Error).message}`
+          )
+        }
+      }
       if (refusal !== null) {
         deps.store.release(requestId)
         return { ok: false, error: refusal }

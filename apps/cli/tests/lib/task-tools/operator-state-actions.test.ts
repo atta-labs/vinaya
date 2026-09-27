@@ -439,9 +439,18 @@ describe("the Operator's doctrine and the Operator's tools agree, state for stat
         expect(`${row.state}: ${outcome.message}`).toBe(`${row.state}: launched`)
         continue
       }
-      // A row `task_start` does not own is either refused — and then the
-      // refusal must hand the Operator the tool the doctrine names, never a
-      // dead end — or simply not this tool's business to refuse.
+      // The two states the gate is supposed to OWN must actually be refused,
+      // and the refusal must hand over the tool the doctrine names. Checking
+      // the message only when a refusal happens to arrive made the word
+      // "exactly" in this case's own title assert nothing: dropping either
+      // gate would have passed here silently.
+      const ownedByAnotherTool = row.state === 'running' || row.state === 'paused'
+      if (ownedByAnotherTool) {
+        expect(`${row.state}: ${outcome.ok ? 'launched' : 'refused'}`).toBe(`${row.state}: refused`)
+        expect(outcome.message).toContain(row.action)
+        continue
+      }
+      // Any remaining row is a read `task_start` has no business refusing.
       if (!outcome.ok) expect(outcome.message).toContain(row.action)
     }
   })
@@ -512,6 +521,63 @@ describe("the Operator's doctrine and the Operator's tools agree, state for stat
         }
       })
     }
+
+    it('holds a pause whose driver was killed, though it derives exited, not paused', async () => {
+      // The production shape of a killed pause: `task run` composes the
+      // watching driver, which retains its lock at EVERY pause reason, and
+      // the signal handler leaves an exit trace. `deriveLoopState` answers
+      // `exited` while the pause record still holds the run, so a gate that
+      // asked for the disposition only under `paused` let this launch past
+      // the ruling it is still waiting for.
+      const root = tempDir()
+      writePause(root, TASK, 2, 'escalation')
+      writeDriverLock(root, TASK, deadPid())
+      appendRoleLine(
+        loopLogPathFor(null, TASK, root),
+        'dev-review-loop',
+        'driver_exited: reason=signal last_decision=dispatch_developer'
+      )
+      const state = deriveLoopState(root, TASK, { repo: null, loopsRoot: root })
+      expect(state.kind).toBe('exited')
+      expect(defaultPauseDisposition(TASK, root)).toBe('awaiting_ruling')
+
+      const start = await taskStartAccepts(root, state)
+      expect(start.ok).toBe(false)
+      expect(start.message).toContain('task_resume')
+      // And the tool it names does move it.
+      const resume = await taskResumeAccepts(root)
+      expect(`killed pause: ${resume.ok ? 'resumed' : resume.message}`).toBe('killed pause: resumed')
+    })
+
+    it('does not hold a run whose pause a later published round superseded', async () => {
+      // A pause record is never cleared on resume, so reading it directly —
+      // which the gate must, to see a killed pause at all — has to apply the
+      // same supersede rule `deriveLoopState` does, or a task that paused,
+      // resumed and published rounds ago would be refused forever.
+      const root = tempDir()
+      writePause(root, TASK, 2, 'escalation')
+      writePublishedRound(root, TASK, 3)
+      const state = deriveLoopState(root, TASK, { repo: null, loopsRoot: root })
+      expect(state.kind).toBe('published')
+      expect(defaultPauseDisposition(TASK, root)).toBe('none')
+      expect((await taskStartAccepts(root, state)).message).toBe('launched')
+    })
+
+    it('refuses rather than guessing when a resolution record will not parse', async () => {
+      // A resolution that cannot be read might be the `cancel` the gate
+      // exists to protect, so it is never read as "no decision recorded".
+      const root = tempDir()
+      writePause(root, TASK, 2, 'escalation')
+      const dir = join(taskDir(root, TASK), 'control', 'resolution')
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(join(dir, `${escalationIdFor(TASK, 2, 'abc123')}.json`), '{ not json', 'utf8')
+      expect(defaultPauseDisposition(TASK, root)).toBe('unreadable')
+
+      const state = deriveLoopState(root, TASK, { repo: null, loopsRoot: root })
+      const start = await taskStartAccepts(root, state)
+      expect(start.ok).toBe(false)
+      expect(start.message).toContain('could not read')
+    })
 
     it('reads the disposition from the same records the continuation reads', () => {
       const awaiting = tempDir()
