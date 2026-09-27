@@ -362,6 +362,8 @@ async function taskStartAccepts(root: string, state: TaskLoopState): Promise<{ o
     heldAgent: (issue) => defaultHeldAgent(issue, root),
     isPidAlive: () => false,
     processSnapshot: () => null,
+    captureChildSnapshot: () => null,
+    pruneClaims: () => {},
     launch: async (target) => {
       launches.push(target)
       return { status: 'confirmed', pid: 1 }

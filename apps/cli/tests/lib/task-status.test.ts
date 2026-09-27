@@ -33,7 +33,11 @@ import {
   type StartClaimState,
   type TaskStatusRow
 } from '../../src/lib/task-status.js'
-import { readStartClaims, START_CLAIM_REPORTING_WINDOW_MS } from '../../src/lib/task-tools/start.js'
+import {
+  pruneDeadStartClaims,
+  readStartClaims,
+  START_CLAIM_REPORTING_WINDOW_MS
+} from '../../src/lib/task-tools/start.js'
 import type { ProcessSnapshot } from '../../src/lib/dispatch.js'
 import {
   mergedTaskPrNumbers,
@@ -441,27 +445,42 @@ describe('readStartClaim', () => {
     }
   })
 
-  it('never lets a claim field forge a row — non-printable characters are replaced and the length is bounded', () => {
+  it('never reads a claim whose own requestId could name a path — that identity reaches `rmSync`', () => {
+    // The store hands a record's own `requestId` to a path builder (`release`
+    // deletes by it), so a body carrying a traversal sequence is not a record
+    // at all. Written under a legitimate FILE name, which is how a reader that
+    // parses every file in the folder would otherwise reach it.
     const root = tempDir()
-    const forged = 'a1b2\nc3d4 | forged | row'
-    writeStartClaim(
-      root,
-      {
-        requestId: forged,
-        caller: 'operator',
-        target: { issue: TASK },
-        startedAt: `${CLAIM_ACCEPTED_AT}\u001b[31m`
-      },
-      REQUEST_ID
-    )
+    for (const requestId of ['../../../etc/passwd', 'a1b2 c3d4', 'a1b2/c3d4', 'x'.repeat(200)]) {
+      writeStartClaim(
+        root,
+        { requestId, caller: 'operator', target: { issue: TASK }, startedAt: CLAIM_ACCEPTED_AT },
+        REQUEST_ID
+      )
+      expect(readStartClaim(root, TASK, null, claimDeps(WHILE_CLAIM_IS_FRESH))).toBeNull()
+    }
+  })
+
+  it('never lets a claim field forge a state phrase — each field is narrowed to its own alphabet', () => {
+    // The Operator doctrine keys its single action off this exact string, so a
+    // field carrying the punctuation the phrases are built from could name a
+    // state the machine is not in. `startedAt` is the field the store's parser
+    // still accepts freely, so it is the one that has to be narrowed here.
+    const root = tempDir()
+    writeStartClaim(root, {
+      requestId: REQUEST_ID,
+      caller: 'operator',
+      target: { issue: TASK },
+      startedAt: `${CLAIM_ACCEPTED_AT}) — running (pid 4242`
+    })
     const state = readStartClaim(root, TASK, null, claimDeps(WHILE_CLAIM_IS_FRESH))
-    expect(state?.requestId).toBe('a1b2?c3d4 | forged | row')
-    expect(state?.startedAt).toBe(`${CLAIM_ACCEPTED_AT}?[31m`)
+    expect(state?.requestId).toBe(REQUEST_ID)
+    expect(state?.startedAt).toBe(`${CLAIM_ACCEPTED_AT}????running??pid?4242`)
   })
 
   it('bounds a claim field long enough to overrun the table', () => {
     const root = tempDir()
-    const long = 'x'.repeat(500)
+    const long = 'a1b2c3d4'.repeat(15)
     writeStartClaim(
       root,
       { requestId: long, caller: 'operator', target: { issue: TASK }, startedAt: CLAIM_ACCEPTED_AT },
@@ -725,11 +744,10 @@ describe('deriveLoopState', () => {
     ).toEqual({ kind: 'start_did_not_come_up', requestId: REQUEST_ID, startedAt: CLAIM_ACCEPTED_AT })
   })
 
-  it('never reads a dead lock with no exit trace as a start that did not come up — that driver did appear', () => {
-    // The SIGKILL / OOM-kill / reboot case: the lock is on disk, its pid is
-    // gone, and no `driver_exited` trace was ever written, so the reader falls
-    // through to where the claim lives. A lock is proof the driver appeared, so
-    // the claim is not consulted at all and the answer stays the absence.
+  it("ignores a claim the task's own dead lock POSTDATES — that lock is this start's driver, or a later one", () => {
+    // A lock written after the claim was accepted can only be this start's own
+    // driver (or a newer run's), so the driver appeared and the claim stops
+    // speaking — the answer stays the absence it was.
     const root = tempDir()
     writeStartClaim(root, {
       requestId: REQUEST_ID,
@@ -752,6 +770,49 @@ describe('deriveLoopState', () => {
     ).toEqual({ kind: 'no_driver' })
   })
 
+  it("reads a start accepted AFTER an earlier run's dead lock as starting — that lock is not about this start", () => {
+    // The SIGKILL / OOM-kill / reboot case: a prior run left a lock naming a
+    // gone pid and wrote no `driver_exited` trace, and `task run` clears and
+    // rewrites that file only after its forge-bound brief render — so the old
+    // lock sits on disk for the whole window this state exists to describe.
+    // Suppressing the claim for it reported a start nobody had made.
+    const root = tempDir()
+    writeRunFile(
+      root,
+      TASK,
+      'driver.pid.json',
+      JSON.stringify({ pid: deadPid(), startedAt: '2026-09-26T09:00:00.000Z' })
+    )
+    writeStartClaim(root, {
+      requestId: REQUEST_ID,
+      caller: 'operator',
+      target: { issue: TASK },
+      startedAt: CLAIM_ACCEPTED_AT,
+      pid: 4242
+    })
+    expect(
+      deriveLoopState(root, TASK, { repo: null, loopsRoot: root }, claimThunk(root, TASK, null, WHILE_CLAIM_IS_FRESH))
+    ).toEqual({ kind: 'starting', requestId: REQUEST_ID, startedAt: CLAIM_ACCEPTED_AT })
+    expect(
+      deriveLoopState(root, TASK, { repo: null, loopsRoot: root }, claimThunk(root, TASK, null, AFTER_CLAIM_WENT_STALE))
+    ).toEqual({ kind: 'start_did_not_come_up', requestId: REQUEST_ID, startedAt: CLAIM_ACCEPTED_AT })
+  })
+
+  it('keeps the absence when a lock carries a timestamp neither side can compare', () => {
+    // A comparison that cannot be made is not evidence for the louder reading.
+    const root = tempDir()
+    writeRunFile(root, TASK, 'driver.pid.json', JSON.stringify({ pid: deadPid(), startedAt: 'not-a-time' }))
+    writeStartClaim(root, {
+      requestId: REQUEST_ID,
+      caller: 'operator',
+      target: { issue: TASK },
+      startedAt: CLAIM_ACCEPTED_AT
+    })
+    expect(
+      deriveLoopState(root, TASK, { repo: null, loopsRoot: root }, claimThunk(root, TASK, null, WHILE_CLAIM_IS_FRESH))
+    ).toEqual({ kind: 'no_driver' })
+  })
+
   it('still reports no_driver when no start claim names this task at all', () => {
     const root = tempDir()
     writeStartClaim(root, {
@@ -763,6 +824,58 @@ describe('deriveLoopState', () => {
     expect(
       deriveLoopState(root, TASK, { repo: null, loopsRoot: root }, claimThunk(root, TASK, null, WHILE_CLAIM_IS_FRESH))
     ).toEqual({ kind: 'no_driver' })
+  })
+})
+
+describe('pruneDeadStartClaims', () => {
+  const FIXED_NOW = '2026-09-26T12:00:00.000Z'
+  const beyondWindow = new Date(Date.parse(FIXED_NOW) - START_CLAIM_REPORTING_WINDOW_MS - 60_000).toISOString()
+
+  it('drops a claim past its reporting window whose launch is gone, and answers how many', () => {
+    const root = tempDir()
+    writeStartClaim(root, {
+      requestId: REQUEST_ID,
+      caller: 'operator',
+      target: { issue: TASK },
+      startedAt: beyondWindow,
+      pid: 4242
+    })
+    expect(readStartClaims(root)).toHaveLength(1)
+    expect(
+      pruneDeadStartClaims(
+        root,
+        () => FIXED_NOW,
+        () => false,
+        () => null
+      )
+    ).toBe(1)
+    expect(readStartClaims(root)).toHaveLength(0)
+  })
+
+  it('keeps a recent claim, and one past the window whose launched process is still this launch', () => {
+    const root = tempDir()
+    writeStartClaim(root, {
+      requestId: REQUEST_ID,
+      caller: 'operator',
+      target: { issue: TASK },
+      startedAt: new Date(Date.parse(FIXED_NOW) - 60_000).toISOString()
+    })
+    writeStartClaim(root, {
+      requestId: 'b2c3d4e5f6071829',
+      caller: 'operator',
+      target: { issue: TASK + 1 },
+      startedAt: beyondWindow,
+      pid: 4242
+    })
+    expect(
+      pruneDeadStartClaims(
+        root,
+        () => FIXED_NOW,
+        (pid) => pid === 4242,
+        () => null
+      )
+    ).toBe(0)
+    expect(readStartClaims(root)).toHaveLength(2)
   })
 })
 

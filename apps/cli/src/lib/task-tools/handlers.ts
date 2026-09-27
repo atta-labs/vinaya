@@ -37,7 +37,7 @@ import {
 } from '@attalabs/aeg-core'
 import { findTrancheSlug, resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
 import { runtimeDir } from '../dev-review-loop.js'
-import { gatherTaskStatusList, type TaskLoopState, type TaskStatusRow } from '../task-status.js'
+import { gatherTaskStatusList, type TaskStatusRow } from '../task-status.js'
 import { classifyStateFreshness, describeTaskLoopState, paginate, readEscalationPacket, whereTheRunIs } from './read.js'
 
 export type TaskToolCallResult<T> = { ok: true; result: T } | { ok: false; error: TaskToolError }
@@ -116,26 +116,21 @@ export function taskStatusHandler(input: unknown): TaskToolCallResult<TaskStatus
  * appears in the status list yet still fails these three the same "no open task
  * matches" way it always has.
  *
- * The two start-claim states are excluded for the same reason, and the
- * exclusion is what keeps the invariant above true now that a planned task with
- * an accepted start reads `starting` rather than `not_started`: a start whose
- * driver has not appeared has frozen no brief, written no pause and recorded no
- * escalation, so there is nothing for these three to act on. It also matches
- * the Operator doctrine's own table, which gives `starting` the action
- * `task_status` and a start that did not come up the action `task_start` —
- * neither of them one of the tools this resolver serves.
+ * The gate is the view's own `briefFrozenIssues`, not a state kind. Once a
+ * planned task with an accepted start reads `starting` rather than
+ * `not_started`, no state kind means "prepared" any more — a PREPARED task
+ * whose driver has not written its lock yet reads `starting` too, and it has a
+ * pause and an escalation to read like any other prepared task. Gating on the
+ * kinds instead would answer "no open task matches" for a task that is open,
+ * listed and readable, purely because a start was in flight. The frozen-brief
+ * set is the fact the invariant is actually about, and the reader already knows
+ * it (see `TaskStatusListView.briefFrozenIssues` on why it rides on the view
+ * rather than on each row).
  */
-const UNPREPARED_STATE_KINDS: ReadonlySet<TaskLoopState['kind']> = new Set([
-  'not_started',
-  'starting',
-  'start_did_not_come_up'
-])
-
 export function resolveIssueForRef(ref: TaskToolRef): number | null {
   if ('issue' in ref) return ref.issue
-  const row = currentTaskStatusRows().find(
-    (r) => r.tranche === ref.tranche && r.id === ref.id && !UNPREPARED_STATE_KINDS.has(r.state.kind)
-  )
+  const { rows, briefFrozenIssues } = gatherTaskStatusList()
+  const row = rows.find((r) => r.tranche === ref.tranche && r.id === ref.id && briefFrozenIssues.has(r.issue))
   return row ? row.issue : null
 }
 

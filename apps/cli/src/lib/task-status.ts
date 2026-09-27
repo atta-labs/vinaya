@@ -411,20 +411,30 @@ export const defaultStartClaimDeps: StartClaimDeps = {
  *
  * `requestId` and `startedAt` come off a file on disk and are rendered into
  * `renderTaskStatusTable`'s fixed-width rows and into the `task_status` state
- * string — the surface an Operator reads state decisions off. A newline or an
- * escape sequence in either would forge rows there, so neither reaches a
- * renderer before every non-printable character is replaced and the length is
- * bounded. The store's own parser accepts any string for both, deliberately:
- * an odd claim is still a claim, and refusing to READ it would cost the
- * accurate reading this whole state exists to give.
+ * string — the exact string the Operator doctrine keys its single action off.
+ * Replacing only the non-printable characters is not enough: the whole
+ * printable range includes the punctuation the state phrases themselves are
+ * built from, so a `requestId` reading `abc) — running (pid 4242` would render
+ * `starting (start request abc) — running (pid 4242)` and name a state the
+ * machine is not in. So each field is narrowed to the alphabet its own real
+ * values use — a hex request identity, an ISO timestamp — everything else
+ * becomes `?`, and the length is bounded.
+ *
+ * This is display-side only. The store's parser rejects a `requestId` that
+ * could name a path (see `start.ts`'s `isSafeRequestId`) but still accepts any
+ * `startedAt`: an odd claim is still a claim, and refusing to READ one would
+ * cost the accurate reading this whole state exists to give.
  */
 const CLAIM_FIELD_DISPLAY_MAX = 64
 
-function displaySafeClaimField(value: string): string {
-  // Everything outside printable ASCII, which is what a fixed-width table and
-  // an Operator-facing state string can carry without a claim forging rows.
-  const printable = value.replace(/[^\x20-\x7e]/g, '?')
-  return printable.length > CLAIM_FIELD_DISPLAY_MAX ? `${printable.slice(0, CLAIM_FIELD_DISPLAY_MAX)}…` : printable
+/** Hex digests and the `-`/`_` a hand-written or older identity may carry — never a space, a bracket or a dash-like punctuation the state phrases use. */
+const REQUEST_ID_DISPLAY_ALPHABET = /[^A-Za-z0-9._-]/g
+/** ISO-8601: digits, `-`, `:`, `.`, `T`, `Z`, and a numeric offset's `+`. */
+const TIMESTAMP_DISPLAY_ALPHABET = /[^0-9A-Za-z:.+-]/g
+
+function displaySafeClaimField(value: string, alphabet: RegExp): string {
+  const narrowed = value.replace(alphabet, '?')
+  return narrowed.length > CLAIM_FIELD_DISPLAY_MAX ? `${narrowed.slice(0, CLAIM_FIELD_DISPLAY_MAX)}…` : narrowed
 }
 
 /**
@@ -491,8 +501,8 @@ export function readStartClaim(
   const kind = !claimIsStale(record, deps.now) || alive ? 'starting' : 'start_did_not_come_up'
   return {
     kind,
-    requestId: displaySafeClaimField(record.requestId),
-    startedAt: displaySafeClaimField(record.startedAt)
+    requestId: displaySafeClaimField(record.requestId, REQUEST_ID_DISPLAY_ALPHABET),
+    startedAt: displaySafeClaimField(record.startedAt, TIMESTAMP_DISPLAY_ALPHABET)
   }
 }
 
@@ -569,12 +579,28 @@ export function deriveLoopState(
     return { kind: 'paused', reason: pause.reason, detail: pause.detail, round: pause.round }
   }
   if (published !== null) return { kind: 'published', round: published }
-  // A lock on disk — even a dead one this host found no `driver_exited` trace
-  // for, the SIGKILL/OOM/reboot case — is proof the driver DID appear. Whatever
-  // a claim still says about that task, this is not a start that never came up,
-  // so the claim is not consulted and the answer stays the absence it was.
-  if (lock) return { kind: 'no_driver' }
-  return startClaim() ?? { kind: 'no_driver' }
+  const claim = startClaim()
+  if (claim === null) return { kind: 'no_driver' }
+  // A driver lock is proof a driver appeared — but only for the run that wrote
+  // it. A lock this claim POSTDATES belongs to an earlier run (the
+  // SIGKILL/OOM/reboot case leaves one behind with no `driver_exited` trace to
+  // read), and says nothing about a start accepted after it; `task run` clears
+  // and rewrites that file only after its forge-bound brief render, so the old
+  // one sits on disk for the whole window this state exists to describe.
+  // A lock at or after the claim's own accepted-at IS this start's own driver,
+  // or a later one: either way the driver appeared and the claim stops
+  // speaking. An unreadable timestamp on either side takes the same silent
+  // branch, since a comparison that cannot be made is not evidence for the
+  // louder reading.
+  if (lock && !claimPostdatesLock(claim.startedAt, lock.startedAt)) return { kind: 'no_driver' }
+  return claim
+}
+
+/** Was this claim accepted strictly after that driver lock was written? `false` whenever either timestamp does not parse — see {@link deriveLoopState}. */
+function claimPostdatesLock(claimStartedAt: string, lockStartedAt: string): boolean {
+  const claimAt = Date.parse(claimStartedAt)
+  const lockAt = Date.parse(lockStartedAt)
+  return Number.isFinite(claimAt) && Number.isFinite(lockAt) && claimAt > lockAt
 }
 
 /** `vinaya dev-review-loop --resume <pr>` — the exact string `renderPauseComment`/`task run` already print, rendered fresh from the pr number rather than duplicated as a literal in each caller. */
@@ -980,7 +1006,7 @@ function buildRow(
   history: PhaseHistoryLookup,
   readComments: PrCommentReader,
   claimDeps: StartClaimDeps
-): TaskStatusRow {
+): { row: TaskStatusRow; briefFrozen: boolean } {
   const started = hasFrozenBrief(ref.issue, allowlist)
   const root = runtimeDir()
   const base = {
@@ -997,19 +1023,24 @@ function buildRow(
     // A start this machine has already accepted makes this task started,
     // whatever the forge says about its brief: `task run` renders and posts the
     // frozen brief inside its own preparation, so a launch that has not reached
-    // that step yet would otherwise read as a task nobody had started.
+    // that step yet would otherwise read as a task nobody had started. The
+    // BRIEF is still not frozen, though, which is what the view reports
+    // separately — see `TaskStatusListView.briefFrozenIssues`.
     return {
-      ...base,
-      pr: null,
-      state: startClaim() ?? { kind: 'not_started' },
-      round: null,
-      phase: null,
-      recordedPhase: null,
-      minutesInPhase: null,
-      phaseIsCurrent: null,
-      lastConfidence: null,
-      lastConfidenceUnread: false,
-      phaseHistory: null
+      briefFrozen: false,
+      row: {
+        ...base,
+        pr: null,
+        state: startClaim() ?? { kind: 'not_started' },
+        round: null,
+        phase: null,
+        recordedPhase: null,
+        minutesInPhase: null,
+        phaseIsCurrent: null,
+        lastConfidence: null,
+        lastConfidenceUnread: false,
+        phaseHistory: null
+      }
     }
   }
   const pr = findPrForRef(ref)
@@ -1022,28 +1053,48 @@ function buildRow(
   )
   const phaseIsCurrent = phase === null ? null : phaseIsCurrentFor(state, phase.recordedPhase)
   return {
-    ...base,
-    pr,
-    state,
-    round: phase?.round ?? null,
-    phase: phase?.phase ?? null,
-    recordedPhase: phase?.recordedPhase ?? null,
-    minutesInPhase: phase?.minutesInPhase ?? null,
-    phaseIsCurrent,
-    lastConfidence: confidence.kind === 'confidence' ? confidence.confidence : null,
-    lastConfidenceUnread: confidence.kind === 'unread',
-    // A typical time answers "how long does THIS phase usually take" — a
-    // question only a run actually in that phase is asking. A stopped run's
-    // last recorded phase gets none, which is also what keeps the forge read
-    // out of a listing where nothing is in flight.
-    phaseHistory: phase !== null && phaseIsCurrent === true ? history(phase.recordedPhase) : null
+    briefFrozen: true,
+    row: {
+      ...base,
+      pr,
+      state,
+      round: phase?.round ?? null,
+      phase: phase?.phase ?? null,
+      recordedPhase: phase?.recordedPhase ?? null,
+      minutesInPhase: phase?.minutesInPhase ?? null,
+      phaseIsCurrent,
+      lastConfidence: confidence.kind === 'confidence' ? confidence.confidence : null,
+      lastConfidenceUnread: confidence.kind === 'unread',
+      // A typical time answers "how long does THIS phase usually take" — a
+      // question only a run actually in that phase is asking. A stopped run's
+      // last recorded phase gets none, which is also what keeps the forge read
+      // out of a listing where nothing is in flight.
+      phaseHistory: phase !== null && phaseIsCurrent === true ? history(phase.recordedPhase) : null
+    }
   }
 }
 
 // --- command-facing entry points --------------------------------------
 
 /** The rows and the table rendered from them — returned together so the command prints what this reader rendered rather than calling a second boundary function of its own (`apps/cli/specs/surface.md`'s one-command-one-function discipline). */
-export type TaskStatusListView = { rows: TaskStatusRow[]; table: string[] }
+export type TaskStatusListView = {
+  rows: TaskStatusRow[]
+  table: string[]
+  /**
+   * The Issues whose brief `task run`'s own preparation has already frozen.
+   *
+   * The fact behind "this task has been prepared or has a run", which
+   * `resolveIssueForRef` gates `task_escalation_read`/`task_resume`/
+   * `task_cancel` on. It rides on the VIEW rather than on `TaskStatusRow`
+   * because `commands/task-status.ts` serializes a row verbatim into the
+   * public `--json` envelope — a new row field would be a change to that
+   * schema — while it destructures this view. And it cannot be inferred from
+   * `state` any more: a planned task with an accepted start reads `starting`,
+   * and so does a PREPARED one whose driver has not written its lock yet —
+   * the same kind, opposite answers.
+   */
+  briefFrozenIssues: ReadonlySet<number>
+}
 
 /**
  * O1/O3, the entire read for the list form — the ONE function
@@ -1065,15 +1116,18 @@ export function gatherTaskStatusList(): TaskStatusListView {
   const readComments = prCommentReaderForOneStatusRead()
   const claimDeps = claimDepsForOneRead()
   const rows: TaskStatusRow[] = []
+  const briefFrozenIssues = new Set<number>()
   for (const ref of listOpenTaskIssues()) {
     // A backlog ref only ever becomes a candidate once the loop has
     // already written it an outbox directory — see `hasOutboxDir`'s own doc
     // comment. A tranche-labeled ref carries no such gate: O4 lists every open
     // tranche task Issue, a not-yet-frozen (planned) one as `not started`.
     if (ref.kind === 'backlog' && !hasOutboxDir(root, ref.issue)) continue
-    rows.push(buildRow(ref, allowlist, history, readComments, claimDeps))
+    const built = buildRow(ref, allowlist, history, readComments, claimDeps)
+    rows.push(built.row)
+    if (built.briefFrozen) briefFrozenIssues.add(built.row.issue)
   }
-  return { rows, table: renderTaskStatusTable(rows) }
+  return { rows, table: renderTaskStatusTable(rows), briefFrozenIssues }
 }
 
 export type SingleTaskStatus =
@@ -1097,7 +1151,7 @@ export function gatherSingleTaskStatus(tranche: string, id: string): SingleTaskS
   if (!ref) return { kind: 'not_found' }
 
   const allowlist = principalAllowlist()
-  const row = buildRow(
+  const { row } = buildRow(
     ref,
     allowlist,
     phaseHistoryLookup(allowlist),

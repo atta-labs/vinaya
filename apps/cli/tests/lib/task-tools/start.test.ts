@@ -13,6 +13,7 @@ import {
   createTaskStartHandler,
   type PauseDisposition,
   defaultLaunch,
+  isSafeRequestId,
   normalizeStartRecord,
   START_STALE_CLAIM_GRACE_MS,
   TASK_RUN_COMMAND_ENV,
@@ -79,6 +80,8 @@ function harness(
     heldAgent?: (issue: number) => AgentVendor | null
     isPidAlive?: (pid: number) => boolean
     processSnapshot?: (pid: number) => ProcessSnapshot | null
+    captureChildSnapshot?: (pid: number) => ProcessSnapshot | null
+    pruneClaims?: () => void
     now?: () => string
   } = {}
 ) {
@@ -103,6 +106,10 @@ function harness(
     heldAgent: overrides.heldAgent ?? (() => null),
     isPidAlive: overrides.isPidAlive ?? (() => false),
     processSnapshot: overrides.processSnapshot ?? (() => null),
+    // The capture and the later check answer the same table by default, so a
+    // fixture that sets one identity gets a claim that matches itself.
+    captureChildSnapshot: overrides.captureChildSnapshot ?? overrides.processSnapshot ?? (() => null),
+    pruneClaims: overrides.pruneClaims ?? (() => {}),
     launch: async (target, meta) => {
       launches.push(target)
       return (overrides.launch?.(target, meta) ?? { status: 'confirmed', pid: null }) as
@@ -193,6 +200,8 @@ describe('task_start handler', () => {
         heldAgent: () => null,
         isPidAlive: () => false,
         processSnapshot: () => null,
+        captureChildSnapshot: () => null,
+        pruneClaims: () => {},
         launch: async (target) => {
           launches.push(target)
           return { status: 'confirmed', pid: null }
@@ -351,6 +360,35 @@ describe('task_start handler', () => {
     if (!second.ok) return
     expect(second.result.started).toBe(true)
     expect(launches).toHaveLength(2)
+  })
+
+  it('captures the child identity through the SETTLING read, never the plain one', async () => {
+    // A `#!/usr/bin/env node` launcher execs twice, so `comm` read the instant
+    // spawn returns can name `env` rather than the image that survives — and a
+    // capture that never matches a later re-read makes `claimLaunchIsAlive`
+    // call a live launch gone, which is how the supersede path stops refusing
+    // a second launch.
+    const settled = { ppid: 1, startedAt: 'Wed Jan  1 00:00:00 2026', command: 'bun' }
+    const midExec = { ppid: 1, startedAt: 'Wed Jan  1 00:00:00 2026', command: 'env' }
+    const { handler, map } = harness({
+      launch: () => ({ status: 'starting', pid: 4242 }),
+      processSnapshot: () => midExec,
+      captureChildSnapshot: () => settled
+    })
+    expect((await handler({ tranche: 'unattended-run-v1', id: '14' }, CALLER)).ok).toBe(true)
+    expect([...map.values()][0]?.childCommand).toBe('bun')
+  })
+
+  it('prunes the claims already proven dead before writing another', async () => {
+    let pruned = 0
+    const { handler } = harness({
+      launch: () => ({ status: 'starting', pid: 4242 }),
+      pruneClaims: () => {
+        pruned += 1
+      }
+    })
+    expect((await handler({ tranche: 'unattended-run-v1', id: '14' }, CALLER)).ok).toBe(true)
+    expect(pruned).toBe(1)
   })
 
   it('marks a claim whose launch was CONFIRMED, so no later read calls that run a start still coming up', async () => {
@@ -948,6 +986,17 @@ describe('task_start handler', () => {
         target: { tranche: 'demo', id: '3' }
       })
       expect(normalizeStartRecord({ ...base, target: { issue: 729 } })).toEqual({ ...base, target: { issue: 729 } })
+    })
+
+    it('reads nothing out of a record whose own requestId could name a path', () => {
+      // `release` hands this identity to `rmSync` through the store's own path
+      // builder, so a body carrying a traversal sequence — or anything that is
+      // not a request identity — is never a record this store reads back.
+      for (const requestId of ['../../../etc/passwd', 'a b', 'a/b', '', 'x'.repeat(200)]) {
+        expect(normalizeStartRecord({ ...base, requestId, target: { issue: 729 } })).toBeNull()
+      }
+      expect(isSafeRequestId('a1b2c3d4e5f60718')).toBe(true)
+      expect(isSafeRequestId('../escape')).toBe(false)
     })
 
     it('reads nothing out of a record that is neither shape', () => {
