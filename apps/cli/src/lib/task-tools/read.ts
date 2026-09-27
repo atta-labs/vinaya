@@ -114,16 +114,17 @@ export function describeTaskLoopState(state: TaskLoopState): string {
 }
 
 /**
- * The five `TaskStatusItemSchema` fields that say WHERE a run is, taken from
+ * The six `TaskStatusItemSchema` fields that say WHERE a run is, taken from
  * the status row the reader already built — never re-read here, so the tool
  * and `vinaya task status` can never disagree about a task's round or phase.
  *
  * Every field is `null` when no record carries it: a task with no control
- * record has no round, no phase, no time in phase and no `phaseIsCurrent`; a round whose confidence
- * no record still carries has none; a phase with no comparable history — or
- * too few past intervals of it — has no typical time. None of the five is ever
- * estimated, and `phaseHistory` is history, not a prediction of when this run
- * leaves this phase.
+ * record has no round, no phase, no time in phase and no `phaseIsCurrent`; a
+ * round whose confidence no record still carries has none; a phase with no
+ * comparable history — or too few past intervals of it — has no typical time.
+ * None of the six is ever estimated, `phaseIsCurrent: false` marks a phase a
+ * stopped run only RECORDED rather than one it is in, and `phaseHistory` is
+ * history, not a prediction of when this run leaves this phase.
  */
 export function whereTheRunIs(row: TaskStatusRow): {
   round: number | null

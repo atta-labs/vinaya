@@ -150,13 +150,19 @@ const MERGED_PR_COMMENTS = [
   { ...principalComment('VERDICT: PASS\n\nJudged head: abc123'), createdAt: '2026-09-20T10:06:00.000Z' }
 ]
 
-/** The published summary table the confidence column reads for a run that has published — the same shape `renderSummary` posts. */
+/**
+ * The published summary table the confidence column reads for a run that has
+ * published — the shape `renderSummary` actually posts for the common case: ONE
+ * round, whose confidence cell is the not-asked glyph, because round 1 is never
+ * asked for a confidence at all. A fixture claiming a round-1 percentage would
+ * assert against a table the loop can never write.
+ */
 const PUBLISHED_SUMMARY_COMMENTS = [
   {
     ...principalComment(
       '| round | blocker | major | minor | critical | high | medium | low | confidence | outcome |\n' +
         '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n' +
-        '| 1 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 85% | green |'
+        '| 1 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | — | green |'
     ),
     createdAt: '2026-09-22T12:00:00.000Z'
   }
@@ -404,8 +410,11 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
         '6m (n=3)'
       ],
       ['[demo] 2', '#602', '#702', 'paused (escalation)', '1', 'paused', '40m', '—', '—'],
-      // The published run's confidence comes from its own posted summary table.
-      ['[demo] 3', '#603', '#703', 'published', '1', 'publishing', '2m', '85% (round 1)', '—'],
+      // A one-round published run: its summary's own round-1 cell is the
+      // not-asked glyph, so the column reads as no record rather than telling a
+      // reader the developer skipped a statement nothing ever requested. The
+      // phase is marked last-recorded — nothing is publishing any more.
+      ['[demo] 3', '#603', '#703', 'published', '1', 'publishing (last recorded)', '2m', '—', '—'],
       // O4: the planned task (brief not frozen) lists as not started, never
       // omitted — and every fact it has no record for reads as one dash.
       ['[demo] 4', '#606', '—', 'not started', '—', '—', '—', '—', '—']
@@ -547,7 +556,7 @@ describe('vinaya task status <tranche> <n> (O2 — the single-task form)', () =>
 
     expect(outputCells(r.stdout)).toEqual([
       ['task', 'issue', 'pr', 'state', 'round', 'phase', 'in phase', 'confidence', 'typical (history)'],
-      ['[demo] 3', '#603', '#703', 'published', '1', 'publishing', '2m', '85% (round 1)', '—']
+      ['[demo] 3', '#603', '#703', 'published', '1', 'publishing (last recorded)', '2m', '—', '—']
     ])
     expect(r.status).toBe(0)
   })

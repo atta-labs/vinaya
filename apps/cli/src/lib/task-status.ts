@@ -748,11 +748,13 @@ function buildRow(ref: TaskRef, allowlist: readonly string[], history: PhaseHist
     phase: phase?.phase ?? null,
     recordedPhase: phase?.recordedPhase ?? null,
     minutesInPhase: phase?.minutesInPhase ?? null,
-    // `paused` and `published` are resting states the loop DECIDED and the
-    // record agrees with, so the phase they name is current. `no_driver` and
-    // `exited` are not: the driver vanished mid-flight and the record is the
-    // last phase it wrote, not a place anything is still working in.
-    phaseIsCurrent: phase === null ? null : state.kind !== 'no_driver' && state.kind !== 'exited',
+    // `paused` is the one state that is genuinely a PLACE a run sits in — it
+    // waits there for a person — so its phase needs no qualifier. Everything
+    // else that is not a live driver is a phase nothing is in any more: a
+    // published run is finished (nothing is publishing), and `no_driver` /
+    // `exited` mean the driver vanished mid-flight, leaving the last phase it
+    // wrote. For all three the time counts since that record, not time spent.
+    phaseIsCurrent: phase === null ? null : state.kind === 'running' || state.kind === 'paused',
     lastConfidence: confidence,
     phaseHistory: phase ? history(phase.recordedPhase) : null
   }

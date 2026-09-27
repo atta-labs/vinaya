@@ -175,13 +175,14 @@ export const TaskPhaseHistorySchema = z
 export type TaskPhaseHistory = z.infer<typeof TaskPhaseHistorySchema>
 
 /**
- * `state` is the one-phrase loop state this tool always carried. The five
- * fields after it are where the run actually is, each read from a record and
- * each `null` when no record carries it: the loop's own control record holds
- * `round`/`phase` and the timestamp `minutesInPhase` is measured from, the
- * outbox or the published summary holds `lastConfidence`, and merged task
- * pull requests hold `phaseHistory`. All five are optional, so a client
- * written against the earlier shape still parses every item.
+ * `state` is the one-phrase loop state this tool always carried. The six fields
+ * after it are where the run actually is, each read from a record and each
+ * `null` when no record carries it: the loop's own control record holds
+ * `round`/`phase`, the timestamp `minutesInPhase` is measured from, and whether
+ * a live run is still in that phase (`phaseIsCurrent`); the outbox or the
+ * published summary holds `lastConfidence`; and merged task pull requests hold
+ * `phaseHistory`. All six are optional, so a client written against the earlier
+ * shape still parses every item.
  */
 export const TaskStatusItemSchema = z
   .object({
@@ -567,7 +568,7 @@ export const TASK_STATUS_TOOL: TaskToolDefinition<TaskStatusInput, TaskStatusRes
   purpose:
     'Read where every task in flight is — its loop state (running, paused, published, exited, or no driver), its round, the phase it is in and how long it has been there, the newest confidence on record, and what that phase typically takes in this repository — plus its Issue/PR identity, without shelling to `ps` or re-parsing posted verdict comments.',
   boundaries:
-    'Terse and always-answerable: one row per task, from records that either exist or explicitly do not — a fact with no record reads `null`, never an estimate. It never explains WHY a paused task is paused beyond naming the reason — that full packet is `task_escalation_read`. `phaseHistory` is HISTORY: the median of the same phase on recently merged task pull requests, with its sample count, and it says nothing about when this run will leave this phase — there is no ETA, no remaining time and no deadline in this result. Omitting `task` lists every open task, paginated; it never starts, resumes or cancels anything.',
+    'Terse and always-answerable: one row per task, from records that either exist or explicitly do not — a fact with no record reads `null`, never an estimate. `phase` is a place a record names, not a claim that work is happening there: `phaseIsCurrent: false` means the run stopped in it (published, or a driver that vanished), and then `minutesInPhase` is time since that record rather than time being spent. It never explains WHY a paused task is paused beyond naming the reason — that full packet is `task_escalation_read`. `phaseHistory` is HISTORY: the median of the same phase on recently merged task pull requests, with its sample count, and it says nothing about when this run will leave this phase — there is no ETA, no remaining time and no deadline in this result. Omitting `task` lists every open task, paginated; it never starts, resumes or cancels anything.',
   inputSchema: TaskStatusInputSchema,
   resultSchema: TaskStatusResultSchema,
   errorSchema: TaskToolErrorSchema,
