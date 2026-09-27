@@ -214,11 +214,28 @@ export function renderPauseComment(
  * O9: the no-PR-yet variant of the pause comment — posted on the task Issue
  * instead of a pull request, because none is known to exist: the round-1
  * refusal/escalation before any push, or a setup failure that never got as
- * far as resolving one. Carries no PR number for a `--resume` command, so
- * the resume path named is `vinaya task run`, the same one command this
- * task's own O10 makes work with no `--agent` to remember.
+ * far as resolving one. Carries no PR number for a `--resume` command, so the
+ * resume path named is `vinaya task run`.
+ *
+ * The command named must be one the reader can run verbatim. It used to be
+ * `vinaya task run <tranche> <n>` with the ISSUE number substituted into the
+ * `<n>` position and `<tranche>` left as an unfilled placeholder — wrong
+ * twice, and unrunnable as printed. `vinaya task run --issue <n>` is the form
+ * that takes exactly the number this pause knows (`commands/task-run.ts`'s own
+ * usage), and the agent the run was dispatched under travels with it so the
+ * reader need not remember it either.
  */
-export function renderNoPushStopComment(task: number, reason: PauseReason, detail?: string): string {
+/** `task-status.ts`'s `resumeCommandFor` for the case where there is no pull request to anchor a `--resume` to: the one continuation a before-any-push pause actually has. Exported so the pause comment here and `task-tools/read.ts`'s `permittedNextActions` name the identical command rather than each spelling out its own. */
+export function noPushResumeCommandFor(task: number, agent?: string, model?: string): string {
+  return `vinaya task run --issue ${task}${agent ? ` --agent ${agent}` : ''}${model ? ` --model ${model}` : ''}`
+}
+
+export function renderNoPushStopComment(
+  task: number,
+  reason: PauseReason,
+  detail?: string,
+  invocation?: { agent: string; model?: string }
+): string {
   return [
     `The dev-review-loop paused: ${reason}${detail ? ` — ${detail}` : ''}.`,
     '',
@@ -226,8 +243,10 @@ export function renderNoPushStopComment(task: number, reason: PauseReason, detai
     'A Principal ruling is needed before this can continue. Once one is posted on this Issue, resume with:',
     '',
     '```',
-    `vinaya task run <tranche> ${task}`,
-    '```'
+    noPushResumeCommandFor(task, invocation?.agent, invocation?.model),
+    '```',
+    '',
+    "The Operator's own `task_resume` clears this pause too, reading that same ruling from this Issue; `task_cancel` ends it instead."
   ].join('\n')
 }
 
@@ -277,11 +296,12 @@ export function postIssuePauseComment(
   task: number,
   round: number,
   reason: PauseReason,
-  detail?: string
+  detail?: string,
+  invocation?: { agent: string; model?: string }
 ): PauseCommentPostResult {
   const publicDetail = detail === undefined ? undefined : sanitizePublicPauseDetail(detail)
   const marker = pauseMarker(reason)
-  const body = renderNoPushStopComment(task, reason, publicDetail)
+  const body = renderNoPushStopComment(task, reason, publicDetail, invocation)
   const key = `pause-issue-${round}-${reason}`
   const identity: EffectIdentity = {
     operation: 'issue-comment',
@@ -455,7 +475,14 @@ export type PauseState = {
   round: number
   head: string
   branch: string
-  prNumber: number
+  /**
+   * `null` for a pause recorded before any pull request exists — the
+   * before-any-push escalation, whose comment goes on the task Issue. This
+   * used to be a `number` a `-1` sentinel was written into, which read as a
+   * real pull request to every consumer and reached the forge verbatim; see
+   * `readPauseState`, which now normalizes any such record already on disk.
+   */
+  prNumber: number | null
   reason: PauseReason
   detail?: string
   pausedAt: string
@@ -502,11 +529,23 @@ export function writePauseState(root: string, state: PauseState): void {
   writeFileSync(path, JSON.stringify(state), 'utf8')
 }
 
+/**
+ * The one chokepoint every consumer of a pause record reads through — which
+ * is why the legacy-sentinel normalization lives HERE rather than in each
+ * caller's own guard. A record written before `prNumber` could be `null`
+ * carries `-1` (the before-any-push escalation) and, for a `PauseState`
+ * hand-written by an even older path, possibly `0`: neither is a pull request
+ * that can be fetched, so both read back as `null`, the value that says so.
+ * Fixing only the producer would leave every pause already paused on a real
+ * machine unclearable forever.
+ */
 export function readPauseState(root: string, task: number): PauseState | null {
   const raw = readIfExists(pauseStatePath(root, task))
   if (!raw) return null
   try {
-    return JSON.parse(raw) as PauseState
+    const parsed = JSON.parse(raw) as PauseState
+    const pr = parsed.prNumber
+    return typeof pr === 'number' && pr <= 0 ? { ...parsed, prNumber: null } : parsed
   } catch {
     return null
   }
@@ -842,16 +881,16 @@ export class StaleEscalationError extends Error {
   }
 }
 
-/** O2: a resolution naming a PR that does not match the escalation's own recorded PR. */
+/** O2: a resolution naming a PR that does not match the escalation's own recorded PR. `attemptedPr` is `null` for a resolution against a pause that has no pull request at all — which matches only an escalation whose own `pr` is equally `null`, so a no-PR resolution can never be pointed at a real pull request's escalation, nor the reverse. */
 export class WrongTargetResolutionError extends Error {
   constructor(
     readonly task: number,
     readonly escalationId: string,
     readonly escalationPr: number | null,
-    readonly attemptedPr: number
+    readonly attemptedPr: number | null
   ) {
     super(
-      `resolution refused — task ${task}'s escalation '${escalationId}' names PR ${escalationPr ?? '(none)'}, not PR ${attemptedPr}`
+      `resolution refused — task ${task}'s escalation '${escalationId}' names PR ${escalationPr ?? '(none)'}, not PR ${attemptedPr ?? '(none)'}`
     )
     this.name = 'WrongTargetResolutionError'
   }
@@ -888,16 +927,27 @@ export type ResolveEscalationResult = {
  * `StaleEscalationError`/`WrongTargetResolutionError`/
  * `ReplayedResolutionError` on any of the three refusal conditions O2
  * requires; a caller that wants a non-throwing form wraps this itself.
+ *
+ * `expectedPr` is `null` for a pause recorded before any pull request existed
+ * — the wrong-target check below is an equality against the escalation's own
+ * `pr`, so `null` matches exactly the escalations that genuinely have none.
+ *
+ * `storeDeps` defaults to the real global control store but is overridable,
+ * the same reason `readEscalationRecord` above takes it: `task-tools/resume.ts`
+ * consumes a no-PR resolution itself and must do so against the SAME
+ * fixture-testable control-store root its other reads already use, never past
+ * it into this machine's real `~/.vinaya/control-store/`.
  */
 export function resolveEscalation(
   task: number,
   escalationId: string,
-  expectedPr: number,
+  expectedPr: number | null,
   decision: 'resume' | 'cancel',
   authenticatedBy: string,
-  authenticatedFrom: string
+  authenticatedFrom: string,
+  storeDeps: ControlStoreDeps = defaultControlStoreDeps(controlStoreRoot)
 ): ResolveEscalationResult {
-  const deps = defaultControlStoreDeps(controlStoreRoot)
+  const deps = storeDeps
   const escalation = readEscalation(deps, task, escalationId)
   if (escalation.status !== 'ok') {
     throw new StaleEscalationError(

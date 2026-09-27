@@ -160,7 +160,16 @@ export const EscalationInputsSchema = z.object({
   round: z.number().int().nonnegative(),
   head: z.string(),
   branch: z.string(),
-  prNumber: z.number().int().positive()
+  /**
+   * `null` when this pause was recorded before any pull request existed — the
+   * loop's before-any-push escalation, which posts on the task Issue instead.
+   * A positive-only field could not express that at all, so the producer wrote
+   * a `-1` sentinel that every reader's own `=== null` guard then let through,
+   * straight into `gh pr view -1` ("unknown shorthand flag: '1' in -1") — the
+   * pause no tool could clear. Absent means absent here; a widening, so every
+   * producer that records a real pull request still validates unchanged.
+   */
+  prNumber: z.number().int().positive().nullable()
 })
 
 export const EscalationEvidenceSchema = z.object({

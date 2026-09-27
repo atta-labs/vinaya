@@ -181,6 +181,7 @@ import {
   escalationIdFor,
   fenceStartedEffectsAsUncertain,
   isDriverPidAlive,
+  noPushResumeCommandFor,
   type PauseCommentPostResult,
   type PauseState,
   postIssuePauseComment,
@@ -260,6 +261,7 @@ export type { PublishInput } from './dev-review-loop/publication.js'
 export {
   escalationIdFor,
   fenceStartedEffectsAsUncertain,
+  noPushResumeCommandFor,
   readEscalationRecord,
   readResolutionRecord,
   renderNoPushStopComment,
@@ -976,6 +978,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     if (!held) {
       throw new Error(
         `devReviewLoop --resume: no held pause state found for task ${closesTask} (PR #${resumePr}) — nothing to resume.`
+      )
+    }
+    if (held.prNumber === null) {
+      // `--resume <pr>` derives its task from a pull request's own body, so it
+      // has no entry at all for a pause recorded before one existed: that
+      // pause is continued by `vinaya task run --issue <n>` (the command its
+      // own Issue comment names), or through the Operator's `task_resume`.
+      throw new Error(
+        `devReviewLoop --resume: task ${closesTask}'s held pause state records no pull request — it paused before one existed. Continue it with \`${noPushResumeCommandFor(closesTask, held.agent, held.model)}\`.`
       )
     }
     if (held.prNumber !== resumePr) {
@@ -2778,7 +2789,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 round,
                 head: 'unknown',
                 branch,
-                prNumber: -1,
+                // No pull request exists — recorded as having none, the same
+                // `null` the escalation record above already writes for `pr`.
+                // This used to be a `-1` sentinel, which every reader's own
+                // "no pull request" guard then failed to recognize and handed
+                // to `gh pr view -1` verbatim.
+                prNumber: null,
                 reason: 'escalation',
                 detail,
                 pausedAt: new Date().toISOString(),
@@ -2787,7 +2803,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 escalationId: escalationRecord?.escalationId,
                 infrastructureRetries
               })
-              await logPauseCommentRetryIfNotable(round, d.postIssuePauseComment(task, round, 'escalation', detail))
+              await logPauseCommentRetryIfNotable(
+                round,
+                d.postIssuePauseComment(task, round, 'escalation', detail, {
+                  agent: dispatchAgent,
+                  ...(dispatchModel ? { model: dispatchModel } : {})
+                })
+              )
               return { finalDecision: { type: 'pause', reason: 'escalation', detail }, prNumber: 0, task }
             }
           }
@@ -3057,7 +3079,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           round,
           head,
           branch,
-          prNumber,
+          // The SAME normalization the escalation record above already
+          // applies to its own `pr` — a crash this early leaves the local
+          // `prNumber` at its `-1` sentinel, and the pause record must say
+          // "no pull request", not name one nothing was opened against.
+          prNumber: prNumber > 0 ? prNumber : null,
           reason: decision.reason,
           detail: decision.detail,
           pausedAt: new Date().toISOString(),
@@ -3072,13 +3098,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // nothing was ever opened against. Recorded on the task Issue
         // instead, the one forge location that is always addressable for a
         // task with no open PR yet.
+        const invocation = { agent: dispatchAgent, ...(dispatchModel ? { model: dispatchModel } : {}) }
         const postResult =
-          prNumber < 0
-            ? d.postIssuePauseComment(task, round, decision.reason, decision.detail)
-            : d.postPauseComment(task, round, head, prNumber, decision.reason, decision.detail, {
-                agent: dispatchAgent,
-                ...(dispatchModel ? { model: dispatchModel } : {})
-              })
+          prNumber <= 0
+            ? d.postIssuePauseComment(task, round, decision.reason, decision.detail, invocation)
+            : d.postPauseComment(task, round, head, prNumber, decision.reason, decision.detail, invocation)
         await logPauseCommentRetryIfNotable(round, postResult)
       } catch {
         // Swallowed deliberately — see above. The role log's own

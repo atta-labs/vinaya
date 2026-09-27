@@ -35,10 +35,13 @@ import {
 } from '../dev-review-loop-harness'
 import {
   fenceStartedEffectsAsUncertain,
+  noPushResumeCommandFor,
   PAUSE_REASON_PROFILE,
   postWithRetry,
+  readPauseState,
   renderNoPushStopComment,
-  renderPauseComment
+  renderPauseComment,
+  writePauseState
 } from '../../../src/lib/dev-review-loop/pause-resume'
 
 let dir: string
@@ -160,7 +163,77 @@ describe('renderNoPushStopComment (pure) — the no-PR-yet variant carries detai
     const body = renderNoPushStopComment(631, reason, 'a concrete, observed fact about this pause')
     expect(body).toContain(reason)
     expect(body).toContain('a concrete, observed fact about this pause')
-    expect(body).toContain('vinaya task run <tranche> 631')
+    expect(body).toContain('vinaya task run --issue 631')
+  })
+
+  it('names a command the reader can run verbatim — never an unfilled `<tranche>` placeholder', () => {
+    const body = renderNoPushStopComment(631, 'escalation', 'refused at the entry gate', {
+      agent: 'codex',
+      model: 'gpt-5.6-terra'
+    })
+    expect(body).toContain('vinaya task run --issue 631 --agent codex --model gpt-5.6-terra')
+    expect(body).not.toContain('<tranche>')
+    // The Operator's own path out of this pause, which reads the same ruling
+    // off this Issue.
+    expect(body).toContain('task_resume')
+  })
+})
+
+describe('readPauseState — a record with no pull request reads as having none', () => {
+  it('round-trips a null prNumber written by the before-any-push escalation', () => {
+    writePauseState(dir, {
+      task: TASK,
+      round: 1,
+      head: 'unknown',
+      branch: 'task/x/1',
+      prNumber: null,
+      reason: 'escalation',
+      pausedAt: '2026-01-01T00:00:00.000Z'
+    })
+    expect(readPauseState(dir, TASK)?.prNumber).toBeNull()
+  })
+
+  it.each([-1, 0])('normalizes the %s sentinel an older producer already wrote to disk', (sentinel) => {
+    // Written by hand as the old producer wrote it — a `-1` that every
+    // reader's own `=== null` guard let through, into `gh pr view -1`.
+    const control = join(dir, 'tasks-execution', String(TASK), 'control')
+    mkdirSync(control, { recursive: true })
+    writeFileSync(
+      join(control, 'pause-state.json'),
+      JSON.stringify({
+        task: TASK,
+        round: 1,
+        head: 'unknown',
+        branch: 'task/x/1',
+        prNumber: sentinel,
+        reason: 'escalation',
+        pausedAt: '2026-01-01T00:00:00.000Z'
+      })
+    )
+    expect(readPauseState(dir, TASK)?.prNumber).toBeNull()
+  })
+
+  it('leaves a real pull request number exactly as written', () => {
+    writePauseState(dir, {
+      task: TASK,
+      round: 2,
+      head: 'headsha1',
+      branch: 'task/x/1',
+      prNumber: 900,
+      reason: 'max_rounds',
+      pausedAt: '2026-01-01T00:00:00.000Z'
+    })
+    expect(readPauseState(dir, TASK)?.prNumber).toBe(900)
+  })
+})
+
+describe('noPushResumeCommandFor', () => {
+  it('addresses the task by its Issue number, the one address a pause with no pull request has', () => {
+    expect(noPushResumeCommandFor(781)).toBe('vinaya task run --issue 781')
+    expect(noPushResumeCommandFor(781, 'claude')).toBe('vinaya task run --issue 781 --agent claude')
+    expect(noPushResumeCommandFor(781, 'codex', 'gpt-5.6-terra')).toBe(
+      'vinaya task run --issue 781 --agent codex --model gpt-5.6-terra'
+    )
   })
 })
 

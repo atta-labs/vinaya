@@ -138,7 +138,7 @@ function writePublishedRound(root: string, task: number, round: number): void {
 function writePause(
   root: string,
   task: number,
-  overrides: Partial<{ round: number; reason: string; detail: string; prNumber: number }> = {}
+  overrides: Partial<{ round: number; reason: string; detail: string; prNumber: number | null }> = {}
 ): void {
   writeRunFile(
     root,
@@ -149,7 +149,7 @@ function writePause(
       round: overrides.round ?? 2,
       head: 'abc123',
       branch: `task/issue-${task}`,
-      prNumber: overrides.prNumber ?? 900,
+      prNumber: overrides.prNumber === undefined ? 900 : overrides.prNumber,
       reason: overrides.reason ?? 'escalation',
       detail: overrides.detail,
       pausedAt: '2026-09-10T00:00:00.000Z'
@@ -213,6 +213,29 @@ describe('readEscalationPacket', () => {
     expect(packet?.permittedNextActions.length).toBeGreaterThan(0)
     expect(packet?.permittedNextActions.at(-1)).toContain('vinaya dev-review-loop --resume 900')
   })
+
+  it('reports a pause that has no pull request as having none, and names the continuation that exists for it', () => {
+    const root = tempDir()
+    writePause(root, TASK, { round: 1, reason: 'escalation', prNumber: null })
+    const packet = readEscalationPacket(root, TASK)
+    expect(packet?.inputs?.prNumber).toBeNull()
+    expect(packet?.permittedNextActions.at(-1)).toContain(`vinaya task run --issue ${TASK}`)
+    expect(packet?.permittedNextActions.at(-1)).not.toContain('--resume')
+  })
+
+  it.each([-1, 0])(
+    'reads a pause record already on disk carrying the %s sentinel as having no pull request',
+    (sentinel) => {
+      const root = tempDir()
+      writePause(root, TASK, { round: 1, reason: 'escalation', prNumber: sentinel })
+      const packet = readEscalationPacket(root, TASK)
+      expect(packet?.inputs?.prNumber).toBeNull()
+      // The exact string that used to reach an Operator, and `gh` as
+      // `gh pr view -1` → "unknown shorthand flag: '1' in -1".
+      expect(packet?.permittedNextActions.at(-1)).not.toContain(`--resume ${sentinel}`)
+      expect(packet?.permittedNextActions.at(-1)).toContain(`vinaya task run --issue ${TASK}`)
+    }
+  )
 
   it('marks a pause record stale once the outbox shows a later round already published', () => {
     const root = tempDir()
