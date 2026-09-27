@@ -4,7 +4,7 @@ import { mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, w
 import { tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 import type { DoctorDeps, Finding } from '../src/commands/doctor.js'
-import { runDoctor } from '../src/commands/doctor.js'
+import { probeLogDestinationServer, runDoctor } from '../src/commands/doctor.js'
 import type { InitDeps } from '../src/commands/init.js'
 import { runInit } from '../src/commands/init.js'
 import { DOC_OWNERS_PATH } from '@attalabs/aeg-core'
@@ -51,6 +51,14 @@ function doctorDeps(overrides: Partial<DoctorDeps> = {}): DoctorDeps {
       reason: 'no-transcript-resolved',
       detail: 'no --transcript given and no pointer file in this fixture'
     }),
+    // Declaring no destination is what keeps every OTHER test in this file
+    // off a real folder and off the network — the log-destination check's own
+    // cases below each override this with the destination they are about.
+    resolveLogDestination: async () => ({
+      destination: { kind: 'none', reason: 'this fixture declares no destination' },
+      credentialVars: []
+    }),
+    probeLogServer: async () => ({ kind: 'accepted', status: 200 }),
     ...overrides
   }
 }
@@ -1250,5 +1258,182 @@ describe('vinaya doctor — doctrine root/source line (PR #410 review)', () => {
 
     const report = await runDoctorJsonFull()
     expect(report.doctrineInfo?.source).toBe('bundle')
+  })
+})
+
+// The log destination is the one thing here a file cannot answer: a server
+// that refuses every event looks exactly like a healthy one from the config's
+// side, because the sink is fail-open by design. This repository's own server
+// refused every event for most of a day with nothing surfacing it.
+describe('vinaya doctor — the log destination works (Issue #793)', () => {
+  const SERVER = 'https://logs.example.com/v1/repos/acme/widget/events'
+
+  function logFinding(findings: Finding[]): Finding {
+    const found = findings.filter((f) => f.check === 'logs')
+    expect(found).toHaveLength(1)
+    return found[0] as Finding
+  }
+
+  it('reports a server that accepts this machine credential, and stays healthy', async () => {
+    await runInit(['--yes'], initDeps())
+    const report = await runDoctorJson({
+      resolveLogDestination: async () => ({
+        destination: { kind: 'server', url: SERVER, headers: { authorization: 'Bearer real-token' } },
+        credentialVars: ['VINAYA_LOG_TOKEN']
+      }),
+      probeLogServer: async () => ({ kind: 'accepted', status: 200 })
+    })
+
+    const finding = logFinding(report.findings)
+    expect(finding.severity).toBe('ok')
+    expect(finding.message).toContain(SERVER)
+    expect(finding.message).toContain('accepts')
+    expect(finding.message).toContain('Nothing was stored')
+    expect(report.healthy).toBe(true)
+  })
+
+  it('reports a rejected credential as an error naming the variable to fix, never its value', async () => {
+    await runInit(['--yes'], initDeps())
+    const report = await runDoctorJson({
+      resolveLogDestination: async () => ({
+        destination: { kind: 'server', url: SERVER, headers: { authorization: 'Bearer stale-token' } },
+        credentialVars: ['VINAYA_LOG_TOKEN']
+      }),
+      probeLogServer: async () => ({ kind: 'credential-rejected', status: 401 })
+    })
+
+    const finding = logFinding(report.findings)
+    expect(finding.severity).toBe('error')
+    expect(finding.message).toContain('VINAYA_LOG_TOKEN')
+    expect(finding.message).toContain('REFUSED')
+    expect(finding.message).not.toContain('stale-token')
+    expect(report.healthy).toBe(false)
+  })
+
+  it('a credential value inside the unreachable detail is redacted, and offline is a warning not an error', async () => {
+    await runInit(['--yes'], initDeps())
+    const report = await runDoctorJson({
+      resolveLogDestination: async () => ({
+        destination: { kind: 'server', url: SERVER, headers: { authorization: 'Bearer secret-token' } },
+        credentialVars: ['VINAYA_LOG_TOKEN']
+      }),
+      // A destination composes its own failure text; doctor prints none of it
+      // until the values that authenticate this machine are out of it.
+      probeLogServer: async () => ({ kind: 'unreachable', detail: 'connect ECONNREFUSED (sent Bearer secret-token)' })
+    })
+
+    const finding = logFinding(report.findings)
+    expect(finding.severity).toBe('warn')
+    expect(finding.message).not.toContain('secret-token')
+    expect(finding.message).toContain('<redacted>')
+    expect(finding.message).toContain('queue')
+  })
+
+  it('reports a writable folder destination as ok, and an undeliverable one as an error', async () => {
+    await runInit(['--yes'], initDeps())
+    const folder = join(root, 'telemetry', 'logs')
+
+    const okReport = await runDoctorJson({
+      resolveLogDestination: async () => ({ destination: { kind: 'folder', folder }, credentialVars: [] })
+    })
+    const okFinding = logFinding(okReport.findings)
+    expect(okFinding.severity).toBe('ok')
+    expect(okFinding.message).toContain(folder)
+    expect(okReport.healthy).toBe(true)
+
+    // A regular file where a parent directory has to be: the sink's own
+    // recursive mkdir cannot succeed, so no event is ever written.
+    const blocker = join(root, 'not-a-directory')
+    writeFileSync(blocker, 'x\n')
+    const badReport = await runDoctorJson({
+      resolveLogDestination: async () => ({
+        destination: { kind: 'folder', folder: join(blocker, 'logs') },
+        credentialVars: []
+      })
+    })
+    const badFinding = logFinding(badReport.findings)
+    expect(badFinding.severity).toBe('error')
+    expect(badFinding.message).toContain('cannot be written')
+    expect(badReport.healthy).toBe(false)
+  })
+
+  it('a destination of none is reported, and is never a failure', async () => {
+    await runInit(['--yes'], initDeps())
+    const report = await runDoctorJson({
+      resolveLogDestination: async () => ({
+        destination: { kind: 'none', reason: 'this job holds no delivery credential' },
+        credentialVars: []
+      })
+    })
+
+    const finding = logFinding(report.findings)
+    expect(finding.severity).toBe('info')
+    expect(finding.message).toContain('this job holds no delivery credential')
+    expect(report.healthy).toBe(true)
+  })
+
+  // The real probe, against a real server: what it sends is what decides
+  // whether this check can store an event, so a fake would prove nothing.
+  describe('probeLogDestinationServer — the real request', () => {
+    function fixtureServer(status: number): {
+      url: string
+      seen: { method: string; body: string; authorization: string | null }[]
+      stop: () => void
+    } {
+      const seen: { method: string; body: string; authorization: string | null }[] = []
+      const server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          seen.push({
+            method: req.method,
+            body: await req.text(),
+            authorization: req.headers.get('authorization')
+          })
+          return new Response(status === 200 ? '{"accepted":0}' : 'no', { status })
+        }
+      })
+      return { url: `http://127.0.0.1:${server.port}/v1/repos/acme/widget/events`, seen, stop: () => server.stop() }
+    }
+
+    it('posts an empty body with the credential, and reads any non-401/403 answer as accepted', async () => {
+      const fixture = fixtureServer(200)
+      try {
+        const probe = await probeLogDestinationServer(fixture.url, { authorization: 'Bearer real-token' })
+        expect(probe).toEqual({ kind: 'accepted', status: 200 })
+        expect(fixture.seen).toHaveLength(1)
+        // O2, the whole point: the request carries no event, so the
+        // destination has nothing to store — it authenticates and no more.
+        expect(fixture.seen[0]?.body).toBe('')
+        expect(fixture.seen[0]?.method).toBe('POST')
+        expect(fixture.seen[0]?.authorization).toBe('Bearer real-token')
+      } finally {
+        fixture.stop()
+      }
+    })
+
+    it('reads 401 and 403 as the credential being refused', async () => {
+      for (const status of [401, 403]) {
+        const fixture = fixtureServer(status)
+        try {
+          expect(await probeLogDestinationServer(fixture.url, { authorization: 'Bearer stale' })).toEqual({
+            kind: 'credential-rejected',
+            status
+          })
+        } finally {
+          fixture.stop()
+        }
+      }
+    })
+
+    it('a destination nothing is listening on is unreachable, never a throw', async () => {
+      // A port claimed and immediately released: nothing is listening there,
+      // which is what an offline machine looks like to this probe.
+      const idle = Bun.serve({ port: 0, fetch: () => new Response('') })
+      const port = idle.port
+      idle.stop()
+
+      const probe = await probeLogDestinationServer(`http://127.0.0.1:${port}/events`, undefined)
+      expect(probe.kind).toBe('unreachable')
+    })
   })
 })

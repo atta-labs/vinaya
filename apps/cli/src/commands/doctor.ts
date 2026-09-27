@@ -7,8 +7,8 @@
 // story; `vinaya upgrade` is the only sanctioned path back to a clean state.
 
 import { execFileSync } from 'node:child_process'
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { delimiter, join } from 'node:path'
+import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { delimiter, dirname, join } from 'node:path'
 import type { CheckSpec } from '../checks/contract.js'
 import { coreCheckRegistry } from '../checks/registry.js'
 import { bareKeyRejectedDiagnostic, overriddenReplacesCoreDiagnostic, resolveChecks } from '../checks/resolver.js'
@@ -50,12 +50,18 @@ import {
   globalChecksIgnoredWarning,
   isDefaultedAgentVendorPath,
   type ManagedManifest,
+  loadConfig,
+  loadTrustAnchorConfigAsync,
+  type LogsDestination,
   readRepoCiSetup,
   resolveAgentVendors,
+  resolveLogsSetting,
   type VinayaConfig,
   VinayaConfigSchema,
   lintEnvDeclarations
 } from '../lib/config.js'
+import { type ResolvedLogDestination, resolveLogDestinationFrom } from '../lib/log-sink.js'
+import { isUnattendedProcess, repoRootSync, runtimeDirForRepoAsync } from '../lib/run-paths.js'
 import {
   branchProtectionConfigured,
   type BranchProtectionState,
@@ -84,11 +90,98 @@ export type DoctorDeps = {
   bunVersion: () => string | null
   packageVersion: () => string
   meteringCapability: () => MeteringCapability
+  /** Where this machine's log events go, and which variables its credential is named by — see `LogDestinationTarget`. */
+  resolveLogDestination: () => Promise<LogDestinationTarget>
+  /** Does the destination accept this machine's credential — answered without storing an event. */
+  probeLogServer: (url: string, headers: Record<string, string> | undefined) => Promise<LogServerProbe>
 }
 
 function readVersion(): string {
   const pkg = JSON.parse(readFileSync(join(packageRoot(import.meta.url), 'package.json'), 'utf-8'))
   return pkg.version
+}
+
+/** The `${VAR_NAME}` names any of these `logs` settings reference in a header value, deduplicated. */
+function credentialVarNames(settings: ReadonlyArray<LogsDestination | null>): string[] {
+  const names = new Set<string>()
+  for (const setting of settings) {
+    if (!setting || !('url' in setting)) continue
+    for (const value of Object.values(setting.headers ?? {})) {
+      for (const match of value.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g)) names.add(match[1] as string)
+    }
+  }
+  return [...names]
+}
+
+/**
+ * The destination the log sink itself would resolve for this process, through
+ * the sink's OWN decision function (`resolveLogDestinationFrom`) — never a
+ * second reading of `logs`, so doctor can never report a destination the sink
+ * would not use, including the trust-anchor gate an unattended caller carries
+ * and the `${VAR_NAME}` substitution the headers go through.
+ *
+ * The credential's variable names are taken as the UNION of what the working
+ * tree's and the trust anchor's own `logs.headers` reference, rather than by
+ * re-deciding which of the two won: that precedence lives in the sink's
+ * decision function alone, and a second copy of it here is exactly the drift
+ * the paragraph above avoids. Both copies normally name the same variable,
+ * and naming one variable too many is a strictly better failure than naming
+ * the wrong one.
+ *
+ * Exported so a per-call-site proof can invoke this exact wiring.
+ */
+export async function resolveLogDestinationForDoctor(): Promise<LogDestinationTarget> {
+  const localConfig = loadConfig()
+  const unattended = isUnattendedProcess(process.env)
+  const trustAnchorConfig = unattended ? await loadTrustAnchorConfigAsync(undefined, { quiet: true }) : null
+  const repo = await detectGitRepo()
+  const destination = resolveLogDestinationFrom({
+    localConfig,
+    trustAnchorConfig,
+    unattended,
+    env: process.env,
+    defaultFolder: join(await runtimeDirForRepoAsync(repo), 'logs'),
+    repoRoot: repoRootSync()
+  })
+  return {
+    destination,
+    credentialVars:
+      destination.kind === 'server'
+        ? credentialVarNames([resolveLogsSetting(localConfig), resolveLogsSetting(trustAnchorConfig)])
+        : []
+  }
+}
+
+/**
+ * One POST of an EMPTY body to the destination's own ingest route: it
+ * authenticates this machine and stores nothing (see this check's own section
+ * below). `401`/`403` is the credential being refused; any other answer is it
+ * being accepted, since only the destination knows what else it does with a
+ * body carrying no events. A throw is the network, not the credential — an
+ * offline machine loses nothing and is never an error here.
+ *
+ * Exported so a per-call-site proof can invoke this exact wiring.
+ */
+export async function probeLogDestinationServer(
+  url: string,
+  headers: Record<string, string> | undefined
+): Promise<LogServerProbe> {
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { ...(headers ?? {}), 'content-type': 'application/x-ndjson' },
+      body: '',
+      signal: AbortSignal.timeout(LOG_DESTINATION_PROBE_TIMEOUT_MS)
+    })
+    // Never read, only released: the answer this check needs is the status,
+    // and an unconsumed body can hold a socket open past the command.
+    await response.body?.cancel().catch(() => {})
+    return response.status === 401 || response.status === 403
+      ? { kind: 'credential-rejected', status: response.status }
+      : { kind: 'accepted', status: response.status }
+  } catch (err) {
+    return { kind: 'unreachable', detail: firstLine(err) }
+  }
 }
 
 /** Exported so a per-call-site hardening proof can invoke this exact wiring, not a reimplementation of it. */
@@ -102,7 +195,9 @@ export function realDeps(): DoctorDeps {
     nodeVersion: () => process.version,
     bunVersion: () => (typeof Bun === 'undefined' ? null : Bun.version),
     packageVersion: readVersion,
-    meteringCapability: () => resolveMeteringCapability(hardenedMeteringDeps())
+    meteringCapability: () => resolveMeteringCapability(hardenedMeteringDeps()),
+    resolveLogDestination: resolveLogDestinationForDoctor,
+    probeLogServer: probeLogDestinationServer
   }
 }
 
@@ -971,6 +1066,153 @@ function diagnoseTestCi(repoRoot: string): Finding[] {
 }
 
 // ---------------------------------------------------------------------------
+// Check 13 — the log destination: does it actually work from this machine?
+//
+// Every other check here reads a file. This one asks the only question a file
+// cannot answer: whether the events this installation produces are being
+// accepted where they are sent. A server that rejects every event with `401`
+// looks exactly like a healthy one from the config's side — the events queue
+// locally, the run never slows or fails (`apps/cli/specs/log.md`,
+// "Fail-open, always"), and a CI job's queue dies with its runner. That is a
+// whole day of telemetry lost with nothing on any surface saying so, which
+// happened once, and is why this check exists.
+//
+// It never stores an event, and doctor's never-mutates contract holds: the
+// probe POSTs an EMPTY body to the same ingest route the sink delivers to.
+// The route authenticates before it reads anything, and a body with no lines
+// stores no rows (`apps/log-server/specs/server.md` § 5, "Blank lines are
+// ignored", and § 4, "One ingest is one SQLite transaction") — so the answer
+// distinguishes a credential the destination accepts from one it refuses
+// while leaving the log itself untouched.
+// ---------------------------------------------------------------------------
+
+/** What the destination answered a probe with — never its body, never a header it was sent. */
+export type LogServerProbe =
+  | { kind: 'accepted'; status: number }
+  | { kind: 'credential-rejected'; status: number }
+  | { kind: 'unreachable'; detail: string }
+
+/**
+ * The destination this machine's events go to, resolved through the log
+ * sink's own decision, plus the environment variables its credential is
+ * referenced from — the one thing the resolved value cannot carry, because
+ * `${VAR}` references are already substituted for their values by then
+ * (`resolveLogsHeaderValues`, `lib/config.ts`) and doctor must name the
+ * variable to fix without ever printing what is in it.
+ */
+export type LogDestinationTarget = {
+  destination: ResolvedLogDestination
+  credentialVars: readonly string[]
+}
+
+/** The longest doctor waits on the destination — it stays a fast, offline-safe command. */
+export const LOG_DESTINATION_PROBE_TIMEOUT_MS = 3000
+
+/**
+ * Can the folder be delivered into — answered WITHOUT writing anything, since
+ * doctor never mutates. The sink creates the folder itself
+ * (`mkdirSync(dir, { recursive: true })`), so an absent one is deliverable
+ * exactly when its nearest existing ancestor is a writable directory.
+ */
+function folderDeliverable(folder: string): { ok: true; probed: string } | { ok: false; detail: string } {
+  let probed = folder
+  while (!existsSync(probed)) {
+    const parent = dirname(probed)
+    if (parent === probed) break
+    probed = parent
+  }
+  try {
+    if (!statSync(probed).isDirectory()) return { ok: false, detail: `${probed} exists and is not a directory` }
+    accessSync(probed, constants.W_OK)
+    return { ok: true, probed }
+  } catch (err) {
+    return { ok: false, detail: firstLine(err) }
+  }
+}
+
+function firstLine(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err)
+  return message.split('\n')[0]?.trim() || 'no detail'
+}
+
+/**
+ * `text` with every credential value the probe was handed removed. A fetch
+ * failure's own message is the destination's to compose, not ours, so nothing
+ * it returns is printed until the values that authenticate this machine are
+ * out of it — the same posture `redact()` takes on the event itself.
+ */
+function withoutCredentialValues(text: string, headers: Record<string, string> | undefined): string {
+  let out = text
+  for (const value of Object.values(headers ?? {})) {
+    if (value.length === 0) continue
+    out = out.split(value).join('<redacted>')
+  }
+  return out
+}
+
+async function diagnoseLogDestination(deps: DoctorDeps): Promise<Finding[]> {
+  const { destination, credentialVars } = await deps.resolveLogDestination()
+
+  if (destination.kind === 'none') {
+    // Both reasons that land here are sanctioned outcomes, neither a failure
+    // (`apps/cli/specs/log.md` § CI delivery) — reported so the absence is
+    // visible, never as a finding that reddens the command.
+    return [info('logs', `no log event is recorded on this host — ${destination.reason}.`)]
+  }
+
+  if (destination.kind === 'folder') {
+    const deliverable = folderDeliverable(destination.folder)
+    return [
+      deliverable.ok
+        ? ok(
+            'logs',
+            `log events go to the folder ${destination.folder}, and it is writable` +
+              `${deliverable.probed === destination.folder ? '' : ` (its nearest existing parent ${deliverable.probed} is)`}.`
+          )
+        : error(
+            'logs',
+            `log events go to the folder ${destination.folder}, which cannot be written — ${deliverable.detail}. ` +
+              'Every event is dropped, with one warning per process, until it can be.'
+          )
+    ]
+  }
+
+  const probe = await deps.probeLogServer(destination.url, destination.headers)
+  const fix =
+    credentialVars.length > 0
+      ? `Set ${credentialVars.join(', ')} to a credential the server accepts`
+      : 'Give `logs.headers` in vinaya.config.json a credential the server accepts, referenced by variable name rather than written out'
+
+  if (probe.kind === 'credential-rejected') {
+    return [
+      error(
+        'logs',
+        `the log server at ${destination.url} is reachable but REFUSED this machine's credential ` +
+          `(HTTP ${probe.status}). ${fix} — until then every event queues locally and a CI job's queue dies with ` +
+          'its runner. Nothing was stored by this check.'
+      )
+    ]
+  }
+  if (probe.kind === 'unreachable') {
+    return [
+      warn(
+        'logs',
+        `the log server at ${destination.url} could not be reached ` +
+          `(${withoutCredentialValues(probe.detail, destination.headers)}) — this machine may simply be offline, ` +
+          'which loses nothing: events stay in the local retry queue and deliver on the next run.'
+      )
+    ]
+  }
+  return [
+    ok(
+      'logs',
+      `the log server at ${destination.url} is reachable and accepts this machine's credential ` +
+        `(HTTP ${probe.status}). Nothing was stored by this check — the probe carries no event.`
+    )
+  ]
+}
+
+// ---------------------------------------------------------------------------
 // Report rendering
 // ---------------------------------------------------------------------------
 function symbolFor(severity: Severity): string {
@@ -1059,6 +1301,7 @@ export async function runDoctor(args: string[], deps: DoctorDeps): Promise<numbe
   findings.push(await diagnoseBranchProtection(deps, repo.owner, repo.repo))
   findings.push(diagnoseCodeowners(repo.repoRoot))
   findings.push(...diagnoseTestCi(repo.repoRoot))
+  findings.push(...(await diagnoseLogDestination(deps)))
 
   const healthy = findings.every((f) => f.severity === 'ok' || f.severity === 'info')
 
