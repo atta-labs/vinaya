@@ -37,7 +37,7 @@ import {
 } from '@attalabs/aeg-core'
 import { findTrancheSlug, resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
 import { runtimeDir } from '../dev-review-loop.js'
-import { gatherTaskStatusList, type TaskStatusRow } from '../task-status.js'
+import { gatherTaskStatusList, type TaskLoopState, type TaskStatusRow } from '../task-status.js'
 import { classifyStateFreshness, describeTaskLoopState, paginate, readEscalationPacket, whereTheRunIs } from './read.js'
 
 export type TaskToolCallResult<T> = { ok: true; result: T } | { ok: false; error: TaskToolError }
@@ -115,11 +115,26 @@ export function taskStatusHandler(input: unknown): TaskToolCallResult<TaskStatus
  * Issue, through its own `resolveOpenTaskIssueForRef` below — so a planned task
  * appears in the status list yet still fails these three the same "no open task
  * matches" way it always has.
+ *
+ * The two start-claim states are excluded for the same reason, and the
+ * exclusion is what keeps the invariant above true now that a planned task with
+ * an accepted start reads `starting` rather than `not_started`: a start whose
+ * driver has not appeared has frozen no brief, written no pause and recorded no
+ * escalation, so there is nothing for these three to act on. It also matches
+ * the Operator doctrine's own table, which gives `starting` the action
+ * `task_status` and a start that did not come up the action `task_start` —
+ * neither of them one of the tools this resolver serves.
  */
+const UNPREPARED_STATE_KINDS: ReadonlySet<TaskLoopState['kind']> = new Set([
+  'not_started',
+  'starting',
+  'start_did_not_come_up'
+])
+
 export function resolveIssueForRef(ref: TaskToolRef): number | null {
   if ('issue' in ref) return ref.issue
   const row = currentTaskStatusRows().find(
-    (r) => r.tranche === ref.tranche && r.id === ref.id && r.state.kind !== 'not_started'
+    (r) => r.tranche === ref.tranche && r.id === ref.id && !UNPREPARED_STATE_KINDS.has(r.state.kind)
   )
   return row ? row.issue : null
 }

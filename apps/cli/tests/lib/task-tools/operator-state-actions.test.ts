@@ -270,7 +270,10 @@ const FIXTURES: Record<TaskLoopState['kind'], { build: (root: string) => void; d
   // the process it launched gone (a start that never came up).
   starting: { build: (root) => writeStartClaim(root, TASK, new Date().toISOString()), derivable: true },
   start_did_not_come_up: {
-    build: (root) => writeStartClaim(root, TASK, '2026-09-26T00:00:00.000Z', deadPid()),
+    // Past the stale grace and inside the reporting window, measured off the
+    // real clock: a fixed past date would age out of that window and read as
+    // the absence a claim that old is no longer evidence against.
+    build: (root) => writeStartClaim(root, TASK, new Date(Date.now() - 2 * 60_000).toISOString(), deadPid()),
     derivable: true
   },
   paused: { build: (root) => writePause(root, TASK, 2), derivable: true },
@@ -358,6 +361,7 @@ async function taskStartAccepts(root: string, state: TaskLoopState): Promise<{ o
     pauseDisposition: (issue) => defaultPauseDisposition(issue, root),
     heldAgent: (issue) => defaultHeldAgent(issue, root),
     isPidAlive: () => false,
+    processSnapshot: () => null,
     launch: async (target) => {
       launches.push(target)
       return { status: 'confirmed', pid: 1 }

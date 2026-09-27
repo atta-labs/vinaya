@@ -122,7 +122,13 @@ import {
   taskToolError
 } from '@attalabs/aeg-core'
 import { loadConfig } from '../config.js'
-import { type AgentVendor, isAgentVendor } from '../dispatch.js'
+import {
+  type AgentVendor,
+  getProcessSnapshot,
+  isAgentVendor,
+  matchesCapturedIdentity,
+  type ProcessSnapshot
+} from '../dispatch.js'
 import {
   escalationIdFor,
   isDriverPidAlive,
@@ -145,6 +151,12 @@ export type StartRecord = {
   startedAt: string
   /** The pid of the process this claim's own launch spawned, recorded once the launch is known alive — absent on a claim written by a build that recorded none, and on one whose launch has not returned yet. It is what tells a still-preparing run (alive, no driver lock yet) apart from a dead claim, so the supersede path never relaunches a task that is already coming up. */
   pid?: number
+  /** When this launch's own driver lock was observed alive inside the confirm wait — the moment the run this claim started stopped being a start still coming up. Absent on a claim whose wait ended first (a real, still-preparing launch) and on one written before this field existed. A claim carrying it is no longer evidence about a start at all: whatever the run did afterwards, its driver DID appear, and the records that run wrote are what describe it. */
+  confirmedAt?: string
+  /** `ps lstart` for {@link StartRecord.pid}, captured at the moment that pid joined this claim — `null` when the snapshot could not be read. Compared against a live re-read before the pid is ever trusted as this launch's own child, so an OS-recycled pid is not mistaken for a start still coming up. */
+  childStartedAt?: string | null
+  /** `ps comm` for {@link StartRecord.pid}, captured with {@link StartRecord.childStartedAt} and checked the same way. */
+  childCommand?: string | null
 }
 
 /**
@@ -207,6 +219,8 @@ export type TaskStartDeps = {
   heldAgent: (issue: number) => AgentVendor | null
   /** Is this pid still running? Asked of the pid a claim's own launch recorded — the one liveness signal that exists BEFORE a driver lock does, and so the one that tells a still-preparing run apart from a dead claim. */
   isPidAlive: (pid: number) => boolean
+  /** A live re-read of a pid's own identity, for {@link claimLaunchIsAlive} — what keeps a recycled pid from reading as this launch's child. `null` when no process answers at that pid. */
+  processSnapshot: (pid: number) => ProcessSnapshot | null
   /**
    * Starts the run detached and resolves once its own driver lock confirms it
    * alive, or it exits/errors first, or the bounded wait ends with the process
@@ -309,8 +323,26 @@ export function normalizeStartRecord(parsed: unknown): StartRecord | null {
   if (typeof raw.requestId !== 'string' || typeof raw.caller !== 'string' || typeof raw.startedAt !== 'string') {
     return null
   }
-  const pid = typeof raw.pid === 'number' && Number.isInteger(raw.pid) ? { pid: raw.pid } : {}
-  const base = { requestId: raw.requestId, caller: raw.caller, startedAt: raw.startedAt, ...pid }
+  // A pid is only usable as a liveness signal when it names a process: `0` and
+  // any negative value address a process GROUP in `process.kill`, which answers
+  // alive unconditionally and would pin a claim to "still coming up" forever.
+  // Rejected here, in the store's own parser, so the reader and the supersede
+  // path are both fixed by one predicate rather than each guarding separately.
+  const pid = typeof raw.pid === 'number' && Number.isInteger(raw.pid) && raw.pid > 0 ? { pid: raw.pid } : {}
+  const confirmedAt = typeof raw.confirmedAt === 'string' ? { confirmedAt: raw.confirmedAt } : {}
+  const childStartedAt =
+    typeof raw.childStartedAt === 'string' || raw.childStartedAt === null ? { childStartedAt: raw.childStartedAt } : {}
+  const childCommand =
+    typeof raw.childCommand === 'string' || raw.childCommand === null ? { childCommand: raw.childCommand } : {}
+  const base = {
+    requestId: raw.requestId,
+    caller: raw.caller,
+    startedAt: raw.startedAt,
+    ...pid,
+    ...confirmedAt,
+    ...childStartedAt,
+    ...childCommand
+  }
   const target = raw.target
   if (target !== null && typeof target === 'object') {
     const ref = target as Record<string, unknown>
@@ -708,6 +740,68 @@ export function claimIsStale(record: StartRecord, now: () => string): boolean {
   return Number.isFinite(startedAt) && Number.isFinite(current) && current - startedAt > START_STALE_CLAIM_GRACE_MS
 }
 
+/**
+ * How long after it was accepted a claim still says anything about the present.
+ *
+ * A claim is never deleted after a start that WORKED — only a failed launch and
+ * the supersede path release one — so the file outlives the run it started, by
+ * hours. Past this bound it is no longer evidence: a run whose driver came up,
+ * worked, and then ended leaving nothing behind (an uncaught error clears the
+ * lock in its `finally` without writing a `driver_exited` trace, and a sweep
+ * removes the task folder outright) is indistinguishable, from the claim alone,
+ * from a launch that never came up. Reporting the second for the first is the
+ * mirror of the false `no driver` the starting state exists to remove, so the
+ * reader stops believing the claim instead.
+ *
+ * Generous against the thing it measures and small against the thing it must
+ * not outlive: a start's own outcome is decided inside
+ * `START_STALE_CLAIM_GRACE_MS`, while the shortest real review round is tens of
+ * minutes. An operator who started a task and walked away still finds the
+ * failure named; nothing that ran is ever described by a claim this old.
+ */
+export const START_CLAIM_REPORTING_WINDOW_MS = 10 * 60_000
+
+/** Is this claim too old to describe the present at all? See {@link START_CLAIM_REPORTING_WINDOW_MS}. A claim whose own timestamp does not parse is never aged out — an unreadable time is not an old one. */
+export function claimIsPastReporting(record: StartRecord, now: () => string): boolean {
+  const startedAt = Date.parse(record.startedAt)
+  const current = Date.parse(now())
+  return Number.isFinite(startedAt) && Number.isFinite(current) && current - startedAt > START_CLAIM_REPORTING_WINDOW_MS
+}
+
+/**
+ * Is the process this claim's own launch spawned still running AND still that
+ * same process?
+ *
+ * Liveness alone is `process.kill(pid, 0)`, which answers for whatever holds
+ * the pid now — and pids are recycled. Left at that, an unrelated process
+ * inheriting the number reads as the launch still coming up, which no later
+ * read ever corrects. So a claim that captured its child's identity has that
+ * identity re-read and compared through `matchesCapturedIdentity`, the same
+ * guard the dispatch layer already applies wherever a pid is treated as a
+ * launch's own child; a claim that captured none (written before the fields
+ * existed) has nothing to check and is trusted as before.
+ *
+ * Shared by the status reader and this file's own supersede path, for the same
+ * reason `claimIsStale` is: the doctrine's action for a start that did not come
+ * up is `task_start`, and that only starts something if this tool agrees the
+ * launch is gone.
+ */
+export function claimLaunchIsAlive(
+  record: StartRecord,
+  isPidAlive: (pid: number) => boolean,
+  snapshotOf: (pid: number) => ProcessSnapshot | null
+): boolean {
+  const pid = record.pid
+  if (pid === undefined || !isPidAlive(pid)) return false
+  if (record.childStartedAt == null && record.childCommand == null) return true
+  const snapshot = snapshotOf(pid)
+  if (snapshot === null) return false
+  return matchesCapturedIdentity(
+    { childStartedAt: record.childStartedAt ?? null, childCommand: record.childCommand ?? null },
+    snapshot
+  )
+}
+
 // --- default detached launcher, confirmed on the driver lock ----------------
 
 /**
@@ -845,6 +939,7 @@ export const defaultTaskStartDeps: TaskStartDeps = {
   pauseDisposition: (issue) => defaultPauseDisposition(issue),
   heldAgent: (issue) => defaultHeldAgent(issue),
   isPidAlive: isDriverPidAlive,
+  processSnapshot: getProcessSnapshot,
   launch: defaultLaunch,
   now: () => new Date().toISOString()
 }
@@ -914,8 +1009,11 @@ export function createTaskStartHandler(
       // run still coming up — no driver lock yet, and a live pid saying so.
       // Superseding it would put a second developer on one branch, the exact
       // duplicate this tool exists to rule out (O2).
-      const launchedPid = claim.record.pid
-      const childAlive = launchedPid !== undefined && deps.isPidAlive(launchedPid)
+      // Identity-checked, not just alive: a recycled pid answering for an
+      // unrelated process would refuse this supersede forever, which is the
+      // same claim the status reader would be reporting as a start still
+      // coming up. One predicate, so the two can never disagree.
+      const childAlive = claimLaunchIsAlive(claim.record, deps.isPidAlive, deps.processSnapshot)
       if (!childAlive) {
         const staleIssue = deps.resolveIssue(claim.record.target)
         // An Issue that fails to resolve here is a transient forge read, not
@@ -1015,8 +1113,28 @@ export function createTaskStartHandler(
       // Alive — confirmed, or still starting. Either way the claim STAYS, and
       // the launched pid joins it so a later call can re-check liveness
       // against the process itself while its driver lock is still unwritten.
+      // `confirmed` also lands its own timestamp: that outcome means the driver
+      // lock appeared, so this claim has stopped describing a start coming up
+      // and the status reader must stop reading it as one.
+      const confirmedAt = outcome.status === 'confirmed' ? { confirmedAt: deps.now() } : {}
       if (outcome.pid !== null) {
-        claim = { claimed: true, record: { ...claim.record, pid: outcome.pid } }
+        // The child's identity, captured beside its pid at the one moment it is
+        // certainly still that child, so a later liveness read can tell the
+        // process apart from whatever inherits its number.
+        const snapshot = deps.processSnapshot(outcome.pid)
+        claim = {
+          claimed: true,
+          record: {
+            ...claim.record,
+            pid: outcome.pid,
+            childStartedAt: snapshot?.startedAt ?? null,
+            childCommand: snapshot?.command ?? null,
+            ...confirmedAt
+          }
+        }
+        deps.store.update(claim.record)
+      } else if (outcome.status === 'confirmed') {
+        claim = { claimed: true, record: { ...claim.record, ...confirmedAt } }
         deps.store.update(claim.record)
       }
     }

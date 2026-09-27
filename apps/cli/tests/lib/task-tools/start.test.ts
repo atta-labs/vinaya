@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { isDriverPidAlive, readDriverLock } from '../../../src/lib/dev-review-loop/pause-resume.js'
 import { readTaskIssueFacts, resolveOpenTaskIssueForRef } from '../../../src/lib/task-tools/handlers.js'
 import type { TaskIssueFacts } from '../../../src/lib/task-tools/handlers.js'
-import type { AgentVendor } from '../../../src/lib/dispatch.js'
+import type { AgentVendor, ProcessSnapshot } from '../../../src/lib/dispatch.js'
 import type { TaskLoopState } from '../../../src/lib/task-status.js'
 import type { CallerContext } from '../../../src/lib/task-tools/server.js'
 import {
@@ -78,6 +78,7 @@ function harness(
     pauseDisposition?: (issue: number) => PauseDisposition
     heldAgent?: (issue: number) => AgentVendor | null
     isPidAlive?: (pid: number) => boolean
+    processSnapshot?: (pid: number) => ProcessSnapshot | null
     now?: () => string
   } = {}
 ) {
@@ -101,6 +102,7 @@ function harness(
     // No pause record by default, so the configured agent is the one used.
     heldAgent: overrides.heldAgent ?? (() => null),
     isPidAlive: overrides.isPidAlive ?? (() => false),
+    processSnapshot: overrides.processSnapshot ?? (() => null),
     launch: async (target, meta) => {
       launches.push(target)
       return (overrides.launch?.(target, meta) ?? { status: 'confirmed', pid: null }) as
@@ -190,6 +192,7 @@ describe('task_start handler', () => {
         pauseDisposition: () => 'none',
         heldAgent: () => null,
         isPidAlive: () => false,
+        processSnapshot: () => null,
         launch: async (target) => {
           launches.push(target)
           return { status: 'confirmed', pid: null }
@@ -321,6 +324,63 @@ describe('task_start handler', () => {
     if (!second.ok) return
     expect(second.result.started).toBe(false) // replayed, never relaunched
     expect(launches).toHaveLength(1)
+  })
+
+  it("records the child's identity beside its pid, so a recycled pid is not read as the launch still coming up", async () => {
+    let now = '2026-01-01T00:00:00.000Z'
+    const child = { ppid: 1, startedAt: 'Wed Jan  1 00:00:00 2026', command: 'bun' }
+    let snapshot: ProcessSnapshot | null = child
+    const { handler, map, launches } = harness({
+      launch: () => ({ status: 'starting', pid: 4242 }),
+      isRunAlive: () => false,
+      isPidAlive: (pid) => pid === 4242, // the NUMBER is live either way
+      processSnapshot: () => snapshot,
+      now: () => now
+    })
+    const first = await handler({ tranche: 'unattended-run-v1', id: '14' }, CALLER)
+    expect(first.ok).toBe(true)
+    expect([...map.values()][0]?.childStartedAt).toBe(child.startedAt)
+    expect([...map.values()][0]?.childCommand).toBe(child.command)
+
+    // Same pid, different process: the claim is dead and an identical call
+    // launches again rather than replaying a start that is gone.
+    snapshot = { ppid: 1, startedAt: 'Wed Jan  1 09:00:00 2026', command: 'nginx' }
+    now = new Date(Date.parse(now) + START_STALE_CLAIM_GRACE_MS + 60_000).toISOString()
+    const second = await handler({ tranche: 'unattended-run-v1', id: '14' }, CALLER)
+    expect(second.ok).toBe(true)
+    if (!second.ok) return
+    expect(second.result.started).toBe(true)
+    expect(launches).toHaveLength(2)
+  })
+
+  it('marks a claim whose launch was CONFIRMED, so no later read calls that run a start still coming up', async () => {
+    const { handler, map } = harness({
+      launch: () => ({ status: 'confirmed', pid: 4242 }),
+      now: () => '2026-01-01T00:00:00.000Z'
+    })
+    const result = await handler({ tranche: 'unattended-run-v1', id: '14' }, CALLER)
+    expect(result.ok).toBe(true)
+    expect([...map.values()][0]?.confirmedAt).toBe('2026-01-01T00:00:00.000Z')
+  })
+
+  it('marks a confirmed launch that reported no pid at all', async () => {
+    const { handler, map } = harness({
+      launch: () => ({ status: 'confirmed', pid: null }),
+      now: () => '2026-01-01T00:00:00.000Z'
+    })
+    const result = await handler({ tranche: 'unattended-run-v1', id: '14' }, CALLER)
+    expect(result.ok).toBe(true)
+    expect([...map.values()][0]?.confirmedAt).toBe('2026-01-01T00:00:00.000Z')
+  })
+
+  it('leaves a launch that only ever reported `starting` unmarked — its driver has not appeared', async () => {
+    const { handler, map } = harness({
+      launch: () => ({ status: 'starting', pid: 4242 }),
+      now: () => '2026-01-01T00:00:00.000Z'
+    })
+    const result = await handler({ tranche: 'unattended-run-v1', id: '14' }, CALLER)
+    expect(result.ok).toBe(true)
+    expect([...map.values()][0]?.confirmedAt).toBeUndefined()
   })
 
   it('supersedes a stale claim once the process it launched has exited too (O2)', async () => {

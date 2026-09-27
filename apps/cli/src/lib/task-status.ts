@@ -50,7 +50,14 @@ import {
   type PrCommentReader
 } from './task-status-history.js'
 import { findRecordedControllerRun } from './task-run-background.js'
-import { claimIsStale, readStartClaims, type StartRecord } from './task-tools/start.js'
+import {
+  claimIsPastReporting,
+  claimIsStale,
+  claimLaunchIsAlive,
+  readStartClaims,
+  type StartRecord
+} from './task-tools/start.js'
+import { getProcessSnapshot, type ProcessSnapshot } from './dispatch.js'
 
 /**
  * The ceiling on one `gh` read this file makes — the SAME bounds
@@ -387,13 +394,37 @@ export type StartClaimDeps = {
   claims: (root: string) => StartRecord[]
   /** Is the process a claim's own launch spawned still running? The one liveness signal that exists BEFORE a driver lock does. */
   isPidAlive: (pid: number) => boolean
+  /** A live re-read of that pid's own identity, compared against the one the claim captured — see `task-tools/start.ts`'s `claimLaunchIsAlive`. */
+  snapshot: (pid: number) => ProcessSnapshot | null
   now: () => string
 }
 
 export const defaultStartClaimDeps: StartClaimDeps = {
   claims: readStartClaims,
   isPidAlive: isDriverPidAlive,
+  snapshot: getProcessSnapshot,
   now: () => new Date().toISOString()
+}
+
+/**
+ * The most a claim's own strings may say in a status cell.
+ *
+ * `requestId` and `startedAt` come off a file on disk and are rendered into
+ * `renderTaskStatusTable`'s fixed-width rows and into the `task_status` state
+ * string — the surface an Operator reads state decisions off. A newline or an
+ * escape sequence in either would forge rows there, so neither reaches a
+ * renderer before every non-printable character is replaced and the length is
+ * bounded. The store's own parser accepts any string for both, deliberately:
+ * an odd claim is still a claim, and refusing to READ it would cost the
+ * accurate reading this whole state exists to give.
+ */
+const CLAIM_FIELD_DISPLAY_MAX = 64
+
+function displaySafeClaimField(value: string): string {
+  // Everything outside printable ASCII, which is what a fixed-width table and
+  // an Operator-facing state string can carry without a claim forging rows.
+  const printable = value.replace(/[^\x20-\x7e]/g, '?')
+  return printable.length > CLAIM_FIELD_DISPLAY_MAX ? `${printable.slice(0, CLAIM_FIELD_DISPLAY_MAX)}…` : printable
 }
 
 /**
@@ -417,10 +448,24 @@ function claimMatchesTask(record: StartRecord, task: number, address: TaskAddres
  * coming up (`starting`), and so is one past that window whose launched process
  * is still alive: that is a preparation outlasting any fixed wait, exactly the
  * reading `task_start`'s own supersede path takes of the same record (its
- * `claimIsStale`, shared rather than re-derived, so both places mean one
- * window). A claim past the window whose process is gone, with no driver lock to
- * show for it, is a start that did not come up — reported as that, naming its
- * request, rather than as the absence it looks like.
+ * `claimIsStale` and its `claimLaunchIsAlive`, shared rather than re-derived,
+ * so both places mean one window and one liveness test). A claim past the
+ * window whose process is gone, with no driver lock to show for it, is a start
+ * that did not come up — reported as that, naming its request, rather than as
+ * the absence it looks like.
+ *
+ * TWO kinds of claim say nothing about a start at all, and both read `null`
+ * here — the caller's `no_driver`, exactly as before this state existed:
+ *
+ *   - A claim whose launch was CONFIRMED. That outcome means the run's own
+ *     driver lock appeared and named a live pid, so the run this claim started
+ *     did come up. Whatever became of it afterwards is the business of the
+ *     records that run wrote, never of the claim.
+ *   - A claim past `START_CLAIM_REPORTING_WINDOW_MS`. A successful start never
+ *     releases its claim, so the file outlives its run by hours; past that
+ *     bound it cannot tell a launch that never came up from a run that came up,
+ *     worked, and left nothing behind. Asserting the first about the second is
+ *     the same false report — with the sign flipped — that `no driver` was.
  */
 export function readStartClaim(
   root: string,
@@ -440,10 +485,15 @@ export function readStartClaim(
   }
   if (newest === null) return null
   const record = newest.record
-  const launchedPid = record.pid
-  const alive = launchedPid !== undefined && deps.isPidAlive(launchedPid)
+  if (record.confirmedAt !== undefined) return null
+  if (claimIsPastReporting(record, deps.now)) return null
+  const alive = claimLaunchIsAlive(record, deps.isPidAlive, deps.snapshot)
   const kind = !claimIsStale(record, deps.now) || alive ? 'starting' : 'start_did_not_come_up'
-  return { kind, requestId: record.requestId, startedAt: record.startedAt }
+  return {
+    kind,
+    requestId: displaySafeClaimField(record.requestId),
+    startedAt: displaySafeClaimField(record.startedAt)
+  }
 }
 
 export type TaskLoopState =
@@ -519,6 +569,11 @@ export function deriveLoopState(
     return { kind: 'paused', reason: pause.reason, detail: pause.detail, round: pause.round }
   }
   if (published !== null) return { kind: 'published', round: published }
+  // A lock on disk — even a dead one this host found no `driver_exited` trace
+  // for, the SIGKILL/OOM/reboot case — is proof the driver DID appear. Whatever
+  // a claim still says about that task, this is not a start that never came up,
+  // so the claim is not consulted and the answer stays the absence it was.
+  if (lock) return { kind: 'no_driver' }
   return startClaim() ?? { kind: 'no_driver' }
 }
 
@@ -898,11 +953,33 @@ export function renderTaskStatusTable(rows: readonly TaskStatusRow[]): string[] 
  * started task only: a planned one has no control record, no statement and no
  * phase to compare against history.
  */
+/**
+ * One claim listing for one status read, however many rows it has.
+ *
+ * `readStartClaims` lists and parses the whole unscoped control folder, and a
+ * claim for a start that worked is never released — so that folder only grows,
+ * and reading it once per row made a listing of N tasks pay N full scans of it.
+ * The deps object built here is threaded through every row of the same read
+ * instead, so the folder is listed at most once, and only if some row actually
+ * reaches the claim (the thunk is still a thunk).
+ */
+export function claimDepsForOneRead(): StartClaimDeps {
+  let cached: StartRecord[] | null = null
+  return {
+    ...defaultStartClaimDeps,
+    claims: (root) => {
+      cached ??= defaultStartClaimDeps.claims(root)
+      return cached
+    }
+  }
+}
+
 function buildRow(
   ref: TaskRef,
   allowlist: readonly string[],
   history: PhaseHistoryLookup,
-  readComments: PrCommentReader
+  readComments: PrCommentReader,
+  claimDeps: StartClaimDeps
 ): TaskStatusRow {
   const started = hasFrozenBrief(ref.issue, allowlist)
   const root = runtimeDir()
@@ -915,7 +992,7 @@ function buildRow(
   // address this row already carries — so a start is never missed for want of a
   // forge read inside the outbox reader.
   const startClaim = () =>
-    readStartClaim(root, ref.issue, ref.kind === 'tranche' ? { tranche: ref.tranche, id: ref.id } : null)
+    readStartClaim(root, ref.issue, ref.kind === 'tranche' ? { tranche: ref.tranche, id: ref.id } : null, claimDeps)
   if (!started) {
     // A start this machine has already accepted makes this task started,
     // whatever the forge says about its brief: `task run` renders and posts the
@@ -986,6 +1063,7 @@ export function gatherTaskStatusList(): TaskStatusListView {
   const root = runtimeDir()
   const history = phaseHistoryLookup(allowlist)
   const readComments = prCommentReaderForOneStatusRead()
+  const claimDeps = claimDepsForOneRead()
   const rows: TaskStatusRow[] = []
   for (const ref of listOpenTaskIssues()) {
     // A backlog ref only ever becomes a candidate once the loop has
@@ -993,7 +1071,7 @@ export function gatherTaskStatusList(): TaskStatusListView {
     // comment. A tranche-labeled ref carries no such gate: O4 lists every open
     // tranche task Issue, a not-yet-frozen (planned) one as `not started`.
     if (ref.kind === 'backlog' && !hasOutboxDir(root, ref.issue)) continue
-    rows.push(buildRow(ref, allowlist, history, readComments))
+    rows.push(buildRow(ref, allowlist, history, readComments, claimDeps))
   }
   return { rows, table: renderTaskStatusTable(rows) }
 }
@@ -1019,7 +1097,13 @@ export function gatherSingleTaskStatus(tranche: string, id: string): SingleTaskS
   if (!ref) return { kind: 'not_found' }
 
   const allowlist = principalAllowlist()
-  const row = buildRow(ref, allowlist, phaseHistoryLookup(allowlist), prCommentReaderForOneStatusRead())
+  const row = buildRow(
+    ref,
+    allowlist,
+    phaseHistoryLookup(allowlist),
+    prCommentReaderForOneStatusRead(),
+    claimDepsForOneRead()
+  )
 
   const root = runtimeDir()
   const verdictLines = lastRoundVerdictLines(root, ref.issue)

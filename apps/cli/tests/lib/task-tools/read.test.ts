@@ -12,6 +12,7 @@ import {
   whereTheRunIs
 } from '../../../src/lib/task-tools/read.js'
 import type { TaskStatusRow } from '../../../src/lib/task-status.js'
+import { START_CLAIM_REPORTING_WINDOW_MS } from '../../../src/lib/task-tools/start.js'
 
 const TASK = 558
 
@@ -93,6 +94,11 @@ function controlDir(root: string, task: number): string {
 }
 
 const REQUEST_ID = 'a1b2c3d4e5f60718'
+
+/** A timestamp `ms` in the past, measured off the real clock — this read is the production wiring and takes no injected one, so a fixture's claim age has to be relative or it silently ages out of every window. */
+function agoIso(ms: number): string {
+  return new Date(Date.now() - ms).toISOString()
+}
 
 /** One `task_start` claim at the exact path its own store names for it — the unscoped control folder, one file per request identity — written out by hand so this fixture asserts against the literal layout rather than through the reader. */
 function writeStartClaim(root: string, record: Record<string, unknown>): void {
@@ -219,20 +225,49 @@ describe('readTaskLoopStateObserved', () => {
 
   it('reports a start that stopped being recent with no driver and no process as a start that did not come up', () => {
     const root = tempDir()
+    // Past the start handler's own stale grace, well inside the window a claim
+    // still describes the present in — measured off the real clock, because
+    // this read is the production wiring and carries no injected one.
+    const startedAt = agoIso(2 * 60_000)
     writeStartClaim(root, {
       requestId: REQUEST_ID,
       caller: 'operator',
       target: { issue: TASK },
-      startedAt: '2026-09-26T10:00:00.000Z',
+      startedAt,
       pid: deadPid()
     })
     const observed = readTaskLoopStateObserved(root, TASK)
-    expect(observed.value).toEqual({
-      kind: 'start_did_not_come_up',
-      requestId: REQUEST_ID,
-      startedAt: '2026-09-26T10:00:00.000Z'
-    })
+    expect(observed.value).toEqual({ kind: 'start_did_not_come_up', requestId: REQUEST_ID, startedAt })
     expect(observed.freshness).toBe('fresh')
+  })
+
+  it('stops reading a claim older than the reporting window at all — a run that came up is not a start that did not', () => {
+    // A successful start never releases its claim, so the file outlives its run
+    // by hours. Past the reporting window the claim cannot tell a launch that
+    // never came up from a run that came up, worked and left nothing behind, so
+    // it answers the absence it answered before this state existed.
+    const root = tempDir()
+    writeStartClaim(root, {
+      requestId: REQUEST_ID,
+      caller: 'operator',
+      target: { issue: TASK },
+      startedAt: agoIso(START_CLAIM_REPORTING_WINDOW_MS + 60_000),
+      pid: deadPid()
+    })
+    expect(readTaskLoopStateObserved(root, TASK).value).toEqual({ kind: 'no_driver' })
+  })
+
+  it("stops reading a claim whose own launch was confirmed — that run's driver did appear", () => {
+    const root = tempDir()
+    writeStartClaim(root, {
+      requestId: REQUEST_ID,
+      caller: 'operator',
+      target: { issue: TASK },
+      startedAt: agoIso(2 * 60_000),
+      pid: deadPid(),
+      confirmedAt: agoIso(60_000)
+    })
+    expect(readTaskLoopStateObserved(root, TASK).value).toEqual({ kind: 'no_driver' })
   })
 
   it("matches a claim written against a tranche ordinal only when handed this task's address", () => {
