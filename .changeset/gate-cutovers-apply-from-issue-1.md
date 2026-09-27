@@ -1,0 +1,9 @@
+---
+'@attalabs/aeg-core': patch
+'@attalabs/vinaya': patch
+'@attalabs/vinaya-sources': patch
+---
+
+Issue and pull request gates now apply from Issue 1 in a new repository, with cutovers only where configured. Five gates — the `## Objectives` Issue gate, the `## Surface`/`## Parts`/`## Test plan`/`## Stop conditions` brief-sections gate, the `## Documentation` gate, and the two brief-shape pull-request rollouts (the four brief-shape rules and the `[agent]`-checkbox refusal) — were each hardcoded to apply only from a fixed number taken from this monorepo's own history (Issue 404/426/626, PR 394/396). In any other repository, whose Issues start at 1, those gates did nothing for its first hundreds of Issues and pull requests: a new adopter's planner found their Issue 1 accepted with no `## Objectives` section at all.
+
+The five numbers move into one optional `gateCutovers` key in `vinaya.config.json`, and — crucially — an absent key means NO cutover: every gate applies to every Issue and pull request, from number 1, so a new repository's Issue 1 is refused without `## Objectives`, the brief sections, and `## Documentation` exactly as a high-numbered Issue is, and its pull requests are held to the brief-shape rules from PR 1. The validators stay pure — the cutover arrives as an input, resolved once by `resolveGateCutovers` from the working-tree config (or, for the review gate's own objectives binding, from the default-branch trust anchor, so a pull request cannot disarm it) and threaded into each gate; the former constants survive only as each validator's built-in default for a caller that resolves no config. This monorepo sets its own `gateCutovers` to the historical numbers, so its older Issues and pull requests are judged exactly as before. The configuration reference documents the key and states that it exists only for a repository whose Issues predate a gate.
