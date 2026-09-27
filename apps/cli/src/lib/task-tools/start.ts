@@ -444,7 +444,7 @@ export function defaultPauseDisposition(issue: number, root: string = runtimeDir
     const held = readPauseState(root, issue)
     if (held === null) return 'none'
     // A pause record is never cleared on resume, so one naming a round the
-    // outbox has since published past is history, not a hold — the SAME
+    // control store has since published past is history, not a hold — the SAME
     // supersede rule `deriveLoopState` applies before it will report
     // `paused` at all. Without it, reading the record directly (which the
     // gate must, see below) would refuse a task that paused, resumed and
