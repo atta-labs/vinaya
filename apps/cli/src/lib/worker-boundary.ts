@@ -53,7 +53,15 @@ export const WORKER_ENV_ALLOWLIST_KEYS = [
   'HTTPS_PROXY',
   'HTTP_PROXY',
   'NO_PROXY',
-  'TMPDIR'
+  'TMPDIR',
+  // The Vinaya Log's test marker (`apps/cli/tests/lib/test-env-preload.ts`
+  // sets it; `log-sink.ts`'s `testMarkerFrom` reads it). A confined child
+  // spawned from inside this repository's own test run would otherwise
+  // inherit neither this nor `NODE_ENV` — this list is closed — and emit
+  // events indistinguishable from real traffic on the configured log server
+  // (round 5 security review, LOW). Carries no authority and no secret: its
+  // only effect is one boolean label on an event.
+  'AEG_LOG_TEST'
 ] as const
 
 /**

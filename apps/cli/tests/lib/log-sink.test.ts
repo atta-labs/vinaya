@@ -454,6 +454,34 @@ describe('log-sink — the test marker (log-quality-v1 1, O2)', () => {
     expect('test' in line.meta).toBe(false)
   })
 
+  it('a run started at the repository root carries the marker even when NODE_ENV is already taken', () => {
+    // The runner sets `NODE_ENV=test` only when nothing already exported it,
+    // so on a machine whose shell (or direnv) exports `NODE_ENV=development`
+    // that signal is simply absent — and the pre-push hook's own run starts
+    // at the worktree root, where `apps/cli/bunfig.toml` never loads. Both
+    // `bunfig.toml` files now declare the marker preload, which is what
+    // covers that shape; this runs the real runner from the real root to
+    // prove it, since only a child can observe which config was resolved.
+    const repoRoot = new URL('../../../..', import.meta.url).pathname
+    // `./`-prefixed, and named `.probe.ts` rather than `.test.ts`: the runner
+    // treats it as a path instead of a filter, and the repository's own
+    // discovery and shard lists never collect it.
+    const probe = './apps/cli/tests/fixtures/log-marker/root-cwd-marker.probe.ts'
+    const childEnv: NodeJS.ProcessEnv = { ...stripVinayaEnv(), NODE_ENV: 'development' }
+    // This test process is itself marked (the preload ran), so the marker has
+    // to be cleared for the child or it would prove nothing.
+    delete childEnv.AEG_LOG_TEST
+    const run = spawnSyncBudgeted(
+      'bun',
+      ['test', probe],
+      { encoding: 'utf8', cwd: repoRoot, env: childEnv },
+      60_000,
+      'root-cwd marker probe'
+    )
+    expect(`${run.stdout}${run.stderr}`).toContain('1 pass')
+    expect(run.status).toBe(0)
+  }, 120_000)
+
   // Last in the file on purpose: importing the preload RUNS it, setting the
   // marker on this process for good.
   it('the preload marks every child a test process spawns, whatever bunfig was loaded', async () => {
@@ -505,7 +533,8 @@ describe('log-sink — what the branch lookup costs, and when (log-quality-v1 1,
     // the `git` read itself, which directory it reads, or that the number a
     // branch names is confirmed before an event is filed under it. Run in a
     // child so the stub's `PATH` never reaches another test file.
-    const probeOnce = (ghExitStatus: number): { verified: number | null; landedIn: string[] } => {
+    type ForgeAnswer = 'confirms' | 'denies' | 'cannot-be-asked'
+    const probeOnce = (forge: ForgeAnswer): { verified: number | null; landedIn: string[] } => {
       const scratch = mkdtempSync(join(tmpdir(), 'vinaya-branch-probe-'))
       const repoDir = join(scratch, 'repo')
       const binDir = join(scratch, 'bin')
@@ -523,8 +552,16 @@ describe('log-sink — what the branch lookup costs, and when (log-quality-v1 1,
       git('add', 'a.txt')
       git('commit', '-m', 'init')
       git('checkout', '-b', 'task/issue-321')
-      // Stands in for the forge: `gh issue view 321 --json number`.
-      writeFileSync(join(binDir, 'gh'), `#!/bin/sh\necho '{"number":321}'\nexit ${ghExitStatus}\n`, { mode: 0o755 })
+      // Stands in for the forge: `gh issue view 321 --json number --repo …`.
+      // A denial and an unreachable forge both exit non-zero — `gh`'s own
+      // message is the only thing that tells them apart, so each stub writes
+      // the real one.
+      const ghScript = {
+        confirms: '#!/bin/sh\necho \'{"number":321}\'\n',
+        denies: '#!/bin/sh\necho "GraphQL: Could not resolve to an Issue with the number of 321." 1>&2\nexit 1\n',
+        'cannot-be-asked': '#!/bin/sh\necho "gh: authentication required" 1>&2\nexit 4\n'
+      }[forge]
+      writeFileSync(join(binDir, 'gh'), ghScript, { mode: 0o755 })
 
       const sinkModule = new URL('../../src/lib/log-sink.ts', import.meta.url).pathname
       const probe = join(scratch, 'probe.ts')
@@ -566,16 +603,61 @@ describe('log-sink — what the branch lookup costs, and when (log-quality-v1 1,
     // The forge confirms the number the branch named: the read answers it,
     // and the sink files the event under it — from the SINK's own cwd, not
     // the process's (this test process sits on another branch entirely).
-    const confirmed = probeOnce(0)
+    const confirmed = probeOnce('confirms')
     expect(confirmed.verified).toBe(321)
     expect(confirmed.landedIn).toEqual(['321.ndjson'])
 
-    // The forge will not confirm it: the field stays empty rather than
-    // filing this process's telemetry under a number a branch name invented.
-    const denied = probeOnce(1)
+    // The forge DENIES the number: the field stays empty rather than filing
+    // this process's telemetry under a number a branch name invented.
+    const denied = probeOnce('denies')
     expect(denied.verified).toBeNull()
     expect(denied.landedIn).toEqual(['none.ndjson'])
+
+    // The forge cannot be asked at all — no credential, no network, no `gh`.
+    // Silence is not denial: the branch's own plain claim stands, which is
+    // the objective's promise for a local pre-push run on a task branch.
+    const unreachable = probeOnce('cannot-be-asked')
+    expect(unreachable.verified).toBe(321)
+    expect(unreachable.landedIn).toEqual(['321.ndjson'])
   }, 120_000)
+})
+
+describe('log-sink — the append path spends nothing when nothing is recorded (log-quality-v1 1, O1)', () => {
+  it('reads no branch for a `none` destination, the same rule log() applies', async () => {
+    let calls = 0
+    const path = await resolveLogAppendPath({ owner: 'atta-labs', repo: 'vinaya' }, null, {
+      env: () => ({}),
+      outboxRoot: () => '/queue',
+      resolveLogDestination: () => ({ kind: 'none', reason: 'no log server is configured' }),
+      resolveBranchIssue: () => {
+        calls += 1
+        return Promise.resolve(792)
+      }
+    })
+    // A `vinaya dispatch` on a machine with no `logs` setting, or a CI job
+    // deliberately holding no delivery credential, must spend no `git` read
+    // and above all no credentialed `gh` call to fill a field no event carries.
+    expect(calls).toBe(0)
+    expect(path).toBe('/queue/atta-labs-vinaya/none.ndjson')
+  })
+
+  it('asks the forge about the repository the event is FILED under', async () => {
+    const asked: (string | null)[] = []
+    await resolveLogAppendPath({ owner: 'atta-labs', repo: 'vinaya' }, null, {
+      env: () => ({}),
+      outboxRoot: () => '/queue',
+      resolveLogDestination: () => ({ kind: 'folder', folder: '/srv/logs' }),
+      resolveBranchIssue: (repo) => {
+        asked.push(repo)
+        return Promise.resolve(792)
+      }
+    })
+    // `meta.repo` and the outbox directory come from the resolved repository
+    // (whose first source is `AEG_REPO`), so a number confirmed against some
+    // other repository — whatever this directory's git remote happens to name
+    // — would be filed where it was never confirmed.
+    expect(asked).toEqual(['atta-labs/vinaya'])
+  })
 })
 
 describe('log-sink — CI has no branch checked out (log-quality-v1 1, O1)', () => {

@@ -127,6 +127,19 @@ describe('buildWorkerEnv — O2 allowlist, never a spread', () => {
     expect(Object.keys(env).sort()).toEqual(['HOME', 'PATH'])
   })
 
+  it("carries the Vinaya Log's test marker, so a confined child of a test run is not mistaken for real traffic", () => {
+    // The allowlist is closed, so a marker not named in it is dropped and the
+    // child's events become indistinguishable from a real run's on the
+    // configured log server (round 5 security review, LOW). The marker
+    // carries no authority and no secret — one boolean label on an event.
+    const env = buildWorkerEnv({ PATH: '/usr/bin', AEG_LOG_TEST: '1' }, {})
+    expect(env.AEG_LOG_TEST).toBe('1')
+  })
+
+  it('carries no marker when the source has none — a real run stays unmarked through the boundary', () => {
+    expect(buildWorkerEnv({ PATH: '/usr/bin' }, {}).AEG_LOG_TEST).toBeUndefined()
+  })
+
   it('never includes a key outside WORKER_ENV_ALLOWLIST_KEYS regardless of how many the source carries', () => {
     const wideSource: Record<string, string> = {}
     for (let i = 0; i < 50; i++) wideSource[`SECRET_VAR_${i}`] = `leaked-${i}`

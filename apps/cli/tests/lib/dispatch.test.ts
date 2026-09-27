@@ -60,6 +60,7 @@ import {
   buildRolePermissions,
   buildWriteAccessScope,
   addCodexWritableDirs,
+  outboxGrantsFor,
   PERMISSION_POLICY_VERSION,
   codexSpawnEnvExtras,
   missingSubscriptionLoginReason,
@@ -468,6 +469,34 @@ describe('dispatchRole — a successful dispatch', () => {
       '-'
     ])
     expect(readFileSync(stdinOut, 'utf8')).toBe(PROMPT_FILE_CONTENT)
+  })
+})
+
+describe('outboxGrantsFor — every outbox file a confined child could honestly write (log-quality-v1 1, O1)', () => {
+  const own = '/home/dev/.vinaya/outbox/owner-repo/792.ndjson'
+  const resumeRecord = '/runtime/tasks-execution/792/sessions/developer-claude.json'
+  const unattributed = '/home/dev/.vinaya/outbox/owner-repo/none.ndjson'
+  const childsOwn = '/home/dev/.vinaya/outbox/owner-repo/404.ndjson'
+
+  it('names the unattributed file too, because a confined child cannot resolve the branch itself', () => {
+    // Inside the boundary `gh` has no credential and no token, so the child's
+    // own branch read answers null and its events land in the `none` bucket.
+    // A grant naming only the branch-derived file would lose that child's
+    // whole telemetry stream to a swallowed `Operation not permitted`.
+    expect(outboxGrantsFor(own, resumeRecord, [null, unattributed])).toEqual([own, resumeRecord, unattributed])
+  })
+
+  it("names a child's own worktree file as well, and never the same path twice", () => {
+    expect(outboxGrantsFor(own, resumeRecord, [childsOwn, unattributed, childsOwn, own])).toEqual([
+      own,
+      resumeRecord,
+      childsOwn,
+      unattributed
+    ])
+  })
+
+  it('stays exactly the two files when the dispatch names its own task', () => {
+    expect(outboxGrantsFor(own, resumeRecord, [null, null])).toEqual([own, resumeRecord])
   })
 })
 

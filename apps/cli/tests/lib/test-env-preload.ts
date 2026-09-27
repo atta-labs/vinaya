@@ -1,9 +1,13 @@
 /**
- * `[test] preload` (see `apps/cli/bunfig.toml`) — runs once, before any test
- * file in this package, in every `bun test` invocation that has `apps/cli`
- * as its working directory: a local `bun test`, the pre-push hook's
- * selected-file run, and CI's own sharded `bun test ... $(tr '\n' ' ' <
- * tests/ci-shards/shard-N.txt)` (`.github/workflows/ci.yml`).
+ * `[test] preload` — declared by BOTH `apps/cli/bunfig.toml` and the
+ * repository-root `bunfig.toml`, so it runs once before any test file in
+ * every invocation of the runner, whichever directory that invocation
+ * started from: a local run inside `apps/cli`, CI's own sharded run (working
+ * directory `apps/cli`), and the pre-push hook's selected-file run, which
+ * git starts from the working tree root. Bun resolves `bunfig.toml` from the
+ * process's working directory alone and never descends into a
+ * subdirectory's config, so one declaration would cover only one of those
+ * shapes.
  *
  * Two classes of ambient env this test PROCESS's own env must never carry
  * into a test, at the root, once, rather than at every individual fixture
@@ -57,16 +61,22 @@ for (const key of ['GITHUB_ACTIONS', 'VINAYA_HOST', 'VINAYA_ROLE', 'VINAYA_ATTEM
  * design: the marker labels those events, it never suppresses or redirects
  * them.
  *
- * This is the EXPLICIT half of the marker. The sink also reads `NODE_ENV`
- * (`testMarkerFrom`, `apps/cli/src/lib/log-sink.ts`), which is what covers
- * a run this preload never loads for at all: Bun resolves `bunfig.toml`
- * from the process's working directory alone, and git runs the pre-push
- * hook from the working tree root, not from `apps/cli`.
+ * This is the EXPLICIT signal, and the one every sanctioned run of this
+ * repository's tests now rests on, because BOTH `bunfig.toml` files declare
+ * this preload. The sink also reads `NODE_ENV=test` (`testMarkerFrom`,
+ * `apps/cli/src/lib/log-sink.ts`), which the runner sets for itself — but
+ * only when nothing already exported it, so a machine whose shell exports
+ * `NODE_ENV=development` would leave that signal absent. The explicit one
+ * does not depend on the ambient value at all.
  *
  * Set here rather than per fixture, and deliberately NOT under the
  * `VINAYA_` prefix: the many fixtures that spawn a real `vinaya` child
  * delete every `VINAYA_*` key from its environment first, and a marker
  * stripped there would leave exactly the subprocess traffic this exists to
- * mark unmarked.
+ * mark unmarked. For the same reason it is named in
+ * `WORKER_ENV_ALLOWLIST_KEYS` (`apps/cli/src/lib/worker-boundary.ts`), whose
+ * closed allowlist is what a CONFINED child inherits — without it, a
+ * sandboxed dispatch spawned from inside a test run would emit unmarked
+ * events indistinguishable from real traffic.
  */
 process.env.AEG_LOG_TEST = '1'

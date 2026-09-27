@@ -103,12 +103,14 @@ export type LogSinkDeps = {
   /**
    * The Issue the checked-out branch names, for an event whose process
    * carries no `VINAYA_TASK` — the real default is `resolveBranchIssue`
-   * (one `git` read, and one `gh` read to confirm what it named). Called at
-   * most once per process per working directory, lazily: a process whose
-   * events already name their task never calls it at all, and a second sink
-   * reading the same directory reuses the first one's answer.
+   * (one `git` read, and one `gh` read to confirm what it named, asked of the
+   * `<owner>/<repo>` handed in: the repository the event will be FILED
+   * under, never whatever the directory's git remote happens to name).
+   * Called at most once per process per working directory and repository,
+   * lazily: a process whose events already name their task never calls it at
+   * all, and a second sink reading the same pair reuses the first answer.
    */
-  resolveBranchIssue: () => Promise<number | null>
+  resolveBranchIssue: (repo: string | null) => Promise<number | null>
   /**
    * The `logs` setting's resolved destination for this process (O1/O4) —
    * `vinaya.config.json`'s `logs`, trust-anchor-gated for an unattended
@@ -393,7 +395,12 @@ const TRANCHE_ISSUE_LIST_LIMIT = 200
  * harness and the log fixtures use) must not read one checkout's branch and
  * another checkout's Issues.
  */
-async function issueForTrancheTask(tranche: string, taskId: string, cwd: string): Promise<number | null> {
+async function issueForTrancheTask(
+  tranche: string,
+  taskId: string,
+  cwd: string,
+  repo: string | null
+): Promise<number | null> {
   let stdout: string
   try {
     ;({ stdout } = await execFileAsync(
@@ -408,7 +415,10 @@ async function issueForTrancheTask(tranche: string, taskId: string, cwd: string)
         '--json',
         'number,title,labels',
         '--limit',
-        String(TRANCHE_ISSUE_LIST_LIMIT)
+        String(TRANCHE_ISSUE_LIST_LIMIT),
+        // From the already-resolved repository, never the directory's remote
+        // — the same reason `confirmBacklogIssue` passes it.
+        ...(repo === null ? [] : ['--repo', repo])
       ],
       {
         cwd,
@@ -444,33 +454,55 @@ async function issueForTrancheTask(tranche: string, taskId: string, cwd: string)
 }
 
 /**
- * The Issue a `task/issue-<n>` branch names, confirmed to exist in the
- * repository `gh` resolves from this directory — or `null`.
+ * A branch-named Issue, answered on the forge's terms: `'confirmed'` when the
+ * Issue exists in the repository the event will be FILED under, `'denied'`
+ * when that repository says it does not, and `'unknown'` when the forge could
+ * not be asked at all.
  *
- * A branch name is caller-supplied (a contributor's pushed branch, a fork's,
- * a reviewer checking out a pull request), so an UNVERIFIED number would file
- * a whole process's telemetry under whatever Issue that name happened to
- * mention, where it reads as that task's own history (round 4 security
- * review, LOW). The `task/<tranche>/<n>` path already confirms its answer
- * against the forge's own labels and titles; this makes the backlog path
- * symmetric. Existence in THIS repository is what is checked, deliberately
- * not "is a vinaya task Issue": a backlog task Issue carries no tranche
- * label, so requiring one would refuse exactly the branch shape this exists
- * to read. A `gh` that cannot answer — missing, unauthenticated, offline —
- * yields `null`, the same honest empty field every other unresolvable case
- * returns, on the same terms the tranche path has always had.
+ * The three-way answer is the whole point. A branch name is caller-supplied
+ * (a pushed branch, a fork's, a reviewer's checkout), so a number the forge
+ * DENIES must never be filed — that is the attribution harm the confirmation
+ * exists to prevent. But a `gh` that is missing, unauthenticated, offline or
+ * rate-limited has said nothing about the number, and treating its silence as
+ * denial would throw away exactly what this fallback is for: a local pre-push
+ * run, on a task branch, on a machine with no forge access, whose branch
+ * names its task unambiguously (the objective's own words: a `task/issue-<n>`
+ * branch gives `<n>`). Silence therefore leaves the branch's own claim
+ * standing, and `meta.provenance` stays `'unavailable'` either way — the
+ * event never claims the forge agreed.
+ *
+ * `--repo` is passed from the ALREADY-RESOLVED repository, never left to the
+ * directory's git remote: `meta.repo` and the outbox file come from
+ * `resolveRepo()`, whose first source is `AEG_REPO`, so asking a different
+ * repository would confirm a number in one place and file it in another
+ * (round 5 review, MINOR). With no resolved repository to name, `gh`'s own
+ * directory-derived default is all there is.
  */
-async function verifiedBacklogIssue(issue: number, cwd: string): Promise<number | null> {
+type BacklogConfirmation = 'confirmed' | 'denied' | 'unknown'
+
+async function confirmBacklogIssue(issue: number, cwd: string, repo: string | null): Promise<BacklogConfirmation> {
+  let stdout: string
   try {
-    const { stdout } = await execFileAsync('gh', ['issue', 'view', String(issue), '--json', 'number'], {
-      cwd,
-      encoding: 'utf8',
-      timeout: LOG_CONTEXT_LOOKUP_DEADLINE_MS,
-      killSignal: 'SIGKILL'
-    })
-    return (JSON.parse(stdout) as { number?: unknown }).number === issue ? issue : null
+    ;({ stdout } = await execFileAsync(
+      'gh',
+      ['issue', 'view', String(issue), '--json', 'number', ...(repo === null ? [] : ['--repo', repo])],
+      {
+        cwd,
+        encoding: 'utf8',
+        timeout: LOG_CONTEXT_LOOKUP_DEADLINE_MS,
+        killSignal: 'SIGKILL'
+      }
+    ))
+  } catch (err) {
+    // `gh` exits non-zero for both "no such Issue" and "I could not ask" —
+    // only its own message tells them apart, and only the first is a denial.
+    const stderr = typeof (err as { stderr?: unknown }).stderr === 'string' ? (err as { stderr: string }).stderr : ''
+    return /could not resolve|not found|no such|does not exist/i.test(stderr) ? 'denied' : 'unknown'
+  }
+  try {
+    return (JSON.parse(stdout) as { number?: unknown }).number === issue ? 'confirmed' : 'denied'
   } catch {
-    return null
+    return 'unknown'
   }
 }
 
@@ -483,8 +515,9 @@ async function verifiedBacklogIssue(issue: number, cwd: string): Promise<number 
  * a tranche task whose Issue the forge will not name — never a guessed
  * number.
  *
- * Called at most ONCE per sink (memoised in `createLogSink`, `null` included)
- * and only when an event's own `VINAYA_TASK` is absent, so a process that
+ * Called at most ONCE per process per working-directory-and-repository pair
+ * (memoised in `branchIssueByCwd`, `null` included) and only when an event's
+ * own `VINAYA_TASK` is absent, so a process that
  * already knows its task makes no forge call at all; the one call it can
  * make is bounded by `LOG_CONTEXT_LOOKUP_DEADLINE_MS` at the call site, so a
  * slow or unauthenticated `gh` delays no event past that deadline and drops
@@ -492,7 +525,11 @@ async function verifiedBacklogIssue(issue: number, cwd: string): Promise<number 
  * no-synchronous-spawn rule the sink's shared context already holds
  * (`tests/lib/log-sink-no-sync-spawn.test.ts`).
  */
-export async function resolveBranchIssue(cwd: string, env: NodeJS.ProcessEnv = process.env): Promise<number | null> {
+export async function resolveBranchIssue(
+  cwd: string,
+  env: NodeJS.ProcessEnv = process.env,
+  repo: string | null = null
+): Promise<number | null> {
   let branch: string
   try {
     branch = (
@@ -522,9 +559,9 @@ export async function resolveBranchIssue(cwd: string, env: NodeJS.ProcessEnv = p
   const named = branch === 'HEAD' ? (env.GITHUB_HEAD_REF ?? '') : branch
   const ref = taskRefFromBranch(named)
   if (ref === null) return null
-  return ref.kind === 'issue'
-    ? await verifiedBacklogIssue(ref.issue, cwd)
-    : await issueForTrancheTask(ref.tranche, ref.taskId, cwd)
+  if (ref.kind === 'tranche') return await issueForTrancheTask(ref.tranche, ref.taskId, cwd, repo)
+  // `'unknown'` keeps the branch's own number: see `confirmBacklogIssue`.
+  return (await confirmBacklogIssue(ref.issue, cwd, repo)) === 'denied' ? null : ref.issue
 }
 
 /**
@@ -582,6 +619,12 @@ function isSafeRepoSegment(segment: string): boolean {
   return SAFE_PATH_SEGMENT.test(segment) && !segment.includes('..')
 }
 
+/** `<owner>/<repo>` for a `--repo` argv element, or `null` when either segment is one this module refuses to pass anywhere (the same guard `meta.repo` already applies). */
+function safeRepoSlug(repo: RepoRef | null): string | null {
+  if (repo === null) return null
+  return isSafeRepoSegment(repo.owner) && isSafeRepoSegment(repo.repo) ? `${repo.owner}/${repo.repo}` : null
+}
+
 /**
  * The local retry-queue outbox's own root, under the machine's Vinaya home —
  * no longer where `log()` delivers by default (that moved to a folder under
@@ -636,6 +679,12 @@ export async function resolveLogAppendPath(
   const deps = { ...defaultDeps(), ...overrides }
   const destination = await deps.resolveLogDestination(repo, deps.env())
   const root = destination.kind === 'folder' ? destination.folder : deps.outboxRoot()
+  // Nothing is recorded for this process, so nothing is attributed either:
+  // the same rule `log()` applies one step earlier, and the reason a job
+  // deliberately holding no delivery credential spends no `git` read and no
+  // credentialed `gh` call here (round 5 review, MINOR — the ordering fix
+  // had been applied in `log()` alone).
+  if (destination.kind === 'none') return outboxPathFor({ outboxRoot: () => root }, repo, issue)
   // The branch fallback decides which FILE an event lands in, so this
   // mirror has to make the same decision or it stops naming the file
   // `log()` writes — a caller polling for its own line would watch
@@ -647,8 +696,11 @@ export async function resolveLogAppendPath(
   const branchIssue =
     issue === null && !deps.env().VINAYA_TASK && branchIssueFallbackEnabled
       ? await branchIssueRead(
-          deps.cwd(),
-          overrides.resolveBranchIssue ?? (() => resolveBranchIssue(deps.cwd(), deps.env())),
+          `${deps.cwd()}\u0000${safeRepoSlug(repo) ?? ''}`,
+          () =>
+            overrides.resolveBranchIssue !== undefined
+              ? overrides.resolveBranchIssue(safeRepoSlug(repo))
+              : resolveBranchIssue(deps.cwd(), deps.env(), safeRepoSlug(repo)),
           overrides.resolveBranchIssue === undefined
         )
       : null
@@ -727,12 +779,12 @@ const branchIssueByCwd = new Map<string, Promise<number | null>>()
  * in one test process and resolved a real Issue for a caller that had asked
  * for none).
  */
-function branchIssueRead(cwd: string, read: () => Promise<number | null>, shared: boolean): Promise<number | null> {
+function branchIssueRead(key: string, read: () => Promise<number | null>, shared: boolean): Promise<number | null> {
   if (!shared) return withDeadline(Promise.resolve().then(read), LOG_CONTEXT_LOOKUP_DEADLINE_MS, null)
-  const cached = branchIssueByCwd.get(cwd)
+  const cached = branchIssueByCwd.get(key)
   if (cached !== undefined) return cached
   const reading = withDeadline(Promise.resolve().then(read), LOG_CONTEXT_LOOKUP_DEADLINE_MS, null)
-  branchIssueByCwd.set(cwd, reading)
+  branchIssueByCwd.set(key, reading)
   return reading
 }
 
@@ -908,7 +960,7 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
     // read this sink makes uses (`resolveDoctrine(deps.cwd(), …)`) — a sink
     // given a `cwd` of its own never reports its own `meta.repo` from one
     // checkout and its branch-derived `subject.issue` from another.
-    resolveBranchIssue: () => resolveBranchIssue(deps.cwd(), deps.env()),
+    resolveBranchIssue: (repo) => resolveBranchIssue(deps.cwd(), deps.env(), repo),
     ...overrides
   }
   const runId = deps.env().VINAYA_RUN_ID || randomUUID()
@@ -951,14 +1003,14 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
   // never a dropped event.
   const readerIsReal = overrides.resolveBranchIssue === undefined
   let ownBranchIssue: Promise<number | null> | undefined
-  const branchIssueOnce = (): Promise<number | null> => {
+  const branchIssueOnce = (repo: RepoRef | null): Promise<number | null> => {
     // A process that serves several tasks answers `null` here without ever
     // reading a branch — see `setBranchIssueFallback`.
     if (!branchIssueFallbackEnabled) return Promise.resolve(null)
-    if (readerIsReal) return branchIssueRead(deps.cwd(), () => deps.resolveBranchIssue(), true)
-    if (ownBranchIssue === undefined) {
-      ownBranchIssue = branchIssueRead(deps.cwd(), () => deps.resolveBranchIssue(), false)
-    }
+    const slug = safeRepoSlug(repo)
+    const read = (): Promise<number | null> => deps.resolveBranchIssue(slug)
+    if (readerIsReal) return branchIssueRead(`${deps.cwd()}\u0000${slug ?? ''}`, read, true)
+    if (ownBranchIssue === undefined) ownBranchIssue = branchIssueRead(deps.cwd(), read, false)
     return ownBranchIssue
   }
 
@@ -1122,7 +1174,7 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
         // memoised promise. Call order is held by the write chain below,
         // not by this await, so an event that skips the lookup can never
         // overtake an earlier one that waited for it.
-        const branchIssue = envFields.task ? null : await branchIssueOnce()
+        const branchIssue = envFields.task ? null : await branchIssueOnce(repo)
         const header = buildHeader({
           now,
           runId,

@@ -157,9 +157,11 @@ const ASSESS_ROUND_PATH = 'packages/aeg-core/src/dev-review-loop/assess-round.ts
  * calls for several tasks at once turns the branch fallback off with
  * (log-quality-v1 1, O1). It produces no event of its own, so it is
  * deliberately NOT a `CALLER_ALLOWLIST` member: the producer boundary that
- * table enforces stays exactly as narrow as it was, and a file that starts
- * calling `log()` from here would still have to be argued into the caller
- * table above.
+ * table enforces stays exactly as narrow as it was. The import-only check
+ * below cannot tell one imported symbol from another, so the narrowness is
+ * asserted directly, by its own case: the import from this file names
+ * `setBranchIssueFallback` and nothing else, so a file here that started
+ * importing `log` would fail rather than ride this exemption.
  */
 const TASK_TOOLS_SERVER_PATH = 'apps/cli/src/lib/task-tools/server.ts'
 const SINK_CONFIGURATION_ALLOWLIST = new Set([TASK_TOOLS_SERVER_PATH])
@@ -304,6 +306,17 @@ describe('log-callers — O2', () => {
       .map(([rel]) => rel)
       .filter((rel) => !CALLER_ALLOWLIST.has(rel) && !SINK_CONFIGURATION_ALLOWLIST.has(rel))
     expect(offenders).toEqual([])
+  })
+
+  it('the configuration-only exemption really is configuration-only — it imports the switch, never log()', () => {
+    const entry = files.find(([rel]) => rel === TASK_TOOLS_SERVER_PATH)
+    expect(entry, `${TASK_TOOLS_SERVER_PATH} not found`).toBeDefined()
+    const content = readFileSync((entry as [string, string])[1], 'utf8')
+    const imports = [...content.matchAll(/import\s*\{([^}]*)\}\s*from\s*['"][^'"]*\/log-sink(?:\.js)?['"]/g)].map((m) =>
+      (m[1] as string).split(',').map((name) => name.trim())
+    )
+    expect(imports.length).toBeGreaterThan(0)
+    expect(imports.flat().sort()).toEqual(['setBranchIssueFallback'])
   })
 
   it('the still-future allowlist entries name no file that exists yet — those chokepoints land in a later task', () => {

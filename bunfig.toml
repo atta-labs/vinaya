@@ -1,2 +1,12 @@
 [test]
 timeout = 30000
+# The same marker preload `apps/cli/bunfig.toml` declares. Bun resolves
+# `bunfig.toml` from the process's working directory alone and never descends
+# into a subdirectory's config, and git runs the pre-push hook from the
+# working tree root — so without this line that run (the biggest single
+# producer of real log-server traffic) loads no preload, `AEG_LOG_TEST` is
+# never set, and its fixture events reach the configured server unmarked.
+# Declared in both files rather than one so the marker holds in either
+# invocation shape without depending on an ambient `NODE_ENV` the runner only
+# sets when nothing else already did.
+preload = "./apps/cli/tests/lib/test-env-preload.ts"
