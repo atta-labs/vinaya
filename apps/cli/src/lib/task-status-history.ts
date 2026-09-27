@@ -2,7 +2,7 @@
  * What a phase typically takes in THIS repository — read off the pull
  * requests of its own recently merged tasks, never predicted.
  *
- * One bounded read per process: the most recent merged task branches
+ * One bounded read per STATUS READ: the most recent merged task branches
  * (`MERGED_TASK_PR_READ_CAP` of them), each pull request's comments fetched
  * once, every interval extracted by the pure reader in `@attalabs/aeg-core`
  * (`phaseSamplesFromPrComments`) from PRINCIPAL-AUTHORED comments only — the
@@ -92,17 +92,22 @@ type MergedPr = { number: number; headRefName: string; mergedAt: string }
  * The newest merged TASK pull requests, newest first, capped — a merge on any
  * other branch shape carries no round markers and is not a task's history.
  *
- * Both fields are checked against the parsed JSON rather than trusted from the
- * cast: the number this returns becomes an argument of a `gh pr view`
+ * All three fields are checked against the parsed JSON rather than trusted from
+ * the cast. The number this returns becomes an argument of a `gh pr view`
  * subprocess, and a value that is not a positive integer — a changed `gh`
  * output shape, a wrapper binary of that name on `PATH` — must never reach an
- * argument list, where one beginning with a dash would be read as a flag.
+ * argument list, where one beginning with a dash would be read as a flag. The
+ * merge timestamp decides WHICH pull requests the cap keeps: one that does not
+ * parse would make the comparator return `NaN` and leave the order
+ * implementation-defined, so the column would describe an arbitrary handful of
+ * the listed rows rather than this repository lately.
  */
 export function mergedTaskPrNumbers(raw: string, cap: number = MERGED_TASK_PR_READ_CAP): number[] {
   const parsed = JSON.parse(raw) as MergedPr[]
   return parsed
     .filter((pr) => Number.isInteger(pr.number) && pr.number > 0)
     .filter((pr) => typeof pr.headRefName === 'string' && pr.headRefName.startsWith('task/'))
+    .filter((pr) => Number.isFinite(Date.parse(pr.mergedAt)))
     .sort((a, b) => Date.parse(b.mergedAt) - Date.parse(a.mergedAt))
     .slice(0, cap)
     .map((pr) => pr.number)
@@ -138,6 +143,52 @@ export function readPrComments(pr: number, deps: HistoryReadDeps = defaultHistor
     return parseComments(deps.fetchPrComments(pr))
   } catch {
     return null
+  }
+}
+
+/**
+ * The same comment read, REMEMBERED per pull request and bounded per status
+ * read — what the published-summary confidence path needs, which asks about one
+ * pull request PER ROW rather than a fixed handful.
+ *
+ * A published run's summary never changes (the run is finished), so a
+ * successful read is honoured for `PHASE_HISTORY_CACHE_TTL_MS` and a failed one
+ * for `PHASE_HISTORY_FAILURE_BACKOFF_MS`, exactly as the history read's own
+ * outcome decides its lifetime. An Operator polling `task_status` therefore
+ * re-pays nothing, and one status read is capped at
+ * `SUMMARY_CONFIDENCE_READS_PER_STATUS_READ` fresh reads whatever it is handed
+ * — past that the confidence column reads as no record for the remaining rows
+ * rather than spawning an unbounded number of synchronous subprocesses on the
+ * shared task-tool server.
+ */
+export const SUMMARY_CONFIDENCE_READS_PER_STATUS_READ = 5
+
+type RememberedComments = { comments: HistoryComment[] | null; readAt: number }
+
+const rememberedComments = new Map<number, RememberedComments>()
+
+function rememberedIsCurrent(entry: RememberedComments, at: number): boolean {
+  const lifetime = entry.comments === null ? PHASE_HISTORY_FAILURE_BACKOFF_MS : PHASE_HISTORY_CACHE_TTL_MS
+  return at - entry.readAt < lifetime
+}
+
+/** One status read's own comment reader: remembered across reads, capped within this one. `null` is "no comments to read from" — a failed read, or a budget already spent. */
+export type PrCommentReader = (pr: number) => HistoryComment[] | null
+
+export function prCommentReaderForOneStatusRead(
+  deps: HistoryReadDeps = defaultHistoryReadDeps,
+  now: () => number = () => Date.now()
+): PrCommentReader {
+  let freshReads = 0
+  return (pr: number) => {
+    const at = now()
+    const remembered = rememberedComments.get(pr)
+    if (remembered !== undefined && rememberedIsCurrent(remembered, at)) return remembered.comments
+    if (freshReads >= SUMMARY_CONFIDENCE_READS_PER_STATUS_READ) return null
+    freshReads += 1
+    const comments = readPrComments(pr, deps)
+    rememberedComments.set(pr, { comments, readAt: at })
+    return comments
   }
 }
 
@@ -279,4 +330,5 @@ export function phaseHistoryLookup(
 /** Drops what the last read remembered — for a test that reads history twice with different fixtures; production never calls it. */
 export function resetPhaseHistoryCache(): void {
   cached = null
+  rememberedComments.clear()
 }

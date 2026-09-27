@@ -43,11 +43,33 @@ import { findOpenPrForBranch, runtimeDir } from './dev-review-loop.js'
 import { DRIVER_LOCK_FILENAME, runPath, tasksExecutionRoot } from './run-paths.js'
 import { loopLogPathFor, loopsRoot, type LoopLogRepo } from './loop-log.js'
 import { CONFIDENCE_FILE_NAME, parseConfidenceReply } from './dev-review-loop/round-assess.js'
-import { phaseHistoryLookup, readPrComments, type PhaseHistoryLookup } from './task-status-history.js'
+import {
+  phaseHistoryLookup,
+  prCommentReaderForOneStatusRead,
+  type PhaseHistoryLookup,
+  type PrCommentReader
+} from './task-status-history.js'
 import { findRecordedControllerRun } from './task-run-background.js'
 
+/**
+ * The ceiling on one `gh` read this file makes — the SAME bounds
+ * `task-status-history.ts` raises for its own, and for the same reason: these
+ * reads are synchronous (one `gh issue list`, plus one `gh issue view` per open
+ * task), and the long-lived task-tool server chains every request through one
+ * promise, so a `gh` that hangs here would hold every other task's queued call
+ * behind it. A task Issue's comment payload also passes `execFileSync`'s own
+ * 1 MiB default, which is why the buffer is raised rather than left to throw.
+ */
+const GH_READ_TIMEOUT_MS = 20_000
+const MAX_GH_OUTPUT_BYTES = 64 * 1024 * 1024
+
 function sh(cmd: string, args: string[]): string {
-  return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+  return execFileSync(cmd, args, {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    maxBuffer: MAX_GH_OUTPUT_BYTES,
+    timeout: GH_READ_TIMEOUT_MS
+  }).trim()
 }
 
 function readIfExists(path: string): string | null {
@@ -540,9 +562,21 @@ export function confidenceFromSummaryComments(
   return newest
 }
 
-/** The forge half of the read above — one `gh pr view … --json comments` call through the reader this feature owns (`task-status-history.ts`'s `readPrComments`), `null` when it failed. */
-function publishedSummaryConfidence(prNumber: number, allowlist: readonly string[]): TaskConfidence | null {
-  const comments = readPrComments(prNumber)
+/**
+ * The forge half of the read above, through ONE status read's own comment
+ * reader (`task-status-history.ts`'s `prCommentReaderForOneStatusRead`):
+ * remembered per pull request across reads, and capped within a single read, so
+ * a listing with many published tasks cannot spawn an unbounded number of
+ * synchronous subprocesses and an Operator polling `task_status` re-pays
+ * nothing. `null` — no confidence — when the read failed or the budget is
+ * spent.
+ */
+function publishedSummaryConfidence(
+  prNumber: number,
+  allowlist: readonly string[],
+  readComments: PrCommentReader
+): TaskConfidence | null {
+  const comments = readComments(prNumber)
   if (comments === null) return null
   return confidenceFromSummaryComments(comments, allowlist)
 }
@@ -557,12 +591,12 @@ function publishedSummaryConfidence(prNumber: number, allowlist: readonly string
 export function readLastConfidence(
   root: string,
   task: number,
-  published: { prNumber: number; allowlist: readonly string[] } | null
+  published: { prNumber: number; allowlist: readonly string[]; readComments: PrCommentReader } | null
 ): TaskConfidence | null {
   const stated = readStatedConfidence(root, task)
   if (stated !== null) return stated
   if (published === null) return null
-  return publishedSummaryConfidence(published.prNumber, published.allowlist)
+  return publishedSummaryConfidence(published.prNumber, published.allowlist, published.readComments)
 }
 
 // --- rendering -------------------------------------------------------------
@@ -584,6 +618,27 @@ export type TaskStatusRow = {
   lastConfidence: TaskConfidence | null
   /** What this phase has typically taken on this repository's recently merged tasks — history, never a forecast; `null` for a phase with no comparable history or too few past intervals. */
   phaseHistory: TaskPhaseHistory | null
+}
+
+/**
+ * Whether the phase the control record names is where the run actually IS.
+ *
+ * A live driver is in its phase. A `paused` run is too — it waits there for a
+ * person — but ONLY when the two records agree: `pause-state.json` is written at
+ * every pause and never cleared on resume, so a task that paused at round 1, was
+ * resumed, and then died mid-round still derives `paused` off that stale record
+ * while `loop_state` reads the round it actually reached and the phase it was
+ * working in. Reporting that phase as current would assert developing is
+ * happening while no driver exists — the exact misstatement the marking exists
+ * to prevent — so a pause whose own recorded phase is not `pause` is treated
+ * like any other stopped run.
+ *
+ * Everything else is a phase nothing is in any more: a published run is
+ * finished, and `no_driver`/`exited` mean the driver vanished mid-flight.
+ */
+export function phaseIsCurrentFor(state: TaskLoopState, recordedPhase: string): boolean {
+  if (state.kind === 'running') return true
+  return state.kind === 'paused' && recordedPhase === 'pause'
 }
 
 function renderStateText(state: TaskLoopState): string {
@@ -710,7 +765,12 @@ export function renderTaskStatusTable(rows: readonly TaskStatusRow[]): string[] 
  * started task only: a planned one has no control record, no statement and no
  * phase to compare against history.
  */
-function buildRow(ref: TaskRef, allowlist: readonly string[], history: PhaseHistoryLookup): TaskStatusRow {
+function buildRow(
+  ref: TaskRef,
+  allowlist: readonly string[],
+  history: PhaseHistoryLookup,
+  readComments: PrCommentReader
+): TaskStatusRow {
   const started = hasFrozenBrief(ref.issue, allowlist)
   const root = runtimeDir()
   const base = {
@@ -738,7 +798,7 @@ function buildRow(ref: TaskRef, allowlist: readonly string[], history: PhaseHist
   const confidence = readLastConfidence(
     root,
     ref.issue,
-    state.kind === 'published' && pr ? { prNumber: pr.number, allowlist } : null
+    state.kind === 'published' && pr ? { prNumber: pr.number, allowlist, readComments } : null
   )
   return {
     ...base,
@@ -748,13 +808,7 @@ function buildRow(ref: TaskRef, allowlist: readonly string[], history: PhaseHist
     phase: phase?.phase ?? null,
     recordedPhase: phase?.recordedPhase ?? null,
     minutesInPhase: phase?.minutesInPhase ?? null,
-    // `paused` is the one state that is genuinely a PLACE a run sits in — it
-    // waits there for a person — so its phase needs no qualifier. Everything
-    // else that is not a live driver is a phase nothing is in any more: a
-    // published run is finished (nothing is publishing), and `no_driver` /
-    // `exited` mean the driver vanished mid-flight, leaving the last phase it
-    // wrote. For all three the time counts since that record, not time spent.
-    phaseIsCurrent: phase === null ? null : state.kind === 'running' || state.kind === 'paused',
+    phaseIsCurrent: phase === null ? null : phaseIsCurrentFor(state, phase.recordedPhase),
     lastConfidence: confidence,
     phaseHistory: phase ? history(phase.recordedPhase) : null
   }
@@ -782,6 +836,7 @@ export function gatherTaskStatusList(): TaskStatusListView {
   const allowlist = principalAllowlist()
   const root = runtimeDir()
   const history = phaseHistoryLookup()
+  const readComments = prCommentReaderForOneStatusRead()
   const rows: TaskStatusRow[] = []
   for (const ref of listOpenTaskIssues()) {
     // A backlog ref only ever becomes a candidate once the loop has
@@ -789,7 +844,7 @@ export function gatherTaskStatusList(): TaskStatusListView {
     // comment. A tranche-labeled ref carries no such gate: O4 lists every open
     // tranche task Issue, a not-yet-frozen (planned) one as `not started`.
     if (ref.kind === 'backlog' && !hasOutboxDir(root, ref.issue)) continue
-    rows.push(buildRow(ref, allowlist, history))
+    rows.push(buildRow(ref, allowlist, history, readComments))
   }
   return { rows, table: renderTaskStatusTable(rows) }
 }
@@ -814,7 +869,7 @@ export function gatherSingleTaskStatus(tranche: string, id: string): SingleTaskS
   const ref = listOpenTaskIssues().find((r) => r.kind === 'tranche' && r.tranche === tranche && r.id === id)
   if (!ref) return { kind: 'not_found' }
 
-  const row = buildRow(ref, principalAllowlist(), phaseHistoryLookup())
+  const row = buildRow(ref, principalAllowlist(), phaseHistoryLookup(), prCommentReaderForOneStatusRead())
 
   const root = runtimeDir()
   const verdictLines = lastRoundVerdictLines(root, ref.issue)

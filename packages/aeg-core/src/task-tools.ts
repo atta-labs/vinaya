@@ -195,7 +195,7 @@ export const TaskStatusItemSchema = z
     phase: z.string().min(1).nullable().optional(),
     /** How long the run has been in that phase, measured from the control record's own timestamp — never from a wall-clock guess about when the phase began. */
     minutesInPhase: z.number().nonnegative().nullable().optional(),
-    /** Whether the phase is where the run actually is. `false` means the driver vanished mid-flight (no driver, or an exited one) and the record is the LAST phase it wrote — not a place anything is still working in, with `minutesInPhase` counting time since that record rather than time being spent. A decided resting state (paused, published) agrees with its own record and reads `true`. `null` when no control record exists at all. */
+    /** Whether the phase is where the run actually is. `true` for a live driver, and for a paused run whose own recorded phase is the pause (it waits there for a person). `false` for every other stopped run — a published one (nothing is publishing), a driver that vanished mid-flight, and a pause record a later round has already moved past — where the phase is the LAST one the run wrote and `minutesInPhase` counts time since that record rather than time being spent. `null` when no control record exists at all. */
     phaseIsCurrent: z.boolean().nullable().optional(),
     lastConfidence: TaskConfidenceSchema.nullable().optional(),
     phaseHistory: TaskPhaseHistorySchema.nullable().optional()

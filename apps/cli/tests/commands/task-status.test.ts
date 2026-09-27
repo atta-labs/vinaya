@@ -548,6 +548,30 @@ describe('vinaya task status <tranche> <n> (O2 — the single-task form)', () =>
     expect(r.status).toBe(0)
   })
 
+  it("marks a resumed-then-stopped task's phase as last recorded, even though its stale pause record still names it paused", () => {
+    const { home, env } = setUp()
+    // The exact shape a task that paused at round 1, resumed, and then died
+    // mid-round leaves behind: the pause record is never cleared on resume, so
+    // the state reads `paused` while the control record names round 2 and the
+    // phase the run was actually working in.
+    writeRunFile(home, 602, 'pause-state.json', {
+      task: 602,
+      round: 1,
+      head: 'abc123',
+      branch: 'task/demo/2',
+      prNumber: 702,
+      reason: 'escalation',
+      pausedAt: '2026-09-10T00:00:00.000Z'
+    })
+    writeLoopState(home, 602, { round: 2, phase: 'dispatch_developer', minutesInPhase: 90 })
+
+    const r = runCli(['task', 'status', 'demo', '2'], env)
+
+    const row = outputCells(r.stdout)[1] as string[]
+    expect(row.slice(4, 7)).toEqual(['2', 'developing (last recorded)', '90m'])
+    expect(r.status).toBe(0)
+  })
+
   it('prints no resume line for a published task', () => {
     const { home, env } = setUp()
     writePublishedRound(home, 603, 1)

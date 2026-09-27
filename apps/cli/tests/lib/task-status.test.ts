@@ -22,6 +22,7 @@ import {
   confidenceFromSummaryComments,
   deriveLoopState,
   lastRoundVerdictLines,
+  phaseIsCurrentFor,
   readLastConfidence,
   readLoopPhase,
   renderTaskStatusTable,
@@ -35,9 +36,11 @@ import {
   phaseSamplesFromMergedPrs,
   readPhaseSamples,
   resetPhaseHistoryCache,
+  prCommentReaderForOneStatusRead,
   MERGED_TASK_PR_READ_CAP,
   PHASE_HISTORY_CACHE_TTL_MS,
-  PHASE_HISTORY_FAILURE_BACKOFF_MS
+  PHASE_HISTORY_FAILURE_BACKOFF_MS,
+  SUMMARY_CONFIDENCE_READS_PER_STATUS_READ
 } from '../../src/lib/task-status-history.js'
 import { CONFIDENCE_FILE_NAME } from '../../src/lib/dev-review-loop/round-assess.js'
 import { appendRoleLine, loopLogPathFor } from '../../src/lib/loop-log.js'
@@ -594,6 +597,15 @@ describe('typical phase times from history (O2/O4)', () => {
     expect(mergedTaskPrNumbers(merged)).toEqual([13])
   })
 
+  it('drops a merged pull request whose merge timestamp does not parse, since that timestamp decides which ones the cap keeps', () => {
+    const merged = JSON.stringify([
+      { number: 13, headRefName: 'task/demo/1', mergedAt: '2026-09-23T10:00:00.000Z' },
+      { number: 14, headRefName: 'task/demo/2', mergedAt: null },
+      { number: 15, headRefName: 'task/demo/3' }
+    ])
+    expect(mergedTaskPrNumbers(merged)).toEqual([13])
+  })
+
   it('reports the read as failed when every pull request it named could not be read', () => {
     const read = readPhaseSamples({
       listMergedPrs: () =>
@@ -761,6 +773,88 @@ describe('typical phase times from history (O2/O4)', () => {
       allowlist: () => ALLOWLIST
     })
     expect(read.samples).toEqual({ developing: [], reviewing: [] })
+    // The forge WAS reached and its answer parsed — the comments simply carried
+    // nothing readable — so this counts as a successful read and is remembered
+    // for the full lifetime, unlike a read that reached nothing at all.
+    expect(read.ok).toBe(true)
+  })
+})
+
+describe('phaseIsCurrentFor (O1)', () => {
+  it('reads a live driver as current, and every stopped run as not', () => {
+    expect(phaseIsCurrentFor({ kind: 'running', pid: 1, startedAt: 'x' }, 'dispatch_developer')).toBe(true)
+    expect(phaseIsCurrentFor({ kind: 'published', round: 2 }, 'publish')).toBe(false)
+    expect(phaseIsCurrentFor({ kind: 'no_driver' }, 'dispatch_developer')).toBe(false)
+    expect(phaseIsCurrentFor({ kind: 'exited', reason: 'error', lastDecision: 'x' }, 'dispatch_developer')).toBe(false)
+    expect(phaseIsCurrentFor({ kind: 'not_started' }, 'dispatch_developer')).toBe(false)
+  })
+
+  it('reads a pause as current only when the control record agrees it is a pause', () => {
+    expect(phaseIsCurrentFor({ kind: 'paused', reason: 'escalation', round: 1 }, 'pause')).toBe(true)
+    // `pause-state.json` is never cleared on resume, so a task that paused at
+    // round 1, resumed, and then died mid-round still derives `paused` while
+    // `loop_state` names the phase it was working in. Reporting that phase as
+    // current would assert developing is happening with no driver alive.
+    expect(phaseIsCurrentFor({ kind: 'paused', reason: 'escalation', round: 1 }, 'dispatch_developer')).toBe(false)
+    expect(phaseIsCurrentFor({ kind: 'paused', reason: 'escalation', round: 1 }, 'dispatch_reviewers')).toBe(false)
+  })
+})
+
+describe('the summary-confidence comment reader (O1)', () => {
+  const comments = (body: string) =>
+    JSON.stringify({ comments: [{ body, author: { login: 'principal' }, createdAt: '2026-09-22T12:00:00.000Z' }] })
+
+  function depsCounting(reads: number[]) {
+    return {
+      listMergedPrs: () => JSON.stringify([]),
+      fetchPrComments: (pr: number) => {
+        reads.push(pr)
+        return comments('published summary')
+      },
+      allowlist: () => ['principal']
+    }
+  }
+
+  it('reads one pull request once and remembers it across status reads', () => {
+    resetPhaseHistoryCache()
+    const reads: number[] = []
+    const deps = depsCounting(reads)
+    expect(prCommentReaderForOneStatusRead(deps, () => 1_000)(703)).not.toBeNull()
+    // A second status read, well inside the lifetime — a published run's
+    // summary never changes, so an Operator polling re-pays nothing.
+    expect(prCommentReaderForOneStatusRead(deps, () => 2_000)(703)).not.toBeNull()
+    expect(reads).toEqual([703])
+    resetPhaseHistoryCache()
+  })
+
+  it('caps how many fresh reads one status read may make, reporting no record past the cap', () => {
+    resetPhaseHistoryCache()
+    const reads: number[] = []
+    const reader = prCommentReaderForOneStatusRead(depsCounting(reads), () => 1_000)
+    const asked = SUMMARY_CONFIDENCE_READS_PER_STATUS_READ + 3
+    const answers = Array.from({ length: asked }, (_, i) => reader(800 + i))
+    expect(reads).toHaveLength(SUMMARY_CONFIDENCE_READS_PER_STATUS_READ)
+    expect(answers.filter((a) => a === null)).toHaveLength(asked - SUMMARY_CONFIDENCE_READS_PER_STATUS_READ)
+    resetPhaseHistoryCache()
+  })
+
+  it('retries a failed read only after the back-off, like the history read', () => {
+    resetPhaseHistoryCache()
+    let attempts = 0
+    const deps = {
+      listMergedPrs: () => JSON.stringify([]),
+      fetchPrComments: () => {
+        attempts += 1
+        throw new Error('gh: comment read failed')
+      },
+      allowlist: () => ['principal']
+    }
+    expect(prCommentReaderForOneStatusRead(deps, () => 1_000)(703)).toBeNull()
+    expect(prCommentReaderForOneStatusRead(deps, () => 1_000 + PHASE_HISTORY_FAILURE_BACKOFF_MS - 1)(703)).toBeNull()
+    expect(attempts).toBe(1)
+    expect(prCommentReaderForOneStatusRead(deps, () => 1_000 + PHASE_HISTORY_FAILURE_BACKOFF_MS)(703)).toBeNull()
+    expect(attempts).toBe(2)
+    resetPhaseHistoryCache()
   })
 })
 
