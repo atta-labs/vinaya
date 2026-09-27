@@ -19,6 +19,7 @@ import {
   listStartedEffectKeys,
   type LoopBudgets,
   markEffectUncertain,
+  parseTaskBranchIdentity,
   type PauseReason,
   readEscalation,
   readResolution,
@@ -211,39 +212,83 @@ export function renderPauseComment(
 }
 
 /**
+ * `vinaya task run`'s own argv for continuing a pause that has no pull
+ * request — THE one builder, so the command a reader is told to run and the
+ * argv `task_resume` actually spawns can never disagree. `task run` accepts
+ * exactly two address forms (`commands/task-run.ts`'s own usage) and they are
+ * not interchangeable: `--issue <n>` is the TRANCHE-LESS backlog path, and
+ * `assembleAndRenderBriefForIssue` refuses an Issue carrying a
+ * `vinaya/tranche:*` label outright ("it belongs to a tranche and renders via
+ * `vinaya task brief <tranche> <n>`") — a refusal that is not the
+ * already-dispatched case `task run` tolerates, so the launched child exits.
+ * A tranche task therefore has to be addressed `task run <tranche> <n>`.
+ *
+ * The address form comes from the pause's OWN branch, which is where that
+ * fact already lives: `developerBranchFor` resolved the Issue's labels and
+ * title once, at dispatch, and wrote the answer into the branch name —
+ * `task/<tranche>/<n>` for a tranche task, `task/issue-<n>` for a backlog one
+ * (`parseTaskBranchIdentity`, `@attalabs/aeg-core`). Reading it back costs no
+ * forge call and cannot disagree with the branch the run is actually on. A
+ * branch that parses as neither falls back to the Issue form, the only address
+ * derivable from a task number alone.
+ */
+export function noPushResumeArgv(task: number, branch: string, agent?: string, model?: string): string[] {
+  const identity = parseTaskBranchIdentity(branch)
+  const address =
+    identity?.kind === 'tranche'
+      ? ['task', 'run', identity.tranche, identity.taskId]
+      : ['task', 'run', '--issue', String(task)]
+  return [...address, ...(agent ? ['--agent', agent] : []), ...(model ? ['--model', model] : [])]
+}
+
+/** `task-status.ts`'s `resumeCommandFor` for the case where there is no pull request to anchor a `--resume` to: the one continuation a before-any-push pause actually has, rendered from `noPushResumeArgv` so the pause comment here and `task-tools/read.ts`'s `permittedNextActions` name the identical command the launcher runs. */
+export function noPushResumeCommandFor(task: number, branch: string, agent?: string, model?: string): string {
+  return `vinaya ${noPushResumeArgv(task, branch, agent, model).join(' ')}`
+}
+
+/**
  * O9: the no-PR-yet variant of the pause comment — posted on the task Issue
  * instead of a pull request, because none is known to exist: the round-1
  * refusal/escalation before any push, or a setup failure that never got as
  * far as resolving one. Carries no PR number for a `--resume` command, so the
- * resume path named is `vinaya task run`.
+ * resume path named is `vinaya task run`, in whichever of its two address
+ * forms this task's own branch says it takes (`noPushResumeArgv`, above).
  *
- * The command named must be one the reader can run verbatim. It used to be
- * `vinaya task run <tranche> <n>` with the ISSUE number substituted into the
- * `<n>` position and `<tranche>` left as an unfilled placeholder — wrong
- * twice, and unrunnable as printed. `vinaya task run --issue <n>` is the form
- * that takes exactly the number this pause knows (`commands/task-run.ts`'s own
- * usage), and the agent the run was dispatched under travels with it so the
- * reader need not remember it either.
+ * Both halves of what the reader needs are named, because neither is
+ * guessable: the command, filled in — it used to print `vinaya task run
+ * <tranche> <n>` with the ISSUE number in the ordinal's position and
+ * `<tranche>` left as a literal placeholder — and the marker line a Principal
+ * ruling must carry on its own first line for any of this to read it. No
+ * shipped command posts a ruling on an Issue (`vinaya pr rule` counts and
+ * posts through `gh pr`), so a Principal writes that comment by hand, and the
+ * readers here (`filterPrincipalRulings`) recognise nothing without that exact
+ * first line and a strictly-newer ordinal than the one this escalation
+ * recorded.
  */
-/** `task-status.ts`'s `resumeCommandFor` for the case where there is no pull request to anchor a `--resume` to: the one continuation a before-any-push pause actually has. Exported so the pause comment here and `task-tools/read.ts`'s `permittedNextActions` name the identical command rather than each spelling out its own. */
-export function noPushResumeCommandFor(task: number, agent?: string, model?: string): string {
-  return `vinaya task run --issue ${task}${agent ? ` --agent ${agent}` : ''}${model ? ` --model ${model}` : ''}`
-}
-
 export function renderNoPushStopComment(
   task: number,
+  branch: string,
   reason: PauseReason,
   detail?: string,
-  invocation?: { agent: string; model?: string }
+  invocation?: { agent: string; model?: string },
+  rulingOrdinal?: number
 ): string {
+  const nextOrdinal = (rulingOrdinal ?? 0) + 1
   return [
     `The dev-review-loop paused: ${reason}${detail ? ` — ${detail}` : ''}.`,
     '',
     'No pull request exists yet for this task, so the pause is recorded on this Issue instead.',
-    'A Principal ruling is needed before this can continue. Once one is posted on this Issue, resume with:',
+    'A Principal ruling is needed before this can continue. Post it as a comment on this Issue whose FIRST line is the ruling marker, with an ordinal higher than the one this pause recorded:',
     '',
     '```',
-    noPushResumeCommandFor(task, invocation?.agent, invocation?.model),
+    `<!-- aeg:principal:ruling:${nextOrdinal}-1 -->`,
+    'Your ruling text here.',
+    '```',
+    '',
+    'Then continue with:',
+    '',
+    '```',
+    noPushResumeCommandFor(task, branch, invocation?.agent, invocation?.model),
     '```',
     '',
     "The Operator's own `task_resume` clears this pause too, reading that same ruling from this Issue; `task_cancel` ends it instead."
@@ -294,14 +339,16 @@ export type PauseCommentPostResult = { attempts: number; posted: boolean }
  */
 export function postIssuePauseComment(
   task: number,
+  branch: string,
   round: number,
   reason: PauseReason,
   detail?: string,
-  invocation?: { agent: string; model?: string }
+  invocation?: { agent: string; model?: string },
+  rulingOrdinal?: number
 ): PauseCommentPostResult {
   const publicDetail = detail === undefined ? undefined : sanitizePublicPauseDetail(detail)
   const marker = pauseMarker(reason)
-  const body = renderNoPushStopComment(task, reason, publicDetail, invocation)
+  const body = renderNoPushStopComment(task, branch, reason, publicDetail, invocation, rulingOrdinal)
   const key = `pause-issue-${round}-${reason}`
   const identity: EffectIdentity = {
     operation: 'issue-comment',

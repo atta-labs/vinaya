@@ -79,6 +79,8 @@ import {
   isDriverPidAlive,
   readDriverLock,
   readEscalationRecord,
+  noPushResumeArgv,
+  noPushResumeCommandFor,
   readPauseState,
   ReplayedResolutionError,
   resolveEscalation,
@@ -290,7 +292,7 @@ function waitForLiveDriver(
  * overrides neither).
  */
 export function defaultResumeLaunch(
-  target: { pr: number | null; agent: AgentVendor; issue: number },
+  target: { pr: number | null; agent: AgentVendor; issue: number; branch: string },
   meta: { escalationId: string; caller: string },
   root: string = runtimeDir(),
   timeoutMs: number = RESUME_CONFIRM_TIMEOUT_MS
@@ -304,12 +306,17 @@ export function defaultResumeLaunch(
   const stderrFd = openSync(stderrPath, 'a')
   // A pause with no pull request has no `--resume <pr>` to continue through
   // (that entry derives its task from a pull request's body), so the
-  // continuation is `task run --issue <n>` — the same command that pause's own
-  // Issue comment prints, and the one existing continuation it has. Both forms
-  // are commands the CLI already exposes; only the argv differs.
+  // continuation is `task run` — built by `noPushResumeArgv`, the SAME builder
+  // that pause's own Issue comment and `task_escalation_read`'s permitted
+  // next actions render, so the command a reader is told to run and the argv
+  // spawned here cannot diverge. Which of `task run`'s two address forms it
+  // picks matters: `--issue <n>` is the tranche-LESS backlog path and is
+  // refused outright for an Issue carrying a `vinaya/tranche:*` label, so a
+  // tranche task is addressed `task run <tranche> <n>`, read off this pause's
+  // own branch. Both forms are commands the CLI already exposes.
   const argv =
     target.pr === null
-      ? ['task', 'run', '--issue', String(target.issue), '--agent', target.agent]
+      ? noPushResumeArgv(target.issue, target.branch, target.agent)
       : ['dev-review-loop', '--resume', String(target.pr), '--agent', target.agent]
   let child: ReturnType<typeof spawn>
   try {
@@ -354,7 +361,7 @@ export type TaskResumeDeps = {
    * the process still alive (O1) — see this file's own header.
    */
   launch: (
-    target: { pr: number | null; agent: AgentVendor; issue: number },
+    target: { pr: number | null; agent: AgentVendor; issue: number; branch: string },
     meta: { escalationId: string; caller: string }
   ) => Promise<LaunchResult>
   now: () => string
@@ -508,17 +515,27 @@ export function createTaskResumeHandler(
       if (pr === null) {
         // O4: on this path THIS handler is what consumed the ruling (there is
         // no `dev-review-loop --resume` continuation to do it), so an existing
-        // `'resume'` resolution means this exact escalation's ruling is already
-        // spent. Launching again off it would be a replay — refused, in
+        // `'resume'` resolution means this exact escalation's decision is
+        // already spent. Launching again off it would be a replay — refused, in
         // `resolveEscalation`'s own single-consumption terms. A pause WITH a
         // pull request still reports the truthful `'already_resumed'` below:
         // there the consumption belongs to the continuation, and a repeat call
         // is an idempotent replay of a launch that really happened.
+        //
+        // What the refusal must NOT say is that a new ruling lifts it. It
+        // does not: this gate fires before any ruling is read, and
+        // `resolveEscalation` refuses the same `escalationId` forever after
+        // (`consumeResolutionOnce`) no matter how many rulings land. An
+        // identical pause raised again even reuses the same id
+        // (`sameEscalationInstance` matches on round/head/branch/pr/reason/
+        // detail), so this tool is permanently done with this escalation. The
+        // continuation that IS still available is the command itself, which is
+        // why the message names it rather than an action that cannot work.
         emitOperationEvent(deps.log, issue, target, 'refused', 'precondition')
         return fail(
           taskToolError(
             'precondition',
-            `task ${issue}'s escalation '${escalationId}' already has a consumed 'resume' resolution (by ${existingResolution.authenticatedBy}, from ${existingResolution.authenticatedFrom}) — replay refused. A new Principal ruling on ${rulingSource} is what authorizes resuming it again.`
+            `task ${issue}'s escalation '${escalationId}' already has a consumed 'resume' resolution (by ${existingResolution.authenticatedBy}, from ${existingResolution.authenticatedFrom}) — replay refused. This escalation's decision is spent for good: no later ruling reopens it. Continue the task by running \`${noPushResumeCommandFor(issue, held.branch, held.agent, held.model)}\` directly, and the run's next pause will carry the next decision.`
           )
         )
       }
@@ -676,7 +693,7 @@ export function createTaskResumeHandler(
 
     let outcome: LaunchResult
     try {
-      outcome = await deps.launch({ pr, agent, issue }, { escalationId, caller: caller.id })
+      outcome = await deps.launch({ pr, agent, issue, branch: held.branch }, { escalationId, caller: caller.id })
     } catch (err) {
       deps.store.release(escalationId)
       emitOperationEvent(deps.log, issue, target, 'error', 'infrastructure')
@@ -693,7 +710,7 @@ export function createTaskResumeHandler(
         taskToolError(
           'infrastructure',
           pr === null
-            ? `task_resume: task ${issue} did not confirm alive: ${outcome.error.message}. Its ruling was already consumed as this escalation's resolution, so retrying needs a new Principal ruling on Issue ${issue}.`
+            ? `task_resume: task ${issue} did not confirm alive: ${outcome.error.message}. Its ruling was already consumed as this escalation's resolution and no later ruling reopens that escalation, so this tool cannot retry it — run \`${noPushResumeCommandFor(issue, held.branch, held.agent, held.model)}\` directly once the cause is fixed.`
             : `task_resume: task ${issue} (PR ${pr}) did not confirm alive: ${outcome.error.message}`,
           outcome.error.message
         )

@@ -35,6 +35,7 @@ import {
 } from '../dev-review-loop-harness'
 import {
   fenceStartedEffectsAsUncertain,
+  noPushResumeArgv,
   noPushResumeCommandFor,
   PAUSE_REASON_PROFILE,
   postWithRetry,
@@ -160,14 +161,14 @@ describe('renderPauseComment (pure) — O1: every pause reason renders its detai
 
 describe('renderNoPushStopComment (pure) — the no-PR-yet variant carries detail the same way', () => {
   it.each(ALL_PAUSE_REASONS)('reason %s carries a passed detail into the Issue-posted comment', (reason) => {
-    const body = renderNoPushStopComment(631, reason, 'a concrete, observed fact about this pause')
+    const body = renderNoPushStopComment(631, 'task/issue-631', reason, 'a concrete, observed fact about this pause')
     expect(body).toContain(reason)
     expect(body).toContain('a concrete, observed fact about this pause')
     expect(body).toContain('vinaya task run --issue 631')
   })
 
   it('names a command the reader can run verbatim — never an unfilled `<tranche>` placeholder', () => {
-    const body = renderNoPushStopComment(631, 'escalation', 'refused at the entry gate', {
+    const body = renderNoPushStopComment(631, 'task/issue-631', 'escalation', 'refused at the entry gate', {
       agent: 'codex',
       model: 'gpt-5.6-terra'
     })
@@ -176,6 +177,30 @@ describe('renderNoPushStopComment (pure) — the no-PR-yet variant carries detai
     // The Operator's own path out of this pause, which reads the same ruling
     // off this Issue.
     expect(body).toContain('task_resume')
+  })
+
+  it('addresses a TRANCHE task by its tranche and ordinal — the `--issue` form is refused for one', () => {
+    const body = renderNoPushStopComment(781, 'task/unattended-run-v1/22', 'escalation', 'refused at the entry gate', {
+      agent: 'claude'
+    })
+    expect(body).toContain('vinaya task run unattended-run-v1 22 --agent claude')
+    // The form that cannot work for this task: `--issue <n>` is the
+    // tranche-LESS backlog path, refused for a `vinaya/tranche:*`-labeled
+    // Issue before any run starts.
+    expect(body).not.toContain('--issue 781')
+  })
+
+  it('names the ruling marker a Principal must write, at an ordinal above the one this pause recorded', () => {
+    const body = renderNoPushStopComment(781, 'task/unattended-run-v1/22', 'escalation', undefined, undefined, 4)
+    // No shipped command posts a ruling on an Issue, so the marker format and
+    // the ordinal to beat both have to be in the comment or the Principal
+    // cannot authorize anything.
+    expect(body).toContain('<!-- aeg:principal:ruling:5-1 -->')
+  })
+
+  it('starts the marker ordinal at one when the escalation recorded no ruling baseline', () => {
+    const body = renderNoPushStopComment(781, 'task/unattended-run-v1/22', 'escalation')
+    expect(body).toContain('<!-- aeg:principal:ruling:1-1 -->')
   })
 })
 
@@ -227,12 +252,39 @@ describe('readPauseState — a record with no pull request reads as having none'
   })
 })
 
-describe('noPushResumeCommandFor', () => {
-  it('addresses the task by its Issue number, the one address a pause with no pull request has', () => {
-    expect(noPushResumeCommandFor(781)).toBe('vinaya task run --issue 781')
-    expect(noPushResumeCommandFor(781, 'claude')).toBe('vinaya task run --issue 781 --agent claude')
-    expect(noPushResumeCommandFor(781, 'codex', 'gpt-5.6-terra')).toBe(
+describe('noPushResumeCommandFor / noPushResumeArgv — the address form comes from the branch', () => {
+  it('addresses a backlog task by its Issue number', () => {
+    expect(noPushResumeCommandFor(781, 'task/issue-781')).toBe('vinaya task run --issue 781')
+    expect(noPushResumeCommandFor(781, 'task/issue-781', 'claude')).toBe('vinaya task run --issue 781 --agent claude')
+    expect(noPushResumeCommandFor(781, 'task/issue-781', 'codex', 'gpt-5.6-terra')).toBe(
       'vinaya task run --issue 781 --agent codex --model gpt-5.6-terra'
+    )
+  })
+
+  it('addresses a tranche task by tranche and ordinal, never by `--issue`', () => {
+    expect(noPushResumeCommandFor(781, 'task/unattended-run-v1/22')).toBe('vinaya task run unattended-run-v1 22')
+    expect(noPushResumeCommandFor(781, 'task/unattended-run-v1/22', 'claude', 'opus')).toBe(
+      'vinaya task run unattended-run-v1 22 --agent claude --model opus'
+    )
+  })
+
+  it('falls back to the Issue form for a branch that parses as neither shape', () => {
+    // The only address derivable from a task number alone — better than
+    // emitting a malformed tranche pair from an unrecognized branch.
+    expect(noPushResumeCommandFor(781, 'not-a-task-branch')).toBe('vinaya task run --issue 781')
+  })
+
+  it('renders exactly the argv the launcher spawns, so the printed command and the launch cannot diverge', () => {
+    expect(noPushResumeArgv(781, 'task/unattended-run-v1/22', 'claude')).toEqual([
+      'task',
+      'run',
+      'unattended-run-v1',
+      '22',
+      '--agent',
+      'claude'
+    ])
+    expect(`vinaya ${noPushResumeArgv(781, 'task/unattended-run-v1/22', 'claude').join(' ')}`).toBe(
+      noPushResumeCommandFor(781, 'task/unattended-run-v1/22', 'claude')
     )
   })
 })

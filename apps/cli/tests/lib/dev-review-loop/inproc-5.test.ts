@@ -646,10 +646,18 @@ describe('devReviewLoop — a refusal/escalation posted before any push ends the
     const body = pauseFiles[0]!.body
     expect(body).toMatch(/^<!-- aeg:loop:paused:escalation -->$/m)
     expect(body).toMatch(/brief is missing tier\/scope\/stop-conditions/)
-    // The one continuation this pause has, named in a form the reader can run
-    // verbatim — the Issue number in `--issue`, never an unfilled `<tranche>`.
-    expect(body).toContain(`vinaya task run --issue ${world.task}`)
+    // The one continuation this pause has, named in the address form that
+    // actually works for it — this is a tranche task, whose Issue carries a
+    // `vinaya/tranche:*` label, and `task run --issue <n>` is refused for one.
+    // The tranche and ordinal come from the run's own branch.
+    const branchParts = /^task\/([^/]+)\/([^/]+)$/.exec(world.branch)
+    expect(branchParts).not.toBeNull()
+    expect(body).toContain(`vinaya task run ${branchParts?.[1]} ${branchParts?.[2]}`)
     expect(body).not.toContain('<tranche>')
+    expect(body).not.toContain('--issue')
+    // No shipped command posts a ruling on an Issue, so the marker the
+    // Principal must hand-write is named here or nothing can authorize this.
+    expect(body).toContain('<!-- aeg:principal:ruling:1-1 -->')
 
     const pauseState = JSON.parse(readFileSync(join(controlDir(world), 'pause-state.json'), 'utf8')) as Record<
       string,
@@ -669,6 +677,33 @@ describe('devReviewLoop — a refusal/escalation posted before any push ends the
     expect(record.task).toBe(world.task)
     expect(record.round).toBe(1)
     expect(record.reason).toBe('escalation')
+  })
+
+  it("records the task ISSUE's own newest ruling ordinal as this pause's freshness baseline", async () => {
+    // The gates `task_resume`/`task_cancel` apply to a pause like this compare
+    // the Issue's live newest ordinal against the one recorded here. Recording
+    // `0` unconditionally — which is what a pull-request-only read produces
+    // when there is no pull request — made that comparison vacuous: any ruling
+    // already on the Issue, including one an earlier pause already consumed,
+    // would clear it. The baseline has to come from where the ruling will be.
+    const world = makeWorld({
+      developerStop: 'Entry gate refused: brief is missing tier/scope/stop-conditions.' as never
+    })
+    world.issueRulingOrdinal = 4
+    const { deps } = controlledDeveloperDeps(world, {})
+    await runLoopInProcessSafe(world, deps)
+
+    const record = JSON.parse(readFileSync(escalationRecordPath(world, 1, 'unknown'), 'utf8')) as Record<
+      string,
+      unknown
+    >
+    expect(record.pr).toBeNull()
+    expect(record.rulingOrdinal).toBe(4)
+
+    // And the comment tells the Principal which ordinal to beat, since that is
+    // now a real number rather than always zero.
+    const pauseBody = world.postedComments.find((c) => c.body.includes('aeg:loop:paused:escalation'))?.body ?? ''
+    expect(pauseBody).toContain('<!-- aeg:principal:ruling:5-1 -->')
   })
 })
 

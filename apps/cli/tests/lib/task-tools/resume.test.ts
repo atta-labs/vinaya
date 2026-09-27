@@ -177,7 +177,7 @@ function harness(
     issueRulings?: string[]
     newestIssueRulingOrdinal?: number
     launch?: (
-      target: { pr: number | null; agent: AgentVendor; issue: number },
+      target: { pr: number | null; agent: AgentVendor; issue: number; branch: string },
       meta: { escalationId: string; caller: string }
     ) => LaunchResult | Promise<LaunchResult>
     resolveIssue?: (ref: unknown) => number | null
@@ -185,7 +185,7 @@ function harness(
     now?: () => string
   } = {}
 ) {
-  const launches: Array<{ pr: number | null; agent: AgentVendor; issue: number }> = []
+  const launches: Array<{ pr: number | null; agent: AgentVendor; issue: number; branch: string }> = []
   const prRulingReads: number[] = []
   const events: Array<{ operation: string; target: string; result: string; error_class: string | null }> = []
   const { store, map } = memClaimStore()
@@ -360,7 +360,7 @@ describe('task_resume handler', () => {
     expect(result.result.outcome).toBe('started')
     expect(result.result.pr).toBe(PR)
     expect(result.result.authenticatedBy).toBe('principal-1')
-    expect(launches).toEqual([{ pr: PR, agent: 'claude', issue: ISSUE }])
+    expect(launches).toEqual([{ pr: PR, agent: 'claude', issue: ISSUE, branch: 'task/x/1' }])
     expect(events).toEqual([{ operation: 'task_resume', target: `task:${ISSUE}`, result: 'ok', error_class: null }])
   })
 
@@ -628,8 +628,12 @@ describe('task_resume handler — a pause recorded before its pull request exist
     expect(result.result.authenticatedBy).toBe('principal-1')
     expect(result.result.authenticatedFrom).toBe(`issue-${ISSUE}-1`)
     // The launch target carries no pull request, so `defaultResumeLaunch`
-    // builds the `task run --issue` argv rather than `--resume <pr>`.
-    expect(launches).toEqual([{ pr: null, agent: 'claude', issue: ISSUE }])
+    // builds a `task run` argv rather than `--resume <pr>` — and it carries
+    // the pause's OWN branch, which is what decides between `task run
+    // <tranche> <n>` and `task run --issue <n>`. Handing the launcher only a
+    // task number is what made it always pick `--issue`, the one form a
+    // tranche-labeled Issue refuses.
+    expect(launches).toEqual([{ pr: null, agent: 'claude', issue: ISSUE, branch: 'task/x/1' }])
     expect(prRulingReads).toEqual([])
 
     // Consumed durably, by this handler — nothing else was going to.
@@ -654,7 +658,11 @@ describe('task_resume handler — a pause recorded before its pull request exist
     if (!result.ok) {
       expect(result.error.kind).toBe('infrastructure')
       expect(result.error.message).toContain('Its ruling was already consumed')
-      expect(result.error.message).toContain(`a new Principal ruling on Issue ${ISSUE}`)
+      // Truthful about what a new ruling can and cannot do: this escalation is
+      // closed to this tool for good, so the message names the command that
+      // still works rather than an action that would refuse again.
+      expect(result.error.message).toContain('no later ruling reopens that escalation')
+      expect(result.error.message).toContain('vinaya task run x 1')
     }
     expect(readResolutionRecord().status).toBe('ok')
   })
@@ -674,7 +682,11 @@ describe('task_resume handler — a pause recorded before its pull request exist
     if (!second.ok) {
       expect(second.error.kind).toBe('precondition')
       expect(second.error.message).toContain('replay refused')
-      expect(second.error.message).toContain('A new Principal ruling')
+      // The old text promised a new ruling reopens this escalation.
+      // `consumeResolutionOnce` refuses the same id forever, so it does not.
+      expect(second.error.message).toContain('no later ruling reopens it')
+      expect(second.error.message).not.toContain('A new Principal ruling')
+      expect(second.error.message).toContain('vinaya task run x 1')
     }
     expect(launches).toHaveLength(1)
   })
@@ -726,7 +738,10 @@ describe('defaultResumeLaunch — the argv each pause shape continues through', 
       writeFileSync(script, `#!/bin/sh\nprintf '%s\\n' "$@" > '${logPath}'\nsleep 3\n`, { mode: 0o755 })
       return script
     }
-    async function argvOf(target: { pr: number | null; agent: AgentVendor }, name: string): Promise<string[]> {
+    async function argvOf(
+      target: { pr: number | null; agent: AgentVendor; branch: string },
+      name: string
+    ): Promise<string[]> {
       const logPath = join(sandbox, `${name}.log`)
       const prev = process.env[RESUME_COMMAND_ENV]
       process.env[RESUME_COMMAND_ENV] = recorderWriting(logPath, `${name}.sh`)
@@ -754,7 +769,7 @@ describe('defaultResumeLaunch — the argv each pause shape continues through', 
       }
     }
 
-    expect(await argvOf({ pr: null, agent: 'claude' }, 'no-pr')).toEqual([
+    expect(await argvOf({ pr: null, agent: 'claude', branch: `task/issue-${ISSUE}` }, 'no-pr-backlog')).toEqual([
       'task',
       'run',
       '--issue',
@@ -762,7 +777,18 @@ describe('defaultResumeLaunch — the argv each pause shape continues through', 
       '--agent',
       'claude'
     ])
-    expect(await argvOf({ pr: PR, agent: 'codex' }, 'with-pr')).toEqual([
+    // A tranche task: `--issue <n>` is refused for a `vinaya/tranche:*`-labeled
+    // Issue, so the launch must address it by tranche and ordinal or the child
+    // exits on the render refusal with the ruling already consumed.
+    expect(await argvOf({ pr: null, agent: 'claude', branch: 'task/unattended-run-v1/22' }, 'no-pr-tranche')).toEqual([
+      'task',
+      'run',
+      'unattended-run-v1',
+      '22',
+      '--agent',
+      'claude'
+    ])
+    expect(await argvOf({ pr: PR, agent: 'codex', branch: `task/issue-${ISSUE}` }, 'with-pr')).toEqual([
       'dev-review-loop',
       '--resume',
       String(PR),

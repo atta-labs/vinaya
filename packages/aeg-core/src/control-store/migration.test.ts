@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { acquireOwnership, readRun, readTransitions, type ControlStoreDeps } from './local'
+import { acquireOwnership, readInput, readRun, readTransitions, type ControlStoreDeps } from './local'
 import { defaultIsPidAlive, migrateLegacyTask } from './migration'
 
 let storeDir: string
@@ -88,6 +88,46 @@ describe('migrateLegacyTask', () => {
     const transitions = readTransitions(deps, 551, 1).map((t) => (t.status === 'ok' ? t.value.to : t))
     expect(transitions).toEqual(['paused:confidence', 'effect:2-reviewer-verdict:posted', 'effect:2-summary:started'])
   })
+
+  it.each([null, -1, 0])(
+    'migrates a pause that records prNumber %s as a real pause with no pull request',
+    (prNumber) => {
+      // A pause raised before any pull request existed. Requiring a NUMBER here
+      // made exactly that record fail the legacy-shape guard, so the migration
+      // recorded `source: 'fresh'` at round `0` and appended no `paused`
+      // transition — silently losing the one pause shape that is hardest to
+      // reconstruct by hand. The non-positive sentinels are what an older
+      // producer wrote for the same state.
+      const dir = legacyTaskDir(781)
+      writeFileSync(
+        join(dir, 'pause-state.json'),
+        JSON.stringify({
+          task: 781,
+          round: 3,
+          head: 'unknown',
+          branch: 'task/unattended-run-v1/22',
+          prNumber,
+          reason: 'escalation',
+          pausedAt: '2026-09-27T11:00:00.000Z'
+        }),
+        'utf8'
+      )
+
+      const result = migrateLegacyTask(deps, legacyDir, 781, 'run-migrate', alwaysDead)
+      expect(result).toEqual({ status: 'migrated', task: 781, epoch: 1, transitionsWritten: 1 })
+
+      const transitions = readTransitions(deps, 781, 1).map((t) => (t.status === 'ok' ? t.value.to : t))
+      expect(transitions).toEqual(['paused:escalation'])
+
+      const input = readInput(deps, 781, 'run-migrate')
+      expect(input.status).toBe('ok')
+      if (input.status !== 'ok') return
+      expect(input.value.source).toBe('resume')
+      expect(input.value.round).toBe(3)
+      // Never a sentinel a forge read would choke on.
+      expect(input.value.pr).toBeNull()
+    }
+  )
 
   it('refuses ambiguous ownership when the legacy driver pid is still live', () => {
     const dir = legacyTaskDir(552)

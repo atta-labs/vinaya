@@ -306,6 +306,8 @@ export type LoopDeps = {
   fetchNewestRulingOrdinal: typeof fetchNewestRulingOrdinal
   /** O2: the GitHub login that authored the newest principal ruling — a resolution record's `authenticatedBy`. */
   fetchNewestRulingAuthor: typeof fetchNewestRulingAuthor
+  /** The newest principal ruling ordinal on the TASK ISSUE — the freshness baseline an escalation with no pull request records, since a ruling answering it can only be posted there. Its pull-request sibling above covers every other pause. */
+  fetchNewestIssueRulingOrdinal: typeof fetchNewestIssueRulingOrdinal
   fetchFrozenBrief: typeof fetchFrozenBrief
   resolveIssueObjectives: typeof resolveIssueObjectives
   /** O2: the frozen brief's own source revision, named to the reviewer as a fact. */
@@ -792,6 +794,7 @@ function defaultDeps(): LoopDeps {
     fetchRulings,
     fetchNewestRulingOrdinal,
     fetchNewestRulingAuthor,
+    fetchNewestIssueRulingOrdinal,
     fetchFrozenBrief,
     resolveIssueObjectives,
     fetchSourceRevision,
@@ -992,7 +995,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // pause is continued by `vinaya task run --issue <n>` (the command its
       // own Issue comment names), or through the Operator's `task_resume`.
       throw new Error(
-        `devReviewLoop --resume: task ${closesTask}'s held pause state records no pull request — it paused before one existed. Continue it with \`${noPushResumeCommandFor(closesTask, held.agent, held.model)}\`.`
+        `devReviewLoop --resume: task ${closesTask}'s held pause state records no pull request — it paused before one existed. Continue it with \`${noPushResumeCommandFor(closesTask, held.branch, held.agent, held.model)}\`.`
       )
     }
     if (held.prNumber !== resumePr) {
@@ -1635,9 +1638,18 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // Best-effort — objectives unresolvable this early.
       }
       try {
-        ordinal = prNumber > 0 ? d.fetchNewestRulingOrdinal(prNumber) : 0
+        // The baseline a later resume/cancel must postdate, read from
+        // WHEREVER this pause's own ruling will be posted. A pause with no
+        // pull request used to record `0` unconditionally, which made the
+        // Issue-side freshness gate vacuous: `newestIssueRulingOrdinal > 0`
+        // is satisfied by ANY ruling ever posted on the Issue, including one
+        // an earlier pause on this same task already consumed, so a single
+        // stale approval could authenticate every later before-any-push
+        // resume or cancel. The pull-request path always captured a real
+        // baseline; this makes the Issue path capture one too.
+        ordinal = prNumber > 0 ? d.fetchNewestRulingOrdinal(prNumber) : d.fetchNewestIssueRulingOrdinal(task)
       } catch {
-        // Best-effort — no PR yet, or the forge read failed.
+        // Best-effort — no ruling yet, or the forge read failed.
       }
       let digest = 'unknown'
       try {
@@ -2811,10 +2823,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               })
               await logPauseCommentRetryIfNotable(
                 round,
-                d.postIssuePauseComment(task, round, 'escalation', detail, {
-                  agent: dispatchAgent,
-                  ...(dispatchModel ? { model: dispatchModel } : {})
-                })
+                d.postIssuePauseComment(
+                  task,
+                  branch,
+                  round,
+                  'escalation',
+                  detail,
+                  { agent: dispatchAgent, ...(dispatchModel ? { model: dispatchModel } : {}) },
+                  escalationRecord?.rulingOrdinal
+                )
               )
               return { finalDecision: { type: 'pause', reason: 'escalation', detail }, prNumber: 0, task }
             }
@@ -3107,7 +3124,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         const invocation = { agent: dispatchAgent, ...(dispatchModel ? { model: dispatchModel } : {}) }
         const postResult =
           prNumber <= 0
-            ? d.postIssuePauseComment(task, round, decision.reason, decision.detail, invocation)
+            ? d.postIssuePauseComment(
+                task,
+                branch,
+                round,
+                decision.reason,
+                decision.detail,
+                invocation,
+                escalationRecord?.rulingOrdinal
+              )
             : d.postPauseComment(task, round, head, prNumber, decision.reason, decision.detail, invocation)
         await logPauseCommentRetryIfNotable(round, postResult)
       } catch {
@@ -4136,9 +4161,10 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
  *
  * The one pause this never watches: the pre-first-push escalation
  * (`prNumber <= 0` — no pull request exists yet to poll or comment on)
- * ends the driver exactly as before this task, printing `vinaya task run
- * <tranche> <n>` as its own resume command ("Pause and `--resume`",
- * `apps/cli/specs/loop.md`) — there is nothing yet to watch.
+ * ends the driver unwatched — there is nothing yet to watch. Its own Issue
+ * comment names the command that continues it, in whichever address form
+ * this task's branch says `task run` takes for it (`noPushResumeArgv`,
+ * `pause-resume.ts`; "Pause and `--resume`", `apps/cli/specs/loop.md`).
  *
  * This watcher holds the task's one-driver-per-task lock for its ENTIRE
  * life — across every pause and every resume attempt it makes, never

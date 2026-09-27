@@ -114,6 +114,8 @@ export type LoopWorld = {
   sourceRevision: string
   rulings: string[]
   rulingOrdinal: number
+  /** The newest principal ruling ordinal on the TASK ISSUE — the baseline a no-pull-request escalation records, read separately from the pull-request one so a fixture can hold a ruling on one and not the other. */
+  issueRulingOrdinal: number
   rulingAuthor: string | null
   developerStop: string | null
   /** The PR body `checkPremiseAtHead` reads each round; the default carries only `Closes #<task>` (no `Premise:` block, so the reassert is dormant). */
@@ -221,6 +223,7 @@ export function makeWorld(overrides: Partial<LoopWorld> = {}): LoopWorld {
     sourceRevision: '(none — pre-task-4 frozen brief)',
     rulings: [],
     rulingOrdinal: 0,
+    issueRulingOrdinal: 0,
     rulingAuthor: null,
     developerStop: null,
     prBody: `Closes #${task}`,
@@ -311,6 +314,7 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
     fetchRulings: (_pr) => [...world.rulings],
     fetchNewestRulingOrdinal: (_pr) => world.rulingOrdinal,
     fetchNewestRulingAuthor: (_pr) => world.rulingAuthor,
+    fetchNewestIssueRulingOrdinal: (_issue) => world.issueRulingOrdinal,
     fetchFrozenBrief: (_issue) => world.frozenBrief,
     resolveIssueObjectives: (_issue) => {
       // Parse the world's frozen brief with the REAL parser so a held
@@ -397,10 +401,13 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
       world.postedComments.push({ kind: 'pr', ref: String(prNumber), marker, body })
       return { posted: true, url: 'https://example/pause', attempts: 1 } as never
     },
-    postIssuePauseComment: (task, _round, reason, detail) => {
+    postIssuePauseComment: (task, branch, _round, reason, detail, invocation, rulingOrdinal) => {
       const publicDetail = detail === undefined ? undefined : sanitizePublicPauseDetail(detail)
       const marker = pauseMarker(reason)
-      const body = markedCommentBody(marker, renderNoPushStopComment(task, reason, publicDetail))
+      const body = markedCommentBody(
+        marker,
+        renderNoPushStopComment(task, branch, reason, publicDetail, invocation, rulingOrdinal)
+      )
       world.postedComments.push({ kind: 'issue', ref: String(task), marker, body })
       return { posted: true, url: 'https://example/issue-pause', attempts: 1 } as never
     },

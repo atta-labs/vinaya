@@ -250,7 +250,8 @@ type PauseState = {
   round: number
   head: string
   branch: string
-  prNumber: number
+  /** `null` for a pause recorded before any pull request existed — kept in step with `dev-review-loop/pause-resume.ts`'s own `PauseState`, the record this parses. */
+  prNumber: number | null
   reason: PauseReason
   detail?: string
   pausedAt: string
@@ -258,11 +259,14 @@ type PauseState = {
   model?: string
 }
 
+/** This file's own narrow copy of the pause read (its header's split between forge-touching entry points and pure outbox reads), including the shared reader's non-positive-sentinel normalization — a record already on disk can carry `-1` for "no pull request", and a second reader that disagreed about that value is how the sentinel survived being fixed in one place. */
 function readPauseState(root: string, task: number): PauseState | null {
   const raw = readIfExists(runPath(root, task, { area: 'control', file: 'pause-state.json' }))
   if (!raw) return null
   try {
-    return JSON.parse(raw) as PauseState
+    const parsed = JSON.parse(raw) as PauseState
+    const pr = parsed.prNumber
+    return typeof pr === 'number' && pr <= 0 ? { ...parsed, prNumber: null } : parsed
   } catch {
     return null
   }
