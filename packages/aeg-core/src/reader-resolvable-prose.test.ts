@@ -8,8 +8,10 @@ import {
   checkUndefinedVocabulary,
   checkUnresolvableReferences,
   classifyProseFile,
+  DEFAULT_SPEC_PATHS,
   extractComments,
   legacySlugPattern,
+  normalizeSpecPath,
   parseGlossaryTerms,
   PRODUCT_SLUG_SCOPE,
   stripNonProse
@@ -79,6 +81,49 @@ describe('classifyProseFile — the three-class map', () => {
     expect(classifyProseFile('apps/vinaya/specs/vinaya-spec.md', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBe(
       'spec'
     )
+  })
+
+  // The spec class's defaults: the durable documents a repository with no
+  // `apps/` tree of its own actually keeps. Without them, a root spec was
+  // free to carry a copy of a plan nothing ever read.
+  it('classifies a root SPEC.md, a root CONTEXT.md and a docs/adr record as spec by default', () => {
+    expect(classifyProseFile('SPEC.md', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBe('spec')
+    expect(classifyProseFile('CONTEXT.md', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBe('spec')
+    expect(classifyProseFile('docs/adr/0001-pick-a-runtime.md', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBe(
+      'spec'
+    )
+  })
+
+  it('never classifies README.md as spec by default — a stack badge is not a citation', () => {
+    expect(classifyProseFile('README.md', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBeNull()
+  })
+
+  it('classifies a configured specPaths file or folder as spec, markdown only', () => {
+    expect(
+      classifyProseFile('design/architecture.md', READER_FACING_PREFIX, READER_FACING_SUFFIX, undefined, [
+        ...DEFAULT_SPEC_PATHS,
+        'design'
+      ])
+    ).toBe('spec')
+    expect(
+      classifyProseFile('design/diagram.svg', READER_FACING_PREFIX, READER_FACING_SUFFIX, undefined, [
+        ...DEFAULT_SPEC_PATHS,
+        'design'
+      ])
+    ).toBeNull()
+  })
+
+  it('a specPaths prefix matches only its own path or a child of it', () => {
+    expect(
+      classifyProseFile('designs/other.md', READER_FACING_PREFIX, READER_FACING_SUFFIX, undefined, ['design'])
+    ).toBeNull()
+  })
+
+  it('classifies nothing extra as spec when specPaths is empty — a repo with none of these files reports nothing new', () => {
+    expect(classifyProseFile('SPEC.md', READER_FACING_PREFIX, READER_FACING_SUFFIX, undefined, [])).toBeNull()
+    expect(
+      classifyProseFile('apps/vinaya/specs/vinaya-spec.md', READER_FACING_PREFIX, READER_FACING_SUFFIX, undefined, [])
+    ).toBe('spec')
   })
 
   it('classifies any CLAUDE.md as internal', () => {
@@ -210,6 +255,132 @@ describe('class 1 — unresolvable references — the gate can see what it bans'
     expect(findings.every((f) => f.blocking)).toBe(true)
     expect(findings.map((f) => f.message).join(' ')).toMatch(/a forge number/)
     expect(findings.map((f) => f.message).join(' ')).toMatch(/an internal tranche slug/)
+  })
+
+  it('sweeps a root SPEC.md and a docs/adr record with the same blocking rules, no configuration at all', () => {
+    const findings = checkUnresolvableReferences(
+      [
+        { path: 'SPEC.md', content: 'closed by (#365), see aeg-coherence-v1' },
+        { path: 'docs/adr/0002-store-logs-remotely.md', content: 'decided in (#365)' }
+      ],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings.every((f) => f.blocking)).toBe(true)
+    expect(findings.map((f) => f.file)).toContain('SPEC.md')
+    expect(findings.map((f) => f.file)).toContain('docs/adr/0002-store-logs-remotely.md')
+  })
+
+  it('grandfathers a default-path spec by path exactly as it grandfathers a per-product one', () => {
+    const findings = checkUnresolvableReferences(
+      [{ path: 'SPEC.md', content: 'closed by (#365), see aeg-coherence-v1' }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX,
+      [],
+      undefined,
+      ['SPEC.md']
+    )
+    expect(findings).toEqual([])
+  })
+
+  it('sweeps a file named only by specPaths, and reports nothing for a README with a badge-shaped slug', () => {
+    const files = [
+      { path: 'design/architecture.md', content: 'see aeg-coherence-v1' },
+      { path: 'README.md', content: 'Built with next-v1 and bun-v1.' }
+    ]
+    const findings = checkUnresolvableReferences(
+      files,
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX,
+      [],
+      undefined,
+      [],
+      [...DEFAULT_SPEC_PATHS, 'design']
+    )
+    expect(findings.map((f) => f.file)).toEqual(['design/architecture.md'])
+  })
+
+  it('blocks a task number in a spec, beside the Issue numbers and slugs it already blocks', () => {
+    const findings = checkUnresolvableReferences(
+      [{ path: 'SPEC.md', content: 'Delivered by task 4.\nTasks 11 and 12 follow.\nSee task #7 too.' }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    const taskFindings = findings.filter((f) => f.message.includes('a task number'))
+    expect(taskFindings).toHaveLength(3)
+    expect(taskFindings.every((f) => f.blocking)).toBe(true)
+    expect(taskFindings[0]!.message).toContain('"task 4"')
+    expect(taskFindings[1]!.message).toContain('"Tasks 11"')
+    expect(taskFindings[2]!.message).toContain('"task #7"')
+  })
+
+  // The reported line is the citation's own, including when the citation
+  // opens a line: the pattern consumes the character before it, and where
+  // that character is the previous line's newline the whole match begins one
+  // line early. Nothing asserted a line number for this rule before, which is
+  // how that shipped.
+  it('reports the line the task number is actually on, at the start of a line and mid-line', () => {
+    const findings = checkUnresolvableReferences(
+      [{ path: 'SPEC.md', content: 'an opening line\ntask 5 opens this line\nand mid task 6 sits here\n' }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings.map((f) => [f.line, f.message.includes('"task 5"') ? 'task 5' : 'task 6'])).toEqual([
+      [2, 'task 5'],
+      [3, 'task 6']
+    ])
+  })
+
+  it('reports the line an Issue number and a tranche slug are on when each opens a line', () => {
+    const findings = checkUnresolvableReferences(
+      [
+        {
+          path: 'aeg-root/roles/developer.md',
+          content: 'an opening line\n(#365) opened this line\naeg-coherence-v1 this one\n'
+        }
+      ],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings.map((f) => f.line)).toEqual([2, 3])
+  })
+
+  it("never reads a spec's own numbered structure as a task number", () => {
+    const findings = checkUnresolvableReferences(
+      [
+        {
+          path: 'apps/vinaya/specs/vinaya-spec.md',
+          content: 'Section 3 covers step 2 of Part 1. Multitasking 2 is not a citation, nor is a tasking 3 run.'
+        }
+      ],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings).toEqual([])
+  })
+
+  it('leaves a doctrine page and product code untouched by the task-number rule', () => {
+    const findings = checkUnresolvableReferences(
+      [
+        { path: 'aeg-root/roles/developer.md', content: 'Delivered by task 4.' },
+        { path: 'apps/cli/src/commands/dispatch.ts', content: '// delivered by task 4' }
+      ],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings.filter((f) => f.message.includes('a task number'))).toEqual([])
+  })
+
+  it('a grandfathered spec is exempt from the task-number rule too', () => {
+    const findings = checkUnresolvableReferences(
+      [{ path: 'SPEC.md', content: 'Delivered by task 4.' }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX,
+      [],
+      undefined,
+      ['SPEC.md']
+    )
+    expect(findings).toEqual([])
   })
 
   it('a spec explicitly grandfathered by path is skipped entirely, even with a real citation', () => {
@@ -647,5 +818,31 @@ describe('checkReaderResolvableProse — runs both classes together', () => {
       READER_FACING_SUFFIX
     )
     expect(findings.length).toBeGreaterThanOrEqual(2)
+  })
+})
+
+// A configured spec path is hand-written, so the class accepts the spellings a
+// hand writes and reduces them to one. Unnormalized, a trailing slash or a
+// leading `./` was collected and read but never classified — the entry checked
+// nothing at all, silently.
+describe('normalizeSpecPath — one spelling for a hand-written entry', () => {
+  it('strips a leading ./, a trailing slash and a doubled separator', () => {
+    expect(normalizeSpecPath('docs/adr/')).toBe('docs/adr')
+    expect(normalizeSpecPath('./docs/adr')).toBe('docs/adr')
+    expect(normalizeSpecPath('./docs//adr///')).toBe('docs/adr')
+    expect(normalizeSpecPath('PRODUCT.md')).toBe('PRODUCT.md')
+  })
+
+  it('leaves a bare entry exactly as written', () => {
+    for (const entry of DEFAULT_SPEC_PATHS) expect(normalizeSpecPath(entry)).toBe(entry)
+  })
+
+  it('classifies a file under an entry written with a trailing slash or a leading ./', () => {
+    expect(
+      classifyProseFile('docs/adr/x.md', READER_FACING_PREFIX, READER_FACING_SUFFIX, undefined, ['docs/adr/'])
+    ).toBe('spec')
+    expect(classifyProseFile('design/a.md', READER_FACING_PREFIX, READER_FACING_SUFFIX, undefined, ['./design'])).toBe(
+      'spec'
+    )
   })
 })

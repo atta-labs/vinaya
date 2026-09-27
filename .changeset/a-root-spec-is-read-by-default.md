@@ -1,0 +1,11 @@
+---
+'@attalabs/vinaya': minor
+'@attalabs/aeg-core': minor
+'@attalabs/vinaya-sources': minor
+---
+
+`reader-resolvable-prose`'s spec class now reads four paths in any repository with no configuration at all: a root `SPEC.md`, a root `CONTEXT.md`, every Markdown file under `docs/adr/`, and — as before — every `apps/<app>/specs/**/*.md`. The class collected only the last of those, so a repository with no `apps/` tree of its own had its most durable documents read by nothing: one such root spec copied its plan's task list and had to be rewritten three times in a day, with no check refusing any of it. A repository carrying none of the new default paths reports nothing new.
+
+The class also blocks a task number now — the word `task` or `tasks` followed by a number — beside the Issue and pull-request numbers and tranche slugs it already blocked. A number out of a plan resolves only against that plan's own tracker and stops being true the moment the plan is renumbered, which is the same reason the other citations are refused. A document's own numbered structure — a section, a step, a part — is never a match, and neither is a longer word that merely contains those letters. Doctrine pages and product code are unaffected by this rule; it is the spec class's own.
+
+`proseGates.specPaths` adds further repository-relative files or folders to the class, additively — configuring it never stops the defaults being read. `README.md` is not a default and should not be added lightly, since the tranche-slug pattern matches an ordinary stack badge. An entry may be written with a trailing slash or a leading `./` and names the same path a bare one does, and an entry that leaves the repository — absolute, climbing through `..`, or a folder symlinked outside — is refused rather than read. `proseGates.specGrandfather` remains the class's only exemption and now covers a default path exactly as it covers a per-product spec, the task-number rule included. The configuration reference documents both keys, and a repository upgrading whose root spec, context document or decision records already carry these citations goes red on the files it touches until they are rewritten or listed as grandfathered.

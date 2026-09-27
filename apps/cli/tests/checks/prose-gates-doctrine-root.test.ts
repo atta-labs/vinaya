@@ -428,7 +428,16 @@ describe('doctrine root genuinely unresolvable (Issue #314)', () => {
 
   function cloneWithoutAegRoot(name: string): string {
     const dest = join(tmpdir(), `vinaya-no-aeg-root-${name}-${Date.now()}-${Math.random().toString(36).slice(2)}`)
-    execFileSync('git', ['clone', '--quiet', REPO_ROOT, dest])
+    // `--shared`: the clone borrows this repository's objects through an
+    // alternate instead of copying them. A plain local clone hardlinks them
+    // only when the source is an ordinary checkout — from a linked worktree,
+    // whose `.git` is a file rather than an object store, it falls back to
+    // copying the whole repository (measured: 4.3s against 0.5s), which took
+    // this test past its own time limit for every run dispatched into a
+    // worktree. The clone is a throwaway this test deletes itself, so
+    // borrowing objects from its source is safe; nothing here writes to the
+    // source, and the clone's own commit below lands in its own object store.
+    execFileSync('git', ['clone', '--quiet', '--shared', REPO_ROOT, dest])
     execFileSync('git', ['checkout', '-q', '-b', 'test-no-aeg-root'], { cwd: dest })
     symlinkSync(join(REPO_ROOT, 'node_modules'), join(dest, 'node_modules'))
     execFileSync('git', ['rm', '-rq', '--', 'aeg-root'], { cwd: dest })
@@ -667,6 +676,230 @@ describe('reader-resolvable-prose: the source-comment class', () => {
       })
       expect(result.exitCode).toBe(0)
       expect(result.stdout.toString()).toContain('source-comment class dormant')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
+// The spec class's default file set. A repository with no `apps/` tree of its
+// own — the shape a newly-adopting repository actually has — was never read by
+// this class at all, so its root spec was free to carry a copy of a plan
+// (a task list, the Issue numbers behind it) that went stale the moment the
+// plan moved. Measured live: one such spec had to be rewritten three times in
+// a day, with nothing refusing any of it.
+//
+// No `BASE_SHA`, same as the suites above: a fresh single-commit fixture with
+// no remote has no resolvable diff boundary, so `findingsInThisDiff` treats it
+// as indeterminate and reports everything, which is what lets a bare
+// `bun <bin>` invocation here see the finding at all.
+describe('reader-resolvable-prose: the spec class checks a root spec, context and decision records by default', () => {
+  function fixtureWithConfig(name: string, config: Record<string, unknown> | null): string {
+    const root = initFixture(name)
+    if (config !== null) {
+      writeFileSync(join(root, 'vinaya.config.json'), JSON.stringify({ checks: {}, ...config }, null, 2))
+    }
+    return root
+  }
+
+  function commitAll(root: string, message: string): void {
+    execFileSync('git', ['add', '-A'], { cwd: root })
+    execFileSync('git', ['commit', '-q', '-m', message], { cwd: root })
+  }
+
+  function runReaderBin(root: string): { exitCode: number | null; stdout: string; stderr: string } {
+    const result = Bun.spawnSync(['bun', READER_BIN], {
+      cwd: root,
+      env: { ...process.env, PR_BODY: undefined, BASE_SHA: undefined }
+    })
+    return { exitCode: result.exitCode, stdout: result.stdout.toString(), stderr: result.stderr.toString() }
+  }
+
+  it('a root SPEC.md citing an Issue number and a tranche slug fails, with no configuration at all', () => {
+    const root = fixtureWithConfig('spec-defaults-root-spec', null)
+    try {
+      writeFileSync(join(root, 'SPEC.md'), '# Spec\n\nThe gate landed in aeg-coherence-v1, closing (#4213).\n')
+      commitAll(root, 'Chore: add a root spec carrying plan citations')
+
+      const { exitCode, stderr } = runReaderBin(root)
+      expect(exitCode).toBe(1)
+      expect(stderr).toContain('SPEC.md')
+      expect(stderr).toContain('a forge number')
+      expect(stderr).toContain('an internal tranche slug')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a root CONTEXT.md and a docs/adr record are read the same way', () => {
+    const root = fixtureWithConfig('spec-defaults-context-and-adr', null)
+    try {
+      writeFileSync(join(root, 'CONTEXT.md'), '# Context\n\nWhy this exists: see (#4213).\n')
+      mkdirSync(join(root, 'docs', 'adr'), { recursive: true })
+      writeFileSync(join(root, 'docs', 'adr', '0001-pick-a-runtime.md'), '# Pick a runtime\n\nDecided in (#4214).\n')
+      commitAll(root, 'Chore: add a context document and a decision record')
+
+      const { exitCode, stderr } = runReaderBin(root)
+      expect(exitCode).toBe(1)
+      expect(stderr).toContain('CONTEXT.md')
+      expect(stderr).toContain('docs/adr/0001-pick-a-runtime.md')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a README.md carrying badge-shaped slugs is never swept by default', () => {
+    const root = fixtureWithConfig('spec-defaults-readme-exempt', null)
+    try {
+      writeFileSync(join(root, 'README.md'), '# fixture\n\nBuilt with next-v1 and bun-v1.\n')
+      commitAll(root, 'Chore: add a README carrying stack badges')
+
+      const { exitCode, stderr } = runReaderBin(root)
+      expect(exitCode).toBe(0)
+      expect(stderr).not.toContain('README.md')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a repository with none of the default files reports nothing new', () => {
+    const root = fixtureWithConfig('spec-defaults-absent', null)
+    try {
+      const { exitCode, stdout } = runReaderBin(root)
+      expect(exitCode).toBe(0)
+      expect(stdout).toContain('spec class ran (0 file(s) swept')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('specGrandfather exempts a default path exactly as it exempts a per-product spec', () => {
+    const root = fixtureWithConfig('spec-defaults-grandfathered', {
+      proseGates: { specGrandfather: ['SPEC.md'] }
+    })
+    try {
+      writeFileSync(join(root, 'SPEC.md'), '# Spec\n\nThe gate landed in aeg-coherence-v1, closing (#4213).\n')
+      commitAll(root, 'Chore: add a grandfathered root spec')
+
+      const { exitCode, stderr } = runReaderBin(root)
+      expect(exitCode).toBe(0)
+      expect(stderr).not.toContain('SPEC.md')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a task number copied out of a plan fails a root spec, and a numbered section does not', () => {
+    const root = fixtureWithConfig('spec-defaults-task-number', null)
+    try {
+      writeFileSync(
+        join(root, 'SPEC.md'),
+        '# Spec\n\nDelivered by task 4.\n\n## Section 3\n\nStep 2 of Part 1 is not a citation.\n'
+      )
+      commitAll(root, 'Chore: add a root spec carrying a task number')
+
+      const { exitCode, stderr } = runReaderBin(root)
+      expect(exitCode).toBe(1)
+      expect(stderr).toContain('a task number')
+      expect(stderr).toContain('task 4')
+      expect(stderr).not.toContain('Section 3')
+      expect(stderr).not.toContain('Step 2')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a specPaths entry written with a trailing slash is really checked, not silently skipped', () => {
+    const root = fixtureWithConfig('spec-defaults-trailing-slash', {
+      proseGates: { specPaths: ['design/', './notes'] }
+    })
+    try {
+      mkdirSync(join(root, 'design'), { recursive: true })
+      mkdirSync(join(root, 'notes'), { recursive: true })
+      writeFileSync(join(root, 'design', 'architecture.md'), '# Architecture\n\nDelivered by task 4.\n')
+      writeFileSync(join(root, 'notes', 'context.md'), '# Context\n\nShaped by aeg-coherence-v1.\n')
+      commitAll(root, 'Chore: add spec folders named with a trailing slash and a leading dot-slash')
+
+      const { exitCode, stderr } = runReaderBin(root)
+      expect(exitCode).toBe(1)
+      expect(stderr).toContain('design/architecture.md')
+      expect(stderr).toContain('notes/context.md')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a specPaths entry reaching outside the repository is refused by the schema, so the class reads only its defaults', () => {
+    const root = fixtureWithConfig('spec-defaults-escaping-entry', {
+      proseGates: { specPaths: ['../outside'] }
+    })
+    const outside = join(root, '..', `outside-${Date.now()}`)
+    try {
+      mkdirSync(outside, { recursive: true })
+      writeFileSync(join(outside, 'notes.md'), '# Outside\n\nDelivered by task 4, closing (#4213).\n')
+      // The escaping entry is written as `../outside` in config; the fixture's
+      // own out-of-repo folder carries a unique name so a stray read of it is
+      // unmistakable in the output.
+      writeFileSync(
+        join(root, 'vinaya.config.json'),
+        JSON.stringify({ checks: {}, proseGates: { specPaths: [`../${outside.split('/').pop()}`] } }, null, 2)
+      )
+      commitAll(root, 'Chore: configure a spec path outside the repository')
+
+      const { exitCode, stderr } = runReaderBin(root)
+      expect(exitCode).toBe(0)
+      expect(stderr).not.toContain('notes.md')
+      expect(stderr).not.toContain('outside')
+
+      const validated = Bun.spawnSync(['bun', INDEX_TS, 'check', 'reader-resolvable-prose'], {
+        cwd: root,
+        env: { ...process.env, PR_BODY: undefined, BASE_SHA: undefined }
+      })
+      // The command path validates the config instead of degrading to none, so
+      // an entry that leaves the repository is named rather than ignored.
+      expect(validated.exitCode).not.toBe(0)
+      expect(`${validated.stdout.toString()}${validated.stderr.toString()}`).toContain('specPaths')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+      rmSync(outside, { recursive: true, force: true })
+    }
+  })
+
+  it('a specPaths folder that is a symlink out of the repository reads nothing through it', () => {
+    const root = fixtureWithConfig('spec-defaults-symlink-escape', {
+      proseGates: { specPaths: ['design'] }
+    })
+    const outside = join(root, '..', `symlinked-${Date.now()}`)
+    try {
+      mkdirSync(outside, { recursive: true })
+      writeFileSync(join(outside, 'leaked.md'), '# Leaked\n\nDelivered by task 4, closing (#4213).\n')
+      symlinkSync(outside, join(root, 'design'))
+      commitAll(root, 'Chore: point a spec folder at a directory outside the repository')
+
+      const { exitCode, stdout, stderr } = runReaderBin(root)
+      expect(exitCode).toBe(0)
+      expect(stderr).not.toContain('leaked.md')
+      expect(stdout).toContain('spec class ran (0 file(s) swept')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+      rmSync(outside, { recursive: true, force: true })
+    }
+  })
+
+  it('proseGates.specPaths adds a folder to the class without replacing the defaults', () => {
+    const root = fixtureWithConfig('spec-defaults-configured-paths', {
+      proseGates: { specPaths: ['design'] }
+    })
+    try {
+      mkdirSync(join(root, 'design'), { recursive: true })
+      writeFileSync(join(root, 'design', 'architecture.md'), '# Architecture\n\nShaped by aeg-coherence-v1.\n')
+      writeFileSync(join(root, 'SPEC.md'), '# Spec\n\nClosing (#4213).\n')
+      commitAll(root, 'Chore: add a configured spec folder alongside a root spec')
+
+      const { exitCode, stderr } = runReaderBin(root)
+      expect(exitCode).toBe(1)
+      expect(stderr).toContain('design/architecture.md')
+      expect(stderr).toContain('SPEC.md')
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

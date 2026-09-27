@@ -1638,6 +1638,13 @@ describe('selection follows the changed names, and widens to file level when it 
     }
   })
 
+  // Two whole-repository selections, each walking every workspace package and
+  // parsing its sources — seconds of real work apiece on this repository's
+  // current size, and several times that when the suite runs it alongside
+  // dozens of other files, as both the push hook and CI do. Its own limit
+  // says what the work costs rather than leaving it on a default sized for
+  // an ordinary unit test, which this one outgrew: it failed for load alone,
+  // on an untouched checkout, reporting nothing about the selector.
   it('on the real repository, a one-name change selects strictly fewer files than the file-level answer', () => {
     const changed = join(REPO_ROOT, 'packages/aeg-core/src/review-input-manifest.ts')
     const fileLevel = selectAffectedTestFiles(REPO_ROOT, [changed]).selected.length
@@ -1645,7 +1652,7 @@ describe('selection follows the changed names, and widens to file level when it 
       affectedNames: new Map([[changed, new Set(['isBoundToPolicy'])]])
     }).selected.length
     expect(oneName).toBeLessThan(fileLevel)
-  })
+  }, 180_000)
 })
 
 // O7 — a test whose input is the repository TREE has no import edge to the
