@@ -37,7 +37,7 @@ import {
 } from '@attalabs/aeg-core'
 import { findTrancheSlug, resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
 import { runtimeDir } from '../dev-review-loop.js'
-import { gatherTaskStatusList, type TaskStatusRow } from '../task-status.js'
+import { gatherTaskStatusList, renderTaskStatusTable, type TaskStatusRow } from '../task-status.js'
 import { classifyStateFreshness, describeTaskLoopState, paginate, readEscalationPacket, whereTheRunIs } from './read.js'
 
 export type TaskToolCallResult<T> = { ok: true; result: T } | { ok: false; error: TaskToolError }
@@ -92,7 +92,11 @@ export function taskStatusHandler(input: unknown): TaskToolCallResult<TaskStatus
     freshness: classifyStateFreshness(row.state)
   }))
 
-  return ok({ items, nextCursor: page.nextCursor })
+  // The table is rendered by the command's OWN renderer — never a second
+  // layout built here — and over every MATCHED row rather than the page above:
+  // a call with no `task` shows every open task in the repository, whatever
+  // `limit` does to the structured items beside it.
+  return ok({ items, nextCursor: page.nextCursor, table: renderTaskStatusTable(matching).join('\n') })
 }
 
 // --- task_escalation_read ------------------------------------------------

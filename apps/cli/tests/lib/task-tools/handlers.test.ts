@@ -9,11 +9,15 @@ import {
   buildReviewRecord,
   capTail,
   capText,
+  latestNodeRunPerName,
   type PrComment,
   type PrReadForge,
+  type RollupNode,
   sanitizeForgeLogTail,
   sanitizeForgeText,
   stripAnsi,
+  summarizeChecks,
+  taskPrFactsFrom,
   taskPrReadHandler,
   toChecks
 } from '../../../src/lib/task-tools/pr-read.js'
@@ -600,5 +604,150 @@ describe('toChecks — every unauthored field leaves through the sanitizer (O1, 
     expect(name.length).toBe(201)
     expect((checks[1]?.name ?? '').length).toBe(201)
     expect(checks[1]?.detailsUrl).not.toContain('hunter2')
+  })
+})
+
+describe('the status table’s own pull-request columns', () => {
+  const PRINCIPALS = ['daniboomerang']
+  const HEAD = 'abc123def456'
+
+  function check(name: string, status: string, conclusion: string | null, startedAt?: string): RollupNode {
+    return { __typename: 'CheckRun', name, status, conclusion, ...(startedAt === undefined ? {} : { startedAt }) }
+  }
+
+  function verdictComment(body: string): PrComment {
+    return { body, author: 'daniboomerang' }
+  }
+
+  describe('latestNodeRunPerName', () => {
+    it('keeps the newest run of a re-run check, so a failure its re-run superseded never counts', () => {
+      const nodes = [
+        check('vinaya check --all', 'COMPLETED', 'FAILURE', '2026-09-27T09:00:00Z'),
+        check('vinaya check --all', 'COMPLETED', 'SUCCESS', '2026-09-27T10:00:00Z'),
+        check('Build', 'COMPLETED', 'SUCCESS', '2026-09-27T09:00:00Z')
+      ]
+      const latest = latestNodeRunPerName(nodes)
+      expect(latest).toHaveLength(2)
+      expect(latest.find((n) => n.name === 'vinaya check --all')?.conclusion).toBe('SUCCESS')
+    })
+
+    it('never lets an unreadable or absent start time displace a run whose own time reads', () => {
+      const nodes = [
+        check('Build', 'COMPLETED', 'SUCCESS', '2026-09-27T10:00:00Z'),
+        check('Build', 'COMPLETED', 'FAILURE', 'not-a-time'),
+        check('Build', 'COMPLETED', 'FAILURE')
+      ]
+      expect(latestNodeRunPerName(nodes)[0]?.conclusion).toBe('SUCCESS')
+    })
+
+    it('groups a plain commit status by its own context, and keeps an unnamed node as itself', () => {
+      const nodes: RollupNode[] = [
+        { __typename: 'StatusContext', context: 'ci/external', state: 'SUCCESS', startedAt: '2026-09-27T09:00:00Z' },
+        { __typename: 'StatusContext', context: 'ci/external', state: 'FAILURE', startedAt: '2026-09-27T10:00:00Z' },
+        { __typename: 'CheckRun', status: 'COMPLETED', conclusion: 'SUCCESS' }
+      ]
+      const latest = latestNodeRunPerName(nodes)
+      expect(latest).toHaveLength(2)
+      expect(latest.find((n) => n.context === 'ci/external')?.state).toBe('FAILURE')
+    })
+  })
+
+  describe('summarizeChecks', () => {
+    it('reads a suite that all passed as green, counting the three conclusions the driver also passes', () => {
+      const checks = toChecks(
+        [check('a', 'COMPLETED', 'SUCCESS'), check('b', 'COMPLETED', 'NEUTRAL'), check('c', 'COMPLETED', 'SKIPPED')],
+        () => null
+      )
+      expect(summarizeChecks(checks)).toBe('green')
+    })
+
+    it('reads anything still running as running, even beside a failure — the same precedence the driver polls on', () => {
+      const checks = toChecks([check('a', 'COMPLETED', 'FAILURE'), check('b', 'IN_PROGRESS', null)], () => null)
+      expect(summarizeChecks(checks)).toBe('running')
+    })
+
+    it('reads a completed suite with a failure as red', () => {
+      const checks = toChecks([check('a', 'COMPLETED', 'SUCCESS'), check('b', 'COMPLETED', 'FAILURE')], () => null)
+      expect(summarizeChecks(checks)).toBe('red')
+    })
+
+    it('reads a head with no check reported at all as running, never as green', () => {
+      expect(summarizeChecks([])).toBe('running')
+    })
+
+    it('reads a pending commit status as running rather than as a failure', () => {
+      const checks = toChecks([{ __typename: 'StatusContext', context: 'ci/external', state: 'PENDING' }], () => null)
+      expect(summarizeChecks(checks)).toBe('running')
+    })
+  })
+
+  describe('taskPrFactsFrom', () => {
+    it('summarizes the mechanical suite, the gate and both verdicts on the head, from one payload', () => {
+      const facts = taskPrFactsFrom(
+        HEAD,
+        [
+          check('Build, lint & typecheck', 'COMPLETED', 'SUCCESS'),
+          check('vinaya review gate', 'COMPLETED', 'SUCCESS'),
+          check('vinaya check principal-test-plan-wait', 'COMPLETED', 'FAILURE')
+        ],
+        [
+          verdictComment(`VERDICT: APPROVE\nJudged head: ${HEAD}`),
+          verdictComment(`VERDICT: PASS\nJudged head: ${HEAD}`)
+        ],
+        PRINCIPALS
+      )
+      expect(facts).toEqual({ head: HEAD, ci: 'green', gate: 'green', codeReview: 'APPROVE', security: 'PASS' })
+    })
+
+    it('excludes the review gate and the principal-test-plan wait from the CI word, exactly as the driver does', () => {
+      // Both are red; neither is the mechanical suite, so CI is still green.
+      const facts = taskPrFactsFrom(
+        HEAD,
+        [
+          check('Build, lint & typecheck', 'COMPLETED', 'SUCCESS'),
+          check('vinaya review gate', 'COMPLETED', 'FAILURE'),
+          check('vinaya check principal-test-plan-wait', 'COMPLETED', 'FAILURE')
+        ],
+        [],
+        PRINCIPALS
+      )
+      expect(facts.ci).toBe('green')
+      expect(facts.gate).toBe('red')
+    })
+
+    it('reports no gate at all when the forge reports no gate check on this head', () => {
+      const facts = taskPrFactsFrom(HEAD, [check('Build', 'COMPLETED', 'SUCCESS')], [], PRINCIPALS)
+      expect(facts.gate).toBeNull()
+    })
+
+    it('drops a verdict bound to an older head — a stale approval is not an approval of this head', () => {
+      const facts = taskPrFactsFrom(
+        HEAD,
+        [],
+        [
+          verdictComment('VERDICT: APPROVE\nJudged head: 999999999999'),
+          verdictComment(`VERDICT: PASS\nJudged head: ${HEAD}`)
+        ],
+        PRINCIPALS
+      )
+      expect(facts.codeReview).toBeNull()
+      expect(facts.security).toBe('PASS')
+    })
+
+    it('carries no verdict at all when the forge reported no head to bind one to', () => {
+      const facts = taskPrFactsFrom(null, [], [verdictComment(`VERDICT: APPROVE\nJudged head: ${HEAD}`)], PRINCIPALS)
+      expect(facts.head).toBeNull()
+      expect(facts.codeReview).toBeNull()
+    })
+
+    it('counts no verdict from outside the principal allowlist — the same trust boundary the gate applies', () => {
+      const facts = taskPrFactsFrom(
+        HEAD,
+        [],
+        [{ body: `VERDICT: APPROVE\nJudged head: ${HEAD}`, author: 'a-drive-by' }],
+        PRINCIPALS
+      )
+      expect(facts.codeReview).toBeNull()
+    })
   })
 })

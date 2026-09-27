@@ -60,6 +60,8 @@ import { homedir } from 'node:os'
 import { redact } from '@attalabs/aeg-core'
 import { markerComments, principalAllowlist } from '../dev-review-loop/developer-dispatch.js'
 import { sh } from '../dev-review-loop/gate-reading.js'
+import { PRINCIPAL_TEST_PLAN_WAIT_CHECK_RUN_NAME } from '../principal-test-plan-wait-check-name.js'
+import { REVIEW_GATE_CHECK_RUN_NAME } from '../review-gate-check-name.js'
 import { resolveRowForRef, type TaskToolCallResult } from './handlers.js'
 
 /** One comment as the forge reports it — body plus the login that authored it, the only two fields any derivation below reads. */
@@ -238,6 +240,177 @@ function summaryTableOf(body: string): string {
   return start === -1 ? body : lines.slice(start).join('\n')
 }
 
+// --- the status table's own pull-request columns ------------------------------
+
+/**
+ * A head's checks as ONE word. The same three-value reading
+ * `gate-reading.ts`'s `fetchCiConclusion` gives the driver, and in the same
+ * order of precedence: anything still running wins over a failure, because a
+ * head whose suite has not finished has not failed yet — the driver polls on
+ * exactly that reading, and a status table that disagreed with it would tell
+ * the Principal a run was red while the loop was still waiting.
+ */
+export type TaskPrCheckSummary = 'green' | 'red' | 'running'
+
+/**
+ * Everything a status row shows about its own pull request, from ONE forge
+ * read of that pull request — never one read per column.
+ *
+ * `ci` is the MECHANICAL suite only: the review gate's own check-run and the
+ * principal-test-plan wait are excluded, the same two `fetchCiConclusion`
+ * excludes and for the same reasons — the gate is not CI, and the wait's red
+ * is the Principal's own hold rather than a failure anyone can push a fix
+ * for. `gate` is the review gate's own conclusion, read as the same three
+ * words, and `null` when the forge reports no such check on this head at all.
+ *
+ * `codeReview`/`security` are the newest verdict values the merge gate's own
+ * extractors read, and ONLY when the verdict is bound to `head`: a verdict
+ * that judged an earlier head is not a verdict on this one, and reporting it
+ * as if it were is how a stale approval reads as a current one.
+ */
+export type TaskPrFacts = {
+  /** The head the columns below were read against — `null` when the forge reported none. */
+  head: string | null
+  ci: TaskPrCheckSummary
+  gate: TaskPrCheckSummary | null
+  /** `APPROVE`, `REQUEST CHANGES` or `LGTM` on this head, else `null`. */
+  codeReview: string | null
+  /** `PASS` or `FAIL` on this head, else `null`. */
+  security: string | null
+}
+
+/**
+ * One node per check name — the newest run by `startedAt`, so a check re-run
+ * after a failure is judged by the run that superseded it rather than by both.
+ * The same dedupe rule `gate-reading.ts` applies to the driver's own check-run
+ * read (newest start wins, never the highest id, ties keeping the first seen),
+ * applied here at the NODE level because `toChecks` deliberately does not
+ * dedupe: `task_pr_read` answers "what does the forge report on this head",
+ * and collapsing two same-named contexts answers a different question.
+ *
+ * A node with no name at all cannot be grouped by one and is kept as itself.
+ */
+export function latestNodeRunPerName(nodes: readonly RollupNode[]): RollupNode[] {
+  const latest = new Map<string, RollupNode>()
+  const unnamed: RollupNode[] = []
+  for (const node of nodes) {
+    const name = node.name ?? node.context ?? null
+    if (name === null) {
+      unnamed.push(node)
+      continue
+    }
+    const seen = latest.get(name)
+    if (seen === undefined) {
+      latest.set(name, node)
+      continue
+    }
+    const at = Date.parse(node.startedAt ?? '')
+    const seenAt = Date.parse(seen.startedAt ?? '')
+    // An unparseable or absent start time never outranks one that reads: a
+    // comparison that cannot be made is not evidence for replacing what is
+    // already held.
+    if (Number.isFinite(at) && (!Number.isFinite(seenAt) || at > seenAt)) latest.set(name, node)
+  }
+  return [...latest.values(), ...unnamed]
+}
+
+/** `EXPECTED` is a status context the forge is still waiting for, `PENDING` one still reporting — neither has concluded, so neither is a failure. */
+const RUNNING_CONCLUSIONS = new Set(['PENDING', 'EXPECTED'])
+
+/** One check's own outcome. A check the forge has not completed, and a completed one carrying no conclusion or a not-yet-concluded one, are both still running — never counted as a pass and never as a failure. */
+function checkOutcome(check: TaskPrCheck): 'pass' | 'fail' | 'running' {
+  if (check.status.toUpperCase() !== 'COMPLETED') return 'running'
+  const conclusion = check.conclusion === null ? null : check.conclusion.toUpperCase()
+  if (conclusion === null || RUNNING_CONCLUSIONS.has(conclusion)) return 'running'
+  return PASSING_CONCLUSIONS.has(conclusion) ? 'pass' : 'fail'
+}
+
+/** The one word a set of checks reads as — see {@link TaskPrCheckSummary} for why running precedes red. A head with no checks reported at all is `running`: nothing has concluded on it yet. */
+export function summarizeChecks(checks: readonly TaskPrCheck[]): TaskPrCheckSummary {
+  if (checks.length === 0) return 'running'
+  const outcomes = checks.map(checkOutcome)
+  if (outcomes.includes('running')) return 'running'
+  return outcomes.every((outcome) => outcome === 'pass') ? 'green' : 'red'
+}
+
+/** A verdict this pull request cast on THIS head, or `null` — a verdict bound to another head (or to none) says nothing about the head a reader is looking at. */
+function verdictOnHead(
+  verdicts: readonly TaskPrVerdict[],
+  role: TaskPrVerdict['role'],
+  head: string | null
+): string | null {
+  if (head === null) return null
+  const found = verdicts.find((verdict) => verdict.role === role && verdict.judgedHead === head)
+  return found ? found.value : null
+}
+
+/**
+ * The pure half of the status table's pull-request columns: the same
+ * `toChecks` flattening and the same `buildReviewRecord` derivation
+ * `task_pr_read` already uses, read for a summary rather than for a
+ * diagnosis. No `gh` call in it, so every column is unit-testable against
+ * fixtures.
+ *
+ * `toChecks` is handed a failure-detail reader that answers nothing: a
+ * failure summary is what `task_pr_read` exists to give, and reading a job
+ * log per red check would turn one status read into many forge calls for a
+ * cell that only ever shows one word.
+ */
+export function taskPrFactsFrom(
+  head: string | null,
+  nodes: readonly RollupNode[],
+  comments: readonly PrComment[],
+  allowlist: readonly string[]
+): TaskPrFacts {
+  const checks = toChecks(latestNodeRunPerName(nodes), () => null)
+  const gate = checks.find((check) => check.name === REVIEW_GATE_CHECK_RUN_NAME) ?? null
+  const mechanical = checks.filter(
+    (check) => check.name !== REVIEW_GATE_CHECK_RUN_NAME && check.name !== PRINCIPAL_TEST_PLAN_WAIT_CHECK_RUN_NAME
+  )
+  const review = buildReviewRecord(comments, allowlist)
+  return {
+    head,
+    ci: summarizeChecks(mechanical),
+    gate: gate === null ? null : summarizeChecks([gate]),
+    codeReview: verdictOnHead(review.verdicts, 'code-review', head),
+    security: verdictOnHead(review.verdicts, 'security', head)
+  }
+}
+
+/**
+ * ONE forge read per pull request — `gh pr view` asked for the head, the
+ * status-check rollup and the comments together, because every column above
+ * comes out of that one payload and a read per column would multiply a status
+ * listing's forge cost by the number of columns.
+ *
+ * Deliberately NOT remembered between status reads, unlike the confidence
+ * column's own comment read: a check that was green on the last read is not
+ * green now, and the Operator doctrine's reporting rule turns on exactly that
+ * — a cached CI word would be an earlier reading served as current.
+ *
+ * `null` when the read or the parse failed. That is an UNKNOWN, not an
+ * absence, and a caller must render it as one: reporting a forge read that
+ * never answered as "no record carries this" is the one invented fact this
+ * table avoids everywhere else.
+ */
+export function readTaskPrFacts(pr: number, allowlist: readonly string[]): TaskPrFacts | null {
+  let raw: string
+  try {
+    raw = sh('gh', ['pr', 'view', String(pr), '--json', 'headRefOid,statusCheckRollup,comments'])
+  } catch {
+    return null
+  }
+  try {
+    const parsed = JSON.parse(raw) as { headRefOid?: string | null; statusCheckRollup?: RollupNode[] | null }
+    // The comments are parsed by the loop's OWN parser, out of the same raw
+    // payload — one parser for a comment's author, never a second
+    // `author.login` mapping beside it.
+    return taskPrFactsFrom(parsed.headRefOid ?? null, parsed.statusCheckRollup ?? [], markerComments(raw), allowlist)
+  } catch {
+    return null
+  }
+}
+
 // --- the forge half ----------------------------------------------------------
 
 /** Every forge read this tool makes, behind one injectable seam — so the handler's own refusals and its composition are testable with no `gh` on `PATH`. */
@@ -263,6 +436,8 @@ export type RollupNode = {
   __typename?: string
   databaseId?: number | null
   name?: string | null
+  /** When this run started, as the forge reports it — read only by `latestNodeRunPerName`, which needs it to tell a re-run from the run it superseded. Absent on a `StatusContext`, and on a read that never asked for it. */
+  startedAt?: string | null
   status?: string | null
   conclusion?: string | null
   isRequired?: boolean | null

@@ -427,6 +427,8 @@ export {
   TASK_TOOL_NAMES,
   taskToolByName,
   taskToolError,
+  isTaskNextAction,
+  TASK_NEXT_ACTIONS,
   taskStartRequestIdentity,
   TaskStartResultSchema,
   EscalationEvidenceSchema,
@@ -464,6 +466,7 @@ export {
 export type {
   Freshness,
   OperatorGrantedTool,
+  TaskNextAction,
   PageRequest,
   RequestedAuthority,
   TaskCancelInput,

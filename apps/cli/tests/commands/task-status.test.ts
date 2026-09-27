@@ -88,9 +88,23 @@ function withoutTrustAnchorWarning(stdout: string): string {
     .join('\n')
 }
 
-/** The table's rows as cell arrays — the column padding is presentation (`renderTaskStatusTable` pads to the widest cell), the cells are the contract. */
-function outputCells(stdout: string): string[][] {
-  return outputLines(stdout).map((line) => line.split(/\s{2,}/))
+/**
+ * The table's own rows as cell arrays — the header first, then one per task.
+ * The pipes are what make the output markdown wherever it is pasted and the
+ * column padding is presentation (`renderTaskStatusTable` pads to the widest
+ * cell); the cells are the contract. The markdown separator, the history
+ * sentence and the read footer are lines ABOUT the table rather than rows of
+ * it, and are asserted through `outputLines` instead.
+ */
+function tableCells(stdout: string): string[][] {
+  return outputLines(stdout)
+    .filter((line) => line.startsWith('|') && !/^\|[\s|-]+\|$/.test(line))
+    .map((line) =>
+      line
+        .split('|')
+        .slice(1, -1)
+        .map((cell) => cell.trim())
+    )
 }
 
 /** A timestamp this many minutes before now — what a run's control record carries while it sits in a phase, so the fixture asserts a real elapsed time rather than a frozen date drifting further out every day. */
@@ -175,6 +189,41 @@ const PR_BY_BRANCH: Record<string, number> = {
   'task/issue-604': 704
 }
 
+/** A pull request's own head, shaped like a real sha so the table's abbreviation is the first seven characters of something a command could resolve. */
+function headOf(pr: number): string {
+  return `${pr}${'a'.repeat(37)}`
+}
+
+function checkRun(name: string, status: string, conclusion: string | null) {
+  return { __typename: 'CheckRun', name, status, conclusion, startedAt: '2026-09-22T12:00:00Z' }
+}
+
+/**
+ * What the forge reports on each task pull request's own head — the one payload
+ * `task-status.ts`'s single `gh pr view` read per pull request asks for
+ * (`headRefOid`, `statusCheckRollup` and `comments` together).
+ *
+ * One of each state the table has a word for: a suite still running (701), a
+ * failed one (702), a green head whose review gate passed and whose verdicts
+ * both judged that head (703 — the merge-ready row), and a green head with no
+ * gate check reported yet (704).
+ */
+const PR_ROLLUP: Record<number, ReturnType<typeof checkRun>[]> = {
+  701: [checkRun('Build, lint & typecheck', 'IN_PROGRESS', null)],
+  702: [checkRun('Build, lint & typecheck', 'COMPLETED', 'FAILURE')],
+  703: [
+    checkRun('Build, lint & typecheck', 'COMPLETED', 'SUCCESS'),
+    checkRun('vinaya review gate', 'COMPLETED', 'SUCCESS')
+  ],
+  704: [checkRun('Build, lint & typecheck', 'COMPLETED', 'SUCCESS')]
+}
+
+/** Both verdicts on 703's own head — principal-authored, and bound to the head the gate went green on. */
+const PR_703_VERDICTS = [
+  principalComment(`VERDICT: APPROVE\n\nJudged head: ${headOf(703)}\n`),
+  principalComment(`VERDICT: PASS\n\nJudged head: ${headOf(703)}\n`)
+]
+
 function stubGh(home: string): string {
   const dir = join(home, 'fake-forge')
   mkdirSync(dir, { recursive: true })
@@ -184,6 +233,18 @@ function stubGh(home: string): string {
       ([branch, number]) =>
         `    ${branch}) cat <<'JSON'\n${JSON.stringify([{ number, headRefName: branch }])}\nJSON\n    ;;`
     )
+    .join('\n')
+  // One `gh pr view` payload per task pull request, carrying the three fields
+  // the status read asks for together — the same single read production makes.
+  const prViewCases = Object.values(PR_BY_BRANCH)
+    .map((pr) => {
+      const comments = [
+        ...(pr === 703 ? [...PUBLISHED_SUMMARY_COMMENTS, ...PR_703_VERDICTS] : []),
+        ...(pr === 703 ? [] : MERGED_PR_COMMENTS)
+      ]
+      const payload = { headRefOid: headOf(pr), statusCheckRollup: PR_ROLLUP[pr] ?? [], comments }
+      return `    ${pr}) cat <<'JSON'\n${JSON.stringify(payload)}\nJSON\n    ;;`
+    })
     .join('\n')
   const script = `#!/bin/sh
 if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
@@ -224,10 +285,7 @@ ${prCases}
 fi
 if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
   case "$3" in
-    703) cat <<'JSON'
-${JSON.stringify({ comments: PUBLISHED_SUMMARY_COMMENTS })}
-JSON
-    ;;
+${prViewCases}
     *) cat <<'JSON'
 ${JSON.stringify({ comments: MERGED_PR_COMMENTS })}
 JSON
@@ -401,8 +459,23 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
 
     const r = runCli(['task', 'status'], env)
 
-    expect(outputCells(r.stdout).slice(0, 6)).toEqual([
-      ['task', 'issue', 'pr', 'state', 'round', 'phase', 'in phase', 'confidence', 'typical (history)'],
+    expect(tableCells(r.stdout).slice(0, 6)).toEqual([
+      [
+        'task',
+        'issue',
+        'pr',
+        'state',
+        'round',
+        'phase',
+        'in phase',
+        'confidence',
+        'typical (history)',
+        'head',
+        'ci',
+        'code review',
+        'security',
+        'gate'
+      ],
       [
         '[demo] 1',
         '#601',
@@ -416,20 +489,74 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
         '90% (round 2, stated)',
         // The fixture's merged pull requests carry reviewing intervals only, so
         // `developing` has no history to compare against (O4).
+        '—',
+        // Its own pull request's head, its suite still running, and no verdict
+        // or gate conclusion on that head yet.
+        '701aaaa',
+        'running',
+        '—',
+        '—',
         '—'
       ],
-      ['[demo] 2', '#602', '#702', 'paused (escalation)', '1', 'paused', '40m', '—', '—'],
+      [
+        '[demo] 2',
+        '#602',
+        '#702',
+        'paused (escalation)',
+        '1',
+        'paused',
+        '40m',
+        '—',
+        '—',
+        '702aaaa',
+        'red',
+        '—',
+        '—',
+        '—'
+      ],
       // A one-round published run: its summary's own round-1 cell is the
       // not-asked glyph, so the column reads as no record rather than telling a
       // reader the developer skipped a statement nothing ever requested. The
-      // phase is marked last-recorded — nothing is publishing any more.
-      ['[demo] 3', '#603', '#703', 'published', '1', 'publishing (last recorded)', '2m', '—', '—'],
+      // phase is marked last-recorded — nothing is publishing any more. Its
+      // head is green, gated and approved — the merge-ready shape.
+      [
+        '[demo] 3',
+        '#603',
+        '#703',
+        'published',
+        '1',
+        'publishing (last recorded)',
+        '2m',
+        '—',
+        '—',
+        '703aaaa',
+        'green',
+        'approve',
+        'pass',
+        'green'
+      ],
       // O4: the planned task (brief not frozen) lists as not started, never
-      // omitted — and every fact it has no record for reads as one dash.
-      ['[demo] 4', '#606', '—', 'not started', '—', '—', '—', '—', '—'],
+      // omitted — and every fact it has no record for reads as one dash, its
+      // pull-request columns included: there is no pull request to read.
+      ['[demo] 4', '#606', '—', 'not started', '—', '—', '—', '—', '—', '—', '—', '—', '—', '—'],
       // Three merged task pull requests of history, each a six-minute reviewing
       // interval — history, never a claim about this run.
-      ['[backlog] 604', '#604', '#704', `running (pid ${process.pid})`, '3', 'reviewing', '4m', '—', '6m (n=3)']
+      [
+        '[backlog] 604',
+        '#604',
+        '#704',
+        `running (pid ${process.pid})`,
+        '3',
+        'reviewing',
+        '4m',
+        '—',
+        '6m (n=3)',
+        '704aaaa',
+        'green',
+        '—',
+        '—',
+        '—'
+      ]
     ])
     expect(withoutTrustAnchorWarning(r.stdout)).toContain('history, not a prediction')
     expect(r.status).toBe(0)
@@ -438,12 +565,42 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
   it('prints no driver for a frozen task with nothing in the outbox, and not started for a planned one', () => {
     const { env } = setUp()
     const r = runCli(['task', 'status'], env)
-    expect(outputCells(r.stdout)).toEqual([
-      ['task', 'issue', 'pr', 'state', 'round', 'phase', 'in phase', 'confidence', 'typical (history)'],
-      ['[demo] 1', '#601', '#701', 'no driver', '—', '—', '—', '—', '—'],
-      ['[demo] 2', '#602', '#702', 'no driver', '—', '—', '—', '—', '—'],
-      ['[demo] 3', '#603', '#703', 'no driver', '—', '—', '—', '—', '—'],
-      ['[demo] 4', '#606', '—', 'not started', '—', '—', '—', '—', '—']
+    expect(tableCells(r.stdout)).toEqual([
+      [
+        'task',
+        'issue',
+        'pr',
+        'state',
+        'round',
+        'phase',
+        'in phase',
+        'confidence',
+        'typical (history)',
+        'head',
+        'ci',
+        'code review',
+        'security',
+        'gate'
+      ],
+      ['[demo] 1', '#601', '#701', 'no driver', '—', '—', '—', '—', '—', '701aaaa', 'running', '—', '—', '—'],
+      ['[demo] 2', '#602', '#702', 'no driver', '—', '—', '—', '—', '—', '702aaaa', 'red', '—', '—', '—'],
+      [
+        '[demo] 3',
+        '#603',
+        '#703',
+        'no driver',
+        '—',
+        '—',
+        '—',
+        '—',
+        '—',
+        '703aaaa',
+        'green',
+        'approve',
+        'pass',
+        'green'
+      ],
+      ['[demo] 4', '#606', '—', 'not started', '—', '—', '—', '—', '—', '—', '—', '—', '—', '—']
     ])
     // No row is in a phase, so no row carries a typical time — and the
     // history sentence is not printed at all (O4).
@@ -473,7 +630,7 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
 
     const r = runCli(['task', 'status'], env)
 
-    expect(outputCells(r.stdout).map((cells) => [cells[0], cells[1], cells[2], cells[3]])).toEqual([
+    expect(tableCells(r.stdout).map((cells) => [cells[0], cells[1], cells[2], cells[3]])).toEqual([
       ['task', 'issue', 'pr', 'state'],
       ['[demo] 1', '#601', '#701', `running (pid ${process.pid})`],
       ['[demo] 2', '#602', '#702', 'paused (escalation)'],
@@ -514,7 +671,16 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
       lastConfidenceUnread: false,
       // Every past interval this fixture's history carries is a REVIEWING one;
       // developing has none, so this phase reports no typical time (O4).
-      phaseHistory: null
+      phaseHistory: null,
+      // The pull-request facts the table's own head/CI/verdict/gate columns
+      // render, carried in the envelope too — one forge read per pull request.
+      prFacts: {
+        head: `701${'a'.repeat(37)}`,
+        ci: 'running',
+        gate: null,
+        codeReview: null,
+        security: null
+      }
     })
     expect(parsed.data.tasks[3]).toEqual({
       tranche: 'demo',
@@ -529,7 +695,9 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
       phaseIsCurrent: null,
       lastConfidence: null,
       lastConfidenceUnread: false,
-      phaseHistory: null
+      phaseHistory: null,
+      // No pull request, so nothing was read and nothing is claimed.
+      prFacts: null
     })
   })
 })
@@ -552,13 +720,45 @@ describe('vinaya task status <tranche> <n> (O2 — the single-task form)', () =>
 
     const r = runCli(['task', 'status', 'demo', '2'], env)
 
-    expect(outputCells(r.stdout)).toEqual([
-      ['task', 'issue', 'pr', 'state', 'round', 'phase', 'in phase', 'confidence', 'typical (history)'],
-      ['[demo] 2', '#602', '#702', 'paused (escalation)', '1', 'paused', '40m', '—', '—'],
-      ['reviewer (round 1): VERDICT: REQUEST CHANGES'],
-      ['security (round 1): VERDICT: PASS'],
-      ['Resume with: vinaya dev-review-loop --resume 702']
+    expect(tableCells(r.stdout)).toEqual([
+      [
+        'task',
+        'issue',
+        'pr',
+        'state',
+        'round',
+        'phase',
+        'in phase',
+        'confidence',
+        'typical (history)',
+        'head',
+        'ci',
+        'code review',
+        'security',
+        'gate'
+      ],
+      [
+        '[demo] 2',
+        '#602',
+        '#702',
+        'paused (escalation)',
+        '1',
+        'paused',
+        '40m',
+        '—',
+        '—',
+        '702aaaa',
+        'red',
+        '—',
+        '—',
+        '—'
+      ]
     ])
+    // The verdict lines and the resume command are printed under the table,
+    // never as rows of it.
+    expect(outputLines(r.stdout)).toContain('reviewer (round 1): VERDICT: REQUEST CHANGES')
+    expect(outputLines(r.stdout)).toContain('security (round 1): VERDICT: PASS')
+    expect(outputLines(r.stdout)).toContain('Resume with: vinaya dev-review-loop --resume 702')
     expect(r.status).toBe(0)
   })
 
@@ -581,7 +781,7 @@ describe('vinaya task status <tranche> <n> (O2 — the single-task form)', () =>
 
     const r = runCli(['task', 'status', 'demo', '2'], env)
 
-    const row = outputCells(r.stdout)[1] as string[]
+    const row = tableCells(r.stdout)[1] as string[]
     expect(row.slice(4, 7)).toEqual(['2', 'developing (last recorded)', '90m'])
     expect(r.status).toBe(0)
   })
@@ -592,9 +792,39 @@ describe('vinaya task status <tranche> <n> (O2 — the single-task form)', () =>
 
     const r = runCli(['task', 'status', 'demo', '3'], env)
 
-    expect(outputCells(r.stdout)).toEqual([
-      ['task', 'issue', 'pr', 'state', 'round', 'phase', 'in phase', 'confidence', 'typical (history)'],
-      ['[demo] 3', '#603', '#703', 'published', '1', 'publishing (last recorded)', '2m', '—', '—']
+    expect(tableCells(r.stdout)).toEqual([
+      [
+        'task',
+        'issue',
+        'pr',
+        'state',
+        'round',
+        'phase',
+        'in phase',
+        'confidence',
+        'typical (history)',
+        'head',
+        'ci',
+        'code review',
+        'security',
+        'gate'
+      ],
+      [
+        '[demo] 3',
+        '#603',
+        '#703',
+        'published',
+        '1',
+        'publishing (last recorded)',
+        '2m',
+        '—',
+        '—',
+        '703aaaa',
+        'green',
+        'approve',
+        'pass',
+        'green'
+      ]
     ])
     expect(r.status).toBe(0)
   })
@@ -602,9 +832,24 @@ describe('vinaya task status <tranche> <n> (O2 — the single-task form)', () =>
   it('reads a planned task (brief not frozen) as not started, never a no-brief refusal (O4)', () => {
     const { env } = setUp()
     const r = runCli(['task', 'status', 'demo', '4'], env)
-    expect(outputCells(r.stdout)).toEqual([
-      ['task', 'issue', 'pr', 'state', 'round', 'phase', 'in phase', 'confidence', 'typical (history)'],
-      ['[demo] 4', '#606', '—', 'not started', '—', '—', '—', '—', '—']
+    expect(tableCells(r.stdout)).toEqual([
+      [
+        'task',
+        'issue',
+        'pr',
+        'state',
+        'round',
+        'phase',
+        'in phase',
+        'confidence',
+        'typical (history)',
+        'head',
+        'ci',
+        'code review',
+        'security',
+        'gate'
+      ],
+      ['[demo] 4', '#606', '—', 'not started', '—', '—', '—', '—', '—', '—', '—', '—', '—', '—']
     ])
     expect(r.status).toBe(0)
   })

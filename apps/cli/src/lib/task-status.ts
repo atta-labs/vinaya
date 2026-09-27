@@ -24,6 +24,7 @@
 
 import { execFileSync } from 'node:child_process'
 import { readFileSync, readdirSync } from 'node:fs'
+import { hostname } from 'node:os'
 import {
   defaultControlStoreDeps,
   isPrincipal,
@@ -57,6 +58,7 @@ import {
   readStartClaims,
   type StartRecord
 } from './task-tools/start.js'
+import { readTaskPrFacts, type TaskPrFacts } from './task-tools/pr-read.js'
 import { getProcessSnapshot, type ProcessSnapshot } from './dispatch.js'
 
 /**
@@ -862,6 +864,14 @@ export type TaskStatusRow = {
   lastConfidenceUnread: boolean
   /** What this phase has typically taken on this repository's recently merged tasks — history, never a forecast; `null` for a phase with no comparable history or too few past intervals. */
   phaseHistory: TaskPhaseHistory | null
+  /**
+   * What this row's own pull request reports on its head — `null` both for a
+   * row with no pull request and for a read that failed, told apart by `pr`
+   * itself: a row with a pull request and no facts is an unread pull request,
+   * which the table says rather than showing an absence the forge never
+   * reported.
+   */
+  prFacts: TaskPrFacts | null
 }
 
 /**
@@ -907,14 +917,25 @@ function renderStateText(state: TaskLoopState): string {
 }
 
 /**
- * One table, one row per task (O3) — the same columns whether one task is
- * named or every open one is listed. A fact with no record reads `—`: an empty
- * cell is a recorded absence, never a zero or a guess.
+ * One table, one row per task — the same columns whether one task is named or
+ * every open one is listed, and the same table `task_status` returns in its own
+ * `table` field, rendered by this one function so the tool and the command can
+ * never print different columns for the same records. A fact with no record
+ * reads `—`: an empty cell is a recorded absence, never a zero or a guess.
+ *
+ * Markdown, and padded: the pipes make it a table wherever an Operator pastes
+ * it as returned, and the padding keeps it readable in a terminal, so one
+ * rendering serves both readers.
  *
  * The typical-time column is labelled as history in the header AND carries its
  * own sample count per row, so a reader can never mistake it for a forecast of
  * when this run leaves this phase. `renderTaskStatusHistoryNote` is the one
  * sentence that says so in words.
+ *
+ * The five pull-request columns are a SUMMARY of the head, not a diagnosis of
+ * it: one word for CI, the newest verdict on that head from each reviewer, and
+ * the review gate's own conclusion. Why a check failed is `task_pr_read`'s
+ * answer, and a `red` word here is the reason to reach for it.
  */
 const TABLE_HEADERS = [
   'task',
@@ -925,11 +946,19 @@ const TABLE_HEADERS = [
   'phase',
   'in phase',
   'confidence',
-  'typical (history)'
+  'typical (history)',
+  'head',
+  'ci',
+  'code review',
+  'security',
+  'gate'
 ] as const
 
 /** An absent cell. One glyph for every "no record carries this" case, so a reader learns it once. */
 const NO_VALUE = '—'
+
+/** A read this status read attempted and could not complete — an unknown, never the absence `NO_VALUE` states. */
+const NOT_READ = 'not read'
 
 /**
  * A `stated` figure is the developer's OWN statement for a round whose review
@@ -946,7 +975,7 @@ const NO_VALUE = '—'
 function confidenceCell(confidence: TaskConfidence | null, unread: boolean): string {
   // A read this status read never made is not an absence: saying `—` here would
   // tell a reader no record carries a figure when nothing looked.
-  if (unread) return 'not read'
+  if (unread) return NOT_READ
   if (confidence === null) return NO_VALUE
   const qualifier = confidence.source === 'stated' ? `round ${confidence.round}, stated` : `round ${confidence.round}`
   if (confidence.percent === null) return `absent (${qualifier})`
@@ -964,6 +993,50 @@ function historyCell(history: TaskPhaseHistory | null): string {
   return `${history.typicalPhaseMinutes}m (n=${history.typicalPhaseSamples})`
 }
 
+/** The mark on a phase that has already run past twice what the same phase typically took here. A phase with no typical time never carries it — there is nothing to be twice OF, and a mark with no comparison behind it would be a judgement this table never makes. */
+const OVER_TYPICAL_MARK = '⚠'
+
+/**
+ * Has this phase run past twice its own typical time? History compared against
+ * history: both sides are recorded facts, and the comparison is still not a
+ * forecast — it says where this run sits against what already merged, never
+ * when it will finish.
+ */
+export function phaseIsPastTwiceTypical(row: TaskStatusRow): boolean {
+  if (row.phaseHistory === null || row.minutesInPhase === null) return false
+  return row.minutesInPhase > 2 * row.phaseHistory.typicalPhaseMinutes
+}
+
+function inPhaseCell(row: TaskStatusRow): string {
+  if (row.minutesInPhase === null) return NO_VALUE
+  return phaseIsPastTwiceTypical(row) ? `${row.minutesInPhase}m ${OVER_TYPICAL_MARK}` : `${row.minutesInPhase}m`
+}
+
+/**
+ * How many characters of a head sha the table shows. A row is one line and a
+ * pull request's head is the one fact on it a reader carries to another tool,
+ * so it is abbreviated the way git itself abbreviates — never truncated to
+ * something no command would resolve.
+ */
+const HEAD_DISPLAY_CHARS = 7
+
+/** The pull-request columns, in the header's own order: head, CI, code review, security, gate. */
+function prCells(row: TaskStatusRow): string[] {
+  // A row with no pull request has nothing to report here, and a read that
+  // failed has nothing it MANAGED to report — two different cells, because a
+  // dash would claim the forge answered.
+  if (row.pr === null) return [NO_VALUE, NO_VALUE, NO_VALUE, NO_VALUE, NO_VALUE]
+  const facts = row.prFacts
+  if (facts === null) return [NOT_READ, NOT_READ, NOT_READ, NOT_READ, NOT_READ]
+  return [
+    facts.head === null ? NO_VALUE : facts.head.slice(0, HEAD_DISPLAY_CHARS),
+    facts.ci,
+    facts.codeReview === null ? NO_VALUE : facts.codeReview.toLowerCase(),
+    facts.security === null ? NO_VALUE : facts.security.toLowerCase(),
+    facts.gate === null ? NO_VALUE : facts.gate
+  ]
+}
+
 function cellsFor(row: TaskStatusRow): string[] {
   return [
     `[${row.tranche}] ${row.id}`,
@@ -972,9 +1045,10 @@ function cellsFor(row: TaskStatusRow): string[] {
     renderStateText(row.state),
     row.round === null ? NO_VALUE : String(row.round),
     phaseCell(row),
-    row.minutesInPhase === null ? NO_VALUE : `${row.minutesInPhase}m`,
+    inPhaseCell(row),
     confidenceCell(row.lastConfidence, row.lastConfidenceUnread),
-    historyCell(row.phaseHistory)
+    historyCell(row.phaseHistory),
+    ...prCells(row)
   ]
 }
 
@@ -983,19 +1057,41 @@ export function renderTaskStatusHistoryNote(): string {
   return "typical (history) = median time this phase took on this repository's recently merged tasks, with the number of past rounds behind it — history, not a prediction of when this run finishes."
 }
 
-/** The table as lines: a header row, then one row per task, every column padded to its widest cell. */
-export function renderTaskStatusTable(rows: readonly TaskStatusRow[]): string[] {
+/**
+ * What one read of this table was: when it was taken, on which machine, and how
+ * many tasks it listed. Every claim in the rows above is as old as this line
+ * says and no newer — which is the whole reason it is printed: a table pasted
+ * into an answer carries its own read time with it, so nobody has to ask
+ * whether they are looking at a fresh reading or an earlier one.
+ *
+ * The count is of the rows this table carries. A listing it lists every open
+ * task in; a single-task read, the one row asked for.
+ */
+export function renderTaskStatusFooter(rowCount: number, at: Date, host: string): string {
+  const tasks = rowCount === 1 ? '1 task' : `${rowCount} tasks`
+  return `read ${at.toISOString()} (UTC) on ${host} — ${tasks} listed`
+}
+
+/** What the renderer needs that is not a row — injectable so a test asserts a fixed footer rather than the wall clock and this machine's own name. */
+export type TaskStatusTableDeps = { now: () => Date; host: () => string }
+
+export const defaultTaskStatusTableDeps: TaskStatusTableDeps = { now: () => new Date(), host: () => hostname() }
+
+/** The table as lines: a header row, a markdown separator, then one row per task, every column padded to its widest cell, and one footer line last. */
+export function renderTaskStatusTable(
+  rows: readonly TaskStatusRow[],
+  deps: TaskStatusTableDeps = defaultTaskStatusTableDeps
+): string[] {
   const body = rows.map(cellsFor)
   const widths = TABLE_HEADERS.map((header, column) =>
     Math.max(header.length, ...body.map((cells) => (cells[column] as string).length))
   )
   const renderCells = (cells: readonly string[]): string =>
-    cells
-      .map((cell, column) => (column === cells.length - 1 ? cell : cell.padEnd(widths[column] as number)))
-      .join('  ')
-      .trimEnd()
-  const lines = [renderCells(TABLE_HEADERS), ...body.map(renderCells)]
+    `| ${cells.map((cell, column) => cell.padEnd(widths[column] as number)).join(' | ')} |`
+  const separator = `| ${widths.map((width) => '-'.repeat(Math.max(3, width))).join(' | ')} |`
+  const lines = [renderCells(TABLE_HEADERS), separator, ...body.map(renderCells)]
   if (rows.some((row) => row.phaseHistory !== null)) lines.push('', renderTaskStatusHistoryNote())
+  lines.push('', renderTaskStatusFooter(rows.length, deps.now(), deps.host()))
   return lines
 }
 
@@ -1037,12 +1133,26 @@ export function claimDepsForOneRead(): StartClaimDeps {
   }
 }
 
+/**
+ * The pull-request facts reader every row of ONE status read shares — one forge
+ * read per pull request, made only for a row that actually has one, and never
+ * remembered between reads (see `readTaskPrFacts` on why a CI word must not be
+ * cached). Threaded as a parameter so a test drives every column off fixtures
+ * with no `gh` on `PATH`.
+ */
+export type PrFactsReader = (pr: number) => TaskPrFacts | null
+
+export function prFactsReaderFor(allowlist: readonly string[]): PrFactsReader {
+  return (pr: number) => readTaskPrFacts(pr, allowlist)
+}
+
 function buildRow(
   ref: TaskRef,
   allowlist: readonly string[],
   history: PhaseHistoryLookup,
   readComments: PrCommentReader,
-  claimDeps: StartClaimDeps
+  claimDeps: StartClaimDeps,
+  readPrFacts: PrFactsReader
 ): { row: TaskStatusRow; briefFrozen: boolean } {
   const started = hasFrozenBrief(ref.issue, allowlist)
   const root = runtimeDir()
@@ -1076,7 +1186,10 @@ function buildRow(
         phaseIsCurrent: null,
         lastConfidence: null,
         lastConfidenceUnread: false,
-        phaseHistory: null
+        phaseHistory: null,
+        // A task whose brief is not frozen yet has no branch on the remote, so
+        // no pull request to read and no pause to be waiting on either.
+        prFacts: null
       }
     }
   }
@@ -1106,7 +1219,9 @@ function buildRow(
       // question only a run actually in that phase is asking. A stopped run's
       // last recorded phase gets none, which is also what keeps the forge read
       // out of a listing where nothing is in flight.
-      phaseHistory: phase !== null && phaseIsCurrent === true ? history(phase.recordedPhase) : null
+      phaseHistory: phase !== null && phaseIsCurrent === true ? history(phase.recordedPhase) : null,
+      // One read per pull request, and none at all for a row without one.
+      prFacts: pr ? readPrFacts(pr.number) : null
     }
   }
 }
@@ -1152,6 +1267,7 @@ export function gatherTaskStatusList(): TaskStatusListView {
   const history = phaseHistoryLookup(allowlist)
   const readComments = prCommentReaderForOneStatusRead()
   const claimDeps = claimDepsForOneRead()
+  const readPrFacts = prFactsReaderFor(allowlist)
   const rows: TaskStatusRow[] = []
   const briefFrozenIssues = new Set<number>()
   for (const ref of listOpenTaskIssues()) {
@@ -1160,7 +1276,7 @@ export function gatherTaskStatusList(): TaskStatusListView {
     // comment. A tranche-labeled ref carries no such gate: O4 lists every open
     // tranche task Issue, a not-yet-frozen (planned) one as `not started`.
     if (ref.kind === 'backlog' && !hasOutboxDir(root, ref.issue)) continue
-    const built = buildRow(ref, allowlist, history, readComments, claimDeps)
+    const built = buildRow(ref, allowlist, history, readComments, claimDeps, readPrFacts)
     rows.push(built.row)
     if (built.briefFrozen) briefFrozenIssues.add(built.row.issue)
   }
@@ -1193,7 +1309,8 @@ export function gatherSingleTaskStatus(tranche: string, id: string): SingleTaskS
     allowlist,
     phaseHistoryLookup(allowlist),
     prCommentReaderForOneStatusRead(),
-    claimDepsForOneRead()
+    claimDepsForOneRead(),
+    prFactsReaderFor(allowlist)
   )
 
   const root = runtimeDir()

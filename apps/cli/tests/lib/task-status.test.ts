@@ -39,6 +39,7 @@ import {
   START_CLAIM_REPORTING_WINDOW_MS
 } from '../../src/lib/task-tools/start.js'
 import type { ProcessSnapshot } from '../../src/lib/dispatch.js'
+import type { TaskPrFacts } from '../../src/lib/task-tools/pr-read.js'
 import {
   mergedTaskPrNumbers,
   phaseHistoryLookup,
@@ -1618,6 +1619,33 @@ describe('the summary-confidence comment reader (O1)', () => {
   })
 })
 
+/**
+ * One rendered line's cells. The pipes are what makes the table markdown
+ * wherever it is pasted, and the padding is presentation — the cells are the
+ * contract, so they are read back through the pipes rather than asserted with
+ * their spacing.
+ */
+function cellsOf(line: string | undefined): string[] {
+  return (line ?? '')
+    .split('|')
+    .slice(1, -1)
+    .map((cell) => cell.trim())
+}
+
+/** The rendered rows, past the header and the markdown separator — index 0 is the first task. */
+function rowCells(lines: readonly string[], row: number): string[] {
+  return cellsOf(lines[2 + row])
+}
+
+/** A pull request whose head is green, approved and passed — the facts behind the merge-ready columns. */
+const GREEN_APPROVED: TaskPrFacts = {
+  head: 'abcdef1234567890',
+  ci: 'green',
+  gate: 'green',
+  codeReview: 'APPROVE',
+  security: 'PASS'
+}
+
 describe('renderTaskStatusTable (O3)', () => {
   const base: Omit<TaskStatusRow, 'state' | 'pr'> = {
     tranche: 'task-run-v1',
@@ -1630,8 +1658,12 @@ describe('renderTaskStatusTable (O3)', () => {
     phaseIsCurrent: null,
     lastConfidence: null,
     lastConfidenceUnread: false,
-    phaseHistory: null
+    phaseHistory: null,
+    prFacts: null
   }
+
+  /** A fixed read time and host, so the footer asserts a value rather than the wall clock and this machine's own name. */
+  const deps = { now: () => new Date('2026-09-27T09:30:00.000Z'), host: () => 'test-host' }
 
   it('renders one header row and one row per task, every recorded fact in its own column', () => {
     const rows: TaskStatusRow[] = [
@@ -1645,11 +1677,12 @@ describe('renderTaskStatusTable (O3)', () => {
         minutesInPhase: 7,
         phaseIsCurrent: true,
         lastConfidence: { round: 2, percent: 90, source: 'published-summary' },
-        phaseHistory: { typicalPhaseMinutes: 5, typicalPhaseSamples: 4 }
+        phaseHistory: { typicalPhaseMinutes: 5, typicalPhaseSamples: 4 },
+        prFacts: GREEN_APPROVED
       }
     ]
-    const lines = renderTaskStatusTable(rows)
-    expect(lines[0]?.split(/\s{2,}/)).toEqual([
+    const lines = renderTaskStatusTable(rows, deps)
+    expect(cellsOf(lines[0])).toEqual([
       'task',
       'issue',
       'pr',
@@ -1658,9 +1691,14 @@ describe('renderTaskStatusTable (O3)', () => {
       'phase',
       'in phase',
       'confidence',
-      'typical (history)'
+      'typical (history)',
+      'head',
+      'ci',
+      'code review',
+      'security',
+      'gate'
     ])
-    expect(lines[1]?.split(/\s{2,}/)).toEqual([
+    expect(rowCells(lines, 0)).toEqual([
       '[task-run-v1] 14',
       '#515',
       '#517',
@@ -1669,27 +1707,56 @@ describe('renderTaskStatusTable (O3)', () => {
       'reviewing',
       '7m',
       '90% (round 2)',
-      '5m (n=4)'
+      '5m (n=4)',
+      'abcdef1',
+      'green',
+      'approve',
+      'pass',
+      'green'
     ])
   })
 
+  it('is a markdown table: a separator row under the header, and every row fenced by pipes', () => {
+    const lines = renderTaskStatusTable([{ ...base, pr: null, state: { kind: 'not_started' } }], deps)
+    expect(lines[0]?.startsWith('| task')).toBe(true)
+    expect(lines[1]?.replaceAll(/[\s|-]/g, '')).toBe('')
+    expect(lines[1]?.startsWith('| ---')).toBe(true)
+    expect(lines[2]?.startsWith('| [task-run-v1] 14')).toBe(true)
+  })
+
+  it('ends with one footer line naming the read time in UTC, the host, and how many tasks it lists (O5)', () => {
+    const one = renderTaskStatusTable([{ ...base, pr: null, state: { kind: 'not_started' } }], deps)
+    expect(one[one.length - 1]).toBe('read 2026-09-27T09:30:00.000Z (UTC) on test-host — 1 task listed')
+
+    const two = renderTaskStatusTable(
+      [
+        { ...base, pr: null, state: { kind: 'not_started' } },
+        { ...base, id: '15', issue: 516, pr: null, state: { kind: 'no_driver' } }
+      ],
+      deps
+    )
+    expect(two[two.length - 1]).toBe('read 2026-09-27T09:30:00.000Z (UTC) on test-host — 2 tasks listed')
+  })
+
   it('names the typical-time column as history, in the header and in one sentence below the table', () => {
-    const lines = renderTaskStatusTable([
-      {
-        ...base,
-        pr: { number: 517 },
-        state: { kind: 'running', pid: 4242, startedAt: 'x' },
-        round: 1,
-        phase: 'developing',
-        recordedPhase: 'dispatch_developer',
-        minutesInPhase: 3,
-        phaseIsCurrent: true,
-        phaseHistory: { typicalPhaseMinutes: 12, typicalPhaseSamples: 5 }
-      }
-    ])
+    const lines = renderTaskStatusTable(
+      [
+        {
+          ...base,
+          pr: { number: 517 },
+          state: { kind: 'running', pid: 4242, startedAt: 'x' },
+          round: 1,
+          phase: 'developing',
+          recordedPhase: 'dispatch_developer',
+          minutesInPhase: 3,
+          phaseIsCurrent: true,
+          phaseHistory: { typicalPhaseMinutes: 12, typicalPhaseSamples: 5 }
+        }
+      ],
+      deps
+    )
     expect(lines[0]).toContain('typical (history)')
-    const note = lines[lines.length - 1] as string
-    expect(note).toContain('history, not a prediction')
+    expect(lines.some((line) => line.includes('history, not a prediction'))).toBe(true)
     // Never a promise about this run: no deadline, no remaining time, no ETA.
     for (const line of lines) {
       expect(line.toLowerCase()).not.toContain('eta')
@@ -1698,61 +1765,114 @@ describe('renderTaskStatusTable (O3)', () => {
   })
 
   it('renders every absent fact as one dash, and prints no history sentence when no row carries a figure (O4)', () => {
-    const lines = renderTaskStatusTable([{ ...base, pr: null, state: { kind: 'not_started' } }])
-    expect(lines).toHaveLength(2)
-    expect(lines[1]?.split(/\s{2,}/)).toEqual(['[task-run-v1] 14', '#515', '—', 'not started', '—', '—', '—', '—', '—'])
+    const lines = renderTaskStatusTable([{ ...base, pr: null, state: { kind: 'not_started' } }], deps)
+    expect(lines.some((line) => line.includes('history, not a prediction'))).toBe(false)
+    expect(rowCells(lines, 0)).toEqual([
+      '[task-run-v1] 14',
+      '#515',
+      '—',
+      'not started',
+      '—',
+      '—',
+      '—',
+      '—',
+      '—',
+      '—',
+      '—',
+      '—',
+      '—',
+      '—'
+    ])
+  })
+
+  it('says a pull request whose read failed was not read, never showing it as an absence', () => {
+    const unread = renderTaskStatusTable(
+      [{ ...base, pr: { number: 517 }, state: { kind: 'published', round: 1 }, prFacts: null }],
+      deps
+    )
+    expect(rowCells(unread, 0).slice(9)).toEqual(['not read', 'not read', 'not read', 'not read', 'not read'])
+
+    // A row with no pull request at all is the absence — nothing to read, so
+    // nothing claims a read was attempted.
+    const none = renderTaskStatusTable([{ ...base, pr: null, state: { kind: 'no_driver' } }], deps)
+    expect(rowCells(none, 0).slice(9)).toEqual(['—', '—', '—', '—', '—'])
+  })
+
+  it('reports a red suite and a verdict bound to an older head as what they are', () => {
+    const lines = renderTaskStatusTable(
+      [
+        {
+          ...base,
+          pr: { number: 517 },
+          state: { kind: 'running', pid: 4242, startedAt: 'x' },
+          prFacts: { head: 'fedcba9876543210', ci: 'red', gate: 'running', codeReview: null, security: null }
+        }
+      ],
+      deps
+    )
+    expect(rowCells(lines, 0).slice(9)).toEqual(['fedcba9', 'red', '—', '—', 'running'])
   })
 
   it('reads a start that is coming up as starting, and one that never did as a start that did not come up', () => {
-    const starting = renderTaskStatusTable([
-      { ...base, pr: null, state: { kind: 'starting', requestId: REQUEST_ID, startedAt: CLAIM_ACCEPTED_AT } }
-    ])
-    expect(starting[1]).toContain(`starting (start request ${REQUEST_ID})`)
-    expect(starting[1]).not.toContain('no driver')
+    const starting = renderTaskStatusTable(
+      [{ ...base, pr: null, state: { kind: 'starting', requestId: REQUEST_ID, startedAt: CLAIM_ACCEPTED_AT } }],
+      deps
+    )
+    expect(starting[2]).toContain(`starting (start request ${REQUEST_ID})`)
+    expect(starting[2]).not.toContain('no driver')
 
-    const failed = renderTaskStatusTable([
-      {
-        ...base,
-        pr: null,
-        state: { kind: 'start_did_not_come_up', requestId: REQUEST_ID, startedAt: CLAIM_ACCEPTED_AT }
-      }
-    ])
-    expect(failed[1]).toContain(`start did not come up (start request ${REQUEST_ID}, accepted ${CLAIM_ACCEPTED_AT})`)
-    expect(failed[1]).not.toContain('no driver')
+    const failed = renderTaskStatusTable(
+      [
+        {
+          ...base,
+          pr: null,
+          state: { kind: 'start_did_not_come_up', requestId: REQUEST_ID, startedAt: CLAIM_ACCEPTED_AT }
+        }
+      ],
+      deps
+    )
+    expect(failed[2]).toContain(`start did not come up (start request ${REQUEST_ID}, accepted ${CLAIM_ACCEPTED_AT})`)
+    expect(failed[2]).not.toContain('no driver')
   })
 
   it("marks a figure the developer has only just stated, whose round's review has not completed", () => {
-    const lines = renderTaskStatusTable([
-      {
-        ...base,
-        pr: { number: 517 },
-        state: { kind: 'running', pid: 4242, startedAt: 'x' },
-        round: 3,
-        phase: 'developing',
-        recordedPhase: 'dispatch_developer',
-        minutesInPhase: 2,
-        phaseIsCurrent: true,
-        lastConfidence: { round: 3, percent: 95, source: 'stated' }
-      }
-    ])
+    const lines = renderTaskStatusTable(
+      [
+        {
+          ...base,
+          pr: { number: 517 },
+          state: { kind: 'running', pid: 4242, startedAt: 'x' },
+          round: 3,
+          phase: 'developing',
+          recordedPhase: 'dispatch_developer',
+          minutesInPhase: 2,
+          phaseIsCurrent: true,
+          lastConfidence: { round: 3, percent: 95, source: 'stated' }
+        }
+      ],
+      deps
+    )
     // Read without the qualifier, this looks like round 3's review outcome.
-    expect(lines[1]).toContain('95% (round 3, stated)')
+    expect(lines[2]).toContain('95% (round 3, stated)')
   })
 
   it("marks the phase as last recorded when the driver vanished mid-flight, and doesn't for a live or resting run", () => {
-    const stale = renderTaskStatusTable([
-      {
-        ...base,
-        pr: { number: 517 },
-        state: { kind: 'no_driver' },
-        round: 2,
-        phase: 'developing',
-        recordedPhase: 'dispatch_developer',
-        minutesInPhase: 2880,
-        phaseIsCurrent: false
-      }
-    ])
-    expect(stale[1]?.split(/\s{2,}/)).toEqual([
+    const stale = renderTaskStatusTable(
+      [
+        {
+          ...base,
+          pr: { number: 517 },
+          state: { kind: 'no_driver' },
+          round: 2,
+          phase: 'developing',
+          recordedPhase: 'dispatch_developer',
+          minutesInPhase: 2880,
+          phaseIsCurrent: false
+        }
+      ],
+      deps
+    )
+    expect(rowCells(stale, 0).slice(0, 9)).toEqual([
       '[task-run-v1] 14',
       '#515',
       '#517',
@@ -1764,86 +1884,100 @@ describe('renderTaskStatusTable (O3)', () => {
       '—'
     ])
 
-    const live = renderTaskStatusTable([
-      {
-        ...base,
-        pr: { number: 517 },
-        state: { kind: 'running', pid: 4242, startedAt: 'x' },
-        round: 2,
-        phase: 'developing',
-        recordedPhase: 'dispatch_developer',
-        minutesInPhase: 2,
-        phaseIsCurrent: true
-      }
-    ])
-    expect(live[1]).toContain('developing ')
-    expect(live[1]).not.toContain('last recorded')
+    const live = renderTaskStatusTable(
+      [
+        {
+          ...base,
+          pr: { number: 517 },
+          state: { kind: 'running', pid: 4242, startedAt: 'x' },
+          round: 2,
+          phase: 'developing',
+          recordedPhase: 'dispatch_developer',
+          minutesInPhase: 2,
+          phaseIsCurrent: true
+        }
+      ],
+      deps
+    )
+    expect(live[2]).toContain('developing ')
+    expect(live[2]).not.toContain('last recorded')
 
     // A pause IS a place a run sits in, waiting for a person, so its phase
     // carries no qualifier. A published run is not: nothing is publishing.
-    const resting = renderTaskStatusTable([
-      {
-        ...base,
-        pr: { number: 517 },
-        state: { kind: 'paused', reason: 'escalation', round: 2 },
-        round: 2,
-        phase: 'paused',
-        recordedPhase: 'pause',
-        minutesInPhase: 40,
-        phaseIsCurrent: true
-      }
-    ])
-    expect(resting[1]).not.toContain('last recorded')
+    const resting = renderTaskStatusTable(
+      [
+        {
+          ...base,
+          pr: { number: 517 },
+          state: { kind: 'paused', reason: 'escalation', round: 2 },
+          round: 2,
+          phase: 'paused',
+          recordedPhase: 'pause',
+          minutesInPhase: 40,
+          phaseIsCurrent: true
+        }
+      ],
+      deps
+    )
+    expect(resting[2]).not.toContain('last recorded')
 
-    const finished = renderTaskStatusTable([
-      {
-        ...base,
-        pr: { number: 517 },
-        state: { kind: 'published', round: 2 },
-        round: 2,
-        phase: 'publishing',
-        recordedPhase: 'publish',
-        minutesInPhase: 4320,
-        phaseIsCurrent: false
-      }
-    ])
-    expect(finished[1]).toContain('publishing (last recorded)')
+    const finished = renderTaskStatusTable(
+      [
+        {
+          ...base,
+          pr: { number: 517 },
+          state: { kind: 'published', round: 2 },
+          round: 2,
+          phase: 'publishing',
+          recordedPhase: 'publish',
+          minutesInPhase: 4320,
+          phaseIsCurrent: false
+        }
+      ],
+      deps
+    )
+    expect(finished[2]).toContain('publishing (last recorded)')
   })
 
   it('says a confidence was not read when a bound stopped the read, never showing it as an absence', () => {
-    const lines = renderTaskStatusTable([
-      {
-        ...base,
-        pr: { number: 517 },
-        state: { kind: 'published', round: 1 },
-        round: 1,
-        phase: 'publishing',
-        recordedPhase: 'publish',
-        minutesInPhase: 30,
-        phaseIsCurrent: false,
-        lastConfidenceUnread: true
-      }
-    ])
-    expect(lines[1]).toContain('not read')
-    expect(lines[1]?.split(/\s{2,}/)[7]).toBe('not read')
+    const lines = renderTaskStatusTable(
+      [
+        {
+          ...base,
+          pr: { number: 517 },
+          state: { kind: 'published', round: 1 },
+          round: 1,
+          phase: 'publishing',
+          recordedPhase: 'publish',
+          minutesInPhase: 30,
+          phaseIsCurrent: false,
+          lastConfidenceUnread: true
+        }
+      ],
+      deps
+    )
+    expect(rowCells(lines, 0)[7]).toBe('not read')
   })
 
   it('renders a confidence the loop recorded as absent as an absence, never as a zero', () => {
-    const lines = renderTaskStatusTable([
-      {
-        ...base,
-        pr: { number: 517 },
-        state: { kind: 'paused', reason: 'confidence', round: 2 },
-        round: 2,
-        phase: 'paused',
-        recordedPhase: 'pause',
-        minutesInPhase: 40,
-        phaseIsCurrent: true,
-        lastConfidence: { round: 2, percent: null, source: 'published-summary' }
-      }
-    ])
-    expect(lines[1]).toContain('absent (round 2)')
-    expect(lines[1]).toContain('paused (confidence)')
+    const lines = renderTaskStatusTable(
+      [
+        {
+          ...base,
+          pr: { number: 517 },
+          state: { kind: 'paused', reason: 'confidence', round: 2 },
+          round: 2,
+          phase: 'paused',
+          recordedPhase: 'pause',
+          minutesInPhase: 40,
+          phaseIsCurrent: true,
+          lastConfidence: { round: 2, percent: null, source: 'published-summary' }
+        }
+      ],
+      deps
+    )
+    expect(lines[2]).toContain('absent (round 2)')
+    expect(lines[2]).toContain('paused (confidence)')
   })
 })
 
