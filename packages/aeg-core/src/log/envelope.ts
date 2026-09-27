@@ -58,7 +58,16 @@ export type HeaderInput = {
   doctrine: string
   host: Host
   hostname: string
-  env: { role?: string; task?: string; round?: string; run?: string; attempt?: string; parent?: string }
+  env: {
+    role?: string
+    task?: string
+    round?: string
+    run?: string
+    attempt?: string
+    parent?: string
+    /** `AEG_LOG_TEST` — any non-empty value marks this event as produced inside a repository's own test run (`meta.test`). Read from the environment like every other field here, so the caller (the sink) snapshots it the same way. */
+    test?: string
+  }
   /**
    * The Issue the caller's own checked-out branch names, for a process that
    * carries no `VINAYA_TASK` — `subject.issue`'s fallback, never its
@@ -129,7 +138,11 @@ export function buildHeader(input: HeaderInput): Header {
         ruling_ordinal: input.inputVersions?.rulingOrdinal ?? null,
         policy_digest: input.inputVersions?.policyDigest ?? null
       },
-      provenance: provenanceFor(input)
+      provenance: provenanceFor(input),
+      // A label, not a switch: present only when the environment said so,
+      // absent otherwise — never `false`, so "real traffic" is the absence
+      // of a claim rather than a claim of its own.
+      ...(input.env.test ? { test: true as const } : {})
     },
     subject
   }

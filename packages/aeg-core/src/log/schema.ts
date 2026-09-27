@@ -142,7 +142,20 @@ const HeaderMetaV2Schema = z
     actor_id: z.string().nullable(),
     lineage: LineageSchema,
     input_versions: InputVersionsSchema,
-    provenance: ProvenanceSchema
+    provenance: ProvenanceSchema,
+    /**
+     * `true` on an event produced inside a repository's own test run, absent
+     * on every other event — a label a reader separates fixture traffic from
+     * real traffic by, never a switch: it changes nothing about where the
+     * event is delivered or whether it is delivered at all. Only ever set by
+     * a test preload (`apps/cli/tests/lib/test-env-preload.ts`, via
+     * `AEG_LOG_TEST`), so a real run's events simply never carry it; there is
+     * deliberately no `false` to write, because "this is real traffic" is
+     * said by the field's absence and cannot be forged into silence.
+     * Optional and additive — every line written before this field existed
+     * still validates unchanged, so no new `meta.schema` version is needed.
+     */
+    test: z.literal(true).optional()
   })
   .strict()
 

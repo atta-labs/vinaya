@@ -47,3 +47,21 @@
 for (const key of ['GITHUB_ACTIONS', 'VINAYA_HOST', 'VINAYA_ROLE', 'VINAYA_ATTEMPT', 'VINAYA_PARENT_EVENT']) {
   delete process.env[key]
 }
+
+/**
+ * Every event this test process produces — in-process, or in a real
+ * subprocess that inherits `process.env` — is marked `meta.test: true`
+ * (`packages/aeg-core/src/log/schema.ts`), so a reader of a real log server
+ * can separate this repository's own fixture traffic from real traffic.
+ * Fixtures deliver to the SAME configured destination a real run does, by
+ * design: the marker labels those events, it never suppresses or redirects
+ * them.
+ *
+ * Set here rather than per fixture, and deliberately NOT under the
+ * `VINAYA_` prefix: the many fixtures that spawn a real `vinaya` child
+ * delete every `VINAYA_*` key from its environment first, and a marker
+ * stripped there would leave exactly the subprocess traffic this exists to
+ * mark unmarked. Nothing outside this preload sets it, so a real run's
+ * events simply never carry it.
+ */
+process.env.AEG_LOG_TEST = '1'

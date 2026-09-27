@@ -63,6 +63,7 @@ meta: {
   doctrine: string     // 'aeg-root@<sha>' for a tree checkout, the package version for a bundle, 'unknown' when git is unreachable
   host: 'hook' | 'ci' | 'cli' | 'loop'
   machine: string      // sha256 of the hostname; never the name itself
+  test?: true          // schema 2 only — present only on an event produced inside a repository's own test run
 }
 subject: {
   issue: number | null          // VINAYA_TASK; the checked-out task branch's Issue when that is unset; null when neither names one
@@ -267,6 +268,14 @@ The lookup runs at most **once per process**, lazily: a process whose events alr
 **`lineage.run` (`task-log-v1` task 6, O1/O2).** `devReviewLoop` sets `VINAYA_RUN` to its own run's `loop_id` at the very top of `runDevReviewLoopBody`, before this process logs a single line — every `dev_review_loop` event it emits AND every `effect`/`operation` event a downstream call into `effects.ts`/`broker.ts` fires in the SAME process (a pause post, an escalation write) therefore share one `lineage.run`, which is this task's own title made literal: "one correlated history." A caller that never sets `VINAYA_RUN` still gets an honest, non-`null` value — the sink defaults `lineage.run` to this process's own `run_id` (already the identity every line this process writes shares via `meta.run_id`) rather than leaving the slot `null` for want of an opt-in producer. A DIFFERENT process — a `--resume` continuing a paused run, a `--cancel` invocation, a driver re-exec — mints its own fresh `loop_id`/`run_id` and therefore its own `lineage.run`, distinct from whatever process paused it: `lineage.run` correlates one PROCESS's own lines, not a task's entire cross-restart history (`subject.issue`, unchanged, is what already ties every process's lines to the same task).
 
 `vinaya dispatch <role> --agent claude|codex|gemini` (`apps/cli/src/lib/dispatch.ts`) is the real mechanism: it sets all four variables on the CHILD process's environment only — via `spawn`'s own `env` option, never by mutating the parent's `process.env` — and separately calls `createLogSink({ env: () => ({ ...process.env, VINAYA_ROLE, VINAYA_TASK, VINAYA_ROUND }) })` once per dispatch so its OWN `dispatched`/`outcome_received`/`dispatch_failed` lines carry the same attribution without ever touching the parent's real environment. `--task` is optional: given, the line's `issue` is that number; absent, `issue: null` and `role` still comes from the `<role>` argument — never `unattributed`, since the role is always known at the point of dispatch. The child inherits the SAME `run_id` the parent's three lines used, so every `vinaya` call the child makes in turn (its own Stop hook, a nested dispatch) joins under it.
+
+## Test traffic is marked, never suppressed
+
+A repository's own tests run inside that repository and deliver to the same configured destination a real run does, so a real log server holds their fixture events too. Those events are labelled rather than hidden: `apps/cli/tests/lib/test-env-preload.ts` — the one `[test] preload` `apps/cli/bunfig.toml` names, which runs once before any test file in the package — sets `AEG_LOG_TEST=1`, the sink snapshots it with every other environment field, and `buildHeader` puts `test: true` on the `schema: 2` header. A reader separates test traffic from real traffic by that field alone.
+
+It is a label, not a switch. It changes nothing about where an event goes or whether it is delivered, and there is deliberately no `false` to write: "this is real traffic" is said by the field's ABSENCE, so no run can mark itself real to disappear from a reader's view, and nothing outside the preload sets the variable in the first place. The field is optional and additive on the existing `schema: 2` header — every line written before it existed still validates unchanged, and `classifyStoredLine` stores a marked line as `ok` (`packages/aeg-core/src/log/store.test.ts`), so no new `meta.schema` version is involved.
+
+The name is deliberately outside the `VINAYA_` prefix: the many fixtures that spawn a real `vinaya` child delete every `VINAYA_*` key from that child's environment first, to keep a dispatched session's own identity out of it, and a marker stripped there would leave exactly the subprocess traffic this exists to mark unmarked.
 
 ## Redaction
 

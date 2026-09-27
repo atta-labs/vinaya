@@ -378,3 +378,39 @@ describe('log-sink — the Issue a branch names (log-quality-v1 1, O1/O3)', () =
     expect(line.kind).toBe('dispatch')
   })
 })
+
+describe('log-sink — the test marker (log-quality-v1 1, O2)', () => {
+  it('marks every event produced with AEG_LOG_TEST set, and delivers it exactly where an unmarked one goes', async () => {
+    const { dir, deps } = testDeps({
+      env: () => ({ VINAYA_ROLE: 'developer', VINAYA_TASK: '404', AEG_LOG_TEST: '1' })
+    })
+    const { log } = createLogSink(deps)
+    log(DISPATCHED)
+    await flush()
+    // Same path an unmarked event lands at: a label, not a switch.
+    const line = JSON.parse(readFileSync(join(dir, 'outbox', 'atta-labs-vinaya', '404.ndjson'), 'utf8').trim())
+    expect(line.meta.test).toBe(true)
+    expect(line.subject.issue).toBe(404)
+  })
+
+  it('leaves the marker off an event from a process that is not a test run', async () => {
+    const { dir, deps } = testDeps()
+    const { log } = createLogSink(deps)
+    log(DISPATCHED)
+    await flush()
+    const line = JSON.parse(readFileSync(join(dir, 'outbox', 'atta-labs-vinaya', '404.ndjson'), 'utf8').trim())
+    expect('test' in line.meta).toBe(false)
+  })
+
+  // Last in the file on purpose: importing the preload RUNS it, setting the
+  // marker on this process for good — which is exactly what `bunfig.toml`'s
+  // own `[test] preload` already did before the first test file loaded, in
+  // every run whose working directory is `apps/cli` (the pre-push hook's
+  // run and CI's sharded run both are; a run started from the repository
+  // root is not, which is why this asserts the module's own effect rather
+  // than an ambient variable that depends on how the runner was invoked).
+  it('the preload sets the marker for every process it runs in', async () => {
+    await import('./test-env-preload.js')
+    expect(process.env.AEG_LOG_TEST).toBe('1')
+  })
+})

@@ -210,6 +210,20 @@ describe('unknown-version records are kept for diagnosis (O3)', () => {
     expect(rec.status).toBe('ok')
     if (rec.status === 'ok') expect(rec.provenance).toBe('env_correlated')
   })
+
+  it('the test marker is stored, not rejected — no new schema version (log-quality-v1 1, O2)', () => {
+    const marked = forgeWrite(metaV2('r1', 0, 'e'), 'ok')
+    ;(marked.meta as Record<string, unknown>).test = true
+    const rec = classifyStoredLine(JSON.stringify(marked), HOME)
+    expect(rec.status).toBe('ok')
+    if (rec.status === 'ok') expect(JSON.parse(rec.postLine).meta.test).toBe(true)
+  })
+
+  it('refuses a meta.test that is not the marker — absence is the only way to say "real traffic"', () => {
+    const forged = forgeWrite(metaV2('r1', 0, 'e'), 'ok')
+    ;(forged.meta as Record<string, unknown>).test = false
+    expect(classifyStoredLine(JSON.stringify(forged), HOME).status).toBe('invalid')
+  })
 })
 
 describe('redaction at both the sink and the transport boundary (O3)', () => {

@@ -878,7 +878,15 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
         // forever for want of a caller that never opts in.
         run: env.VINAYA_RUN || runId,
         attempt: env.VINAYA_ATTEMPT,
-        parent: env.VINAYA_PARENT_EVENT
+        parent: env.VINAYA_PARENT_EVENT,
+        // Set by this repository's own test preload and by nothing else, so
+        // an event carrying it really did come from a test run.
+        // Deliberately NOT a `VINAYA_`-prefixed name: the fixtures that
+        // spawn a real `vinaya` child strip every `VINAYA_*` key from its
+        // environment first (to keep a dispatched session's own identity
+        // out of the child), and a marker stripped there would leave
+        // exactly the subprocess traffic this marks unmarked.
+        test: env.AEG_LOG_TEST
       }
       const written: Promise<void> = context()
         .then(async ({ repo, doctrine: doctrineValue, destination: resolvedDestination }) => {

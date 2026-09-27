@@ -49,6 +49,16 @@ describe('buildHeader', () => {
     expect(buildHeader({ ...baseInput, branchIssue: null }).subject.issue).toBeNull()
   })
 
+  it('marks an event produced inside a test run (log-quality-v1 1, O2)', () => {
+    const { meta } = buildHeader({ ...baseInput, env: { test: '1' } })
+    expect(meta.schema === 2 && meta.test).toBe(true)
+  })
+
+  it('carries no marker outside a test run — absence, never a false', () => {
+    const { meta } = buildHeader({ ...baseInput, env: { role: 'developer' } })
+    expect('test' in meta).toBe(false)
+  })
+
   it('leaves issue null for an unparseable VINAYA_TASK', () => {
     const { subject } = buildHeader({ ...baseInput, env: { task: 'abc' } })
     expect(subject.issue).toBeNull()
