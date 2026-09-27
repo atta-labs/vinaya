@@ -19,6 +19,8 @@ Vinaya uses a handful of words in a specific, non-obvious sense — on the pages
 
 **Operator-metered** — Said of an agent whose tool gives it no way to see how much work it just did, so only a person can supply that figure. Such an agent still files its report at the end of its turn — which task, which role, which model, what date — but leaves the count itself blank rather than guessing. A person may fill the blank in later from whatever usage screen the tool shows them. The opposite is self-metering, defined below.
 
+**Plan** — The set of tasks that will build a product: their list, their numbers, the order they run in, which of them depend on or collide with which, and the file surface each one touches. A plan is live working knowledge — a task splits in two, the numbers shift, a new dependency appears — so it lives in exactly one place: the forge, as the task issues of a tranche. Nothing else keeps a copy of it, and a spec (defined below) never does — a second copy is out of date from the first edit made to either one.
+
 **Provenance** — A short, durable record, left as a comment on a merged pull request, proving the work behind it was actually reviewed and closed out — not just merged. A pull request carrying no such record means that close-out step never happened.
 
 **Ratification** — Sign-off, from the person ultimately accountable for the product, on a decision or a piece of work that would be hard to undo. Higher-impact changes wait for a scheduled sign-off window rather than merging the moment they're technically ready.
@@ -30,6 +32,8 @@ Vinaya uses a handful of words in a specific, non-obvious sense — on the pages
 **Self-metering** — Said of an agent whose tool lets it read, by itself, how much work it just did — so it can report a real figure with nobody watching. How it reads that figure differs from tool to tool, and is the one part of this system that has to be written fresh for each one. An agent that can do this is not allowed to report a blank token count instead. The opposite is operator-metered, defined above.
 
 **Seam** — The handoff point between two people or roles, where one produces something — a document, a decision, a record — and the other consumes it. Each seam is written down once, in its own place, so both sides can agree on exactly what crosses it.
+
+**Spec** — The durable statement of what a product is and what it must do: its behavior, its rules, and the constraints on it — all of which stay true after the work that built them has merged. It answers "what does this have to do, and why", never "which tasks build it, in what order". Those are the plan (defined above), which lives only on the forge, as a tranche's task issues; a spec never copies them. Where a spec needs to refer to the work at all, it points at those issues instead of restating them, because a copied task list is wrong again the next time a task is split or renumbered.
 
 **Step 0** — The literal first command someone runs before touching any code on a task: the one that creates that task's own isolated copy of the repository and its own branch. Nothing else happens until this command has run.
 

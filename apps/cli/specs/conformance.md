@@ -117,7 +117,7 @@ mechanism.
 
 Captured live, this authoring run, `claude --version`: `2.1.197` — the same
 binary and version `adapters.ts`'s `CLAUDE_MCP_ADAPTER` already records for
-task 5's own registration-format check, re-confirmed here as still current.
+its own registration-format check, re-confirmed here as still current.
 
 Real typed event emitted by the real `log()` sink for this run (`meta.repo`
 reads `attalabs/vinaya` because `buildSandbox()`'s own `AEG_REPO` fixture

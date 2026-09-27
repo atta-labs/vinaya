@@ -435,6 +435,73 @@ describe('dispatchRole — a successful dispatch', () => {
     expect((outcome as { model: string }).model).toBe('default')
   })
 
+  // O1/O3: the value a dispatched role reads to recognize its OWN driver. The
+  // regression it closes: a Developer ran `ps`, found the `vinaya task run`
+  // process that had launched it, read two runs racing on one branch, and
+  // stopped before its first step. The driver is this launching process — not
+  // the vendor CLI it spawns — so the assertion compares the value the child
+  // received against the launch record's own `dispatcherPid`, which the driver
+  // wrote about ITSELF (`process.pid`) before spawning anything. Run for a
+  // code-reviewer as well as a developer: the value is set beside the attribution
+  // every role already receives, never only the developer's.
+  for (const [role, task] of [
+    ['developer', 9101],
+    ['code-reviewer', 9102]
+  ] as const) {
+    it(`tells a dispatched ${role} its own driver's pid, equal to the driver's own`, () => {
+      const home = tempDir('vinaya-dispatch-home-')
+      const cwd = tempDir('vinaya-dispatch-cwd-')
+      const binDir = tempDir('vinaya-dispatch-bin-')
+      const driverPidOut = join(cwd, 'driver-pid.out')
+      // Reads back exactly one environment value and nothing else — and
+      // drains stdin, the way every other fake vendor in this file does,
+      // because a real vendor reads its prompt from there. The first version
+      // of this fixture exited without reading it and the dispatch came back
+      // non-zero on the Linux CI runner (`Test (apps/cli, shard 2)`) while
+      // passing on the authoring macOS host — the one structural difference
+      // from this file's long-passing sibling fixture, which drains it.
+      writeFakeBinary(
+        binDir,
+        'claude',
+        `#!/bin/sh\ncat > /dev/null\nprintf '%s' "$VINAYA_DRIVER_PID" > "${driverPidOut}"\nexit 0\n`
+      )
+      const promptFile = join(cwd, 'prompt.txt')
+      writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+
+      const r = runDispatch(
+        [role, '--agent', 'claude', '--prompt-file', promptFile, '--task', String(task)],
+        cwd,
+        home,
+        `${binDir}:${pathWithoutRealVendors()}`
+      )
+      // Named rather than asserted bare: a non-zero status here is always a
+      // dispatch that refused or died, and its own stderr says which.
+      if (r.status !== 0) {
+        throw new Error(`vinaya dispatch exited ${r.status}\n--- stderr ---\n${r.stderr}\n--- stdout ---\n${r.stdout}`)
+      }
+
+      const received = readFileSync(driverPidOut, 'utf8')
+      expect(received).toMatch(/^[0-9]+$/)
+
+      const record = JSON.parse(
+        readFileSync(
+          join(
+            home,
+            '.vinaya',
+            'runtime',
+            'unresolved',
+            'tasks-execution',
+            String(task),
+            'sessions',
+            `${role}-claude.json`
+          ),
+          'utf8'
+        )
+      ) as { dispatcherPid: number }
+      expect(Number.parseInt(received, 10)).toBe(record.dispatcherPid)
+    })
+  }
+
   it('Codex gives a normal stdin/JSONL dispatch workspace-write access', () => {
     const home = tempDir('vinaya-dispatch-home-')
     const cwd = tempDir('vinaya-dispatch-cwd-')

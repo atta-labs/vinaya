@@ -76,6 +76,13 @@ function baseFacts(overrides: Partial<BriefFacts> = {}): BriefFacts {
     consumersOf: () => [],
     docOwnersContent: null,
     sourceRevision: FIXTURE_REVISION,
+    // The vendoring repository's own shape by default — every pre-existing
+    // expectation in this file was written against the commands it renders.
+    cliInvocation: 'bun apps/cli/src/index.ts',
+    localGateCommands: {
+      dispatchReadiness: 'bun packages/aeg-core/bin/verify-dispatch.ts',
+      docCoverage: 'bun packages/aeg-core/bin/verify-docs.ts'
+    },
     ...overrides
   }
 }
@@ -702,6 +709,132 @@ describe('renderBrief', () => {
     expect(result.brief).toContain(
       'The pre-push hook already ran the affected suite on your one push and refused it on failure'
     )
+  })
+
+  describe('every command is written the way the rendered-for repository invokes the CLI (Issue #807)', () => {
+    const ADOPTER = {
+      cliInvocation: 'npx --yes @attalabs/vinaya@9.9.9',
+      localGateCommands: { dispatchReadiness: null, docCoverage: null }
+    } as const
+
+    it('an adopter that installs from the registry gets no path that exists only in the authoring repository (O1)', () => {
+      const result = renderBrief(baseFacts(ADOPTER), TEMPLATE)
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      // The three prefixes the Boundary named — the doctrine tree, the
+      // aeg-core gate bins, and the vendored CLI entry. An `npm install` of
+      // this package puts none of them anywhere the reader can reach.
+      expect(result.brief).not.toContain('aeg-root/')
+      expect(result.brief).not.toContain('packages/aeg-core/bin/')
+      expect(result.brief).not.toContain('apps/cli/src/index.ts')
+    })
+
+    it('the doctrine and the PR report template are named as commands that print them (O2)', () => {
+      const result = renderBrief(baseFacts(ADOPTER), TEMPLATE)
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.brief).toContain(
+        'Run `npx --yes @attalabs/vinaya@9.9.9 doctrine --role developer --print` and read its output first'
+      )
+      expect(result.brief).toContain(
+        'The tier checklist in `npx --yes @attalabs/vinaya@9.9.9 doctrine --role developer --print`'
+      )
+      expect(result.brief).toContain(
+        'print it with `npx --yes @attalabs/vinaya@9.9.9 doctrine --template pr-report --print`'
+      )
+    })
+
+    it('an adopter runs the shipped checks, with no unabridged local derivation offered (O1)', () => {
+      const result = renderBrief(baseFacts(ADOPTER), TEMPLATE)
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.brief).toContain('`npx --yes @attalabs/vinaya@9.9.9 check dispatch-readiness`')
+      expect(result.brief).toContain(
+        '`PR_BODY="$(cat <body-file>)" npx --yes @attalabs/vinaya@9.9.9 check doc-coverage` green'
+      )
+      expect(result.brief).toContain('`npx --yes @attalabs/vinaya@9.9.9 pr create --body-file <path>')
+      expect(result.brief).not.toContain('also ships')
+    })
+
+    it('no command is left as a bare `vinaya` — an adopter has none on PATH (round 2, F1)', () => {
+      const result = renderBrief(baseFacts(ADOPTER), TEMPLATE)
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      // §8's `pr report` line was the one command this sweep did not catch
+      // before: it writes the Evidence block the PR report template requires,
+      // and read `vinaya pr report --write` in every adopter's brief.
+      expect(result.brief).not.toContain('`vinaya ')
+      expect(result.brief).toContain('`npx --yes @attalabs/vinaya@9.9.9 pr report --write`')
+    })
+
+    it('§2 asks for a confirmation §5 can actually produce (round 3, F2)', () => {
+      const result = renderBrief(baseFacts(ADOPTER), TEMPLATE)
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      // `check dispatch-readiness` prints `✓ dispatch-readiness: pass`, never
+      // `READY TO DISPATCH` — which only this repository's own unabridged
+      // derivation emits, and an adopter's §5 does not name it.
+      expect(result.brief).toContain('Confirm dispatch readiness at your own Step 0, with the command §5 names.')
+      expect(result.brief).not.toContain('READY TO DISPATCH')
+    })
+
+    it('a command the Planner wrote into an Issue field is rewritten too, not copied bare (round 3, security F1)', () => {
+      const issueBody = ISSUE_BODY.replace(
+        '**Traps to avoid** — (1) Do NOT skip the test.',
+        '**Traps to avoid** — (1) Run `vinaya check doc-coverage` before pushing.'
+      )
+      const result = renderBrief(baseFacts({ ...ADOPTER, rationale: parseRationaleFields(issueBody) }), TEMPLATE)
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.brief).toContain('Run `npx --yes @attalabs/vinaya@9.9.9 check doc-coverage` before pushing')
+      expect(result.brief).not.toContain('`vinaya ')
+    })
+
+    it("the Objectives section keeps the Issue's own words, so `checkObjectivesCopy` still matches (round 3, security F1)", () => {
+      const objectives = [{ id: 'O1', text: 'Run `vinaya check doc-coverage` in the fixture.' }]
+      const result = renderBrief(baseFacts({ ...ADOPTER, objectives }), TEMPLATE)
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      // The one held-out section: a gate compares it word for word against the
+      // Issue, so a rewritten command there would refuse the brief.
+      expect(result.brief).toContain('O1. Run `vinaya check doc-coverage` in the fixture.')
+    })
+
+    it('an invocation carrying a substitution pattern is copied literally, never expanded (round 2, security F3)', () => {
+      const result = renderBrief(
+        baseFacts({ cliInvocation: 'npx $& $` x', localGateCommands: { dispatchReadiness: null, docCoverage: null } }),
+        TEMPLATE
+      )
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.brief).toContain('Run `npx $& $` x doctrine --role developer --print`')
+      expect(result.brief).not.toContain('`vinaya ')
+    })
+
+    it('a repository that vendors the CLI keeps every command it runs today, plus its own unabridged derivations (O3)', () => {
+      const result = renderBrief(baseFacts(), TEMPLATE)
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.brief).toContain('`bun apps/cli/src/index.ts check dispatch-readiness`')
+      expect(result.brief).toContain('`bun packages/aeg-core/bin/verify-dispatch.ts review-convergence-v1 42`')
+      expect(result.brief).toContain('`PR_BODY="$(cat <body-file>)" bun packages/aeg-core/bin/verify-docs.ts --pr`')
+      expect(result.brief).toContain('`bun apps/cli/src/index.ts pr create --body-file <path>')
+      expect(result.brief).toContain('`bun apps/cli/src/index.ts pr report --write`')
+    })
+
+    it("a backlog task's unabridged dispatch derivation names the Issue it re-derives (O3)", () => {
+      const result = renderBrief(baseFacts({ trancheSlug: null }), TEMPLATE)
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.brief).toContain('`bun packages/aeg-core/bin/verify-dispatch.ts --issue 42`')
+    })
+
+    it('refuses to render at all when the caller states no invocation — never a default', () => {
+      const result = renderBrief(baseFacts({ cliInvocation: '' }), TEMPLATE)
+      expect(result.ok).toBe(false)
+      if (result.ok) return
+      expect(result.missing.join('\n')).toContain('CLI invocation')
+    })
   })
 })
 
