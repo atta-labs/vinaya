@@ -1256,13 +1256,83 @@ function trustAnchorRepoFromRemoteUrl(url: string): string | null {
 
 const execFileAsync = promisify(execFile)
 
+// ---------------------------------------------------------------------------
+// The pre-merge trust-anchor probe — proving a root-`vinaya.config.json`
+// change before merge (`apps/cli/specs/self-hosting.md`).
+//
+// The trust-anchor read below deliberately reads `vinaya.config.json` from the
+// repository's DEFAULT BRANCH via the GitHub API, never local git or the
+// working tree — that is the whole point of `loadTrustAnchorConfig`'s doc
+// comment, and it means a pull request under review can never test "what
+// happens once THIS configuration is the default branch's": its CI reads the
+// OLD default-branch bytes. A configuration change that breaks a CLI test only
+// once merged therefore passed every check and broke the default branch on
+// merge (the `logs.url` change observed 2026-09-26).
+//
+// This seam closes that one gap, and ONLY that one, for ONE CI job. When
+// `resolveCiTrustAnchorProbeRef` returns a ref, both fetchers read the config
+// from that local git ref (the checked-out pull request) instead of the real
+// default branch — so the CLI test suite runs with the pull request's
+// configuration standing in for the default branch's. Everywhere else it
+// returns `null` and the read is byte-for-byte the ordinary `gh api` one.
+//
+// It is a security-sensitive seam next to the trust anchor, so it is gated on
+// THREE independent facts that only ever coincide inside that one job, and can
+// be turned on by nothing a real unattended run or a developer's shell does:
+//
+//   - `VINAYA_CI_CONFIG_PROBE_REF` names the ref — an explicit, visible opt-in
+//     the job sets to its checked-out pull-request ref, absent everywhere else;
+//   - `GITHUB_ACTIONS === 'true'` — set only by the Actions runner, never a
+//     developer's shell nor an unattended run on an operator host;
+//   - NO forge credential is present (`GH_TOKEN`/`GITHUB_TOKEN` unset or empty)
+//     — the "no secrets" property the job declares, and the one a real
+//     unattended run can NEVER satisfy, because it must write to the forge.
+//
+// Why this does not re-open the round-3 hole `loadTrustAnchorConfig`'s doc
+// comment describes (a PR steering a LOCAL git ref the trust anchor read):
+// every read that decides MERGE AUTHORITY runs in a `pull_request_target` job
+// loaded from the DEFAULT branch (`apps/cli/specs/self-hosting.md` § What
+// self-hosting costs) — that job never sets this var and always carries a
+// token, so the seam is inert there. A malicious PR that sets the var and
+// drops the token in its OWN `pull_request` job only steers that job's own
+// output, which is untrusted content, not merge authority — the same boundary
+// that already lets a PR change the content checks that inspect it.
+// ---------------------------------------------------------------------------
+
+export function resolveCiTrustAnchorProbeRef(env: NodeJS.ProcessEnv = process.env): string | null {
+  const ref = env.VINAYA_CI_CONFIG_PROBE_REF?.trim()
+  if (!ref) return null
+  if (env.GITHUB_ACTIONS !== 'true') return null
+  if ((env.GH_TOKEN ?? '').length > 0 || (env.GITHUB_TOKEN ?? '').length > 0) return null
+  return ref
+}
+
+/**
+ * The repository's own `vinaya.config.json` at `ref`, base64-encoded exactly
+ * as the GitHub contents API's `--jq .content` returns it, so the probe seam
+ * feeds the identical `parseTrustAnchorContent` the real read does. `git show`
+ * reads a COMMITTED blob, never the working tree, so an uncommitted edit in the
+ * job's clone cannot leak in.
+ */
+function readTrustAnchorConfigAtRef(ref: string): string {
+  const raw = execFileSync('git', ['show', `${ref}:${LOCAL_CONFIG_FILENAME}`], {
+    encoding: 'utf-8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 10_000
+  })
+  return Buffer.from(raw, 'utf-8').toString('base64')
+}
+
 /**
  * Fetches `vinaya.config.json` from the repository's DEFAULT BRANCH via the
  * GitHub API — no `ref` parameter, so GitHub itself picks the default branch
  * from server-side repo settings. The returned CONTENT never comes from local
- * git or the working tree; only the repo identity does (`trustAnchorRepo`).
+ * git or the working tree; only the repo identity does (`trustAnchorRepo`). The
+ * single exception is the pre-merge probe above, inert outside its one CI job.
  */
 function ghFetchTrustAnchorConfig(): string {
+  const probeRef = resolveCiTrustAnchorProbeRef()
+  if (probeRef) return readTrustAnchorConfigAtRef(probeRef)
   const repo = trustAnchorRepo()
   if (!repo) throw new Error('could not resolve repo identity for the trust-anchor read')
   return execFileSync('gh', ['api', `repos/${repo}/contents/${LOCAL_CONFIG_FILENAME}`, '--jq', '.content'], {
@@ -1273,6 +1343,14 @@ function ghFetchTrustAnchorConfig(): string {
 
 /** `ghFetchTrustAnchorConfig`'s async twin — the same read, as an async child that never blocks the event loop. */
 async function ghFetchTrustAnchorConfigAsync(): Promise<string> {
+  const probeRef = resolveCiTrustAnchorProbeRef()
+  if (probeRef) {
+    const { stdout } = await execFileAsync('git', ['show', `${probeRef}:${LOCAL_CONFIG_FILENAME}`], {
+      encoding: 'utf-8',
+      timeout: 10_000
+    })
+    return Buffer.from(stdout, 'utf-8').toString('base64')
+  }
   const repo = await trustAnchorRepoAsync()
   if (!repo) throw new Error('could not resolve repo identity for the trust-anchor read')
   const { stdout } = await execFileAsync(
