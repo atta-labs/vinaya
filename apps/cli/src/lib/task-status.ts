@@ -26,6 +26,7 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync, readdirSync } from 'node:fs'
 import { hostname } from 'node:os'
 import {
+  DEFAULT_PAGE_LIMIT,
   defaultControlStoreDeps,
   isPrincipal,
   isPublishedSummaryComment,
@@ -61,7 +62,14 @@ import {
   type PauseDisposition,
   type StartRecord
 } from './task-tools/start.js'
-import { readTaskPrFacts, sanitizeForgeText, type TaskPrFacts, type TaskPrRead } from './task-tools/pr-read.js'
+import {
+  GH_STATUS_READ_TIMEOUT_MS,
+  MAX_GH_STATUS_OUTPUT_BYTES,
+  readTaskPrFacts,
+  sanitizeForgeText,
+  type TaskPrFacts,
+  type TaskPrRead
+} from './task-tools/pr-facts.js'
 import { getProcessSnapshot, type ProcessSnapshot } from './dispatch.js'
 
 /**
@@ -1257,14 +1265,26 @@ const CELL_DISPLAY_MAX = 200
  *    hiding columns from a reader while the Operator believed it had relayed the
  *    table intact — and the same cell could carry a control-comment shape into
  *    the Operator's own context.
- * 2. A vertical bar is ESCAPED (`\|`, which markdown renders as the bar itself)
+ * 2. EVERY remaining `<` becomes `&lt;`, not just the comment opener. The opener
+ *    is only the loudest of a family: `<span hidden>`, `<div
+ *    style="display:none">`, `<style>` and `<script>` all fit inside a forge
+ *    label's own length limit, and each hides the cells and rows after it in any
+ *    renderer that honours raw HTML — the same harm, reached by a different tag.
+ *    No legitimate cell this table renders contains an angle bracket, so this
+ *    costs nothing a reader wanted.
+ * 3. A vertical bar is ESCAPED (`\|`, which markdown renders as the bar itself)
  *    rather than dropped, so the value still reads as itself; one unescaped bar
  *    silently adds a column and the header stops naming what the row carries.
- * 3. A newline or carriage return becomes a space: no escape keeps a line break
+ * 4. A newline or carriage return becomes a space: no escape keeps a line break
  *    inside one cell, and a cell that ends its own row is the same defect.
+ *
+ * `&` is left alone deliberately: escaping it AFTER step 1 would turn that step's
+ * own `&lt;!--` into visible `&amp;lt;!--`, and a bare ampersand renders as
+ * itself in every reader this table reaches.
  */
 function cellSafe(value: string): string {
   return sanitizeForgeText(value, CELL_DISPLAY_MAX)
+    .replaceAll('<', '&lt;')
     .replaceAll('|', '\\|')
     .replaceAll(/[\r\n]+/g, ' ')
 }
@@ -1328,16 +1348,24 @@ export function claimDepsForOneRead(): StartClaimDeps {
 }
 
 /**
- * How many pull requests ONE status read will read facts for.
+ * How many pull requests ONE status read will read facts for: the catalog's own
+ * `DEFAULT_PAGE_LIMIT`, the size of the page `task_status` returns when a caller
+ * names no limit — so a default-sized answer never carries a column nothing read.
  *
- * The same figure, and the same reason, as the confidence column's own
- * `SUMMARY_CONFIDENCE_READS_PER_STATUS_READ`: these reads are synchronous, and
- * the long-lived task-tool server chains every request through one promise, so
- * an unbounded number of them would hold every other task's queued call behind
- * a listing of a busy repository — and a `gh` that hangs would hold it behind
- * one hanging subprocess. This column reads MORE rows than that one does (every
- * row with a pull request, not only the published ones), so it needs the bound
- * more, not less.
+ * It IS a ceiling, and it exists for the reason a review named: these reads are
+ * synchronous, and the long-lived task-tool server chains every request through
+ * one promise, so an unbounded number of them would hold every other task's
+ * queued call behind a listing of a busy repository, and a `gh` that hangs would
+ * hold it behind one subprocess (bounded in turn by
+ * `GH_STATUS_READ_TIMEOUT_MS`).
+ *
+ * It is deliberately HIGHER than the confidence column's own
+ * `SUMMARY_CONFIDENCE_READS_PER_STATUS_READ`, which it was first borrowed from,
+ * for two reasons. That reader asks about PUBLISHED rows only, while this one
+ * asks about every row with a pull request — strictly more. And recovering a
+ * truncated row costs MORE than reading it up front: reading it by name is one
+ * Issue read plus one pull-request read, where the listing would have spent one.
+ * A bound that makes the ordinary listing pay twice over is not a saving.
  *
  * Past the budget the remaining rows read `not read` — the word this table
  * already uses for a read nothing made — and the answer for the row an Operator
@@ -1349,7 +1377,7 @@ export function claimDepsForOneRead(): StartClaimDeps {
  * that filter existed. The remedy itself is the same one the doctrine already
  * gives for a task missing from a listing.
  */
-export const PR_FACTS_READS_PER_STATUS_READ = 5
+export const PR_FACTS_READS_PER_STATUS_READ = DEFAULT_PAGE_LIMIT
 
 /**
  * The pull-request facts reader every row of ONE status read shares — one forge
@@ -1388,6 +1416,26 @@ export function prFactsReaderFor(
     return answer
   }
 }
+
+/**
+ * Whether a read fills the pull-request COLUMNS at all.
+ *
+ * `'skip'` is for a caller that wants a row's identity and its pull-request
+ * NUMBER and nothing else — the two ref resolutions behind
+ * `task_escalation_read`, `task_resume`, `task_cancel` and `task_pr_read`, which
+ * read `issue` and `pr` off the row and discard the rest. Before this existed
+ * every one of those paid a `gh pr view` per invocation whose whole payload was
+ * thrown away, and `task_pr_read` then re-fetched the same comments and the same
+ * rollup itself — a spare synchronous subprocess in front of every queued call on
+ * the shared task-tool server, for four tools that never paid it before.
+ *
+ * A row from a `'skip'` read carries `prFacts: null`, which renders as `not
+ * read`: true of it, and the reason such a read never renders a table.
+ */
+export type PrFactsReadMode = 'read' | 'skip'
+
+/** The facts reader for a `'skip'` read — it makes no forge call and answers nothing, for every row. */
+const noPrFactsRead: PrFactsReader = () => null
 
 /** A reader over comments THIS read already has in hand — the second column served by the first column's own forge read, with no call of its own. */
 function commentsAlreadyRead(comments: readonly { body: string; author: string | null }[]): SummaryCommentReader {
@@ -1556,13 +1604,16 @@ export type TaskStatusListView = {
  * bounded lifetime — so a listing of ten tasks pays for it once, and a listing
  * in which nothing is in a comparable phase pays nothing at all.
  */
-export function gatherTaskStatusList(selector: TaskStatusSelector = null): TaskStatusListView {
+export function gatherTaskStatusList(
+  selector: TaskStatusSelector = null,
+  prFacts: PrFactsReadMode = 'read'
+): TaskStatusListView {
   const allowlist = principalAllowlist()
   const root = runtimeDir()
   const history = phaseHistoryLookup(allowlist)
   const readComments = prCommentReaderForOneStatusRead()
   const claimDeps = claimDepsForOneRead()
-  const readPrFacts = prFactsReaderFor(allowlist)
+  const readPrFacts = prFacts === 'read' ? prFactsReaderFor(allowlist) : noPrFactsRead
   const rows: TaskStatusRow[] = []
   const briefFrozenIssues = new Set<number>()
   for (const ref of listOpenTaskIssues()) {

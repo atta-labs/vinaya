@@ -47,9 +47,9 @@ import {
   readStartClaims,
   START_CLAIM_REPORTING_WINDOW_MS
 } from '../../src/lib/task-tools/start.js'
-import { TASK_NEXT_ACTIONS } from '@attalabs/aeg-core'
+import { DEFAULT_PAGE_LIMIT, TASK_NEXT_ACTIONS } from '@attalabs/aeg-core'
 import type { ProcessSnapshot } from '../../src/lib/dispatch.js'
-import type { TaskPrFacts } from '../../src/lib/task-tools/pr-read.js'
+import type { TaskPrFacts } from '../../src/lib/task-tools/pr-facts.js'
 import {
   mergedTaskPrNumbers,
   phaseHistoryLookup,
@@ -2261,6 +2261,17 @@ describe('a cell never breaks the table it is in', () => {
     expect(lines[2]).toContain('VERDICT :')
   })
 
+  it('escapes every angle bracket, not only the comment opener — hidden markup hides rows just as well', () => {
+    // A forge label has room for any of these, and each hides the cells and rows
+    // after it in a renderer that honours raw HTML, which is the same harm the
+    // comment opener causes by a different tag.
+    for (const markup of ['<span hidden>', '<div style="display:none">', '<style>', '<script>']) {
+      const lines = renderTaskStatusTable([{ ...base, tranche: markup, pr: null, state: { kind: 'no_driver' } }], deps)
+      expect(lines[2]).not.toContain('<')
+      expect(lines[2]).toContain('&lt;')
+    }
+  })
+
   it('bounds one cell, so a label nothing should render in full cannot spend the whole row', () => {
     const lines = renderTaskStatusTable(
       [{ ...base, tranche: 'x'.repeat(5_000), pr: null, state: { kind: 'no_driver' } }],
@@ -2337,8 +2348,13 @@ describe('prFactsReaderFor', () => {
     expect(asked).toEqual([701, 702])
   })
 
-  it('defaults to the shipped budget', () => {
-    expect(PR_FACTS_READS_PER_STATUS_READ).toBe(SUMMARY_CONFIDENCE_READS_PER_STATUS_READ)
+  it('defaults to the page the tool returns, and never below the confidence read’s own bound', () => {
+    // The size of the default page `task_status` returns, so a default-sized
+    // answer never carries a column nothing read — and deliberately at or above
+    // the confidence read's bound, since this reader asks about every row with a
+    // pull request where that one asks only about published rows.
+    expect(PR_FACTS_READS_PER_STATUS_READ).toBe(DEFAULT_PAGE_LIMIT)
+    expect(PR_FACTS_READS_PER_STATUS_READ).toBeGreaterThanOrEqual(SUMMARY_CONFIDENCE_READS_PER_STATUS_READ)
   })
 })
 

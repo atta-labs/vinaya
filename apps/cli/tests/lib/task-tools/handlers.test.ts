@@ -12,17 +12,16 @@ import {
   capText,
   latestNodeRunPerName,
   type PrComment,
-  type PrReadForge,
-  type RollupNode,
   readTaskPrFacts,
+  type RollupNode,
   sanitizeForgeLogTail,
   sanitizeForgeText,
   stripAnsi,
   summarizeChecks,
   taskPrFactsFrom,
-  taskPrReadHandler,
   toChecks
-} from '../../../src/lib/task-tools/pr-read.js'
+} from '../../../src/lib/task-tools/pr-facts.js'
+import { type PrReadForge, taskPrReadHandler } from '../../../src/lib/task-tools/pr-read.js'
 
 /**
  * The forge-touching composition inside `taskStatusHandler`/
@@ -938,15 +937,16 @@ exit 1
 `
 
   const fixtureScript = `
-import { taskStatusHandler } from '../../../src/lib/task-tools/handlers.js'
-import { appendFileSync, writeFileSync } from 'node:fs'
+import { taskEscalationReadHandler, taskStatusHandler } from '../../../src/lib/task-tools/handlers.js'
+import { appendFileSync } from 'node:fs'
 
 const countFile = process.env.VINAYA_TEST_COUNT_FILE as string
 const listing = taskStatusHandler({})
-writeFileSync(countFile + '.after-listing', '')
 appendFileSync(countFile, 'NAMED_READ_STARTS\\n')
 const named = taskStatusHandler({ task: { tranche: 'demo', id: '7' } })
-process.stdout.write('F1_RESULT:' + JSON.stringify({ listing, named }) + '\\n')
+appendFileSync(countFile, 'REF_RESOLUTION_STARTS\\n')
+const escalation = taskEscalationReadHandler({ task: { tranche: 'demo', id: '7' } })
+process.stdout.write('F1_RESULT:' + JSON.stringify({ listing, named, escalation }) + '\\n')
 `
 
   it('reads the named row’s own pull-request columns, however late it lists', () => {
@@ -981,6 +981,7 @@ process.stdout.write('F1_RESULT:' + JSON.stringify({ listing, named }) + '\\n')
       const parsed = JSON.parse((line as string).slice('F1_RESULT:'.length)) as {
         listing: { ok: boolean; result?: { table: string } }
         named: { ok: boolean; result?: { table: string; items: Array<{ issue: number }> } }
+        escalation: { ok: boolean }
       }
       expect(parsed.listing.ok).toBe(true)
       expect(parsed.named.ok).toBe(true)
@@ -991,13 +992,14 @@ process.stdout.write('F1_RESULT:' + JSON.stringify({ listing, named }) + '\\n')
           .filter((l) => l.startsWith('| [demo]'))
           .map((l) => l.split('|').map((c) => c.trim()))
 
-      // The listing spends its budget in listing order: the first rows carry a
-      // head and a CI word, and the rows past the budget say so rather than
-      // showing an absence.
+      // Seven rows, and — with the budget now the size of the default page — every
+      // one of them read. The budget's own truncation and its memoization are
+      // asserted against an explicit small budget in `prFactsReaderFor`'s tests;
+      // what this fixture is for is the ORDER the budget is spent in.
       const listed = rowsOf(parsed.listing.result?.table ?? '')
       expect(listed).toHaveLength(7)
-      expect(listed.filter((cells) => cells.includes('not read'))).toHaveLength(7 - PR_FACTS_READS_PER_STATUS_READ)
-      expect(listed[6]?.includes('not read')).toBe(true)
+      expect(PR_FACTS_READS_PER_STATUS_READ).toBeGreaterThanOrEqual(listed.length)
+      expect(listed.filter((cells) => cells.includes('not read'))).toHaveLength(0)
 
       // The NAMED read builds only that row, so its own columns are read — and
       // it costs one Issue read, not one per open task.
@@ -1007,12 +1009,46 @@ process.stdout.write('F1_RESULT:' + JSON.stringify({ listing, named }) + '\\n')
       expect(namedRows[0]).toContain('head900')
       expect(parsed.named.result?.items.map((i) => i.issue)).toEqual([9007])
 
-      const afterNamed = readFileSync(countFile, 'utf8').split('NAMED_READ_STARTS\n')[1] ?? ''
+      // The whole point, and what a listing-order budget spend would break: the
+      // named read touches ONE task's Issue and ONE pull request, not every open
+      // task's.
+      const calls = readFileSync(countFile, 'utf8')
+      const afterNamed = (calls.split('NAMED_READ_STARTS\n')[1] ?? '').split('REF_RESOLUTION_STARTS\n')[0] ?? ''
       const namedCalls = afterNamed.split('\n').filter((l) => l.trim() !== '')
       expect(namedCalls).toEqual(['issue-view 9007', 'pr-view 9007'])
+
+      // A ref resolution reads a row's Issue and its pull-request NUMBER and
+      // nothing else, so it makes NO pull-request read at all — the payload would
+      // be discarded, and `task_pr_read` re-fetches the same rollup and the same
+      // comments itself.
+      expect(parsed.escalation.ok).toBe(true)
+      const afterResolution = calls.split('REF_RESOLUTION_STARTS\n')[1] ?? ''
+      const resolutionCalls = afterResolution.split('\n').filter((l) => l.trim() !== '')
+      expect(resolutionCalls).toEqual(['issue-view 9007'])
     } finally {
       rmSync(scriptPath, { force: true })
       rmSync(home, { recursive: true, force: true })
     }
   }, 40_000)
+})
+
+/**
+ * The shared derivations are a LEAF, and this is what keeps them one: nothing in
+ * `pr-facts.ts` may import a handler or the status reader, because `pr-read.ts`
+ * resolves its pull request through `handlers.ts`, which reads the status rows
+ * from `task-status.ts` — so a single import back from the leaf closes a module
+ * cycle through every one of them. That cycle existed, and initialized only
+ * because every binding crossing it was a hoisted `export function`: converting
+ * one to a const arrow would have broken module init at import time with nothing
+ * to catch it.
+ */
+describe('pr-facts.ts stays a leaf', () => {
+  it('imports no handler and no status reader', () => {
+    const source = readFileSync(join(import.meta.dir, '../../../src/lib/task-tools/pr-facts.ts'), 'utf8')
+    const imported = [...source.matchAll(/from '([^']+)'/g)].map((m) => m[1] as string)
+    expect(imported).not.toContain('./handlers.js')
+    expect(imported).not.toContain('./pr-read.js')
+    expect(imported).not.toContain('../task-status.js')
+    expect(imported.filter((path) => /handlers|task-status|pr-read/.test(path))).toEqual([])
+  })
 })

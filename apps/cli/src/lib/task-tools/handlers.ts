@@ -39,7 +39,6 @@ import { findTrancheSlug, resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
 import { runtimeDir } from '../dev-review-loop.js'
 import {
   gatherTaskStatusList,
-  renderTaskStatusTable,
   taskStatusIdentityMatches,
   type TaskStatusRow,
   type TaskStatusSelector
@@ -80,7 +79,10 @@ export function describeTaskRef(ref: TaskToolRef): string {
  * about and then report the named row's own columns as unread.
  */
 function currentTaskStatusRows(selector: TaskStatusSelector = null): TaskStatusRow[] {
-  return gatherTaskStatusList(selector).rows
+  // `'skip'`: every caller of this function reads a row's Issue and its
+  // pull-request NUMBER and nothing else, so the pull-request columns' own forge
+  // read would be one `gh pr view` per invocation whose payload is discarded.
+  return gatherTaskStatusList(selector, 'skip').rows
 }
 
 export function taskStatusHandler(input: unknown): TaskToolCallResult<TaskStatusResult> {
@@ -88,11 +90,14 @@ export function taskStatusHandler(input: unknown): TaskToolCallResult<TaskStatus
   if (!parsed.success) return fail(taskToolError('validation', parsed.error.issues[0]?.message ?? 'invalid input'))
   const { task, cursor, limit } = parsed.data
 
-  const rows = currentTaskStatusRows(task ?? null)
-  // `rows` already carries only what `task` selected (the reader filtered before
-  // building), and this keeps the same rule as the one predicate either side of
-  // that boundary applies.
-  const matching = task ? rows.filter((row) => refMatchesRow(task, row)) : rows
+  // The one read this handler makes — its rows AND the table rendered from them.
+  // `task_status` is the one caller that wants the pull-request columns, so it is
+  // the one that asks for them.
+  const view = gatherTaskStatusList(task ?? null, 'read')
+  // `view.rows` already carries only what `task` selected (the reader filtered
+  // before building), and this keeps the same rule as the one predicate either
+  // side of that boundary applies.
+  const matching = task ? view.rows.filter((row) => refMatchesRow(task, row)) : view.rows
   if (task && matching.length === 0) {
     return fail(taskToolError('precondition', `no open task matches ${describeTaskRef(task)}`))
   }
@@ -112,11 +117,13 @@ export function taskStatusHandler(input: unknown): TaskToolCallResult<TaskStatus
     freshness: classifyStateFreshness(row.state)
   }))
 
-  // The table is rendered by the command's OWN renderer — never a second
-  // layout built here — and over every MATCHED row rather than the page above:
-  // a call with no `task` shows every open task in the repository, whatever
-  // `limit` does to the structured items beside it.
-  return ok({ items, nextCursor: page.nextCursor, table: renderTaskStatusTable(matching).join('\n') })
+  // The reader's OWN table, not a second rendering of the same rows: it already
+  // built one from these rows with the command's own renderer, over every MATCHED
+  // row rather than the page above (a call with no `task` shows every open task in
+  // the repository, whatever `limit` does to the structured items beside it).
+  // Re-rendering took a second `now()` and `hostname()` for a footer already
+  // computed, and threw the reader's own away.
+  return ok({ items, nextCursor: page.nextCursor, table: view.table.join('\n') })
 }
 
 // --- task_escalation_read ------------------------------------------------
@@ -153,7 +160,9 @@ export function taskStatusHandler(input: unknown): TaskToolCallResult<TaskStatus
  */
 export function resolveIssueForRef(ref: TaskToolRef): number | null {
   if ('issue' in ref) return ref.issue
-  const { rows, briefFrozenIssues } = gatherTaskStatusList(ref)
+  // `'skip'` for the same reason `currentTaskStatusRows` skips: this resolution
+  // reads an Issue number and the frozen-brief set, never a column.
+  const { rows, briefFrozenIssues } = gatherTaskStatusList(ref, 'skip')
   const row = rows.find((r) => r.tranche === ref.tranche && r.id === ref.id && briefFrozenIssues.has(r.issue))
   return row ? row.issue : null
 }
