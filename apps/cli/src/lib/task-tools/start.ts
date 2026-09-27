@@ -50,11 +50,14 @@
  *   - refuses (`precondition`) a task whose run is in a state another tool
  *     owns, naming that tool — and ONLY when that tool would really move it.
  *     A LIVE driver is `task_status`'s to watch. A PAUSED run is
- *     `task_resume`'s only while it is still asking for a decision; a pause
- *     already resolved as resume, and a recoverable infrastructure pause the
- *     loop continues on its own, are both refused BY `task_resume` and so
- *     are started here instead (`PauseDisposition`). A pause resolved as
- *     cancel is refused by both, and says so. Every other state this tool
+ *     `task_resume`'s only while it is still asking for a decision. Two
+ *     others are started here instead, because `task_resume` launches
+ *     nothing for either (`PauseDisposition`): a pause already resolved as
+ *     resume, for which it answers `already_resumed` — an ok result, not a
+ *     refusal — and an in-bound infrastructure pause, which it refuses
+ *     `authority` for want of a ruling nobody posts for an automatic
+ *     hiccup. A pause resolved as cancel is continued by neither, and says
+ *     so; so is one whose record this host cannot read. Every other state this tool
  *     starts — a task never dispatched, a run that EXITED (killed, crashed,
  *     ended by a signal, no pause written), and a published one — because
  *     `runTask` re-attaches to the task's own open pull request when no
@@ -399,32 +402,6 @@ function resolveStartTarget(
 }
 
 /**
- * What a paused run is actually waiting for — the fact that decides whether
- * `task_resume` can move it, or whether this tool is the one that can.
- *
- *   - `awaiting_ruling` — a pause nobody has decided yet. `task_resume`'s
- *     case: it authenticates the Principal's ruling and continues from it.
- *   - `resolved_resume` — a ruling was already given and consumed into a
- *     resolution record, and the continuing driver then died. `task_resume`
- *     replays `already_resumed` and launches nothing; `runTask`'s own
- *     replayed-resolution recovery re-attaches and carries on.
- *   - `resolved_cancel` — the run was stopped on a Principal decision.
- *     Neither tool continues it, and neither should.
- *   - `self_resuming` — a recoverable infrastructure hiccup, which the loop
- *     continues WITHOUT a ruling inside its own retry bound. `task_resume`
- *     has no such waiver and refuses `authority` for a ruling nobody posts
- *     for an automatic hiccup, so this tool is the one that moves it. Past
- *     that bound the loop requires a ruling like any other pause and says so
- *     in its own refusal — which is why the bound is read where it is
- *     enforced rather than second-guessed here.
- *   - `unreadable` — a pause record or a resolution that could not be read
- *     or did not parse. Not the same as "no decision recorded": we do not
- *     know whose the run is, so the gate refuses rather than guessing, and
- *     says what it could not read.
- *   - `none` — no pause holding this run: no pause record at all, or one a
- *     later published round has already superseded.
- */
-/**
  * The loop's own `MAX_INFRASTRUCTURE_RETRIES`, restated rather than imported.
  *
  * Importing it would pull the loop's round-assessment module into this one's
@@ -437,6 +414,33 @@ function resolveStartTarget(
  * alone fails there.
  */
 export const INFRASTRUCTURE_RETRY_BOUND = 5
+
+/**
+ * What a paused run is actually waiting for — the fact that decides whether
+ * `task_resume` can move it, or whether this tool is the one that can.
+ *
+ *   - `awaiting_ruling` — a pause nobody has decided yet. `task_resume`'s
+ *     case: it authenticates the Principal's ruling and continues from it.
+ *   - `resolved_resume` — a ruling was already given and consumed into a
+ *     resolution record, and the continuing driver then died. `task_resume`
+ *     answers `already_resumed` and launches nothing — an ok result, not a
+ *     refusal; `runTask`'s own replayed-resolution recovery re-attaches and
+ *     carries on.
+ *   - `resolved_cancel` — the run was stopped on a Principal decision.
+ *     Neither tool continues it, and neither should.
+ *   - `self_resuming` — a recoverable infrastructure hiccup, self-resuming
+ *     only INSIDE the loop's retry bound, which this reader computes the
+ *     loop's way. At or past that bound the pause reads `awaiting_ruling`.
+ *     Inside it, `task_resume` has no such waiver and refuses `authority`
+ *     for a ruling nobody posts for an automatic hiccup, so this tool is the
+ *     one that moves it.
+ *   - `unreadable` — a pause record or a resolution that could not be read
+ *     or did not parse. Not the same as "no decision recorded": we do not
+ *     know whose the run is, so the gate refuses rather than guessing, and
+ *     says what it could not read.
+ *   - `none` — no pause holding this run: no pause record at all, or one a
+ *     later published round has already superseded.
+ */
 
 export type PauseDisposition =
   | 'awaiting_ruling'
