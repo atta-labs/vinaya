@@ -156,15 +156,23 @@ const FUTURE_CALLER_ALLOWLIST = new Set<string>([])
  * `vinaya doctor` reports whether the configured destination actually works
  * (`apps/cli/specs/log.md` § `vinaya doctor` reports whether the destination
  * works), which means resolving the destination the way the sink itself does
- * rather than reading `logs` a second time. What it imports is the PURE
- * decision function and its type — never `log()`, and never a sink instance:
+ * rather than reading `logs` a second time — including bounding the
+ * trust-anchor read with the sink's own deadline, so the two degrade alike
+ * instead of doctor reporting an anchored destination the sink abandoned.
+ * What it imports is the PURE decision function, that deadline pair, and a
+ * type — never `log()`, and never a sink instance:
  * doctor produces no event, it only asks where one would go. That narrower
  * claim is asserted below rather than assumed, so this entry cannot quietly
  * widen into a second producer.
  */
 const DOCTOR_PATH = 'apps/cli/src/commands/doctor.ts'
 /** Exactly what `DOCTOR_PATH` is allowed to take from the sink module. */
-const DOCTOR_SINK_IMPORTS = ['ResolvedLogDestination', 'resolveLogDestinationFrom']
+const DOCTOR_SINK_IMPORTS = [
+  'LOG_CONTEXT_LOOKUP_DEADLINE_MS',
+  'ResolvedLogDestination',
+  'resolveLogDestinationFrom',
+  'withDeadline'
+]
 const CALLER_ALLOWLIST = new Set([
   ...FUTURE_CALLER_ALLOWLIST,
   LOG_WEBHOOK_DRAIN_LIB_PATH,

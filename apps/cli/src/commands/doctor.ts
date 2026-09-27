@@ -60,7 +60,13 @@ import {
   VinayaConfigSchema,
   lintEnvDeclarations
 } from '../lib/config.js'
-import { type ResolvedLogDestination, resolveLogDestinationFrom } from '../lib/log-sink.js'
+import { resolveRepo } from '@attalabs/aeg-forge-state'
+import {
+  LOG_CONTEXT_LOOKUP_DEADLINE_MS,
+  type ResolvedLogDestination,
+  resolveLogDestinationFrom,
+  withDeadline
+} from '../lib/log-sink.js'
 import { isUnattendedProcess, repoRootSync, runtimeDirForRepoAsync } from '../lib/run-paths.js'
 import {
   branchProtectionConfigured,
@@ -101,8 +107,13 @@ function readVersion(): string {
   return pkg.version
 }
 
-/** The `${VAR_NAME}` names any of these `logs` settings reference in a header value, deduplicated. */
-function credentialVarNames(settings: ReadonlyArray<LogsDestination | null>): string[] {
+/**
+ * The `${VAR_NAME}` names any of these `logs` settings reference in a header
+ * value, deduplicated. Exported for its own test: this is what "naming the
+ * environment variable to fix" resolves to, so it is proved directly rather
+ * than only through a fixture that hands the answer in.
+ */
+export function credentialVarNames(settings: ReadonlyArray<LogsDestination | null>): string[] {
   const names = new Set<string>()
   for (const setting of settings) {
     if (!setting || !('url' in setting)) continue
@@ -114,28 +125,75 @@ function credentialVarNames(settings: ReadonlyArray<LogsDestination | null>): st
 }
 
 /**
- * The destination the log sink itself would resolve for this process, through
- * the sink's OWN decision function (`resolveLogDestinationFrom`) — never a
- * second reading of `logs`, so doctor can never report a destination the sink
- * would not use, including the trust-anchor gate an unattended caller carries
- * and the `${VAR_NAME}` substitution the headers go through.
+ * The pure half of the resolution below — the destination through the sink's
+ * OWN decision function (`resolveLogDestinationFrom`, never a second reading
+ * of `logs`), plus the variable names its credential is referenced by.
  *
- * The credential's variable names are taken as the UNION of what the working
- * tree's and the trust anchor's own `logs.headers` reference, rather than by
- * re-deciding which of the two won: that precedence lives in the sink's
- * decision function alone, and a second copy of it here is exactly the drift
- * the paragraph above avoids. Both copies normally name the same variable,
- * and naming one variable too many is a strictly better failure than naming
- * the wrong one.
+ * Those names are the UNION of what the working tree's and the trust anchor's
+ * own `logs.headers` reference, rather than a re-decision of which of the two
+ * won: that precedence lives in the sink's decision function alone, and a
+ * second copy of it here is exactly the drift this function avoids. Both
+ * copies normally name the same variable, and naming one variable too many is
+ * a strictly better failure than naming the wrong one. They are resolved for
+ * EVERY destination kind, including `none`: a CI job holding no delivery
+ * credential is the incident shape this whole check exists for, and it is the
+ * case where naming the variable helps most.
+ */
+export function logDestinationTargetFrom(input: {
+  localConfig: VinayaConfig | null
+  trustAnchorConfig: VinayaConfig | null
+  unattended: boolean
+  env: NodeJS.ProcessEnv
+  defaultFolder: string
+  repoRoot?: string | null
+}): LogDestinationTarget {
+  return {
+    destination: resolveLogDestinationFrom(input),
+    credentialVars: credentialVarNames([
+      resolveLogsSetting(input.localConfig),
+      resolveLogsSetting(input.trustAnchorConfig)
+    ])
+  }
+}
+
+/**
+ * The destination the log sink itself would resolve for this process — the
+ * I/O half: the configs, the repository identity, the default folder.
+ *
+ * Two things are deliberately taken from the sink rather than reimplemented,
+ * because a doctor that reports a destination the sink would not use is worse
+ * than no finding at all. The repository identity comes from the same
+ * `resolveRepo` the sink's own default dep uses — which prefers `AEG_REPO`
+ * over the origin remote, the shape every dispatched role's child runs in, so
+ * the default folder cannot differ between the two. And the trust-anchor read
+ * is bounded by the same deadline the sink bounds it with: past it the sink
+ * degrades to a null anchor and its own fallback destination, so doctor has to
+ * degrade identically or it reports an anchored server the sink abandoned —
+ * and that read spawns a child process whose exit the pinned Bun can lose, so
+ * unbounded it would hang doctor rather than merely disagree with it.
+ *
+ * A run on a CI host is classified unattended whatever `VINAYA_UNATTENDED`
+ * says. Without that, a pull request's own working-tree `logs` value is
+ * honoured verbatim, and this check would then POST that job's environment —
+ * its own credentials among it — to a host the pull request under review
+ * chose for itself. The trust-anchor gate exists to stop exactly that
+ * redirection for delivery; a diagnostic that reaches the network must not be
+ * the one caller that opts out of it. `GITHUB_ACTIONS` is the same signal the
+ * sink's own host derivation reads.
  *
  * Exported so a per-call-site proof can invoke this exact wiring.
  */
 export async function resolveLogDestinationForDoctor(): Promise<LogDestinationTarget> {
   const localConfig = loadConfig()
-  const unattended = isUnattendedProcess(process.env)
-  const trustAnchorConfig = unattended ? await loadTrustAnchorConfigAsync(undefined, { quiet: true }) : null
-  const repo = await detectGitRepo()
-  const destination = resolveLogDestinationFrom({
+  const unattended = isUnattendedProcess(process.env) || Boolean(process.env.GITHUB_ACTIONS)
+  const trustAnchorConfig = unattended
+    ? await withDeadline(loadTrustAnchorConfigAsync(undefined, { quiet: true }), LOG_CONTEXT_LOOKUP_DEADLINE_MS, null)
+    : null
+  // Bounded for the same reason the anchor read above is, and by the same
+  // deadline: the sink wraps this identical lookup too, and a git child whose
+  // exit is lost must degrade the command, never hang it.
+  const repo = await withDeadline(resolveRepo(), LOG_CONTEXT_LOOKUP_DEADLINE_MS, null)
+  return logDestinationTargetFrom({
     localConfig,
     trustAnchorConfig,
     unattended,
@@ -143,22 +201,21 @@ export async function resolveLogDestinationForDoctor(): Promise<LogDestinationTa
     defaultFolder: join(await runtimeDirForRepoAsync(repo), 'logs'),
     repoRoot: repoRootSync()
   })
-  return {
-    destination,
-    credentialVars:
-      destination.kind === 'server'
-        ? credentialVarNames([resolveLogsSetting(localConfig), resolveLogsSetting(trustAnchorConfig)])
-        : []
-  }
 }
 
 /**
  * One POST of an EMPTY body to the destination's own ingest route: it
  * authenticates this machine and stores nothing (see this check's own section
- * below). `401`/`403` is the credential being refused; any other answer is it
- * being accepted, since only the destination knows what else it does with a
- * body carrying no events. A throw is the network, not the credential — an
- * offline machine loses nothing and is never an error here.
+ * below).
+ *
+ * Only a `2xx` is an acceptance. `401`/`403` is the credential being refused;
+ * every other status is the destination refusing the delivery for some other
+ * reason, and is reported as such rather than as health — a `404` from a
+ * mistyped path is produced before the token is ever checked, a `500` is what
+ * a server whose own ingest secret is unset answers, and either discards
+ * every event exactly as silently as the `401` this check was written after.
+ * A throw is the network, not the destination — an offline machine loses
+ * nothing, since its events wait in the local retry queue.
  *
  * Exported so a per-call-site proof can invoke this exact wiring.
  */
@@ -176,9 +233,10 @@ export async function probeLogDestinationServer(
     // Never read, only released: the answer this check needs is the status,
     // and an unconsumed body can hold a socket open past the command.
     await response.body?.cancel().catch(() => {})
-    return response.status === 401 || response.status === 403
-      ? { kind: 'credential-rejected', status: response.status }
-      : { kind: 'accepted', status: response.status }
+    const status = response.status
+    if (status === 401 || status === 403) return { kind: 'credential-rejected', status }
+    if (status >= 200 && status < 300) return { kind: 'accepted', status }
+    return { kind: 'refused', status }
   } catch (err) {
     return { kind: 'unreachable', detail: firstLine(err) }
   }
@@ -1086,10 +1144,17 @@ function diagnoseTestCi(repoRoot: string): Finding[] {
 // while leaving the log itself untouched.
 // ---------------------------------------------------------------------------
 
-/** What the destination answered a probe with — never its body, never a header it was sent. */
+/**
+ * What the destination answered a probe with — never its body, never a header
+ * it was sent. `accepted` is a `2xx` and nothing else: a status that is
+ * neither an acceptance nor a refused credential is its own outcome
+ * (`refused`), because a destination answering it discards every event just as
+ * silently as one refusing the credential.
+ */
 export type LogServerProbe =
   | { kind: 'accepted'; status: number }
   | { kind: 'credential-rejected'; status: number }
+  | { kind: 'refused'; status: number }
   | { kind: 'unreachable'; detail: string }
 
 /**
@@ -1136,28 +1201,89 @@ function firstLine(err: unknown): string {
 }
 
 /**
- * `text` with every credential value the probe was handed removed. A fetch
- * failure's own message is the destination's to compose, not ours, so nothing
- * it returns is printed until the values that authenticate this machine are
- * out of it — the same posture `redact()` takes on the event itself.
+ * `text` with every value that could authenticate this machine removed. Three
+ * shapes, because a header value is not the only spelling a credential
+ * reaches a message in:
+ *
+ *   - the resolved header value itself (`Bearer abc123`),
+ *   - the credential inside it, without the scheme word that precedes it
+ *     (`abc123` alone — what a destination's own error text is far more likely
+ *     to quote back than the whole header),
+ *   - the value of each variable the headers reference, read from `env`, which
+ *     covers a header whose credential is only PART of its value and so
+ *     matches neither of the two above.
+ *
+ * A fetch failure's message is the destination's to compose, not ours, so
+ * nothing it returns is printed until those are out of it — the same posture
+ * `redact()` takes on the event itself. Exported for its own test.
  */
-function withoutCredentialValues(text: string, headers: Record<string, string> | undefined): string {
-  let out = text
+export function withoutCredentialValues(
+  text: string,
+  headers: Record<string, string> | undefined,
+  credentialVars: readonly string[] = [],
+  env: NodeJS.ProcessEnv = process.env
+): string {
+  const secrets = new Set<string>()
   for (const value of Object.values(headers ?? {})) {
     if (value.length === 0) continue
-    out = out.split(value).join('<redacted>')
+    secrets.add(value)
+    const schemed = /^\S+\s+(.+)$/.exec(value)
+    if (schemed?.[1]) secrets.add(schemed[1])
   }
+  for (const name of credentialVars) {
+    const value = env[name]
+    // A one- or two-character value is not a credential worth substring-
+    // replacing, and replacing it would corrupt unrelated text.
+    if (value && value.length > 2) secrets.add(value)
+  }
+  let out = text
+  for (const secret of secrets) out = out.split(secret).join('<redacted>')
   return out
+}
+
+/**
+ * The destination's URL as it is safe to print. `logs.url` is a bare URL in
+ * the schema, so it can carry a credential of its own — in userinfo
+ * (`https://ingest:SECRET@host/`, which `fetch` turns into an authorization
+ * header, making it genuinely the credential) or in a query parameter — and
+ * this string is printed on every run, into CI job output and into `--json`
+ * that gets pasted into an Issue. Userinfo and any credential-shaped query
+ * value are replaced; everything else is left readable, since the host and
+ * path are what make the finding actionable. A URL this cannot parse is not
+ * printed at all rather than printed hopefully.
+ */
+export function urlForDisplay(url: string): string {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return '<unparseable logs.url>'
+  }
+  if (parsed.username !== '' || parsed.password !== '') {
+    parsed.username = '<redacted>'
+    parsed.password = ''
+  }
+  for (const key of [...parsed.searchParams.keys()]) {
+    if (/token|secret|key|auth|sig|pass|credential/i.test(key)) parsed.searchParams.set(key, '<redacted>')
+  }
+  return parsed.toString()
 }
 
 async function diagnoseLogDestination(deps: DoctorDeps): Promise<Finding[]> {
   const { destination, credentialVars } = await deps.resolveLogDestination()
+  const fix =
+    credentialVars.length > 0
+      ? `Set ${credentialVars.join(', ')} to a credential the server accepts`
+      : 'Give `logs.headers` in vinaya.config.json a credential the server accepts, referenced by variable name rather than written out'
 
   if (destination.kind === 'none') {
     // Both reasons that land here are sanctioned outcomes, neither a failure
     // (`apps/cli/specs/log.md` § CI delivery) — reported so the absence is
-    // visible, never as a finding that reddens the command.
-    return [info('logs', `no log event is recorded on this host — ${destination.reason}.`)]
+    // visible, never as a finding that reddens the command. The variable is
+    // named anyway: "a job holds no delivery credential" IS the incident
+    // shape, and the name is the one thing that makes it fixable.
+    const named = credentialVars.length > 0 ? ` ${fix} where this host can read it.` : ''
+    return [info('logs', `no log event is recorded on this host — ${destination.reason}.${named}`)]
   }
 
   if (destination.kind === 'folder') {
@@ -1178,35 +1304,50 @@ async function diagnoseLogDestination(deps: DoctorDeps): Promise<Finding[]> {
   }
 
   const probe = await deps.probeLogServer(destination.url, destination.headers)
-  const fix =
-    credentialVars.length > 0
-      ? `Set ${credentialVars.join(', ')} to a credential the server accepts`
-      : 'Give `logs.headers` in vinaya.config.json a credential the server accepts, referenced by variable name rather than written out'
+  const where = urlForDisplay(destination.url)
+  const clean = (text: string): string => withoutCredentialValues(text, destination.headers, credentialVars)
 
   if (probe.kind === 'credential-rejected') {
     return [
       error(
         'logs',
-        `the log server at ${destination.url} is reachable but REFUSED this machine's credential ` +
+        `the log server at ${where} is reachable but REFUSED this machine's credential ` +
           `(HTTP ${probe.status}). ${fix} — until then every event queues locally and a CI job's queue dies with ` +
           'its runner. Nothing was stored by this check.'
       )
     ]
   }
-  if (probe.kind === 'unreachable') {
+  if (probe.kind === 'refused') {
     return [
-      warn(
+      error(
         'logs',
-        `the log server at ${destination.url} could not be reached ` +
-          `(${withoutCredentialValues(probe.detail, destination.headers)}) — this machine may simply be offline, ` +
-          'which loses nothing: events stay in the local retry queue and deliver on the next run.'
+        `the log server at ${where} answered HTTP ${probe.status}, which is not an acceptance — it is refusing ` +
+          "delivery, so every event queues locally and a CI job's queue dies with its runner. A wrong path in " +
+          '`logs.url` answers `404` before any credential is read, and a server missing its own ingest secret ' +
+          "answers `500`; check the URL against the destination's ingest route and the destination's own " +
+          'configuration. Nothing was stored by this check.'
+      )
+    ]
+  }
+  if (probe.kind === 'unreachable') {
+    // `info`, not `warn`: doctor's health rule counts anything above `info` as
+    // a failing run, and an offline machine must not fail this command — its
+    // events are not lost, they wait in the local retry queue for the next
+    // run. The line still says plainly that nothing answered.
+    return [
+      info(
+        'logs',
+        `the log server at ${where} could not be reached (${clean(probe.detail)}) — this machine may simply be ` +
+          'offline, which loses nothing: events stay in the local retry queue and deliver on the next run. ' +
+          'Reported rather than failed for that reason; re-run this where the destination is reachable to have it ' +
+          'checked for real.'
       )
     ]
   }
   return [
     ok(
       'logs',
-      `the log server at ${destination.url} is reachable and accepts this machine's credential ` +
+      `the log server at ${where} is reachable and accepts this machine's credential ` +
         `(HTTP ${probe.status}). Nothing was stored by this check — the probe carries no event.`
     )
   ]
