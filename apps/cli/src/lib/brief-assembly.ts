@@ -42,14 +42,17 @@ import {
   type IssuePart,
   type IssueSurface,
   type IssueTestPlan,
+  type LocalGateCommands,
   type SurfaceFileFact,
   type Task
 } from '@attalabs/aeg-core'
 import { parseRationaleDeps } from '@attalabs/aeg-forge-state'
 import { createForgeSource } from '@attalabs/vinaya-sources'
 import { type EdgeFactsSubset, type EdgeTaskRef, resolveEdge } from '../checks/edge-resolve.js'
+import { briefCliInvocation } from './artifacts.js'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
 import { packageRoot } from './package-root.js'
+import { detectVendoredVinaya } from './self-host.js'
 
 const DOC_OWNERS_PATH = '.vinaya/doc-owners'
 const WORKSPACE_TEMPLATE_PATH = 'aeg-root/templates/brief-template.md'
@@ -58,6 +61,42 @@ const PACKAGED_TEMPLATE_PATH = join(PACKAGE_ROOT, 'aeg-root', 'templates', 'brie
 const TEMPLATE_PATH = existsSync(PACKAGED_TEMPLATE_PATH)
   ? PACKAGED_TEMPLATE_PATH
   : join(PACKAGE_ROOT, '..', '..', 'aeg-root', 'templates', 'brief-template.md')
+
+/**
+ * The two command facts every rendered brief needs about the repository it is
+ * rendered for: how that repository invokes the CLI, and which unabridged
+ * gate derivations it ships itself. Both are `renderBrief` inputs rather than
+ * anything it detects — that module reads no filesystem — and both are
+ * derived here, once, for the two `assembleAndRenderBrief*` entry points.
+ *
+ * The invocation reuses `briefCliInvocation`, i.e. the SAME vendored-CLI
+ * detection the generated hooks and workflows make their own choice with, so a
+ * brief and a hook in one repository never disagree about how the CLI is
+ * reached.
+ *
+ * The local gate programs are `existsSync` facts about this repository, never
+ * a second inference from `selfHost`: a fork that vendors the CLI but carries
+ * no `bin/` derivation gets `null` and a brief that names only the shipped
+ * checks, which is exactly right for it.
+ */
+export function repoBriefCommandFacts(repoRoot: string): {
+  cliInvocation: string
+  localGateCommands: LocalGateCommands
+} {
+  const program = (rel: string): string | null => (existsSync(join(repoRoot, rel)) ? `bun ${rel}` : null)
+  return {
+    cliInvocation: briefCliInvocation(detectVendoredVinaya(repoRoot)),
+    localGateCommands: {
+      dispatchReadiness: program('packages/aeg-core/bin/verify-dispatch.ts'),
+      docCoverage: program('packages/aeg-core/bin/verify-docs.ts')
+    }
+  }
+}
+
+/** This checkout's git toplevel — the anchor every path in `repoBriefCommandFacts` resolves against. Falls back to the process cwd when `git` cannot answer, the same degradation `git()` itself takes. */
+function repoRootOrCwd(): string {
+  return git(['rev-parse', '--show-toplevel']) || process.cwd()
+}
 
 function git(args: string[]): string {
   try {
@@ -545,7 +584,8 @@ export async function assembleAndRenderBrief(
     surfaceFiles,
     consumersOf,
     docOwnersContent: existsSync(DOC_OWNERS_PATH) ? readFileSync(DOC_OWNERS_PATH, 'utf8') : null,
-    sourceRevision: headSha
+    sourceRevision: headSha,
+    ...repoBriefCommandFacts(repoRootOrCwd())
   }
 
   const template = readFileSync(TEMPLATE_PATH, 'utf8')
@@ -808,7 +848,8 @@ export async function assembleAndRenderBriefForIssue(
     surfaceFiles,
     consumersOf,
     docOwnersContent: existsSync(DOC_OWNERS_PATH) ? readFileSync(DOC_OWNERS_PATH, 'utf8') : null,
-    sourceRevision: headSha
+    sourceRevision: headSha,
+    ...repoBriefCommandFacts(repoRootOrCwd())
   }
 
   const template = readFileSync(TEMPLATE_PATH, 'utf8')

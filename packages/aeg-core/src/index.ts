@@ -548,7 +548,7 @@ export type {
 export { findWorkspaceEscapes } from './workspace-escape'
 export type { WorkspaceEscapeFinding, WorkspaceEscapeReason, WorkspaceEscapeSourceFile } from './workspace-escape'
 export { extractBoundaryFilePaths, extractSourceRevision, parseRationaleFields, renderBrief } from './brief-render'
-export type { BriefFacts, RationaleFieldKey, RenderResult, SurfaceFileFact } from './brief-render'
+export type { BriefFacts, LocalGateCommands, RationaleFieldKey, RenderResult, SurfaceFileFact } from './brief-render'
 export {
   hasObjectivesHeading,
   isIssueNotFoundError,

@@ -10,6 +10,7 @@ import {
   checkDirtyPinnedFiles,
   checkStaleAgainstRemote,
   DRAFT_ISSUE_SENTINEL,
+  repoBriefCommandFacts,
   resolveBoundaryPaths,
   resolveRemoteDefaultBranch,
   resolveTrancheTaskId,
@@ -431,5 +432,33 @@ describe('resolveTrancheTaskId', () => {
         if (originalAegRepo === undefined) delete process.env.AEG_REPO
         else process.env.AEG_REPO = originalAegRepo
       })
+  })
+})
+
+/**
+ * Issue #807 — a brief's commands are written the way the repository it is
+ * rendered for reaches the CLI, so an adopter never receives one naming a path
+ * only this repository has.
+ */
+describe('repoBriefCommandFacts', () => {
+  it('this repository vendors the CLI: the source entry, plus the unabridged gate derivations it ships', () => {
+    const facts = repoBriefCommandFacts(REPO_ROOT)
+    expect(facts.cliInvocation).toBe('bun apps/cli/src/index.ts')
+    expect(facts.localGateCommands).toEqual({
+      dispatchReadiness: 'bun packages/aeg-core/bin/verify-dispatch.ts',
+      docCoverage: 'bun packages/aeg-core/bin/verify-docs.ts'
+    })
+  })
+
+  it('a repository that installs from the registry: the pinned npx form, and no local derivation', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'brief-cli-adopter-'))
+    try {
+      writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'adopter' }))
+      const facts = repoBriefCommandFacts(dir)
+      expect(facts.cliInvocation).toMatch(/^npx --yes @attalabs\/vinaya@\d+\.\d+\.\d+$/)
+      expect(facts.localGateCommands).toEqual({ dispatchReadiness: null, docCoverage: null })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

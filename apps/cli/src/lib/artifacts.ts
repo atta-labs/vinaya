@@ -400,6 +400,27 @@ function vinayaRun(selfHost: VendoredVinaya | null, args: string): string {
 }
 
 /**
+ * How a task brief tells its Developer to invoke the CLI — the brief analogue
+ * of `vinayaRun`, reusing the same `selfHost` decision so a brief and a
+ * generated hook never disagree about how the CLI is reached in a given
+ * repository. A brief that named a path only the authoring repository has was
+ * unrunnable for every adopter, and read as spoofed instructions to at least
+ * one Developer that received one.
+ *
+ * The published shape is `vinayaRun`'s, for `ownVersion()`'s reasons.
+ *
+ * The vendored shape deliberately differs from `vinayaRun`'s `node <bin>`:
+ * the brief's first act is `git worktree add`, `dist/` is gitignored, and the
+ * fresh worktree is where every command the brief names then runs — so the
+ * built file does not exist yet. The source entry — the same
+ * `<dir>/src/index.ts` `resolveAuthorRepoSourceEntry` resolves — needs no
+ * build and is what the vendoring repository's own briefs have always named.
+ */
+export function briefCliInvocation(selfHost: VendoredVinaya | null): string {
+  return selfHost ? `bun ${selfHost.dir}/src/index.ts` : `npx --yes @attalabs/vinaya@${ownVersion()}`
+}
+
+/**
  * The adopter-declared CI preparation step (`vinaya.config.json`'s
  * `ci.setup`), emitted only in the workflows that execute `vinaya check` —
  * the one place a generated job can spawn the ADOPTER'S OWN check scripts.

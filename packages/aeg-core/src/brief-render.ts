@@ -271,6 +271,43 @@ export type BriefFacts = {
    * for the review loop's reviewer-prompt facts.
    */
   sourceRevision: string
+  /**
+   * How the repository this brief is rendered for invokes the Vinaya CLI —
+   * `npx --yes @attalabs/vinaya@<version>` for a repository that installs it
+   * from the registry, `bun <dir>/src/index.ts` for one that vendors it.
+   * Every command this renderer tells the Developer to run is written through
+   * it, so no brief ever names a path that exists only in the authoring
+   * repository.
+   *
+   * Passed in as a fact, never detected here: this module reads no
+   * environment and no filesystem, and the decision already has one owner —
+   * `apps/cli`'s `briefCliInvocation`, over the same vendored-CLI detection
+   * the generated hooks and workflows use. Empty refuses the render, the same
+   * as `sourceRevision`: a brief whose commands nobody can run is worse than
+   * no brief.
+   */
+  cliInvocation: string
+  /**
+   * Commands the rendered-for repository ships itself that run an unabridged
+   * version of a CLI check this brief names — the CLI's own check being the
+   * portable form every reader has, and these being the fuller derivation the
+   * authoring repository additionally carries (`dispatch-readiness`'s shipped
+   * predicate reports prior-tranche-archival empty; `doc-coverage` evaluates
+   * C5 alone, not C1/C3). Each is the program alone, with no arguments — this
+   * renderer holds the task's own facts and appends them.
+   *
+   * `null` for a repository that has only the CLI's own checks, which is every
+   * adopter — the brief then names the CLI check and nothing else.
+   */
+  localGateCommands: LocalGateCommands
+}
+
+/** See `BriefFacts.localGateCommands`. */
+export type LocalGateCommands = {
+  /** e.g. `bun packages/aeg-core/bin/verify-dispatch.ts`, or `null`. */
+  dispatchReadiness: string | null
+  /** e.g. `bun packages/aeg-core/bin/verify-docs.ts`, or `null`. */
+  docCoverage: string | null
 }
 
 export type RenderResult = { ok: true; brief: string } | { ok: false; missing: string[] }
@@ -554,10 +591,19 @@ function renderSection4(facts: BriefFacts): string {
 
 function renderSection5(facts: BriefFacts): string {
   const branch = developerBranchForFacts(facts)
+  // The portable form first — `dispatch-readiness` is a shipped check every
+  // reader of this brief can run. The authoring repository's own fuller
+  // derivation follows only when `facts` says that repository has one, and
+  // takes the task arguments from this render rather than from a placeholder.
+  const unabridgedTarget = facts.trancheSlug !== null ? '<tranche> <n>' : `--issue ${facts.issue}`
+  const unabridged =
+    facts.localGateCommands.dispatchReadiness !== null
+      ? ` This repository also ships the unabridged derivation — \`${facts.localGateCommands.dispatchReadiness} ${unabridgedTarget}\` → \`READY TO DISPATCH\`.`
+      : ''
   const verifyLine =
-    facts.trancheSlug !== null
-      ? '2. `bun packages/aeg-core/bin/verify-dispatch.ts <tranche> <n>` → `READY TO DISPATCH` (re-derived at render time: it was).'
-      : `2. \`bun packages/aeg-core/bin/verify-dispatch.ts --issue ${facts.issue}\` → \`READY TO DISPATCH\` (re-derived at render time: it was).`
+    `2. \`${facts.cliInvocation} check dispatch-readiness\` → pass (re-derived at render time: it was ready).` +
+    ' Known gap: its prior-tranche-archival predicate always reports empty — confirm that predicate yourself.' +
+    unabridged
   const lines = [
     '## 5. Pre-flight checks',
     '',
@@ -664,7 +710,20 @@ function renderSection7(section7Pointers: string[]): string {
   return lines.join('\n')
 }
 
-function renderSection8(): string {
+/**
+ * The pre-open documentation gate, as one command the reader can run — cited
+ * by both §8 and §12, so it is written once. `check doc-coverage` is the
+ * portable form; the authoring repository's fuller `--pr` derivation is
+ * appended only when `facts` says that repository ships one.
+ */
+function docGateCommand(facts: BriefFacts): string {
+  const portable = `\`PR_BODY="$(cat <body-file>)" ${facts.cliInvocation} check doc-coverage\` green`
+  return facts.localGateCommands.docCoverage !== null
+    ? `${portable} (this repository also ships \`PR_BODY="$(cat <body-file>)" ${facts.localGateCommands.docCoverage} --pr\`, which additionally evaluates the spec-status and code-requires-docs contracts)`
+    : portable
+}
+
+function renderSection8(facts: BriefFacts): string {
   return [
     '## 8. Verification before claiming done',
     '',
@@ -676,7 +735,7 @@ function renderSection8(): string {
     '- The pre-push hook already ran the affected suite on your one push and refused it on failure — do not additionally run it yourself; `vinaya pr report --write`/`--push` separately re-runs it with `--force` to attest the command and its output in the Evidence block.',
     "- The full `bun run test` suite is CI's to run, on the one push — never run it locally.",
     '- Every blast-radius consumer named in §4, re-verified by name.',
-    '- `roles/developer.md`\'s tier checklist genuinely satisfied, and `PR_BODY="$(cat <body-file>)" bun packages/aeg-core/bin/verify-docs.ts --pr` green.'
+    `- \`roles/developer.md\`'s tier checklist genuinely satisfied, and ${docGateCommand(facts)}.`
   ].join('\n')
 }
 
@@ -767,11 +826,11 @@ function renderSection12(facts: BriefFacts): string {
     '## 12. Deliverable',
     '',
     `- PR title (exact): \`${prTitle}\``,
-    '- Open the PR only via `bun apps/cli/src/index.ts pr create --body-file <path> --title "<title above>"`.',
+    `- Open the PR only via \`${facts.cliInvocation} pr create --body-file <path> --title "<title above>"\`.`,
     "- PR body = the Developer's PR report (start from `aeg-root/templates/pr-report-template.md`), with this entire brief pasted as the reference copy inside a collapsed `<details>` block, and `Closes #" +
       facts.issue +
       '` at the top of the header block.',
-    '- Pre-open gate: tier checklist satisfied, and `PR_BODY="$(cat <body-file>)" bun packages/aeg-core/bin/verify-docs.ts --pr` green.',
+    `- Pre-open gate: tier checklist satisfied, and ${docGateCommand(facts)}.`,
     '- Include `git diff main --stat` and a token report (if unavailable, state so).',
     '- Then STOP. Review and Verification are separate invocations.'
   ].join('\n')
@@ -795,6 +854,11 @@ export function renderBrief(facts: BriefFacts, template: string): RenderResult {
   if (!facts.sourceRevision) {
     missing.push(
       'Revision (no source revision resolved — the caller must refuse before render, never render with an empty one)'
+    )
+  }
+  if (!facts.cliInvocation) {
+    missing.push(
+      'CLI invocation (the caller must state how this repository invokes the CLI — every command this brief names is written through it)'
     )
   }
   // Grandfathered the same as the Issue gate itself (`checkIssueObjectives`):
@@ -901,7 +965,7 @@ export function renderBrief(facts: BriefFacts, template: string): RenderResult {
     '',
     renderSection7(section7Pointers),
     '',
-    renderSection8(),
+    renderSection8(facts),
     '',
     renderSection9(facts),
     '',

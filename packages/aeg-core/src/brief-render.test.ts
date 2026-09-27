@@ -76,6 +76,13 @@ function baseFacts(overrides: Partial<BriefFacts> = {}): BriefFacts {
     consumersOf: () => [],
     docOwnersContent: null,
     sourceRevision: FIXTURE_REVISION,
+    // The vendoring repository's own shape by default — every pre-existing
+    // expectation in this file was written against the commands it renders.
+    cliInvocation: 'bun apps/cli/src/index.ts',
+    localGateCommands: {
+      dispatchReadiness: 'bun packages/aeg-core/bin/verify-dispatch.ts',
+      docCoverage: 'bun packages/aeg-core/bin/verify-docs.ts'
+    },
     ...overrides
   }
 }
@@ -702,6 +709,49 @@ describe('renderBrief', () => {
     expect(result.brief).toContain(
       'The pre-push hook already ran the affected suite on your one push and refused it on failure'
     )
+  })
+
+  describe('every command is written the way the rendered-for repository invokes the CLI (Issue #807)', () => {
+    const ADOPTER = {
+      cliInvocation: 'npx --yes @attalabs/vinaya@9.9.9',
+      localGateCommands: { dispatchReadiness: null, docCoverage: null }
+    } as const
+
+    it('an adopter runs the shipped checks, with no unabridged local derivation offered (O1)', () => {
+      const result = renderBrief(baseFacts(ADOPTER), TEMPLATE)
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.brief).toContain('`npx --yes @attalabs/vinaya@9.9.9 check dispatch-readiness`')
+      expect(result.brief).toContain(
+        '`PR_BODY="$(cat <body-file>)" npx --yes @attalabs/vinaya@9.9.9 check doc-coverage` green'
+      )
+      expect(result.brief).toContain('`npx --yes @attalabs/vinaya@9.9.9 pr create --body-file <path>')
+      expect(result.brief).not.toContain('also ships')
+    })
+
+    it('a repository that vendors the CLI keeps every command it runs today, plus its own unabridged derivations (O3)', () => {
+      const result = renderBrief(baseFacts(), TEMPLATE)
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.brief).toContain('`bun apps/cli/src/index.ts check dispatch-readiness`')
+      expect(result.brief).toContain('`bun packages/aeg-core/bin/verify-dispatch.ts <tranche> <n>`')
+      expect(result.brief).toContain('`PR_BODY="$(cat <body-file>)" bun packages/aeg-core/bin/verify-docs.ts --pr`')
+      expect(result.brief).toContain('`bun apps/cli/src/index.ts pr create --body-file <path>')
+    })
+
+    it("a backlog task's unabridged dispatch derivation names the Issue it re-derives (O3)", () => {
+      const result = renderBrief(baseFacts({ trancheSlug: null }), TEMPLATE)
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.brief).toContain('`bun packages/aeg-core/bin/verify-dispatch.ts --issue 42`')
+    })
+
+    it('refuses to render at all when the caller states no invocation — never a default', () => {
+      const result = renderBrief(baseFacts({ cliInvocation: '' }), TEMPLATE)
+      expect(result.ok).toBe(false)
+      if (result.ok) return
+      expect(result.missing.join('\n')).toContain('CLI invocation')
+    })
   })
 })
 
