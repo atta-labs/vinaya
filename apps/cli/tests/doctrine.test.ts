@@ -57,6 +57,25 @@ describe('vinaya doctrine', () => {
     expect(existsSync(printed)).toBe(true)
   })
 
+  it('--template <name> resolves to templates/<name>-template.md under the same root (Issue #807)', () => {
+    const root = resolveDoctrineRoot()
+    if (root === null) throw new Error('no doctrine root on this machine — cannot exercise --template')
+
+    const printed = captureStdout(() => doctrineCommand(['--template', 'pr-report'])).trim()
+    expect(printed).toBe(join(root, 'templates', 'pr-report-template.md'))
+    expect(existsSync(printed)).toBe(true)
+  })
+
+  it('--template <name> --print emits the template body, frontmatter stripped (Issue #807)', () => {
+    const printed = captureStdout(() => doctrineCommand(['--template', 'pr-report', '--print']))
+    // The brief names this command where it used to name a path only this
+    // repository has, so its output must be the report the Developer starts
+    // from — not a path, and not the file's frontmatter.
+    expect(printed).not.toContain('sidebar_title:')
+    expect(printed).toContain("# Template — Developer's PR report")
+    expect(printed).toContain('<!-- AEG:CLOSES:START -->')
+  })
+
   it('--role <name> --json emits the envelope with a coherent root/entry pair', () => {
     const root = resolveDoctrineRoot()
     if (root === null) throw new Error('no doctrine root on this machine — cannot exercise --role')
@@ -85,6 +104,69 @@ describe('vinaya doctrine', () => {
     expect(stderr).toContain("'nonsense-name' is not a known role")
     expect(stderr).toContain('reviewer')
     expect(stderr).toContain('developer')
+  })
+
+  it('--template <bad-name> fails cleanly, listing the live-enumerated valid template names (Issue #807)', async () => {
+    const proc = Bun.spawn(['bun', CLI_ENTRY, 'doctrine', '--template', 'nonsense-name'], {
+      stdout: 'pipe',
+      stderr: 'pipe'
+    })
+    const exitCode = await proc.exited
+    const stderr = await new Response(proc.stderr).text()
+
+    expect(exitCode).toBe(1)
+    expect(stderr).toContain("'nonsense-name' is not a known template")
+    expect(stderr).toContain('pr-report')
+    expect(stderr).toContain('brief')
+  })
+
+  it('a templates/ file that is not *-template.md is never enumerated as a name (round 2, F3)', () => {
+    const root = resolveDoctrineRoot()
+    if (root === null) throw new Error('no doctrine root on this machine — cannot exercise --template')
+    const stray = join(root, 'templates', 'round-2-stray.md')
+    const strayDir = join(root, 'templates', 'round-2-stray-template.md')
+    writeFileSync(stray, '# not a template\n')
+    mkdirSync(strayDir, { recursive: true })
+    try {
+      // The name a caller is offered and the path this command rebuilds from
+      // it must be exact inverses: an optional-suffix strip offered `stray`
+      // and then died on an uncaught ENOENT for `stray-template.md`, and a
+      // DIRECTORY named `*-template.md` passes a name test and fails the read.
+      let stderr = ''
+      const originalWrite = process.stderr.write.bind(process.stderr)
+      const originalExit = process.exit.bind(process)
+      process.stderr.write = ((chunk: string) => {
+        stderr += chunk
+        return true
+      }) as typeof process.stderr.write
+      process.exit = ((code?: number) => {
+        throw new Error(`exit:${code}`)
+      }) as typeof process.exit
+      try {
+        expect(() => doctrineCommand(['--template', 'round-2-stray'])).toThrow('exit:1')
+        expect(() => doctrineCommand(['--template', 'round-2-stray-template'])).toThrow('exit:1')
+      } finally {
+        process.stderr.write = originalWrite
+        process.exit = originalExit
+      }
+      expect(stderr).toContain("'round-2-stray' is not a known template")
+      expect(stderr).not.toContain('round-2-stray,')
+    } finally {
+      rmSync(stray, { force: true })
+      rmSync(strayDir, { recursive: true, force: true })
+    }
+  })
+
+  it('--template together with --role is refused rather than silently preferring one (Issue #807)', async () => {
+    const proc = Bun.spawn(['bun', CLI_ENTRY, 'doctrine', '--template', 'pr-report', '--role', 'developer'], {
+      stdout: 'pipe',
+      stderr: 'pipe'
+    })
+    const exitCode = await proc.exited
+    const stderr = await new Response(proc.stderr).text()
+
+    expect(exitCode).toBe(1)
+    expect(stderr).toContain('--role and --template select different files')
   })
 
   it('--role with no name attached fails cleanly rather than swallowing the next flag', async () => {
