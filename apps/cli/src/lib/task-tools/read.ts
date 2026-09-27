@@ -44,8 +44,10 @@ import {
   deriveLoopState,
   lastRoundVerdictLines,
   newestPublishedRound,
+  readStartClaim,
   resumeCommandFor,
   type RoundVerdictLines,
+  type TaskAddress,
   type TaskLoopState,
   type TaskStatusRow
 } from '../task-status.js'
@@ -85,13 +87,23 @@ export function paginate<T>(items: readonly T[], cursor: string | undefined, lim
  * necessarily current. `no_driver` is the one case with no record of any
  * kind to observe; every other `TaskLoopState` kind is this read's current,
  * fresh answer.
+ *
+ * `address` is the task's tranche ordinal, when it has one: a `task_start`
+ * claim written against an ordinal names that ordinal, not the Issue number,
+ * so a caller reading a tranche task passes its address to have a start that
+ * has not written its driver lock yet read as `starting`. Omitted, only a claim
+ * that named this Issue directly is matched.
  */
-export function readTaskLoopStateObserved(root: string, task: number): Observed<TaskLoopState> {
-  const state = deriveLoopState(root, task)
+export function readTaskLoopStateObserved(
+  root: string,
+  task: number,
+  address: TaskAddress = null
+): Observed<TaskLoopState> {
+  const state = deriveLoopState(root, task, undefined, () => readStartClaim(root, task, address))
   return observedNow(state, classifyStateFreshness(state))
 }
 
-/** `no_driver` is the only `TaskLoopState` kind backed by no record at all; every other kind — `not_started` (a definite current fact: the brief is not frozen) included — is a current, fresh answer. Exported so `handlers.ts` can classify a `TaskStatusRow.state` it already has in hand — computed by `gatherTaskStatusList`/`gatherSingleTaskStatus` against the same outbox — without a second, redundant outbox read. */
+/** `no_driver` is the only `TaskLoopState` kind backed by no record at all; every other kind — `not_started` (a definite current fact: the brief is not frozen), and the two start-claim states (a start this machine accepted, recorded on disk) included — is a current, fresh answer. Exported so `handlers.ts` can classify a `TaskStatusRow.state` it already has in hand — computed by `gatherTaskStatusList`/`gatherSingleTaskStatus` against the same outbox — without a second, redundant outbox read. */
 export function classifyStateFreshness(state: TaskLoopState): Freshness {
   return state.kind === 'no_driver' ? 'unknown' : 'fresh'
 }
@@ -109,6 +121,10 @@ export function describeTaskLoopState(state: TaskLoopState): string {
       return `exited (${state.reason}) — last decision: ${state.lastDecision}`
     case 'not_started':
       return 'not started'
+    case 'starting':
+      return `starting (start request ${state.requestId})`
+    case 'start_did_not_come_up':
+      return `start did not come up (start request ${state.requestId}, accepted ${state.startedAt})`
     case 'no_driver':
       return 'no driver'
   }
