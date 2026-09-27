@@ -599,7 +599,26 @@ export const VinayaConfigSchema = z.object({
       // recursively for `.md` files; a file entry names that one file.
       // `README.md` is never a default and should not be added lightly — the
       // tranche-slug pattern the class runs matches an ordinary stack badge.
-      specPaths: z.array(z.string().min(1)).optional()
+      //
+      // An entry names a path inside THIS repository, so one that reaches
+      // outside it — absolute, or climbing through `..` — is refused here
+      // rather than resolved: the class would otherwise read a file this
+      // repository does not own and quote its text in a finding. A trailing
+      // slash or a leading `./` is accepted and normalized, since both spell
+      // a path this repository does own.
+      specPaths: z
+        .array(
+          z
+            .string()
+            .min(1)
+            .refine((entry) => !entry.startsWith('/') && !/^[A-Za-z]:/.test(entry), {
+              message: 'must be a repository-relative path, not an absolute one'
+            })
+            .refine((entry) => !entry.split(/[\\/]/).includes('..'), {
+              message: 'must stay inside the repository — no `..` segment'
+            })
+        )
+        .optional()
     })
     .optional(),
   // Config-native project metadata — see the `ProjectEntrySchema` comment

@@ -353,6 +353,7 @@ export {
   DEFAULT_SPEC_PATHS,
   extractComments,
   legacySlugPattern,
+  normalizeSpecPath,
   parseGlossaryTerms,
   PRODUCT_SLUG_SCOPE,
   stripNonProse,

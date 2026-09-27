@@ -11,6 +11,7 @@ import {
   DEFAULT_SPEC_PATHS,
   extractComments,
   legacySlugPattern,
+  normalizeSpecPath,
   parseGlossaryTerms,
   PRODUCT_SLUG_SCOPE,
   stripNonProse
@@ -311,6 +312,37 @@ describe('class 1 — unresolvable references — the gate can see what it bans'
     expect(taskFindings[0]!.message).toContain('"task 4"')
     expect(taskFindings[1]!.message).toContain('"Tasks 11"')
     expect(taskFindings[2]!.message).toContain('"task #7"')
+  })
+
+  // The reported line is the citation's own, including when the citation
+  // opens a line: the pattern consumes the character before it, and where
+  // that character is the previous line's newline the whole match begins one
+  // line early. Nothing asserted a line number for this rule before, which is
+  // how that shipped.
+  it('reports the line the task number is actually on, at the start of a line and mid-line', () => {
+    const findings = checkUnresolvableReferences(
+      [{ path: 'SPEC.md', content: 'an opening line\ntask 5 opens this line\nand mid task 6 sits here\n' }],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings.map((f) => [f.line, f.message.includes('"task 5"') ? 'task 5' : 'task 6'])).toEqual([
+      [2, 'task 5'],
+      [3, 'task 6']
+    ])
+  })
+
+  it('reports the line an Issue number and a tranche slug are on when each opens a line', () => {
+    const findings = checkUnresolvableReferences(
+      [
+        {
+          path: 'aeg-root/roles/developer.md',
+          content: 'an opening line\n(#365) opened this line\naeg-coherence-v1 this one\n'
+        }
+      ],
+      READER_FACING_PREFIX,
+      READER_FACING_SUFFIX
+    )
+    expect(findings.map((f) => f.line)).toEqual([2, 3])
   })
 
   it("never reads a spec's own numbered structure as a task number", () => {
@@ -786,5 +818,31 @@ describe('checkReaderResolvableProse — runs both classes together', () => {
       READER_FACING_SUFFIX
     )
     expect(findings.length).toBeGreaterThanOrEqual(2)
+  })
+})
+
+// A configured spec path is hand-written, so the class accepts the spellings a
+// hand writes and reduces them to one. Unnormalized, a trailing slash or a
+// leading `./` was collected and read but never classified — the entry checked
+// nothing at all, silently.
+describe('normalizeSpecPath — one spelling for a hand-written entry', () => {
+  it('strips a leading ./, a trailing slash and a doubled separator', () => {
+    expect(normalizeSpecPath('docs/adr/')).toBe('docs/adr')
+    expect(normalizeSpecPath('./docs/adr')).toBe('docs/adr')
+    expect(normalizeSpecPath('./docs//adr///')).toBe('docs/adr')
+    expect(normalizeSpecPath('PRODUCT.md')).toBe('PRODUCT.md')
+  })
+
+  it('leaves a bare entry exactly as written', () => {
+    for (const entry of DEFAULT_SPEC_PATHS) expect(normalizeSpecPath(entry)).toBe(entry)
+  })
+
+  it('classifies a file under an entry written with a trailing slash or a leading ./', () => {
+    expect(
+      classifyProseFile('docs/adr/x.md', READER_FACING_PREFIX, READER_FACING_SUFFIX, undefined, ['docs/adr/'])
+    ).toBe('spec')
+    expect(classifyProseFile('design/a.md', READER_FACING_PREFIX, READER_FACING_SUFFIX, undefined, ['./design'])).toBe(
+      'spec'
+    )
   })
 })

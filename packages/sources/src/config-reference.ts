@@ -482,7 +482,8 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
       "Repo-relative files or folders ADDED to `reader-resolvable-prose`'s spec class — the blocking class that refuses a citation only this repository's own tracker can resolve. A folder entry is swept recursively for `.md` files; a file entry names that one file.",
       'Additive: the class already reads, with no configuration at all, a root `SPEC.md`, a root `CONTEXT.md`, every `.md` under `docs/adr/`, and every `apps/<app>/specs/**/*.md`. A repository carrying none of those files has nothing new to report. Setting this key adds to that set and never replaces it.',
       'The class blocks four shapes in every file it reads: an Issue or PR number (`#NNN`), an internal tranche slug (`<slug>-vN`), an archived-tranche slug, and a task number — the word `task` or `tasks` followed by a number (`task 4`, `tasks 11`, `task #7`), which a durable document copies out of a plan and which goes stale the moment that plan is renumbered. A document\'s own numbered structure ("Section 3", "step 2") is never a match.',
-      '`README.md` is deliberately not a default and should not be added lightly: the tranche-slug pattern matches an ordinary stack badge, which is not a citation at all.'
+      '`README.md` is deliberately not a default and should not be added lightly: the tranche-slug pattern matches an ordinary stack badge, which is not a citation at all.',
+      'Each entry names a path inside the repository. A trailing slash or a leading `./` is accepted and reduced to the same bare path, so `docs/adr/`, `./docs/adr` and `docs/adr` all name one folder. An entry that leaves the repository — absolute, or climbing through `..` — is refused when the configuration is read, since this class reads the repository under check and nothing else; a folder that is a symlink pointing outside is read through by nothing either.'
     ],
     example: `{
   "proseGates": {

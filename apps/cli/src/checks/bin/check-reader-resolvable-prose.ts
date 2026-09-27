@@ -61,12 +61,13 @@
  * file the PR actually changed still surfaces.
  */
 
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { extname, join } from 'node:path'
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import {
   checkReaderResolvableProse,
   checkSourceComments,
   DEFAULT_SPEC_PATHS,
+  normalizeSpecPath,
   parseGlossaryTerms,
   PRODUCT_SLUG_SCOPE,
   type ProseSourceFile
@@ -158,9 +159,57 @@ const SPEC_GRANDFATHER = proseGates?.specGrandfather ?? []
  * than replacing them, so a repository naming one extra document does not
  * silently stop reading its own root spec; an entry naming a path that does
  * not exist contributes nothing, the same dormancy `collect` already applies
- * to a missing directory.
+ * to a missing directory. Entries are normalized to one spelling here, so a
+ * hand-written `docs/adr/` or `./docs/adr` names the same folder the collector
+ * walks and the classifier matches — unnormalized the two disagreed, and such
+ * an entry was swept but never classified, checking nothing at all.
  */
-const SPEC_PATHS = [...DEFAULT_SPEC_PATHS, ...(proseGates?.specPaths ?? [])]
+const SPEC_PATHS = [...DEFAULT_SPEC_PATHS, ...(proseGates?.specPaths ?? [])].map(normalizeSpecPath)
+
+/**
+ * `path`'s location relative to `root`, in the normalized spelling the
+ * spec-class predicate compares against — or `null` when it resolves outside
+ * `root` at all.
+ *
+ * This class reads the repository under check and nothing else. A configured
+ * entry is hand-written text, so one reaching upward (`../notes.md`, an
+ * absolute path) would otherwise have been stat-ed, read and quoted in a
+ * finding — this repository's files are the only ones any of that is true of.
+ * A folder entry outside the root was worse than a leaked read: the old
+ * relative path came from slicing the root's own length off an unrelated
+ * absolute path, which yields a truncated name whose read either throws
+ * uncaught out of the check or, if that name happens to exist, reports a
+ * DIFFERENT file's text under it. Resolving first and refusing what lands
+ * outside closes both, and every caller below takes its relative paths from
+ * here rather than slicing.
+ */
+function containedRelativePath(root: string, path: string): string | null {
+  const abs = resolve(root, path)
+  const lexical = relative(resolve(root), abs)
+  if (escapesRoot(lexical)) return null
+  // A path that stays inside the root when read as text can still leave it
+  // when read as a directory entry — a symlink pointing away reaches the same
+  // outside file, so an entry that EXISTS is judged again on where it really
+  // lands. Only an existing one: a missing path resolves to itself, which
+  // under a symlinked checkout would then read as an escape, and a missing
+  // path contributes nothing regardless.
+  if (existsSync(abs) && escapesRoot(relative(realPathOrSelf(resolve(root)), realPathOrSelf(abs)))) return null
+  return normalizeSpecPath(lexical)
+}
+
+/** A relative path that leaves its base: empty (the base itself), upward, or absolute. */
+function escapesRoot(rel: string): boolean {
+  return rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || rel.startsWith('../') || isAbsolute(rel)
+}
+
+/** `realpathSync`, degrading to the path itself when it cannot be resolved — the caller only consults it for a path it has already seen exist. */
+function realPathOrSelf(path: string): string {
+  try {
+    return realpathSync(path)
+  } catch {
+    return path
+  }
+}
 
 /** Recursively collects repo-relative paths under `dir`. Missing/unreadable `dir` degrades to `[]`, never throws — the same dormancy discipline `legacySlugs()` below documents. */
 function collect(dir: string, out: string[] = []): string[] {
@@ -249,7 +298,15 @@ function readProductFiles(root: string, relPaths: string[]): ProseSourceFile[] {
 function collectSpecFiles(root: string, specPaths: readonly string[]): string[] {
   const out: string[] = []
   for (const entry of specPaths) {
-    const abs = join(root, entry)
+    const rel = containedRelativePath(root, entry)
+    if (rel === null) {
+      // stdout, not stderr — same reasoning as the summary line in `main()`.
+      console.log(
+        `${CHECK_NAME}: ignoring spec path "${entry}" — it resolves outside the repository under check, and this class only ever reads this repository's own files.`
+      )
+      continue
+    }
+    const abs = join(root, rel)
     let isDir: boolean
     try {
       isDir = statSync(abs).isDirectory()
@@ -258,11 +315,11 @@ function collectSpecFiles(root: string, specPaths: readonly string[]): string[] 
     }
     if (isDir) {
       for (const f of collect(abs)) {
-        const rel = f.slice(root.length + 1)
-        if (rel.endsWith('.md')) out.push(rel)
+        const child = containedRelativePath(root, f)
+        if (child?.endsWith('.md')) out.push(child)
       }
-    } else if (entry.endsWith('.md')) {
-      out.push(entry)
+    } else if (rel.endsWith('.md')) {
+      out.push(rel)
     }
   }
   const appsDir = join(root, 'apps')

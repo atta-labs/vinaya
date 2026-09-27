@@ -102,6 +102,24 @@ function shipsArchivePrefix(shipsPrefix: string): string {
 export const DEFAULT_SPEC_PATHS: readonly string[] = ['SPEC.md', 'CONTEXT.md', 'docs/adr']
 
 /**
+ * One spec-path entry in the single spelling the class matches against: no
+ * leading `./`, no trailing slash, no doubled separators. A configured entry
+ * is written by hand, so `docs/adr/` and `./docs/adr` both reach here and
+ * both mean the folder `docs/adr` — normalized, they match; unnormalized,
+ * the prefix compare below silently answered "not a spec" and the entry
+ * checked nothing at all. Every caller normalizes with THIS function so the
+ * collector's paths and the classifier's entries cannot disagree about a
+ * spelling.
+ */
+export function normalizeSpecPath(entry: string): string {
+  let out = entry.replace(/\\/g, '/')
+  while (out.startsWith('./')) out = out.slice(2)
+  out = out.replace(/\/{2,}/g, '/')
+  while (out.endsWith('/')) out = out.slice(0, -1)
+  return out
+}
+
+/**
  * A spec-class file: a per-product specs file (`apps/<product>/specs/**`),
  * or any `.md` file at — or under — one of `specPaths`' entries. Both are
  * swept with the SAME rules `ships`/doctrine pages already carry (a spec is
@@ -116,12 +134,13 @@ export const DEFAULT_SPEC_PATHS: readonly string[] = ['SPEC.md', 'CONTEXT.md', '
  *
  * `.md` is required of an entry-matched path so a folder entry carrying
  * non-prose files (a fixture, an image) widens the class to its markdown
- * only.
+ * only. Each entry is normalized before it is compared, so a hand-written
+ * `docs/adr/` or `./docs/adr` names the same folder a bare `docs/adr` does.
  */
 function isSpecFile(path: string, specPaths: readonly string[]): boolean {
   if (path.startsWith('apps/') && path.includes('/specs/') && path.endsWith('.md')) return true
   if (!path.endsWith('.md')) return false
-  return specPaths.some((entry) => isUnderOrEqual(path, entry))
+  return specPaths.some((entry) => isUnderOrEqual(path, normalizeSpecPath(entry)))
 }
 
 /** Any `CLAUDE.md`, at any depth — same reasoning as specs: this reader has this forge. */
@@ -338,9 +357,18 @@ export function checkUnresolvableReferences(
       let match: RegExpExecArray | null = pattern.exec(scrubbed)
       while (match !== null) {
         const cited = group !== undefined ? (match[group] ?? match[0]) : match[0]
+        // The line is the CITED text's own line, not the whole match's. A
+        // boundary-checked pattern consumes the character before the
+        // citation, and where that character is the newline ending the
+        // previous line — a citation that opens a line — the match begins on
+        // the previous line and a finding sent the reader there instead.
+        // `indexOf` is exact for both shapes in use: the leading boundary is
+        // one character that can never itself start the cited text, and an
+        // empty boundary (start of file) resolves to offset zero.
+        const citedIndex = match.index + match[0].indexOf(cited)
         findings.push({
           file: file.path,
-          line: lineAt(scrubbed, match.index),
+          line: lineAt(scrubbed, citedIndex),
           message: `references ${what} ("${cited}") a reader outside this repo's tracker cannot resolve`,
           blocking
         })

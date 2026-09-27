@@ -809,6 +809,83 @@ describe('reader-resolvable-prose: the spec class checks a root spec, context an
     }
   })
 
+  it('a specPaths entry written with a trailing slash is really checked, not silently skipped', () => {
+    const root = fixtureWithConfig('spec-defaults-trailing-slash', {
+      proseGates: { specPaths: ['design/', './notes'] }
+    })
+    try {
+      mkdirSync(join(root, 'design'), { recursive: true })
+      mkdirSync(join(root, 'notes'), { recursive: true })
+      writeFileSync(join(root, 'design', 'architecture.md'), '# Architecture\n\nDelivered by task 4.\n')
+      writeFileSync(join(root, 'notes', 'context.md'), '# Context\n\nShaped by aeg-coherence-v1.\n')
+      commitAll(root, 'Chore: add spec folders named with a trailing slash and a leading dot-slash')
+
+      const { exitCode, stderr } = runReaderBin(root)
+      expect(exitCode).toBe(1)
+      expect(stderr).toContain('design/architecture.md')
+      expect(stderr).toContain('notes/context.md')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a specPaths entry reaching outside the repository is refused by the schema, so the class reads only its defaults', () => {
+    const root = fixtureWithConfig('spec-defaults-escaping-entry', {
+      proseGates: { specPaths: ['../outside'] }
+    })
+    const outside = join(root, '..', `outside-${Date.now()}`)
+    try {
+      mkdirSync(outside, { recursive: true })
+      writeFileSync(join(outside, 'notes.md'), '# Outside\n\nDelivered by task 4, closing (#4213).\n')
+      // The escaping entry is written as `../outside` in config; the fixture's
+      // own out-of-repo folder carries a unique name so a stray read of it is
+      // unmistakable in the output.
+      writeFileSync(
+        join(root, 'vinaya.config.json'),
+        JSON.stringify({ checks: {}, proseGates: { specPaths: [`../${outside.split('/').pop()}`] } }, null, 2)
+      )
+      commitAll(root, 'Chore: configure a spec path outside the repository')
+
+      const { exitCode, stderr } = runReaderBin(root)
+      expect(exitCode).toBe(0)
+      expect(stderr).not.toContain('notes.md')
+      expect(stderr).not.toContain('outside')
+
+      const validated = Bun.spawnSync(['bun', INDEX_TS, 'check', 'reader-resolvable-prose'], {
+        cwd: root,
+        env: { ...process.env, PR_BODY: undefined, BASE_SHA: undefined }
+      })
+      // The command path validates the config instead of degrading to none, so
+      // an entry that leaves the repository is named rather than ignored.
+      expect(validated.exitCode).not.toBe(0)
+      expect(`${validated.stdout.toString()}${validated.stderr.toString()}`).toContain('specPaths')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+      rmSync(outside, { recursive: true, force: true })
+    }
+  })
+
+  it('a specPaths folder that is a symlink out of the repository reads nothing through it', () => {
+    const root = fixtureWithConfig('spec-defaults-symlink-escape', {
+      proseGates: { specPaths: ['design'] }
+    })
+    const outside = join(root, '..', `symlinked-${Date.now()}`)
+    try {
+      mkdirSync(outside, { recursive: true })
+      writeFileSync(join(outside, 'leaked.md'), '# Leaked\n\nDelivered by task 4, closing (#4213).\n')
+      symlinkSync(outside, join(root, 'design'))
+      commitAll(root, 'Chore: point a spec folder at a directory outside the repository')
+
+      const { exitCode, stdout, stderr } = runReaderBin(root)
+      expect(exitCode).toBe(0)
+      expect(stderr).not.toContain('leaked.md')
+      expect(stdout).toContain('spec class ran (0 file(s) swept')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+      rmSync(outside, { recursive: true, force: true })
+    }
+  })
+
   it('proseGates.specPaths adds a folder to the class without replacing the defaults', () => {
     const root = fixtureWithConfig('spec-defaults-configured-paths', {
       proseGates: { specPaths: ['design'] }
