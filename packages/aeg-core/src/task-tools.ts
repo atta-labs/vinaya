@@ -441,7 +441,8 @@ export type TaskCancelInput = z.infer<typeof TaskCancelInputSchema>
  */
 export const TaskResumeResultSchema = z.object({
   task: z.number().int().positive(),
-  pr: z.number().int().positive(),
+  /** `null` for a pause recorded before any pull request existed — see `EscalationInputsSchema.prNumber`. A result cannot name a pull request the run does not have, so this field says so rather than carrying a sentinel. */
+  pr: z.number().int().positive().nullable(),
   escalationId: z.string().min(1),
   outcome: z.enum(['started', 'already_resumed']),
   authenticatedBy: z.string().min(1),
@@ -466,7 +467,8 @@ export type TaskCancelOutcome = z.infer<typeof TaskCancelOutcomeSchema>
 
 export const TaskCancelResultSchema = z.object({
   task: z.number().int().positive(),
-  pr: z.number().int().positive(),
+  /** `null` for a pause recorded before any pull request existed — see `EscalationInputsSchema.prNumber`. */
+  pr: z.number().int().positive().nullable(),
   escalationId: z.string().min(1),
   outcome: TaskCancelOutcomeSchema,
   authenticatedBy: z.string().min(1),
@@ -572,7 +574,7 @@ export const TASK_RESUME_TOOL: TaskToolDefinition<TaskResumeInput, TaskResumeRes
   name: 'task_resume',
   purpose: 'Continue a paused dev-review-loop run from where it left off, once a Principal ruling authenticates it.',
   boundaries:
-    "Distinct from `task_start`: this tool only ever applies to a task that already has a paused run, never a fresh one. It never accepts a caller-supplied approval — the only decision reference it consumes is a Principal ruling comment already posted on the run's own PR, read fresh from the forge every call, never taken from a tool argument. It never resolves a decision itself: it triggers the SAME `dev-review-loop --resume` continuation the CLI has always used, guarded so the same paused escalation is never resumed by two calls.",
+    "Distinct from `task_start`: this tool only ever applies to a task that already has a paused run, never a fresh one. It never accepts a caller-supplied approval — the only decision reference it consumes is a Principal ruling comment already posted where this pause's own comment was posted, read fresh from the forge every call, never taken from a tool argument: the run's own pull request, or the task Issue for a pause the loop recorded before any pull request existed (`pr: null`), where that pause's comment is and where the only ruling answering it can be. Either source is read by the same parser under the same principal allowlist — an Issue comment authenticates a resume on exactly the terms a pull-request one does, never easier ones. For a pause that HAS a pull request it resolves no decision itself: it triggers the SAME `dev-review-loop --resume` continuation the CLI has always used, guarded so the same paused escalation is never resumed by two calls. For one that has none, that entry does not apply — it derives its task from a pull request's body — so this tool consumes the ruling as that escalation's own resolution and then relaunches through `vinaya task run`, the one continuation such a pause has; a second resume of the same escalation is refused as a replay rather than launching again.",
   inputSchema: TaskResumeInputSchema,
   resultSchema: TaskResumeResultSchema,
   errorSchema: TaskToolErrorSchema,
@@ -584,7 +586,7 @@ export const TASK_CANCEL_TOOL: TaskToolDefinition<TaskCancelInput, TaskCancelRes
   name: 'task_cancel',
   purpose: 'Stop a paused dev-review-loop run, fencing any in-flight effect it can no longer safely complete.',
   boundaries:
-    'The only tool in this catalog whose job is to end a run rather than read or continue one. Like `task_resume`, it consumes a Principal ruling read fresh from the forge, never a caller-supplied approval. A repeated call against an already-cancelled escalation reports the same outcome again rather than erroring — cancelling twice is never a retry of a failed cancel.',
+    "The only tool in this catalog whose job is to end a run rather than read or continue one. Like `task_resume`, it consumes a Principal ruling read fresh from the forge — from the run's own pull request, or from the task Issue for a pause recorded before any pull request existed — never a caller-supplied approval, and never a pull-request number the run does not have. A repeated call against an already-cancelled escalation reports the same outcome again rather than erroring — cancelling twice is never a retry of a failed cancel.",
   inputSchema: TaskCancelInputSchema,
   resultSchema: TaskCancelResultSchema,
   errorSchema: TaskToolErrorSchema,

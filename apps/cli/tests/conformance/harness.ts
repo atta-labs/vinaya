@@ -609,6 +609,8 @@ export function defineConformanceSuite(runtime: 'claude' | 'codex', invocation: 
           resolveIssueForRef: () => ISSUE,
           fetchRulings: () => ['LGTM, cancel.'],
           fetchNewestRulingOrdinal: () => 1,
+          fetchIssueRulings: () => ['LGTM, cancel.'],
+          fetchNewestIssueRulingOrdinal: () => 1,
           hostname: () => 'test-host',
           cancelDevReviewLoop: async () => {
             calls += 1

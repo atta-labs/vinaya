@@ -17,6 +17,7 @@ import {
 } from '@attalabs/aeg-core'
 import type { CallerContext } from '../../../src/lib/task-tools/server.js'
 import { createTaskCancelHandler } from '../../../src/lib/task-tools/cancel.js'
+import type { CancelInput } from '../../../src/lib/dev-review-loop.js'
 import { writePauseState } from '../../../src/lib/dev-review-loop/pause-resume.js'
 import { isolatedConfigFixture } from '../process-fixture'
 
@@ -110,13 +111,13 @@ afterEach(() => {
   rmSync(sandbox, { recursive: true, force: true })
 })
 
-function writePause() {
+function writePause(overrides: { prNumber?: number | null } = {}) {
   writePauseState(outbox, {
     task: ISSUE,
     round: 1,
     head: 'headsha1',
     branch: 'task/x/1',
-    prNumber: PR,
+    prNumber: overrides.prNumber === undefined ? PR : overrides.prNumber,
     reason: 'escalation',
     pausedAt: '2026-01-01T00:00:00.000Z',
     escalationId: ESCALATION_ID
@@ -153,18 +154,30 @@ function harness(
   overrides: {
     rulings?: string[]
     newestRulingOrdinal?: number
+    /** Rulings read off the task ISSUE — the only place a pause with no pull request could carry one. Defaults to none, so a test that does not post one proves the refusal. */
+    issueRulings?: string[]
+    newestIssueRulingOrdinal?: number
     hostname?: string
     cancelResult?: { escalationId: string; fencedEffectKeys: string[] }
     cancelError?: Error
   } = {}
 ) {
-  const calls: Array<{ cancelPr: number; agent: string }> = []
+  const calls: CancelInput[] = []
+  const prRulingReads: number[] = []
   const events: Array<{ operation: string; target: string; result: string; error_class: string | null }> = []
   const handler = createTaskCancelHandler({
     runtimeDir: () => outbox,
     resolveIssueForRef: () => ISSUE,
-    fetchRulings: () => overrides.rulings ?? ['LGTM, cancel.'],
-    fetchNewestRulingOrdinal: () => overrides.newestRulingOrdinal ?? 1,
+    fetchRulings: (pr) => {
+      prRulingReads.push(pr)
+      return overrides.rulings ?? ['LGTM, cancel.']
+    },
+    fetchNewestRulingOrdinal: (pr) => {
+      prRulingReads.push(pr)
+      return overrides.newestRulingOrdinal ?? 1
+    },
+    fetchIssueRulings: () => overrides.issueRulings ?? [],
+    fetchNewestIssueRulingOrdinal: () => overrides.newestIssueRulingOrdinal ?? 0,
     hostname: () => overrides.hostname ?? 'test-host',
     cancelDevReviewLoop: async (input) => {
       calls.push(input)
@@ -180,7 +193,7 @@ function harness(
         events.push({ operation: e.operation, target: e.target ?? '', result: e.result, error_class: e.error_class })
     }
   })
-  return { handler, calls, events }
+  return { handler, calls, events, prRulingReads }
 }
 
 describe('task_cancel handler', () => {
@@ -199,7 +212,7 @@ describe('task_cancel handler', () => {
     if (!result.ok) expect(result.error.kind).toBe('authority')
   })
 
-  it('refuses when no pause with a PR is recorded', async () => {
+  it('refuses when no pause is recorded at all', async () => {
     const { handler, calls } = harness()
     const result = await handler({ task: { issue: ISSUE }, reason: 'no longer needed' }, CALLER)
     expect(result.ok).toBe(false)
@@ -698,4 +711,84 @@ console.log('DONE')
       rmSync(home, { recursive: true, force: true })
     }
   }, 20000)
+})
+
+/**
+ * O1/O2 — the pause the loop records BEFORE any pull request exists (the
+ * before-any-push escalation, whose comment goes on the task Issue). Its
+ * `prNumber` is `null`, so its ruling is read from the Issue and the cancel is
+ * addressed by task: the handler must never hand a non-existent pull-request
+ * number to a forge read. Observed live before this: `task_cancel` on such a
+ * pause shelled `gh pr view -1` and failed with an infrastructure error,
+ * leaving the run untouched and unclearable by any tool.
+ */
+describe('task_cancel handler — a pause recorded before its pull request existed', () => {
+  it('reads the ruling from the task Issue, cancels by task, and never touches a pull-request read', async () => {
+    writePause({ prNumber: null })
+    writeEscalationFixture({ host: 'test-host', pr: null })
+    const { handler, calls, events, prRulingReads } = harness({
+      hostname: 'test-host',
+      issueRulings: ['Ruling: abandon this task.'],
+      newestIssueRulingOrdinal: 1
+    })
+    const result = await handler({ task: { issue: ISSUE }, reason: 'superseded by a re-plan' }, CALLER)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.result.outcome).toBe('confirmed')
+    // Reported as having none, never as a number nothing was opened against.
+    expect(result.result.pr).toBeNull()
+    expect(calls).toEqual([{ cancelTask: ISSUE, agent: 'claude' }])
+    expect(prRulingReads).toEqual([])
+    expect(events).toEqual([{ operation: 'task_cancel', target: `task:${ISSUE}`, result: 'ok', error_class: null }])
+  })
+
+  it.each([-1, 0])(
+    'treats a pause record already on disk carrying the %s sentinel as having no pull request',
+    async (sentinel) => {
+      writePause({ prNumber: sentinel })
+      writeEscalationFixture({ host: 'test-host', pr: null })
+      const { handler, calls, prRulingReads } = harness({
+        hostname: 'test-host',
+        issueRulings: ['Ruling: abandon this task.'],
+        newestIssueRulingOrdinal: 1
+      })
+      const result = await handler({ task: { issue: ISSUE }, reason: 'superseded' }, CALLER)
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.result.pr).toBeNull()
+      expect(calls).toEqual([{ cancelTask: ISSUE, agent: 'claude' }])
+      // The read that used to become `gh pr view -1`.
+      expect(prRulingReads).toEqual([])
+    }
+  )
+
+  it('rejects a forged decision — no Principal ruling on the Issue yet, and never falls back to the pull-request read', async () => {
+    writePause({ prNumber: null })
+    writeEscalationFixture({ host: 'test-host', pr: null })
+    const { handler, calls, prRulingReads } = harness({ issueRulings: [] })
+    const result = await handler({ task: { issue: ISSUE }, reason: 'superseded' }, CALLER)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.kind).toBe('authority')
+      expect(result.error.message).toContain(`Issue ${ISSUE} carries no Principal ruling comment yet`)
+    }
+    expect(calls).toHaveLength(0)
+    expect(prRulingReads).toEqual([])
+  })
+
+  it('rejects a stale Issue ruling whose ordinal has not advanced past the one this escalation was raised under', async () => {
+    writePause({ prNumber: null })
+    writeEscalationFixture({ host: 'test-host', pr: null, rulingOrdinal: 2 })
+    const { handler, calls } = harness({
+      issueRulings: ['An older ruling, already accounted for.'],
+      newestIssueRulingOrdinal: 2
+    })
+    const result = await handler({ task: { issue: ISSUE }, reason: 'superseded' }, CALLER)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.kind).toBe('authority')
+      expect(result.error.message).toContain('no newer than the ruling this escalation was already raised under')
+    }
+    expect(calls).toHaveLength(0)
+  })
 })

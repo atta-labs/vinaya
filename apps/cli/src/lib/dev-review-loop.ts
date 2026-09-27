@@ -108,6 +108,9 @@ import {
   DeveloperStopSignal,
   fetchDeveloperStop,
   fetchFrozenBrief,
+  fetchIssueRulings,
+  fetchNewestIssueRulingAuthor,
+  fetchNewestIssueRulingOrdinal,
   fetchNewestRulingAuthor,
   fetchNewestRulingOrdinal,
   fetchPrBody,
@@ -225,7 +228,10 @@ export {
   extractObjectivesSection,
   fetchDeveloperStop,
   fetchFrozenBrief,
+  fetchIssueRulings,
   fetchIssueTitle,
+  fetchNewestIssueRulingAuthor,
+  fetchNewestIssueRulingOrdinal,
   fetchNewestRulingAuthor,
   fetchNewestRulingOrdinal,
   fetchRulings,
@@ -3871,7 +3877,16 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
 
 // --- cancel (O3) -------------------------------------------------------
 
-export type CancelInput = { cancelPr: number; agent: AgentVendor }
+/**
+ * A cancel names EITHER the paused run's pull request (`cancelPr`, the
+ * ordinary case — the task itself is derived from that pull request's own
+ * `Closes #N`) or, for a pause recorded before any pull request existed, the
+ * task directly (`cancelTask`): there is no pull request body to derive a task
+ * from, and no pull request to read a ruling off, so that pause is addressed
+ * and authenticated through its own Issue. Passing the absent pull request as
+ * a `-1` sentinel is what made such a pause uncancellable.
+ */
+export type CancelInput = { agent: AgentVendor } & ({ cancelPr: number } | { cancelTask: number })
 export type CancelResult = { task: number; escalationId: string; fencedEffectKeys: string[] }
 
 export type CancelDeps = {
@@ -3881,6 +3896,10 @@ export type CancelDeps = {
   fetchRulings: typeof fetchRulings
   fetchNewestRulingOrdinal: typeof fetchNewestRulingOrdinal
   fetchNewestRulingAuthor: typeof fetchNewestRulingAuthor
+  /** The Issue-target ruling readers — used only for a pause that has no pull request, and gated by the identical principal allowlist their pull-request siblings above apply (`developer-dispatch.ts`). */
+  fetchIssueRulings: typeof fetchIssueRulings
+  fetchNewestIssueRulingOrdinal: typeof fetchNewestIssueRulingOrdinal
+  fetchNewestIssueRulingAuthor: typeof fetchNewestIssueRulingAuthor
   runtimeDir: () => string
   resolveLogAppendPath: (repo: { owner: string; repo: string } | null, issue: number) => string | Promise<string>
   resolveRepo: () => Promise<{ owner: string; repo: string } | null>
@@ -3900,6 +3919,9 @@ function defaultCancelDeps(): CancelDeps {
     fetchRulings,
     fetchNewestRulingOrdinal,
     fetchNewestRulingAuthor,
+    fetchIssueRulings,
+    fetchNewestIssueRulingOrdinal,
+    fetchNewestIssueRulingAuthor,
     runtimeDir,
     resolveLogAppendPath,
     resolveRepo: () => resolveRepo().catch(() => null),
@@ -3934,28 +3956,44 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
   // inherits its environment.
   markProcessUnattended()
   const d: CancelDeps = { ...defaultCancelDeps(), ...deps }
-  const task = d.taskFromPrBody(d.fetchPrBody(input.cancelPr))
-  if (task === null) {
-    throw new Error(
-      `devReviewLoop --cancel: PR #${input.cancelPr}'s body carries no \`Closes #N\` reference — cannot derive its task.`
-    )
+  // A no-pull-request cancel is addressed by its task directly; every other
+  // one derives the task from the pull request it names, unchanged.
+  let cancelPr: number | null = null
+  let task: number
+  if ('cancelPr' in input) {
+    cancelPr = input.cancelPr
+    const derived = d.taskFromPrBody(d.fetchPrBody(cancelPr))
+    if (derived === null) {
+      throw new Error(
+        `devReviewLoop --cancel: PR #${cancelPr}'s body carries no \`Closes #N\` reference — cannot derive its task.`
+      )
+    }
+    task = derived
+  } else {
+    task = input.cancelTask
   }
+  /** `PR #<n>`, or the task's own Issue for a pause that never had one — the one phrase every refusal below names its target by. */
+  const targetLabel = cancelPr === null ? `Issue #${task}` : `PR #${cancelPr}`
   const root = d.runtimeDir()
   const held = d.readPauseState(root, task)
   if (!held) {
     throw new Error(
-      `devReviewLoop --cancel: no held pause state found for task ${task} (PR #${input.cancelPr}) — nothing to cancel.`
+      `devReviewLoop --cancel: no held pause state found for task ${task} (${targetLabel}) — nothing to cancel.`
     )
   }
-  if (held.prNumber !== input.cancelPr) {
+  if (held.prNumber !== cancelPr) {
     throw new Error(
-      `devReviewLoop --cancel: task ${task}'s held pause state names PR #${held.prNumber}, not PR #${input.cancelPr}.`
+      `devReviewLoop --cancel: task ${task}'s held pause state names PR #${held.prNumber ?? '(none)'}, not ${targetLabel}.`
     )
   }
-  const rulings = d.fetchRulings(input.cancelPr)
+  // The ruling is read from wherever this pause's own comment was posted — the
+  // pull request when one exists, the task Issue when the pause predates one.
+  // Same parser, same principal allowlist, either way
+  // (`developer-dispatch.ts`'s own `fetchIssueRulings`).
+  const rulings = cancelPr === null ? d.fetchIssueRulings(task) : d.fetchRulings(cancelPr)
   if (rulings.length === 0) {
     throw new Error(
-      `devReviewLoop --cancel: PR #${input.cancelPr} carries no Principal ruling comment yet — nothing authenticates this cancel.`
+      `devReviewLoop --cancel: ${targetLabel} carries no Principal ruling comment yet — nothing authenticates this cancel.`
     )
   }
   // See the identical comment on the `--resume` path above.
@@ -3980,11 +4018,19 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
   }
   const terminateAgent: AgentVendor =
     dispatchedAgent !== undefined && isAgentVendor(dispatchedAgent) ? dispatchedAgent : input.agent
-  const authenticatedBy = d.fetchNewestRulingAuthor(input.cancelPr) ?? 'unknown-principal'
-  const authenticatedFrom = `${input.cancelPr}-${d.fetchNewestRulingOrdinal(input.cancelPr)}`
+  const authenticatedBy =
+    (cancelPr === null ? d.fetchNewestIssueRulingAuthor(task) : d.fetchNewestRulingAuthor(cancelPr)) ??
+    'unknown-principal'
+  // `<pr>-<ordinal>` for a pull-request ruling; `issue-<n>-<ordinal>` for one
+  // read off the task Issue, so a resolution record names WHERE its decision
+  // was read from and never reads as a pull request number that does not exist.
+  const authenticatedFrom =
+    cancelPr === null
+      ? `issue-${task}-${d.fetchNewestIssueRulingOrdinal(task)}`
+      : `${cancelPr}-${d.fetchNewestRulingOrdinal(cancelPr)}`
   let resolved: ResolveEscalationResult
   try {
-    resolved = resolveEscalation(task, escalationId, input.cancelPr, 'cancel', authenticatedBy, authenticatedFrom)
+    resolved = resolveEscalation(task, escalationId, cancelPr, 'cancel', authenticatedBy, authenticatedFrom)
   } catch (err) {
     if (
       err instanceof WrongTargetResolutionError ||
