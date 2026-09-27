@@ -1,7 +1,10 @@
 /**
- * `vinaya task status` — every open task Issue carrying a frozen brief, its
- * pull request, and whether its dev-review-loop is running, paused,
- * published, or has no driver at all. `vinaya task status <tranche> <n>`
+ * `vinaya task status` — one table: every open task Issue carrying a frozen
+ * brief, its pull request, whether its dev-review-loop is running, paused,
+ * published, or has no driver at all, and where that run is — its round, its
+ * phase, how long it has been in that phase, the newest confidence on record,
+ * and what the phase typically takes on this repository's recently merged
+ * tasks (history, never a forecast). `vinaya task status <tranche> <n>`
  * narrows to one task and adds the last round's verdict lines plus the
  * exact resume command when paused. `--follow`,
  * on either the `<tranche> <n>` form or `--issue <n>`, tails that task's
@@ -41,17 +44,17 @@ function parseArgs(args: string[]): ParsedArgs {
 }
 
 function runList(json: boolean): void {
-  const rows = gatherTaskStatusList()
+  const { rows, table } = gatherTaskStatusList()
 
   if (json) {
-    printJson({ tasks: rows.map((r) => r.row) })
+    printJson({ tasks: rows })
     return
   }
   if (rows.length === 0) {
     process.stdout.write('No open task carries a frozen brief.\n')
     return
   }
-  for (const r of rows) process.stdout.write(`${r.line}\n`)
+  for (const line of table) process.stdout.write(`${line}\n`)
 }
 
 function runSingle(tranche: string, id: string, json: boolean): void {
@@ -71,7 +74,9 @@ function runSingle(tranche: string, id: string, json: boolean): void {
     return
   }
 
-  process.stdout.write(`${result.line}\n`)
+  // The same table the list form prints, one row wide — one shape to read,
+  // whether the answer is about one task or every open one.
+  for (const line of result.table) process.stdout.write(`${line}\n`)
   const lines = result.verdictLines
   if (lines) {
     if (lines.reviewer) process.stdout.write(`  reviewer (round ${lines.round}): ${lines.reviewer}\n`)

@@ -25,7 +25,13 @@
  * which stays inside the value for a caller that wants it.
  */
 
-import { defaultControlStoreDeps, type Freshness, type TaskEscalationPacket } from '@attalabs/aeg-core'
+import {
+  defaultControlStoreDeps,
+  type Freshness,
+  type TaskConfidence,
+  type TaskEscalationPacket,
+  type TaskPhaseHistory
+} from '@attalabs/aeg-core'
 import {
   escalationIdFor,
   noPushResumeCommandFor,
@@ -40,7 +46,8 @@ import {
   newestPublishedRound,
   resumeCommandFor,
   type RoundVerdictLines,
-  type TaskLoopState
+  type TaskLoopState,
+  type TaskStatusRow
 } from '../task-status.js'
 import { tasksExecutionRoot } from '../run-paths.js'
 
@@ -104,6 +111,44 @@ export function describeTaskLoopState(state: TaskLoopState): string {
       return 'not started'
     case 'no_driver':
       return 'no driver'
+  }
+}
+
+/**
+ * The seven `TaskStatusItemSchema` fields that say WHERE a run is, taken from
+ * the status row the reader already built — never re-read here, so the tool
+ * and `vinaya task status` can never disagree about a task's round or phase.
+ *
+ * Every field is `null` when no record carries it: a task with no control
+ * record has no round, no phase, no time in phase and no `phaseIsCurrent`; a
+ * round whose confidence no record still carries has none; a phase with no
+ * comparable history — or too few past intervals of it — has no typical time.
+ * None of them is ever estimated, `phaseIsCurrent: false` marks a phase a
+ * stopped run only RECORDED rather than one it is in, and `phaseHistory` is
+ * history, not a prediction of when this run leaves this phase.
+ */
+export function whereTheRunIs(row: TaskStatusRow): {
+  round: number | null
+  phase: string | null
+  minutesInPhase: number | null
+  phaseIsCurrent: boolean | null
+  lastConfidence: TaskConfidence | null
+  lastConfidenceUnread: boolean
+  phaseHistory: TaskPhaseHistory | null
+} {
+  return {
+    round: row.round,
+    phase: row.phase,
+    minutesInPhase: row.minutesInPhase,
+    // Whether a driver is still in that phase — `false` marks the record as the
+    // last phase the run wrote before it stopped, so a caller never presents a
+    // stale phase as a place the run is in now.
+    phaseIsCurrent: row.phaseIsCurrent,
+    lastConfidence: row.lastConfidence,
+    // An absence a caller may report, told apart from a read a bound stopped
+    // this status read from making at all.
+    lastConfidenceUnread: row.lastConfidenceUnread,
+    phaseHistory: row.phaseHistory
   }
 }
 
