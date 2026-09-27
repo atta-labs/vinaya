@@ -70,6 +70,7 @@ export { stripCode } from './strip-code'
 export type { StripCodeOptions } from './strip-code'
 export {
   AmbiguousBareEdgeError,
+  findLetteredEdgeIds,
   parseRationaleDeps,
   requireTrancheQualifiedEdges,
   SECTION_HEADER,

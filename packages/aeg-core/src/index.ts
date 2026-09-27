@@ -252,6 +252,7 @@ export {
   checkConflictCompleteness,
   checkDocsWithinSurface,
   checkDocumentationCitesObjective,
+  checkEdgeIdsWholeNumbers,
   checkIssueBriefSections,
   checkIssueObjectives,
   checkIssueRationale,

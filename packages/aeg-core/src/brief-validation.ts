@@ -391,8 +391,22 @@ export const COMMIT_TYPE_STYLE = new RegExp(`^(${COMMIT_TYPES.join('|')})(\\([a-
  * (husky/commitlint parity, applied at the wrapper).
  */
 export function checkForgeTitle(title: string): BriefSectionResult {
-  const taskStyle = /^\[[a-z0-9._-]+\] \S+ — \S/
+  const taskStyle = /^\[[a-z0-9._-]+\] \d+ — \S/
   if (COMMIT_TYPE_STYLE.test(title) || taskStyle.test(title)) return { status: 'pass', errors: [] }
+  // A title that is task-shaped except for a non-numeric id (`[slug] 7a — …`)
+  // gets the specific rule, not the generic "matches neither grammar": task ids
+  // are whole numbers, the same shape `vinaya task run`/`task dispatch` and the
+  // edge grammar (`parse-rationale-deps.ts`) accept — a lettered id names a task
+  // nothing downstream can start.
+  const letteredTaskId = /^\[[a-z0-9._-]+\] (\S+) — \S/.exec(title)
+  if (letteredTaskId) {
+    return {
+      status: 'fail',
+      errors: [
+        `brief-validation title: "${title}" names task id \`${letteredTaskId[1]}\` — task ids are whole numbers (\`1\`, \`2\`), never lettered (\`2a\`). \`vinaya task run\` and \`task dispatch\` refuse a non-numeric id, so a plan titled this way names a task that cannot be started.`
+      ]
+    }
+  }
   return {
     status: 'fail',
     errors: [
