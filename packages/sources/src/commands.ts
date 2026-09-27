@@ -549,6 +549,10 @@ export const COMMANDS: readonly Command[] = [
         description: 'Resolve to a specific role file (roles/<name>.md) instead of the front door'
       },
       {
+        flag: '--template <name>',
+        description: 'Print a template the package ships (templates/<name>-template.md) instead of the front door'
+      },
+      {
         flag: '--print',
         description:
           "Emit the resolved file's body (frontmatter stripped) instead of its path — the one-hop mode every generated skill and slash command invokes. A role file whose frontmatter carries an `ack-token` emits that token as the output's own first line."
