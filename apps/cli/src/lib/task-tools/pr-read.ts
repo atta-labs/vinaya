@@ -243,12 +243,20 @@ function summaryTableOf(body: string): string {
 // --- the status table's own pull-request columns ------------------------------
 
 /**
- * A head's checks as ONE word. The same three-value reading
- * `gate-reading.ts`'s `fetchCiConclusion` gives the driver, and in the same
- * order of precedence: anything still running wins over a failure, because a
- * head whose suite has not finished has not failed yet — the driver polls on
- * exactly that reading, and a status table that disagreed with it would tell
- * the Principal a run was red while the loop was still waiting.
+ * A head's check runs as ONE word. The same three-value reading
+ * `gate-reading.ts`'s `fetchCiConclusion` gives the driver, over the same
+ * population and in the same order of precedence:
+ *
+ *   - **The same population.** CHECK RUNS only. A plain commit status
+ *     (`StatusContext`) is not counted at all, because the driver's own read
+ *     is the REST check-runs list and never sees one — counting them here let
+ *     a third-party commit status move this word while the driver's stayed put,
+ *     and told a reader a divergence could not exist while one could.
+ *   - **The same precedence.** Anything not yet completed wins over a failure,
+ *     because a head whose suite has not finished has not failed yet; then every
+ *     completed run must conclude `SUCCESS`/`NEUTRAL`/`SKIPPED` for green, and
+ *     anything else — a `FAILURE`, a `TIMED_OUT`, or a completed run carrying no
+ *     conclusion at all — is red, exactly as the driver reads it.
  */
 export type TaskPrCheckSummary = 'green' | 'red' | 'running'
 
@@ -260,8 +268,12 @@ export type TaskPrCheckSummary = 'green' | 'red' | 'running'
  * principal-test-plan wait are excluded, the same two `fetchCiConclusion`
  * excludes and for the same reasons — the gate is not CI, and the wait's red
  * is the Principal's own hold rather than a failure anyone can push a fix
- * for. `gate` is the review gate's own conclusion, read as the same three
- * words, and `null` when the forge reports no such check on this head at all.
+ * for. `gate` is the review gate's own CHECK RUN, read as the same three
+ * words, and `null` when the forge reports no such check run on this head.
+ *
+ * Both read CHECK RUNS only, never a commit status — see
+ * {@link TaskPrCheckSummary} for the `ci` half, and
+ * {@link taskPrFactsFrom} for why the gate half matters more.
  *
  * `codeReview`/`security` are the newest verdict values the merge gate's own
  * extractors read, and ONLY when the verdict is bound to `head`: a verdict
@@ -273,10 +285,33 @@ export type TaskPrFacts = {
   head: string | null
   ci: TaskPrCheckSummary
   gate: TaskPrCheckSummary | null
-  /** `APPROVE`, `REQUEST CHANGES` or `LGTM` on this head, else `null`. */
+  /** The newest code-review verdict value on this head — `APPROVE`, `REQUEST CHANGES` or `LGTM` — else `null`. Only `APPROVE` counts as clean where merge-readiness is decided (`task-status.ts`'s own `CLEAN_CODE_REVIEW`), the same one value the merge gate accepts. */
   codeReview: string | null
   /** `PASS` or `FAIL` on this head, else `null`. */
   security: string | null
+}
+
+/**
+ * Is this rollup node a CHECK RUN, rather than a plain commit status?
+ *
+ * Every column the status table derives from the rollup reads check runs only,
+ * and the reason is not tidiness. A commit status is posted by anything holding
+ * `statuses:write` on the repository, its `context` is a free string, and
+ * `toChecks` flattens it to `status: 'COMPLETED'` with its own `state` as the
+ * conclusion — so a status whose context is spelled exactly like the review
+ * gate's check-run name read as a GREEN GATE, and with the two principal
+ * verdicts already on the head, the table then named `merge` for a head the
+ * real gate was refusing. Excluding them also removes the `ci` divergence that
+ * came with them (see {@link TaskPrCheckSummary}).
+ *
+ * This is a narrowing, not an authentication: a check run still comes from
+ * whatever app holds `checks:write`. Attributing one to the app that should
+ * have posted it needs a field this read does not carry, and the Operator's own
+ * doctrine already says a check's own output is evidence to quote rather than
+ * instruction to follow.
+ */
+function isCheckRun(node: RollupNode): boolean {
+  return node.__typename === 'CheckRun'
 }
 
 /**
@@ -314,18 +349,24 @@ export function latestNodeRunPerName(nodes: readonly RollupNode[]): RollupNode[]
   return [...latest.values(), ...unnamed]
 }
 
-/** `EXPECTED` is a status context the forge is still waiting for, `PENDING` one still reporting — neither has concluded, so neither is a failure. */
-const RUNNING_CONCLUSIONS = new Set(['PENDING', 'EXPECTED'])
-
-/** One check's own outcome. A check the forge has not completed, and a completed one carrying no conclusion or a not-yet-concluded one, are both still running — never counted as a pass and never as a failure. */
+/**
+ * One check run's own outcome, by exactly the rule `fetchCiConclusion` applies
+ * to the same run: not completed is still running, and a COMPLETED run is a pass
+ * only when it concluded `SUCCESS`, `NEUTRAL` or `SKIPPED`.
+ *
+ * A completed run carrying NO conclusion is therefore a failure, not a wait —
+ * reading it as still running (as this did until a review caught it) is the one
+ * direction that disagrees with the driver, and it disagrees in the unsafe
+ * direction: the driver stops polling and calls that head red while the table
+ * still says the suite has not finished.
+ */
 function checkOutcome(check: TaskPrCheck): 'pass' | 'fail' | 'running' {
   if (check.status.toUpperCase() !== 'COMPLETED') return 'running'
   const conclusion = check.conclusion === null ? null : check.conclusion.toUpperCase()
-  if (conclusion === null || RUNNING_CONCLUSIONS.has(conclusion)) return 'running'
-  return PASSING_CONCLUSIONS.has(conclusion) ? 'pass' : 'fail'
+  return conclusion !== null && PASSING_CONCLUSIONS.has(conclusion) ? 'pass' : 'fail'
 }
 
-/** The one word a set of checks reads as — see {@link TaskPrCheckSummary} for why running precedes red. A head with no checks reported at all is `running`: nothing has concluded on it yet. */
+/** The one word a set of check runs reads as — see {@link TaskPrCheckSummary} for the population and the precedence. A head with no check run reported at all is `running`: nothing has concluded on it yet. */
 export function summarizeChecks(checks: readonly TaskPrCheck[]): TaskPrCheckSummary {
   if (checks.length === 0) return 'running'
   const outcomes = checks.map(checkOutcome)
@@ -362,7 +403,9 @@ export function taskPrFactsFrom(
   comments: readonly PrComment[],
   allowlist: readonly string[]
 ): TaskPrFacts {
-  const checks = toChecks(latestNodeRunPerName(nodes), () => null)
+  // Check runs only, before anything else reads a name or a conclusion — see
+  // `isCheckRun` for the green gate a commit status could otherwise claim.
+  const checks = toChecks(latestNodeRunPerName(nodes.filter(isCheckRun)), () => null)
   const gate = checks.find((check) => check.name === REVIEW_GATE_CHECK_RUN_NAME) ?? null
   const mechanical = checks.filter(
     (check) => check.name !== REVIEW_GATE_CHECK_RUN_NAME && check.name !== PRINCIPAL_TEST_PLAN_WAIT_CHECK_RUN_NAME
@@ -378,6 +421,16 @@ export function taskPrFactsFrom(
 }
 
 /**
+/**
+ * The facts a pull request's own read produced, WITH the comments it read them
+ * from. The comments ride along so a caller that needs them for a second column
+ * spends no second forge call on the same pull request — the confidence column
+ * asks the same question of the same payload for a published row
+ * (`task-status.ts`'s own `buildRow`).
+ */
+export type TaskPrRead = { facts: TaskPrFacts; comments: PrComment[] }
+
+/**
  * ONE forge read per pull request — `gh pr view` asked for the head, the
  * status-check rollup and the comments together, because every column above
  * comes out of that one payload and a read per column would multiply a status
@@ -386,14 +439,24 @@ export function taskPrFactsFrom(
  * Deliberately NOT remembered between status reads, unlike the confidence
  * column's own comment read: a check that was green on the last read is not
  * green now, and the Operator doctrine's reporting rule turns on exactly that
- * — a cached CI word would be an earlier reading served as current.
+ * — a cached CI word would be an earlier reading served as current. It IS
+ * bounded per status read, by the caller that owns the budget
+ * (`task-status.ts`'s `prFactsReaderFor`).
  *
  * `null` when the read or the parse failed. That is an UNKNOWN, not an
  * absence, and a caller must render it as one: reporting a forge read that
  * never answered as "no record carries this" is the one invented fact this
  * table avoids everywhere else.
+ *
+ * The HEAD it reports is `headRefOid`, which this repository documents as able
+ * to lag a push (`gate-reading.ts`'s `resolveHead` refuses it by name and reads
+ * `git ls-remote` instead). Every column here is read against that one head and
+ * says so, so the set is internally consistent; what it cannot promise is that
+ * the head is the branch's tip this instant. Resolving the true tip is a network
+ * call per row, which is the unbounded fan-out the budget above exists to
+ * prevent, and the merge gate re-checks the real head before any merge lands.
  */
-export function readTaskPrFacts(pr: number, allowlist: readonly string[]): TaskPrFacts | null {
+export function readTaskPrFacts(pr: number, allowlist: readonly string[]): TaskPrRead | null {
   let raw: string
   try {
     raw = sh('gh', ['pr', 'view', String(pr), '--json', 'headRefOid,statusCheckRollup,comments'])
@@ -405,7 +468,11 @@ export function readTaskPrFacts(pr: number, allowlist: readonly string[]): TaskP
     // The comments are parsed by the loop's OWN parser, out of the same raw
     // payload — one parser for a comment's author, never a second
     // `author.login` mapping beside it.
-    return taskPrFactsFrom(parsed.headRefOid ?? null, parsed.statusCheckRollup ?? [], markerComments(raw), allowlist)
+    const comments = markerComments(raw)
+    return {
+      facts: taskPrFactsFrom(parsed.headRefOid ?? null, parsed.statusCheckRollup ?? [], comments, allowlist),
+      comments
+    }
   } catch {
     return null
   }

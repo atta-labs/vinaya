@@ -28,6 +28,8 @@ import {
   nextActionFor,
   phaseIsCurrentFor,
   phaseIsPastTwiceTypical,
+  PR_FACTS_READS_PER_STATUS_READ,
+  prFactsReaderFor,
   readLastConfidence,
   readLoopPhase,
   readStartClaim,
@@ -1722,9 +1724,10 @@ describe('renderTaskStatusTable (O3)', () => {
       'approve',
       'pass',
       'green',
-      // The gate is green and both verdicts judged this head: the row is ready
-      // to merge, whatever the loop's own state says it is doing.
-      'merge'
+      // The gate is green and both verdicts judged this head — but a driver is
+      // still running the task, so the head this read judged is not the head the
+      // run will finish on. `wait`, and the next read says `merge` once it stops.
+      'wait'
     ])
   })
 
@@ -2084,8 +2087,9 @@ describe('the Next column (O3)', () => {
     const merged = (facts: TaskPrFacts) =>
       nextActionFor({ ...base, pr: { number: 517 }, state: STATES.published, prFacts: facts })
     expect(merged(GREEN_APPROVED)).toBe('merge')
-    // An `LGTM` is the other clean code-review value the extractor accepts.
-    expect(merged({ ...GREEN_APPROVED, codeReview: 'LGTM' })).toBe('merge')
+    // `LGTM` is a value the extractor accepts and the merge gate does NOT —
+    // naming `merge` for it would promise a merge the gate refuses.
+    expect(merged({ ...GREEN_APPROVED, codeReview: 'LGTM' })).toBe('wait')
     // Every way it is not ready: the gate itself, either verdict blocking, and
     // either verdict simply absent from this head.
     expect(merged({ ...GREEN_APPROVED, gate: 'red' })).toBe('wait')
@@ -2095,6 +2099,17 @@ describe('the Next column (O3)', () => {
     expect(merged({ ...GREEN_APPROVED, security: 'FAIL' })).toBe('wait')
     expect(merged({ ...GREEN_APPROVED, codeReview: null })).toBe('wait')
     expect(merged({ ...GREEN_APPROVED, security: null })).toBe('wait')
+  })
+
+  it('never names merge while a driver is still working the task', () => {
+    for (const state of [STATES.running, STATES.starting]) {
+      expect(nextActionFor({ ...base, pr: { number: 517 }, state, prFacts: GREEN_APPROVED })).toBe('wait')
+    }
+    // A run that has STOPPED on a green, approved head is the case merge exists
+    // for — including one whose driver vanished.
+    for (const state of [STATES.published, STATES.no_driver, STATES.exited]) {
+      expect(nextActionFor({ ...base, pr: { number: 517 }, state, prFacts: GREEN_APPROVED })).toBe('merge')
+    }
   })
 
   it('never tells the Principal to merge what they already cancelled, or a record it could not read', () => {
@@ -2169,6 +2184,99 @@ describe('the over-typical mark (O4)', () => {
       expect(line.toLowerCase()).not.toContain('remaining')
       expect(line.toLowerCase()).not.toContain('overdue')
     }
+  })
+})
+
+/**
+ * The table an Operator must relay exactly as returned is markdown, and a cell
+ * value is not this renderer's to trust: a vertical bar in one silently adds a
+ * column, and the header and the row stop meaning the same thing.
+ */
+describe('a cell never breaks the table it is in', () => {
+  const base: Omit<TaskStatusRow, 'state' | 'pr'> = {
+    tranche: 'demo',
+    id: '1',
+    issue: 601,
+    round: null,
+    phase: null,
+    recordedPhase: null,
+    minutesInPhase: null,
+    phaseIsCurrent: null,
+    lastConfidence: null,
+    lastConfidenceUnread: false,
+    phaseHistory: null,
+    prFacts: null,
+    pauseDisposition: null
+  }
+  const deps = { now: () => new Date('2026-09-27T09:30:00.000Z'), host: () => 'test-host' }
+
+  it('escapes a vertical bar in a cell rather than letting it add a column', () => {
+    // A tranche slug is whatever the forge label carried — `findTrancheSlug`
+    // strips the prefix and validates nothing at read time.
+    const lines = renderTaskStatusTable(
+      [{ ...base, tranche: 'demo | forged', pr: null, state: { kind: 'no_driver' } }],
+      deps
+    )
+    // Counted the way a markdown reader counts them: an escaped bar is not a
+    // cell boundary, so the row still has exactly the header's own columns.
+    const unescapedPipes = (line: string) => line.split(/(?<!\\)\|/).length
+    expect(unescapedPipes(lines[2] as string)).toBe(unescapedPipes(lines[0] as string))
+    expect(lines[2]).toContain('[demo \\| forged] 1')
+  })
+
+  it('never lets a cell end its own row', () => {
+    const lines = renderTaskStatusTable(
+      [{ ...base, tranche: 'demo\nforged', pr: null, state: { kind: 'no_driver' } }],
+      deps
+    )
+    // Header, separator, one row, a blank, the footer — never a sixth line a
+    // cell wrote for itself.
+    expect(lines).toHaveLength(5)
+    expect(lines[2]).toContain('[demo forged] 1')
+  })
+})
+
+/**
+ * The per-read bound on the pull-request columns' own forge read. These reads
+ * are synchronous and the task-tool server chains every request through one
+ * promise, so a listing of a busy repository must not fan out one subprocess per
+ * row with no ceiling — the same reason the confidence column's own read is
+ * bounded, and this column reads more rows than that one does.
+ */
+describe('prFactsReaderFor', () => {
+  const FACTS: TaskPrFacts = { head: 'abc1234def', ci: 'green', gate: null, codeReview: null, security: null }
+  const answer = { facts: FACTS, comments: [{ body: 'x', author: 'daniboomerang' }] }
+
+  it('reads at most its budget per status read, and answers nothing past it', () => {
+    const asked: number[] = []
+    const reader = prFactsReaderFor(['daniboomerang'], 2, (pr) => {
+      asked.push(pr)
+      return answer
+    })
+    expect(reader(701)).toEqual(answer)
+    expect(reader(702)).toEqual(answer)
+    // Past the budget the read is never ATTEMPTED — not made and discarded.
+    expect(reader(703)).toBeNull()
+    expect(asked).toEqual([701, 702])
+  })
+
+  it('pays once for a pull request two rows name, and remembers a failure too', () => {
+    const asked: number[] = []
+    const reader = prFactsReaderFor(['daniboomerang'], 2, (pr) => {
+      asked.push(pr)
+      return pr === 701 ? answer : null
+    })
+    expect(reader(701)).toEqual(answer)
+    expect(reader(701)).toEqual(answer)
+    expect(reader(702)).toBeNull()
+    expect(reader(702)).toBeNull()
+    // Two pull requests, two reads — a remembered failure never re-reads and
+    // never spends a second slot of the budget either.
+    expect(asked).toEqual([701, 702])
+  })
+
+  it('defaults to the shipped budget', () => {
+    expect(PR_FACTS_READS_PER_STATUS_READ).toBe(SUMMARY_CONFIDENCE_READS_PER_STATUS_READ)
   })
 })
 

@@ -118,7 +118,7 @@ Every state `task_status` can report has exactly one action from this seat, and 
 
 The `next` column is what the PRINCIPAL does about the row, and it is the same word `task_status`'s own table returns in its `next` column — one closed vocabulary (`wait`, `merge`, `rule`, `start`, `cancel`, `investigate`), read out of this table by a conformance test rather than kept in step by hand. It is not a second grant: `merge` tells the Principal a row is ready to merge, and merging is still theirs to do with a tool you do not hold.
 
-Two things refine it, and both are facts a read already carries. **`merge` replaces the state's own word** when the review gate is green and both verdicts on that head are clean — the newer fact wins, so a run whose driver vanished on a green, approved head is one to merge rather than one to restart. And **a pause is routed by what it is waiting for**, never by the word `paused` alone — the same four dispositions the paused row above already names, read from the same records the continuation reads:
+Two things refine it, and both are facts a read already carries. **`merge` replaces the state's own word** when the review gate is green and both verdicts on that head are clean — an approval and a pass, nothing weaker — so a run whose driver vanished on a green, approved head is one to merge rather than one to restart, the newer fact winning over the state. It does not replace the word while a driver is still live: the head that read judged is not the head a running loop will finish on, and `wait` is the truthful answer until it stops. And **a pause is routed by what it is waiting for**, never by the word `paused` alone — the same four dispositions the paused row above already names, read from the same records the continuation reads:
 
 | the pause is waiting for | The Principal's `next` |
 |---|---|
@@ -128,7 +128,7 @@ Two things refine it, and both are facts a read already carries. **`merge` repla
 | a decision already taken as cancel | `cancel` |
 | a record this host cannot read | `investigate` |
 
-A cancel already decided and a record that will not read are the two answers `merge` never overrides: telling the Principal to merge what they cancelled would reverse their own decision, and a table built on a record nothing could read has nothing to be confident about.
+A cancel already decided and a record that will not read are two of the three answers `merge` never overrides: telling the Principal to merge what they cancelled would reverse their own decision, and a table built on a record nothing could read has nothing to be confident about. The third is a live driver, above.
 
 `task_cancel` is in no row because it is not a state's action: it stops a **paused** run that has a pull request, on a Principal ruling — and, where a durable escalation record exists to compare against, one that postdates the ruling that pause was already raised under — and is asked for rather than reached for. It ends nothing else — a task never started, a live driver, a published round and a pause-less exited run are all refused with `nothing to cancel`.
 

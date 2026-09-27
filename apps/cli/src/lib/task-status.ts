@@ -61,7 +61,7 @@ import {
   type PauseDisposition,
   type StartRecord
 } from './task-tools/start.js'
-import { readTaskPrFacts, type TaskPrFacts } from './task-tools/pr-read.js'
+import { readTaskPrFacts, type TaskPrFacts, type TaskPrRead } from './task-tools/pr-read.js'
 import { getProcessSnapshot, type ProcessSnapshot } from './dispatch.js'
 
 /**
@@ -811,7 +811,7 @@ export function confidenceFromSummaryComments(
 function publishedSummaryConfidence(
   prNumber: number,
   allowlist: readonly string[],
-  readComments: PrCommentReader
+  readComments: SummaryCommentReader
 ): LastConfidence {
   const answer = readComments(prNumber)
   if (answer.kind === 'unread') return { kind: 'unread' }
@@ -829,6 +829,24 @@ function publishedSummaryConfidence(
 export type LastConfidence = { kind: 'confidence'; confidence: TaskConfidence } | { kind: 'none' } | { kind: 'unread' }
 
 /**
+ * What this column needs of a comment reader: a body and an author, and the
+ * same three answers `PrCommentReader` gives (read, failed, or never asked).
+ *
+ * Narrower than `PrCommentReader` on purpose. That reader's own comments carry a
+ * `createdAt` the history read needs and this one never looks at, and a reader
+ * built out of comments a pull request's OWN facts read already fetched has no
+ * `createdAt` to offer — so typing this column's dependency by what it actually
+ * reads is what lets one forge read serve both columns
+ * (`buildRow`). `prCommentReaderForOneStatusRead` still satisfies it unchanged.
+ */
+export type SummaryCommentReader = (
+  pr: number
+) =>
+  | { kind: 'read'; comments: readonly { body: string; author: string | null }[] }
+  | { kind: 'failed' }
+  | { kind: 'unread' }
+
+/**
  * The stated file wins over the summary when both exist: it is the newer of
  * the two by construction (the summary is written at publish; a statement
  * still on disk has not been consumed since). The summary is read only for a
@@ -838,7 +856,7 @@ export type LastConfidence = { kind: 'confidence'; confidence: TaskConfidence } 
 export function readLastConfidence(
   root: string,
   task: number,
-  published: { prNumber: number; allowlist: readonly string[]; readComments: PrCommentReader } | null
+  published: { prNumber: number; allowlist: readonly string[]; readComments: SummaryCommentReader } | null
 ): LastConfidence {
   const stated = readStatedConfidence(root, task)
   if (stated !== null) return { kind: 'confidence', confidence: stated }
@@ -978,8 +996,18 @@ export const NEXT_ACTION_BY_PAUSE_DISPOSITION: Record<PauseDisposition, TaskNext
   none: 'start'
 }
 
-/** A code-review verdict value that is clean — the two the extractor's own pattern accepts beside `REQUEST CHANGES`. */
-const CLEAN_CODE_REVIEW = new Set(['APPROVE', 'LGTM'])
+/**
+ * The one code-review verdict value that counts as clean here — `APPROVE`,
+ * and nothing else.
+ *
+ * `LGTM` is a value the extractor's own pattern accepts, and it was in this set
+ * until a review pointed out that the merge gate does not: `checkReviewGate`
+ * treats only `APPROVE` as clean, so a row whose newest verdict read `LGTM`
+ * would have named `merge` for a head the gate itself refuses. This set is
+ * narrower than the extractor's vocabulary on purpose, and the direction of the
+ * difference is the safe one.
+ */
+const CLEAN_CODE_REVIEW = new Set(['APPROVE'])
 
 /**
  * Is this row's own head ready to merge? The review gate green AND both
@@ -998,15 +1026,28 @@ function headIsReadyToMerge(facts: TaskPrFacts | null): boolean {
 }
 
 /**
+ * Is a driver still working this task? Merge-readiness never overrides these
+ * two states, because a live run can push another commit seconds from now: the
+ * gate went green on the head this read saw, and telling the Principal to merge
+ * races the very loop that is still working. `wait` is the truthful answer for
+ * both, and the next read says `merge` once the run stops.
+ */
+function driverIsLive(state: TaskLoopState): boolean {
+  return state.kind === 'running' || state.kind === 'starting'
+}
+
+/**
  * The one action the `Next` column names for a row.
  *
  * Merge-readiness wins over the state's own action, because it is the newer
  * fact: a run that has published and whose gate is green needs a merge, not
- * another read. Two answers it never overrides, both of them decisions already
+ * another read. Three answers it never overrides. Two are decisions already
  * made or unreadable: a pause resolved as CANCEL — telling the Principal to
  * merge what they already cancelled would reverse their own decision — and a
  * record this host could not read, where every reading is suspect and the only
- * honest instruction is to look.
+ * honest instruction is to look. The third is a driver still working the task
+ * (see {@link driverIsLive}), where the head this read judged is not the head
+ * the run will finish on.
  */
 export function nextActionFor(row: TaskStatusRow): TaskNextAction {
   const fromState = NEXT_ACTION_BY_STATE_KIND[row.state.kind]
@@ -1017,7 +1058,7 @@ export function nextActionFor(row: TaskStatusRow): TaskNextAction {
         // paused row, and the seat a reader is safest sent to.
         NEXT_ACTION_BY_PAUSE_DISPOSITION[row.pauseDisposition ?? 'awaiting_ruling']
       : fromState
-  if (action === 'cancel' || action === 'investigate') return action
+  if (action === 'cancel' || action === 'investigate' || driverIsLive(row.state)) return action
   return headIsReadyToMerge(row.prFacts) ? 'merge' : action
 }
 
@@ -1184,12 +1225,37 @@ export type TaskStatusTableDeps = { now: () => Date; host: () => string }
 
 export const defaultTaskStatusTableDeps: TaskStatusTableDeps = { now: () => new Date(), host: () => hostname() }
 
+/**
+ * The one character that ends a markdown table cell, and the ones that end a
+ * row — neutralized in every cell before it is rendered, because a cell's own
+ * value is not this renderer's to trust.
+ *
+ * Most cells come from a closed vocabulary, but two do not: the tranche slug is
+ * whatever the forge label carried (`findTrancheSlug` strips the prefix and
+ * validates nothing at read time) and a state phrase can carry a pause reason or
+ * a last-decision word off a record on disk. A single vertical bar in either
+ * silently adds a column to a table the Operator doctrine now requires be
+ * relayed exactly as returned, so the header and the row stop lining up and a
+ * reader is shown a value under the wrong name. The padded layout this replaced
+ * was immune to that, and the pipes must not cost it.
+ *
+ * A bar is ESCAPED (`\|`, which markdown renders as the bar itself) rather than
+ * dropped — the value still reads as itself. A newline or a carriage return is
+ * replaced by a space instead: there is no escape that keeps a line break
+ * inside one cell, and a cell that ends its own row is the same defect.
+ */
+function cellSafe(value: string): string {
+  return value.replaceAll('|', '\\|').replaceAll(/[\r\n]+/g, ' ')
+}
+
 /** The table as lines: a header row, a markdown separator, then one row per task, every column padded to its widest cell, and one footer line last. */
 export function renderTaskStatusTable(
   rows: readonly TaskStatusRow[],
   deps: TaskStatusTableDeps = defaultTaskStatusTableDeps
 ): string[] {
-  const body = rows.map(cellsFor)
+  // Escaped BEFORE the widths are measured, so a cell that grew by an escape
+  // still pads to the column it is in.
+  const body = rows.map((row) => cellsFor(row).map(cellSafe))
   const widths = TABLE_HEADERS.map((header, column) =>
     Math.max(header.length, ...body.map((cells) => (cells[column] as string).length))
   )
@@ -1241,16 +1307,66 @@ export function claimDepsForOneRead(): StartClaimDeps {
 }
 
 /**
- * The pull-request facts reader every row of ONE status read shares — one forge
- * read per pull request, made only for a row that actually has one, and never
- * remembered between reads (see `readTaskPrFacts` on why a CI word must not be
- * cached). Threaded as a parameter so a test drives every column off fixtures
- * with no `gh` on `PATH`.
+ * How many pull requests ONE status read will read facts for.
+ *
+ * The same figure, and the same reason, as the confidence column's own
+ * `SUMMARY_CONFIDENCE_READS_PER_STATUS_READ`: these reads are synchronous, and
+ * the long-lived task-tool server chains every request through one promise, so
+ * an unbounded number of them would hold every other task's queued call behind
+ * a listing of a busy repository — and a `gh` that hangs would hold it behind
+ * one hanging subprocess. This column reads MORE rows than that one does (every
+ * row with a pull request, not only the published ones), so it needs the bound
+ * more, not less.
+ *
+ * Past the budget the remaining rows read `not read` — the word this table
+ * already uses for a read nothing made — and the answer for the row an Operator
+ * is actually acting on is to read that task by name, which is one row and
+ * always inside the budget. That is the same remedy the doctrine already gives
+ * for a task missing from a listing.
  */
-export type PrFactsReader = (pr: number) => TaskPrFacts | null
+export const PR_FACTS_READS_PER_STATUS_READ = 5
 
-export function prFactsReaderFor(allowlist: readonly string[]): PrFactsReader {
-  return (pr: number) => readTaskPrFacts(pr, allowlist)
+/**
+ * The pull-request facts reader every row of ONE status read shares — one forge
+ * read per pull request, made only for a row that actually has one, bounded at
+ * {@link PR_FACTS_READS_PER_STATUS_READ} per read, and never remembered between
+ * reads (see `readTaskPrFacts` on why a CI word must not be cached). Threaded as
+ * a parameter so a test drives every column off fixtures with no `gh` on `PATH`.
+ *
+ * `null` covers both a read that failed and a read the budget stopped this
+ * status read from making. The row renders both the same way — `not read`, an
+ * unknown rather than an absence — and the confidence column falls back to its
+ * own bounded, remembered reader in either case, so no fact is lost that the
+ * older shape would have had.
+ */
+export type PrFactsReader = (pr: number) => TaskPrRead | null
+
+export function prFactsReaderFor(
+  allowlist: readonly string[],
+  budget: number = PR_FACTS_READS_PER_STATUS_READ,
+  /** The one forge read behind this reader — injectable so a test drives the budget and the memoization with no `gh` on `PATH`. */
+  read: (pr: number, allowlist: readonly string[]) => TaskPrRead | null = readTaskPrFacts
+): PrFactsReader {
+  // Within ONE read only — the closure dies with the read, so nothing is
+  // remembered across reads. It exists because two rows could name the same
+  // pull request, and because `gatherSingleTaskStatus` and `gatherTaskStatusList`
+  // must never pay twice for one row.
+  const answered = new Map<number, TaskPrRead | null>()
+  let reads = 0
+  return (pr: number) => {
+    const remembered = answered.get(pr)
+    if (remembered !== undefined) return remembered
+    if (reads >= budget) return null
+    reads += 1
+    const answer = read(pr, allowlist)
+    answered.set(pr, answer)
+    return answer
+  }
+}
+
+/** A reader over comments THIS read already has in hand — the second column served by the first column's own forge read, with no call of its own. */
+function commentsAlreadyRead(comments: readonly { body: string; author: string | null }[]): SummaryCommentReader {
+  return () => ({ kind: 'read', comments })
 }
 
 function buildRow(
@@ -1306,10 +1422,23 @@ function buildRow(
   const pr = findPrForRef(ref)
   const state = deriveLoopState(root, ref.issue, undefined, startClaim)
   const phase = readLoopPhase(root, ref.issue)
+  // One read per pull request, and none at all for a row without one.
+  const prRead = pr ? readPrFacts(pr.number) : null
   const confidence = readLastConfidence(
     root,
     ref.issue,
-    state.kind === 'published' && pr ? { prNumber: pr.number, allowlist, readComments } : null
+    state.kind === 'published' && pr
+      ? {
+          prNumber: pr.number,
+          allowlist,
+          // The facts read already fetched this pull request's comments, and the
+          // summary this column wants is in them — so a published row costs ONE
+          // forge read for both columns rather than two for the same payload.
+          // Its own bounded, remembered reader is the fallback for a facts read
+          // that failed or that the budget stopped.
+          readComments: prRead ? commentsAlreadyRead(prRead.comments) : readComments
+        }
+      : null
   )
   const phaseIsCurrent = phase === null ? null : phaseIsCurrentFor(state, phase.recordedPhase)
   return {
@@ -1330,8 +1459,7 @@ function buildRow(
       // last recorded phase gets none, which is also what keeps the forge read
       // out of a listing where nothing is in flight.
       phaseHistory: phase !== null && phaseIsCurrent === true ? history(phase.recordedPhase) : null,
-      // One read per pull request, and none at all for a row without one.
-      prFacts: pr ? readPrFacts(pr.number) : null,
+      prFacts: prRead === null ? null : prRead.facts,
       // Read only where it means something: the disposition is what a PAUSE is
       // waiting for, and reading it for a running or published row would cost
       // every listing a control-store read for a cell that names no pause.

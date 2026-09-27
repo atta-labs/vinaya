@@ -675,9 +675,13 @@ describe('the status table’s own pull-request columns', () => {
       expect(summarizeChecks([])).toBe('running')
     })
 
-    it('reads a pending commit status as running rather than as a failure', () => {
-      const checks = toChecks([{ __typename: 'StatusContext', context: 'ci/external', state: 'PENDING' }], () => null)
-      expect(summarizeChecks(checks)).toBe('running')
+    it('reads a completed check that concluded nothing as red, exactly as the driver reads it', () => {
+      // `fetchCiConclusion` calls a completed run green only for SUCCESS,
+      // NEUTRAL or SKIPPED; a null conclusion is none of those. Reading it as
+      // still running would have the driver call the head red while the table
+      // said the suite had not finished.
+      const checks = toChecks([check('a', 'COMPLETED', null)], () => null)
+      expect(summarizeChecks(checks)).toBe('red')
     })
   })
 
@@ -713,6 +717,31 @@ describe('the status table’s own pull-request columns', () => {
       )
       expect(facts.ci).toBe('green')
       expect(facts.gate).toBe('red')
+    })
+
+    it('never reads a plain commit status as the review gate, however it is named', () => {
+      // Anything holding `statuses:write` can post a commit status under any
+      // context; `toChecks` flattens one to COMPLETED with its own state as the
+      // conclusion, so before check runs were the only population this read a
+      // forged context as a green gate — and with both verdicts already on the
+      // head, the table then named `merge` for a head the real gate refused.
+      const facts = taskPrFactsFrom(
+        HEAD,
+        [
+          { __typename: 'StatusContext', context: 'vinaya review gate', state: 'SUCCESS' },
+          { __typename: 'StatusContext', context: 'ci/external', state: 'FAILURE' },
+          check('Build, lint & typecheck', 'COMPLETED', 'SUCCESS')
+        ],
+        [
+          verdictComment(`VERDICT: APPROVE\nJudged head: ${HEAD}`),
+          verdictComment(`VERDICT: PASS\nJudged head: ${HEAD}`)
+        ],
+        PRINCIPALS
+      )
+      expect(facts.gate).toBeNull()
+      // The failing commit status moves nothing either — the driver's own read
+      // never sees one, so neither does this word.
+      expect(facts.ci).toBe('green')
     })
 
     it('reports no gate at all when the forge reports no gate check on this head', () => {
