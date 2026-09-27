@@ -717,6 +717,33 @@ describe('renderBrief', () => {
       localGateCommands: { dispatchReadiness: null, docCoverage: null }
     } as const
 
+    it('an adopter that installs from the registry gets no path that exists only in the authoring repository (O1)', () => {
+      const result = renderBrief(baseFacts(ADOPTER), TEMPLATE)
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      // The three prefixes the Boundary named — the doctrine tree, the
+      // aeg-core gate bins, and the vendored CLI entry. An `npm install` of
+      // this package puts none of them anywhere the reader can reach.
+      expect(result.brief).not.toContain('aeg-root/')
+      expect(result.brief).not.toContain('packages/aeg-core/bin/')
+      expect(result.brief).not.toContain('apps/cli/src/index.ts')
+    })
+
+    it('the doctrine and the PR report template are named as commands that print them (O2)', () => {
+      const result = renderBrief(baseFacts(ADOPTER), TEMPLATE)
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.brief).toContain(
+        'Run `npx --yes @attalabs/vinaya@9.9.9 doctrine --role developer --print` and read its output first'
+      )
+      expect(result.brief).toContain(
+        'The tier checklist in `npx --yes @attalabs/vinaya@9.9.9 doctrine --role developer --print`'
+      )
+      expect(result.brief).toContain(
+        'print it with `npx --yes @attalabs/vinaya@9.9.9 doctrine --template pr-report --print`'
+      )
+    })
+
     it('an adopter runs the shipped checks, with no unabridged local derivation offered (O1)', () => {
       const result = renderBrief(baseFacts(ADOPTER), TEMPLATE)
       expect(result.ok).toBe(true)

@@ -348,14 +348,30 @@ function isTestFile(path: string): boolean {
   return /\.test\.[jt]sx?$/i.test(path)
 }
 
+/**
+ * A command the template (or this module) writes as a bare `vinaya <args>`,
+ * rewritten to the way the rendered-for repository actually invokes the CLI.
+ *
+ * Scoped to an inline code span's own opening backtick, deliberately: the word
+ * `vinaya` also occurs in ordinary prose the Planner wrote (`.vinaya/`, "the
+ * Vinaya Log", a Boundary quoting a command by name), and none of that is a
+ * command this brief is telling anyone to run.
+ */
+function withCliInvocation(text: string, invocation: string): string {
+  return text.replaceAll('`vinaya ', `\`${invocation} `)
+}
+
 function renderHeader(facts: BriefFacts, template: string): string {
   const introMatch = template.match(/^You are the AEG Developer\.[^\n]*$/m)
-  const intro = introMatch
-    ? (introMatch[0] as string)
-        .replace(/\s*\[[^\]]*\]/g, '')
-        .replace(/\bBoth mandatory\.$/, 'Mandatory.')
-        .trim()
-    : 'You are the AEG Developer. Read `aeg-root/roles/developer.md` first. Mandatory.'
+  const intro = withCliInvocation(
+    introMatch
+      ? (introMatch[0] as string)
+          .replace(/\s*\[[^\]]*\]/g, '')
+          .replace(/\bBoth mandatory\.$/, 'Mandatory.')
+          .trim()
+      : 'You are the AEG Developer. Run `vinaya doctrine --role developer --print` and read its output first. Mandatory.',
+    facts.cliInvocation
+  )
 
   const reason = facts.rationale.suggestedAgentClass ?? ''
   // The declared tier is a floor, not a default: raised to the mechanical
@@ -735,7 +751,7 @@ function renderSection8(facts: BriefFacts): string {
     '- The pre-push hook already ran the affected suite on your one push and refused it on failure — do not additionally run it yourself; `vinaya pr report --write`/`--push` separately re-runs it with `--force` to attest the command and its output in the Evidence block.',
     "- The full `bun run test` suite is CI's to run, on the one push — never run it locally.",
     '- Every blast-radius consumer named in §4, re-verified by name.',
-    `- \`roles/developer.md\`'s tier checklist genuinely satisfied, and ${docGateCommand(facts)}.`
+    `- The tier checklist in \`${facts.cliInvocation} doctrine --role developer --print\` genuinely satisfied, and ${docGateCommand(facts)}.`
   ].join('\n')
 }
 
@@ -827,9 +843,7 @@ function renderSection12(facts: BriefFacts): string {
     '',
     `- PR title (exact): \`${prTitle}\``,
     `- Open the PR only via \`${facts.cliInvocation} pr create --body-file <path> --title "<title above>"\`.`,
-    "- PR body = the Developer's PR report (start from `aeg-root/templates/pr-report-template.md`), with this entire brief pasted as the reference copy inside a collapsed `<details>` block, and `Closes #" +
-      facts.issue +
-      '` at the top of the header block.',
+    `- PR body = the Developer's PR report (print it with \`${facts.cliInvocation} doctrine --template pr-report --print\`), with this entire brief pasted as the reference copy inside a collapsed \`<details>\` block, and \`Closes #${facts.issue}\` at the top of the header block.`,
     `- Pre-open gate: tier checklist satisfied, and ${docGateCommand(facts)}.`,
     '- Include `git diff main --stat` and a token report (if unavailable, state so).',
     '- Then STOP. Review and Verification are separate invocations.'

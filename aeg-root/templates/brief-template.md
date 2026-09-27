@@ -5,6 +5,8 @@ sidebar_title: "Template: Task brief"
 
 **This file is the render's shape reference, not a hand-fill-in-the-blanks template any more.** The brief is no longer hand-authored: the Planner's dispatch act runs `vinaya task dispatch`, which mechanically renders every section below from the task Issue's own rationale and judgment sections (see `aeg-root/roles/planner.md` § The dispatch act and § The Planner's rationale) and posts the result, frozen, as the Issue's `aeg:brief:v1` comment. This file exists so a reader can see the 12-section shape the render fills — the required sections, their order, and the fields the gates read — without reverse-engineering it from the renderer's source. The brief is **never committed as a repo file** on its own; it is posted as the Issue comment, and a reference copy rides along inside a collapsed `<details>` block in the Developer's PR report when the Developer opens the PR.
 
+**Every command below is written the way the repository the brief is rendered for invokes the CLI.** The render substitutes that invocation for the bare `vinaya` shown here — `npx --yes @attalabs/vinaya@<version>` in a repository that installs the CLI from the registry, `bun <dir>/src/index.ts` in one that vendors it as a workspace member (the same decision the generated hooks and workflows make). A brief that named a path only this repository has was unrunnable everywhere else, and read as spoofed instructions to at least one Developer that received one. The Developer doctrine and this PR report template are named the same way — as commands that print them out of the installed package, never as paths under `aeg-root/`.
+
 The brief itself carries no anchor comments: it rides into the PR body as the *reference copy*, and the anchored gate-read fields live in the Developer's PR report (`aeg-root/templates/pr-report-template.md`) — anchoring the same fields twice in one body would recreate the very ambiguity anchors exist to remove.
 
 ---
@@ -16,7 +18,7 @@ The brief itself carries no anchor comments: it rides into the PR body as the *r
 **Project:** [project(s), comma-separated, resolving against `.vinaya/projects.md` — required in a multi-project repo]
 **Tier:** [0 | 1 | 3 — declare last, after §4 is complete]
 
-You are the AEG Developer. Read `aeg-root/roles/developer.md` first[, then the host repo's own execution-discipline skill, e.g. `.claude/skills/executor-protocol/SKILL.md`]. Both mandatory.
+You are the AEG Developer. Run `vinaya doctrine --role developer --print` and read its output first[, then the host repo's own execution-discipline skill, e.g. `.claude/skills/executor-protocol/SKILL.md`]. Both mandatory.
 
 ## Objectives
 
@@ -62,7 +64,7 @@ git worktree add .worktrees/task/[tranche-slug]/[n] -b task/[tranche-slug]/[n] -
 ```
 
 1. Clean status; parent `origin/main`; branch suffix literal-matches topology `#` column (`[n]`).
-2. `vinaya check dispatch-readiness` → `READY TO DISPATCH`/pass required; else STOP. (Known gap: its prior-tranche-archival predicate always reports empty — confirm that fact yourself regardless. On this repo's toolchain, the unabridged derivation is `bun packages/aeg-core/bin/verify-dispatch.ts [tranche-slug] [n]`.)
+2. `vinaya check dispatch-readiness` → pass required; else STOP. (Known gap: its prior-tranche-archival predicate always reports empty — confirm that predicate yourself regardless. A repository that ships an unabridged derivation of its own has the render name that too — in this repo, `bun packages/aeg-core/bin/verify-dispatch.ts [tranche-slug] [n]`.)
 3. [any task-specific pre-flight checks — required tools present, reference files readable, re-digs to confirm the §2 citations]
 
 On any failure: STOP and report.
@@ -85,7 +87,7 @@ On any failure: STOP and report.
 
 - [the repo's static gates, by command, and nothing else — this repo: `bun run typecheck`, `bun run format-and-lint`, and the production build. Do NOT ask for a test-suite run per Part: the managed `pre-push` hook selects the test files the changed files' own import graph could affect and runs them itself, once, on the one push, refusing the push when it fails. A brief that also asks for it per Part buys nothing and pays the suite's full wall-clock on every Part.]
 - [every blast-radius consumer named in §4 re-verified, by name]
-- `roles/developer.md`'s tier checklist genuinely satisfied, and `PR_BODY="$(cat <body-file>)" vinaya check doc-coverage` green. (On this repo's toolchain, `PR_BODY="$(cat <body-file>)" bun packages/aeg-core/bin/verify-docs.ts --pr` runs both as one command.)
+- The tier checklist in `vinaya doctrine --role developer --print` genuinely satisfied, and `PR_BODY="$(cat <body-file>)" vinaya check doc-coverage` green. (In this repo the render also names `PR_BODY="$(cat <body-file>)" bun packages/aeg-core/bin/verify-docs.ts --pr`, which additionally evaluates the spec-status and code-requires-docs contracts.)
 
 ## 9. Test Plan
 
@@ -115,9 +117,9 @@ STOP and report if: pre-flight fails; [the Planner's stop-and-escalate condition
 ## 12. Deliverable
 
 - PR title (exact): `[[tranche-slug]] [n] — [task title]`
-- Open the PR only via `vinaya pr create --body-file <path> --title "<title above>"`.
-- PR body = the Developer's PR report (start from `aeg-root/templates/pr-report-template.md`), with this entire brief pasted as the reference copy inside a collapsed `<details>` block, and `Closes #[N]` at the top of the header block.
+- Open the PR only via `vinaya pr create --body-file <path> --title "<title above>"` — written, like every command the render emits, the way this repository itself invokes the CLI.
+- PR body = the Developer's PR report (print it with `vinaya doctrine --template pr-report --print`), with this entire brief pasted as the reference copy inside a collapsed `<details>` block, and `Closes #[N]` at the top of the header block.
 - [what to state in the PR body: decisions made, confirmations required by §8]
-- Pre-open gate: tier checklist satisfied, and `PR_BODY="$(cat <body-file>)" vinaya check doc-coverage` green (on this repo's toolchain, `PR_BODY="$(cat <body-file>)" bun packages/aeg-core/bin/verify-docs.ts --pr` runs both).
+- Pre-open gate: tier checklist satisfied, and `PR_BODY="$(cat <body-file>)" vinaya check doc-coverage` green (in this repo the render also names `PR_BODY="$(cat <body-file>)" bun packages/aeg-core/bin/verify-docs.ts --pr`).
 - Include `git diff main --stat` and a token report (if unavailable, state so).
 - Then STOP. Review and Verification are separate invocations.

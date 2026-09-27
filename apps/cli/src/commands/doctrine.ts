@@ -154,6 +154,21 @@ function listRoleNames(root: string): string[] {
     .sort()
 }
 
+/**
+ * Template names available under `<root>/templates/`, from the `*.md`
+ * filenames with the `-template` suffix dropped — never a hardcoded list, the
+ * same derivation `listRoleNames` uses for roles. `pr-report-template.md` is
+ * therefore `--template pr-report`.
+ */
+function listTemplateNames(root: string): string[] {
+  const dir = join(root, 'templates')
+  if (!existsSync(dir)) return []
+  return readdirSync(dir)
+    .filter((name) => name.endsWith('.md'))
+    .map((name) => name.slice(0, -'.md'.length).replace(/-template$/, ''))
+    .sort()
+}
+
 export function doctrineCommand(args: string[]): void {
   const root = resolveDoctrineRoot()
   if (root === null) {
@@ -167,7 +182,29 @@ export function doctrineCommand(args: string[]): void {
 
   let entry: string
   const roleFlagIndex = args.indexOf('--role')
-  if (roleFlagIndex !== -1) {
+  const templateFlagIndex = args.indexOf('--template')
+  if (roleFlagIndex !== -1 && templateFlagIndex !== -1) {
+    process.stderr.write('vinaya doctrine: --role and --template select different files — pass one, not both.\n')
+    process.exit(1)
+  }
+  if (templateFlagIndex !== -1) {
+    // The shipped templates are part of the doctrine the package carries
+    // (`scripts/bundle-doctrine.ts` copies `templates/` alongside `roles/`),
+    // so they resolve through the same root as `--role` and are reachable by
+    // an adopter who has no `aeg-root/` of their own — which is what lets a
+    // rendered brief name the PR report by a command instead of by a path only
+    // this repository has.
+    const requested = args[templateFlagIndex + 1]
+    const validTemplateNames = listTemplateNames(root)
+    if (requested === undefined || requested.startsWith('--') || !validTemplateNames.includes(requested)) {
+      process.stderr.write(
+        `vinaya doctrine --template: '${requested ?? ''}' is not a known template. ` +
+          `Valid template names: ${validTemplateNames.join(', ')}\n`
+      )
+      process.exit(1)
+    }
+    entry = join(root, 'templates', `${requested}-template.md`)
+  } else if (roleFlagIndex !== -1) {
     const requested = args[roleFlagIndex + 1]
     // `Object.hasOwn`, never a bare index: a bare lookup reaches
     // `Object.prototype`, so `--role constructor` resolved to a function and
