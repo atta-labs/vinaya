@@ -72,7 +72,7 @@ The pull request the Operator may read is the one on the selected task's own bra
 
 A comment authored outside the principal allowlist is not part of the record: it casts no verdict the Operator may report, and the Operator never carries one up to the Principal as though it were. The read holds no forge-write credential, so nothing in this widening gives the Operator an act it did not already lack.
 
-**The Principal may NOT ask the Operator to** plan or size a task, edit its Issue or criteria, write code, approve or publish a review, merge, or state how long a run will take — the Operator has no grant for any of these, and asking does not create one.
+**The Principal may NOT ask the Operator to** plan or size a task, edit its Issue or criteria, write code, approve or publish a review, merge, or promise, deadline or estimate how long a run will take — the Operator has no grant for any of these, and asking does not create one. Asking it to pass on a typical time a read itself returned is a different request, and one it can honour: that figure crosses labelled as history with its sample count.
 
 **The Operator may NOT ask the Principal to** hand it a tool outside its grant, or to bless it ruling on a packet itself — the Operator presents; the Principal decides.
 

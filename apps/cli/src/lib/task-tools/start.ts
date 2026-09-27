@@ -96,10 +96,11 @@
 
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { closeSync, ftruncateSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { closeSync, existsSync, ftruncateSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import {
   defaultControlStoreDeps,
+  readLoopState,
   readResolution,
   TaskStartInputSchema,
   type TaskStartResult,
@@ -111,6 +112,7 @@ import {
 import { loadConfig } from '../config.js'
 import { type AgentVendor, isAgentVendor } from '../dispatch.js'
 import { escalationIdFor, isDriverPidAlive, readDriverLock, readPauseState } from '../dev-review-loop/pause-resume.js'
+import { MAX_INFRASTRUCTURE_RETRIES } from '../dev-review-loop/round-assess.js'
 import { ensureRunDir, runPath, runtimeDirForThisRepo, tasksExecutionRoot } from '../run-paths.js'
 import { repoRoot as gitRepoRoot } from '../diff-evidence.js'
 import { deriveLoopState, newestPublishedRound, type TaskLoopState } from '../task-status.js'
@@ -431,18 +433,35 @@ export type PauseDisposition =
  * can drive every disposition off real records in a temporary tree, exactly
  * as `defaultLaunch` below takes its own root.
  *
- * The `infrastructure` reason is taken at face value rather than re-deriving
- * the loop's retry budget here: a second copy of that arithmetic is exactly
- * the drift this task exists to remove, and being wrong in this direction
- * costs nothing. Past the bound the launch still happens and the loop
- * refuses it with its own message naming the ruling it now needs, which is a
- * truthful answer an Operator can act on — where refusing here would have
- * named `task_resume` for a pause `task_resume` would not have moved either.
+ * The `infrastructure` reason self-resumes only INSIDE the loop's own retry
+ * bound, computed the same way the loop computes it — the control store's
+ * recorded count floored against the one the pause record carries, and a
+ * control-store record that will not parse counted as past the bound. An
+ * earlier version took the reason at face value and left the bound to the
+ * loop, on the reasoning that the loop would refuse a past-bound resume
+ * itself. It does not, reliably: past the bound the loop falls through to a
+ * gate that refuses only when the pull request carries NO ruling comment at
+ * all, with none of the ordinal-freshness check `task_resume` applies, so
+ * any older ruling still sitting on the pull request would have
+ * authenticated a continuation past the very bound the loop's own message
+ * says needs a fresh one. At or past the bound this reads
+ * `awaiting_ruling`, which is the truth: a ruling is owed, and
+ * `task_resume` is the tool that authenticates one.
  */
 export function defaultPauseDisposition(issue: number, root: string = runtimeDirForThisRepo()): PauseDisposition {
   try {
+    // "No pause record" and "a pause record that will not parse" are the
+    // same `null` from `readPauseState`, and they must not be the same
+    // answer here: `writePauseState` is a plain non-atomic write, so a kill
+    // or a full disk mid-write — the very crash this gate exists for — can
+    // leave a truncated record, and reading that as `none` would launch
+    // straight past a hold, as a FRESH dispatch rather than a resume, since
+    // `runTask`'s own `hasPauseState` reads the identical null. So the file's
+    // own existence is checked first, separately from its contents.
+    const pausePath = runPath(root, issue, { area: 'control', file: 'pause-state.json' })
+    if (!existsSync(pausePath)) return 'none'
     const held = readPauseState(root, issue)
-    if (held === null) return 'none'
+    if (held === null) return 'unreadable'
     // A pause record is never cleared on resume, so one naming a round the
     // control store has since published past is history, not a hold — the SAME
     // supersede rule `deriveLoopState` applies before it will report
@@ -452,12 +471,9 @@ export function defaultPauseDisposition(issue: number, root: string = runtimeDir
     const published = newestPublishedRound(root, issue)
     if (published !== null && held.round <= published) return 'none'
 
+    const csDeps = defaultControlStoreDeps(() => tasksExecutionRoot(root))
     const escalationId = held.escalationId ?? escalationIdFor(issue, held.round, held.head)
-    const resolution = readResolution(
-      defaultControlStoreDeps(() => tasksExecutionRoot(root)),
-      issue,
-      escalationId
-    )
+    const resolution = readResolution(csDeps, issue, escalationId)
     // `absent` is a real answer — nobody has decided yet. `corrupt` is not:
     // a resolution that will not parse might be the `cancel` this gate
     // exists to protect, so it is never read as "no decision recorded".
@@ -472,7 +488,19 @@ export function defaultPauseDisposition(issue: number, root: string = runtimeDir
     // would launch a run the loop then refuses. Awaiting a ruling is the
     // truthful answer for it, and `task_resume` does move it once one is
     // posted.
-    return held.reason === 'infrastructure' ? 'self_resuming' : 'awaiting_ruling'
+    if (held.reason !== 'infrastructure') return 'awaiting_ruling'
+    // …and only inside the loop's own bound, computed its way: the control
+    // store's recorded count floored against the one this pause carries, a
+    // record that will not parse counted as past the bound.
+    const recorded = readLoopState(csDeps, issue)
+    const storeRetries =
+      recorded.status === 'ok'
+        ? recorded.value.budgets.infrastructureRetries
+        : recorded.status === 'corrupt'
+          ? Number.POSITIVE_INFINITY
+          : 0
+    const retriesSoFar = Math.max(storeRetries, held.infrastructureRetries ?? 0)
+    return retriesSoFar < MAX_INFRASTRUCTURE_RETRIES ? 'self_resuming' : 'awaiting_ruling'
   } catch {
     // Every read above can throw on a real filesystem error (`readIfExists`
     // rethrows anything that is not ENOENT). Throwing out of here would
@@ -515,6 +543,17 @@ export function defaultPauseDisposition(issue: number, root: string = runtimeDir
  * Refusing every pause was itself a way of stranding a run: two of the
  * shapes need no Principal act at all, and `task_resume` launches nothing
  * for either, so refusing them named a tool that would not move.
+ *
+ * **What this gate is not.** It is a check-then-act read, not a lock, and
+ * the claim it sits behind is keyed by request identity — caller included —
+ * so it is per-request idempotency rather than per-task exclusion. Two
+ * different callers reading a non-running state at the same moment can both
+ * reach the launch before either driver lock exists. Narrowing that window
+ * is all this layer does: `runTask` re-reads the same fact, and the loop's
+ * own round-1 entry re-reads it again immediately before it would dispatch.
+ * Closing it needs a real cross-process reservation per task, which is
+ * infrastructure this tool does not own — the same accepted race `runTask`
+ * already records against its own open-pull-request check.
  */
 export function startRefusalForState(
   state: TaskLoopState,

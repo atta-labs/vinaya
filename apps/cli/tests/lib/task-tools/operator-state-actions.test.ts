@@ -12,6 +12,7 @@ import {
   writeEscalation
 } from '@attalabs/aeg-core'
 import { escalationIdFor } from '../../../src/lib/dev-review-loop/pause-resume.js'
+import { MAX_INFRASTRUCTURE_RETRIES } from '../../../src/lib/dev-review-loop/round-assess.js'
 import { taskPrReadHandler } from '../../../src/lib/task-tools/pr-read.js'
 import { appendRoleLine, loopLogPathFor } from '../../../src/lib/loop-log.js'
 import { deriveLoopState, type TaskLoopState } from '../../../src/lib/task-status.js'
@@ -182,6 +183,22 @@ function writePause(root: string, task: number, round: number, reason: PauseReas
     objectivesVersion: null,
     rulingOrdinal: 0,
     policyDigest: 'digest',
+    recordedAt: '2026-09-26T00:00:00.000Z'
+  })
+}
+
+/** The loop's own recorded retry budget — what decides whether an `infrastructure` pause is still inside the bound the loop resumes it without a ruling within. */
+function writeRecordedRetries(root: string, task: number, infrastructureRetries: number): void {
+  writeControlFile(root, task, 'loop-state.json', {
+    version: 1,
+    kind: 'loop_state',
+    task,
+    round: 2,
+    phase: 'pause',
+    pauseReason: 'infrastructure',
+    budgets: { mechanicalRetries: 0, reviewRounds: 1, infrastructureRetries },
+    heldResult: null,
+    deliveredFindings: null,
     recordedAt: '2026-09-26T00:00:00.000Z'
   })
 }
@@ -420,13 +437,26 @@ describe("the Operator's doctrine and the Operator's tools agree, state for stat
     for (const row of readDoctrineTable()) expect(GRANTED).toContain(row.action)
   })
 
-  it('names, for every state, an action the tools accept in that state', async () => {
+  /**
+   * The property that actually keeps a state from being stranded: the action
+   * the doctrine names is never a dead end. It either moves the run, or it
+   * declines and hands over a tool that does.
+   *
+   * Plain acceptance is too strong to state over a whole row, and demanding
+   * it is what pushed the paused row to name `task_resume` — a tool that
+   * answers `already_resumed` without starting anything for a pause already
+   * ruled on, and refuses for want of a ruling nobody posts on an automatic
+   * hiccup. Both are "not a refusal", and neither is an action.
+   */
+  it('names, for every state, an action that is not a dead end', async () => {
     for (const row of readDoctrineTable()) {
       const { root, state } = realStateFor(row.state as TaskLoopState['kind'])
       expect(state.kind).toBe(row.state as TaskLoopState['kind'])
       const outcome = await toolAccepts(row.action, root, state)
-      expect(`${row.state} → ${row.action}: ${outcome.ok ? 'accepted' : outcome.message}`).toBe(
-        `${row.state} → ${row.action}: accepted`
+      if (outcome.ok) continue
+      const handedOver = [...TASK_TOOL_NAMES].filter((name) => name !== row.action && outcome.message.includes(name))
+      expect(`${row.state} → ${row.action} declined, naming: ${handedOver.join(',') || '(nothing)'}`).not.toContain(
+        '(nothing)'
       )
     }
   })
@@ -435,23 +465,40 @@ describe("the Operator's doctrine and the Operator's tools agree, state for stat
     for (const row of readDoctrineTable()) {
       const { root, state } = realStateFor(row.state as TaskLoopState['kind'])
       const outcome = await taskStartAccepts(root, state)
-      if (row.action === 'task_start') {
-        expect(`${row.state}: ${outcome.message}`).toBe(`${row.state}: launched`)
+      // Either the named action moved the run, or it declined and handed
+      // over a tool that does. A refusal naming nothing is the dead end this
+      // whole table exists to rule out.
+      if (outcome.ok) continue
+      const handedOver = [...TASK_TOOL_NAMES].filter((name) => outcome.message.includes(name))
+      expect(`${row.state} → ${row.action} declined, naming: ${handedOver.join(',') || '(nothing)'}`).not.toContain(
+        '(nothing)'
+      )
+    }
+  })
+
+  /**
+   * What `task_start` itself refuses, asserted against an explicit table
+   * rather than against whatever the doctrine happens to name — so a row
+   * quietly losing its gate cannot make this case vacuous. The fixtures are
+   * the ones `FIXTURES` builds, so the paused entry here is the
+   * awaiting-a-decision shape; the other pause shapes have their own cases
+   * below.
+   */
+  it('refuses exactly the states another tool owns, naming that tool', async () => {
+    const EXPECTED_REFUSAL: Partial<Record<TaskLoopState['kind'], string>> = {
+      running: 'task_status',
+      paused: 'task_resume'
+    }
+    for (const kind of Object.keys(FIXTURES) as TaskLoopState['kind'][]) {
+      const { root, state } = realStateFor(kind)
+      const outcome = await taskStartAccepts(root, state)
+      const owner = EXPECTED_REFUSAL[kind]
+      if (owner === undefined) {
+        expect(`${kind}: ${outcome.message}`).toBe(`${kind}: launched`)
         continue
       }
-      // The two states the gate is supposed to OWN must actually be refused,
-      // and the refusal must hand over the tool the doctrine names. Checking
-      // the message only when a refusal happens to arrive made the word
-      // "exactly" in this case's own title assert nothing: dropping either
-      // gate would have passed here silently.
-      const ownedByAnotherTool = row.state === 'running' || row.state === 'paused'
-      if (ownedByAnotherTool) {
-        expect(`${row.state}: ${outcome.ok ? 'launched' : 'refused'}`).toBe(`${row.state}: refused`)
-        expect(outcome.message).toContain(row.action)
-        continue
-      }
-      // Any remaining row is a read `task_start` has no business refusing.
-      if (!outcome.ok) expect(outcome.message).toContain(row.action)
+      expect(`${kind}: ${outcome.ok ? 'launched' : 'refused'}`).toBe(`${kind}: refused`)
+      expect(outcome.message).toContain(owner)
     }
   })
 
@@ -571,6 +618,76 @@ describe("the Operator's doctrine and the Operator's tools agree, state for stat
       const dir = join(taskDir(root, TASK), 'control', 'resolution')
       mkdirSync(dir, { recursive: true })
       writeFileSync(join(dir, `${escalationIdFor(TASK, 2, 'abc123')}.json`), '{ not json', 'utf8')
+      expect(defaultPauseDisposition(TASK, root)).toBe('unreadable')
+
+      const state = deriveLoopState(root, TASK, { repo: null, loopsRoot: root })
+      const start = await taskStartAccepts(root, state)
+      expect(start.ok).toBe(false)
+      expect(start.message).toContain('could not read')
+    })
+
+    it("holds an infrastructure pause once it is at the loop's own retry bound", async () => {
+      // Inside the bound the loop continues this reason with no ruling, so
+      // `task_start` is its mover. AT the bound it does not: it falls through
+      // to a gate that refuses only when the pull request carries NO ruling
+      // at all, with no ordinal-freshness check, so any older ruling still on
+      // the pull request would authenticate a continuation past the bound.
+      // A ruling is genuinely owed here, and saying so is what routes it to
+      // the tool that authenticates one.
+      const under = tempDir()
+      writePause(under, TASK, 2, 'infrastructure')
+      writeRecordedRetries(under, TASK, MAX_INFRASTRUCTURE_RETRIES - 1)
+      expect(defaultPauseDisposition(TASK, under)).toBe('self_resuming')
+      expect(
+        (await taskStartAccepts(under, deriveLoopState(under, TASK, { repo: null, loopsRoot: under }))).message
+      ).toBe('launched')
+
+      const atBound = tempDir()
+      writePause(atBound, TASK, 2, 'infrastructure')
+      writeRecordedRetries(atBound, TASK, MAX_INFRASTRUCTURE_RETRIES)
+      expect(defaultPauseDisposition(TASK, atBound)).toBe('awaiting_ruling')
+      const refused = await taskStartAccepts(
+        atBound,
+        deriveLoopState(atBound, TASK, { repo: null, loopsRoot: atBound })
+      )
+      expect(refused.ok).toBe(false)
+      expect(refused.message).toContain('task_resume')
+    })
+
+    it('counts the bound from the pause record too, and a control-store record that will not parse as past it', () => {
+      // The same floor the loop applies: whichever count is higher wins, and
+      // a `loop_state` record that will not parse is never read as a low one.
+      const fromPauseRecord = tempDir()
+      writePause(fromPauseRecord, TASK, 2, 'infrastructure')
+      writeControlFile(fromPauseRecord, TASK, 'pause-state.json', {
+        task: TASK,
+        round: 2,
+        head: 'abc123',
+        branch: `task/issue-${TASK}`,
+        prNumber: 900,
+        reason: 'infrastructure',
+        pausedAt: '2026-09-26T00:00:00.000Z',
+        escalationId: escalationIdFor(TASK, 2, 'abc123'),
+        infrastructureRetries: MAX_INFRASTRUCTURE_RETRIES
+      })
+      expect(defaultPauseDisposition(TASK, fromPauseRecord)).toBe('awaiting_ruling')
+
+      const corruptBudget = tempDir()
+      writePause(corruptBudget, TASK, 2, 'infrastructure')
+      writeFileSync(join(taskDir(corruptBudget, TASK), 'control', 'loop-state.json'), '{ not json', 'utf8')
+      expect(defaultPauseDisposition(TASK, corruptBudget)).toBe('awaiting_ruling')
+    })
+
+    it('holds a run whose pause record itself will not parse, rather than starting fresh past it', async () => {
+      // `readPauseState` answers the same `null` for "no record" and "a
+      // record that will not parse", and `writePauseState` is a plain
+      // non-atomic write — so the kill this whole task is about can leave a
+      // truncated record. Read as `none` it would not merely skip the
+      // refusal: `runTask`'s own `hasPauseState` reads that identical null,
+      // so the launch would be a FRESH dispatch rather than a resume.
+      const root = tempDir()
+      mkdirSync(join(taskDir(root, TASK), 'control'), { recursive: true })
+      writeFileSync(join(taskDir(root, TASK), 'control', 'pause-state.json'), '{"task":990', 'utf8')
       expect(defaultPauseDisposition(TASK, root)).toBe('unreadable')
 
       const state = deriveLoopState(root, TASK, { repo: null, loopsRoot: root })
