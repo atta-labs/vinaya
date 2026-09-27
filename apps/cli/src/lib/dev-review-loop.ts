@@ -1312,11 +1312,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
 
   async function runDevReviewLoopBody(): Promise<LoopResult> {
     // `buildHeader` derives `subject.issue` (and thus the outbox file this
-    // loop's OWN `log()` calls land in) purely from `env.VINAYA_TASK`
+    // loop's OWN `log()` calls land in) from `env.VINAYA_TASK`
     // (`envelope.ts`'s `issueFromTask`) — never self-declared. `dispatchRole`
     // sets it on each CHILD's env already; this driver's own top-level events
-    // (`loop_started`, `round_started`, …) need it on THIS process's env too,
-    // or they land under the `none` bucket instead of this task's.
+    // (`loop_started`, `round_started`, …) need it on THIS process's env too.
+    // Without it they would fall back to whatever task the CHECKED-OUT
+    // BRANCH names (`log-sink.ts`'s `resolveBranchIssue`) — this task's, from
+    // a worktree on its own branch, but the `none` bucket from a driver
+    // running anywhere else. Setting it here is what makes that exact, not
+    // incidental.
     process.env.VINAYA_TASK = String(task)
 
     // Primes `resolveRepo()`'s process-lifetime cache BEFORE this loop's own
