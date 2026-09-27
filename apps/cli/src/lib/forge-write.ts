@@ -1017,6 +1017,17 @@ export type IssueContentInput = {
   projectPaths: ProjectPath[]
   retryCommand: string
   issueNumber: number | null
+  /**
+   * The resolved brief-sections cutover (`gateCutovers.briefSectionsSinceIssue`)
+   * the Surface-coverage gates below (`checkBlastRadiusScope`,
+   * `checkDocsWithinSurface`, `checkRationaleSurfaceCoverage`) grade against —
+   * `null` means NO cutover, so each applies from Issue 1 exactly where
+   * `## Surface` is itself required from Issue 1 (O1). Resolved by the caller
+   * from the working-tree config, the same value `validateForgeWrite` passes
+   * `checkIssueBriefSections`, so the mandatory-`## Surface` gate and these
+   * Surface-consistency gates can never disagree about the cutover.
+   */
+  briefSectionsSinceIssue: number | null
   resolvesToFile: (glob: string) => boolean
   docOwnersContent: string | null
   /**
@@ -1053,8 +1064,14 @@ export function validateIssueContent(input: IssueContentInput): CheckError[] {
 
   const findings: Array<[string[], keyof typeof ISSUE_CONTENT_RECOVERY]> = [
     [
-      checkBlastRadiusScope(input.body, input.labels, input.sharedPackages, input.projectPaths, input.issueNumber)
-        .errors,
+      checkBlastRadiusScope(
+        input.body,
+        input.labels,
+        input.sharedPackages,
+        input.projectPaths,
+        input.issueNumber,
+        input.briefSectionsSinceIssue
+      ).errors,
       'blastRadius'
     ],
     [checkNoBriefContent(input.body).errors, 'noBriefContent'],
@@ -1062,9 +1079,12 @@ export function validateIssueContent(input: IssueContentInput): CheckError[] {
     [checkSurfaceGlobsResolve(input.body, input.resolvesToFile).errors, 'surfaceGlobsResolve'],
     [checkPartsCiteDefinedObjectives(input.body).errors, 'partsCiteObjectives'],
     [checkEdgeIdsWholeNumbers(input.body).errors, 'edgeIdsWholeNumbers'],
-    [checkDocsWithinSurface(input.body, input.issueNumber).errors, 'docsWithinSurface'],
+    [checkDocsWithinSurface(input.body, input.issueNumber, input.briefSectionsSinceIssue).errors, 'docsWithinSurface'],
     [checkSurfaceExcludesBoundDoc(input.body, input.docOwnersContent).errors, 'surfaceExcludesBoundDoc'],
-    [checkRationaleSurfaceCoverage(input.body, input.issueNumber).errors, 'rationaleSurfaceCoverage'],
+    [
+      checkRationaleSurfaceCoverage(input.body, input.issueNumber, input.briefSectionsSinceIssue).errors,
+      'rationaleSurfaceCoverage'
+    ],
     [
       input.milestoneSiblings !== null ? checkSurfaceOverlap(subject, input.milestoneSiblings).errors : [],
       'surfaceOverlap'
@@ -1700,6 +1720,7 @@ export async function collectTaskIssueErrors(
       projectPaths: readProjectPaths(),
       retryCommand,
       issueNumber,
+      briefSectionsSinceIssue: resolveGateCutovers(loadConfig()).briefSectionsSinceIssue,
       resolvesToFile: (glob) => expandGlob(glob).length > 0,
       docOwnersContent: readDocOwnersContent(),
       milestoneSiblings,

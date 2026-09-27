@@ -1327,11 +1327,15 @@ const BLAST_RADIUS_ACK_RE = /(?:\*\*)?blast-radius-ack(?:\*\*)?\s*[:—–-]/i
  * touch `packages/ui`") — a negation the text scan below cannot tell apart
  * from a real touch-claim, and a heuristic in a blocking gate is wrong in
  * both directions. `## Surface`'s `in:` glob list is parsed structure with
- * no negation to misread: at or above `BRIEF_SECTIONS_SINCE_ISSUE`, where
+ * no negation to misread: at or above the brief-sections cutover, where
  * every task Issue carries one, a shared domain is "named" iff a declared
  * `in:` glob covers it (`globCoversPath`) — never by scanning prose for the
  * domain's name. Below the cutover, an Issue legitimately carries no
- * `## Surface` at all, so the original prose scan is unchanged.
+ * `## Surface` at all, so the original prose scan is unchanged. The cutover is
+ * the resolved `sinceBriefSections` (`gateCutovers.briefSectionsSinceIssue`,
+ * an absent key → `null` → NO cutover, so `## Surface` decides from Issue 1,
+ * O1); it defaults to `BRIEF_SECTIONS_SINCE_ISSUE` only for a caller that does
+ * not resolve config.
  * `issueNumber` follows the same fail-closed posture as
  * `checkIssueObjectives`/`checkIssueBriefSections`: `null` (not yet known,
  * e.g. `issue create`) is NOT treated as "at or above the cutover" — it
@@ -1343,10 +1347,11 @@ export function checkBlastRadiusScope(
   _labels: string[],
   sharedPackages: string[],
   projectPaths: ProjectPath[],
-  issueNumber: number | null = null
+  issueNumber: number | null = null,
+  sinceBriefSections: number | null = BRIEF_SECTIONS_SINCE_ISSUE
 ): IssueSectionResult {
   if (sharedPackages.length === 0) return { status: 'pass', errors: [] }
-  const decideFromSurface = issueNumber !== null && issueNumber >= BRIEF_SECTIONS_SINCE_ISSUE
+  const decideFromSurface = issueNumber !== null && (sinceBriefSections === null || issueNumber >= sinceBriefSections)
   let named: string[]
   if (decideFromSurface) {
     const surface = parseIssueSurface(body)
@@ -1537,15 +1542,24 @@ export function checkRationaleNamesDocs(body: string): IssueSectionResult {
  * simply does not enclose is now accepted; a pointer the surface explicitly
  * excludes still is not.
  *
- * At or above `BRIEF_SECTIONS_SINCE_ISSUE` only — below it an Issue
+ * At or above the brief-sections cutover only — below it an Issue
  * legitimately carries no `## Surface` to compare against, same cutover
- * every other Surface-aware check in this module uses. Passes trivially
- * when the Surface itself doesn't parse (`checkIssueBriefSections` already
- * reports that malformation) or the docs field carries the `no-doc-surface`
- * sentinel (nothing to compare).
+ * every other Surface-aware check in this module uses. The cutover is the
+ * resolved `sinceBriefSections` (`gateCutovers.briefSectionsSinceIssue`, an
+ * absent key → `null` → NO cutover, so this gate applies from Issue 1 wherever
+ * `## Surface` is itself required from Issue 1, O1); it defaults to
+ * `BRIEF_SECTIONS_SINCE_ISSUE` only for a caller that does not resolve config.
+ * Passes trivially when the Surface itself doesn't parse
+ * (`checkIssueBriefSections` already reports that malformation) or the docs
+ * field carries the `no-doc-surface` sentinel (nothing to compare).
  */
-export function checkDocsWithinSurface(body: string, issueNumber: number | null): IssueSectionResult {
-  if (issueNumber !== null && issueNumber < BRIEF_SECTIONS_SINCE_ISSUE) return { status: 'pass', errors: [] }
+export function checkDocsWithinSurface(
+  body: string,
+  issueNumber: number | null,
+  sinceBriefSections: number | null = BRIEF_SECTIONS_SINCE_ISSUE
+): IssueSectionResult {
+  if (sinceBriefSections !== null && issueNumber !== null && issueNumber < sinceBriefSections)
+    return { status: 'pass', errors: [] }
   const surface = parseIssueSurface(body)
   if (!surface.ok) return { status: 'pass', errors: [] }
 
@@ -1620,11 +1634,20 @@ function nearestInGlob(path: string, inGlobs: string[]): string {
  * decision undid; Boundary is where "what this task touches" is actually
  * declared.
  *
- * At or above `BRIEF_SECTIONS_SINCE_ISSUE` only — below it an Issue
- * legitimately carries no `## Surface` to compare against.
+ * At or above the brief-sections cutover only — below it an Issue
+ * legitimately carries no `## Surface` to compare against. The cutover is the
+ * resolved `sinceBriefSections` (`gateCutovers.briefSectionsSinceIssue`, an
+ * absent key → `null` → NO cutover, so this gate applies from Issue 1 wherever
+ * `## Surface` is itself required from Issue 1, O1); it defaults to
+ * `BRIEF_SECTIONS_SINCE_ISSUE` only for a caller that does not resolve config.
  */
-export function checkRationaleSurfaceCoverage(body: string, issueNumber: number | null): IssueSectionResult {
-  if (issueNumber !== null && issueNumber < BRIEF_SECTIONS_SINCE_ISSUE) return { status: 'pass', errors: [] }
+export function checkRationaleSurfaceCoverage(
+  body: string,
+  issueNumber: number | null,
+  sinceBriefSections: number | null = BRIEF_SECTIONS_SINCE_ISSUE
+): IssueSectionResult {
+  if (sinceBriefSections !== null && issueNumber !== null && issueNumber < sinceBriefSections)
+    return { status: 'pass', errors: [] }
   const surface = parseIssueSurface(body)
   if (!surface.ok) return { status: 'pass', errors: [] }
 

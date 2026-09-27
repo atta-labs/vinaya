@@ -570,6 +570,7 @@ describe('every brief-schema/issue-content recovery prompt names its own fix (O2
       projectPaths: [],
       retryCommand: 'vinaya issue create --validate-only …',
       issueNumber: null,
+      briefSectionsSinceIssue: null,
       resolvesToFile: () => true,
       docOwnersContent: null,
       milestoneSiblings: null,

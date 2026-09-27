@@ -1652,6 +1652,21 @@ describe('checkDocsWithinSurface (O6)', () => {
     const body = '**Docs to keep coherent** — Update `apps/cli/specs/surface.md`.\n'
     expect(checkDocsWithinSurface(body, 500).status).toBe('pass')
   })
+
+  it('applies from Issue 1 when no cutover is configured (null) — O1', () => {
+    // Config-less repo: `## Surface` is required from Issue 1, so this
+    // Surface-consistency gate must run from Issue 1 too — an `out:`-excluded
+    // pointer is a real refusal, never grandfathered away.
+    const body = `${surface}\n**Docs to keep coherent** — Update \`aeg-root/tranches/example-tranche.md\`.\n`
+    const r = checkDocsWithinSurface(body, 1, null)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/aeg-root\/tranches\/example-tranche\.md/)
+  })
+
+  it('grandfathers Issue 1 below a configured cutover — O2 unchanged', () => {
+    const body = `${surface}\n**Docs to keep coherent** — Update \`aeg-root/tranches/example-tranche.md\`.\n`
+    expect(checkDocsWithinSurface(body, 1, 426).status).toBe('pass')
+  })
 })
 
 describe('checkRationaleSurfaceCoverage (task-run-v1 11, O4)', () => {
@@ -1715,6 +1730,18 @@ describe('checkRationaleSurfaceCoverage (task-run-v1 11, O4)', () => {
   it('ignores a bare backticked identifier with no `/` — never a path', () => {
     const body = `${surface}\n**Boundary** — Calls \`renderBrief()\`.\n`
     expect(checkRationaleSurfaceCoverage(body, 500).status).toBe('pass')
+  })
+
+  it('applies from Issue 1 when no cutover is configured (null) — O1', () => {
+    const body = `${surface}\n**Boundary** — Edits \`packages/aeg-core/src/issue-validation.ts\`.\n`
+    const r = checkRationaleSurfaceCoverage(body, 1, null)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/packages\/aeg-core\/src\/issue-validation\.ts/)
+  })
+
+  it('grandfathers Issue 1 below a configured cutover — O2 unchanged', () => {
+    const body = `${surface}\n**Boundary** — Edits \`packages/aeg-core/src/issue-validation.ts\`.\n`
+    expect(checkRationaleSurfaceCoverage(body, 1, 426).status).toBe('pass')
   })
 })
 
@@ -1856,6 +1883,25 @@ describe('checkBlastRadiusScope (O4) — structural mode at/above the brief-sect
       '**Project:** vinaya'
     ].join('\n')
     const r = checkBlastRadiusScope(body, [], SHARED, REGISTRY, 500)
+    expect(r.status).toBe('pass')
+  })
+
+  it('decides from `## Surface` from Issue 1 when no cutover is configured (null) — O1', () => {
+    // Config-less repo: `## Surface` is required from Issue 1, so the mode
+    // switch must pick the structural `in:`-glob read from Issue 1, not the
+    // coarser prose scan.
+    const body = '## Surface\n\nin: packages/ui/**\nout: —\n\n**Project:** vinaya\n'
+    const r = checkBlastRadiusScope(body, [], SHARED, REGISTRY, 1, null)
+    expect(r.status).toBe('fail')
+    expect(r.errors[0]).toMatch(/packages\/ui/)
+  })
+
+  it('grandfathers Issue 1 to the prose scan below a configured cutover — O2 unchanged', () => {
+    // Configured cutover 426: Issue 1 is below it → prose scan, which does not
+    // consult the structural `in:` glob, so no Boundary prose naming the domain
+    // means pass — this repo's behaviour is unchanged.
+    const body = '## Surface\n\nin: packages/ui/**\nout: —\n\n**Project:** vinaya\n'
+    const r = checkBlastRadiusScope(body, [], SHARED, REGISTRY, 1, 426)
     expect(r.status).toBe('pass')
   })
 })
