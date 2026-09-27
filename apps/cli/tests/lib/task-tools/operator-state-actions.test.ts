@@ -529,6 +529,12 @@ describe("the Operator's doctrine and the Operator's tools agree, state for stat
   it('refuses exactly the states another tool owns, naming that tool', async () => {
     const EXPECTED_REFUSAL: Partial<Record<TaskLoopState['kind'], string>> = {
       running: 'task_status',
+      // A start already coming up is the doctrine's `task_status` row too: a
+      // repeat of the SAME request replays its own claim and never reaches
+      // this gate, so a call that does reach it is a second start on one
+      // branch. `start_did_not_come_up` is deliberately NOT here — that row
+      // names `task_start`, and it is what bounds this refusal.
+      starting: 'task_status',
       paused: 'task_resume'
     }
     for (const kind of Object.keys(FIXTURES) as TaskLoopState['kind'][]) {

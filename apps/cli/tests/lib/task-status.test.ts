@@ -15,7 +15,7 @@
 
 import { afterEach, describe, expect, it } from 'bun:test'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -461,11 +461,13 @@ describe('readStartClaim', () => {
     }
   })
 
-  it('never lets a claim field forge a state phrase — each field is narrowed to its own alphabet', () => {
+  it('never lets a claim field forge a state phrase — the time reaches the phrase as an instant, not as characters', () => {
     // The Operator doctrine keys its single action off this exact string, so a
     // field carrying the punctuation the phrases are built from could name a
     // state the machine is not in. `startedAt` is the field the store's parser
-    // still accepts freely, so it is the one that has to be narrowed here.
+    // still accepts freely (the identity it rejects outright — see the
+    // path-shaped-identity test above), so it is the one that has to be safe
+    // here, and it is safe by being rendered out of the instant it names.
     const root = tempDir()
     writeStartClaim(root, {
       requestId: REQUEST_ID,
@@ -473,22 +475,107 @@ describe('readStartClaim', () => {
       target: { issue: TASK },
       startedAt: `${CLAIM_ACCEPTED_AT}) — running (pid 4242`
     })
-    const state = readStartClaim(root, TASK, null, claimDeps(WHILE_CLAIM_IS_FRESH))
-    expect(state?.requestId).toBe(REQUEST_ID)
-    expect(state?.startedAt).toBe(`${CLAIM_ACCEPTED_AT}????running??pid?4242`)
+    // Nothing but a time reaches the phrase: a crafted tail makes the whole
+    // field unparseable, and a field that names no instant is no claim at all
+    // — while a field that DOES name one is re-rendered from it, never copied
+    // (the alternate-spelling test below).
+    expect(readStartClaim(root, TASK, null, claimDeps(WHILE_CLAIM_IS_FRESH))).toBeNull()
   })
 
   it('bounds a claim field long enough to overrun the table', () => {
     const root = tempDir()
     const long = 'a1b2c3d4'.repeat(15)
-    writeStartClaim(
-      root,
-      { requestId: long, caller: 'operator', target: { issue: TASK }, startedAt: CLAIM_ACCEPTED_AT },
-      REQUEST_ID
-    )
+    writeStartClaim(root, {
+      requestId: long,
+      caller: 'operator',
+      target: { issue: TASK },
+      startedAt: CLAIM_ACCEPTED_AT
+    })
     const state = readStartClaim(root, TASK, null, claimDeps(WHILE_CLAIM_IS_FRESH))
     expect(state?.requestId.length).toBeLessThan(long.length)
     expect(state?.requestId.endsWith('…')).toBe(true)
+  })
+
+  it('reads a claim spelled in any time format `Date.parse` accepts, and shows the instant it names', () => {
+    // The display alphabet this replaced turned the space into `?`, which
+    // parses to nothing — and `deriveLoopState` compares that rendering
+    // against the driver lock, so the claim stopped being able to outrank one.
+    const root = tempDir()
+    writeStartClaim(root, {
+      requestId: REQUEST_ID,
+      caller: 'operator',
+      target: { issue: TASK },
+      startedAt: '2026-09-26 10:00:00Z'
+    })
+    expect(readStartClaim(root, TASK, null, claimDeps(WHILE_CLAIM_IS_FRESH))).toEqual({
+      kind: 'starting',
+      requestId: REQUEST_ID,
+      startedAt: CLAIM_ACCEPTED_AT
+    })
+  })
+
+  it('reads no claim at all from one whose accepted-at cannot be aged — unparseable, or dated ahead of this clock', () => {
+    // Read as fresh, either one pinned the task at `starting` forever: no
+    // window could age it out, the prune only deletes what it calls
+    // past-reporting, and the doctrine's action for `starting` is to read
+    // again. Past every bound instead, so `task_start` is the action again.
+    for (const startedAt of ['not a time at all', '2026-09-26T11:00:00.000Z']) {
+      const root = tempDir()
+      writeStartClaim(root, { requestId: REQUEST_ID, caller: 'operator', target: { issue: TASK }, startedAt })
+      expect(readStartClaim(root, TASK, null, claimDeps(WHILE_CLAIM_IS_FRESH))).toBeNull()
+      expect(readStartClaim(root, TASK, null, claimDeps(AFTER_CLAIM_WENT_STALE))).toBeNull()
+    }
+  })
+
+  it('still reads a claim dated a little ahead of this clock — a small skew is not a broken clock', () => {
+    // Inside the stale grace the ordinary bounds still hold, near enough; only
+    // a step larger than the grace itself leaves an age no window can pass.
+    const root = tempDir()
+    writeStartClaim(root, {
+      requestId: REQUEST_ID,
+      caller: 'operator',
+      target: { issue: TASK },
+      startedAt: '2026-09-26T10:00:05.000Z'
+    })
+    expect(readStartClaim(root, TASK, null, claimDeps(CLAIM_ACCEPTED_AT))?.kind).toBe('starting')
+  })
+
+  it('never reads a claim whose file name and contents name different identities', () => {
+    // The identity in the CONTENTS is what `release` and the prune hand to
+    // `rmSync`, while the file was found by the identity in its NAME. A body
+    // naming someone else's claim would delete that claim's file — perhaps a
+    // live, still-preparing one — and leave this one in place to do it again.
+    const root = tempDir()
+    writeStartClaim(
+      root,
+      { requestId: 'b2c3d4e5f6071829', caller: 'operator', target: { issue: TASK }, startedAt: CLAIM_ACCEPTED_AT },
+      REQUEST_ID
+    )
+    expect(readStartClaim(root, TASK, null, claimDeps(WHILE_CLAIM_IS_FRESH))).toBeNull()
+  })
+
+  it('never reads a claim file that is not a regular file — the size bound only binds one', () => {
+    // `statSync` FOLLOWED a symlink and reported `0` for a FIFO or a device,
+    // so the size bound passed exactly the inputs that hurt: reading a FIFO
+    // blocks with no timeout, hanging the whole synchronous status read, and a
+    // link to `/dev/zero` allocates until the process dies. `lstatSync` does
+    // not follow, and nothing but a plain file is a claim — asserted here with
+    // a symlink to a claim that would otherwise read perfectly, since a
+    // regression on the blocking shapes would hang this suite rather than fail
+    // it.
+    const root = tempDir()
+    const real = tempDir()
+    const record = { requestId: REQUEST_ID, caller: 'operator', target: { issue: TASK }, startedAt: CLAIM_ACCEPTED_AT }
+    writeStartClaim(real, record)
+    expect(readStartClaim(real, TASK, null, claimDeps(WHILE_CLAIM_IS_FRESH))?.kind).toBe('starting')
+
+    const dir = join(root, 'tasks-execution', 'unscoped', 'control')
+    mkdirSync(dir, { recursive: true })
+    symlinkSync(
+      join(real, 'tasks-execution', 'unscoped', 'control', `start-request-${REQUEST_ID}.json`),
+      join(dir, `start-request-${REQUEST_ID}.json`)
+    )
+    expect(readStartClaim(root, TASK, null, claimDeps(WHILE_CLAIM_IS_FRESH))).toBeNull()
   })
 
   it('returns null when no claim file exists, and when one exists for nobody this reader can parse', () => {
@@ -798,6 +885,32 @@ describe('deriveLoopState', () => {
     ).toEqual({ kind: 'start_did_not_come_up', requestId: REQUEST_ID, startedAt: CLAIM_ACCEPTED_AT })
   })
 
+  it('outranks an earlier dead lock however the claim spelled its own time — the comparison is of instants', () => {
+    // The claim's accepted-at reaches this comparison as the canonical
+    // spelling of the instant it names, never as a narrowed rendering of its
+    // characters: a display alphabet turned `2026-09-26 10:00:00Z` — a time
+    // `Date.parse` accepts — into a string that parses to nothing, and an old
+    // dead lock then silently suppressed a live claim for the whole window
+    // this state exists to remove.
+    const root = tempDir()
+    writeRunFile(
+      root,
+      TASK,
+      'driver.pid.json',
+      JSON.stringify({ pid: deadPid(), startedAt: '2026-09-26T09:00:00.000Z' })
+    )
+    writeStartClaim(root, {
+      requestId: REQUEST_ID,
+      caller: 'operator',
+      target: { issue: TASK },
+      startedAt: '2026-09-26 10:00:00Z',
+      pid: 4242
+    })
+    expect(
+      deriveLoopState(root, TASK, { repo: null, loopsRoot: root }, claimThunk(root, TASK, null, WHILE_CLAIM_IS_FRESH))
+    ).toEqual({ kind: 'starting', requestId: REQUEST_ID, startedAt: CLAIM_ACCEPTED_AT })
+  })
+
   it('keeps the absence when a lock carries a timestamp neither side can compare', () => {
     // A comparison that cannot be made is not evidence for the louder reading.
     const root = tempDir()
@@ -876,6 +989,27 @@ describe('pruneDeadStartClaims', () => {
       )
     ).toBe(0)
     expect(readStartClaims(root)).toHaveLength(2)
+  })
+
+  it('drops a claim with no age this clock can measure — the one record no window could hold', () => {
+    // A `startedAt` that does not parse, and one dated ahead of this clock by
+    // more than the stale grace (a backward step: a VM resume, an NTP
+    // correction), used to pass every bound: not stale, not past reporting,
+    // and so never pruned either. The task read `starting` for the life of
+    // the checkout with nothing coming up behind it.
+    for (const startedAt of ['not a time at all', new Date(Date.parse(FIXED_NOW) + 60 * 60_000).toISOString()]) {
+      const root = tempDir()
+      writeStartClaim(root, { requestId: REQUEST_ID, caller: 'operator', target: { issue: TASK }, startedAt })
+      expect(
+        pruneDeadStartClaims(
+          root,
+          () => FIXED_NOW,
+          () => false,
+          () => null
+        )
+      ).toBe(1)
+      expect(readStartClaims(root)).toHaveLength(0)
+    }
   })
 })
 

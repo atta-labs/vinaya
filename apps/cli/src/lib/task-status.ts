@@ -416,9 +416,19 @@ export const defaultStartClaimDeps: StartClaimDeps = {
  * printable range includes the punctuation the state phrases themselves are
  * built from, so a `requestId` reading `abc) — running (pid 4242` would render
  * `starting (start request abc) — running (pid 4242)` and name a state the
- * machine is not in. So each field is narrowed to the alphabet its own real
- * values use — a hex request identity, an ISO timestamp — everything else
- * becomes `?`, and the length is bounded.
+ * machine is not in. So `requestId` is narrowed to the alphabet its real
+ * values use — a hex identity — everything else becomes `?`, and the length is
+ * bounded.
+ *
+ * `startedAt` is not narrowed but RE-RENDERED, from the instant it names
+ * rather than from the characters it carries (`displayClaimTimestamp`): a
+ * string built out of a parsed number can carry nothing to escape from, and —
+ * the reason this is not merely another way to be safe — an alphabet silently
+ * changed the VALUE. `2026-09-27 12:00:00Z` is a time `Date.parse` accepts and
+ * that alphabet turned into `2026-09-27?12:00:00Z`, which parses to nothing;
+ * `deriveLoopState` then compared that against the driver lock, failed to read
+ * it, and let an old dead lock suppress a live claim — the `no driver` this
+ * state exists to remove, reappearing for exactly one timestamp shape.
  *
  * This is display-side only. The store's parser rejects a `requestId` that
  * could name a path (see `start.ts`'s `isSafeRequestId`) but still accepts any
@@ -429,12 +439,26 @@ const CLAIM_FIELD_DISPLAY_MAX = 64
 
 /** Hex digests and the `-`/`_` a hand-written or older identity may carry — never a space, a bracket or a dash-like punctuation the state phrases use. */
 const REQUEST_ID_DISPLAY_ALPHABET = /[^A-Za-z0-9._-]/g
-/** ISO-8601: digits, `-`, `:`, `.`, `T`, `Z`, and a numeric offset's `+`. */
-const TIMESTAMP_DISPLAY_ALPHABET = /[^0-9A-Za-z:.+-]/g
 
 function displaySafeClaimField(value: string, alphabet: RegExp): string {
   const narrowed = value.replace(alphabet, '?')
   return narrowed.length > CLAIM_FIELD_DISPLAY_MAX ? `${narrowed.slice(0, CLAIM_FIELD_DISPLAY_MAX)}…` : narrowed
+}
+
+/**
+ * A claim's accepted-at as the canonical spelling of the instant it names —
+ * the same instant every window predicate ages it by, so what a reader is
+ * shown and what the machine decided on are one time, however the claim
+ * happened to spell it. See {@link CLAIM_FIELD_DISPLAY_MAX}'s own note.
+ *
+ * Unreachable through `readStartClaim`, which answers `null` for a claim whose
+ * time does not parse (`claimIsPastReporting`), but total anyway: a renderer
+ * that cannot be handed an arbitrary string is one no later caller has to
+ * remember to sanitize for.
+ */
+function displayClaimTimestamp(value: string): string {
+  const at = Date.parse(value)
+  return Number.isFinite(at) ? new Date(at).toISOString() : 'an unreadable time'
 }
 
 /**
@@ -487,9 +511,10 @@ export function readStartClaim(
   for (const record of deps.claims(root)) {
     if (!claimMatchesTask(record, task, address)) continue
     const parsed = Date.parse(record.startedAt)
-    // A record whose own timestamp does not parse sorts oldest — it is still a
-    // real claim, and `claimIsStale` reads it as not-stale, so it never
-    // silently outranks a claim that carries a readable time.
+    // A record whose own timestamp does not parse sorts oldest, so it never
+    // outranks a claim that carries a readable time — and if it is the only
+    // one, `claimIsPastReporting` answers for it below: a claim with no
+    // measurable age says nothing about the present.
     const at = Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY
     if (newest === null || at >= newest.at) newest = { record, at }
   }
@@ -502,7 +527,7 @@ export function readStartClaim(
   return {
     kind,
     requestId: displaySafeClaimField(record.requestId, REQUEST_ID_DISPLAY_ALPHABET),
-    startedAt: displaySafeClaimField(record.startedAt, TIMESTAMP_DISPLAY_ALPHABET)
+    startedAt: displayClaimTimestamp(record.startedAt)
   }
 }
 
@@ -592,6 +617,10 @@ export function deriveLoopState(
   // speaking. An unreadable timestamp on either side takes the same silent
   // branch, since a comparison that cannot be made is not evidence for the
   // louder reading.
+  // The claim's `startedAt` is the canonical spelling of the very instant its
+  // record carries (`displayClaimTimestamp`), never a narrowed rendering of
+  // the characters — so this compares the two records' times, not two display
+  // strings, whatever shape the claim on disk spelled its own time in.
   if (lock && !claimPostdatesLock(claim.startedAt, lock.startedAt)) return { kind: 'no_driver' }
   return claim
 }

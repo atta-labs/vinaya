@@ -75,7 +75,7 @@ function harness(
     resolveIssue?: (ref: TaskToolRef) => number | null
     issueFacts?: (issue: number) => TaskIssueFacts
     isRunAlive?: (issue: number) => boolean
-    loopState?: (issue: number) => TaskLoopState
+    loopState?: (issue: number, ref: TaskToolRef) => TaskLoopState
     pauseDisposition?: (issue: number) => PauseDisposition
     heldAgent?: (issue: number) => AgentVendor | null
     isPidAlive?: (pid: number) => boolean
@@ -522,6 +522,59 @@ describe('task_start handler', () => {
       }
       expect(launches).toHaveLength(0)
       expect(map.size).toBe(0) // released — the refusal never blocks the tool that does own this state
+    })
+
+    it('refuses a start already coming up, naming `task_status`, and never claims the identity', async () => {
+      // The same request never reaches this gate — its own claim replays
+      // before any state is read — so a call that DOES reach it with a start
+      // in flight is a different caller or a different payload, about to put
+      // a second developer on one branch in the window before the first
+      // start's driver lock exists.
+      const { handler, launches, map } = harness({
+        loopState: () => ({ kind: 'starting', requestId: 'a1b2c3d4e5f60718', startedAt: '2026-01-01T00:00:00.000Z' })
+      })
+      const result = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error.kind).toBe('precondition')
+        expect(result.error.message).toContain('task_status')
+        expect(result.error.message).toContain('a1b2c3d4e5f60718')
+      }
+      expect(launches).toHaveLength(0)
+      expect(map.size).toBe(0)
+    })
+
+    it('starts a start that did not come up — the one claim state whose own action is this tool', async () => {
+      // What bounds the refusal above: a claim stops reading `starting` once
+      // its grace has passed with its process gone, and this state is the
+      // doctrine's `task_start` row. Refusing both would stand the Operator
+      // in front of a task with no driver and nothing that starts one.
+      const { handler, launches } = harness({
+        loopState: () => ({
+          kind: 'start_did_not_come_up',
+          requestId: 'a1b2c3d4e5f60718',
+          startedAt: '2026-01-01T00:00:00.000Z'
+        })
+      })
+      const result = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(result.ok).toBe(true)
+      expect(launches).toHaveLength(1)
+    })
+
+    it('reads the state for the ADDRESS this start names, not only for its Issue', async () => {
+      // A claim written against a tranche ordinal names that ordinal, not the
+      // Issue number, so a state read that was handed no address could never
+      // match one — and the `starting` refusal above would be dead code for
+      // the address form every tranche task uses.
+      const seen: TaskToolRef[] = []
+      const { handler } = harness({
+        loopState: (_issue, ref) => {
+          seen.push(ref)
+          return { kind: 'not_started' }
+        }
+      })
+      await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(seen).toEqual([{ tranche: 'unattended-run-v1', id: '17' }])
     })
 
     it('refuses a pause still awaiting a decision, naming `task_resume`, and never claims the identity', async () => {

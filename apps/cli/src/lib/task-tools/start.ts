@@ -103,11 +103,11 @@ import {
   closeSync,
   existsSync,
   ftruncateSync,
+  lstatSync,
   openSync,
   readFileSync,
   readdirSync,
   rmSync,
-  statSync,
   writeFileSync
 } from 'node:fs'
 import { dirname } from 'node:path'
@@ -140,7 +140,13 @@ import {
 } from '../dev-review-loop/pause-resume.js'
 import { ensureRunDir, runPath, runtimeDirForThisRepo, tasksExecutionRoot } from '../run-paths.js'
 import { repoRoot as gitRepoRoot } from '../diff-evidence.js'
-import { deriveLoopState, newestPublishedRound, type TaskLoopState } from '../task-status.js'
+import {
+  deriveLoopState,
+  newestPublishedRound,
+  readStartClaim,
+  type TaskAddress,
+  type TaskLoopState
+} from '../task-status.js'
 import { describeTaskRef, readTaskIssueFacts, resolveOpenTaskIssueForRef } from './handlers.js'
 import type { TaskIssueFacts, TaskToolCallResult } from './handlers.js'
 import type { CallerContext } from './server.js'
@@ -213,8 +219,20 @@ export type TaskStartDeps = {
   issueFacts: (issue: number) => TaskIssueFacts
   /** Is a live driver currently running this Issue? The SAME observable (`driver.pid.json`) a fresh launch is confirmed against. */
   isRunAlive: (issue: number) => boolean
-  /** The task's current loop state, read through the SAME derivation `task_status` reports from (`deriveLoopState`, `../task-status.js`) — never a raw pause-record read, which is never cleared on resume and so would refuse a task that paused and published long ago. It is what decides whether this start belongs to another tool. */
-  loopState: (issue: number) => TaskLoopState
+  /**
+   * The task's current loop state, read through the SAME derivation
+   * `task_status` reports from (`deriveLoopState`, `../task-status.js`) —
+   * never a raw pause-record read, which is never cleared on resume and so
+   * would refuse a task that paused and published long ago. It is what decides
+   * whether this start belongs to another tool.
+   *
+   * Takes the REF as well as the Issue: a start claim written against a
+   * tranche ordinal names that ordinal, not the Issue number, so a read that
+   * passed no address could never match a claim for the address form every
+   * tranche task uses — and the gate's own `starting` refusal would then be
+   * dead code for exactly the tasks it exists to protect.
+   */
+  loopState: (issue: number, ref: TaskToolRef) => TaskLoopState
   /** For a paused task, what that pause is waiting for — read from the same records the continuation reads, so this gate never names a tool that would not move the run. See `PauseDisposition`. */
   pauseDisposition: (issue: number) => PauseDisposition
   /** The agent a held run was dispatched with, from its own pause record — `null` when there is no pause record or it names none. What a CONTINUATION must be relaunched under; the loop refuses any other. */
@@ -329,6 +347,24 @@ const MAX_CLAIM_FILE_BYTES = 64 * 1024
  * A file that does not parse, or parses to neither record shape, is skipped
  * rather than raised: to a reader an unreadable claim is no claim at all, the
  * same reading `claim`'s own replay path already takes.
+ *
+ * Two things are checked before the read, and both are about this folder being
+ * a wider input surface than the writer that fills it:
+ *
+ *   - It must be a REGULAR file. `statSync` follows a symlink and reports `0`
+ *     for a FIFO or a character device, so the size bound below passed exactly
+ *     the inputs that hurt: reading a FIFO blocks with no timeout — hanging
+ *     the whole synchronous status read, and with it `task_status` — and a
+ *     symlink to `/dev/zero` allocates until the process dies. `lstatSync`
+ *     does not follow, and anything that is not a plain file is not a claim.
+ *   - Its CONTENTS must name the identity its NAME does. The identity in the
+ *     body reaches a path — `release` and `pruneDeadStartClaims` both hand one
+ *     to `rmSync` — so a body naming a different identity would delete another
+ *     claim's file, possibly a live one, and leave the file it was read from
+ *     in place to do it again on the next pass. The writer only ever puts a
+ *     record at its own identity's path, so this rejects nothing this store
+ *     wrote, and it is what makes `startRecordPath(record.requestId)` provably
+ *     the file each record came from.
  */
 export function readStartClaims(root: string = runtimeDirForThisRepo()): StartRecord[] {
   let entries: string[]
@@ -343,9 +379,10 @@ export function readStartClaims(root: string = runtimeDirForThisRepo()): StartRe
     if (requestId === null) continue
     try {
       const path = startRecordPath(requestId, root)
-      if (statSync(path).size > MAX_CLAIM_FILE_BYTES) continue
+      const entry = lstatSync(path)
+      if (!entry.isFile() || entry.size > MAX_CLAIM_FILE_BYTES) continue
       const record = normalizeStartRecord(JSON.parse(readFileSync(path, 'utf8')))
-      if (record !== null) records.push(record)
+      if (record !== null && record.requestId === requestId) records.push(record)
     } catch {
       // Unreadable or malformed — see this function's own doc comment.
     }
@@ -367,7 +404,13 @@ export function readStartClaims(root: string = runtimeDirForThisRepo()): StartRe
  * `START_CLAIM_REPORTING_WINDOW_MS` — so past the stale grace too — with no
  * live launch behind it. A claim that far gone already reports nothing and is
  * already supersedable; removing the file only saves the next reader from
- * parsing it.
+ * parsing it. A claim whose own accepted-at cannot be aged at all is past
+ * that window by {@link claimIsPastReporting}'s own reading, which is what
+ * keeps the one record no bound can hold from accumulating here forever.
+ *
+ * The path deleted is rebuilt from the record's identity, and that is the file
+ * it was read from: `readStartClaims` skips any claim whose contents name an
+ * identity other than the one its file name carries, so the two cannot differ.
  */
 export function pruneDeadStartClaims(
   root: string = runtimeDirForThisRepo(),
@@ -740,7 +783,18 @@ export function defaultHeldAgent(issue: number, root: string = runtimeDirForThis
  * a next action — the failure this gate exists to close was a state with NO
  * working tool at all, and a refusal that names none recreates it.
  *
- * A live driver is the one refusal the derived STATE decides. Everything
+ * A live driver and a start still coming up are the two refusals the derived
+ * STATE decides — a run that exists, and a run being brought into existence.
+ * `starting` is the only signal there is in the window before a driver lock:
+ * the claim behind it makes this call's own REQUEST idempotent, but a start
+ * from another caller, or for the same task under a different payload, has a
+ * different identity, finds no claim to replay, and used to read past a state
+ * that was already saying a launch was in flight. Refusing it narrows the
+ * duplicate-developer race by exactly the span the claim can see — and it is
+ * bounded from both ends: the claim stops reading `starting` once its process
+ * is gone and its grace has passed, and `start_did_not_come_up` is not refused
+ * at all, so the Operator is never left with nothing that starts the task.
+ * Everything
  * else is decided by the pause record's DISPOSITION, and deliberately NOT by
  * whether the state reads `paused`: a pause is not one situation, and — the
  * reason this is not merely tidier — a paused run whose driver is then
@@ -767,7 +821,10 @@ export function defaultHeldAgent(issue: number, root: string = runtimeDirForThis
  * the claim it sits behind is keyed by request identity — caller included —
  * so it is per-request idempotency rather than per-task exclusion. Two
  * different callers reading a non-running state at the same moment can both
- * reach the launch before either driver lock exists. Narrowing that window
+ * reach the launch before either driver lock exists — and before either
+ * claim is on disk, which is the part the `starting` refusal above cannot
+ * reach: it closes the window where one claim is already written, not the
+ * instant where neither is. Narrowing that window
  * is all this layer does: `runTask` re-reads the same fact, and the loop's
  * own round-1 entry re-reads it again immediately before it would dispatch.
  * Closing it needs a real cross-process reservation per task, which is
@@ -783,6 +840,12 @@ export function startRefusalForState(
     return taskToolError(
       'precondition',
       `task_start: ${describeTaskRef(target)} already has a live driver (pid ${state.pid}) — refusing to start a second developer on one branch. Watch the run it already has with \`task_status\`.`
+    )
+  }
+  if (state.kind === 'starting') {
+    return taskToolError(
+      'precondition',
+      `task_start: ${describeTaskRef(target)} already has a start coming up (start request ${state.requestId}, accepted ${state.startedAt}) whose driver has not written its lock yet — refusing to start a second developer on one branch. Watch it with \`task_status\`: a start that never comes up stops reading as one on its own, and \`task_start\` starts it again then.`
     )
   }
   if (disposition === 'unreadable') {
@@ -823,9 +886,43 @@ export function startRefusalForState(
  * from ever meaning two different windows.
  */
 export function claimIsStale(record: StartRecord, now: () => string): boolean {
-  const startedAt = Date.parse(record.startedAt)
+  const age = claimAgeMs(record, now)
+  return age === null || age > START_STALE_CLAIM_GRACE_MS
+}
+
+/**
+ * How long ago this claim was accepted, by the reader's own clock — or `null`
+ * when it has no age this clock can measure, which both windows below read as
+ * past their own bound rather than as fresh.
+ *
+ * Two records have no measurable age, and they fail the same way: one whose
+ * `startedAt` does not parse, and one dated further in the FUTURE than the
+ * stale grace itself — which a backward host clock step leaves behind (a VM
+ * suspend and resume, an NTP step correction, a claim written while the clock
+ * was ahead), since every later read then subtracts to a negative age.
+ *
+ * Read as FRESH, those two pinned a task at `starting` for the life of the
+ * checkout: no bound ever aged them out, so the status reader reported a start
+ * still coming up on every read, `pruneDeadStartClaims` never deleted the file
+ * (it only deletes what it can call past-reporting), and the supersede path
+ * never replaced it — while the doctrine's action for `starting` is to read
+ * again. A task with no driver at all then had nothing that would ever restart
+ * it: the same false report these states exist to remove, with the sign
+ * flipped. So an unmeasurable age is past every bound instead. The cost is the
+ * other direction — a genuine start in flight whose clock jumped reads
+ * `no driver`, and `task_start` starts it again, which is a working action.
+ *
+ * A `now()` this reader cannot parse is not the claim's fault and is not
+ * decided here: it answers `0` — an age no window has passed — leaving the
+ * record exactly as untouched as it was before these bounds compared anything.
+ */
+function claimAgeMs(record: StartRecord, now: () => string): number | null {
   const current = Date.parse(now())
-  return Number.isFinite(startedAt) && Number.isFinite(current) && current - startedAt > START_STALE_CLAIM_GRACE_MS
+  if (!Number.isFinite(current)) return 0
+  const startedAt = Date.parse(record.startedAt)
+  if (!Number.isFinite(startedAt)) return null
+  const age = current - startedAt
+  return age < -START_STALE_CLAIM_GRACE_MS ? null : age
 }
 
 /**
@@ -860,11 +957,10 @@ export function claimIsStale(record: StartRecord, now: () => string): boolean {
  */
 export const START_CLAIM_REPORTING_WINDOW_MS = 10 * 60_000
 
-/** Is this claim too old to describe the present at all? See {@link START_CLAIM_REPORTING_WINDOW_MS}. A claim whose own timestamp does not parse is never aged out — an unreadable time is not an old one. */
+/** Is this claim too old to describe the present at all? See {@link START_CLAIM_REPORTING_WINDOW_MS}. A claim with no age this clock can measure counts as past it — see {@link claimAgeMs} for why that direction and not the other. */
 export function claimIsPastReporting(record: StartRecord, now: () => string): boolean {
-  const startedAt = Date.parse(record.startedAt)
-  const current = Date.parse(now())
-  return Number.isFinite(startedAt) && Number.isFinite(current) && current - startedAt > START_CLAIM_REPORTING_WINDOW_MS
+  const age = claimAgeMs(record, now)
+  return age === null || age > START_CLAIM_REPORTING_WINDOW_MS
 }
 
 /**
@@ -1024,6 +1120,11 @@ function defaultIsRunAlive(issue: number): boolean {
   return lock !== null && isDriverPidAlive(lock.pid)
 }
 
+/** The address a start claim for this target would have been WRITTEN against — the ordinal for a tranche task, and `null` for an Issue the claim names directly. The inverse of `claimMatchesTask` (`../task-status.js`), which is the only thing that reads it. */
+function claimAddressFor(ref: TaskToolRef): TaskAddress {
+  return 'issue' in ref ? null : { tranche: ref.tranche, id: ref.id }
+}
+
 export const defaultTaskStartDeps: TaskStartDeps = {
   // Never null in practice: falls back to the server's own cwd (constant for
   // the process lifetime) when the git lookup itself fails, so the identity
@@ -1034,7 +1135,10 @@ export const defaultTaskStartDeps: TaskStartDeps = {
   resolveIssue: resolveOpenTaskIssueForRef,
   issueFacts: readTaskIssueFacts,
   isRunAlive: defaultIsRunAlive,
-  loopState: (issue) => deriveLoopState(runtimeDirForThisRepo(), issue),
+  loopState: (issue, ref) => {
+    const root = runtimeDirForThisRepo()
+    return deriveLoopState(root, issue, undefined, () => readStartClaim(root, issue, claimAddressFor(ref)))
+  },
   pauseDisposition: (issue) => defaultPauseDisposition(issue),
   heldAgent: (issue) => defaultHeldAgent(issue),
   isPidAlive: isDriverPidAlive,
@@ -1155,7 +1259,7 @@ export function createTaskStartHandler(
       let refusal: TaskToolError | null
       let disposition: PauseDisposition = 'none'
       try {
-        const state = deps.loopState(issue)
+        const state = deps.loopState(issue, target)
         disposition = state.kind === 'running' ? 'none' : deps.pauseDisposition(issue)
         refusal = startRefusalForState(state, target, disposition)
       } catch (err) {
