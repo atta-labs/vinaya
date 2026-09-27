@@ -79,7 +79,7 @@ That's the difference between "the agent said it passed" and a record you can ac
 
 ## Bring your own agent
 
-Cursor, Claude Code, Codex, Gemini CLI — keep the one you already use. Vinaya checks the merge,
+Claude Code, Codex, Gemini CLI — keep the one you already use. Vinaya checks the merge,
 not the model.
 
 - **Claude Code** gets a native `/vinaya <role>` command and a `Stop` hook that keeps a session
@@ -149,9 +149,12 @@ the AEG implementation currently living in the public
 (`aeg-core`, `aeg-forge-state`, `aeg-types`), the Vinaya CLI, and the AEG doctrine live here so
 that AEG's implementation stops being world-readable.
 
-The **Vinaya CLI** (`@attalabs/vinaya`, published to npm from this repository) and
-**`@attalabs/aeg-core`** are licensed [Apache-2.0](packages/aeg-core/LICENSE) — the published
-artifact is open even though the repository that builds it is not. All other code here is
+The **Vinaya CLI** (`@attalabs/vinaya`, published to npm from this repository) and the engine
+packages it ships — [`@attalabs/aeg-core`](packages/aeg-core/LICENSE),
+[`@attalabs/aeg-forge-state`](packages/aeg-forge-state/LICENSE),
+[`@attalabs/aeg-types`](packages/aeg-types/LICENSE) and
+[`@attalabs/vinaya-sources`](packages/sources/LICENSE) — are licensed Apache-2.0: the published
+artifacts are open even though the repository that builds them is not. All other code here is
 private, all rights reserved.
 
 <div align="center">
