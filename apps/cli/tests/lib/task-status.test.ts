@@ -23,7 +23,11 @@ import {
   confidenceFromSummaryComments,
   deriveLoopState,
   lastRoundVerdictLines,
+  NEXT_ACTION_BY_PAUSE_DISPOSITION,
+  NEXT_ACTION_BY_STATE_KIND,
+  nextActionFor,
   phaseIsCurrentFor,
+  phaseIsPastTwiceTypical,
   readLastConfidence,
   readLoopPhase,
   readStartClaim,
@@ -31,13 +35,16 @@ import {
   resumeCommandFor,
   type StartClaimDeps,
   type StartClaimState,
+  type TaskLoopState,
   type TaskStatusRow
 } from '../../src/lib/task-status.js'
 import {
+  type PauseDisposition,
   pruneDeadStartClaims,
   readStartClaims,
   START_CLAIM_REPORTING_WINDOW_MS
 } from '../../src/lib/task-tools/start.js'
+import { TASK_NEXT_ACTIONS } from '@attalabs/aeg-core'
 import type { ProcessSnapshot } from '../../src/lib/dispatch.js'
 import type { TaskPrFacts } from '../../src/lib/task-tools/pr-read.js'
 import {
@@ -1659,7 +1666,8 @@ describe('renderTaskStatusTable (O3)', () => {
     lastConfidence: null,
     lastConfidenceUnread: false,
     phaseHistory: null,
-    prFacts: null
+    prFacts: null,
+    pauseDisposition: null
   }
 
   /** A fixed read time and host, so the footer asserts a value rather than the wall clock and this machine's own name. */
@@ -1696,7 +1704,8 @@ describe('renderTaskStatusTable (O3)', () => {
       'ci',
       'code review',
       'security',
-      'gate'
+      'gate',
+      'next'
     ])
     expect(rowCells(lines, 0)).toEqual([
       '[task-run-v1] 14',
@@ -1712,7 +1721,10 @@ describe('renderTaskStatusTable (O3)', () => {
       'green',
       'approve',
       'pass',
-      'green'
+      'green',
+      // The gate is green and both verdicts judged this head: the row is ready
+      // to merge, whatever the loop's own state says it is doing.
+      'merge'
     ])
   })
 
@@ -1781,7 +1793,8 @@ describe('renderTaskStatusTable (O3)', () => {
       '—',
       '—',
       '—',
-      '—'
+      '—',
+      'start'
     ])
   })
 
@@ -1790,12 +1803,12 @@ describe('renderTaskStatusTable (O3)', () => {
       [{ ...base, pr: { number: 517 }, state: { kind: 'published', round: 1 }, prFacts: null }],
       deps
     )
-    expect(rowCells(unread, 0).slice(9)).toEqual(['not read', 'not read', 'not read', 'not read', 'not read'])
+    expect(rowCells(unread, 0).slice(9, 14)).toEqual(['not read', 'not read', 'not read', 'not read', 'not read'])
 
     // A row with no pull request at all is the absence — nothing to read, so
     // nothing claims a read was attempted.
     const none = renderTaskStatusTable([{ ...base, pr: null, state: { kind: 'no_driver' } }], deps)
-    expect(rowCells(none, 0).slice(9)).toEqual(['—', '—', '—', '—', '—'])
+    expect(rowCells(none, 0).slice(9, 14)).toEqual(['—', '—', '—', '—', '—'])
   })
 
   it('reports a red suite and a verdict bound to an older head as what they are', () => {
@@ -1810,7 +1823,7 @@ describe('renderTaskStatusTable (O3)', () => {
       ],
       deps
     )
-    expect(rowCells(lines, 0).slice(9)).toEqual(['fedcba9', 'red', '—', '—', 'running'])
+    expect(rowCells(lines, 0).slice(9, 14)).toEqual(['fedcba9', 'red', '—', '—', 'running'])
   })
 
   it('reads a start that is coming up as starting, and one that never did as a start that did not come up', () => {
@@ -1978,6 +1991,184 @@ describe('renderTaskStatusTable (O3)', () => {
     )
     expect(lines[2]).toContain('absent (round 2)')
     expect(lines[2]).toContain('paused (confidence)')
+  })
+})
+
+/**
+ * The `Next` column: every state kind has one, every pause disposition has one,
+ * and the value is always inside the catalog's own closed vocabulary. The
+ * mapping is a `Record` over both unions, so a state or a disposition added
+ * without a next action beside it is a typecheck error — this suite is the
+ * runtime half: it enumerates what the mapping declares and drives each one
+ * through the renderer, so a value that is declared but never renders is caught
+ * too.
+ *
+ * The binding to the Operator doctrine's own table — that this mapping IS the
+ * one the doctrine gives, rather than a second opinion beside it — is asserted
+ * in `apps/cli/tests/lib/task-tools/operator-state-actions.test.ts`, against
+ * the doctrine file itself.
+ */
+describe('the Next column (O3)', () => {
+  const base: Omit<TaskStatusRow, 'state' | 'pr'> = {
+    tranche: 'demo',
+    id: '1',
+    issue: 601,
+    round: null,
+    phase: null,
+    recordedPhase: null,
+    minutesInPhase: null,
+    phaseIsCurrent: null,
+    lastConfidence: null,
+    lastConfidenceUnread: false,
+    phaseHistory: null,
+    prFacts: null,
+    pauseDisposition: null
+  }
+
+  /** One real state value per kind — the shapes `deriveLoopState` returns, so the mapping is exercised over states the reader can actually produce. */
+  const STATES: Record<TaskLoopState['kind'], TaskLoopState> = {
+    not_started: { kind: 'not_started' },
+    starting: { kind: 'starting', requestId: 'abc123', startedAt: CLAIM_ACCEPTED_AT },
+    start_did_not_come_up: { kind: 'start_did_not_come_up', requestId: 'abc123', startedAt: CLAIM_ACCEPTED_AT },
+    running: { kind: 'running', pid: 4242, startedAt: CLAIM_ACCEPTED_AT },
+    paused: { kind: 'paused', reason: 'escalation', round: 2 },
+    published: { kind: 'published', round: 2 },
+    exited: { kind: 'exited', reason: 'signal', lastDecision: 'dispatch_developer' },
+    no_driver: { kind: 'no_driver' }
+  }
+
+  it('names one action for every state kind the reader can report, and nothing outside the vocabulary', () => {
+    const kinds = Object.keys(NEXT_ACTION_BY_STATE_KIND) as TaskLoopState['kind'][]
+    // Every kind the mapping declares has a fixture, and every fixture is that
+    // kind — so neither list can quietly fall behind the union.
+    expect([...kinds].sort()).toEqual((Object.keys(STATES) as TaskLoopState['kind'][]).sort())
+    for (const kind of kinds) {
+      const action = nextActionFor({ ...base, pr: null, state: STATES[kind] })
+      expect(TASK_NEXT_ACTIONS).toContain(action)
+      // And it is the value the mapping declares, rendered into the row's own
+      // last cell rather than computed a second way.
+      const rendered = rowCells(renderTaskStatusTable([{ ...base, pr: null, state: STATES[kind] }]), 0).at(-1)
+      expect(rendered).toBe(action)
+    }
+  })
+
+  it('reads a planned, a live, a stopped and a published run the way the doctrine routes them', () => {
+    const actionFor = (state: TaskLoopState, row: Partial<TaskStatusRow> = {}) =>
+      nextActionFor({ ...base, pr: null, state, ...row })
+    expect(actionFor(STATES.not_started)).toBe('start')
+    // A start already accepted needs nothing done about it — read it again.
+    expect(actionFor(STATES.starting)).toBe('wait')
+    expect(actionFor(STATES.start_did_not_come_up)).toBe('start')
+    expect(actionFor(STATES.running)).toBe('wait')
+    expect(actionFor(STATES.published)).toBe('wait')
+    expect(actionFor(STATES.exited)).toBe('start')
+    expect(actionFor(STATES.no_driver)).toBe('start')
+  })
+
+  it('routes a pause by what it is waiting for, never by the word paused alone', () => {
+    const dispositions = Object.keys(NEXT_ACTION_BY_PAUSE_DISPOSITION) as PauseDisposition[]
+    for (const disposition of dispositions) {
+      const action = nextActionFor({ ...base, pr: null, state: STATES.paused, pauseDisposition: disposition })
+      expect(action).toBe(NEXT_ACTION_BY_PAUSE_DISPOSITION[disposition])
+    }
+    expect(NEXT_ACTION_BY_PAUSE_DISPOSITION.awaiting_ruling).toBe('rule')
+    expect(NEXT_ACTION_BY_PAUSE_DISPOSITION.resolved_cancel).toBe('cancel')
+    expect(NEXT_ACTION_BY_PAUSE_DISPOSITION.unreadable).toBe('investigate')
+  })
+
+  it('reads a pause whose disposition was not read as a decision the Principal still owes', () => {
+    expect(nextActionFor({ ...base, pr: null, state: STATES.paused, pauseDisposition: null })).toBe('rule')
+  })
+
+  it('names merge only when the gate is green AND both verdicts judged this head', () => {
+    const merged = (facts: TaskPrFacts) =>
+      nextActionFor({ ...base, pr: { number: 517 }, state: STATES.published, prFacts: facts })
+    expect(merged(GREEN_APPROVED)).toBe('merge')
+    // An `LGTM` is the other clean code-review value the extractor accepts.
+    expect(merged({ ...GREEN_APPROVED, codeReview: 'LGTM' })).toBe('merge')
+    // Every way it is not ready: the gate itself, either verdict blocking, and
+    // either verdict simply absent from this head.
+    expect(merged({ ...GREEN_APPROVED, gate: 'red' })).toBe('wait')
+    expect(merged({ ...GREEN_APPROVED, gate: 'running' })).toBe('wait')
+    expect(merged({ ...GREEN_APPROVED, gate: null })).toBe('wait')
+    expect(merged({ ...GREEN_APPROVED, codeReview: 'REQUEST CHANGES' })).toBe('wait')
+    expect(merged({ ...GREEN_APPROVED, security: 'FAIL' })).toBe('wait')
+    expect(merged({ ...GREEN_APPROVED, codeReview: null })).toBe('wait')
+    expect(merged({ ...GREEN_APPROVED, security: null })).toBe('wait')
+  })
+
+  it('never tells the Principal to merge what they already cancelled, or a record it could not read', () => {
+    const cancelled = nextActionFor({
+      ...base,
+      pr: { number: 517 },
+      state: STATES.paused,
+      pauseDisposition: 'resolved_cancel',
+      prFacts: GREEN_APPROVED
+    })
+    expect(cancelled).toBe('cancel')
+    const unreadable = nextActionFor({
+      ...base,
+      pr: { number: 517 },
+      state: STATES.paused,
+      pauseDisposition: 'unreadable',
+      prFacts: GREEN_APPROVED
+    })
+    expect(unreadable).toBe('investigate')
+  })
+})
+
+describe('the over-typical mark (O4)', () => {
+  const base: Omit<TaskStatusRow, 'state' | 'pr' | 'phaseHistory' | 'minutesInPhase'> = {
+    tranche: 'demo',
+    id: '1',
+    issue: 601,
+    round: 2,
+    phase: 'reviewing',
+    recordedPhase: 'dispatch_reviewers',
+    phaseIsCurrent: true,
+    lastConfidence: null,
+    lastConfidenceUnread: false,
+    prFacts: null,
+    pauseDisposition: null
+  }
+
+  function row(minutesInPhase: number | null, typicalPhaseMinutes: number | null): TaskStatusRow {
+    return {
+      ...base,
+      pr: null,
+      state: { kind: 'running', pid: 4242, startedAt: CLAIM_ACCEPTED_AT },
+      minutesInPhase,
+      phaseHistory: typicalPhaseMinutes === null ? null : { typicalPhaseMinutes, typicalPhaseSamples: 4 }
+    }
+  }
+
+  it('marks a phase that has run past twice what the same phase typically took here', () => {
+    expect(phaseIsPastTwiceTypical(row(21, 10))).toBe(true)
+    expect(rowCells(renderTaskStatusTable([row(21, 10)]), 0)[6]).toBe('21m ⚠')
+  })
+
+  it('does not mark a phase at exactly twice, or under it', () => {
+    expect(phaseIsPastTwiceTypical(row(20, 10))).toBe(false)
+    expect(phaseIsPastTwiceTypical(row(3, 10))).toBe(false)
+    expect(rowCells(renderTaskStatusTable([row(20, 10)]), 0)[6]).toBe('20m')
+  })
+
+  it('never marks a phase with no typical time — there is nothing to be twice of', () => {
+    expect(phaseIsPastTwiceTypical(row(4320, null))).toBe(false)
+    expect(rowCells(renderTaskStatusTable([row(4320, null)]), 0)[6]).toBe('4320m')
+  })
+
+  it('never marks a phase with no recorded time in it', () => {
+    expect(phaseIsPastTwiceTypical(row(null, 10))).toBe(false)
+    expect(rowCells(renderTaskStatusTable([row(null, 10)]), 0)[6]).toBe('—')
+  })
+
+  it('is still not a forecast: the mark says where this run sits, never when it finishes', () => {
+    for (const line of renderTaskStatusTable([row(21, 10)])) {
+      expect(line.toLowerCase()).not.toContain('eta')
+      expect(line.toLowerCase()).not.toContain('remaining')
+      expect(line.toLowerCase()).not.toContain('overdue')
+    }
   })
 })
 

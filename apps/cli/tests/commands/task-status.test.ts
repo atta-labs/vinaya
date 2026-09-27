@@ -474,7 +474,8 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
         'ci',
         'code review',
         'security',
-        'gate'
+        'gate',
+        'next'
       ],
       [
         '[demo] 1',
@@ -496,7 +497,9 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
         'running',
         '—',
         '—',
-        '—'
+        '—',
+        // Nothing to do about a run that is moving: read it again.
+        'wait'
       ],
       [
         '[demo] 2',
@@ -512,7 +515,10 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
         'red',
         '—',
         '—',
-        '—'
+        '—',
+        // An `escalation` pause with no resolution recorded is a decision the
+        // Principal owes — `task_resume` is what authenticates one.
+        'rule'
       ],
       // A one-round published run: its summary's own round-1 cell is the
       // not-asked glyph, so the column reads as no record rather than telling a
@@ -533,12 +539,13 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
         'green',
         'approve',
         'pass',
-        'green'
+        'green',
+        'merge'
       ],
       // O4: the planned task (brief not frozen) lists as not started, never
       // omitted — and every fact it has no record for reads as one dash, its
       // pull-request columns included: there is no pull request to read.
-      ['[demo] 4', '#606', '—', 'not started', '—', '—', '—', '—', '—', '—', '—', '—', '—', '—'],
+      ['[demo] 4', '#606', '—', 'not started', '—', '—', '—', '—', '—', '—', '—', '—', '—', '—', 'start'],
       // Three merged task pull requests of history, each a six-minute reviewing
       // interval — history, never a claim about this run.
       [
@@ -555,7 +562,8 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
         'green',
         '—',
         '—',
-        '—'
+        '—',
+        'wait'
       ]
     ])
     expect(withoutTrustAnchorWarning(r.stdout)).toContain('history, not a prediction')
@@ -580,10 +588,13 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
         'ci',
         'code review',
         'security',
-        'gate'
+        'gate',
+        'next'
       ],
-      ['[demo] 1', '#601', '#701', 'no driver', '—', '—', '—', '—', '—', '701aaaa', 'running', '—', '—', '—'],
-      ['[demo] 2', '#602', '#702', 'no driver', '—', '—', '—', '—', '—', '702aaaa', 'red', '—', '—', '—'],
+      ['[demo] 1', '#601', '#701', 'no driver', '—', '—', '—', '—', '—', '701aaaa', 'running', '—', '—', '—', 'start'],
+      ['[demo] 2', '#602', '#702', 'no driver', '—', '—', '—', '—', '—', '702aaaa', 'red', '—', '—', '—', 'start'],
+      // A driverless run whose own head is green, gated and approved is not one
+      // to restart — it is one to merge. The newer fact wins over the state.
       [
         '[demo] 3',
         '#603',
@@ -598,9 +609,10 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
         'green',
         'approve',
         'pass',
-        'green'
+        'green',
+        'merge'
       ],
-      ['[demo] 4', '#606', '—', 'not started', '—', '—', '—', '—', '—', '—', '—', '—', '—', '—']
+      ['[demo] 4', '#606', '—', 'not started', '—', '—', '—', '—', '—', '—', '—', '—', '—', '—', 'start']
     ])
     // No row is in a phase, so no row carries a typical time — and the
     // history sentence is not printed at all (O4).
@@ -680,7 +692,8 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
         gate: null,
         codeReview: null,
         security: null
-      }
+      },
+      pauseDisposition: null
     })
     expect(parsed.data.tasks[3]).toEqual({
       tranche: 'demo',
@@ -697,7 +710,10 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
       lastConfidenceUnread: false,
       phaseHistory: null,
       // No pull request, so nothing was read and nothing is claimed.
-      prFacts: null
+      prFacts: null,
+      // No pause, so nothing to be waiting on — the row's own next action is
+      // derived from its state, and is not a field the envelope carries.
+      pauseDisposition: null
     })
   })
 })
@@ -735,7 +751,8 @@ describe('vinaya task status <tranche> <n> (O2 — the single-task form)', () =>
         'ci',
         'code review',
         'security',
-        'gate'
+        'gate',
+        'next'
       ],
       [
         '[demo] 2',
@@ -751,7 +768,8 @@ describe('vinaya task status <tranche> <n> (O2 — the single-task form)', () =>
         'red',
         '—',
         '—',
-        '—'
+        '—',
+        'rule'
       ]
     ])
     // The verdict lines and the resume command are printed under the table,
@@ -807,7 +825,8 @@ describe('vinaya task status <tranche> <n> (O2 — the single-task form)', () =>
         'ci',
         'code review',
         'security',
-        'gate'
+        'gate',
+        'next'
       ],
       [
         '[demo] 3',
@@ -823,7 +842,8 @@ describe('vinaya task status <tranche> <n> (O2 — the single-task form)', () =>
         'green',
         'approve',
         'pass',
-        'green'
+        'green',
+        'merge'
       ]
     ])
     expect(r.status).toBe(0)
@@ -847,9 +867,10 @@ describe('vinaya task status <tranche> <n> (O2 — the single-task form)', () =>
         'ci',
         'code review',
         'security',
-        'gate'
+        'gate',
+        'next'
       ],
-      ['[demo] 4', '#606', '—', 'not started', '—', '—', '—', '—', '—', '—', '—', '—', '—', '—']
+      ['[demo] 4', '#606', '—', 'not started', '—', '—', '—', '—', '—', '—', '—', '—', '—', '—', 'start']
     ])
     expect(r.status).toBe(0)
   })

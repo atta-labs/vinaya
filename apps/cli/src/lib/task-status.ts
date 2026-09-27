@@ -36,6 +36,7 @@ import {
   taskPhaseLabel,
   type PauseReason,
   type TaskConfidence,
+  type TaskNextAction,
   type TaskPhaseHistory
 } from '@attalabs/aeg-core'
 import { resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
@@ -55,7 +56,9 @@ import {
   claimIsPastReporting,
   claimIsStale,
   claimLaunchIsAlive,
+  defaultPauseDisposition,
   readStartClaims,
+  type PauseDisposition,
   type StartRecord
 } from './task-tools/start.js'
 import { readTaskPrFacts, type TaskPrFacts } from './task-tools/pr-read.js'
@@ -872,6 +875,14 @@ export type TaskStatusRow = {
    * reported.
    */
   prFacts: TaskPrFacts | null
+  /**
+   * For a paused row, what that pause is waiting for — the SAME reading
+   * `task_start`'s own gate takes of the same two records
+   * (`defaultPauseDisposition`), so the next action this table names and the
+   * tool that would move the run can never disagree. `null` for every row that
+   * is not paused.
+   */
+  pauseDisposition: PauseDisposition | null
 }
 
 /**
@@ -916,6 +927,100 @@ function renderStateText(state: TaskLoopState): string {
   }
 }
 
+// --- the one thing to do about this row next --------------------------------
+
+/**
+ * Every run state, mapped to what the Principal does about it next — the SAME
+ * mapping `aeg-root/roles/operator.md`'s own state-to-action table gives, one
+ * row per state, read off that table's `Next` column by a test rather than
+ * kept in step by hand. It is a `Record` over the state kinds deliberately: a
+ * state added to `TaskLoopState` without a next action beside it is a
+ * typecheck error, not a row that silently renders nothing.
+ *
+ * `by_pause_disposition` is not an action — it is the one state whose answer
+ * depends on what the pause is waiting for, resolved through
+ * {@link NEXT_ACTION_BY_PAUSE_DISPOSITION} below, exactly as the doctrine's
+ * own paused row resolves it.
+ */
+export const NEXT_ACTION_BY_STATE_KIND: Record<TaskLoopState['kind'], TaskNextAction | 'by_pause_disposition'> = {
+  not_started: 'start',
+  // A start already accepted needs nothing done about it: the doctrine's action
+  // here is to read again, and the wait is bounded by the claim itself.
+  starting: 'wait',
+  start_did_not_come_up: 'start',
+  running: 'wait',
+  paused: 'by_pause_disposition',
+  // A published round is the loop's own last act; what follows is the review
+  // gate's answer, and the merge rule below is what turns this into `merge`.
+  published: 'wait',
+  exited: 'start',
+  no_driver: 'start'
+}
+
+/**
+ * A pause is not one situation, and its four dispositions route to four
+ * different seats — the same four the doctrine's paused row already names, in
+ * the same order, with the same tools behind them: a decision the Principal
+ * owes (`task_resume` authenticates it), a decision already taken as resume or
+ * a hiccup the loop resumes itself (`task_start` continues it), a decision
+ * already taken as CANCEL (no continuation may reverse it), and a record this
+ * host cannot read at all — a defect to report, never a state to act on.
+ */
+export const NEXT_ACTION_BY_PAUSE_DISPOSITION: Record<PauseDisposition, TaskNextAction> = {
+  awaiting_ruling: 'rule',
+  resolved_resume: 'start',
+  self_resuming: 'start',
+  resolved_cancel: 'cancel',
+  unreadable: 'investigate',
+  // A pause record that reads as no hold at all (a round already published
+  // past) leaves the continuation to `task_start`, which is what the state's
+  // own doctrine row names.
+  none: 'start'
+}
+
+/** A code-review verdict value that is clean — the two the extractor's own pattern accepts beside `REQUEST CHANGES`. */
+const CLEAN_CODE_REVIEW = new Set(['APPROVE', 'LGTM'])
+
+/**
+ * Is this row's own head ready to merge? The review gate green AND both
+ * verdicts on that head clean — never a re-derivation of the gate's own rule
+ * (`checkReviewGate` reads labels, ruling ordinals and an input manifest this
+ * reader never fetches), and never a verdict bound to some earlier head
+ * (`taskPrFactsFrom` has already dropped those).
+ *
+ * The gate's own conclusion is the authority; the two verdict values are read
+ * beside it so the cell a reader is shown and the action beside it rest on the
+ * same facts, rather than on a green word whose reason is somewhere else.
+ */
+function headIsReadyToMerge(facts: TaskPrFacts | null): boolean {
+  if (facts === null || facts.gate !== 'green') return false
+  return CLEAN_CODE_REVIEW.has(facts.codeReview ?? '') && facts.security === 'PASS'
+}
+
+/**
+ * The one action the `Next` column names for a row.
+ *
+ * Merge-readiness wins over the state's own action, because it is the newer
+ * fact: a run that has published and whose gate is green needs a merge, not
+ * another read. Two answers it never overrides, both of them decisions already
+ * made or unreadable: a pause resolved as CANCEL — telling the Principal to
+ * merge what they already cancelled would reverse their own decision — and a
+ * record this host could not read, where every reading is suspect and the only
+ * honest instruction is to look.
+ */
+export function nextActionFor(row: TaskStatusRow): TaskNextAction {
+  const fromState = NEXT_ACTION_BY_STATE_KIND[row.state.kind]
+  const action =
+    fromState === 'by_pause_disposition'
+      ? // A paused row whose disposition was not read is one a decision is owed
+        // on, as far as this table can tell — the doctrine's own default for the
+        // paused row, and the seat a reader is safest sent to.
+        NEXT_ACTION_BY_PAUSE_DISPOSITION[row.pauseDisposition ?? 'awaiting_ruling']
+      : fromState
+  if (action === 'cancel' || action === 'investigate') return action
+  return headIsReadyToMerge(row.prFacts) ? 'merge' : action
+}
+
 /**
  * One table, one row per task — the same columns whether one task is named or
  * every open one is listed, and the same table `task_status` returns in its own
@@ -951,7 +1056,8 @@ const TABLE_HEADERS = [
   'ci',
   'code review',
   'security',
-  'gate'
+  'gate',
+  'next'
 ] as const
 
 /** An absent cell. One glyph for every "no record carries this" case, so a reader learns it once. */
@@ -1048,7 +1154,8 @@ function cellsFor(row: TaskStatusRow): string[] {
     inPhaseCell(row),
     confidenceCell(row.lastConfidence, row.lastConfidenceUnread),
     historyCell(row.phaseHistory),
-    ...prCells(row)
+    ...prCells(row),
+    nextActionFor(row)
   ]
 }
 
@@ -1189,7 +1296,10 @@ function buildRow(
         phaseHistory: null,
         // A task whose brief is not frozen yet has no branch on the remote, so
         // no pull request to read and no pause to be waiting on either.
-        prFacts: null
+        prFacts: null,
+        // A task whose brief is not frozen yet has no branch on the remote, so
+        // no pull request to read and no pause to be waiting on either.
+        pauseDisposition: null
       }
     }
   }
@@ -1221,7 +1331,11 @@ function buildRow(
       // out of a listing where nothing is in flight.
       phaseHistory: phase !== null && phaseIsCurrent === true ? history(phase.recordedPhase) : null,
       // One read per pull request, and none at all for a row without one.
-      prFacts: pr ? readPrFacts(pr.number) : null
+      prFacts: pr ? readPrFacts(pr.number) : null,
+      // Read only where it means something: the disposition is what a PAUSE is
+      // waiting for, and reading it for a running or published row would cost
+      // every listing a control-store read for a cell that names no pause.
+      pauseDisposition: state.kind === 'paused' ? defaultPauseDisposition(ref.issue, root) : null
     }
   }
 }

@@ -522,10 +522,12 @@ describe('whereTheRunIs', () => {
     lastConfidence: { round: 2, percent: 90, source: 'stated' },
     lastConfidenceUnread: false,
     phaseHistory: { typicalPhaseMinutes: 5, typicalPhaseSamples: 4 },
-    // The pull-request columns ride on the row the table renders, never on the
-    // structured observation this function builds — `task_pr_read` is where a
-    // caller reads a head's checks and verdicts as data.
-    prFacts: null
+    // The pull-request columns and the next action ride on the row the table
+    // renders, never on the structured observation this function builds —
+    // `task_pr_read` is where a caller reads a head's checks and verdicts as
+    // data.
+    prFacts: null,
+    pauseDisposition: null
   }
 
   it("carries the row's round, shown phase, time in phase, confidence and typical time, as structured fields", () => {
