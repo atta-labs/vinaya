@@ -10,6 +10,7 @@ import {
   checkDirtyPinnedFiles,
   checkStaleAgainstRemote,
   DRAFT_ISSUE_SENTINEL,
+  fastForwardToRemoteIfSafe,
   repoBriefCommandFacts,
   resolveBoundaryPaths,
   resolveRemoteDefaultBranch,
@@ -168,6 +169,143 @@ describe('checkStaleAgainstRemote / checkDirtyPinnedFiles — fixture repo, both
   it('checkDirtyPinnedFiles never blocks on a dirty file it was not asked to pin (Traps to avoid: no unrelated dirty file blocks)', () => {
     writeFileSync(join(localDir, 'scratch.md'), 'an operator scratch file\n')
     expect(checkDirtyPinnedFiles(['pinned.md'], localDir)).toEqual([])
+  })
+})
+
+/**
+ * Issue #839, O1/O2/O3 — `fastForwardToRemoteIfSafe` on a real remote/local
+ * repo pair, no network, no mocked `git`. A clean default-branch checkout that
+ * is only behind is fast-forwarded to the remote tip; the three unsafe cases
+ * (another branch, uncommitted tracked change, local commits the remote lacks)
+ * and an unreachable remote each refuse, moving nothing. This is the fixture
+ * the Test plan calls for: "a clean default-branch checkout two commits behind
+ * its remote prepares after fast-forwarding, while the same checkout with a
+ * local commit, an uncommitted tracked change, or on another branch is refused."
+ */
+describe('fastForwardToRemoteIfSafe (Issue #839)', () => {
+  let tmpDir: string
+  let remoteDir: string
+  let localDir: string
+
+  // Advances the remote's default branch by one commit past the local clone,
+  // returning the new remote tip sha — so the local checkout is strictly behind.
+  const advanceRemote = (content: string): string => {
+    writeFileSync(join(remoteDir, 'pinned.md'), content)
+    git(remoteDir, ['add', 'pinned.md'])
+    git(remoteDir, ['commit', '-q', '-m', `advance ${content.trim()}`])
+    return git(remoteDir, ['rev-parse', 'HEAD'])
+  }
+
+  const resolve = () => resolveRemoteDefaultBranch(localDir)
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'vinaya-brief-ff-'))
+    remoteDir = join(tmpDir, 'remote')
+    localDir = join(tmpDir, 'local')
+    mkdirSync(remoteDir, { recursive: true })
+    git(remoteDir, ['init', '-q', '-b', 'main'])
+    git(remoteDir, ['config', 'user.email', 'a@example.com'])
+    git(remoteDir, ['config', 'user.name', 'A'])
+    writeFileSync(join(remoteDir, 'pinned.md'), 'v1\n')
+    git(remoteDir, ['add', 'pinned.md'])
+    git(remoteDir, ['commit', '-q', '-m', 'first'])
+
+    git(tmpDir, ['clone', '-q', remoteDir, localDir])
+    git(localDir, ['config', 'user.email', 'a@example.com'])
+    git(localDir, ['config', 'user.name', 'A'])
+  })
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('fast-forwards a clean default-branch checkout that is two commits behind, and moves HEAD to the remote tip (O1)', () => {
+    advanceRemote('v2\n')
+    const newTip = advanceRemote('v3\n')
+    const before = git(localDir, ['rev-parse', 'HEAD'])
+    expect(before).not.toBe(newTip)
+
+    const result = fastForwardToRemoteIfSafe(localDir, resolve)
+
+    expect(result).toEqual({ kind: 'moved', from: before, to: newTip })
+    // The checkout actually advanced — a real fast-forward, not just a report.
+    expect(git(localDir, ['rev-parse', 'HEAD'])).toBe(newTip)
+  })
+
+  it('is a no-op when the checkout already equals the remote tip, moving nothing', () => {
+    const tip = git(localDir, ['rev-parse', 'HEAD'])
+    const result = fastForwardToRemoteIfSafe(localDir, resolve)
+    expect(result).toEqual({ kind: 'noop' })
+    expect(git(localDir, ['rev-parse', 'HEAD'])).toBe(tip)
+  })
+
+  it('refuses, naming the branch and `git switch`, when on another branch — and never moves (O2)', () => {
+    advanceRemote('v2\n')
+    git(localDir, ['switch', '-c', 'feature'])
+    const before = git(localDir, ['rev-parse', 'HEAD'])
+
+    const result = fastForwardToRemoteIfSafe(localDir, resolve)
+
+    expect(result.kind).toBe('refused')
+    if (result.kind === 'refused') {
+      expect(result.reason).toContain('feature')
+      expect(result.reason).toContain('not the remote default branch `main`')
+      expect(result.reason).toContain('git switch main')
+    }
+    expect(git(localDir, ['rev-parse', 'HEAD'])).toBe(before)
+  })
+
+  it('refuses, naming the tracked file and `git stash`, on an uncommitted tracked change — and never moves (O2)', () => {
+    advanceRemote('v2\n')
+    const before = git(localDir, ['rev-parse', 'HEAD'])
+    writeFileSync(join(localDir, 'pinned.md'), 'uncommitted local edit\n')
+
+    const result = fastForwardToRemoteIfSafe(localDir, resolve)
+
+    expect(result.kind).toBe('refused')
+    if (result.kind === 'refused') {
+      expect(result.reason).toContain('uncommitted changes to tracked file(s)')
+      expect(result.reason).toContain('pinned.md')
+      expect(result.reason).toContain('git stash')
+    }
+    expect(git(localDir, ['rev-parse', 'HEAD'])).toBe(before)
+  })
+
+  it('refuses, naming the local commits and `git push`, when the checkout is ahead — and never moves (O2)', () => {
+    // Local commits the remote does not have, with the remote NOT advanced:
+    // ahead of the remote tip, so a fast-forward would have to discard them.
+    writeFileSync(join(localDir, 'local-only.md'), 'a local commit\n')
+    git(localDir, ['add', 'local-only.md'])
+    git(localDir, ['commit', '-q', '-m', 'local only'])
+    const before = git(localDir, ['rev-parse', 'HEAD'])
+
+    const result = fastForwardToRemoteIfSafe(localDir, resolve)
+
+    expect(result.kind).toBe('refused')
+    if (result.kind === 'refused') {
+      expect(result.reason).toContain('local commit(s) the remote default branch `main` does not have')
+      expect(result.reason).toContain('git push')
+    }
+    expect(git(localDir, ['rev-parse', 'HEAD'])).toBe(before)
+  })
+
+  it('fast-forwards past an untracked file, which never blocks (Traps to avoid)', () => {
+    const newTip = advanceRemote('v2\n')
+    writeFileSync(join(localDir, 'scratch.md'), 'an operator scratch file\n')
+
+    const result = fastForwardToRemoteIfSafe(localDir, resolve)
+
+    expect(result.kind).toBe('moved')
+    expect(git(localDir, ['rev-parse', 'HEAD'])).toBe(newTip)
+  })
+
+  it('refuses when the remote cannot be reached, moving nothing (O3)', () => {
+    advanceRemote('v2\n')
+    const before = git(localDir, ['rev-parse', 'HEAD'])
+    const result = fastForwardToRemoteIfSafe(localDir, () => null)
+    expect(result.kind).toBe('refused')
+    if (result.kind === 'refused') expect(result.reason).toMatch(/could not be resolved/)
+    expect(git(localDir, ['rev-parse', 'HEAD'])).toBe(before)
   })
 })
 

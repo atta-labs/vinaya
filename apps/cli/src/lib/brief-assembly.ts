@@ -217,15 +217,22 @@ export function resolveRemoteDefaultBranch(cwd?: string): { branch: string; sha:
  * network dependency. Returns a `missing`-shaped reason, never throws — the
  * caller decides what a non-empty return means.
  */
+/**
+ * The refusal both the fast-forward step and the staleness check share when
+ * the remote cannot be reached — refusing rather than rendering from a
+ * checkout of unknown freshness (O3: "when the remote cannot be reached,
+ * preparation refuses as today"). One string so the two never drift.
+ */
+const OFFLINE_REFUSAL =
+  'the remote default branch could not be resolved (`git ls-remote origin HEAD` failed — offline?) — refusing rather than rendering from a checkout of unknown freshness.'
+
 export function checkStaleAgainstRemote(
   headSha: string,
   resolveRemote: () => { branch: string; sha: string } | null = resolveRemoteDefaultBranch
 ): string[] {
   const remote = resolveRemote()
   if (!remote) {
-    return [
-      'the remote default branch could not be resolved (`git ls-remote origin HEAD` failed — offline?) — refusing rather than rendering from a checkout of unknown freshness.'
-    ]
+    return [OFFLINE_REFUSAL]
   }
   if (headSha !== remote.sha) {
     return [
@@ -233,6 +240,131 @@ export function checkStaleAgainstRemote(
     ]
   }
   return []
+}
+
+/**
+ * O1/O2/O3 — the fast-forward step both brief-preparation callers run BEFORE
+ * `checkStaleAgainstRemote`. Every merged pull request moves the remote
+ * default branch, and an Operator (no shell) was then blocked at the next
+ * start until a person ran `git pull` by hand — four times on 2026-09-27/28.
+ * A checkout that is on the default branch, carries no uncommitted change to a
+ * tracked file, and is strictly BEHIND the remote tip can be advanced to it
+ * with no loss, so this fast-forwards it (`git merge --ff-only`, after a
+ * `git fetch` of the default branch — never a reset, rebase, or checkout) and
+ * preparation continues (O1).
+ *
+ * It moves NOTHING when any of the three unsafe cases holds, naming which one
+ * it found and the exact command that clears it (O2): a checkout on ANOTHER
+ * branch (or a detached HEAD), one with UNCOMMITTED changes to tracked files
+ * (untracked files never block — Traps to avoid), or one carrying LOCAL
+ * COMMITS the remote does not have (ahead, or diverged — never discarded).
+ * When the remote cannot be reached it refuses exactly as the staleness check
+ * does (O3).
+ *
+ * `cwd`/`resolveRemote` are injected so this is testable against a fixture
+ * repo with a local remote and no network — the same discipline
+ * `checkStaleAgainstRemote`'s own tests use. The one-line move report (O1) is
+ * written to stderr here so a captured brief on stdout is never contaminated,
+ * and the `{from,to}` is returned too so a test can assert the move without
+ * capturing a stream. A checkout already at the tip is a `noop` (nothing to
+ * move; the staleness check that follows confirms it, and the unchanged
+ * `checkDirtyPinnedFiles` still guards a dirty pinned file there as before).
+ */
+export type FastForwardOutcome =
+  | { kind: 'noop' }
+  | { kind: 'moved'; from: string; to: string }
+  | { kind: 'refused'; reason: string }
+
+export function fastForwardToRemoteIfSafe(
+  cwd?: string,
+  resolveRemote: () => { branch: string; sha: string } | null = () => resolveRemoteDefaultBranch(cwd)
+): FastForwardOutcome {
+  const run = (args: string[]): { ok: true; out: string } | { ok: false } => {
+    try {
+      return { ok: true, out: execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }) }
+    } catch {
+      return { ok: false }
+    }
+  }
+
+  const remote = resolveRemote()
+  if (!remote) return { kind: 'refused', reason: OFFLINE_REFUSAL }
+
+  const headRes = run(['rev-parse', 'HEAD'])
+  const headSha = headRes.ok ? headRes.out.trim() : ''
+  // Already at the remote tip — nothing to fast-forward.
+  if (headSha && headSha === remote.sha) return { kind: 'noop' }
+
+  // Unsafe case 1 — on another branch (or a detached HEAD): preparation
+  // fast-forwards only a checkout sitting on the default branch.
+  const branchRes = run(['symbolic-ref', '--short', '-q', 'HEAD'])
+  const currentBranch = branchRes.ok ? branchRes.out.trim() : ''
+  if (currentBranch !== remote.branch) {
+    const where = currentBranch ? `branch \`${currentBranch}\`` : 'a detached HEAD'
+    return {
+      kind: 'refused',
+      reason:
+        `checkout is on ${where}, not the remote default branch \`${remote.branch}\` — ` +
+        `preparation fast-forwards only a checkout on the default branch; switch to it first: \`git switch ${remote.branch}\`.`
+    }
+  }
+
+  // Unsafe case 2 — uncommitted changes to tracked files. `--untracked-files=no`
+  // so an operator's scratch file never blocks (Traps to avoid). Never `.trim()`
+  // the porcelain blob before slicing: its status codes occupy the first two
+  // columns, and trimming would shift every line (the lesson `checkDirtyPinnedFiles`
+  // records).
+  const statusRes = run(['status', '--porcelain', '--untracked-files=no'])
+  if (statusRes.ok && statusRes.out.trim().length > 0) {
+    const dirty = statusRes.out
+      .split('\n')
+      .filter((l) => l.length > 0)
+      .map((l) => l.slice(3).trim())
+      .filter(Boolean)
+    return {
+      kind: 'refused',
+      reason:
+        `checkout carries uncommitted changes to tracked file(s): ${dirty.join(', ')} — ` +
+        'preparation never discards them; commit or stash them first: `git stash`.'
+    }
+  }
+
+  // Bring the remote default branch's objects local — this updates FETCH_HEAD
+  // and the remote-tracking ref only, never HEAD or the working tree, so
+  // "move nothing until every unsafe case is cleared" still holds. A fetch that
+  // fails after `ls-remote` already succeeded is a transient loss of the
+  // remote: refuse as offline (O3).
+  const fetchRes = run(['fetch', 'origin', remote.branch])
+  if (!fetchRes.ok) return { kind: 'refused', reason: OFFLINE_REFUSAL }
+
+  // Unsafe case 3 — HEAD is not an ancestor of the remote tip: the checkout
+  // carries local commit(s) the remote does not have (ahead, or diverged), and
+  // a fast-forward would either be impossible or silently drop them.
+  const isAncestor = run(['merge-base', '--is-ancestor', headSha, remote.sha])
+  if (!isAncestor.ok) {
+    return {
+      kind: 'refused',
+      reason:
+        `checkout has local commit(s) the remote default branch \`${remote.branch}\` does not have — ` +
+        'preparation never discards them; push or integrate them first: `git push`.'
+    }
+  }
+
+  // Safe: on the default branch, clean, and strictly behind — fast-forward to
+  // the remote tip and continue.
+  const merge = run(['merge', '--ff-only', remote.sha])
+  if (!merge.ok) {
+    return {
+      kind: 'refused',
+      reason:
+        `fast-forward to the remote default branch \`${remote.branch}\` at \`${remote.sha}\` failed — ` +
+        'update the checkout by hand first: `git pull --ff-only`.'
+    }
+  }
+  process.stderr.write(
+    `fast-forwarded checkout on \`${remote.branch}\` from \`${headSha}\` to \`${remote.sha}\` before preparing the brief.\n`
+  )
+  return { kind: 'moved', from: headSha, to: remote.sha }
 }
 
 /**
@@ -426,10 +558,18 @@ export async function assembleAndRenderBrief(
     }
   }
 
-  // O1 — the first of the two guarantees on
-  // the instruction version: a frozen brief is rendered from a known tree.
-  // Checked here, before any forge read, so a stale checkout never pays for
-  // a Tranche/Issue fetch it is about to refuse anyway.
+  // O1/O2/O3 — a clean default-branch checkout that is only behind is
+  // fast-forwarded to the remote tip first, so a merge moving the remote
+  // default branch never blocks the next start; the three unsafe cases and an
+  // unreachable remote refuse (`fastForwardToRemoteIfSafe`, the one function
+  // both brief-preparation callers run before the staleness check). Done here,
+  // before any forge read, so a refused checkout never pays for a Tranche/Issue
+  // fetch it is about to refuse anyway.
+  const fastForward = fastForwardToRemoteIfSafe()
+  if (fastForward.kind === 'refused') return { ok: false, missing: [fastForward.reason] }
+
+  // Read HEAD *after* the fast-forward, so the staleness backstop below and the
+  // frozen brief's own `sourceRevision` reflect the tip actually rendered from.
   const headSha = git(['rev-parse', 'HEAD'])
   const staleness = checkStaleAgainstRemote(headSha)
   if (staleness.length > 0) return { ok: false, missing: staleness }
@@ -725,6 +865,12 @@ export async function assembleAndRenderBriefForIssue(
       missing: ['could not resolve owner/repo (set AEG_REPO=owner/repo, or confirm `git remote get-url origin`).']
     }
   }
+
+  // O1/O2/O3 — the same fast-forward-before-staleness step the tranche path
+  // runs (see `assembleAndRenderBrief`): both brief-preparation callers of the
+  // staleness check share this one function.
+  const fastForward = fastForwardToRemoteIfSafe()
+  if (fastForward.kind === 'refused') return { ok: false, missing: [fastForward.reason] }
 
   const headSha = git(['rev-parse', 'HEAD'])
   const staleness = checkStaleAgainstRemote(headSha)
