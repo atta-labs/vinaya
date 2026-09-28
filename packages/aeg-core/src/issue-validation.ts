@@ -1951,7 +1951,7 @@ export function checkSurfaceOverlap(subject: TaskSurfaceFacts, siblings: TaskSur
 export type TaskFileFacts = {
   /** How this peer is named in a `Conflicts-with` edge — a task Issue's number, or, for an open pull request, the number of the Issue it closes. */
   ref: string
-  /** How this peer is named in a message — e.g. `task Issue #851`, `pull request #862 (task Issue #851)`. */
+  /** How this peer is named in a message — its own kind and number, e.g. a task Issue's, or a pull request's plus the task Issue it closes. */
   label: string
   /** The files this peer will touch: a task Issue's own Boundary pinned files, or an open pull request's changed files. */
   files: string[]
