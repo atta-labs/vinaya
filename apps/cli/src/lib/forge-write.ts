@@ -1041,10 +1041,15 @@ const MAX_TREE_PROBES = 40
 /**
  * Does the tracked tree already spell this token out anywhere? A fixed-string
  * `git grep`, never a regex — the tokens asked about are literals (`--issue`,
- * `logs.url`, a command's own word) and a regex reading of one would match by
- * accident. A token the tree already carries is shipped, so an Issue quoting it
- * introduces nothing; `''` (outside a git repository) answers `false` for
- * everything, which leaves the rules grading against the reference alone.
+ * `logs.url`) and a regex reading of one would match by accident. A token the
+ * tree already carries is shipped, so an Issue quoting it introduces nothing;
+ * `''` (outside a git repository) answers `false` for everything, which leaves
+ * the rules grading against the reference alone.
+ *
+ * `-w` makes the match a whole word, not a substring: without it a longer
+ * token already in the tree answered for a shorter one nested inside it
+ * (`--deep` excused by an existing `--deeper`), which is the same
+ * accidental-match failure `-F` exists to prevent, one level up.
  *
  * Past `MAX_TREE_PROBES` distinct tokens it answers `true` — "already
  * shipped", the direction that refuses NOTHING — without running a further
@@ -1064,7 +1069,7 @@ export function tokenExistsInTree(root: string = repoRoot()): (token: string) =>
     const cached = seen.get(token)
     if (cached !== undefined) return cached
     if (seen.size >= MAX_TREE_PROBES) return true
-    const found = git(['-C', root, 'grep', '-l', '-F', '-e', token]) !== ''
+    const found = git(['-C', root, 'grep', '-l', '-F', '-w', '-e', token]) !== ''
     seen.set(token, found)
     return found
   }

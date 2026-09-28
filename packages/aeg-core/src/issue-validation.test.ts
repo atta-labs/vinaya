@@ -2629,6 +2629,40 @@ describe('checkIntroducedConfigKeysCovered', () => {
     expect(result.status).toBe('pass')
   })
 
+  it('refuses a brand-new top-level key when the line says it introduces a configuration key', () => {
+    const result = checkIntroducedConfigKeysCovered(
+      body('A new configuration key `telemetry.endpoint` names where events go.'),
+      FIXTURE_CONFIG_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toContain('`telemetry.endpoint`')
+    expect(result.errors[0]).toContain('Add `packages/sources/src` and `apps/cli/src/lib` to `in:`')
+  })
+
+  it('passes that same brand-new key once the Surface covers both files', () => {
+    expect(
+      checkIntroducedConfigKeysCovered(
+        body(
+          'A new configuration key `telemetry.endpoint` names where events go.',
+          'packages/sources/src, apps/cli/src/lib'
+        ),
+        FIXTURE_CONFIG_REFERENCE,
+        NOTHING_IN_TREE
+      ).status
+    ).toBe('pass')
+  })
+
+  it('reads a dotted token with an undocumented root as a key only where the line claims one', () => {
+    expect(
+      checkIntroducedConfigKeysCovered(
+        body('`telemetry.endpoint` is left alone by this task.'),
+        FIXTURE_CONFIG_REFERENCE,
+        NOTHING_IN_TREE
+      ).status
+    ).toBe('pass')
+  })
+
   it('never reads a filename or a dotted token rooted outside the config as a key', () => {
     const result = checkIntroducedConfigKeysCovered(
       body('`brief-render.ts` and `checks.ts` and `foo.bar` are untouched.'),

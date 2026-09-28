@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { buildPrincipalTestPlanWaitErrors } from '../../src/checks/bin/check-principal-test-plan-wait'
 import { CHECK_SCHEMA_VERSION, type CheckError } from '../../src/checks/contract'
 import { sha256Hex } from '../../src/lib/effects'
+import { checkIntroducedCommandsCovered } from '@attalabs/aeg-core'
 import {
   collectTaskIssueErrors,
   isPendingOnlyFailure,
@@ -960,6 +961,10 @@ describe('readPinnedFileImporters — path-exact, not basename-exact', () => {
     // A basename carrying its own dot.
     write('packages/core/src/config.schema.ts', 'export const schema = 4\n')
     write('apps/cli/src/commands/read.ts', "import { schema } from '../../../../packages/core/src/config.schema'\n")
+    // An ordinary English word a command could be named after, and a longer
+    // flag a shorter one must not be excused by.
+    write('packages/core/src/fsops.ts', "import { rename } from 'node:fs/promises'\nexport { rename }\n")
+    write('apps/cli/src/commands/deep.ts', "export const FLAGS = ['--deeper']\n")
     execFileSync('git', ['add', '-A'], { cwd: fixture })
     execFileSync('git', ['-c', 'user.email=t@e', '-c', 'user.name=t', 'commit', '-qm', 'fixture'], { cwd: fixture })
   })
@@ -1021,6 +1026,69 @@ describe('readPinnedFileImporters — path-exact, not basename-exact', () => {
     expect(inTree('export const gate')).toBe(true)
     expect(inTree('--never-shipped')).toBe(false)
     expect(tokenExistsInTree('')('export const gate')).toBe(false)
+  })
+
+  // The rules' own refusals, run against the REAL tree probe rather than a
+  // stub — the arrangement where a tree answer can suppress a refusal, and so
+  // the only one that proves it cannot suppress the wrong ones.
+  const commandReference = {
+    file: 'packages/sources/src/commands.ts',
+    binary: 'vinaya',
+    commands: [
+      { name: 'issue create', flags: ['--body-file'] },
+      { name: 'check', flags: ['--all', '--deeper'] }
+    ],
+    text: ''
+  }
+  const introducing = (invocation: string) =>
+    [
+      "## Planner's rationale",
+      '',
+      '**Boundary** — In: the gate. Out: nothing else.',
+      '',
+      '## Objectives',
+      '',
+      `O1. \`${invocation}\` does the new thing.`,
+      '',
+      '## Surface',
+      '',
+      'in: packages/core/src',
+      'out: apps/log-server',
+      '',
+      '## Parts',
+      '',
+      'Part 1 (O1) — the new thing happens.'
+    ].join('\n')
+
+  it('refuses an introduced command even though its own word is all over the tree', () => {
+    const result = checkIntroducedCommandsCovered(
+      introducing('vinaya issue rename'),
+      commandReference,
+      tokenExistsInTree(fixture)
+    )
+    expect(tokenExistsInTree(fixture)('rename')).toBe(true)
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toContain('`vinaya issue rename`')
+    expect(result.errors[0]).toContain('Add `packages/sources/src` to `in:`')
+  })
+
+  it('refuses an introduced flag the tree does not carry, and excuses one it does', () => {
+    const inTree = tokenExistsInTree(fixture)
+    const refused = checkIntroducedCommandsCovered(introducing('vinaya check --deep'), commandReference, inTree)
+    expect(refused.status).toBe('fail')
+    expect(refused.errors[0]).toContain('`--deep`')
+    const excused = checkIntroducedCommandsCovered(
+      introducing('vinaya check --other-shipped'),
+      commandReference,
+      () => true
+    )
+    expect(excused.status).toBe('pass')
+  })
+
+  it('matches a whole token, so a longer one in the tree never excuses a shorter one', () => {
+    const inTree = tokenExistsInTree(fixture)
+    expect(inTree('--deeper')).toBe(true)
+    expect(inTree('--deep')).toBe(false)
   })
 
   it('stops probing the tree past its cap, answering "already shipped" rather than refusing', () => {

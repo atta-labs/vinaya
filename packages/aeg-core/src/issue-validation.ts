@@ -2304,13 +2304,26 @@ function resolveCommand(tokens: string[], names: Set<string>): { known: string |
  * flag with the reference's own package in `out:` had the missing row raised
  * two review rounds running.
  *
- * `existsInTree` is what separates INTRODUCES from merely quotes: a token the
- * tracked tree already carries somewhere is shipped already, so this Issue is
- * not the one that has to document it, however stale the reference's own row
- * may be. Without that seam the rule refused an Issue for quoting
- * `vinaya task run --issue` — a flag shipped long before, whose reference row
- * was never updated by the task that added it. The reference gap is real and
- * belongs to a task of its own; it is not this Issue's forced edit.
+ * `existsInTree` is what separates INTRODUCES from merely quotes, **for a flag
+ * only**: a flag the tracked tree already carries somewhere is shipped
+ * already, so this Issue is not the one that has to document it, however stale
+ * the reference's own row may be. Without that seam the rule refused an Issue
+ * for quoting `vinaya task run --issue` — a flag shipped long before, whose
+ * reference row was never updated by the task that added it. The reference gap
+ * is real and belongs to a task of its own; it is not this Issue's forced edit.
+ * A flag token is safe to ask the tree about because `--name` is a shape
+ * ordinary prose and ordinary code do not otherwise write.
+ *
+ * **A command is NOT asked of the tree, and must not be.** A command's own
+ * name is an ordinary English word (`rename`, `archive`, `status`), and the
+ * only thing the tree can answer is whether that word appears somewhere — it
+ * does, in unrelated identifiers, comments and standard-library calls, for
+ * essentially every word a command could be called. Probing it excused nearly
+ * every introduced command as "already shipped" and left this half of the rule
+ * doing nothing. The command reference needs no such backstop: it is the
+ * registry the router is itself tested against (`apps/cli`'s own
+ * registry/switch agreement suite), so a command absent from it is absent from
+ * the product, and absence there is the whole question.
  *
  * A flag is graded against EVERY flag the reference documents, never against
  * the resolved command's own row alone: "not already in the command
@@ -2340,12 +2353,9 @@ export function checkIntroducedCommandsCovered(
     for (const span of backtickedSpans(text)) {
       const tokens = invokedCommandTokens(span, reference.binary)
       const resolved = tokens === null ? { known: null, introduced: null } : resolveCommand(tokens, names)
-      const introducedLeaf = resolved.introduced === null ? null : (resolved.introduced.split(' ').pop() as string)
       if (
         resolved.introduced !== null &&
-        introducedLeaf !== null &&
         !documentedInProse(`${reference.binary} ${resolved.introduced}`, reference.text) &&
-        !existsInTree(introducedLeaf) &&
         !reported.has(`cmd:${resolved.introduced}`)
       ) {
         reported.add(`cmd:${resolved.introduced}`)
@@ -2373,6 +2383,9 @@ function documentedInProse(token: string, text: string): boolean {
   const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   return new RegExp(`(?<![\\w.-])${escaped}(?![\\w.-])`).test(text)
 }
+
+/** A line that says in words that it introduces a configuration key — the one signal available for a key whose root segment the reference has never carried. */
+const CONFIG_KEY_PHRASE_RE = /\bconfig(?:uration)?\s+key\b/i
 
 /** A dotted token whose last segment is one of these is a filename, never a configuration key. */
 const FILE_EXTENSIONS = new Set([
@@ -2418,30 +2431,36 @@ function isDocumentedConfigKey(token: string, keys: string[]): boolean {
 }
 
 /**
- * Every backticked token in `text` that is shaped like a configuration key
- * ROOTED IN THIS PRODUCT'S CONFIG — two or more dotted segments, no path
- * separator, no file extension, and a first segment the reference already
- * documents as a top-level key.
+ * Every backticked token in `text` that is shaped like a configuration key —
+ * two or more dotted segments, no path separator, no file extension — and that
+ * `text` gives a reason to read as one.
  *
- * The first-segment requirement is what keeps this rule from reading every
- * dotted identifier in an Issue (`brief-render.ts`, `foo.bar()`, a version
- * number) as a configuration key. Its cost is that a brand-new TOP-LEVEL key
- * is out of reach — that one stays the Planner's and the Reviewer's judgment,
- * which is the right trade against a rule that refuses real Issues for tokens
- * that were never keys at all: nothing in an Issue distinguishes an undocumented
- * root segment from any other dotted identifier, so widening the net here buys
- * one more caught key at the price of refusing bodies that introduce nothing.
- * The gap is stated where the Planner reads it, in the role reference, rather
- * than left to be discovered.
+ * There are two such reasons, and a token needs either. Its first segment is
+ * already a documented top-level key, so the token extends the config tree
+ * this product has; or the line itself says in words that it introduces a
+ * configuration key, which is the only signal available for a key whose ROOT
+ * has never been documented either. Without the second reason a brand-new
+ * top-level key was invisible to this rule and its two forced reference edits
+ * went undeclared — while the first reason alone cannot see it, since nothing
+ * about an undocumented root segment distinguishes it from any other dotted
+ * identifier.
+ *
+ * Both reasons are needed for the rule to be neither blind nor noisy: dropping
+ * the first-segment test entirely would read every dotted identifier in an
+ * Issue (`brief-render.ts`, `foo.bar()`, a version number) as a key and refuse
+ * bodies that introduce nothing, and the phrase test is narrow precisely
+ * because a line that says "configuration key" and backticks a dotted token is
+ * making the claim this rule grades.
  */
 function configKeyCandidates(text: string, keys: string[]): string[] {
   const topLevel = new Set(keys.map((k) => k.split('.')[0] as string))
+  const saysConfigKey = CONFIG_KEY_PHRASE_RE.test(text)
   const out: string[] = []
   for (const span of backtickedSpans(text)) {
     for (const m of span.matchAll(/(?<![\w./-])[A-Za-z][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_<>-]+)+(?![\w./-])/g)) {
       const token = m[0]
       const segments = token.split('.')
-      if (!topLevel.has(segments[0] as string)) continue
+      if (!topLevel.has(segments[0] as string) && !saysConfigKey) continue
       if (FILE_EXTENSIONS.has((segments[segments.length - 1] as string).toLowerCase())) continue
       out.push(token)
     }
