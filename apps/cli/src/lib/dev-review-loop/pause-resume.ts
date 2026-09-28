@@ -808,6 +808,20 @@ export const PAUSE_REASON_PROFILE: Record<
     attemptedRecovery: 'none — a previously-resolved finding reappeared, which the loop never auto-dismisses.',
     nextActions: ['Confirm whether the reappearance is a real regression or a reviewer false positive.']
   },
+  repeat_finding: {
+    requestedAuthority: 'principal',
+    attemptedRecovery:
+      'one further developer turn on the same blocking finding, which left it open — a third was not spent.',
+    nextActions: [
+      'Read the finding key(s) in `detail`, then rule on the finding itself or redirect the work that cannot close it.'
+    ]
+  },
+  repeat_failure: {
+    requestedAuthority: 'operator',
+    attemptedRecovery:
+      'one further attempt, which ended on the same mechanical failure — the message is in `detail`, unnormalised.',
+    nextActions: ['Fix the mechanical failure named in `detail`, then resume.']
+  },
   infrastructure: {
     requestedAuthority: 'operator',
     attemptedRecovery:

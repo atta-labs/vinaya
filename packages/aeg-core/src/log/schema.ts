@@ -394,6 +394,11 @@ export const DevReviewLoopEventSchema = z.discriminatedUnion('event', [
       // confidence collapse and a finding-id reappearance are each their own
       // condition, distinguished from the generic `no_progress` stall and
       // from each other, rather than collapsing all three into one value.
+      // `repeat_finding` and `repeat_failure` widen it the same way: a
+      // blocking finding open for two consecutive reviewed rounds, and two
+      // consecutive attempts ending on the same mechanical failure, are each
+      // their own condition too — never folded into `no_progress`, whose own
+      // (removed) rule paused on any round that resolved nothing.
       condition: z.enum([
         'green',
         'max_rounds',
@@ -401,7 +406,9 @@ export const DevReviewLoopEventSchema = z.discriminatedUnion('event', [
         'escalated',
         'principal_stop',
         'confidence',
-        'reappearance'
+        'reappearance',
+        'repeat_finding',
+        'repeat_failure'
       ])
     })
     .strict(),

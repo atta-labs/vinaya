@@ -579,3 +579,98 @@ describe('assessRound — a round no reviewer saw records no counts and names wh
     expect(Object.keys(record?.countsBySeverity ?? {}).sort()).toEqual([...SEVERITY_COLUMNS].sort())
   })
 })
+
+describe('assessRound — the same blocking finding twice pauses the loop', () => {
+  const blocking = (id: string, state: 'open' | 'fix-claimed' | 'resolved' = 'open') => ({
+    id,
+    severity: 'blocker',
+    state,
+    severityScale: 'code-review',
+    policyTreatment: 'blocking' as const
+  })
+
+  it('a blocking finding open in two consecutive rounds → pause(repeat_finding) naming it, instead of a third developer turn', () => {
+    const { events, decisions } = runScenario(freshState(), [
+      fakeGate(1, true),
+      fakeVerdicts(1, [blockingVerdict('reviewer', [blocking('F1')]), cleanVerdict('security')]),
+      fakeGate(2, true, { confidence: { value: 80 } }),
+      fakeVerdicts(2, [blockingVerdict('reviewer', [blocking('F1')]), cleanVerdict('security')])
+    ])
+
+    expect(decisions[1]).toEqual({ type: 'dispatch_developer' })
+    expect(decisions.at(-1)).toEqual({
+      type: 'pause',
+      reason: 'repeat_finding',
+      detail: 'open after two consecutive rounds: reviewer:F1'
+    })
+    const stop = events.find((e) => e.event === 'stop_condition_met' && 'round' in e && e.round === 2)
+    expect(stop).toMatchObject({ condition: 'repeat_finding' })
+    expect(events.some((e) => e.event === 'journal_finalized' && 'result' in e && e.result === 'stopped')).toBe(true)
+  })
+
+  it('the same id from the other role is a different finding: reviewer:F1 then security:F1 continues', () => {
+    const { decisions } = runScenario(freshState(), [
+      fakeGate(1, true),
+      fakeVerdicts(1, [blockingVerdict('reviewer', [blocking('F1')]), cleanVerdict('security')]),
+      fakeGate(2, true, { confidence: { value: 80 } }),
+      fakeVerdicts(2, [cleanVerdict('reviewer'), blockingVerdict('security', [blocking('F1')])])
+    ])
+
+    expect(decisions.at(-1)).toEqual({ type: 'dispatch_developer' })
+  })
+
+  it('a repeated NON-blocking finding never pauses — the developer was never sent back for it', () => {
+    const nonBlocking = {
+      id: 'F1',
+      severity: 'minor',
+      state: 'open' as const,
+      severityScale: 'code-review',
+      policyTreatment: 'non_blocking' as const
+    }
+    const { decisions } = runScenario(freshState(), [
+      fakeGate(1, true),
+      fakeVerdicts(1, [blockingVerdict('reviewer', [nonBlocking, blocking('F2')]), cleanVerdict('security')]),
+      fakeGate(2, true, { confidence: { value: 80 } }),
+      fakeVerdicts(2, [blockingVerdict('reviewer', [nonBlocking, blocking('F3')]), cleanVerdict('security')])
+    ])
+
+    expect(decisions.at(-1)).toEqual({ type: 'dispatch_developer' })
+  })
+
+  it('the removed no_progress rule is not revived: a round resolving nothing but raising only NEW blocking findings continues', () => {
+    const { decisions } = runScenario(freshState(), [
+      fakeGate(1, true),
+      fakeVerdicts(1, [blockingVerdict('reviewer', [blocking('F1')]), cleanVerdict('security')]),
+      fakeGate(2, true, { confidence: { value: 80 } }),
+      fakeVerdicts(2, [blockingVerdict('reviewer', [blocking('F2')]), cleanVerdict('security')])
+    ])
+
+    expect(decisions.at(-1)).toEqual({ type: 'dispatch_developer' })
+  })
+
+  it('a blocking finding the round marks resolved is not open, so it never counts as repeated', () => {
+    const { decisions } = runScenario(freshState(), [
+      fakeGate(1, true),
+      fakeVerdicts(1, [blockingVerdict('reviewer', [blocking('F1')]), cleanVerdict('security')]),
+      fakeGate(2, true, { confidence: { value: 80 } }),
+      fakeVerdicts(2, [
+        blockingVerdict('reviewer', [blocking('F1', 'resolved'), blocking('F2')]),
+        cleanVerdict('security')
+      ])
+    ])
+
+    expect(decisions.at(-1)).toEqual({ type: 'dispatch_developer' })
+  })
+
+  it('a red gate between two reviewed rounds does not break the chain — consecutive means consecutive REVIEWED rounds', () => {
+    const { decisions } = runScenario(freshState(), [
+      fakeGate(1, true),
+      fakeVerdicts(1, [blockingVerdict('reviewer', [blocking('F1')]), cleanVerdict('security')]),
+      fakeGate(2, false),
+      fakeGate(2, true, { confidence: { value: 80 } }),
+      fakeVerdicts(2, [blockingVerdict('reviewer', [blocking('F1')]), cleanVerdict('security')])
+    ])
+
+    expect(decisions.at(-1)).toMatchObject({ type: 'pause', reason: 'repeat_finding' })
+  })
+})

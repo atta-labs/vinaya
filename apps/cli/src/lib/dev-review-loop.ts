@@ -631,7 +631,9 @@ export function describeConfidencePauseDetail(confidence: Confidence): string {
  * verdicts it built `Observations` from. `max_rounds` is excluded: it
  * already carries its own `detail` from `assessRound` (`max rounds: <n>`),
  * so this is never called for it (see the `decision.detail === undefined`
- * guard at each call site). `assessVerdicts` no longer decides a
+ * guard at each call site) — and so, for the same reason, is
+ * `'repeat_finding'`, whose own `detail` from `assessRound` names the
+ * reviewer-qualified finding key(s) that stayed open two rounds running. `assessVerdicts` no longer decides a
  * `'no_progress'` pause at all — the driver's own attach-redelivery pause is
  * the only `'no_progress'` source now, and it builds its own `detail` inline
  * rather than here.
