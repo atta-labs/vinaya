@@ -3354,7 +3354,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                         conflictFiles.length > 0 ? conflictFiles.join(', ') : '(unknown)'
                       })`
                     : `head ${headBeforeDispatch} unchanged after dispatch; failing check-run(s): ${
-                        lastFailingChecks.length > 0 ? lastFailingChecks.join(', ') : '(unknown)'
+                        lastFailingChecks.length > 0
+                          ? lastFailingChecks.join(', ')
+                          : 'none read for this head — the developer pushed nothing for the gate to judge'
                       }`
                 if (gateStalledStreak < MAX_GATE_STALLED_TURNS) {
                   continue
@@ -3424,6 +3426,18 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // `@attalabs/aeg-core`) and pauses when two consecutive attempts
           // match. A red gate whose cause could not be named sends nothing,
           // which is exactly how "unknown never matches unknown" is spelled.
+          //
+          // This is the ONLY site that feeds it, and it bounds what the stop
+          // can cover: a failure reaches here only if the developer pushed a
+          // head for the gate to read. A refused push never does — its
+          // refusal text lives in the developer's own session, and all this
+          // driver can read afterwards is `readUnpushedWorkDetail`'s dirty
+          // files and commits-ahead count, never why the push was refused —
+          // and neither does a test that fails inside the pre-push hook,
+          // for the same reason. Both are bounded a turn EARLIER instead, by
+          // the unmoved-head paths above (`no_push` after one resume,
+          // `infrastructure` at `MAX_GATE_STALLED_TURNS`); neither compares
+          // signatures, because neither has a failure message to compare.
           const failure = gateGreen || lastFailingChecks.length === 0 ? undefined : lastFailingChecks.join('; ')
           const obs: Observations = {
             kind: 'gate',

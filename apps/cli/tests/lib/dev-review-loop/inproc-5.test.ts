@@ -221,6 +221,34 @@ describe('devReviewLoop — O2 (#543): unpushed real work is resumed once, then 
     expect(resumeEvent?.branch).toBe(world.branch)
     expect(resumeEvent?.detail as string).toMatch(/smoke\.ts/)
   })
+
+  it('a push the developer could not land is bounded HERE, not by the repeat-failure stop: no head means no gate read to compare', async () => {
+    // The boundary the repeat-failure stop documents, pinned as behaviour:
+    // a refused push (or a test failing inside the pre-push hook) leaves the
+    // branch head where it was, so no mechanical-gate read ever happens for
+    // it and no failure text ever reaches the assessment. The commits-ahead
+    // reading below is everything this driver can see of such a push. It
+    // pauses one turn EARLIER than the repeat-failure stop would, through
+    // `no_push` — never as a repeat-failure pause, and never by comparing
+    // signatures it does not have.
+    const world = makeWorld({ gate: 'red' })
+    const { deps } = withCapturedDeveloperDispatch(world, {
+      readUnpushedWorkDetail: () => ({ dirtyFiles: [], aheadCount: 2 })
+    })
+    const result = await runLoopInProcessSafe(world, deps, { gatePollMaxAttempts: 2, gatePollIntervalMs: 5 })
+
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'no_push' })
+    const conditions = outboxLines(world)
+      .filter((l) => l.event === 'stop_condition_met')
+      .map((l) => l.condition)
+    expect(conditions).not.toContain('repeat_failure')
+    const pauseState = JSON.parse(readFileSync(join(controlDir(world), 'pause-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
+    expect(pauseState.reason).toBe('no_push')
+    expect(pauseState.detail).toMatch(/commits ahead of the remote only/)
+  })
 })
 
 // --- O2 (task-files-v1 2, #649): the loop's two OLD worktree-root control-file names get no exemption any more ---
