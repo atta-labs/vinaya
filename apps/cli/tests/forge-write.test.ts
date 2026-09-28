@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { BriefSection } from '../src/lib/config'
+import { resetTrustAnchorConfigMemo } from '../src/lib/log-sink.js'
 import {
   ForgeArgError,
   extractLabels,
@@ -146,6 +147,19 @@ describe('validateForgeWrite — milestoneShape builtin', () => {
     expect(errors.length).toBe(1)
     expect(errors[0]?.message).toContain('Release')
   })
+})
+
+// `runBodyChecks` below logs, so an unattended `log()` in THIS process reads
+// the default branch's own config over the trust anchor and memoizes it for the
+// whole `bun:test` process. A later file driving a temporary world of its own is
+// then told the default branch declares a `logs.url` server and delivers its
+// events there instead of to that world's folder, which it reads back empty —
+// `lib/dev-review-loop/inproc-1.test.ts` fails its `journal_finalized` count
+// exactly that way, and only when it runs after this file. The memo is dropped
+// here, in the file that populates it, the same way `new-check.test.ts` drops
+// its own.
+afterEach(() => {
+  resetTrustAnchorConfigMemo()
 })
 
 // The three forced-companion rules are exercised in
