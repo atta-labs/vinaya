@@ -32,8 +32,7 @@
   "releaseActor": "daniboomerang",
   "reviewPolicy": {
     "codeReviewThreshold": "MAJOR",
-    "securityThreshold": "HIGH",
-    "maxRounds": 7
+    "securityThreshold": "HIGH"
   },
   "gateCutovers": {
     "objectivesSinceIssue": 404,
