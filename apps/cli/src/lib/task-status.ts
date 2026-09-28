@@ -587,15 +587,30 @@ export type TaskLoopState =
  * means the last run's own `driver_exited` role-log trace — if one exists —
  * is more informative than a possibly much older pause/publish record.
  *
- * A start claim is the LEAST authoritative signal here and is read last, on the
- * one path that used to end in `no_driver`: every state above it is backed by a
- * record of something that actually happened to a run — a live lock, a pause, a
- * published round, a driver that exited — while a claim only says a start was
- * accepted. So a live driver still reads `running` whatever a claim says, a
- * pause still reads `paused`, and the claim decides only where there was
- * otherwise nothing to read. `startClaim` is a thunk for that reason: the claim
- * directory is listed only when the read reaches it, so a running task pays
- * nothing for it.
+ * But a FRESH start claim — one accepted strictly after that dead lock was
+ * written — is newer still, and outranks the exit trace: it belongs to a run
+ * started AFTER the one that exited, a start coming up whose own driver lock has
+ * not appeared yet, not the run that wrote the trace. Reporting a start the
+ * Operator had just accepted as `exited` sent it to start the task again, and
+ * the run already coming up then had a second developer put on its branch — the
+ * exact failure this precedence closes. Freshness is measured the SAME way,
+ * against the same lock, whether the claim overrides the exit trace here or is
+ * the last-resort reading below (`claimPostdatesLock`), so "outranks the exit
+ * record" and "outranks the empty fallback" can never come to mean two
+ * different comparisons; and a start that REPLACED an earlier failed one for
+ * this task changes nothing, since `readStartClaim` reads the newest claim, so
+ * it is the replacement's own accepted-at that is compared, never the one it
+ * replaced.
+ *
+ * A start claim is otherwise the LEAST authoritative signal here: a live driver
+ * still reads `running` whatever a claim says, and a pause or a published round
+ * still wins over it, because each is backed by a record of something that
+ * actually happened to a run while a claim only says a start was accepted. So a
+ * claim decides only two things — it overrides the previous run's exit trace
+ * when it is fresh, and it is the one reading left where nothing else describes
+ * the task at all. `startClaim` is a thunk read ONCE and only after a live
+ * driver is ruled out, so a running task pays nothing for the claim directory
+ * listing.
  */
 export function deriveLoopState(
   root: string,
@@ -615,9 +630,33 @@ export function deriveLoopState(
   // by run identity").
   const controller = findRecordedControllerRun(task)
   if (controller) return { kind: 'running', pid: controller.pid, startedAt: controller.startedAt }
+
+  // The start claim, read once now that a live driver is ruled out (a running
+  // task returned above and never pays for it) and consulted on two paths
+  // below. It is FRESH when it postdates this task's most recent driver lock —
+  // or when there is no lock at all: such a claim was accepted after the run
+  // that wrote the lock, so it speaks for a start still coming up, not for that
+  // earlier run. A lock the claim does NOT postdate is this start's own driver,
+  // or a later one — the driver appeared and the claim stops speaking. An
+  // unreadable timestamp on either side is not fresh: a comparison that cannot
+  // be made is not evidence for the louder reading. The claim's `startedAt` is
+  // the canonical spelling of the instant its record carries
+  // (`displayClaimTimestamp`), never a narrowed rendering of the characters, so
+  // this compares two records' times, not two display strings, whatever shape
+  // the claim on disk spelled its own time in.
+  const claim = startClaim()
+  const freshClaim: StartClaimState | null =
+    claim !== null && (lock === null || claimPostdatesLock(claim.startedAt, lock.startedAt)) ? claim : null
+
   if (lock) {
     const trace = readLastDriverExited(task, loopLog)
-    if (trace) return { kind: 'exited', reason: trace.reason, lastDecision: trace.lastDecision }
+    if (trace) {
+      // A fresh start outranks the previous run's exit trace — see this
+      // function's own header for why, and for why a replaced earlier failed
+      // start does not change which time is compared.
+      if (freshClaim !== null) return freshClaim
+      return { kind: 'exited', reason: trace.reason, lastDecision: trace.lastDecision }
+    }
   }
 
   const published = newestPublishedRound(root, task)
@@ -626,25 +665,10 @@ export function deriveLoopState(
     return { kind: 'paused', reason: pause.reason, detail: pause.detail, round: pause.round }
   }
   if (published !== null) return { kind: 'published', round: published }
-  const claim = startClaim()
-  if (claim === null) return { kind: 'no_driver' }
-  // A driver lock is proof a driver appeared — but only for the run that wrote
-  // it. A lock this claim POSTDATES belongs to an earlier run (the
-  // SIGKILL/OOM/reboot case leaves one behind with no `driver_exited` trace to
-  // read), and says nothing about a start accepted after it; `task run` clears
-  // and rewrites that file only after its forge-bound brief render, so the old
-  // one sits on disk for the whole window this state exists to describe.
-  // A lock at or after the claim's own accepted-at IS this start's own driver,
-  // or a later one: either way the driver appeared and the claim stops
-  // speaking. An unreadable timestamp on either side takes the same silent
-  // branch, since a comparison that cannot be made is not evidence for the
-  // louder reading.
-  // The claim's `startedAt` is the canonical spelling of the very instant its
-  // record carries (`displayClaimTimestamp`), never a narrowed rendering of
-  // the characters — so this compares the two records' times, not two display
-  // strings, whatever shape the claim on disk spelled its own time in.
-  if (lock && !claimPostdatesLock(claim.startedAt, lock.startedAt)) return { kind: 'no_driver' }
-  return claim
+  // The last-resort reading: on the one path that otherwise ends in
+  // `no_driver`, a fresh start claim is the only record that says anything about
+  // this task at all.
+  return freshClaim ?? { kind: 'no_driver' }
 }
 
 /** Was this claim accepted strictly after that driver lock was written? `false` whenever either timestamp does not parse — see {@link deriveLoopState}. */

@@ -925,6 +925,128 @@ describe('deriveLoopState', () => {
     ).toEqual({ kind: 'start_did_not_come_up', requestId: REQUEST_ID, startedAt: CLAIM_ACCEPTED_AT })
   })
 
+  it("reads a start accepted after an earlier run's EXIT TRACE as starting, not as that earlier exit", () => {
+    // The reported failure: a task whose previous run exited on a signal — a
+    // dead lock AND a `driver_exited` trace — was started again, and a status
+    // read in the window before the new driver's lock appeared still reported
+    // `exited (signal)`. The Operator, told a start it had just accepted had not
+    // happened, started the task a second time — a second developer on one
+    // branch. A start accepted after that trace belongs to the NEW run coming
+    // up and outranks it. This is the precedence the earlier
+    // "…AFTER an earlier run's dead lock…" case never reached: that lock carried
+    // no trace, so the exit branch never fired.
+    const root = tempDir()
+    writeRunFile(
+      root,
+      TASK,
+      'driver.pid.json',
+      JSON.stringify({ pid: deadPid(), startedAt: '2026-09-26T09:00:00.000Z' })
+    )
+    appendRoleLine(
+      loopLogPathFor(null, TASK, root),
+      'dev-review-loop',
+      'driver_exited: reason=signal last_decision=dispatch_developer'
+    )
+    writeStartClaim(root, {
+      requestId: REQUEST_ID,
+      caller: 'operator',
+      target: { issue: TASK },
+      startedAt: CLAIM_ACCEPTED_AT,
+      pid: 4242
+    })
+    expect(
+      deriveLoopState(root, TASK, { repo: null, loopsRoot: root }, claimThunk(root, TASK, null, WHILE_CLAIM_IS_FRESH))
+    ).toEqual({ kind: 'starting', requestId: REQUEST_ID, startedAt: CLAIM_ACCEPTED_AT })
+  })
+
+  it('reads a start that then did not come up as start_did_not_come_up, still never the earlier exit trace', () => {
+    // O2: once the accepted start's own process is gone and its grace has passed
+    // with no driver lock, it reads as a start that did not come up — its own,
+    // more recent failure, never the previous run's older exit trace. Both send
+    // the Operator to `task_start`, but the newer one names the request that
+    // just failed rather than the run that exited before it.
+    const root = tempDir()
+    writeRunFile(
+      root,
+      TASK,
+      'driver.pid.json',
+      JSON.stringify({ pid: deadPid(), startedAt: '2026-09-26T09:00:00.000Z' })
+    )
+    appendRoleLine(
+      loopLogPathFor(null, TASK, root),
+      'dev-review-loop',
+      'driver_exited: reason=signal last_decision=dispatch_developer'
+    )
+    writeStartClaim(root, {
+      requestId: REQUEST_ID,
+      caller: 'operator',
+      target: { issue: TASK },
+      startedAt: CLAIM_ACCEPTED_AT,
+      pid: 4242
+    })
+    expect(
+      deriveLoopState(root, TASK, { repo: null, loopsRoot: root }, claimThunk(root, TASK, null, AFTER_CLAIM_WENT_STALE))
+    ).toEqual({ kind: 'start_did_not_come_up', requestId: REQUEST_ID, startedAt: CLAIM_ACCEPTED_AT })
+  })
+
+  it('O3: an exit record AND a replaced failed start — starting before the new driver, running after it', () => {
+    // The whole verification story: a task whose previous run exited on a signal
+    // (a dead lock and a `driver_exited` trace) and whose first start that day
+    // FAILED and was replaced, started again — read once before its new driver's
+    // lock appears and once after.
+    const root = tempDir()
+    writeRunFile(
+      root,
+      TASK,
+      'driver.pid.json',
+      JSON.stringify({ pid: deadPid(), startedAt: '2026-09-26T09:00:00.000Z' })
+    )
+    appendRoleLine(
+      loopLogPathFor(null, TASK, root),
+      'dev-review-loop',
+      'driver_exited: reason=signal last_decision=dispatch_developer'
+    )
+    // The earlier start that FAILED and was replaced: an older claim, its own
+    // launch gone. It postdates the dead lock too, but `readStartClaim` reads the
+    // NEWEST claim, so it is the replacement below — not this one — whose
+    // accepted-at is compared, and whose request the reading names.
+    writeStartClaim(root, {
+      requestId: 'ffffffffffffffff',
+      caller: 'operator',
+      target: { issue: TASK },
+      startedAt: '2026-09-26T09:30:00.000Z',
+      pid: 4242
+    })
+    // The start that replaced it, accepted after both the exit and the failed one.
+    writeStartClaim(root, {
+      requestId: REQUEST_ID,
+      caller: 'operator',
+      target: { issue: TASK },
+      startedAt: CLAIM_ACCEPTED_AT,
+      pid: 5252
+    })
+
+    // Read BEFORE the new driver's lock appears: the fresh replacement claim wins
+    // over both the exit trace and the older replaced claim — starting, named for
+    // the replacement's OWN request, never the one it replaced.
+    expect(
+      deriveLoopState(root, TASK, { repo: null, loopsRoot: root }, claimThunk(root, TASK, null, WHILE_CLAIM_IS_FRESH))
+    ).toEqual({ kind: 'starting', requestId: REQUEST_ID, startedAt: CLAIM_ACCEPTED_AT })
+
+    // The new driver comes up: `task run` clears and rewrites the lock, now
+    // naming a live pid and postdating the claim. Read AFTER: running, whatever
+    // the claim still says.
+    writeRunFile(
+      root,
+      TASK,
+      'driver.pid.json',
+      JSON.stringify({ pid: process.pid, startedAt: '2026-09-26T10:00:05.000Z' })
+    )
+    expect(
+      deriveLoopState(root, TASK, { repo: null, loopsRoot: root }, claimThunk(root, TASK, null, WHILE_CLAIM_IS_FRESH))
+    ).toEqual({ kind: 'running', pid: process.pid, startedAt: '2026-09-26T10:00:05.000Z' })
+  })
+
   it('outranks an earlier dead lock however the claim spelled its own time — the comparison is of instants', () => {
     // The claim's accepted-at reaches this comparison as the canonical
     // spelling of the instant it names, never as a narrowed rendering of its

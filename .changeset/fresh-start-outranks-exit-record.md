@@ -1,0 +1,5 @@
+---
+'@attalabs/vinaya': patch
+---
+
+A `task_status` read taken after `task_start` accepted a start, and before that run's driver has written its lock, now reads the task as `starting` even when the task carries an earlier run's `driver_exited` trace. Before, a start accepted after a previous run exited on a signal still read `exited (...)` for the whole tens-of-seconds window before the new driver's lock appeared — telling the Operator a start it had just accepted had not happened, and inviting it to start the task a second time. A start claim accepted strictly after the dead lock was written now outranks that lock's exit trace in `deriveLoopState`, so the window reads `starting` (or `start did not come up` once the launch is gone), the `task_start` gate reads the same derivation and refuses a second developer on the branch, and once the new driver's lock appears the task reads `running` as before. A start that replaced an earlier failed start for the same task is compared by the replacement's own accepted-at, never the one it replaced.
