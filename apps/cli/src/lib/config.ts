@@ -824,7 +824,7 @@ export const VinayaConfigSchema = z.object({
   // by the trusted process only, so a credential never sits in the
   // committed config (`resolveLogsHeaderValues`, below). When that variable is
   // unset in the process environment, the value falls back to the macOS login
-  // Keychain (issue #841); the environment still wins where it is set, and on
+  // Keychain; the environment still wins where it is set, and on
   // Linux the fallback is a no-op.
   //
   // **Default-branch only, for an unattended caller** — the exact rule
@@ -1208,13 +1208,13 @@ export function resolveTrustAnchorLogsDestination(
   return 'folder' in anchored && anchored.folder === local.folder ? anchored : null
 }
 
-/** Reads a `logs.headers` credential from the macOS login Keychain — the injectable half of `resolveLogsHeaderValues`, so the substitution stays pure where it is tested (issue #841). */
+/** Reads a `logs.headers` credential from the macOS login Keychain — the injectable half of `resolveLogsHeaderValues`, so the substitution stays pure where it is tested. */
 export type LogHeaderKeychainReader = (variable: string) => string | null
 
 /**
  * Substitutes `${VAR_NAME}` references in a `logs.url` header value with the
  * named environment variable, falling back to the macOS login Keychain when
- * that variable is not set in the process environment (issue #841, O1) — never
+ * that variable is not set in the process environment (O1) — never
  * a literal secret sitting in `vinaya.config.json` itself. **The environment
  * always wins** (O3): the Keychain is consulted only when `env[name]` is
  * genuinely absent (`undefined`), so a variable that is set — on Linux, in CI,

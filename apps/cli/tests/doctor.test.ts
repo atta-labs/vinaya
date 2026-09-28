@@ -67,6 +67,9 @@ function doctorDeps(overrides: Partial<DoctorDeps> = {}): DoctorDeps {
       credentialVars: []
     }),
     probeLogServer: async () => ({ kind: 'accepted', status: 200 }),
+    // Nothing in the Keychain by default — CI is Linux, where the real reader
+    // returns null anyway. The O4 cases below override this to prove each source.
+    readLogCredentialKeychain: () => null,
     ...overrides
   }
 }
@@ -1530,6 +1533,99 @@ describe('vinaya doctor — the log destination works (Issue #793)', () => {
     expect(finding.severity).toBe('info')
     expect(finding.message).toContain('VINAYA_LOG_TOKEN')
     expect(report.healthy).toBe(true)
+  })
+
+  // O4: doctor reports WHERE each log credential was found — the environment,
+  // the macOS login Keychain, or nowhere — never its value.
+  describe('where the log credential was found (O4)', () => {
+    function credentialFinding(findings: Finding[]): Finding {
+      const found = findings.filter((f) => f.check === 'log-credential')
+      expect(found).toHaveLength(1)
+      return found[0] as Finding
+    }
+
+    it('names no credential-source line when no variable is referenced', async () => {
+      await runInit(['--yes'], initDeps())
+      const report = await runDoctorJson({
+        resolveLogDestination: async () => ({
+          destination: { kind: 'server', url: SERVER, headers: undefined },
+          credentialVars: []
+        }),
+        probeLogServer: async () => ({ kind: 'accepted', status: 200 })
+      })
+      expect(report.findings.filter((f) => f.check === 'log-credential')).toHaveLength(0)
+    })
+
+    it('reports the environment as the source when the variable is set there — Keychain not consulted', async () => {
+      await runInit(['--yes'], initDeps())
+      const prev = process.env.VINAYA_LOG_TOKEN
+      process.env.VINAYA_LOG_TOKEN = 'set-in-env'
+      try {
+        const report = await runDoctorJson({
+          resolveLogDestination: async () => ({
+            destination: { kind: 'server', url: SERVER, headers: { authorization: 'Bearer x' } },
+            credentialVars: ['VINAYA_LOG_TOKEN']
+          }),
+          probeLogServer: async () => ({ kind: 'accepted', status: 200 }),
+          readLogCredentialKeychain: () => {
+            throw new Error('the environment was set — the Keychain must not be read')
+          }
+        })
+        const finding = credentialFinding(report.findings)
+        expect(finding.severity).toBe('info')
+        expect(finding.message).toContain('VINAYA_LOG_TOKEN: found in the environment')
+        expect(finding.message).not.toContain('set-in-env')
+        expect(report.healthy).toBe(true)
+      } finally {
+        if (prev === undefined) delete process.env.VINAYA_LOG_TOKEN
+        else process.env.VINAYA_LOG_TOKEN = prev
+      }
+    })
+
+    it('reports the macOS login Keychain when the variable is unset but stored there', async () => {
+      await runInit(['--yes'], initDeps())
+      const prev = process.env.VINAYA_LOG_TOKEN
+      delete process.env.VINAYA_LOG_TOKEN
+      try {
+        const report = await runDoctorJson({
+          resolveLogDestination: async () => ({
+            destination: { kind: 'server', url: SERVER, headers: { authorization: 'Bearer x' } },
+            credentialVars: ['VINAYA_LOG_TOKEN']
+          }),
+          probeLogServer: async () => ({ kind: 'accepted', status: 200 }),
+          readLogCredentialKeychain: (name) => (name === 'VINAYA_LOG_TOKEN' ? 'kc-secret' : null)
+        })
+        const finding = credentialFinding(report.findings)
+        expect(finding.message).toContain('VINAYA_LOG_TOKEN: found in the macOS login Keychain')
+        expect(finding.message).not.toContain('kc-secret')
+      } finally {
+        if (prev === undefined) delete process.env.VINAYA_LOG_TOKEN
+        else process.env.VINAYA_LOG_TOKEN = prev
+      }
+    })
+
+    it('reports nowhere when the variable is in neither the environment nor the Keychain', async () => {
+      await runInit(['--yes'], initDeps())
+      const prev = process.env.VINAYA_LOG_TOKEN
+      delete process.env.VINAYA_LOG_TOKEN
+      try {
+        const report = await runDoctorJson({
+          resolveLogDestination: async () => ({
+            destination: { kind: 'server', url: SERVER, headers: { authorization: 'Bearer x' } },
+            credentialVars: ['VINAYA_LOG_TOKEN']
+          }),
+          probeLogServer: async () => ({ kind: 'credential-rejected', status: 401 }),
+          readLogCredentialKeychain: () => null
+        })
+        const finding = credentialFinding(report.findings)
+        expect(finding.message).toContain(
+          'VINAYA_LOG_TOKEN: found in neither the environment nor the macOS login Keychain'
+        )
+      } finally {
+        if (prev === undefined) delete process.env.VINAYA_LOG_TOKEN
+        else process.env.VINAYA_LOG_TOKEN = prev
+      }
+    })
   })
 
   // The real probe, against a real server: what it sends is what decides

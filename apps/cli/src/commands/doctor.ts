@@ -44,6 +44,7 @@ import { CLAUDE_SETTINGS_PATH } from '../lib/claude-stop-hook-emitter.js'
 import { GEMINI_COMMAND_PATH } from '../lib/gemini-command-emitter.js'
 import { type DoctrineSource, resolveDoctrineRootInfo } from './doctrine.js'
 import { detectVendoredVinaya } from '../lib/self-host.js'
+import { readLogHeaderKeychainCredential } from '../lib/worker-boundary.js'
 import {
   type BriefSection,
   GLOBAL_CONFIG_PATH,
@@ -103,6 +104,8 @@ export type DoctorDeps = {
   resolveLogDestination: () => Promise<LogDestinationTarget>
   /** Does the destination accept this machine's credential — answered without storing an event. */
   probeLogServer: (url: string, headers: Record<string, string> | undefined) => Promise<LogServerProbe>
+  /** Reads a `logs.headers` credential from the macOS login Keychain — so doctor can report WHERE each credential was found (environment, Keychain, or nowhere), never its value (O4). The SAME reader delivery uses, so the two can never disagree. Optional and injected so the check is provable on Linux CI where the real Keychain is absent; an omitted entry falls back to the real reader (which returns `null` off macOS), so every existing `DoctorDeps` constructor keeps compiling unchanged. */
+  readLogCredentialKeychain?: (variable: string) => string | null
 }
 
 function readVersion(): string {
@@ -269,7 +272,8 @@ export function realDeps(): DoctorDeps {
     packageVersion: readVersion,
     meteringCapability: () => resolveMeteringCapability(hardenedMeteringDeps()),
     resolveLogDestination: resolveLogDestinationForDoctor,
-    probeLogServer: probeLogDestinationServer
+    probeLogServer: probeLogDestinationServer,
+    readLogCredentialKeychain: readLogHeaderKeychainCredential
   }
 }
 
@@ -1314,8 +1318,49 @@ export function urlForDisplay(url: string): string {
   return parsed.toString()
 }
 
+/**
+ * O4: where each credential a `logs.headers` value references was found — the
+ * environment, the macOS login Keychain, or nowhere — reported through the EXACT
+ * reader delivery uses (`resolveLogsHeaderValues`'s own default), so the two can
+ * never disagree about where the value comes from. The value itself is never
+ * read into the report: only the environment-variable's presence and the
+ * Keychain read's null-ness are inspected. `info` always — this line reports a
+ * fact; the destination probe above already reddens the command when a credential
+ * is actually refused. `null` when no `${VAR}` is referenced at all.
+ *
+ * The precedence mirrors the substitution exactly (O3): a variable that is SET
+ * in the environment (`!== undefined`, even to the empty string) is where the
+ * value comes from, so it is reported as the environment; only a genuinely
+ * absent variable is looked up in the Keychain.
+ */
+function logCredentialSourceFinding(
+  credentialVars: readonly string[],
+  readKeychain: (variable: string) => string | null,
+  env: NodeJS.ProcessEnv
+): Finding | null {
+  if (credentialVars.length === 0) return null
+  const parts = credentialVars.map((name) => {
+    if (env[name] !== undefined) return `${name}: found in the environment`
+    if (readKeychain(name) !== null) return `${name}: found in the macOS login Keychain`
+    return `${name}: found in neither the environment nor the macOS login Keychain`
+  })
+  // A distinct `[log-credential]` line, beside the `[logs]` destination finding
+  // rather than folded into it, so the source is reported on every destination
+  // kind — including a healthy server, where the destination line is `ok`.
+  return info(
+    'log-credential',
+    `where the log credential was found — ${parts.join('; ')} (the value itself is never read into this report).`
+  )
+}
+
 async function diagnoseLogDestination(deps: DoctorDeps): Promise<Finding[]> {
   const { destination, credentialVars } = await deps.resolveLogDestination()
+  const source = logCredentialSourceFinding(
+    credentialVars,
+    deps.readLogCredentialKeychain ?? readLogHeaderKeychainCredential,
+    process.env
+  )
+  const withSource = (findings: Finding[]): Finding[] => (source ? [...findings, source] : findings)
   const fix =
     credentialVars.length > 0
       ? `Set ${credentialVars.join(', ')} to a credential the server accepts`
@@ -1328,19 +1373,19 @@ async function diagnoseLogDestination(deps: DoctorDeps): Promise<Finding[]> {
     // named anyway: "a job holds no delivery credential" IS the incident
     // shape, and the name is the one thing that makes it fixable.
     const named = credentialVars.length > 0 ? ` ${fix} where this host can read it.` : ''
-    return [info('logs', `no log event is recorded on this host — ${destination.reason}.${named}`)]
+    return withSource([info('logs', `no log event is recorded on this host — ${destination.reason}.${named}`)])
   }
 
   if (destination.kind === 'folder') {
     const deliverable = folderDeliverable(destination.folder)
     if (!deliverable.ok) {
-      return [
+      return withSource([
         error(
           'logs',
           `log events go to the folder ${destination.folder}, which cannot be written — ${deliverable.detail}. ` +
             'Every event is dropped, with one warning per process, until it can be.'
         )
-      ]
+      ])
     }
     const writable =
       `log events go to the folder ${destination.folder}, and it is writable` +
@@ -1354,9 +1399,11 @@ async function diagnoseLogDestination(deps: DoctorDeps): Promise<Finding[]> {
     // is `warn` (a standing configuration divergence the operator must fix).
     if (destination.fallbackReason) {
       const message = `${writable} But it ${describeFolderFallback(destination.fallbackReason)}.`
-      return [destination.fallbackReason.kind === 'anchor-mismatch' ? warn('logs', message) : info('logs', message)]
+      return withSource([
+        destination.fallbackReason.kind === 'anchor-mismatch' ? warn('logs', message) : info('logs', message)
+      ])
     }
-    return [ok('logs', writable)]
+    return withSource([ok('logs', writable)])
   }
 
   const probe = await deps.probeLogServer(destination.url, destination.headers)
@@ -1364,17 +1411,17 @@ async function diagnoseLogDestination(deps: DoctorDeps): Promise<Finding[]> {
   const clean = (text: string): string => withoutCredentialValues(text, destination.headers, credentialVars)
 
   if (probe.kind === 'credential-rejected') {
-    return [
+    return withSource([
       error(
         'logs',
         `the log server at ${where} is reachable but REFUSED this machine's credential ` +
           `(HTTP ${probe.status}). ${fix} — until then every event queues locally and a CI job's queue dies with ` +
           'its runner. Nothing was stored by this check.'
       )
-    ]
+    ])
   }
   if (probe.kind === 'refused') {
-    return [
+    return withSource([
       error(
         'logs',
         `the log server at ${where} answered HTTP ${probe.status}, which is not an acceptance — it is refusing ` +
@@ -1383,14 +1430,14 @@ async function diagnoseLogDestination(deps: DoctorDeps): Promise<Finding[]> {
           "answers `500`; check the URL against the destination's ingest route and the destination's own " +
           'configuration. Nothing was stored by this check.'
       )
-    ]
+    ])
   }
   if (probe.kind === 'unreachable') {
     // `info`, not `warn`: doctor's health rule counts anything above `info` as
     // a failing run, and an offline machine must not fail this command — its
     // events are not lost, they wait in the local retry queue for the next
     // run. The line still says plainly that nothing answered.
-    return [
+    return withSource([
       info(
         'logs',
         `the log server at ${where} could not be reached (${clean(probe.detail)}) — this machine may simply be ` +
@@ -1398,15 +1445,15 @@ async function diagnoseLogDestination(deps: DoctorDeps): Promise<Finding[]> {
           'Reported rather than failed for that reason; re-run this where the destination is reachable to have it ' +
           'checked for real.'
       )
-    ]
+    ])
   }
-  return [
+  return withSource([
     ok(
       'logs',
       `the log server at ${where} is reachable and accepts this machine's credential ` +
         `(HTTP ${probe.status}). Nothing was stored by this check — the probe carries no event.`
     )
-  ]
+  ])
 }
 
 // ---------------------------------------------------------------------------

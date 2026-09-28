@@ -122,7 +122,7 @@ function readRealCodexKeychainCredential(codexHome: string): string | null {
   }
 }
 
-// --- the logs.url header credential in the macOS login Keychain (issue #841) -
+// --- the logs.url header credential in the macOS login Keychain --------------
 //
 // The SAME `find-generic-password`/`add-generic-password` machinery this file
 // already uses for the Codex worker's session (above), applied to a `logs`
@@ -145,7 +145,7 @@ function readRealCodexKeychainCredential(codexHome: string): string | null {
 export const LOG_HEADER_KEYCHAIN_SERVICE = 'Vinaya Log'
 
 /**
- * Read at most once per variable per process (issue #841 Trap): a `logs.url`
+ * Read at most once per variable per process: a `logs.url`
  * server destination resolves its headers on every event, so an uncached read
  * would re-shell to `security` per line. `null` is cached too — an absent item
  * must not be re-probed each event — and `storeLogHeaderKeychainCredential`
@@ -169,7 +169,7 @@ function readRealLogHeaderKeychainCredential(variable: string): string | null {
 
 /**
  * The per-process-cached reader `resolveLogsHeaderValues` injects as its default
- * Keychain fallback (issue #841, O1). Exported so `config.ts` can name it as the
+ * Keychain fallback (O1). Exported so `config.ts` can name it as the
  * default without duplicating the cache, and so `vinaya doctor` can report
  * WHERE the credential was found (O4) through the exact reader delivery uses —
  * never a second one that could disagree.
@@ -185,7 +185,7 @@ export function readLogHeaderKeychainCredential(variable: string): string | null
 /**
  * Stores a `logs.headers` credential in the login Keychain under
  * `LOG_HEADER_KEYCHAIN_SERVICE`, keyed by the variable NAME as its account
- * (issue #841, O2). The value reaches `security` through STANDARD INPUT — `-w`
+ * (O2). The value reaches `security` through STANDARD INPUT — `-w`
  * is passed LAST with no value on the command line, so `ps` can never show it —
  * and `-U` updates an existing item in place rather than refusing. Never prints,
  * returns or puts the value in an error; a failure message carries only the

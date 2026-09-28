@@ -1,5 +1,5 @@
 // `vinaya log set-credential <VAR_NAME>` — store a `logs.headers` credential in
-// the macOS login Keychain (issue #841, O2), so an Operator the Claude desktop
+// the macOS login Keychain (O2), so an Operator the Claude desktop
 // app starts on macOS delivers logs with no token copied into any settings file.
 //
 // The value is read from STANDARD INPUT, never a command-line argument a `ps`
