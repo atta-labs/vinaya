@@ -81,10 +81,12 @@ export {
 } from './waiver-label'
 export {
   blockingSeverities,
+  classifyFinding,
   CODE_REVIEW_SEVERITY_ORDER,
   codeReviewBlockingSeverities,
   consequentialFindings,
   DEFAULT_REVIEW_POLICY,
+  DEFERRAL_REASON_TEXT,
   evaluateCodeReview,
   evaluateReviewFindings,
   evaluateSecurityReview,
@@ -97,6 +99,11 @@ export {
 } from './review-policy'
 export type {
   CodeReviewSeverity,
+  DeferralReason,
+  DeferredFinding,
+  FindingClassification,
+  FindingDeferralContext,
+  FindingPolicyOutcome,
   PolicyEvaluation,
   PolicyFinding,
   ReviewPolicy,

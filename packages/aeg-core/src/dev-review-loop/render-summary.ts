@@ -5,8 +5,16 @@
  * `Judged head:`, or `Objectives version:` label anywhere in the output.
  */
 
+import { DEFERRAL_REASON_TEXT } from '../review-policy'
 import { SUMMARY_TABLE_HEADER } from './journal-reconstruction'
-import { SEVERITY_COLUMNS, type Confidence, type Journal, type NotReviewedReason, type RoundRecord } from './types'
+import {
+  SEVERITY_COLUMNS,
+  type Confidence,
+  type DeferredFindingRow,
+  type Journal,
+  type NotReviewedReason,
+  type RoundRecord
+} from './types'
 
 /**
  * The two non-numeric cells this table writes, named once so the parser below
@@ -80,11 +88,37 @@ function row(record: RoundRecord): string {
   return `| ${record.round} | ${countCells(record).join(' | ')} | ${confidenceCell(record.confidence)} | ${outcomeCell(record)} |`
 }
 
+/** The heading that opens the deferred-findings block, so a reader (and a test) can find it without matching a whole line. */
+export const DEFERRED_FINDINGS_HEADING = 'Deferred findings (reported, not blocking this round):'
+
+/** One deferred finding as the summary lists it (O4): its original severity, its `file:line` (or `(no location)` when it carried none), and why. */
+export function renderDeferredFindingLine(round: number, f: DeferredFindingRow): string {
+  const where = f.location.length > 0 ? f.location : '(no location)'
+  return `- round ${round} — ${f.severity} ${where} — ${DEFERRAL_REASON_TEXT[f.reason]}`
+}
+
+/**
+ * The deferred-findings block appended below the table (O4) — one line per
+ * deferred finding across every round, in round then report order. Empty
+ * string when no round deferred anything, so the summary is byte-identical to
+ * what it was before this task on a run that deferred nothing. Deliberately
+ * NOT a `|`-delimited table: `parseSummaryConfidenceRows` reads the table by
+ * its pipe-delimited rows, so a plain-list block can never be misread as a
+ * round row.
+ */
+function renderDeferredBlock(journal: Journal): string[] {
+  const lines: string[] = []
+  for (const record of journal.rounds) {
+    for (const f of record.deferred ?? []) lines.push(renderDeferredFindingLine(record.round, f))
+  }
+  return lines.length === 0 ? [] : ['', DEFERRED_FINDINGS_HEADING, ...lines]
+}
+
 export function renderSummary(journal: Journal): string {
   const header = SUMMARY_TABLE_HEADER
   const divider = `| --- | ${SEVERITY_COLUMNS.map(() => '---').join(' | ')} | --- | --- |`
   const rows = journal.rounds.map(row)
-  return [header, divider, ...rows].join('\n')
+  return [header, divider, ...rows, ...renderDeferredBlock(journal)].join('\n')
 }
 
 /**

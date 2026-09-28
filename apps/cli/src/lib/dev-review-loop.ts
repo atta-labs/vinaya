@@ -56,8 +56,10 @@ import {
   DevReviewLoopEventSchema,
   initialLoopState,
   isConcludedJournal,
+  type IssueSurface,
   manifestAsEchoed,
   nextRoundNumber,
+  parseIssueSurface,
   policyDigest as policyDigestOf,
   type Confidence,
   type Decision,
@@ -125,6 +127,7 @@ import {
   withPromptFile
 } from './dev-review-loop/developer-dispatch.js'
 import {
+  buildRoundDeferralContext,
   buildVerdictFromReport,
   discardHeldVerdicts,
   hasObjectivesFacts,
@@ -357,6 +360,24 @@ export type LoopDeps = {
   gitMergeBase: (head: string) => Promise<string>
   gitFetch: (sha: string) => void
   gitDiffShortstat: (base: string, head: string) => string
+  /**
+   * O2: `git diff --unified=0 <from> <to>` between the previous round's head
+   * and the current head — the raw diff `buildRoundDeferralContext` parses
+   * into changed lines. `null` when git cannot answer (an unreachable sha, a
+   * shallow clone, no git) — the caller then leaves the unchanged-line rule
+   * inactive rather than guessing. Optional: a fixture that does not stub it
+   * (`makeInProcessDeps` returns `null`) exercises the loop with the
+   * unchanged-line rule off, exactly the round-1/no-previous-head behaviour.
+   */
+  gitUnifiedDiff?: (from: string, to: string) => string | null
+  /**
+   * O3: the task Issue's own `## Surface` `in:`/`out:` globs (`parseIssueSurface`),
+   * or `null` when the Issue carries none or cannot be fetched — the
+   * out-of-Surface rule is then inactive. Optional, for the same reason
+   * `gitUnifiedDiff` is: a fixture that stubs neither runs with both deferral
+   * rules off, the loop's pre-task behaviour.
+   */
+  resolveTaskSurface?: (task: number) => IssueSurface | null
   /** The task's round journal, rebuilt from the pull request's principal-authored forge markers (developer round markers, the published summary) — never a log event, a flushed log comment or the telemetry outbox. */
   fetchLoopHistory: (prNumber: number | null) => ReconstructedJournal
   sleep: (ms: number) => Promise<void>
@@ -507,6 +528,44 @@ function defaultGitDiffShortstat(base: string, head: string): string {
     return sh('git', ['diff', `${base}...${head}`, '--shortstat'])
   } catch {
     return ''
+  }
+}
+
+/**
+ * O2: the direct `git diff --unified=0` between the previous round's head and
+ * the current head — a two-endpoint diff (`from to`, not `from...head`), the
+ * net content difference between the two heads themselves, which is what
+ * "the changed lines between the two round heads" means (Traps to avoid).
+ * `null` on any git failure, so the caller leaves the unchanged-line rule
+ * inactive rather than treating an unreadable diff as "nothing changed."
+ */
+function defaultGitUnifiedDiff(from: string, to: string): string | null {
+  try {
+    return execFileSync('git', ['diff', '--unified=0', from, to], {
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024
+    })
+  } catch {
+    return null
+  }
+}
+
+/**
+ * O3: the task Issue's own `## Surface` `in:`/`out:` globs, read from
+ * `gh issue view <task> --json body` and parsed by `parseIssueSurface` (the
+ * same parser the Issue-authoring gate and the brief renderer use). `null`
+ * when the Issue cannot be fetched or carries no parseable `## Surface`, so
+ * the out-of-Surface rule stays inactive rather than treating every finding
+ * as out of Surface.
+ */
+function defaultResolveTaskSurface(task: number): IssueSurface | null {
+  try {
+    const out = sh('gh', ['issue', 'view', String(task), '--json', 'body'])
+    const body = (JSON.parse(out) as { body?: string }).body ?? ''
+    const parsed = parseIssueSurface(body)
+    return parsed.ok ? parsed.value : null
+  } catch {
+    return null
   }
 }
 
@@ -808,6 +867,8 @@ function defaultDeps(): LoopDeps {
     gitMergeBase: defaultGitMergeBase,
     gitFetch: defaultGitFetch,
     gitDiffShortstat: defaultGitDiffShortstat,
+    gitUnifiedDiff: defaultGitUnifiedDiff,
+    resolveTaskSurface: defaultResolveTaskSurface,
     fetchLoopHistory,
     sleep: defaultSleep,
     now: () => Date.now(),
@@ -2220,7 +2281,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           handle,
           facts.manifest,
           policy,
-          facts.resolvedObjectives
+          facts.resolvedObjectives,
+          facts.deferralContext ?? {}
         )
         return { verdict, findingsUncitable: !findingIdsCited(workDir, verdict.observation.findings.length) }
       } catch (err) {
@@ -2310,7 +2372,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             handle,
             facts.manifest,
             policy,
-            facts.resolvedObjectives
+            facts.resolvedObjectives,
+            facts.deferralContext ?? {}
           )
           if (findingIdsCited(workDir, verdict.observation.findings.length)) {
             return { verdict, findingsUncitable: false }
@@ -3483,6 +3546,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // rounds is caught by the gate and by the existing `stale_driver`
           // guard, not by manufacturing a new mid-round pause reason.
           const baseSha = await d.gitMergeBase(head)
+          // O2: the previous round's own head — the head of the manifest the
+          // loop last dispatched reviewers against, read BEFORE this round's
+          // manifest overwrites it below. `undefined` on the first dispatch
+          // (round 1 has no previous head), so the unchanged-line rule stays
+          // inactive that round. The changed lines are the diff between these
+          // two heads, never the base branch (Traps to avoid).
+          const previousRoundHead = lastDispatchedManifest?.headSha ?? null
           const manifest: ReviewInputManifest = buildReviewInputManifest({
             headSha: head,
             baseSha,
@@ -3492,13 +3562,26 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             policy
           })
           lastDispatchedManifest = manifest
+          // O2/O3: the round's deferral rules — the task's `## Surface` (any
+          // round) and the changed lines since the previous round's head
+          // (round 2 on). Both resolved via optional deps: absent in a fixture
+          // that stubs neither, so the loop's existing behaviour — every
+          // in-Surface finding blocks — is unchanged where they are not wired.
+          const deferralContext = buildRoundDeferralContext({
+            round,
+            previousRoundHead,
+            head,
+            surface: d.resolveTaskSurface ? d.resolveTaskSurface(task) : null,
+            unifiedDiff: d.gitUnifiedDiff
+          })
           const facts: ReviewerPromptFacts = {
             objectives: resolvedObjectives.text,
             resolvedObjectives: resolvedObjectives.objectives,
             rulings,
             ciConclusion,
             revision,
-            manifest
+            manifest,
+            deferralContext
           }
 
           // O1: the parent persists this round's manifest to the control store
