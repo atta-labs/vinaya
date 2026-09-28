@@ -20,6 +20,7 @@ import {
   findLetteredEdgeIds,
   hasLabel,
   LABELS,
+  parseRationaleDeps,
   projectFieldFromBody,
   projectsFromBody,
   SECTION_HEADER,
@@ -27,9 +28,11 @@ import {
 } from '@attalabs/aeg-forge-state'
 import { stripCode } from './anchored-region'
 import { checkTestPlan, extractFencedBlocks } from './brief-validation'
+import { type ClaimBinding, type ClaimVoice, evaluateClaimBindings } from './doc-claim'
 import { DOC_OWNERS_PATH, isUrlPointer, parseDocOwners, pointerToPath } from './doc-owners'
 import { globsOverlap } from './derive-section7'
 import { objectivesOf, objectivesVersion } from './objectives'
+import { isValidCitedFilePath } from './quoted-command'
 import { locateTestPlanSection } from './test-plan-section'
 
 export type IssueSectionResult = { status: 'pass' | 'fail'; errors: string[] }
@@ -724,6 +727,199 @@ export function checkDocumentationCitesObjective(body: string): IssueSectionResu
     status: 'fail',
     errors: [
       "issue-validation Documentation: `## Documentation` names a real source but none cites a defined `## Objectives` id — add `(O<n>)` to at least one source line so the Reviewer's ordinary Objectives grading covers whether its mechanism/version was actually incorporated."
+    ]
+  }
+}
+
+/**
+ * One `## Premises` line — a fact about the code the plan rests on, written
+ * so a machine can re-assert it instead of a reader having to trust it.
+ *
+ * The section exists because prose could not carry the weight. A real task
+ * rationale stated a cancellation signal was "already wired, currently
+ * inert"; nothing fed it, and the task ran about 20 hours through five review
+ * rounds and two Principal rulings before the gap closed. The same session
+ * showed the other half: a task that needs code a SIBLING task will write had
+ * no way to say so except prose. `afterIssue` is that second case — the
+ * premise is not true yet, names the Issue that makes it true, and is checked
+ * at dispatch rather than at plan time.
+ */
+export type IssuePremise = {
+  /** Repository-relative path the premise asserts about. */
+  path: string
+  /** The literal text that path must contain. */
+  text: string
+  /** The Issue number of an `after #<n>:` prefix — `null` for a premise that must hold now. */
+  afterIssue: number | null
+  /** The premise's own line, verbatim, so a refusal quotes what the Planner wrote. */
+  line: string
+}
+
+/**
+ * One premise line: `` `<path>` contains `<text>` ``, optionally prefixed
+ * `after #<n>:`, optionally bulleted. The text capture is greedy to the LAST
+ * backtick on the line, so a literal containing backticks survives — the same
+ * reason `doc-claim.ts` reads its value off the original line rather than a
+ * masked one.
+ */
+const ISSUE_PREMISE_LINE_RE = /^[-*]?[ \t]*(?:after[ \t]+#(\d+)[ \t]*:[ \t]*)?`([^`\n]+)`[ \t]+contains[ \t]+`(.+)`$/i
+
+/**
+ * Parses the optional `## Premises` section. An Issue without the heading has
+ * no premises and parses clean — the section is never required on its own
+ * (`checkBoundaryClaimsNeedPremise` is the one thing that can demand it, and
+ * only for a Boundary that asserts something already exists).
+ *
+ * A heading with no well-formed line is an error, not an empty list: an empty
+ * section reads as "checked, nothing to check" to every later reader, which is
+ * exactly the silence the section exists to remove.
+ */
+export function parseIssuePremises(body: string): ParsedIssueSection<IssuePremise[]> {
+  const section = topLevelSectionText(body, 'Premises')
+  if (section === null) return { ok: true, value: [] }
+
+  const errors: string[] = []
+  const premises: IssuePremise[] = []
+
+  for (const raw of section.split('\n')) {
+    const line = raw.trim()
+    if (line === '') continue
+    const m = ISSUE_PREMISE_LINE_RE.exec(line)
+    if (!m) {
+      errors.push(
+        `\`${line}\` is not a premise — write one premise per line as \`<path>\` contains \`<text>\`, optionally prefixed \`after #<n>:\` when a task that has not merged yet is what makes it true.`
+      )
+      continue
+    }
+    const [, afterRaw, path, text] = m
+    if (!isValidCitedFilePath(path as string)) {
+      errors.push(
+        `\`${line}\` names \`${path}\`, which is not a repository-relative path inside the repository (absolute paths and \`..\` traversal are refused).`
+      )
+      continue
+    }
+    premises.push({
+      path: path as string,
+      text: text as string,
+      afterIssue: afterRaw === undefined ? null : Number.parseInt(afterRaw, 10),
+      line
+    })
+  }
+
+  if (errors.length === 0 && premises.length === 0) {
+    errors.push(
+      'the `## Premises` section carries no premise line — delete the heading, or write the premise the plan actually rests on.'
+    )
+  }
+
+  return errors.length > 0 ? { ok: false, errors } : { ok: true, value: premises }
+}
+
+/**
+ * How a premise refusal addresses the Planner. Passed to `doc-claim.ts`'s
+ * `evaluateClaimBindings` so the predicate — "does this file contain this
+ * text" — has exactly one implementation across doc claims, brief premise
+ * pins and this section; only the sentence the author reads back differs.
+ */
+const ISSUE_PREMISE_VOICE: ClaimVoice = {
+  locate: (binding) => `premise ${binding.line}`,
+  staleRemediation: () =>
+    'Write the premise the code actually holds, or — when a task that has not merged yet is what makes it true — prefix it `after #<n>:` and declare `Depends-on` on that Issue. Never assert it in prose instead.'
+}
+
+/** A premise, as the shared claim evaluator consumes it. `line` is the premise's 1-based position in the section, which is how `ISSUE_PREMISE_VOICE` names it. */
+function premiseBinding(premise: IssuePremise, index: number): ClaimBinding {
+  return {
+    file: '## Premises',
+    line: index + 1,
+    assertion: { kind: 'contains', path: premise.path, value: premise.text }
+  }
+}
+
+/**
+ * **O1 — every premise without an `after #<n>:` prefix holds right now.**
+ * Evaluated against the checkout the Planner is cutting the Issue from,
+ * through `doc-claim.ts`'s own evaluation (`evaluateClaimBindings`) rather
+ * than a second matcher, so a premise and a doc claim can never disagree
+ * about what "contains" means.
+ *
+ * `fileReader` returns `null` for a path that does not exist — injected, so
+ * this module stays free of `fs` like the rest of the grammar.
+ */
+export function checkIssuePremises(body: string, fileReader: (path: string) => string | null): IssueSectionResult {
+  const parsed = parseIssuePremises(body)
+  if (!parsed.ok) {
+    return { status: 'fail', errors: parsed.errors.map((e) => `issue-validation Premises: ${e}`) }
+  }
+
+  const bindings = parsed.value
+    .map((premise, index) => ({ premise, index }))
+    .filter(({ premise }) => premise.afterIssue === null)
+    .map(({ premise, index }) => premiseBinding(premise, index))
+
+  const errors = evaluateClaimBindings(bindings, fileReader, ISSUE_PREMISE_VOICE).map(
+    (f) => `issue-validation Premises: ${f.message}`
+  )
+  return { status: errors.length > 0 ? 'fail' : 'pass', errors }
+}
+
+/**
+ * **O2 — an `after #<n>:` premise is a deferred fact, and a deferred fact
+ * needs a declared edge.** Without one the Issue would dispatch before the
+ * task that makes the premise true has merged, and the deferral would buy
+ * nothing but a later failure. Matched on the Issue number's digits, so a
+ * `Depends-on` written `#<n>` and one written `<n>` both satisfy it — the two
+ * forms `parseRationaleDeps` already emits.
+ */
+export function checkPremiseDependencyDeclared(body: string): IssueSectionResult {
+  const parsed = parseIssuePremises(body)
+  if (!parsed.ok) return { status: 'pass', errors: [] }
+
+  const declared = new Set(
+    parseRationaleDeps(body).dependsOn.map((edge) => (splitSlugQualifiedEdge(edge)?.bareId ?? edge).replace(/^#/, ''))
+  )
+
+  const errors = parsed.value
+    .filter((premise) => premise.afterIssue !== null && !declared.has(String(premise.afterIssue)))
+    .map(
+      (premise) =>
+        `issue-validation Premises: \`${premise.line}\` defers to #${premise.afterIssue}, but the Dependency rationale declares no \`Depends-on\` on it — a premise another task has to make true is a dependency, not a note.`
+    )
+
+  return { status: errors.length > 0 ? 'fail' : 'pass', errors }
+}
+
+/**
+ * The words a Boundary uses when it asserts the current state of the code
+ * rather than describing the task. Whole words only — `wiredness` is not a
+ * claim, and `alreadyish` is not a word. Matched in the Boundary field alone:
+ * checking every prose field for claims is a different, much larger rule
+ * (`doc-claim.ts`'s marker discipline is the one that scales), and this one is
+ * deliberately narrow to the field whose false claims cost the 20 hours.
+ */
+const BOUNDARY_EXISTING_STATE_RE = /\b(already|currently|wired)\b/i
+
+/**
+ * **O4 — a Boundary that says something already exists must pin it.** The
+ * refusal is not "do not write this"; it is "write it as a premise too". A
+ * Planner who genuinely looked has the pin to hand, and the pin is what makes
+ * the next reader's trust cheap.
+ */
+export function checkBoundaryClaimsNeedPremise(body: string): IssueSectionResult {
+  const boundary = rationaleFieldText(stripCode(body), 'Boundary')
+  const trigger = BOUNDARY_EXISTING_STATE_RE.exec(boundary)
+  if (!trigger) return { status: 'pass', errors: [] }
+
+  // A malformed section is `checkIssuePremises`' finding, not this one's —
+  // reporting "carries no `## Premises` section" about a section that plainly
+  // exists would send the Planner looking for the wrong defect.
+  const parsed = parseIssuePremises(body)
+  if (!parsed.ok || parsed.value.length > 0) return { status: 'pass', errors: [] }
+
+  return {
+    status: 'fail',
+    errors: [
+      `issue-validation Premises: the Boundary says "${trigger[1]}" — it states something about the code as it stands — but the Issue carries no \`## Premises\` section. Add one premise per such claim, written \`<path>\` contains \`<text>\`, so the next reader checks it instead of trusting it.`
     ]
   }
 }

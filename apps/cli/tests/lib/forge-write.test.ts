@@ -572,6 +572,7 @@ describe('every brief-schema/issue-content recovery prompt names its own fix (O2
       issueNumber: null,
       briefSectionsSinceIssue: null,
       resolvesToFile: () => true,
+      readFile: () => null,
       docOwnersContent: null,
       milestoneSiblings: null,
       subjectRef: ''

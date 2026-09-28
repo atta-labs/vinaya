@@ -6,10 +6,12 @@ import { fenceShapes } from '../tests/fixtures/fence-shapes'
 import {
   BRIEF_SECTIONS_SINCE_ISSUE,
   checkBlastRadiusScope,
+  checkBoundaryClaimsNeedPremise,
   checkConflictCompleteness,
   checkEdgeIdsWholeNumbers,
   checkIssueBriefSections,
   checkIssueObjectives,
+  checkIssuePremises,
   checkIssueRationale,
   checkDocsWithinSurface,
   checkDocumentationCitesObjective,
@@ -20,6 +22,7 @@ import {
   checkObjectivesRespectBoundary,
   checkPartsCiteDefinedObjectives,
   checkPartsCoverageAndSequence,
+  checkPremiseDependencyDeclared,
   checkProjectsRegistered,
   checkRationaleNamesDocs,
   checkRationaleSurfaceCoverage,
@@ -37,6 +40,7 @@ import {
   OBJECTIVES_SINCE_ISSUE,
   parseIssueDocumentation,
   parseIssueParts,
+  parseIssuePremises,
   parseIssueStopConditions,
   parseIssueSurface,
   parseIssueTestPlan,
@@ -2372,5 +2376,230 @@ describe('checkMilestoneAttach', () => {
     const r = checkMilestoneAttach(['vinaya/tranche:demo-v1'], null, 'v1')
     expect(r.status).toBe('fail')
     expect(r.errors.join(' ')).toMatch(/unset/)
+  })
+})
+
+// --------------------------------------------------------------------------
+// `## Premises` — the section a plan's facts about the code are written in.
+// --------------------------------------------------------------------------
+
+/** Every premise the tests below evaluate reads from this map, never from disk. */
+function readerOf(files: Record<string, string>): (path: string) => string | null {
+  return (path) => files[path] ?? null
+}
+
+const PREMISE_SOURCES = { 'packages/aeg-core/src/cancel.ts': 'export const signal = new AbortController()\n' }
+
+function bodyWithPremises(premises: string, extra = ''): string {
+  return [
+    '**Boundary** — a task about one thing.',
+    '',
+    '**Dependency rationale** — `Depends-on: —` `Conflicts-with: —`',
+    '',
+    extra,
+    '## Premises',
+    '',
+    premises,
+    ''
+  ].join('\n')
+}
+
+describe('parseIssuePremises', () => {
+  it('returns no premises for a body with no `## Premises` heading — the section is optional', () => {
+    const r = parseIssuePremises('**Boundary** — nothing to pin.\n')
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.value).toEqual([])
+  })
+
+  it('parses a bulleted and an unbulleted premise line alike', () => {
+    const r = parseIssuePremises(
+      bodyWithPremises(
+        '- `packages/aeg-core/src/cancel.ts` contains `AbortController`\n`apps/cli/src/index.ts` contains `main(`'
+      )
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value).toEqual([
+      {
+        path: 'packages/aeg-core/src/cancel.ts',
+        text: 'AbortController',
+        afterIssue: null,
+        line: '- `packages/aeg-core/src/cancel.ts` contains `AbortController`'
+      },
+      {
+        path: 'apps/cli/src/index.ts',
+        text: 'main(',
+        afterIssue: null,
+        line: '`apps/cli/src/index.ts` contains `main(`'
+      }
+    ])
+  })
+
+  it('reads the `after #<n>:` prefix as the Issue the premise waits on', () => {
+    const r = parseIssuePremises(
+      bodyWithPremises('after #841: `packages/aeg-core/src/cancel.ts` contains `drainOutbox`')
+    )
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.value[0]?.afterIssue).toBe(841)
+  })
+
+  it('keeps a literal that itself contains backticks — the text capture runs to the last backtick', () => {
+    const r = parseIssuePremises(bodyWithPremises('`apps/cli/src/index.ts` contains `the `--json` flag`'))
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.value[0]?.text).toBe('the `--json` flag')
+  })
+
+  it('refuses a line that is not a premise, quoting it', () => {
+    const r = parseIssuePremises(bodyWithPremises('the cancellation signal is already wired.'))
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/is not a premise/)
+  })
+
+  it('refuses a premise path outside the repository', () => {
+    const r = parseIssuePremises(bodyWithPremises('`../../etc/passwd` contains `root`'))
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/not a repository-relative path/)
+  })
+
+  it('refuses an absolute premise path', () => {
+    const r = parseIssuePremises(bodyWithPremises('`/etc/passwd` contains `root`'))
+    expect(r.ok).toBe(false)
+  })
+
+  it('refuses a `## Premises` heading with no premise line — an empty section reads as "checked"', () => {
+    const r = parseIssuePremises('**Boundary** — x.\n\n## Premises\n\n\n## Surface\n\nin: apps\n')
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/carries no premise line/)
+  })
+})
+
+describe('checkIssuePremises (O1)', () => {
+  it('passes a premise the checkout holds', () => {
+    const r = checkIssuePremises(
+      bodyWithPremises('`packages/aeg-core/src/cancel.ts` contains `AbortController`'),
+      readerOf(PREMISE_SOURCES)
+    )
+    expect(r.status).toBe('pass')
+  })
+
+  it('fails, naming the premise, when the file does not contain the text', () => {
+    const r = checkIssuePremises(
+      bodyWithPremises('`packages/aeg-core/src/cancel.ts` contains `drainOutbox`'),
+      readerOf(PREMISE_SOURCES)
+    )
+    expect(r.status).toBe('fail')
+    expect(r.errors.join(' ')).toMatch(/premise 1 binds `packages\/aeg-core\/src\/cancel\.ts contains:drainOutbox`/)
+    expect(r.errors.join(' ')).toMatch(/Write the premise the code actually holds/)
+  })
+
+  it('fails when the premise names a file that does not exist', () => {
+    const r = checkIssuePremises(
+      bodyWithPremises('`packages/aeg-core/src/gone.ts` contains `x`'),
+      readerOf(PREMISE_SOURCES)
+    )
+    expect(r.status).toBe('fail')
+    expect(r.errors.join(' ')).toMatch(/could not be read/)
+  })
+
+  it('does NOT check an `after #<n>:` premise — it is not true yet, by construction (O2)', () => {
+    const r = checkIssuePremises(
+      bodyWithPremises('after #841: `packages/aeg-core/src/cancel.ts` contains `drainOutbox`'),
+      readerOf(PREMISE_SOURCES)
+    )
+    expect(r.status).toBe('pass')
+  })
+
+  it('reports the malformed-section error through the same check', () => {
+    const r = checkIssuePremises(bodyWithPremises('not a premise at all'), readerOf(PREMISE_SOURCES))
+    expect(r.status).toBe('fail')
+    expect(r.errors.join(' ')).toMatch(/issue-validation Premises:/)
+  })
+})
+
+describe('checkPremiseDependencyDeclared (O2)', () => {
+  const deferred = 'after #841: `packages/aeg-core/src/cancel.ts` contains `drainOutbox`'
+
+  it('accepts a deferred premise whose Issue is declared `Depends-on` as `#<n>`', () => {
+    const body = bodyWithPremises(deferred).replace('`Depends-on: —`', '`Depends-on: #841`')
+    expect(checkPremiseDependencyDeclared(body).status).toBe('pass')
+  })
+
+  it('accepts the bare-number `Depends-on` form for the same Issue', () => {
+    const body = bodyWithPremises(deferred).replace('`Depends-on: —`', '`Depends-on: 841`')
+    expect(checkPremiseDependencyDeclared(body).status).toBe('pass')
+  })
+
+  it('refuses a deferred premise with no matching `Depends-on` edge', () => {
+    const r = checkPremiseDependencyDeclared(bodyWithPremises(deferred))
+    expect(r.status).toBe('fail')
+    expect(r.errors.join(' ')).toMatch(/defers to #841, but the Dependency rationale declares no `Depends-on`/)
+  })
+
+  it('refuses when the declared edge names a different Issue', () => {
+    const body = bodyWithPremises(deferred).replace('`Depends-on: —`', '`Depends-on: #842`')
+    expect(checkPremiseDependencyDeclared(body).status).toBe('fail')
+  })
+
+  it('ignores an unprefixed premise — nothing is deferred', () => {
+    expect(checkPremiseDependencyDeclared(bodyWithPremises('`apps/cli/src/index.ts` contains `main(`')).status).toBe(
+      'pass'
+    )
+  })
+})
+
+describe('checkBoundaryClaimsNeedPremise (O4)', () => {
+  const withBoundary = (boundary: string, premises?: string): string =>
+    [
+      `**Boundary** — ${boundary}`,
+      '',
+      '**Dependency rationale** — `Depends-on: —` `Conflicts-with: —`',
+      ...(premises ? ['', '## Premises', '', premises] : []),
+      ''
+    ].join('\n')
+
+  it('passes a Boundary that claims nothing about the code as it stands', () => {
+    expect(checkBoundaryClaimsNeedPremise(withBoundary('add a cancellation signal to the loop.')).status).toBe('pass')
+  })
+
+  for (const word of ['already', 'currently', 'wired']) {
+    it(`refuses a premise-less Issue whose Boundary says "${word}"`, () => {
+      const r = checkBoundaryClaimsNeedPremise(withBoundary(`the signal is ${word} there, inert.`))
+      expect(r.status).toBe('fail')
+      expect(r.errors.join(' ')).toMatch(new RegExp(`the Boundary says "${word}"`))
+    })
+  }
+
+  it('passes the same Boundary once it carries a premise', () => {
+    const r = checkBoundaryClaimsNeedPremise(
+      withBoundary(
+        'the signal is already wired, inert.',
+        '`packages/aeg-core/src/cancel.ts` contains `AbortController`'
+      )
+    )
+    expect(r.status).toBe('pass')
+  })
+
+  it('matches the trigger words whole — `wiredness` is not a claim', () => {
+    expect(checkBoundaryClaimsNeedPremise(withBoundary('judge the wiredness of nothing.')).status).toBe('pass')
+  })
+
+  it('reads the Boundary field only — a "already" in another field never triggers it', () => {
+    const body = [
+      '**Boundary** — add a cancellation signal.',
+      '',
+      '**Traps to avoid** — the outbox drain already exists; see `aeg-root/process.md`.',
+      ''
+    ].join('\n')
+    expect(checkBoundaryClaimsNeedPremise(body).status).toBe('pass')
+  })
+
+  it('ignores a trigger word inside a fenced block — code is not a claim', () => {
+    const body = ['**Boundary** — add a signal.', '', '```', 'const already = 1', '```', ''].join('\n')
+    expect(checkBoundaryClaimsNeedPremise(body).status).toBe('pass')
+  })
+
+  it('leaves a malformed `## Premises` section to `checkIssuePremises` rather than reporting it as absent', () => {
+    const r = checkBoundaryClaimsNeedPremise(withBoundary('the signal is already wired.', 'not a premise'))
+    expect(r.status).toBe('pass')
   })
 })
