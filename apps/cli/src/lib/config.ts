@@ -1474,6 +1474,16 @@ async function ghFetchTrustAnchorConfigAsync(): Promise<string> {
  * with no `gh` auth therefore behaves exactly as it did before `principals`
  * existed.
  *
+ * The `gh` this read invokes by name is resolved through the process PATH, and
+ * a `gh` that cannot even START (rather than one that is merely unauthenticated)
+ * lands in that same `null` fallback — which is how an unattended sink on a Mac
+ * Operator's `task-tools serve` (a PATH without gh's install folder) silently
+ * rerouted a whole run's telemetry to the local folder. The CLI's entry path
+ * (`apps/cli/src/index.ts`'s `ensureGhOnPath`) closes that at the source: `gh`
+ * is put on PATH at process start when a standard install folder holds it, so
+ * this read — and every other `gh`-by-name call site — resolves it even when the
+ * launching PATH lacked its folder.
+ *
  * That fallback announces itself rather than degrading silently: an adopter
  * whose `principals` failed to resolve would otherwise see their own
  * reviewers' verdicts ignored for no visible reason — precisely the baffling

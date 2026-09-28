@@ -47,6 +47,7 @@ import { tokensCommand } from './commands/tokens.js'
 import { upgradeCommand } from './commands/upgrade.js'
 import { waiverCommand } from './commands/waiver.js'
 import { printJson } from './lib/envelope.js'
+import { ensureGhOnPath } from './lib/gh-path.js'
 import { printHelp } from './lib/output.js'
 import { packageRoot } from './lib/package-root.js'
 import { resolveAuthorRepoSourceEntry } from './lib/self-host.js'
@@ -95,6 +96,12 @@ function maybeDeferToAuthorRepoSource(): void {
   }
   process.exit(result.status ?? 1)
 }
+
+// Before ANY command runs, and before the author-repo re-exec below (which
+// passes `env: process.env` to its child), make `gh` reachable when the
+// launching PATH lacked its install folder — so every `gh`-by-name call site,
+// in this process and in every child it spawns, resolves it.
+ensureGhOnPath()
 
 maybeDeferToAuthorRepoSource()
 
