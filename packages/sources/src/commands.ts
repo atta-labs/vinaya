@@ -747,5 +747,16 @@ export const COMMANDS: readonly Command[] = [
       "issue-711 O4: this command — `--task <n>`, `--resume <pr>`, `--cancel <pr>` alike — stays `task run`'s own one-shot debug/direct entry; the watching driver that survives a pause and continues on its own is `task run`'s (see that command's own entry)."
     ],
     status: 'shipped'
+  },
+  {
+    name: 'log send',
+    description: "Deliver this repository's locally-held log events to the configured `logs.url` server, once",
+    flags: [{ flag: '--json', description: 'Enveloped JSON output (schema: 1)' }],
+    details: [
+      "For a run whose events ended up on local disk instead of the configured server — an unattended run that fell back to the local folder because the trust-anchor read could not confirm its `logs.url` (a developer machine slower than the read deadline, or genuinely offline), or a retry queue holding a backlog or a `.draining.ndjson` a dead drain left behind. It moves the local folder's events into the retry queue and drains every queue for this repository through the SAME webhook delivery a live event uses.",
+      "It resolves the destination exactly the way a normal event does — the sink's own decision over `vinaya.config.json`'s `logs` setting, trust-anchor-gated for an unattended caller — never a URL passed on the command line. A repository whose destination is a folder (or none) has nothing to send to a server and the command says so.",
+      'Safe to run more than once: the server stores events by `event_id` and ignores one it already holds, so a re-sent chunk creates no duplicate, and a second run finds the folder emptied and the queue drained.'
+    ],
+    status: 'shipped'
   }
 ]

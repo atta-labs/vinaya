@@ -13,6 +13,7 @@ import { demoBreakCommand } from './commands/demo.js'
 import { devReviewLoopCommand } from './commands/dev-review-loop.js'
 import { dispatchCommand } from './commands/dispatch.js'
 import { doctorCommand } from './commands/doctor.js'
+import { logSendCommand } from './commands/log-send.js'
 import { doctrineCommand } from './commands/doctrine.js'
 import { ejectCommand } from './commands/eject.js'
 import { initCommand, initProductCommand } from './commands/init.js'
@@ -332,6 +333,16 @@ try {
     }
     case 'dev-review-loop': {
       await devReviewLoopCommand(args)
+      break
+    }
+    case 'log': {
+      const [subcommand, ...rest] = args
+      if (subcommand === 'send') {
+        await logSendCommand(rest)
+      } else {
+        console.error(`Unknown 'log' subcommand: ${subcommand ?? '(none)'} (expected 'send')`)
+        process.exit(2)
+      }
       break
     }
     default:

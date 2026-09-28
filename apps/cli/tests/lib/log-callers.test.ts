@@ -159,17 +159,32 @@ const FUTURE_CALLER_ALLOWLIST = new Set<string>([])
  * rather than reading `logs` a second time — including bounding the
  * trust-anchor read with the sink's own deadline, so the two degrade alike
  * instead of doctor reporting an anchored destination the sink abandoned.
- * What it imports is the PURE decision function, that deadline pair, and a
- * type — never `log()`, and never a sink instance:
- * doctor produces no event, it only asks where one would go. That narrower
- * claim is asserted below rather than assumed, so this entry cannot quietly
- * widen into a second producer.
+ * What it imports is the PURE decision function, BOTH of the sink's deadlines
+ * (the per-event one and the longer once-per-process destination-read one it
+ * bounds the anchor read by), the pure `describeFolderFallback` renderer so its
+ * `[logs]` finding names a folder fallback in the sink's own words, and a
+ * type — never `log()`, and never a sink instance: doctor produces no event, it
+ * only asks where one would go. That narrower claim is asserted below rather
+ * than assumed, so this entry cannot quietly widen into a second producer.
  */
 const DOCTOR_PATH = 'apps/cli/src/commands/doctor.ts'
-/** Exactly what `DOCTOR_PATH` is allowed to take from the sink module. */
+/**
+ * `vinaya log send` (O4) delivers a repository's locally-held events to the
+ * configured server, once. Like `DOCTOR_PATH` it is NOT a producer — it calls
+ * no `log()` and builds no sink — it imports the sink's pure destination
+ * resolution and outbox-path helpers plus the drain, to move a folder's events
+ * into the retry queue and deliver every queue the SAME way a live event does.
+ * It performs no raw outbox write of its own: every write goes through the
+ * sink's own `appendHardenedLine`, so it never appears on the outbox-write
+ * check below.
+ */
+const LOG_SEND_PATH = 'apps/cli/src/commands/log-send.ts'
+/** Exactly what `DOCTOR_PATH` is allowed to take from the sink module (sorted). */
 const DOCTOR_SINK_IMPORTS = [
   'LOG_CONTEXT_LOOKUP_DEADLINE_MS',
+  'LOG_DESTINATION_ANCHOR_DEADLINE_MS',
   'ResolvedLogDestination',
+  'describeFolderFallback',
   'resolveLogDestinationFrom',
   'withDeadline'
 ]
@@ -184,7 +199,8 @@ const CALLER_ALLOWLIST = new Set([
   RUNNER_PATH,
   EFFECTS_PATH,
   BROKER_PATH,
-  DOCTOR_PATH
+  DOCTOR_PATH,
+  LOG_SEND_PATH
 ])
 const OUTBOX_TRUNCATE_ALLOWLIST = new Set([LOG_WEBHOOK_DRAIN_LIB_PATH])
 const OUTBOX_HELD_VERDICT_ALLOWLIST = new Set([
