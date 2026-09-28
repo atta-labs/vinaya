@@ -201,15 +201,20 @@ export const LOG_CONTEXT_LOOKUP_DEADLINE_MS = 3000
  * datacenter VPS clears it in well under one — so a 3s bound cleared on the VPS
  * and expired on the Mac, sending every Mac run's rounds to the folder with no
  * message (reproduced: a `gh` slower than 3s resolves the folder,
- * faster resolves the server). This bound comfortably exceeds a real Mac read
- * and the inner `gh` timeout (`config.ts`'s `ghFetchTrustAnchorConfigAsync`,
- * 10s, which kills a genuinely hung child with `SIGKILL`), so the only case
- * that still reaches this fallback is a child whose exit the pinned Bun lost
- * entirely — where a bound is still required so the read can never hold the
- * process open. `log()` stays fire-and-forget throughout: the caller never
- * waits on this read, only the first line's landing does.
+ * faster resolves the server).
+ *
+ * `8s` is chosen to sit ABOVE a real Mac read (a few seconds, with generous
+ * margin) but BELOW the inner `gh` timeout (`config.ts`'s
+ * `ghFetchTrustAnchorConfigAsync`, 10s, which kills a genuinely hung child with
+ * `SIGKILL`): a hung read therefore falls back at THIS deadline rather than
+ * waiting the extra time for the child's own kill, so the whole-run reroute is
+ * bounded by one value here rather than by the config module's timeout. `log()`
+ * stays fire-and-forget throughout: the caller never waits on this read, only
+ * the first line's landing does, and a process that ends by draining
+ * (`drainLogSink`) waits at most this long for its first line once, never per
+ * event.
  */
-export const LOG_DESTINATION_ANCHOR_DEADLINE_MS = 15_000
+export const LOG_DESTINATION_ANCHOR_DEADLINE_MS = 8_000
 
 /** `work`'s value, or `fallback` once `ms` has passed or `work` rejects — the timer never holds a process open. */
 export function withDeadline<T>(work: Promise<T>, ms: number, fallback: T): Promise<T> {
