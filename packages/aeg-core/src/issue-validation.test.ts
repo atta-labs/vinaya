@@ -31,6 +31,7 @@ import {
   declaredProjects,
   DOCUMENTATION_SINCE_ISSUE,
   frozenSectionsChanged,
+  globCoversPath,
   isTaskIssueBodyShaped,
   isTaskIssueLabelSet,
   OBJECTIVES_SINCE_ISSUE,
@@ -1791,6 +1792,40 @@ describe('checkSurfaceExcludesBoundDoc (task-run-v1 9, O1/O2/O3)', () => {
   it('passes trivially when `## Surface` does not parse — reported elsewhere', () => {
     const body = '**Docs to keep coherent** — no `## Surface` heading here.\n'
     expect(checkSurfaceExcludesBoundDoc(body, manifest).status).toBe('pass')
+  })
+})
+
+describe('globCoversPath — the root glob `*` (#826, O1/O2/O3)', () => {
+  it('admits a repository-root file, a path with no slash (O1)', () => {
+    expect(globCoversPath('*', 'README.md')).toBe(true)
+    expect(globCoversPath('*', 'LICENSE')).toBe(true)
+    expect(globCoversPath('*', 'package.json')).toBe(true)
+  })
+
+  it('never admits a nested path — `*` stays root-level only, so `in: *, out: apps` still excludes apps/... (O2)', () => {
+    expect(globCoversPath('*', 'apps/cli/src/index.ts')).toBe(false)
+    expect(globCoversPath('*', 'packages/aeg-core/src/issue-validation.ts')).toBe(false)
+    // a bare root directory name has no slash, so `*` covers it as a root entry —
+    // it is `out: apps` (a prefix glob), not `*`, that excludes the files under it.
+    expect(globCoversPath('*', 'apps')).toBe(true)
+  })
+
+  it('a trailing-slash form of the root glob behaves identically', () => {
+    expect(globCoversPath('*/', 'README.md')).toBe(true)
+    expect(globCoversPath('*/', 'apps/cli/src/index.ts')).toBe(false)
+  })
+
+  it('only `*` is the root glob — `.` keeps its existing prefix behaviour unchanged (O3)', () => {
+    expect(globCoversPath('.', 'README.md')).toBe(false)
+    expect(globCoversPath('.', 'apps/cli/src/index.ts')).toBe(false)
+    expect(globCoversPath('.', '.')).toBe(true)
+  })
+
+  it('every non-root glob matches exactly what it matched before (O3)', () => {
+    expect(globCoversPath('packages/aeg-core', 'packages/aeg-core/src/x.ts')).toBe(true)
+    expect(globCoversPath('packages/aeg-core/src/**', 'packages/aeg-core/src/x.ts')).toBe(true)
+    expect(globCoversPath('packages/aeg-core/bin', 'packages/aeg-core/src/x.ts')).toBe(false)
+    expect(globCoversPath('packages/aeg-core/src/x.ts', 'packages/aeg-core')).toBe(true)
   })
 })
 
