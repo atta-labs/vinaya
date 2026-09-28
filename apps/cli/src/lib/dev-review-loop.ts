@@ -3433,11 +3433,17 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 // budget of `MAX_GATE_STALLED_TURNS` turns.
                 persistCurrentLoopState('dispatch_developer')
                 const stats = computeStats(headBeforeDispatch, roundStartMs)
+                // A conflict is a named failure whether or not the file list
+                // could be read — the conflict itself is the cause, and its
+                // text is unchanged from before this stop existed. A red-gate
+                // stall is named only by the check-runs the developer was sent
+                // back for; with none of those, this stall has no named cause
+                // at all.
                 const namedFailure =
                   conflictFiles !== null
-                    ? conflictFiles.length > 0
-                      ? `conflict never resolved (file(s): ${conflictFiles.join(', ')})`
-                      : null
+                    ? `conflict never resolved (file(s): ${
+                        conflictFiles.length > 0 ? conflictFiles.join(', ') : '(unknown)'
+                      })`
                     : lastFailingChecks.length > 0
                       ? `failing check-run(s): ${lastFailingChecks.join(', ')}`
                       : null

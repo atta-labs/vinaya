@@ -2406,13 +2406,16 @@ describe('devReviewLoop — a genuinely failing current check-run still pauses, 
       VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '10'
     })
     expect(r.status).not.toBe(0)
-    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+    // The same current failing check-run ended both stalled turns, so the
+    // repeat-failure stop names it — the bound behind it is unchanged for a
+    // stall the driver cannot name.
+    expect(r.stdout).toMatch(/paused \(repeat_failure\)/)
 
     const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
       string,
       unknown
     >
-    expect(pauseState.reason).toBe('infrastructure')
+    expect(pauseState.reason).toBe('repeat_failure')
     expect(pauseState.detail).toMatch(/head .* unchanged/)
     // Same shape as the single-failing-run case above: the surviving,
     // CURRENT failure (run 2) is named — never the superseded success (run
@@ -2455,16 +2458,20 @@ describe('devReviewLoop — O4 (#595): a re-exec child whose own first gate read
     // code masquerading as success.
     expect(r.status).not.toBe(0)
     expect(r.stderr).not.toMatch(/Uncaught|TypeError|ReferenceError|at Object\./)
-    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+    expect(r.stdout).toMatch(/paused \(repeat_failure\)/)
     // Never `stale_driver` — the staleness was absorbed by the re-exec
     // itself; what pauses the CHILD is its own red gate, a different fact.
+    // That the reason is `repeat_failure` is the repeat memory surviving the
+    // re-exec: the parent recorded this same failure before handing off, so
+    // the child's own first red read is the second attempt to end on it,
+    // which is precisely what it must not send the developer back at.
     expect(r.stdout).not.toMatch(/paused \(stale_driver\)/)
 
     const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
       string,
       unknown
     >
-    expect(pauseState.reason).toBe('infrastructure')
+    expect(pauseState.reason).toBe('repeat_failure')
   }, 30000)
 })
 
