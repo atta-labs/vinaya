@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import type { CheckSpec } from '../src/checks/contract'
 import { coreCheckRegistry } from '../src/checks/registry'
 import { runChecks } from '../src/checks/runner'
+import { resetTrustAnchorConfigMemo } from '../src/lib/log-sink.js'
 
 const CLI_ENTRY = join(import.meta.dir, '..', 'src', 'index.ts')
 
@@ -15,6 +16,20 @@ afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true })
     tmpDir = undefined
   }
+  // The round-trip below calls `runChecks` in this very process, and
+  // `runChecks` logs — so the default branch's own config, which an unattended
+  // caller reads over the trust anchor, is read from THIS repository's checkout
+  // and memoized for the whole `bun:test` process. A later file driving a
+  // temporary world of its own is then told the default branch declares a
+  // `logs.url` server, and delivers its events there instead of to that
+  // world's own folder, which it reads back empty:
+  // `lib/dev-review-loop/inproc-1.test.ts` fails its `journal_finalized` count
+  // exactly that way, and only when it runs after this file. Every
+  // process-lifetime memo this file populates is dropped here, in the file that
+  // populated it — the destination the world's own runtime dir resolves to is
+  // the harness's own to reset (`dev-review-loop-harness.ts`), and does not
+  // need dropping here.
+  resetTrustAnchorConfigMemo()
 })
 
 describe('vinaya new check (scaffold round-trip)', () => {

@@ -363,18 +363,34 @@ describe('assembleAndRenderBriefForIssue — pre-write override', () => {
     rmSync(tmpDir, { recursive: true, force: true })
   })
 
-  it('canRenderBriefFromHere is true once the template exists and the repo resolves', () => {
-    expect(canRenderBriefFromHere()).toBe(true)
+  it('canRenderBriefFromHere is ok once the template resolves, the repo resolves, and we are in a work tree', () => {
+    expect(canRenderBriefFromHere().ok).toBe(true)
   })
 
-  it('keeps the local issue-validation probe dormant when the adopter has no aeg-root directory', () => {
+  // O1 — the plan-time gate must render in an adopter that installs Vinaya from
+  // the registry and has NO `aeg-root/` of its own: dispatch resolves the
+  // PACKAGED template (`PACKAGED_TEMPLATE_PATH`), so `canRenderBriefFromHere`
+  // must too, never the workspace copy only Vinaya's own repo carries. Removing
+  // the local `aeg-root/` therefore does NOT switch the gate off — that silent
+  // switch-off was the bug that printed a plan-time pass for an Issue `task
+  // run` then refused at brief render.
+  it('stays renderable when the adopter has no aeg-root directory (dispatch resolves the packaged template)', () => {
     rmSync(join(localDir, 'aeg-root'), { recursive: true, force: true })
-    expect(canRenderBriefFromHere()).toBe(false)
+    expect(canRenderBriefFromHere().ok).toBe(true)
   })
 
-  it('canRenderBriefFromHere is false with no resolvable repo, even with the template present', () => {
+  it('is not renderable, naming the reason, with no resolvable repo even with the template present', () => {
     delete process.env.AEG_REPO
-    expect(canRenderBriefFromHere()).toBe(false)
+    const result = canRenderBriefFromHere()
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toMatch(/owner\/repo/)
+  })
+
+  it('is not renderable, naming the reason, outside a git work tree', () => {
+    process.chdir(tmpDir) // `tmpDir` itself is not a git repo (only `localDir`/`remoteDir` are)
+    const result = canRenderBriefFromHere()
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toMatch(/work tree/)
   })
 
   const RATIONALE = [
@@ -759,21 +775,32 @@ describe('dispatchPremiseRefusals', () => {
     expect(refusals[0]).toContain('is not a premise')
   })
 
-  it("leaves a deferred premise unasserted under `'due-now'` — a plan-time render must not refuse what has not merged yet", () => {
-    const body = bodyWithPremises('after #841: `cancel.ts` contains `drainOutbox`')
-    expect(dispatchPremiseRefusals(body, 'HEAD', 'all', readAt).length).toBe(1)
-    expect(dispatchPremiseRefusals(body, 'HEAD', 'due-now', readAt)).toEqual([])
+  it("asserts nothing under `'none'` — a plan-time render must not refuse a premise that has not merged yet", () => {
+    const deferred = bodyWithPremises('after #841: `cancel.ts` contains `drainOutbox`')
+    expect(dispatchPremiseRefusals(deferred, 'HEAD', 'all', readAt).length).toBe(1)
+    expect(dispatchPremiseRefusals(deferred, 'HEAD', 'none', readAt)).toEqual([])
   })
 
-  it("still asserts an unprefixed premise under `'due-now'` — it claims something true now, whoever is asking", () => {
+  it("asserts nothing under `'none'` for an unprefixed premise either — plan time has its own reader", () => {
     const body = bodyWithPremises('`cancel.ts` contains `drainOutbox`')
-    expect(dispatchPremiseRefusals(body, 'HEAD', 'due-now', readAt).length).toBe(1)
+    expect(dispatchPremiseRefusals(body, 'HEAD', 'all', readAt).length).toBe(1)
+    expect(dispatchPremiseRefusals(body, 'HEAD', 'none', readAt)).toEqual([])
   })
 
-  it("reports a malformed section under `'due-now'` too — grammar is not deferrable", () => {
-    const refusals = dispatchPremiseRefusals(bodyWithPremises('not a premise'), 'HEAD', 'due-now', readAt)
-    expect(refusals.length).toBe(1)
-    expect(refusals[0]).toContain('is not a premise')
+  it("leaves a malformed section to `checkIssuePremises` under `'none'`, rather than reporting it twice", () => {
+    const body = bodyWithPremises('not a premise')
+    expect(dispatchPremiseRefusals(body, 'HEAD', 'all', readAt).length).toBe(1)
+    expect(dispatchPremiseRefusals(body, 'HEAD', 'none', readAt)).toEqual([])
+  })
+
+  it("reads no revision at all under `'none'` — nothing to assert means nothing to fetch", () => {
+    let reads = 0
+    const counting = (rev: string, path: string): string | null => {
+      reads++
+      return readAt(rev, path)
+    }
+    dispatchPremiseRefusals(bodyWithPremises('`cancel.ts` contains `AbortController`'), 'HEAD', 'none', counting)
+    expect(reads).toBe(0)
   })
 
   it('asserts every premise when no scope is given — a dispatch is the default caller', () => {

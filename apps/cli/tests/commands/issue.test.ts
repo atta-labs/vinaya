@@ -194,6 +194,48 @@ describe('vinaya issue create --validate-only', () => {
     expect(parsed.data.validated).toBe(true)
     expect(parsed.data.written).toBe(false)
   }, 60000)
+
+  // O3 (Issue #849) — this `cwd` is not a git work tree, so the brief render
+  // cannot run. The plan-time result must SAY so and why, never print a clean
+  // pass for a render that did not happen.
+  it('reports the brief render was SKIPPED, with a reason, when it cannot run — never a clean pass (O3)', () => {
+    const r = runCli(
+      [
+        'issue',
+        'create',
+        '--validate-only',
+        '--body-file',
+        join(FORGE_FIXTURES, 'issue-valid-with-objectives.md'),
+        '--label',
+        'vinaya/tranche:demo'
+      ],
+      cwd
+    )
+    expect(r.status).toBe(0)
+    expect(r.stdout).toContain('SKIPPED')
+    expect(r.stdout).not.toContain('✓ all brief-schema gates PASS')
+  }, 60000)
+
+  it('--json marks briefRenderRan false with a skip reason when the render cannot run (O3)', () => {
+    const r = runCli(
+      [
+        'issue',
+        'create',
+        '--validate-only',
+        '--json',
+        '--body-file',
+        join(FORGE_FIXTURES, 'issue-valid-with-objectives.md'),
+        '--label',
+        'vinaya/tranche:demo'
+      ],
+      cwd
+    )
+    expect(r.status).toBe(0)
+    const parsed = JSON.parse(r.stdout)
+    expect(parsed.data.validated).toBe(true)
+    expect(parsed.data.briefRenderRan).toBe(false)
+    expect(typeof parsed.data.briefRenderSkipReason).toBe('string')
+  }, 60000)
 })
 
 // The three content checks `open-issue.ts` gates task Issues on

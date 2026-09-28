@@ -98,11 +98,11 @@ describe('collectTaskIssueErrors — one gate sequence, every group, one refusal
 
   it("a body failing title grammar, a Surface-versus-Test-plan rule, and the rendered brief's consumer-test rule is refused once with three findings", async () => {
     const deps: TaskIssueValidationDeps = {
-      computeRenderedBriefErrors: async () => [fakeConsumerTestFinding],
+      computeRenderedBriefErrors: async () => ({ errors: [fakeConsumerTestFinding], skipped: null }),
       runIssueChecks: async () => []
     }
 
-    const errors = await collectTaskIssueErrors(
+    const { errors } = await collectTaskIssueErrors(
       surfaceVsTestPlanBody,
       'not a valid title',
       [],
@@ -134,11 +134,11 @@ describe('collectTaskIssueErrors — one gate sequence, every group, one refusal
     ].join('\n')
 
     const deps: TaskIssueValidationDeps = {
-      computeRenderedBriefErrors: async () => [],
+      computeRenderedBriefErrors: async () => ({ errors: [], skipped: null }),
       runIssueChecks: async () => []
     }
 
-    const errors = await collectTaskIssueErrors(
+    const { errors } = await collectTaskIssueErrors(
       fixedBody,
       'Feat: a well-formed title',
       [],
@@ -201,11 +201,11 @@ exit 1
 
   it("keeps the schema group's own findings when the sibling-overlap fetch fails, refusing once with both", async () => {
     const deps: TaskIssueValidationDeps = {
-      computeRenderedBriefErrors: async () => [],
+      computeRenderedBriefErrors: async () => ({ errors: [], skipped: null }),
       runIssueChecks: async () => []
     }
 
-    const errors = await collectTaskIssueErrors(
+    const { errors } = await collectTaskIssueErrors(
       // `no-doc-surface` sentinel keeps `checkRationaleNamesDocs` quiet — this
       // fixture means to name exactly one content-group defect via the
       // fetch failure itself, not a second, unrelated one.
@@ -318,7 +318,7 @@ describe('the real (non-injected) rendered-brief-shape group also names its own 
   it('a real render-gap finding quotes the gap and states the fix, not just the rule', async () => {
     // No `deps` override — `computeRenderedBriefErrors` runs the REAL
     // `validateRenderedBriefForIssue`, exercising its own `nameTheFix` calls.
-    const errors = await collectTaskIssueErrors(
+    const { errors } = await collectTaskIssueErrors(
       bodyMissingStopConditions,
       'Feat: a well-formed title',
       [],
@@ -330,6 +330,176 @@ describe('the real (non-injected) rendered-brief-shape group also names its own 
     expect(renderFindings.length).toBeGreaterThan(0)
     for (const e of renderFindings) expect(recoveryNamesItsFix(e)).toBe(true)
   })
+})
+
+// ---------------------------------------------------------------------------
+// Issue #849 (O1/O2/O3) — the plan-time write gate renders the brief exactly as
+// dispatch does, in EVERY repository (not only Vinaya's own) and at task CREATE
+// time. The fixture is an adopter repo with NO `aeg-root/` of its own — the
+// exact shape that installs Vinaya from the registry: it has the PACKAGED
+// template dispatch renders from, and nothing more. It is given the body that
+// dispatch refused at brief render (the `## Surface` `in:` resolves to a tracked
+// file, but the Boundary names none of them to pin) and must be refused HERE,
+// at create, with dispatch's own message; a corrected body passes; and a
+// checkout that genuinely cannot render reports WHY, never a silent pass.
+// ---------------------------------------------------------------------------
+
+describe('the plan-time gate renders as dispatch does — adopter with no aeg-root, at create time (Issue #849)', () => {
+  let cwd: string
+  let originalCwd: string
+  let originalAegRepo: string | undefined
+
+  const RATIONALE = (boundary: string): string =>
+    [
+      "## Task Issue — Planner's rationale",
+      '',
+      `**Boundary** — ${boundary}`,
+      '',
+      '**Sizing** — n/a, test fixture.',
+      '',
+      '**Project(s) + blast radius** — `Project: cli`. No shared-primitive fan-out.',
+      '',
+      '**Dependency rationale** — `Depends-on: —`; `Conflicts-with: —`.',
+      '',
+      '**Traps to avoid** — n/a.',
+      '',
+      '**Suggested agent-class** — fast — test fixture.',
+      '',
+      '**Stop-and-escalate** — n/a.',
+      '',
+      '**Docs to keep coherent** — no-doc-surface.'
+    ].join('\n')
+
+  const bodyWithBoundary = (boundary: string): string =>
+    [
+      '**Project:** cli',
+      '',
+      '## Objectives',
+      '',
+      'O1. The plan-time gate renders the brief exactly as dispatch does.',
+      '',
+      '## Documentation',
+      '',
+      'None.',
+      '',
+      '## Surface',
+      '',
+      'in: src',
+      'out: —',
+      '',
+      '## Parts',
+      '',
+      'Part 1 (O1) — the only part, citing the only objective.',
+      '',
+      '## Test plan',
+      '',
+      'Test Plan: unit-tests-only',
+      '',
+      '## Stop conditions',
+      '',
+      '- None.',
+      '',
+      RATIONALE(boundary)
+    ].join('\n')
+
+  // The incident: the Surface `in:` resolves to a tracked file, but the
+  // Boundary names none of them to pin — exactly what dispatch refuses.
+  const incidentBody = bodyWithBoundary('In: the plan-time gate itself, described in prose only. Out: nothing.')
+  // Corrected: the Boundary names the real in-scope file, so a premise pin exists.
+  const correctedBody = bodyWithBoundary('In: `src/fixture.ts`, the committed source file. Out: nothing.')
+
+  // The exact substring of `brief-render.ts`'s premise-pins refusal —
+  // dispatch's own message, which this gate must now reproduce.
+  const PREMISE_PINS_MESSAGE = 'the Boundary names none of them to pin'
+
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-adopter-no-aeg-root-'))
+    writeFileSync(
+      join(cwd, 'vinaya.config.json'),
+      JSON.stringify({ briefSchema: { issue: { sections: [{ builtin: 'issueRationale' }] } } }),
+      'utf8'
+    )
+    execFileSync('git', ['init', '-q'], { cwd })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd })
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd })
+    // A tracked file under the Surface `in:` glob — but DELIBERATELY no
+    // `aeg-root/` of its own. If this gate still switched itself off for a
+    // missing workspace `aeg-root/` (the O1 bug), the incident below would
+    // falsely pass and this test would prove nothing.
+    mkdirSync(join(cwd, 'src'), { recursive: true })
+    writeFileSync(join(cwd, 'src', 'fixture.ts'), 'export const fixture = true\n')
+    execFileSync('git', ['add', '.'], { cwd })
+    execFileSync('git', ['commit', '-q', '-m', 'seed'], { cwd })
+
+    originalAegRepo = process.env.AEG_REPO
+    process.env.AEG_REPO = 'test-owner/test-repo'
+    originalCwd = process.cwd()
+    process.chdir(cwd)
+  })
+
+  afterEach(() => {
+    process.chdir(originalCwd)
+    if (originalAegRepo === undefined) delete process.env.AEG_REPO
+    else process.env.AEG_REPO = originalAegRepo
+    rmSync(cwd, { recursive: true, force: true })
+  })
+
+  it("refuses a tranche-task CREATE (no Issue number yet) with dispatch's premise-pins message (O1, O2)", async () => {
+    const { errors, renderSkipped } = await collectTaskIssueErrors(
+      incidentBody,
+      '[demo] 1 — the incident, at create time',
+      ['vinaya/tranche:demo'],
+      'vinaya issue create --validate-only …',
+      null // no Issue number — a create
+    )
+    // The render RAN: no local `aeg-root/` did not switch the gate off (O1).
+    expect(renderSkipped).toBeNull()
+    const renderFinding = errors.find((e) => e.check === 'brief-render' && e.message.includes(PREMISE_PINS_MESSAGE))
+    expect(renderFinding, JSON.stringify(errors)).toBeDefined()
+    expect(renderFinding?.severity).toBe('error')
+  }, 60000)
+
+  it('passes the same tranche-task CREATE once the Boundary names the real in-scope file (O1, O2)', async () => {
+    const { errors, renderSkipped } = await collectTaskIssueErrors(
+      correctedBody,
+      '[demo] 1 — the incident, corrected',
+      ['vinaya/tranche:demo'],
+      'vinaya issue create --validate-only …',
+      null
+    )
+    expect(renderSkipped).toBeNull()
+    // No render finding — the draft brief renders and premise-pins are satisfied.
+    expect(
+      errors.some((e) => e.check === 'brief-render'),
+      JSON.stringify(errors)
+    ).toBe(false)
+  }, 60000)
+
+  it('refuses a backlog CREATE (no tranche label) with the same message — the fix is adopter-wide, not tranche-only (O1)', async () => {
+    const { errors, renderSkipped } = await collectTaskIssueErrors(
+      incidentBody,
+      'Fix: the incident on a backlog Issue',
+      [],
+      'vinaya issue create --validate-only …',
+      null
+    )
+    expect(renderSkipped).toBeNull()
+    expect(errors.some((e) => e.check === 'brief-render' && e.message.includes(PREMISE_PINS_MESSAGE))).toBe(true)
+  }, 60000)
+
+  it('when the render cannot run (no resolvable repo), reports the skip reason and no brief-render finding (O3)', async () => {
+    delete process.env.AEG_REPO // this fixture's origin is unresolvable, so the repo no longer resolves
+    const { errors, renderSkipped } = await collectTaskIssueErrors(
+      incidentBody,
+      '[demo] 1 — the incident',
+      ['vinaya/tranche:demo'],
+      'vinaya issue create --validate-only …',
+      null
+    )
+    expect(renderSkipped).not.toBeNull()
+    expect(renderSkipped).toMatch(/owner\/repo/)
+    expect(errors.some((e) => e.check === 'brief-render')).toBe(false)
+  }, 60000)
 })
 
 // ---------------------------------------------------------------------------
@@ -472,7 +642,7 @@ exit 1
   })
 
   it('is reported with `severity: "warning"`, naming the dependency, and blocks nothing', async () => {
-    const errors = await collectTaskIssueErrors(
+    const { errors } = await collectTaskIssueErrors(
       bodyWithOpenDependency,
       'Feat: a well-formed title',
       [],
@@ -508,7 +678,7 @@ exit 1
   )
 
   it('never asserts a deferred premise, on the real render path the write gate runs', async () => {
-    const errors = await collectTaskIssueErrors(
+    const { errors } = await collectTaskIssueErrors(
       bodyWithDeferredPremise,
       'Feat: a well-formed title',
       [],
@@ -521,8 +691,20 @@ exit 1
     expect(blocking).toEqual([])
   })
 
+  it('never asserts a deferred premise on the tranche-draft create render either', async () => {
+    const { errors } = await collectTaskIssueErrors(
+      bodyWithDeferredPremise,
+      '[demo] 1 — a well-formed tranche task title',
+      ['vinaya/tranche:demo'],
+      'vinaya issue create …',
+      null
+    )
+
+    expect(errors.filter((e) => /premise/i.test(e.message))).toEqual([])
+  })
+
   it('still asserts the same premise, on that same path, once the `after` prefix is gone', async () => {
-    const errors = await collectTaskIssueErrors(
+    const { errors } = await collectTaskIssueErrors(
       bodyWithDeferredPremise.replace('after #999: ', ''),
       'Feat: a well-formed title',
       [],

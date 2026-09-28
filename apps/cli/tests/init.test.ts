@@ -1275,7 +1275,7 @@ describe('generated pre-push hook: affected tests (#407 O4)', () => {
     vendorVinaya()
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const prePush = readFileSync(join(root, '.husky/pre-push'), 'utf-8')
-    expect(prePush).toContain("for _vinaya_git_var in $(env | grep -o '^GIT_[A-Z_]*='); do")
+    expect(prePush).toContain("for _vinaya_git_var in $(env | grep -o '^GIT_[A-Za-z0-9_]*='); do")
     expect(prePush).toContain('unset "${_vinaya_git_var%=*}"')
     const selectIdx = prePush.indexOf('pre-push-select-tests.ts')
     const unsetIdx = prePush.indexOf('_vinaya_git_var')
@@ -1284,25 +1284,53 @@ describe('generated pre-push hook: affected tests (#407 O4)', () => {
     expect(unsetIdx).toBeLessThan(runTestsIdx)
   })
 
-  it('the GIT_* unset step really does isolate a child process from an ambient GIT_DIR/GIT_WORK_TREE — real subprocess, real env, no simulation shortcuts', () => {
-    // Extracts and runs the hook's own unset snippet in a real `sh`, exactly
-    // as the generated hook would, then proves a `git` call afterward can no
-    // longer see the ambient GIT_DIR/GIT_WORK_TREE this test seeds — the
-    // exact live incident (task-run-v1 20): a fixture test's own git fixture,
-    // created elsewhere, inherited the pre-push hook's real GIT_DIR and had
-    // several of its own commits land for real on the branch being pushed.
+  it('the GIT_* unset step really does isolate a child process from an ambient GIT_DIR/GIT_WORK_TREE — real subprocess, real env, no simulation shortcuts', async () => {
+    // Runs the GENERATED hook's own unset snippet — lifted out of the file
+    // `runInit` just wrote, never retyped here, so this proof can never pass
+    // against a pattern the generator no longer emits — in a real `sh`, then
+    // proves a `git` call afterward can no longer see the ambient GIT_DIR/
+    // GIT_WORK_TREE this test seeds. The live incident (task-run-v1 20): a
+    // fixture test's own git fixture, created elsewhere, inherited the
+    // pre-push hook's real GIT_DIR and had several of its own commits land
+    // for real on the branch being pushed.
+    //
+    // The seeded set is every variable shape git itself hands a hook, plus
+    // the two whose names carry a digit — measured, on a real push from a
+    // linked worktree, as the ones a letters-only name pattern left behind:
+    // `GIT_CONFIG_KEY_0`/`GIT_CONFIG_VALUE_0` (configuration injected into
+    // every git call the test run makes) and `GIT_TRACE2` (trace output
+    // interleaved into the git output a fixture test parses).
+    vendorVinaya()
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const prePush = readFileSync(join(root, '.husky/pre-push'), 'utf-8')
+    const hookLines = prePush.split('\n')
+    const loopStart = hookLines.findIndex((l) => l.includes('for _vinaya_git_var in'))
+    expect(loopStart).toBeGreaterThan(-1)
+    const unsetSnippet = hookLines.slice(loopStart, loopStart + 3).join('\n')
+    expect(unsetSnippet).toContain('unset')
+    expect(unsetSnippet.trim().endsWith('done')).toBe(true)
     const script = `
 GIT_DIR=/tmp/should-never-be-read GIT_WORK_TREE=/tmp/should-never-be-read
-export GIT_DIR GIT_WORK_TREE
-for _vinaya_git_var in $(env | grep -o '^GIT_[A-Z_]*='); do
-  unset "\${_vinaya_git_var%=*}"
-done
+GIT_INDEX_FILE=/tmp/should-never-be-read/index GIT_PREFIX=sub/
+GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.bare GIT_CONFIG_VALUE_0=true GIT_TRACE2=1
+export GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX
+export GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_TRACE2
+${unsetSnippet}
 echo "GIT_DIR after unset: [$GIT_DIR]"
+sh -c 'printf "child reads: [%s][%s][%s][%s][%s][%s][%s][%s]\\n" "$GIT_DIR" "$GIT_WORK_TREE" "$GIT_INDEX_FILE" "$GIT_PREFIX" "$GIT_CONFIG_COUNT" "$GIT_CONFIG_KEY_0" "$GIT_CONFIG_VALUE_0" "$GIT_TRACE2"'
 git rev-parse --git-dir 2>&1 || true
 `
     const out = execFileSync('sh', ['-c', script], { cwd: '/tmp', encoding: 'utf8' })
     expect(out).toContain('GIT_DIR after unset: []')
+    // The child reads each variable by name rather than counting `env | grep
+    // "^GIT_"` lines: any OTHER variable in scope whose value spans lines —
+    // `PR_BODY`, which `vinaya pr report` exports around every Test-plan
+    // command, and which may quote a `GIT_DIR=…` line of its own — puts lines
+    // that look exactly like an environment entry into `env`'s output, and the
+    // count read them as leaked variables that were never set.
+    expect(out).toContain('child reads: [][][][][][][][]')
     expect(out).not.toContain('/tmp/should-never-be-read')
+    expect(out).not.toContain('core.bare')
   })
 
   it("both xargs pipelines stop flag parsing with a trailing '--' before the file list, so a tracked file named like a CLI flag is never forwarded as one (round-4 security review, HIGH/MEDIUM)", async () => {
