@@ -83,6 +83,7 @@ import {
   resolveHookDir
 } from '../lib/detect.js'
 import { printJson } from '../lib/envelope.js'
+import { planGhPathFix } from '../lib/gh-path.js'
 import { checksMissingEnvDeclaration, envDeclarationWarning } from '../lib/env-lint.js'
 import { PROJECTS_REGISTRY_PATH } from '../lib/registry-write.js'
 import { markerLines, renderBlock, resolveManagedBlockPath } from '../lib/ops.js'
@@ -871,6 +872,37 @@ function diagnoseTokenMetering(deps: DoctorDeps): Finding[] {
 }
 
 // ---------------------------------------------------------------------------
+// gh reachability — is the GitHub CLI binary FINDABLE at all, before
+// `diagnoseEnvironment` below asks whether it is AUTHENTICATED. The CLI's
+// entry path (`apps/cli/src/index.ts`'s `ensureGhOnPath`) already appended a
+// standard install folder to this process's PATH if one held `gh`, so by the
+// time doctor runs `gh` is reachable whenever it could be made so — this
+// re-evaluates that same decision (`planGhPathFix`, read-only, never mutating)
+// and, when `gh` is STILL not findable, names both that it is missing and the
+// standard locations that were searched (issue #836, O2). Every forge read
+// (config, review, dispatch — 23 call sites) invokes `gh` by name, so a `gh`
+// nothing can find is a real gap, reported at `warn`; a reachable one is a
+// quiet `info` naming where it resolved.
+// ---------------------------------------------------------------------------
+function diagnoseGhReachable(): Finding[] {
+  const plan = planGhPathFix(process.env)
+  if (plan.kind === 'not-found') {
+    return [
+      warn(
+        'gh',
+        'the GitHub CLI `gh` is not on PATH and was not found at any standard install location ' +
+          `(${plan.searched.join(', ')}). Every forge read — config, review, dispatch — invokes \`gh\` by name, so ` +
+          'each will fail "command not found" until it is installed or its folder is added to PATH.'
+      )
+    ]
+  }
+  // `already-on-path` or `added`: reachable. By the time doctor runs the
+  // entry-path fix has already amended PATH, so `added` collapses into
+  // `already-on-path` here — both name the folder `gh` resolves from.
+  return [info('gh', `\`gh\` resolves at ${plan.dir}.`)]
+}
+
+// ---------------------------------------------------------------------------
 // Check 5 — environment (gh auth + scope, Node/Bun, package-vs-artifact skew)
 // ---------------------------------------------------------------------------
 async function diagnoseEnvironment(deps: DoctorDeps, hasDrift: boolean): Promise<Finding[]> {
@@ -1462,6 +1494,7 @@ export async function runDoctor(args: string[], deps: DoctorDeps): Promise<numbe
   findings.push(...diagnoseCheckClassification(configRead.kind === 'ok' ? configRead.config : null))
   findings.push(...diagnoseGlobalConfigChecks())
   findings.push(...diagnoseTokenMetering(deps))
+  findings.push(...diagnoseGhReachable())
   findings.push(...(await diagnoseEnvironment(deps, hasDrift)))
   findings.push(await diagnoseBranchProtection(deps, repo.owner, repo.repo))
   findings.push(diagnoseCodeowners(repo.repoRoot))

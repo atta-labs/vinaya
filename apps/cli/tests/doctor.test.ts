@@ -724,7 +724,14 @@ describe('vinaya doctor — principals and vinaya-on-PATH (PR #279 review)', () 
 
     it('reports info-gap when a vendor is selected but no `vinaya` file sits on PATH', async () => {
       await runInit(['--yes', '--agents=claude'], initDeps())
-      process.env.PATH = '/nonexistent-dir-for-this-test'
+      // A PATH with no `vinaya` on it — but with a reachable `gh`, so the
+      // separate `[gh]`-reachability finding (issue #836) stays `info` and the
+      // `healthy === true` assertion still isolates the point here: an `info`
+      // vinaya-on-path gap never flips the exit code.
+      const binDir = join(root, 'gh-only-bin')
+      mkdirSync(binDir, { recursive: true })
+      writeFileSync(join(binDir, 'gh'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+      process.env.PATH = binDir
       const report = await runDoctorJson()
       const finding = report.findings.find((f) => f.check === 'vinaya-on-path')
       expect(finding?.severity).toBe('info')
