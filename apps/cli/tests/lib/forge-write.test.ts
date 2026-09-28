@@ -952,6 +952,14 @@ describe('readPinnedFileImporters — path-exact, not basename-exact', () => {
     write('apps/cli/src/lib/user.ts', "import { other } from './gate'\n")
     // Not a module at all: its importers are never imports of it.
     write('apps/cli/specs/gate.md', '# gate\n')
+    // A non-TypeScript module, imported only from another non-TypeScript one —
+    // invisible while the search pathspec was narrower than the extensions a
+    // pinned file may carry.
+    write('packages/core/src/legacy.mjs', 'export const legacy = 3\n')
+    write('packages/core/scripts/run.mjs', "import { legacy } from '../src/legacy.mjs'\n")
+    // A basename carrying its own dot.
+    write('packages/core/src/config.schema.ts', 'export const schema = 4\n')
+    write('apps/cli/src/commands/read.ts', "import { schema } from '../../../../packages/core/src/config.schema'\n")
     execFileSync('git', ['add', '-A'], { cwd: fixture })
     execFileSync('git', ['-c', 'user.email=t@e', '-c', 'user.name=t', 'commit', '-qm', 'fixture'], { cwd: fixture })
   })
@@ -986,6 +994,18 @@ describe('readPinnedFileImporters — path-exact, not basename-exact', () => {
     ])
   })
 
+  it('searches every importable extension, not only TypeScript', () => {
+    expect(readPinnedFileImporters(bodyPinning('packages/core/src/legacy.mjs'), fixture)).toEqual([
+      { file: 'packages/core/src/legacy.mjs', importers: ['packages/core/scripts/run.mjs'] }
+    ])
+  })
+
+  it('resolves a pinned file whose own basename carries a dot', () => {
+    expect(readPinnedFileImporters(bodyPinning('packages/core/src/config.schema.ts'), fixture)).toEqual([
+      { file: 'packages/core/src/config.schema.ts', importers: ['apps/cli/src/commands/read.ts'] }
+    ])
+  })
+
   it('finds no importer for a pinned file that is not an importable module', () => {
     expect(readPinnedFileImporters(bodyPinning('apps/cli/specs/gate.md'), fixture)).toEqual([
       { file: 'apps/cli/specs/gate.md', importers: [] }
@@ -1001,5 +1021,15 @@ describe('readPinnedFileImporters — path-exact, not basename-exact', () => {
     expect(inTree('export const gate')).toBe(true)
     expect(inTree('--never-shipped')).toBe(false)
     expect(tokenExistsInTree('')('export const gate')).toBe(false)
+  })
+
+  it('stops probing the tree past its cap, answering "already shipped" rather than refusing', () => {
+    const inTree = tokenExistsInTree(fixture)
+    const answers = Array.from({ length: 60 }, (_, i) => inTree(`--absent-flag-${i}`))
+    // Under the cap the tree's real answer comes back; past it the cheap,
+    // refuses-nothing one does, so a flooded body costs a bounded number of greps.
+    expect(answers[0]).toBe(false)
+    expect(answers[answers.length - 1]).toBe(true)
+    expect(answers.filter((answer) => answer === false).length).toBe(40)
   })
 })

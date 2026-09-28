@@ -1028,12 +1028,34 @@ export function readConfigReference(root: string = repoRoot()): ConfigReferenceF
 }
 
 /**
+ * How many distinct tokens one validation may probe the tree for. The body
+ * being validated is attacker-reachable — anyone who can write an Issue writes
+ * its Objectives — and each distinct token costs one full-tree `git grep`, so
+ * an unbounded probe count turns a body listing thousands of invented flags
+ * into thousands of repository scans on every `issue create`/`issue edit`. A
+ * real task introduces a handful of flags or keys; this bound sits far above
+ * that and far below anything that costs real time.
+ */
+const MAX_TREE_PROBES = 40
+
+/**
  * Does the tracked tree already spell this token out anywhere? A fixed-string
  * `git grep`, never a regex — the tokens asked about are literals (`--issue`,
  * `logs.url`, a command's own word) and a regex reading of one would match by
  * accident. A token the tree already carries is shipped, so an Issue quoting it
  * introduces nothing; `''` (outside a git repository) answers `false` for
  * everything, which leaves the rules grading against the reference alone.
+ *
+ * Past `MAX_TREE_PROBES` distinct tokens it answers `true` — "already
+ * shipped", the direction that refuses NOTHING — without running a further
+ * grep. A body past that bound is not a real task's Objectives, and the worst
+ * outcome of the cap is a rule that stays quiet on such a body; answering
+ * `false` there would turn the same cheap flood into a wall of refusals
+ * instead, which is the more damaging half of the same abuse.
+ *
+ * Runs with `-C root` rather than the process's own directory, so the tree
+ * asked about is always the repository the write is being validated against —
+ * and a test can point it at a fixture tree instead of this one.
  */
 export function tokenExistsInTree(root: string = repoRoot()): (token: string) => boolean {
   if (!root) return () => false
@@ -1041,6 +1063,7 @@ export function tokenExistsInTree(root: string = repoRoot()): (token: string) =>
   return (token: string) => {
     const cached = seen.get(token)
     if (cached !== undefined) return cached
+    if (seen.size >= MAX_TREE_PROBES) return true
     const found = git(['-C', root, 'grep', '-l', '-F', '-e', token]) !== ''
     seen.set(token, found)
     return found
@@ -1048,7 +1071,27 @@ export function tokenExistsInTree(root: string = repoRoot()): (token: string) =>
 }
 
 /** Only a code module can be imported — a pinned `.md` spec or `.json` config has no importers, whatever its basename collides with. */
-const IMPORTABLE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'])
+const IMPORTABLE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'] as const
+
+/**
+ * The files searched for import sites — the same extensions a pinned file may
+ * carry, never a narrower set. Searching only `*.ts`/`*.tsx` while accepting a
+ * pinned `.mjs` reported an empty importer list for it, and an empty list is
+ * how this seam says "dormant": the rule then never fired for that pin, even
+ * where a real uncovered importer existed.
+ */
+const IMPORT_SEARCH_PATHSPEC = IMPORTABLE_EXTENSIONS.map((e) => `*${e}`)
+
+/** A specifier's own module extension, dropped — `'./gate.js'` and `'./gate'` name the same module, and so do the `.mjs`/`.cjs` forms. */
+function stripImportableExtension(path: string): string {
+  const extension = IMPORTABLE_EXTENSIONS.find((e) => path.endsWith(e))
+  return extension === undefined ? path : path.slice(0, -extension.length)
+}
+
+/** A literal made safe for `git grep -E` — a pinned basename may carry a `.` (`config.schema.ts`), which is a wildcard unescaped. */
+function escapeForExtendedRegex(literal: string): string {
+  return literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
 
 /** `a/b/../c` → `a/c`, and a leading `./` dropped — the specifier resolution below never touches disk, so it normalizes the path itself. */
 function normalizeRelative(path: string): string {
@@ -1071,7 +1114,7 @@ function resolvedSpecifiers(importerFile: string, line: string): string[] {
   const dir = importerFile.includes('/') ? importerFile.slice(0, importerFile.lastIndexOf('/')) : ''
   const out: string[] = []
   for (const m of line.matchAll(/['"](\.[^'"]*)['"]/g)) {
-    const spec = (m[1] as string).replace(/\.js$/, '')
+    const spec = stripImportableExtension(m[1] as string)
     out.push(normalizeRelative(`${dir}/${spec}`))
   }
   return out
@@ -1097,12 +1140,12 @@ function resolvedSpecifiers(importerFile: string, line: string): string[] {
 export function readPinnedFileImporters(body: string, root: string = repoRoot()): PinnedFileImporters[] {
   if (!root) return []
   return boundaryPinnedFiles(body).map((file) => {
-    const dot = file.lastIndexOf('.')
-    const extension = dot === -1 ? '' : file.slice(dot)
-    if (!IMPORTABLE_EXTENSIONS.has(extension)) return { file, importers: [] }
-    const base = (file.split('/').pop() as string).slice(0, -extension.length)
-    const pattern = `['"][^'"]*/${base}(\\.js)?['"]`
-    const hits = git(['-C', root, 'grep', '-nE', pattern, '--', '*.ts', '*.tsx'])
+    const extension = IMPORTABLE_EXTENSIONS.find((e) => file.endsWith(e))
+    if (extension === undefined) return { file, importers: [] }
+    const base = escapeForExtendedRegex((file.split('/').pop() as string).slice(0, -extension.length))
+    const suffixes = IMPORTABLE_EXTENSIONS.map((e) => escapeForExtendedRegex(e)).join('|')
+    const pattern = `['"][^'"]*/${base}(${suffixes})?['"]`
+    const hits = git(['-C', root, 'grep', '-nE', pattern, '--', ...IMPORT_SEARCH_PATHSPEC])
     const importers = new Set<string>()
     for (const hit of hits === '' ? [] : hits.split('\n')) {
       const cut = hit.indexOf(':')

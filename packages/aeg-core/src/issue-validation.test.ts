@@ -2693,10 +2693,10 @@ describe('checkPinnedFileImportersCovered', () => {
     ).toBe('pass')
   })
 
-  it('passes when the Surface `out:` list excludes the importer deliberately', () => {
-    expect(
-      checkPinnedFileImportersCovered(body('packages/aeg-core/src', 'apps/cli/src/commands'), importers).status
-    ).toBe('pass')
+  it('refuses even when a Surface `out:` glob covers the importer — only the Boundary says "left out on purpose"', () => {
+    const result = checkPinnedFileImportersCovered(body('packages/aeg-core/src', 'apps/cli/src/commands'), importers)
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toContain('`apps/cli/src/commands/issue.ts`')
   })
 
   it("passes when the Boundary's `Out:` clause names the importer's directory", () => {

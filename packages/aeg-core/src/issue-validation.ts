@@ -2426,9 +2426,13 @@ function isDocumentedConfigKey(token: string, keys: string[]): boolean {
  * The first-segment requirement is what keeps this rule from reading every
  * dotted identifier in an Issue (`brief-render.ts`, `foo.bar()`, a version
  * number) as a configuration key. Its cost is that a brand-new TOP-LEVEL key
- * is out of reach — that one stays the Reviewer's judgment, which is the
- * right trade against a rule that refuses real Issues for tokens that were
- * never keys at all.
+ * is out of reach — that one stays the Planner's and the Reviewer's judgment,
+ * which is the right trade against a rule that refuses real Issues for tokens
+ * that were never keys at all: nothing in an Issue distinguishes an undocumented
+ * root segment from any other dotted identifier, so widening the net here buys
+ * one more caught key at the price of refusing bodies that introduce nothing.
+ * The gap is stated where the Planner reads it, in the role reference, rather
+ * than left to be discovered.
  */
 function configKeyCandidates(text: string, keys: string[]): string[] {
   const topLevel = new Set(keys.map((k) => k.split('.')[0] as string))
@@ -2507,21 +2511,22 @@ export function boundaryPinnedFiles(body: string): string[] {
  * rulings, because the caller that had to pass the new signal sat outside it.
  *
  * An importer counts as covered when any `in:` glob covers it, or when the
- * task DELIBERATELY excludes it — the Surface's own `out:` list naming it, or
- * the Boundary's `Out:` clause naming it or its directory. Both exclusion
- * forms count, the same two sources of "excluded"
- * `checkObjectivesRespectBoundary` already reads, because a Planner writes the
- * decision in whichever of the two fits: refusing the `out:` form would refuse
- * a decision already made, in the exact words the Surface grammar provides for
- * it. Refused only when NONE of a pinned file's importers is covered any of
- * those ways: one importer in the Surface means the task already reaches its
- * call sites.
+ * Boundary's `Out:` clause names it or its directory — those two, and no
+ * third. The Boundary is where a task says what it deliberately leaves out of
+ * work it is otherwise committed to, and saying it there is a sentence the
+ * Planner writes on purpose; a `## Surface` `out:` glob is a coarser
+ * declaration that the task does not touch a directory at all, which is
+ * exactly the claim a forced call-site edit contradicts. Reading `out:` as an
+ * excuse let a pinned file's only importer sit under a directory the Issue had
+ * merely declared untouched, and the refusal this rule exists for never fired.
+ * Refused only when NONE of a pinned file's importers is covered either way:
+ * one importer in the Surface means the task already reaches its call sites.
  */
 export function checkPinnedFileImportersCovered(body: string, importers: PinnedFileImporters[]): IssueSectionResult {
   if (importers.length === 0) return { status: 'pass', errors: [] }
   const surface = parseIssueSurface(body)
   if (!surface.ok) return { status: 'pass', errors: [] }
-  const disclaimed = [...namedPathsIn(boundaryOutText(body)), ...surface.value.out]
+  const disclaimed = namedPathsIn(boundaryOutText(body))
 
   const errors: string[] = []
   for (const { file, importers: found } of importers) {
@@ -2532,7 +2537,7 @@ export function checkPinnedFileImportersCovered(body: string, importers: PinnedF
     if (uncovered.length < found.length) continue
     const globs = [...new Set(uncovered.map(directoryGlobFor))]
     errors.push(
-      `issue-validation Surface/importers: the Boundary pins \`${file}\`, which is imported by ${uncovered.map((i) => `\`${i}\``).join(', ')} — and no \`## Surface\` \`in:\` glob covers any of them, nor does \`out:\` or the Boundary's \`Out:\` clause name one. Add ${globs.map((g) => `\`${g}\``).join(' or ')} to \`in:\`, or name the importer in \`out:\` (or the Boundary's \`Out:\` clause) to exclude it deliberately.`
+      `issue-validation Surface/importers: the Boundary pins \`${file}\`, which is imported by ${uncovered.map((i) => `\`${i}\``).join(', ')} — and no \`## Surface\` \`in:\` glob covers any of them, nor does the Boundary's \`Out:\` clause name one. Add ${globs.map((g) => `\`${g}\``).join(' or ')} to \`in:\`, or name the importer in the Boundary's \`Out:\` clause to exclude it deliberately (a \`## Surface\` \`out:\` glob is not that statement — it claims the directory is untouched, which a forced call-site edit contradicts).`
     )
   }
   return { status: errors.length > 0 ? 'fail' : 'pass', errors }
