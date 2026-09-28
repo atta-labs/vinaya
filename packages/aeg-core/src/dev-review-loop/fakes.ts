@@ -29,17 +29,22 @@ export function fakeStats(round: number, overrides: Partial<RoundStats> = {}): R
   }
 }
 
-/** The CI fake: a round's mechanical-gate result, optionally carrying the developer's confidence. */
+/**
+ * The CI fake: a round's mechanical-gate result, optionally carrying the
+ * developer's confidence and — for a red gate — the mechanical failure the
+ * driver observed, verbatim, exactly as the real one reports it.
+ */
 export function fakeGate(
   round: number,
   green: boolean,
-  opts: { confidence?: Confidence; stats?: Partial<RoundStats> } = {}
+  opts: { confidence?: Confidence; stats?: Partial<RoundStats>; failure?: string } = {}
 ): Observations {
   return {
     kind: 'gate',
     round,
     green,
     ...(opts.confidence !== undefined ? { confidence: opts.confidence } : {}),
+    ...(opts.failure !== undefined ? { failure: opts.failure } : {}),
     stats: fakeStats(round, opts.stats)
   }
 }

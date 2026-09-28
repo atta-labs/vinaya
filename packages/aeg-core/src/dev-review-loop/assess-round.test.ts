@@ -8,6 +8,7 @@ import {
   notMetVerdict,
   runScenario
 } from './fakes'
+import { normalizeFailureSignature } from './assess-round'
 import { initialLoopState, SEVERITY_COLUMNS } from './types'
 import type { LoopConfig } from './types'
 
@@ -672,5 +673,101 @@ describe('assessRound — the same blocking finding twice pauses the loop', () =
     ])
 
     expect(decisions.at(-1)).toMatchObject({ type: 'pause', reason: 'repeat_finding' })
+  })
+})
+
+describe('assessRound — the same mechanical failure twice pauses the loop', () => {
+  // The live shape of a repeated premise re-check mismatch: the same failure,
+  // reported by two different attempts, differing only in what always differs.
+  const premiseMismatch = (when: string, tmp: string, pid: number, ms: number) =>
+    `2026-09-28T${when}Z premise re-assert failed in /tmp/${tmp} (pid ${pid}, ${ms}ms): absent: maxRounds`
+
+  it('two consecutive red gates with the same failure → pause(repeat_failure) naming the message as reported', () => {
+    const { events, decisions } = runScenario(freshState(), [
+      fakeGate(1, false, { failure: premiseMismatch('10:00:00', 'aeg-a1b2c3d', 41201, 1200) }),
+      fakeGate(1, false, { failure: premiseMismatch('10:07:31', 'aeg-9f8e7d6', 41999, 1873) })
+    ])
+
+    // The first red gate is an ordinary send-back; the second is the stop.
+    expect(decisions[0]).toEqual({ type: 'dispatch_developer' })
+    expect(decisions[1]).toEqual({
+      type: 'pause',
+      reason: 'repeat_failure',
+      detail: premiseMismatch('10:07:31', 'aeg-9f8e7d6', 41999, 1873)
+    })
+    expect(events.filter((e) => e.event === 'stop_condition_met')).toMatchObject([{ condition: 'repeat_failure' }])
+    expect(events.some((e) => e.event === 'journal_finalized' && 'result' in e && e.result === 'stopped')).toBe(true)
+  })
+
+  it('a near miss is not a repeat: two different premise pins keep the loop going', () => {
+    const { decisions } = runScenario(freshState(), [
+      fakeGate(1, false, { failure: premiseMismatch('10:00:00', 'aeg-a1b2c3d', 41201, 1200) }),
+      fakeGate(1, false, {
+        failure: premiseMismatch('10:07:31', 'aeg-9f8e7d6', 41999, 1873).replace('maxRounds', 'reviewers')
+      })
+    ])
+
+    expect(decisions).toEqual([{ type: 'dispatch_developer' }, { type: 'dispatch_developer' }])
+  })
+
+  it('a red gate whose cause the driver could not name never matches another unnamed one', () => {
+    const { decisions } = runScenario(freshState(), [fakeGate(1, false), fakeGate(1, false)])
+
+    expect(decisions).toEqual([{ type: 'dispatch_developer' }, { type: 'dispatch_developer' }])
+  })
+
+  it('a green gate in between breaks the chain — the failure stopped repeating', () => {
+    const failure = 'pre-push test run failed: apps/cli/tests/loop.test.ts'
+    const { decisions, state } = runScenario(freshState(), [
+      fakeGate(1, false, { failure }),
+      fakeGate(1, true),
+      fakeVerdicts(1, [
+        blockingVerdict('reviewer', [{ id: 'F1', severity: 'major', state: 'open' }]),
+        cleanVerdict('security')
+      ]),
+      fakeGate(2, false, { confidence: { value: 80 }, failure })
+    ])
+
+    expect(state.lastFailure).toEqual({
+      signature: normalizeFailureSignature(failure),
+      message: failure
+    })
+    expect(decisions.at(-1)).toEqual({ type: 'dispatch_developer' })
+  })
+
+  it('the round a repeat stops records no counts and names why, like every other round no reviewer saw', () => {
+    const failure = 'push refused by the pre-push hook: 1 test failed'
+    const { state } = runScenario(freshState(), [fakeGate(1, false, { failure }), fakeGate(1, false, { failure })])
+
+    const record = state.rounds.at(-1)
+    expect(record?.countsBySeverity).toEqual({})
+    expect(record?.notReviewed).toBe('checks_red')
+    expect(record?.outcome).toBe('stopped')
+  })
+})
+
+describe('normalizeFailureSignature — what varies is ignored, what distinguishes is kept', () => {
+  it('two runs of the same failure share a signature across timestamps, temp paths, process ids and durations', () => {
+    const a = normalizeFailureSignature(
+      '2026-09-28T10:00:00.123Z forge read failed in /var/folders/rp/T/aeg-1a2b3c4 (pid 41201) after 1200ms at 4f0807fab8bb7a4c'
+    )
+    const b = normalizeFailureSignature(
+      '2026-09-29T02:41:07Z forge read failed in /private/tmp/aeg-99ff00e (pid=8) after 3.4s at 1f4ed5c7aa19'
+    )
+    expect(a).toBe(b)
+    // Volatile tokens are replaced, never deleted — the sentence still reads.
+    expect(a).toBe('<ts> forge read failed in <tmp> (pid <pid>) after <dur> at <sha>')
+  })
+
+  it('two different failures never collapse into one signature', () => {
+    expect(normalizeFailureSignature('absent: maxRounds')).not.toBe(normalizeFailureSignature('absent: reviewers'))
+    expect(normalizeFailureSignature('check typecheck failed')).not.toBe(
+      normalizeFailureSignature('check biome failed')
+    )
+  })
+
+  it('is total: an empty or whitespace-only message normalises to the empty signature', () => {
+    expect(normalizeFailureSignature('')).toBe('')
+    expect(normalizeFailureSignature('   \n\t ')).toBe('')
   })
 })

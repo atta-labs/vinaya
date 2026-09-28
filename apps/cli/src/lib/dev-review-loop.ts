@@ -3415,7 +3415,24 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           }
           unpushedResumeAttempted = false
           const confidence = round >= 2 && gateGreen ? readAndClearConfidence(round) : undefined
-          const obs: Observations = { kind: 'gate', round, green: gateGreen, confidence, stats: gate.stats }
+          // The mechanical failure this attempt ended on, handed to the
+          // assessment verbatim — the same failing check-run names and
+          // premise re-assert messages this driver already prints in the
+          // gate-red retry prompt, never a second, differently-worded
+          // description of the same facts. Only the assessment decides what
+          // a repeat is: it normalises this text (`normalizeFailureSignature`,
+          // `@attalabs/aeg-core`) and pauses when two consecutive attempts
+          // match. A red gate whose cause could not be named sends nothing,
+          // which is exactly how "unknown never matches unknown" is spelled.
+          const failure = gateGreen || lastFailingChecks.length === 0 ? undefined : lastFailingChecks.join('; ')
+          const obs: Observations = {
+            kind: 'gate',
+            round,
+            green: gateGreen,
+            confidence,
+            stats: gate.stats,
+            ...(failure !== undefined ? { failure } : {})
+          }
           const result = assessRound(state, obs)
           state = result.state
           decision = result.decision

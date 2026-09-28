@@ -397,7 +397,7 @@ function mergedIds(
 
 function assessGate(
   state: LoopState,
-  obs: { round: number; green: boolean; confidence?: Confidence; stats: RoundStats }
+  obs: { round: number; green: boolean; confidence?: Confidence; stats: RoundStats; failure?: string }
 ): { decision: Decision; state: LoopState; events: DevReviewLoopEventInput[] } {
   const events: DevReviewLoopEventInput[] = []
   const isNewRound = state.pending === null || state.pending.round !== obs.round
@@ -414,16 +414,49 @@ function assessGate(
   events.push(gateResultReadEvent(state, obs.round, obs.stats.head, obs.green, obs.confidence))
 
   if (!obs.green) {
+    // The mechanical failure that ended this attempt, matched against the
+    // previous attempt's by normalised signature — never by raw equality,
+    // which two runs of the same failure never satisfy (different
+    // timestamps, scratch paths, process ids, durations). A failure the
+    // driver could not name at all (`undefined`, or nothing left after
+    // normalisation) is no signature: it breaks the chain rather than
+    // matching one unknown to another.
+    const failure = obs.failure?.trim() ?? ''
+    const signature = failure === '' ? '' : normalizeFailureSignature(failure)
+    const thisFailure = signature === '' ? null : { signature, message: failure }
+    if (thisFailure !== null && state.lastFailure?.signature === signature) {
+      events.push(stopConditionMetEvent(state, obs.round, 'repeat_failure'))
+      events.push(pausedEvent(state, obs.round, 'principal_item'))
+      events.push(roundEndedEvent(state, obs.round, obs.stats, 'changes_requested'))
+      const record = buildUnreviewedRecord(obs.round, null, 'stopped', 'checks_red')
+      const preFinalize: LoopState = {
+        ...state,
+        rounds: [...state.rounds, record],
+        pending: null,
+        lastFailure: thisFailure,
+        ...withRoundStats(state, obs.stats)
+      }
+      events.push(journalFinalizedEvent(preFinalize, obs.stats.head, 'stopped'))
+      // The pause carries the failure as reported, not the signature: the
+      // normalised form exists only to match two attempts, never to be read.
+      return { decision: { type: 'pause', reason: 'repeat_failure', detail: failure }, state: preFinalize, events }
+    }
     events.push(roundEndedEvent(state, obs.round, obs.stats, 'changes_requested'))
     const record = buildUnreviewedRecord(obs.round, null, 'changes_requested', 'checks_red')
     const newState: LoopState = {
       ...state,
       rounds: [...state.rounds, record],
       pending: null,
+      lastFailure: thisFailure,
       ...withRoundStats(state, obs.stats)
     }
     return { decision: { type: 'dispatch_developer' }, state: newState, events }
   }
+
+  // Past the red branch the gate is green: whatever mechanical failure the
+  // previous attempt hit is over, so the repeat chain starts again from
+  // nothing. Every state this function returns below carries that.
+  const clearedFailure = { lastFailure: null } as const
 
   if (obs.round === 1) {
     const pending: PendingRound = {
@@ -433,7 +466,7 @@ function assessGate(
       confidence: obs.confidence ?? null,
       priorIds: state.lastIds
     }
-    return { decision: { type: 'dispatch_reviewers' }, state: { ...state, pending }, events }
+    return { decision: { type: 'dispatch_reviewers' }, state: { ...state, ...clearedFailure, pending }, events }
   }
 
   // Round ≥ 2: the confidence gate.
@@ -448,6 +481,7 @@ function assessGate(
       const record = buildRoundRecord(obs.round, [], null, 'stopped')
       const preFinalize: LoopState = {
         ...state,
+        ...clearedFailure,
         rounds: [...state.rounds, record],
         pending: null,
         ...withRoundStats(state, obs.stats)
@@ -462,7 +496,7 @@ function assessGate(
       confidence: null,
       priorIds: state.lastIds
     }
-    return { decision: { type: 'ask_confidence' }, state: { ...state, pending }, events }
+    return { decision: { type: 'ask_confidence' }, state: { ...state, ...clearedFailure, pending }, events }
   }
 
   if (confidence.value < 50) {
@@ -473,6 +507,7 @@ function assessGate(
       const record = buildRoundRecord(obs.round, [], confidence, 'stopped')
       const preFinalize: LoopState = {
         ...state,
+        ...clearedFailure,
         rounds: [...state.rounds, record],
         pending: null,
         ...withRoundStats(state, obs.stats)
@@ -484,6 +519,7 @@ function assessGate(
     const record = buildUnreviewedRecord(obs.round, confidence, 'changes_requested', 'low_confidence')
     const newState: LoopState = {
       ...state,
+      ...clearedFailure,
       rounds: [...state.rounds, record],
       pending: null,
       extraTurnUsed: true,
@@ -499,7 +535,7 @@ function assessGate(
     confidence,
     priorIds: state.lastIds
   }
-  return { decision: { type: 'dispatch_reviewers' }, state: { ...state, pending }, events }
+  return { decision: { type: 'dispatch_reviewers' }, state: { ...state, ...clearedFailure, pending }, events }
 }
 
 function assessVerdicts(
