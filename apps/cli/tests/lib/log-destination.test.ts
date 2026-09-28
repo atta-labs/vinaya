@@ -100,23 +100,74 @@ describe('resolveTrustAnchorLogsDestination (pure) — a PR cannot grant itself 
   })
 })
 
-describe('resolveLogsHeaderValues (pure) — env-var references, never a literal secret in config', () => {
+describe('resolveLogsHeaderValues (pure) — env-var references, else the macOS Keychain, never a literal secret in config', () => {
+  // The Keychain reader is always injected here: the substitution is pure where
+  // it is tested, and CI runs on Linux where the real Keychain is absent. A
+  // reader that throws proves the branch it stands in is never taken.
+  const noKeychain = (): string | null => null
+  const throwingKeychain = (): string | null => {
+    throw new Error('the environment should have won — the Keychain must not be read')
+  }
+
   it('returns undefined for undefined headers', () => {
-    expect(resolveLogsHeaderValues(undefined, {})).toBeUndefined()
+    expect(resolveLogsHeaderValues(undefined, {}, noKeychain)).toBeUndefined()
   })
 
   it('substitutes a variable reference from the given env', () => {
-    expect(resolveLogsHeaderValues({ authorization: 'Bearer ${TOKEN}' }, { TOKEN: 'abc123' })).toEqual({
+    expect(resolveLogsHeaderValues({ authorization: 'Bearer ${TOKEN}' }, { TOKEN: 'abc123' }, noKeychain)).toEqual({
       authorization: 'Bearer abc123'
     })
   })
 
-  it('resolves an unset variable to the empty string, never throwing', () => {
-    expect(resolveLogsHeaderValues({ authorization: 'Bearer ${MISSING}' }, {})).toEqual({ authorization: 'Bearer ' })
+  it('resolves an unset variable to the empty string when neither env nor Keychain has it, never throwing', () => {
+    expect(resolveLogsHeaderValues({ authorization: 'Bearer ${MISSING}' }, {}, noKeychain)).toEqual({
+      authorization: 'Bearer '
+    })
   })
 
   it('leaves a header with no variable reference untouched', () => {
-    expect(resolveLogsHeaderValues({ 'x-plain': 'literal' }, {})).toEqual({ 'x-plain': 'literal' })
+    expect(resolveLogsHeaderValues({ 'x-plain': 'literal' }, {}, noKeychain)).toEqual({ 'x-plain': 'literal' })
+  })
+
+  it('O1: falls back to the Keychain when the variable is unset in the environment', () => {
+    const keychain = (name: string): string | null => (name === 'VINAYA_LOG_TOKEN' ? 'kc-secret' : null)
+    expect(resolveLogsHeaderValues({ authorization: 'Bearer ${VINAYA_LOG_TOKEN}' }, {}, keychain)).toEqual({
+      authorization: 'Bearer kc-secret'
+    })
+  })
+
+  it('O3: the environment wins over the Keychain when the variable is set', () => {
+    // `throwingKeychain` proves the Keychain is not even consulted for a set var.
+    expect(
+      resolveLogsHeaderValues(
+        { authorization: 'Bearer ${VINAYA_LOG_TOKEN}' },
+        { VINAYA_LOG_TOKEN: 'env-secret' },
+        throwingKeychain
+      )
+    ).toEqual({ authorization: 'Bearer env-secret' })
+  })
+
+  it('O3: a variable set to the empty string still wins — the Keychain is not consulted', () => {
+    expect(
+      resolveLogsHeaderValues(
+        { authorization: 'Bearer ${VINAYA_LOG_TOKEN}' },
+        { VINAYA_LOG_TOKEN: '' },
+        throwingKeychain
+      )
+    ).toEqual({
+      authorization: 'Bearer '
+    })
+  })
+
+  it('resolves a mix — env for the set reference, Keychain for the unset one', () => {
+    const keychain = (name: string): string | null => (name === 'FROM_KC' ? 'kc' : null)
+    expect(
+      resolveLogsHeaderValues(
+        { authorization: 'Bearer ${FROM_ENV}', 'x-extra': 'v=${FROM_KC}' },
+        { FROM_ENV: 'env' },
+        keychain
+      )
+    ).toEqual({ authorization: 'Bearer env', 'x-extra': 'v=kc' })
   })
 })
 

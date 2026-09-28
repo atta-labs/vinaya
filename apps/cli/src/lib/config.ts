@@ -19,6 +19,7 @@ import {
 import { AGENT_VENDORS, type AgentVendor } from './agent-vendors.js'
 import { CLAUDE_COMMAND_PATH } from './claude-command-emitter.js'
 import { GEMINI_COMMAND_PATH } from './gemini-command-emitter.js'
+import { readLogHeaderKeychainCredential } from './worker-boundary.js'
 
 // Rings is the only schema surface this task ships — declarative
 // booleans, no conditional logic. Ring 0 (git hooks) and the
@@ -821,7 +822,10 @@ export const VinayaConfigSchema = z.object({
   // `url`'s `headers` values may reference an environment variable with
   // `${VAR_NAME}` instead of a literal secret — resolved at delivery time,
   // by the trusted process only, so a credential never sits in the
-  // committed config (`resolveLogsHeaderValues`, below).
+  // committed config (`resolveLogsHeaderValues`, below). When that variable is
+  // unset in the process environment, the value falls back to the macOS login
+  // Keychain (issue #841); the environment still wins where it is set, and on
+  // Linux the fallback is a no-op.
   //
   // **Default-branch only, for an unattended caller** — the exact rule
   // `runtimeDir` already carries: the destination is a
@@ -1204,24 +1208,44 @@ export function resolveTrustAnchorLogsDestination(
   return 'folder' in anchored && anchored.folder === local.folder ? anchored : null
 }
 
+/** Reads a `logs.headers` credential from the macOS login Keychain — the injectable half of `resolveLogsHeaderValues`, so the substitution stays pure where it is tested (issue #841). */
+export type LogHeaderKeychainReader = (variable: string) => string | null
+
 /**
  * Substitutes `${VAR_NAME}` references in a `logs.url` header value with the
- * named environment variable — never a literal secret sitting in
- * `vinaya.config.json` itself. A reference to an unset variable resolves to
- * the empty string rather than throwing, matching `redact()`'s own
- * fail-open-but-visible posture elsewhere in this contract: an
- * authentication failure at the destination is the observable signal, not a
- * crashed sink. `undefined` in, `undefined` out — a `logs.url` with no
- * `headers` at all never allocates a fresh empty object.
+ * named environment variable, falling back to the macOS login Keychain when
+ * that variable is not set in the process environment (issue #841, O1) — never
+ * a literal secret sitting in `vinaya.config.json` itself. **The environment
+ * always wins** (O3): the Keychain is consulted only when `env[name]` is
+ * genuinely absent (`undefined`), so a variable that is set — on Linux, in CI,
+ * or on a macOS shell that does export it — resolves exactly as it did before,
+ * and Linux behaviour is unchanged (the reader is darwin-only and returns
+ * `null` everywhere else, resolving to the empty string as before). A reference
+ * that resolves in neither place is the empty string rather than a throw,
+ * matching `redact()`'s own fail-open-but-visible posture elsewhere in this
+ * contract: an authentication failure at the destination is the observable
+ * signal, not a crashed sink. `undefined` in, `undefined` out — a `logs.url`
+ * with no `headers` at all never allocates a fresh empty object.
+ *
+ * The Keychain read is injected (`readKeychain`) so this function stays pure
+ * where it is tested — tests always pass a fake, since CI runs on Linux where
+ * the real Keychain is absent. The real default reads at most once per variable
+ * per process (`readLogHeaderKeychainCredential` caches), so resolving headers
+ * on every event never re-shells to `security`.
  */
 export function resolveLogsHeaderValues(
   headers: Record<string, string> | undefined,
-  env: NodeJS.ProcessEnv
+  env: NodeJS.ProcessEnv,
+  readKeychain: LogHeaderKeychainReader = readLogHeaderKeychainCredential
 ): Record<string, string> | undefined {
   if (!headers) return undefined
   const resolved: Record<string, string> = {}
   for (const [key, value] of Object.entries(headers)) {
-    resolved[key] = value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, name: string) => env[name] ?? '')
+    resolved[key] = value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, name: string) => {
+      const fromEnv = env[name]
+      if (fromEnv !== undefined) return fromEnv
+      return readKeychain(name) ?? ''
+    })
   }
   return resolved
 }

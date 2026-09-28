@@ -122,6 +122,95 @@ function readRealCodexKeychainCredential(codexHome: string): string | null {
   }
 }
 
+// --- the logs.url header credential in the macOS login Keychain (issue #841) -
+//
+// The SAME `find-generic-password`/`add-generic-password` machinery this file
+// already uses for the Codex worker's session (above), applied to a `logs`
+// header credential so an Operator the Claude desktop app starts on macOS —
+// whose environment carries no `VINAYA_LOG_TOKEN`, because the token lives in an
+// interactive shell file the app never reads — still delivers logs with no token
+// copied into any settings file (O1). Kept in this module, beside the Codex
+// path, because it is the one place that already talks to `/usr/bin/security`;
+// `resolveLogsHeaderValues` (`config.ts`) injects the reader below as its
+// default fallback, so the substitution itself stays pure and testable.
+
+/**
+ * The Keychain generic-password SERVICE every `logs.headers` credential is
+ * stored under, keyed by the environment-variable NAME the header references as
+ * its ACCOUNT (`Bearer ${VINAYA_LOG_TOKEN}` → account `VINAYA_LOG_TOKEN`). The
+ * variable name is not itself a secret, so it is the one part that may sit on a
+ * `security` command line; the value only ever moves through stdin (store) and
+ * `-w`'s own stdout (read), never an argument `ps` could show.
+ */
+export const LOG_HEADER_KEYCHAIN_SERVICE = 'Vinaya Log'
+
+/**
+ * Read at most once per variable per process (issue #841 Trap): a `logs.url`
+ * server destination resolves its headers on every event, so an uncached read
+ * would re-shell to `security` per line. `null` is cached too — an absent item
+ * must not be re-probed each event — and `storeLogHeaderKeychainCredential`
+ * below refreshes the entry so a store-then-read in one process is coherent.
+ */
+const logHeaderKeychainCache = new Map<string, string | null>()
+
+/** Trusted-controller-only read of a `logs` header credential from the login Keychain — never throws, never logs the value. `-w` prints the password to stdout followed by a newline, which is stripped; on any failure (not darwin, item absent, `security` unavailable) the fallback is `null`, exactly as the Codex read above degrades. */
+function readRealLogHeaderKeychainCredential(variable: string): string | null {
+  if (process.platform !== 'darwin') return null
+  try {
+    return execFileSync(
+      '/usr/bin/security',
+      ['find-generic-password', '-s', LOG_HEADER_KEYCHAIN_SERVICE, '-a', variable, '-w'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5_000, maxBuffer: 1024 * 1024 }
+    ).replace(/\n$/, '')
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The per-process-cached reader `resolveLogsHeaderValues` injects as its default
+ * Keychain fallback (issue #841, O1). Exported so `config.ts` can name it as the
+ * default without duplicating the cache, and so `vinaya doctor` can report
+ * WHERE the credential was found (O4) through the exact reader delivery uses —
+ * never a second one that could disagree.
+ */
+export function readLogHeaderKeychainCredential(variable: string): string | null {
+  const cached = logHeaderKeychainCache.get(variable)
+  if (cached !== undefined) return cached
+  const value = readRealLogHeaderKeychainCredential(variable)
+  logHeaderKeychainCache.set(variable, value)
+  return value
+}
+
+/**
+ * Stores a `logs.headers` credential in the login Keychain under
+ * `LOG_HEADER_KEYCHAIN_SERVICE`, keyed by the variable NAME as its account
+ * (issue #841, O2). The value reaches `security` through STANDARD INPUT — `-w`
+ * is passed LAST with no value on the command line, so `ps` can never show it —
+ * and `-U` updates an existing item in place rather than refusing. Never prints,
+ * returns or puts the value in an error; a failure message carries only the
+ * process's exit code. The real macOS stdin round-trip is not live-verifiable on
+ * this Linux authoring host — the disclosed-limit posture this module already
+ * takes for the Codex `--with-access-token` path — so tests inject a fake store;
+ * the invocation shape follows this task's own Traps section.
+ */
+export function storeLogHeaderKeychainCredential(variable: string, value: string): void {
+  if (process.platform !== 'darwin') {
+    throw new Error('storing a log credential in the Keychain is supported only on macOS')
+  }
+  try {
+    execFileSync(
+      '/usr/bin/security',
+      ['add-generic-password', '-U', '-s', LOG_HEADER_KEYCHAIN_SERVICE, '-a', variable, '-w'],
+      { input: value, stdio: ['pipe', 'ignore', 'ignore'], timeout: 5_000 }
+    )
+  } catch (error) {
+    const e = error as { status?: number | null }
+    throw new Error(`security add-generic-password failed (exit ${e.status ?? 'unknown'})`)
+  }
+  logHeaderKeychainCache.set(variable, value)
+}
+
 export function resolveCodexAccessToken(
   sourceEnv: Readonly<Record<string, string | undefined>>,
   realHome: string,
