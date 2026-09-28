@@ -58,7 +58,6 @@ const DOC_OWNERS_PATH = '.vinaya/doc-owners'
 /** The workspace member that owns the unabridged gate derivations a brief may name, and the name it must declare for this repository to be the one that owns them. */
 const AEG_CORE_DIR = 'packages/aeg-core'
 const AEG_CORE_PACKAGE_NAME = '@attalabs/aeg-core'
-const WORKSPACE_TEMPLATE_PATH = 'aeg-root/templates/brief-template.md'
 const PACKAGE_ROOT = packageRoot(import.meta.url)
 const PACKAGED_TEMPLATE_PATH = join(PACKAGE_ROOT, 'aeg-root', 'templates', 'brief-template.md')
 const TEMPLATE_PATH = existsSync(PACKAGED_TEMPLATE_PATH)
@@ -137,22 +136,57 @@ function resolveRepo(): { owner: string; repo: string } | null {
 }
 
 /**
- * Whether this checkout has enough infra to attempt a brief render at all —
- * the brief template exists on disk AND the owner/repo resolves
- * (`AEG_REPO`, or a GitHub `origin` remote). `false` means the pre-write
- * brief-render gate (`forge-write.ts`'s `validateRenderedBriefForIssue`)
- * stays DORMANT — never refused — the same dormant-when-infra-absent posture
- * this file's `docOwnersContent`/`sharedPackages` seams already take
- * elsewhere. A real `vinaya` invocation always runs inside a cloned repo
- * that carries this file and a real remote, so this degrades only a rare
- * edge case (an Issue write attempted outside any real checkout, or a test
- * fixture with no repo/template infra of its own), never the normal path —
- * and it is checked BEFORE the render's own staleness/dispatch-readiness/
- * missing-section checks run, so a real checkout still gets the full,
- * fail-closed gate this pre-write validation requires.
+ * Whether this checkout has enough infra to attempt a brief render at all,
+ * and — when it does not — WHY (O3): a plan-time pass must never be printed
+ * for a render that never ran, so the caller reports the reason instead of
+ * silently claiming success.
+ *
+ * The three preconditions the render itself needs, checked here in the SAME
+ * terms dispatch resolves them:
+ *
+ *  1. **The brief template is on disk at `TEMPLATE_PATH`** — the exact,
+ *     packaged-first path `assembleAndRenderBrief`/`assembleAndRenderBriefForIssue`
+ *     read (`PACKAGED_TEMPLATE_PATH`, the copy an install ships, then the
+ *     workspace fallback), never the workspace-only copy only Vinaya's own
+ *     repository carries. Checking the workspace copy was the O1 bug: an
+ *     adopter that installs Vinaya from the registry has the packaged template
+ *     dispatch renders from but no `aeg-root/` of its own, so this gate
+ *     switched itself off and printed a pass for an Issue `task run` then
+ *     refused at brief render.
+ *  2. **The owner/repo resolves** (`AEG_REPO`, or a GitHub `origin` remote) —
+ *     the render reads the forge under that identity.
+ *  3. **A git work tree** — the render shells out to `git ls-files`/`git
+ *     rev-parse` to build the surface map and pin the revision; outside a work
+ *     tree there is nothing to render from.
+ *
+ * `{ ok: false }` means the pre-write brief-render gate
+ * (`forge-write.ts`'s `validateRenderedBriefForIssue`) does not run — but the
+ * caller now surfaces `reason` rather than treating the miss as a pass. A real
+ * `vinaya` invocation inside a cloned repo has all three, so this degrades
+ * only a genuine edge case (an Issue write attempted outside any real
+ * checkout, or a repo whose remote cannot be resolved), never the normal path,
+ * and it is checked BEFORE the render's own dispatch-readiness/missing-section
+ * checks run, so a real checkout still gets the full, fail-closed gate.
  */
-export function canRenderBriefFromHere(): boolean {
-  return existsSync(WORKSPACE_TEMPLATE_PATH) && resolveRepo() !== null
+export type BriefRenderability = { ok: true } | { ok: false; reason: string }
+
+export function canRenderBriefFromHere(): BriefRenderability {
+  if (!existsSync(TEMPLATE_PATH)) {
+    return { ok: false, reason: `the brief template is not on disk at \`${TEMPLATE_PATH}\`` }
+  }
+  if (resolveRepo() === null) {
+    return {
+      ok: false,
+      reason: 'the owner/repo could not be resolved (set `AEG_REPO=owner/repo`, or confirm `git remote get-url origin`)'
+    }
+  }
+  if (git(['rev-parse', '--is-inside-work-tree']) !== 'true') {
+    return {
+      ok: false,
+      reason: 'not inside a git work tree (the render reads `git ls-files` to build the surface map)'
+    }
+  }
+  return { ok: true }
 }
 
 async function resolveToken(): Promise<string | null> {
@@ -505,6 +539,35 @@ export type AssembleAndRenderBriefResult =
   | { ok: false; missing: string[]; dispatchBlockerDetails?: DispatchBlocker[] }
 
 /**
+ * Plan-time render options. `skipFreshness` bypasses the fast-forward and
+ * staleness checks both callers otherwise run FIRST: checkout freshness is a
+ * DISPATCH-time gate (a `task run` renders from the tip), never a plan-time
+ * one. A Planner may legitimately cut or edit Issues from a checkout that is
+ * behind the remote default branch, and the write gate that renders the brief
+ * only to GRADE it (`forge-write.ts`'s `validateRenderedBriefForIssue`) must
+ * not refuse them for that. Dispatch omits it (defaults `false`), keeping its
+ * own freshness guarantee unchanged.
+ */
+export type BriefRenderOptions = { skipFreshness?: boolean }
+
+/** `assembleAndRenderBriefForIssue`'s render options — plan-time freshness plus the O2 tranche-draft escape hatch. */
+export type IssueBriefRenderOptions = BriefRenderOptions & {
+  /**
+   * O2 — render a tranche-labeled Issue as a DRAFT at create time, before it
+   * has an Issue number. `slug` comes from its `vinaya/tranche:*` label,
+   * `taskId` from its `[slug] <n> — …` title. Given, the tranche-label refusal
+   * below is skipped — a create legitimately cannot go through the tranche
+   * path (`assembleAndRenderBrief` reads a forge Issue that does not exist
+   * yet) — and the rendered brief carries the tranche identity in its §1
+   * header, exactly as dispatch will once the Issue is cut. The brief-schema
+   * rules that matter to the write gate (premise pins, Boundary/Surface
+   * agreement, section shape) are label-independent, so the draft render
+   * refuses precisely what dispatch would.
+   */
+  trancheDraft?: { slug: string; taskId: string }
+}
+
+/**
  * **O2 — names what dispatch looked for.** A bare "not
  * present in the forge-derived task list" message leaves the operator
  * guessing whether the Issue was never cut, mislabeled, or the title doesn't
@@ -548,7 +611,8 @@ export async function assembleAndRenderBrief(
   trancheSlug: string,
   taskId: string,
   surfaceGlobsOverride?: string[],
-  bodyOverride?: string
+  bodyOverride?: string,
+  opts?: BriefRenderOptions
 ): Promise<AssembleAndRenderBriefResult> {
   const repo = resolveRepo()
   if (!repo) {
@@ -564,15 +628,21 @@ export async function assembleAndRenderBrief(
   // unreachable remote refuse (`fastForwardToRemoteIfSafe`, the one function
   // both brief-preparation callers run before the staleness check). Done here,
   // before any forge read, so a refused checkout never pays for a Tranche/Issue
-  // fetch it is about to refuse anyway.
-  const fastForward = fastForwardToRemoteIfSafe()
-  if (fastForward.kind === 'refused') return { ok: false, missing: [fastForward.reason] }
+  // fetch it is about to refuse anyway. `skipFreshness` bypasses it entirely
+  // for the plan-time write gate — freshness is a dispatch-time gate, and a
+  // Planner may cut/edit Issues from a checkout that is behind.
+  if (!opts?.skipFreshness) {
+    const fastForward = fastForwardToRemoteIfSafe()
+    if (fastForward.kind === 'refused') return { ok: false, missing: [fastForward.reason] }
+  }
 
   // Read HEAD *after* the fast-forward, so the staleness backstop below and the
   // frozen brief's own `sourceRevision` reflect the tip actually rendered from.
   const headSha = git(['rev-parse', 'HEAD'])
-  const staleness = checkStaleAgainstRemote(headSha)
-  if (staleness.length > 0) return { ok: false, missing: staleness }
+  if (!opts?.skipFreshness) {
+    const staleness = checkStaleAgainstRemote(headSha)
+    if (staleness.length > 0) return { ok: false, missing: staleness }
+  }
 
   const source = createForgeSource({ owner: repo.owner, repo: repo.repo })
   let tranche: Awaited<ReturnType<typeof source.getTranche>>
@@ -856,7 +926,8 @@ function extractProjectField(body: string): string[] {
  */
 export async function assembleAndRenderBriefForIssue(
   issueNumber: number,
-  override?: DraftIssueOverride
+  override?: DraftIssueOverride,
+  opts?: IssueBriefRenderOptions
 ): Promise<AssembleAndRenderBriefResult> {
   const repo = resolveRepo()
   if (!repo) {
@@ -868,13 +939,18 @@ export async function assembleAndRenderBriefForIssue(
 
   // O1/O2/O3 — the same fast-forward-before-staleness step the tranche path
   // runs (see `assembleAndRenderBrief`): both brief-preparation callers of the
-  // staleness check share this one function.
-  const fastForward = fastForwardToRemoteIfSafe()
-  if (fastForward.kind === 'refused') return { ok: false, missing: [fastForward.reason] }
+  // staleness check share this one function. `skipFreshness` bypasses it for
+  // the plan-time write gate, exactly as the tranche path does.
+  if (!opts?.skipFreshness) {
+    const fastForward = fastForwardToRemoteIfSafe()
+    if (fastForward.kind === 'refused') return { ok: false, missing: [fastForward.reason] }
+  }
 
   const headSha = git(['rev-parse', 'HEAD'])
-  const staleness = checkStaleAgainstRemote(headSha)
-  if (staleness.length > 0) return { ok: false, missing: staleness }
+  if (!opts?.skipFreshness) {
+    const staleness = checkStaleAgainstRemote(headSha)
+    if (staleness.length > 0) return { ok: false, missing: staleness }
+  }
 
   const found: IssueForBrief | null = override
     ? { title: override.title, body: override.body, labels: override.labels, state: 'OPEN' }
@@ -882,7 +958,10 @@ export async function assembleAndRenderBriefForIssue(
   if (!found) {
     return { ok: false, missing: [`could not fetch Issue #${issueNumber} (\`gh issue view\`).`] }
   }
-  if (found.labels.some((l) => l.startsWith('vinaya/tranche:'))) {
+  // A tranche-labeled Issue belongs on the tranche path — EXCEPT an O2 draft
+  // create (`trancheDraft`), which has no forge Issue for that path to read
+  // yet and is rendered here, as a draft, on purpose.
+  if (!opts?.trancheDraft && found.labels.some((l) => l.startsWith('vinaya/tranche:'))) {
     return {
       ok: false,
       missing: [
@@ -896,9 +975,13 @@ export async function assembleAndRenderBriefForIssue(
   const issueBody = found.body
   const issueRationalePass = checkIssueRationale(issueBody).status !== 'fail'
 
+  // O2 — a tranche draft carries its real tranche identity (slug from the
+  // label, id from the title); a backlog Issue's task id is the Issue number
+  // itself, as before.
+  const effectiveTaskId = opts?.trancheDraft ? opts.trancheDraft.taskId : String(issueNumber)
   const { dependsOn: dependsOnIds, conflictsWith: conflictsWithIds } = parseRationaleDeps(issueBody)
   const task: Task = {
-    id: String(issueNumber),
+    id: effectiveTaskId,
     title: found.title,
     issue: issueNumber,
     projects: extractProjectField(issueBody),
@@ -935,7 +1018,7 @@ export async function assembleAndRenderBriefForIssue(
   const priorTrancheArchival: DispatchPriorTrancheFact[] = []
 
   const gateInput: DispatchGateInput = {
-    trancheSlug: `issue-${issueNumber}`,
+    trancheSlug: opts?.trancheDraft ? opts.trancheDraft.slug : `issue-${issueNumber}`,
     task,
     issue: { number: issueNumber, state: 'open' },
     issueRationalePass,
@@ -991,8 +1074,8 @@ export async function assembleAndRenderBriefForIssue(
     : { kind: 'sources', sources: [] }
 
   const facts: BriefFacts = {
-    trancheSlug: null,
-    taskId: String(issueNumber),
+    trancheSlug: opts?.trancheDraft ? opts.trancheDraft.slug : null,
+    taskId: effectiveTaskId,
     title: task.title,
     issue: issueNumber,
     projects: task.projects,

@@ -43,7 +43,6 @@ import { dispatchRole, isAgentClass, resolveClassModel, type AgentClass } from '
 import { assembleAndRenderBrief, assembleAndRenderBriefForIssue } from './brief-assembly.js'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
 import { collectTaskIssueErrors, currentGhLogin, postMarkedComment } from './forge-write.js'
-import type { CheckError } from '../checks/contract'
 
 export { AEG_BRIEF_V1_MARKER, briefHash, contentAfterTwoLines } from '@attalabs/aeg-core'
 
@@ -157,7 +156,7 @@ export async function validateIssueWriteGate(
   issue: number,
   retryCommand: string
 ): Promise<void> {
-  const errors: CheckError[] = await collectTaskIssueErrors(body, null, labels, retryCommand, issue, {
+  const { errors } = await collectTaskIssueErrors(body, null, labels, retryCommand, issue, {
     kind: 'edit',
     issueRef: String(issue)
   })
