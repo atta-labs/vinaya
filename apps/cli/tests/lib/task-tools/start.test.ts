@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import type { TaskToolRef } from '@attalabs/aeg-core'
+import { spawnSync } from 'node:child_process'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,7 +8,13 @@ import { isDriverPidAlive, readDriverLock } from '../../../src/lib/dev-review-lo
 import { readTaskIssueFacts, resolveOpenTaskIssueForRef } from '../../../src/lib/task-tools/handlers.js'
 import type { TaskIssueFacts } from '../../../src/lib/task-tools/handlers.js'
 import type { AgentVendor, ProcessSnapshot } from '../../../src/lib/dispatch.js'
-import type { TaskLoopState } from '../../../src/lib/task-status.js'
+import {
+  deriveLoopState,
+  readStartClaim,
+  type StartClaimDeps,
+  type TaskLoopState
+} from '../../../src/lib/task-status.js'
+import { appendRoleLine, loopLogPathFor } from '../../../src/lib/loop-log.js'
 import type { CallerContext } from '../../../src/lib/task-tools/server.js'
 import {
   createTaskStartHandler,
@@ -15,6 +22,7 @@ import {
   defaultLaunch,
   isSafeRequestId,
   normalizeStartRecord,
+  readStartClaims,
   START_STALE_CLAIM_GRACE_MS,
   TASK_RUN_COMMAND_ENV,
   type LaunchResult,
@@ -41,6 +49,13 @@ const NO_CALLER: CallerContext = { caller: null }
 const ISSUE = 601
 /** A standalone task Issue: open, and claimed by no tranche — the one shape `{ issue }` accepts. */
 const STANDALONE: TaskIssueFacts = { kind: 'issue', open: true, tranche: null }
+
+/** A pid that has definitely already exited — `spawnSync` blocks until the child is gone before returning its pid (mirrors `task-status.test.ts`'s own `deadPid`). Used where the REAL `deriveLoopState` reads a lock's liveness, so a recycled or kernel pid can never read as running. */
+function deadPid(): number {
+  const r = spawnSync('true', [])
+  if (typeof r.pid !== 'number') throw new Error('spawnSync did not report a pid')
+  return r.pid
+}
 
 function memStore(): { store: RequestStore; map: Map<string, StartRecord> } {
   const map = new Map<string, StartRecord>()
@@ -542,6 +557,81 @@ describe('task_start handler', () => {
       }
       expect(launches).toHaveLength(0)
       expect(map.size).toBe(0)
+    })
+
+    it('refuses a second developer once the real derivation reads a fresh start over an earlier exit record (O1)', async () => {
+      // The reported failure, end to end and through the REAL `deriveLoopState`,
+      // not an injected state: a task whose previous run exited on a signal (a
+      // dead lock AND a `driver_exited` trace) was started again, and the
+      // accepted start's own driver lock had not appeared yet. Before the fix the
+      // derivation read that window as `exited` — a state THIS gate launches — so
+      // a second caller reaching it put a second developer on the one branch. The
+      // fresh claim now outranks the exit trace, the state reads `starting`, and
+      // the gate refuses, naming `task_status`.
+      const root = mkdtempSync(join(tmpdir(), 'vinaya-start-gate-'))
+      try {
+        const REF = { tranche: 'unattended-run-v1', id: '17' } as const
+        // The previous run's remains, under the Issue the ref resolves to.
+        const taskDir = join(root, 'tasks-execution', String(ISSUE))
+        mkdirSync(taskDir, { recursive: true })
+        writeFileSync(
+          join(taskDir, 'driver.pid.json'),
+          JSON.stringify({ pid: deadPid(), startedAt: '2026-09-26T09:00:00.000Z' }),
+          'utf8'
+        )
+        appendRoleLine(
+          loopLogPathFor(null, ISSUE, root),
+          'dev-review-loop',
+          'driver_exited: reason=signal last_decision=dispatch_developer'
+        )
+        // A start ANOTHER caller already has in flight for this task — its claim
+        // on disk, its driver lock not yet written. Its request identity is not
+        // this call's own, so the state read below does not exclude it.
+        const claimDir = join(root, 'tasks-execution', 'unscoped', 'control')
+        mkdirSync(claimDir, { recursive: true })
+        writeFileSync(
+          join(claimDir, 'start-request-deadbeefdeadbeef.json'),
+          JSON.stringify({
+            requestId: 'deadbeefdeadbeef',
+            caller: 'operator-2',
+            target: REF,
+            startedAt: '2026-09-26T10:00:00.000Z'
+          }),
+          'utf8'
+        )
+        // A fixed clock inside the claim's own grace, and no pid alive: a fresh
+        // claim reads `starting` on age alone, whatever a pid says.
+        const claimStateDeps: StartClaimDeps = {
+          claims: readStartClaims,
+          isPidAlive: () => false,
+          snapshot: () => null,
+          now: () => '2026-09-26T10:00:10.000Z'
+        }
+        const { handler, launches, map } = harness({
+          loopState: (issue, ref, ownRequestId) =>
+            deriveLoopState(root, issue, { repo: null, loopsRoot: root }, () =>
+              readStartClaim(
+                root,
+                issue,
+                'issue' in ref ? null : { tranche: ref.tranche, id: ref.id },
+                claimStateDeps,
+                ownRequestId
+              )
+            )
+        })
+        const result = await handler(REF, CALLER)
+        expect(result.ok).toBe(false)
+        if (!result.ok) {
+          expect(result.error.kind).toBe('precondition')
+          expect(result.error.message).toContain('task_status')
+          expect(result.error.message).toContain('deadbeefdeadbeef')
+        }
+        expect(launches).toHaveLength(0)
+        // Its own claim released, so the tool that does own this state is not blocked.
+        expect(map.size).toBe(0)
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
     })
 
     it('starts a start that did not come up — the one claim state whose own action is this tool', async () => {
