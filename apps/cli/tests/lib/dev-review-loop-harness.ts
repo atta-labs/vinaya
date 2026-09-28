@@ -57,6 +57,7 @@ import {
 } from '../../src/lib/dev-review-loop/pause-resume.js'
 import { markedCommentBody } from '../../src/lib/forge-write.js'
 import { objectivesOf, objectivesVersion, renderObjectives } from '@attalabs/aeg-core'
+import { FIXTURE_REPO, isolatedConfigFixture } from './process-fixture.js'
 
 /** The role output files a fake reviewer/security dispatch writes into its work dir — the exact grammar the real reviewer binary produces. */
 export type RoleOutcome = {
@@ -168,6 +169,8 @@ export type LoopWorld = {
   // --- infra ---
   runtimeDir: string
   repoRoot: string
+  /** The isolated `$HOME` this run's log sink resolves under — the `home` of the world's own `isolatedConfigFixture` (Issue #833). */
+  home: string
   logPath: string
   cleanup: () => void
 }
@@ -199,8 +202,28 @@ export const DEFAULT_TASK = 9001
  */
 export function makeWorld(overrides: Partial<LoopWorld> = {}): LoopWorld {
   const task = overrides.task ?? DEFAULT_TASK
-  const runtimeDir = tempDir('vinaya-drl-inproc-rt-')
-  const repoRoot = tempDir('vinaya-drl-inproc-repo-')
+  // Issue #833: the loop harness runs against an ISOLATED CONFIGURATION — the
+  // very same `isolatedConfigFixture` every real-subprocess fixture already
+  // uses (`process-fixture.ts`), not a second isolation path. Its working
+  // directory holds a `vinaya.config.json` that DECLARES a `logs.folder`, and
+  // that declaration is the whole fix: an unattended caller (which `devReviewLoop`
+  // marks itself as) whose local config declares a folder can never resolve the
+  // DEFAULT BRANCH's `logs.url` server over the trust anchor and deliver fake
+  // round events to it — `log-sink.ts`'s `resolveTrustAnchorLogsDestination`
+  // refuses a local folder the default branch does not itself declare and falls
+  // back to the per-run default folder, never the server. Before this, the
+  // harness declared no config at all, so an unattended loop resolved the
+  // trust-anchor server (the memoized default-branch config on a CI runner, or
+  // a cached real-repo identity) and delivered under the real task's Issue
+  // number, next to the fixture's own `${DEFAULT_TASK}` events.
+  //
+  // `runtimeDir` is the fixture's OWN runtime dir, so the folder the config
+  // declares and the default folder an unattended caller falls back to are one
+  // place — `<runtimeDir>/logs` — which is exactly where `outboxLines` reads.
+  const configFixture = isolatedConfigFixture('vinaya-drl-inproc-')
+  tempDirs.push(configFixture.home)
+  const runtimeDir = configFixture.runtimeDir
+  const repoRoot = configFixture.cwd
   const logDir = tempDir('vinaya-drl-inproc-log-')
   const logPath = join(logDir, `${task}.ndjson`)
   const world: LoopWorld = {
@@ -244,6 +267,7 @@ export function makeWorld(overrides: Partial<LoopWorld> = {}): LoopWorld {
     terminateCalls: [],
     runtimeDir,
     repoRoot,
+    home: configFixture.home,
     logPath,
     cleanup: cleanupWorlds,
     ...overrides
@@ -438,6 +462,12 @@ export class InProcessExit extends Error {
  * dir (drives both the loop's own files and the log sink's destination), and
  * the per-run identity keys that would otherwise leak from a real dispatched
  * session into the loop's own resolution.
+ *
+ * `withWorldEnv` SETS the three in `WORLD_ENV_SET_KEYS` to this world's own
+ * isolated values and CLEARS the rest for the duration of the call. `AEG_REPO`
+ * is set (Issue #833) rather than cleared: pinned to `FIXTURE_REPO`, it gives
+ * the log sink a deterministic repo segment and keeps the trust-anchor read off
+ * any real repository, alongside the isolated `$HOME` (see `withWorldEnv`).
  */
 const OWNED_ENV_KEYS = [
   'VINAYA_RUNTIME_DIR',
@@ -458,28 +488,20 @@ const OWNED_ENV_KEYS = [
   'VINAYA_PARENT_EVENT'
 ] as const
 
+/** The `OWNED_ENV_KEYS` `withWorldEnv` SETS to this world's own values; every other owned key is cleared. */
+const WORLD_ENV_SET_KEYS = new Set<string>(['VINAYA_RUNTIME_DIR', 'VINAYA_TASK', 'AEG_REPO'])
+
 /**
  * Run `devReviewLoop` in-process against `world`. Defaults to a `--task`
  * start on the world's own task. `overrides` replaces individual fakes for a
  * scenario the world's own fields do not model (a forge read that fails once,
  * a post that throws); every other dependency stays the world-backed fake.
  *
- * Two pieces of ambient process state are pointed at this run's isolated
- * world for the duration of the call, then restored unconditionally in
- * `finally` (Issue #709 Traps to avoid: an in-process test that mutates
- * `process.env`/cwd and does not restore leaks into every later test):
- *
- *  - `VINAYA_RUNTIME_DIR`/`VINAYA_TASK` — so the module-level log sink writes
- *    where `logEvents` polls; the other per-run identity keys are cleared for
- *    the same reason a spawned fixture's env stripped them.
- *  - the working directory is switched to `world.repoRoot`, a NON-git temp
- *    dir. This is what the spawned fixtures got for free from their own
- *    scratch `cwd`: with no `git remote`, `trustAnchorRepo()` resolves `null`
- *    and the trust-anchor read (`principalAllowlist`/`reviewPolicy`) skips its
- *    real `gh api …/vinaya.config.json` call entirely, falling back to
- *    built-in defaults — and `resolveRepo` reads `unresolved`, the same repo
- *    segment those fixtures' own `$HOME/.vinaya/runtime/unresolved/…` paths
- *    hardcode. Without this the loop makes a real network `gh` call per run.
+ * The isolated world's runtime dir, task, repo identity, `$HOME` and working
+ * directory are all pointed at this run for the duration of the call and
+ * restored unconditionally in `finally` — see `withWorldEnv` for how that
+ * isolation is composed (Issue #833) and why a working directory alone was not
+ * enough to keep the loop's events off the configured server.
  */
 export async function runLoopInProcess(
   world: LoopWorld,
@@ -528,18 +550,48 @@ export async function runDriverLoopInProcess(
 }
 
 /**
- * Runs `fn` with this world's runtime directory, task and working directory
- * in place, then restores all of them. `runLoopInProcess` uses it; so does a
- * test driving another loop entry point (`cancelDevReviewLoop`) in-process.
+ * Runs `fn` with this world's runtime directory, task, repo identity, `$HOME`
+ * and working directory in place, then restores all of them. `runLoopInProcess`
+ * uses it; so does a test driving another loop entry point
+ * (`cancelDevReviewLoop`) in-process.
+ *
+ * Isolation has two halves, both this world's own (Issue #833):
+ *
+ *  - **Working directory** — `world.repoRoot` is the world's own
+ *    `isolatedConfigFixture` cwd, a non-git dir holding a `vinaya.config.json`
+ *    that DECLARES a `logs.folder`. That declaration is what stops an
+ *    unattended `devReviewLoop` from resolving the DEFAULT BRANCH's `logs.url`
+ *    server over the trust anchor: `resolveTrustAnchorLogsDestination` refuses a
+ *    local folder the default branch does not declare and falls back to the
+ *    default folder, never the server (`apps/cli/specs/log.md` § The
+ *    destination). A working directory alone never closed this — an unattended
+ *    caller with NO local `logs` setting still honours whatever the default
+ *    branch declares, so before this the harness delivered fake round events to
+ *    the real server under the checked-out task's own Issue number.
+ *  - **Identity/`$HOME`** — `AEG_REPO` is pinned to `FIXTURE_REPO` and `$HOME`
+ *    to `world.home` (the fixture's own), so the log sink's repo segment, its
+ *    default folder and its retry queue all resolve under this world's own
+ *    tree, never the real machine's `~/.vinaya`. `VINAYA_RUNTIME_DIR` is the
+ *    fixture's own runtime dir, so the declared folder and the default folder an
+ *    unattended caller falls back to are the same `<runtimeDir>/logs` place
+ *    `outboxLines` reads. The remaining owned keys are cleared for the same
+ *    reason a spawned fixture's env strips them.
+ *
+ * All of it is restored unconditionally in `finally` (Issue #709 Traps to
+ * avoid: an in-process test that mutates `process.env`/cwd and does not restore
+ * leaks into every later test).
  */
 export async function withWorldEnv<T>(world: LoopWorld, fn: () => Promise<T> | T): Promise<T> {
   const saved: Record<string, string | undefined> = {}
   for (const key of OWNED_ENV_KEYS) saved[key] = process.env[key]
+  const savedHome = process.env.HOME
   const savedCwd = process.cwd()
   process.env.VINAYA_RUNTIME_DIR = world.runtimeDir
   process.env.VINAYA_TASK = String(world.task)
+  process.env.AEG_REPO = FIXTURE_REPO
+  process.env.HOME = world.home
   for (const key of OWNED_ENV_KEYS) {
-    if (key !== 'VINAYA_RUNTIME_DIR' && key !== 'VINAYA_TASK') delete process.env[key]
+    if (!WORLD_ENV_SET_KEYS.has(key)) delete process.env[key]
   }
   process.chdir(world.repoRoot)
   // `loopsRoot()`/`runtimeDirForThisRepo()` memoizes its runtime-dir
@@ -554,6 +606,8 @@ export async function withWorldEnv<T>(world: LoopWorld, fn: () => Promise<T> | T
   } finally {
     resetRuntimeDirCache()
     process.chdir(savedCwd)
+    if (savedHome === undefined) delete process.env.HOME
+    else process.env.HOME = savedHome
     for (const key of OWNED_ENV_KEYS) {
       if (saved[key] === undefined) delete process.env[key]
       else process.env[key] = saved[key]

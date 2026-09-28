@@ -133,6 +133,8 @@ export type ConfigIsolatedFixture = {
   home: string
   /** The child's working directory: the folder holding the fixture's own `vinaya.config.json`, which declares a `logs.folder` of its own — never an empty configuration, for the reason `isolatedConfigFixture` below sets out. */
   cwd: string
+  /** `<home>/.vinaya/runtime/<segment>` — the runtime dir the declared `logs.folder` hangs off, and the value a caller points `VINAYA_RUNTIME_DIR` at so the default folder an unattended caller falls back to is the SAME place the configuration declares (the in-process loop harness does exactly this — `dev-review-loop-harness.ts`). */
+  runtimeDir: string
   /** `<home>/.vinaya/runtime/<segment>/logs/<segment>` — the folder the child's own `log()` writes its `<task>.ndjson` into. The fixture configuration DECLARES it, and it is also the default folder that configuration falls back to when the child is classified unattended, so both classifications write here. */
   logsDir: string
   /** `{ ...stripVinayaEnv(), HOME, AEG_REPO }` — merge a `VINAYA_TASK` (or anything else the case needs) on top. */
@@ -181,11 +183,13 @@ export function isolatedConfigFixture(prefix: string): ConfigIsolatedFixture {
   const home = mkdtempSync(join(tmpdir(), prefix))
   const cwd = join(home, 'workspace')
   mkdirSync(cwd, { recursive: true })
-  const logsFolder = join(home, '.vinaya', 'runtime', FIXTURE_REPO_SEGMENT, 'logs')
+  const runtimeDir = join(home, '.vinaya', 'runtime', FIXTURE_REPO_SEGMENT)
+  const logsFolder = join(runtimeDir, 'logs')
   writeFileSync(join(cwd, 'vinaya.config.json'), `${JSON.stringify({ logs: { folder: logsFolder } }, null, 2)}\n`)
   return {
     home,
     cwd,
+    runtimeDir,
     logsDir: join(logsFolder, FIXTURE_REPO_SEGMENT),
     env: { ...stripVinayaEnv(), HOME: home, AEG_REPO: FIXTURE_REPO }
   }
