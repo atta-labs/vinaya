@@ -389,6 +389,26 @@ function processTrustAnchor(): Promise<VinayaConfig | null> {
   return processTrustAnchorOnce
 }
 
+/**
+ * Test-only: drops the memoized default-branch config so the next unattended
+ * `log()` reads it again, from the working directory in force then.
+ *
+ * The answer depends on where it was read from, and inside one `bun:test`
+ * process the file that reads it first is not the file that depends on it:
+ * read from this repository's own checkout it returns a config declaring a
+ * `logs.url` server, and read from a temporary fixture directory that is not a
+ * git repository at all it returns `null`. An unattended fixture whose own
+ * config declares no `logs` setting is therefore delivered to the real server
+ * when an earlier file cached the first answer, and to its own folder when
+ * nothing did — that fixture's events vanish from the folder it reads back,
+ * for no reason but which file ran before it. A test file whose code path
+ * reaches an unattended `log()` calls this in its own teardown, next to
+ * `run-paths.ts`'s `resetRuntimeDirCache`.
+ */
+export function resetTrustAnchorConfigMemo(): void {
+  processTrustAnchorOnce = undefined
+}
+
 async function defaultResolveLogDestination(
   repo: RepoRef | null,
   env: NodeJS.ProcessEnv
