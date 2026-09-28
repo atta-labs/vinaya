@@ -47,6 +47,7 @@ import {
   type LoopResult,
   runDriverLoop
 } from '../../src/lib/dev-review-loop.js'
+import { resetTrustAnchorConfigMemo } from '../../src/lib/log-sink.js'
 import { resetRuntimeDirCache } from '../../src/lib/run-paths.js'
 import type { DispatchHandle } from '../../src/lib/dispatch.js'
 import {
@@ -611,10 +612,23 @@ export async function withWorldEnv<T>(world: LoopWorld, fn: () => Promise<T> | T
   // subprocess-based test in the same file never reads a stale in-process
   // resolution.
   resetRuntimeDirCache()
+  // The trust-anchor config is memoized process-wide the same way, and decides
+  // something this harness reads back directly: whether an unattended `log()`
+  // delivers to a configured log server or to this world's own folder. One
+  // `bun:test` process runs many files, so a file that reached an unattended
+  // `log()` from THIS repository's checkout first (`forge-write.test.ts`, live)
+  // leaves the answer "a `logs.url` server is configured" cached, and every
+  // fixture world after it writes its journal to that destination instead of
+  // the folder `outboxLines` reads — the events vanish for no reason but which
+  // file ran before this one. Dropped here and again in `finally`, exactly as
+  // the runtime-dir memo is, so a world's own config is what decides its
+  // destination whatever ran first.
+  resetTrustAnchorConfigMemo()
   try {
     return await fn()
   } finally {
     resetRuntimeDirCache()
+    resetTrustAnchorConfigMemo()
     process.chdir(savedCwd)
     if (savedHome === undefined) delete process.env.HOME
     else process.env.HOME = savedHome
