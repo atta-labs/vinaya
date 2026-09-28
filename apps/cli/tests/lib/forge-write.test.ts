@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { buildPrincipalTestPlanWaitErrors } from '../../src/checks/bin/check-principal-test-plan-wait'
 import { CHECK_SCHEMA_VERSION, type CheckError } from '../../src/checks/contract'
 import { sha256Hex } from '../../src/lib/effects'
-import { checkIntroducedCommandsCovered } from '@attalabs/aeg-core'
+import { checkIntroducedCommandsCovered, checkIntroducedConfigKeysCovered } from '@attalabs/aeg-core'
 import {
   collectTaskIssueErrors,
   isPendingOnlyFailure,
@@ -965,6 +965,8 @@ describe('readPinnedFileImporters — path-exact, not basename-exact', () => {
     // flag a shorter one must not be excused by.
     write('packages/core/src/fsops.ts', "import { rename } from 'node:fs/promises'\nexport { rename }\n")
     write('apps/cli/src/commands/deep.ts', "export const FLAGS = ['--deeper']\n")
+    // A dotted token this tree already spells out — code that exists, never a key a task introduces.
+    write('apps/cli/src/lib/settings.ts', 'export const retries = settings.retries\n')
     execFileSync('git', ['add', '-A'], { cwd: fixture })
     execFileSync('git', ['-c', 'user.email=t@e', '-c', 'user.name=t', 'commit', '-qm', 'fixture'], { cwd: fixture })
   })
@@ -1040,7 +1042,7 @@ describe('readPinnedFileImporters — path-exact, not basename-exact', () => {
     ],
     text: ''
   }
-  const introducing = (invocation: string) =>
+  const objective = (text: string) =>
     [
       "## Planner's rationale",
       '',
@@ -1048,7 +1050,7 @@ describe('readPinnedFileImporters — path-exact, not basename-exact', () => {
       '',
       '## Objectives',
       '',
-      `O1. \`${invocation}\` does the new thing.`,
+      `O1. ${text}`,
       '',
       '## Surface',
       '',
@@ -1062,7 +1064,7 @@ describe('readPinnedFileImporters — path-exact, not basename-exact', () => {
 
   it('refuses an introduced command even though its own word is all over the tree', () => {
     const result = checkIntroducedCommandsCovered(
-      introducing('vinaya issue rename'),
+      objective('`vinaya issue rename` renames the Issue.'),
       commandReference,
       tokenExistsInTree(fixture)
     )
@@ -1072,13 +1074,45 @@ describe('readPinnedFileImporters — path-exact, not basename-exact', () => {
     expect(result.errors[0]).toContain('Add `packages/sources/src` to `in:`')
   })
 
+  it('refuses a brand-new configuration key the tree has never carried, in any wording', () => {
+    const configReference = {
+      files: ['packages/sources/src/config-reference.ts', 'apps/cli/src/lib/config.ts'],
+      keys: ['logs', 'reviewPolicy.maxRounds'],
+      text: 'A folder (`logs.folder`) or a server (`logs.url`), never both.'
+    }
+    const inTree = tokenExistsInTree(fixture)
+    for (const wording of [
+      'Add a setting `telemetry.endpoint` for event routing.',
+      'A new configuration key `telemetry.endpoint` names where events go.'
+    ]) {
+      const refused = checkIntroducedConfigKeysCovered(objective(wording), configReference, inTree)
+      expect(refused.status).toBe('fail')
+      expect(refused.errors[0]).toContain('`telemetry.endpoint`')
+    }
+    expect(inTree('telemetry.endpoint')).toBe(false)
+
+    // A dotted token the fixture tree does spell out is code that exists, not a key this task introduces.
+    expect(inTree('settings.retries')).toBe(true)
+    expect(
+      checkIntroducedConfigKeysCovered(
+        objective('`settings.retries` already bounds the retry loop.'),
+        configReference,
+        inTree
+      ).status
+    ).toBe('pass')
+  })
+
   it('refuses an introduced flag the tree does not carry, and excuses one it does', () => {
     const inTree = tokenExistsInTree(fixture)
-    const refused = checkIntroducedCommandsCovered(introducing('vinaya check --deep'), commandReference, inTree)
+    const refused = checkIntroducedCommandsCovered(
+      objective('`vinaya check --deep` runs the slow lens.'),
+      commandReference,
+      inTree
+    )
     expect(refused.status).toBe('fail')
     expect(refused.errors[0]).toContain('`--deep`')
     const excused = checkIntroducedCommandsCovered(
-      introducing('vinaya check --other-shipped'),
+      objective('`vinaya check --other-shipped` runs the other lens.'),
       commandReference,
       () => true
     )

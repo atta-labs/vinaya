@@ -2384,9 +2384,6 @@ function documentedInProse(token: string, text: string): boolean {
   return new RegExp(`(?<![\\w.-])${escaped}(?![\\w.-])`).test(text)
 }
 
-/** A line that says in words that it introduces a configuration key — the one signal available for a key whose root segment the reference has never carried. */
-const CONFIG_KEY_PHRASE_RE = /\bconfig(?:uration)?\s+key\b/i
-
 /** A dotted token whose last segment is one of these is a filename, never a configuration key. */
 const FILE_EXTENSIONS = new Set([
   'ts',
@@ -2431,36 +2428,34 @@ function isDocumentedConfigKey(token: string, keys: string[]): boolean {
 }
 
 /**
- * Every backticked token in `text` that is shaped like a configuration key —
- * two or more dotted segments, no path separator, no file extension — and that
- * `text` gives a reason to read as one.
+ * Every backticked token in `text` shaped like a configuration key: two or
+ * more dotted segments, no path separator, and a last segment that is not a
+ * file extension.
  *
- * There are two such reasons, and a token needs either. Its first segment is
- * already a documented top-level key, so the token extends the config tree
- * this product has; or the line itself says in words that it introduces a
- * configuration key, which is the only signal available for a key whose ROOT
- * has never been documented either. Without the second reason a brand-new
- * top-level key was invisible to this rule and its two forced reference edits
- * went undeclared — while the first reason alone cannot see it, since nothing
- * about an undocumented root segment distinguishes it from any other dotted
- * identifier.
+ * Shape is the whole of it — the candidate set depends on nothing the Planner
+ * says ABOUT the token, only on the token. An earlier version asked the first
+ * segment to be an already-documented top-level key, which made a brand-new
+ * top-level key invisible; a second version accepted an undocumented root when
+ * the line also said the words "configuration key", which made the rule a
+ * convention a Planner could simply not use, and made "two new configuration
+ * keys" read differently from "a new configuration key". Neither is the
+ * mechanical refusal this gate owes.
  *
- * Both reasons are needed for the rule to be neither blind nor noisy: dropping
- * the first-segment test entirely would read every dotted identifier in an
- * Issue (`brief-render.ts`, `foo.bar()`, a version number) as a key and refuse
- * bodies that introduce nothing, and the phrase test is narrow precisely
- * because a line that says "configuration key" and backticks a dotted token is
- * making the claim this rule grades.
+ * Precision comes from the caller instead, and from facts rather than prose: a
+ * candidate is excused when the reference already documents it, or when the
+ * tracked tree already spells it out. Between them those two absorb every
+ * dotted token an Issue writes about code that exists — a property path, a
+ * package name, an existing key with a stale row — and what is left is a dotted
+ * token naming something this repository has never had, which is what
+ * "introduces" means. Measured over this repository's whole task-Issue stock at
+ * the time of writing, the rule refuses none of them.
  */
-function configKeyCandidates(text: string, keys: string[]): string[] {
-  const topLevel = new Set(keys.map((k) => k.split('.')[0] as string))
-  const saysConfigKey = CONFIG_KEY_PHRASE_RE.test(text)
+function configKeyCandidates(text: string): string[] {
   const out: string[] = []
   for (const span of backtickedSpans(text)) {
     for (const m of span.matchAll(/(?<![\w./-])[A-Za-z][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_<>-]+)+(?![\w./-])/g)) {
       const token = m[0]
       const segments = token.split('.')
-      if (!topLevel.has(segments[0] as string) && !saysConfigKey) continue
       if (FILE_EXTENSIONS.has((segments[segments.length - 1] as string).toLowerCase())) continue
       out.push(token)
     }
@@ -2496,7 +2491,7 @@ export function checkIntroducedConfigKeysCovered(
   const errors: string[] = []
   const reported = new Set<string>()
   for (const { where, text } of introducedText(body)) {
-    for (const key of configKeyCandidates(text, reference.keys)) {
+    for (const key of configKeyCandidates(text)) {
       if (isDocumentedConfigKey(key, reference.keys) || documentedInProse(key, reference.text)) continue
       if (existsInTree(key)) continue
       if (reported.has(key)) continue
