@@ -35,9 +35,27 @@ function locateBodyOrRefuse(ghArgs: string[], retryCommand: string): BodyResult 
   }
 }
 
-function reportPass(json: boolean, command: string): void {
+/**
+ * O3 — the plan-time result. `renderSkipped` non-null means the brief render
+ * never ran (no template/repo/work-tree, a tranche create whose title yields no
+ * task id, or a tranche edit whose Issue is not yet in the derived task list):
+ * the output then reports the skip and its cause rather than a clean pass, so a
+ * pass is never claimed for a render that did not happen. The schema/content
+ * gates that DID run still passed, which the line says plainly.
+ */
+function reportPass(json: boolean, command: string, renderSkipped: string | null = null): void {
   if (json) {
-    printJson({ validated: true, written: false, command })
+    printJson({
+      validated: true,
+      written: false,
+      briefRenderRan: renderSkipped === null,
+      ...(renderSkipped !== null ? { briefRenderSkipReason: renderSkipped } : {}),
+      command
+    })
+  } else if (renderSkipped !== null) {
+    process.stdout.write(
+      `⚠ brief-schema gates PASS, but the brief render was SKIPPED (${renderSkipped}) — NOT a full plan-time pass; \`vinaya task run\` may still refuse this Issue at brief render. Nothing written (--validate-only).\n`
+    )
   } else {
     process.stdout.write('✓ all brief-schema gates PASS — nothing written (--validate-only).\n')
   }
@@ -62,16 +80,17 @@ export async function issueCreateCommand(args: string[]): Promise<void> {
   // tranche task — everything except the tranche-specific label/Milestone
   // machinery below, which stays gated on `isTaskIssueLabelSet` alone since
   // there is no tranche to ensure a label for or attach a Milestone from.
+  let renderSkipped: string | null = null
   if (isTaskIssueLabelSet(labels) || (body !== null && isTaskIssueBodyShaped(body))) {
     // No number exists until the write completes — `checkIssueObjectives`
     // treats `null` as NOT exempted (fail-closed), never as "old enough to
     // skip"; every Issue this repo can newly mint is already far past
     // `OBJECTIVES_SINCE_ISSUE`, so this never blocks a legitimate create.
-    await validateTaskIssue(body, title, labels, RETRY_CREATE, null, { kind: 'create', ghArgs })
+    ;({ renderSkipped } = await validateTaskIssue(body, title, labels, RETRY_CREATE, null, { kind: 'create', ghArgs }))
   }
 
   if (validateOnly) {
-    reportPass(json, 'issue create')
+    reportPass(json, 'issue create', renderSkipped)
     return
   }
 
@@ -108,14 +127,22 @@ export async function issueEditCommand(args: string[]): Promise<void> {
     // applicability.
     const labels = [...new Set([...fetchForgeLabels(issueRef, RETRY_EDIT), ...extractLabels(ghArgs)])]
     refuseUnlabeledTaskShapedBody(body, labels, RETRY_EDIT)
+    let renderSkipped: string | null = null
     if (isTaskIssueLabelSet(labels) || (body !== null && isTaskIssueBodyShaped(body))) {
       refuseFrozenSectionChange(issueRef, body, RETRY_EDIT)
-      await validateTaskIssue(body, title, labels, RETRY_EDIT, parseIssueNumberFromRef(issueRef), {
-        kind: 'edit',
-        issueRef
-      })
+      ;({ renderSkipped } = await validateTaskIssue(
+        body,
+        title,
+        labels,
+        RETRY_EDIT,
+        parseIssueNumberFromRef(issueRef),
+        {
+          kind: 'edit',
+          issueRef
+        }
+      ))
     }
-    reportPass(json, 'issue edit')
+    reportPass(json, 'issue edit', renderSkipped)
     return
   }
 

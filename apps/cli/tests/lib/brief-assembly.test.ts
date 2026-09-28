@@ -361,18 +361,34 @@ describe('assembleAndRenderBriefForIssue — pre-write override', () => {
     rmSync(tmpDir, { recursive: true, force: true })
   })
 
-  it('canRenderBriefFromHere is true once the template exists and the repo resolves', () => {
-    expect(canRenderBriefFromHere()).toBe(true)
+  it('canRenderBriefFromHere is ok once the template resolves, the repo resolves, and we are in a work tree', () => {
+    expect(canRenderBriefFromHere().ok).toBe(true)
   })
 
-  it('keeps the local issue-validation probe dormant when the adopter has no aeg-root directory', () => {
+  // O1 — the plan-time gate must render in an adopter that installs Vinaya from
+  // the registry and has NO `aeg-root/` of its own: dispatch resolves the
+  // PACKAGED template (`PACKAGED_TEMPLATE_PATH`), so `canRenderBriefFromHere`
+  // must too, never the workspace copy only Vinaya's own repo carries. Removing
+  // the local `aeg-root/` therefore does NOT switch the gate off — that silent
+  // switch-off was the bug that printed a plan-time pass for an Issue `task
+  // run` then refused at brief render.
+  it('stays renderable when the adopter has no aeg-root directory (dispatch resolves the packaged template)', () => {
     rmSync(join(localDir, 'aeg-root'), { recursive: true, force: true })
-    expect(canRenderBriefFromHere()).toBe(false)
+    expect(canRenderBriefFromHere().ok).toBe(true)
   })
 
-  it('canRenderBriefFromHere is false with no resolvable repo, even with the template present', () => {
+  it('is not renderable, naming the reason, with no resolvable repo even with the template present', () => {
     delete process.env.AEG_REPO
-    expect(canRenderBriefFromHere()).toBe(false)
+    const result = canRenderBriefFromHere()
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toMatch(/owner\/repo/)
+  })
+
+  it('is not renderable, naming the reason, outside a git work tree', () => {
+    process.chdir(tmpDir) // `tmpDir` itself is not a git repo (only `localDir`/`remoteDir` are)
+    const result = canRenderBriefFromHere()
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toMatch(/work tree/)
   })
 
   const RATIONALE = [

@@ -44,6 +44,8 @@ You turn an intent and a slice of work into a whole tranche — not one task, an
 
 **How it physically runs** — cutting the issues is a forge action, so most planning commits nothing: no branch, no worktree, no plan pull request. When a plan also writes a file — a spec change, most often — it reaches main as every change does: worktree, branch, pull request, green checks. Only one plan pull request per tranche may be open at once. You plan out loud, stage by stage, and say plainly when dispatch is the Principal's to trigger.
 
+**A task is planned only when `vinaya brief render` passes** for every Issue you cut or edit — its Boundary naming real in-scope files, `## Parts` never a path.
+
 
 ---
 
