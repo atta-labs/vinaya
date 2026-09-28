@@ -77,9 +77,52 @@ export type LogSinkInputVersions = {
  * the runner is torn down, and `reason` is what a job-output line names.
  */
 export type ResolvedLogDestination =
-  | { kind: 'folder'; folder: string }
+  | { kind: 'folder'; folder: string; fallbackReason?: FolderFallbackReason }
   | { kind: 'server'; url: string; headers?: Record<string, string> }
   | { kind: 'none'; reason: string }
+
+/**
+ * Why an unattended run that DECLARED a `logs.url` server destination in its
+ * working tree is writing to the local folder instead of that server (O2). Set
+ * only when a server was configured and not honoured — the ordinary default
+ * folder (no `logs` anywhere) carries none, so it stays exactly as silent as it
+ * always was. The two kinds map to the two ways the trust-anchor gate refuses a
+ * working-tree url, and a reader (`log()`'s one visible warning, `vinaya
+ * doctor`'s `[logs]` finding) tells them apart to say the right thing and pick
+ * the right severity:
+ *
+ *   - `anchor-unreadable` — the default branch's `vinaya.config.json` could not
+ *     be read AT ALL to confirm the url (the `gh` trust-anchor read was
+ *     offline, unauthenticated, or slower than its deadline). Transient and
+ *     recoverable: nothing is lost, the events wait in the local folder, and
+ *     `vinaya log send` delivers them once the server is reachable. This is the
+ *     Mac case once its deadline no longer expires prematurely —
+ *     it only remains reachable for a genuinely offline/unauthenticated run.
+ *   - `anchor-mismatch` — the default branch's config WAS read and does not
+ *     declare this url, so an unattended run refuses it (a pull request cannot
+ *     redirect telemetry by editing its own diff). A standing configuration
+ *     divergence, not a transient one.
+ */
+export type FolderFallbackReason =
+  | { kind: 'anchor-unreadable'; intendedUrl: string }
+  | { kind: 'anchor-mismatch'; intendedUrl: string }
+
+/** The one-line, single-sentence rendering of a folder fallback, shared by `log()`'s warning and `vinaya doctor` so the two can never say different things about the same fact. The url is safe to print — it is the committed, non-secret destination; its credential lives in `logs.headers` via `${VAR}`, never here. */
+export function describeFolderFallback(reason: FolderFallbackReason): string {
+  if (reason.kind === 'anchor-unreadable') {
+    return (
+      `not delivering to the configured log server ${reason.intendedUrl} — the default branch's ` +
+      'vinaya.config.json could not be read to confirm it (the trust-anchor read via `gh` was offline, ' +
+      'unauthenticated, or slower than its deadline); events are written to the local folder and can be ' +
+      'delivered later with `vinaya log send`'
+    )
+  }
+  return (
+    `not delivering to the working-tree log server ${reason.intendedUrl} — the default branch's ` +
+    'vinaya.config.json does not declare it, so an unattended run does not honour it (a pull request cannot ' +
+    'redirect telemetry); events are written to the local folder'
+  )
+}
 
 export type LogSinkDeps = {
   outboxRoot: () => string
@@ -141,6 +184,33 @@ export type LogSinkDeps = {
  */
 export const LOG_CONTEXT_LOOKUP_DEADLINE_MS = 3000
 
+/**
+ * The deadline for the ONE trust-anchor read that decides this process's whole
+ * log destination (`safeLoadTrustAnchorConfig`) — deliberately longer than the
+ * per-event `LOG_CONTEXT_LOOKUP_DEADLINE_MS` above, because the two lookups
+ * answer different questions at different costs.
+ *
+ * `LOG_CONTEXT_LOOKUP_DEADLINE_MS` bounds a per-event lookup (the branch, the
+ * repo, the doctrine): every line waits on it, so it must be short, and its
+ * fallback merely under-attributes one event. This read runs at most ONCE per
+ * process and is cached (`processTrustAnchor`); its fallback is not "one event
+ * loses a field" but "the ENTIRE run's telemetry is silently rerouted from the
+ * configured server to the local folder." A developer's Mac clears the
+ * `gh api` contents read for the default-branch config in a few seconds
+ * (keychain-backed auth cold-start plus a home-network round-trip), where a
+ * datacenter VPS clears it in well under one — so a 3s bound cleared on the VPS
+ * and expired on the Mac, sending every Mac run's rounds to the folder with no
+ * message (reproduced: a `gh` slower than 3s resolves the folder,
+ * faster resolves the server). This bound comfortably exceeds a real Mac read
+ * and the inner `gh` timeout (`config.ts`'s `ghFetchTrustAnchorConfigAsync`,
+ * 10s, which kills a genuinely hung child with `SIGKILL`), so the only case
+ * that still reaches this fallback is a child whose exit the pinned Bun lost
+ * entirely — where a bound is still required so the read can never hold the
+ * process open. `log()` stays fire-and-forget throughout: the caller never
+ * waits on this read, only the first line's landing does.
+ */
+export const LOG_DESTINATION_ANCHOR_DEADLINE_MS = 15_000
+
 /** `work`'s value, or `fallback` once `ms` has passed or `work` rejects — the timer never holds a process open. */
 export function withDeadline<T>(work: Promise<T>, ms: number, fallback: T): Promise<T> {
   return new Promise((resolve) => {
@@ -160,7 +230,7 @@ export function withDeadline<T>(work: Promise<T>, ms: number, fallback: T): Prom
 }
 
 async function safeLoadTrustAnchorConfig(): Promise<VinayaConfig | null> {
-  return withDeadline(loadTrustAnchorConfigAsync(undefined, { quiet: true }), LOG_CONTEXT_LOOKUP_DEADLINE_MS, null)
+  return withDeadline(loadTrustAnchorConfigAsync(undefined, { quiet: true }), LOG_DESTINATION_ANCHOR_DEADLINE_MS, null)
 }
 
 /**
@@ -230,10 +300,28 @@ export function resolveLogDestinationFrom(input: {
 }): ResolvedLogDestination {
   const local = resolveLogsSetting(input.localConfig)
   let effective: LogsDestination | null = null
+  // Set only when an unattended run declared a `logs.url` server destination
+  // the trust-anchor gate then refused — the one case O2 exists to make
+  // visible. A matched url returns a server below and carries none; a
+  // local folder, or no local setting at all, carries none either.
+  let fallbackReason: FolderFallbackReason | undefined
   if (input.unattended) {
-    effective = local
-      ? resolveTrustAnchorLogsDestination(local, input.trustAnchorConfig)
-      : resolveLogsSetting(input.trustAnchorConfig)
+    if (local) {
+      effective = resolveTrustAnchorLogsDestination(local, input.trustAnchorConfig)
+      if (effective === null && 'url' in local) {
+        // `null` trust-anchor config means the default branch's config could
+        // not be read at all (offline/unauthenticated/timed-out `gh`, or no
+        // file there); a NON-null one that still refused means it was read and
+        // does not declare this url. The two are different incidents with
+        // different fixes, so they are named apart rather than collapsed.
+        fallbackReason =
+          input.trustAnchorConfig === null
+            ? { kind: 'anchor-unreadable', intendedUrl: local.url }
+            : { kind: 'anchor-mismatch', intendedUrl: local.url }
+      }
+    } else {
+      effective = resolveLogsSetting(input.trustAnchorConfig)
+    }
   } else {
     effective = local
   }
@@ -267,7 +355,7 @@ export function resolveLogDestinationFrom(input: {
     effective = null
   }
   const folder = effective && 'folder' in effective ? effective.folder : input.defaultFolder
-  return { kind: 'folder', folder }
+  return fallbackReason ? { kind: 'folder', folder, fallbackReason } : { kind: 'folder', folder }
 }
 
 /**
@@ -1136,6 +1224,15 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
           // every check it runs.
           warnOnce(`vinaya: not recording — ${resolvedDestination.reason}\n`)
           return
+        }
+        if (resolvedDestination.kind === 'folder' && resolvedDestination.fallbackReason) {
+          // O2: one visible line per process — never per event — naming why an
+          // unattended run that DID configure a `logs.url` server is writing to
+          // the local folder instead of that server, so the silent reroute the
+          // Mac hit is never silent again. Delivery to the folder
+          // still proceeds: falling back is a degraded outcome, not a failure,
+          // and `vinaya log send` recovers the folder's events later.
+          warnOnce(`vinaya: ${describeFolderFallback(resolvedDestination.fallbackReason)}\n`)
         }
         // Only an event whose own snapshot carries no task asks the branch
         // what task this is; every `log()` call that does await the SAME

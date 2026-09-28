@@ -1443,6 +1443,55 @@ describe('vinaya doctor — the log destination works (Issue #793)', () => {
     expect(badReport.healthy).toBe(false)
   })
 
+  it('a folder that is a fallback from an unreadable trust anchor reports why, at info (Issue #832)', async () => {
+    await runInit(['--yes'], initDeps())
+    const folder = join(root, 'telemetry', 'logs')
+    const report = await runDoctorJson({
+      resolveLogDestination: async () => ({
+        destination: {
+          kind: 'folder',
+          folder,
+          fallbackReason: { kind: 'anchor-unreadable', intendedUrl: SERVER }
+        },
+        credentialVars: ['VINAYA_LOG_TOKEN']
+      })
+    })
+
+    const finding = logFinding(report.findings)
+    // `info`, not `warn`: nothing is lost — the folder holds the events and
+    // `vinaya log send` delivers them later — so this must not fail the command,
+    // exactly as the offline server-`unreachable` case does not.
+    expect(finding.severity).toBe('info')
+    expect(finding.message).toContain(folder)
+    expect(finding.message).toContain(SERVER)
+    expect(finding.message).toContain('could not be read')
+    expect(finding.message).toContain('vinaya log send')
+    expect(report.healthy).toBe(true)
+  })
+
+  it('a folder that is a fallback from an anchor mismatch reports why, at warn', async () => {
+    await runInit(['--yes'], initDeps())
+    const folder = join(root, 'telemetry', 'logs')
+    const report = await runDoctorJson({
+      resolveLogDestination: async () => ({
+        destination: {
+          kind: 'folder',
+          folder,
+          fallbackReason: { kind: 'anchor-mismatch', intendedUrl: 'https://attacker.example/x' }
+        },
+        credentialVars: []
+      })
+    })
+
+    const finding = logFinding(report.findings)
+    // `warn`: a standing configuration divergence — the working-tree url the
+    // default branch does not declare — that the operator has to resolve.
+    expect(finding.severity).toBe('warn')
+    expect(finding.message).toContain('does not declare it')
+    expect(finding.message).toContain('https://attacker.example/x')
+    expect(report.healthy).toBe(false)
+  })
+
   it('a destination of none is reported, and is never a failure', async () => {
     await runInit(['--yes'], initDeps())
     const report = await runDoctorJson({
@@ -1611,7 +1660,7 @@ describe('vinaya doctor — the log destination works (Issue #793)', () => {
       expect(target.credentialVars).toEqual([])
     })
 
-    it('an unattended caller whose working tree redirects the destination gets the fallback, not the redirect', () => {
+    it('an unattended caller whose working tree redirects the destination gets the fallback, not the redirect, and names why (anchor-mismatch)', () => {
       const target = logDestinationTargetFrom({
         ...base,
         unattended: true,
@@ -1627,7 +1676,36 @@ describe('vinaya doctor — the log destination works (Issue #793)', () => {
         })
       })
 
-      expect(target.destination).toEqual({ kind: 'folder', folder: base.defaultFolder })
+      // O2: the default branch WAS read and does not declare this working-tree
+      // url, so the fallback is named `anchor-mismatch` and carries the url that
+      // was refused — never delivered, only reported.
+      expect(target.destination).toEqual({
+        kind: 'folder',
+        folder: base.defaultFolder,
+        fallbackReason: { kind: 'anchor-mismatch', intendedUrl: 'https://attacker.example/x' }
+      })
+    })
+
+    it('an unattended caller whose trust-anchor read failed falls back with an anchor-unreadable reason (Issue #832: the Mac case)', () => {
+      const target = logDestinationTargetFrom({
+        ...base,
+        unattended: true,
+        localConfig: configWith({
+          url: 'https://logs.example.com/events',
+          // biome-ignore lint/suspicious/noTemplateCurlyInString: the ${VAR} reference IS the config syntax under test, never a JS template
+          headers: { authorization: 'Bearer ${VINAYA_LOG_TOKEN}' }
+        }),
+        // `null` = the default branch's config could not be read at all (offline,
+        // unauthenticated, or slower than the deadline) — distinct from a read
+        // that returned a config declaring a different destination.
+        trustAnchorConfig: null
+      })
+
+      expect(target.destination).toEqual({
+        kind: 'folder',
+        folder: base.defaultFolder,
+        fallbackReason: { kind: 'anchor-unreadable', intendedUrl: 'https://logs.example.com/events' }
+      })
     })
 
     it('a CI host with a configured server but no credential resolves to none, and the variable is still named', () => {

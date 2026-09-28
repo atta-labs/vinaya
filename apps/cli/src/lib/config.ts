@@ -1317,7 +1317,14 @@ export async function trustAnchorRepoAsync(): Promise<string | null> {
   try {
     const { stdout } = await execFileAsync('git', ['remote', 'get-url', 'origin'], {
       encoding: 'utf-8',
-      timeout: 10_000
+      // The child dies WITH the deadline, not just the promise: a hung or
+      // proxied git left running past the timeout would hold the event loop
+      // open and delay the whole process's exit — the log sink reaches this on
+      // its once-per-process destination read, so a lost child exit must kill
+      // the child, never merely time out the await (mirrors `log-sink.ts`'s own
+      // `gh` reads).
+      timeout: 10_000,
+      killSignal: 'SIGKILL'
     })
     return trustAnchorRepoFromRemoteUrl(stdout)
   } catch {
@@ -1445,7 +1452,12 @@ async function ghFetchTrustAnchorConfigAsync(): Promise<string> {
   const { stdout } = await execFileAsync(
     'gh',
     ['api', `repos/${repo}/contents/${LOCAL_CONFIG_FILENAME}`, '--jq', '.content'],
-    { encoding: 'utf-8', timeout: 10_000 }
+    // `SIGKILL` so a hung, proxied or unauthenticated `gh` that outlived the
+    // timeout is actually killed rather than left holding the event loop open —
+    // the log sink's once-per-process destination read waits on this, and its
+    // own outer deadline (`LOG_DESTINATION_ANCHOR_DEADLINE_MS`) is a backstop
+    // for a lost exit only, never a substitute for killing the child.
+    { encoding: 'utf-8', timeout: 10_000, killSignal: 'SIGKILL' }
   )
   return stdout
 }
