@@ -2470,13 +2470,28 @@ function flagsIn(span: string): string[] {
 
 /**
  * The command-name token run a backticked invocation opens with — the words
- * after the binary, stopping at the first token that is not a bare lowercase
- * word (a flag, a `<placeholder>`, a path). `null` when the span is not an
- * invocation of this binary at all.
+ * after the binary, stopping at the first token that is not a bare word (a
+ * flag, a `<placeholder>`, a path). `null` when the span is not an invocation
+ * of this binary at all.
+ *
+ * The BINARY's case is folded: a CLI name written `Vinaya` at the start of a
+ * sentence is the same invocation as `vinaya`, and compared exactly, one
+ * capital letter made the span parse as no invocation at all — an Issue could
+ * introduce a wholly undocumented command, Surface never reaching the command
+ * reference, by capitalising it (round 5 security review).
+ *
+ * The COMMAND WORDS must still be lower-case as written, and that is not an
+ * oversight. A capitalised word run after the binary is how a proper name is
+ * written, not a command: measured over this repository's own task Issues,
+ * `Vinaya Body Checks` and `Vinaya Checks` are the names of CI workflows, and
+ * folding their case read both as introduced commands and refused an Issue
+ * that introduces nothing. Nothing mechanical separates `Vinaya Issue Archive`
+ * from `Vinaya Body Checks`, so the line is drawn where the evidence is: the
+ * binary may be capitalised, the command may not.
  */
 function invokedCommandTokens(span: string, binary: string): string[] | null {
   const words = span.trim().split(/\s+/)
-  if (words[0] !== binary) return null
+  if ((words[0] ?? '').toLowerCase() !== binary.toLowerCase()) return null
   const tokens: string[] = []
   for (const w of words.slice(1)) {
     if (!/^[a-z][a-z0-9-]*$/.test(w)) break
@@ -2564,7 +2579,7 @@ export function checkIntroducedCommandsCovered(
   const covered = surface.value.in.some((g) => globCoversPath(g, reference.file as string))
   if (covered) return { status: 'pass', errors: [] }
 
-  const names = new Set(reference.commands.map((c) => c.name))
+  const names = new Set(reference.commands.map((c) => c.name.toLowerCase()))
   const everyFlag = new Set(reference.commands.flatMap((c) => c.flags.map(flagName)))
   const glob = directoryGlobFor(reference.file)
   const errors: string[] = []
@@ -2576,7 +2591,7 @@ export function checkIntroducedCommandsCovered(
       const resolved = tokens === null ? { known: null, introduced: null } : resolveCommand(tokens, names)
       if (
         resolved.introduced !== null &&
-        !documentedInProse(`${reference.binary} ${resolved.introduced}`, reference.text) &&
+        !documentedInProse(`${reference.binary} ${resolved.introduced}`, reference.text, true) &&
         !reported.has(`cmd:${resolved.introduced}`)
       ) {
         reported.add(`cmd:${resolved.introduced}`)
@@ -2598,11 +2613,21 @@ export function checkIntroducedCommandsCovered(
   return { status: errors.length > 0 ? 'fail' : 'pass', errors }
 }
 
-/** Does the reference's own prose spell this token out verbatim, as a whole token? A flag or key explained in a paragraph is documented. */
-function documentedInProse(token: string, text: string): boolean {
+/**
+ * Does the reference's own prose spell this token out verbatim, as a whole
+ * token? A flag or key explained in a paragraph is documented.
+ *
+ * `ignoreCase` is set only for a command name, whose own words this module
+ * lower-cases before comparing anything (`invokedCommandTokens`) — without it a
+ * reference paragraph writing the command at the start of a sentence would not
+ * match the folded name. A flag and a configuration key stay case-sensitive:
+ * both are identifiers whose case is part of them (`reviewPolicy.maxRounds`),
+ * and folding those would excuse a token the reference does not carry.
+ */
+function documentedInProse(token: string, text: string, ignoreCase = false): boolean {
   if (text === '') return false
   const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return new RegExp(`(?<![\\w.-])${escaped}(?![\\w.-])`).test(text)
+  return new RegExp(`(?<![\\w.-])${escaped}(?![\\w.-])`, ignoreCase ? 'i' : '').test(text)
 }
 
 /** A dotted token whose last segment is one of these is a filename, never a configuration key. */

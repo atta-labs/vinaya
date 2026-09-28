@@ -2475,6 +2475,41 @@ describe('checkIntroducedCommandsCovered', () => {
     expect(result.errors[0]).toContain('Add `packages/sources/src` to `in:`')
   })
 
+  it('refuses an introduced command however the binary is capitalised', () => {
+    for (const invocation of ['`Vinaya issue archive`', '`VINAYA rotate-secrets`']) {
+      const result = checkIntroducedCommandsCovered(
+        body(`${invocation} does the new thing.`),
+        FIXTURE_COMMAND_REFERENCE,
+        NOTHING_IN_TREE
+      )
+      expect(result.status).toBe('fail')
+      expect(result.errors[0]).toContain('Add `packages/sources/src` to `in:`')
+    }
+  })
+
+  it('reads a capitalised word run after the binary as a proper name, never as a command', () => {
+    // `Vinaya Body Checks` is the name of a CI workflow in this repository's own
+    // Issues; nothing mechanical separates it from a Title-Cased invocation, so
+    // a capitalised command word ends the run.
+    expect(
+      checkIntroducedCommandsCovered(
+        body('`Vinaya Body Checks` answers in two minutes.'),
+        FIXTURE_COMMAND_REFERENCE,
+        NOTHING_IN_TREE
+      ).status
+    ).toBe('pass')
+  })
+
+  it('still reads a capitalised leaf command plus a further word as an argument', () => {
+    expect(
+      checkIntroducedCommandsCovered(
+        body('`Vinaya check dispatch-readiness` passes on the task branch.'),
+        FIXTURE_COMMAND_REFERENCE,
+        NOTHING_IN_TREE
+      ).status
+    ).toBe('pass')
+  })
+
   it('refuses a command whose very first word the reference has never heard of', () => {
     const result = checkIntroducedCommandsCovered(
       body('`vinaya frobnicate` rewrites the body.'),
