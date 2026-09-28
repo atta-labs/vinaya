@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runDemoBreak } from '../src/commands/demo.js'
+import { stripAmbientGitEnv } from './git-env.js'
 import { withSerialLock } from './serial-lock.js'
 
 // The real CLI source, invoked directly by `bun` rather than through a
@@ -81,6 +82,19 @@ const SERIAL_LOCK_DIR = join(
 )
 
 let root: string
+let restoreGitEnv: (() => void) | undefined
+
+// Every fixture below runs git — in-process and in spawned children — against
+// its OWN temporary repository, so an ambient `GIT_DIR`/`GIT_WORK_TREE` from a
+// caller that is itself inside a repository (a git hook, or a runner started
+// with those variables already set) must never reach it. See `./git-env.ts`.
+beforeAll(() => {
+  restoreGitEnv = stripAmbientGitEnv()
+})
+
+afterAll(() => {
+  restoreGitEnv?.()
+})
 
 beforeEach(() => {
   root = initFixture()
