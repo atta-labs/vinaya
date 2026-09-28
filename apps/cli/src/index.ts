@@ -14,6 +14,7 @@ import { devReviewLoopCommand } from './commands/dev-review-loop.js'
 import { dispatchCommand } from './commands/dispatch.js'
 import { doctorCommand } from './commands/doctor.js'
 import { logSendCommand } from './commands/log-send.js'
+import { logSetCredentialCommand } from './commands/log-set-credential.js'
 import { doctrineCommand } from './commands/doctrine.js'
 import { ejectCommand } from './commands/eject.js'
 import { initCommand, initProductCommand } from './commands/init.js'
@@ -346,8 +347,10 @@ try {
       const [subcommand, ...rest] = args
       if (subcommand === 'send') {
         await logSendCommand(rest)
+      } else if (subcommand === 'set-credential') {
+        process.exit(await logSetCredentialCommand(rest))
       } else {
-        console.error(`Unknown 'log' subcommand: ${subcommand ?? '(none)'} (expected 'send')`)
+        console.error(`Unknown 'log' subcommand: ${subcommand ?? '(none)'} (expected 'send' or 'set-credential')`)
         process.exit(2)
       }
       break
