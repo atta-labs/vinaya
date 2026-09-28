@@ -26,6 +26,7 @@ import {
   globCoversPath,
   type IssueDocumentation,
   type IssuePart,
+  type IssuePremise,
   type IssueSurface,
   type IssueTestPlan
 } from './issue-validation'
@@ -49,6 +50,32 @@ function renderDocumentation(documentation: IssueDocumentation): string {
     ...documentation.sources.map((s) => {
       const citation = s.objectiveIds.length > 0 ? ` (${s.objectiveIds.map((id) => `O${id}`).join(', ')})` : ''
       return `- ${s.source} — ${s.mechanism}${citation}`
+    })
+  ].join('\n')
+}
+
+/**
+ * Renders the Issue's `## Premises` section — one line per premise, under its
+ * own heading, so the Developer reads them as **checked facts** rather than as
+ * more of the Boundary's prose. Every line here was asserted against the
+ * checkout when the Issue was cut (or deferred to a declared dependency) and
+ * asserted again against the default branch immediately before this render, so
+ * the lead sentence is a statement about what the pipeline did, not an
+ * invitation to re-verify by hand.
+ *
+ * Called only when `facts.premises` is non-empty (see the join in
+ * `renderBrief`): the section is optional on the Issue, and a brief with an
+ * empty heading would read as "checked, nothing to check".
+ */
+function renderPremises(premises: readonly IssuePremise[]): string {
+  return [
+    '## Premises',
+    '',
+    'Checked against the code when this task Issue was cut, and again against the default branch at dispatch — facts, not claims.',
+    '',
+    ...premises.map((p) => {
+      const prefix = p.afterIssue === null ? '' : `after #${p.afterIssue}: `
+      return `- ${prefix}\`${p.path}\` contains \`${p.text}\``
     })
   ].join('\n')
 }
@@ -250,6 +277,16 @@ export type BriefFacts = {
    * legitimate explicit opt-out and is rendered, never treated as absent.
    */
   documentation: IssueDocumentation
+  /**
+   * The Issue's `## Premises` list (`issue-validation.ts`'s
+   * `parseIssuePremises`) — the facts about the code this plan rests on, each
+   * already re-asserted against the default branch by the caller before this
+   * render. `[]` is the absent-section sentinel, same convention as
+   * `objectives`/`parts`/`stopConditions`, and the section is genuinely
+   * optional: an Issue whose Boundary states nothing about the code as it
+   * stands owes no premise.
+   */
+  premises: IssuePremise[]
   /**
    * The resolved gate cutovers (`resolveGateCutovers`, `apps/cli/src/lib/config.ts`).
    * The renderer's missing-fact refusal for a missing `## Objectives`/
@@ -1005,6 +1042,7 @@ export function renderBrief(facts: BriefFacts, template: string): RenderResult {
     ...(facts.documentation.kind === 'none' || facts.documentation.sources.length > 0
       ? [withCli(renderDocumentation(facts.documentation)), '']
       : []),
+    ...(facts.premises.length > 0 ? [renderPremises(facts.premises), ''] : []),
     withCli(renderSection2(facts)),
     '',
     withCli(renderSection3(facts)),

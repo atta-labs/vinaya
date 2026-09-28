@@ -25,10 +25,11 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import {
   checkAutonomyClause,
   checkBlastRadiusScope,
+  checkBoundaryClaimsNeedPremise,
   checkBriefClosesN,
   checkBriefSections,
   checkDocsWithinSurface,
@@ -38,6 +39,7 @@ import {
   checkForgeTitle,
   checkIssueBriefSections,
   checkIssueObjectives,
+  checkIssuePremises,
   checkIssueRationale,
   type GateCutovers,
   checkMilestoneShape,
@@ -46,6 +48,7 @@ import {
   checkObjectivesRespectBoundary,
   checkPartsCiteDefinedObjectives,
   checkPartsCoverageAndSequence,
+  checkPremiseDependencyDeclared,
   checkPremiseCoverage,
   checkPrincipalPlaceholder,
   checkProjectField,
@@ -979,6 +982,25 @@ export function readDocOwnersContent(root: string = repoRoot()): string | null {
   }
 }
 
+/**
+ * One repository-relative path out of the working checkout, or `null` when it
+ * does not exist — the `readFile` seam O1's premise check reads through. A path
+ * is resolved against the repository root and refused if it escapes it: a
+ * premise is a claim about THIS repository, and `parseIssuePremises` already
+ * refuses an absolute or `..`-bearing path, so this is the second, independent
+ * guard on the same property at the point the read actually happens.
+ */
+export function readCheckoutFile(path: string, root: string = repoRoot()): string | null {
+  if (!root) return null
+  const resolved = resolve(root, path)
+  if (resolved !== root && !resolved.startsWith(root + sep)) return null
+  try {
+    return readFileSync(resolved, 'utf8')
+  } catch {
+    return null
+  }
+}
+
 const CHECK_ISSUE_CONTENT = 'issue-content'
 
 const ISSUE_CONTENT_RECOVERY = {
@@ -1007,7 +1029,13 @@ const ISSUE_CONTENT_RECOVERY = {
   noForeignTaskOwnership:
     "Rewrite the named sentence so it does not assign ownership of this task's own objective to another task — depend on the other task instead (`Dependency rationale`), or fold the work back into this task's own Objectives/Parts. Then re-run `{cmd}`.",
   partsCoverageAndSequence:
-    'Fix the named `## Parts` defect — cite every declared objective from at least one Part, and number Parts contiguously from 1 — then re-run `{cmd}`.'
+    'Fix the named `## Parts` defect — cite every declared objective from at least one Part, and number Parts contiguously from 1 — then re-run `{cmd}`.',
+  issuePremises:
+    'Fix the named `## Premises` line so the file really contains the text (re-read the code, then write what it holds), or — when a task that has not merged yet is what makes it true — prefix the premise `after #<n>:` and declare `Depends-on` on that Issue. Then re-run `{cmd}`.',
+  premiseDependencyDeclared:
+    'Add the missing `Depends-on` edge for the deferred premise named above to the `**Dependency rationale**` field (`vinaya issue amend-deps`), or drop the `after #<n>:` prefix and write a premise that holds now. Then re-run `{cmd}`.',
+  boundaryClaimsNeedPremise:
+    "Add a `## Premises` section pinning what the Boundary asserts already exists — one `` `<path>` contains `<text>` `` line per claim — or rewrite the Boundary so it no longer states the code's current shape. Then re-run `{cmd}`."
 } as const
 
 export type IssueContentInput = {
@@ -1029,6 +1057,13 @@ export type IssueContentInput = {
    */
   briefSectionsSinceIssue: number | null
   resolvesToFile: (glob: string) => boolean
+  /**
+   * Reads one repository-relative path out of the checkout the Issue is being
+   * cut from — `null` for a path that does not exist. Injected for the same
+   * reason `resolvesToFile` is: `@attalabs/aeg-core`'s grammar reads no `fs`,
+   * and O1's premise check needs the checkout's real bytes.
+   */
+  readFile: (path: string) => string | null
   docOwnersContent: string | null
   /**
    * O5's sibling task set, already resolved by the caller from the live
@@ -1091,7 +1126,10 @@ export function validateIssueContent(input: IssueContentInput): CheckError[] {
     ],
     [checkObjectivesRespectBoundary(input.body).errors, 'objectivesRespectBoundary'],
     [checkNoForeignTaskOwnership(input.body).errors, 'noForeignTaskOwnership'],
-    [checkPartsCoverageAndSequence(input.body).errors, 'partsCoverageAndSequence']
+    [checkPartsCoverageAndSequence(input.body).errors, 'partsCoverageAndSequence'],
+    [checkIssuePremises(input.body, input.readFile).errors, 'issuePremises'],
+    [checkPremiseDependencyDeclared(input.body).errors, 'premiseDependencyDeclared'],
+    [checkBoundaryClaimsNeedPremise(input.body).errors, 'boundaryClaimsNeedPremise']
   ]
   const errors: CheckError[] = []
   for (const [messages, kind] of findings) {
@@ -1605,6 +1643,15 @@ async function validateRenderedBriefForIssue(input: {
 
   const trancheSlug = findTrancheSlug(input.labels)
   let rendered: AssembleAndRenderBriefResult
+  // `premiseScope: 'none'` on EVERY branch below. These renders happen at plan
+  // time, before the write lands, and premises at plan time belong to
+  // `checkIssuePremises` on this same write: it reads the working tree and
+  // omits the deferred ones (O1/O2). Asserting them here instead would refuse
+  // the very write an `after #<n>:` deferral exists to allow — round 2's
+  // review found exactly that — and would read the HEAD commit, which
+  // `skipFreshness` leaves unpinned to the default branch. The render that
+  // must assert every premise is the dispatch one (`dispatch-task.ts`), which
+  // passes no scope and so gets `'all'`.
   if (trancheSlug !== null) {
     if (input.issueNumber === null) {
       // O2 — a tranche CREATE has no Issue number for the tranche path
@@ -1623,7 +1670,7 @@ async function validateRenderedBriefForIssue(input: {
       rendered = await assembleAndRenderBriefForIssue(
         DRAFT_ISSUE_SENTINEL,
         { title: input.title, body: input.body, labels: input.labels },
-        { skipFreshness: true, trancheDraft: { slug: trancheSlug, taskId } }
+        { skipFreshness: true, premiseScope: 'none', trancheDraft: { slug: trancheSlug, taskId } }
       )
     } else {
       const taskId = await resolveTrancheTaskId(trancheSlug, input.issueNumber)
@@ -1636,7 +1683,10 @@ async function validateRenderedBriefForIssue(input: {
       // Plan-time render: `skipFreshness` — a Planner may edit from a checkout
       // that is behind the remote default branch; freshness is a dispatch-time
       // gate, not this one.
-      rendered = await assembleAndRenderBrief(trancheSlug, taskId, undefined, input.body, { skipFreshness: true })
+      rendered = await assembleAndRenderBrief(trancheSlug, taskId, undefined, input.body, {
+        skipFreshness: true,
+        premiseScope: 'none'
+      })
     }
   } else {
     rendered = await assembleAndRenderBriefForIssue(
@@ -1646,7 +1696,7 @@ async function validateRenderedBriefForIssue(input: {
         body: input.body,
         labels: input.labels
       },
-      { skipFreshness: true }
+      { skipFreshness: true, premiseScope: 'none' }
     )
   }
   if (!rendered.ok) {
@@ -1783,6 +1833,7 @@ export async function collectTaskIssueErrors(
       issueNumber,
       briefSectionsSinceIssue: resolveGateCutovers(loadConfig()).briefSectionsSinceIssue,
       resolvesToFile: (glob) => expandGlob(glob).length > 0,
+      readFile: readCheckoutFile,
       docOwnersContent: readDocOwnersContent(),
       milestoneSiblings,
       subjectRef: issueNumber !== null ? String(issueNumber) : ''

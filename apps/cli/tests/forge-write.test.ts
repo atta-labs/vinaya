@@ -168,6 +168,7 @@ describe('validateIssueContent — the content checks', () => {
       issueNumber: null,
       briefSectionsSinceIssue: null,
       resolvesToFile: () => true,
+      readFile: () => null,
       docOwnersContent: null,
       milestoneSiblings: null,
       subjectRef: ''
@@ -189,6 +190,7 @@ describe('validateIssueContent — the content checks', () => {
       issueNumber: null,
       briefSectionsSinceIssue: null,
       resolvesToFile: () => true,
+      readFile: () => null,
       docOwnersContent: null,
       milestoneSiblings: null,
       subjectRef: ''
@@ -206,6 +208,7 @@ describe('validateIssueContent — the content checks', () => {
       issueNumber: null,
       briefSectionsSinceIssue: null,
       resolvesToFile: () => true,
+      readFile: () => null,
       docOwnersContent: null,
       milestoneSiblings: null,
       subjectRef: ''
@@ -213,6 +216,73 @@ describe('validateIssueContent — the content checks', () => {
     expect(errors.length).toBe(1)
     expect(errors[0]?.check).toBe('issue-content')
     expect(errors[0]?.message).toContain('Technical surface map')
+  })
+
+  it('refuses an Issue whose `## Premises` line the checkout does not hold', () => {
+    const body =
+      '**Boundary** — a task.\n\n**Dependency rationale** — `Depends-on: —` `Conflicts-with: —`\n\n**Traps to avoid** — see `aeg-root/process.md`.\n\n## Premises\n\n`src/a.ts` contains `drainOutbox`\n'
+    const errors = validateIssueContent({
+      body,
+      labels: ['vinaya/tranche:demo'],
+      sharedPackages: [],
+      projectPaths: [],
+      retryCommand: cmd,
+      issueNumber: null,
+      briefSectionsSinceIssue: null,
+      resolvesToFile: () => true,
+      readFile: (path) => (path === 'src/a.ts' ? 'export const signal = 1\n' : null),
+      docOwnersContent: null,
+      milestoneSiblings: null,
+      subjectRef: ''
+    })
+    const premise = errors.find((e) => e.message.includes('premise 1 binds'))
+    expect(premise).toBeDefined()
+    expect(premise?.check).toBe('issue-content')
+    expect(premise?.agent_recovery_prompt).toContain('vinaya issue create')
+  })
+
+  it('refuses an Issue whose Boundary claims something already exists with no premise', () => {
+    const body =
+      '**Boundary** — the cancellation signal is already wired, currently inert.\n\n**Dependency rationale** — `Depends-on: —` `Conflicts-with: —`\n\n**Traps to avoid** — see `aeg-root/process.md`.\n'
+    const errors = validateIssueContent({
+      body,
+      labels: ['vinaya/tranche:demo'],
+      sharedPackages: [],
+      projectPaths: [],
+      retryCommand: cmd,
+      issueNumber: null,
+      briefSectionsSinceIssue: null,
+      resolvesToFile: () => true,
+      readFile: () => null,
+      docOwnersContent: null,
+      milestoneSiblings: null,
+      subjectRef: ''
+    })
+    const boundary = errors.find((e) => e.message.includes('the Boundary says'))
+    expect(boundary).toBeDefined()
+    expect(boundary?.agent_recovery_prompt).toContain('`## Premises`')
+  })
+
+  it('refuses a deferred premise with no declared `Depends-on`', () => {
+    const body =
+      '**Boundary** — a task.\n\n**Dependency rationale** — `Depends-on: —` `Conflicts-with: —`\n\n**Traps to avoid** — see `aeg-root/process.md`.\n\n## Premises\n\nafter #841: `src/a.ts` contains `drainOutbox`\n'
+    const errors = validateIssueContent({
+      body,
+      labels: ['vinaya/tranche:demo'],
+      sharedPackages: [],
+      projectPaths: [],
+      retryCommand: cmd,
+      issueNumber: null,
+      briefSectionsSinceIssue: null,
+      resolvesToFile: () => true,
+      readFile: () => null,
+      docOwnersContent: null,
+      milestoneSiblings: null,
+      subjectRef: ''
+    })
+    expect(errors.find((e) => e.message.includes('defers to #841'))).toBeDefined()
+    // The deferred premise is NOT evaluated against the checkout at plan time.
+    expect(errors.find((e) => e.message.includes('premise 1 binds'))).toBeUndefined()
   })
 
   it('refuses a Dependency rationale edge naming a lettered task id (issue-809, O1)', () => {
@@ -226,6 +296,7 @@ describe('validateIssueContent — the content checks', () => {
       issueNumber: null,
       briefSectionsSinceIssue: null,
       resolvesToFile: () => true,
+      readFile: () => null,
       docOwnersContent: null,
       milestoneSiblings: null,
       subjectRef: ''
@@ -246,6 +317,7 @@ describe('validateIssueContent — the content checks', () => {
       issueNumber: null,
       briefSectionsSinceIssue: null,
       resolvesToFile: () => true,
+      readFile: () => null,
       docOwnersContent: null,
       milestoneSiblings: null,
       subjectRef: ''
@@ -265,6 +337,7 @@ describe('validateIssueContent — the content checks', () => {
       issueNumber: null,
       briefSectionsSinceIssue: null,
       resolvesToFile: () => true,
+      readFile: () => null,
       docOwnersContent: null,
       milestoneSiblings: null,
       subjectRef: ''
@@ -284,6 +357,7 @@ describe('validateIssueContent — the content checks', () => {
       issueNumber: null,
       briefSectionsSinceIssue: null,
       resolvesToFile: () => true,
+      readFile: () => null,
       docOwnersContent: 'apps/cli/src/lib/**  apps/cli/specs/surface.md\n',
       milestoneSiblings: null,
       subjectRef: ''
@@ -305,6 +379,7 @@ describe('validateIssueContent — the content checks', () => {
       issueNumber: null,
       briefSectionsSinceIssue: null,
       resolvesToFile: () => true,
+      readFile: () => null,
       docOwnersContent: 'apps/cli/src/lib/**  apps/cli/specs/surface.md\n',
       milestoneSiblings: null,
       subjectRef: ''

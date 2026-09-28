@@ -157,22 +157,48 @@ function withoutClaimMarkers(content: string): string {
 }
 
 /**
+ * How a finding addresses the author of the thing that carries the binding.
+ *
+ * A doc sentence and a task Issue's `## Premises` line are the same assertion
+ * about the same file, evaluated by the same predicate — but the author reads
+ * a different sentence back. Defaulted to the doc-claim voice below, so every
+ * existing caller is unchanged; the Issue gate passes its own rather than
+ * growing a second evaluator whose predicate could drift from this one.
+ */
+export type ClaimVoice = {
+  /** Names where the binding is written — `${file}:${line}` by default. */
+  locate: (binding: ClaimBinding) => string
+  /** What to do when a `contains`/`absent` pin no longer holds. */
+  staleRemediation: (path: string) => string
+}
+
+const DOC_CLAIM_VOICE: ClaimVoice = {
+  locate: (binding) => `${binding.file}:${binding.line}`,
+  staleRemediation: (path) =>
+    `The sentence bound here claims something \`${path}\` no longer shows. Re-read the code, then correct the sentence and re-bind it, or remove it — never reword an unbound claim.`
+}
+
+/**
  * Re-assert every binding against the cited file's current content. The
  * predicate itself is delegated to `checkPremises` — one implementation of
  * `contains`/`absent`/`sha256`, shared with the brief's own `Premise:` block,
  * so the two grammars can never drift into disagreeing about what a pin
  * means. Only the message is composed here, because a doc claim's remediation
- * differs from a stale brief's.
+ * differs from a stale brief's — and, since a task Issue's `## Premises`
+ * section reuses this same evaluation, `voice` is what lets that caller say
+ * "rewrite the premise" where a doc says "rewrite the sentence".
  */
 export function evaluateClaimBindings(
   bindings: readonly ClaimBinding[],
-  fileReader: (path: string) => string | null
+  fileReader: (path: string) => string | null,
+  voice: ClaimVoice = DOC_CLAIM_VOICE
 ): ClaimFinding[] {
   const findings: ClaimFinding[] = []
 
   for (const binding of bindings) {
     const { file, line, assertion } = binding
     const pin = `${assertion.path} ${assertion.kind}:${assertion.value}`
+    const at = voice.locate(binding)
 
     // An invalid cited path never reaches the file-read stage. `quoted-command.ts`
     // treats one as no marker at all, to deny an attacker any signal difference;
@@ -183,7 +209,7 @@ export function evaluateClaimBindings(
       findings.push({
         file,
         line,
-        message: `${file}:${line} binds \`${pin}\`, but \`${assertion.path}\` is not a repo-root-relative path (absolute paths and \`..\` traversal are refused). Cite a file inside the repository.`
+        message: `${at} binds \`${pin}\`, but \`${assertion.path}\` is not a repo-root-relative path (absolute paths and \`..\` traversal are refused). Cite a file inside the repository.`
       })
       continue
     }
@@ -193,7 +219,7 @@ export function evaluateClaimBindings(
       findings.push({
         file,
         line,
-        message: `${file}:${line} binds \`${pin}\`, but \`${assertion.path}\` could not be read. Cite a file that exists, or remove the sentence.`
+        message: `${at} binds \`${pin}\`, but \`${assertion.path}\` could not be read. Cite a file that exists, or remove it.`
       })
       continue
     }
@@ -205,12 +231,12 @@ export function evaluateClaimBindings(
     const remediation =
       assertion.kind === 'sha256'
         ? `\`${assertion.path}\` changed, so the pinned hash is stale. If this PR is the change, update the pin in this same PR; otherwise the bound sentence may no longer be true — re-read it, then re-bind or remove it.`
-        : `The sentence bound here claims something \`${assertion.path}\` no longer shows. Re-read the code, then correct the sentence and re-bind it, or remove it — never reword an unbound claim.`
+        : voice.staleRemediation(assertion.path)
 
     findings.push({
       file,
       line,
-      message: `${file}:${line} binds \`${pin}\`, which no longer holds. ${remediation}`
+      message: `${at} binds \`${pin}\`, which no longer holds. ${remediation}`
     })
   }
 

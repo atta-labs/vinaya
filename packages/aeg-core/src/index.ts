@@ -250,12 +250,14 @@ export type {
 } from './review-input-manifest'
 export {
   checkBlastRadiusScope,
+  checkBoundaryClaimsNeedPremise,
   checkConflictCompleteness,
   checkDocsWithinSurface,
   checkDocumentationCitesObjective,
   checkEdgeIdsWholeNumbers,
   checkIssueBriefSections,
   checkIssueObjectives,
+  checkIssuePremises,
   checkIssueRationale,
   checkIssueType,
   checkMilestoneAttach,
@@ -264,6 +266,8 @@ export {
   checkObjectivesRespectBoundary,
   checkPartsCiteDefinedObjectives,
   checkPartsCoverageAndSequence,
+  checkPremiseDependencyDeclared,
+  checkPremisesHold,
   checkProjectsRegistered,
   checkRationaleNamesDocs,
   checkRationaleSurfaceCoverage,
@@ -283,6 +287,7 @@ export {
   OBJECTIVES_SINCE_ISSUE,
   parseIssueDocumentation,
   parseIssueParts,
+  parseIssuePremises,
   parseIssueStopConditions,
   parseIssueSurface,
   parseIssueTestPlan
@@ -292,6 +297,7 @@ export type {
   IssueDocumentation,
   IssueDocumentationSource,
   IssuePart,
+  IssuePremise,
   IssueSectionResult,
   IssueSurface,
   IssueTestPlan,
@@ -332,7 +338,7 @@ export type { DerivationRule, ForgeFactInput } from './state-machine-model'
 export { checkPremises, parsePremiseBlock } from './premise-check'
 export type { PremiseAssertion, PremiseCheckResult } from './premise-check'
 export { checkDocClaims } from './doc-claim'
-export type { ClaimBinding, ClaimFinding, DocClaimSourceFile } from './doc-claim'
+export type { ClaimBinding, ClaimFinding, ClaimVoice, DocClaimSourceFile } from './doc-claim'
 export { classifyLeftover } from './leftover-detection'
 export type { LeftoverInput, LeftoverResult, LeftoverVerdict } from './leftover-detection'
 export { checkDeadBranchPush } from './dead-branch-push-guard'
