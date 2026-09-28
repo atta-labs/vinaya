@@ -347,4 +347,4 @@ Full documentation at [vinaya.attalabs.dev](https://vinaya.attalabs.dev) — the
 
 Copyright (C) 2026 Daniel Estevez.
 
-Apache-2.0 — see [LICENSE](./LICENSE).
+Licensed under the [Functional Source License, Version 1.1, with an Apache-2.0 future license](https://fsl.software) (`FSL-1.1-ALv2`) from version `0.35.0` — see [LICENSE](./LICENSE). Versions `0.34.0` and earlier were released under Apache-2.0 and stay Apache-2.0.

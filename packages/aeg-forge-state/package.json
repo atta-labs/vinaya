@@ -4,7 +4,7 @@
   "publishConfig": {
     "access": "public"
   },
-  "license": "Apache-2.0",
+  "license": "FSL-1.1-ALv2",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/atta-labs/vinaya.git",
