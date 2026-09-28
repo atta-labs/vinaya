@@ -758,5 +758,15 @@ export const COMMANDS: readonly Command[] = [
       'Safe to run more than once: the server stores events by `event_id` and ignores one it already holds, so a re-sent chunk creates no duplicate, and a second run finds the folder emptied and the queue drained.'
     ],
     status: 'shipped'
+  },
+  {
+    name: 'log set-credential',
+    description: 'Store a `logs.headers` delivery credential in the macOS login Keychain, read from standard input',
+    details: [
+      'For a `logs.url` server whose `headers` reference a credential by variable name (`{ "authorization": "Bearer ${VINAYA_LOG_TOKEN}" }`) on a host where that variable is not in the process environment — the case an Operator the Claude desktop app starts on macOS hits, since the token lives in an interactive shell file the app never reads. It stores the value so header resolution finds it in the Keychain when the environment does not, with no token copied into any settings file.',
+      'The value is read from STANDARD INPUT, never a command-line argument a `ps` listing could show — `printf %s "$TOKEN" | vinaya log set-credential VINAYA_LOG_TOKEN`. Only the variable NAME, which is not a secret, sits on the command line; the value is stored under the Keychain service `Vinaya Log` keyed by that name. The command prints a confirmation naming the variable and never echoes, returns, or logs the value.',
+      'macOS only (Linux keyrings are out of scope); it refuses with a clear message elsewhere. The environment still wins over the Keychain wherever the variable is set, so this changes nothing for a host that already exports it.'
+    ],
+    status: 'shipped'
   }
 ]
