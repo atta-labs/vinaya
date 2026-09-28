@@ -161,9 +161,10 @@ What that means for you:
 
 The `@attalabs/vinaya` tarball also carries the `aeg-root/` doctrine and the `studio-standalone/`
 dashboard, and from version `0.35.0` both are distributed under the same terms as the CLI, except
-the bundled third-party dependencies, which keep their own licenses. All other code and content in
-this repository, meaning what none of the five packages distributes, is copyright Daniel Estevez,
-all rights reserved. The [root `LICENSE`](LICENSE) lists which directories fall under which terms.
+the bundled third-party dependencies, which keep their own licenses, as does the third-party code
+the CLI's `dist/` bundle includes. All other code and content in this repository, meaning what none
+of the five packages distributes, is copyright Daniel Estevez, all rights reserved. The
+[root `LICENSE`](LICENSE) lists which directories fall under which terms.
 
 <div align="center">
 

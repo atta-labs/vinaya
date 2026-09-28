@@ -19,6 +19,8 @@ Copyright (C) 2026 Daniel Estevez.
    studio-standalone/ dashboard. From version 0.35.0 onward, both are
    distributed under the same FSL-1.1-ALv2 terms as the CLI, except the
    bundled third-party dependencies, which keep their own licenses.
+   The dist/ bundle likewise includes third-party code, which keeps its own
+   licenses.
 
 2. Earlier versions
 
