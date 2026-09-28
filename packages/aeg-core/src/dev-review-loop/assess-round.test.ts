@@ -838,3 +838,42 @@ describe('assessRound — an attempt that never produced a head reaches the same
     expect(decisions.at(-1)).toEqual({ type: 'dispatch_developer' })
   })
 })
+
+describe('assessRound — buildRoundRecord collects deferred findings (O4)', () => {
+  it("carries each verdict's deferred findings, with severity/location/reason, onto the round record", () => {
+    const reviewer: import('./types').VerdictObservation = {
+      role: 'reviewer',
+      verdict: 'APPROVE',
+      objectives: [],
+      findings: [
+        {
+          id: 'F1',
+          severity: 'MAJOR',
+          location: 'packages/aeg-core/src/x.ts:42',
+          state: null,
+          policyTreatment: 'non_blocking',
+          deferred: 'unchanged-line'
+        }
+      ]
+    }
+    const security: import('./types').VerdictObservation = {
+      role: 'security',
+      verdict: 'PASS',
+      objectives: [],
+      findings: []
+    }
+    const { state, decisions } = runScenario(freshState(), [fakeGate(1, true), fakeVerdicts(1, [reviewer, security])])
+    expect(decisions[decisions.length - 1]).toEqual({ type: 'publish' })
+    expect(state.rounds[0]?.deferred).toEqual([
+      { severity: 'MAJOR', location: 'packages/aeg-core/src/x.ts:42', reason: 'unchanged-line' }
+    ])
+  })
+
+  it('a round that deferred nothing carries no deferred list', () => {
+    const { state } = runScenario(freshState(), [
+      fakeGate(1, true),
+      fakeVerdicts(1, [cleanVerdict('reviewer'), cleanVerdict('security')])
+    ])
+    expect(state.rounds[0]?.deferred).toBeUndefined()
+  })
+})

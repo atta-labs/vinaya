@@ -14,6 +14,7 @@ export type { ReconstructedJournal, ReconstructionInput, ReviewGateFact } from '
 export type {
   Confidence,
   Decision,
+  DeferredFindingRow,
   DevReviewLoopEventInput,
   FindingObservation,
   FindingState,

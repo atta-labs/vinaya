@@ -5,6 +5,8 @@ import {
   evaluateClaimBindings,
   findClaimBindings,
   findMalformedClaimMarkers,
+  type ClaimBinding,
+  type ClaimVoice,
   type DocClaimSourceFile
 } from './doc-claim'
 
@@ -191,5 +193,46 @@ describe('checkDocClaims — both phases in one call', () => {
       findings: [],
       bindingCount: 0
     })
+  })
+})
+
+describe('evaluateClaimBindings — the caller-supplied voice', () => {
+  const binding: ClaimBinding = {
+    file: '## Premises',
+    line: 2,
+    assertion: { kind: 'contains', path: 'src/a.ts', value: 'gone' }
+  }
+  const voice: ClaimVoice = {
+    locate: (b) => `premise ${b.line}`,
+    staleRemediation: () => 'Write the premise the code actually holds.'
+  }
+
+  it('speaks the doc-claim voice by default — unchanged for every existing caller', () => {
+    const [finding] = evaluateClaimBindings([{ ...binding, file: 'aeg-root/x.md' }], reader({ 'src/a.ts': 'present' }))
+    expect(finding?.message).toContain('aeg-root/x.md:2 binds')
+    expect(finding?.message).toContain('The sentence bound here claims')
+  })
+
+  it('locates and remediates in the caller-supplied voice when one is given', () => {
+    const [finding] = evaluateClaimBindings([binding], reader({ 'src/a.ts': 'present' }), voice)
+    expect(finding?.message).toContain('premise 2 binds')
+    expect(finding?.message).toContain('Write the premise the code actually holds.')
+    expect(finding?.message).not.toContain('The sentence bound here')
+  })
+
+  it('applies the voice to an unreadable cited file too', () => {
+    const [finding] = evaluateClaimBindings([binding], reader({}), voice)
+    expect(finding?.message).toContain('premise 2 binds')
+    expect(finding?.message).toContain('could not be read')
+  })
+
+  it('keeps the shared sha256 remediation — a hash is stale the same way whoever pinned it', () => {
+    const [finding] = evaluateClaimBindings(
+      [{ ...binding, assertion: { kind: 'sha256', path: 'src/a.ts', value: 'deadbeef' } }],
+      reader({ 'src/a.ts': 'present' }),
+      voice
+    )
+    expect(finding?.message).toContain('premise 2 binds')
+    expect(finding?.message).toContain('so the pinned hash is stale')
   })
 })

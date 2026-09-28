@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { extractCodeReviewVerdict, extractSecurityReviewVerdict } from '../verdict-extraction'
 import { blockingVerdict, cleanVerdict, fakeGate, fakeVerdicts, runScenario } from './fakes'
-import { parseSummaryConfidenceRows, renderSummary } from './render-summary'
+import { DEFERRED_FINDINGS_HEADING, parseSummaryConfidenceRows, renderSummary } from './render-summary'
 import { initialLoopState, SEVERITY_COLUMNS } from './types'
 import type { LoopConfig, RoundRecord } from './types'
 
@@ -284,5 +284,67 @@ describe('parseSummaryConfidenceRows', () => {
     // Comment text is not a trusted source of a figure a tool result declares
     // as 0-100, so the out-of-range row contributes nothing at all.
     expect(parseSummaryConfidenceRows(comment)).toEqual([{ round: 2, percent: 100, asked: true }])
+  })
+})
+
+describe('renderSummary — deferred findings block (O4)', () => {
+  it('lists each deferred finding with its original severity, file:line and reason, below the table', () => {
+    const summary = renderSummary({
+      rounds: [
+        {
+          round: 2,
+          countsBySeverity: {},
+          confidence: null,
+          outcome: 'changes_requested',
+          deferred: [
+            { severity: 'MAJOR', location: 'packages/aeg-core/src/x.ts:42', reason: 'unchanged-line' },
+            { severity: 'MAJOR', location: 'apps/log-server/y.ts:3', reason: 'outside-surface' }
+          ]
+        }
+      ]
+    })
+    expect(summary).toContain(DEFERRED_FINDINGS_HEADING)
+    expect(summary).toContain('- round 2 — MAJOR packages/aeg-core/src/x.ts:42 — unchanged line')
+    expect(summary).toContain('- round 2 — MAJOR apps/log-server/y.ts:3 — outside the Surface')
+  })
+
+  it('a finding with no location reads (no location)', () => {
+    const summary = renderSummary({
+      rounds: [
+        {
+          round: 2,
+          countsBySeverity: {},
+          confidence: null,
+          outcome: 'green',
+          deferred: [{ severity: 'HIGH', location: '', reason: 'unchanged-line' }]
+        }
+      ]
+    })
+    expect(summary).toContain('- round 2 — HIGH (no location) — unchanged line')
+  })
+
+  it('renders no deferred block, and stays parseable, when no round deferred anything', () => {
+    const summary = renderSummary({
+      rounds: [{ round: 1, countsBySeverity: { major: 0 }, confidence: null, outcome: 'green' }]
+    })
+    expect(summary).not.toContain(DEFERRED_FINDINGS_HEADING)
+    // the deferred block is a plain list, never a table row, so the confidence
+    // parser still reads exactly the round rows it did before
+    expect(parseSummaryConfidenceRows(summary).map((r) => r.round)).toEqual([1])
+  })
+
+  it('the deferred block never parses as a summary row', () => {
+    const summary = renderSummary({
+      rounds: [
+        {
+          round: 1,
+          countsBySeverity: { major: 1 },
+          confidence: null,
+          outcome: 'green',
+          deferred: [{ severity: 'MAJOR', location: 'a.ts:1', reason: 'unchanged-line' }]
+        }
+      ]
+    })
+    expect(parseSummaryConfidenceRows(summary).map((r) => r.round)).toEqual([1])
   })
 })

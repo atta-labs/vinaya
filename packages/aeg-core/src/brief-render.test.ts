@@ -69,6 +69,7 @@ function baseFacts(overrides: Partial<BriefFacts> = {}): BriefFacts {
     },
     stopConditions: ['If the fixture ever needs a second file, STOP and escalate severity: execution.'],
     documentation: { kind: 'sources', sources: [] },
+    premises: [],
     // This repo's historical cutovers (`gateCutovers` in its own
     // `vinaya.config.json`) — the grandfather tests below assert the render
     // refusal against these; a separate test overrides them to all-`null` (no
@@ -933,5 +934,73 @@ describe('renderBrief — end-to-end from a real Issue body (#426 fixture)', () 
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.missing.some((m) => m.startsWith('Parts'))).toBe(true)
+  })
+})
+
+/**
+ * The Issue's premises render under their own
+ * heading, so a Developer reads them as checked facts rather than as more
+ * Boundary prose. The section is optional: an Issue with none renders exactly
+ * as before, which is what keeps already-posted briefs unaffected.
+ */
+describe('renderBrief — the `## Premises` section', () => {
+  it('omits the heading entirely when the Issue carries no premises', () => {
+    const result = renderBrief(baseFacts(), TEMPLATE)
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.brief).not.toContain('## Premises')
+  })
+
+  it('renders one line per premise under its own heading, before §2', () => {
+    const result = renderBrief(
+      baseFacts({
+        premises: [
+          {
+            path: 'packages/aeg-core/src/fixture.ts',
+            text: 'export function fixture(',
+            afterIssue: null,
+            line: '`packages/aeg-core/src/fixture.ts` contains `export function fixture(`'
+          }
+        ]
+      }),
+      TEMPLATE
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.brief).toContain('## Premises')
+    expect(result.brief).toContain('- `packages/aeg-core/src/fixture.ts` contains `export function fixture(`')
+    expect(result.brief.indexOf('## Premises')).toBeLessThan(result.brief.indexOf('## 2. Context'))
+  })
+
+  it('keeps the `after #<n>:` prefix on a deferred premise', () => {
+    const result = renderBrief(
+      baseFacts({
+        premises: [
+          {
+            path: 'packages/aeg-core/src/fixture.ts',
+            text: 'drainOutbox',
+            afterIssue: 841,
+            line: 'after #841: `packages/aeg-core/src/fixture.ts` contains `drainOutbox`'
+          }
+        ]
+      }),
+      TEMPLATE
+    )
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.brief).toContain('- after #841: `packages/aeg-core/src/fixture.ts` contains `drainOutbox`')
+    }
+  })
+
+  it('states that the premises were checked, so the Developer reads them as facts', () => {
+    const result = renderBrief(
+      baseFacts({
+        premises: [
+          { path: 'packages/aeg-core/src/fixture.ts', text: 'fixture', afterIssue: null, line: '`x` contains `y`' }
+        ]
+      }),
+      TEMPLATE
+    )
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.brief).toMatch(/Checked against the code when this task Issue was cut/)
   })
 })
