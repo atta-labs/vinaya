@@ -1,5 +1,25 @@
 # @attalabs/vinaya
 
+## 0.35.0
+
+### Minor Changes
+
+- b5c45b1: The license of all five packages changes to the Functional Source License, Version 1.1, with an Apache-2.0 future license (`FSL-1.1-ALv2`), starting with this version. You can still use and modify the packages freely, including at work. You may not offer Vinaya, or anything substantially similar built from it, to others as a commercial product or service. The exact terms are in LICENSE; where this summary and the license differ, the license wins. Each release becomes Apache-2.0 on the second anniversary of its release. Versions `0.34.0` and earlier were released under Apache-2.0 and stay Apache-2.0.
+
+### Patch Changes
+
+- eb586a9: The in-process dev-review-loop test harness now runs against an isolated log configuration of its own, so a loop test run can no longer resolve the repository's configured `logs.url` server and deliver fake review-loop events to it. The harness reuses `isolatedConfigFixture` (a working directory declaring its own `logs.folder`, plus an isolated `$HOME`/`AEG_REPO`), which makes the trust-anchor resolution refuse the default branch's server and fall back to a per-run folder. Test-only change; real loop runs still deliver to the configured destination unchanged.
+- ac08bbd: A review-loop run started on a developer's Mac now delivers its round events to the configured `logs.url` server, exactly as the same run on the Linux VPS already did. The once-per-process trust-anchor read that decides a run's whole log destination was bounded by the 3s per-event `LOG_CONTEXT_LOOKUP_DEADLINE_MS`; a Mac clears that `gh api` read in a few seconds (keychain-backed auth cold-start plus a home-network round-trip), so the bound expired on every Mac run and rerouted its telemetry to the local folder silently, while the VPS cleared it in well under a second. That read now has its own longer `LOG_DESTINATION_ANCHOR_DEADLINE_MS` (15s), and the `gh`/`git` anchor children are killed with `SIGKILL` so a genuinely hung child never holds the process open.
+  
+  When an unattended run that configured a `logs.url` server cannot use it, it no longer falls back to the local folder silently: `log()` prints one line per process naming why (the default branch's config could not be read, or does not declare this url), and `vinaya doctor` reports the same reason.
+  
+  New: `vinaya log send` delivers a repository's locally-held log events — the local default folder's events, and any retry-queue backlog or draining file a dead drain left behind — to the configured server, once, through the same webhook delivery a live event uses. It is idempotent (the server deduplicates by event id) and reads the destination the same way a normal event does, never a URL on the command line.
+- ae2b485: A round no reviewer ever saw now shows no counts in the published summary table, and its outcome cell says why. A round can end before any reviewer is dispatched — its gate observation was not green, or, from round 2 on, a below-threshold confidence sent the developer back. Neither round was assessed, yet `assessRound` recorded it through `buildRoundRecord`'s seeded zeros, and the table rendered `0` in every severity column beside a `changes_requested` outcome: a contradiction a reader hit when a round whose run had died on a full temp disk read as zero findings for a review that never ran.
+  
+  Such a round is now recorded with `buildUnreviewedRecord`, which carries NO counts at all — the same empty `countsBySeverity` a marker-reconstructed round already carries — so the renderer reports `—` for every severity column through its existing "counts have no source" path, never a `0` a reader takes for a clean review. The outcome cell names the reason instead of the round's log outcome: `not reviewed — checks red` for a red gate, `not reviewed — low confidence` for the confidence send-back. A round the reviewers did assess renders exactly as before, its zeros included when they found nothing.
+  
+  The loop's decision is unchanged — the developer is still sent back exactly as today — and the round's own `round_ended` log event keeps its schema-constrained `changes_requested` outcome, so log readers are unaffected; only the `RoundRecord` the journal carries and the row the table renders change. The `apps/cli/specs/loop.md` Publication section documents the rule.
+
 ## 0.34.0
 
 ### Minor Changes

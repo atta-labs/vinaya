@@ -1,5 +1,25 @@
 # @atta/aeg-core
 
+## 0.35.0
+
+### Minor Changes
+
+- b5c45b1: The license of all five packages changes to the Functional Source License, Version 1.1, with an Apache-2.0 future license (`FSL-1.1-ALv2`), starting with this version. You can still use and modify the packages freely, including at work. You may not offer Vinaya, or anything substantially similar built from it, to others as a commercial product or service. The exact terms are in LICENSE; where this summary and the license differ, the license wins. Each release becomes Apache-2.0 on the second anniversary of its release. Versions `0.34.0` and earlier were released under Apache-2.0 and stay Apache-2.0.
+
+### Patch Changes
+
+- 4b358a3: The root glob `*` in a `## Surface` now admits repository-root files such as `README.md` and `LICENSE`. `globCoversPath` covered a path only when the glob equalled it or one was a `/`-prefix of the other, so a bare `*` matched nothing real: no legal Surface glob admitted a repository-root file (a tracked path with no `/`). A Boundary pinning `README.md` could not pass `vinaya issue create --validate-only`, and `admittedSurfaceFiles` — which reads the same matcher — rendered an empty file list, so `vinaya brief render` produced no surface map. Observed live: a README task could not be validated and its author bypassed the CLI to open the Issue.
+  
+  A bare `*` now covers every tracked path with no `/`, and only those. It never admits a nested path, so the common `in: *, out: apps` shape still excludes `apps/…`, and a `*` in an `out:` list excludes only root-level files. Only `*` is the root glob; `.` keeps its existing prefix behaviour unchanged, and every other glob matches exactly the files it matched before.
+- ae2b485: A round no reviewer ever saw now shows no counts in the published summary table, and its outcome cell says why. A round can end before any reviewer is dispatched — its gate observation was not green, or, from round 2 on, a below-threshold confidence sent the developer back. Neither round was assessed, yet `assessRound` recorded it through `buildRoundRecord`'s seeded zeros, and the table rendered `0` in every severity column beside a `changes_requested` outcome: a contradiction a reader hit when a round whose run had died on a full temp disk read as zero findings for a review that never ran.
+  
+  Such a round is now recorded with `buildUnreviewedRecord`, which carries NO counts at all — the same empty `countsBySeverity` a marker-reconstructed round already carries — so the renderer reports `—` for every severity column through its existing "counts have no source" path, never a `0` a reader takes for a clean review. The outcome cell names the reason instead of the round's log outcome: `not reviewed — checks red` for a red gate, `not reviewed — low confidence` for the confidence send-back. A round the reviewers did assess renders exactly as before, its zeros included when they found nothing.
+  
+  The loop's decision is unchanged — the developer is still sent back exactly as today — and the round's own `round_ended` log event keeps its schema-constrained `changes_requested` outcome, so log readers are unaffected; only the `RoundRecord` the journal carries and the row the table renders change. The `apps/cli/specs/loop.md` Publication section documents the rule.
+- Updated dependencies [b5c45b1]
+  - @attalabs/aeg-forge-state@0.35.0
+  - @attalabs/aeg-types@0.35.0
+
 ## 0.34.0
 
 ### Minor Changes
