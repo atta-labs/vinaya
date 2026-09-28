@@ -790,6 +790,10 @@ export async function assembleAndRenderBrief(
     testPlan,
     stopConditions,
     documentation,
+    premises: (() => {
+      const parsed = parseIssuePremises(issueBody)
+      return parsed.ok ? parsed.value : []
+    })(),
     // An absent `gateCutovers` key resolves to no cutover, so the renderer's
     // missing-`## Objectives`/`## Documentation` refusal grandfathers exactly
     // the class the Issue gate does (O1); this repo restates its own (O2).
@@ -1069,6 +1073,10 @@ export async function assembleAndRenderBriefForIssue(
     testPlan,
     stopConditions,
     documentation,
+    premises: (() => {
+      const parsed = parseIssuePremises(issueBody)
+      return parsed.ok ? parsed.value : []
+    })(),
     // See the tranche-task facts above — absent `gateCutovers` → no cutover (O1).
     cutovers: resolveGateCutovers(loadConfig()),
     dispatchReady: gate.ready,
