@@ -12,10 +12,15 @@ import type { DispatchHandle } from '../../../src/lib/dispatch'
 import {
   buildManifestRecord,
   buildReviewerPromptPieces,
+  buildRoundDeferralContext,
   buildVerdictFromReport,
   controlStoreRootFor,
   driverAuthoredPromptText,
   lintReviewerPrompt,
+  makeChangedLinePredicate,
+  makeInSurfacePredicate,
+  parseChangedLines,
+  parseFindingLocation,
   persistManifestRecord,
   renderReviewerDispatchPrompt,
   renderReviewerPrompt,
@@ -386,5 +391,163 @@ describe('renderReviewerPrompt — the banned-framing lint checks only the text 
     const rendered = renderReviewerPrompt({ ...FACTS, objectives: '   ', resolvedObjectives: [] })
     expect(rendered).toContain('OBJECTIVES:\n(none found on the Issue)')
     expect(rendered).toContain('RULINGS ON THIS PR:\n(none)')
+  })
+})
+
+// --- the deferral rules the loop's classifier applies (convergence-v1 task 1, #853) ---
+
+describe('deferral helpers (O2/O3)', () => {
+  it('parseFindingLocation splits file:line, tolerates a bare file and a file:line:col', () => {
+    expect(parseFindingLocation('a/b.ts:42')).toEqual({ file: 'a/b.ts', line: 42 })
+    expect(parseFindingLocation('a/b.ts')).toEqual({ file: 'a/b.ts', line: null })
+    expect(parseFindingLocation('a/b.ts:42:7')).toEqual({ file: 'a/b.ts', line: 42 })
+  })
+
+  it('parseChangedLines reads --unified=0 hunks into per-file new-side line sets', () => {
+    const diff = [
+      'diff --git a/x.ts b/x.ts',
+      '--- a/x.ts',
+      '+++ b/x.ts',
+      '@@ -10,0 +11,2 @@',
+      '+added one',
+      '+added two',
+      'diff --git a/y.ts b/y.ts',
+      '--- a/y.ts',
+      '+++ b/y.ts',
+      '@@ -5 +5 @@',
+      '-old',
+      '+new'
+    ].join('\n')
+    const changed = parseChangedLines(diff)
+    expect([...(changed.get('x.ts') ?? [])].sort((a, b) => a - b)).toEqual([11, 12])
+    expect([...(changed.get('y.ts') ?? [])]).toEqual([5])
+    expect(changed.has('z.ts')).toBe(false)
+  })
+
+  it('makeChangedLinePredicate: file-level on a changed file counts as changed; an unchanged line does not', () => {
+    const changed = new Map([['x.ts', new Set([11, 12])]])
+    const pred = makeChangedLinePredicate(changed)
+    expect(pred('x.ts:11')).toBe(true)
+    expect(pred('x.ts:99')).toBe(false)
+    expect(pred('x.ts')).toBe(true) // file-level on a changed file
+    expect(pred('other.ts:1')).toBe(false) // file never changed
+  })
+
+  it('makeInSurfacePredicate uses globCoversPath over the finding file', () => {
+    const pred = makeInSurfacePredicate(['packages/aeg-core/src', 'apps/cli/src/lib'])
+    expect(pred('packages/aeg-core/src/x.ts:1')).toBe(true)
+    expect(pred('apps/log-server/y.ts:1')).toBe(false)
+  })
+
+  it('buildRoundDeferralContext: round 1 leaves changedLine inactive; a surface activates inSurface any round', () => {
+    const ctx1 = buildRoundDeferralContext({
+      round: 1,
+      previousRoundHead: null,
+      head: 'h1',
+      surface: { in: ['packages/aeg-core/src'], out: [] },
+      unifiedDiff: () => 'diff'
+    })
+    expect(ctx1.changedLine).toBeUndefined()
+    expect(ctx1.inSurface?.('packages/aeg-core/src/a.ts:1')).toBe(true)
+
+    const ctx2 = buildRoundDeferralContext({
+      round: 2,
+      previousRoundHead: 'h1',
+      head: 'h2',
+      surface: null,
+      unifiedDiff: (_from, _to) => '--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n+one\n'
+    })
+    expect(ctx2.inSurface).toBeUndefined()
+    expect(ctx2.changedLine?.('x.ts:1')).toBe(true)
+    expect(ctx2.changedLine?.('x.ts:99')).toBe(false)
+  })
+
+  it('buildRoundDeferralContext leaves changedLine inactive when the head did not move or the diff is unreadable', () => {
+    expect(
+      buildRoundDeferralContext({ round: 2, previousRoundHead: 'h', head: 'h', surface: null, unifiedDiff: () => 'x' })
+        .changedLine
+    ).toBeUndefined()
+    expect(
+      buildRoundDeferralContext({
+        round: 2,
+        previousRoundHead: 'h1',
+        head: 'h2',
+        surface: null,
+        unifiedDiff: () => null
+      }).changedLine
+    ).toBeUndefined()
+  })
+})
+
+describe('buildVerdictFromReport — deferral context (O2/O3/O4)', () => {
+  let workDir: string
+  beforeEach(() => {
+    workDir = mkdtempSync(join(tmpdir(), 'vinaya-defer-verdict-'))
+  })
+  afterEach(() => {
+    rmSync(workDir, { recursive: true, force: true })
+  })
+
+  const MANIFEST: ReviewInputManifest = {
+    headSha: 'a'.repeat(40),
+    baseSha: 'e'.repeat(40),
+    briefHash: 'b'.repeat(64),
+    objectivesVersion: null,
+    rulingOrdinal: 0,
+    policyDigest: 'd'.repeat(64)
+  }
+  const HANDLE: DispatchHandle = {
+    exitCode: 0,
+    durationMs: 100,
+    usage: { input: 10, output: 5 },
+    resumeId: 'session-1',
+    timedOut: false
+  }
+  const MAJOR_POLICY = { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH', maxRounds: 3 } as const
+
+  function writeReviewer(): void {
+    writeFileSync(
+      join(workDir, 'findings.txt'),
+      'MAJOR|packages/aeg-core/src/x.ts:99|perf regression on unchanged code'
+    )
+    writeFileSync(
+      join(workDir, 'report.txt'),
+      'BRIEF_CONFORMANCE: clean\nSPEC_CONFORMANCE: clean\nSCOPE: small\nTESTS: honest\nDOCS: n/a\nFINDING_IDS: F1'
+    )
+  }
+
+  it('an unchanged-line MAJOR is deferred: verdict APPROVE, recorded on the observation, absent from the comment', () => {
+    writeReviewer()
+    const result = buildVerdictFromReport('reviewer', workDir, 'claude', 853, HANDLE, MANIFEST, MAJOR_POLICY, [], {
+      changedLine: () => false
+    })
+    expect(result.observation.verdict).toBe('APPROVE')
+    expect(result.observation.findings).toHaveLength(1)
+    expect(result.observation.findings[0]).toMatchObject({
+      severity: 'MAJOR',
+      location: 'packages/aeg-core/src/x.ts:99',
+      policyTreatment: 'non_blocking',
+      deferred: 'unchanged-line'
+    })
+    // the deferred finding never reaches the published comment's FINDINGS
+    // block, so a contextless merge gate reading it sees the clean APPROVE too
+    expect(result.rendered).not.toContain('x.ts:99')
+  })
+
+  it('the same finding on a changed line blocks: verdict REQUEST CHANGES, present in the comment', () => {
+    writeReviewer()
+    const result = buildVerdictFromReport('reviewer', workDir, 'claude', 853, HANDLE, MANIFEST, MAJOR_POLICY, [], {
+      changedLine: () => true
+    })
+    expect(result.observation.verdict).toBe('REQUEST CHANGES')
+    expect(result.observation.findings[0]).toMatchObject({ policyTreatment: 'blocking' })
+    expect(result.observation.findings[0]?.deferred).toBeUndefined()
+    expect(result.rendered).toContain('x.ts:99')
+  })
+
+  it('with no context (round 1), the finding blocks as before', () => {
+    writeReviewer()
+    const result = buildVerdictFromReport('reviewer', workDir, 'claude', 853, HANDLE, MANIFEST, MAJOR_POLICY, [])
+    expect(result.observation.verdict).toBe('REQUEST CHANGES')
   })
 })

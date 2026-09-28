@@ -15,18 +15,20 @@ import { existsSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from
 import { join } from 'node:path'
 import {
   CODE_REVIEW_SEVERITY_ORDER,
-  codeReviewBlockingSeverities,
+  classifyFinding,
   defaultControlStoreDeps,
+  type DeferralReason,
   extractCodeReviewVerdict,
   extractSecurityReviewVerdict,
+  type FindingDeferralContext,
+  globCoversPath,
   isProseLocation,
+  type IssueSurface,
   type ManifestInput,
   type ManifestRecord,
   type Objective,
-  PROSE_CAP_SEVERITY,
   type ReviewInputManifest,
   SECURITY_SEVERITY_ORDER,
-  securityBlockingSeverities,
   type ReviewPolicy,
   type VerdictObservation,
   writeManifest
@@ -68,6 +70,13 @@ export type ReviewerPromptFacts = {
    * `objectivesVersion`/`rulingOrdinal` are no longer separate fields here.
    */
   manifest: ReviewInputManifest
+  /**
+   * O2/O3: the round's deferral rules, built by the driver from the previous
+   * round's head and the task's `## Surface` (`buildRoundDeferralContext`).
+   * Threaded to `buildVerdictFromReport`, never into the reviewer prompt —
+   * the renderer ignores it. Absent (or `{}`) leaves both rules inactive.
+   */
+  deferralContext?: FindingDeferralContext
 }
 
 /**
@@ -548,20 +557,127 @@ export function reclassifyProseOnlyNotMet(results: readonly ObjectiveResult[]): 
 }
 
 /**
- * The SAME `isProseLocation`/threshold rule
- * `evaluateReviewFindings` applies internally (`@attalabs/aeg-core`) to
- * decide `outcome`/`blockingFindings` — recomputed here, over the SAME
- * finding, only to attach the resulting fact onto the finding's own
- * observation record, which that evaluator's return value has no room for
+ * The SAME rule `evaluateReviewFindings` applies internally
+ * (`@attalabs/aeg-core`) to decide `outcome`/`blockingFindings` — no longer a
+ * second copy of the prose cap and threshold check here, but the one shared
+ * `classifyFinding` (O1), called over the SAME finding only to attach the
+ * resulting fact onto the finding's own observation record, which that
+ * evaluator's return value has no room for
  * (`PolicyEvaluation.blockingFindings` is a filtered array, not an annotated
- * one — see this task's PR Decisions). `severity` itself is never
- * overwritten: this only ever changes how the finding COUNTS toward this
- * threshold, not what it reports (Traps to avoid: "retain reported severity
- * separately from the incoming prose cap").
+ * one — see this task's PR Decisions). `context` threads the round's
+ * deferral rules (O2/O3) when the driver supplied them; a `'deferred'`
+ * classification records the reason so the summary can name it, and never
+ * counts the finding as blocking. `severity` itself is never overwritten:
+ * this only ever changes how the finding COUNTS toward this threshold, not
+ * what it reports (Traps to avoid: "retain reported severity separately from
+ * the incoming prose cap").
  */
-function policyTreatmentFor(finding: Finding, blockingSeverities: readonly string[]): 'blocking' | 'non_blocking' {
-  const effectiveSeverity = isProseLocation(finding.location) ? PROSE_CAP_SEVERITY : finding.severity
-  return blockingSeverities.includes(effectiveSeverity) ? 'blocking' : 'non_blocking'
+function policyTreatmentFor(
+  finding: Finding,
+  scale: readonly string[],
+  threshold: string,
+  context: FindingDeferralContext
+): { treatment: 'blocking' | 'non_blocking'; deferred: DeferralReason | null } {
+  const c = classifyFinding(finding, scale, threshold, context)
+  return { treatment: c.outcome === 'blocking' ? 'blocking' : 'non_blocking', deferred: c.deferralReason }
+}
+
+// --- the round's deferral context (O2/O3), built from driver facts ----------
+
+/**
+ * A finding location's file and optional line: `packages/x.ts:42` →
+ * `{ file: 'packages/x.ts', line: 42 }`, `packages/x.ts` →
+ * `{ file, line: null }`. A `file:line:col` reads the FIRST number as the line.
+ */
+export function parseFindingLocation(location: string): { file: string; line: number | null } {
+  const trimmed = location.trim()
+  const m = /^(.*?):(\d+)(?::\d+)?$/.exec(trimmed)
+  if (m) return { file: m[1] as string, line: Number(m[2]) }
+  return { file: trimmed, line: null }
+}
+
+/**
+ * Parse `git diff --unified=0` output into the NEW-side line numbers that
+ * changed, per file. A file that appears at all (even a pure deletion, whose
+ * hunk adds no new line) is a CHANGED file — recorded with whatever new-side
+ * lines its hunks add, so a file-level finding on it counts as changed
+ * (Traps to avoid). `/dev/null` on the new side (a deleted file) is not a
+ * changed file a later finding could land on, so it is skipped.
+ */
+export function parseChangedLines(unifiedDiff: string): Map<string, Set<number>> {
+  const changed = new Map<string, Set<number>>()
+  let currentFile: string | null = null
+  for (const line of unifiedDiff.split('\n')) {
+    const fileMatch = /^\+\+\+ b\/(.+)$/.exec(line)
+    if (fileMatch) {
+      const f = (fileMatch[1] as string).trim()
+      currentFile = f === '/dev/null' ? null : f
+      if (currentFile && !changed.has(currentFile)) changed.set(currentFile, new Set())
+      continue
+    }
+    const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line)
+    if (hunk && currentFile) {
+      const start = Number(hunk[1])
+      const count = hunk[2] === undefined ? 1 : Number(hunk[2])
+      const set = changed.get(currentFile) as Set<number>
+      for (let i = 0; i < count; i++) set.add(start + i)
+    }
+  }
+  return changed
+}
+
+/**
+ * The `changedLine` predicate over a parsed changed-line map: a finding is on
+ * a changed line when its file changed AND either it names no line (a
+ * file-level finding on a changed file counts as changed) or its line is in
+ * that file's changed set. A file absent from the map did not change.
+ */
+export function makeChangedLinePredicate(changed: Map<string, Set<number>>): (location: string) => boolean {
+  return (location: string) => {
+    const { file, line } = parseFindingLocation(location)
+    const set = changed.get(file)
+    if (set === undefined) return false
+    if (line === null) return true
+    return set.has(line)
+  }
+}
+
+/** The `inSurface` predicate: a finding's file is covered by any `## Surface` `in:` glob — the SAME `globCoversPath` the Issue's own Surface checks use, never a second matcher. */
+export function makeInSurfacePredicate(inGlobs: readonly string[]): (location: string) => boolean {
+  return (location: string) => {
+    const { file } = parseFindingLocation(location)
+    return inGlobs.some((g) => globCoversPath(g, file))
+  }
+}
+
+/**
+ * The round's deferral context (O2/O3), from what the driver could resolve:
+ *
+ *   - `inSurface` is active whenever the task's `## Surface` `in:` list
+ *     resolved — ANY round (O3);
+ *   - `changedLine` is active only from round 2 on, AND only when the previous
+ *     round's head was recovered, differs from the current head, and the diff
+ *     between them was readable. Round 1, an unrecoverable previous head, an
+ *     unchanged head, or an unreadable diff each leave it inactive, so every
+ *     in-Surface finding blocks as it did before — the brief's own fallback,
+ *     never a guessed deferral.
+ */
+export function buildRoundDeferralContext(args: {
+  round: number
+  previousRoundHead: string | null
+  head: string
+  surface: IssueSurface | null
+  unifiedDiff?: (from: string, to: string) => string | null
+}): FindingDeferralContext {
+  const context: FindingDeferralContext = {}
+  if (args.surface && args.surface.in.length > 0) {
+    context.inSurface = makeInSurfacePredicate(args.surface.in)
+  }
+  if (args.round >= 2 && args.previousRoundHead !== null && args.previousRoundHead !== args.head && args.unifiedDiff) {
+    const diff = args.unifiedDiff(args.previousRoundHead, args.head)
+    if (diff) context.changedLine = makeChangedLinePredicate(parseChangedLines(diff))
+  }
+  return context
 }
 
 export type RoundVerdictParse = { observation: VerdictObservation; rendered: string }
@@ -574,7 +690,15 @@ export function buildVerdictFromReport(
   handle: DispatchHandle,
   manifest: ReviewInputManifest,
   policy: ReviewPolicy,
-  resolvedObjectives: readonly Objective[]
+  resolvedObjectives: readonly Objective[],
+  /**
+   * O2/O3: the round's deferral rules, built by the driver from the previous
+   * round's head (the changed-line diff) and the task's `## Surface`. `{}`
+   * (the default) leaves both rules inactive — every in-Surface finding
+   * blocks as before, exactly round 1's behaviour and the fallback for a
+   * round whose previous head could not be recovered.
+   */
+  deferralContext: FindingDeferralContext = {}
 ): RoundVerdictParse {
   const headSha = manifest.headSha
   const objectivesVersionAtDispatch = manifest.objectivesVersion
@@ -689,24 +813,43 @@ export function buildVerdictFromReport(
   // from real policy/finding data, never fabricated; `confidence` and its
   // siblings stay unset — no reviewer grammar reports one yet (optional,
   // self-reported: absent is honest, not a gap this task's own grammar
-  // needs to close).
-  const blockingSet = role === 'reviewer' ? codeReviewBlockingSeverities(policy) : securityBlockingSeverities(policy)
-  const findingObservations = findings.map((f, i) => ({
-    id: `F${i + 1}`,
-    severity: f.severity,
+  // needs to close). O2/O3: every finding is classified through the ONE
+  // shared rule (`policyTreatmentFor` → `classifyFinding`); a `deferred`
+  // finding carries its reason and location onto its observation so the round
+  // summary can name it (O4), keeps its reported `severity`, and counts as
+  // `non_blocking` toward this round.
+  const scale = role === 'reviewer' ? CODE_REVIEW_SEVERITY_ORDER : SECURITY_SEVERITY_ORDER
+  const threshold = role === 'reviewer' ? policy.codeReviewThreshold : policy.securityThreshold
+  const classified = findings.map((f, i) => {
+    const t = policyTreatmentFor(f, scale, threshold, deferralContext)
+    return { finding: f, id: `F${i + 1}`, treatment: t.treatment, deferred: t.deferred }
+  })
+  const findingObservations = classified.map((c) => ({
+    id: c.id,
+    severity: c.finding.severity,
+    location: c.finding.location,
     state: null,
-    severityScale: role === 'reviewer' ? 'code-review' : 'security',
-    policyTreatment: policyTreatmentFor(f, blockingSet)
+    severityScale: role === 'reviewer' ? ('code-review' as const) : ('security' as const),
+    policyTreatment: c.treatment,
+    ...(c.deferred !== null ? { deferred: c.deferred } : {})
   }))
+  // A deferred finding does not block this round (O2/O3), so the derived
+  // verdict AND the rendered comment's own FINDINGS block are built from only
+  // the findings that still block — a contextless merge gate reading the
+  // published comment then reaches the same clean verdict the loop did,
+  // rather than re-blocking on a finding this round already set aside. The
+  // deferred findings travel to the round summary (O4), never into the
+  // verdict comment's finding list.
+  const blockingEligibleFindings = classified.filter((c) => c.deferred === null).map((c) => c.finding)
 
   if (role === 'reviewer') {
-    const verdict = deriveCodeReviewVerdict(findings, policy)
+    const verdict = deriveCodeReviewVerdict(blockingEligibleFindings, policy)
     const rendered = renderCodeReviewComment({
       headSha,
       verdict,
       briefConformance: report.BRIEF_CONFORMANCE ?? '(not reported)',
       specConformance: report.SPEC_CONFORMANCE ?? '(not reported)',
-      findings,
+      findings: blockingEligibleFindings,
       scope: report.SCOPE ?? '(not reported)',
       scopeEvidence: null,
       tests: report.TESTS ?? '(not reported)',
@@ -754,11 +897,11 @@ export function buildVerdictFromReport(
     )
   }
 
-  const verdict = deriveSecurityVerdict(findings, policy)
+  const verdict = deriveSecurityVerdict(blockingEligibleFindings, policy)
   const rendered = renderSecurityComment({
     headSha,
     verdict,
-    findings,
+    findings: blockingEligibleFindings,
     configScan: report.CONFIG_SCAN ?? '(not reported)',
     secrets: report.SECRETS,
     secretsEvidence: null,

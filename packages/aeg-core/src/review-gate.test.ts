@@ -1294,3 +1294,35 @@ describe('checkReviewGate — resolved findings never block (O1/O2)', () => {
     expect(result.reason).not.toContain('BLOCKER, MAJOR')
   })
 })
+
+describe('checkReviewGate — deferral context (O2/O3/O4)', () => {
+  // An APPROVE whose FINDINGS block carries a BLOCKER outside the Surface —
+  // without context this fails (APPROVE beside a blocking finding), with an
+  // out-of-Surface context the finding is deferred and the gate passes.
+  const APPROVE_WITH_OUT_OF_SURFACE_BLOCKER = principal(
+    `VERDICT: APPROVE\n\nJudged head: ${HEAD_SHA}\n\nFINDINGS (ordered by severity):\n1. [BLOCKER] apps/log-server/x.ts:9 — perf on a file this task does not own\n\nPolicy digest: ${DEFAULT_POLICY_DIGEST}`
+  )
+  const base = {
+    labels: [] as string[],
+    waiverLabelActor: null,
+    headSha: HEAD_SHA,
+    objectivesVersion: null,
+    rulingOrdinal: 0
+  }
+
+  it('with no context, an APPROVE beside a blocking finding still fails (the pre-task, fallback behaviour)', () => {
+    const result = checkReviewGate({ ...base, comments: [APPROVE_WITH_OUT_OF_SURFACE_BLOCKER, PASS_COMMENT] })
+    expect(result.verdict).toBe('fail')
+  })
+
+  it('O3/O4: an out-of-Surface blocker is deferred — the gate passes and names it in its output', () => {
+    const result = checkReviewGate({
+      ...base,
+      comments: [APPROVE_WITH_OUT_OF_SURFACE_BLOCKER, PASS_COMMENT],
+      deferralContext: { inSurface: (loc) => !loc.startsWith('apps/log-server/') }
+    })
+    expect(result.verdict).toBe('pass')
+    expect(result.reason).toContain('deferred, not blocking this round')
+    expect(result.reason).toContain('BLOCKER apps/log-server/x.ts:9 (outside the Surface)')
+  })
+})
