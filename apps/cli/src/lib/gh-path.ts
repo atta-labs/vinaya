@@ -1,4 +1,4 @@
-// Making `gh` reachable at process start — issue #836.
+// Making `gh` reachable at process start.
 //
 // Twenty-three source files invoke `gh` by name (`execFile('gh', …)`), and
 // every one relies on the shell's own PATH lookup to find it. That lookup
@@ -26,7 +26,7 @@ import { delimiter, join } from 'node:path'
  * them. Homebrew on Apple Silicon installs to `/opt/homebrew/bin`; Intel
  * Homebrew and most manual installs use `/usr/local/bin`. The Claude desktop
  * app on macOS starts an Operator's task tools with a PATH that contains
- * neither, which is the incident this list exists for (#836).
+ * neither, which is the incident this list exists for.
  */
 export const STANDARD_GH_DIRS = ['/opt/homebrew/bin', '/usr/local/bin'] as const
 

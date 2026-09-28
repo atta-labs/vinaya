@@ -100,7 +100,7 @@ function maybeDeferToAuthorRepoSource(): void {
 // Before ANY command runs, and before the author-repo re-exec below (which
 // passes `env: process.env` to its child), make `gh` reachable when the
 // launching PATH lacked its install folder — so every `gh`-by-name call site,
-// in this process and in every child it spawns, resolves it (issue #836).
+// in this process and in every child it spawns, resolves it.
 ensureGhOnPath()
 
 maybeDeferToAuthorRepoSource()

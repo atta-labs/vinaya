@@ -879,7 +879,7 @@ function diagnoseTokenMetering(deps: DoctorDeps): Finding[] {
 // time doctor runs `gh` is reachable whenever it could be made so — this
 // re-evaluates that same decision (`planGhPathFix`, read-only, never mutating)
 // and, when `gh` is STILL not findable, names both that it is missing and the
-// standard locations that were searched (issue #836, O2). Every forge read
+// standard locations that were searched (O2). Every forge read
 // (config, review, dispatch — 23 call sites) invokes `gh` by name, so a `gh`
 // nothing can find is a real gap, reported at `warn`; a reachable one is a
 // quiet `info` naming where it resolved.

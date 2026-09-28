@@ -1482,7 +1482,7 @@ async function ghFetchTrustAnchorConfigAsync(): Promise<string> {
  * (`apps/cli/src/index.ts`'s `ensureGhOnPath`) closes that at the source: `gh`
  * is put on PATH at process start when a standard install folder holds it, so
  * this read — and every other `gh`-by-name call site — resolves it even when the
- * launching PATH lacked its folder (issue #836).
+ * launching PATH lacked its folder.
  *
  * That fallback announces itself rather than degrading silently: an adopter
  * whose `principals` failed to resolve would otherwise see their own
