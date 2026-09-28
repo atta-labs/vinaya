@@ -25,11 +25,12 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import {
   boundaryPinnedFiles,
   checkAutonomyClause,
   checkBlastRadiusScope,
+  checkBoundaryClaimsNeedPremise,
   checkBriefClosesN,
   checkBriefSections,
   checkDocsWithinSurface,
@@ -39,6 +40,7 @@ import {
   checkForgeTitle,
   checkIssueBriefSections,
   checkIssueObjectives,
+  checkIssuePremises,
   checkIssueRationale,
   checkIntroducedCommandsCovered,
   checkIntroducedConfigKeysCovered,
@@ -53,6 +55,7 @@ import {
   checkPartsCoverageAndSequence,
   checkPinnedFileImportersCovered,
   type PinnedFileImporters,
+  checkPremiseDependencyDeclared,
   checkPremiseCoverage,
   checkPrincipalPlaceholder,
   checkProjectField,
@@ -1166,6 +1169,25 @@ export function readPinnedFileImporters(body: string, root: string = repoRoot())
   })
 }
 
+/**
+ * One repository-relative path out of the working checkout, or `null` when it
+ * does not exist — the `readFile` seam O1's premise check reads through. A path
+ * is resolved against the repository root and refused if it escapes it: a
+ * premise is a claim about THIS repository, and `parseIssuePremises` already
+ * refuses an absolute or `..`-bearing path, so this is the second, independent
+ * guard on the same property at the point the read actually happens.
+ */
+export function readCheckoutFile(path: string, root: string = repoRoot()): string | null {
+  if (!root) return null
+  const resolved = resolve(root, path)
+  if (resolved !== root && !resolved.startsWith(root + sep)) return null
+  try {
+    return readFileSync(resolved, 'utf8')
+  } catch {
+    return null
+  }
+}
+
 const CHECK_ISSUE_CONTENT = 'issue-content'
 
 const ISSUE_CONTENT_RECOVERY = {
@@ -1200,7 +1222,13 @@ const ISSUE_CONTENT_RECOVERY = {
   introducedConfigKeys:
     "Add the named directory globs to `## Surface`'s `in:` list so this task can write both the configuration schema and its reference row, or drop the key from the Objectives and Parts. Then re-run `{cmd}`.",
   pinnedFileImporters:
-    "Add the named directory glob to `## Surface`'s `in:` list so the call site can be updated, or name the importer (or its directory) in the Boundary's `Out:` clause to exclude it deliberately. Then re-run `{cmd}`."
+    "Add the named directory glob to `## Surface`'s `in:` list so the call site can be updated, or name the importer (or its directory) in the Boundary's `Out:` clause to exclude it deliberately. Then re-run `{cmd}`.",
+  issuePremises:
+    'Fix the named `## Premises` line so the file really contains the text (re-read the code, then write what it holds), or — when a task that has not merged yet is what makes it true — prefix the premise `after #<n>:` and declare `Depends-on` on that Issue. Then re-run `{cmd}`.',
+  premiseDependencyDeclared:
+    'Add the missing `Depends-on` edge for the deferred premise named above to the `**Dependency rationale**` field (`vinaya issue amend-deps`), or drop the `after #<n>:` prefix and write a premise that holds now. Then re-run `{cmd}`.',
+  boundaryClaimsNeedPremise:
+    "Add a `## Premises` section pinning what the Boundary asserts already exists — one `` `<path>` contains `<text>` `` line per claim — or rewrite the Boundary so it no longer states the code's current shape. Then re-run `{cmd}`."
 } as const
 
 export type IssueContentInput = {
@@ -1222,6 +1250,13 @@ export type IssueContentInput = {
    */
   briefSectionsSinceIssue: number | null
   resolvesToFile: (glob: string) => boolean
+  /**
+   * Reads one repository-relative path out of the checkout the Issue is being
+   * cut from — `null` for a path that does not exist. Injected for the same
+   * reason `resolvesToFile` is: `@attalabs/aeg-core`'s grammar reads no `fs`,
+   * and O1's premise check needs the checkout's real bytes.
+   */
+  readFile: (path: string) => string | null
   docOwnersContent: string | null
   /**
    * O5's sibling task set, already resolved by the caller from the live
@@ -1301,7 +1336,10 @@ export function validateIssueContent(input: IssueContentInput): CheckError[] {
       checkIntroducedConfigKeysCovered(input.body, input.configReference, input.existsInTree).errors,
       'introducedConfigKeys'
     ],
-    [checkPinnedFileImportersCovered(input.body, input.pinnedFileImporters).errors, 'pinnedFileImporters']
+    [checkPinnedFileImportersCovered(input.body, input.pinnedFileImporters).errors, 'pinnedFileImporters'],
+    [checkIssuePremises(input.body, input.readFile).errors, 'issuePremises'],
+    [checkPremiseDependencyDeclared(input.body).errors, 'premiseDependencyDeclared'],
+    [checkBoundaryClaimsNeedPremise(input.body).errors, 'boundaryClaimsNeedPremise']
   ]
   const errors: CheckError[] = []
   for (const [messages, kind] of findings) {
@@ -1749,24 +1787,31 @@ const INFORMATIONAL_DISPATCH_BLOCKER_CLASSES: ReadonlySet<DispatchBlockerClass> 
  * instead: `checkBriefSections`'s own error strings already name both the
  * section (`brief-validation <Section>: …`) and the rule that failed.
  *
- * **A tranche-labeled Issue renders through the tranche path.** An EDIT of
- * an Issue already carrying a `vinaya/tranche:*` label has a real Issue
- * number to look up in its tranche's forge-derived task list
+ * **A tranche-labeled Issue renders through the tranche path — at create AND
+ * edit.** An EDIT of an Issue already carrying a `vinaya/tranche:*` label has a
+ * real Issue number to look up in its tranche's forge-derived task list
  * (`resolveTrancheTaskId`) — found, `assembleAndRenderBrief` renders it with
- * the drafted body substituted in. **Dormant only for a tranche-labeled
- * CREATE** (`issueNumber === null`): no Issue number exists yet to look up,
- * genuinely circular before the Issue itself lands — and dormant when the
- * lookup itself finds nothing (a label naming a tranche this checkout cannot
- * derive, or an Issue number not yet reflected in that tranche's task list),
- * the same fail-open-on-cannot-render posture as every other dormancy here.
- * A backlog Issue (no tranche label at all) always renders through
+ * the drafted body substituted in. A tranche-labeled CREATE (`issueNumber ===
+ * null`) has no Issue number yet to look up, so it is rendered as a DRAFT (O2)
+ * — `assembleAndRenderBriefForIssue`'s draft sentinel plus the task id derived
+ * from the `[slug] <n> — …` title — so the same premise-pin/Boundary/section
+ * gates run when the Issue is CUT, not only when it is edited later. A backlog
+ * Issue (no tranche label at all) always renders through
  * `assembleAndRenderBriefForIssue`, as before.
  *
- * Also dormant when `canRenderBriefFromHere()` is false — no brief template
- * on disk, or no resolvable owner/repo. A real `vinaya` invocation always has
- * both; a fixture/test environment or an Issue write attempted outside any
- * real checkout does not, and this gate must not turn "cannot render" into a
- * false refusal of an otherwise-valid Issue.
+ * **Freshness is a dispatch-time gate, not this one.** Every render here passes
+ * `skipFreshness`: a Planner may cut or edit Issues from a checkout that is
+ * behind the remote default branch, and a plan-time write gate must not refuse
+ * them for that — the fast-forward/staleness checks stay where `task run`
+ * enforces them.
+ *
+ * **When the render cannot run, it SKIPS with a reason (O3), never a silent
+ * pass.** `canRenderBriefFromHere()` false (no template on disk, no resolvable
+ * owner/repo, or not inside a git work tree), a tranche create whose title
+ * yields no task id, or a tranche edit whose Issue is not yet in the derived
+ * task list all return a `skipped` reason and no findings — the caller surfaces
+ * that reason rather than printing a plan-time pass for a render that never
+ * happened. A real `vinaya` invocation inside a cloned repo always renders.
  *
  * No partition-by-rollout (`partitionBriefErrorsByRollout`): a pre-write
  * gate has no PR number to grandfather against, and `partitionBriefErrorsByRollout`'s
@@ -1777,32 +1822,92 @@ const INFORMATIONAL_DISPATCH_BLOCKER_CLASSES: ReadonlySet<DispatchBlockerClass> 
  * **O1 — returns findings, never refuses.** Used to call `refuse()` directly
  * (twice — once for a render gap, once for `checkBriefSections`'s own
  * findings), which stopped `validateTaskIssue` from ever reaching its later
- * groups. Returns every finding as a `CheckError[]` instead so the caller can
+ * groups. Returns every finding (and any skip reason) instead so the caller can
  * fold this group's findings into the SAME union every other group
  * contributes to, and refuse once.
  */
+/**
+ * The plan-time brief-render gate's result: the findings it produced, and — when
+ * the render did NOT run — the reason WHY (O3). A `skipped` reason is never a
+ * finding: it never refuses, never inflates a finding count, and is surfaced
+ * separately so the command that would otherwise print a clean pass reports the
+ * skip and its cause instead of silently claiming a plan-time pass for a render
+ * that never happened.
+ */
+export type RenderedBriefValidation = { errors: CheckError[]; skipped: string | null }
+
+/** The `<n>` in a `[slug] <n> — …` task-Issue title, or `null` when it is not task-shaped — O2 derives a tranche create's task id from its title, since no Issue number exists yet. */
+function taskIdFromTitle(title: string): string | null {
+  return /^\[[a-z0-9._-]+\]\s+(\S+)\s+—/.exec(title)?.[1] ?? null
+}
+
 async function validateRenderedBriefForIssue(input: {
   issueNumber: number | null
   title: string
   body: string
   labels: string[]
   retryCommand: string
-}): Promise<CheckError[]> {
-  if (!canRenderBriefFromHere()) return []
+}): Promise<RenderedBriefValidation> {
+  const renderable = canRenderBriefFromHere()
+  if (!renderable.ok) return { errors: [], skipped: renderable.reason }
 
   const trancheSlug = findTrancheSlug(input.labels)
   let rendered: AssembleAndRenderBriefResult
+  // `premiseScope: 'none'` on EVERY branch below. These renders happen at plan
+  // time, before the write lands, and premises at plan time belong to
+  // `checkIssuePremises` on this same write: it reads the working tree and
+  // omits the deferred ones (O1/O2). Asserting them here instead would refuse
+  // the very write an `after #<n>:` deferral exists to allow — round 2's
+  // review found exactly that — and would read the HEAD commit, which
+  // `skipFreshness` leaves unpinned to the default branch. The render that
+  // must assert every premise is the dispatch one (`dispatch-task.ts`), which
+  // passes no scope and so gets `'all'`.
   if (trancheSlug !== null) {
-    if (input.issueNumber === null) return []
-    const taskId = await resolveTrancheTaskId(trancheSlug, input.issueNumber)
-    if (taskId === null) return []
-    rendered = await assembleAndRenderBrief(trancheSlug, taskId, undefined, input.body)
+    if (input.issueNumber === null) {
+      // O2 — a tranche CREATE has no Issue number for the tranche path
+      // (`assembleAndRenderBrief`) to look up yet, so render it as a DRAFT:
+      // the draft sentinel `assembleAndRenderBriefForIssue` already uses for
+      // backlog drafts, plus the task id derived from the `[slug] <n> — …`
+      // title, so the very same premise-pin/Boundary/section gates dispatch
+      // applies run when the Issue is CREATED, not only when it is edited later.
+      const taskId = taskIdFromTitle(input.title)
+      if (taskId === null) {
+        return {
+          errors: [],
+          skipped: `the tranche task title \`${input.title}\` is not \`[${trancheSlug}] <n> — …\`-shaped, so its task id could not be derived to render a draft brief`
+        }
+      }
+      rendered = await assembleAndRenderBriefForIssue(
+        DRAFT_ISSUE_SENTINEL,
+        { title: input.title, body: input.body, labels: input.labels },
+        { skipFreshness: true, premiseScope: 'none', trancheDraft: { slug: trancheSlug, taskId } }
+      )
+    } else {
+      const taskId = await resolveTrancheTaskId(trancheSlug, input.issueNumber)
+      if (taskId === null) {
+        return {
+          errors: [],
+          skipped: `Issue #${input.issueNumber} is not yet in tranche \`${trancheSlug}\`'s forge-derived task list, so its brief could not be rendered to grade this edit`
+        }
+      }
+      // Plan-time render: `skipFreshness` — a Planner may edit from a checkout
+      // that is behind the remote default branch; freshness is a dispatch-time
+      // gate, not this one.
+      rendered = await assembleAndRenderBrief(trancheSlug, taskId, undefined, input.body, {
+        skipFreshness: true,
+        premiseScope: 'none'
+      })
+    }
   } else {
-    rendered = await assembleAndRenderBriefForIssue(input.issueNumber ?? DRAFT_ISSUE_SENTINEL, {
-      title: input.title,
-      body: input.body,
-      labels: input.labels
-    })
+    rendered = await assembleAndRenderBriefForIssue(
+      input.issueNumber ?? DRAFT_ISSUE_SENTINEL,
+      {
+        title: input.title,
+        body: input.body,
+        labels: input.labels
+      },
+      { skipFreshness: true, premiseScope: 'none' }
+    )
   }
   if (!rendered.ok) {
     // O2 — a `missing` entry that came out of a dispatch-blocker class this
@@ -1818,32 +1923,38 @@ async function validateRenderedBriefForIssue(input: {
         .filter((b) => INFORMATIONAL_DISPATCH_BLOCKER_CLASSES.has(b.class))
         .map((b) => b.message)
     )
-    return rendered.missing.map((m) =>
-      makeCheckError(
-        CHECK_BRIEF_RENDER,
-        `brief-render: ${m}`,
-        nameTheFix(
+    return {
+      errors: rendered.missing.map((m) =>
+        makeCheckError(
+          CHECK_BRIEF_RENDER,
           `brief-render: ${m}`,
-          `Fix the named gap so this Issue renders a valid brief, then re-run \`${input.retryCommand}\`.`
-        ),
-        informationalMessages.has(m) ? 'warning' : 'error'
-      )
-    )
+          nameTheFix(
+            `brief-render: ${m}`,
+            `Fix the named gap so this Issue renders a valid brief, then re-run \`${input.retryCommand}\`.`
+          ),
+          informationalMessages.has(m) ? 'warning' : 'error'
+        )
+      ),
+      skipped: null
+    }
   }
 
   const briefErrors = checkBriefSections(rendered.brief, readTierFromPrBody, {
     consumersOf: buildWorkspaceConsumersOf()
   }).errors
-  return briefErrors.map((e) =>
-    makeCheckError(
-      CHECK_BRIEF_SHAPE_PREWRITE,
-      e,
-      nameTheFix(
+  return {
+    errors: briefErrors.map((e) =>
+      makeCheckError(
+        CHECK_BRIEF_SHAPE_PREWRITE,
         e,
-        `Fix the named section in the Issue body — as written it would freeze into a brief \`pr create\` refuses — then re-run \`${input.retryCommand}\`.`
+        nameTheFix(
+          e,
+          `Fix the named section in the Issue body — as written it would freeze into a brief \`pr create\` refuses — then re-run \`${input.retryCommand}\`.`
+        )
       )
-    )
-  )
+    ),
+    skipped: null
+  }
 }
 
 /**
@@ -1888,7 +1999,7 @@ export async function collectTaskIssueErrors(
   issueNumber: number | null,
   milestoneSource?: MilestoneSource,
   deps: TaskIssueValidationDeps = defaultTaskIssueValidationDeps
-): Promise<CheckError[]> {
+): Promise<{ errors: CheckError[]; renderSkipped: string | null }> {
   const errors: CheckError[] = []
 
   const sections = resolveSections('issue', retryCommand)
@@ -1932,6 +2043,7 @@ export async function collectTaskIssueErrors(
       issueNumber,
       briefSectionsSinceIssue: resolveGateCutovers(loadConfig()).briefSectionsSinceIssue,
       resolvesToFile: (glob) => expandGlob(glob).length > 0,
+      readFile: readCheckoutFile,
       docOwnersContent: readDocOwnersContent(),
       milestoneSiblings,
       subjectRef: issueNumber !== null ? String(issueNumber) : '',
@@ -1950,9 +2062,14 @@ export async function collectTaskIssueErrors(
   // tranche's own task list instead).
   const effectiveTitle =
     title ?? (milestoneSource?.kind === 'edit' ? fetchForgeTitleBestEffort(milestoneSource.issueRef) : '')
-  errors.push(
-    ...(await deps.computeRenderedBriefErrors({ issueNumber, title: effectiveTitle, body, labels, retryCommand }))
-  )
+  const rendered = await deps.computeRenderedBriefErrors({
+    issueNumber,
+    title: effectiveTitle,
+    body,
+    labels,
+    retryCommand
+  })
+  errors.push(...rendered.errors)
 
   // O2 (task 17) — the six write-only rules, through the SAME registry
   // runner `runBodyChecks` uses. `checkMilestoneAttach` stays dormant on
@@ -1982,7 +2099,7 @@ export async function collectTaskIssueErrors(
     }))
   )
 
-  return errors
+  return { errors, renderSkipped: rendered.skipped }
 }
 
 export async function validateTaskIssue(
@@ -1997,7 +2114,7 @@ export async function validateTaskIssue(
   // exactly like a Milestone this process could not determine — never a
   // crash, never a silently-wrong Milestone guess.
   milestoneSource?: MilestoneSource
-): Promise<void> {
+): Promise<{ renderSkipped: string | null }> {
   if (body === null) {
     refuse([
       makeCheckError(
@@ -2008,7 +2125,14 @@ export async function validateTaskIssue(
     ])
   }
 
-  const errors = await collectTaskIssueErrors(body, title, labels, retryCommand, issueNumber, milestoneSource)
+  const { errors, renderSkipped } = await collectTaskIssueErrors(
+    body,
+    title,
+    labels,
+    retryCommand,
+    issueNumber,
+    milestoneSource
+  )
   // O2 — a `warning`-severity finding (an unmerged Depends-on, an open
   // Conflicts-with PR: `validateRenderedBriefForIssue`'s own fold, above) is
   // reported but never refuses the edit on its own; only a real `error`
@@ -2017,6 +2141,10 @@ export async function validateTaskIssue(
   const blocking = errors.filter((e) => e.severity !== 'warning')
   if (blocking.length > 0) refuse(errors)
   for (const e of errors) emitCheckError(e)
+  // O3 — the caller prints the plan-time result; `renderSkipped` (non-null
+  // when the brief render never ran) makes it report the skip and its cause
+  // rather than a clean pass.
+  return { renderSkipped }
 }
 
 /**

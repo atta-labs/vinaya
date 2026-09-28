@@ -56,7 +56,7 @@ import {
   sanitizePublicPauseDetail
 } from '../../src/lib/dev-review-loop/pause-resume.js'
 import { markedCommentBody } from '../../src/lib/forge-write.js'
-import { objectivesOf, objectivesVersion, renderObjectives } from '@attalabs/aeg-core'
+import { type IssueSurface, objectivesOf, objectivesVersion, renderObjectives } from '@attalabs/aeg-core'
 import { FIXTURE_REPO, isolatedConfigFixture } from './process-fixture.js'
 
 /** The role output files a fake reviewer/security dispatch writes into its work dir — the exact grammar the real reviewer binary produces. */
@@ -122,6 +122,10 @@ export type LoopWorld = {
   /** The PR body `checkPremiseAtHead` reads each round; the default carries only `Closes #<task>` (no `Premise:` block, so the reassert is dormant). */
   prBody: string
   shortstat: string
+  /** O2: the `git diff --unified=0` a fixture wants the driver to see between the previous round's head and the current head (`gitUnifiedDiff`); `undefined` (the default) leaves the unchanged-line rule inactive. */
+  roundDiff?: string
+  /** O3: the task Issue's `## Surface` a fixture wants the driver to resolve (`resolveTaskSurface`); `undefined` (the default) leaves the out-of-Surface rule inactive. */
+  surface?: IssueSurface | null
   /**
    * Per-round role outcomes; a round with no entry uses the clean default.
    * A role's value may be a single `RoleOutcome` (every attempt in the round
@@ -363,6 +367,12 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
     gitMergeBase: async (_head) => world.mergeBase,
     gitFetch: () => {},
     gitDiffShortstat: (_base, _head) => world.shortstat,
+    // O2/O3: both deferral-rule inputs default to inactive here — the loop's
+    // pre-task behaviour (every in-Surface finding blocks). A fixture
+    // exercising the unchanged-line or out-of-Surface rule sets `world.roundDiff`
+    // / `world.surface`; a test that stubs neither sees no deferral at all.
+    gitUnifiedDiff: (_from, _to) => world.roundDiff ?? null,
+    resolveTaskSurface: (_task) => world.surface ?? null,
     fetchLoopHistory: (_pr) => ({ rounds: [], totalWallMs: 0, totalFilesChanged: 0, journalFinalized: null }) as never,
     // A real (but minimal) yield, never an instant no-op: `logEvents`' own
     // wait-for-landing busy-loops on `sleep`, and the log sink flushes its

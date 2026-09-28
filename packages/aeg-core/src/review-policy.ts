@@ -95,10 +95,21 @@ export function isProseLocation(location: string): boolean {
  */
 export const PROSE_CAP_SEVERITY = 'MINOR'
 
+/** A finding that would block under the plain threshold but this round cannot act on — carried out of the evaluator so the summary and gate can report it (O4). */
+export type DeferredFinding<F extends PolicyFinding> = { finding: F; reason: DeferralReason }
+
 export type PolicyEvaluation<F extends PolicyFinding> = {
   outcome: 'clean' | 'blocked'
   /** The findings responsible for blocking — `[]` iff `outcome === 'clean'`. */
   blockingFindings: F[]
+  /**
+   * The findings that WOULD have blocked but were set aside this round by the
+   * unchanged-line or out-of-Surface rule (O4). Always `[]` when no
+   * `FindingDeferralContext` was supplied — every existing caller that passes
+   * none sees exactly the outcome it did before this task, a deferral list
+   * that is simply empty.
+   */
+  deferredFindings: DeferredFinding<F>[]
 }
 
 /**
@@ -116,6 +127,136 @@ export function blockingSeverities(scale: readonly string[], threshold: string):
   return scale.slice(0, idx + 1)
 }
 
+/** Why a finding that WOULD block under the plain threshold is set aside for this round instead — reported, never silently dropped (O4). */
+export type DeferralReason = 'unchanged-line' | 'outside-surface'
+
+/**
+ * O4's human-readable prose for each `DeferralReason` — the one place the
+ * machine reason is worded for a reader, so the round summary
+ * (`render-summary.ts`) and the merge gate (`review-gate.ts`) name a deferral
+ * identically rather than each spelling it their own way.
+ */
+export const DEFERRAL_REASON_TEXT: Record<DeferralReason, string> = {
+  'unchanged-line': 'unchanged line',
+  'outside-surface': 'outside the Surface'
+}
+
+/**
+ * The single verdict `classifyFinding` returns:
+ *   - `'blocking'` — at or above threshold, in the Surface, on a changed line
+ *     (or the round-1/no-previous-head case where the unchanged-line rule does
+ *     not apply), or a security finding at or above HIGH the unchanged-line
+ *     rule never defers;
+ *   - `'deferred'` — WOULD block, but this round cannot act on it: outside the
+ *     Surface (any round, O3) or on a line that did not change since the
+ *     previous round's head (round 2 on, O2). `deferralReason` names which;
+ *   - `'non_blocking'` — below threshold, or a prose-located finding capped to
+ *     `PROSE_CAP_SEVERITY` (O5). Never deferred: it was never going to block,
+ *     so there is nothing to report as set-aside.
+ */
+export type FindingPolicyOutcome = 'blocking' | 'deferred' | 'non_blocking'
+
+export type FindingClassification = {
+  outcome: FindingPolicyOutcome
+  /** Set iff `outcome === 'deferred'`; `null` otherwise. */
+  deferralReason: DeferralReason | null
+}
+
+/**
+ * The round-dependent facts the deferral rules need, supplied by the caller
+ * (never resolved here — this module stays pure, no `git`, no glob, no forge
+ * read). Each predicate is OPTIONAL, and its absence is the "rule inactive"
+ * case, not "rule fails":
+ *
+ *   - `changedLine` — active only from round 2 on, and only when the caller
+ *     could recover the previous round's head: `changedLine(location)` is
+ *     `true` when the finding's own line changed between the previous round's
+ *     head and the current head (a file-level finding on a file that changed
+ *     counts as changed — the caller's own predicate decides this, per the
+ *     brief's own trap). Undefined means the unchanged-line rule (O2) is NOT
+ *     applied at all — round 1 has no previous head, and a CI gate that cannot
+ *     recover one treats every in-Surface finding as blocking rather than
+ *     guessing. Never inferred here from a `false` return.
+ *   - `inSurface` — `inSurface(location)` is `true` when the finding's file is
+ *     covered by the task's `## Surface` `in:` list. Undefined means the
+ *     Surface is not known to this caller, so the out-of-Surface rule (O3) is
+ *     not applied — never a silent "everything is out of Surface."
+ */
+export type FindingDeferralContext = {
+  changedLine?: (location: string) => boolean
+  inSurface?: (location: string) => boolean
+}
+
+/**
+ * A security finding at or above HIGH — the one exception to the
+ * unchanged-line rule (O2): it blocks wherever it sits, even on a line the
+ * round did not touch. Derived from the security scale so it is exactly
+ * `CRITICAL` and `HIGH`; those two severities exist on no other scale, so
+ * membership alone identifies a security finding of that rank without needing
+ * to know which scale the caller passed. The out-of-Surface rule (O3) carries
+ * NO such exception — a finding outside the Surface never blocks, security or
+ * not — so this is consulted only on the unchanged-line path below.
+ */
+const SECURITY_HIGH_AND_ABOVE: readonly string[] = blockingSeverities(SECURITY_SEVERITY_ORDER, 'HIGH')
+
+/**
+ * The ONE function that decides whether a review finding blocks this round —
+ * O1's single rule, behind the merge gate (`review-gate.ts`) and the loop's
+ * own classifier (`reviewer-dispatch.ts`) alike, so neither keeps its own
+ * copy. Pure, and total: it applies, in order,
+ *
+ *   1. the prose cap (O5) — a PR-body / comment / role-file location is
+ *      evaluated at `PROSE_CAP_SEVERITY`, so it can never reach the threshold;
+ *   2. the threshold — below it, `'non_blocking'` (never deferred: a finding
+ *      that was never going to block is not "set aside", it simply passes);
+ *   3. the out-of-Surface rule (O3) — a would-block finding whose file the
+ *      Surface `in:` does not cover is `'deferred'`, ANY round, no exception;
+ *   4. the unchanged-line rule (O2) — from round 2 on (`context.changedLine`
+ *      present), a would-block finding on an unchanged line is `'deferred'`,
+ *      EXCEPT a security finding at or above HIGH, which blocks anyway.
+ *
+ * The finding's own reported severity is never mutated — only how it counts
+ * toward this round's block decision is (Traps to avoid: "retain reported
+ * severity separately from the incoming prose cap").
+ */
+export function classifyFinding(
+  finding: PolicyFinding,
+  scale: readonly string[],
+  threshold: string,
+  context: FindingDeferralContext = {}
+): FindingClassification {
+  if (!scale.includes(finding.severity)) {
+    throw new Error(`classifyFinding: severity "${finding.severity}" is not one of ${scale.join(' > ')}`)
+  }
+  const location = finding.location
+  const effectiveSeverity = location !== undefined && isProseLocation(location) ? PROSE_CAP_SEVERITY : finding.severity
+  const wouldBlock = blockingSeverities(scale, threshold).includes(effectiveSeverity)
+  if (!wouldBlock) return { outcome: 'non_blocking', deferralReason: null }
+
+  // A locatable would-block finding — every deferral rule below needs a
+  // location to test. A finding carrying none (an older extraction shape with
+  // no `file:line`) can be tested by neither rule, so it blocks, the
+  // fail-closed default this task's own trap names for an unrecoverable case.
+  const hasLocation = location !== undefined && location.length > 0
+
+  // O3 first: findings outside the Surface never block, in ANY round, with no
+  // security exception — so it is decided before the unchanged-line rule.
+  if (hasLocation && context.inSurface && !context.inSurface(location as string)) {
+    return { outcome: 'deferred', deferralReason: 'outside-surface' }
+  }
+
+  // O2: the unchanged-line rule, active only when the caller supplied a
+  // changed-line predicate (round 2 on, previous head recovered). A security
+  // finding at or above HIGH is the one exception and blocks regardless.
+  if (hasLocation && context.changedLine && !SECURITY_HIGH_AND_ABOVE.includes(effectiveSeverity)) {
+    if (!context.changedLine(location as string)) {
+      return { outcome: 'deferred', deferralReason: 'unchanged-line' }
+    }
+  }
+
+  return { outcome: 'blocking', deferralReason: null }
+}
+
 /**
  * The one pure evaluator. Takes validated findings and an effective
  * policy threshold on an ordered severity scale; returns the outcome and the
@@ -128,22 +269,21 @@ export function blockingSeverities(scale: readonly string[], threshold: string):
 export function evaluateReviewFindings<F extends PolicyFinding>(
   findings: readonly F[],
   scale: readonly string[],
-  threshold: string
+  threshold: string,
+  context: FindingDeferralContext = {}
 ): PolicyEvaluation<F> {
-  const blocking = new Set(blockingSeverities(scale, threshold))
-  const blockingFindings = findings.filter((f) => {
-    if (!scale.includes(f.severity)) {
-      throw new Error(`evaluateReviewFindings: severity "${f.severity}" is not one of ${scale.join(' > ')}`)
-    }
-    // Prose never blocks: a finding whose own location is the PR
-    // body, a comment, or a role file is evaluated at `PROSE_CAP_SEVERITY`,
-    // never its own reported severity — a source or test file location is
-    // never capped, and the finding's own reported severity is unchanged
-    // (only how it counts toward THIS threshold check is affected).
-    const effectiveSeverity = f.location !== undefined && isProseLocation(f.location) ? PROSE_CAP_SEVERITY : f.severity
-    return blocking.has(effectiveSeverity)
-  })
-  return { outcome: blockingFindings.length > 0 ? 'blocked' : 'clean', blockingFindings }
+  const blockingFindings: F[] = []
+  const deferredFindings: DeferredFinding<F>[] = []
+  for (const f of findings) {
+    // `classifyFinding` throws on an unrecognized severity (a caller defect),
+    // applies the prose cap (O5), and — when `context` carries them — the
+    // out-of-Surface (O3) and unchanged-line (O2) rules. With no context it
+    // reduces to the plain prose-capped threshold check this function was.
+    const c = classifyFinding(f, scale, threshold, context)
+    if (c.outcome === 'blocking') blockingFindings.push(f)
+    else if (c.outcome === 'deferred') deferredFindings.push({ finding: f, reason: c.deferralReason as DeferralReason })
+  }
+  return { outcome: blockingFindings.length > 0 ? 'blocked' : 'clean', blockingFindings, deferredFindings }
 }
 
 /**
@@ -170,20 +310,22 @@ export function consequentialFindings<F extends { state?: string | null }>(findi
   return findings.filter((f) => isConsequentialFinding(f))
 }
 
-/** `evaluateReviewFindings` fixed to the code-review scale and `policy.codeReviewThreshold`. */
+/** `evaluateReviewFindings` fixed to the code-review scale and `policy.codeReviewThreshold`. `context` threads the deferral rules through; omitted, the evaluation is the plain prose-capped threshold check it was. */
 export function evaluateCodeReview<F extends PolicyFinding>(
   findings: readonly F[],
-  policy: ReviewPolicy
+  policy: ReviewPolicy,
+  context: FindingDeferralContext = {}
 ): PolicyEvaluation<F> {
-  return evaluateReviewFindings(findings, CODE_REVIEW_SEVERITY_ORDER, policy.codeReviewThreshold)
+  return evaluateReviewFindings(findings, CODE_REVIEW_SEVERITY_ORDER, policy.codeReviewThreshold, context)
 }
 
-/** `evaluateReviewFindings` fixed to the security scale and `policy.securityThreshold`. */
+/** `evaluateReviewFindings` fixed to the security scale and `policy.securityThreshold`. `context` threads the deferral rules through; omitted, the evaluation is the plain prose-capped threshold check it was. */
 export function evaluateSecurityReview<F extends PolicyFinding>(
   findings: readonly F[],
-  policy: ReviewPolicy
+  policy: ReviewPolicy,
+  context: FindingDeferralContext = {}
 ): PolicyEvaluation<F> {
-  return evaluateReviewFindings(findings, SECURITY_SEVERITY_ORDER, policy.securityThreshold)
+  return evaluateReviewFindings(findings, SECURITY_SEVERITY_ORDER, policy.securityThreshold, context)
 }
 
 /** The code-review scale's blocking subset under `policy` — `blockingSeverities(CODE_REVIEW_SEVERITY_ORDER, policy.codeReviewThreshold)`. */

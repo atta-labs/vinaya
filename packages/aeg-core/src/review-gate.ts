@@ -78,8 +78,12 @@ import { extractCodeReviewVerdict, extractSecurityReviewVerdict } from './verdic
 import {
   consequentialFindings,
   DEFAULT_REVIEW_POLICY,
+  DEFERRAL_REASON_TEXT,
+  type DeferredFinding,
   evaluateCodeReview,
   evaluateSecurityReview,
+  type FindingDeferralContext,
+  type PolicyFinding,
   type ReviewPolicy
 } from './review-policy'
 import {
@@ -225,6 +229,32 @@ export type ReviewGateInput = {
    * see `compareManifest`'s own base rule.
    */
   baseSha?: string | null
+  /**
+   * O2/O3: the round's deferral rules, the SAME `FindingDeferralContext`
+   * `classifyFinding` reads — resolved by the CALLER (this module stays pure,
+   * no `git`, no glob, no forge read). The CI adapter builds it from the
+   * previous round's head recovered off the loop's own published round markers
+   * (the changed-line diff) and the task's `## Surface`. Optional, and its
+   * absence is deliberately the fail-closed default the brief's own trap
+   * names: with no context every in-Surface finding blocks exactly as it did
+   * before this task — a gate that could not recover a previous round's head,
+   * or a caller predating this field, never guesses a deferral. A supplied
+   * context sets aside the findings the round could not act on and names each
+   * in the gate's own output (O4).
+   */
+  deferralContext?: FindingDeferralContext
+}
+
+/** O4: one deferred finding as the gate's output names it — its original severity, its `file:line`, and why it was set aside, worded through the shared `DEFERRAL_REASON_TEXT`. */
+function renderGateDeferred(deferred: readonly DeferredFinding<PolicyFinding>[]): string {
+  if (deferred.length === 0) return ''
+  const items = deferred
+    .map((d) => {
+      const where = d.finding.location && d.finding.location.length > 0 ? d.finding.location : '(no location)'
+      return `${d.finding.severity} ${where} (${DEFERRAL_REASON_TEXT[d.reason]})`
+    })
+    .join('; ')
+  return ` ${deferred.length} finding(s) deferred, not blocking this round: ${items}.`
 }
 
 /**
@@ -329,8 +359,18 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
   let codeReviewPolicyEvaluation: ReturnType<typeof evaluateCodeReview>
   let securityPolicyEvaluation: ReturnType<typeof evaluateSecurityReview>
   try {
-    codeReviewPolicyEvaluation = evaluateCodeReview(consequentialFindings(codeReview.findingSeverities), policy)
-    securityPolicyEvaluation = evaluateSecurityReview(consequentialFindings(security.findingSeverities), policy)
+    // O2/O3: the deferral context threads through unchanged when omitted — the
+    // evaluation is then the plain prose-capped threshold check it was.
+    codeReviewPolicyEvaluation = evaluateCodeReview(
+      consequentialFindings(codeReview.findingSeverities),
+      policy,
+      input.deferralContext
+    )
+    securityPolicyEvaluation = evaluateSecurityReview(
+      consequentialFindings(security.findingSeverities),
+      policy,
+      input.deferralContext
+    )
   } catch (err) {
     return {
       verdict: 'fail',
@@ -386,10 +426,18 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
   const codeReviewRulingsBound = codeReviewBinding.rulingOrdinal
   const securityRulingsBound = securityBinding.rulingOrdinal
 
+  // O4: every finding the deferral rules set aside this round, named in the
+  // gate's own output whether it passes or fails — the deferred blockers are
+  // exactly why an APPROVE beside them is still clean.
+  const deferredNote = renderGateDeferred([
+    ...codeReviewPolicyEvaluation.deferredFindings,
+    ...securityPolicyEvaluation.deferredFindings
+  ])
+
   if (codeReviewClean && codeReviewBinding.bound && securityClean && securityBinding.bound) {
     return {
       verdict: 'pass',
-      reason: `code-reviewer verdict is a clean APPROVE and security-review verdict is a clean PASS, both covering head ${input.headSha}.`,
+      reason: `code-reviewer verdict is a clean APPROVE and security-review verdict is a clean PASS, both covering head ${input.headSha}.${deferredNote}`,
       waived: false
     }
   }
@@ -464,7 +512,7 @@ export function checkReviewGate(input: ReviewGateInput): ReviewGateResult {
 
   return {
     verdict: 'fail',
-    reason: `${problems.join('; ')}. A principal can apply an actor-verified \`${WAIVER_LABEL_REVIEW}\` label to skip this requirement, or post the missing/clean verdict comment(s).${ignoredNote}`,
+    reason: `${problems.join('; ')}. A principal can apply an actor-verified \`${WAIVER_LABEL_REVIEW}\` label to skip this requirement, or post the missing/clean verdict comment(s).${ignoredNote}${deferredNote}`,
     waived: false
   }
 }

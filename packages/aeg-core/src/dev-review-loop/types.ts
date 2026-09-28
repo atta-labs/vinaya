@@ -6,6 +6,7 @@
  */
 
 import type { DevReviewLoopEvent } from '../log'
+import type { DeferralReason } from '../review-policy'
 
 type Envelope = { meta: unknown; subject: unknown }
 /**
@@ -40,9 +41,23 @@ export type FindingState = 'open' | 'fix-claimed' | 'reproduced' | 'resolved' | 
 export type FindingObservation = {
   id: string
   severity: string
+  /**
+   * The finding's own `file:line` (O4) — carried so the round summary can name
+   * every deferred finding's location. Optional: an older extraction shape, or
+   * a finding with none, simply has none to report.
+   */
+  location?: string
   state: FindingState
   severityScale?: string
   policyTreatment?: 'blocking' | 'non_blocking' | 'unavailable'
+  /**
+   * Set only when the round set this finding aside rather than let it block
+   * (O2/O3): `'unchanged-line'` (round 2 on, a line that did not change) or
+   * `'outside-surface'` (any round, a file the Surface `in:` does not cover).
+   * Absent means the finding was NOT deferred — it blocked, or was below
+   * threshold. `policyTreatment` reads `non_blocking` whenever this is set.
+   */
+  deferred?: DeferralReason
   confidence?: number
   confidenceScale?: string
   confidenceSource?: string
@@ -203,12 +218,28 @@ export type RoundOutcome = 'green' | 'changes_requested' | 'escalated' | 'stoppe
  */
 export type NotReviewedReason = 'checks_red' | 'low_confidence'
 
+/** One deferred finding, as the published summary reports it (O4) — its original severity, its `file:line`, and why this round set it aside, never its reported severity mutated. */
+export type DeferredFindingRow = {
+  severity: string
+  /** The finding's own `file:line`, or `''` when it carried none. */
+  location: string
+  reason: DeferralReason
+}
+
 /** One row of the published summary (`renderSummary`, O4) — counts only, no finding prose. */
 export type RoundRecord = {
   round: number
   countsBySeverity: Record<string, number>
   confidence: Confidence | null
   outcome: RoundOutcome
+  /**
+   * Every finding this round set aside rather than let it block (O2/O3),
+   * carried so the published summary can list each with its original severity,
+   * location and reason (O4). Absent/`[]` for a round that deferred none, and
+   * for a marker-reconstructed round (its findings are unknown — see
+   * `journal-reconstruction.ts`).
+   */
+  deferred?: DeferredFindingRow[]
   /**
    * Set only for a round no reviewer saw (`buildUnreviewedRecord`,
    * `assess-round.ts`): its counts are absent (empty `countsBySeverity`) and the

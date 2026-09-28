@@ -1,10 +1,12 @@
 import { describe, expect, test } from 'vitest'
 import {
   blockingSeverities,
+  classifyFinding,
   CODE_REVIEW_SEVERITY_ORDER,
   codeReviewBlockingSeverities,
   consequentialFindings,
   DEFAULT_REVIEW_POLICY,
+  type FindingDeferralContext,
   evaluateCodeReview,
   evaluateReviewFindings,
   evaluateSecurityReview,
@@ -254,3 +256,119 @@ describe('isConsequentialFinding / consequentialFindings (O4) — the single "co
 // findings) — covered by review-post.test.ts and dev-review-loop.test.ts,
 // not here: this evaluator has no I/O and no verdict-text concept to
 // contradict.
+
+describe('classifyFinding — the one blocking decision (O1, O2, O3, O5)', () => {
+  const CODE = CODE_REVIEW_SEVERITY_ORDER
+  const SEC = SECURITY_SEVERITY_ORDER
+  // in-Surface, changed line: the plain blocking case, so a deferral in a
+  // later test is unambiguously the rule under test and not the context.
+  const allChanged: FindingDeferralContext = { changedLine: () => true, inSurface: () => true }
+
+  test('below threshold is non_blocking, never deferred', () => {
+    expect(classifyFinding({ severity: 'MINOR', location: 'a.ts:1' }, CODE, 'MAJOR')).toEqual({
+      outcome: 'non_blocking',
+      deferralReason: null
+    })
+  })
+
+  test('O5: a prose-located finding is capped to MINOR and never blocks, even at BLOCKER', () => {
+    expect(classifyFinding({ severity: 'BLOCKER', location: 'the PR body' }, CODE, 'MAJOR')).toEqual({
+      outcome: 'non_blocking',
+      deferralReason: null
+    })
+    // a real file whose severity is at threshold still blocks — the cap is prose-only
+    expect(classifyFinding({ severity: 'MAJOR', location: 'a.ts:1' }, CODE, 'MAJOR', allChanged).outcome).toBe(
+      'blocking'
+    )
+  })
+
+  test('O3: a would-block finding outside the Surface is deferred, any round, no security exception', () => {
+    const ctx: FindingDeferralContext = { inSurface: (l) => l.startsWith('in/') }
+    expect(classifyFinding({ severity: 'MAJOR', location: 'out/x.ts:9' }, CODE, 'MAJOR', ctx)).toEqual({
+      outcome: 'deferred',
+      deferralReason: 'outside-surface'
+    })
+    expect(classifyFinding({ severity: 'MAJOR', location: 'in/x.ts:9' }, CODE, 'MAJOR', ctx).outcome).toBe('blocking')
+    // even a security CRITICAL outside the Surface is deferred — O3 carries no exception
+    expect(classifyFinding({ severity: 'CRITICAL', location: 'out/x.ts:9' }, SEC, 'HIGH', ctx)).toEqual({
+      outcome: 'deferred',
+      deferralReason: 'outside-surface'
+    })
+  })
+
+  test('O2: from round 2 on, a would-block finding on an unchanged line is deferred', () => {
+    const ctx: FindingDeferralContext = { changedLine: (l) => l === 'a.ts:10' }
+    expect(classifyFinding({ severity: 'MAJOR', location: 'a.ts:99' }, CODE, 'MAJOR', ctx)).toEqual({
+      outcome: 'deferred',
+      deferralReason: 'unchanged-line'
+    })
+    expect(classifyFinding({ severity: 'MAJOR', location: 'a.ts:10' }, CODE, 'MAJOR', ctx).outcome).toBe('blocking')
+  })
+
+  test('O2 exception: a security finding at or above HIGH blocks on an unchanged line', () => {
+    const ctx: FindingDeferralContext = { changedLine: () => false }
+    expect(classifyFinding({ severity: 'HIGH', location: 'a.ts:99' }, SEC, 'HIGH', ctx).outcome).toBe('blocking')
+    expect(classifyFinding({ severity: 'CRITICAL', location: 'a.ts:99' }, SEC, 'HIGH', ctx).outcome).toBe('blocking')
+    // a security MEDIUM (still blocking under a MEDIUM threshold) is NOT exempt
+    expect(classifyFinding({ severity: 'MEDIUM', location: 'a.ts:99' }, SEC, 'MEDIUM', ctx)).toEqual({
+      outcome: 'deferred',
+      deferralReason: 'unchanged-line'
+    })
+  })
+
+  test('O3 is decided before O2 — an out-of-Surface unchanged-line finding reads outside-surface', () => {
+    const ctx: FindingDeferralContext = { changedLine: () => false, inSurface: () => false }
+    expect(classifyFinding({ severity: 'MAJOR', location: 'x.ts:1' }, CODE, 'MAJOR', ctx).deferralReason).toBe(
+      'outside-surface'
+    )
+  })
+
+  test('round-1 fallback: no context means every in-scope finding blocks', () => {
+    expect(classifyFinding({ severity: 'MAJOR', location: 'a.ts:99' }, CODE, 'MAJOR').outcome).toBe('blocking')
+  })
+
+  test('a file-level finding (no line) is tested only by the caller predicate', () => {
+    // the predicate decides file-level; classifyFinding just calls it
+    const changedFile: FindingDeferralContext = { changedLine: (l) => l === 'a.ts' }
+    expect(classifyFinding({ severity: 'MAJOR', location: 'a.ts' }, CODE, 'MAJOR', changedFile).outcome).toBe(
+      'blocking'
+    )
+  })
+
+  test('throws on a severity off the scale, never silently ignores', () => {
+    expect(() => classifyFinding({ severity: 'SEVERE', location: 'a.ts:1' }, CODE, 'MAJOR')).toThrow(/not one of/)
+  })
+})
+
+describe('evaluateReviewFindings — deferred findings carried out (O4)', () => {
+  test('with no context, deferredFindings is empty and blocking is unchanged', () => {
+    const findings = [
+      { severity: 'MAJOR', location: 'a.ts:1' },
+      { severity: 'MINOR', location: 'b.ts:1' }
+    ]
+    const r = evaluateReviewFindings(findings, CODE_REVIEW_SEVERITY_ORDER, 'MAJOR')
+    expect(r.outcome).toBe('blocked')
+    expect(r.blockingFindings.map((f) => f.severity)).toEqual(['MAJOR'])
+    expect(r.deferredFindings).toEqual([])
+  })
+
+  test('a deferred blocker leaves the outcome clean and is reported with its reason', () => {
+    const findings = [{ severity: 'MAJOR', location: 'a.ts:99' }]
+    const ctx: FindingDeferralContext = { changedLine: () => false }
+    const r = evaluateReviewFindings(findings, CODE_REVIEW_SEVERITY_ORDER, 'MAJOR', ctx)
+    expect(r.outcome).toBe('clean')
+    expect(r.blockingFindings).toEqual([])
+    expect(r.deferredFindings).toEqual([{ finding: findings[0], reason: 'unchanged-line' }])
+  })
+
+  test('evaluateCodeReview / evaluateSecurityReview thread the context through', () => {
+    const policy: ReviewPolicy = { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH', maxRounds: 3 }
+    const ctx: FindingDeferralContext = { inSurface: () => false }
+    expect(evaluateCodeReview([{ severity: 'MAJOR', location: 'x.ts:1' }], policy, ctx).deferredFindings).toHaveLength(
+      1
+    )
+    expect(
+      evaluateSecurityReview([{ severity: 'HIGH', location: 'x.ts:1' }], policy, ctx).deferredFindings
+    ).toHaveLength(1)
+  })
+})
