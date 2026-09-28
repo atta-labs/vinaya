@@ -653,13 +653,13 @@ describe('repoBriefCommandFacts', () => {
 })
 
 /**
- * planner-harness-v1 3, O3 — every premise on the Issue, prefixed or not, is
+ * Every premise on the Issue, prefixed or not, is
  * re-asserted against the default branch before a brief renders, and a failing
  * one refuses the dispatch naming it. `readFileAtRevision` is exercised against
  * a real fixture repository, so the "reads the commit, not the working tree"
  * property is proved rather than asserted.
  */
-describe('dispatchPremiseRefusals (planner-harness-v1 3, O3)', () => {
+describe('dispatchPremiseRefusals', () => {
   let tmpDir: string
   let repoDir: string
 

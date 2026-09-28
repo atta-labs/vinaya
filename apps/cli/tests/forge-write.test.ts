@@ -218,7 +218,7 @@ describe('validateIssueContent — the content checks', () => {
     expect(errors[0]?.message).toContain('Technical surface map')
   })
 
-  it('refuses an Issue whose `## Premises` line the checkout does not hold (planner-harness-v1 3, O1)', () => {
+  it('refuses an Issue whose `## Premises` line the checkout does not hold', () => {
     const body =
       '**Boundary** — a task.\n\n**Dependency rationale** — `Depends-on: —` `Conflicts-with: —`\n\n**Traps to avoid** — see `aeg-root/process.md`.\n\n## Premises\n\n`src/a.ts` contains `drainOutbox`\n'
     const errors = validateIssueContent({
@@ -241,7 +241,7 @@ describe('validateIssueContent — the content checks', () => {
     expect(premise?.agent_recovery_prompt).toContain('vinaya issue create')
   })
 
-  it('refuses an Issue whose Boundary claims something already exists with no premise (planner-harness-v1 3, O4)', () => {
+  it('refuses an Issue whose Boundary claims something already exists with no premise', () => {
     const body =
       '**Boundary** — the cancellation signal is already wired, currently inert.\n\n**Dependency rationale** — `Depends-on: —` `Conflicts-with: —`\n\n**Traps to avoid** — see `aeg-root/process.md`.\n'
     const errors = validateIssueContent({
@@ -263,7 +263,7 @@ describe('validateIssueContent — the content checks', () => {
     expect(boundary?.agent_recovery_prompt).toContain('`## Premises`')
   })
 
-  it('refuses a deferred premise with no declared `Depends-on` (planner-harness-v1 3, O2)', () => {
+  it('refuses a deferred premise with no declared `Depends-on`', () => {
     const body =
       '**Boundary** — a task.\n\n**Dependency rationale** — `Depends-on: —` `Conflicts-with: —`\n\n**Traps to avoid** — see `aeg-root/process.md`.\n\n## Premises\n\nafter #841: `src/a.ts` contains `drainOutbox`\n'
     const errors = validateIssueContent({

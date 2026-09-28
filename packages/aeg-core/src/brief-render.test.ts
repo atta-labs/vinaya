@@ -938,12 +938,12 @@ describe('renderBrief — end-to-end from a real Issue body (#426 fixture)', () 
 })
 
 /**
- * planner-harness-v1 3, O5 — the Issue's premises render under their own
+ * The Issue's premises render under their own
  * heading, so a Developer reads them as checked facts rather than as more
  * Boundary prose. The section is optional: an Issue with none renders exactly
  * as before, which is what keeps already-posted briefs unaffected.
  */
-describe('renderBrief — the `## Premises` section (planner-harness-v1 3, O5)', () => {
+describe('renderBrief — the `## Premises` section', () => {
   it('omits the heading entirely when the Issue carries no premises', () => {
     const result = renderBrief(baseFacts(), TEMPLATE)
     expect(result.ok).toBe(true)
