@@ -50,6 +50,7 @@ import {
   type Decision,
   type DevReviewLoopEventInput,
   type LoopState,
+  type NotReviewedReason,
   type Observations,
   type PendingRound,
   type RoundOutcome,
@@ -251,6 +252,27 @@ function buildRoundRecord(
   return { round, countsBySeverity, confidence, outcome }
 }
 
+/**
+ * A round that ended before any reviewer ran — its gate was not green, or a
+ * below-threshold confidence sent the developer back — has no findings from any
+ * source. Unlike `buildRoundRecord`, it records NO counts (an empty
+ * `countsBySeverity`, the shape a marker-reconstructed round also carries), so
+ * the published table reports `—` for every severity column through the
+ * renderer's existing "counts have no source" path, never a `0` a reader would
+ * take for a clean review (`countCells`, `render-summary.ts`). `outcome` is left
+ * exactly as this round would otherwise carry — the `round_ended` log event is
+ * unchanged — and `notReviewed` names why no reviewer saw it for the table's
+ * outcome cell.
+ */
+function buildUnreviewedRecord(
+  round: number,
+  confidence: Confidence | null,
+  outcome: RoundOutcome,
+  reason: NotReviewedReason
+): RoundRecord {
+  return { round, countsBySeverity: {}, confidence, outcome, notReviewed: reason }
+}
+
 /** Folds one round's diff stats into the running totals `journal_finalized` reports — never recomputed from `rounds`. */
 function withRoundStats(state: LoopState, stats: RoundStats): Pick<LoopState, 'totalWallMs' | 'totalFilesChanged'> {
   return {
@@ -317,7 +339,7 @@ function assessGate(
 
   if (!obs.green) {
     events.push(roundEndedEvent(state, obs.round, obs.stats, 'changes_requested'))
-    const record = buildRoundRecord(obs.round, [], null, 'changes_requested')
+    const record = buildUnreviewedRecord(obs.round, null, 'changes_requested', 'checks_red')
     const newState: LoopState = {
       ...state,
       rounds: [...state.rounds, record],
@@ -383,7 +405,7 @@ function assessGate(
       return { decision: { type: 'pause', reason: 'confidence' }, state: preFinalize, events }
     }
     events.push(roundEndedEvent(state, obs.round, obs.stats, 'changes_requested'))
-    const record = buildRoundRecord(obs.round, [], confidence, 'changes_requested')
+    const record = buildUnreviewedRecord(obs.round, confidence, 'changes_requested', 'low_confidence')
     const newState: LoopState = {
       ...state,
       rounds: [...state.rounds, record],

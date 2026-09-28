@@ -20,6 +20,7 @@ export type {
   Journal,
   LoopConfig,
   LoopState,
+  NotReviewedReason,
   Observations,
   PauseReason,
   PendingRound,

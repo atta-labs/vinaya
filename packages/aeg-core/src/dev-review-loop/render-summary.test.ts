@@ -34,6 +34,21 @@ function rebuiltRound(round: number, outcome: RoundRecord['outcome'] = 'changes_
   return { round, countsBySeverity: {}, confidence: null, outcome }
 }
 
+/**
+ * A round no reviewer ever saw — its gate was red, or a low confidence sent the
+ * developer back — as `buildUnreviewedRecord` (`assess-round.ts`) builds one: no
+ * counts recorded, and a `notReviewed` reason. Distinct from `rebuiltRound`,
+ * whose counts are also unknown but which DID reach review, so it keeps its
+ * `outcome` rather than naming a not-reviewed reason.
+ */
+function unreviewedRound(
+  round: number,
+  reason: NonNullable<RoundRecord['notReviewed']>,
+  confidence: RoundRecord['confidence'] = null
+): RoundRecord {
+  return { round, countsBySeverity: {}, confidence, outcome: 'changes_requested', notReviewed: reason }
+}
+
 describe('renderSummary — Part 4 (O4)', () => {
   it('renders one row per round with the fixed severity columns, confidence, and outcome', () => {
     const { state } = runScenario(freshState(), [
@@ -169,6 +184,41 @@ describe('renderSummary — a round whose counts are unknown never reads as a cl
     // Every cell but the outcome reads `—`; the parser still reports exactly
     // one row, and reads it as a round that was never asked for a confidence.
     expect(parseSummaryConfidenceRows(rendered)).toEqual([{ round: 1, percent: null, asked: false }])
+  })
+})
+
+describe('renderSummary — a round no reviewer saw never reads as a reviewed round (Issue #824)', () => {
+  it('shows `—` counts and a not-reviewed outcome for an unreviewed round, and `0` for a reviewed clean round', () => {
+    const summary = renderSummary({
+      rounds: [
+        unreviewedRound(1, 'checks_red'),
+        { round: 2, countsBySeverity: recordedCounts(), confidence: { value: 80 }, outcome: 'green' }
+      ]
+    })
+
+    // Round 1 never reached review: no counts to report, and the outcome cell
+    // says so and why — never a `0`/`changes_requested` row read as a review
+    // that found nothing.
+    expect(summary).toContain('| 1 | — | — | — | — | — | — | — | — | not reviewed — checks red |')
+    // Round 2's zeros are a measurement the reviewers made, and still read `0`.
+    expect(summary).toContain('| 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 80% | green |')
+  })
+
+  it('names the low-confidence reason and still shows the confidence the developer stated', () => {
+    const summary = renderSummary({ rounds: [unreviewedRound(2, 'low_confidence', { value: 40 })] })
+
+    expect(summary).toContain('| 2 | — | — | — | — | — | — | — | 40% | not reviewed — low confidence |')
+  })
+
+  it('defeat: an unreviewed round is never emitted as a real verdict, and its outcome cell is not read as a confidence', () => {
+    const summary = renderSummary({ rounds: [unreviewedRound(1, 'checks_red')] })
+
+    expect(extractCodeReviewVerdict([summary]).danglingNote).not.toBeNull()
+    expect(extractSecurityReviewVerdict([summary]).danglingNote).not.toBeNull()
+    expect(summary).not.toMatch(/VERDICT:/)
+    // The outcome cell's em-dash never confuses the confidence read: the row is
+    // still parsed once, as a round never asked for a confidence.
+    expect(parseSummaryConfidenceRows(summary)).toEqual([{ round: 1, percent: null, asked: false }])
   })
 })
 

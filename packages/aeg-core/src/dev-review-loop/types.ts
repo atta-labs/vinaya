@@ -184,12 +184,40 @@ export type Decision =
  */
 export type RoundOutcome = 'green' | 'changes_requested' | 'escalated' | 'stopped'
 
+/**
+ * Why a round ended before any reviewer ran, for the published table's outcome
+ * cell. A round no reviewer saw has no findings from any source, so it records
+ * no counts at all (an empty `countsBySeverity`, `render-summary.ts`' own `—`)
+ * rather than a zero that reads as a clean review — and this names the reason
+ * the outcome cell states instead of the log-parity `outcome` a reviewed round
+ * carries:
+ *
+ *   - `'checks_red'` — the round's gate observation was not green, so reviewers
+ *     were never dispatched;
+ *   - `'low_confidence'` — a below-threshold confidence sent the developer back
+ *     without dispatching reviewers.
+ *
+ * `outcome` stays whatever the round would otherwise carry (both reasons are
+ * `changes_requested` today), so the `round_ended` log event a reader parses is
+ * unaffected — only the summary table's rendering changes.
+ */
+export type NotReviewedReason = 'checks_red' | 'low_confidence'
+
 /** One row of the published summary (`renderSummary`, O4) — counts only, no finding prose. */
 export type RoundRecord = {
   round: number
   countsBySeverity: Record<string, number>
   confidence: Confidence | null
   outcome: RoundOutcome
+  /**
+   * Set only for a round no reviewer saw (`buildUnreviewedRecord`,
+   * `assess-round.ts`): its counts are absent (empty `countsBySeverity`) and the
+   * table's outcome cell names this reason. Absent for every round the loop
+   * assessed and for a round rebuilt from a marker — a marker-reconstructed
+   * round's counts are likewise unknown, but the round DID reach review, so it
+   * keeps its `outcome`, not a not-reviewed reason.
+   */
+  notReviewed?: NotReviewedReason
 }
 
 export type Journal = { rounds: RoundRecord[] }
