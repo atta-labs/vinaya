@@ -143,19 +143,24 @@ bunx biome check .
 
 ## License
 
-**This repository is private and is intended to stay private.** It is the extraction target of
-the AEG implementation currently living in the public
-[`atta-labs/attalabs`](https://github.com/atta-labs/attalabs) monorepo — the engine
-(`aeg-core`, `aeg-forge-state`, `aeg-types`), the Vinaya CLI, and the AEG doctrine live here so
-that AEG's implementation stops being world-readable.
-
-The **Vinaya CLI** (`@attalabs/vinaya`, published to npm from this repository) and the engine
-packages it ships — [`@attalabs/aeg-core`](packages/aeg-core/LICENSE),
+The five packages this repository publishes to npm — the Vinaya CLI
+([`@attalabs/vinaya`](apps/cli/LICENSE)) and the engine packages it ships,
+[`@attalabs/aeg-core`](packages/aeg-core/LICENSE),
 [`@attalabs/aeg-forge-state`](packages/aeg-forge-state/LICENSE),
 [`@attalabs/aeg-types`](packages/aeg-types/LICENSE) and
-[`@attalabs/vinaya-sources`](packages/sources/LICENSE) — are licensed Apache-2.0: the published
-artifacts are open even though the repository that builds them is not. All other code here is
-private, all rights reserved.
+[`@attalabs/vinaya-sources`](packages/sources/LICENSE) — are source-available under the
+[Functional Source License, Version 1.1, with an Apache-2.0 future license](https://fsl.software)
+(`FSL-1.1-ALv2`), from version `0.35.0`. Versions `0.34.0` and earlier were released under
+Apache-2.0 and stay Apache-2.0.
+
+What that means for you:
+
+- You can use and modify Vinaya freely, including at work, inside your own company.
+- You may not use it to build a competing product or service.
+- Each released version becomes Apache-2.0 on the second anniversary of its release.
+
+All other code and content in this repository is copyright Daniel Estevez / AttaLabs, all rights
+reserved. The [root `LICENSE`](LICENSE) lists which directories fall under which terms.
 
 <div align="center">
 

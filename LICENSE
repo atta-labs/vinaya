@@ -1,0 +1,26 @@
+Vinaya — licensing of this repository
+
+Copyright (C) 2026 Daniel Estevez.
+
+1. The published packages
+
+   The five packages below are published to npm. From version 0.35.0 onward,
+   each is licensed under the Functional Source License, Version 1.1, ALv2
+   Future License (SPDX identifier FSL-1.1-ALv2). The terms are in the LICENSE
+   file inside each package's directory:
+
+   - @attalabs/vinaya            apps/cli/LICENSE
+   - @attalabs/aeg-core          packages/aeg-core/LICENSE
+   - @attalabs/aeg-forge-state   packages/aeg-forge-state/LICENSE
+   - @attalabs/aeg-types         packages/aeg-types/LICENSE
+   - @attalabs/vinaya-sources    packages/sources/LICENSE
+
+2. Earlier versions
+
+   Versions 0.34.0 and earlier of those five packages were released under the
+   Apache License, Version 2.0, and remain under it.
+
+3. Everything else
+
+   All other code and content in this repository is copyright Daniel Estevez /
+   AttaLabs, all rights reserved.
