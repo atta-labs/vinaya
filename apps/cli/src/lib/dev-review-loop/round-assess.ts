@@ -360,6 +360,8 @@ export type LoopStateSnapshot = {
   budgets: LoopBudgets
   heldResult: RoundHeadIdentity | null
   deliveredFindings: RoundHeadIdentity | null
+  /** The loop's two repeat detectors, so a re-exec or an attach continues counting rather than starting over — see `LoopStateRecordSchema.repeatMemory`. */
+  repeatMemory: { blockingFindings: string[]; lastFailure: { signature: string; message: string } | null }
 }
 
 /**
@@ -380,6 +382,7 @@ export function persistLoopState(task: number, snapshot: LoopStateSnapshot, now:
       budgets: snapshot.budgets,
       heldResult: snapshot.heldResult,
       deliveredFindings: snapshot.deliveredFindings,
+      repeatMemory: snapshot.repeatMemory,
       recordedAt: now().toISOString()
     })
   } catch {

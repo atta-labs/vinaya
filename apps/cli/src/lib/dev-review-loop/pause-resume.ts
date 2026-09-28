@@ -644,6 +644,8 @@ export type RecoveredLoopState = {
   budgets: LoopBudgets
   heldResult: RoundHeadIdentity | null
   deliveredFindings: RoundHeadIdentity | null
+  /** The two repeat detectors as last persisted — `null` for a record written before this field existed, which reads back as no memory (both detectors start empty), never as a corrupt record. */
+  repeatMemory: { blockingFindings: string[]; lastFailure: { signature: string; message: string } | null } | null
 }
 
 /**
@@ -670,7 +672,8 @@ export function recoverLoopState(
       round: parsed.value.round,
       budgets: parsed.value.budgets,
       heldResult: parsed.value.heldResult,
-      deliveredFindings: parsed.value.deliveredFindings
+      deliveredFindings: parsed.value.deliveredFindings,
+      repeatMemory: parsed.value.repeatMemory ?? null
     }
   }
 }

@@ -98,6 +98,21 @@ export type Observations =
       round: number
       verdicts: VerdictObservation[]
     })
+  /**
+   * A mechanical failure that ended an attempt WITHOUT producing a head for
+   * the gate to read — a push the developer could not land (refused by a
+   * pre-push hook, or by the remote), or a turn that pushed nothing at all.
+   * There is no gate result to report for such an attempt, so it cannot
+   * arrive as a `gate` observation; it carries only the failure the driver
+   * observed, which the same `'repeat_failure'` rule matches against the
+   * previous attempt's. Unlike a `gate` observation, a non-repeat here
+   * records nothing but the signature: no round record, no events, no round
+   * accounting — the attempt produced no head, so there is nothing about it
+   * to publish, and the driver's own bounds (one resume then `'no_push'`,
+   * the stalled-head bound then `'infrastructure'`) still govern a first
+   * occurrence.
+   */
+  | ({ kind: 'mechanical_failure' } & { round: number; failure: string; stats: RoundStats })
 
 /**
  * `'infrastructure'`: a review
@@ -238,13 +253,16 @@ export type RoundOutcome = 'green' | 'changes_requested' | 'escalated' | 'stoppe
  *   - `'checks_red'` — the round's gate observation was not green, so reviewers
  *     were never dispatched;
  *   - `'low_confidence'` — a below-threshold confidence sent the developer back
- *     without dispatching reviewers.
+ *     without dispatching reviewers;
+ *   - `'mechanical_failure'` — the same mechanical failure ended two
+ *     consecutive attempts that never produced a head (`'repeat_failure'`),
+ *     so no gate ever judged one and no reviewer ever saw it.
  *
  * `outcome` stays whatever the round would otherwise carry (both reasons are
  * `changes_requested` today), so the `round_ended` log event a reader parses is
  * unaffected — only the summary table's rendering changes.
  */
-export type NotReviewedReason = 'checks_red' | 'low_confidence'
+export type NotReviewedReason = 'checks_red' | 'low_confidence' | 'mechanical_failure'
 
 /** One row of the published summary (`renderSummary`, O4) — counts only, no finding prose. */
 export type RoundRecord = {

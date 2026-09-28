@@ -4,6 +4,7 @@ import {
   cleanVerdict,
   escalateVerdict,
   fakeGate,
+  fakeStats,
   fakeVerdicts,
   notMetVerdict,
   runScenario
@@ -769,5 +770,71 @@ describe('normalizeFailureSignature — what varies is ignored, what distinguish
   it('is total: an empty or whitespace-only message normalises to the empty signature', () => {
     expect(normalizeFailureSignature('')).toBe('')
     expect(normalizeFailureSignature('   \n\t ')).toBe('')
+  })
+})
+
+describe('assessRound — an attempt that never produced a head reaches the same repeat stop', () => {
+  const pushNeverLanded = (head: string, dirty: string) =>
+    `push never landed on task/x/1: head ${head} unchanged; dirty file(s): ${dirty}`
+
+  function mechanical(round: number, failure: string) {
+    return { kind: 'mechanical_failure' as const, round, failure, stats: fakeStats(round) }
+  }
+
+  it('the same failure on two consecutive headless attempts → pause(repeat_failure) naming it', () => {
+    const { events, decisions, state } = runScenario(freshState(), [
+      mechanical(1, pushNeverLanded('a'.repeat(40), 'smoke.ts')),
+      mechanical(1, pushNeverLanded('a'.repeat(40), 'smoke.ts'))
+    ])
+
+    expect(decisions[0]).toEqual({ type: 'dispatch_developer' })
+    expect(decisions[1]).toEqual({
+      type: 'pause',
+      reason: 'repeat_failure',
+      detail: pushNeverLanded('a'.repeat(40), 'smoke.ts')
+    })
+    expect(events.filter((e) => e.event === 'stop_condition_met')).toMatchObject([{ condition: 'repeat_failure' }])
+    // The round it stops on saw no gate and no reviewer, and says so.
+    expect(state.rounds.at(-1)?.notReviewed).toBe('mechanical_failure')
+    expect(state.rounds.at(-1)?.countsBySeverity).toEqual({})
+  })
+
+  it('a first occurrence records the signature and nothing else — no round record, no events', () => {
+    const { events, state } = runScenario(freshState(), [mechanical(1, pushNeverLanded('b'.repeat(40), 'smoke.ts'))])
+
+    expect(events).toEqual([])
+    expect(state.rounds).toEqual([])
+    expect(state.lastFailure?.message).toBe(pushNeverLanded('b'.repeat(40), 'smoke.ts'))
+  })
+
+  it('a headless attempt that failed DIFFERENTLY is not a repeat — the driver keeps its own first-occurrence bound', () => {
+    const { decisions } = runScenario(freshState(), [
+      mechanical(1, pushNeverLanded('c'.repeat(40), 'smoke.ts')),
+      mechanical(1, pushNeverLanded('c'.repeat(40), 'other.ts'))
+    ])
+
+    expect(decisions).toEqual([{ type: 'dispatch_developer' }, { type: 'dispatch_developer' }])
+  })
+
+  it('a headless attempt and a red gate carrying the same failure match each other — the chain is one chain', () => {
+    const failure = 'failing check-run(s): Vinaya CI'
+    const { decisions } = runScenario(freshState(), [mechanical(1, failure), fakeGate(1, false, { failure })])
+
+    expect(decisions.at(-1)).toMatchObject({ type: 'pause', reason: 'repeat_failure', detail: failure })
+  })
+
+  it('a green gate between two identical headless attempts breaks the chain', () => {
+    const failure = pushNeverLanded('d'.repeat(40), 'smoke.ts')
+    const { decisions } = runScenario(freshState(), [
+      mechanical(1, failure),
+      fakeGate(1, true),
+      fakeVerdicts(1, [
+        blockingVerdict('reviewer', [{ id: 'F1', severity: 'major', state: 'open' }]),
+        cleanVerdict('security')
+      ]),
+      mechanical(2, failure)
+    ])
+
+    expect(decisions.at(-1)).toEqual({ type: 'dispatch_developer' })
   })
 })

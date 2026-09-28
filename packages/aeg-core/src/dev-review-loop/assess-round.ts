@@ -375,6 +375,24 @@ const VOLATILE_TOKENS: readonly { pattern: RegExp; replacement: string }[] = [
 ]
 
 /**
+ * What the `'repeat_failure'` rule makes of one reported failure: the
+ * `{signature, message}` pair to remember (`null` for a failure the driver
+ * could not name — nothing left after normalisation), and whether it matches
+ * the previous attempt's. Shared by both observation kinds that can carry a
+ * mechanical failure, so a repeat means the same thing whether or not the
+ * attempt produced a head.
+ */
+function matchFailure(
+  state: LoopState,
+  reported: string | undefined
+): { failure: { signature: string; message: string } | null; repeat: boolean } {
+  const message = reported?.trim() ?? ''
+  const signature = message === '' ? '' : normalizeFailureSignature(message)
+  if (signature === '') return { failure: null, repeat: false }
+  return { failure: { signature, message }, repeat: state.lastFailure?.signature === signature }
+}
+
+/**
  * One mechanical failure's matching signature (O3) — lower-cased, volatile
  * tokens replaced per the fixed list above, whitespace collapsed. Pure and
  * total: any string in, a signature out; the empty string for a message with
@@ -421,10 +439,8 @@ function assessGate(
     // driver could not name at all (`undefined`, or nothing left after
     // normalisation) is no signature: it breaks the chain rather than
     // matching one unknown to another.
-    const failure = obs.failure?.trim() ?? ''
-    const signature = failure === '' ? '' : normalizeFailureSignature(failure)
-    const thisFailure = signature === '' ? null : { signature, message: failure }
-    if (thisFailure !== null && state.lastFailure?.signature === signature) {
+    const { failure, repeat } = matchFailure(state, obs.failure)
+    if (repeat && failure !== null) {
       events.push(stopConditionMetEvent(state, obs.round, 'repeat_failure'))
       events.push(pausedEvent(state, obs.round, 'principal_item'))
       events.push(roundEndedEvent(state, obs.round, obs.stats, 'changes_requested'))
@@ -433,13 +449,17 @@ function assessGate(
         ...state,
         rounds: [...state.rounds, record],
         pending: null,
-        lastFailure: thisFailure,
+        lastFailure: failure,
         ...withRoundStats(state, obs.stats)
       }
       events.push(journalFinalizedEvent(preFinalize, obs.stats.head, 'stopped'))
       // The pause carries the failure as reported, not the signature: the
       // normalised form exists only to match two attempts, never to be read.
-      return { decision: { type: 'pause', reason: 'repeat_failure', detail: failure }, state: preFinalize, events }
+      return {
+        decision: { type: 'pause', reason: 'repeat_failure', detail: failure.message },
+        state: preFinalize,
+        events
+      }
     }
     events.push(roundEndedEvent(state, obs.round, obs.stats, 'changes_requested'))
     const record = buildUnreviewedRecord(obs.round, null, 'changes_requested', 'checks_red')
@@ -447,7 +467,7 @@ function assessGate(
       ...state,
       rounds: [...state.rounds, record],
       pending: null,
-      lastFailure: thisFailure,
+      lastFailure: failure,
       ...withRoundStats(state, obs.stats)
     }
     return { decision: { type: 'dispatch_developer' }, state: newState, events }
@@ -679,6 +699,46 @@ function assessVerdicts(
 }
 
 /**
+ * An attempt that ended on a mechanical failure without producing a head.
+ * The SAME `'repeat_failure'` rule the gate path applies, on an observation
+ * that has no gate result to carry: a second consecutive attempt whose
+ * failure normalises to the previous one's signature pauses, naming the
+ * failure exactly as the driver reported it. A first occurrence — or an
+ * attempt whose failure differs from the previous one's — records the
+ * signature and nothing else: no round record, no events, no diff-stat
+ * accounting, since no head was produced and the driver's own first-occurrence
+ * bounds still govern what happens next.
+ */
+function assessMechanicalFailure(
+  state: LoopState,
+  obs: { round: number; failure: string; stats: RoundStats }
+): { decision: Decision; state: LoopState; events: DevReviewLoopEventInput[] } {
+  const { failure, repeat } = matchFailure(state, obs.failure)
+  if (repeat && failure !== null) {
+    const events: DevReviewLoopEventInput[] = [
+      stopConditionMetEvent(state, obs.round, 'repeat_failure'),
+      pausedEvent(state, obs.round, 'principal_item'),
+      roundEndedEvent(state, obs.round, obs.stats, 'changes_requested')
+    ]
+    const record = buildUnreviewedRecord(obs.round, null, 'stopped', 'mechanical_failure')
+    const preFinalize: LoopState = {
+      ...state,
+      rounds: [...state.rounds, record],
+      pending: null,
+      lastFailure: failure,
+      ...withRoundStats(state, obs.stats)
+    }
+    events.push(journalFinalizedEvent(preFinalize, obs.stats.head, 'stopped'))
+    return {
+      decision: { type: 'pause', reason: 'repeat_failure', detail: failure.message },
+      state: preFinalize,
+      events
+    }
+  }
+  return { decision: { type: 'dispatch_developer' }, state: { ...state, lastFailure: failure }, events: [] }
+}
+
+/**
  * `assessRound(state, observations) → { decision, state, events }` — pure,
  * no I/O. `events` is the `DevReviewLoopEventInput[]` the caller passes,
  * unchanged, to the injected `log()`; `assessRound` itself never calls
@@ -689,5 +749,6 @@ export function assessRound(
   observations: Observations
 ): { decision: Decision; state: LoopState; events: DevReviewLoopEventInput[] } {
   if (observations.kind === 'gate') return assessGate(state, observations)
+  if (observations.kind === 'mechanical_failure') return assessMechanicalFailure(state, observations)
   return assessVerdicts(state, observations)
 }
