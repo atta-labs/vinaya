@@ -180,6 +180,7 @@ describe('validateIssueContent — the content checks', () => {
       subjectRef: '',
       commandReference: DORMANT_COMMAND_REFERENCE,
       configReference: DORMANT_CONFIG_REFERENCE,
+      pinnedFileImporters: [],
       existsInTree: () => false
     })
     expect(errors.length).toBe(1)
@@ -204,6 +205,7 @@ describe('validateIssueContent — the content checks', () => {
       subjectRef: '',
       commandReference: DORMANT_COMMAND_REFERENCE,
       configReference: DORMANT_CONFIG_REFERENCE,
+      pinnedFileImporters: [],
       existsInTree: () => false
     })
     expect(errors).toEqual([])
@@ -224,6 +226,7 @@ describe('validateIssueContent — the content checks', () => {
       subjectRef: '',
       commandReference: DORMANT_COMMAND_REFERENCE,
       configReference: DORMANT_CONFIG_REFERENCE,
+      pinnedFileImporters: [],
       existsInTree: () => false
     })
     expect(errors.length).toBe(1)
@@ -247,6 +250,7 @@ describe('validateIssueContent — the content checks', () => {
       subjectRef: '',
       commandReference: DORMANT_COMMAND_REFERENCE,
       configReference: DORMANT_CONFIG_REFERENCE,
+      pinnedFileImporters: [],
       existsInTree: () => false
     })
     const edge = errors.find((e) => e.message.includes('`2a`') && /whole number/.test(e.message))
@@ -270,6 +274,7 @@ describe('validateIssueContent — the content checks', () => {
       subjectRef: '',
       commandReference: DORMANT_COMMAND_REFERENCE,
       configReference: DORMANT_CONFIG_REFERENCE,
+      pinnedFileImporters: [],
       existsInTree: () => false
     })
     expect(errors.length).toBe(1)
@@ -292,6 +297,7 @@ describe('validateIssueContent — the content checks', () => {
       subjectRef: '',
       commandReference: DORMANT_COMMAND_REFERENCE,
       configReference: DORMANT_CONFIG_REFERENCE,
+      pinnedFileImporters: [],
       existsInTree: () => false
     })
     expect(errors).toEqual([])
@@ -314,6 +320,7 @@ describe('validateIssueContent — the content checks', () => {
       subjectRef: '',
       commandReference: DORMANT_COMMAND_REFERENCE,
       configReference: DORMANT_CONFIG_REFERENCE,
+      pinnedFileImporters: [],
       existsInTree: () => false
     })
     expect(errors.length).toBe(1)
@@ -338,6 +345,7 @@ describe('validateIssueContent — the content checks', () => {
       subjectRef: '',
       commandReference: DORMANT_COMMAND_REFERENCE,
       configReference: DORMANT_CONFIG_REFERENCE,
+      pinnedFileImporters: [],
       existsInTree: () => false
     })
     expect(errors).toEqual([])

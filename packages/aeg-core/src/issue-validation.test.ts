@@ -4,6 +4,7 @@ import { amendRationaleDeps, projectsFromBody } from '@attalabs/aeg-forge-state'
 import { describe, expect, it } from 'vitest'
 import { fenceShapes } from '../tests/fixtures/fence-shapes'
 import {
+  boundaryPinnedFiles,
   BRIEF_SECTIONS_SINCE_ISSUE,
   checkBlastRadiusScope,
   checkConflictCompleteness,
@@ -13,6 +14,7 @@ import {
   checkIssueRationale,
   checkIntroducedCommandsCovered,
   checkIntroducedConfigKeysCovered,
+  checkPinnedFileImportersCovered,
   type CommandReferenceFacts,
   type ConfigReferenceFacts,
   checkDocsWithinSurface,
@@ -2634,5 +2636,86 @@ describe('checkIntroducedConfigKeysCovered', () => {
       NOTHING_IN_TREE
     )
     expect(result.status).toBe('pass')
+  })
+})
+
+describe('boundaryPinnedFiles', () => {
+  it('returns the file-shaped paths the Boundary pins, and never one its `Out:` clause disclaims', () => {
+    const body = issueBody({
+      boundary:
+        'In: the gate. Pinned files: `packages/aeg-core/src/issue-validation.ts`, `apps/cli/src/lib/forge-write.ts`, `packages/aeg-core/src`. Out: `apps/cli/src/commands/issue.ts`.',
+      objectives: ['O1. The gate refuses the body.'],
+      partLines: ['Part 1 (O1) — the gate refuses the body.'],
+      in: 'packages/aeg-core/src, apps/cli/src/lib',
+      out: 'apps/log-server'
+    })
+    expect(boundaryPinnedFiles(body)).toEqual([
+      'packages/aeg-core/src/issue-validation.ts',
+      'apps/cli/src/lib/forge-write.ts'
+    ])
+  })
+})
+
+describe('checkPinnedFileImportersCovered', () => {
+  const body = (inGlobs: string, outGlobs: string, boundaryOut = 'judging whether the Surface is too wide') =>
+    issueBody({
+      boundary: `In: the gate. Pinned files: \`packages/aeg-core/src/gate.ts\`. Out: ${boundaryOut}.`,
+      objectives: ['O1. The gate refuses the body.'],
+      partLines: ['Part 1 (O1) — the gate refuses the body.'],
+      in: inGlobs,
+      out: outGlobs
+    })
+  const importers = [{ file: 'packages/aeg-core/src/gate.ts', importers: ['apps/cli/src/commands/issue.ts'] }]
+
+  it('is dormant when no pinned file has an importer', () => {
+    expect(
+      checkPinnedFileImportersCovered(body('packages/aeg-core/src', 'apps/log-server'), [
+        { file: 'packages/aeg-core/src/gate.ts', importers: [] }
+      ]).status
+    ).toBe('pass')
+  })
+
+  it('refuses when no importer is reachable, listing the importers and the glob to add', () => {
+    const result = checkPinnedFileImportersCovered(body('packages/aeg-core/src', 'apps/log-server'), importers)
+    expect(result.status).toBe('fail')
+    expect(result.errors).toHaveLength(1)
+    expect(result.errors[0]).toContain('pins `packages/aeg-core/src/gate.ts`')
+    expect(result.errors[0]).toContain('`apps/cli/src/commands/issue.ts`')
+    expect(result.errors[0]).toContain('Add `apps/cli/src/commands` to `in:`')
+  })
+
+  it('passes when an `in:` glob covers the importer', () => {
+    expect(
+      checkPinnedFileImportersCovered(
+        body('packages/aeg-core/src, apps/cli/src/commands', 'apps/log-server'),
+        importers
+      ).status
+    ).toBe('pass')
+  })
+
+  it('passes when the Surface `out:` list excludes the importer deliberately', () => {
+    expect(
+      checkPinnedFileImportersCovered(body('packages/aeg-core/src', 'apps/cli/src/commands'), importers).status
+    ).toBe('pass')
+  })
+
+  it("passes when the Boundary's `Out:` clause names the importer's directory", () => {
+    expect(
+      checkPinnedFileImportersCovered(
+        body('packages/aeg-core/src', 'apps/log-server', 'every caller under `apps/cli/src/commands`'),
+        importers
+      ).status
+    ).toBe('pass')
+  })
+
+  it('passes when at least one of several importers is inside the Surface', () => {
+    expect(
+      checkPinnedFileImportersCovered(body('packages/aeg-core/src', 'apps/log-server'), [
+        {
+          file: 'packages/aeg-core/src/gate.ts',
+          importers: ['apps/cli/src/commands/issue.ts', 'packages/aeg-core/src/index.ts']
+        }
+      ]).status
+    ).toBe('pass')
   })
 })

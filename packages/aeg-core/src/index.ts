@@ -249,6 +249,7 @@ export type {
   ReviewInputManifestFacts
 } from './review-input-manifest'
 export {
+  boundaryPinnedFiles,
   checkBlastRadiusScope,
   checkConflictCompleteness,
   checkDocsWithinSurface,
@@ -266,6 +267,7 @@ export {
   checkObjectivesRespectBoundary,
   checkPartsCiteDefinedObjectives,
   checkPartsCoverageAndSequence,
+  checkPinnedFileImportersCovered,
   checkProjectsRegistered,
   checkRationaleNamesDocs,
   checkRationaleSurfaceCoverage,
@@ -300,6 +302,7 @@ export type {
   IssueSectionResult,
   IssueSurface,
   IssueTestPlan,
+  PinnedFileImporters,
   SurfaceScopeResult,
   SurfaceScopeViolation,
   ProjectPath,

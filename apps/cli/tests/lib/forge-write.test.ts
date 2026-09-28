@@ -9,6 +9,7 @@ import { sha256Hex } from '../../src/lib/effects'
 import {
   collectTaskIssueErrors,
   isPendingOnlyFailure,
+  readPinnedFileImporters,
   tokenExistsInTree,
   reconcileGhComment,
   runIssueChecks,
@@ -585,6 +586,7 @@ describe('every brief-schema/issue-content recovery prompt names its own fix (O2
       subjectRef: '',
       commandReference: DORMANT_COMMAND_REFERENCE,
       configReference: DORMANT_CONFIG_REFERENCE,
+      pinnedFileImporters: [],
       existsInTree: () => false
     })
     expect(errors.length).toBe(1)
@@ -923,13 +925,13 @@ describe('isPendingOnlyFailure — the real principal wait state never refuses a
 })
 
 // ---------------------------------------------------------------------------
-// The tree-side half of the forced-companion reference rules: whether a token
-// already exists in the tree. Runs against a fixture git tree built here, never
-// this repository's own — a real token appearing must not be able to flip a
-// case.
+// The tree-side halves of the forced-companion rules: which files really
+// import a Boundary-pinned module, and whether a token already exists in the
+// tree. Both run against a fixture git tree built here, never this
+// repository's own — a real import moving must not be able to flip a case.
 // ---------------------------------------------------------------------------
 
-describe('tokenExistsInTree — against a fixture tree', () => {
+describe('readPinnedFileImporters — path-exact, not basename-exact', () => {
   let fixture: string
 
   const write = (path: string, content: string) => {
@@ -958,7 +960,43 @@ describe('tokenExistsInTree — against a fixture tree', () => {
     rmSync(fixture, { recursive: true, force: true })
   })
 
-  it('answers from that same tree, and false everywhere outside a repository', () => {
+  const bodyPinning = (path: string) =>
+    [
+      "## Planner's rationale",
+      '',
+      `**Boundary** — In: the gate. Pinned files: \`${path}\`. Out: nothing else.`,
+      '',
+      '## Objectives',
+      '',
+      'O1. The gate refuses the body.',
+      '',
+      '## Surface',
+      '',
+      'in: packages/core/src',
+      'out: apps/log-server'
+    ].join('\n')
+
+  it('names only the importers whose specifier resolves to the pinned file', () => {
+    const result = readPinnedFileImporters(bodyPinning('packages/core/src/gate.ts'), fixture)
+    expect(result).toEqual([
+      {
+        file: 'packages/core/src/gate.ts',
+        importers: ['apps/cli/src/commands/issue.ts', 'packages/core/src/index.ts']
+      }
+    ])
+  })
+
+  it('finds no importer for a pinned file that is not an importable module', () => {
+    expect(readPinnedFileImporters(bodyPinning('apps/cli/specs/gate.md'), fixture)).toEqual([
+      { file: 'apps/cli/specs/gate.md', importers: [] }
+    ])
+  })
+
+  it('is dormant outside a git repository', () => {
+    expect(readPinnedFileImporters(bodyPinning('packages/core/src/gate.ts'), '')).toEqual([])
+  })
+
+  it('answers tokenExistsInTree from that same tree, and false everywhere outside a repository', () => {
     const inTree = tokenExistsInTree(fixture)
     expect(inTree('export const gate')).toBe(true)
     expect(inTree('--never-shipped')).toBe(false)

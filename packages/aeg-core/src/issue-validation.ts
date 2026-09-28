@@ -2147,7 +2147,9 @@ export function checkPartsCoverageAndSequence(body: string): IssueSectionResult 
 // ---------------------------------------------------------------------------
 // The forced-companion Surface rules. A task Issue whose Objectives or Parts
 // introduce a CLI flag, a command, or a configuration key is forced to edit
-// the reference that documents it. When the `## Surface` `in:` list does not reach the forced file, the
+// the reference that documents it; a task whose Boundary pins a file other
+// tracked sources import is forced to touch at least one of those importers.
+// When the `## Surface` `in:` list does not reach the forced file, the
 // Developer cannot make the change the Issue asks for without leaving its
 // declared surface, and every review round repeats the same finding. Each
 // rule below decides that from the Issue text plus facts the caller resolves
@@ -2155,8 +2157,9 @@ export function checkPartsCoverageAndSequence(body: string): IssueSectionResult 
 //
 // Pure, like everything else in this module: the reference entries and the
 // importer lists are gathered by `apps/cli` (`forge-write.ts`) and passed in.
-// Only `## Objectives` and `## Parts` are read — a sentence elsewhere in the
-// body that mentions a flag in passing can never trip these.
+// Only `## Objectives`, `## Parts` and the Boundary field are read — a
+// sentence elsewhere in the body that mentions a flag in passing can never
+// trip these.
 // ---------------------------------------------------------------------------
 
 /** One command as the command reference records it — its name (`issue create`) and the flags it documents. */
@@ -2203,6 +2206,9 @@ export type ConfigReferenceFacts = {
    */
   text: string
 }
+
+/** The tracked source files that import one Boundary-pinned file, as the caller resolved them. */
+export type PinnedFileImporters = { file: string; importers: string[] }
 
 /** The directory a file sits in — the `## Surface` `in:` entry that would cover it, since Surface lists directories, never files. */
 function directoryGlobFor(file: string): string {
@@ -2480,6 +2486,57 @@ export function checkIntroducedConfigKeysCovered(
   return { status: errors.length > 0 ? 'fail' : 'pass', errors }
 }
 
+/**
+ * The files a task's Boundary PINS — every backticked, file-shaped path in
+ * the Boundary field, minus the ones its own `Out:` clause names (a path
+ * disclaimed there is the opposite of a pin). Exported because the caller
+ * needs the same list to resolve each file's importers from the tree, and two
+ * parsers for "what did the Boundary pin" would drift.
+ */
+export function boundaryPinnedFiles(body: string): string[] {
+  const boundary = rationaleFieldText(PATH_TEXT(body), 'Boundary')
+  const excluded = new Set(namedPathsIn(boundaryOutText(body)))
+  return namedPathsIn(boundary).filter((p) => looksLikeFilePath(p) && !excluded.has(p))
+}
+
+/**
+ * **A pinned file's importers are in the Surface, or deliberately out of
+ * it.** Changing a file other tracked sources import almost always forces a
+ * change at the call site; a Surface that reaches the pinned file and none of
+ * its importers is the shape that cost one adopter task five rounds and two
+ * rulings, because the caller that had to pass the new signal sat outside it.
+ *
+ * An importer counts as covered when any `in:` glob covers it, or when the
+ * task DELIBERATELY excludes it — the Surface's own `out:` list naming it, or
+ * the Boundary's `Out:` clause naming it or its directory. Both exclusion
+ * forms count, the same two sources of "excluded"
+ * `checkObjectivesRespectBoundary` already reads, because a Planner writes the
+ * decision in whichever of the two fits: refusing the `out:` form would refuse
+ * a decision already made, in the exact words the Surface grammar provides for
+ * it. Refused only when NONE of a pinned file's importers is covered any of
+ * those ways: one importer in the Surface means the task already reaches its
+ * call sites.
+ */
+export function checkPinnedFileImportersCovered(body: string, importers: PinnedFileImporters[]): IssueSectionResult {
+  if (importers.length === 0) return { status: 'pass', errors: [] }
+  const surface = parseIssueSurface(body)
+  if (!surface.ok) return { status: 'pass', errors: [] }
+  const disclaimed = [...namedPathsIn(boundaryOutText(body)), ...surface.value.out]
+
+  const errors: string[] = []
+  for (const { file, importers: found } of importers) {
+    if (found.length === 0) continue
+    const uncovered = found.filter(
+      (i) => !surface.value.in.some((g) => globCoversPath(g, i)) && !disclaimed.some((d) => globCoversPath(d, i))
+    )
+    if (uncovered.length < found.length) continue
+    const globs = [...new Set(uncovered.map(directoryGlobFor))]
+    errors.push(
+      `issue-validation Surface/importers: the Boundary pins \`${file}\`, which is imported by ${uncovered.map((i) => `\`${i}\``).join(', ')} — and no \`## Surface\` \`in:\` glob covers any of them, nor does \`out:\` or the Boundary's \`Out:\` clause name one. Add ${globs.map((g) => `\`${g}\``).join(' or ')} to \`in:\`, or name the importer in \`out:\` (or the Boundary's \`Out:\` clause) to exclude it deliberately.`
+    )
+  }
+  return { status: errors.length > 0 ? 'fail' : 'pass', errors }
+}
 // ---------------------------------------------------------------------------
 // O3 — an edit that changes
 // `## Objectives`, `## Surface`, or `## Parts` on a task Issue whose brief is

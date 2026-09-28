@@ -27,6 +27,7 @@ import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  boundaryPinnedFiles,
   checkAutonomyClause,
   checkBlastRadiusScope,
   checkBriefClosesN,
@@ -50,6 +51,8 @@ import {
   checkObjectivesRespectBoundary,
   checkPartsCiteDefinedObjectives,
   checkPartsCoverageAndSequence,
+  checkPinnedFileImportersCovered,
+  type PinnedFileImporters,
   checkPremiseCoverage,
   checkPrincipalPlaceholder,
   checkProjectField,
@@ -1044,6 +1047,77 @@ export function tokenExistsInTree(root: string = repoRoot()): (token: string) =>
   }
 }
 
+/** Only a code module can be imported — a pinned `.md` spec or `.json` config has no importers, whatever its basename collides with. */
+const IMPORTABLE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'])
+
+/** `a/b/../c` → `a/c`, and a leading `./` dropped — the specifier resolution below never touches disk, so it normalizes the path itself. */
+function normalizeRelative(path: string): string {
+  const out: string[] = []
+  for (const segment of path.split('/')) {
+    if (segment === '' || segment === '.') continue
+    if (segment === '..') out.pop()
+    else out.push(segment)
+  }
+  return out.join('/')
+}
+
+/**
+ * Every relative import specifier written in `line`, resolved against the
+ * importing file's own directory. A bare package specifier (`@attalabs/…`,
+ * `node:fs`) resolves to no file and is skipped — it names a package, never a
+ * path in this tree.
+ */
+function resolvedSpecifiers(importerFile: string, line: string): string[] {
+  const dir = importerFile.includes('/') ? importerFile.slice(0, importerFile.lastIndexOf('/')) : ''
+  const out: string[] = []
+  for (const m of line.matchAll(/['"](\.[^'"]*)['"]/g)) {
+    const spec = (m[1] as string).replace(/\.js$/, '')
+    out.push(normalizeRelative(`${dir}/${spec}`))
+  }
+  return out
+}
+
+/**
+ * Every tracked source file that imports one of the Boundary's pinned files.
+ *
+ * Resolution is path-exact, never basename-exact: `git grep` prefilters the
+ * lines whose specifier ENDS in the pinned module's own basename, then each of
+ * those specifiers is resolved against its own importing file's directory and
+ * compared to the pinned path. A basename match alone is not an import of this
+ * file — `apps/log-server/specs/server.md` and
+ * `apps/cli/src/lib/task-tools/server.ts` share a basename and nothing else,
+ * and a prefilter-only answer named every importer of the second as an
+ * importer of the first.
+ *
+ * Outside a git repository, with no pinned file named, or with a pinned file
+ * that is not an importable module at all, this returns an empty importer list
+ * and the rule goes dormant rather than guessing — same posture as every other
+ * seam resolved here.
+ */
+export function readPinnedFileImporters(body: string, root: string = repoRoot()): PinnedFileImporters[] {
+  if (!root) return []
+  return boundaryPinnedFiles(body).map((file) => {
+    const dot = file.lastIndexOf('.')
+    const extension = dot === -1 ? '' : file.slice(dot)
+    if (!IMPORTABLE_EXTENSIONS.has(extension)) return { file, importers: [] }
+    const base = (file.split('/').pop() as string).slice(0, -extension.length)
+    const pattern = `['"][^'"]*/${base}(\\.js)?['"]`
+    const hits = git(['-C', root, 'grep', '-nE', pattern, '--', '*.ts', '*.tsx'])
+    const importers = new Set<string>()
+    for (const hit of hits === '' ? [] : hits.split('\n')) {
+      const cut = hit.indexOf(':')
+      if (cut === -1) continue
+      const importer = hit.slice(0, cut)
+      if (importer === file) continue
+      const lineStart = hit.indexOf(':', cut + 1)
+      const text = lineStart === -1 ? '' : hit.slice(lineStart + 1)
+      const target = file.slice(0, -extension.length)
+      if (resolvedSpecifiers(importer, text).includes(target)) importers.add(importer)
+    }
+    return { file, importers: [...importers].sort() }
+  })
+}
+
 const CHECK_ISSUE_CONTENT = 'issue-content'
 
 const ISSUE_CONTENT_RECOVERY = {
@@ -1076,7 +1150,9 @@ const ISSUE_CONTENT_RECOVERY = {
   introducedCommands:
     "Add the named directory glob to `## Surface`'s `in:` list so this task can write the command reference row the flag/command needs, or drop the flag/command from the Objectives and Parts. Then re-run `{cmd}`.",
   introducedConfigKeys:
-    "Add the named directory globs to `## Surface`'s `in:` list so this task can write both the configuration schema and its reference row, or drop the key from the Objectives and Parts. Then re-run `{cmd}`."
+    "Add the named directory globs to `## Surface`'s `in:` list so this task can write both the configuration schema and its reference row, or drop the key from the Objectives and Parts. Then re-run `{cmd}`.",
+  pinnedFileImporters:
+    "Add the named directory glob to `## Surface`'s `in:` list so the call site can be updated, or name the importer (or its directory) in the Boundary's `Out:` clause to exclude it deliberately. Then re-run `{cmd}`."
 } as const
 
 export type IssueContentInput = {
@@ -1113,6 +1189,8 @@ export type IssueContentInput = {
   commandReference: CommandReferenceFacts
   /** The configuration reference and schema this repository ships (`readConfigReference`) — no files ⇒ dormant. */
   configReference: ConfigReferenceFacts
+  /** Each Boundary-pinned file's tracked importers (`readPinnedFileImporters`) — empty ⇒ dormant. */
+  pinnedFileImporters: PinnedFileImporters[]
   /** Does the tracked tree already carry this literal token? (`tokenExistsInTree`) — separates a token this Issue introduces from one it merely quotes. */
   existsInTree: (token: string) => boolean
 }
@@ -1174,7 +1252,8 @@ export function validateIssueContent(input: IssueContentInput): CheckError[] {
     [
       checkIntroducedConfigKeysCovered(input.body, input.configReference, input.existsInTree).errors,
       'introducedConfigKeys'
-    ]
+    ],
+    [checkPinnedFileImportersCovered(input.body, input.pinnedFileImporters).errors, 'pinnedFileImporters']
   ]
   const errors: CheckError[] = []
   for (const [messages, kind] of findings) {
@@ -1810,6 +1889,7 @@ export async function collectTaskIssueErrors(
       subjectRef: issueNumber !== null ? String(issueNumber) : '',
       commandReference: readCommandReference(),
       configReference: readConfigReference(),
+      pinnedFileImporters: readPinnedFileImporters(body),
       existsInTree: tokenExistsInTree()
     })
   )
