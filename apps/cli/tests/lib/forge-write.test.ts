@@ -9,6 +9,7 @@ import { sha256Hex } from '../../src/lib/effects'
 import {
   collectTaskIssueErrors,
   isPendingOnlyFailure,
+  tokenExistsInTree,
   reconcileGhComment,
   runIssueChecks,
   type TaskIssueValidationDeps,
@@ -32,6 +33,13 @@ const FAKE_PRINCIPAL_OWED_CHECK = join(CLI_ROOT, 'tests', 'fixtures', 'forge', '
 // unit test should not have to stand up — the CLI-level `pr create`/
 // `issue create` suites already exercise those for real).
 // ---------------------------------------------------------------------------
+
+// The three forced-companion rules are exercised in
+// `packages/aeg-core/src/issue-validation.test.ts` against fixture references;
+// here they are handed their dormant (nothing-in-this-tree) facts, so these
+// cases keep grading exactly the check each one names.
+const DORMANT_COMMAND_REFERENCE = { file: null, binary: 'vinaya', commands: [], text: '' }
+const DORMANT_CONFIG_REFERENCE = { files: [], keys: [], text: '' }
 
 describe('collectTaskIssueErrors — one gate sequence, every group, one refusal (O1)', () => {
   let cwd: string
@@ -574,7 +582,10 @@ describe('every brief-schema/issue-content recovery prompt names its own fix (O2
       resolvesToFile: () => true,
       docOwnersContent: null,
       milestoneSiblings: null,
-      subjectRef: ''
+      subjectRef: '',
+      commandReference: DORMANT_COMMAND_REFERENCE,
+      configReference: DORMANT_CONFIG_REFERENCE,
+      existsInTree: () => false
     })
     expect(errors.length).toBe(1)
     for (const e of errors) expect(recoveryNamesItsFix(e)).toBe(true)
@@ -908,5 +919,49 @@ describe('isPendingOnlyFailure — the real principal wait state never refuses a
       agent_recovery_prompt: 'fix the body'
     }
     expect(isPendingOnlyFailure([pendingError, structural])).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The tree-side half of the forced-companion reference rules: whether a token
+// already exists in the tree. Runs against a fixture git tree built here, never
+// this repository's own — a real token appearing must not be able to flip a
+// case.
+// ---------------------------------------------------------------------------
+
+describe('tokenExistsInTree — against a fixture tree', () => {
+  let fixture: string
+
+  const write = (path: string, content: string) => {
+    const full = join(fixture, path)
+    mkdirSync(join(full, '..'), { recursive: true })
+    writeFileSync(full, content)
+  }
+
+  beforeEach(() => {
+    fixture = mkdtempSync(join(tmpdir(), 'vinaya-importers-'))
+    execFileSync('git', ['init', '-q'], { cwd: fixture })
+    write('packages/core/src/gate.ts', 'export const gate = 1\n')
+    write('packages/core/src/index.ts', "export { gate } from './gate'\n")
+    write('apps/cli/src/commands/issue.ts', "import { gate } from '../../../../packages/core/src/gate'\n")
+    // Same basename, different file — a basename-only match would call every
+    // importer of THIS one an importer of the pinned file above.
+    write('apps/cli/src/lib/gate.ts', 'export const other = 2\n')
+    write('apps/cli/src/lib/user.ts', "import { other } from './gate'\n")
+    // Not a module at all: its importers are never imports of it.
+    write('apps/cli/specs/gate.md', '# gate\n')
+    execFileSync('git', ['add', '-A'], { cwd: fixture })
+    execFileSync('git', ['-c', 'user.email=t@e', '-c', 'user.name=t', 'commit', '-qm', 'fixture'], { cwd: fixture })
+  })
+
+  afterEach(() => {
+    rmSync(fixture, { recursive: true, force: true })
+  })
+
+  it('answers from that same tree, and false everywhere outside a repository', () => {
+    const inTree = tokenExistsInTree(fixture)
+    expect(inTree('export const gate')).toBe(true)
+    expect(inTree('--never-shipped')).toBe(false)
+    expect(tokenExistsInTree('')('export const gate')).toBe(false)
   })
 })

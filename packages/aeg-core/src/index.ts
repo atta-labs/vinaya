@@ -258,6 +258,8 @@ export {
   checkIssueObjectives,
   checkIssueRationale,
   checkIssueType,
+  checkIntroducedCommandsCovered,
+  checkIntroducedConfigKeysCovered,
   checkMilestoneAttach,
   checkNoBriefContent,
   checkNoForeignTaskOwnership,
@@ -288,6 +290,9 @@ export {
   parseIssueTestPlan
 } from './issue-validation'
 export type {
+  CommandReferenceEntry,
+  CommandReferenceFacts,
+  ConfigReferenceFacts,
   FrozenSection,
   IssueDocumentation,
   IssueDocumentationSource,

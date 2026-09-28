@@ -39,6 +39,10 @@ import {
   checkIssueBriefSections,
   checkIssueObjectives,
   checkIssueRationale,
+  checkIntroducedCommandsCovered,
+  checkIntroducedConfigKeysCovered,
+  type CommandReferenceFacts,
+  type ConfigReferenceFacts,
   type GateCutovers,
   checkMilestoneShape,
   checkNoBriefContent,
@@ -98,6 +102,7 @@ import {
   parseRationaleDeps,
   resolveMilestoneAttachTarget
 } from '@attalabs/aeg-forge-state'
+import { COMMANDS, CONFIG_REFERENCE } from '@attalabs/vinaya-sources'
 import { coreCheckRegistry } from '../checks/registry'
 import { resolveChecks } from '../checks/resolver'
 import { defaultParallelism, runChecks } from '../checks/runner'
@@ -979,6 +984,66 @@ export function readDocOwnersContent(root: string = repoRoot()): string | null {
   }
 }
 
+/**
+ * The tracked file holding this repository's command reference, or `null`.
+ * The path is this product's own layout, checked for existence rather than
+ * assumed: an adopter that consumes the published CLI carries no copy of the
+ * reference in its own tree, and asking it to widen a Surface to reach a file
+ * it does not have would be a refusal with no satisfiable fix — so the rule
+ * goes dormant there, the same posture `readDocOwnersContent` takes for an
+ * absent manifest.
+ */
+const COMMAND_REFERENCE_FILE = 'packages/sources/src/commands.ts'
+/** The adopter-facing configuration reference, and the schema that validates the same keys — a new key is an edit to both. */
+const CONFIG_REFERENCE_FILES = ['packages/sources/src/config-reference.ts', 'apps/cli/src/lib/config.ts']
+/** The CLI binary an invocation in an Issue is written with. */
+const CLI_BINARY = 'vinaya'
+
+/** Command names and their documented flags, read from the reference module this repository ships (`COMMANDS`) — never re-derived from the argv parser. */
+export function readCommandReference(root: string = repoRoot()): CommandReferenceFacts {
+  const present = root !== '' && existsSync(join(root, COMMAND_REFERENCE_FILE))
+  return {
+    file: present ? COMMAND_REFERENCE_FILE : null,
+    binary: CLI_BINARY,
+    commands: COMMANDS.map((c) => ({ name: c.name, flags: (c.flags ?? []).map((f) => f.flag) })),
+    text: COMMANDS.flatMap((c) => [
+      c.description,
+      ...(c.details ?? []),
+      ...(c.flags ?? []).map((f) => f.description)
+    ]).join('\n')
+  }
+}
+
+/** Configuration keys, read from the same authored registry the web reference renders (`CONFIG_REFERENCE`); `files` holds only the reference/schema files this tree actually carries. */
+export function readConfigReference(root: string = repoRoot()): ConfigReferenceFacts {
+  const files = root === '' ? [] : CONFIG_REFERENCE_FILES.filter((f) => existsSync(join(root, f)))
+  return {
+    files,
+    keys: CONFIG_REFERENCE.map((f) => f.key),
+    text: CONFIG_REFERENCE.flatMap((f) => [...f.semantics, f.example, f.warning ?? '']).join('\n')
+  }
+}
+
+/**
+ * Does the tracked tree already spell this token out anywhere? A fixed-string
+ * `git grep`, never a regex — the tokens asked about are literals (`--issue`,
+ * `logs.url`, a command's own word) and a regex reading of one would match by
+ * accident. A token the tree already carries is shipped, so an Issue quoting it
+ * introduces nothing; `''` (outside a git repository) answers `false` for
+ * everything, which leaves the rules grading against the reference alone.
+ */
+export function tokenExistsInTree(root: string = repoRoot()): (token: string) => boolean {
+  if (!root) return () => false
+  const seen = new Map<string, boolean>()
+  return (token: string) => {
+    const cached = seen.get(token)
+    if (cached !== undefined) return cached
+    const found = git(['-C', root, 'grep', '-l', '-F', '-e', token]) !== ''
+    seen.set(token, found)
+    return found
+  }
+}
+
 const CHECK_ISSUE_CONTENT = 'issue-content'
 
 const ISSUE_CONTENT_RECOVERY = {
@@ -1007,7 +1072,11 @@ const ISSUE_CONTENT_RECOVERY = {
   noForeignTaskOwnership:
     "Rewrite the named sentence so it does not assign ownership of this task's own objective to another task — depend on the other task instead (`Dependency rationale`), or fold the work back into this task's own Objectives/Parts. Then re-run `{cmd}`.",
   partsCoverageAndSequence:
-    'Fix the named `## Parts` defect — cite every declared objective from at least one Part, and number Parts contiguously from 1 — then re-run `{cmd}`.'
+    'Fix the named `## Parts` defect — cite every declared objective from at least one Part, and number Parts contiguously from 1 — then re-run `{cmd}`.',
+  introducedCommands:
+    "Add the named directory glob to `## Surface`'s `in:` list so this task can write the command reference row the flag/command needs, or drop the flag/command from the Objectives and Parts. Then re-run `{cmd}`.",
+  introducedConfigKeys:
+    "Add the named directory globs to `## Surface`'s `in:` list so this task can write both the configuration schema and its reference row, or drop the key from the Objectives and Parts. Then re-run `{cmd}`."
 } as const
 
 export type IssueContentInput = {
@@ -1040,6 +1109,12 @@ export type IssueContentInput = {
   milestoneSiblings: TaskSurfaceFacts[] | null
   /** How this subject is referred to in a sibling's `Conflicts-with` — its Issue number, or `''` for a not-yet-created Issue (a sibling cannot yet name a number that does not exist). */
   subjectRef: string
+  /** The command reference this repository ships (`readCommandReference`) — `file: null` ⇒ dormant. */
+  commandReference: CommandReferenceFacts
+  /** The configuration reference and schema this repository ships (`readConfigReference`) — no files ⇒ dormant. */
+  configReference: ConfigReferenceFacts
+  /** Does the tracked tree already carry this literal token? (`tokenExistsInTree`) — separates a token this Issue introduces from one it merely quotes. */
+  existsInTree: (token: string) => boolean
 }
 
 /**
@@ -1091,7 +1166,15 @@ export function validateIssueContent(input: IssueContentInput): CheckError[] {
     ],
     [checkObjectivesRespectBoundary(input.body).errors, 'objectivesRespectBoundary'],
     [checkNoForeignTaskOwnership(input.body).errors, 'noForeignTaskOwnership'],
-    [checkPartsCoverageAndSequence(input.body).errors, 'partsCoverageAndSequence']
+    [checkPartsCoverageAndSequence(input.body).errors, 'partsCoverageAndSequence'],
+    [
+      checkIntroducedCommandsCovered(input.body, input.commandReference, input.existsInTree).errors,
+      'introducedCommands'
+    ],
+    [
+      checkIntroducedConfigKeysCovered(input.body, input.configReference, input.existsInTree).errors,
+      'introducedConfigKeys'
+    ]
   ]
   const errors: CheckError[] = []
   for (const [messages, kind] of findings) {
@@ -1724,7 +1807,10 @@ export async function collectTaskIssueErrors(
       resolvesToFile: (glob) => expandGlob(glob).length > 0,
       docOwnersContent: readDocOwnersContent(),
       milestoneSiblings,
-      subjectRef: issueNumber !== null ? String(issueNumber) : ''
+      subjectRef: issueNumber !== null ? String(issueNumber) : '',
+      commandReference: readCommandReference(),
+      configReference: readConfigReference(),
+      existsInTree: tokenExistsInTree()
     })
   )
 

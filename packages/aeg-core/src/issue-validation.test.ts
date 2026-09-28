@@ -11,6 +11,10 @@ import {
   checkIssueBriefSections,
   checkIssueObjectives,
   checkIssueRationale,
+  checkIntroducedCommandsCovered,
+  checkIntroducedConfigKeysCovered,
+  type CommandReferenceFacts,
+  type ConfigReferenceFacts,
   checkDocsWithinSurface,
   checkDocumentationCitesObjective,
   checkIssueType,
@@ -2372,5 +2376,263 @@ describe('checkMilestoneAttach', () => {
     const r = checkMilestoneAttach(['vinaya/tranche:demo-v1'], null, 'v1')
     expect(r.status).toBe('fail')
     expect(r.errors.join(' ')).toMatch(/unset/)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The forced-companion Surface rules. Fixture references and fixture importer
+// lists throughout — never this repository's live tree, so a real command or a
+// real config key changing can never flip one of these cases.
+// ---------------------------------------------------------------------------
+
+const NOTHING_IN_TREE = () => false
+
+const FIXTURE_COMMAND_REFERENCE: CommandReferenceFacts = {
+  file: 'packages/sources/src/commands.ts',
+  binary: 'vinaya',
+  commands: [
+    { name: 'check', flags: ['--all', '--json'] },
+    { name: 'issue create', flags: ['--body-file', '--validate-only'] },
+    { name: 'doctrine', flags: ['--role', '--print'] }
+  ],
+  text: 'Runs one check, or every registered check. `--print` writes the resolved text to stdout.'
+}
+
+const FIXTURE_CONFIG_REFERENCE: ConfigReferenceFacts = {
+  files: ['packages/sources/src/config-reference.ts', 'apps/cli/src/lib/config.ts'],
+  keys: ['checks', 'checks.timeoutMs', 'reviewPolicy', 'reviewPolicy.maxRounds', 'logs'],
+  text: 'A folder (`logs.folder`) or a server (`logs.url`), never both.'
+}
+
+/** One well-formed task Issue body, with the Surface globs, Boundary and Objectives/Parts text each case needs. */
+function issueBody(parts: { boundary: string; objectives: string[]; partLines: string[]; in: string; out: string }) {
+  return [
+    "## Planner's rationale",
+    '',
+    `**Boundary** — ${parts.boundary}`,
+    '',
+    '## Objectives',
+    '',
+    ...parts.objectives,
+    '',
+    '## Surface',
+    '',
+    `in: ${parts.in}`,
+    `out: ${parts.out}`,
+    '',
+    '## Parts',
+    '',
+    ...parts.partLines
+  ].join('\n')
+}
+
+describe('checkIntroducedCommandsCovered', () => {
+  const body = (objective: string, inGlobs = 'apps/cli/src/lib') =>
+    issueBody({
+      boundary: 'One gate and its wiring.',
+      objectives: [`O1. ${objective}`],
+      partLines: ['Part 1 (O1) — the gate refuses the body.'],
+      in: inGlobs,
+      out: 'apps/log-server'
+    })
+
+  it('is dormant when this repository ships no command reference', () => {
+    const result = checkIntroducedCommandsCovered(
+      body('`vinaya doctrine --template` prints the template.'),
+      { ...FIXTURE_COMMAND_REFERENCE, file: null },
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('pass')
+  })
+
+  it('refuses an introduced flag, naming the flag and the glob to add', () => {
+    const result = checkIntroducedCommandsCovered(
+      body('`vinaya doctrine --template pr-report --print` prints the template.'),
+      FIXTURE_COMMAND_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('fail')
+    expect(result.errors).toHaveLength(1)
+    expect(result.errors[0]).toContain('`--template`')
+    expect(result.errors[0]).toContain('`vinaya doctrine`')
+    expect(result.errors[0]).toContain('Add `packages/sources/src` to `in:`')
+  })
+
+  it('refuses an introduced subcommand under a documented namespace', () => {
+    const result = checkIntroducedCommandsCovered(
+      body('`vinaya issue archive` closes and relabels the Issue.'),
+      FIXTURE_COMMAND_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toContain('`vinaya issue archive`')
+    expect(result.errors[0]).toContain('Add `packages/sources/src` to `in:`')
+  })
+
+  it('refuses a command whose very first word the reference has never heard of', () => {
+    const result = checkIntroducedCommandsCovered(
+      body('`vinaya frobnicate` rewrites the body.'),
+      FIXTURE_COMMAND_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toContain('`vinaya frobnicate`')
+  })
+
+  it('passes the same body once an `in:` glob covers the command reference', () => {
+    const result = checkIntroducedCommandsCovered(
+      body('`vinaya doctrine --template pr-report` prints the template.', 'apps/cli/src/lib, packages/sources/src'),
+      FIXTURE_COMMAND_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('pass')
+  })
+
+  it('reads a leaf command plus a further word as an argument, never as a new subcommand', () => {
+    const result = checkIntroducedCommandsCovered(
+      body('`vinaya check dispatch-readiness` passes on the task branch.'),
+      FIXTURE_COMMAND_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('pass')
+  })
+
+  it('passes a flag the reference documents for any command, and one only its prose explains', () => {
+    expect(
+      checkIntroducedCommandsCovered(
+        body('`vinaya doctrine --json` prints the resolved text.'),
+        FIXTURE_COMMAND_REFERENCE,
+        NOTHING_IN_TREE
+      ).status
+    ).toBe('pass')
+    expect(
+      checkIntroducedCommandsCovered(
+        body('`vinaya issue create --print` prints the body.'),
+        FIXTURE_COMMAND_REFERENCE,
+        NOTHING_IN_TREE
+      ).status
+    ).toBe('pass')
+  })
+
+  it('passes a flag the tracked tree already ships, however stale the reference row is', () => {
+    const result = checkIntroducedCommandsCovered(
+      body('`vinaya check --parallel` caps concurrency.'),
+      FIXTURE_COMMAND_REFERENCE,
+      (token) => token === '--parallel'
+    )
+    expect(result.status).toBe('pass')
+  })
+
+  it('never fires on free prose — only a backticked token counts', () => {
+    const result = checkIntroducedCommandsCovered(
+      body('Running vinaya doctrine with --template is out of scope for this task.'),
+      FIXTURE_COMMAND_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('pass')
+  })
+
+  it('reads a Part line as well as an Objective', () => {
+    const result = checkIntroducedCommandsCovered(
+      issueBody({
+        boundary: 'One gate.',
+        objectives: ['O1. The gate refuses a malformed body.'],
+        partLines: ['Part 1 (O1) — `vinaya check --deep` runs the slow lens.'],
+        in: 'apps/cli/src/lib',
+        out: 'apps/log-server'
+      }),
+      FIXTURE_COMMAND_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toContain('Part 1 introduces the flag `--deep`')
+  })
+})
+
+describe('checkIntroducedConfigKeysCovered', () => {
+  const body = (objective: string, inGlobs = 'apps/cli/src/commands') =>
+    issueBody({
+      boundary: 'One key and its reader.',
+      objectives: [`O1. ${objective}`],
+      partLines: ['Part 1 (O1) — the reader resolves the key.'],
+      in: inGlobs,
+      out: 'apps/log-server'
+    })
+
+  it('is dormant when neither reference nor schema is in this tree', () => {
+    const result = checkIntroducedConfigKeysCovered(
+      body('`reviewPolicy.maxTaskMinutes` bounds the loop.'),
+      { ...FIXTURE_CONFIG_REFERENCE, files: [] },
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('pass')
+  })
+
+  it('refuses an introduced key, naming both missing globs', () => {
+    const result = checkIntroducedConfigKeysCovered(
+      body('`reviewPolicy.maxTaskMinutes` bounds the loop.'),
+      FIXTURE_CONFIG_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('fail')
+    expect(result.errors).toHaveLength(1)
+    expect(result.errors[0]).toContain('`reviewPolicy.maxTaskMinutes`')
+    expect(result.errors[0]).toContain('Add `packages/sources/src` and `apps/cli/src/lib` to `in:`')
+  })
+
+  it('names only the glob still missing when the Surface already covers one of the two', () => {
+    const result = checkIntroducedConfigKeysCovered(
+      body('`reviewPolicy.maxTaskMinutes` bounds the loop.', 'apps/cli/src/lib'),
+      FIXTURE_CONFIG_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toContain('Add `packages/sources/src` to `in:`')
+    expect(result.errors[0]).not.toContain('apps/cli/src/lib` to')
+  })
+
+  it('passes once the Surface covers both the reference and the schema', () => {
+    const result = checkIntroducedConfigKeysCovered(
+      body('`reviewPolicy.maxTaskMinutes` bounds the loop.', 'packages/sources/src, apps/cli/src/lib'),
+      FIXTURE_CONFIG_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('pass')
+  })
+
+  it('reads a documented key quoted with its own instance name as documented', () => {
+    const result = checkIntroducedConfigKeysCovered(
+      body('`checks.doc-coverage.timeoutMs` is raised to 120000.'),
+      FIXTURE_CONFIG_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('pass')
+  })
+
+  it('reads a key the reference explains inside its parent row as documented', () => {
+    const result = checkIntroducedConfigKeysCovered(
+      body('`logs.url` receives every event as it occurs.'),
+      FIXTURE_CONFIG_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('pass')
+  })
+
+  it('passes a key the tracked tree already ships', () => {
+    const result = checkIntroducedConfigKeysCovered(
+      body('`reviewPolicy.securityThreshold` gates the security pass.'),
+      FIXTURE_CONFIG_REFERENCE,
+      (token) => token === 'reviewPolicy.securityThreshold'
+    )
+    expect(result.status).toBe('pass')
+  })
+
+  it('never reads a filename or a dotted token rooted outside the config as a key', () => {
+    const result = checkIntroducedConfigKeysCovered(
+      body('`brief-render.ts` and `checks.ts` and `foo.bar` are untouched.'),
+      FIXTURE_CONFIG_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('pass')
   })
 })
