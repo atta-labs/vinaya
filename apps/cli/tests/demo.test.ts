@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runDemoBreak } from '../src/commands/demo.js'
+import { stripAmbientFixtureEnv } from './fixture-env.js'
 import { withSerialLock } from './serial-lock.js'
 
 // The real CLI source, invoked directly by `bun` rather than through a
@@ -81,6 +82,20 @@ const SERIAL_LOCK_DIR = join(
 )
 
 let root: string
+let restoreFixtureEnv: (() => void) | undefined
+
+// Every fixture below runs git — in-process and in spawned children — against
+// its OWN temporary repository, and runs this CLI's own generated hooks inside
+// it, so neither an ambient `GIT_DIR`/`GIT_WORK_TREE` from a caller that is
+// itself inside a repository nor an ambient `PR_BODY` from a caller grading a
+// pull request may reach it. See `./fixture-env.ts`.
+beforeAll(() => {
+  restoreFixtureEnv = stripAmbientFixtureEnv()
+})
+
+afterAll(() => {
+  restoreFixtureEnv?.()
+})
 
 beforeEach(() => {
   root = initFixture()

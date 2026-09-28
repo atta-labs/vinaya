@@ -1324,7 +1324,22 @@ if [ -n "$VINAYA_SELECTED_TESTS" ]; then
   # the one step that can run arbitrary test-owned git fixtures — every
   # step above stays on this repo either way, since cwd-based discovery
   # finds the exact same repo these variables already named.
-  for _vinaya_git_var in $(env | grep -o '^GIT_[A-Z_]*='); do
+  #
+  # The name pattern admits digits, not letters and underscores only: the
+  # real git variables whose names carry one are exactly the ones a
+  # letters-only pattern leaves behind for the test run to inherit —
+  # \`GIT_CONFIG_KEY_0\`/\`GIT_CONFIG_VALUE_0\` (arbitrary config injected into
+  # every fixture git call) and \`GIT_TRACE2\`/\`GIT_TRACE2_EVENT\` (trace
+  # output interleaved into whatever a fixture test parses out of git's
+  # own). Measured on a real push from a linked worktree: with a
+  # letters-only pattern those three survived the loop and reached the
+  # test run's own child processes.
+  #
+  # Reading names out of \`env\` cannot MISS a variable — a real one always
+  # holds a line of its own — and an unrelated variable whose value spans
+  # lines (a pull-request body, say) can at worst contribute a name that is
+  # not set, which \`unset\` accepts as the no-op it is.
+  for _vinaya_git_var in $(env | grep -o '^GIT_[A-Za-z0-9_]*='); do
     unset "\${_vinaya_git_var%=*}"
   done
   # The trailing "--" stops flag parsing before the file list: a tracked
