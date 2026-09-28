@@ -17,7 +17,8 @@ Copyright (C) 2026 Daniel Estevez.
 
    The @attalabs/vinaya tarball also carries the aeg-root/ doctrine and the
    studio-standalone/ dashboard. From version 0.35.0 onward, both are
-   distributed under the same FSL-1.1-ALv2 terms as the CLI.
+   distributed under the same FSL-1.1-ALv2 terms as the CLI, except the
+   bundled third-party dependencies, which keep their own licenses.
 
 2. Earlier versions
 
