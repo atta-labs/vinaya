@@ -6,9 +6,12 @@ import { join } from 'node:path'
 import { buildPrincipalTestPlanWaitErrors } from '../../src/checks/bin/check-principal-test-plan-wait'
 import { CHECK_SCHEMA_VERSION, type CheckError } from '../../src/checks/contract'
 import { sha256Hex } from '../../src/lib/effects'
+import { checkIntroducedCommandsCovered, checkIntroducedConfigKeysCovered } from '@attalabs/aeg-core'
 import {
   collectTaskIssueErrors,
   isPendingOnlyFailure,
+  readPinnedFileImporters,
+  tokenExistsInTree,
   reconcileGhComment,
   runIssueChecks,
   type TaskIssueValidationDeps,
@@ -32,6 +35,13 @@ const FAKE_PRINCIPAL_OWED_CHECK = join(CLI_ROOT, 'tests', 'fixtures', 'forge', '
 // unit test should not have to stand up — the CLI-level `pr create`/
 // `issue create` suites already exercise those for real).
 // ---------------------------------------------------------------------------
+
+// The three forced-companion rules are exercised in
+// `packages/aeg-core/src/issue-validation.test.ts` against fixture references;
+// here they are handed their dormant (nothing-in-this-tree) facts, so these
+// cases keep grading exactly the check each one names.
+const DORMANT_COMMAND_REFERENCE = { file: null, binary: 'vinaya', commands: [], text: '' }
+const DORMANT_CONFIG_REFERENCE = { files: [], keys: [], text: '' }
 
 describe('collectTaskIssueErrors — one gate sequence, every group, one refusal (O1)', () => {
   let cwd: string
@@ -800,7 +810,11 @@ describe('every brief-schema/issue-content recovery prompt names its own fix (O2
       readFile: () => null,
       docOwnersContent: null,
       milestoneSiblings: null,
-      subjectRef: ''
+      subjectRef: '',
+      commandReference: DORMANT_COMMAND_REFERENCE,
+      configReference: DORMANT_CONFIG_REFERENCE,
+      pinnedFileImporters: [],
+      existsInTree: () => false
     })
     expect(errors.length).toBe(1)
     for (const e of errors) expect(recoveryNamesItsFix(e)).toBe(true)
@@ -1134,5 +1148,216 @@ describe('isPendingOnlyFailure — the real principal wait state never refuses a
       agent_recovery_prompt: 'fix the body'
     }
     expect(isPendingOnlyFailure([pendingError, structural])).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The tree-side halves of the forced-companion rules: which files really
+// import a Boundary-pinned module, and whether a token already exists in the
+// tree. Both run against a fixture git tree built here, never this
+// repository's own — a real import moving must not be able to flip a case.
+// ---------------------------------------------------------------------------
+
+describe('readPinnedFileImporters — path-exact, not basename-exact', () => {
+  let fixture: string
+
+  const write = (path: string, content: string) => {
+    const full = join(fixture, path)
+    mkdirSync(join(full, '..'), { recursive: true })
+    writeFileSync(full, content)
+  }
+
+  beforeEach(() => {
+    fixture = mkdtempSync(join(tmpdir(), 'vinaya-importers-'))
+    execFileSync('git', ['init', '-q'], { cwd: fixture })
+    write('packages/core/src/gate.ts', 'export const gate = 1\n')
+    write('packages/core/src/index.ts', "export { gate } from './gate'\n")
+    write('apps/cli/src/commands/issue.ts', "import { gate } from '../../../../packages/core/src/gate'\n")
+    // Same basename, different file — a basename-only match would call every
+    // importer of THIS one an importer of the pinned file above.
+    write('apps/cli/src/lib/gate.ts', 'export const other = 2\n')
+    write('apps/cli/src/lib/user.ts', "import { other } from './gate'\n")
+    // Not a module at all: its importers are never imports of it.
+    write('apps/cli/specs/gate.md', '# gate\n')
+    // A non-TypeScript module, imported only from another non-TypeScript one —
+    // invisible while the search pathspec was narrower than the extensions a
+    // pinned file may carry.
+    write('packages/core/src/legacy.mjs', 'export const legacy = 3\n')
+    write('packages/core/scripts/run.mjs', "import { legacy } from '../src/legacy.mjs'\n")
+    // A basename carrying its own dot.
+    write('packages/core/src/config.schema.ts', 'export const schema = 4\n')
+    write('apps/cli/src/commands/read.ts', "import { schema } from '../../../../packages/core/src/config.schema'\n")
+    // An ordinary English word a command could be named after, and a longer
+    // flag a shorter one must not be excused by.
+    write('packages/core/src/fsops.ts', "import { rename } from 'node:fs/promises'\nexport { rename }\n")
+    write('apps/cli/src/commands/deep.ts', "export const FLAGS = ['--deeper']\n")
+    // A dotted token this tree already spells out — code that exists, never a key a task introduces.
+    write('apps/cli/src/lib/settings.ts', 'export const retries = settings.retries\n')
+    execFileSync('git', ['add', '-A'], { cwd: fixture })
+    execFileSync('git', ['-c', 'user.email=t@e', '-c', 'user.name=t', 'commit', '-qm', 'fixture'], { cwd: fixture })
+  })
+
+  afterEach(() => {
+    rmSync(fixture, { recursive: true, force: true })
+  })
+
+  const bodyPinning = (path: string) =>
+    [
+      "## Planner's rationale",
+      '',
+      `**Boundary** — In: the gate. Pinned files: \`${path}\`. Out: nothing else.`,
+      '',
+      '## Objectives',
+      '',
+      'O1. The gate refuses the body.',
+      '',
+      '## Surface',
+      '',
+      'in: packages/core/src',
+      'out: apps/log-server'
+    ].join('\n')
+
+  it('names only the importers whose specifier resolves to the pinned file', () => {
+    const result = readPinnedFileImporters(bodyPinning('packages/core/src/gate.ts'), fixture)
+    expect(result).toEqual([
+      {
+        file: 'packages/core/src/gate.ts',
+        importers: ['apps/cli/src/commands/issue.ts', 'packages/core/src/index.ts']
+      }
+    ])
+  })
+
+  it('searches every importable extension, not only TypeScript', () => {
+    expect(readPinnedFileImporters(bodyPinning('packages/core/src/legacy.mjs'), fixture)).toEqual([
+      { file: 'packages/core/src/legacy.mjs', importers: ['packages/core/scripts/run.mjs'] }
+    ])
+  })
+
+  it('resolves a pinned file whose own basename carries a dot', () => {
+    expect(readPinnedFileImporters(bodyPinning('packages/core/src/config.schema.ts'), fixture)).toEqual([
+      { file: 'packages/core/src/config.schema.ts', importers: ['apps/cli/src/commands/read.ts'] }
+    ])
+  })
+
+  it('finds no importer for a pinned file that is not an importable module', () => {
+    expect(readPinnedFileImporters(bodyPinning('apps/cli/specs/gate.md'), fixture)).toEqual([
+      { file: 'apps/cli/specs/gate.md', importers: [] }
+    ])
+  })
+
+  it('is dormant outside a git repository', () => {
+    expect(readPinnedFileImporters(bodyPinning('packages/core/src/gate.ts'), '')).toEqual([])
+  })
+
+  it('answers tokenExistsInTree from that same tree, and false everywhere outside a repository', () => {
+    const inTree = tokenExistsInTree(fixture)
+    expect(inTree('export const gate')).toBe(true)
+    expect(inTree('--never-shipped')).toBe(false)
+    expect(tokenExistsInTree('')('export const gate')).toBe(false)
+  })
+
+  // The rules' own refusals, run against the REAL tree probe rather than a
+  // stub — the arrangement where a tree answer can suppress a refusal, and so
+  // the only one that proves it cannot suppress the wrong ones.
+  const commandReference = {
+    file: 'packages/sources/src/commands.ts',
+    binary: 'vinaya',
+    commands: [
+      { name: 'issue create', flags: ['--body-file'] },
+      { name: 'check', flags: ['--all', '--deeper'] }
+    ],
+    text: ''
+  }
+  const objective = (text: string) =>
+    [
+      "## Planner's rationale",
+      '',
+      '**Boundary** — In: the gate. Out: nothing else.',
+      '',
+      '## Objectives',
+      '',
+      `O1. ${text}`,
+      '',
+      '## Surface',
+      '',
+      'in: packages/core/src',
+      'out: apps/log-server',
+      '',
+      '## Parts',
+      '',
+      'Part 1 (O1) — the new thing happens.'
+    ].join('\n')
+
+  it('refuses an introduced command even though its own word is all over the tree', () => {
+    const result = checkIntroducedCommandsCovered(
+      objective('`vinaya issue rename` renames the Issue.'),
+      commandReference,
+      tokenExistsInTree(fixture)
+    )
+    expect(tokenExistsInTree(fixture)('rename')).toBe(true)
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toContain('`vinaya issue rename`')
+    expect(result.errors[0]).toContain('Add `packages/sources/src` to `in:`')
+  })
+
+  it('refuses a brand-new configuration key the tree has never carried, in any wording', () => {
+    const configReference = {
+      files: ['packages/sources/src/config-reference.ts', 'apps/cli/src/lib/config.ts'],
+      keys: ['logs', 'reviewPolicy.maxRounds'],
+      text: 'A folder (`logs.folder`) or a server (`logs.url`), never both.'
+    }
+    const inTree = tokenExistsInTree(fixture)
+    for (const wording of [
+      'Add a setting `telemetry.endpoint` for event routing.',
+      'A new configuration key `telemetry.endpoint` names where events go.'
+    ]) {
+      const refused = checkIntroducedConfigKeysCovered(objective(wording), configReference, inTree)
+      expect(refused.status).toBe('fail')
+      expect(refused.errors[0]).toContain('`telemetry.endpoint`')
+    }
+    expect(inTree('telemetry.endpoint')).toBe(false)
+
+    // A dotted token the fixture tree does spell out is code that exists, not a key this task introduces.
+    expect(inTree('settings.retries')).toBe(true)
+    expect(
+      checkIntroducedConfigKeysCovered(
+        objective('`settings.retries` already bounds the retry loop.'),
+        configReference,
+        inTree
+      ).status
+    ).toBe('pass')
+  })
+
+  it('refuses an introduced flag the tree does not carry, and excuses one it does', () => {
+    const inTree = tokenExistsInTree(fixture)
+    const refused = checkIntroducedCommandsCovered(
+      objective('`vinaya check --deep` runs the slow lens.'),
+      commandReference,
+      inTree
+    )
+    expect(refused.status).toBe('fail')
+    expect(refused.errors[0]).toContain('`--deep`')
+    const excused = checkIntroducedCommandsCovered(
+      objective('`vinaya check --other-shipped` runs the other lens.'),
+      commandReference,
+      () => true
+    )
+    expect(excused.status).toBe('pass')
+  })
+
+  it('matches a whole token, so a longer one in the tree never excuses a shorter one', () => {
+    const inTree = tokenExistsInTree(fixture)
+    expect(inTree('--deeper')).toBe(true)
+    expect(inTree('--deep')).toBe(false)
+  })
+
+  it('stops probing the tree past its cap, answering "already shipped" rather than refusing', () => {
+    const inTree = tokenExistsInTree(fixture)
+    const answers = Array.from({ length: 60 }, (_, i) => inTree(`--absent-flag-${i}`))
+    // Under the cap the tree's real answer comes back; past it the cheap,
+    // refuses-nothing one does, so a flooded body costs a bounded number of greps.
+    expect(answers[0]).toBe(false)
+    expect(answers[answers.length - 1]).toBe(true)
+    expect(answers.filter((answer) => answer === false).length).toBe(40)
   })
 })

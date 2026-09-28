@@ -27,6 +27,7 @@ import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import {
+  boundaryPinnedFiles,
   checkAutonomyClause,
   checkBlastRadiusScope,
   checkBoundaryClaimsNeedPremise,
@@ -41,6 +42,10 @@ import {
   checkIssueObjectives,
   checkIssuePremises,
   checkIssueRationale,
+  checkIntroducedCommandsCovered,
+  checkIntroducedConfigKeysCovered,
+  type CommandReferenceFacts,
+  type ConfigReferenceFacts,
   type GateCutovers,
   checkMilestoneShape,
   checkNoBriefContent,
@@ -48,6 +53,8 @@ import {
   checkObjectivesRespectBoundary,
   checkPartsCiteDefinedObjectives,
   checkPartsCoverageAndSequence,
+  checkPinnedFileImportersCovered,
+  type PinnedFileImporters,
   checkPremiseDependencyDeclared,
   checkPremiseCoverage,
   checkPrincipalPlaceholder,
@@ -101,6 +108,7 @@ import {
   parseRationaleDeps,
   resolveMilestoneAttachTarget
 } from '@attalabs/aeg-forge-state'
+import { COMMANDS, CONFIG_REFERENCE } from '@attalabs/vinaya-sources'
 import { coreCheckRegistry } from '../checks/registry'
 import { resolveChecks } from '../checks/resolver'
 import { defaultParallelism, runChecks } from '../checks/runner'
@@ -983,6 +991,185 @@ export function readDocOwnersContent(root: string = repoRoot()): string | null {
 }
 
 /**
+ * The tracked file holding this repository's command reference, or `null`.
+ * The path is this product's own layout, checked for existence rather than
+ * assumed: an adopter that consumes the published CLI carries no copy of the
+ * reference in its own tree, and asking it to widen a Surface to reach a file
+ * it does not have would be a refusal with no satisfiable fix — so the rule
+ * goes dormant there, the same posture `readDocOwnersContent` takes for an
+ * absent manifest.
+ */
+const COMMAND_REFERENCE_FILE = 'packages/sources/src/commands.ts'
+/** The adopter-facing configuration reference, and the schema that validates the same keys — a new key is an edit to both. */
+const CONFIG_REFERENCE_FILES = ['packages/sources/src/config-reference.ts', 'apps/cli/src/lib/config.ts']
+/** The CLI binary an invocation in an Issue is written with. */
+const CLI_BINARY = 'vinaya'
+
+/** Command names and their documented flags, read from the reference module this repository ships (`COMMANDS`) — never re-derived from the argv parser. */
+export function readCommandReference(root: string = repoRoot()): CommandReferenceFacts {
+  const present = root !== '' && existsSync(join(root, COMMAND_REFERENCE_FILE))
+  return {
+    file: present ? COMMAND_REFERENCE_FILE : null,
+    binary: CLI_BINARY,
+    commands: COMMANDS.map((c) => ({ name: c.name, flags: (c.flags ?? []).map((f) => f.flag) })),
+    text: COMMANDS.flatMap((c) => [
+      c.description,
+      ...(c.details ?? []),
+      ...(c.flags ?? []).map((f) => f.description)
+    ]).join('\n')
+  }
+}
+
+/** Configuration keys, read from the same authored registry the web reference renders (`CONFIG_REFERENCE`); `files` holds only the reference/schema files this tree actually carries. */
+export function readConfigReference(root: string = repoRoot()): ConfigReferenceFacts {
+  const files = root === '' ? [] : CONFIG_REFERENCE_FILES.filter((f) => existsSync(join(root, f)))
+  return {
+    files,
+    keys: CONFIG_REFERENCE.map((f) => f.key),
+    text: CONFIG_REFERENCE.flatMap((f) => [...f.semantics, f.example, f.warning ?? '']).join('\n')
+  }
+}
+
+/**
+ * How many distinct tokens one validation may probe the tree for. The body
+ * being validated is attacker-reachable — anyone who can write an Issue writes
+ * its Objectives — and each distinct token costs one full-tree `git grep`, so
+ * an unbounded probe count turns a body listing thousands of invented flags
+ * into thousands of repository scans on every `issue create`/`issue edit`. A
+ * real task introduces a handful of flags or keys; this bound sits far above
+ * that and far below anything that costs real time.
+ */
+const MAX_TREE_PROBES = 40
+
+/**
+ * Does the tracked tree already spell this token out anywhere? A fixed-string
+ * `git grep`, never a regex — the tokens asked about are literals (`--issue`,
+ * `logs.url`) and a regex reading of one would match by accident. A token the
+ * tree already carries is shipped, so an Issue quoting it introduces nothing;
+ * `''` (outside a git repository) answers `false` for everything, which leaves
+ * the rules grading against the reference alone.
+ *
+ * `-w` makes the match a whole word, not a substring: without it a longer
+ * token already in the tree answered for a shorter one nested inside it
+ * (`--deep` excused by an existing `--deeper`), which is the same
+ * accidental-match failure `-F` exists to prevent, one level up.
+ *
+ * Past `MAX_TREE_PROBES` distinct tokens it answers `true` — "already
+ * shipped", the direction that refuses NOTHING — without running a further
+ * grep. A body past that bound is not a real task's Objectives, and the worst
+ * outcome of the cap is a rule that stays quiet on such a body; answering
+ * `false` there would turn the same cheap flood into a wall of refusals
+ * instead, which is the more damaging half of the same abuse.
+ *
+ * Runs with `-C root` rather than the process's own directory, so the tree
+ * asked about is always the repository the write is being validated against —
+ * and a test can point it at a fixture tree instead of this one.
+ */
+export function tokenExistsInTree(root: string = repoRoot()): (token: string) => boolean {
+  if (!root) return () => false
+  const seen = new Map<string, boolean>()
+  return (token: string) => {
+    const cached = seen.get(token)
+    if (cached !== undefined) return cached
+    if (seen.size >= MAX_TREE_PROBES) return true
+    const found = git(['-C', root, 'grep', '-l', '-F', '-w', '-e', token]) !== ''
+    seen.set(token, found)
+    return found
+  }
+}
+
+/** Only a code module can be imported — a pinned `.md` spec or `.json` config has no importers, whatever its basename collides with. */
+const IMPORTABLE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'] as const
+
+/**
+ * The files searched for import sites — the same extensions a pinned file may
+ * carry, never a narrower set. Searching only `*.ts`/`*.tsx` while accepting a
+ * pinned `.mjs` reported an empty importer list for it, and an empty list is
+ * how this seam says "dormant": the rule then never fired for that pin, even
+ * where a real uncovered importer existed.
+ */
+const IMPORT_SEARCH_PATHSPEC = IMPORTABLE_EXTENSIONS.map((e) => `*${e}`)
+
+/** A specifier's own module extension, dropped — `'./gate.js'` and `'./gate'` name the same module, and so do the `.mjs`/`.cjs` forms. */
+function stripImportableExtension(path: string): string {
+  const extension = IMPORTABLE_EXTENSIONS.find((e) => path.endsWith(e))
+  return extension === undefined ? path : path.slice(0, -extension.length)
+}
+
+/** A literal made safe for `git grep -E` — a pinned basename may carry a `.` (`config.schema.ts`), which is a wildcard unescaped. */
+function escapeForExtendedRegex(literal: string): string {
+  return literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/** `a/b/../c` → `a/c`, and a leading `./` dropped — the specifier resolution below never touches disk, so it normalizes the path itself. */
+function normalizeRelative(path: string): string {
+  const out: string[] = []
+  for (const segment of path.split('/')) {
+    if (segment === '' || segment === '.') continue
+    if (segment === '..') out.pop()
+    else out.push(segment)
+  }
+  return out.join('/')
+}
+
+/**
+ * Every relative import specifier written in `line`, resolved against the
+ * importing file's own directory. A bare package specifier (`@attalabs/…`,
+ * `node:fs`) resolves to no file and is skipped — it names a package, never a
+ * path in this tree.
+ */
+function resolvedSpecifiers(importerFile: string, line: string): string[] {
+  const dir = importerFile.includes('/') ? importerFile.slice(0, importerFile.lastIndexOf('/')) : ''
+  const out: string[] = []
+  for (const m of line.matchAll(/['"](\.[^'"]*)['"]/g)) {
+    const spec = stripImportableExtension(m[1] as string)
+    out.push(normalizeRelative(`${dir}/${spec}`))
+  }
+  return out
+}
+
+/**
+ * Every tracked source file that imports one of the Boundary's pinned files.
+ *
+ * Resolution is path-exact, never basename-exact: `git grep` prefilters the
+ * lines whose specifier ENDS in the pinned module's own basename, then each of
+ * those specifiers is resolved against its own importing file's directory and
+ * compared to the pinned path. A basename match alone is not an import of this
+ * file — `apps/log-server/specs/server.md` and
+ * `apps/cli/src/lib/task-tools/server.ts` share a basename and nothing else,
+ * and a prefilter-only answer named every importer of the second as an
+ * importer of the first.
+ *
+ * Outside a git repository, with no pinned file named, or with a pinned file
+ * that is not an importable module at all, this returns an empty importer list
+ * and the rule goes dormant rather than guessing — same posture as every other
+ * seam resolved here.
+ */
+export function readPinnedFileImporters(body: string, root: string = repoRoot()): PinnedFileImporters[] {
+  if (!root) return []
+  return boundaryPinnedFiles(body).map((file) => {
+    const extension = IMPORTABLE_EXTENSIONS.find((e) => file.endsWith(e))
+    if (extension === undefined) return { file, importers: [] }
+    const base = escapeForExtendedRegex((file.split('/').pop() as string).slice(0, -extension.length))
+    const suffixes = IMPORTABLE_EXTENSIONS.map((e) => escapeForExtendedRegex(e)).join('|')
+    const pattern = `['"][^'"]*/${base}(${suffixes})?['"]`
+    const hits = git(['-C', root, 'grep', '-nE', pattern, '--', ...IMPORT_SEARCH_PATHSPEC])
+    const importers = new Set<string>()
+    for (const hit of hits === '' ? [] : hits.split('\n')) {
+      const cut = hit.indexOf(':')
+      if (cut === -1) continue
+      const importer = hit.slice(0, cut)
+      if (importer === file) continue
+      const lineStart = hit.indexOf(':', cut + 1)
+      const text = lineStart === -1 ? '' : hit.slice(lineStart + 1)
+      const target = file.slice(0, -extension.length)
+      if (resolvedSpecifiers(importer, text).includes(target)) importers.add(importer)
+    }
+    return { file, importers: [...importers].sort() }
+  })
+}
+
+/**
  * One repository-relative path out of the working checkout, or `null` when it
  * does not exist — the `readFile` seam O1's premise check reads through. A path
  * is resolved against the repository root and refused if it escapes it: a
@@ -1030,6 +1217,12 @@ const ISSUE_CONTENT_RECOVERY = {
     "Rewrite the named sentence so it does not assign ownership of this task's own objective to another task — depend on the other task instead (`Dependency rationale`), or fold the work back into this task's own Objectives/Parts. Then re-run `{cmd}`.",
   partsCoverageAndSequence:
     'Fix the named `## Parts` defect — cite every declared objective from at least one Part, and number Parts contiguously from 1 — then re-run `{cmd}`.',
+  introducedCommands:
+    "Add the named directory glob to `## Surface`'s `in:` list so this task can write the command reference row the flag/command needs, or drop the flag/command from the Objectives and Parts. Then re-run `{cmd}`.",
+  introducedConfigKeys:
+    "Add the named directory globs to `## Surface`'s `in:` list so this task can write both the configuration schema and its reference row, or drop the key from the Objectives and Parts. Then re-run `{cmd}`.",
+  pinnedFileImporters:
+    "Add the named directory glob to `## Surface`'s `in:` list so the call site can be updated, or name the importer (or its directory) in the Boundary's `Out:` clause to exclude it deliberately. Then re-run `{cmd}`.",
   issuePremises:
     'Fix the named `## Premises` line so the file really contains the text (re-read the code, then write what it holds), or — when a task that has not merged yet is what makes it true — prefix the premise `after #<n>:` and declare `Depends-on` on that Issue. Then re-run `{cmd}`.',
   premiseDependencyDeclared:
@@ -1075,6 +1268,14 @@ export type IssueContentInput = {
   milestoneSiblings: TaskSurfaceFacts[] | null
   /** How this subject is referred to in a sibling's `Conflicts-with` — its Issue number, or `''` for a not-yet-created Issue (a sibling cannot yet name a number that does not exist). */
   subjectRef: string
+  /** The command reference this repository ships (`readCommandReference`) — `file: null` ⇒ dormant. */
+  commandReference: CommandReferenceFacts
+  /** The configuration reference and schema this repository ships (`readConfigReference`) — no files ⇒ dormant. */
+  configReference: ConfigReferenceFacts
+  /** Each Boundary-pinned file's tracked importers (`readPinnedFileImporters`) — empty ⇒ dormant. */
+  pinnedFileImporters: PinnedFileImporters[]
+  /** Does the tracked tree already carry this literal token? (`tokenExistsInTree`) — separates a token this Issue introduces from one it merely quotes. */
+  existsInTree: (token: string) => boolean
 }
 
 /**
@@ -1127,6 +1328,15 @@ export function validateIssueContent(input: IssueContentInput): CheckError[] {
     [checkObjectivesRespectBoundary(input.body).errors, 'objectivesRespectBoundary'],
     [checkNoForeignTaskOwnership(input.body).errors, 'noForeignTaskOwnership'],
     [checkPartsCoverageAndSequence(input.body).errors, 'partsCoverageAndSequence'],
+    [
+      checkIntroducedCommandsCovered(input.body, input.commandReference, input.existsInTree).errors,
+      'introducedCommands'
+    ],
+    [
+      checkIntroducedConfigKeysCovered(input.body, input.configReference, input.existsInTree).errors,
+      'introducedConfigKeys'
+    ],
+    [checkPinnedFileImportersCovered(input.body, input.pinnedFileImporters).errors, 'pinnedFileImporters'],
     [checkIssuePremises(input.body, input.readFile).errors, 'issuePremises'],
     [checkPremiseDependencyDeclared(input.body).errors, 'premiseDependencyDeclared'],
     [checkBoundaryClaimsNeedPremise(input.body).errors, 'boundaryClaimsNeedPremise']
@@ -1836,7 +2046,11 @@ export async function collectTaskIssueErrors(
       readFile: readCheckoutFile,
       docOwnersContent: readDocOwnersContent(),
       milestoneSiblings,
-      subjectRef: issueNumber !== null ? String(issueNumber) : ''
+      subjectRef: issueNumber !== null ? String(issueNumber) : '',
+      commandReference: readCommandReference(),
+      configReference: readConfigReference(),
+      pinnedFileImporters: readPinnedFileImporters(body),
+      existsInTree: tokenExistsInTree()
     })
   )
 

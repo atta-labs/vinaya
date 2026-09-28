@@ -256,6 +256,7 @@ export type {
   ReviewInputManifestFacts
 } from './review-input-manifest'
 export {
+  boundaryPinnedFiles,
   checkBlastRadiusScope,
   checkBoundaryClaimsNeedPremise,
   checkConflictCompleteness,
@@ -267,12 +268,15 @@ export {
   checkIssuePremises,
   checkIssueRationale,
   checkIssueType,
+  checkIntroducedCommandsCovered,
+  checkIntroducedConfigKeysCovered,
   checkMilestoneAttach,
   checkNoBriefContent,
   checkNoForeignTaskOwnership,
   checkObjectivesRespectBoundary,
   checkPartsCiteDefinedObjectives,
   checkPartsCoverageAndSequence,
+  checkPinnedFileImportersCovered,
   checkPremiseDependencyDeclared,
   checkPremisesHold,
   checkProjectsRegistered,
@@ -300,6 +304,9 @@ export {
   parseIssueTestPlan
 } from './issue-validation'
 export type {
+  CommandReferenceEntry,
+  CommandReferenceFacts,
+  ConfigReferenceFacts,
   FrozenSection,
   IssueDocumentation,
   IssueDocumentationSource,
@@ -308,6 +315,7 @@ export type {
   IssueSectionResult,
   IssueSurface,
   IssueTestPlan,
+  PinnedFileImporters,
   SurfaceScopeResult,
   SurfaceScopeViolation,
   ProjectPath,
