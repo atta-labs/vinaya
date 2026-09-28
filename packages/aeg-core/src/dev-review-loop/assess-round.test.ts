@@ -8,7 +8,7 @@ import {
   notMetVerdict,
   runScenario
 } from './fakes'
-import { initialLoopState } from './types'
+import { initialLoopState, SEVERITY_COLUMNS } from './types'
 import type { LoopConfig } from './types'
 
 const CONFIG: LoopConfig = {
@@ -530,5 +530,52 @@ describe('assessRound — Part 3 (O2): the exits', () => {
     ])
 
     expect(decisions.at(-1)).toEqual({ type: 'dispatch_developer' })
+  })
+})
+
+describe('assessRound — a round no reviewer saw records no counts and names why (Issue #824)', () => {
+  it('a red gate records an empty count map and `checks_red`, while the round_ended log keeps `changes_requested`', () => {
+    const { state, events } = runScenario(freshState(), [fakeGate(1, false)])
+
+    const record = state.rounds.at(-1)
+    // Empty, not seeded-at-zero: the renderer's "counts have no source" path
+    // shows `—`, never a `0` a reader takes for a reviewed-clean round.
+    expect(record?.countsBySeverity).toEqual({})
+    expect(record?.notReviewed).toBe('checks_red')
+    expect(record?.outcome).toBe('changes_requested')
+    // Trap: the log event a reader parses is unchanged by this.
+    expect(events.find((e) => e.event === 'round_ended')).toMatchObject({ outcome: 'changes_requested' })
+  })
+
+  it('a below-50 confidence that sends the developer back records no counts and names `low_confidence`, carrying the stated figure', () => {
+    const { state, decisions } = runScenario(freshState(), [
+      fakeGate(1, true),
+      fakeVerdicts(1, [
+        blockingVerdict('reviewer', [{ id: 'F1', severity: 'blocker', state: 'open' }]),
+        cleanVerdict('security')
+      ]),
+      fakeGate(2, true, { confidence: { value: 49 } })
+    ])
+
+    // The decision itself is unchanged — the developer is still sent back.
+    expect(decisions.at(-1)).toEqual({ type: 'dispatch_developer', reason: 'confidence' })
+    const record = state.rounds.at(-1)
+    expect(record?.round).toBe(2)
+    expect(record?.countsBySeverity).toEqual({})
+    expect(record?.notReviewed).toBe('low_confidence')
+    expect(record?.confidence).toEqual({ value: 49 })
+    expect(record?.outcome).toBe('changes_requested')
+  })
+
+  it('a round the reviewers assessed and found nothing in records seeded zeros and no not-reviewed reason', () => {
+    const { state } = runScenario(freshState(), [
+      fakeGate(1, true, { confidence: { value: 80 } }),
+      fakeVerdicts(1, [cleanVerdict('reviewer'), cleanVerdict('security')])
+    ])
+
+    const record = state.rounds.at(-1)
+    expect(record?.notReviewed).toBeUndefined()
+    // Every severity column is present at zero — a measurement, not an absence.
+    expect(Object.keys(record?.countsBySeverity ?? {}).sort()).toEqual([...SEVERITY_COLUMNS].sort())
   })
 })

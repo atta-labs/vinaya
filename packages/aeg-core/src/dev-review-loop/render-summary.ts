@@ -6,7 +6,7 @@
  */
 
 import { SUMMARY_TABLE_HEADER } from './journal-reconstruction'
-import { SEVERITY_COLUMNS, type Confidence, type Journal, type RoundRecord } from './types'
+import { SEVERITY_COLUMNS, type Confidence, type Journal, type NotReviewedReason, type RoundRecord } from './types'
 
 /**
  * The two non-numeric cells this table writes, named once so the parser below
@@ -38,14 +38,18 @@ function confidenceCell(confidence: Confidence | null): string {
  *
  * A round the loop ASSESSED records every severity column, zeros included
  * (`buildRoundRecord`, `assess-round.ts`), so a record carrying none of them
- * is one whose counts have no source: a round rebuilt from the pull request's
- * own round markers after a restart, which name a round's number and head and
- * carry no finding breakdown at all (`journal-reconstruction.ts`). Writing `0`
- * for those cells told a reader the round was clean — four rounds of a real
- * task's published table read as zero findings when the truth was that nobody
- * knew. The distinction is whether the counts were recorded, never whether
- * they are zero: a round the loop assessed and found nothing in still reads
- * `0`, because that zero is a measurement.
+ * is one whose counts have no source. Two kinds carry none: a round rebuilt
+ * from the pull request's own round markers after a restart, which name a
+ * round's number and head and carry no finding breakdown at all
+ * (`journal-reconstruction.ts`); and a round no reviewer ever saw — its gate
+ * was red, or a low confidence sent the developer back — which records no
+ * counts on purpose (`buildUnreviewedRecord`, `assess-round.ts`) and names why
+ * in its outcome cell (`outcomeCell` below). Writing `0` for those cells told a
+ * reader the round was clean — four rounds of a real task's published table
+ * read as zero findings when the truth was that nobody knew, and an unreviewed
+ * round read as a clean review that never ran. The distinction is whether the
+ * counts were recorded, never whether they are zero: a round the loop assessed
+ * and found nothing in still reads `0`, because that zero is a measurement.
  */
 function countCells(record: RoundRecord): string[] {
   const recorded = SEVERITY_COLUMNS.some((key) => record.countsBySeverity[key] !== undefined)
@@ -53,8 +57,27 @@ function countCells(record: RoundRecord): string[] {
   return SEVERITY_COLUMNS.map((key) => String(record.countsBySeverity[key] ?? 0))
 }
 
+/**
+ * The outcome cell. A round the loop assessed (or one rebuilt from a marker)
+ * prints its own `outcome` verbatim — the vocabulary `render-summary.test.ts`
+ * pins (`green`, `changes_requested`, `escalated`, `stopped`). A round no
+ * reviewer saw (`notReviewed` set, `buildUnreviewedRecord` in
+ * `assess-round.ts`) instead states that no review ran and why, so a reader
+ * never takes its `—` counts for a clean round the way the old `0` /
+ * `changes_requested` row read.
+ */
+const NOT_REVIEWED_REASON_TEXT: Record<NotReviewedReason, string> = {
+  checks_red: 'checks red',
+  low_confidence: 'low confidence'
+}
+
+function outcomeCell(record: RoundRecord): string {
+  if (record.notReviewed !== undefined) return `not reviewed — ${NOT_REVIEWED_REASON_TEXT[record.notReviewed]}`
+  return record.outcome
+}
+
 function row(record: RoundRecord): string {
-  return `| ${record.round} | ${countCells(record).join(' | ')} | ${confidenceCell(record.confidence)} | ${record.outcome} |`
+  return `| ${record.round} | ${countCells(record).join(' | ')} | ${confidenceCell(record.confidence)} | ${outcomeCell(record)} |`
 }
 
 export function renderSummary(journal: Journal): string {
