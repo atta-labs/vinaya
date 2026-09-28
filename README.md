@@ -156,11 +156,14 @@ Apache-2.0 and stay Apache-2.0.
 What that means for you:
 
 - You can use and modify Vinaya freely, including at work, inside your own company.
-- You may not use it to build a competing product or service.
-- Each released version becomes Apache-2.0 on the second anniversary of its release.
+- You may not make it available to others as a commercial product or service that substitutes for Vinaya.
+- Each released version becomes `Apache-2.0` on the second anniversary of its release.
 
-All other code and content in this repository is copyright Daniel Estevez / AttaLabs, all rights
-reserved. The [root `LICENSE`](LICENSE) lists which directories fall under which terms.
+The `@attalabs/vinaya` tarball also carries the `aeg-root/` doctrine and the `studio-standalone/`
+dashboard, and from version `0.35.0` both are distributed under the same terms as the CLI. All
+other code and content in this repository, meaning what none of the five packages distributes, is
+copyright Daniel Estevez, all rights reserved. The [root `LICENSE`](LICENSE) lists which
+directories fall under which terms.
 
 <div align="center">
 

@@ -15,6 +15,10 @@ Copyright (C) 2026 Daniel Estevez.
    - @attalabs/aeg-types         packages/aeg-types/LICENSE
    - @attalabs/vinaya-sources    packages/sources/LICENSE
 
+   The @attalabs/vinaya tarball also carries the aeg-root/ doctrine and the
+   studio-standalone/ dashboard. From version 0.35.0 onward, both are
+   distributed under the same FSL-1.1-ALv2 terms as the CLI.
+
 2. Earlier versions
 
    Versions 0.34.0 and earlier of those five packages were released under the
@@ -22,5 +26,6 @@ Copyright (C) 2026 Daniel Estevez.
 
 3. Everything else
 
-   All other code and content in this repository is copyright Daniel Estevez /
-   AttaLabs, all rights reserved.
+   All other code and content in this repository, meaning what is not
+   distributed in any of the five packages, is copyright Daniel Estevez, all
+   rights reserved.
