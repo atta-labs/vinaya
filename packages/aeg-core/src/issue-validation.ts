@@ -301,10 +301,20 @@ export function parseIssueSurface(body: string): ParsedIssueSection<IssueSurface
  * — shared by O4 (does a `## Surface` `in:` glob touch a shared collision
  * domain?) and O6 (does a `## Surface` glob contain a doc pointer?). Both
  * sides are stripped of a trailing `/**`/`/*` and any trailing slash first.
+ *
+ * **The root glob `*` names the repository-root files.** A bare `*` covers
+ * every tracked path with no `/` (`README.md`, `LICENSE`) — and ONLY those.
+ * It never admits a nested path, so the common `in: *, out: apps` shape still
+ * excludes `apps/...`, and `*` in an `out:` list excludes only root-level
+ * files. Without this case a bare `*` covered nothing real — no legal glob
+ * admitted a repository-root file, so a Boundary pinning `README.md` could not
+ * validate and its brief rendered an empty file list. Only `*` is the
+ * root glob; `.` keeps its existing prefix behaviour unchanged.
  */
 export function globCoversPath(glob: string, path: string): boolean {
   const g = glob.replace(/\/\*\*?$/, '').replace(/\/+$/, '')
   const p = path.replace(/\/+$/, '')
+  if (g === '*') return !p.includes('/')
   return g === p || g.startsWith(`${p}/`) || p.startsWith(`${g}/`)
 }
 

@@ -149,7 +149,7 @@ R1 checks **presence/structure only**; whether the content is correct (sizing ac
 <!-- AEG:CLAIM: packages/aeg-core/src/brief-render.ts contains:export function renderBrief(facts: BriefFacts, template: string): RenderResult { -->
 **Four more sections, below the eight fields, since `BRIEF_SECTIONS_SINCE_ISSUE`** — judgment sections as data, so `vinaya brief render` can fill §4/§6/§9/§10 mechanically instead of a hand-authored placeholder. Each is parsed by its own function in `@attalabs/aeg-core`, and a well-formed one is directory-level/outcome-level only — never a file path:
 
-- **`## Surface`** — a directory-level `in:`/`out:` glob list, comma-separated on each of its own line, naming what this task's surface touches and explicitly does not.
+- **`## Surface`** — a directory-level `in:`/`out:` glob list, comma-separated on each of its own line, naming what this task's surface touches and explicitly does not. The repository-root files (`README.md`, `LICENSE`, and any other tracked path with no `/`) are named by the **root glob `*`**: a bare `*` in `in:` admits every root-level file and only those — it never reaches a nested path, so the common `in: *, out: apps` shape still excludes `apps/…` — and a `*` in `out:` excludes only root-level files.
 - **`## Parts`** — numbered `Part <k> (O<n>[, O<m>]) — <outcome>` lines, one per Part, naming outcomes and symbols only, never a path.
 - **`## Test plan`** — either the `Test plan: unit-tests-only` sentinel, or a fenced command list (one command per line, each with `→ <expected observable>`) plus any `**[principal]**` items.
 - **`## Stop conditions`** — a bullet list of the conditions under which the executing agent must stop and escalate.

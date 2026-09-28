@@ -357,6 +357,21 @@ describe('renderBrief', () => {
       expect(result.brief).not.toContain('apps/cli/src/lib/unrelated-file.ts')
     })
 
+    it('admits a repository-root file under the root glob `*`, and never a nested path (#826, O1/O2)', () => {
+      const facts = baseFacts({
+        surface: { in: ['*'], out: [] },
+        surfaceFiles: [
+          { path: 'README.md', sha256: 'a'.repeat(64), packageName: null },
+          { path: 'packages/aeg-core/src/nested.ts', sha256: 'b'.repeat(64), packageName: '@attalabs/aeg-core' }
+        ]
+      })
+      const result = renderBrief(facts, TEMPLATE)
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.brief).toContain('README.md')
+      expect(result.brief).not.toContain('packages/aeg-core/src/nested.ts')
+    })
+
     it('refuses rather than rendering an empty surface map when Surface admits none of the Boundary-named files', () => {
       const facts = baseFacts({
         surface: { in: ['aeg-root'], out: [] },
