@@ -1317,12 +1317,18 @@ export GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX
 export GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_TRACE2
 ${unsetSnippet}
 echo "GIT_DIR after unset: [$GIT_DIR]"
-echo "GIT_ left in a child's own env: [$(sh -c 'env | grep -c "^GIT_" || true')]"
+sh -c 'printf "child reads: [%s][%s][%s][%s][%s][%s][%s][%s]\\n" "$GIT_DIR" "$GIT_WORK_TREE" "$GIT_INDEX_FILE" "$GIT_PREFIX" "$GIT_CONFIG_COUNT" "$GIT_CONFIG_KEY_0" "$GIT_CONFIG_VALUE_0" "$GIT_TRACE2"'
 git rev-parse --git-dir 2>&1 || true
 `
     const out = execFileSync('sh', ['-c', script], { cwd: '/tmp', encoding: 'utf8' })
     expect(out).toContain('GIT_DIR after unset: []')
-    expect(out).toContain("GIT_ left in a child's own env: [0]")
+    // The child reads each variable by name rather than counting `env | grep
+    // "^GIT_"` lines: any OTHER variable in scope whose value spans lines —
+    // `PR_BODY`, which `vinaya pr report` exports around every Test-plan
+    // command, and which may quote a `GIT_DIR=…` line of its own — puts lines
+    // that look exactly like an environment entry into `env`'s output, and the
+    // count read them as leaked variables that were never set.
+    expect(out).toContain('child reads: [][][][][][][][]')
     expect(out).not.toContain('/tmp/should-never-be-read')
     expect(out).not.toContain('core.bare')
   })

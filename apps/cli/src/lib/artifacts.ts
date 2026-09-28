@@ -1334,6 +1334,11 @@ if [ -n "$VINAYA_SELECTED_TESTS" ]; then
   # own). Measured on a real push from a linked worktree: with a
   # letters-only pattern those three survived the loop and reached the
   # test run's own child processes.
+  #
+  # Reading names out of \`env\` cannot MISS a variable — a real one always
+  # holds a line of its own — and an unrelated variable whose value spans
+  # lines (a pull-request body, say) can at worst contribute a name that is
+  # not set, which \`unset\` accepts as the no-op it is.
   for _vinaya_git_var in $(env | grep -o '^GIT_[A-Za-z0-9_]*='); do
     unset "\${_vinaya_git_var%=*}"
   done
