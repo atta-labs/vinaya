@@ -2190,15 +2190,20 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
 // Raised 21 → 22: `apps/cli/tests/lib/gate-cutovers.test.ts` newly imports
 // `config.ts` directly (to cover `resolveGateCutovers`), so a `config.ts`
 // change now selects that one extra suite. The rule working, not a regression.
+//
+// Raised 22 → 23: `apps/cli/tests/new-check.test.ts` newly imports
+// `log-sink.ts` directly, for the test-only reset of the sink's
+// process-lifetime trust-anchor memo it drops in its own teardown — so a
+// `log-sink.ts` change now selects that one extra suite. Same rule.
 describe('selectAffectedTestFiles depth: "one" — reference change-set ceilings (Issue #707, O1)', () => {
-  it('a change to the log sink (log-sink.ts/config.ts/run-paths.ts) selects at most 22 files', () => {
+  it('a change to the log sink (log-sink.ts/config.ts/run-paths.ts) selects at most 23 files', () => {
     const changed = [
       join(REPO_ROOT, 'apps/cli/src/lib/log-sink.ts'),
       join(REPO_ROOT, 'apps/cli/src/lib/config.ts'),
       join(REPO_ROOT, 'apps/cli/src/lib/run-paths.ts')
     ]
     const { selected } = selectAffectedTestFiles(REPO_ROOT, changed, { depth: 'one' })
-    expect(selected.length).toBeLessThanOrEqual(22)
+    expect(selected.length).toBeLessThanOrEqual(23)
   })
 
   it('a change to a widely imported export of the shared core package selects at most 25 files', () => {
