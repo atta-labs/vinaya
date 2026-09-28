@@ -244,7 +244,11 @@ describe('the default-branch logs read belongs to the process, and is silent', (
   it('a default-branch read that never answers holds log() back for a bounded time, then falls back to the local default', () => {
     const f = setUpAnchorFixture('never-answers')
     const started = Date.now()
-    const { stdout } = runAnchorProbe(f.cwd, { ...f.env, VINAYA_ROLE: 'developer', PROBE_WAIT_MS: '5000' })
+    // Wait past `LOG_DESTINATION_ANCHOR_DEADLINE_MS` (8s) so the fallback and
+    // its write land before the probe exits; the deadline sits below the inner
+    // `gh` timeout, so a never-answering read falls back at ~8s, not at the
+    // child's own 10s kill.
+    const { stdout } = runAnchorProbe(f.cwd, { ...f.env, VINAYA_ROLE: 'developer', PROBE_WAIT_MS: '10000' })
     expect(Date.now() - started).toBeLessThan(15_000)
     expect(stdout).toBe('')
     expect(lineIn(join(f.cwd, '.vinaya'), 'anchor-probe')).toBe(true)

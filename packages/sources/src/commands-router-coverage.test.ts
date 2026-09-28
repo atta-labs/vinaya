@@ -98,7 +98,8 @@ describe('router -> COMMANDS coverage', () => {
         'quickstart',
         'tokens',
         'release',
-        'dispatch'
+        'dispatch',
+        'log send'
       ])
     )
   })

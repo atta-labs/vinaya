@@ -62,7 +62,9 @@ import {
 } from '../lib/config.js'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import {
+  describeFolderFallback,
   LOG_CONTEXT_LOOKUP_DEADLINE_MS,
+  LOG_DESTINATION_ANCHOR_DEADLINE_MS,
   type ResolvedLogDestination,
   resolveLogDestinationFrom,
   withDeadline
@@ -186,8 +188,19 @@ export function logDestinationTargetFrom(input: {
 export async function resolveLogDestinationForDoctor(): Promise<LogDestinationTarget> {
   const localConfig = loadConfig()
   const unattended = isUnattendedProcess(process.env) || Boolean(process.env.GITHUB_ACTIONS)
+  // The trust-anchor read is bounded by the SAME deadline the sink bounds it
+  // with (`LOG_DESTINATION_ANCHOR_DEADLINE_MS`, longer than the per-event
+  // `LOG_CONTEXT_LOOKUP_DEADLINE_MS` the repo read below uses): past it the
+  // sink degrades to a null anchor and its folder fallback, so doctor must
+  // degrade identically or it would report a folder the sink no longer uses —
+  // on a Mac, exactly the destination the deadline fix teaches the sink to
+  // deliver to.
   const trustAnchorConfig = unattended
-    ? await withDeadline(loadTrustAnchorConfigAsync(undefined, { quiet: true }), LOG_CONTEXT_LOOKUP_DEADLINE_MS, null)
+    ? await withDeadline(
+        loadTrustAnchorConfigAsync(undefined, { quiet: true }),
+        LOG_DESTINATION_ANCHOR_DEADLINE_MS,
+        null
+      )
     : null
   // Bounded for the same reason the anchor read above is, and by the same
   // deadline: the sink wraps this identical lookup too, and a git child whose
@@ -1288,19 +1301,30 @@ async function diagnoseLogDestination(deps: DoctorDeps): Promise<Finding[]> {
 
   if (destination.kind === 'folder') {
     const deliverable = folderDeliverable(destination.folder)
-    return [
-      deliverable.ok
-        ? ok(
-            'logs',
-            `log events go to the folder ${destination.folder}, and it is writable` +
-              `${deliverable.probed === destination.folder ? '' : ` (its nearest existing parent ${deliverable.probed} is)`}.`
-          )
-        : error(
-            'logs',
-            `log events go to the folder ${destination.folder}, which cannot be written — ${deliverable.detail}. ` +
-              'Every event is dropped, with one warning per process, until it can be.'
-          )
-    ]
+    if (!deliverable.ok) {
+      return [
+        error(
+          'logs',
+          `log events go to the folder ${destination.folder}, which cannot be written — ${deliverable.detail}. ` +
+            'Every event is dropped, with one warning per process, until it can be.'
+        )
+      ]
+    }
+    const writable =
+      `log events go to the folder ${destination.folder}, and it is writable` +
+      `${deliverable.probed === destination.folder ? '' : ` (its nearest existing parent ${deliverable.probed} is)`}.`
+    // O2: when a `logs.url` server WAS configured but is not being used, report
+    // the SAME reason the sink's own one-line warning names — through the SAME
+    // `describeFolderFallback`, so doctor and the sink can never disagree about
+    // why. `anchor-unreadable` is `info` (transient/offline — nothing is lost,
+    // the folder holds it and `vinaya log send` delivers it later, the same
+    // reasoning the `unreachable` server case is `info` for); `anchor-mismatch`
+    // is `warn` (a standing configuration divergence the operator must fix).
+    if (destination.fallbackReason) {
+      const message = `${writable} But it ${describeFolderFallback(destination.fallbackReason)}.`
+      return [destination.fallbackReason.kind === 'anchor-mismatch' ? warn('logs', message) : info('logs', message)]
+    }
+    return [ok('logs', writable)]
   }
 
   const probe = await deps.probeLogServer(destination.url, destination.headers)
@@ -1462,5 +1486,5 @@ export async function doctorCommand(args: string[]): Promise<void> {
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  doctor: { date: '2026-09-05', callsToday: 17, retiresVia: 'sharedCommandShell' }
+  doctor: { date: '2026-09-05', callsToday: 18, retiresVia: 'sharedCommandShell' }
 }

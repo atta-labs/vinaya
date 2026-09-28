@@ -429,6 +429,30 @@ describe('drainOutboxToWebhook — the logs.url server-destination delivery path
     expect(queueContent(path)).toBe('')
   }, 10000)
 
+  it('sends a draining file a dead process left behind, on the next drain, even with no live or backup file of its own (O3, Issue #832)', async () => {
+    const cwd = tempDir('log-webhook-cwd-')
+    initGitRepo(cwd)
+    const home = tempDir('log-webhook-home-')
+    const server = startWebhookServer(200)
+    // A process that renamed the bucket aside and then died mid-drain leaves
+    // exactly this: a `<name>.draining.ndjson` with no `<name>.ndjson` and no
+    // `<name>.1.ndjson` beside it. It must not sit forever — the next drain
+    // (here a fresh process, the same shape a new event's own drain takes once
+    // the destination resolves to a server again) delivers it and removes it.
+    const stranded = ndjsonLine('dead-process', 745)
+    seedSibling(home, 745, '.draining.ndjson', [stranded])
+
+    const result = await runDrainAsync(745, server.url, undefined, cwd, home)
+    server.stop()
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('unreachable')
+    expect(result.outcome.flushed).toBe(true)
+    expect(result.outcome.lineCount).toBe(1)
+    expect(server.requests.map((r) => runIdsOf(r.body))).toEqual([['dead-process']])
+    expect(existsSync(siblingPath(home, 745, '.draining.ndjson'))).toBe(false)
+  }, 20000)
+
   it('reports nothing to flush for a missing outbox, without contacting the webhook', async () => {
     const cwd = tempDir('log-webhook-cwd-')
     initGitRepo(cwd)

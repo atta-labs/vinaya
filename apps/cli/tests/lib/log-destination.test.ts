@@ -25,6 +25,7 @@ import {
 } from '../../src/lib/config.js'
 import {
   createLogSink,
+  describeFolderFallback,
   resolveLogAppendPath,
   resolveLogDestinationFrom,
   type LogSinkDeps
@@ -208,11 +209,62 @@ describe('resolveLogDestinationFrom (pure) — who is allowed to name the destin
     ).toEqual({ kind: 'server', url: 'https://example.com/ingest', headers: { authorization: 'Bearer xyz' } })
   })
 
-  it('an unattended caller never honours a working-tree server destination the default branch does not also declare — falls back to the default folder, never a partial/unrouted server attempt', () => {
+  it('an unattended caller never honours a working-tree server destination the default branch does not also declare — falls back to the default folder, never a partial/unrouted server attempt, and names why (O2)', () => {
+    // `trustAnchorConfig: null` — the default branch config could not be read at
+    // all (offline/unauthenticated `gh`, or no file there), so the fallback is
+    // `anchor-unreadable`, carrying the url it could not confirm.
     expect(
       resolveLogDestinationFrom({
         localConfig: { logs: { url: 'https://attacker.example.com/ingest' } } as VinayaConfig,
         trustAnchorConfig: null,
+        unattended: true,
+        env: {},
+        defaultFolder: DEFAULT_FOLDER
+      })
+    ).toEqual({
+      kind: 'folder',
+      folder: DEFAULT_FOLDER,
+      fallbackReason: { kind: 'anchor-unreadable', intendedUrl: 'https://attacker.example.com/ingest' }
+    })
+  })
+
+  it('an unattended caller whose default branch WAS read but declares a different url falls back with an anchor-mismatch reason (O2)', () => {
+    expect(
+      resolveLogDestinationFrom({
+        localConfig: { logs: { url: 'https://attacker.example.com/ingest' } } as VinayaConfig,
+        trustAnchorConfig: { logs: { url: 'https://trusted.example.com/ingest' } } as VinayaConfig,
+        unattended: true,
+        env: {},
+        defaultFolder: DEFAULT_FOLDER
+      })
+    ).toEqual({
+      kind: 'folder',
+      folder: DEFAULT_FOLDER,
+      fallbackReason: { kind: 'anchor-mismatch', intendedUrl: 'https://attacker.example.com/ingest' }
+    })
+  })
+
+  it('an unattended caller whose working-tree url the default branch DOES declare gets the server, no fallback reason (O1: the Mac delivers once the anchor is read)', () => {
+    expect(
+      resolveLogDestinationFrom({
+        localConfig: {
+          logs: { url: 'https://trusted.example.com/ingest', headers: { authorization: 'Bearer ${T}' } }
+        } as VinayaConfig,
+        trustAnchorConfig: {
+          logs: { url: 'https://trusted.example.com/ingest', headers: { authorization: 'Bearer ${T}' } }
+        } as VinayaConfig,
+        unattended: true,
+        env: { T: 'xyz' },
+        defaultFolder: DEFAULT_FOLDER
+      })
+    ).toEqual({ kind: 'server', url: 'https://trusted.example.com/ingest', headers: { authorization: 'Bearer xyz' } })
+  })
+
+  it('an unattended caller whose working tree declares a FOLDER the anchor disagrees with falls back silently — no server was configured, so there is no "server not used" to name', () => {
+    expect(
+      resolveLogDestinationFrom({
+        localConfig: { logs: { folder: '/srv/logs' } } as VinayaConfig,
+        trustAnchorConfig: { logs: { folder: '/other/logs' } } as VinayaConfig,
         unattended: true,
         env: {},
         defaultFolder: DEFAULT_FOLDER
@@ -257,6 +309,72 @@ describe('resolveLogDestinationFrom (pure) — who is allowed to name the destin
         repoRoot: '/repo'
       })
     ).toEqual({ kind: 'folder', folder: '/srv/logs' })
+  })
+})
+
+describe('describeFolderFallback (pure) — one line, names the url, never a token (O2)', () => {
+  const URL = 'https://logs.example.com/v1/repos/acme/widget/events'
+
+  it('anchor-unreadable names the url, says it could not be read, and points to `vinaya log send`', () => {
+    const message = describeFolderFallback({ kind: 'anchor-unreadable', intendedUrl: URL })
+    expect(message).toContain(URL)
+    expect(message).toContain('could not be read')
+    expect(message).toContain('vinaya log send')
+    expect(message).not.toContain('\n')
+  })
+
+  it('anchor-mismatch names the url and says the default branch does not declare it', () => {
+    const message = describeFolderFallback({ kind: 'anchor-mismatch', intendedUrl: URL })
+    expect(message).toContain(URL)
+    expect(message).toContain('does not declare it')
+    expect(message).not.toContain('\n')
+  })
+})
+
+describe('log-sink — a folder fallback prints its reason exactly once (O2)', () => {
+  it('an unattended run that configured a server it cannot confirm writes to the folder AND warns once', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vinaya-fallback-'))
+    try {
+      const stderr: string[] = []
+      const sink = createLogSink({
+        outboxRoot: () => join(dir, 'outbox'),
+        home: () => dir,
+        hostname: () => 'h',
+        cwd: () => dir,
+        env: () => ({}) as NodeJS.ProcessEnv,
+        resolveRepo: async () => ({ owner: 'acme', repo: 'widget' }),
+        stderr: (m) => stderr.push(m),
+        // The exact shape `resolveLogDestinationFrom` returns for the Mac case:
+        // a folder fallback carrying why the configured server was not used.
+        resolveLogDestination: () => ({
+          kind: 'folder',
+          folder: join(dir, 'folder'),
+          fallbackReason: { kind: 'anchor-unreadable', intendedUrl: 'https://logs.example.com/events' }
+        })
+      })
+      // Two events: the warning is one-per-process, not one-per-event.
+      const event = {
+        kind: 'dispatch' as const,
+        event: 'dispatched' as const,
+        payload: {},
+        target_role: 'developer',
+        model: 'sonnet',
+        effect_id: 'e1',
+        prompt_hash: 'sha256:abc'
+      }
+      sink.log(event as never)
+      sink.log({ ...event, effect_id: 'e2' } as never)
+      await sink.drain()
+
+      expect(stderr).toHaveLength(1)
+      expect(stderr[0]).toContain('https://logs.example.com/events')
+      expect(stderr[0]).toContain('vinaya log send')
+      // The events still landed in the folder — the fallback delivers, it never drops.
+      const written = readFileSync(join(dir, 'folder', 'acme-widget', 'none.ndjson'), 'utf8')
+      expect(written.trim().split('\n')).toHaveLength(2)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
 
