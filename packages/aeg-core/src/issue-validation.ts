@@ -837,6 +837,25 @@ function premiseBinding(premise: IssuePremise, index: number): ClaimBinding {
 }
 
 /**
+ * One message per premise in `premises` that `fileReader` does not bear out —
+ * empty when every one holds. `index` is each premise's position in the whole
+ * section, not in this list, so a refusal names the same premise number the
+ * Planner counts down the section.
+ *
+ * The shared half of the plan-time gate (O1) and the dispatch gate (O3): the
+ * two differ only in WHICH premises they hand over (plan time omits the
+ * deferred ones, dispatch checks them all) and what they read from (the
+ * checkout, then the default branch) — never in what the check itself means.
+ */
+export function checkPremisesHold(
+  premises: ReadonlyArray<{ premise: IssuePremise; index: number }>,
+  fileReader: (path: string) => string | null
+): string[] {
+  const bindings = premises.map(({ premise, index }) => premiseBinding(premise, index))
+  return evaluateClaimBindings(bindings, fileReader, ISSUE_PREMISE_VOICE).map((f) => f.message)
+}
+
+/**
  * **O1 — every premise without an `after #<n>:` prefix holds right now.**
  * Evaluated against the checkout the Planner is cutting the Issue from,
  * through `doc-claim.ts`'s own evaluation (`evaluateClaimBindings`) rather
@@ -852,14 +871,11 @@ export function checkIssuePremises(body: string, fileReader: (path: string) => s
     return { status: 'fail', errors: parsed.errors.map((e) => `issue-validation Premises: ${e}`) }
   }
 
-  const bindings = parsed.value
+  const dueNow = parsed.value
     .map((premise, index) => ({ premise, index }))
     .filter(({ premise }) => premise.afterIssue === null)
-    .map(({ premise, index }) => premiseBinding(premise, index))
 
-  const errors = evaluateClaimBindings(bindings, fileReader, ISSUE_PREMISE_VOICE).map(
-    (f) => `issue-validation Premises: ${f.message}`
-  )
+  const errors = checkPremisesHold(dueNow, fileReader).map((m) => `issue-validation Premises: ${m}`)
   return { status: errors.length > 0 ? 'fail' : 'pass', errors }
 }
 

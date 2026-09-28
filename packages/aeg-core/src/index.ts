@@ -267,6 +267,7 @@ export {
   checkPartsCiteDefinedObjectives,
   checkPartsCoverageAndSequence,
   checkPremiseDependencyDeclared,
+  checkPremisesHold,
   checkProjectsRegistered,
   checkRationaleNamesDocs,
   checkRationaleSurfaceCoverage,

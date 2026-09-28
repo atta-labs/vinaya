@@ -19,12 +19,14 @@ import {
   buildConsumersOf,
   checkDispatchReadiness,
   checkIssueRationale,
+  checkPremisesHold,
   extractBoundaryFilePaths,
   fetchForgeFacts,
   fetchOpenIssuesByLabel,
   objectivesOf,
   parseIssueDocumentation,
   parseIssueParts,
+  parseIssuePremises,
   parseIssueStopConditions,
   parseIssueSurface,
   parseIssueTestPlan,
@@ -500,6 +502,55 @@ export function buildWorkspaceConsumersOf(): (pkg: string) => string[] {
  * `validateRenderedBriefForIssue`) can, without re-deriving the dispatch
  * gate's own classification a second time.
  */
+/**
+ * One repository-relative path as a given revision holds it — `null` when that
+ * revision has no such file. Read with `git show`, never off the working tree:
+ * by the time the dispatch premise check runs, `checkStaleAgainstRemote` has
+ * already established that `HEAD` IS the remote default branch's tip, so the
+ * commit's bytes are the default branch's bytes and an uncommitted local edit
+ * can neither satisfy a premise nor break one. `git()` cannot serve here —
+ * it trims, and a premise's literal may sit in leading or trailing whitespace.
+ */
+export function readFileAtRevision(rev: string, path: string, cwd?: string): string | null {
+  try {
+    return execFileSync('git', ['show', `${rev}:${path}`], {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    })
+  } catch {
+    return null
+  }
+}
+
+/**
+ * **O3 — every premise on the Issue, deferred or not, re-checked against the
+ * default branch before a brief is rendered.** One refusal line per premise
+ * that no longer holds, naming it; empty when they all do.
+ *
+ * This is the half of the premise contract the plan-time gate cannot cover. A
+ * premise prefixed `after #<n>:` is deliberately unchecked when the Issue is
+ * cut — the task that makes it true has not merged yet — so dispatch is the
+ * first moment it can be asserted at all; and an unprefixed premise true at
+ * plan time can have been falsified by any merge since. The predicate and the
+ * refusal wording are `@attalabs/aeg-core`'s (`checkPremisesHold`), the same
+ * ones `issue create`/`issue edit` apply, so the two moments can never
+ * disagree about what a premise means.
+ *
+ * `readAt` is injected for testing against a fixture repository; the default
+ * reads the real revision.
+ */
+export function dispatchPremiseRefusals(
+  issueBody: string,
+  rev: string,
+  readAt: (rev: string, path: string) => string | null = readFileAtRevision
+): string[] {
+  const parsed = parseIssuePremises(issueBody)
+  if (!parsed.ok) return parsed.errors.map((e) => `Premises: ${e}`)
+  const all = parsed.value.map((premise, index) => ({ premise, index }))
+  return checkPremisesHold(all, (path) => readAt(rev, path))
+}
+
 export type AssembleAndRenderBriefResult =
   | { ok: true; brief: string; issue: number }
   | { ok: false; missing: string[]; dispatchBlockerDetails?: DispatchBlocker[] }
@@ -617,6 +668,11 @@ export async function assembleAndRenderBrief(
   }
   const issueBody = bodyOverride ?? openIssueMatch.body
   const issueRationalePass = checkIssueRationale(issueBody).status !== 'fail'
+
+  // O3 — the Issue's own premises, re-asserted against the default branch
+  // before anything is rendered from them.
+  const premiseRefusals = dispatchPremiseRefusals(issueBody, headSha)
+  if (premiseRefusals.length > 0) return { ok: false, missing: premiseRefusals }
 
   const taskRefs = tranche.tasks.map((t) => ({ id: t.id, issue: t.issue }))
   const snapshot = await fetchForgeFacts({ owner: repo.owner, repo: repo.repo, tranche: trancheSlug, tasks: taskRefs })
@@ -895,6 +951,11 @@ export async function assembleAndRenderBriefForIssue(
   }
   const issueBody = found.body
   const issueRationalePass = checkIssueRationale(issueBody).status !== 'fail'
+
+  // O3 — the same premise re-assertion the tranche path runs, on the one
+  // shared function; a backlog Issue's premises are premises too.
+  const premiseRefusals = dispatchPremiseRefusals(issueBody, headSha)
+  if (premiseRefusals.length > 0) return { ok: false, missing: premiseRefusals }
 
   const { dependsOn: dependsOnIds, conflictsWith: conflictsWithIds } = parseRationaleDeps(issueBody)
   const task: Task = {
