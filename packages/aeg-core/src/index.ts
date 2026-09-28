@@ -252,6 +252,8 @@ export {
   checkBlastRadiusScope,
   checkConflictCompleteness,
   checkDocsWithinSurface,
+  checkFileCollisions,
+  DEFAULT_COLLISION_THRESHOLD,
   checkDocumentationCitesObjective,
   checkEdgeIdsWholeNumbers,
   checkIssueBriefSections,
@@ -288,6 +290,7 @@ export {
   parseIssueTestPlan
 } from './issue-validation'
 export type {
+  FileCollisionResult,
   FrozenSection,
   IssueDocumentation,
   IssueDocumentationSource,
@@ -298,6 +301,7 @@ export type {
   SurfaceScopeResult,
   SurfaceScopeViolation,
   ProjectPath,
+  TaskFileFacts,
   TaskIssueFacts,
   TaskSurfaceFacts
 } from './issue-validation'

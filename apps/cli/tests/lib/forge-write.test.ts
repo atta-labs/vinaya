@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { buildPrincipalTestPlanWaitErrors } from '../../src/checks/bin/check-principal-test-plan-wait'
 import { CHECK_SCHEMA_VERSION, type CheckError } from '../../src/checks/contract'
 import { sha256Hex } from '../../src/lib/effects'
+import { DEFAULT_COLLISION_THRESHOLD } from '@attalabs/aeg-core'
 import {
   collectTaskIssueErrors,
   isPendingOnlyFailure,
@@ -442,13 +443,21 @@ describe('an unmerged Depends-on folds into the write gate as informational, nev
 
     // A fake `gh` answering Issue #999's own state — open, closed by no
     // merged pull request — the live "not merged yet" fact this fixture
-    // means to exercise for real, never a stand-in string.
+    // means to exercise for real, never a stand-in string. It also answers
+    // the two listings the pinned-file collision gate makes (this fixture's
+    // Boundary pins a real file, so that gate runs) with an empty forge: the
+    // fixture isolates the ONE dependency-not-merged blocker, never a fetch
+    // failure on top of it.
     const gh = join(localDir, 'gh')
     writeFileSync(
       gh,
       `#!/bin/sh
 if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
   echo '{"state":"OPEN","stateReason":null,"closedByPullRequestsReferences":[]}'
+  exit 0
+fi
+if [ "$2" = "list" ]; then
+  echo '[]'
   exit 0
 fi
 exit 1
@@ -574,7 +583,10 @@ describe('every brief-schema/issue-content recovery prompt names its own fix (O2
       resolvesToFile: () => true,
       docOwnersContent: null,
       milestoneSiblings: null,
-      subjectRef: ''
+      subjectRef: '',
+      collisionPeers: null,
+      subjectFiles: [],
+      collisionThreshold: DEFAULT_COLLISION_THRESHOLD
     })
     expect(errors.length).toBe(1)
     for (const e of errors) expect(recoveryNamesItsFix(e)).toBe(true)

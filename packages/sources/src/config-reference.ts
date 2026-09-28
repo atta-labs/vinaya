@@ -637,6 +637,28 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     example: `{ "gateCutovers": { "agentBoxesRefusedSincePr": 396 } }`
   },
   {
+    key: 'planning',
+    type: 'object (optional)',
+    semantics: [
+      'Plan-time policy — what the Planner-facing gates in `vinaya issue create`/`vinaya issue edit` enforce about a task Issue before it reaches the forge.'
+    ],
+    example: `{
+  "planning": {
+    "collisionThreshold": 3
+  }
+}`
+  },
+  {
+    key: 'planning.collisionThreshold',
+    type: 'number (optional, non-negative integer)',
+    semantics: [
+      "How many files two tasks may have in common before the one being written must declare a `Conflicts-with` edge on the other. `vinaya issue create`/`vinaya issue edit` compare this Issue's Boundary `Pinned files:` against every other open task Issue's pinned files and every open pull request's changed files: at or above this many shared files, with no `Conflicts-with` edge declared in either direction, the write is refused, naming the other task and the shared files.",
+      'Under the threshold the Issue is accepted and each shared file is printed as a warning, with the task it is shared with — a small overlap is worth running in parallel, because a merge conflict over one or two files costs minutes while serializing a task costs a whole dispatch.',
+      '`0` turns the refusal off entirely and leaves only the warning. Absent → `3`. The same comparison runs when a task is dispatched, scoped to open pull requests only; only the first fifty open pull requests are read, and the output says so when that bound was reached.'
+    ],
+    example: `{ "planning": { "collisionThreshold": 3 } }`
+  },
+  {
     key: 'prePush',
     type: 'object (optional)',
     semantics: [

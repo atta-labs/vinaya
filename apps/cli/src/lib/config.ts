@@ -7,6 +7,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { z } from 'zod'
 import {
   CODE_REVIEW_SEVERITY_ORDER,
+  DEFAULT_COLLISION_THRESHOLD,
   DEFAULT_RELEASE_ACTOR,
   DEFAULT_REVIEW_POLICY,
   type GateCutovers,
@@ -726,6 +727,22 @@ export const VinayaConfigSchema = z.object({
       agentBoxesRefusedSincePr: z.number().int().nonnegative().optional()
     })
     .optional(),
+  // Plan-time policy. `collisionThreshold` is how many files two open tasks
+  // may share before the one being written must declare a `Conflicts-with`
+  // edge on the other: at or above it the write is refused, under it the
+  // overlap is printed as a warning and both tasks run in parallel. The
+  // asymmetry is the whole point — a merge conflict over one or two files
+  // costs minutes, serializing a task costs a whole dispatch — so the default
+  // (`DEFAULT_COLLISION_THRESHOLD`, three files) is deliberately permissive,
+  // and `0` turns the refusal off entirely, leaving only the warning. Read
+  // from the working-tree config like `gateCutovers`, and for the same
+  // reason: it is adopter policy of the reviewed-committed trust class, never
+  // a merge-authority decision like `principals`/`reviewPolicy`.
+  planning: z
+    .object({
+      collisionThreshold: z.number().int().nonnegative().optional()
+    })
+    .optional(),
   // The pre-push hook's test-file selector (`lib/test-selector.ts`) chooses
   // what to run by import-graph reachability from the diff — a rule whose
   // own INPUT is the repository itself (scans `.github/workflows`, walks
@@ -1120,6 +1137,19 @@ export function resolveGateCutovers(config: VinayaConfig | null): GateCutovers {
     briefRulesSincePr: raw.briefRulesSincePr ?? null,
     agentBoxesRefusedSincePr: raw.agentBoxesRefusedSincePr ?? null
   }
+}
+
+/**
+ * The resolved `planning.collisionThreshold`: the declared value when set,
+ * else `DEFAULT_COLLISION_THRESHOLD`. Unlike `resolveGateCutovers`, an absent
+ * key here resolves to the built-in default rather than to "no rule" — a
+ * repository that has never heard of this key still wants a collision it
+ * cannot merge cheaply to be declared, whereas an absent cutover genuinely
+ * means "this repository has no history to grandfather". `0` is a real,
+ * honoured value (the refusal off), never conflated with absence.
+ */
+export function resolveCollisionThreshold(config: VinayaConfig | null): number {
+  return config?.planning?.collisionThreshold ?? DEFAULT_COLLISION_THRESHOLD
 }
 
 /**

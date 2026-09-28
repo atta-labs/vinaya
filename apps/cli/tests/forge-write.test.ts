@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DEFAULT_COLLISION_THRESHOLD } from '@attalabs/aeg-core'
 import type { BriefSection } from '../src/lib/config'
 import {
   ForgeArgError,
@@ -170,7 +171,10 @@ describe('validateIssueContent — the content checks', () => {
       resolvesToFile: () => true,
       docOwnersContent: null,
       milestoneSiblings: null,
-      subjectRef: ''
+      subjectRef: '',
+      collisionPeers: null,
+      subjectFiles: [],
+      collisionThreshold: DEFAULT_COLLISION_THRESHOLD
     })
     expect(errors.length).toBe(1)
     expect(errors[0]?.check).toBe('issue-content')
@@ -191,7 +195,10 @@ describe('validateIssueContent — the content checks', () => {
       resolvesToFile: () => true,
       docOwnersContent: null,
       milestoneSiblings: null,
-      subjectRef: ''
+      subjectRef: '',
+      collisionPeers: null,
+      subjectFiles: [],
+      collisionThreshold: DEFAULT_COLLISION_THRESHOLD
     })
     expect(errors).toEqual([])
   })
@@ -208,7 +215,10 @@ describe('validateIssueContent — the content checks', () => {
       resolvesToFile: () => true,
       docOwnersContent: null,
       milestoneSiblings: null,
-      subjectRef: ''
+      subjectRef: '',
+      collisionPeers: null,
+      subjectFiles: [],
+      collisionThreshold: DEFAULT_COLLISION_THRESHOLD
     })
     expect(errors.length).toBe(1)
     expect(errors[0]?.check).toBe('issue-content')
@@ -228,7 +238,10 @@ describe('validateIssueContent — the content checks', () => {
       resolvesToFile: () => true,
       docOwnersContent: null,
       milestoneSiblings: null,
-      subjectRef: ''
+      subjectRef: '',
+      collisionPeers: null,
+      subjectFiles: [],
+      collisionThreshold: DEFAULT_COLLISION_THRESHOLD
     })
     const edge = errors.find((e) => e.message.includes('`2a`') && /whole number/.test(e.message))
     expect(edge).toBeDefined()
@@ -248,7 +261,10 @@ describe('validateIssueContent — the content checks', () => {
       resolvesToFile: () => true,
       docOwnersContent: null,
       milestoneSiblings: null,
-      subjectRef: ''
+      subjectRef: '',
+      collisionPeers: null,
+      subjectFiles: [],
+      collisionThreshold: DEFAULT_COLLISION_THRESHOLD
     })
     expect(errors.length).toBe(1)
     expect(errors[0]?.check).toBe('issue-content')
@@ -267,7 +283,10 @@ describe('validateIssueContent — the content checks', () => {
       resolvesToFile: () => true,
       docOwnersContent: null,
       milestoneSiblings: null,
-      subjectRef: ''
+      subjectRef: '',
+      collisionPeers: null,
+      subjectFiles: [],
+      collisionThreshold: DEFAULT_COLLISION_THRESHOLD
     })
     expect(errors).toEqual([])
   })
@@ -286,7 +305,10 @@ describe('validateIssueContent — the content checks', () => {
       resolvesToFile: () => true,
       docOwnersContent: 'apps/cli/src/lib/**  apps/cli/specs/surface.md\n',
       milestoneSiblings: null,
-      subjectRef: ''
+      subjectRef: '',
+      collisionPeers: null,
+      subjectFiles: [],
+      collisionThreshold: DEFAULT_COLLISION_THRESHOLD
     })
     expect(errors.length).toBe(1)
     expect(errors[0]?.check).toBe('issue-content')
@@ -307,7 +329,10 @@ describe('validateIssueContent — the content checks', () => {
       resolvesToFile: () => true,
       docOwnersContent: 'apps/cli/src/lib/**  apps/cli/specs/surface.md\n',
       milestoneSiblings: null,
-      subjectRef: ''
+      subjectRef: '',
+      collisionPeers: null,
+      subjectFiles: [],
+      collisionThreshold: DEFAULT_COLLISION_THRESHOLD
     })
     expect(errors).toEqual([])
   })

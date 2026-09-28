@@ -1934,6 +1934,95 @@ export function checkSurfaceOverlap(subject: TaskSurfaceFacts, siblings: TaskSur
 }
 
 // ---------------------------------------------------------------------------
+// File-level collision. `checkSurfaceOverlap` above grades DIRECTORY globs
+// against the tasks sharing one Milestone; `checkConflictCompleteness` before
+// it grades whole PACKAGES and only warns. Neither answers the question a
+// Planner actually has — how many of the same FILES will two tasks in flight
+// edit — and the cost of getting it wrong is asymmetric: three tasks planned
+// around the same status and log code ran in parallel and each merge forced
+// the others to merge again and rerun a slow hook, hours lost, while
+// serializing a task that shares one or two files costs forty minutes to save
+// a merge conflict worth minutes. So the answer is a count, not a boolean: a
+// large overlap must be declared, a small one runs in parallel with the
+// overlap named in the output.
+// ---------------------------------------------------------------------------
+
+/** One open task Issue or open pull request, reduced to the files it will touch. */
+export type TaskFileFacts = {
+  /** How this peer is named in a `Conflicts-with` edge — a task Issue's number, or, for an open pull request, the number of the Issue it closes. */
+  ref: string
+  /** How this peer is named in a message — e.g. `task Issue #851`, `pull request #862 (task Issue #851)`. */
+  label: string
+  /** The files this peer will touch: a task Issue's own Boundary pinned files, or an open pull request's changed files. */
+  files: string[]
+  /** Already-parsed `Conflicts-with` ids (`parseRationaleDeps`) — `[]` for a peer whose own Issue body the caller did not read (an open pull request graded at dispatch, where only pull requests are fetched). */
+  conflictsWith: string[]
+}
+
+/**
+ * A refusal is a blocking finding; a warning is reported and never blocks.
+ * Both name the peer and every shared file, so the two outputs differ only in
+ * severity and in what the reader is asked to do about it.
+ */
+export type FileCollisionResult = { refusals: string[]; warnings: string[] }
+
+/** The threshold an adopter gets when `planning.collisionThreshold` is unset — three files shared is where a declared edge starts being cheaper than a re-merge. */
+export const DEFAULT_COLLISION_THRESHOLD = 3
+
+/**
+ * **A task sharing `threshold` or more files with another open task must
+ * declare a `Conflicts-with` edge on it; a smaller overlap is only a
+ * warning.** `subject.files` and each peer's `files` are already-resolved
+ * repo-relative paths (the caller resolves a task Issue's Boundary
+ * `Pinned files:` through `extractBoundaryFilePaths`/`resolveBoundaryPaths` —
+ * the same extraction and resolution the brief renderer itself uses to build
+ * §4 — and an open pull request's through the forge's own changed-file list),
+ * so the comparison here is set intersection, never a second path parser.
+ *
+ * `edgesNameEachOther` is the same one-sided-is-enough bypass
+ * `checkConflictCompleteness` and `checkSurfaceOverlap` already apply: the
+ * edge only needs to be declared once for both tasks to serialize against it.
+ * An open pull request whose own Issue body the caller did not read carries no
+ * `conflictsWith` of its own, so only the subject's own declaration exempts
+ * that pair — which is exactly what the rule asks of the Issue being written.
+ *
+ * `threshold` of `0` turns the refusal off entirely: every overlap is reported
+ * as a warning instead, and nothing blocks. Pure over its inputs — no forge,
+ * no `fs` — same discipline as every other predicate in this module.
+ */
+export function checkFileCollisions(
+  subject: { ref: string; files: string[]; conflictsWith: string[] },
+  peers: TaskFileFacts[],
+  threshold: number
+): FileCollisionResult {
+  const mine = new Set(subject.files)
+  if (mine.size === 0) return { refusals: [], warnings: [] }
+
+  const subjectRef = subject.ref === '' ? null : normalizeEdgeId(subject.ref)
+  const refusals: string[] = []
+  const warnings: string[] = []
+  for (const peer of peers) {
+    if (subjectRef !== null && normalizeEdgeId(peer.ref) === subjectRef) continue
+    const shared = [...new Set(peer.files)].filter((f) => mine.has(f)).sort()
+    if (shared.length === 0) continue
+    if (edgesNameEachOther(subject, peer)) continue
+    const list = shared.map((f) => `\`${f}\``).join(', ')
+    if (threshold > 0 && shared.length >= threshold) {
+      refusals.push(
+        `issue-validation file collision: this task and ${peer.label} both touch ${shared.length} of the same files (${list}) — at or above the collision threshold of ${threshold}, and neither declares the other in \`Conflicts-with\`.`
+      )
+      continue
+    }
+    warnings.push(
+      threshold === 0
+        ? `issue-validation file collision: this task and ${peer.label} both touch ${list} — \`planning.collisionThreshold\` is 0, so the refusal is off and this overlap is reported only.`
+        : `issue-validation file collision: this task and ${peer.label} both touch ${list} — under the collision threshold of ${threshold}, so the two run in parallel and whichever merges second resolves the conflict.`
+    )
+  }
+  return { refusals, warnings }
+}
+
+// ---------------------------------------------------------------------------
 // Three predicates closing the gap between what a task Issue's
 // Objectives/Parts/Test-plan lines CLAIM and what its own Boundary/Surface
 // `out:` and rationale actually authorize. Wired into `apps/cli`'s
