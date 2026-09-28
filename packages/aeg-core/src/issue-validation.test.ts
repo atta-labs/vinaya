@@ -2579,6 +2579,26 @@ describe('checkBoundaryClaimsNeedPremise (O4)', () => {
     expect(r.status).toBe('pass')
   })
 
+  it('sees a trigger word inside an inline code span — the shape a Boundary actually states this claim in', () => {
+    const r = checkBoundaryClaimsNeedPremise(withBoundary('the signal is `already wired`, inert.'))
+    expect(r.status).toBe('fail')
+    expect(r.errors.join(' ')).toMatch(/the Boundary says "already"/)
+  })
+
+  it('sees a trigger word whose whole sentence is one inline span', () => {
+    expect(checkBoundaryClaimsNeedPremise(withBoundary('`the drain is currently inert`.')).status).toBe('fail')
+  })
+
+  it('passes that same backticked Boundary once it carries a premise', () => {
+    const r = checkBoundaryClaimsNeedPremise(
+      withBoundary(
+        'the signal is `already wired`, inert.',
+        '`packages/aeg-core/src/cancel.ts` contains `AbortController`'
+      )
+    )
+    expect(r.status).toBe('pass')
+  })
+
   it('matches the trigger words whole — `wiredness` is not a claim', () => {
     expect(checkBoundaryClaimsNeedPremise(withBoundary('judge the wiredness of nothing.')).status).toBe('pass')
   })

@@ -489,6 +489,49 @@ exit 1
     const blocking = errors.filter((e) => e.severity !== 'warning')
     expect(blocking).toEqual([])
   })
+
+  // Round 2 review, BLOCKER — the plan-time premise gate filtered deferred
+  // premises out, and then this SAME write re-checked them, unfiltered,
+  // through the pre-write brief render. These two run the whole
+  // `issue create`/`issue edit` aggregation with the REAL render path (default
+  // deps), which is the only place that regression was ever visible: a unit
+  // test of the content gate alone cannot see it.
+  const bodyWithDeferredPremise = bodyWithOpenDependency.replace(
+    RATIONALE_WITH_OPEN_DEPENDENCY,
+    [
+      '## Premises',
+      '',
+      'after #999: `aeg-root/templates/brief-template.md` contains `a literal the template does not carry`',
+      '',
+      RATIONALE_WITH_OPEN_DEPENDENCY
+    ].join('\n')
+  )
+
+  it('never asserts a deferred premise, on the real render path the write gate runs', async () => {
+    const errors = await collectTaskIssueErrors(
+      bodyWithDeferredPremise,
+      'Feat: a well-formed title',
+      [],
+      'vinaya issue edit …',
+      null
+    )
+
+    expect(errors.filter((e) => /premise/i.test(e.message))).toEqual([])
+    const blocking = errors.filter((e) => e.severity !== 'warning')
+    expect(blocking).toEqual([])
+  })
+
+  it('still asserts the same premise, on that same path, once the `after` prefix is gone', async () => {
+    const errors = await collectTaskIssueErrors(
+      bodyWithDeferredPremise.replace('after #999: ', ''),
+      'Feat: a well-formed title',
+      [],
+      'vinaya issue edit …',
+      null
+    )
+
+    expect(errors.some((e) => e.message.includes('premise 1 binds'))).toBe(true)
+  })
 })
 
 // ---------------------------------------------------------------------------

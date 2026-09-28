@@ -1620,17 +1620,27 @@ async function validateRenderedBriefForIssue(input: {
 
   const trancheSlug = findTrancheSlug(input.labels)
   let rendered: AssembleAndRenderBriefResult
+  // `'due-now'` on BOTH branches. This render happens at plan time, before the
+  // write lands, so it asks for exactly the premise subset `checkIssuePremises`
+  // asks for above: a premise prefixed `after #<n>:` is not true yet, and
+  // asserting it here would refuse the write the deferral exists to allow (O2).
+  // The dispatch render — the one that must assert every premise — is
+  // `dispatch-task.ts`'s own call, which passes no scope and so gets `'all'`.
   if (trancheSlug !== null) {
     if (input.issueNumber === null) return []
     const taskId = await resolveTrancheTaskId(trancheSlug, input.issueNumber)
     if (taskId === null) return []
-    rendered = await assembleAndRenderBrief(trancheSlug, taskId, undefined, input.body)
+    rendered = await assembleAndRenderBrief(trancheSlug, taskId, undefined, input.body, 'due-now')
   } else {
-    rendered = await assembleAndRenderBriefForIssue(input.issueNumber ?? DRAFT_ISSUE_SENTINEL, {
-      title: input.title,
-      body: input.body,
-      labels: input.labels
-    })
+    rendered = await assembleAndRenderBriefForIssue(
+      input.issueNumber ?? DRAFT_ISSUE_SENTINEL,
+      {
+        title: input.title,
+        body: input.body,
+        labels: input.labels
+      },
+      'due-now'
+    )
   }
   if (!rendered.ok) {
     // O2 — a `missing` entry that came out of a dispatch-blocker class this

@@ -524,15 +524,34 @@ export function readFileAtRevision(rev: string, path: string, cwd?: string): str
 }
 
 /**
- * **O3 — every premise on the Issue, deferred or not, re-checked against the
- * default branch before a brief is rendered.** One refusal line per premise
- * that no longer holds, naming it; empty when they all do.
+ * Which of an Issue's premises a brief preparation asserts.
  *
- * This is the half of the premise contract the plan-time gate cannot cover. A
- * premise prefixed `after #<n>:` is deliberately unchecked when the Issue is
- * cut — the task that makes it true has not merged yet — so dispatch is the
- * first moment it can be asserted at all; and an unprefixed premise true at
- * plan time can have been falsified by any merge since. The predicate and the
+ * `'all'` — a real dispatch (O3). Every premise is asserted, deferred ones
+ * included: an `after #<n>:` premise is unchecked when the Issue is cut
+ * precisely because the task that makes it true has not merged yet, so
+ * dispatch is the first moment it can be asserted at all.
+ *
+ * `'due-now'` — the pre-write render `issue create`/`issue edit` runs to grade
+ * the bytes it is about to send (`forge-write.ts`'s
+ * `validateRenderedBriefForIssue`). That render happens at PLAN time, where a
+ * deferred premise is not true yet by construction, so asserting it would
+ * refuse the very write the deferral exists to allow — O2, and the exact
+ * bypass round 2's review found: the plan-time gate filtered deferred
+ * premises out and then this same write re-checked them, unfiltered, through
+ * the render path. The two now agree, because a plan-time render asks for the
+ * same subset `checkIssuePremises` asks for.
+ */
+export type PremiseScope = 'all' | 'due-now'
+
+/**
+ * **O3 — an Issue's premises, re-checked against the default branch before a
+ * brief is rendered.** One refusal line per premise that does not hold,
+ * naming it; empty when they all do. `scope` decides which premises are
+ * asserted at all — see `PremiseScope`; a plan-time render passes `'due-now'`,
+ * a dispatch `'all'`.
+ *
+ * An unprefixed premise true when the Issue was cut can have been falsified by
+ * any merge since, so it is asserted under BOTH scopes. The predicate and the
  * refusal wording are `@attalabs/aeg-core`'s (`checkPremisesHold`), the same
  * ones `issue create`/`issue edit` apply, so the two moments can never
  * disagree about what a premise means.
@@ -543,12 +562,15 @@ export function readFileAtRevision(rev: string, path: string, cwd?: string): str
 export function dispatchPremiseRefusals(
   issueBody: string,
   rev: string,
+  scope: PremiseScope = 'all',
   readAt: (rev: string, path: string) => string | null = readFileAtRevision
 ): string[] {
   const parsed = parseIssuePremises(issueBody)
   if (!parsed.ok) return parsed.errors.map((e) => `Premises: ${e}`)
-  const all = parsed.value.map((premise, index) => ({ premise, index }))
-  return checkPremisesHold(all, (path) => readAt(rev, path))
+  const asserted = parsed.value
+    .map((premise, index) => ({ premise, index }))
+    .filter(({ premise }) => scope === 'all' || premise.afterIssue === null)
+  return checkPremisesHold(asserted, (path) => readAt(rev, path))
 }
 
 export type AssembleAndRenderBriefResult =
@@ -599,7 +621,8 @@ export async function assembleAndRenderBrief(
   trancheSlug: string,
   taskId: string,
   surfaceGlobsOverride?: string[],
-  bodyOverride?: string
+  bodyOverride?: string,
+  premiseScope: PremiseScope = 'all'
 ): Promise<AssembleAndRenderBriefResult> {
   const repo = resolveRepo()
   if (!repo) {
@@ -670,8 +693,10 @@ export async function assembleAndRenderBrief(
   const issueRationalePass = checkIssueRationale(issueBody).status !== 'fail'
 
   // O3 — the Issue's own premises, re-asserted against the default branch
-  // before anything is rendered from them.
-  const premiseRefusals = dispatchPremiseRefusals(issueBody, headSha)
+  // before anything is rendered from them. `premiseScope` is what keeps a
+  // plan-time render out of O2's way: it defaults to a dispatch's `'all'`, and
+  // the pre-write validation path passes `'due-now'`.
+  const premiseRefusals = dispatchPremiseRefusals(issueBody, headSha, premiseScope)
   if (premiseRefusals.length > 0) return { ok: false, missing: premiseRefusals }
 
   const taskRefs = tranche.tasks.map((t) => ({ id: t.id, issue: t.issue }))
@@ -916,7 +941,8 @@ function extractProjectField(body: string): string[] {
  */
 export async function assembleAndRenderBriefForIssue(
   issueNumber: number,
-  override?: DraftIssueOverride
+  override?: DraftIssueOverride,
+  premiseScope: PremiseScope = 'all'
 ): Promise<AssembleAndRenderBriefResult> {
   const repo = resolveRepo()
   if (!repo) {
@@ -957,8 +983,10 @@ export async function assembleAndRenderBriefForIssue(
   const issueRationalePass = checkIssueRationale(issueBody).status !== 'fail'
 
   // O3 — the same premise re-assertion the tranche path runs, on the one
-  // shared function; a backlog Issue's premises are premises too.
-  const premiseRefusals = dispatchPremiseRefusals(issueBody, headSha)
+  // shared function and under the same scope rule; a backlog Issue's premises
+  // are premises too, and a backlog Issue's plan-time render is exactly where
+  // round 2's review found the deferred-premise double-check.
+  const premiseRefusals = dispatchPremiseRefusals(issueBody, headSha, premiseScope)
   if (premiseRefusals.length > 0) return { ok: false, missing: premiseRefusals }
 
   const { dependsOn: dependsOnIds, conflictsWith: conflictsWithIds } = parseRationaleDeps(issueBody)

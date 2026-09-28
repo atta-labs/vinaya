@@ -685,16 +685,26 @@ describe('dispatchPremiseRefusals', () => {
   const readAt = (rev: string, path: string): string | null => readFileAtRevision(rev, path, repoDir)
 
   it('passes an Issue with no `## Premises` section — nothing to assert', () => {
-    expect(dispatchPremiseRefusals('**Boundary** — a task.\n', 'HEAD', readAt)).toEqual([])
+    expect(dispatchPremiseRefusals('**Boundary** — a task.\n', 'HEAD', 'all', readAt)).toEqual([])
   })
 
   it('passes a premise the default branch holds', () => {
-    const refusals = dispatchPremiseRefusals(bodyWithPremises('`cancel.ts` contains `AbortController`'), 'HEAD', readAt)
+    const refusals = dispatchPremiseRefusals(
+      bodyWithPremises('`cancel.ts` contains `AbortController`'),
+      'HEAD',
+      'all',
+      readAt
+    )
     expect(refusals).toEqual([])
   })
 
   it('refuses, naming the premise, when the default branch does not hold it', () => {
-    const refusals = dispatchPremiseRefusals(bodyWithPremises('`cancel.ts` contains `drainOutbox`'), 'HEAD', readAt)
+    const refusals = dispatchPremiseRefusals(
+      bodyWithPremises('`cancel.ts` contains `drainOutbox`'),
+      'HEAD',
+      'all',
+      readAt
+    )
     expect(refusals.length).toBe(1)
     expect(refusals[0]).toContain('premise 1 binds `cancel.ts contains:drainOutbox`')
   })
@@ -703,6 +713,7 @@ describe('dispatchPremiseRefusals', () => {
     const refusals = dispatchPremiseRefusals(
       bodyWithPremises('after #841: `cancel.ts` contains `drainOutbox`'),
       'HEAD',
+      'all',
       readAt
     )
     expect(refusals.length).toBe(1)
@@ -719,6 +730,7 @@ describe('dispatchPremiseRefusals', () => {
     const refusals = dispatchPremiseRefusals(
       bodyWithPremises('after #841: `cancel.ts` contains `drainOutbox`'),
       'HEAD',
+      'all',
       readAt
     )
     expect(refusals).toEqual([])
@@ -726,25 +738,47 @@ describe('dispatchPremiseRefusals', () => {
 
   it('reads the commit, never the working tree — an uncommitted edit neither satisfies a premise nor breaks one', () => {
     writeFileSync(join(repoDir, 'cancel.ts'), 'export function drainOutbox() {}\n')
-    expect(dispatchPremiseRefusals(bodyWithPremises('`cancel.ts` contains `drainOutbox`'), 'HEAD', readAt).length).toBe(
-      1
-    )
-    expect(dispatchPremiseRefusals(bodyWithPremises('`cancel.ts` contains `AbortController`'), 'HEAD', readAt)).toEqual(
-      []
-    )
+    expect(
+      dispatchPremiseRefusals(bodyWithPremises('`cancel.ts` contains `drainOutbox`'), 'HEAD', 'all', readAt).length
+    ).toBe(1)
+    expect(
+      dispatchPremiseRefusals(bodyWithPremises('`cancel.ts` contains `AbortController`'), 'HEAD', 'all', readAt)
+    ).toEqual([])
   })
 
   it('refuses a premise naming a path the revision does not carry', () => {
-    const refusals = dispatchPremiseRefusals(bodyWithPremises('`gone.ts` contains `x`'), 'HEAD', readAt)
+    const refusals = dispatchPremiseRefusals(bodyWithPremises('`gone.ts` contains `x`'), 'HEAD', 'all', readAt)
     expect(refusals.length).toBe(1)
     expect(refusals[0]).toContain('could not be read')
   })
 
   it('reports a malformed `## Premises` section rather than rendering from it', () => {
-    const refusals = dispatchPremiseRefusals(bodyWithPremises('the signal is already wired.'), 'HEAD', readAt)
+    const refusals = dispatchPremiseRefusals(bodyWithPremises('the signal is already wired.'), 'HEAD', 'all', readAt)
     expect(refusals.length).toBe(1)
     expect(refusals[0]).toMatch(/^Premises: /)
     expect(refusals[0]).toContain('is not a premise')
+  })
+
+  it("leaves a deferred premise unasserted under `'due-now'` — a plan-time render must not refuse what has not merged yet", () => {
+    const body = bodyWithPremises('after #841: `cancel.ts` contains `drainOutbox`')
+    expect(dispatchPremiseRefusals(body, 'HEAD', 'all', readAt).length).toBe(1)
+    expect(dispatchPremiseRefusals(body, 'HEAD', 'due-now', readAt)).toEqual([])
+  })
+
+  it("still asserts an unprefixed premise under `'due-now'` — it claims something true now, whoever is asking", () => {
+    const body = bodyWithPremises('`cancel.ts` contains `drainOutbox`')
+    expect(dispatchPremiseRefusals(body, 'HEAD', 'due-now', readAt).length).toBe(1)
+  })
+
+  it("reports a malformed section under `'due-now'` too — grammar is not deferrable", () => {
+    const refusals = dispatchPremiseRefusals(bodyWithPremises('not a premise'), 'HEAD', 'due-now', readAt)
+    expect(refusals.length).toBe(1)
+    expect(refusals[0]).toContain('is not a premise')
+  })
+
+  it('asserts every premise when no scope is given — a dispatch is the default caller', () => {
+    const body = bodyWithPremises('after #841: `cancel.ts` contains `drainOutbox`')
+    expect(dispatchPremiseRefusals(body, 'HEAD', undefined, readAt).length).toBe(1)
   })
 
   it('readFileAtRevision returns the revision’s bytes untrimmed, and null for an absent path', () => {
