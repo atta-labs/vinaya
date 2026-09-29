@@ -625,17 +625,92 @@ export function wholeSuiteTestCommandDetectorSource(): string {
     '  const idx = maskQuoted(s).indexOf("#");',
     '  return idx === -1 ? s : s.slice(0, idx);',
     '}',
-    'function commandStatements(command) {',
-    '  const masked = maskQuoted(command);',
-    '  const statements = [];',
-    '  let last = 0;',
-    '  const re = /;|&&|\\|\\||\\n/g;',
-    '  let m;',
-    '  while ((m = re.exec(masked)) !== null) {',
-    '    statements.push(command.slice(last, m.index));',
-    '    last = m.index + m[0].length;',
+    // A command substitution runs its own body as a command, and the body
+    // is invisible to every separator the splitter below knows: `echo
+    // $(sudo rm /etc/hosts)` carries no `;`/`&&`/`||`/`|` at the top level
+    // at all, and `echo \"$(sudo rm /etc/hosts)\"` is worse — `maskQuoted`
+    // blanks the body before anything can look at it. Round 2 security
+    // review, CRITICAL, confirmed live. So the bodies are lifted out of the
+    // RAW text, before any masking, and judged as commands in their own
+    // right. `$((…))` is arithmetic, never a command, and is left alone.
+    'function substitutionBodies(s) {',
+    '  const bodies = [];',
+    '  for (let i = 0; i < s.length; i++) {',
+    '    const two = s.slice(i, i + 2);',
+    "    if ((two === '$(' || two === '<(' || two === '>(') && s.charAt(i + 2) !== '(') {",
+    '      let depth = 1;',
+    '      let j = i + 2;',
+    '      for (; j < s.length && depth > 0; j++) {',
+    "        if (s.charAt(j) === '(') depth++;",
+    "        else if (s.charAt(j) === ')') depth--;",
+    '      }',
+    '      bodies.push(s.slice(i + 2, depth === 0 ? j - 1 : s.length));',
+    '      continue;',
+    '    }',
+    "    if (s.charAt(i) === '`') {",
+    "      const end = s.indexOf('`', i + 1);",
+    '      if (end === -1) break;',
+    '      bodies.push(s.slice(i + 1, end));',
+    '      i = end;',
+    '    }',
     '  }',
-    '  statements.push(command.slice(last));',
+    '  return bodies;',
+    '}',
+    // Blanked length-for-length, so the separator scan below keeps its index
+    // alignment with the original text while a `|` or `;` INSIDE a
+    // substitution can no longer split the statement that contains it.
+    'function maskSubstitutions(s) {',
+    "  const chars = s.split('');",
+    '  for (let i = 0; i < s.length; i++) {',
+    '    const two = s.slice(i, i + 2);',
+    "    if ((two === '$(' || two === '<(' || two === '>(') && s.charAt(i + 2) !== '(') {",
+    '      let depth = 1;',
+    '      let j = i + 2;',
+    '      for (; j < s.length && depth > 0; j++) {',
+    "        if (s.charAt(j) === '(') depth++;",
+    "        else if (s.charAt(j) === ')') depth--;",
+    '      }',
+    "      for (let k = i; k < j; k++) chars[k] = 'x';",
+    '      i = j - 1;',
+    '      continue;',
+    '    }',
+    "    if (s.charAt(i) === '`') {",
+    "      const end = s.indexOf('`', i + 1);",
+    '      if (end === -1) break;',
+    "      for (let k = i; k <= end; k++) chars[k] = 'x';",
+    '      i = end;',
+    '    }',
+    '  }',
+    "  return chars.join('');",
+    '}',
+    // A single `|` and a lone `&` are statement separators exactly as
+    // `;`/`&&`/`||` are — `true | sudo rm /etc/hosts` and `echo x & sudo
+    // launchctl load evil.plist` each run a second command whose own first
+    // token is the one that matters (round 2 security review, CRITICAL,
+    // confirmed live: both read as ONE statement beginning `true`/`echo`
+    // before this). `\\|\\|` and `&&` stay ahead of `\\|` and `&` in the
+    // alternation so a two-character operator is never split as two
+    // one-character ones. Substitution bodies found above are queued and
+    // split the same way, bounded so a pathological nesting cannot spin.
+    'function commandStatements(command) {',
+    '  const statements = [];',
+    '  const queue = [command];',
+    '  let guard = 0;',
+    '  while (queue.length > 0 && guard < 64) {',
+    '    guard++;',
+    '    const current = queue.shift();',
+    "    if (typeof current !== 'string' || current.length === 0) continue;",
+    '    for (const body of substitutionBodies(current)) queue.push(body);',
+    '    const masked = maskQuoted(maskSubstitutions(current));',
+    '    let last = 0;',
+    '    const re = /;|&&|\\|\\||\\||&|\\n/g;',
+    '    let m;',
+    '    while ((m = re.exec(masked)) !== null) {',
+    '      statements.push(current.slice(last, m.index));',
+    '      last = m.index + m[0].length;',
+    '    }',
+    '    statements.push(current.slice(last));',
+    '  }',
     '  return statements;',
     '}',
     'function commandRunsWholeSuite(command) {',
@@ -844,9 +919,16 @@ export const COMMIT_PUSH_ON_DEFAULT_BRANCH_DENY_REASON =
  * default-keychain -s x` is the shape the origin incident could just as
  * easily have taken) — reusing `commandStatements`/`stripLineComment`/
  * `statementTokens` from the sibling detectors already embedded in the SAME
- * generated script. A leading `VAR=value` environment assignment is skipped
- * and `tokens[0]` is compared by basename, so neither an env prefix nor an
- * absolute path hides the command being run.
+ * generated script. `commandStatements` splits on a single `|` and a lone
+ * `&` as well as `;`/`&&`/`||`/newline, and lifts `$(…)`/backtick/`<(…)`
+ * bodies out before any quote masking — all three shapes hid a command
+ * from this detector AND from the settings `deny` prefixes at the same
+ * time (round 2 security review, CRITICAL, confirmed live with `true |
+ * sudo rm /etc/hosts` and `echo "$(sudo rm /etc/hosts)"`). Before the
+ * first real command word, a leading `VAR=value` assignment, a wrapper
+ * (`env`, `command`, `exec`, `time`, …) and a subshell/brace/`!` prefix
+ * are each stripped, and the word itself is compared by basename, so
+ * none of those hides what is actually being run.
  *
  * **This is a floor, not a sandbox** — the same limit `roles/developer.md`
  * and `roles/security.md` now state in one line. It answers a Bash tool call
@@ -860,9 +942,26 @@ function machineStateDetectorSource(): string {
   return [
     'function machineStateTokens(stmt) {',
     '  let tokens = statementTokens(stmt);',
+    // A subshell or brace group leaves its punctuation glued to the first
+    // token — `(sudo rm x)` tokenizes as `(sudo`, `{ sudo rm x; }` as a
+    // bare `{` — and `!` negates the command that follows it.
+    "  if (tokens.length > 0) tokens = [tokens[0].replace(/^[({!]+/, '')].concat(tokens.slice(1));",
+    "  while (tokens.length > 0 && tokens[0] === '') tokens = tokens.slice(1);",
     // A leading `VAR=value` assignment is part of the shell's own grammar,
-    // not the command — `SUDO_ASKPASS=/x sudo …` runs sudo all the same.
-    '  while (tokens.length > 0 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[0])) tokens = tokens.slice(1);',
+    // not the command — `SUDO_ASKPASS=/x sudo …` runs sudo all the same —
+    // and a wrapper word passes its own arguments straight through to the
+    // command that follows: `env sudo …`, `command sudo …`, `time sudo …`
+    // all run sudo. Both are stripped until a real command word is first.
+    '  let changed = true;',
+    '  while (changed && tokens.length > 0) {',
+    '    changed = false;',
+    '    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[0])) { tokens = tokens.slice(1); changed = true; continue; }',
+    "    const head = tokens[0].split('/').pop();",
+    "    if (head === 'env' || head === 'command' || head === 'builtin' || head === 'exec' || head === 'time' || head === 'nice' || head === 'stdbuf') {",
+    '      tokens = tokens.slice(1);',
+    '      changed = true;',
+    '    }',
+    '  }',
     '  return tokens;',
     '}',
     'function commandChangesMachineState(command) {',
@@ -883,19 +982,40 @@ function machineStateDetectorSource(): string {
     "    if (cmd === 'networksetup' || cmd === 'pmset' || cmd === 'dscl') return true;",
     "    if (cmd === 'crontab' || cmd === 'chsh') return true;",
     "    if (cmd === 'defaults') {",
-    // `defaults read` is harmless; only a write changes the machine. The
-    // subcommand is not always `tokens[1]` — `defaults -currentHost write …`
-    // is an ordinary spelling — so every argument is scanned.
-    "      for (let i = 1; i < tokens.length; i++) if (tokens[i] === 'write') return true;",
+    // `defaults read`/`read-type`/`domains`/`find` are harmless; every
+    // subcommand that MUTATES a domain is not. `import` is the one that
+    // matters most — it loads a whole plist into a domain and changes
+    // exactly what a `write` would (round 2 security review, MEDIUM) — and
+    // `delete`/`rename` change the same settings from the other direction.
+    // The subcommand is not always `tokens[1]` (`defaults -currentHost
+    // write …` is an ordinary spelling), so every argument is scanned.
+    '      for (let i = 1; i < tokens.length; i++) {',
+    '        const t = tokens[i];',
+    "        if (t === 'write' || t === 'import' || t === 'delete' || t === 'rename') return true;",
+    '      }',
     '      continue;',
     '    }',
-    "    if (cmd === 'git' && tokens[1] === 'config') {",
+    "    if (cmd === 'git') {",
+    // git's own options precede the subcommand, and several take a value:
+    // `git -C /tmp config --global …` puts `config` at index two, not one
+    // (round 2 code review, MINOR). Skip git's leading options — with
+    // their values where they take one — and judge whatever word lands
+    // first, rather than assuming a fixed position.
+    '      let i = 1;',
+    '      while (i < tokens.length) {',
+    '        const t = tokens[i];',
+    "        if (t === '-C' || t === '-c' || t === '--git-dir' || t === '--work-tree' || t === '--namespace' || t === '--exec-path') { i += 2; continue; }",
+    "        if (t.charAt(0) === '-') { i += 1; continue; }",
+    '        break;',
+    '      }',
+    "      if (tokens[i] === 'config') {",
     // Repository-scoped `git config` is a dispatched role's own business
     // (Step 0 sets `push.autoSetupRemote` with it); the global and system
     // scopes are the machine's.
-    '      for (let i = 2; i < tokens.length; i++) {',
-    '        const t = tokens[i];',
-    "        if (t === '--global' || t === '--system') return true;",
+    '        for (let j = i + 1; j < tokens.length; j++) {',
+    '          const t = tokens[j];',
+    "          if (t === '--global' || t === '--system') return true;",
+    '        }',
     '      }',
     '    }',
     '  }',
@@ -905,7 +1025,7 @@ function machineStateDetectorSource(): string {
 }
 
 export const MACHINE_STATE_DENY_REASON =
-  "Dispatched sessions cannot change this machine's own keychain, services or global settings — `security` (except a `find-generic-password` read), `launchctl`, `crontab`, `defaults write`, `systemsetup`, `networksetup`, `pmset`, `dscl`, `chsh`, `sudo`, and `git config` at `--global`/`--system` scope. A test that needs one of these uses a fake. Enforced by argument inspection, so no flag ordering, absolute path, environment prefix or compound command defeats it."
+  "Dispatched sessions cannot change this machine's own keychain, services or global settings — `security` (except a `find-generic-password` read), `launchctl`, `crontab`, a mutating `defaults` subcommand, `systemsetup`, `networksetup`, `pmset`, `dscl`, `chsh`, `sudo`, and `git config` at `--global`/`--system` scope. A test that needs one of these uses a fake. Every statement of the command is inspected, substituted bodies included, so argument order, an absolute path, an environment or wrapper prefix, a pipe, a background `&` or a command substitution does not hide the command. This is a floor, not a sandbox: it reads the shell text of the call, and cannot answer for a command another interpreter builds at runtime."
 
 /**
  * The subagent tool (`Agent`/`Task` — both names are checked, as a

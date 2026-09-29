@@ -3418,6 +3418,114 @@ describe('background-deny hook — Issue #865, O1/O2: machine-state commands, al
     expect(decisionFor(scriptPath, '/usr/bin/security find-generic-password -s svc -w')).toBeNull()
   })
 
+  /**
+   * Round 2 findings. Each shape below defeated BOTH enforcement layers at
+   * once before this round: the statement splitter kept the blocked command
+   * out of the first token, and the settings `deny` entries are prefix
+   * patterns that never matched the full command text either.
+   */
+  it('a single pipe, a background `&`, and a command substitution are statement separators too — the command they carry is judged, not the harmless word in front of it', () => {
+    const scriptPath = freshDenyScriptPath('developer')
+    for (const command of [
+      'true | sudo rm /etc/hosts',
+      'echo x | sudo launchctl load /Library/LaunchAgents/evil.plist',
+      'echo x & sudo rm /etc/hosts',
+      'echo $(sudo rm /etc/hosts)',
+      'echo `security default-keychain -s /tmp/scratch.keychain`',
+      'cat <(security create-keychain -p x /tmp/scratch.keychain)',
+      'true | cd /tmp && defaults write com.apple.finder AppleShowAllFiles true'
+    ]) {
+      const decision = decisionFor(scriptPath, command)
+      expect(decision?.permissionDecision).toBe('deny')
+      expect(decision?.permissionDecisionReason).toMatch(/keychain, services or global settings/)
+    }
+  })
+
+  it('a substitution body inside double quotes is judged too — quote masking would otherwise blank it before anything looked at it', () => {
+    const scriptPath = freshDenyScriptPath('developer')
+    expect(decisionFor(scriptPath, 'echo "$(sudo rm /etc/hosts)"')?.permissionDecision).toBe('deny')
+    expect(
+      decisionFor(scriptPath, 'FOO="$(security create-keychain -p x /tmp/y.keychain)" echo done')?.permissionDecision
+    ).toBe('deny')
+  })
+
+  it("git's own leading options precede the subcommand, so the scope flag is found by position-independent scan, not at a fixed index", () => {
+    const scriptPath = freshDenyScriptPath('developer')
+    expect(decisionFor(scriptPath, 'git -C /tmp config --global user.email a@b.c')?.permissionDecision).toBe('deny')
+    expect(decisionFor(scriptPath, 'git -c core.pager=cat config --system core.editor vim')?.permissionDecision).toBe(
+      'deny'
+    )
+    expect(
+      decisionFor(scriptPath, '/usr/bin/git --git-dir /tmp/.git config --global user.name x')?.permissionDecision
+    ).toBe('deny')
+    // The same shapes at repository scope stay a dispatched role's own business.
+    expect(decisionFor(scriptPath, 'git -C /tmp config user.email a@b.c')).toBeNull()
+  })
+
+  it('every mutating `defaults` subcommand is refused, not only `write` — `import` loads a whole plist into the same domain', () => {
+    const scriptPath = freshDenyScriptPath('developer')
+    for (const command of [
+      'defaults import com.apple.finder /tmp/evil.plist',
+      'defaults delete com.apple.finder AppleShowAllFiles',
+      'defaults rename com.apple.finder a b',
+      'defaults -currentHost import com.apple.screensaver /tmp/x.plist'
+    ]) {
+      expect(decisionFor(scriptPath, command)?.permissionDecision).toBe('deny')
+    }
+    // Reads still resolve exactly as before.
+    expect(decisionFor(scriptPath, 'defaults read-type com.apple.finder AppleShowAllFiles')).toBeNull()
+    expect(decisionFor(scriptPath, 'defaults domains')).toBeNull()
+  })
+
+  it('a wrapper word or a subshell in front of the command does not hide it', () => {
+    const scriptPath = freshDenyScriptPath('developer')
+    for (const command of [
+      'env sudo rm /etc/hosts',
+      'command security default-keychain -s /tmp/x.keychain',
+      'time launchctl unload /Library/LaunchAgents/x.plist',
+      '(sudo rm /etc/hosts)',
+      '! security create-keychain -p x /tmp/y.keychain'
+    ]) {
+      expect(decisionFor(scriptPath, command)?.permissionDecision).toBe('deny')
+    }
+  })
+
+  it('a separator INSIDE a substitution does not split the statement around it — the deciding word would otherwise land in a different fragment from its command', () => {
+    const scriptPath = freshDenyScriptPath('developer')
+    for (const command of [
+      'defaults $(echo a|b) write com.apple.finder AppleShowAllFiles true',
+      'git config $(echo a|b) --global user.email a@b.c',
+      'security $(printf x|cat) default-keychain -s /tmp/scratch.keychain'
+    ]) {
+      expect(decisionFor(scriptPath, command)?.permissionDecision).toBe('deny')
+    }
+  })
+
+  it('the exempted read survives every one of those shapes — it is how a log header resolves from the login Keychain', () => {
+    const scriptPath = freshDenyScriptPath('developer')
+    for (const command of [
+      'security find-generic-password -s svc -a acct -w',
+      'security find-generic-password -s svc -w | tr -d "\\n"',
+      'env security find-generic-password -s svc -w',
+      'TOKEN=$(security find-generic-password -s svc -a acct -w) && echo set'
+    ]) {
+      expect(decisionFor(scriptPath, command)).toBeNull()
+    }
+  })
+
+  it('ordinary piped and chained work a dispatched role really runs is never refused', () => {
+    const scriptPath = freshDenyScriptPath('developer')
+    for (const command of [
+      'git log --oneline | cat',
+      'grep -rn "sudo" apps/cli/src | head',
+      'gh pr view --json body | jq .body',
+      'echo "security create-keychain" > /tmp/notes.txt',
+      'cat /tmp/notes.txt && echo done'
+    ]) {
+      expect(decisionFor(scriptPath, command)).toBeNull()
+    }
+  })
+
   it('reads and repository-scoped writes are untouched — this rule refuses state changes, not information', () => {
     const scriptPath = freshDenyScriptPath('developer')
     for (const command of [
