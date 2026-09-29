@@ -97,6 +97,7 @@ import {
   type DevReviewLoopEventInput
 } from '@attalabs/aeg-core'
 import {
+  CLEAN_REVIEWER,
   CLEAN_SECURITY,
   cleanupWorlds,
   controlDir as ipControlDir,
@@ -1195,6 +1196,50 @@ describe('devReviewLoop — round 1 clean, ends on publish', () => {
     const roleLog = readFileSync(join(ipTaskRunDir(world), 'output', 'driver.log'), 'utf8')
     expect(roleLog).toMatch(/evidence_report_failed: round=1 head=\S+ reason=/)
     expect(roleLog).toContain('fake-always-refuse-body: fixture forces a body-check refusal')
+  })
+})
+
+describe('devReviewLoop — deferred findings tracked in one Issue per pull request (#854)', () => {
+  afterEach(cleanupWorlds)
+
+  // A would-block finding (BLOCKER, the code-review threshold) whose file the
+  // Surface `in:` does not cover is deferred (`outside-surface`) rather than
+  // blocking, so the round still publishes — the exact shape the deferral
+  // rules set aside (a below-threshold finding is non-blocking but NEVER
+  // deferred, so it would not exercise this path).
+  const OUT_OF_SURFACE_FINDING =
+    'BLOCKER|packages/aeg-core/src/foo.ts:10|F1 correctness: a latent bug the loop cannot act on this round\n'
+
+  it('opens/updates one tracking Issue for a publish with deferred findings and links it from the summary (O1)', async () => {
+    const world = makeWorld({
+      surface: { in: ['apps/cli/**'], out: [] },
+      roleOutcomes: {
+        1: { reviewer: { ...CLEAN_REVIEWER, findings: OUT_OF_SURFACE_FINDING } }
+      }
+    })
+    const result = await runLoopInProcess(world)
+    expect(result.finalDecision.type).toBe('publish')
+
+    // O1: the tracking Issue was written exactly once, carrying the deferred
+    // finding's own severity, `file:line`, reason and round.
+    expect(world.deferredIssueWrites).toHaveLength(1)
+    const write = world.deferredIssueWrites[0]!
+    expect(write.prNumber).toBe(world.prNumber)
+    expect(write.entries).toEqual([
+      { round: 1, severity: 'BLOCKER', location: 'packages/aeg-core/src/foo.ts:10', reason: 'outside-surface' }
+    ])
+    // O1: publication received the tracking Issue's ref, to link from the summary.
+    expect(world.publishedDeferredIssues).toEqual([{ issue: world.deferredIssueNumber }])
+  })
+
+  it('opens nothing for a clean publish with no deferred findings (O3)', async () => {
+    const world = makeWorld()
+    const result = await runLoopInProcess(world)
+    expect(result.finalDecision.type).toBe('publish')
+
+    // O3: nothing deferred, so no Issue is written and the summary links none.
+    expect(world.deferredIssueWrites).toEqual([])
+    expect(world.publishedDeferredIssues).toEqual([])
   })
 })
 

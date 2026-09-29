@@ -30,7 +30,7 @@ import {
 } from '@attalabs/aeg-core'
 import { principalBodies } from '../../commands/review-post.js'
 import { controlStoreRoot, createEffectExecutor, sha256Hex } from '../effects.js'
-import { reconcileGhComment } from '../forge-write.js'
+import { type DeferredFindingsIssueRef, reconcileGhComment } from '../forge-write.js'
 import { sh } from './gate-reading.js'
 import { markerComments, principalAllowlist } from './developer-dispatch.js'
 import { heldVerdictPath, readIfExists } from './reviewer-dispatch.js'
@@ -163,6 +163,13 @@ export type PublishInput = {
    * invariant, now field-complete rather than head-only.
    */
   manifest: ReviewInputManifest
+  /**
+   * O1: the backlog Issue this pull request's deferred findings were tracked
+   * in, linked from the summary so the loop's readers can find the durable
+   * record. `undefined` when nothing was deferred (O3) — the summary then
+   * carries no link, byte-identical to before this task.
+   */
+  deferredIssue?: DeferredFindingsIssueRef
 }
 
 /** The field names `compareManifest` reports as unbound — `[]` when everything binds. */
@@ -270,7 +277,14 @@ export function publishRound(root: string, input: PublishInput): void {
     )
   }
 
-  const summary = renderSummary(input.journal)
+  // O1: link the deferred-findings tracking Issue from the summary when this
+  // publication opened or updated one. A plain trailing sentence — never a
+  // `VERDICT:`/`Judged head:`/`Objectives version:` line — so the
+  // re-parses-as-a-verdict guard below still holds; that guard runs over this
+  // full text, link included.
+  const summary = input.deferredIssue
+    ? `${renderSummary(input.journal)}\n\nDeferred findings that no longer block a round are tracked in #${input.deferredIssue.issue}.`
+    : renderSummary(input.journal)
   const summaryAsCodeReview = extractCodeReviewVerdict([summary])
   const summaryAsSecurity = extractSecurityReviewVerdict([summary])
   if (summaryAsCodeReview.danglingNote === null || summaryAsSecurity.danglingNote === null) {

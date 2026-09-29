@@ -71,6 +71,8 @@ import {
   checkTierField,
   checkTrancheLabelPresence,
   checkWorktreeStep0,
+  DEFERRAL_REASON_TEXT,
+  type DeferralReason,
   deriveBuiltinCrossCuttingDefaults,
   deriveWorkspacePackageDomains,
   type DispatchBlockerClass,
@@ -2369,4 +2371,173 @@ export function reconcileGhComment(
     if (match) return { outcome: 'confirmed', url: match.url ?? '' }
     return { outcome: 'absent' }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Deferred-findings tracking Issue — the one backlog Issue per pull request
+// that carries the findings a round set aside rather than let block (the
+// deferral rules in `@attalabs/aeg-core`). Written through this file like
+// every other loop forge write, FOUND by a body marker naming the pull
+// request (never by title, so a re-titled Issue is still the same one), and
+// labelled `vinaya/deferred` with NO tranche label so it never reads as a
+// planned task. See `apps/cli/specs/loop.md` § "The deferred-findings Issue."
+// ---------------------------------------------------------------------------
+
+/** The fixed label every deferred-findings tracking Issue carries — a backlog label, never a `vinaya/tranche:*` task label, so no plan gate applies to it. */
+export const DEFERRED_FINDINGS_LABEL = 'vinaya/deferred'
+
+const DEFERRED_FINDINGS_LABEL_COLOR = 'BFD4F2'
+
+/** One deferred finding as the tracking Issue lists it — the same facts the published summary's deferred block carries, plus the round that set it aside. */
+export type DeferredFindingEntry = {
+  round: number
+  severity: string
+  /** The finding's own `file:line`, or `''` when it carried none. */
+  location: string
+  reason: DeferralReason
+}
+
+/** What `upsertDeferredFindingsIssue` returns — the tracking Issue's own number, for the published summary to link. */
+export type DeferredFindingsIssueRef = { issue: number }
+
+/** The hidden marker naming the pull request, on the tracking Issue's first body line — how the Issue is FOUND on a republish, never its title. */
+export function deferredFindingsMarker(prNumber: number): string {
+  return `<!-- aeg:deferred-findings:pr-${prNumber} -->`
+}
+
+/** The tracking Issue's title — human-facing only; the marker, never this, is what a republish matches on. */
+function deferredFindingsTitle(prNumber: number): string {
+  return `Deferred review findings — pull request #${prNumber}`
+}
+
+/**
+ * The tracking Issue's body: the marker on line 1, then one bullet per
+ * deferred finding in round-then-report order, each naming its round, original
+ * severity, `file:line` (or `(no location)`), and why it was set aside — the
+ * SAME facts the published summary's own deferred block renders, so the
+ * durable backlog Issue and the summary never disagree. `DEFERRAL_REASON_TEXT`
+ * is the one shared reason-wording map both read.
+ */
+export function renderDeferredFindingsIssueBody(prNumber: number, entries: DeferredFindingEntry[]): string {
+  const lines = entries.map((e) => {
+    const where = e.location.length > 0 ? e.location : '(no location)'
+    return `- round ${e.round} — ${e.severity} ${where} — ${DEFERRAL_REASON_TEXT[e.reason]}`
+  })
+  return [
+    deferredFindingsMarker(prNumber),
+    '',
+    `Findings the review loop set aside rather than let them block pull request #${prNumber} — they fall outside the task's Surface, or land on lines this round did not change. They no longer block a round, so they are tracked here rather than carried forward only by a hand-cut follow-up.`,
+    '',
+    ...lines,
+    ''
+  ].join('\n')
+}
+
+/** A `gh` invocation returning trimmed stdout — the seam a test overrides to drive the upsert without a real forge; production runs real `gh`. */
+export type GhRunner = (args: string[]) => string
+
+const realGhRunner: GhRunner = (args) =>
+  execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+
+/**
+ * Creates the `vinaya/deferred` label if the forge does not already carry it.
+ * Throws (never `refuse`/`process.exit`) on a `gh` failure, so a caller inside
+ * the loop's own publish step falls to its infrastructure-pause path rather
+ * than killing the driver process — unlike `ensureTrancheLabelExists`, whose
+ * one-shot-CLI callers do want a hard refusal.
+ */
+function ensureDeferredFindingsLabel(gh: GhRunner): void {
+  const existing = JSON.parse(gh(['label', 'list', '--json', 'name', '--limit', '200'])) as Array<{ name: string }>
+  if (existing.some((l) => l.name === DEFERRED_FINDINGS_LABEL)) return
+  gh([
+    'label',
+    'create',
+    DEFERRED_FINDINGS_LABEL,
+    '--color',
+    DEFERRED_FINDINGS_LABEL_COLOR,
+    '--description',
+    'Findings a review round set aside rather than let block'
+  ])
+}
+
+type ForgeIssueRow = { number: number; body: string; state: string }
+
+/** The open-or-closed tracking Issue whose body carries `marker`, or `null` — the find-by-marker that makes a republish idempotent (O2), scoped to the fixed label, never a title match. */
+function findDeferredFindingsIssue(gh: GhRunner, marker: string): ForgeIssueRow | null {
+  const rows = JSON.parse(
+    gh([
+      'issue',
+      'list',
+      '--label',
+      DEFERRED_FINDINGS_LABEL,
+      '--state',
+      'all',
+      '--json',
+      'number,body,state',
+      '--limit',
+      '100'
+    ])
+  ) as ForgeIssueRow[]
+  return rows.find((r) => r.body.includes(marker)) ?? null
+}
+
+function writeIssueBodyFromFile(gh: GhRunner, ghCmd: string[], body: string): string {
+  const dir = mkdtempSync(join(tmpdir(), 'vinaya-deferred-issue-'))
+  const tmp = join(dir, 'body.md')
+  writeFileSync(tmp, body, 'utf8')
+  try {
+    return gh([...ghCmd, '--body-file', tmp])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+const ISSUE_URL_TRAILING_NUMBER = /\/(\d+)(?:[#?].*)?$/
+
+/**
+ * Opens or updates the one deferred-findings tracking Issue for `prNumber`
+ * (O1, O2):
+ *
+ *   - finds the existing Issue by its body marker, never its title — a
+ *     republish of the same pull request updates THAT Issue rather than
+ *     opening a second (O2);
+ *   - reopens it first if a prior publish's Issue was since closed, so the
+ *     backlog record is live again;
+ *   - writes the current deferred set as the body, skipping the write when it
+ *     already matches (a genuine no-op republish posts nothing);
+ *   - creates it with the fixed `vinaya/deferred` label and no tranche label
+ *     when none exists yet.
+ *
+ * Synchronous and throwing (never `refuse`/`process.exit`) so the loop's
+ * publish step can call it inline and fall to its own infrastructure-pause on
+ * a `gh` failure. The caller opens NO Issue when nothing is deferred (O3) — this
+ * is only reached with a non-empty `entries`.
+ */
+export function upsertDeferredFindingsIssue(
+  input: { prNumber: number; entries: DeferredFindingEntry[] },
+  gh: GhRunner = realGhRunner
+): DeferredFindingsIssueRef {
+  const { prNumber, entries } = input
+  const marker = deferredFindingsMarker(prNumber)
+  const body = renderDeferredFindingsIssueBody(prNumber, entries)
+  ensureDeferredFindingsLabel(gh)
+  const existing = findDeferredFindingsIssue(gh, marker)
+  if (existing) {
+    if (existing.state.toUpperCase() === 'CLOSED') gh(['issue', 'reopen', String(existing.number)])
+    if (existing.body.trim() !== body.trim())
+      writeIssueBodyFromFile(gh, ['issue', 'edit', String(existing.number)], body)
+    return { issue: existing.number }
+  }
+  const url = writeIssueBodyFromFile(
+    gh,
+    ['issue', 'create', '--title', deferredFindingsTitle(prNumber), '--label', DEFERRED_FINDINGS_LABEL],
+    body
+  )
+  const m = ISSUE_URL_TRAILING_NUMBER.exec(url)
+  if (!m) {
+    throw new Error(
+      `upsertDeferredFindingsIssue: could not read the created Issue number from \`gh issue create\`'s output: ${url}`
+    )
+  }
+  return { issue: Number(m[1]) }
 }

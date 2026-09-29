@@ -55,7 +55,11 @@ import {
   renderPauseComment,
   sanitizePublicPauseDetail
 } from '../../src/lib/dev-review-loop/pause-resume.js'
-import { markedCommentBody } from '../../src/lib/forge-write.js'
+import {
+  type DeferredFindingEntry,
+  type DeferredFindingsIssueRef,
+  markedCommentBody
+} from '../../src/lib/forge-write.js'
 import { type IssueSurface, objectivesOf, objectivesVersion, renderObjectives } from '@attalabs/aeg-core'
 import { FIXTURE_REPO, isolatedConfigFixture } from './process-fixture.js'
 
@@ -165,6 +169,12 @@ export type LoopWorld = {
   /** How many times each role was dispatched, cumulative across rounds. */
   dispatchCountByRole: Record<string, number>
   publishedRounds: number[]
+  /** Each `writeDeferredFindingsIssue` call this run recorded — O1/O3: a publish with deferred findings appends one, a clean publish appends none. */
+  deferredIssueWrites: Array<{ prNumber: number; entries: DeferredFindingEntry[] }>
+  /** The tracking Issue number the fake `writeDeferredFindingsIssue` returns — stable across calls, modelling one Issue per pull request (O2). */
+  deferredIssueNumber: number
+  /** The `deferredIssue` ref each `publishRound` was handed — O1: non-empty when the summary was to link the tracking Issue. */
+  publishedDeferredIssues: DeferredFindingsIssueRef[]
   evidenceReportCalls: number
   reexecCalls: string[][]
   exitCalls: number[]
@@ -264,6 +274,9 @@ export function makeWorld(overrides: Partial<LoopWorld> = {}): LoopWorld {
     dispatches: [],
     dispatchCountByRole: {},
     publishedRounds: [],
+    deferredIssueWrites: [],
+    deferredIssueNumber: 7777,
+    publishedDeferredIssues: [],
     evidenceReportCalls: 0,
     reexecCalls: [],
     exitCalls: [],
@@ -445,8 +458,16 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
       world.postedComments.push({ kind: 'issue', ref: String(task), marker, body })
       return { posted: true, url: 'https://example/issue-pause', attempts: 1 } as never
     },
+    writeDeferredFindingsIssue: (input) => {
+      // Record the call (O1/O3) and return a STABLE number, so a second
+      // publication of the same world resolves the same Issue (O2) — the real
+      // find-by-marker idempotency is unit-tested against `forge-write.ts`.
+      world.deferredIssueWrites.push({ prNumber: input.prNumber, entries: input.entries })
+      return { issue: world.deferredIssueNumber }
+    },
     publishRound: (_root, input) => {
       world.publishedRounds.push(input.round)
+      if (input.deferredIssue) world.publishedDeferredIssues.push(input.deferredIssue)
       // Record the same three comments the real publishRound posts, in order,
       // so a test asserting the published sequence still sees it. The real
       // publishRound's own posted-comment re-fetch + manifest re-binding
