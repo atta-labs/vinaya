@@ -442,6 +442,6 @@ export async function prEditCommand(args: string[]): Promise<void> {
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'pr create': { date: '2026-09-14', callsToday: 13, retiresVia: 'forgeWrite' },
+  'pr create': { date: '2026-09-29', callsToday: 9, retiresVia: 'forgeWrite' },
   'pr edit': { date: '2026-09-11', callsToday: 10, retiresVia: 'forgeWrite' }
 }

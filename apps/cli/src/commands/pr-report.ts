@@ -295,5 +295,5 @@ export async function prReportCommand(args: string[], testOverrides?: { gateRunn
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'pr report': { date: '2026-09-13', callsToday: 8, retiresVia: 'collectTokens' }
+  'pr report': { date: '2026-09-29', callsToday: 7, retiresVia: 'runChecks' }
 }
