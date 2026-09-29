@@ -94,22 +94,22 @@ function controlledDeveloperDeps(
   return { deps: { ...base, dispatchRole, findOpenPrForBranch }, prompts, resumeIds }
 }
 
-// --- O1 (#595): a blank/dash-only token-report row never ends the driver ---
+// --- O1 (#595): one failing CI check never ends the driver ---
 
-describe('devReviewLoop — O1 (#595): a blank/dash-only token-report row never ends the driver', () => {
-  it('yields one developer resume naming token-report, then a live driver that runs to publish once the row is fixed', async () => {
+describe('devReviewLoop — O1 (#595): one failing CI check never ends the driver', () => {
+  it('yields one developer resume naming the failing check, then a live driver that runs to publish once it is fixed', async () => {
     const world = makeWorld({
       gate: 'red',
-      failingCheckRuns: [{ id: 1, name: 'token-report', conclusion: 'failure' }]
+      failingCheckRuns: [{ id: 1, name: 'evidence-fresh', conclusion: 'failure' }]
     })
     const { deps, prompts } = withCapturedDeveloperDispatch(world, {
       fetchCiConclusion: () => ((world.dispatchCountByRole.developer ?? 0) >= 2 ? 'green' : 'red'),
       fetchFailingCheckRuns: () =>
         (world.dispatchCountByRole.developer ?? 0) >= 2
           ? []
-          : ([{ id: 1, name: 'token-report', conclusion: 'failure' }] as never),
+          : ([{ id: 1, name: 'evidence-fresh', conclusion: 'failure' }] as never),
       // The head-change poll after a gate-red retry needs a REAL change —
-      // the fixture's stand-in for "the developer fixed the row and
+      // the fixture's stand-in for "the developer fixed the check and
       // pushed" once its resumed turn actually ran.
       resolveHead: () => ((world.dispatchCountByRole.developer ?? 0) >= 2 ? 'c'.repeat(40) : world.head)
     })
@@ -122,7 +122,7 @@ describe('devReviewLoop — O1 (#595): a blank/dash-only token-report row never 
     // dispatch is prompts[0], and the ONE gate-red retry that names the
     // failing check is prompts[1] — never a third.
     expect(prompts).toHaveLength(2)
-    expect(prompts[1]).toMatch(/token-report/)
+    expect(prompts[1]).toMatch(/evidence-fresh/)
     expect(prompts[1]).toMatch(/`git push`/)
 
     // Never a pause of any kind — this run reaches a clean publish.

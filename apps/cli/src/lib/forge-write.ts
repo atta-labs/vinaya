@@ -683,8 +683,8 @@ function resolvedRegistry(): CheckSpec[] {
  * `prNumber` distinguishes the two shapes every body write actually has:
  * `undefined` (no PR exists yet — `pr create`, before the write) sets
  * `localOnly: true`, which skips every `requiresOpenPr` check outright
- * (`closes-n`, `test-plan`, `body-bare-digits`, `token-report`,
- * `evidence-fresh` all take their own documented "no PR yet" bypass when
+ * (`closes-n`, `test-plan`, `body-bare-digits`, `evidence-fresh` all take
+ * their own documented "no PR yet" bypass when
  * actually run — skipping here is cheaper and matches the pre-commit/
  * pre-push hooks' own `--local` posture); a real number (`pr edit`, `pr
  * report --push`, both against an already-open PR) runs the full set,

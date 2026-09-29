@@ -12,17 +12,19 @@
  * the registry, then compare. Nothing here runs a check; the caller supplies both
  * the published region and a freshly generated one.
  *
- * The comparison is set-equality over normalised lines, not a byte diff. Three
+ * The comparison is set-equality over normalised lines, not a byte diff. Two
  * sources of false difference were observed comparing a real pull request
- * against its own regeneration at its own head, and every one of them
+ * against its own regeneration at its own head, and both of them
  * would have made a byte diff useless:
  *
  *   1. Absolute paths — regenerated warnings embed the checkout root, which
  *      differs per machine and per worktree.
  *   2. Line order — a `workspace-escape` warning changed position between two
  *      runs at the same head.
- *   3. `AEG:TOKENS` appends by design, so whole-body comparison always differs.
- *      Handled by the caller extracting the evidence region only.
+ *
+ * Whole-body comparison is wrong for a third reason, handled by the caller
+ * extracting the evidence region only: prose the Developer wrote by hand sits
+ * outside that region and no regeneration reproduces it.
  *
  * A pure reordering is therefore reported as a match. That is deliberate: a
  * reordered warning set is not a fabrication, and flagging it would train the

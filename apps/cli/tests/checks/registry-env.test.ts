@@ -73,7 +73,6 @@ describe('registry env declarations', () => {
         'surface-scope',
         'test-plan',
         'token-collection-wired',
-        'token-report',
         'workspace-escape'
       ].sort()
     )

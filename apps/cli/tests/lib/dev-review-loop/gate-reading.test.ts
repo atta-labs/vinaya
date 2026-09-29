@@ -99,8 +99,8 @@ describe('fetchMechanicalCheckRuns dedupe — O3 (#595): newest started_at wins,
       dir,
       `
 if [ "$1" = "api" ]; then
-  printf '%s\\n' '{"id":1,"name":"token-report","status":"completed","conclusion":"failure","started_at":"2026-09-14T10:00:00Z"}'
-  printf '%s\\n' '{"id":2,"name":"token-report","status":"completed","conclusion":"success","started_at":"2026-09-14T10:05:00Z"}'
+  printf '%s\\n' '{"id":1,"name":"evidence-fresh","status":"completed","conclusion":"failure","started_at":"2026-09-14T10:00:00Z"}'
+  printf '%s\\n' '{"id":2,"name":"evidence-fresh","status":"completed","conclusion":"success","started_at":"2026-09-14T10:05:00Z"}'
   exit 0
 fi
 exit 1
@@ -122,8 +122,8 @@ exit 1
       dir,
       `
 if [ "$1" = "api" ]; then
-  printf '%s\\n' '{"id":5,"name":"token-report","status":"completed","conclusion":"success","started_at":"2026-09-14T10:00:00Z"}'
-  printf '%s\\n' '{"id":1,"name":"token-report","status":"completed","conclusion":"failure","started_at":"2026-09-14T10:05:00Z"}'
+  printf '%s\\n' '{"id":5,"name":"evidence-fresh","status":"completed","conclusion":"success","started_at":"2026-09-14T10:00:00Z"}'
+  printf '%s\\n' '{"id":1,"name":"evidence-fresh","status":"completed","conclusion":"failure","started_at":"2026-09-14T10:05:00Z"}'
   exit 0
 fi
 exit 1
@@ -138,7 +138,7 @@ exit 1
     expect(conclusion).toBe('red')
     // O3 (`#607`): the surviving run is named by id and started_at, not just
     // by check name — the audit trail a pause detail is later built from.
-    expect(JSON.parse(runs as string)).toEqual([{ name: 'token-report', id: 1, startedAt: '2026-09-14T10:05:00Z' }])
+    expect(JSON.parse(runs as string)).toEqual([{ name: 'evidence-fresh', id: 1, startedAt: '2026-09-14T10:05:00Z' }])
   })
 })
 
@@ -150,7 +150,7 @@ describe("principal-test-plan-wait exclusion (O3): its own red is the Principal'
       `
 if [ "$1" = "api" ]; then
   printf '%s\\n' '{"id":1,"name":"vinaya check principal-test-plan-wait","status":"completed","conclusion":"failure","started_at":"2026-09-21T10:00:00Z"}'
-  printf '%s\\n' '{"id":2,"name":"token-report","status":"completed","conclusion":"success","started_at":"2026-09-21T10:00:00Z"}'
+  printf '%s\\n' '{"id":2,"name":"evidence-fresh","status":"completed","conclusion":"success","started_at":"2026-09-21T10:00:00Z"}'
   exit 0
 fi
 exit 1
@@ -173,7 +173,7 @@ exit 1
       `
 if [ "$1" = "api" ]; then
   printf '%s\\n' '{"id":1,"name":"vinaya check principal-test-plan-wait","status":"completed","conclusion":"failure","started_at":"2026-09-21T10:00:00Z"}'
-  printf '%s\\n' '{"id":2,"name":"token-report","status":"completed","conclusion":"failure","started_at":"2026-09-21T10:00:00Z"}'
+  printf '%s\\n' '{"id":2,"name":"evidence-fresh","status":"completed","conclusion":"failure","started_at":"2026-09-21T10:00:00Z"}'
   exit 0
 fi
 exit 1
@@ -186,7 +186,7 @@ exit 1
     expect(r.stderr).toBe('')
     const [conclusion, runs] = r.stdout.trim().split('\n')
     expect(conclusion).toBe('red')
-    expect(JSON.parse(runs as string)).toEqual([{ name: 'token-report', id: 2, startedAt: '2026-09-21T10:00:00Z' }])
+    expect(JSON.parse(runs as string)).toEqual([{ name: 'evidence-fresh', id: 2, startedAt: '2026-09-21T10:00:00Z' }])
   })
 })
 

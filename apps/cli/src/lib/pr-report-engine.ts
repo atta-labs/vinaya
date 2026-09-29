@@ -17,31 +17,20 @@ import {
 import { hostname, tmpdir } from 'node:os'
 import { dirname, join, resolve as resolvePath } from 'node:path'
 import { promisify } from 'node:util'
-import {
-  type AnchorField,
-  anchoredRegionBounds,
-  extractFencedBlocks,
-  formatTokenReportRow,
-  locateTestPlanSection,
-  type MeteringCapability,
-  resolveMeteringCapability
-} from '@attalabs/aeg-core'
-import { maskCode } from '@attalabs/aeg-forge-state/strip-code'
+import { type AnchorField, anchoredRegionBounds, extractFencedBlocks, locateTestPlanSection } from '@attalabs/aeg-core'
 import { coreCheckRegistry } from '../checks/registry'
 import { buildCheckEnv } from '../checks/runner'
 import { ScanContext } from '../checks/scan-context'
 import { loadConfig } from './config'
-import { type DispatchTeeRecovery, realDispatchTeeRecoveryDeps, recoverUsageFromDispatchTee } from './dispatch.js'
 import { collectBodyCheckErrors } from './forge-write.js'
 import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from './numstat'
 import { packageRoot } from './package-root.js'
 import { ensureRunDir, runPath, runtimeDirForThisRepo } from './run-paths.js'
-import { meteringRefusalMessage, realDeps } from '../commands/tokens'
 
 /**
- * The `AEG:EVIDENCE`/`AEG:TOKENS` engine — every function that computes, or
- * writes, the two anchored blocks `aeg-root/roles/developer.md`'s PR-body
- * canonical form describes. Moved out of `apps/cli/src/commands/pr-report.ts`:
+ * The `AEG:EVIDENCE` engine — every function that computes, or writes, the
+ * anchored block `aeg-root/roles/developer.md`'s PR-body canonical form
+ * describes. Moved out of `apps/cli/src/commands/pr-report.ts`:
  * a COMMAND (`apps/cli/src/commands/pr-report.ts`'s
  * `prReportCommand`, argv-parsing and console I/O only) and the loop's own
  * driver (`apps/cli/src/lib/dev-review-loop.ts`) both need this engine, and a
@@ -50,19 +39,6 @@ import { meteringRefusalMessage, realDeps } from '../commands/tokens'
  * than the loop shelling out to `vinaya pr report --push` as a subprocess.
  * `pr-report.ts` re-exports every name below under its own path, so no
  * existing import elsewhere in this codebase needed to change.
- *
- * `--write` also fills a second, independent block: `AEG:TOKENS`, real
- * usage figures collected the same way `vinaya tokens` collects them
- * (`resolveMeteringCapability`), rendered into the `## Token report`
- * heading's table. Unlike Evidence, re-entry APPENDS a row rather than
- * replacing the block — see `writeTokensBlock`'s doc comment and this
- * task's own brief for why. Cost is always `—` by design (no maintained
- * pricing table). A session whose OWN wiring was reached but failed — a pointer
- * whose id matches, or one at this project's own pointer path — gets an
- * all-`—` row carrying the probe's reason inline (Agent/Model cell),
- * never a fabricated `0/0/—`; a session that resolved no transcript at all
- * gets NO row and a refusal (`collectTokensAddition`) — the
- * Evidence block is written either way.
  *
  * Two groups, deliberately kept apart, because they are verifiable to
  * different degrees:
@@ -1371,297 +1347,6 @@ export function replaceEvidenceBlock(body: string, blockInner: string): string {
 }
 
 /**
- * `AEG:TOKENS` — the second block `--write` fills, alongside `AEG:EVIDENCE`.
- * Unlike Evidence, this one has APPEND semantics: a Developer re-entry after
- * `CHANGES_REQUESTED` reports again, and `aeg-root/tranche-model.md` §12 is
- * explicit that a second report is a second row — "never a sum, never an
- * overwrite" — with the tranche total derived at read time
- * (`sum-ledger.ts`). `replaceEvidenceBlock`'s replace-in-place model is
- * therefore the wrong one to copy here; see this task's own brief for why.
- *
- * The anchors are deliberately sited INSIDE the `## Token report` heading
- * this repo's own PR template already carries — `body-bare-digits-logic.ts`'s
- * `blankTokenReportSection` already blanks that whole heading's content,
- * unconditionally, before the bare-digit scan ever runs. Anchoring inside a
- * region a sibling check already exempts needs no new exemption of any kind,
- * which is the point: `body-bare-digits-logic.ts` stays untouched, and the
- * still-open exemption/verification coupling failure this avoids never has a
- * new instance to reopen.
- *
- * `TOKEN_REPORT_HEADING`/`HEADING_LINE` intentionally duplicate
- * `blankTokenReportSection`'s own heading/section-bound regexes rather than
- * importing them (that module is out of this task's surface, and neither
- * regex is exported) — the region this writer creates must be exactly the
- * region that check later blanks, so the two definitions are kept
- * byte-identical on purpose.
- */
-const TOKENS_START = '<!-- AEG:TOKENS:START -->'
-const TOKENS_END = '<!-- AEG:TOKENS:END -->'
-const TOKEN_REPORT_HEADING = /^#{1,6}\s*token report\s*$/i
-const HEADING_LINE = /^#{1,6}\s/
-const TOKEN_TABLE_HEADER = '| Phase | Role | Agent/Model | Tokens in | Tokens out | Cost | Date |'
-const TOKEN_TABLE_SEPARATOR = '|---|---|---|---|---|---|---|'
-
-/**
- * Locate the real (non-fenced) `AEG:TOKENS` anchor pair, if one exists —
- * masked-search, same discipline `anchoredRegionBounds` uses for the other
- * anchored fields, so a decoy copy pasted into this PR's own Test Plan
- * evidence (a fenced paste of "the resulting block", exactly what this
- * task's own Test Plan asks the Developer to do) can never be mistaken for
- * the real block. Per-line comparison against the masked view: `maskCode`
- * blanks fenced/inline code to same-length spaces without touching line
- * structure, so a decoy line never equals the literal anchor text after
- * masking, while the real anchor (never fenced) always does.
- */
-function tokensBlockLineBounds(maskedLines: string[]): { startIdx: number; endIdx: number } | null {
-  const startIdx = maskedLines.findIndex((l) => l.trim() === TOKENS_START)
-  if (startIdx === -1) return null
-  for (let i = startIdx + 1; i < maskedLines.length; i++) {
-    if ((maskedLines[i] as string).trim() === TOKENS_END) return { startIdx, endIdx: i }
-  }
-  return null
-}
-
-/** Whether `body` carries a real (non-fenced) `AEG:TOKENS` pair — `spliceIntoLiveBody`'s guard for whether appending a row is safe. */
-function hasTokensAnchor(body: string): boolean {
-  return tokensBlockLineBounds(maskCode(body).split('\n')) !== null
-}
-
-/**
- * Splices `addition` (one new table row) into `body`'s `AEG:TOKENS` block —
- * appending immediately before the closing
- * anchor when a real block already exists, or creating a fresh one
- * (sited inside the `## Token report` heading section when present, appended
- * at the end of the body otherwise) when it doesn't. Never edits an existing
- * row: append semantics per §12, enforced by construction — there is no
- * code path here that touches a byte before the closing anchor.
- */
-export function writeTokensBlock(body: string, addition: string): string {
-  const rawLines = body.split('\n')
-  const maskedLines = maskCode(body).split('\n')
-  const additionLines = addition.split('\n')
-
-  const existing = tokensBlockLineBounds(maskedLines)
-  if (existing) {
-    const before = rawLines.slice(0, existing.endIdx)
-    const after = rawLines.slice(existing.endIdx)
-    return [...before, ...additionLines, ...after].join('\n')
-  }
-
-  const freshBlock = [TOKENS_START, TOKEN_TABLE_HEADER, TOKEN_TABLE_SEPARATOR, ...additionLines, TOKENS_END]
-
-  const headingIdx = rawLines.findIndex((l) => TOKEN_REPORT_HEADING.test(l))
-  if (headingIdx !== -1) {
-    let sectionEnd = rawLines.length
-    for (let i = headingIdx + 1; i < rawLines.length; i++) {
-      if (HEADING_LINE.test(rawLines[i] as string)) {
-        sectionEnd = i
-        break
-      }
-    }
-    const before = rawLines.slice(0, headingIdx + 1)
-    const after = rawLines.slice(sectionEnd)
-    return [...before, '', ...freshBlock, '', ...after].join('\n')
-  }
-
-  const sep = body.length === 0 || body.endsWith('\n') ? [] : ['']
-  return [...rawLines, ...sep, '', '## Token report', '', ...freshBlock, ''].join('\n')
-}
-
-/**
- * `<n>` out of a `task/<tranche>/<n>` branch name — the `<task-id>` half of
- * the `<task-id>: develop` phase convention (`types.ts`'s `LedgerRow.phase`
- * doc: e.g. `9: develop`). Falls back to the raw branch name for anything
- * that doesn't match (a manual run off another branch) rather than
- * refusing — a wrong-shaped phase string is still legible and re-pivotable,
- * and refusing here would block the Evidence half of this command over a
- * Token-report-only concern.
- */
-export async function derivePhase(): Promise<string> {
-  const branch = await git(['rev-parse', '--abbrev-ref', 'HEAD'])
-  const m = /^task\/[^/]+\/(.+)$/.exec(branch)
-  const taskId = m ? m[1] : branch || 'unknown'
-  return `${taskId}: develop`
-}
-
-export function isoToday(): string {
-  return new Date().toISOString().slice(0, 10)
-}
-
-/**
- * Named in the refusal below rather than left to the reader: both routes out
- * of `no-transcript-resolved` are real, and neither is a fallback to a blank
- * row.
- *
- * Deliberately says nothing about what else was written. This constant is
- * composed inside `collectTokensAddition`, which writes no file — a sentence
- * here claiming the Evidence block was written would be true only because
- * one caller happens to write it, which is the same shape of unearned claim
- * this whole change exists to remove (per code review). The caller
- * states that, where it is the caller's own fact.
- */
-const TOKEN_ROW_REMEDY = [
-  'Nothing here established that this host cannot meter — only that this session resolved no',
-  'transcript of its own. Report real figures by naming your own transcript:',
-  '',
-  '  vinaya pr report --write <body-file> --transcript <path>',
-  '',
-  'or, on a host whose usage arrives by some other means, format figures you already hold with:',
-  '',
-  '  vinaya tokens --phase "<task-id>: develop" --role Developer --in <tokens-in> --out <tokens-out>',
-  '',
-  'and transcribe them into the `## Token report` table. That command prints a `Tokens:` line, not',
-  'a table row — the table takes | Phase | Role | Agent/Model | Tokens in | Tokens out | Cost | Date |,',
-  'and a line inside the block that does not start with `|` truncates the table for every row after it.'
-].join('\n')
-
-/**
- * Either the `AEG:TOKENS` row to append, or a refusal to append one. A
- * discriminated union rather than a nullable string because the caller must
- * not be able to splice "no row" into the block as an empty line: the two
- * outcomes carry different obligations (write the row / print the refusal and
- * exit non-zero), and the type is what enforces that both are handled.
- */
-export type TokensAddition = { collected: true; row: string } | { collected: false; refusal: string }
-
-/**
- * Collects real usage figures via the same `resolveMeteringCapability` probe
- * `vinaya tokens` uses, and renders the `AEG:TOKENS` addition — never a
- * fabricated `0/0/—` row (`bin/report-tokens.ts`'s own throw-rather-than-guess
- * discipline, which must survive here too). Three outcomes, not two:
- *
- *   - **Capable** — a real row.
- *   - **Incapable, `no-transcript-resolved`** — REFUSES. That
- *     reason covers "no pointer file at all" and "a pointer that could not be
- *     corroborated as this session's": both mean this session has no wiring of
- *     its own, and neither means this host cannot produce usage figures. A
- *     blank-celled row here would assert the latter, which
- *     `aeg-root/roles/developer.md` reserves for the host-has-no-usage case
- *     alone — the misrepresentation that doc names in its own words. The
- *     caller writes Evidence anyway and exits non-zero; see `prReportCommand`.
- *   - **Incapable, any other reason** (`pointer-unusable`,
- *     `transcript-unreadable`, `transcript-empty`) — the all-`—` row carrying
- *     the probe's `reason` inline in the Agent/Model cell, unchanged. There a
- *     pointer this session OWNS was reached — its id matches, or it sits at
- *     this project's own pointer path (`resolvePointer`'s error arms set
- *     `oursByLocation`, never `corroborated`, and say so themselves) — and the
- *     figures still could not be, so the row states a fact the probe actually
- *     established, and `token-collection-wired` already flags it as the wiring
- *     defect it is.
- */
-/**
- * `resolveMeteringCapability(realDeps())` — the one call site every other
- * caller in this file already reaches through (`collectTokensAddition`,
- * below). Exported so a COMMAND (`pr create`, O7) can resolve capability
- * without importing `realDeps` from `../commands/tokens.ts` itself —
- * `apps/cli/specs/surface.md`'s own rule refuses a command calling into
- * another `commands/*.ts` file outright; routing through this lib-layer
- * wrapper keeps that call inside `apps/cli/src/lib`, where it already lived.
- */
-/**
- * `resolveTokenReportCapabilityWith`'s I/O, injected the same way every
- * other deps type in this file is — the merge logic below is otherwise
- * untestable end to end (round-2 review, MAJOR finding F1): the two
- * halves — `resolveMeteringCapability` and `recoverUsageFromDispatchTee` —
- * each had unit coverage in isolation, but nothing proved the merge itself
- * (a `no-transcript-resolved` verdict plus a real recovered summary
- * actually becoming `{capable: true, ...}`) without this seam.
- */
-export type TokenReportCapabilityDeps = {
-  resolveMetering: (transcriptPath?: string) => MeteringCapability
-  recoverFromTee: () => DispatchTeeRecovery | null
-}
-
-/** Real, production deps — `resolveMeteringCapability(realDeps())` and `recoverUsageFromDispatchTee(realDispatchTeeRecoveryDeps())`, unchanged from before this seam existed. */
-export function realTokenReportCapabilityDeps(): TokenReportCapabilityDeps {
-  return {
-    resolveMetering: (transcriptPath) => resolveMeteringCapability(realDeps(), transcriptPath),
-    recoverFromTee: () => recoverUsageFromDispatchTee(realDispatchTeeRecoveryDeps())
-  }
-}
-
-/**
- * O1: tries the real probe first, exactly as before; only when it
- * comes back `no-transcript-resolved` (this session's own wiring — no
- * pointer at all — never a resolved-but-broken one) does it also try
- * `recoverUsageFromDispatchTee` before giving up. Every other verdict
- * (capable, or incapable for a different reason) passes through unchanged —
- * this never overrides a real wiring-defect diagnosis with a recovered
- * number. The pure merge, deps-injected so a test can compose both halves
- * with fakes and assert the actual branch taken.
- */
-export function resolveTokenReportCapabilityWith(
-  deps: TokenReportCapabilityDeps,
-  transcriptPath?: string
-): MeteringCapability {
-  const capability = deps.resolveMetering(transcriptPath)
-  if (capability.capable || capability.reason !== 'no-transcript-resolved') return capability
-  const recovered = deps.recoverFromTee()
-  if (!recovered) return capability
-  return { capable: true, transcriptPath: recovered.teePath, summary: recovered.summary }
-}
-
-export function resolveTokenReportCapability(transcriptPath?: string): MeteringCapability {
-  return resolveTokenReportCapabilityWith(realTokenReportCapabilityDeps(), transcriptPath)
-}
-
-export function collectTokensAddition(opts: {
-  phase: string
-  role: string
-  date: string
-  transcriptPath?: string
-  modelOverride?: string
-}): TokensAddition {
-  const capability = resolveTokenReportCapability(opts.transcriptPath)
-  if (!capability.capable) {
-    if (capability.reason === 'no-transcript-resolved') {
-      return {
-        collected: false,
-        refusal: `${meteringRefusalMessage('vinaya pr report', capability)}\n\n${TOKEN_ROW_REMEDY}`
-      }
-    }
-    // The reason rides inside the Agent/Model cell, never a sibling line: a
-    // second line here that doesn't start with `|` breaks `parseTableSection`'s
-    // contiguous row scan for every row appended after it (found live —
-    // a first incapable row followed by a later real row silently
-    // truncated `parseTokenReportEntries` to one row). One line per row,
-    // always, is what keeps append-then-round-trip sound.
-    return {
-      collected: true,
-      row: formatTokenReportRow({
-        phase: opts.phase,
-        role: opts.role,
-        summary: null,
-        modelOverride: `— (${capability.reason})`,
-        date: opts.date
-      })
-    }
-  }
-  return {
-    collected: true,
-    row: formatTokenReportRow({
-      phase: opts.phase,
-      role: opts.role,
-      summary: capability.summary,
-      modelOverride: opts.modelOverride,
-      date: opts.date
-    })
-  }
-}
-
-/**
- * The body `--write` writes: Evidence always, the token row only when one was
- * collected. Split out of `prReportCommand` so the invariant that matters
- * most here — a refused token row never costs the caller its Evidence block —
- * is a directly testable fact rather than a claim about a function that ends
- * in `process.exit`.
- */
-export function composeWrittenBody(existing: string, blockInner: string, tokens: TokensAddition): string {
-  const withEvidence = replaceEvidenceBlock(existing, blockInner)
-  return tokens.collected ? writeTokensBlock(withEvidence, tokens.row) : withEvidence
-}
-
-/**
  * Thrown by `spliceIntoLiveBody` when the live PR body carries no real
  * `AEG:EVIDENCE` pair. `replaceEvidenceBlock` itself APPENDS a fresh pair in
  * that case — the right behaviour for `--write`'s local draft, which starts
@@ -1684,11 +1369,9 @@ export class MissingEvidenceAnchorError extends Error {
   }
 }
 
-export type SpliceResult = { body: string; tokensSpliced: boolean }
-
 /**
- * The `--push` counterpart to `composeWrittenBody`: splices the freshly-built
- * Evidence/Tokens content into a LIVE forge body rather than a local draft.
+ * The `--push` counterpart to `replaceEvidenceBlock`: splices the freshly-built
+ * Evidence content into a LIVE forge body rather than a local draft.
  * Refuses — writes nothing — under the two conditions that make splicing
  * unsafe: the raw/normalised anchor resolutions disagree (`replaceEvidenceBlock`'s
  * own `DivergentEvidenceAnchorError`, checked here up front so the caller
@@ -1697,35 +1380,14 @@ export type SpliceResult = { body: string; tokensSpliced: boolean }
  * above — checked separately because `replaceEvidenceBlock` would otherwise
  * silently append rather than refuse).
  *
- * `AEG:TOKENS` gets the SAME no-pair guard as `AEG:EVIDENCE`, but a softer
- * outcome: `composeWrittenBody`/`writeTokensBlock` would otherwise CREATE a
- * fresh `AEG:TOKENS` pair (correct for `--write`'s local draft, which starts
- * from the template and is expected to grow the pair on first adoption — see
- * `MissingEvidenceAnchorError`'s doc comment for why that's wrong for a LIVE
- * body). Creating one here would show up as "drift" outside the two regions
- * `bodiesAgreeOutsideRegions` is supposed to police — false drift, since this
- * command authored it, but drift a reviewer diffing the push could still
- * mistake for an unrelated change. So when the live body carries no real
- * `AEG:TOKENS` pair, the token splice is skipped entirely — `EVIDENCE` alone
- * is spliced, and the caller learns this via `tokensSpliced: false` so its
- * own success message never claims a write that didn't happen. Also skipped
- * entirely, by construction, when `tokens.collected` is false — the caller
- * passes `{ collected: false, refusal: '' }` on purpose when it never
- * intends to collect a token row at all (the driver's in-process call —
- * see `runReportForOpenPr`'s doc comment).
+ * A body that still carries an older run's token table keeps it, byte for
+ * byte: this function's only write is the `AEG:EVIDENCE` region, and no code
+ * path here reads or edits any other anchor.
  */
-export function spliceIntoLiveBody(live: string, blockInner: string, tokens: TokensAddition): SpliceResult {
+export function spliceIntoLiveBody(live: string, blockInner: string): string {
   if (!ScanContext.from(live).rawResolutionAgrees('EVIDENCE')) throw new DivergentEvidenceAnchorError()
   if (anchoredRegionBounds(live, 'EVIDENCE') === null) throw new MissingEvidenceAnchorError()
-  const withEvidence = replaceEvidenceBlock(live, blockInner)
-  // `withEvidence`, not `live`: the Evidence splice is what this function has
-  // already produced, and it is the body the token splice will actually be
-  // applied to. Testing `live` asks whether the anchor existed in a body that
-  // is no longer the one being written — the two agree today only because
-  // `replaceEvidenceBlock` happens not to touch the `AEG:TOKENS` pair, which
-  // is an invariant of another function, not of this decision.
-  if (!tokens.collected || !hasTokensAnchor(withEvidence)) return { body: withEvidence, tokensSpliced: false }
-  return { body: writeTokensBlock(withEvidence, tokens.row), tokensSpliced: true }
+  return replaceEvidenceBlock(live, blockInner)
 }
 
 /** Removes the first real `AEG:<field>` anchored region (markers included) from `body`, or returns `body` unchanged when none is found — `anchoredRegionBounds` already does the masked, decoy-blind search. */
@@ -1735,10 +1397,10 @@ function stripAnchoredRegion(body: string, field: AnchorField): string {
 }
 
 /**
- * The `--push` self-verification predicate: with the `AEG:EVIDENCE` and
- * `AEG:TOKENS` regions removed from both, are `before` and `after` the exact
- * same bytes? These are the only two regions a `--push` run is authorized to
- * change (`aeg-root/roles/developer.md`'s frozen-body rule); anything else
+ * The `--push` self-verification predicate: with the `AEG:EVIDENCE` region
+ * removed from both, are `before` and `after` the exact same bytes? That
+ * region is the only one a `--push` run is authorized to change
+ * (`aeg-root/roles/developer.md`'s frozen-body rule); anything else
  * differing means the edit clobbered content it had no business touching — a
  * whole-body overwrite racing a Principal's `[principal]` tick, a line-ending
  * conversion round-tripped through the forge, or a bug in this engine.
@@ -1746,28 +1408,19 @@ function stripAnchoredRegion(body: string, field: AnchorField): string {
  * re-fetched post-edit body and restores the pre-edit body on a `false`
  * result rather than letting the mismatch stand.
  *
- * `AEG:TOKENS` isn't one of `anchoredRegionBounds`'s six `AnchorField`s (it's
- * this module's own, append-only anchor — see `writeTokensBlock`'s doc
- * comment), so its region is found the same masked-line way that function
- * already does, via `tokensBlockLineBounds`, rather than through
- * `anchoredRegionBounds`.
+ * An older run's token table, wherever the body still carries one, is
+ * therefore compared like any other untouched prose: this command no longer
+ * writes that region, so a difference inside it is real drift.
  */
-function stripTokensRegion(body: string): string {
-  const rawLines = body.split('\n')
-  const bounds = tokensBlockLineBounds(maskCode(body).split('\n'))
-  if (!bounds) return body
-  return [...rawLines.slice(0, bounds.startIdx), ...rawLines.slice(bounds.endIdx + 1)].join('\n')
-}
-
 export function bodiesAgreeOutsideRegions(before: string, after: string): boolean {
-  const strip = (b: string) => stripTokensRegion(stripAnchoredRegion(b, 'EVIDENCE'))
+  const strip = (b: string) => stripAnchoredRegion(b, 'EVIDENCE')
   return strip(before) === strip(after)
 }
 
 /**
- * This command's exit code: non-zero when the gate run failed, when the token
- * row was refused, or both — one non-zero exit either way, never two reasons
- * competing for it.
+ * This command's exit code: non-zero when the gate run failed. A red gate
+ * still writes the block — the failure is recorded honestly and reported by
+ * the exit code, never by withholding the evidence.
  *
  * Pulled out as its own pure, exported function for the reason `anyGateFailed`
  * was: `prReportCommand` ends in `process.exit`, so the computation is
@@ -1775,8 +1428,8 @@ export function bodiesAgreeOutsideRegions(before: string, after: string): boolea
  * expression there is invisible to the unit suite — the exact mutation-survivor
  * gap this module's own doc comment records (per code review).
  */
-export function prReportExitCode(opts: { gatesFailed: boolean; tokensRefused: boolean }): number {
-  return opts.gatesFailed || opts.tokensRefused ? 1 : 0
+export function prReportExitCode(opts: { gatesFailed: boolean }): number {
+  return opts.gatesFailed ? 1 : 0
 }
 
 export type ReportResult = {
@@ -1870,7 +1523,7 @@ export async function ghEditBody(pr: string, body: string): Promise<void> {
 }
 
 /**
- * The outcome of pushing a freshly-built Evidence/Tokens report onto an
+ * The outcome of pushing a freshly-built Evidence report onto an
  * OPEN pull request's LIVE body — `runReportForOpenPr`'s own return type.
  * `'ok'` is not "no gate failed"; a red gate still writes the block
  * (recording the failure honestly, `aeg-root/roles/developer.md`) — `'ok'`
@@ -1884,7 +1537,7 @@ export async function ghEditBody(pr: string, body: string): Promise<void> {
  * engine's own).
  */
 export type EvidenceReportOutcome =
-  | { kind: 'ok'; tokensSpliced: boolean; tokensCollected: boolean; tokensRefusal?: string; gatesFailed: boolean }
+  | { kind: 'ok'; gatesFailed: boolean }
   | { kind: 'splice-refused'; message: string }
   | { kind: 'body-checks-refused'; message: string }
   | { kind: 'edit-failed'; message: string }
@@ -1935,19 +1588,9 @@ async function bodyCheckRefusalMessage(body: string, branch: string, prNumber: n
  * `EvidenceReportOutcome` back into the exact console messages and exit code
  * it always printed.
  *
- * `opts.includeTokens` (default `true`, matching every real `--push`
- * invocation) is `false` for the driver's own call: the driver runs in its
- * OWN process/session, not the Developer's, so `collectTokensAddition`'s
- * metering probe would resolve the DRIVER's token usage, not the
- * Developer's — misattributing it under the Developer's own `<task>: develop`
- * phase row. Token reporting stays the Developer's own concern, populated at
- * PR-open time via `--write`; this task's Objectives (O1/O2) name the
- * `AEG:EVIDENCE` block only, never `AEG:TOKENS`, when describing what the
- * driver now owns. `includeTokens: false` passes `{ collected: false,
- * refusal: '' }` through to `spliceIntoLiveBody`, which already treats
- * `!tokens.collected` as "skip the token splice entirely" — no new branch
- * needed, and `tokensCollected` on the returned `'ok'` outcome is `false`
- * with no refusal message attached (never printed as a real refusal).
+ * A pull-request body carries no token table any more: token use for a
+ * dispatched turn is recorded as the Vinaya log's own `usage` event, emitted
+ * by the dispatch path, so nothing here collects or writes usage figures.
  * `opts.branch`, when given, is what the `runBodyChecks` call below grades
  * against instead of that call's own `process.env.BRANCH` default — the
  * loop's driver passes it explicitly so this function never reads the
@@ -1960,28 +1603,12 @@ export async function runReportForOpenPr(
   preEditBody: string,
   result: ReportResult,
   opts: {
-    includeTokens?: boolean
-    transcriptPath?: string
-    phaseOverride?: string
-    roleOverride?: string
-    modelOverride?: string
     branch?: string
   } = {}
 ): Promise<EvidenceReportOutcome> {
-  const includeTokens = opts.includeTokens ?? true
-  const tokens: TokensAddition = includeTokens
-    ? collectTokensAddition({
-        phase: opts.phaseOverride ?? (await derivePhase()),
-        role: opts.roleOverride ?? 'Developer',
-        date: isoToday(),
-        transcriptPath: opts.transcriptPath,
-        modelOverride: opts.modelOverride
-      })
-    : { collected: false, refusal: '' }
-
-  let spliced: SpliceResult
+  let splicedBody: string
   try {
-    spliced = spliceIntoLiveBody(preEditBody, result.blockInner, tokens)
+    splicedBody = spliceIntoLiveBody(preEditBody, result.blockInner)
   } catch (err) {
     return { kind: 'splice-refused', message: err instanceof Error ? err.message : String(err) }
   }
@@ -1994,7 +1621,7 @@ export async function runReportForOpenPr(
   // here must return an outcome, never exit this process (see
   // `bodyCheckRefusalMessage`'s own doc comment above for why).
   const bodyCheckMessage = await bodyCheckRefusalMessage(
-    spliced.body,
+    splicedBody,
     opts.branch ?? process.env.BRANCH ?? '',
     Number(pushPr)
   )
@@ -2003,7 +1630,7 @@ export async function runReportForOpenPr(
   }
 
   try {
-    await ghEditBody(pushPr, spliced.body)
+    await ghEditBody(pushPr, splicedBody)
   } catch (err) {
     return {
       kind: 'edit-failed',
@@ -2035,15 +1662,9 @@ export async function runReportForOpenPr(
     }
     return {
       kind: 'drift-restored',
-      message: `vinaya pr report: refused — self-verification FAILED: PR ${pushPr}'s live body changed outside the AEG:EVIDENCE/AEG:TOKENS regions after the push. Restored the pre-edit body. Inspect this command and PR ${pushPr} for drift before retrying.`
+      message: `vinaya pr report: refused — self-verification FAILED: PR ${pushPr}'s live body changed outside the AEG:EVIDENCE region after the push. Restored the pre-edit body. Inspect this command and PR ${pushPr} for drift before retrying.`
     }
   }
 
-  return {
-    kind: 'ok',
-    tokensSpliced: spliced.tokensSpliced,
-    tokensCollected: tokens.collected,
-    tokensRefusal: !tokens.collected && includeTokens ? tokens.refusal : undefined,
-    gatesFailed: result.gatesFailed
-  }
+  return { kind: 'ok', gatesFailed: result.gatesFailed }
 }

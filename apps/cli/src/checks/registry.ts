@@ -415,7 +415,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       }
     },
     // requiresOpenPr AND ownWorkflow — CI/PR-only twice over, same as
-    // `body-bare-digits`/`token-report` above.
+    // `body-bare-digits` below.
     1
   ],
   [
@@ -458,44 +458,6 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       }
     },
     // requiresOpenPr AND ownWorkflow — CI/PR-only twice over.
-    1
-  ],
-  [
-    {
-      name: 'token-report',
-      validates: 'body',
-      run: bin('check-token-report'),
-      scope: 'diff',
-      timeoutMs: 15_000,
-      // Pre-merge-only, same reasoning as `closes-n`/`test-plan` above: the
-      // PR body it inspects doesn't exist before a PR does. A 2026-08-29
-      // amendment: `requiresOpenPr: true` derives
-      // this check's ring mechanically as `1` via `CoreCheckRing`'s own doc
-      // comment, superseding the original brief rationale's now-retracted
-      // ring-0/1 instruction.
-      requiresOpenPr: true,
-      // `process.env.PR_BODY ?? ''` / `process.env.BRANCH ?? ''` — both
-      // plain absence-tolerant fall-throughs, same shape as `brief-shape`'s
-      // identical declaration above. Without BRANCH declared here the
-      // runner strips it before the child spawns and the task-PR-only
-      // no-row refusal can never tell a task branch from a
-      // release branch — it would silently fall back to treating every PR
-      // as non-task, which is the exact regression this declaration
-      // prevents. `CLAUDE_PROJECT_DIR`/`CLAUDE_CODE_SESSION_ID` back
-      // `resolveMeteringCapability`'s own pointer resolution — undeclared,
-      // the runner strips them before spawn and the probe silently
-      // degrades to cwd-based/no-staleness-check resolution on every run,
-      // the same env-stripping trap `token-collection-wired`'s identical pair
-      // already documents. `TMPDIR` needs no declaration: already in the
-      // runner's fixed baseline.
-      env: {
-        PR_BODY: { optional: true },
-        BRANCH: { optional: true },
-        CLAUDE_PROJECT_DIR: { optional: true },
-        CLAUDE_CODE_SESSION_ID: { optional: true }
-      }
-    },
-    // requiresOpenPr — see `closes-n` above.
     1
   ],
   [

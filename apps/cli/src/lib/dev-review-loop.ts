@@ -423,10 +423,7 @@ export type LoopDeps = {
    * onto `prNumber`'s live body, from `cwd` (the task's own worktree — see
    * `pr-report-engine.ts`'s module doc, "`cwd`"). The SAME engine function
    * `vinaya pr report --push` itself calls (`runReportForOpenPr`) — never a
-   * `vinaya pr report --push` subprocess (Traps to avoid). Never collects a
-   * token row (`includeTokens: false` — see `runReportForOpenPr`'s own doc
-   * comment for why: the driver's own session is not the Developer's, so its
-   * metering probe would misattribute usage). `{ ok: false, reason }` on any
+   * `vinaya pr report --push` subprocess (Traps to avoid). `{ ok: false, reason }` on any
    * refusal — the caller treats this as a non-fatal, logged condition (O1:
    * this task's whole point is that the loop's own paperwork must never cost
    * a round), never a pause.
@@ -792,8 +789,7 @@ function defaultReexecSelf(args: string[]): number | null {
  * body, builds the report from `cwd` (the task worktree, never
  * `process.cwd()` — see `pr-report-engine.ts`'s module doc, "`cwd`"), then
  * pushes it via `runReportForOpenPr` — the exact engine function `vinaya pr
- * report --push` itself calls. `includeTokens: false`: see `runEvidenceReport`'s
- * own doc comment on `LoopDeps`. Never throws — every failure mode (the
+ * report --push` itself calls. Never throws — every failure mode (the
  * initial `gh pr view` fetch, `buildReport` itself, or the push) collapses to
  * `{ ok: false, reason }` so the caller can log-and-continue rather than
  * treat the loop's own evidence bookkeeping as a stop condition.
@@ -833,7 +829,7 @@ async function defaultRunEvidenceReport(
     // ordinary return, never a process exit — including `'body-checks-refused'`:
     // a body-check refusal during this push is just one more
     // failure mode this ternary already collapses to `{ ok: false, reason }`.
-    const outcome = await runReportForOpenPr(pushPr, preEditBody, result, { includeTokens: false, branch })
+    const outcome = await runReportForOpenPr(pushPr, preEditBody, result, { branch })
     return outcome.kind === 'ok'
       ? { ok: true, gatesFailed: outcome.gatesFailed }
       : { ok: false, reason: outcome.message }

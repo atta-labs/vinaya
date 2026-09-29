@@ -2,13 +2,12 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import {
   buildReport,
-  collectTokensAddition,
-  composeWrittenBody,
   type GateRunner,
   gh,
   GitCommandError,
   ghEditBody,
   prReportExitCode,
+  replaceEvidenceBlock,
   type ReportResult,
   runReportForOpenPr,
   UnresolvableMergeBaseError
@@ -26,8 +25,6 @@ export {
   bodiesAgreeOutsideRegions,
   buildReport,
   bunTestFileArgs,
-  collectTokensAddition,
-  composeWrittenBody,
   computeGroupA,
   computeGroupC,
   DEFAULT_COMMAND_TIMEOUT_MS,
@@ -54,13 +51,12 @@ export {
   type TestRunCacheRecord,
   testRunCacheKey,
   testRunStateKey,
-  UnresolvableMergeBaseError,
-  writeTokensBlock
+  UnresolvableMergeBaseError
 } from '../lib/pr-report-engine.js'
 
 /**
- * `vinaya pr report` — the CLI surface over the `AEG:EVIDENCE`/`AEG:TOKENS`
- * engine (`apps/cli/src/lib/pr-report-engine.ts`): argv
+ * `vinaya pr report` — the CLI surface over the `AEG:EVIDENCE` engine
+ * (`apps/cli/src/lib/pr-report-engine.ts`): argv
  * parsing, console I/O, and `process.exit` only. Every computation lives in
  * the engine, which the loop's driver (`apps/cli/src/lib/dev-review-loop.ts`)
  * also calls directly, in-process — a command never calls a command
@@ -70,25 +66,29 @@ export {
  * than relying on `process.chdir()`.
  *
  * `--push <pr>` is the post-open sibling of `--write`: it fetches the PR's
- * LIVE body from the forge, splices the freshly-built blocks into it through
+ * LIVE body from the forge, splices the freshly-built block into it through
  * the same anchor resolver `--write` uses, pushes the result via `gh pr edit`,
  * then re-reads the live body and refuses (restoring the pre-edit body)
- * unless the two bodies agree outside the `AEG:EVIDENCE`/`AEG:TOKENS`
- * regions. The local body file a Developer might still be holding is never
- * the input — the live body always is. The non-`--body-file` half of this
+ * unless the two bodies agree outside the `AEG:EVIDENCE` region. The local
+ * body file a Developer might still be holding is never the input — the live
+ * body always is. The non-`--body-file` half of this
  * sequence is `runReportForOpenPr` (the engine), called below exactly the
  * way the driver calls it, translating its `EvidenceReportOutcome` back into
  * the same console messages and exit code this command always printed.
  *
  * `--push <n> --body-file <path>` is a narrower, separate mode, not the
  * routine one: `--body-file` names a local file that IS the whole body —
- * `AEG:EVIDENCE`/`AEG:TOKENS` are regenerated fresh against it (never
- * trusting stale copies the file itself carries) and the file's own content
- * is written to the forge verbatim, replacing the live body outright, rather
- * than fetching-and-splicing into whatever the forge currently holds. This
- * exists for the one legitimate case a routine splice cannot cover: a
- * section outside the two generated blocks (a Decisions bullet, most often)
- * that only ever existed in a local draft, never yet posted.
+ * `AEG:EVIDENCE` is regenerated fresh against it (never trusting a stale copy
+ * the file itself carries) and the file's own content is written to the forge
+ * verbatim, replacing the live body outright, rather than fetching-and-splicing
+ * into whatever the forge currently holds. This exists for the one legitimate
+ * case a routine splice cannot cover: a section outside the generated block (a
+ * Decisions bullet, most often) that only ever existed in a local draft, never
+ * yet posted.
+ *
+ * Token use is no longer a pull-request concern at all: a dispatched turn's
+ * usage is recorded as the Vinaya log's own `usage` event, and this command
+ * neither collects figures nor writes a table.
  */
 
 function git(args: string[]): string {
@@ -99,29 +99,7 @@ function git(args: string[]): string {
   }
 }
 
-const USAGE =
-  'Usage: vinaya pr report [--write <body-file> | --push <pr> [--body-file <path>]] [--phase <phase>] ' +
-  '[--role <role>] [--model <id>] [--transcript <path>]'
-
-/**
- * `<n>` out of a `task/<tranche>/<n>` branch name — the `<task-id>` half of
- * the `<task-id>: develop` phase convention. Duplicated here, not imported
- * from the engine (which keeps its own private copy for its default `phase`
- * — see `runReportForOpenPr`'s own `derivePhase` default): this command's
- * `--phase` default and the engine's are the same rule, but keeping this
- * command able to compute it without reaching into the engine's internals
- * avoids exporting a name the engine has no other reason to expose.
- */
-function derivePhase(): string {
-  const branch = git(['rev-parse', '--abbrev-ref', 'HEAD'])
-  const m = /^task\/[^/]+\/(.+)$/.exec(branch)
-  const taskId = m ? m[1] : branch || 'unknown'
-  return `${taskId}: develop`
-}
-
-function isoToday(): string {
-  return new Date().toISOString().slice(0, 10)
-}
+const USAGE = 'Usage: vinaya pr report [--write <body-file> | --push <pr> [--body-file <path>]]'
 
 export async function prReportCommand(args: string[], testOverrides?: { gateRunner?: GateRunner }): Promise<void> {
   const writeIdx = args.indexOf('--write')
@@ -130,21 +108,12 @@ export async function prReportCommand(args: string[], testOverrides?: { gateRunn
   const pushPr = pushIdx !== -1 ? args[pushIdx + 1] : undefined
   // `--body-file <path>` names the
   // local file that IS the whole body source for this push — every byte of
-  // it, not only the freshly regenerated AEG:EVIDENCE/AEG:TOKENS blocks,
-  // reaches the forge (`composeWrittenBody`, the SAME whole-body composer
-  // `--write` alone already uses). Valid only alongside `--push`: it names
-  // what to push, and `--write` alone has no forge target for it to reach.
+  // it, not only the freshly regenerated AEG:EVIDENCE block, reaches the
+  // forge (`replaceEvidenceBlock`, the SAME composer `--write` alone already
+  // uses). Valid only alongside `--push`: it names what to push, and
+  // `--write` alone has no forge target for it to reach.
   const bodyFileIdx = args.indexOf('--body-file')
   const bodyFilePath = bodyFileIdx !== -1 ? args[bodyFileIdx + 1] : undefined
-  const transcriptIdx = args.indexOf('--transcript')
-  const transcriptPath = transcriptIdx !== -1 ? args[transcriptIdx + 1] : undefined
-  const phaseIdx = args.indexOf('--phase')
-  const phaseOverride = phaseIdx !== -1 ? args[phaseIdx + 1] : undefined
-  const roleIdx = args.indexOf('--role')
-  const roleOverride = roleIdx !== -1 ? args[roleIdx + 1] : undefined
-  const modelIdx = args.indexOf('--model')
-  const modelOverride = modelIdx !== -1 ? args[modelIdx + 1] : undefined
-
   if (writeIdx !== -1 && !writePath) {
     console.error(USAGE)
     process.exit(2)
@@ -155,7 +124,7 @@ export async function prReportCommand(args: string[], testOverrides?: { gateRunn
   }
   if (pushPr && !/^\d+$/.test(pushPr)) {
     // Catches a flag value swallowed as the PR number (e.g. a stray
-    // `--transcript` with no path) before it ever reaches `gh pr view`,
+    // `--body-file` with no path) before it ever reaches `gh pr view`,
     // which would otherwise surface as an opaque forge error instead of a
     // clean usage refusal.
     console.error(`vinaya pr report: refused — \`--push ${pushPr}\` is not a PR number.\n${USAGE}`)
@@ -249,27 +218,17 @@ export async function prReportCommand(args: string[], testOverrides?: { gateRunn
     throw err
   }
 
-  // A refused token row must not cost the caller its Evidence block.
   // `aeg-root/roles/developer.md` makes this command's exit code the
   // Developer's pre-open verification run, and states that a red gate still
-  // writes the block and exits non-zero — so refusing here means withholding
-  // the row and exiting non-zero, never aborting before the write. Aborting
-  // would leave every unwired host unable to populate Evidence at all.
-  let tokensRefused = false
+  // writes the block and exits non-zero — the failure is reported, never
+  // papered over by withholding evidence.
   if (pushPr && bodyFileSource !== undefined) {
-    // O6: the whole local body — every byte of it, never only the
-    // regenerated blocks — replaces the live body outright. `composeWrittenBody`
-    // is the SAME whole-body composer `--write` alone already uses (source +
-    // freshly regenerated Evidence/Tokens); the only difference here is the
+    // The whole local body — every byte of it, never only the
+    // regenerated block — replaces the live body outright. `replaceEvidenceBlock`
+    // is the SAME composer `--write` alone already uses (source + a freshly
+    // regenerated Evidence block); the only difference here is the
     // destination (the forge, via `gh pr edit`) rather than a local file.
-    const tokens = collectTokensAddition({
-      phase: phaseOverride ?? derivePhase(),
-      role: roleOverride ?? 'Developer',
-      date: isoToday(),
-      transcriptPath,
-      modelOverride
-    })
-    const composed = composeWrittenBody(bodyFileSource, result.blockInner, tokens)
+    const composed = replaceEvidenceBlock(bodyFileSource, result.blockInner)
 
     await runBodyChecks(
       composed,
@@ -302,18 +261,9 @@ export async function prReportCommand(args: string[], testOverrides?: { gateRunn
       )
     }
 
-    if (!tokens.collected) tokensRefused = true
     process.stdout.write(`Pushed the whole body from ${bodyFilePath} to PR ${pushPr}\n`)
-    if (!tokens.collected) {
-      console.error(`${tokens.refusal}\n\nThe AEG:EVIDENCE block was still pushed to PR ${pushPr}.`)
-    }
   } else if (pushPr) {
-    const outcome = await runReportForOpenPr(pushPr, preEditBody as string, result, {
-      transcriptPath,
-      phaseOverride,
-      roleOverride,
-      modelOverride
-    })
+    const outcome = await runReportForOpenPr(pushPr, preEditBody as string, result)
     switch (outcome.kind) {
       case 'splice-refused':
         console.error(`vinaya pr report: refused — ${outcome.message}`)
@@ -328,47 +278,18 @@ export async function prReportCommand(args: string[], testOverrides?: { gateRunn
         process.exit(1)
         break
       case 'ok':
-        if (!outcome.tokensSpliced && outcome.tokensCollected) {
-          console.error(
-            `vinaya pr report: PR ${pushPr}'s live body carries no AEG:TOKENS anchor pair — the token row was withheld rather than creating one via --push (only --write's local draft creates a fresh pair; see aeg-root/templates/pr-report-template.md). The AEG:EVIDENCE block was still pushed to PR ${pushPr}.`
-          )
-        }
-        if (outcome.tokensSpliced) {
-          process.stdout.write(`Pushed AEG:EVIDENCE and AEG:TOKENS blocks to PR ${pushPr}\n`)
-        } else {
-          if (!outcome.tokensCollected) tokensRefused = true
-          process.stdout.write(`Pushed AEG:EVIDENCE block to PR ${pushPr}\n`)
-          if (!outcome.tokensCollected) {
-            console.error(`${outcome.tokensRefusal}\n\nThe AEG:EVIDENCE block was still pushed to PR ${pushPr}.`)
-          }
-        }
+        process.stdout.write(`Pushed AEG:EVIDENCE block to PR ${pushPr}\n`)
         break
     }
   } else if (writePath) {
     const existing = existingForWrite ?? ''
-    const tokens = collectTokensAddition({
-      phase: phaseOverride ?? derivePhase(),
-      role: roleOverride ?? 'Developer',
-      date: isoToday(),
-      transcriptPath,
-      modelOverride
-    })
-    writeFileSync(writePath, composeWrittenBody(existing, result.blockInner, tokens))
-    if (tokens.collected) {
-      process.stdout.write(`Wrote AEG:EVIDENCE and AEG:TOKENS blocks to ${writePath}\n`)
-    } else {
-      tokensRefused = true
-      process.stdout.write(`Wrote AEG:EVIDENCE block to ${writePath}\n`)
-      // The Evidence half is the CALLER's fact — this is the only place that
-      // knows a file was written, and to which path. `TOKEN_ROW_REMEDY` says
-      // nothing about it on purpose; see its doc comment.
-      console.error(`${tokens.refusal}\n\nThe AEG:EVIDENCE block was still written to ${writePath}.`)
-    }
+    writeFileSync(writePath, replaceEvidenceBlock(existing, result.blockInner))
+    process.stdout.write(`Wrote AEG:EVIDENCE block to ${writePath}\n`)
   } else {
     process.stdout.write(`${result.block}\n`)
   }
 
-  process.exit(prReportExitCode({ gatesFailed: result.gatesFailed, tokensRefused }))
+  process.exit(prReportExitCode({ gatesFailed: result.gatesFailed }))
 }
 
 import type { SurfaceExemption } from '../lib/surface-exemption'

@@ -3,7 +3,7 @@ import { chmodSync, lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync, w
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { parseTokenReportEntries, resolveMeteringCapability, sumLedger } from '@attalabs/aeg-core'
+import { resolveMeteringCapability } from '@attalabs/aeg-core'
 import { describe, expect, it } from 'bun:test'
 import {
   agentCommandText,
@@ -11,8 +11,6 @@ import {
   bodiesAgreeOutsideRegions,
   buildReport,
   bunTestFileArgs,
-  collectTokensAddition,
-  composeWrittenBody,
   computeGroupA,
   computeGroupC,
   DEFAULT_COMMAND_TIMEOUT_MS,
@@ -37,10 +35,8 @@ import {
   type TestRunCacheRecord,
   testRunCacheKey,
   testRunStateKey,
-  UnresolvableMergeBaseError,
-  writeTokensBlock
+  UnresolvableMergeBaseError
 } from '../src/commands/pr-report'
-import { resolveTokenReportCapabilityWith } from '../src/lib/pr-report-engine'
 import { spawnBudgetedAsync, stripVinayaEnv } from './lib/process-fixture'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -1618,482 +1614,63 @@ describe('computeGroupA refuses rather than degrading', () => {
   })
 })
 
-describe('writeTokensBlock', () => {
-  const ROW_1 = '| 3: develop | Developer | claude-sonnet-5 | 100 | 50 | — | 2026-08-29 |'
-  const ROW_2 = '| 3: develop | Developer | claude-sonnet-5 | 200 | 75 | — | 2026-08-30 |'
-
-  it('sites a fresh anchored block inside an existing `## Token report` heading, replacing its placeholder content', () => {
-    const body = [
-      '## Summary',
-      '',
-      'why this shape.',
-      '',
-      '## Token report',
-      '',
-      '| Phase | Role | Agent/Model | Tokens in | Tokens out | Cost | Date |',
-      '|---|---|---|---|---|---|---|',
-      '| [task-id]: develop | Developer | [model] | [exact in] | [exact out] | [cost] | [YYYY-MM-DD] |'
-    ].join('\n')
-    const updated = writeTokensBlock(body, ROW_1)
-    expect(updated).toContain('## Summary')
-    expect(updated).toContain('<!-- AEG:TOKENS:START -->')
-    expect(updated).toContain('<!-- AEG:TOKENS:END -->')
-    expect(updated).toContain(ROW_1)
-    expect(updated).not.toContain('[task-id]: develop')
+// The metering probe itself is untouched by the retirement of the PR-body
+// token table: `vinaya tokens` and the `token-collection-wired` check both
+// still resolve capability through it, and the Vinaya log's own `usage`
+// events are what record a dispatched turn's spend now. The classification
+// these docs ASSERT stays pinned as behaviour — if it ever moves, this goes
+// red and names the docs that claim otherwise.
+describe('resolveMeteringCapability — the incapable classification the docs describe', () => {
+  const deps = (over: Partial<Parameters<typeof resolveMeteringCapability>[0]>) => ({
+    env: { TMPDIR: '/tmp', CLAUDE_PROJECT_DIR: '/proj' } as Record<string, string | undefined>,
+    cwd: '/proj',
+    exists: () => true,
+    readFile: () => '',
+    ...over
   })
 
-  it('creates a fresh `## Token report` heading and block when the body carries no heading at all', () => {
-    const updated = writeTokensBlock('## Summary\n\nwhy.', ROW_1)
-    expect(updated).toContain('## Summary')
-    expect(updated).toContain('## Token report')
-    expect(updated).toContain('<!-- AEG:TOKENS:START -->')
-    expect(updated).toContain(ROW_1)
-  })
-
-  it('appends a second row on re-entry, leaving the first row unmodified — never a sum, never an overwrite', () => {
-    const first = writeTokensBlock('## Summary\n\nwhy.', ROW_1)
-    const second = writeTokensBlock(first, ROW_2)
-    expect(second).toContain(ROW_1)
-    expect(second).toContain(ROW_2)
-    // Exactly one anchor pair — the append lands INSIDE the existing block, never a second block.
-    expect(second.match(/<!-- AEG:TOKENS:START -->/g)).toHaveLength(1)
-    expect(second.match(/<!-- AEG:TOKENS:END -->/g)).toHaveLength(1)
-    // Row 1 precedes row 2 — a real append, not a prepend or a reorder.
-    expect(second.indexOf(ROW_1)).toBeLessThan(second.indexOf(ROW_2))
-  })
-
-  it('ignores a fenced decoy AEG:TOKENS pair pasted as Test Plan evidence when locating the real block to append into', () => {
-    const body = [
-      '## Test plan',
-      '',
-      '- [x] example output:',
-      '',
-      '  ```',
-      '  <!-- AEG:TOKENS:START -->',
-      '  | decoy | pasted | as | evidence | — | — | — |',
-      '  <!-- AEG:TOKENS:END -->',
-      '  ```',
-      '',
-      '## Token report',
-      '',
-      '<!-- AEG:TOKENS:START -->',
-      '| Phase | Role | Agent/Model | Tokens in | Tokens out | Cost | Date |',
-      '|---|---|---|---|---|---|---|',
-      ROW_1,
-      '<!-- AEG:TOKENS:END -->'
-    ].join('\n')
-    const updated = writeTokensBlock(body, ROW_2)
-    expect(updated).toContain('decoy | pasted | as | evidence')
-    // The decoy is untouched — exactly two real (unfenced) START anchors would mean the
-    // decoy got treated as real; there must be exactly the two literal occurrences total
-    // (one decoy, one real), and ROW_2 must land next to the real block, not the decoy.
-    const realBlockStart = updated.indexOf('## Token report')
-    expect(updated.indexOf(ROW_2)).toBeGreaterThan(realBlockStart)
-  })
-
-  it('round-trips two appended rows through parseTokenReportEntries into two matching LedgerRows', () => {
-    const first = writeTokensBlock('## Summary\n\nwhy.', ROW_1)
-    const second = writeTokensBlock(first, ROW_2)
-    const rows = parseTokenReportEntries(second)
-    expect(rows).toHaveLength(2)
-    expect(rows[0]).toMatchObject({ phase: '3: develop', role: 'Developer', tokensIn: 100, tokensOut: 50 })
-    expect(rows[1]).toMatchObject({ phase: '3: develop', role: 'Developer', tokensIn: 200, tokensOut: 75 })
-  })
-})
-
-// Task 7 (#274): the block already appends any given row without collapsing
-// or merging — task 3's `writeTokensBlock` is role-agnostic by construction
-// (no dedup, no lookup by role). What this proves is narrower: that a
-// Developer row, a Brief Author row and a Planner row — each produced through
-// the same shipped `--role`/`--phase` mechanism `pr-report.ts` already wires
-// up — round-trip through `parseTokenReportEntries` into three distinct,
-// correctly-attributed `LedgerRow`s, that no earlier row's bytes are touched
-// by a later append, and that `sumLedger` (the read-time aggregate §12
-// requires) reflects all three rather than the last-written one.
-describe('AEG:TOKENS carries distinct rows per role (task 7, #274)', () => {
-  const DEV_ROW = '| 7: develop | Developer | claude-sonnet-5 | 6050 | 200 | — | 2026-09-01 |'
-  const BRIEF_AUTHOR_ROW = '| 7: brief | Brief Author | claude-sonnet-5 | 1210 | 80 | — | 2026-09-01 |'
-  const PLANNER_ROW = '| 7: plan | Planner | claude-sonnet-5 | 2720 | 150 | — | 2026-09-01 |'
-
-  it('appends a Brief Author row then a Planner row onto an existing Developer row without collapsing any of the three', () => {
-    const withDev = writeTokensBlock('## Summary\n\nwhy.', DEV_ROW)
-    const withBriefAuthor = writeTokensBlock(withDev, BRIEF_AUTHOR_ROW)
-    const final = writeTokensBlock(withBriefAuthor, PLANNER_ROW)
-
-    expect(final).toContain(DEV_ROW)
-    expect(final).toContain(BRIEF_AUTHOR_ROW)
-    expect(final).toContain(PLANNER_ROW)
-    // Exactly one anchor pair throughout — three rows inside one block, never three blocks.
-    expect(final.match(/<!-- AEG:TOKENS:START -->/g)).toHaveLength(1)
-    expect(final.match(/<!-- AEG:TOKENS:END -->/g)).toHaveLength(1)
-    // Append order preserved.
-    expect(final.indexOf(DEV_ROW)).toBeLessThan(final.indexOf(BRIEF_AUTHOR_ROW))
-    expect(final.indexOf(BRIEF_AUTHOR_ROW)).toBeLessThan(final.indexOf(PLANNER_ROW))
-
-    const rows = parseTokenReportEntries(final)
-    expect(rows).toHaveLength(3)
-    expect(rows[0]).toMatchObject({ phase: '7: develop', role: 'Developer', tokensIn: 6050, tokensOut: 200 })
-    expect(rows[1]).toMatchObject({ phase: '7: brief', role: 'Brief Author', tokensIn: 1210, tokensOut: 80 })
-    expect(rows[2]).toMatchObject({ phase: '7: plan', role: 'Planner', tokensIn: 2720, tokensOut: 150 })
-  })
-
-  it('leaves each prior row byte-for-byte untouched as later rows are appended', () => {
-    const withDev = writeTokensBlock('## Summary\n\nwhy.', DEV_ROW)
-    const withBriefAuthor = writeTokensBlock(withDev, BRIEF_AUTHOR_ROW)
-    const final = writeTokensBlock(withBriefAuthor, PLANNER_ROW)
-
-    // The Developer row's own line is identical across all three bodies.
-    const devLine = (body: string) => body.split('\n').find((l) => l.includes('Developer'))
-    expect(devLine(withDev)).toBe(devLine(withBriefAuthor))
-    expect(devLine(withBriefAuthor)).toBe(devLine(final))
-
-    // The Brief Author row's own line is identical before and after the Planner append.
-    const briefAuthorLine = (body: string) => body.split('\n').find((l) => l.includes('Brief Author'))
-    expect(briefAuthorLine(withBriefAuthor)).toBe(briefAuthorLine(final))
-  })
-
-  it('sums all three rows at read time — never fewer, never the last row alone', () => {
-    const withDev = writeTokensBlock('## Summary\n\nwhy.', DEV_ROW)
-    const withBriefAuthor = writeTokensBlock(withDev, BRIEF_AUTHOR_ROW)
-    const final = writeTokensBlock(withBriefAuthor, PLANNER_ROW)
-
-    const totals = sumLedger(parseTokenReportEntries(final))
-    expect(totals).toMatchObject({ tokensIn: 6050 + 1210 + 2720, tokensOut: 200 + 80 + 150, rows: 3 })
-  })
-})
-
-/**
- * `resolveTokenReportCapabilityWith` (O1, #608, round-2 review MAJOR finding
- * F1) — `recoverUsageFromDispatchTee` and `resolveMeteringCapability` each
- * had unit coverage in isolation, but nothing proved the MERGE: a
- * `no-transcript-resolved` verdict plus a real recovered summary actually
- * becoming a `capable: true` result carrying that summary and the tee's own
- * path. Every case below is a fake `TokenReportCapabilityDeps` — no real
- * transcript, launch record, or tee file touched.
- */
-describe('resolveTokenReportCapabilityWith (O1, #608)', () => {
-  const RECOVERY = {
-    summary: {
-      components: { inputTokens: 100, outputTokens: 10, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
-      model: 'claude-sonnet-5',
-      messageCount: 1
-    },
-    teePath: '/fake/dispatch-output/effect-abc.log'
-  }
-
-  it('no-transcript-resolved + a real recovery: merges into capable:true carrying the recovered summary and teePath', () => {
-    const result = resolveTokenReportCapabilityWith({
-      resolveMetering: () => ({ capable: false, reason: 'no-transcript-resolved', detail: 'no pointer' }),
-      recoverFromTee: () => RECOVERY
-    })
-    expect(result).toEqual({ capable: true, transcriptPath: RECOVERY.teePath, summary: RECOVERY.summary })
-  })
-
-  it('no-transcript-resolved + no recovery: the original incapable verdict passes through unchanged', () => {
-    const incapable = { capable: false, reason: 'no-transcript-resolved', detail: 'no pointer' } as const
-    const result = resolveTokenReportCapabilityWith({
-      resolveMetering: () => incapable,
-      recoverFromTee: () => null
-    })
-    expect(result).toEqual(incapable)
-  })
-
-  it('already capable: recovery is never even consulted', () => {
-    let recoverCalled = false
-    const capable = {
-      capable: true,
-      transcriptPath: '/real/transcript.jsonl',
-      summary: {
-        components: { inputTokens: 1, outputTokens: 1, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
-        model: 'x',
-        messageCount: 1
-      }
-    } as const
-    const result = resolveTokenReportCapabilityWith({
-      resolveMetering: () => capable,
-      recoverFromTee: () => {
-        recoverCalled = true
-        return RECOVERY
-      }
-    })
-    expect(result).toEqual(capable)
-    expect(recoverCalled).toBe(false)
-  })
-
-  it('incapable for a wiring-defect reason (not no-transcript-resolved): recovery is never consulted, the real diagnosis stands', () => {
-    let recoverCalled = false
-    const wiringBroken = { capable: false, reason: 'pointer-unusable', detail: 'stale pointer' } as const
-    const result = resolveTokenReportCapabilityWith({
-      resolveMetering: () => wiringBroken,
-      recoverFromTee: () => {
-        recoverCalled = true
-        return RECOVERY
-      }
-    })
-    expect(result).toEqual(wiringBroken)
-    expect(recoverCalled).toBe(false)
-  })
-
-  it('passes the caller-supplied transcriptPath straight through to resolveMetering', () => {
-    let seenPath: string | undefined
-    resolveTokenReportCapabilityWith(
-      {
-        resolveMetering: (transcriptPath) => {
-          seenPath = transcriptPath
-          return { capable: false, reason: 'transcript-unreadable', detail: 'x' }
-        },
-        recoverFromTee: () => null
-      },
-      '/explicit/transcript.jsonl'
+  it('classifies an owned-but-unreadable pointer as `pointer-unusable`', () => {
+    const cap = resolveMeteringCapability(
+      deps({
+        readFile: () => {
+          throw new Error('EACCES: permission denied')
+        }
+      })
     )
-    expect(seenPath).toBe('/explicit/transcript.jsonl')
-  })
-})
-
-describe('collectTokensAddition', () => {
-  it('renders real figures from a resolvable transcript', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'pr-report-tokens-'))
-    const transcriptPath = join(dir, 'transcript.jsonl')
-    try {
-      const line = (id: string, out: number) =>
-        JSON.stringify({
-          type: 'assistant',
-          message: { id, model: 'claude-sonnet-5', usage: { input_tokens: 100, output_tokens: out } }
-        })
-      writeFileSync(transcriptPath, `${line('m1', 50)}\n${line('m2', 25)}\n`)
-      const addition = collectTokensAddition({
-        phase: '3: develop',
-        role: 'Developer',
-        date: '2026-08-29',
-        transcriptPath
-      })
-      expect(addition).toEqual({
-        collected: true,
-        row: '| 3: develop | Developer | claude-sonnet-5 | 200 | 75 | — | 2026-08-29 |'
-      })
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
+    expect(cap.capable).toBe(false)
+    expect(cap.capable === false && cap.reason).toBe('pointer-unusable')
   })
 
-  it('never fabricates a `0/0/—` row for an unresolvable transcript — `—` cells plus the probe reason inline, one line only', () => {
-    const addition = collectTokensAddition({
-      phase: '3: develop',
-      role: 'Developer',
-      date: '2026-08-29',
-      transcriptPath: '/nonexistent/path/does/not/exist.jsonl'
-    })
-    expect(addition.collected).toBe(true)
-    const row = addition.collected ? addition.row : ''
-    expect(row.split('\n')).toHaveLength(1)
-    expect(row).toContain('transcript-unreadable')
-    expect(row).toBe('| 3: develop | Developer | — (transcript-unreadable) | — | — | — | 2026-08-29 |')
-    expect(row).not.toMatch(/\|\s*0\s*\|\s*0\s*\|/)
-  })
-
-  it('still renders the inline-reason row for a corroborated but empty transcript — `transcript-empty` is unchanged', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'pr-report-tokens-empty-'))
-    const transcriptPath = join(dir, 'transcript.jsonl')
-    try {
-      writeFileSync(transcriptPath, '')
-      const addition = collectTokensAddition({
-        phase: '3: develop',
-        role: 'Developer',
-        date: '2026-08-29',
-        transcriptPath
+  it('classifies a STALE pointer as `no-transcript-resolved`, not `pointer-unusable`', () => {
+    const cap = resolveMeteringCapability(
+      deps({
+        env: { TMPDIR: '/tmp', CLAUDE_PROJECT_DIR: '/proj', CLAUDE_CODE_SESSION_ID: 'mine' },
+        readFile: () => 'theirs\t/somewhere/their-transcript.jsonl'
       })
-      expect(addition).toEqual({
-        collected: true,
-        row: '| 3: develop | Developer | — (transcript-empty) | — | — | — | 2026-08-29 |'
-      })
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
-  })
-})
-
-/**
- * Issue #365. `no-transcript-resolved` means this session resolved no
- * transcript of its own — no pointer file, or one it cannot corroborate. It
- * does NOT mean the host cannot meter, which is the only case
- * `aeg-root/roles/developer.md` sanctions a blank token cell for. The
- * emitter must therefore withhold the row rather than assert that fact, while
- * still writing the Evidence block: `developer.md` makes this command's exit
- * code the Developer's pre-open verification run, so an abort-before-write
- * would leave every unwired host unable to populate Evidence at all.
- *
- * The unwired state is produced by pointing `TMPDIR`/`CLAUDE_PROJECT_DIR` at
- * a fresh empty directory (no pointer file can exist there) and clearing
- * `CLAUDE_CODE_SESSION_ID` — `hardenedMeteringDeps` reads `process.env` live,
- * and `collectTokensAddition` builds its deps per call.
- *
- * `VINAYA_RUN_ID`/`VINAYA_ROLE`/`VINAYA_TASK` are cleared too (O1, #608):
- * `resolveTokenReportCapability` now also tries
- * `recoverUsageFromDispatchTee`, which reads these three live off
- * `process.env` — and when this whole suite itself runs inside a real
- * dispatched developer session (as it does when a Developer runs its own
- * `bun test` from a `vinaya dispatch developer` turn), those three are
- * genuinely set to THIS session's own real values, and a real launch record
- * plus tee log for this exact run can genuinely exist on this machine.
- * Left uncleared, that real, unrelated state leaks into a test asserting
- * "no wiring, no recovery" and non-deterministically turns a refusal into a
- * real collected row (found live: exactly this, on the authoring machine).
- */
-describe('collectTokensAddition refuses rather than claiming the host cannot meter (#365)', () => {
-  function withUnwiredEnv<T>(fn: () => T): T {
-    const dir = mkdtempSync(join(tmpdir(), 'pr-report-unwired-'))
-    const saved = {
-      TMPDIR: process.env.TMPDIR,
-      CLAUDE_PROJECT_DIR: process.env.CLAUDE_PROJECT_DIR,
-      CLAUDE_CODE_SESSION_ID: process.env.CLAUDE_CODE_SESSION_ID,
-      VINAYA_RUN_ID: process.env.VINAYA_RUN_ID,
-      VINAYA_ROLE: process.env.VINAYA_ROLE,
-      VINAYA_TASK: process.env.VINAYA_TASK
-    }
-    process.env.TMPDIR = dir
-    process.env.CLAUDE_PROJECT_DIR = dir
-    delete process.env.CLAUDE_CODE_SESSION_ID
-    delete process.env.VINAYA_RUN_ID
-    delete process.env.VINAYA_ROLE
-    delete process.env.VINAYA_TASK
-    try {
-      return fn()
-    } finally {
-      for (const [key, value] of Object.entries(saved)) {
-        if (value === undefined) delete process.env[key]
-        else process.env[key] = value
-      }
-      rmSync(dir, { recursive: true, force: true })
-    }
-  }
-
-  it('returns a refusal, not a row, when no transcript resolves', () => {
-    const addition = withUnwiredEnv(() =>
-      collectTokensAddition({ phase: '3: develop', role: 'Developer', date: '2026-08-29' })
     )
-    expect(addition.collected).toBe(false)
-    const refusal = addition.collected ? '' : addition.refusal
-    expect(refusal).toContain('vinaya pr report: refused')
-    expect(refusal).toContain('no-transcript-resolved')
-    // Both ways out are named, so the refusal is actionable rather than terminal.
-    expect(refusal).toContain('--transcript')
-    expect(refusal).toContain('--in <tokens-in> --out <tokens-out>')
-    // The row it would have written is exactly what must not appear anywhere.
-    expect(refusal).not.toContain('| — | — | — |')
-    // The message claims nothing about a file being written: this function
-    // writes none, and only the caller knows whether Evidence landed or where
-    // (code review, PR #369).
-    expect(refusal).not.toContain('AEG:EVIDENCE')
-    // `vinaya tokens` prints a `Tokens:` line, never a `|`-delimited row, so
-    // the remedy must say transcribe — telling a reader to paste that output
-    // into the block puts a non-`|` line inside it, which truncates
-    // `parseTokenReportEntries` for every row appended after it.
-    expect(refusal).toContain('transcribe')
-    expect(refusal).not.toMatch(/paste it into\s+the `## Token report` table/)
-  })
-
-  // Template-shaped: an Evidence anchor pair under its own heading, the Token
-  // report heading last — the body `aeg-root/templates/pr-report-template.md`
-  // produces, and the shape `writeTokensBlock` sites a fresh block into.
-  const TEMPLATE_BODY = [
-    '## Summary',
-    '',
-    'why.',
-    '',
-    '## Evidence',
-    '',
-    '<!-- AEG:EVIDENCE:START -->',
-    '[populated by `vinaya pr report --write`]',
-    '<!-- AEG:EVIDENCE:END -->',
-    '',
-    '## Token report',
-    ''
-  ].join('\n')
-
-  it('still writes the Evidence block when the token row is refused', () => {
-    const written = composeWrittenBody(TEMPLATE_BODY, 'Head: abc', { collected: false, refusal: 'refused' })
-    expect(written).toContain('<!-- AEG:EVIDENCE:START -->')
-    expect(written).toContain('Head: abc')
-    expect(written).not.toContain('<!-- AEG:TOKENS:START -->')
-    expect(written).not.toContain('no-transcript-resolved')
-  })
-
-  it('writes both blocks when a row was collected', () => {
-    const row = '| 3: develop | Developer | claude-sonnet-5 | 200 | 75 | — | 2026-08-29 |'
-    const written = composeWrittenBody(TEMPLATE_BODY, 'Head: abc', { collected: true, row })
-    expect(written).toContain('<!-- AEG:EVIDENCE:START -->')
-    expect(written).toContain('Head: abc')
-    expect(written).toContain('<!-- AEG:TOKENS:START -->')
-    expect(written).toContain(row)
-  })
-
-  // The classification these docs ASSERT, pinned as behaviour.
-  //
-  // `apps/cli/README.md`, this module's doc comments and the changeset all
-  // state which incapable reason a given pointer state produces. Three review
-  // rounds were spent on those sentences being wrong in prose while the code
-  // was right, and prose has no gate: `quoted-command` sweeps only
-  // `${doctrineRoot}/**/*.md` (this repo: `aeg-root/`, `proseGates` unset), so
-  // a citation marker in a README, a `.ts` file or a changeset is never read,
-  // and its predicate wants a verbatim quote rather than a paraphrase anyway.
-  //
-  // What CAN be mechanised is the fact underneath: if the classification ever
-  // moves, these go red and name the docs that claim otherwise — no reviewer
-  // needs to suspect a particular word first.
-  describe('the incapable classification those docs describe', () => {
-    const deps = (over: Partial<Parameters<typeof resolveMeteringCapability>[0]>) => ({
-      env: { TMPDIR: '/tmp', CLAUDE_PROJECT_DIR: '/proj' } as Record<string, string | undefined>,
-      cwd: '/proj',
-      exists: () => true,
-      readFile: () => '',
-      ...over
-    })
-
-    it('classifies an owned-but-unreadable pointer as `pointer-unusable`', () => {
-      const cap = resolveMeteringCapability(
-        deps({
-          readFile: () => {
-            throw new Error('EACCES: permission denied')
-          }
-        })
-      )
-      expect(cap.capable).toBe(false)
-      expect(cap.capable === false && cap.reason).toBe('pointer-unusable')
-    })
-
-    it('classifies a STALE pointer as `no-transcript-resolved`, not `pointer-unusable`', () => {
-      const cap = resolveMeteringCapability(
-        deps({
-          env: { TMPDIR: '/tmp', CLAUDE_PROJECT_DIR: '/proj', CLAUDE_CODE_SESSION_ID: 'mine' },
-          readFile: () => 'theirs\t/somewhere/their-transcript.jsonl'
-        })
-      )
-      expect(cap.capable).toBe(false)
-      // The whole point: a stale pointer is another session's, so it is not
-      // this session's wiring, so it REFUSES rather than keeping a row.
-      expect(cap.capable === false && cap.reason).toBe('no-transcript-resolved')
-    })
-  })
-
-  // The exit half of the same fix. `prReportCommand` ends in `process.exit`,
-  // so without this the widened condition rested on a manual run alone —
-  // narrowing it back to `gatesFailed` would leave every other test green
-  // (code review, PR #369).
-  it('exits non-zero for a refused token row, a failing gate, or both — and zero for neither', () => {
-    expect(prReportExitCode({ gatesFailed: false, tokensRefused: false })).toBe(0)
-    expect(prReportExitCode({ gatesFailed: false, tokensRefused: true })).toBe(1)
-    expect(prReportExitCode({ gatesFailed: true, tokensRefused: false })).toBe(1)
-    // Both failing is still ONE non-zero exit, never a second reason lost.
-    expect(prReportExitCode({ gatesFailed: true, tokensRefused: true })).toBe(1)
+    expect(cap.capable).toBe(false)
+    // A stale pointer is another session's, so it is not this session's
+    // wiring, and the probe says so rather than claiming this host cannot
+    // meter at all.
+    expect(cap.capable === false && cap.reason).toBe('no-transcript-resolved')
   })
 })
 
-// A template-shaped body with real (non-fenced) `AEG:EVIDENCE` and
-// `AEG:TOKENS` pairs already seeded — the shape
-// `aeg-root/templates/pr-report-template.md` produces and a live,
-// already-open PR body actually has (both pairs are pre-seeded at open, per
-// the template; `--push` only ever runs after that). `spliceIntoLiveBody`
-// must leave everything outside the two pairs byte-for-byte untouched.
+// `prReportCommand` ends in `process.exit`, so without this the exit-code
+// rule rests on a manual run alone (code review).
+describe('prReportExitCode', () => {
+  it('is non-zero for a failing gate and zero otherwise — a red gate still writes the block', () => {
+    expect(prReportExitCode({ gatesFailed: false })).toBe(0)
+    expect(prReportExitCode({ gatesFailed: true })).toBe(1)
+  })
+})
+
+// A live body of the shape `aeg-root/templates/pr-report-template.md`
+// produces: a real (non-fenced) `AEG:EVIDENCE` pair, plus — on a pull request
+// opened before the token table was retired — an older run's `AEG:TOKENS`
+// block that nothing writes any more. `spliceIntoLiveBody` must leave
+// everything outside the Evidence pair byte-for-byte untouched, that stale
+// table included.
 const LIVE_BODY = [
   '## Summary',
   '',
@@ -2114,13 +1691,14 @@ const LIVE_BODY = [
   '<!-- AEG:TOKENS:START -->',
   '| Phase | Role | Agent/Model | Tokens in | Tokens out | Cost | Date |',
   '|---|---|---|---|---|---|---|',
+  '| 3: develop | Developer | claude-sonnet-5 | 100 | 50 | — | 2026-09-03 |',
   '<!-- AEG:TOKENS:END -->',
   ''
 ].join('\n')
 
 describe('spliceIntoLiveBody', () => {
-  it('keeps every byte outside the AEG:EVIDENCE/AEG:TOKENS regions, replacing only the block content', () => {
-    const { body: updated } = spliceIntoLiveBody(LIVE_BODY, 'Head: freshsha', { collected: false, refusal: 'refused' })
+  it('keeps every byte outside the AEG:EVIDENCE region, replacing only the block content', () => {
+    const updated = spliceIntoLiveBody(LIVE_BODY, 'Head: freshsha')
     expect(updated).toContain('## Summary')
     expect(updated).toContain('why this shipped, in the author’s own words.')
     expect(updated).toContain('## Scope')
@@ -2129,11 +1707,19 @@ describe('spliceIntoLiveBody', () => {
     expect(updated).toContain('Head: freshsha')
   })
 
+  // O3: an old body's token table is data this command no longer owns — it is
+  // neither refreshed nor removed, and a byte of it never moves.
+  it('leaves an older run’s AEG:TOKENS block byte-for-byte intact', () => {
+    const updated = spliceIntoLiveBody(LIVE_BODY, 'Head: freshsha')
+    const region = (body: string) =>
+      body.slice(body.indexOf('<!-- AEG:TOKENS:START -->'), body.indexOf('<!-- AEG:TOKENS:END -->'))
+    expect(region(updated)).toBe(region(LIVE_BODY))
+    expect(updated).toContain('| 3: develop | Developer | claude-sonnet-5 | 100 | 50 | — | 2026-09-03 |')
+  })
+
   it('refuses (throws, writes nothing) on a live body with no real AEG:EVIDENCE pair — never appends one', () => {
     const noPair = '## Summary\n\nwhy.\n\n## Scope\n\n**Tier:** 1'
-    expect(() => spliceIntoLiveBody(noPair, 'Head: freshsha', { collected: false, refusal: 'refused' })).toThrow(
-      MissingEvidenceAnchorError
-    )
+    expect(() => spliceIntoLiveBody(noPair, 'Head: freshsha')).toThrow(MissingEvidenceAnchorError)
   })
 
   it('refuses on a live body whose only AEG:EVIDENCE pair sits inside a fenced code block', () => {
@@ -2150,33 +1736,33 @@ describe('spliceIntoLiveBody', () => {
       '',
       '## Scope'
     ].join('\n')
-    expect(() => spliceIntoLiveBody(fencedOnly, 'Head: freshsha', { collected: false, refusal: 'refused' })).toThrow(
-      MissingEvidenceAnchorError
-    )
+    expect(() => spliceIntoLiveBody(fencedOnly, 'Head: freshsha')).toThrow(MissingEvidenceAnchorError)
   })
 
-  it('skips the token splice (no false drift) when the live body carries no real AEG:TOKENS pair, even with a collected row', () => {
+  // O1: a body with no token table never grows one — the anchor pair this
+  // command used to create for a fresh draft is gone with the table.
+  it('never creates an AEG:TOKENS pair in a body that has none', () => {
     const noTokensPair =
       '## Summary\n\nwhy.\n\n<!-- AEG:EVIDENCE:START -->\nstale\n<!-- AEG:EVIDENCE:END -->\n\n## Scope'
-    const { body: updated, tokensSpliced } = spliceIntoLiveBody(noTokensPair, 'Head: freshsha', {
-      collected: true,
-      row: '| 7: develop | Developer | claude-sonnet-5 | 200 | 75 | — | 2026-09-03 |'
-    })
-    expect(tokensSpliced).toBe(false)
+    const updated = spliceIntoLiveBody(noTokensPair, 'Head: freshsha')
     expect(updated).not.toContain('AEG:TOKENS')
-    expect(updated).not.toContain('claude-sonnet-5')
+    expect(updated).not.toContain('Token report')
     expect(updated).toContain('Head: freshsha')
   })
 })
 
 describe('bodiesAgreeOutsideRegions', () => {
-  it('is true when only the AEG:EVIDENCE/AEG:TOKENS regions were regenerated', () => {
+  it('is true when only the AEG:EVIDENCE region was regenerated', () => {
     const before = LIVE_BODY
-    const { body: after } = spliceIntoLiveBody(before, 'Head: freshsha', {
-      collected: true,
-      row: '| 7: develop | Developer | claude-sonnet-5 | 200 | 75 | — | 2026-09-03 |'
-    })
+    const after = spliceIntoLiveBody(before, 'Head: freshsha')
     expect(bodiesAgreeOutsideRegions(before, after)).toBe(true)
+  })
+
+  // The region this command no longer writes is now policed like any other
+  // untouched prose: a change inside an old token table is real drift.
+  it('is false when a byte inside an older run’s token table changed', () => {
+    const after = LIVE_BODY.replace('| 100 | 50 |', '| 999 | 50 |')
+    expect(bodiesAgreeOutsideRegions(LIVE_BODY, after)).toBe(false)
   })
 
   it('is false when a single byte outside those regions changed', () => {
@@ -2212,7 +1798,7 @@ describe('vinaya pr report --push CLI surface', () => {
   it('refuses a non-numeric --push value before touching the forge', () => {
     const dir = mkdtempSync(join(tmpdir(), 'vinaya-pr-report-push-cli-'))
     try {
-      const result = runCli(['pr', 'report', '--push', '--transcript'], dir)
+      const result = runCli(['pr', 'report', '--push', '--body-file'], dir)
       expect(result.status).toBe(2)
       expect(result.stderr).toMatch(/is not a PR number/)
     } finally {
@@ -2268,7 +1854,7 @@ describe('prReportCommand — --push --body-file writes the whole local body (#5
     }
   }
 
-  it("pushes the local body-file's own Decisions bullet — a section outside the AEG:EVIDENCE/AEG:TOKENS blocks — to the forge fake, not only the regenerated blocks", async () => {
+  it("pushes the local body-file's own Decisions bullet — a section outside the AEG:EVIDENCE block — to the forge fake, not only the regenerated block", async () => {
     const dir = mkdtempSync(join(tmpdir(), 'vinaya-pr-report-push-bodyfile-'))
     const binDir = mkdtempSync(join(tmpdir(), 'vinaya-pr-report-push-bodyfile-bin-'))
     const forgeStore = join(dir, 'forge-body.txt')
@@ -2340,8 +1926,8 @@ exit 1
       await runCapturingExit(['--push', '383', '--body-file', bodyPath], { gateRunner: () => PASSING_GATES })
 
       const pushedBody = readFileSync(forgeStore, 'utf8')
-      // The Decisions bullet — outside both generated blocks — reached the
-      // forge fake whole, not only the regenerated Evidence/Tokens content.
+      // The Decisions bullet — outside the generated block — reached the
+      // forge fake whole, not only the regenerated Evidence content.
       expect(pushedBody).toContain('## Decisions')
       expect(pushedBody).toContain('chose `reviewPolicy.maxRounds`')
       expect(pushedBody).toContain('AEG:EVIDENCE:START')
