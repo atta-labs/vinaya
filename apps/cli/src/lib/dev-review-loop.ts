@@ -73,7 +73,8 @@ import {
   type ReviewInputManifest,
   type ReviewPolicy,
   type RoundHeadIdentity,
-  type RoundStats
+  type RoundStats,
+  type VerdictObservation
 } from '@attalabs/aeg-core'
 import {
   AGENT_VENDOR_NAMES,
@@ -85,7 +86,12 @@ import {
   type ResumeRecord,
   terminateLaunchedChildOnShutdown as realTerminateLaunchedChildOnShutdown
 } from './dispatch.js'
-import { postMarkedComment } from './forge-write.js'
+import {
+  type DeferredFindingEntry,
+  type DeferredFindingsIssueRef,
+  postMarkedComment,
+  upsertDeferredFindingsIssue
+} from './forge-write.js'
 import { createLogSink, drainLogSink, resolveLogAppendPath } from './log-sink.js'
 import { ensureRunDir, markProcessUnattended, runPath } from './run-paths.js'
 import { defaultTaskSweepAsyncDeps, sweepModernTasksAsync } from './task-sweep.js'
@@ -479,6 +485,15 @@ export type LoopDeps = {
   postPauseComment: typeof postPauseComment
   postIssuePauseComment: typeof postIssuePauseComment
   publishRound: typeof publishRound
+  /**
+   * Opens or updates the one backlog Issue per pull request that tracks the
+   * findings this loop set aside rather than let block (O1, O2) — injected
+   * like the four forge-writes above so an in-process run records the call
+   * instead of shelling out to `gh`. Production default is the real
+   * `upsertDeferredFindingsIssue`. Called from the publish step ONLY when a
+   * round deferred something (O3: nothing deferred opens nothing).
+   */
+  writeDeferredFindingsIssue: (input: { prNumber: number; entries: DeferredFindingEntry[] }) => DeferredFindingsIssueRef
   /**
    * issue-709, O2 — the PR body read `checkPremiseAtHead` performs on every
    * round's gate check (a real `gh pr view <n> --json body`), injected for
@@ -899,9 +914,33 @@ function defaultDeps(): LoopDeps {
     postPauseComment,
     postIssuePauseComment,
     publishRound,
+    writeDeferredFindingsIssue: upsertDeferredFindingsIssue,
     fetchPrBody,
     patchIdOf: defaultPatchIdOf
   }
+}
+
+/**
+ * One round's deferred findings as tracking-Issue entries — each carrying the
+ * reviewer that reported it (`v.role`, O1's "reviewer" field), taken straight
+ * from the round's own verdict observations. The journal's `RoundRecord.deferred`
+ * (`@attalabs/aeg-core`) drops the role, and that type — like the summary that
+ * renders it — is out of this task's Surface, so the role is captured here at
+ * the one point it is still in hand, then accumulated per round by the loop.
+ * The severity/location/reason are the same facts the summary lists, so the
+ * two never disagree on the finding itself. Empty when the round deferred
+ * nothing (O3).
+ */
+function deferredEntriesForRound(round: number, verdicts: VerdictObservation[]): DeferredFindingEntry[] {
+  const entries: DeferredFindingEntry[] = []
+  for (const v of verdicts) {
+    for (const f of v.findings) {
+      if (f.deferred !== undefined) {
+        entries.push({ round, reviewer: v.role, severity: f.severity, location: f.location ?? '', reason: f.deferred })
+      }
+    }
+  }
+  return entries
 }
 
 // --- the loop -----------------------------------------------------------------
@@ -1471,6 +1510,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       maxRounds: DEFAULT_REVIEW_POLICY.maxRounds
     }
     let state: LoopState = initialLoopState(config)
+    // O1: this process's own per-round deferred findings, WITH the reviewer
+    // that reported each — keyed by round so a re-observed round replaces
+    // rather than duplicates. Captured from the verdict observations (the one
+    // place the role is still in hand) and read at publish to open/update the
+    // tracking Issue. Covers exactly the live rounds this process assessed —
+    // the same set the journal's own `deferred` carries, since a
+    // marker-reconstructed round has no deferred detail either.
+    const deferredByRound = new Map<number, DeferredFindingEntry[]>()
 
     // The `resumed` observation — a genuine
     // `--resume` attach, already authenticated (`resolveEscalation`, above)
@@ -3819,10 +3866,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 )
               }
 
+              const roundVerdicts = [reviewer.verdict.observation, security.verdict.observation]
+              // O1: capture this round's deferred findings WITH the reviewer
+              // role now, while the verdict observations are in hand — keyed by
+              // round so a re-observation replaces rather than duplicates.
+              deferredByRound.set(round, deferredEntriesForRound(round, roundVerdicts))
               const obs: Observations = {
                 kind: 'verdicts',
                 round,
-                verdicts: [reviewer.verdict.observation, security.verdict.observation]
+                verdicts: roundVerdicts
               }
               const result = assessRound(state, obs)
               state = result.state
@@ -3894,6 +3946,23 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             continue
           }
 
+          // O1/O3: the findings this loop set aside rather than let block are
+          // tracked in one backlog Issue per pull request, so they are not
+          // lost once the loop closes. Opened or updated ONLY when a round
+          // actually deferred something (O3: a clean run opens nothing); the
+          // returned reference is linked from the published summary below.
+          // Written before `publishRound` so a `gh` failure here throws into
+          // the same outer catch that turns a failed publication into an
+          // infrastructure pause, retried idempotently next round (O2: found
+          // by its body marker, never a second Issue).
+          const deferredFindings = [...deferredByRound.entries()]
+            .sort(([a], [b]) => a - b)
+            .flatMap(([, entries]) => entries)
+          const deferredIssue =
+            deferredFindings.length > 0
+              ? d.writeDeferredFindingsIssue({ prNumber, entries: deferredFindings })
+              : undefined
+
           d.publishRound(root, {
             task,
             round,
@@ -3929,7 +3998,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 objectivesVersion: d.resolveIssueObjectives(task).version,
                 rulingOrdinal: d.fetchNewestRulingOrdinal(prNumber),
                 policy
-              })
+              }),
+            // O1: the backlog Issue this round's deferred findings were just
+            // tracked in, so the published summary links it; `undefined` when
+            // nothing was deferred (O3).
+            deferredIssue
           })
           // Only now — posts confirmed, not merely attempted — does the durable
           // log get to say this run completed. A throw above (a post that

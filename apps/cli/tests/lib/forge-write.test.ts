@@ -9,15 +9,21 @@ import { sha256Hex } from '../../src/lib/effects'
 import { checkIntroducedCommandsCovered, checkIntroducedConfigKeysCovered } from '@attalabs/aeg-core'
 import {
   collectTaskIssueErrors,
+  DEFERRED_FINDINGS_LABEL,
+  deferredFindingsMarker,
+  type GhRunner,
   isPendingOnlyFailure,
   readPinnedFileImporters,
+  renderDeferredFindingsIssueBody,
   tokenExistsInTree,
   reconcileGhComment,
   runIssueChecks,
   type TaskIssueValidationDeps,
+  upsertDeferredFindingsIssue,
   validateForgeWrite,
   validateIssueContent
 } from '../../src/lib/forge-write'
+import { readFileSync } from 'node:fs'
 
 const CLI_ROOT = join(import.meta.dir, '..', '..')
 const REPO_ROOT = join(CLI_ROOT, '..', '..')
@@ -1359,5 +1365,145 @@ describe('readPinnedFileImporters — path-exact, not basename-exact', () => {
     expect(answers[0]).toBe(false)
     expect(answers[answers.length - 1]).toBe(true)
     expect(answers.filter((answer) => answer === false).length).toBe(40)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// #854 — `upsertDeferredFindingsIssue`: one backlog Issue per pull request for
+// the findings a round set aside, found by a body marker naming the pull
+// request (never by title), idempotent on a republish (O2).
+// ---------------------------------------------------------------------------
+
+/** A fake forge over one in-memory issue store; records every `gh` invocation so a test can assert what was and was not written. */
+function fakeForge(labelPresent = true): {
+  gh: GhRunner
+  calls: string[][]
+  issues: Array<{ number: number; body: string; state: string }>
+} {
+  const calls: string[][] = []
+  const issues: Array<{ number: number; body: string; state: string }> = []
+  let labelExists = labelPresent
+  let nextNumber = 4242
+  const bodyFileArg = (args: string[]): string => readFileSync(args[args.indexOf('--body-file') + 1] as string, 'utf8')
+  const gh: GhRunner = (args) => {
+    calls.push(args)
+    if (args[0] === 'label' && args[1] === 'list')
+      return JSON.stringify(labelExists ? [{ name: DEFERRED_FINDINGS_LABEL }] : [])
+    if (args[0] === 'label' && args[1] === 'create') {
+      labelExists = true
+      return ''
+    }
+    // findDeferredFindingsIssue lists via `gh api --paginate … --jq '.[] | {number, body, state}'`,
+    // which streams one NDJSON object per issue; REST reports state lower-case.
+    if (args[0] === 'api')
+      return issues
+        .map((i) => JSON.stringify({ number: i.number, body: i.body, state: i.state.toLowerCase() }))
+        .join('\n')
+    if (args[0] === 'issue' && args[1] === 'create') {
+      const number = nextNumber++
+      issues.push({ number, body: bodyFileArg(args), state: 'OPEN' })
+      return `https://github.com/o/r/issues/${number}`
+    }
+    if (args[0] === 'issue' && args[1] === 'edit') {
+      const target = issues.find((i) => i.number === Number(args[2]))!
+      target.body = bodyFileArg(args)
+      return `https://github.com/o/r/issues/${target.number}`
+    }
+    if (args[0] === 'issue' && args[1] === 'reopen') {
+      issues.find((i) => i.number === Number(args[2]))!.state = 'OPEN'
+      return ''
+    }
+    throw new Error(`fakeForge: unexpected gh call: ${args.join(' ')}`)
+  }
+  return { gh, calls, issues }
+}
+
+const OUTSIDE = {
+  round: 1,
+  reviewer: 'reviewer',
+  severity: 'MAJOR',
+  location: 'x.ts:1',
+  reason: 'outside-surface' as const
+}
+const UNCHANGED = {
+  round: 2,
+  reviewer: 'security',
+  severity: 'MEDIUM',
+  location: 'y.ts:2',
+  reason: 'unchanged-line' as const
+}
+
+describe('upsertDeferredFindingsIssue — one tracking Issue per pull request (#854)', () => {
+  it('creates the Issue listing each finding, labelled and marked, when none exists (O1)', () => {
+    const forge = fakeForge()
+    const ref = upsertDeferredFindingsIssue({ prNumber: 55, entries: [OUTSIDE, UNCHANGED] }, forge.gh)
+    expect(ref.issue).toBe(4242)
+    expect(forge.issues).toHaveLength(1)
+    const body = forge.issues[0]!.body
+    // O1: the marker names the pull request, and every finding is listed with
+    // its severity, `file:line` and reason (the shared reason wording).
+    expect(body).toContain(deferredFindingsMarker(55))
+    // O1: each line names the reviewer that reported it, its severity, file:line and reason.
+    expect(body).toContain('- round 1 — reviewer — MAJOR x.ts:1 — outside the Surface')
+    expect(body).toContain('- round 2 — security — MEDIUM y.ts:2 — unchanged line')
+    // Fixed backlog label, no tranche label, so no plan gate applies.
+    const createCall = forge.calls.find((a) => a[0] === 'issue' && a[1] === 'create')!
+    expect(createCall).toContain('--label')
+    expect(createCall[createCall.indexOf('--label') + 1]).toBe(DEFERRED_FINDINGS_LABEL)
+    expect(createCall.some((a) => a.startsWith('vinaya/tranche:'))).toBe(false)
+  })
+
+  it('updates the SAME Issue on a republish of the same pull request, never a second (O2)', () => {
+    const forge = fakeForge()
+    const first = upsertDeferredFindingsIssue({ prNumber: 55, entries: [OUTSIDE] }, forge.gh)
+    // A second publication with a grown deferred set, same pull request.
+    const second = upsertDeferredFindingsIssue({ prNumber: 55, entries: [OUTSIDE, UNCHANGED] }, forge.gh)
+    expect(second.issue).toBe(first.issue)
+    expect(forge.issues).toHaveLength(1)
+    expect(forge.calls.filter((a) => a[0] === 'issue' && a[1] === 'create')).toHaveLength(1)
+    // The republish edited the one Issue to the new deferred set.
+    expect(forge.calls.some((a) => a[0] === 'issue' && a[1] === 'edit')).toBe(true)
+    expect(forge.issues[0]!.body).toContain('y.ts:2')
+  })
+
+  it('finds its Issue by marker, not title — a different PR opens its own (O2)', () => {
+    const forge = fakeForge()
+    upsertDeferredFindingsIssue({ prNumber: 55, entries: [OUTSIDE] }, forge.gh)
+    upsertDeferredFindingsIssue({ prNumber: 66, entries: [OUTSIDE] }, forge.gh)
+    expect(forge.issues).toHaveLength(2)
+    expect(forge.issues[0]!.body).toContain(deferredFindingsMarker(55))
+    expect(forge.issues[1]!.body).toContain(deferredFindingsMarker(66))
+  })
+
+  it('a republish with the identical deferred set edits nothing (idempotent no-op)', () => {
+    const forge = fakeForge()
+    upsertDeferredFindingsIssue({ prNumber: 55, entries: [OUTSIDE] }, forge.gh)
+    upsertDeferredFindingsIssue({ prNumber: 55, entries: [OUTSIDE] }, forge.gh)
+    expect(forge.calls.filter((a) => a[0] === 'issue' && a[1] === 'edit')).toHaveLength(0)
+  })
+
+  it('reopens a closed tracking Issue before updating it, so the backlog record is live again', () => {
+    const forge = fakeForge()
+    upsertDeferredFindingsIssue({ prNumber: 55, entries: [OUTSIDE] }, forge.gh)
+    forge.issues[0]!.state = 'CLOSED'
+    upsertDeferredFindingsIssue({ prNumber: 55, entries: [OUTSIDE, UNCHANGED] }, forge.gh)
+    expect(forge.calls.some((a) => a[0] === 'issue' && a[1] === 'reopen')).toBe(true)
+    expect(forge.issues[0]!.state).toBe('OPEN')
+  })
+
+  it('creates the fixed label when the forge lacks it, then creates the Issue', () => {
+    const forge = fakeForge(false)
+    upsertDeferredFindingsIssue({ prNumber: 55, entries: [OUTSIDE] }, forge.gh)
+    expect(forge.calls.some((a) => a[0] === 'label' && a[1] === 'create' && a[2] === DEFERRED_FINDINGS_LABEL)).toBe(
+      true
+    )
+    expect(forge.issues).toHaveLength(1)
+  })
+
+  it('renders `(no location)` for a finding that carried none', () => {
+    const body = renderDeferredFindingsIssueBody(7, [
+      { round: 1, reviewer: 'reviewer', severity: 'BLOCKER', location: '', reason: 'outside-surface' }
+    ])
+    expect(body).toContain('- round 1 — reviewer — BLOCKER (no location) — outside the Surface')
   })
 })
