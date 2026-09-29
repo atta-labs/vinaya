@@ -3573,6 +3573,90 @@ describe('background-deny hook — Issue #865, O1/O2: machine-state commands, al
     })
   }
 
+  /**
+   * Round 4 finding. A transparent wrapper takes flags of its own, and
+   * dropping only the wrapper word leaves the flag standing where the
+   * command should be. `command -p` is the spelling the review found; the
+   * same one-flag distance covers `env -i`, `env -u NAME`, `nice -n N` and
+   * the rest, so the fix is a per-wrapper table of which flags carry a
+   * separate value rather than a patch for the one word reported.
+   */
+  it("a wrapper's own flags are consumed with it, including the ones that take a separate value", () => {
+    const scriptPath = freshDenyScriptPath('developer')
+    for (const command of [
+      'command -p sudo rm /etc/hosts',
+      'command -p security create-keychain -p x /tmp/scratch.keychain',
+      'command -p launchctl unload /Library/LaunchAgents/x.plist',
+      'cd /tmp && command -p sudo rm /etc/hosts',
+      'command -p eval sudo rm /etc/hosts',
+      'env -i sudo rm /etc/hosts',
+      'env -u FOO sudo rm /etc/hosts',
+      'env -- sudo rm /etc/hosts',
+      'nice -n 10 sudo rm /etc/hosts',
+      'stdbuf -o 0 sudo rm /etc/hosts',
+      'time -o /tmp/t sudo rm /etc/hosts',
+      'exec -a fake sudo rm /etc/hosts',
+      "env -i command -p eval 'sudo rm /etc/hosts'"
+    ]) {
+      const decision = decisionFor(scriptPath, command)
+      expect(decision?.permissionDecision).toBe('deny')
+      expect(decision?.permissionDecisionReason).toMatch(/keychain, services or global settings/)
+    }
+  })
+
+  it('a flagged wrapper in front of ordinary work, and in front of the exempted read, is still not refused', () => {
+    const scriptPath = freshDenyScriptPath('developer')
+    for (const command of [
+      'command -p security find-generic-password -s svc -a acct -w',
+      'env -i security find-generic-password -s svc -w',
+      'nice -n 10 echo hi',
+      'env -u FOO git config user.email a@b.c'
+    ]) {
+      expect(decisionFor(scriptPath, command)).toBeNull()
+    }
+  })
+
+  /**
+   * Found while committing this task's own round-4 work, not in review. A
+   * heredoc payload is DATA — `cat > notes.md <<EOF … EOF` writes prose,
+   * and a line of prose reading `nice -n 10 sudo is the shape` is a
+   * sentence. Two separate defects conspired: a substitution body was
+   * blanked for the separator scan but the statement was still cut from
+   * the RAW text, so the body's words were read as the outer statement's
+   * own arguments; and the payload itself was split into statements. The
+   * exception is a payload a shell reads, which really does execute.
+   */
+  it('a heredoc payload is data, and prose inside one is never read as the command it describes', () => {
+    const scriptPath = freshDenyScriptPath('developer')
+    for (const command of [
+      "cat > /tmp/notes.md <<'EOF'\nnice -n 10 sudo is the shape\nsecurity create-keychain is the origin incident\nEOF",
+      'git commit -q -m "$(cat <<\'EOF\'\nfix: consume a wrapper flag\n\nnice -n 10 sudo is the shape\nEOF\n)"',
+      "python3 - <<'PY'\nprint('hi')\nPY"
+    ]) {
+      expect(decisionFor(scriptPath, command)).toBeNull()
+    }
+  })
+
+  it('a heredoc a SHELL reads is executed, so it is judged', () => {
+    const scriptPath = freshDenyScriptPath('developer')
+    for (const command of [
+      "bash <<'EOF'\nsudo rm /etc/hosts\nEOF",
+      'sh <<EOF\nsecurity default-keychain -s /tmp/scratch.keychain\nEOF'
+    ]) {
+      expect(decisionFor(scriptPath, command)?.permissionDecision).toBe('deny')
+    }
+  })
+
+  it('a substitution body is judged as its own command, never re-read as the containing command arguments', () => {
+    const scriptPath = freshDenyScriptPath('developer')
+    // The body still denies on its own account.
+    expect(decisionFor(scriptPath, 'echo "$(sudo rm /etc/hosts)"')?.permissionDecision).toBe('deny')
+    // But its words are not attributed to the command that contained it: a
+    // `git commit` whose message text mentions `-n` is not a `--no-verify`
+    // commit.
+    expect(decisionFor(scriptPath, 'git commit -m "$(echo fix -n later)"')).toBeNull()
+  })
+
   it('the exempted read survives every one of those shapes — it is how a log header resolves from the login Keychain', () => {
     const scriptPath = freshDenyScriptPath('developer')
     for (const command of [
@@ -4057,6 +4141,42 @@ describe('writeDispatchSettings — Issue #663, O1/O3: the permission policy is 
     expect(devSettings.permissions.allow).toContain('Bash(git commit:*)')
     expect(revSettings.permissions.allow).not.toContain('Bash(git commit:*)')
   })
+
+  /**
+   * Round 4 security review, MEDIUM. The policy is written for `claude`
+   * alone, and no vendor-agnostic refusal mechanism has been confirmed live
+   * — that predates this task and is not closed here. What is closed is the
+   * silence: a `--agent codex`/`--agent gemini` dispatch used to run with no
+   * permission policy at all and leave a run log indistinguishable from a
+   * protected one.
+   */
+  for (const agent of ['codex', 'gemini'] as const) {
+    it(`an agent that carries no permission policy says so in its own first lifecycle line (${agent})`, () => {
+      const home = tempDir('vinaya-dispatch-home-')
+      const cwd = tempDir('vinaya-dispatch-cwd-')
+      const binDir = tempDir('vinaya-dispatch-bin-')
+      writeFakeBinary(binDir, agent, `#!/bin/sh\nwhile read -r line; do :; done\ncat > /dev/null\necho '{}'\nexit 0\n`)
+      const promptFile = join(cwd, 'prompt.txt')
+      writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+      const roleLogPath = join(cwd, 'role.log')
+
+      const r = runDispatch(
+        ['developer', '--agent', agent, '--prompt-file', promptFile, '--role-log-path', roleLogPath],
+        cwd,
+        home,
+        `${binDir}:${pathWithoutRealVendors()}`
+      )
+      expect(r.status).toBe(0)
+
+      const lines = readFileSync(roleLogPath, 'utf8').trim().split('\n')
+      const policyLine = lines.find((l) => l.includes('permission policy'))
+      expect(policyLine).toBeDefined()
+      expect(policyLine).toContain('NO permission policy')
+      expect(policyLine).toMatch(/machine-state commands .* are NOT denied for this agent/)
+      // Never the claim a protected run makes.
+      expect(policyLine).not.toContain(`permission policy ${PERMISSION_POLICY_VERSION} written to`)
+    })
+  }
 
   it("O3: the role's first lifecycle line names the permission policy version it wrote", () => {
     const home = tempDir('vinaya-dispatch-home-')

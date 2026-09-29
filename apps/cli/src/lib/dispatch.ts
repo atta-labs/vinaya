@@ -704,26 +704,95 @@ export function wholeSuiteTestCommandDetectorSource(): string {
     // layer of quoting before the shell re-reads the text, so `eval 'sudo rm
     // x'` must be seen as `sudo rm x`, and dropping quote characters is what
     // makes that true whichever chunk they were written around.
-    'const REINTERPRET_PREFIX = /^(?:(?:[A-Za-z_][A-Za-z0-9_]*=\\S*|env|command|builtin|exec|time|nice|stdbuf)\\s+)*/;',
+    // Shell punctuation and quoting glue themselves to a word without
+    // changing which command it names: `(sudo`, `'sudo'`, `!` are all read
+    // through to the word underneath.
+    'function bareWord(t) {',
+    "  return typeof t === 'string' ? t.replace(/^[({!'\\\"]+/, '').replace(/['\\\"]+$/, '') : '';",
+    '}',
+    // A transparent wrapper runs the command that follows it — but several
+    // take FLAGS OF THEIR OWN first, and dropping only the wrapper word
+    // leaves the flag sitting where the command should be. `command -p sudo
+    // rm /etc/hosts` read as a statement headed by `-p` and matched nothing
+    // (round 4 code review, BLOCKER, confirmed live); so did `env -u FOO
+    // sudo …`, `env -i sudo …` and `nice -n 10 sudo …`, which the same gap
+    // covers and which are the same one-flag distance from working. A flag
+    // that takes a SEPARATE value has to consume that value too, or the
+    // value becomes the head instead — hence the per-wrapper table rather
+    // than a blanket "skip anything starting with a dash".
+    "const WRAPPER_FLAGS_WITH_VALUE = { env: ['-u', '--unset'], nice: ['-n', '--adjustment'], stdbuf: ['-i', '-o', '-e', '--input', '--output', '--error'], time: ['-o', '-f', '--output', '--format'], exec: ['-a'], command: [], builtin: [] };",
+    'function wrapperPrefixEnd(tokens) {',
+    '  let i = 0;',
+    '  for (;;) {',
+    "    while (i < tokens.length && bareWord(tokens[i]) === '') i++;",
+    '    if (i >= tokens.length) break;',
+    '    const word = bareWord(tokens[i]);',
+    '    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) { i++; continue; }',
+    "    const head = word.split('/').pop();",
+    '    if (!Object.prototype.hasOwnProperty.call(WRAPPER_FLAGS_WITH_VALUE, head)) break;',
+    '    const valued = WRAPPER_FLAGS_WITH_VALUE[head];',
+    '    i++;',
+    "    while (i < tokens.length && bareWord(tokens[i]).charAt(0) === '-' && bareWord(tokens[i]) !== '--') {",
+    '      const takesValue = valued.indexOf(bareWord(tokens[i])) !== -1;',
+    '      i++;',
+    '      if (takesValue && i < tokens.length) i++;',
+    '    }',
+    "    if (i < tokens.length && bareWord(tokens[i]) === '--') i++;",
+    '  }',
+    '  return i;',
+    '}',
     'function reinterpretedCommands(stmt) {',
     "  if (typeof stmt !== 'string') return [];",
-    '  const body = stmt.trim().replace(REINTERPRET_PREFIX, "");',
-    '  const tokens = body.split(/\\s+/).filter(Boolean);',
-    '  if (tokens.length < 2) return [];',
-    "  const head = tokens[0].split('/').pop();",
+    '  const all = stmt.trim().split(/\\s+/).filter(Boolean);',
+    '  const start = wrapperPrefixEnd(all);',
+    '  if (all.length - start < 2) return [];',
+    "  const head = bareWord(all[start]).split('/').pop();",
     '  let rest = null;',
     "  if (head === 'eval') {",
-    '    rest = body.slice(tokens[0].length);',
+    "    rest = all.slice(start + 1).join(' ');",
     "  } else if (head === 'bash' || head === 'sh' || head === 'zsh' || head === 'dash' || head === 'ksh') {",
-    "    const flag = tokens.indexOf('-c');",
+    '    let flag = -1;',
+    "    for (let k = start + 1; k < all.length; k++) if (bareWord(all[k]) === '-c') { flag = k; break; }",
     '    if (flag === -1) return [];',
-    "    const at = body.indexOf('-c', tokens.slice(0, flag).join(' ').length);",
-    '    if (at === -1) return [];',
-    '    rest = body.slice(at + 2);',
+    "    rest = all.slice(flag + 1).join(' ');",
     '  }',
     "  if (rest === null || rest.trim() === '') return [];",
     "  const dequoted = rest.replace(/['\"]/g, '');",
     '  return rest === dequoted ? [rest] : [rest, dequoted];',
+    '}',
+    // A heredoc payload is DATA, not commands — `cat > notes.md <<EOF … EOF`
+    // writes prose, and a line of that prose reading `nice -n 10 sudo is the
+    // shape` is a sentence, not an invocation. Splitting the payload into
+    // statements refused exactly that (found here, not in review, by this
+    // task's own commit message). The one exception is a payload a SHELL is
+    // reading — `bash <<EOF … EOF` executes every line of it — so that one
+    // is queued as commands instead of dropped. A heredoc whose delimiter
+    // line never appears is not treated as a heredoc at all, so a `<<`
+    // sitting inside an ordinary quoted string cannot swallow the rest of
+    // the command.
+    'const HEREDOC_OPEN = /<<-?\\s*(?:\'([^\']+)\'|"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))/;',
+    'function splitHeredocs(command) {',
+    "  const lines = command.split('\\n');",
+    '  const kept = [];',
+    '  const scripts = [];',
+    '  for (let i = 0; i < lines.length; i++) {',
+    '    const line = lines[i];',
+    '    kept.push(line);',
+    '    const m = HEREDOC_OPEN.exec(line);',
+    '    if (!m) continue;',
+    '    const delim = m[1] || m[2] || m[3];',
+    '    let end = -1;',
+    '    for (let j = i + 1; j < lines.length; j++) {',
+    '      if (lines[j].trim() === delim) { end = j; break; }',
+    '    }',
+    '    if (end === -1) continue;',
+    "    const payload = lines.slice(i + 1, end).join('\\n');",
+    '    const tokens = line.split(/\\s+/).filter(Boolean);',
+    "    const head = bareWord(tokens[wrapperPrefixEnd(tokens)] || '').split('/').pop();",
+    "    if (head === 'bash' || head === 'sh' || head === 'zsh' || head === 'dash' || head === 'ksh' || head === 'eval') scripts.push(payload);",
+    '    i = end;',
+    '  }',
+    "  return { text: kept.join('\\n'), scripts: scripts };",
     '}',
     'function commandStatements(command) {',
     '  const statements = [];',
@@ -731,19 +800,36 @@ export function wholeSuiteTestCommandDetectorSource(): string {
     '  let guard = 0;',
     '  while (queue.length > 0 && guard < 64) {',
     '    guard++;',
-    '    const current = queue.shift();',
-    "    if (typeof current !== 'string' || current.length === 0) continue;",
+    '    const raw = queue.shift();',
+    "    if (typeof raw !== 'string' || raw.length === 0) continue;",
+    '    const heredocs = splitHeredocs(raw);',
+    '    for (const script of heredocs.scripts) queue.push(script);',
+    '    const current = heredocs.text;',
+    '    if (current.length === 0) continue;',
     '    for (const body of substitutionBodies(current)) queue.push(body);',
-    '    const masked = maskQuoted(maskSubstitutions(current));',
+    // A statement is cut from the SUBSTITUTION-MASKED text, never the raw
+    // text. Masking only the separator scan and then slicing the raw string
+    // put a substitution's whole body back inside the statement that
+    // contained it, where the next detector tokenized it as that
+    // statement's own arguments — found here, not in review: an ordinary
+    // `git commit -m "$(cat <<EOF … EOF)"` whose MESSAGE happened to
+    // contain a bare `-n` token was refused as a `--no-verify` commit,
+    // because the body's newlines were masked (so they no longer split the
+    // statement) while the body's words were not (so they were still
+    // read). The body is queued as its own command either way, so blanking
+    // it here loses nothing and stops it being read twice, once out of
+    // context.
+    '    const substitutionMasked = maskSubstitutions(current);',
+    '    const masked = maskQuoted(substitutionMasked);',
     '    const fragments = [];',
     '    let last = 0;',
     '    const re = /;|&&|\\|\\||\\||&|\\n/g;',
     '    let m;',
     '    while ((m = re.exec(masked)) !== null) {',
-    '      fragments.push(current.slice(last, m.index));',
+    '      fragments.push(substitutionMasked.slice(last, m.index));',
     '      last = m.index + m[0].length;',
     '    }',
-    '    fragments.push(current.slice(last));',
+    '    fragments.push(substitutionMasked.slice(last));',
     '    for (const fragment of fragments) {',
     '      statements.push(fragment);',
     '      for (const inner of reinterpretedCommands(fragment)) queue.push(inner);',
@@ -984,32 +1070,18 @@ export const COMMIT_PUSH_ON_DEFAULT_BRANCH_DENY_REASON =
  */
 function machineStateDetectorSource(): string {
   return [
+    // Everything in front of the real command word — a `VAR=value`
+    // assignment, a transparent wrapper and ITS OWN flags, subshell/brace
+    // punctuation, quoting — is resolved by the SAME `wrapperPrefixEnd`
+    // the statement splitter uses for `eval`/`<shell> -c`, so the two can
+    // never disagree about where a statement's command actually begins.
+    // They did disagree before: both carried their own copy of the wrapper
+    // list, and both dropped a wrapper's flags on the floor (round 4 code
+    // review, BLOCKER).
     'function machineStateTokens(stmt) {',
-    '  let tokens = statementTokens(stmt);',
-    // A subshell or brace group leaves its punctuation glued to the first
-    // token — `(sudo rm x)` tokenizes as `(sudo`, `{ sudo rm x; }` as a
-    // bare `{` — and `!` negates the command that follows it. A quote
-    // character can be glued on the same way: `statementTokens` is a plain
-    // whitespace split with no quote awareness (round 3 code review), so
-    // `'sudo` and `"sudo` are both spellings of `sudo`.
-    "  if (tokens.length > 0) tokens = [tokens[0].replace(/^[({!'\"]+/, '').replace(/['\"]+$/, '')].concat(tokens.slice(1));",
-    "  while (tokens.length > 0 && tokens[0] === '') tokens = tokens.slice(1);",
-    // A leading `VAR=value` assignment is part of the shell's own grammar,
-    // not the command — `SUDO_ASKPASS=/x sudo …` runs sudo all the same —
-    // and a wrapper word passes its own arguments straight through to the
-    // command that follows: `env sudo …`, `command sudo …`, `time sudo …`
-    // all run sudo. Both are stripped until a real command word is first.
-    '  let changed = true;',
-    '  while (changed && tokens.length > 0) {',
-    '    changed = false;',
-    '    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[0])) { tokens = tokens.slice(1); changed = true; continue; }',
-    "    const head = tokens[0].split('/').pop();",
-    "    if (head === 'env' || head === 'command' || head === 'builtin' || head === 'exec' || head === 'time' || head === 'nice' || head === 'stdbuf') {",
-    '      tokens = tokens.slice(1);',
-    '      changed = true;',
-    '    }',
-    '  }',
-    '  return tokens;',
+    '  const tokens = statementTokens(stmt);',
+    '  const start = wrapperPrefixEnd(tokens);',
+    "  return tokens.slice(start).map(bareWord).filter((t) => t !== '');",
     '}',
     'function commandChangesMachineState(command) {',
     "  if (typeof command !== 'string') return false;",
@@ -3725,6 +3797,23 @@ export async function dispatchRole(
   if (dispatchSettingsPath !== null) {
     writeLifecycle(
       `[vinaya dispatch ${effectId}] ${role} via ${agent}: permission policy ${PERMISSION_POLICY_VERSION} written to ${dispatchSettingsPath}`
+    )
+  } else if (agent !== 'claude') {
+    // The policy above — the machine-state deny entries AND the
+    // `PreToolUse` hook that judges every statement of a command — is
+    // written for `claude` alone, because no equivalent refusal mechanism
+    // has been confirmed live for another vendor (the sibling
+    // `writeCodexDispatchHooks` wires a `PostToolUse` logger and a `Stop`
+    // gate, neither of which can refuse a call before it runs). That
+    // predates this policy and is not something this line fixes. What it
+    // fixes is the SILENCE: before it, a `--agent codex`/`--agent gemini`
+    // dispatch ran with no permission policy at all and said nothing, so
+    // an operator or an auditor reading the run log saw the same output
+    // as a protected run (round 4 security review, MEDIUM). An absence
+    // this consequential is stated in the log, in the same first
+    // lifecycle position where a Claude dispatch names its policy.
+    writeLifecycle(
+      `[vinaya dispatch ${effectId}] ${role} via ${agent}: NO permission policy — machine-state commands (keychain, services, global settings) are NOT denied for this agent; only claude carries policy ${PERMISSION_POLICY_VERSION}`
     )
   }
   // Round 5 review, MEDIUM: an unattended, isolation-required Claude dispatch
