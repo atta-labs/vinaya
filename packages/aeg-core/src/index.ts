@@ -603,8 +603,11 @@ export {
   nextRoundNumber,
   parseSummaryConfidenceRows,
   reconstructRounds,
+  renderPhaseBreakdown,
   renderSummary,
-  SUMMARY_TABLE_HEADER
+  renderTaskBudgetDetail,
+  SUMMARY_TABLE_HEADER,
+  taskBudgetExceeded
 } from './dev-review-loop'
 export type {
   Confidence,
@@ -625,6 +628,7 @@ export type {
   RoundOutcome,
   RoundRecord,
   RoundStats,
+  TaskClock,
   VerdictObservation
 } from './dev-review-loop'
 export {
@@ -723,6 +727,7 @@ export {
   parseRunRecord,
   parseTransitionRecord,
   readCurrentOwnership,
+  readEarliestOwnership,
   readEffect,
   readEscalation,
   readInput,

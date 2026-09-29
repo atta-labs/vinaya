@@ -223,6 +223,27 @@ export const LoopStateRecordSchema = z
       })
       .strict()
       .optional(),
+    /**
+     * When the loop FIRST started on this task, as the first driver to persist
+     * state for it recorded — carried forward unchanged by every later write,
+     * including writes by a driver that took the task over, so the task's own
+     * wall-clock budget is measured from one fixed instant rather than
+     * restarting with each process. Optional: a record written before this
+     * field existed reads back as no recorded start, which a caller reads as
+     * "fall back to the earliest ownership epoch" rather than as a corrupt
+     * record.
+     */
+    taskStartedAt: isoTimestamp.optional(),
+    /**
+     * Milliseconds the loop has recorded against each phase it worked in,
+     * keyed by the same `phase` vocabulary the field above uses. Accumulated
+     * across driver restarts (each write carries the running totals it read
+     * back), and narration only: the task's budget is decided on elapsed time,
+     * never on this map, so a run whose earlier phases were recorded by a
+     * driver that has since died still stops on time and simply reports less
+     * about where the time went.
+     */
+    phaseMs: z.record(z.string(), z.number().nonnegative()).optional(),
     recordedAt: isoTimestamp
   })
   .strict()

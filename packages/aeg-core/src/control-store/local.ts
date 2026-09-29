@@ -536,6 +536,37 @@ export function readCurrentOwnership(
   return { epoch: best ? bestEpoch : 0, record: best, corruptEpochs }
 }
 
+/**
+ * The EARLIEST ownership epoch validly recorded for `task`, and when it was
+ * acquired — `null` for a task nothing has ever claimed.
+ *
+ * Every epoch file is created with `O_EXCL` and never overwritten
+ * (`attemptEpochClaim`), so epoch 1's `acquiredAt` is the oldest durable
+ * timestamp the control store holds for a task and survives every driver
+ * restart, re-exec and takeover. That makes it the floor a caller measuring a
+ * task's total wall-clock time falls back to when nothing better was recorded:
+ * an epoch is claimed the first time the task writes anything durable, so the
+ * real start is at or before it, never after — the safe direction for a
+ * budget, which then fires no earlier than it should.
+ *
+ * A corrupt epoch file is skipped rather than reported: this read exists to
+ * find the oldest timestamp available, and a torn file carries none. Callers
+ * that need to know about corruption read `readCurrentOwnership`, which
+ * reports it.
+ */
+export function readEarliestOwnership(deps: Pick<ControlStoreDeps, 'root'>, task: number): OwnershipRecord | null {
+  const dir = ownershipDir(deps.root(), task)
+  if (!existsSync(dir)) return null
+  let best: OwnershipRecord | null = null
+  for (const entry of readdirSync(dir)) {
+    if (!EPOCH_FILENAME.exec(entry)) continue
+    const parsed = parseOwnershipRecord(readIfExists(join(dir, entry)))
+    if (parsed.status !== 'ok') continue
+    if (best === null || parsed.value.epoch < best.epoch) best = parsed.value
+  }
+  return best
+}
+
 export type AcquireResult =
   | { acquired: true; epoch: number; record: OwnershipRecord }
   | { acquired: false; currentEpoch: number; currentOwnerId: string | null }

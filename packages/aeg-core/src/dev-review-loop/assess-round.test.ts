@@ -9,16 +9,22 @@ import {
   notMetVerdict,
   runScenario
 } from './fakes'
-import { normalizeFailureSignature } from './assess-round'
+import {
+  normalizeFailureSignature,
+  renderPhaseBreakdown,
+  renderTaskBudgetDetail,
+  taskBudgetExceeded
+} from './assess-round'
 import { initialLoopState, SEVERITY_COLUMNS } from './types'
-import type { LoopConfig } from './types'
+import type { LoopConfig, TaskClock } from './types'
 
 const CONFIG: LoopConfig = {
   loopId: 'loop-1',
   task: 414,
   reviewers: ['code-reviewer', 'security'],
   models: { 'code-reviewer': 'sonnet', security: 'sonnet' },
-  maxRounds: 3
+  maxRounds: 3,
+  maxTaskMinutes: 180
 }
 
 function freshState() {
@@ -410,7 +416,7 @@ describe('assessRound — Part 3 (O2): the exits', () => {
   })
 
   it('(#543 O4) the round cap is configured, not hardcoded: maxRounds:5 lets round 4 run, and stops at round 5', () => {
-    const configuredState = initialLoopState({ ...CONFIG, maxRounds: 5 })
+    const configuredState = initialLoopState({ ...CONFIG, maxRounds: 5, maxTaskMinutes: 180 })
     const { decisions } = runScenario(configuredState, [
       fakeGate(1, true),
       fakeVerdicts(1, [
@@ -875,5 +881,136 @@ describe('assessRound — buildRoundRecord collects deferred findings (O4)', () 
       fakeVerdicts(1, [cleanVerdict('reviewer'), cleanVerdict('security')])
     ])
     expect(state.rounds[0]?.deferred).toBeUndefined()
+  })
+})
+
+// --- the task's own wall-clock budget --------------------------------------
+
+const MINUTE = 60_000
+
+/** A clock reading: `elapsed` minutes spent in total, split across the phases named. */
+function clock(elapsedMinutes: number, byPhaseMinutes: Record<string, number> = {}): TaskClock {
+  const byPhaseMs: Record<string, number> = {}
+  for (const [phase, minutes] of Object.entries(byPhaseMinutes)) byPhaseMs[phase] = minutes * MINUTE
+  return { elapsedMs: elapsedMinutes * MINUTE, byPhaseMs }
+}
+
+describe('taskBudgetExceeded (O1, O3)', () => {
+  it('is false under the budget, false AT it, true over it', () => {
+    expect(taskBudgetExceeded(180, clock(179))).toBe(false)
+    expect(taskBudgetExceeded(180, clock(180))).toBe(false)
+    expect(taskBudgetExceeded(180, clock(181))).toBe(true)
+  })
+
+  it('a budget of 0 is off — no elapsed time ever exceeds it (O3)', () => {
+    expect(taskBudgetExceeded(0, clock(0))).toBe(false)
+    expect(taskBudgetExceeded(0, clock(6 * 60))).toBe(false)
+    expect(taskBudgetExceeded(0, clock(60 * 24 * 7))).toBe(false)
+  })
+
+  it('a negative budget is read as off, never as a budget already blown', () => {
+    expect(taskBudgetExceeded(-5, clock(600))).toBe(false)
+  })
+})
+
+describe('renderPhaseBreakdown (O1)', () => {
+  it('names each phase in the reader-facing vocabulary, longest first', () => {
+    expect(
+      renderPhaseBreakdown({
+        dispatch_reviewers: 22 * MINUTE,
+        dispatch_developer: 190 * MINUTE,
+        publish: 2 * MINUTE
+      })
+    ).toBe('developing 190 min, reviewing 22 min, publishing 2 min')
+  })
+
+  it('reports an unrecorded breakdown honestly rather than inventing one row', () => {
+    expect(renderPhaseBreakdown({})).toBe('no phase times recorded')
+  })
+
+  it('a phase the label vocabulary does not know reads back as the loop’s own recorded word', () => {
+    expect(renderPhaseBreakdown({ some_new_phase: 5 * MINUTE })).toBe('some_new_phase 5 min')
+  })
+
+  it('the detail names the budget, what was spent, and where it went', () => {
+    expect(renderTaskBudgetDetail(180, clock(214, { dispatch_developer: 190, dispatch_reviewers: 24 }))).toBe(
+      'task time budget: 180 min, spent 214 min — developing 190 min, reviewing 24 min'
+    )
+  })
+})
+
+describe('assessRound — the task time budget (O1, O2)', () => {
+  it('a clock past the budget during a mechanical retry pauses at the next boundary, naming the budget and the phases', () => {
+    // Round 1 gate red at 170 minutes — under the budget, so the developer is
+    // sent back. The retry runs long; by the next observation the task has
+    // spent 214 minutes, and THAT boundary is where the loop stops.
+    const { decisions, state } = runScenario(
+      freshState(),
+      [fakeGate(1, false, { failure: 'check `test` failed' }), fakeGate(1, false, { failure: 'a different failure' })],
+      (i) =>
+        i === 0
+          ? clock(170, { dispatch_developer: 170 })
+          : clock(214, { dispatch_developer: 190, dispatch_reviewers: 24 })
+    )
+
+    expect(decisions[0]).toEqual({ type: 'dispatch_developer' })
+    expect(decisions[1]).toEqual({
+      type: 'pause',
+      reason: 'time_budget',
+      detail: 'task time budget: 180 min, spent 214 min — developing 190 min, reviewing 24 min'
+    })
+    // The round it lands on reached no reviewer, and records as one.
+    expect(state.rounds[state.rounds.length - 1]).toEqual(
+      expect.objectContaining({ outcome: 'stopped', notReviewed: 'time_budget', countsBySeverity: {} })
+    )
+  })
+
+  it('emits the same four-event pause shape every other bounded stop emits', () => {
+    const { events } = runScenario(freshState(), [fakeGate(1, true)], () => clock(400, { dispatch_developer: 400 }))
+    expect(events.map((e) => e.event)).toEqual(['stop_condition_met', 'paused', 'round_ended', 'journal_finalized'])
+    expect(events[0]).toEqual(
+      expect.objectContaining({ event: 'stop_condition_met', round: 1, condition: 'time_budget' })
+    )
+    expect(events[1]).toEqual(expect.objectContaining({ event: 'paused', round: 1, reason: 'principal_item' }))
+    expect(events[3]).toEqual(expect.objectContaining({ event: 'journal_finalized', result: 'stopped' }))
+  })
+
+  it('a budget of 0 never pauses, however long the task has run (O3)', () => {
+    const offConfig: LoopConfig = { ...CONFIG, maxTaskMinutes: 0 }
+    const { decisions } = runScenario(
+      initialLoopState(offConfig),
+      [fakeGate(1, true), fakeVerdicts(1, [cleanVerdict('reviewer'), cleanVerdict('security')])],
+      () => clock(60 * 24, { dispatch_developer: 60 * 24 })
+    )
+    expect(decisions[decisions.length - 1]).toEqual({ type: 'publish' })
+  })
+
+  it('a caller that passes no clock is assessed exactly as before — the budget is never inferred', () => {
+    const { decisions } = runScenario(freshState(), [
+      fakeGate(1, true),
+      fakeVerdicts(1, [cleanVerdict('reviewer'), cleanVerdict('security')])
+    ])
+    expect(decisions[decisions.length - 1]).toEqual({ type: 'publish' })
+  })
+
+  it('verdicts already back are never discarded by the budget — the stop waits for the next boundary (O2)', () => {
+    // The gate is observed under budget; by the time the verdicts come back the
+    // task is well past it. Those verdicts still decide the round, and the
+    // budget stops the loop at the round boundary that follows.
+    const { decisions } = runScenario(
+      freshState(),
+      [fakeGate(1, true), fakeVerdicts(1, [cleanVerdict('reviewer'), cleanVerdict('security')])],
+      (i) => (i === 0 ? clock(170, { dispatch_developer: 170 }) : clock(400, { dispatch_reviewers: 230 }))
+    )
+    expect(decisions[decisions.length - 1]).toEqual({ type: 'publish' })
+  })
+
+  it('a mechanical failure observation past the budget pauses rather than recording only a signature (O2)', () => {
+    const { decisions } = runScenario(
+      freshState(),
+      [{ kind: 'mechanical_failure', round: 1, failure: 'push never landed', stats: fakeStats(1) }],
+      () => clock(200, { dispatch_developer: 200 })
+    )
+    expect(decisions[0]).toEqual(expect.objectContaining({ type: 'pause', reason: 'time_budget' }))
   })
 })

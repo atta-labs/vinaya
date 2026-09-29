@@ -25,11 +25,26 @@ export type SecuritySeverity = (typeof SECURITY_SEVERITY_ORDER)[number]
 /** The dev-review-loop's own round cap, default — replaces the `assess-round.ts` constant this once was; overridable via `reviewPolicy.maxRounds` in `vinaya.config.json`. */
 export const DEFAULT_MAX_ROUNDS = 3
 
-/** An omitted policy means today's behaviour: code review at `BLOCKER`, security at `HIGH`, `DEFAULT_MAX_ROUNDS` rounds. */
+/**
+ * The dev-review-loop's own wall-clock budget for one task, in minutes —
+ * default, overridable via `reviewPolicy.maxTaskMinutes`. Three hours: long
+ * enough that no honest multi-round task has ever needed more, short enough
+ * that a loop nobody is watching cannot spend a night on one task.
+ *
+ * The round cap above bounds review ROUNDS, and nothing bounded the time
+ * between them: a loop can spend hours pushing, rebasing and retrying without
+ * the round number ever advancing, so the cap it would eventually hit is one
+ * it never reaches. This budget bounds the whole task instead, whatever the
+ * time went to.
+ */
+export const DEFAULT_MAX_TASK_MINUTES = 180
+
+/** An omitted policy means today's behaviour: code review at `BLOCKER`, security at `HIGH`, `DEFAULT_MAX_ROUNDS` rounds, `DEFAULT_MAX_TASK_MINUTES` minutes. */
 export const DEFAULT_REVIEW_POLICY: ReviewPolicy = {
   codeReviewThreshold: 'BLOCKER',
   securityThreshold: 'HIGH',
-  maxRounds: DEFAULT_MAX_ROUNDS
+  maxRounds: DEFAULT_MAX_ROUNDS,
+  maxTaskMinutes: DEFAULT_MAX_TASK_MINUTES
 }
 
 export type ReviewPolicy = {
@@ -37,6 +52,18 @@ export type ReviewPolicy = {
   securityThreshold: SecuritySeverity
   /** The dev-review-loop's own round cap — repository policy, not a hardcoded constant. Resolved once per loop run, same trust class as the two thresholds above. */
   maxRounds: number
+  /**
+   * The dev-review-loop's own wall-clock budget for one task, in minutes,
+   * measured from the loop's first recorded start for that task rather than
+   * from any one driver process's own start. `0` turns the budget off —
+   * the one value that disables a bound rather than tightening it, so a
+   * repository that would rather bound only rounds can say so explicitly
+   * instead of setting a number large enough to never fire.
+   *
+   * Same trust class and same resolution point as the fields above: read from
+   * the default branch, resolved once per loop run.
+   */
+  maxTaskMinutes: number
 }
 
 /** The minimal shape the evaluator needs — every real finding type (review-post.ts's `Finding`, a gate-side severity-only extraction) satisfies it. `location` is optional so a caller with no location to report (an older extraction shape) still type-checks; such a finding is simply never prose-capped (O5, below). */

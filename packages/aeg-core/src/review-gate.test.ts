@@ -1074,7 +1074,12 @@ describe('checkReviewGate — policy-digest binding', () => {
 
 describe('checkReviewGate — policy evaluation (O2/O3)', () => {
   const findings = (lines: string[]) => (lines.length > 0 ? lines.join('\n') : 'None.')
-  const MAJOR_HIGH_POLICY = { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH', maxRounds: 3 } as const
+  const MAJOR_HIGH_POLICY = {
+    codeReviewThreshold: 'MAJOR',
+    securityThreshold: 'HIGH',
+    maxRounds: 3,
+    maxTaskMinutes: 180
+  } as const
   const MAJOR_HIGH_POLICY_DIGEST = policyDigest(MAJOR_HIGH_POLICY)
 
   const codeReviewComment = (verdictLine: string, findingLines: string[] = [], digest = DEFAULT_POLICY_DIGEST) =>
@@ -1098,7 +1103,7 @@ describe('checkReviewGate — policy evaluation (O2/O3)', () => {
     const result = checkReviewGate({
       ...BASE_INPUT,
       comments: [codeReviewComment('APPROVE', ['1. [MAJOR] a.ts:1 — off-by-one']), securityComment('PASS')],
-      policy: { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH', maxRounds: 3 }
+      policy: { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH', maxRounds: 3, maxTaskMinutes: 180 }
     })
     expect(result.verdict).toBe('fail')
     expect(result.reason).toContain('never overrides policy')
@@ -1130,7 +1135,7 @@ describe('checkReviewGate — policy evaluation (O2/O3)', () => {
     const result = checkReviewGate({
       ...BASE_INPUT,
       comments: [codeReviewComment('APPROVE'), securityComment('PASS', ['1. [HIGH] a.ts:1 — leaked pattern'])],
-      policy: { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH', maxRounds: 3 }
+      policy: { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH', maxRounds: 3, maxTaskMinutes: 180 }
     })
     expect(result.verdict).toBe('fail')
     expect(result.reason).toContain('security-review verdict says PASS but carries a finding')
@@ -1140,7 +1145,7 @@ describe('checkReviewGate — policy evaluation (O2/O3)', () => {
     const result = checkReviewGate({
       ...BASE_INPUT,
       comments: [codeReviewComment('REQUEST_CHANGES', ['1. [BLOCKER] a.ts:1 — real bug']), securityComment('PASS')],
-      policy: { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH', maxRounds: 3 }
+      policy: { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH', maxRounds: 3, maxTaskMinutes: 180 }
     })
     expect(result.verdict).toBe('fail')
     expect(result.reason).toContain('not a clean APPROVE')
@@ -1158,14 +1163,14 @@ describe('checkReviewGate — policy evaluation (O2/O3)', () => {
           codeReviewComment('APPROVE', ['1. [CRITICAL] a.ts:1 — off-scale severity']),
           securityComment('PASS')
         ],
-        policy: { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH', maxRounds: 3 }
+        policy: { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH', maxRounds: 3, maxTaskMinutes: 180 }
       })
     ).not.toThrow()
 
     const result = checkReviewGate({
       ...BASE_INPUT,
       comments: [codeReviewComment('APPROVE', ['1. [CRITICAL] a.ts:1 — off-scale severity']), securityComment('PASS')],
-      policy: { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH', maxRounds: 3 }
+      policy: { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH', maxRounds: 3, maxTaskMinutes: 180 }
     })
     expect(result.verdict).toBe('fail')
     expect(result.reason).toContain('does not recognize')
@@ -1180,7 +1185,12 @@ describe('checkReviewGate — policy evaluation (O2/O3)', () => {
 
 describe('checkReviewGate — resolved findings never block (O1/O2)', () => {
   const findings = (lines: string[]) => (lines.length > 0 ? lines.join('\n') : 'None.')
-  const MAJOR_HIGH_POLICY = { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH', maxRounds: 3 } as const
+  const MAJOR_HIGH_POLICY = {
+    codeReviewThreshold: 'MAJOR',
+    securityThreshold: 'HIGH',
+    maxRounds: 3,
+    maxTaskMinutes: 180
+  } as const
   const MAJOR_HIGH_POLICY_DIGEST = policyDigest(MAJOR_HIGH_POLICY)
 
   const codeReviewComment = (verdictLine: string, findingLines: string[] = [], digest = DEFAULT_POLICY_DIGEST) =>

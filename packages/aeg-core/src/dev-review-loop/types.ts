@@ -209,6 +209,14 @@ export type Observations =
  * vocabulary and rendering path every other pause reason already uses.
  * `detail` is set for this reason too, naming the branch and the dirty
  * file(s) observed.
+ *
+ * `'time_budget'`: the task's total wall-clock time, measured from the loop's
+ * first recorded start for it, passed `ReviewPolicy.maxTaskMinutes`. Unlike
+ * every other bound here it counts neither rounds nor attempts, so it is the
+ * one stop a loop cannot outrun by never advancing: time spent pushing,
+ * rebasing, waiting on checks and retrying all counts toward it. Decided by
+ * `assessRound` from the clock its caller reads (this module has none of its
+ * own); `detail` names the budget and where the time went, phase by phase.
  */
 export type PauseReason =
   | 'escalation'
@@ -218,6 +226,7 @@ export type PauseReason =
   | 'reappearance'
   | 'repeat_finding'
   | 'repeat_failure'
+  | 'time_budget'
   | 'infrastructure'
   | 'no_push'
   | 'objectives_changed'
@@ -238,8 +247,10 @@ export type Decision =
        * The pause's own narration, when the deciding component has one:
        * `'infrastructure'` (the role and missing artifact(s) the driver
        * observed), `'max_rounds'` (the configured cap), `'repeat_finding'`
-       * (the reviewer-qualified finding key(s) open two rounds running), and
-       * `'repeat_failure'` (the exact failure message, unnormalised). Every
+       * (the reviewer-qualified finding key(s) open two rounds running),
+       * `'repeat_failure'` (the exact failure message, unnormalised), and
+       * `'time_budget'` (the budget, the elapsed time, and the phase
+       * breakdown). Every
        * other reason omits it here — the driver narrates several of them
        * itself from facts it already holds (`deriveVerdictPauseDetail`).
        */
@@ -271,13 +282,15 @@ export type RoundOutcome = 'green' | 'changes_requested' | 'escalated' | 'stoppe
  *     without dispatching reviewers;
  *   - `'mechanical_failure'` — the same mechanical failure ended two
  *     consecutive attempts that never produced a head (`'repeat_failure'`),
- *     so no gate ever judged one and no reviewer ever saw it.
+ *     so no gate ever judged one and no reviewer ever saw it;
+ *   - `'time_budget'` — the task's wall-clock budget ran out before this
+ *     round reached review, so reviewers were never dispatched for it.
  *
  * `outcome` stays whatever the round would otherwise carry (both reasons are
  * `changes_requested` today), so the `round_ended` log event a reader parses is
  * unaffected — only the summary table's rendering changes.
  */
-export type NotReviewedReason = 'checks_red' | 'low_confidence' | 'mechanical_failure'
+export type NotReviewedReason = 'checks_red' | 'low_confidence' | 'mechanical_failure' | 'time_budget'
 
 /** One deferred finding, as the published summary reports it (O4) — its original severity, its `file:line`, and why this round set it aside, never its reported severity mutated. */
 export type DeferredFindingRow = {
@@ -322,6 +335,32 @@ export type LoopConfig = {
   models: Record<string, string>
   /** The round cap — resolved by the driver from `ReviewPolicy.maxRounds` (repository config), never read here: this module has no config read of its own. */
   maxRounds: number
+  /** The task's wall-clock budget in minutes — resolved by the driver from `ReviewPolicy.maxTaskMinutes`, same discipline as `maxRounds` above. `0` turns the budget off. */
+  maxTaskMinutes: number
+}
+
+/**
+ * How long this task has been running, and where that time went — read by the
+ * DRIVER and handed to `assessRound`, never measured here: this module has no
+ * clock, the same way it has no config read.
+ *
+ * `elapsedMs` is measured from the loop's FIRST recorded start for this task,
+ * taken from the durable control records rather than from the current
+ * process's own start — a driver that was killed and restarted, or that
+ * re-execed itself when the base branch moved, must not hand back a clock that
+ * begins again at zero, since a loop restarted often enough would then never
+ * approach the budget at all.
+ *
+ * `byPhaseMs` is what the loop itself recorded against each phase it worked
+ * in, keyed by the phase names the loop persists (`dispatch_developer`,
+ * `dispatch_reviewers`, and so on). It is narration, not the decision: the
+ * stop is decided on `elapsedMs` alone, so a breakdown that is thin — a run
+ * whose earlier phases were recorded by a driver that has since died — still
+ * stops on time and simply reports less about where the time went.
+ */
+export type TaskClock = {
+  elapsedMs: number
+  byPhaseMs: Record<string, number>
 }
 
 /** A round awaiting its `verdicts` observation, or awaiting a confidence re-ask — never both logged twice. */

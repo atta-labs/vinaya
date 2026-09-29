@@ -40,6 +40,15 @@
  *   that resolves nothing but raises only new findings still continues, and
  *   a round whose repeated finding is non-blocking continues too. Both name
  *   what repeated in the pause's own `detail`.
+ * - One further exit bounds the task by TIME rather than by rounds or repeats:
+ *   the wall clock since the loop's first recorded start for this task passing
+ *   `ReviewPolicy.maxTaskMinutes` (`condition: 'time_budget'`). It is the one
+ *   exit a loop cannot outrun by never advancing — the round cap bounds review
+ *   rounds, and a loop stuck pushing, rebasing and retrying advances no round
+ *   at all — and the one whose measurement this module cannot make itself: the
+ *   caller reads the clock and hands it in, since a start that survives a
+ *   driver restart lives in the durable control records, which nothing in this
+ *   package may read.
  *
  * Reuse, not a second counter: the id-state map for each round is built by
  * calling `groupRounds` (`../review-status`) with synthetic same-key
@@ -53,6 +62,7 @@
  */
 
 import { groupRounds, type Round, type VerdictComment } from '../review-status'
+import { taskPhaseLabel } from '../task-phase-history'
 import {
   SEVERITY_COLUMNS,
   type Confidence,
@@ -66,6 +76,7 @@ import {
   type RoundOutcome,
   type RoundRecord,
   type RoundStats,
+  type TaskClock,
   type VerdictObservation
 } from './types'
 
@@ -192,6 +203,7 @@ function stopConditionMetEvent(
     | 'reappearance'
     | 'repeat_finding'
     | 'repeat_failure'
+    | 'time_budget'
 ): DevReviewLoopEventInput {
   return { ...loopEventEnvelope(state), event: 'stop_condition_met', round, condition }
 }
@@ -752,17 +764,136 @@ function assessMechanicalFailure(
   return { decision: { type: 'dispatch_developer' }, state: { ...state, lastFailure: failure }, events: [] }
 }
 
+// --- the task's own wall-clock budget --------------------------------------
+
+/** Whole minutes, rounded to the nearest — every figure the time stop names a reader in. */
+function minutesOf(ms: number): number {
+  return Math.round(ms / 60_000)
+}
+
 /**
- * `assessRound(state, observations) → { decision, state, events }` — pure,
- * no I/O. `events` is the `DevReviewLoopEventInput[]` the caller passes,
+ * `true` when the task has spent longer than `maxTaskMinutes`. `0` — and any
+ * value below it, which `resolveReviewPolicy` refuses at config load and this
+ * predicate still treats as off rather than as a budget already blown — turns
+ * the budget off: the loop then bounds rounds only, exactly as it did before
+ * this budget existed.
+ *
+ * The comparison is strictly greater, so a task sitting exactly on its budget
+ * has not passed it — the same "over the cap, not at it" reading
+ * `obs.round > state.config.maxRounds` already takes of the round cap.
+ */
+export function taskBudgetExceeded(maxTaskMinutes: number, clock: TaskClock): boolean {
+  if (maxTaskMinutes <= 0) return false
+  return clock.elapsedMs > maxTaskMinutes * 60_000
+}
+
+/**
+ * Where the time went, longest phase first — `developing 190 min, reviewing
+ * 22 min`. Phases are named with `taskPhaseLabel`, the SAME vocabulary
+ * `task status` renders a live run's phase in, so the pause and the status
+ * table call one phase by one name; a phase that vocabulary does not know
+ * reads back as the loop's own recorded word rather than as a guess.
+ *
+ * A phase that accrued under a minute is still listed, at `0 min`: the loop
+ * recorded time there, and a reader is better served by a short row than by a
+ * phase silently missing. An empty breakdown renders `no phase times
+ * recorded` — the honest answer for a run whose earlier phases were recorded
+ * by a driver that has since died, never a fabricated single row covering the
+ * whole elapsed time.
+ */
+export function renderPhaseBreakdown(byPhaseMs: Record<string, number>): string {
+  const entries = Object.entries(byPhaseMs).filter(([, ms]) => ms >= 0)
+  if (entries.length === 0) return 'no phase times recorded'
+  return entries
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([phase, ms]) => `${taskPhaseLabel(phase)} ${minutesOf(ms)} min`)
+    .join(', ')
+}
+
+/**
+ * The `'time_budget'` pause's own `detail` — the budget, what was actually
+ * spent, and the phase breakdown, in that order, so a Principal reading it
+ * learns whether the budget is too tight or one phase ran away without
+ * opening the run's log.
+ */
+export function renderTaskBudgetDetail(maxTaskMinutes: number, clock: TaskClock): string {
+  return `task time budget: ${maxTaskMinutes} min, spent ${minutesOf(clock.elapsedMs)} min — ${renderPhaseBreakdown(clock.byPhaseMs)}`
+}
+
+/**
+ * The time stop, built in the same four-event shape every other bounded pause
+ * here emits (`stop_condition_met`, `paused`, `round_ended`,
+ * `journal_finalized`) so a reader — or a machine parsing the outbox — sees a
+ * complete pause record, not a special case.
+ *
+ * The round it lands on is a round no reviewer saw, and records as one
+ * (`notReviewed: 'time_budget'`, `—` counts in the published table): this
+ * stop is only ever checked at a round boundary or a mechanical retry, never
+ * on a `verdicts` observation, so verdicts already back from reviewers are
+ * never thrown away by it. `lastFailure` is left exactly as it stands — the
+ * budget running out says nothing about whether the previous attempt's
+ * mechanical failure has cleared.
+ */
+function timeBudgetPause(
+  state: LoopState,
+  obs: { round: number; stats: RoundStats },
+  clock: TaskClock
+): { decision: Decision; state: LoopState; events: DevReviewLoopEventInput[] } {
+  const events: DevReviewLoopEventInput[] = [
+    stopConditionMetEvent(state, obs.round, 'time_budget'),
+    pausedEvent(state, obs.round, 'principal_item'),
+    roundEndedEvent(state, obs.round, obs.stats, 'changes_requested')
+  ]
+  const record = buildUnreviewedRecord(obs.round, null, 'stopped', 'time_budget')
+  const preFinalize: LoopState = {
+    ...state,
+    rounds: [...state.rounds, record],
+    pending: null,
+    ...withRoundStats(state, obs.stats)
+  }
+  events.push(journalFinalizedEvent(preFinalize, obs.stats.head, 'stopped'))
+  return {
+    decision: {
+      type: 'pause',
+      reason: 'time_budget',
+      detail: renderTaskBudgetDetail(state.config.maxTaskMinutes, clock)
+    },
+    state: preFinalize,
+    events
+  }
+}
+
+/**
+ * `assessRound(state, observations, clock?) → { decision, state, events }` —
+ * pure, no I/O. `events` is the `DevReviewLoopEventInput[]` the caller passes,
  * unchanged, to the injected `log()`; `assessRound` itself never calls
  * it.
+ *
+ * `clock` is the task's own wall clock, read by the caller (this module has
+ * none). Supplied, it arms the `'time_budget'` stop below; omitted, the
+ * assessment is exactly the round-and-repeat-bounded one it was — so a caller
+ * that cannot measure the task's first start honestly passes nothing rather
+ * than a clock starting at its own process's start, which would mean a loop
+ * restarted often enough never approaches its budget.
+ *
+ * The budget is checked on a `gate` observation and on a `mechanical_failure`
+ * observation, and on neither of those does a round's review exist yet: those
+ * two kinds are exactly the round boundaries and the mechanical retries, so a
+ * phase stuck short of review cannot outrun the budget by more than the one
+ * attempt in flight when it ran out. A `verdicts` observation is deliberately
+ * NOT checked — reviewers have already done the round's work by then, and
+ * discarding their verdicts to save minutes the round has already spent would
+ * buy nothing.
  */
 export function assessRound(
   state: LoopState,
-  observations: Observations
+  observations: Observations,
+  clock?: TaskClock
 ): { decision: Decision; state: LoopState; events: DevReviewLoopEventInput[] } {
+  if (observations.kind === 'verdicts') return assessVerdicts(state, observations)
+  if (clock !== undefined && taskBudgetExceeded(state.config.maxTaskMinutes, clock)) {
+    return timeBudgetPause(state, observations, clock)
+  }
   if (observations.kind === 'gate') return assessGate(state, observations)
-  if (observations.kind === 'mechanical_failure') return assessMechanicalFailure(state, observations)
-  return assessVerdicts(state, observations)
+  return assessMechanicalFailure(state, observations)
 }

@@ -33,18 +33,54 @@ describe('briefHash / policyDigest', () => {
   })
 
   it('policyDigest differs when either threshold differs', () => {
-    const a = policyDigest({ codeReviewThreshold: 'BLOCKER', securityThreshold: 'HIGH', maxRounds: 3 })
-    const b = policyDigest({ codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH', maxRounds: 3 })
-    const c = policyDigest({ codeReviewThreshold: 'BLOCKER', securityThreshold: 'LOW', maxRounds: 3 })
+    const a = policyDigest({
+      codeReviewThreshold: 'BLOCKER',
+      securityThreshold: 'HIGH',
+      maxRounds: 3,
+      maxTaskMinutes: 180
+    })
+    const b = policyDigest({
+      codeReviewThreshold: 'MAJOR',
+      securityThreshold: 'HIGH',
+      maxRounds: 3,
+      maxTaskMinutes: 180
+    })
+    const c = policyDigest({
+      codeReviewThreshold: 'BLOCKER',
+      securityThreshold: 'LOW',
+      maxRounds: 3,
+      maxTaskMinutes: 180
+    })
     expect(a).not.toBe(b)
     expect(a).not.toBe(c)
-    expect(a).toBe(policyDigest({ codeReviewThreshold: 'BLOCKER', securityThreshold: 'HIGH', maxRounds: 3 }))
+    expect(a).toBe(
+      policyDigest({ codeReviewThreshold: 'BLOCKER', securityThreshold: 'HIGH', maxRounds: 3, maxTaskMinutes: 180 })
+    )
   })
 
   it('policyDigest folds in the round-policy field — maxRounds changes the digest (#555, O1)', () => {
-    const three = policyDigest({ codeReviewThreshold: 'BLOCKER', securityThreshold: 'HIGH', maxRounds: 3 })
-    const five = policyDigest({ codeReviewThreshold: 'BLOCKER', securityThreshold: 'HIGH', maxRounds: 5 })
+    const three = policyDigest({
+      codeReviewThreshold: 'BLOCKER',
+      securityThreshold: 'HIGH',
+      maxRounds: 3,
+      maxTaskMinutes: 180
+    })
+    const five = policyDigest({
+      codeReviewThreshold: 'BLOCKER',
+      securityThreshold: 'HIGH',
+      maxRounds: 5,
+      maxTaskMinutes: 180
+    })
     expect(three).not.toBe(five)
+  })
+
+  it("policyDigest folds in the task's time budget — a changed budget is a policy change the gate must see", () => {
+    const base = { codeReviewThreshold: 'BLOCKER', securityThreshold: 'HIGH', maxRounds: 3 } as const
+    const threeHours = policyDigest({ ...base, maxTaskMinutes: 180 })
+    const oneHour = policyDigest({ ...base, maxTaskMinutes: 60 })
+    const off = policyDigest({ ...base, maxTaskMinutes: 0 })
+    expect(threeHours).not.toBe(oneHour)
+    expect(threeHours).not.toBe(off)
   })
 })
 
@@ -207,7 +243,12 @@ describe('compareManifest', () => {
   it('policyDigest: a null echo (pre-cutover legacy comment) is NEVER grandfathered — unlike every other field, a policy is always resolvable so there is no genuine "nothing to bind against" case (#478 round 4, security MEDIUM)', () => {
     const echoed: EchoedManifest = { ...manifestAsEchoed(manifest()), policyDigest: null }
     const current = manifest({
-      policyDigest: policyDigest({ codeReviewThreshold: 'MAJOR', securityThreshold: 'LOW', maxRounds: 3 })
+      policyDigest: policyDigest({
+        codeReviewThreshold: 'MAJOR',
+        securityThreshold: 'LOW',
+        maxRounds: 3,
+        maxTaskMinutes: 180
+      })
     })
     expect(compareManifest(echoed, current).policyDigest).toBe(false)
   })
@@ -218,7 +259,12 @@ describe('compareManifest', () => {
       policyDigest: policyDigest(DEFAULT_REVIEW_POLICY)
     }
     const current = manifest({
-      policyDigest: policyDigest({ codeReviewThreshold: 'MAJOR', securityThreshold: 'LOW', maxRounds: 3 })
+      policyDigest: policyDigest({
+        codeReviewThreshold: 'MAJOR',
+        securityThreshold: 'LOW',
+        maxRounds: 3,
+        maxTaskMinutes: 180
+      })
     })
     expect(compareManifest(echoed, current).policyDigest).toBe(false)
   })

@@ -541,16 +541,17 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     key: 'reviewPolicy',
     type: 'object (optional)',
     semantics: [
-      "Which severities block is repository policy, not a hardcoded literal: one threshold per review role's own ordered severity scale — code review over `BLOCKER > MAJOR > MINOR`, security review over `CRITICAL > HIGH > MEDIUM > LOW`. A finding at or above the threshold prevents approval everywhere a verdict is derived, accepted, or judged. Also carries the dev-review-loop's own round cap (`maxRounds`, below).",
+      "Which severities block is repository policy, not a hardcoded literal: one threshold per review role's own ordered severity scale — code review over `BLOCKER > MAJOR > MINOR`, security review over `CRITICAL > HIGH > MEDIUM > LOW`. A finding at or above the threshold prevents approval everywhere a verdict is derived, accepted, or judged. Also carries the dev-review-loop's own two bounds on a task: its round cap (`maxRounds`) and its wall-clock budget (`maxTaskMinutes`), both below.",
       'A finding whose own location is the PR body, a comment, or a role file is capped to `MINOR` before it counts toward either threshold, unconditionally — never configurable, never a source or test file. Prose alone never blocks a merge.',
-      "Omitted entirely, or any field omitted, defaults to today's behavior (`BLOCKER` / `HIGH` / 3 rounds). An unknown severity name, or a `maxRounds` that isn't a positive integer, refuses at config load — it never silently falls back, unlike the rest of this config's fields.",
+      "Omitted entirely, or any field omitted, defaults to today's behavior (`BLOCKER` / `HIGH` / 3 rounds / 180 minutes). An unknown severity name, a `maxRounds` that isn't a positive integer, or a `maxTaskMinutes` that isn't a non-negative integer, refuses at config load — it never silently falls back, unlike the rest of this config's fields.",
       "Read only via the default branch's configuration (the same trust class as `principals`), never the pull request's own checkout, so a change cannot lower its own threshold."
     ],
     example: `{
   "reviewPolicy": {
     "codeReviewThreshold": "MAJOR",
     "securityThreshold": "HIGH",
-    "maxRounds": 5
+    "maxRounds": 5,
+    "maxTaskMinutes": 240
   }
 }`
   },
@@ -577,6 +578,17 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
       "The dev-review-loop's own round cap — replaces a hardcoded constant. Defaults to 3 when omitted. A round past this cap pauses `max_rounds`, naming the configured value. Any non-positive-integer value refuses config load rather than falling back."
     ],
     example: `{ "reviewPolicy": { "maxRounds": 5 } }`
+  },
+  {
+    key: 'reviewPolicy.maxTaskMinutes',
+    type: 'number (optional, non-negative integer, minutes)',
+    semantics: [
+      "The dev-review-loop's own wall-clock budget for ONE task, in minutes. Defaults to 180 when omitted. Measured from the loop's first recorded start for that task — read from the durable control records, so a driver that was killed, restarted, or re-execed itself continues the same budget rather than starting a fresh one.",
+      'Checked at every round boundary and every mechanical retry, so a task stuck short of review cannot run past the budget by more than the one attempt in flight when it ran out. Over budget pauses `time_budget`, and the pause names the budget, the time spent, and where that time went phase by phase.',
+      'This bounds what `maxRounds` cannot: the round cap counts review rounds, and a loop spending hours pushing, rebasing and retrying advances no round at all, so the cap it would eventually hit is one it never reaches.',
+      '`0` turns the budget off — the one value here that removes a bound rather than tightening it, for a repository that would rather bound rounds only. A negative or fractional value refuses config load rather than falling back.'
+    ],
+    example: `{ "reviewPolicy": { "maxTaskMinutes": 240 } }`
   },
   {
     key: 'gateCutovers',

@@ -399,6 +399,9 @@ export const DevReviewLoopEventSchema = z.discriminatedUnion('event', [
       // consecutive attempts ending on the same mechanical failure, are each
       // their own condition too — never folded into `no_progress`, whose own
       // (removed) rule paused on any round that resolved nothing.
+      // `time_budget` widens it once more, and is the only member that counts
+      // neither rounds nor findings: the task's wall clock passed its
+      // configured budget, whatever the time went to.
       condition: z.enum([
         'green',
         'max_rounds',
@@ -408,7 +411,8 @@ export const DevReviewLoopEventSchema = z.discriminatedUnion('event', [
         'confidence',
         'reappearance',
         'repeat_finding',
-        'repeat_failure'
+        'repeat_failure',
+        'time_budget'
       ])
     })
     .strict(),
