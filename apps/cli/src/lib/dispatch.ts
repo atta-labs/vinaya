@@ -625,216 +625,17 @@ export function wholeSuiteTestCommandDetectorSource(): string {
     '  const idx = maskQuoted(s).indexOf("#");',
     '  return idx === -1 ? s : s.slice(0, idx);',
     '}',
-    // A command substitution runs its own body as a command, and the body
-    // is invisible to every separator the splitter below knows: `echo
-    // $(sudo rm /etc/hosts)` carries no `;`/`&&`/`||`/`|` at the top level
-    // at all, and `echo \"$(sudo rm /etc/hosts)\"` is worse — `maskQuoted`
-    // blanks the body before anything can look at it. Round 2 security
-    // review, CRITICAL, confirmed live. So the bodies are lifted out of the
-    // RAW text, before any masking, and judged as commands in their own
-    // right. `$((…))` is arithmetic, never a command, and is left alone.
-    'function substitutionBodies(s) {',
-    '  const bodies = [];',
-    '  for (let i = 0; i < s.length; i++) {',
-    '    const two = s.slice(i, i + 2);',
-    "    if ((two === '$(' || two === '<(' || two === '>(') && s.charAt(i + 2) !== '(') {",
-    '      let depth = 1;',
-    '      let j = i + 2;',
-    '      for (; j < s.length && depth > 0; j++) {',
-    "        if (s.charAt(j) === '(') depth++;",
-    "        else if (s.charAt(j) === ')') depth--;",
-    '      }',
-    '      bodies.push(s.slice(i + 2, depth === 0 ? j - 1 : s.length));',
-    '      continue;',
-    '    }',
-    "    if (s.charAt(i) === '`') {",
-    "      const end = s.indexOf('`', i + 1);",
-    '      if (end === -1) break;',
-    '      bodies.push(s.slice(i + 1, end));',
-    '      i = end;',
-    '    }',
-    '  }',
-    '  return bodies;',
-    '}',
-    // Blanked length-for-length, so the separator scan below keeps its index
-    // alignment with the original text while a `|` or `;` INSIDE a
-    // substitution can no longer split the statement that contains it.
-    'function maskSubstitutions(s) {',
-    "  const chars = s.split('');",
-    '  for (let i = 0; i < s.length; i++) {',
-    '    const two = s.slice(i, i + 2);',
-    "    if ((two === '$(' || two === '<(' || two === '>(') && s.charAt(i + 2) !== '(') {",
-    '      let depth = 1;',
-    '      let j = i + 2;',
-    '      for (; j < s.length && depth > 0; j++) {',
-    "        if (s.charAt(j) === '(') depth++;",
-    "        else if (s.charAt(j) === ')') depth--;",
-    '      }',
-    "      for (let k = i; k < j; k++) chars[k] = 'x';",
-    '      i = j - 1;',
-    '      continue;',
-    '    }',
-    "    if (s.charAt(i) === '`') {",
-    "      const end = s.indexOf('`', i + 1);",
-    '      if (end === -1) break;',
-    "      for (let k = i; k <= end; k++) chars[k] = 'x';",
-    '      i = end;',
-    '    }',
-    '  }',
-    "  return chars.join('');",
-    '}',
-    // A single `|` and a lone `&` are statement separators exactly as
-    // `;`/`&&`/`||` are — `true | sudo rm /etc/hosts` and `echo x & sudo
-    // launchctl load evil.plist` each run a second command whose own first
-    // token is the one that matters (round 2 security review, CRITICAL,
-    // confirmed live: both read as ONE statement beginning `true`/`echo`
-    // before this). `\\|\\|` and `&&` stay ahead of `\\|` and `&` in the
-    // alternation so a two-character operator is never split as two
-    // one-character ones. Substitution bodies found above are queued and
-    // split the same way, bounded so a pathological nesting cannot spin.
-    // `eval <text>` and `<shell> -c <text>` run TEXT THAT IS RIGHT HERE, in
-    // this same call — `eval` in the very same shell process. Neither is the
-    // "a command built somewhere this call cannot see" case; both are
-    // ordinary command text wearing one extra word (round 3 code review,
-    // BLOCKER, confirmed live: `eval sudo rm /etc/hosts` and `bash -c 'sudo
-    // rm /etc/hosts'` each read as a statement whose first token was
-    // `eval`/`bash`, matching nothing). So the inner text is handed back to
-    // this same splitter and judged like any other command. Both the raw
-    // remainder and a quote-stripped copy are queued: `eval` consumes one
-    // layer of quoting before the shell re-reads the text, so `eval 'sudo rm
-    // x'` must be seen as `sudo rm x`, and dropping quote characters is what
-    // makes that true whichever chunk they were written around.
-    // Shell punctuation and quoting glue themselves to a word without
-    // changing which command it names: `(sudo`, `'sudo'`, `!` are all read
-    // through to the word underneath.
-    'function bareWord(t) {',
-    "  return typeof t === 'string' ? t.replace(/^[({!'\\\"]+/, '').replace(/['\\\"]+$/, '') : '';",
-    '}',
-    // A transparent wrapper runs the command that follows it — but several
-    // take FLAGS OF THEIR OWN first, and dropping only the wrapper word
-    // leaves the flag sitting where the command should be. `command -p sudo
-    // rm /etc/hosts` read as a statement headed by `-p` and matched nothing
-    // (round 4 code review, BLOCKER, confirmed live); so did `env -u FOO
-    // sudo …`, `env -i sudo …` and `nice -n 10 sudo …`, which the same gap
-    // covers and which are the same one-flag distance from working. A flag
-    // that takes a SEPARATE value has to consume that value too, or the
-    // value becomes the head instead — hence the per-wrapper table rather
-    // than a blanket "skip anything starting with a dash".
-    "const WRAPPER_FLAGS_WITH_VALUE = { env: ['-u', '--unset'], nice: ['-n', '--adjustment'], stdbuf: ['-i', '-o', '-e', '--input', '--output', '--error'], time: ['-o', '-f', '--output', '--format'], exec: ['-a'], command: [], builtin: [] };",
-    'function wrapperPrefixEnd(tokens) {',
-    '  let i = 0;',
-    '  for (;;) {',
-    "    while (i < tokens.length && bareWord(tokens[i]) === '') i++;",
-    '    if (i >= tokens.length) break;',
-    '    const word = bareWord(tokens[i]);',
-    '    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) { i++; continue; }',
-    "    const head = word.split('/').pop();",
-    '    if (!Object.prototype.hasOwnProperty.call(WRAPPER_FLAGS_WITH_VALUE, head)) break;',
-    '    const valued = WRAPPER_FLAGS_WITH_VALUE[head];',
-    '    i++;',
-    "    while (i < tokens.length && bareWord(tokens[i]).charAt(0) === '-' && bareWord(tokens[i]) !== '--') {",
-    '      const takesValue = valued.indexOf(bareWord(tokens[i])) !== -1;',
-    '      i++;',
-    '      if (takesValue && i < tokens.length) i++;',
-    '    }',
-    "    if (i < tokens.length && bareWord(tokens[i]) === '--') i++;",
-    '  }',
-    '  return i;',
-    '}',
-    'function reinterpretedCommands(stmt) {',
-    "  if (typeof stmt !== 'string') return [];",
-    '  const all = stmt.trim().split(/\\s+/).filter(Boolean);',
-    '  const start = wrapperPrefixEnd(all);',
-    '  if (all.length - start < 2) return [];',
-    "  const head = bareWord(all[start]).split('/').pop();",
-    '  let rest = null;',
-    "  if (head === 'eval') {",
-    "    rest = all.slice(start + 1).join(' ');",
-    "  } else if (head === 'bash' || head === 'sh' || head === 'zsh' || head === 'dash' || head === 'ksh') {",
-    '    let flag = -1;',
-    "    for (let k = start + 1; k < all.length; k++) if (bareWord(all[k]) === '-c') { flag = k; break; }",
-    '    if (flag === -1) return [];',
-    "    rest = all.slice(flag + 1).join(' ');",
-    '  }',
-    "  if (rest === null || rest.trim() === '') return [];",
-    "  const dequoted = rest.replace(/['\"]/g, '');",
-    '  return rest === dequoted ? [rest] : [rest, dequoted];',
-    '}',
-    // A heredoc payload is DATA, not commands — `cat > notes.md <<EOF … EOF`
-    // writes prose, and a line of that prose reading `nice -n 10 sudo is the
-    // shape` is a sentence, not an invocation. Splitting the payload into
-    // statements refused exactly that (found here, not in review, by this
-    // task's own commit message). The one exception is a payload a SHELL is
-    // reading — `bash <<EOF … EOF` executes every line of it — so that one
-    // is queued as commands instead of dropped. A heredoc whose delimiter
-    // line never appears is not treated as a heredoc at all, so a `<<`
-    // sitting inside an ordinary quoted string cannot swallow the rest of
-    // the command.
-    'const HEREDOC_OPEN = /<<-?\\s*(?:\'([^\']+)\'|"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))/;',
-    'function splitHeredocs(command) {',
-    "  const lines = command.split('\\n');",
-    '  const kept = [];',
-    '  const scripts = [];',
-    '  for (let i = 0; i < lines.length; i++) {',
-    '    const line = lines[i];',
-    '    kept.push(line);',
-    '    const m = HEREDOC_OPEN.exec(line);',
-    '    if (!m) continue;',
-    '    const delim = m[1] || m[2] || m[3];',
-    '    let end = -1;',
-    '    for (let j = i + 1; j < lines.length; j++) {',
-    '      if (lines[j].trim() === delim) { end = j; break; }',
-    '    }',
-    '    if (end === -1) continue;',
-    "    const payload = lines.slice(i + 1, end).join('\\n');",
-    '    const tokens = line.split(/\\s+/).filter(Boolean);',
-    "    const head = bareWord(tokens[wrapperPrefixEnd(tokens)] || '').split('/').pop();",
-    "    if (head === 'bash' || head === 'sh' || head === 'zsh' || head === 'dash' || head === 'ksh' || head === 'eval') scripts.push(payload);",
-    '    i = end;',
-    '  }',
-    "  return { text: kept.join('\\n'), scripts: scripts };",
-    '}',
     'function commandStatements(command) {',
+    '  const masked = maskQuoted(command);',
     '  const statements = [];',
-    '  const queue = [command];',
-    '  let guard = 0;',
-    '  while (queue.length > 0 && guard < 64) {',
-    '    guard++;',
-    '    const raw = queue.shift();',
-    "    if (typeof raw !== 'string' || raw.length === 0) continue;",
-    '    const heredocs = splitHeredocs(raw);',
-    '    for (const script of heredocs.scripts) queue.push(script);',
-    '    const current = heredocs.text;',
-    '    if (current.length === 0) continue;',
-    '    for (const body of substitutionBodies(current)) queue.push(body);',
-    // A statement is cut from the SUBSTITUTION-MASKED text, never the raw
-    // text. Masking only the separator scan and then slicing the raw string
-    // put a substitution's whole body back inside the statement that
-    // contained it, where the next detector tokenized it as that
-    // statement's own arguments — found here, not in review: an ordinary
-    // `git commit -m "$(cat <<EOF … EOF)"` whose MESSAGE happened to
-    // contain a bare `-n` token was refused as a `--no-verify` commit,
-    // because the body's newlines were masked (so they no longer split the
-    // statement) while the body's words were not (so they were still
-    // read). The body is queued as its own command either way, so blanking
-    // it here loses nothing and stops it being read twice, once out of
-    // context.
-    '    const substitutionMasked = maskSubstitutions(current);',
-    '    const masked = maskQuoted(substitutionMasked);',
-    '    const fragments = [];',
-    '    let last = 0;',
-    '    const re = /;|&&|\\|\\||\\||&|\\n/g;',
-    '    let m;',
-    '    while ((m = re.exec(masked)) !== null) {',
-    '      fragments.push(substitutionMasked.slice(last, m.index));',
-    '      last = m.index + m[0].length;',
-    '    }',
-    '    fragments.push(substitutionMasked.slice(last));',
-    '    for (const fragment of fragments) {',
-    '      statements.push(fragment);',
-    '      for (const inner of reinterpretedCommands(fragment)) queue.push(inner);',
-    '    }',
+    '  let last = 0;',
+    '  const re = /;|&&|\\|\\||\\n/g;',
+    '  let m;',
+    '  while ((m = re.exec(masked)) !== null) {',
+    '    statements.push(command.slice(last, m.index));',
+    '    last = m.index + m[0].length;',
     '  }',
+    '  statements.push(command.slice(last));',
     '  return statements;',
     '}',
     'function commandRunsWholeSuite(command) {',
@@ -1002,161 +803,6 @@ export const COMMIT_PUSH_ON_DEFAULT_BRANCH_DENY_REASON =
   "Dispatched sessions cannot commit or push while the shell's working directory is a checkout on this repo's default branch — do this from a worktree instead. This is defense in depth beside the pre-push hook, not the only guard."
 
 /**
- * The machine's own security and system state is not a dispatched role's to
- * change. Origin, observed live: a dispatched security reviewer testing
- * Keychain behaviour ran `security create-keychain` followed by `security
- * default-keychain -s` on a temporary keychain, then deleted that keychain —
- * which left the login keychain neither the default nor in the search list.
- * From that moment `gh` read an invalid token and the `claude` CLI read no
- * login at all, so every run on that machine died with "Not logged in" until
- * the keychain list was restored by hand, some eight hours later. The
- * Seatbelt boundary that would have contained it (§§3–4 of
- * `apps/cli/specs/isolation.md`) is off on that host
- * (`dispatch.requireWorkerIsolation: false`), so the dispatched role's own
- * permission policy is the only barrier there is.
- *
- * Inspected here, in real tokens, rather than expressed only as
- * `permissions.deny` entries, for two reasons this file's own history
- * already records:
- *
- *  - **The one exemption cannot be written as a settings pattern.** A
- *    `find-generic-password` READ must keep working — it is how a
- *    `${VAR_NAME}` log header resolves from the login Keychain
- *    (`worker-boundary.ts`) — while every other `security` subcommand is
- *    refused. Expressing that as `deny: ['Bash(security:*)']` plus
- *    `allow: ['Bash(security find-generic-password:*)']` does not work:
- *    confirmed live against the installed binary (2.1.258), a BROADER deny
- *    beats a NARROWER allow that also matches the same command text
- *    (`{"allow":["Bash(echo forbidden:*)"],"deny":["Bash(echo:*)"]}` refused
- *    `echo forbidden hello` outright), the mirror image of the
- *    narrower-deny-wins precedence `buildRolePermissions`'s own doc comment
- *    records. So a blanket settings deny on `security` would take the
- *    exempted read down with it.
- *  - **Argument order and spelling.** The same reason
- *    `gitForceOrSkipVerifyDetectorSource` exists: a `deny` entry is a
- *    literal command-string-PREFIX match, so `git config user.email x
- *    --global` never matches `Bash(git config --global*)`, and
- *    `/usr/bin/security create-keychain` never matches `Bash(security:*)`.
- *    Token inspection generalizes over both; a fixed prefix cannot.
- *
- * Per STATEMENT, so a compound command is covered too (`cd /tmp && security
- * default-keychain -s x` is the shape the origin incident could just as
- * easily have taken) — reusing `commandStatements`/`stripLineComment`/
- * `statementTokens` from the sibling detectors already embedded in the SAME
- * generated script. `commandStatements` splits on a single `|` and a lone
- * `&` as well as `;`/`&&`/`||`/newline, and lifts `$(…)`/backtick/`<(…)`
- * bodies out before any quote masking — all three shapes hid a command
- * from this detector AND from the settings `deny` prefixes at the same
- * time (round 2 security review, CRITICAL, confirmed live with `true |
- * sudo rm /etc/hosts` and `echo "$(sudo rm /etc/hosts)"`). Before the
- * first real command word, a leading `VAR=value` assignment, a wrapper
- * (`env`, `command`, `exec`, `time`, …) and a subshell/brace/`!` prefix
- * are each stripped, and the word itself is compared by basename, so
- * none of those hides what is actually being run.
- *
- * **This is a floor, not a sandbox** — the same limit `roles/developer.md`
- * and `roles/security.md` now state in one line. The line the limit is
- * actually drawn at is TEXT THIS CALL CONTAINS, not "the shell versus
- * another interpreter" (round 3 code review, correctly: `eval` runs in the
- * same shell process, and its argument is right here, so it is read and
- * judged like any other command — see `reinterpretedCommands`). What
- * remains out of reach is a command this call's own text does not carry: a
- * script the session wrote and then runs (`bash ./x.sh`, `source ./x.sh`),
- * a `python3` program that calls `subprocess`, a value only the running
- * shell knows. The narrow case where that opacity is visible IN a
- * reinterpreting wrapper — `eval "$CMD"` — is refused here rather than
- * approved unread; the rest is the Seatbelt boundary's job, and turning it
- * back on is its own task.
- */
-function machineStateDetectorSource(): string {
-  return [
-    // Everything in front of the real command word — a `VAR=value`
-    // assignment, a transparent wrapper and ITS OWN flags, subshell/brace
-    // punctuation, quoting — is resolved by the SAME `wrapperPrefixEnd`
-    // the statement splitter uses for `eval`/`<shell> -c`, so the two can
-    // never disagree about where a statement's command actually begins.
-    // They did disagree before: both carried their own copy of the wrapper
-    // list, and both dropped a wrapper's flags on the floor (round 4 code
-    // review, BLOCKER).
-    'function machineStateTokens(stmt) {',
-    '  const tokens = statementTokens(stmt);',
-    '  const start = wrapperPrefixEnd(tokens);',
-    "  return tokens.slice(start).map(bareWord).filter((t) => t !== '');",
-    '}',
-    'function commandChangesMachineState(command) {',
-    "  if (typeof command !== 'string') return false;",
-    '  for (const raw of commandStatements(command)) {',
-    '    const tokens = machineStateTokens(stripLineComment(raw));',
-    '    if (tokens.length === 0) continue;',
-    // `/usr/bin/security` and `security` are the same command.
-    "    const cmd = tokens[0].split('/').pop();",
-    "    if (cmd === 'security') {",
-    // The ONE exemption: a `find-generic-password` read. Every other
-    // subcommand — `create-keychain`, `default-keychain`, `list-keychains
-    // -s`, `add-generic-password`, `delete-generic-password`, … — is refused.
-    "      if (tokens[1] !== 'find-generic-password') return true;",
-    '      continue;',
-    '    }',
-    // `eval <text>`/`<shell> -c <text>` have already been re-split by
-    // `commandStatements`, so the ordinary case is judged on the inner text
-    // itself. What is left is the case where the text is NOT in this call —
-    // `eval "$CMD"` — and a barrier that cannot read what it is being asked
-    // to approve does not approve it. A `$(…)` body is lifted and judged, so
-    // only an unresolved parameter expansion counts here.
-    "    if (cmd === 'eval' || ((cmd === 'bash' || cmd === 'sh' || cmd === 'zsh' || cmd === 'dash' || cmd === 'ksh') && tokens.indexOf('-c') !== -1)) {",
-    '      if (/\\$(?!\\()/.test(raw)) return true;',
-    '      continue;',
-    '    }',
-    "    if (cmd === 'launchctl' || cmd === 'sudo' || cmd === 'systemsetup') return true;",
-    "    if (cmd === 'networksetup' || cmd === 'pmset' || cmd === 'dscl') return true;",
-    "    if (cmd === 'crontab' || cmd === 'chsh') return true;",
-    "    if (cmd === 'defaults') {",
-    // `defaults read`/`read-type`/`domains`/`find` are harmless; every
-    // subcommand that MUTATES a domain is not. `import` is the one that
-    // matters most — it loads a whole plist into a domain and changes
-    // exactly what a `write` would (round 2 security review, MEDIUM) — and
-    // `delete`/`rename` change the same settings from the other direction.
-    // The subcommand is not always `tokens[1]` (`defaults -currentHost
-    // write …` is an ordinary spelling), so every argument is scanned.
-    '      for (let i = 1; i < tokens.length; i++) {',
-    '        const t = tokens[i];',
-    "        if (t === 'write' || t === 'import' || t === 'delete' || t === 'rename') return true;",
-    '      }',
-    '      continue;',
-    '    }',
-    "    if (cmd === 'git') {",
-    // git's own options precede the subcommand, and several take a value:
-    // `git -C /tmp config --global …` puts `config` at index two, not one
-    // (round 2 code review, MINOR). Skip git's leading options — with
-    // their values where they take one — and judge whatever word lands
-    // first, rather than assuming a fixed position.
-    '      let i = 1;',
-    '      while (i < tokens.length) {',
-    '        const t = tokens[i];',
-    "        if (t === '-C' || t === '-c' || t === '--git-dir' || t === '--work-tree' || t === '--namespace' || t === '--exec-path') { i += 2; continue; }",
-    "        if (t.charAt(0) === '-') { i += 1; continue; }",
-    '        break;',
-    '      }',
-    "      if (tokens[i] === 'config') {",
-    // Repository-scoped `git config` is a dispatched role's own business
-    // (Step 0 sets `push.autoSetupRemote` with it); the global and system
-    // scopes are the machine's.
-    '        for (let j = i + 1; j < tokens.length; j++) {',
-    '          const t = tokens[j];',
-    "          if (t === '--global' || t === '--system') return true;",
-    '        }',
-    '      }',
-    '    }',
-    '  }',
-    '  return false;',
-    '}'
-  ].join('\n')
-}
-
-export const MACHINE_STATE_DENY_REASON =
-  "Dispatched sessions cannot change this machine's own keychain, services or global settings — `security` (except a `find-generic-password` read), `launchctl`, `crontab`, a mutating `defaults` subcommand, `systemsetup`, `networksetup`, `pmset`, `dscl`, `chsh`, `sudo`, and `git config` at `--global`/`--system` scope. A test that needs one of these uses a fake. Every statement of the command is inspected, and so is the text inside a substitution, an `eval` or a `<shell> -c` — argument order, an absolute path, quoting, an environment or wrapper prefix, a pipe, a background `&` do not hide the command, and an `eval`/`-c` whose text this call does not itself contain is refused rather than approved unread. This is a floor, not a sandbox: what it reads is the shell text of this call, so a command that only exists inside a file or a program this call merely starts is beyond it."
-
-/**
  * The subagent tool (`Agent`/`Task` — both names are checked, as a
  * dispatched session may see either) defaults `run_in_background` to true,
  * so an unattended developer session that never sets it explicitly would
@@ -1197,7 +843,6 @@ function backgroundDenyHookScript(): string {
     wholeSuiteTestCommandDetectorSource(),
     gitForceOrSkipVerifyDetectorSource(),
     defaultBranchCommitOrPushDetectorSource(),
-    machineStateDetectorSource(),
     '    const input = e.tool_input || {};',
     "    if (e.tool_name === 'Bash' && (input.run_in_background === true || commandBackgrounds(input.command))) {",
     denyOutput(BACKGROUND_DENY_REASON),
@@ -1207,8 +852,6 @@ function backgroundDenyHookScript(): string {
     denyOutput(GIT_FORCE_OR_SKIP_VERIFY_DENY_REASON),
     "    } else if (e.tool_name === 'Bash' && commandCommitsOrPushesOnDefaultBranch(input.command)) {",
     denyOutput(COMMIT_PUSH_ON_DEFAULT_BRANCH_DENY_REASON),
-    "    } else if (e.tool_name === 'Bash' && commandChangesMachineState(input.command)) {",
-    denyOutput(MACHINE_STATE_DENY_REASON),
     "    } else if ((e.tool_name === 'Agent' || e.tool_name === 'Task') && input.run_in_background === true) {",
     denyOutput(SUBAGENT_BACKGROUND_DENY_REASON),
     '    }',
@@ -1500,48 +1143,63 @@ type RolePermissions = { allow: string[]; deny: string[] }
 const EMPTY_ROLE_PERMISSIONS: RolePermissions = { allow: [], deny: [] }
 
 /**
- * The settings-file half of the machine-state refusal every dispatched role
- * carries — self-documenting the intent in the written policy itself, the
- * same "additive to the hook, not a replacement of it" posture
- * `apps/cli/specs/isolation.md` §6 already records for the force-push rules.
- * `machineStateDetectorSource`'s own real token inspection is what makes the
- * guarantee hold for every spelling; these entries are what a reader of the
- * generated `settings.json` can see.
+ * The machine's own security and system state is not a dispatched role's to
+ * change. Origin, observed live: a dispatched security reviewer testing
+ * Keychain behaviour ran `security create-keychain` followed by `security
+ * default-keychain -s` on a temporary keychain, then deleted that keychain —
+ * which left the login keychain neither the default nor in the search list.
+ * From that moment `gh` read an invalid token and the `claude` CLI read no
+ * login at all, so every run on that machine died with "Not logged in" until
+ * the keychain list was restored by hand, some eight hours later. The
+ * Seatbelt boundary that would have contained it (§§3–4 of
+ * `apps/cli/specs/isolation.md`) is off on that host
+ * (`dispatch.requireWorkerIsolation: false`), so the dispatched role's own
+ * permission policy is the only barrier there is.
  *
- * `security` is deliberately ABSENT from this list, and lives only in the
- * hook: a blanket `Bash(security:*)` deny would also refuse the
- * `find-generic-password` READ that must keep working, because a broader
- * deny beats a narrower allow — see `machineStateDetectorSource`'s own doc
- * comment for the live proof. Every family named here has no such exemption.
+ * Expressed as `permissions.deny` entries in the host's OWN `Bash(<command>:*)`
+ * grammar, and nothing else — the host matches each part of a compound
+ * command against them itself. Confirmed live against the installed binary
+ * (2.1.258), running a REAL `claude -p` against a settings file carrying
+ * exactly these entries: `echo start && security list-keychains` came back
+ * with a POPULATED `permission_denials` array and `result: "User deny
+ * permission. Command not run."`, and so did `true | sudo -n launchctl
+ * list`, `echo a; crontab -l`, `echo three && git config --system --get
+ * user.name` and `echo four && networksetup -listallnetworkservices`. The
+ * repository-scoped `git config` Step 0 itself runs is untouched: `echo five
+ * && git config --get push.autoSetupRemote` resolved with an EMPTY
+ * `permission_denials` array and its real output.
+ *
+ * Whole commands, not subcommands, wherever no doctrine command needs the
+ * family at all — `security` in full (the Keychain reads Vinaya's own
+ * credential paths make run in Vinaya's own code, `find-generic-password` in
+ * `worker-boundary.ts` and the log-credential lookup, never through a
+ * dispatched agent's shell), `defaults` in full rather than `defaults write`
+ * alone. `git config` is the one family split by scope, because the
+ * repository scope is a dispatched role's own business.
+ *
+ * **This is a floor, not a sandbox** — the same limit `roles/developer.md`
+ * and `roles/security.md` state in one line. A deny entry matches a command
+ * PREFIX, so the floor is what the host's own matcher reaches: it does not
+ * reach a command wearing a wrapper word, one an unusual flag order puts
+ * ahead of the matched prefix, another interpreter, an alias, or a script
+ * file the session wrote and then runs. The containment for those is the
+ * worker sandbox, and turning it back on is its own task. A hand-written
+ * parser of shell text is not that containment either: every tokenizer tried
+ * here was defeated by the next spelling found, so none is kept.
  */
-/**
- * O1's one exemption, written as an explicit `allow` — not left unlisted.
- * Found live against the installed binary (2.1.258), running a REAL `claude
- * -p` against the REAL settings file this module generates: with the read
- * merely absent from both lists, `security find-generic-password -s … -w`
- * came back with a POPULATED `permission_denials` array and `result: "Need
- * approval to run the `security` command."` — the host's own classifier
- * asking, which a non-interactive dispatch turns into an outright refusal,
- * exactly the failure `apps/cli/specs/isolation.md` §6 already records for
- * the unlisted commands that started this policy. "The hook declines to
- * deny it" is therefore not the same as "it works." With this entry the
- * same command resolves with an EMPTY `permission_denials` array and a real
- * result, both alone and as the second statement of a compound command.
- */
-const KEYCHAIN_READ_ALLOW_RULE = 'Bash(security find-generic-password:*)'
-
 const MACHINE_STATE_DENY_RULES: readonly string[] = [
-  'Bash(launchctl*)',
-  'Bash(defaults write*)',
-  'Bash(systemsetup*)',
-  'Bash(networksetup*)',
-  'Bash(pmset*)',
-  'Bash(dscl*)',
-  'Bash(crontab*)',
-  'Bash(chsh*)',
-  'Bash(git config --global*)',
-  'Bash(git config --system*)',
-  'Bash(sudo*)'
+  'Bash(security:*)',
+  'Bash(launchctl:*)',
+  'Bash(defaults:*)',
+  'Bash(systemsetup:*)',
+  'Bash(networksetup:*)',
+  'Bash(pmset:*)',
+  'Bash(dscl:*)',
+  'Bash(crontab:*)',
+  'Bash(chsh:*)',
+  'Bash(git config --global:*)',
+  'Bash(git config --system:*)',
+  'Bash(sudo:*)'
 ]
 
 /**
@@ -1639,8 +1297,7 @@ export function buildRolePermissions(role: Role): RolePermissions {
         'Bash(bun packages/aeg-core/bin/verify-dispatch.ts:*)',
         'Bash(bun packages/aeg-core/bin/verify-docs.ts:*)',
         'Bash(bun packages/aeg-core/bin/verify-task.ts:*)',
-        'Bash(bun apps/cli/src/index.ts:*)',
-        KEYCHAIN_READ_ALLOW_RULE
+        'Bash(bun apps/cli/src/index.ts:*)'
       ],
       deny: [
         'Bash(git push --force*)',
@@ -1652,6 +1309,10 @@ export function buildRolePermissions(role: Role): RolePermissions {
         'Bash(git stash*)',
         'Bash(git reset --hard*)',
         'Bash(rm -rf*)',
+        // Kept in its original glob form beside `MACHINE_STATE_DENY_RULES`'s
+        // own `Bash(sudo:*)`, which is narrower: the glob also covers
+        // `sudoedit`, and a policy revision is no place to give coverage back.
+        'Bash(sudo*)',
         ...MACHINE_STATE_DENY_RULES
       ]
     }
@@ -1667,8 +1328,7 @@ export function buildRolePermissions(role: Role): RolePermissions {
         'Bash(git fetch:*)',
         'Bash(gh pr view:*)',
         'Bash(gh pr diff:*)',
-        'Bash(gh issue view:*)',
-        KEYCHAIN_READ_ALLOW_RULE
+        'Bash(gh issue view:*)'
       ],
       deny: [
         'Bash(git push:*)',

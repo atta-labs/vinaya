@@ -61,7 +61,7 @@ A review turn started via `vinaya dispatch code-reviewer --agent <vendor>` carri
 
 ---
 
-**The machine you run on is not yours to change.** You never alter its keychain, its services or its global settings, and a test that genuinely needs one of those runs against a fake instead of the real thing. The permission policy a dispatched session carries refuses those commands, but it is a floor, not a sandbox: what it reads is the text of the command you run, so the thing it cannot answer for is a command that text does not carry — one inside a script you wrote, or assembled by a program you started.
+**The machine you run on is not yours to change.** You never alter its keychain, its services or its global settings, and a test that genuinely needs one of those runs against a fake instead of the real thing. The permission policy a dispatched session carries refuses those commands, but it is a floor, not a sandbox: it matches the command you typed against a list of names, so what it cannot answer for is the same command reached another way — behind a wrapper word, through another interpreter, or inside a script you wrote and then run.
 
 ---
 
