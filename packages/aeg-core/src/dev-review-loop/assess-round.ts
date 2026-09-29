@@ -48,6 +48,7 @@ import {
   SEVERITY_COLUMNS,
   type Confidence,
   type Decision,
+  type DeferredFindingRow,
   type DevReviewLoopEventInput,
   type LoopState,
   type NotReviewedReason,
@@ -242,14 +243,23 @@ function buildRoundRecord(
   // nothing rather than a zero a reader would take for a clean round.
   const countsBySeverity: Record<string, number> = {}
   for (const key of SEVERITY_COLUMNS) countsBySeverity[key] = 0
+  // O4: the findings this round set aside rather than let them block, in the
+  // order the verdicts reported them, each with its original severity and
+  // location — never its reported severity mutated (that is the whole point
+  // of a deferral: the finding is real, this round just cannot act on it).
+  const deferred: DeferredFindingRow[] = []
   for (const v of verdicts) {
     for (const f of v.findings) {
       const key = f.severity.toLowerCase()
-      if (!(SEVERITY_COLUMNS as readonly string[]).includes(key)) continue
-      countsBySeverity[key] = (countsBySeverity[key] ?? 0) + 1
+      if ((SEVERITY_COLUMNS as readonly string[]).includes(key)) {
+        countsBySeverity[key] = (countsBySeverity[key] ?? 0) + 1
+      }
+      if (f.deferred !== undefined) {
+        deferred.push({ severity: f.severity, location: f.location ?? '', reason: f.deferred })
+      }
     }
   }
-  return { round, countsBySeverity, confidence, outcome }
+  return { round, countsBySeverity, confidence, outcome, ...(deferred.length > 0 ? { deferred } : {}) }
 }
 
 /**

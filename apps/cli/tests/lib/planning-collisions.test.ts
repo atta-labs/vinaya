@@ -3,6 +3,12 @@ import { describe, expect, it } from 'bun:test'
 import { resolveCollisionThreshold, type VinayaConfig } from '../../src/lib/config'
 import { buildCollisionPeers, pinnedFilesOf, validateIssueContent } from '../../src/lib/forge-write'
 
+// The forced-companion gates are dormant here — this file exercises only the
+// pinned-file collision findings, so the command/config references carry no
+// rows and no file, and nothing in the tree is claimed.
+const DORMANT_COMMAND_REFERENCE = { file: null, binary: 'vinaya', commands: [], text: '' }
+const DORMANT_CONFIG_REFERENCE = { files: [], keys: [], text: '' }
+
 // The CLI half of the pinned-file collision gate: the threshold an adopter
 // config resolves to, the pinned-file extraction the gate compares with, and
 // the severity split `validateIssueContent` turns one comparison into — a
@@ -87,12 +93,17 @@ describe('validateIssueContent — the pinned-file collision findings', () => {
       issueNumber: 851,
       briefSectionsSinceIssue: null,
       resolvesToFile: () => true,
+      readFile: () => null,
       docOwnersContent: null,
       milestoneSiblings: null,
       subjectRef: '851',
       collisionPeers: { peers, capHit },
       subjectFiles,
-      collisionThreshold: threshold
+      collisionThreshold: threshold,
+      commandReference: DORMANT_COMMAND_REFERENCE,
+      configReference: DORMANT_CONFIG_REFERENCE,
+      pinnedFileImporters: [],
+      existsInTree: () => false
     }).filter((e) => e.message.includes('file collision'))
 
   it('an at-threshold overlap is a blocking error naming the other task and the shared files', () => {
@@ -134,12 +145,17 @@ describe('validateIssueContent — the pinned-file collision findings', () => {
       issueNumber: 851,
       briefSectionsSinceIssue: null,
       resolvesToFile: () => true,
+      readFile: () => null,
       docOwnersContent: null,
       milestoneSiblings: null,
       subjectRef: '851',
       collisionPeers: null,
       subjectFiles: [A, B, C],
-      collisionThreshold: DEFAULT_COLLISION_THRESHOLD
+      collisionThreshold: DEFAULT_COLLISION_THRESHOLD,
+      commandReference: DORMANT_COMMAND_REFERENCE,
+      configReference: DORMANT_CONFIG_REFERENCE,
+      pinnedFileImporters: [],
+      existsInTree: () => false
     }).filter((e) => e.message.includes('file collision'))
     expect(errors).toEqual([])
   })

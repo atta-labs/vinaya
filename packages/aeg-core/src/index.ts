@@ -81,10 +81,12 @@ export {
 } from './waiver-label'
 export {
   blockingSeverities,
+  classifyFinding,
   CODE_REVIEW_SEVERITY_ORDER,
   codeReviewBlockingSeverities,
   consequentialFindings,
   DEFAULT_REVIEW_POLICY,
+  DEFERRAL_REASON_TEXT,
   evaluateCodeReview,
   evaluateReviewFindings,
   evaluateSecurityReview,
@@ -97,6 +99,11 @@ export {
 } from './review-policy'
 export type {
   CodeReviewSeverity,
+  DeferralReason,
+  DeferredFinding,
+  FindingClassification,
+  FindingDeferralContext,
+  FindingPolicyOutcome,
   PolicyEvaluation,
   PolicyFinding,
   ReviewPolicy,
@@ -249,7 +256,9 @@ export type {
   ReviewInputManifestFacts
 } from './review-input-manifest'
 export {
+  boundaryPinnedFiles,
   checkBlastRadiusScope,
+  checkBoundaryClaimsNeedPremise,
   checkConflictCompleteness,
   checkDocsWithinSurface,
   checkFileCollisions,
@@ -258,14 +267,20 @@ export {
   checkEdgeIdsWholeNumbers,
   checkIssueBriefSections,
   checkIssueObjectives,
+  checkIssuePremises,
   checkIssueRationale,
   checkIssueType,
+  checkIntroducedCommandsCovered,
+  checkIntroducedConfigKeysCovered,
   checkMilestoneAttach,
   checkNoBriefContent,
   checkNoForeignTaskOwnership,
   checkObjectivesRespectBoundary,
   checkPartsCiteDefinedObjectives,
   checkPartsCoverageAndSequence,
+  checkPinnedFileImportersCovered,
+  checkPremiseDependencyDeclared,
+  checkPremisesHold,
   checkProjectsRegistered,
   checkRationaleNamesDocs,
   checkRationaleSurfaceCoverage,
@@ -285,19 +300,25 @@ export {
   OBJECTIVES_SINCE_ISSUE,
   parseIssueDocumentation,
   parseIssueParts,
+  parseIssuePremises,
   parseIssueStopConditions,
   parseIssueSurface,
   parseIssueTestPlan
 } from './issue-validation'
 export type {
+  CommandReferenceEntry,
+  CommandReferenceFacts,
+  ConfigReferenceFacts,
   FileCollisionResult,
   FrozenSection,
   IssueDocumentation,
   IssueDocumentationSource,
   IssuePart,
+  IssuePremise,
   IssueSectionResult,
   IssueSurface,
   IssueTestPlan,
+  PinnedFileImporters,
   SurfaceScopeResult,
   SurfaceScopeViolation,
   ProjectPath,
@@ -336,7 +357,7 @@ export type { DerivationRule, ForgeFactInput } from './state-machine-model'
 export { checkPremises, parsePremiseBlock } from './premise-check'
 export type { PremiseAssertion, PremiseCheckResult } from './premise-check'
 export { checkDocClaims } from './doc-claim'
-export type { ClaimBinding, ClaimFinding, DocClaimSourceFile } from './doc-claim'
+export type { ClaimBinding, ClaimFinding, ClaimVoice, DocClaimSourceFile } from './doc-claim'
 export { classifyLeftover } from './leftover-detection'
 export type { LeftoverInput, LeftoverResult, LeftoverVerdict } from './leftover-detection'
 export { checkDeadBranchPush } from './dead-branch-push-guard'

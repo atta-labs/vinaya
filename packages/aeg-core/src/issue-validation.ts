@@ -20,6 +20,7 @@ import {
   findLetteredEdgeIds,
   hasLabel,
   LABELS,
+  parseRationaleDeps,
   projectFieldFromBody,
   projectsFromBody,
   SECTION_HEADER,
@@ -27,9 +28,11 @@ import {
 } from '@attalabs/aeg-forge-state'
 import { stripCode } from './anchored-region'
 import { checkTestPlan, extractFencedBlocks } from './brief-validation'
+import { type ClaimBinding, type ClaimVoice, evaluateClaimBindings } from './doc-claim'
 import { DOC_OWNERS_PATH, isUrlPointer, parseDocOwners, pointerToPath } from './doc-owners'
 import { globsOverlap } from './derive-section7'
 import { objectivesOf, objectivesVersion } from './objectives'
+import { isValidCitedFilePath } from './quoted-command'
 import { locateTestPlanSection } from './test-plan-section'
 
 export type IssueSectionResult = { status: 'pass' | 'fail'; errors: string[] }
@@ -724,6 +727,224 @@ export function checkDocumentationCitesObjective(body: string): IssueSectionResu
     status: 'fail',
     errors: [
       "issue-validation Documentation: `## Documentation` names a real source but none cites a defined `## Objectives` id — add `(O<n>)` to at least one source line so the Reviewer's ordinary Objectives grading covers whether its mechanism/version was actually incorporated."
+    ]
+  }
+}
+
+/**
+ * One `## Premises` line — a fact about the code the plan rests on, written
+ * so a machine can re-assert it instead of a reader having to trust it.
+ *
+ * The section exists because prose could not carry the weight. A real task
+ * rationale stated a cancellation signal was "already wired, currently
+ * inert"; nothing fed it, and the task ran about 20 hours through five review
+ * rounds and two Principal rulings before the gap closed. The same session
+ * showed the other half: a task that needs code a SIBLING task will write had
+ * no way to say so except prose. `afterIssue` is that second case — the
+ * premise is not true yet, names the Issue that makes it true, and is checked
+ * at dispatch rather than at plan time.
+ */
+export type IssuePremise = {
+  /** Repository-relative path the premise asserts about. */
+  path: string
+  /** The literal text that path must contain. */
+  text: string
+  /** The Issue number of an `after #<n>:` prefix — `null` for a premise that must hold now. */
+  afterIssue: number | null
+  /** The premise's own line, verbatim, so a refusal quotes what the Planner wrote. */
+  line: string
+}
+
+/**
+ * One premise line: `` `<path>` contains `<text>` ``, optionally prefixed
+ * `after #<n>:`, optionally bulleted. The text capture is greedy to the LAST
+ * backtick on the line, so a literal containing backticks survives — the same
+ * reason `doc-claim.ts` reads its value off the original line rather than a
+ * masked one.
+ */
+const ISSUE_PREMISE_LINE_RE = /^[-*]?[ \t]*(?:after[ \t]+#(\d+)[ \t]*:[ \t]*)?`([^`\n]+)`[ \t]+contains[ \t]+`(.+)`$/i
+
+/**
+ * Parses the optional `## Premises` section. An Issue without the heading has
+ * no premises and parses clean — the section is never required on its own
+ * (`checkBoundaryClaimsNeedPremise` is the one thing that can demand it, and
+ * only for a Boundary that asserts something already exists).
+ *
+ * A heading with no well-formed line is an error, not an empty list: an empty
+ * section reads as "checked, nothing to check" to every later reader, which is
+ * exactly the silence the section exists to remove.
+ */
+export function parseIssuePremises(body: string): ParsedIssueSection<IssuePremise[]> {
+  const section = topLevelSectionText(body, 'Premises')
+  if (section === null) return { ok: true, value: [] }
+
+  const errors: string[] = []
+  const premises: IssuePremise[] = []
+
+  for (const raw of section.split('\n')) {
+    const line = raw.trim()
+    if (line === '') continue
+    const m = ISSUE_PREMISE_LINE_RE.exec(line)
+    if (!m) {
+      errors.push(
+        `\`${line}\` is not a premise — write one premise per line as \`<path>\` contains \`<text>\`, optionally prefixed \`after #<n>:\` when a task that has not merged yet is what makes it true.`
+      )
+      continue
+    }
+    const [, afterRaw, path, text] = m
+    if (!isValidCitedFilePath(path as string)) {
+      errors.push(
+        `\`${line}\` names \`${path}\`, which is not a repository-relative path inside the repository (absolute paths and \`..\` traversal are refused).`
+      )
+      continue
+    }
+    premises.push({
+      path: path as string,
+      text: text as string,
+      afterIssue: afterRaw === undefined ? null : Number.parseInt(afterRaw, 10),
+      line
+    })
+  }
+
+  if (errors.length === 0 && premises.length === 0) {
+    errors.push(
+      'the `## Premises` section carries no premise line — delete the heading, or write the premise the plan actually rests on.'
+    )
+  }
+
+  return errors.length > 0 ? { ok: false, errors } : { ok: true, value: premises }
+}
+
+/**
+ * How a premise refusal addresses the Planner. Passed to `doc-claim.ts`'s
+ * `evaluateClaimBindings` so the predicate — "does this file contain this
+ * text" — has exactly one implementation across doc claims, brief premise
+ * pins and this section; only the sentence the author reads back differs.
+ */
+const ISSUE_PREMISE_VOICE: ClaimVoice = {
+  locate: (binding) => `premise ${binding.line}`,
+  staleRemediation: () =>
+    'Write the premise the code actually holds, or — when a task that has not merged yet is what makes it true — prefix it `after #<n>:` and declare `Depends-on` on that Issue. Never assert it in prose instead.'
+}
+
+/** A premise, as the shared claim evaluator consumes it. `line` is the premise's 1-based position in the section, which is how `ISSUE_PREMISE_VOICE` names it. */
+function premiseBinding(premise: IssuePremise, index: number): ClaimBinding {
+  return {
+    file: '## Premises',
+    line: index + 1,
+    assertion: { kind: 'contains', path: premise.path, value: premise.text }
+  }
+}
+
+/**
+ * One message per premise in `premises` that `fileReader` does not bear out —
+ * empty when every one holds. `index` is each premise's position in the whole
+ * section, not in this list, so a refusal names the same premise number the
+ * Planner counts down the section.
+ *
+ * The shared half of the plan-time gate (O1) and the dispatch gate (O3): the
+ * two differ only in WHICH premises they hand over (plan time omits the
+ * deferred ones, dispatch checks them all) and what they read from (the
+ * checkout, then the default branch) — never in what the check itself means.
+ */
+export function checkPremisesHold(
+  premises: ReadonlyArray<{ premise: IssuePremise; index: number }>,
+  fileReader: (path: string) => string | null
+): string[] {
+  const bindings = premises.map(({ premise, index }) => premiseBinding(premise, index))
+  return evaluateClaimBindings(bindings, fileReader, ISSUE_PREMISE_VOICE).map((f) => f.message)
+}
+
+/**
+ * **O1 — every premise without an `after #<n>:` prefix holds right now.**
+ * Evaluated against the checkout the Planner is cutting the Issue from,
+ * through `doc-claim.ts`'s own evaluation (`evaluateClaimBindings`) rather
+ * than a second matcher, so a premise and a doc claim can never disagree
+ * about what "contains" means.
+ *
+ * `fileReader` returns `null` for a path that does not exist — injected, so
+ * this module stays free of `fs` like the rest of the grammar.
+ */
+export function checkIssuePremises(body: string, fileReader: (path: string) => string | null): IssueSectionResult {
+  const parsed = parseIssuePremises(body)
+  if (!parsed.ok) {
+    return { status: 'fail', errors: parsed.errors.map((e) => `issue-validation Premises: ${e}`) }
+  }
+
+  const dueNow = parsed.value
+    .map((premise, index) => ({ premise, index }))
+    .filter(({ premise }) => premise.afterIssue === null)
+
+  const errors = checkPremisesHold(dueNow, fileReader).map((m) => `issue-validation Premises: ${m}`)
+  return { status: errors.length > 0 ? 'fail' : 'pass', errors }
+}
+
+/**
+ * **O2 — an `after #<n>:` premise is a deferred fact, and a deferred fact
+ * needs a declared edge.** Without one the Issue would dispatch before the
+ * task that makes the premise true has merged, and the deferral would buy
+ * nothing but a later failure. Matched on the Issue number's digits, so a
+ * `Depends-on` written `#<n>` and one written `<n>` both satisfy it — the two
+ * forms `parseRationaleDeps` already emits.
+ */
+export function checkPremiseDependencyDeclared(body: string): IssueSectionResult {
+  const parsed = parseIssuePremises(body)
+  if (!parsed.ok) return { status: 'pass', errors: [] }
+
+  const declared = new Set(
+    parseRationaleDeps(body).dependsOn.map((edge) => (splitSlugQualifiedEdge(edge)?.bareId ?? edge).replace(/^#/, ''))
+  )
+
+  const errors = parsed.value
+    .filter((premise) => premise.afterIssue !== null && !declared.has(String(premise.afterIssue)))
+    .map(
+      (premise) =>
+        `issue-validation Premises: \`${premise.line}\` defers to #${premise.afterIssue}, but the Dependency rationale declares no \`Depends-on\` on it — a premise another task has to make true is a dependency, not a note.`
+    )
+
+  return { status: errors.length > 0 ? 'fail' : 'pass', errors }
+}
+
+/**
+ * The words a Boundary uses when it asserts the current state of the code
+ * rather than describing the task. Whole words only — `wiredness` is not a
+ * claim, and `alreadyish` is not a word. Matched in the Boundary field alone:
+ * checking every prose field for claims is a different, much larger rule
+ * (`doc-claim.ts`'s marker discipline is the one that scales), and this one is
+ * deliberately narrow to the field whose false claims cost the 20 hours.
+ */
+const BOUNDARY_EXISTING_STATE_RE = /\b(already|currently|wired)\b/i
+
+/**
+ * **O4 — a Boundary that says something already exists must pin it.** The
+ * refusal is not "do not write this"; it is "write it as a premise too". A
+ * Planner who genuinely looked has the pin to hand, and the pin is what makes
+ * the next reader's trust cheap.
+ *
+ * `inlineSpans: 'keep'` is load-bearing, not tidiness. `stripCode`'s DEFAULT
+ * mode blanks inline backtick spans, and a Boundary states this kind of claim
+ * in exactly that shape — "the signal is `already wired`, inert" — so the
+ * default stripped the trigger words out of the very sentence the gate exists
+ * to catch and passed the Issue with no premise at all (round 2 security
+ * review, HIGH). Fenced and indented blocks are still removed: a trigger word
+ * inside a worked example is not a claim about this task's surface, which is
+ * the one exemption this check does want.
+ */
+export function checkBoundaryClaimsNeedPremise(body: string): IssueSectionResult {
+  const boundary = rationaleFieldText(stripCode(body, { inlineSpans: 'keep' }), 'Boundary')
+  const trigger = BOUNDARY_EXISTING_STATE_RE.exec(boundary)
+  if (!trigger) return { status: 'pass', errors: [] }
+
+  // A malformed section is `checkIssuePremises`' finding, not this one's —
+  // reporting "carries no `## Premises` section" about a section that plainly
+  // exists would send the Planner looking for the wrong defect.
+  const parsed = parseIssuePremises(body)
+  if (!parsed.ok || parsed.value.length > 0) return { status: 'pass', errors: [] }
+
+  return {
+    status: 'fail',
+    errors: [
+      `issue-validation Premises: the Boundary says "${trigger[1]}" — it states something about the code as it stands — but the Issue carries no \`## Premises\` section. Add one premise per such claim, written \`<path>\` contains \`<text>\`, so the next reader checks it instead of trusting it.`
     ]
   }
 }
@@ -2233,6 +2454,443 @@ export function checkPartsCoverageAndSequence(body: string): IssueSectionResult 
   return { status: errors.length > 0 ? 'fail' : 'pass', errors }
 }
 
+// ---------------------------------------------------------------------------
+// The forced-companion Surface rules. A task Issue whose Objectives or Parts
+// introduce a CLI flag, a command, or a configuration key is forced to edit
+// the reference that documents it; a task whose Boundary pins a file other
+// tracked sources import is forced to touch at least one of those importers.
+// When the `## Surface` `in:` list does not reach the forced file, the
+// Developer cannot make the change the Issue asks for without leaving its
+// declared surface, and every review round repeats the same finding. Each
+// rule below decides that from the Issue text plus facts the caller resolves
+// from the tree, and names the exact glob to add.
+//
+// Pure, like everything else in this module: the reference entries and the
+// importer lists are gathered by `apps/cli` (`forge-write.ts`) and passed in.
+// Only `## Objectives`, `## Parts` and the Boundary field are read — a
+// sentence elsewhere in the body that mentions a flag in passing can never
+// trip these.
+// ---------------------------------------------------------------------------
+
+/** One command as the command reference records it — its name (`issue create`) and the flags it documents. */
+export type CommandReferenceEntry = { name: string; flags: string[] }
+
+/**
+ * The command reference as the caller resolved it. `file` is the tracked file
+ * that holds it, and `null` when this repository ships none — the rule then
+ * goes dormant, the same seam-is-dormant-when-absent posture
+ * `docOwnersContent`/`sharedPackages` already use, because an adopter whose
+ * tree carries no command reference cannot be asked to widen a Surface to
+ * reach one.
+ */
+export type CommandReferenceFacts = {
+  file: string | null
+  /** The CLI binary an invocation is written with — `vinaya` here, whatever the adopter ships elsewhere. */
+  binary: string
+  commands: CommandReferenceEntry[]
+  /**
+   * The reference's own adopter-facing prose (every description and detail
+   * paragraph, joined). A flag documented only in a paragraph — never as its
+   * own row — is still documented: the reference is what an adopter reads, not
+   * a row table, and refusing on a flag it already explains would refuse an
+   * Issue that introduces nothing.
+   */
+  text: string
+}
+
+/**
+ * The configuration reference and the configuration schema, as the caller
+ * resolved them. `files` holds both tracked files (the reference the prose
+ * lives in, and the schema that validates the shape); empty ⇒ dormant, same
+ * reason as above. `keys` is every dotted key the reference already carries.
+ */
+export type ConfigReferenceFacts = {
+  files: string[]
+  keys: string[]
+  /**
+   * The reference's own prose and examples, joined — same reason
+   * `CommandReferenceFacts.text` exists. A nested key the reference explains
+   * inside its parent's row (`logs.url`, documented in `logs`'s own semantics
+   * and example) is already documented, and an Issue quoting it introduces
+   * nothing.
+   */
+  text: string
+}
+
+/** The tracked source files that import one Boundary-pinned file, as the caller resolved them. */
+export type PinnedFileImporters = { file: string; importers: string[] }
+
+/** The directory a file sits in — the `## Surface` `in:` entry that would cover it, since Surface lists directories, never files. */
+function directoryGlobFor(file: string): string {
+  const cut = file.lastIndexOf('/')
+  return cut === -1 ? '*' : file.slice(0, cut)
+}
+
+/** Every backticked span in `text`, backticks stripped. The only text these rules read a token out of — free prose is never matched. */
+function backtickedSpans(text: string): string[] {
+  return [...text.matchAll(/`([^`\n]+)`/g)].map((m) => m[1] as string)
+}
+
+/**
+ * The Objectives' and Parts' own outcome text, in document order — the two
+ * sections a task states what it introduces in. Parsed with the same
+ * `objectivesOf`/`parseIssueParts` every other rule here uses; a section that
+ * does not parse contributes nothing rather than failing the write (its own
+ * grammar gate already refuses it, and two refusals for one defect is noise).
+ */
+function introducedText(body: string): Array<{ where: string; text: string }> {
+  const out: Array<{ where: string; text: string }> = []
+  const objectives = objectivesOf(body)
+  if (objectives.ok) for (const o of objectives.objectives) out.push({ where: o.id, text: o.text })
+  const parts = parseIssueParts(body)
+  if (parts.ok) for (const p of parts.value) out.push({ where: `Part ${p.n}`, text: p.text })
+  return out
+}
+
+/** A flag as written in a reference row (`--parallel[=n]`, `--path <path>`) reduced to its name alone. */
+function flagName(raw: string): string {
+  return (/^--[A-Za-z0-9][\w-]*/.exec(raw.trim())?.[0] ?? raw.trim()).toLowerCase()
+}
+
+/** Every `--flag` written inside one backticked span, deduped. `(?<![\w-])` keeps `foo--bar` and an em-dash-ish run out. */
+function flagsIn(span: string): string[] {
+  return [...new Set([...span.matchAll(/(?<![\w-])--[A-Za-z0-9][\w-]*/g)].map((m) => m[0].toLowerCase()))]
+}
+
+/**
+ * The command-name token run a backticked invocation opens with — the words
+ * after the binary, stopping at the first token that is not a bare word (a
+ * flag, a `<placeholder>`, a path). `null` when the span is not an invocation
+ * of this binary at all.
+ *
+ * The BINARY's case is folded: a CLI name written `Vinaya` at the start of a
+ * sentence is the same invocation as `vinaya`, and compared exactly, one
+ * capital letter made the span parse as no invocation at all — an Issue could
+ * introduce a wholly undocumented command, Surface never reaching the command
+ * reference, by capitalising it (round 5 security review).
+ *
+ * The COMMAND WORDS must still be lower-case as written, and that is not an
+ * oversight. A capitalised word run after the binary is how a proper name is
+ * written, not a command: measured over this repository's own task Issues,
+ * `Vinaya Body Checks` and `Vinaya Checks` are the names of CI workflows, and
+ * folding their case read both as introduced commands and refused an Issue
+ * that introduces nothing. Nothing mechanical separates `Vinaya Issue Archive`
+ * from `Vinaya Body Checks`, so the line is drawn where the evidence is: the
+ * binary may be capitalised, the command may not.
+ */
+function invokedCommandTokens(span: string, binary: string): string[] | null {
+  const words = span.trim().split(/\s+/)
+  if ((words[0] ?? '').toLowerCase() !== binary.toLowerCase()) return null
+  const tokens: string[] = []
+  for (const w of words.slice(1)) {
+    if (!/^[a-z][a-z0-9-]*$/.test(w)) break
+    tokens.push(w)
+  }
+  return tokens
+}
+
+/**
+ * Resolves a token run against the reference: the longest prefix that is a
+ * documented command name, and whether the run introduces a command the
+ * reference does not carry.
+ *
+ * A leaf command followed by more words is an ARGUMENT, not a new
+ * subcommand — `vinaya check dispatch-readiness` names the check to run, and
+ * reading it as an introduced command would refuse every Issue that quotes a
+ * check by name. A run under a documented NAMESPACE (a name some documented
+ * command extends, e.g. `issue` in `issue create`) whose full form is
+ * undocumented is a real introduction, and so is a run whose very first word
+ * the reference has never heard of.
+ */
+function resolveCommand(tokens: string[], names: Set<string>): { known: string | null; introduced: string | null } {
+  if (tokens.length === 0) return { known: null, introduced: null }
+  const full = tokens.join(' ')
+  if (names.has(full)) return { known: full, introduced: null }
+
+  let known: string | null = null
+  for (let n = tokens.length - 1; n >= 1; n--) {
+    const prefix = tokens.slice(0, n).join(' ')
+    if (names.has(prefix)) {
+      known = prefix
+      break
+    }
+  }
+  if (known === null) return { known: null, introduced: full }
+  const isNamespace = [...names].some((n) => n.startsWith(`${known} `))
+  return { known, introduced: isNamespace ? full : null }
+}
+
+/**
+ * **A flag or command an Issue introduces requires the command reference in
+ * its Surface.** A backticked `--flag`, or a backticked invocation naming a
+ * command the reference does not carry, commits this task to writing a
+ * reference row for it; a `## Surface` whose `in:` list does not reach the
+ * reference file forbids exactly that edit. Observed cost: a task adding a
+ * flag with the reference's own package in `out:` had the missing row raised
+ * two review rounds running.
+ *
+ * `existsInTree` is what separates INTRODUCES from merely quotes, **for a flag
+ * only**: a flag the tracked tree already carries somewhere is shipped
+ * already, so this Issue is not the one that has to document it, however stale
+ * the reference's own row may be. Without that seam the rule refused an Issue
+ * for quoting `vinaya task run --issue` — a flag shipped long before, whose
+ * reference row was never updated by the task that added it. The reference gap
+ * is real and belongs to a task of its own; it is not this Issue's forced edit.
+ * A flag token is safe to ask the tree about because `--name` is a shape
+ * ordinary prose and ordinary code do not otherwise write.
+ *
+ * **A command is NOT asked of the tree, and must not be.** A command's own
+ * name is an ordinary English word (`rename`, `archive`, `status`), and the
+ * only thing the tree can answer is whether that word appears somewhere — it
+ * does, in unrelated identifiers, comments and standard-library calls, for
+ * essentially every word a command could be called. Probing it excused nearly
+ * every introduced command as "already shipped" and left this half of the rule
+ * doing nothing. The command reference needs no such backstop: it is the
+ * registry the router is itself tested against (`apps/cli`'s own
+ * registry/switch agreement suite), so a command absent from it is absent from
+ * the product, and absence there is the whole question.
+ *
+ * A flag is graded against EVERY flag the reference documents, never against
+ * the resolved command's own row alone: "not already in the command
+ * reference" is a statement about the reference, and a row that omits a flag
+ * the CLI already accepts elsewhere is a documentation gap for that row's own
+ * task to close, not a reason to refuse this one. The resolved command is
+ * still named in the message, so the row to write is obvious.
+ */
+export function checkIntroducedCommandsCovered(
+  body: string,
+  reference: CommandReferenceFacts,
+  existsInTree: (token: string) => boolean
+): IssueSectionResult {
+  if (reference.file === null) return { status: 'pass', errors: [] }
+  const surface = parseIssueSurface(body)
+  if (!surface.ok) return { status: 'pass', errors: [] }
+  const covered = surface.value.in.some((g) => globCoversPath(g, reference.file as string))
+  if (covered) return { status: 'pass', errors: [] }
+
+  const names = new Set(reference.commands.map((c) => c.name.toLowerCase()))
+  const everyFlag = new Set(reference.commands.flatMap((c) => c.flags.map(flagName)))
+  const glob = directoryGlobFor(reference.file)
+  const errors: string[] = []
+  const reported = new Set<string>()
+
+  for (const { where, text } of introducedText(body)) {
+    for (const span of backtickedSpans(text)) {
+      const tokens = invokedCommandTokens(span, reference.binary)
+      const resolved = tokens === null ? { known: null, introduced: null } : resolveCommand(tokens, names)
+      if (
+        resolved.introduced !== null &&
+        !documentedInProse(`${reference.binary} ${resolved.introduced}`, reference.text, true) &&
+        !reported.has(`cmd:${resolved.introduced}`)
+      ) {
+        reported.add(`cmd:${resolved.introduced}`)
+        errors.push(
+          `issue-validation Surface/command reference: ${where} introduces the command \`${reference.binary} ${resolved.introduced}\`, which \`${reference.file}\` does not carry — but no \`## Surface\` \`in:\` glob covers that file. Add \`${glob}\` to \`in:\`, or drop the command from this task.`
+        )
+      }
+      for (const flag of flagsIn(span)) {
+        if (everyFlag.has(flag) || documentedInProse(flag, reference.text) || existsInTree(flag)) continue
+        if (reported.has(`flag:${flag}`)) continue
+        reported.add(`flag:${flag}`)
+        const owner = resolved.known === null ? '' : ` of \`${reference.binary} ${resolved.known}\``
+        errors.push(
+          `issue-validation Surface/command reference: ${where} introduces the flag \`${flag}\`${owner}, which \`${reference.file}\` does not carry — but no \`## Surface\` \`in:\` glob covers that file. Add \`${glob}\` to \`in:\`, or drop the flag from this task.`
+        )
+      }
+    }
+  }
+  return { status: errors.length > 0 ? 'fail' : 'pass', errors }
+}
+
+/**
+ * Does the reference's own prose spell this token out verbatim, as a whole
+ * token? A flag or key explained in a paragraph is documented.
+ *
+ * `ignoreCase` is set only for a command name, whose own words this module
+ * lower-cases before comparing anything (`invokedCommandTokens`) — without it a
+ * reference paragraph writing the command at the start of a sentence would not
+ * match the folded name. A flag and a configuration key stay case-sensitive:
+ * both are identifiers whose case is part of them (`reviewPolicy.maxRounds`),
+ * and folding those would excuse a token the reference does not carry.
+ */
+function documentedInProse(token: string, text: string, ignoreCase = false): boolean {
+  if (text === '') return false
+  const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`(?<![\\w.-])${escaped}(?![\\w.-])`, ignoreCase ? 'i' : '').test(text)
+}
+
+/** A dotted token whose last segment is one of these is a filename, never a configuration key. */
+const FILE_EXTENSIONS = new Set([
+  'ts',
+  'tsx',
+  'js',
+  'jsx',
+  'mjs',
+  'cjs',
+  'json',
+  'jsonc',
+  'md',
+  'mdx',
+  'yml',
+  'yaml',
+  'txt',
+  'sh',
+  'lock',
+  'toml',
+  'ndjson',
+  'html',
+  'css'
+])
+
+/**
+ * Is this backticked token a configuration key the reference already knows?
+ *
+ * "Already known" is deliberately wider than exact equality: a key under a
+ * `Record<string, …>` container is written with its instance name in prose
+ * (`checks.doc-coverage.timeoutMs`) while the reference documents the entry
+ * shape once (`checks.timeoutMs`). Matching on the FIRST and LAST segment
+ * absorbs that instance segment, so quoting a real key with a real check name
+ * in it is never read as an introduction.
+ */
+function isDocumentedConfigKey(token: string, keys: string[]): boolean {
+  const segments = token.split('.')
+  const first = segments[0] as string
+  const last = segments[segments.length - 1] as string
+  return keys.some((k) => {
+    const ks = k.split('.')
+    return ks[0] === first && ks[ks.length - 1] === last
+  })
+}
+
+/**
+ * Every backticked token in `text` shaped like a configuration key: two or
+ * more dotted segments, no path separator, and a last segment that is not a
+ * file extension.
+ *
+ * Shape is the whole of it — the candidate set depends on nothing the Planner
+ * says ABOUT the token, only on the token. An earlier version asked the first
+ * segment to be an already-documented top-level key, which made a brand-new
+ * top-level key invisible; a second version accepted an undocumented root when
+ * the line also said the words "configuration key", which made the rule a
+ * convention a Planner could simply not use, and made "two new configuration
+ * keys" read differently from "a new configuration key". Neither is the
+ * mechanical refusal this gate owes.
+ *
+ * Precision comes from the caller instead, and from facts rather than prose: a
+ * candidate is excused when the reference already documents it, or when the
+ * tracked tree already spells it out. Between them those two absorb every
+ * dotted token an Issue writes about code that exists — a property path, a
+ * package name, an existing key with a stale row — and what is left is a dotted
+ * token naming something this repository has never had, which is what
+ * "introduces" means. Measured over this repository's whole task-Issue stock at
+ * the time of writing, the rule refuses none of them.
+ */
+function configKeyCandidates(text: string): string[] {
+  const out: string[] = []
+  for (const span of backtickedSpans(text)) {
+    for (const m of span.matchAll(/(?<![\w./-])[A-Za-z][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_<>-]+)+(?![\w./-])/g)) {
+      const token = m[0]
+      const segments = token.split('.')
+      if (FILE_EXTENSIONS.has((segments[segments.length - 1] as string).toLowerCase())) continue
+      out.push(token)
+    }
+  }
+  return [...new Set(out)]
+}
+
+/**
+ * **A configuration key an Issue introduces requires the configuration
+ * reference AND the configuration schema in its Surface.** A new key is two
+ * forced edits, never one: the schema that accepts it, and the adopter-facing
+ * reference that documents it — this repository even proves the pairing with
+ * a coverage test, so a schema key with no reference row fails CI. An Issue
+ * that introduces a key while its Surface reaches neither file is refused
+ * naming both missing globs.
+ *
+ * `existsInTree` carries the same meaning it does for a flag, above: a key the
+ * tree already spells out is shipped, not introduced.
+ */
+export function checkIntroducedConfigKeysCovered(
+  body: string,
+  reference: ConfigReferenceFacts,
+  existsInTree: (token: string) => boolean
+): IssueSectionResult {
+  if (reference.files.length === 0) return { status: 'pass', errors: [] }
+  const surface = parseIssueSurface(body)
+  if (!surface.ok) return { status: 'pass', errors: [] }
+
+  const missing = reference.files.filter((f) => !surface.value.in.some((g) => globCoversPath(g, f)))
+  if (missing.length === 0) return { status: 'pass', errors: [] }
+  const globs = [...new Set(missing.map(directoryGlobFor))]
+
+  const errors: string[] = []
+  const reported = new Set<string>()
+  for (const { where, text } of introducedText(body)) {
+    for (const key of configKeyCandidates(text)) {
+      if (isDocumentedConfigKey(key, reference.keys) || documentedInProse(key, reference.text)) continue
+      if (existsInTree(key)) continue
+      if (reported.has(key)) continue
+      reported.add(key)
+      errors.push(
+        `issue-validation Surface/configuration reference: ${where} introduces the configuration key \`${key}\`, which ${missing.map((f) => `\`${f}\``).join(' and ')} ${missing.length === 1 ? 'does' : 'do'} not carry — but no \`## Surface\` \`in:\` glob covers ${missing.length === 1 ? 'it' : 'them'}. Add ${globs.map((g) => `\`${g}\``).join(' and ')} to \`in:\`, or drop the key from this task.`
+      )
+    }
+  }
+  return { status: errors.length > 0 ? 'fail' : 'pass', errors }
+}
+
+/**
+ * The files a task's Boundary PINS — every backticked, file-shaped path in
+ * the Boundary field, minus the ones its own `Out:` clause names (a path
+ * disclaimed there is the opposite of a pin). Exported because the caller
+ * needs the same list to resolve each file's importers from the tree, and two
+ * parsers for "what did the Boundary pin" would drift.
+ */
+export function boundaryPinnedFiles(body: string): string[] {
+  const boundary = rationaleFieldText(PATH_TEXT(body), 'Boundary')
+  const excluded = new Set(namedPathsIn(boundaryOutText(body)))
+  return namedPathsIn(boundary).filter((p) => looksLikeFilePath(p) && !excluded.has(p))
+}
+
+/**
+ * **A pinned file's importers are in the Surface, or deliberately out of
+ * it.** Changing a file other tracked sources import almost always forces a
+ * change at the call site; a Surface that reaches the pinned file and none of
+ * its importers is the shape that cost one adopter task five rounds and two
+ * rulings, because the caller that had to pass the new signal sat outside it.
+ *
+ * An importer counts as covered when any `in:` glob covers it, or when the
+ * Boundary's `Out:` clause names it or its directory — those two, and no
+ * third. The Boundary is where a task says what it deliberately leaves out of
+ * work it is otherwise committed to, and saying it there is a sentence the
+ * Planner writes on purpose; a `## Surface` `out:` glob is a coarser
+ * declaration that the task does not touch a directory at all, which is
+ * exactly the claim a forced call-site edit contradicts. Reading `out:` as an
+ * excuse let a pinned file's only importer sit under a directory the Issue had
+ * merely declared untouched, and the refusal this rule exists for never fired.
+ * Refused only when NONE of a pinned file's importers is covered either way:
+ * one importer in the Surface means the task already reaches its call sites.
+ */
+export function checkPinnedFileImportersCovered(body: string, importers: PinnedFileImporters[]): IssueSectionResult {
+  if (importers.length === 0) return { status: 'pass', errors: [] }
+  const surface = parseIssueSurface(body)
+  if (!surface.ok) return { status: 'pass', errors: [] }
+  const disclaimed = namedPathsIn(boundaryOutText(body))
+
+  const errors: string[] = []
+  for (const { file, importers: found } of importers) {
+    if (found.length === 0) continue
+    const uncovered = found.filter(
+      (i) => !surface.value.in.some((g) => globCoversPath(g, i)) && !disclaimed.some((d) => globCoversPath(d, i))
+    )
+    if (uncovered.length < found.length) continue
+    const globs = [...new Set(uncovered.map(directoryGlobFor))]
+    errors.push(
+      `issue-validation Surface/importers: the Boundary pins \`${file}\`, which is imported by ${uncovered.map((i) => `\`${i}\``).join(', ')} — and no \`## Surface\` \`in:\` glob covers any of them, nor does the Boundary's \`Out:\` clause name one. Add ${globs.map((g) => `\`${g}\``).join(' or ')} to \`in:\`, or name the importer in the Boundary's \`Out:\` clause to exclude it deliberately (a \`## Surface\` \`out:\` glob is not that statement — it claims the directory is untouched, which a forced call-site edit contradicts).`
+    )
+  }
+  return { status: errors.length > 0 ? 'fail' : 'pass', errors }
+}
 // ---------------------------------------------------------------------------
 // O3 — an edit that changes
 // `## Objectives`, `## Surface`, or `## Parts` on a task Issue whose brief is

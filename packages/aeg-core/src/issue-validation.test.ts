@@ -4,14 +4,22 @@ import { amendRationaleDeps, projectsFromBody } from '@attalabs/aeg-forge-state'
 import { describe, expect, it } from 'vitest'
 import { fenceShapes } from '../tests/fixtures/fence-shapes'
 import {
+  boundaryPinnedFiles,
   BRIEF_SECTIONS_SINCE_ISSUE,
   checkBlastRadiusScope,
+  checkBoundaryClaimsNeedPremise,
   checkConflictCompleteness,
   checkEdgeIdsWholeNumbers,
   checkFileCollisions,
   checkIssueBriefSections,
   checkIssueObjectives,
+  checkIssuePremises,
   checkIssueRationale,
+  checkIntroducedCommandsCovered,
+  checkIntroducedConfigKeysCovered,
+  checkPinnedFileImportersCovered,
+  type CommandReferenceFacts,
+  type ConfigReferenceFacts,
   checkDocsWithinSurface,
   checkDocumentationCitesObjective,
   checkIssueType,
@@ -21,6 +29,7 @@ import {
   checkObjectivesRespectBoundary,
   checkPartsCiteDefinedObjectives,
   checkPartsCoverageAndSequence,
+  checkPremiseDependencyDeclared,
   checkProjectsRegistered,
   checkRationaleNamesDocs,
   checkRationaleSurfaceCoverage,
@@ -38,6 +47,7 @@ import {
   OBJECTIVES_SINCE_ISSUE,
   parseIssueDocumentation,
   parseIssueParts,
+  parseIssuePremises,
   parseIssueStopConditions,
   parseIssueSurface,
   parseIssueTestPlan,
@@ -2477,5 +2487,657 @@ describe('checkMilestoneAttach', () => {
     const r = checkMilestoneAttach(['vinaya/tranche:demo-v1'], null, 'v1')
     expect(r.status).toBe('fail')
     expect(r.errors.join(' ')).toMatch(/unset/)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The forced-companion Surface rules. Fixture references and fixture importer
+// lists throughout — never this repository's live tree, so a real command or a
+// real config key changing can never flip one of these cases.
+// ---------------------------------------------------------------------------
+
+const NOTHING_IN_TREE = () => false
+
+const FIXTURE_COMMAND_REFERENCE: CommandReferenceFacts = {
+  file: 'packages/sources/src/commands.ts',
+  binary: 'vinaya',
+  commands: [
+    { name: 'check', flags: ['--all', '--json'] },
+    { name: 'issue create', flags: ['--body-file', '--validate-only'] },
+    { name: 'doctrine', flags: ['--role', '--print'] }
+  ],
+  text: 'Runs one check, or every registered check. `--print` writes the resolved text to stdout.'
+}
+
+const FIXTURE_CONFIG_REFERENCE: ConfigReferenceFacts = {
+  files: ['packages/sources/src/config-reference.ts', 'apps/cli/src/lib/config.ts'],
+  keys: ['checks', 'checks.timeoutMs', 'reviewPolicy', 'reviewPolicy.maxRounds', 'logs'],
+  text: 'A folder (`logs.folder`) or a server (`logs.url`), never both.'
+}
+
+/** One well-formed task Issue body, with the Surface globs, Boundary and Objectives/Parts text each case needs. */
+function issueBody(parts: { boundary: string; objectives: string[]; partLines: string[]; in: string; out: string }) {
+  return [
+    "## Planner's rationale",
+    '',
+    `**Boundary** — ${parts.boundary}`,
+    '',
+    '## Objectives',
+    '',
+    ...parts.objectives,
+    '',
+    '## Surface',
+    '',
+    `in: ${parts.in}`,
+    `out: ${parts.out}`,
+    '',
+    '## Parts',
+    '',
+    ...parts.partLines
+  ].join('\n')
+}
+
+describe('checkIntroducedCommandsCovered', () => {
+  const body = (objective: string, inGlobs = 'apps/cli/src/lib') =>
+    issueBody({
+      boundary: 'One gate and its wiring.',
+      objectives: [`O1. ${objective}`],
+      partLines: ['Part 1 (O1) — the gate refuses the body.'],
+      in: inGlobs,
+      out: 'apps/log-server'
+    })
+
+  it('is dormant when this repository ships no command reference', () => {
+    const result = checkIntroducedCommandsCovered(
+      body('`vinaya doctrine --template` prints the template.'),
+      { ...FIXTURE_COMMAND_REFERENCE, file: null },
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('pass')
+  })
+
+  it('refuses an introduced flag, naming the flag and the glob to add', () => {
+    const result = checkIntroducedCommandsCovered(
+      body('`vinaya doctrine --template pr-report --print` prints the template.'),
+      FIXTURE_COMMAND_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('fail')
+    expect(result.errors).toHaveLength(1)
+    expect(result.errors[0]).toContain('`--template`')
+    expect(result.errors[0]).toContain('`vinaya doctrine`')
+    expect(result.errors[0]).toContain('Add `packages/sources/src` to `in:`')
+  })
+
+  it('refuses an introduced subcommand under a documented namespace', () => {
+    const result = checkIntroducedCommandsCovered(
+      body('`vinaya issue archive` closes and relabels the Issue.'),
+      FIXTURE_COMMAND_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toContain('`vinaya issue archive`')
+    expect(result.errors[0]).toContain('Add `packages/sources/src` to `in:`')
+  })
+
+  it('refuses an introduced command however the binary is capitalised', () => {
+    for (const invocation of ['`Vinaya issue archive`', '`VINAYA rotate-secrets`']) {
+      const result = checkIntroducedCommandsCovered(
+        body(`${invocation} does the new thing.`),
+        FIXTURE_COMMAND_REFERENCE,
+        NOTHING_IN_TREE
+      )
+      expect(result.status).toBe('fail')
+      expect(result.errors[0]).toContain('Add `packages/sources/src` to `in:`')
+    }
+  })
+
+  it('reads a capitalised word run after the binary as a proper name, never as a command', () => {
+    // `Vinaya Body Checks` is the name of a CI workflow in this repository's own
+    // Issues; nothing mechanical separates it from a Title-Cased invocation, so
+    // a capitalised command word ends the run.
+    expect(
+      checkIntroducedCommandsCovered(
+        body('`Vinaya Body Checks` answers in two minutes.'),
+        FIXTURE_COMMAND_REFERENCE,
+        NOTHING_IN_TREE
+      ).status
+    ).toBe('pass')
+  })
+
+  it('still reads a capitalised leaf command plus a further word as an argument', () => {
+    expect(
+      checkIntroducedCommandsCovered(
+        body('`Vinaya check dispatch-readiness` passes on the task branch.'),
+        FIXTURE_COMMAND_REFERENCE,
+        NOTHING_IN_TREE
+      ).status
+    ).toBe('pass')
+  })
+
+  it('refuses a command whose very first word the reference has never heard of', () => {
+    const result = checkIntroducedCommandsCovered(
+      body('`vinaya frobnicate` rewrites the body.'),
+      FIXTURE_COMMAND_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toContain('`vinaya frobnicate`')
+  })
+
+  it('passes the same body once an `in:` glob covers the command reference', () => {
+    const result = checkIntroducedCommandsCovered(
+      body('`vinaya doctrine --template pr-report` prints the template.', 'apps/cli/src/lib, packages/sources/src'),
+      FIXTURE_COMMAND_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('pass')
+  })
+
+  it('reads a leaf command plus a further word as an argument, never as a new subcommand', () => {
+    const result = checkIntroducedCommandsCovered(
+      body('`vinaya check dispatch-readiness` passes on the task branch.'),
+      FIXTURE_COMMAND_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('pass')
+  })
+
+  it('passes a flag the reference documents for any command, and one only its prose explains', () => {
+    expect(
+      checkIntroducedCommandsCovered(
+        body('`vinaya doctrine --json` prints the resolved text.'),
+        FIXTURE_COMMAND_REFERENCE,
+        NOTHING_IN_TREE
+      ).status
+    ).toBe('pass')
+    expect(
+      checkIntroducedCommandsCovered(
+        body('`vinaya issue create --print` prints the body.'),
+        FIXTURE_COMMAND_REFERENCE,
+        NOTHING_IN_TREE
+      ).status
+    ).toBe('pass')
+  })
+
+  it('passes a flag the tracked tree already ships, however stale the reference row is', () => {
+    const result = checkIntroducedCommandsCovered(
+      body('`vinaya check --parallel` caps concurrency.'),
+      FIXTURE_COMMAND_REFERENCE,
+      (token) => token === '--parallel'
+    )
+    expect(result.status).toBe('pass')
+  })
+
+  it('never fires on free prose — only a backticked token counts', () => {
+    const result = checkIntroducedCommandsCovered(
+      body('Running vinaya doctrine with --template is out of scope for this task.'),
+      FIXTURE_COMMAND_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('pass')
+  })
+
+  it('reads a Part line as well as an Objective', () => {
+    const result = checkIntroducedCommandsCovered(
+      issueBody({
+        boundary: 'One gate.',
+        objectives: ['O1. The gate refuses a malformed body.'],
+        partLines: ['Part 1 (O1) — `vinaya check --deep` runs the slow lens.'],
+        in: 'apps/cli/src/lib',
+        out: 'apps/log-server'
+      }),
+      FIXTURE_COMMAND_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toContain('Part 1 introduces the flag `--deep`')
+  })
+})
+
+describe('checkIntroducedConfigKeysCovered', () => {
+  const body = (objective: string, inGlobs = 'apps/cli/src/commands') =>
+    issueBody({
+      boundary: 'One key and its reader.',
+      objectives: [`O1. ${objective}`],
+      partLines: ['Part 1 (O1) — the reader resolves the key.'],
+      in: inGlobs,
+      out: 'apps/log-server'
+    })
+
+  it('is dormant when neither reference nor schema is in this tree', () => {
+    const result = checkIntroducedConfigKeysCovered(
+      body('`reviewPolicy.maxTaskMinutes` bounds the loop.'),
+      { ...FIXTURE_CONFIG_REFERENCE, files: [] },
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('pass')
+  })
+
+  it('refuses an introduced key, naming both missing globs', () => {
+    const result = checkIntroducedConfigKeysCovered(
+      body('`reviewPolicy.maxTaskMinutes` bounds the loop.'),
+      FIXTURE_CONFIG_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('fail')
+    expect(result.errors).toHaveLength(1)
+    expect(result.errors[0]).toContain('`reviewPolicy.maxTaskMinutes`')
+    expect(result.errors[0]).toContain('Add `packages/sources/src` and `apps/cli/src/lib` to `in:`')
+  })
+
+  it('names only the glob still missing when the Surface already covers one of the two', () => {
+    const result = checkIntroducedConfigKeysCovered(
+      body('`reviewPolicy.maxTaskMinutes` bounds the loop.', 'apps/cli/src/lib'),
+      FIXTURE_CONFIG_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toContain('Add `packages/sources/src` to `in:`')
+    expect(result.errors[0]).not.toContain('apps/cli/src/lib` to')
+  })
+
+  it('passes once the Surface covers both the reference and the schema', () => {
+    const result = checkIntroducedConfigKeysCovered(
+      body('`reviewPolicy.maxTaskMinutes` bounds the loop.', 'packages/sources/src, apps/cli/src/lib'),
+      FIXTURE_CONFIG_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('pass')
+  })
+
+  it('reads a documented key quoted with its own instance name as documented', () => {
+    const result = checkIntroducedConfigKeysCovered(
+      body('`checks.doc-coverage.timeoutMs` is raised to 120000.'),
+      FIXTURE_CONFIG_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('pass')
+  })
+
+  it('reads a key the reference explains inside its parent row as documented', () => {
+    const result = checkIntroducedConfigKeysCovered(
+      body('`logs.url` receives every event as it occurs.'),
+      FIXTURE_CONFIG_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('pass')
+  })
+
+  it('passes a key the tracked tree already ships', () => {
+    const result = checkIntroducedConfigKeysCovered(
+      body('`reviewPolicy.securityThreshold` gates the security pass.'),
+      FIXTURE_CONFIG_REFERENCE,
+      (token) => token === 'reviewPolicy.securityThreshold'
+    )
+    expect(result.status).toBe('pass')
+  })
+
+  it('refuses a brand-new top-level key whatever words the line is written in', () => {
+    for (const objective of [
+      'A new configuration key `telemetry.endpoint` names where events go.',
+      'Add a setting `telemetry.endpoint` for event routing.',
+      'Two new keys `telemetry.endpoint` and `telemetry.sampleRate` are read from the default branch.'
+    ]) {
+      const result = checkIntroducedConfigKeysCovered(body(objective), FIXTURE_CONFIG_REFERENCE, NOTHING_IN_TREE)
+      expect(result.status).toBe('fail')
+      expect(result.errors[0]).toContain('`telemetry.endpoint`')
+      expect(result.errors[0]).toContain('Add `packages/sources/src` and `apps/cli/src/lib` to `in:`')
+    }
+  })
+
+  it('passes that same brand-new key once the Surface covers both files', () => {
+    expect(
+      checkIntroducedConfigKeysCovered(
+        body('Add a setting `telemetry.endpoint` for event routing.', 'packages/sources/src, apps/cli/src/lib'),
+        FIXTURE_CONFIG_REFERENCE,
+        NOTHING_IN_TREE
+      ).status
+    ).toBe('pass')
+  })
+
+  it('excuses a dotted token the tracked tree already spells out, whatever its root', () => {
+    expect(
+      checkIntroducedConfigKeysCovered(
+        body('`surface.value` already carries the parsed globs.'),
+        FIXTURE_CONFIG_REFERENCE,
+        (token) => token === 'surface.value'
+      ).status
+    ).toBe('pass')
+  })
+
+  it('never reads a filename as a key', () => {
+    const result = checkIntroducedConfigKeysCovered(
+      body('`brief-render.ts` and `checks.ts` and `loop.md` are untouched.'),
+      FIXTURE_CONFIG_REFERENCE,
+      NOTHING_IN_TREE
+    )
+    expect(result.status).toBe('pass')
+  })
+})
+
+describe('boundaryPinnedFiles', () => {
+  it('returns the file-shaped paths the Boundary pins, and never one its `Out:` clause disclaims', () => {
+    const body = issueBody({
+      boundary:
+        'In: the gate. Pinned files: `packages/aeg-core/src/issue-validation.ts`, `apps/cli/src/lib/forge-write.ts`, `packages/aeg-core/src`. Out: `apps/cli/src/commands/issue.ts`.',
+      objectives: ['O1. The gate refuses the body.'],
+      partLines: ['Part 1 (O1) — the gate refuses the body.'],
+      in: 'packages/aeg-core/src, apps/cli/src/lib',
+      out: 'apps/log-server'
+    })
+    expect(boundaryPinnedFiles(body)).toEqual([
+      'packages/aeg-core/src/issue-validation.ts',
+      'apps/cli/src/lib/forge-write.ts'
+    ])
+  })
+})
+
+describe('checkPinnedFileImportersCovered', () => {
+  const body = (inGlobs: string, outGlobs: string, boundaryOut = 'judging whether the Surface is too wide') =>
+    issueBody({
+      boundary: `In: the gate. Pinned files: \`packages/aeg-core/src/gate.ts\`. Out: ${boundaryOut}.`,
+      objectives: ['O1. The gate refuses the body.'],
+      partLines: ['Part 1 (O1) — the gate refuses the body.'],
+      in: inGlobs,
+      out: outGlobs
+    })
+  const importers = [{ file: 'packages/aeg-core/src/gate.ts', importers: ['apps/cli/src/commands/issue.ts'] }]
+
+  it('is dormant when no pinned file has an importer', () => {
+    expect(
+      checkPinnedFileImportersCovered(body('packages/aeg-core/src', 'apps/log-server'), [
+        { file: 'packages/aeg-core/src/gate.ts', importers: [] }
+      ]).status
+    ).toBe('pass')
+  })
+
+  it('refuses when no importer is reachable, listing the importers and the glob to add', () => {
+    const result = checkPinnedFileImportersCovered(body('packages/aeg-core/src', 'apps/log-server'), importers)
+    expect(result.status).toBe('fail')
+    expect(result.errors).toHaveLength(1)
+    expect(result.errors[0]).toContain('pins `packages/aeg-core/src/gate.ts`')
+    expect(result.errors[0]).toContain('`apps/cli/src/commands/issue.ts`')
+    expect(result.errors[0]).toContain('Add `apps/cli/src/commands` to `in:`')
+  })
+
+  it('passes when an `in:` glob covers the importer', () => {
+    expect(
+      checkPinnedFileImportersCovered(
+        body('packages/aeg-core/src, apps/cli/src/commands', 'apps/log-server'),
+        importers
+      ).status
+    ).toBe('pass')
+  })
+
+  it('refuses even when a Surface `out:` glob covers the importer — only the Boundary says "left out on purpose"', () => {
+    const result = checkPinnedFileImportersCovered(body('packages/aeg-core/src', 'apps/cli/src/commands'), importers)
+    expect(result.status).toBe('fail')
+    expect(result.errors[0]).toContain('`apps/cli/src/commands/issue.ts`')
+  })
+
+  it("passes when the Boundary's `Out:` clause names the importer's directory", () => {
+    expect(
+      checkPinnedFileImportersCovered(
+        body('packages/aeg-core/src', 'apps/log-server', 'every caller under `apps/cli/src/commands`'),
+        importers
+      ).status
+    ).toBe('pass')
+  })
+
+  it('passes when at least one of several importers is inside the Surface', () => {
+    expect(
+      checkPinnedFileImportersCovered(body('packages/aeg-core/src', 'apps/log-server'), [
+        {
+          file: 'packages/aeg-core/src/gate.ts',
+          importers: ['apps/cli/src/commands/issue.ts', 'packages/aeg-core/src/index.ts']
+        }
+      ]).status
+    ).toBe('pass')
+  })
+})
+
+// --------------------------------------------------------------------------
+// `## Premises` — the section a plan's facts about the code are written in.
+// --------------------------------------------------------------------------
+
+/** Every premise the tests below evaluate reads from this map, never from disk. */
+function readerOf(files: Record<string, string>): (path: string) => string | null {
+  return (path) => files[path] ?? null
+}
+
+const PREMISE_SOURCES = { 'packages/aeg-core/src/cancel.ts': 'export const signal = new AbortController()\n' }
+
+function bodyWithPremises(premises: string, extra = ''): string {
+  return [
+    '**Boundary** — a task about one thing.',
+    '',
+    '**Dependency rationale** — `Depends-on: —` `Conflicts-with: —`',
+    '',
+    extra,
+    '## Premises',
+    '',
+    premises,
+    ''
+  ].join('\n')
+}
+
+describe('parseIssuePremises', () => {
+  it('returns no premises for a body with no `## Premises` heading — the section is optional', () => {
+    const r = parseIssuePremises('**Boundary** — nothing to pin.\n')
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.value).toEqual([])
+  })
+
+  it('parses a bulleted and an unbulleted premise line alike', () => {
+    const r = parseIssuePremises(
+      bodyWithPremises(
+        '- `packages/aeg-core/src/cancel.ts` contains `AbortController`\n`apps/cli/src/index.ts` contains `main(`'
+      )
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value).toEqual([
+      {
+        path: 'packages/aeg-core/src/cancel.ts',
+        text: 'AbortController',
+        afterIssue: null,
+        line: '- `packages/aeg-core/src/cancel.ts` contains `AbortController`'
+      },
+      {
+        path: 'apps/cli/src/index.ts',
+        text: 'main(',
+        afterIssue: null,
+        line: '`apps/cli/src/index.ts` contains `main(`'
+      }
+    ])
+  })
+
+  it('reads the `after #<n>:` prefix as the Issue the premise waits on', () => {
+    const r = parseIssuePremises(
+      bodyWithPremises('after #841: `packages/aeg-core/src/cancel.ts` contains `drainOutbox`')
+    )
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.value[0]?.afterIssue).toBe(841)
+  })
+
+  it('keeps a literal that itself contains backticks — the text capture runs to the last backtick', () => {
+    const r = parseIssuePremises(bodyWithPremises('`apps/cli/src/index.ts` contains `the `--json` flag`'))
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.value[0]?.text).toBe('the `--json` flag')
+  })
+
+  it('refuses a line that is not a premise, quoting it', () => {
+    const r = parseIssuePremises(bodyWithPremises('the cancellation signal is already wired.'))
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/is not a premise/)
+  })
+
+  it('refuses a premise path outside the repository', () => {
+    const r = parseIssuePremises(bodyWithPremises('`../../etc/passwd` contains `root`'))
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/not a repository-relative path/)
+  })
+
+  it('refuses an absolute premise path', () => {
+    const r = parseIssuePremises(bodyWithPremises('`/etc/passwd` contains `root`'))
+    expect(r.ok).toBe(false)
+  })
+
+  it('refuses a `## Premises` heading with no premise line — an empty section reads as "checked"', () => {
+    const r = parseIssuePremises('**Boundary** — x.\n\n## Premises\n\n\n## Surface\n\nin: apps\n')
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/carries no premise line/)
+  })
+})
+
+describe('checkIssuePremises (O1)', () => {
+  it('passes a premise the checkout holds', () => {
+    const r = checkIssuePremises(
+      bodyWithPremises('`packages/aeg-core/src/cancel.ts` contains `AbortController`'),
+      readerOf(PREMISE_SOURCES)
+    )
+    expect(r.status).toBe('pass')
+  })
+
+  it('fails, naming the premise, when the file does not contain the text', () => {
+    const r = checkIssuePremises(
+      bodyWithPremises('`packages/aeg-core/src/cancel.ts` contains `drainOutbox`'),
+      readerOf(PREMISE_SOURCES)
+    )
+    expect(r.status).toBe('fail')
+    expect(r.errors.join(' ')).toMatch(/premise 1 binds `packages\/aeg-core\/src\/cancel\.ts contains:drainOutbox`/)
+    expect(r.errors.join(' ')).toMatch(/Write the premise the code actually holds/)
+  })
+
+  it('fails when the premise names a file that does not exist', () => {
+    const r = checkIssuePremises(
+      bodyWithPremises('`packages/aeg-core/src/gone.ts` contains `x`'),
+      readerOf(PREMISE_SOURCES)
+    )
+    expect(r.status).toBe('fail')
+    expect(r.errors.join(' ')).toMatch(/could not be read/)
+  })
+
+  it('does NOT check an `after #<n>:` premise — it is not true yet, by construction (O2)', () => {
+    const r = checkIssuePremises(
+      bodyWithPremises('after #841: `packages/aeg-core/src/cancel.ts` contains `drainOutbox`'),
+      readerOf(PREMISE_SOURCES)
+    )
+    expect(r.status).toBe('pass')
+  })
+
+  it('reports the malformed-section error through the same check', () => {
+    const r = checkIssuePremises(bodyWithPremises('not a premise at all'), readerOf(PREMISE_SOURCES))
+    expect(r.status).toBe('fail')
+    expect(r.errors.join(' ')).toMatch(/issue-validation Premises:/)
+  })
+})
+
+describe('checkPremiseDependencyDeclared (O2)', () => {
+  const deferred = 'after #841: `packages/aeg-core/src/cancel.ts` contains `drainOutbox`'
+
+  it('accepts a deferred premise whose Issue is declared `Depends-on` as `#<n>`', () => {
+    const body = bodyWithPremises(deferred).replace('`Depends-on: —`', '`Depends-on: #841`')
+    expect(checkPremiseDependencyDeclared(body).status).toBe('pass')
+  })
+
+  it('accepts the bare-number `Depends-on` form for the same Issue', () => {
+    const body = bodyWithPremises(deferred).replace('`Depends-on: —`', '`Depends-on: 841`')
+    expect(checkPremiseDependencyDeclared(body).status).toBe('pass')
+  })
+
+  it('refuses a deferred premise with no matching `Depends-on` edge', () => {
+    const r = checkPremiseDependencyDeclared(bodyWithPremises(deferred))
+    expect(r.status).toBe('fail')
+    expect(r.errors.join(' ')).toMatch(/defers to #841, but the Dependency rationale declares no `Depends-on`/)
+  })
+
+  it('refuses when the declared edge names a different Issue', () => {
+    const body = bodyWithPremises(deferred).replace('`Depends-on: —`', '`Depends-on: #842`')
+    expect(checkPremiseDependencyDeclared(body).status).toBe('fail')
+  })
+
+  it('ignores an unprefixed premise — nothing is deferred', () => {
+    expect(checkPremiseDependencyDeclared(bodyWithPremises('`apps/cli/src/index.ts` contains `main(`')).status).toBe(
+      'pass'
+    )
+  })
+})
+
+describe('checkBoundaryClaimsNeedPremise (O4)', () => {
+  const withBoundary = (boundary: string, premises?: string): string =>
+    [
+      `**Boundary** — ${boundary}`,
+      '',
+      '**Dependency rationale** — `Depends-on: —` `Conflicts-with: —`',
+      ...(premises ? ['', '## Premises', '', premises] : []),
+      ''
+    ].join('\n')
+
+  it('passes a Boundary that claims nothing about the code as it stands', () => {
+    expect(checkBoundaryClaimsNeedPremise(withBoundary('add a cancellation signal to the loop.')).status).toBe('pass')
+  })
+
+  for (const word of ['already', 'currently', 'wired']) {
+    it(`refuses a premise-less Issue whose Boundary says "${word}"`, () => {
+      const r = checkBoundaryClaimsNeedPremise(withBoundary(`the signal is ${word} there, inert.`))
+      expect(r.status).toBe('fail')
+      expect(r.errors.join(' ')).toMatch(new RegExp(`the Boundary says "${word}"`))
+    })
+  }
+
+  it('passes the same Boundary once it carries a premise', () => {
+    const r = checkBoundaryClaimsNeedPremise(
+      withBoundary(
+        'the signal is already wired, inert.',
+        '`packages/aeg-core/src/cancel.ts` contains `AbortController`'
+      )
+    )
+    expect(r.status).toBe('pass')
+  })
+
+  it('sees a trigger word inside an inline code span — the shape a Boundary actually states this claim in', () => {
+    const r = checkBoundaryClaimsNeedPremise(withBoundary('the signal is `already wired`, inert.'))
+    expect(r.status).toBe('fail')
+    expect(r.errors.join(' ')).toMatch(/the Boundary says "already"/)
+  })
+
+  it('sees a trigger word whose whole sentence is one inline span', () => {
+    expect(checkBoundaryClaimsNeedPremise(withBoundary('`the drain is currently inert`.')).status).toBe('fail')
+  })
+
+  it('passes that same backticked Boundary once it carries a premise', () => {
+    const r = checkBoundaryClaimsNeedPremise(
+      withBoundary(
+        'the signal is `already wired`, inert.',
+        '`packages/aeg-core/src/cancel.ts` contains `AbortController`'
+      )
+    )
+    expect(r.status).toBe('pass')
+  })
+
+  it('matches the trigger words whole — `wiredness` is not a claim', () => {
+    expect(checkBoundaryClaimsNeedPremise(withBoundary('judge the wiredness of nothing.')).status).toBe('pass')
+  })
+
+  it('reads the Boundary field only — a "already" in another field never triggers it', () => {
+    const body = [
+      '**Boundary** — add a cancellation signal.',
+      '',
+      '**Traps to avoid** — the outbox drain already exists; see `aeg-root/process.md`.',
+      ''
+    ].join('\n')
+    expect(checkBoundaryClaimsNeedPremise(body).status).toBe('pass')
+  })
+
+  it('ignores a trigger word inside a fenced block — code is not a claim', () => {
+    const body = ['**Boundary** — add a signal.', '', '```', 'const already = 1', '```', ''].join('\n')
+    expect(checkBoundaryClaimsNeedPremise(body).status).toBe('pass')
+  })
+
+  it('leaves a malformed `## Premises` section to `checkIssuePremises` rather than reporting it as absent', () => {
+    const r = checkBoundaryClaimsNeedPremise(withBoundary('the signal is already wired.', 'not a premise'))
+    expect(r.status).toBe('pass')
   })
 })

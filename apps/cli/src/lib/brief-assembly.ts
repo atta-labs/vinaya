@@ -19,12 +19,14 @@ import {
   buildConsumersOf,
   checkDispatchReadiness,
   checkIssueRationale,
+  checkPremisesHold,
   extractBoundaryFilePaths,
   fetchForgeFacts,
   fetchOpenIssuesByLabel,
   objectivesOf,
   parseIssueDocumentation,
   parseIssueParts,
+  parseIssuePremises,
   parseIssueStopConditions,
   parseIssueSurface,
   parseIssueTestPlan,
@@ -58,7 +60,6 @@ const DOC_OWNERS_PATH = '.vinaya/doc-owners'
 /** The workspace member that owns the unabridged gate derivations a brief may name, and the name it must declare for this repository to be the one that owns them. */
 const AEG_CORE_DIR = 'packages/aeg-core'
 const AEG_CORE_PACKAGE_NAME = '@attalabs/aeg-core'
-const WORKSPACE_TEMPLATE_PATH = 'aeg-root/templates/brief-template.md'
 const PACKAGE_ROOT = packageRoot(import.meta.url)
 const PACKAGED_TEMPLATE_PATH = join(PACKAGE_ROOT, 'aeg-root', 'templates', 'brief-template.md')
 const TEMPLATE_PATH = existsSync(PACKAGED_TEMPLATE_PATH)
@@ -137,22 +138,57 @@ function resolveRepo(): { owner: string; repo: string } | null {
 }
 
 /**
- * Whether this checkout has enough infra to attempt a brief render at all —
- * the brief template exists on disk AND the owner/repo resolves
- * (`AEG_REPO`, or a GitHub `origin` remote). `false` means the pre-write
- * brief-render gate (`forge-write.ts`'s `validateRenderedBriefForIssue`)
- * stays DORMANT — never refused — the same dormant-when-infra-absent posture
- * this file's `docOwnersContent`/`sharedPackages` seams already take
- * elsewhere. A real `vinaya` invocation always runs inside a cloned repo
- * that carries this file and a real remote, so this degrades only a rare
- * edge case (an Issue write attempted outside any real checkout, or a test
- * fixture with no repo/template infra of its own), never the normal path —
- * and it is checked BEFORE the render's own staleness/dispatch-readiness/
- * missing-section checks run, so a real checkout still gets the full,
- * fail-closed gate this pre-write validation requires.
+ * Whether this checkout has enough infra to attempt a brief render at all,
+ * and — when it does not — WHY (O3): a plan-time pass must never be printed
+ * for a render that never ran, so the caller reports the reason instead of
+ * silently claiming success.
+ *
+ * The three preconditions the render itself needs, checked here in the SAME
+ * terms dispatch resolves them:
+ *
+ *  1. **The brief template is on disk at `TEMPLATE_PATH`** — the exact,
+ *     packaged-first path `assembleAndRenderBrief`/`assembleAndRenderBriefForIssue`
+ *     read (`PACKAGED_TEMPLATE_PATH`, the copy an install ships, then the
+ *     workspace fallback), never the workspace-only copy only Vinaya's own
+ *     repository carries. Checking the workspace copy was the O1 bug: an
+ *     adopter that installs Vinaya from the registry has the packaged template
+ *     dispatch renders from but no `aeg-root/` of its own, so this gate
+ *     switched itself off and printed a pass for an Issue `task run` then
+ *     refused at brief render.
+ *  2. **The owner/repo resolves** (`AEG_REPO`, or a GitHub `origin` remote) —
+ *     the render reads the forge under that identity.
+ *  3. **A git work tree** — the render shells out to `git ls-files`/`git
+ *     rev-parse` to build the surface map and pin the revision; outside a work
+ *     tree there is nothing to render from.
+ *
+ * `{ ok: false }` means the pre-write brief-render gate
+ * (`forge-write.ts`'s `validateRenderedBriefForIssue`) does not run — but the
+ * caller now surfaces `reason` rather than treating the miss as a pass. A real
+ * `vinaya` invocation inside a cloned repo has all three, so this degrades
+ * only a genuine edge case (an Issue write attempted outside any real
+ * checkout, or a repo whose remote cannot be resolved), never the normal path,
+ * and it is checked BEFORE the render's own dispatch-readiness/missing-section
+ * checks run, so a real checkout still gets the full, fail-closed gate.
  */
-export function canRenderBriefFromHere(): boolean {
-  return existsSync(WORKSPACE_TEMPLATE_PATH) && resolveRepo() !== null
+export type BriefRenderability = { ok: true } | { ok: false; reason: string }
+
+export function canRenderBriefFromHere(): BriefRenderability {
+  if (!existsSync(TEMPLATE_PATH)) {
+    return { ok: false, reason: `the brief template is not on disk at \`${TEMPLATE_PATH}\`` }
+  }
+  if (resolveRepo() === null) {
+    return {
+      ok: false,
+      reason: 'the owner/repo could not be resolved (set `AEG_REPO=owner/repo`, or confirm `git remote get-url origin`)'
+    }
+  }
+  if (git(['rev-parse', '--is-inside-work-tree']) !== 'true') {
+    return {
+      ok: false,
+      reason: 'not inside a git work tree (the render reads `git ls-files` to build the surface map)'
+    }
+  }
+  return { ok: true }
 }
 
 async function resolveToken(): Promise<string | null> {
@@ -515,9 +551,124 @@ export function buildWorkspaceConsumersOf(): (pkg: string) => string[] {
  * `validateRenderedBriefForIssue`) can, without re-deriving the dispatch
  * gate's own classification a second time.
  */
+/**
+ * One repository-relative path as a given revision holds it — `null` when that
+ * revision has no such file. Read with `git show`, never off the working tree:
+ * by the time the dispatch premise check runs, `checkStaleAgainstRemote` has
+ * already established that `HEAD` IS the remote default branch's tip, so the
+ * commit's bytes are the default branch's bytes and an uncommitted local edit
+ * can neither satisfy a premise nor break one. `git()` cannot serve here —
+ * it trims, and a premise's literal may sit in leading or trailing whitespace.
+ */
+export function readFileAtRevision(rev: string, path: string, cwd?: string): string | null {
+  try {
+    return execFileSync('git', ['show', `${rev}:${path}`], {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    })
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Which of an Issue's premises a brief preparation asserts.
+ *
+ * `'all'` — a real dispatch (O3). Every premise is asserted, deferred ones
+ * included: an `after #<n>:` premise is unchecked when the Issue is cut
+ * precisely because the task that makes it true has not merged yet, so
+ * dispatch is the first moment it can be asserted at all. The revision read is
+ * the remote default branch's tip, which the freshness gate just established.
+ *
+ * `'none'` — the pre-write render `issue create`/`issue edit` runs to grade the
+ * bytes it is about to send (`forge-write.ts`'s
+ * `validateRenderedBriefForIssue`). That render asserts NO premise, for two
+ * reasons. A deferred premise is not true yet by construction, so asserting it
+ * would refuse the very write the deferral exists to allow (O2) — the exact
+ * bypass round 2's review found, where the content gate filtered deferred
+ * premises out and this same write re-checked them through the render. And
+ * plan time already has its own premise reader, `checkIssuePremises`, which
+ * runs on the same write and reads the working tree (O1); a second read here
+ * would read the HEAD *commit* instead, and since a plan-time render skips the
+ * freshness gate that commit is neither guaranteed to be the default branch
+ * nor to match the tree the content gate just graded. One moment, one reader.
+ */
+export type PremiseScope = 'all' | 'none'
+
+/**
+ * **O3 — an Issue's premises, re-checked against the default branch before a
+ * brief is rendered.** One refusal line per premise that does not hold,
+ * naming it; empty when they all do. `scope` decides whether this render
+ * asserts premises at all — see `PremiseScope`; a dispatch passes `'all'`, a
+ * plan-time render `'none'`.
+ *
+ * Under `'none'` the section's own grammar is not graded either: a malformed
+ * `## Premises` section is `checkIssuePremises`' finding on that same write,
+ * and reporting it twice would double every refusal the Planner reads.
+ *
+ * The predicate and the refusal wording are `@attalabs/aeg-core`'s
+ * (`checkPremisesHold`), the same ones `issue create`/`issue edit` apply, so
+ * the two moments can never disagree about what a premise means.
+ *
+ * `readAt` is injected for testing against a fixture repository; the default
+ * reads the real revision.
+ */
+export function dispatchPremiseRefusals(
+  issueBody: string,
+  rev: string,
+  scope: PremiseScope = 'all',
+  readAt: (rev: string, path: string) => string | null = readFileAtRevision
+): string[] {
+  if (scope === 'none') return []
+  const parsed = parseIssuePremises(issueBody)
+  if (!parsed.ok) return parsed.errors.map((e) => `Premises: ${e}`)
+  const asserted = parsed.value.map((premise, index) => ({ premise, index }))
+  return checkPremisesHold(asserted, (path) => readAt(rev, path))
+}
+
 export type AssembleAndRenderBriefResult =
   | { ok: true; brief: string; issue: number }
   | { ok: false; missing: string[]; dispatchBlockerDetails?: DispatchBlocker[] }
+
+/**
+ * Plan-time render options. `skipFreshness` bypasses the fast-forward and
+ * staleness checks both callers otherwise run FIRST: checkout freshness is a
+ * DISPATCH-time gate (a `task run` renders from the tip), never a plan-time
+ * one. A Planner may legitimately cut or edit Issues from a checkout that is
+ * behind the remote default branch, and the write gate that renders the brief
+ * only to GRADE it (`forge-write.ts`'s `validateRenderedBriefForIssue`) must
+ * not refuse them for that. Dispatch omits it (defaults `false`), keeping its
+ * own freshness guarantee unchanged.
+ */
+export type BriefRenderOptions = {
+  skipFreshness?: boolean
+  /**
+   * Which premises this render asserts — see `PremiseScope`. Omitted (a
+   * dispatch) is `'all'`; the plan-time write gate passes `'none'`. It rides
+   * here rather than as its own positional parameter so one options object
+   * carries every "this is a plan-time render, not a dispatch" fact, and a
+   * caller cannot set one half of that and forget the other.
+   */
+  premiseScope?: PremiseScope
+}
+
+/** `assembleAndRenderBriefForIssue`'s render options — plan-time freshness plus the O2 tranche-draft escape hatch. */
+export type IssueBriefRenderOptions = BriefRenderOptions & {
+  /**
+   * O2 — render a tranche-labeled Issue as a DRAFT at create time, before it
+   * has an Issue number. `slug` comes from its `vinaya/tranche:*` label,
+   * `taskId` from its `[slug] <n> — …` title. Given, the tranche-label refusal
+   * below is skipped — a create legitimately cannot go through the tranche
+   * path (`assembleAndRenderBrief` reads a forge Issue that does not exist
+   * yet) — and the rendered brief carries the tranche identity in its §1
+   * header, exactly as dispatch will once the Issue is cut. The brief-schema
+   * rules that matter to the write gate (premise pins, Boundary/Surface
+   * agreement, section shape) are label-independent, so the draft render
+   * refuses precisely what dispatch would.
+   */
+  trancheDraft?: { slug: string; taskId: string }
+}
 
 /**
  * **O2 — names what dispatch looked for.** A bare "not
@@ -563,7 +714,8 @@ export async function assembleAndRenderBrief(
   trancheSlug: string,
   taskId: string,
   surfaceGlobsOverride?: string[],
-  bodyOverride?: string
+  bodyOverride?: string,
+  opts?: BriefRenderOptions
 ): Promise<AssembleAndRenderBriefResult> {
   const repo = resolveRepo()
   if (!repo) {
@@ -579,15 +731,21 @@ export async function assembleAndRenderBrief(
   // unreachable remote refuse (`fastForwardToRemoteIfSafe`, the one function
   // both brief-preparation callers run before the staleness check). Done here,
   // before any forge read, so a refused checkout never pays for a Tranche/Issue
-  // fetch it is about to refuse anyway.
-  const fastForward = fastForwardToRemoteIfSafe()
-  if (fastForward.kind === 'refused') return { ok: false, missing: [fastForward.reason] }
+  // fetch it is about to refuse anyway. `skipFreshness` bypasses it entirely
+  // for the plan-time write gate — freshness is a dispatch-time gate, and a
+  // Planner may cut/edit Issues from a checkout that is behind.
+  if (!opts?.skipFreshness) {
+    const fastForward = fastForwardToRemoteIfSafe()
+    if (fastForward.kind === 'refused') return { ok: false, missing: [fastForward.reason] }
+  }
 
   // Read HEAD *after* the fast-forward, so the staleness backstop below and the
   // frozen brief's own `sourceRevision` reflect the tip actually rendered from.
   const headSha = git(['rev-parse', 'HEAD'])
-  const staleness = checkStaleAgainstRemote(headSha)
-  if (staleness.length > 0) return { ok: false, missing: staleness }
+  if (!opts?.skipFreshness) {
+    const staleness = checkStaleAgainstRemote(headSha)
+    if (staleness.length > 0) return { ok: false, missing: staleness }
+  }
 
   const source = createForgeSource({ owner: repo.owner, repo: repo.repo })
   let tranche: Awaited<ReturnType<typeof source.getTranche>>
@@ -632,6 +790,13 @@ export async function assembleAndRenderBrief(
   }
   const issueBody = bodyOverride ?? openIssueMatch.body
   const issueRationalePass = checkIssueRationale(issueBody).status !== 'fail'
+
+  // O3 — the Issue's own premises, re-asserted against the default branch
+  // before anything is rendered from them. `opts.premiseScope` is what keeps a
+  // plan-time render out of O2's way: omitted (a dispatch) asserts every
+  // premise, and the pre-write validation path passes `'none'`.
+  const premiseRefusals = dispatchPremiseRefusals(issueBody, headSha, opts?.premiseScope ?? 'all')
+  if (premiseRefusals.length > 0) return { ok: false, missing: premiseRefusals }
 
   const taskRefs = tranche.tasks.map((t) => ({ id: t.id, issue: t.issue }))
   const snapshot = await fetchForgeFacts({ owner: repo.owner, repo: repo.repo, tranche: trancheSlug, tasks: taskRefs })
@@ -746,6 +911,10 @@ export async function assembleAndRenderBrief(
     testPlan,
     stopConditions,
     documentation,
+    premises: (() => {
+      const parsed = parseIssuePremises(issueBody)
+      return parsed.ok ? parsed.value : []
+    })(),
     // An absent `gateCutovers` key resolves to no cutover, so the renderer's
     // missing-`## Objectives`/`## Documentation` refusal grandfathers exactly
     // the class the Issue gate does (O1); this repo restates its own (O2).
@@ -868,7 +1037,8 @@ function extractProjectField(body: string): string[] {
  */
 export async function assembleAndRenderBriefForIssue(
   issueNumber: number,
-  override?: DraftIssueOverride
+  override?: DraftIssueOverride,
+  opts?: IssueBriefRenderOptions
 ): Promise<AssembleAndRenderBriefResult> {
   const repo = resolveRepo()
   if (!repo) {
@@ -880,13 +1050,18 @@ export async function assembleAndRenderBriefForIssue(
 
   // O1/O2/O3 — the same fast-forward-before-staleness step the tranche path
   // runs (see `assembleAndRenderBrief`): both brief-preparation callers of the
-  // staleness check share this one function.
-  const fastForward = fastForwardToRemoteIfSafe()
-  if (fastForward.kind === 'refused') return { ok: false, missing: [fastForward.reason] }
+  // staleness check share this one function. `skipFreshness` bypasses it for
+  // the plan-time write gate, exactly as the tranche path does.
+  if (!opts?.skipFreshness) {
+    const fastForward = fastForwardToRemoteIfSafe()
+    if (fastForward.kind === 'refused') return { ok: false, missing: [fastForward.reason] }
+  }
 
   const headSha = git(['rev-parse', 'HEAD'])
-  const staleness = checkStaleAgainstRemote(headSha)
-  if (staleness.length > 0) return { ok: false, missing: staleness }
+  if (!opts?.skipFreshness) {
+    const staleness = checkStaleAgainstRemote(headSha)
+    if (staleness.length > 0) return { ok: false, missing: staleness }
+  }
 
   const found: IssueForBrief | null = override
     ? { title: override.title, body: override.body, labels: override.labels, state: 'OPEN' }
@@ -894,7 +1069,10 @@ export async function assembleAndRenderBriefForIssue(
   if (!found) {
     return { ok: false, missing: [`could not fetch Issue #${issueNumber} (\`gh issue view\`).`] }
   }
-  if (found.labels.some((l) => l.startsWith('vinaya/tranche:'))) {
+  // A tranche-labeled Issue belongs on the tranche path — EXCEPT an O2 draft
+  // create (`trancheDraft`), which has no forge Issue for that path to read
+  // yet and is rendered here, as a draft, on purpose.
+  if (!opts?.trancheDraft && found.labels.some((l) => l.startsWith('vinaya/tranche:'))) {
     return {
       ok: false,
       missing: [
@@ -908,9 +1086,20 @@ export async function assembleAndRenderBriefForIssue(
   const issueBody = found.body
   const issueRationalePass = checkIssueRationale(issueBody).status !== 'fail'
 
+  // O3 — the same premise re-assertion the tranche path runs, on the one
+  // shared function and under the same scope rule; a backlog Issue's premises
+  // are premises too, and a backlog Issue's plan-time render is exactly where
+  // round 2's review found the deferred-premise double-check.
+  const premiseRefusals = dispatchPremiseRefusals(issueBody, headSha, opts?.premiseScope ?? 'all')
+  if (premiseRefusals.length > 0) return { ok: false, missing: premiseRefusals }
+
+  // O2 — a tranche draft carries its real tranche identity (slug from the
+  // label, id from the title); a backlog Issue's task id is the Issue number
+  // itself, as before.
+  const effectiveTaskId = opts?.trancheDraft ? opts.trancheDraft.taskId : String(issueNumber)
   const { dependsOn: dependsOnIds, conflictsWith: conflictsWithIds } = parseRationaleDeps(issueBody)
   const task: Task = {
-    id: String(issueNumber),
+    id: effectiveTaskId,
     title: found.title,
     issue: issueNumber,
     projects: extractProjectField(issueBody),
@@ -947,7 +1136,7 @@ export async function assembleAndRenderBriefForIssue(
   const priorTrancheArchival: DispatchPriorTrancheFact[] = []
 
   const gateInput: DispatchGateInput = {
-    trancheSlug: `issue-${issueNumber}`,
+    trancheSlug: opts?.trancheDraft ? opts.trancheDraft.slug : `issue-${issueNumber}`,
     task,
     issue: { number: issueNumber, state: 'open' },
     issueRationalePass,
@@ -1000,8 +1189,8 @@ export async function assembleAndRenderBriefForIssue(
     : { kind: 'sources', sources: [] }
 
   const facts: BriefFacts = {
-    trancheSlug: null,
-    taskId: String(issueNumber),
+    trancheSlug: opts?.trancheDraft ? opts.trancheDraft.slug : null,
+    taskId: effectiveTaskId,
     title: task.title,
     issue: issueNumber,
     projects: task.projects,
@@ -1017,6 +1206,10 @@ export async function assembleAndRenderBriefForIssue(
     testPlan,
     stopConditions,
     documentation,
+    premises: (() => {
+      const parsed = parseIssuePremises(issueBody)
+      return parsed.ok ? parsed.value : []
+    })(),
     // See the tranche-task facts above — absent `gateCutovers` → no cutover (O1).
     cutovers: resolveGateCutovers(loadConfig()),
     dispatchReady: gate.ready,
