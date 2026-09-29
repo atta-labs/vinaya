@@ -503,7 +503,12 @@ describe('buildVerdictFromReport — deferral context (O2/O3/O4)', () => {
     resumeId: 'session-1',
     timedOut: false
   }
-  const MAJOR_POLICY = { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH', maxRounds: 3 } as const
+  const MAJOR_POLICY = {
+    codeReviewThreshold: 'MAJOR',
+    securityThreshold: 'HIGH',
+    maxRounds: 3,
+    maxTaskMinutes: 180
+  } as const
 
   function writeReviewer(): void {
     writeFileSync(

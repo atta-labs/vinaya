@@ -40,6 +40,7 @@ export {
   markEffectUncertain,
   mkdirNoSymlinks,
   readCurrentOwnership,
+  readEarliestOwnership,
   readEffect,
   readEscalation,
   readInput,

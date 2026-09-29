@@ -362,6 +362,10 @@ export type LoopStateSnapshot = {
   deliveredFindings: RoundHeadIdentity | null
   /** The loop's two repeat detectors, so a re-exec or an attach continues counting rather than starting over — see `LoopStateRecordSchema.repeatMemory`. */
   repeatMemory: { blockingFindings: string[]; lastFailure: { signature: string; message: string } | null }
+  /** When the loop first started on this task, ISO-8601 — written by the first driver to persist state for it and carried forward unchanged by every later one, so the task's wall-clock budget measures from one fixed instant across restarts. */
+  taskStartedAt: string
+  /** Milliseconds recorded against each phase so far, including the phase this write is entering — accumulated across restarts, and narration only (the budget is decided on elapsed time). */
+  phaseMs: Record<string, number>
 }
 
 /**
@@ -383,6 +387,8 @@ export function persistLoopState(task: number, snapshot: LoopStateSnapshot, now:
       heldResult: snapshot.heldResult,
       deliveredFindings: snapshot.deliveredFindings,
       repeatMemory: snapshot.repeatMemory,
+      taskStartedAt: snapshot.taskStartedAt,
+      phaseMs: snapshot.phaseMs,
       recordedAt: now().toISOString()
     })
   } catch {

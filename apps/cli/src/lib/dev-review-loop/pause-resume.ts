@@ -646,6 +646,10 @@ export type RecoveredLoopState = {
   deliveredFindings: RoundHeadIdentity | null
   /** The two repeat detectors as last persisted — `null` for a record written before this field existed, which reads back as no memory (both detectors start empty), never as a corrupt record. */
   repeatMemory: { blockingFindings: string[]; lastFailure: { signature: string; message: string } | null } | null
+  /** When the loop first started on this task, as the first driver to persist state for it recorded — `null` for a record written before this field existed, which sends the caller to the earliest ownership epoch instead. */
+  taskStartedAt: string | null
+  /** Milliseconds recorded against each phase so far — `{}` for a record written before this field existed. Narration only: the budget is decided on elapsed time. */
+  phaseMs: Record<string, number>
 }
 
 /**
@@ -673,7 +677,9 @@ export function recoverLoopState(
       budgets: parsed.value.budgets,
       heldResult: parsed.value.heldResult,
       deliveredFindings: parsed.value.deliveredFindings,
-      repeatMemory: parsed.value.repeatMemory ?? null
+      repeatMemory: parsed.value.repeatMemory ?? null,
+      taskStartedAt: parsed.value.taskStartedAt ?? null,
+      phaseMs: parsed.value.phaseMs ?? {}
     }
   }
 }
@@ -817,6 +823,14 @@ export const PAUSE_REASON_PROFILE: Record<
       'one further developer turn on the same blocking finding, which left it open — a third was not spent.',
     nextActions: [
       'Read the finding key(s) in `detail`, then rule on the finding itself or redirect the work that cannot close it.'
+    ]
+  },
+  time_budget: {
+    requestedAuthority: 'principal',
+    attemptedRecovery:
+      'none — the task passed its wall-clock budget; the loop stopped rather than spend more time unwatched.',
+    nextActions: [
+      'Read `detail` for the budget and where the time went, then either raise `reviewPolicy.maxTaskMinutes`, redirect the work, or resume to spend another budget on it.'
     ]
   },
   repeat_failure: {

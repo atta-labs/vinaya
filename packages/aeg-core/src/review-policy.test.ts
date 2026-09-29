@@ -5,6 +5,7 @@ import {
   CODE_REVIEW_SEVERITY_ORDER,
   codeReviewBlockingSeverities,
   consequentialFindings,
+  DEFAULT_MAX_TASK_MINUTES,
   DEFAULT_REVIEW_POLICY,
   type FindingDeferralContext,
   evaluateCodeReview,
@@ -18,7 +19,19 @@ import {
   securityBlockingSeverities
 } from './review-policy'
 
-const THIS_REPO_POLICY: ReviewPolicy = { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH', maxRounds: 3 }
+const THIS_REPO_POLICY: ReviewPolicy = {
+  codeReviewThreshold: 'MAJOR',
+  securityThreshold: 'HIGH',
+  maxRounds: 3,
+  maxTaskMinutes: 180
+}
+
+describe('the default policy carries a task time budget', () => {
+  test('an omitted policy means three hours, the same way it means three rounds', () => {
+    expect(DEFAULT_MAX_TASK_MINUTES).toBe(180)
+    expect(DEFAULT_REVIEW_POLICY.maxTaskMinutes).toBe(DEFAULT_MAX_TASK_MINUTES)
+  })
+})
 
 describe('blockingSeverities', () => {
   test('is the scale prefix ending at threshold, inclusive', () => {
@@ -236,7 +249,12 @@ describe('isConsequentialFinding / consequentialFindings (O4) — the single "co
   })
 
   test('the filter — not the evaluator — is what clears an all-resolved blocking set', () => {
-    const policy = { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH', maxRounds: 3 } as const
+    const policy = {
+      codeReviewThreshold: 'MAJOR',
+      securityThreshold: 'HIGH',
+      maxRounds: 3,
+      maxTaskMinutes: 180
+    } as const
     const findings = [
       { severity: 'BLOCKER', state: 'resolved' },
       { severity: 'MAJOR', state: 'resolved' }
@@ -362,7 +380,12 @@ describe('evaluateReviewFindings — deferred findings carried out (O4)', () => 
   })
 
   test('evaluateCodeReview / evaluateSecurityReview thread the context through', () => {
-    const policy: ReviewPolicy = { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH', maxRounds: 3 }
+    const policy: ReviewPolicy = {
+      codeReviewThreshold: 'MAJOR',
+      securityThreshold: 'HIGH',
+      maxRounds: 3,
+      maxTaskMinutes: 180
+    }
     const ctx: FindingDeferralContext = { inSurface: () => false }
     expect(evaluateCodeReview([{ severity: 'MAJOR', location: 'x.ts:1' }], policy, ctx).deferredFindings).toHaveLength(
       1

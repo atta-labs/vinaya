@@ -1,4 +1,4 @@
-export { assessRound } from './assess-round'
+export { assessRound, renderPhaseBreakdown, renderTaskBudgetDetail, taskBudgetExceeded } from './assess-round'
 export { parseSummaryConfidenceRows, renderSummary } from './render-summary'
 export type { SummaryConfidenceRow } from './render-summary'
 export { initialLoopState } from './types'
@@ -28,5 +28,6 @@ export type {
   RoundOutcome,
   RoundRecord,
   RoundStats,
+  TaskClock,
   VerdictObservation
 } from './types'

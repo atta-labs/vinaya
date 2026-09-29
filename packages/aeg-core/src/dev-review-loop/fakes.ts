@@ -14,6 +14,7 @@ import type {
   LoopState,
   Observations,
   RoundStats,
+  TaskClock,
   VerdictObservation
 } from './types'
 
@@ -97,16 +98,23 @@ export function notMetVerdict(role: 'reviewer' | 'security', objectiveIds: strin
  * state forward and concatenating every emitted event — the shape Part 1's
  * byte-for-byte event-list assertion needs. Returns the final state, the flat
  * event list, and every decision returned along the way (in order).
+ *
+ * `clockAt` is the task's wall clock as the real driver would read it before
+ * each step, by step index — the scripted equivalent of a run whose elapsed
+ * time grows between observations. Omitted, no clock is passed at all, which
+ * is exactly a caller that cannot measure the task's first start: the time
+ * budget is then never armed and every existing scenario behaves as before.
  */
 export function runScenario(
   initial: LoopState,
-  steps: Observations[]
+  steps: Observations[],
+  clockAt?: (index: number) => TaskClock | undefined
 ): { state: LoopState; events: DevReviewLoopEventInput[]; decisions: Decision[] } {
   let state = initial
   const events: DevReviewLoopEventInput[] = []
   const decisions: Decision[] = []
-  for (const step of steps) {
-    const result = assessRound(state, step)
+  for (const [index, step] of steps.entries()) {
+    const result = assessRound(state, step, clockAt?.(index))
     state = result.state
     events.push(...result.events)
     decisions.push(result.decision)

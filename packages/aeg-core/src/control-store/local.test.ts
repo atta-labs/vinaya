@@ -14,6 +14,7 @@ import {
   listStartedEffectKeys,
   markEffectUncertain,
   readCurrentOwnership,
+  readEarliestOwnership,
   readEffect,
   readEscalation,
   readInput,
@@ -100,6 +101,33 @@ describe('writeManifest / readManifest (#555, O1)', () => {
   })
 })
 
+describe('readEarliestOwnership — the oldest durable timestamp a task has', () => {
+  it('returns epoch 1 however many epochs were claimed after it, so a restart cannot move the floor', () => {
+    acquireOwnership(deps, 552, 'first-owner')
+    acquireOwnership(deps, 552, 'second-owner')
+    acquireOwnership(deps, 552, 'third-owner')
+    const earliest = readEarliestOwnership(deps, 552)
+    expect(earliest?.epoch).toBe(1)
+    expect(earliest?.ownerId).toBe('first-owner')
+    // The current read and the earliest read disagree by construction — that
+    // difference is the whole point of having both.
+    expect(readCurrentOwnership(deps, 552).epoch).toBe(3)
+  })
+
+  it('a task nothing has ever claimed has no earliest ownership at all', () => {
+    expect(readEarliestOwnership(deps, 9999)).toBeNull()
+  })
+
+  it('skips a torn epoch file rather than reporting it — this read exists to find a usable timestamp', () => {
+    acquireOwnership(deps, 552, 'first-owner')
+    acquireOwnership(deps, 552, 'second-owner')
+    writeFileSync(join(dir, '552', 'control', 'ownership', 'epoch-000001.json'), '{"version":1,"kind":"owner')
+    const earliest = readEarliestOwnership(deps, 552)
+    expect(earliest?.epoch).toBe(2)
+    expect(earliest?.ownerId).toBe('second-owner')
+  })
+})
+
 describe('writeLoopState / readLoopState (control-store-v1 task 4, O1)', () => {
   const input = {
     round: 2,
@@ -123,6 +151,29 @@ describe('writeLoopState / readLoopState (control-store-v1 task 4, O1)', () => {
 
   it('a never-written task reads as absent, never corrupt', () => {
     expect(readLoopState(deps, 9999)).toEqual({ status: 'absent' })
+  })
+
+  it("round-trips the task's first start and its per-phase times, so a later driver measures one budget from one instant", () => {
+    const withClock = {
+      ...input,
+      taskStartedAt: '2026-09-13T21:00:00.000Z',
+      phaseMs: { dispatch_developer: 7_200_000, dispatch_reviewers: 900_000 }
+    }
+    writeLoopState(deps, 554, withClock)
+    const read = readLoopState(deps, 554)
+    expect(read.status === 'ok' && read.value.taskStartedAt).toBe('2026-09-13T21:00:00.000Z')
+    expect(read.status === 'ok' && read.value.phaseMs).toEqual({
+      dispatch_developer: 7_200_000,
+      dispatch_reviewers: 900_000
+    })
+  })
+
+  it('a record written before the clock fields existed still parses, reading back as no recorded start', () => {
+    writeLoopState(deps, 554, input)
+    const read = readLoopState(deps, 554)
+    expect(read.status).toBe('ok')
+    expect(read.status === 'ok' && read.value.taskStartedAt).toBeUndefined()
+    expect(read.status === 'ok' && read.value.phaseMs).toBeUndefined()
   })
 
   it('overwrites in place on every transition — unlike run/input, one record per task, not one per round', () => {

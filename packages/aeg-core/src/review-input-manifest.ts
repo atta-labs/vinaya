@@ -61,9 +61,10 @@ export function briefHash(brief: string): string {
 
 /**
  * `sha256` of the effective review policy — one canonical field order
- * (`codeReviewThreshold`, `securityThreshold`, then `maxRounds`) so two
- * callers resolving the identical `ReviewPolicy` value always agree on its
- * digest regardless of how they built the object literal.
+ * (`codeReviewThreshold`, `securityThreshold`, `maxRounds`, then
+ * `maxTaskMinutes`) so two callers resolving the identical `ReviewPolicy`
+ * value always agree on its digest regardless of how they built the object
+ * literal.
  *
  * `maxRounds` — the incoming round-policy field (O1; Traps to avoid: "include the incoming round-policy field in the
  * relevant configuration identity") — is part of the digest so the policy
@@ -73,6 +74,12 @@ export function briefHash(brief: string): string {
  * one-time cost is the same fail-closed transition every other field in this
  * family already paid: a verdict cast before this field entered the digest
  * carries the old digest and needs one fresh review round.
+ *
+ * `maxTaskMinutes` — the task's wall-clock budget — is in the digest for the
+ * identical reason, and pays the identical one-time cost: a run whose time
+ * budget changed under a verdict is a policy change the gate must see, so the
+ * digest covers the COMPLETE effective policy rather than the subset that
+ * happened to exist when this function was written.
  */
 export function policyDigest(policy: ReviewPolicy): string {
   return createHash('sha256')
@@ -80,7 +87,8 @@ export function policyDigest(policy: ReviewPolicy): string {
       JSON.stringify({
         codeReviewThreshold: policy.codeReviewThreshold,
         securityThreshold: policy.securityThreshold,
-        maxRounds: policy.maxRounds
+        maxRounds: policy.maxRounds,
+        maxTaskMinutes: policy.maxTaskMinutes
       })
     )
     .digest('hex')

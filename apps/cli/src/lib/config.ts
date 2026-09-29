@@ -697,7 +697,11 @@ export const VinayaConfigSchema = z.object({
       // here would fail the WHOLE config's schema parse (silently falling
       // back to null everywhere) rather than this field's own loud refusal
       // in `resolveReviewPolicy`, below.
-      maxRounds: z.number().optional()
+      maxRounds: z.number().optional(),
+      // Same deliberately-loose typing, same reason as the fields above: a
+      // schema-level refusal here would fail the WHOLE config's parse rather
+      // than this field's own loud refusal in `resolveReviewPolicy`.
+      maxTaskMinutes: z.number().optional()
     })
     .optional(),
   // The five Issue/PR gate cutovers — one Issue/PR number per gate below
@@ -1068,7 +1072,10 @@ export function resolveReleaseActor(config: VinayaConfig | null): string {
  * this key). Per-field: an omitted `codeReviewThreshold`/`securityThreshold`
  * defaults; a PRESENT one that is not a real severity on its role's own scale
  * REFUSES (throws), never falls back to the default — an unknown value is a
- * config defect to fix, not a value to silently downgrade past. Same sourcing
+ * config defect to fix, not a value to silently downgrade past. The two
+ * numeric fields (`maxRounds`, `maxTaskMinutes`) follow the identical rule,
+ * each with its own legal range — `maxTaskMinutes` accepts `0`, which turns
+ * the task's wall-clock budget off. Same sourcing
  * rule as `resolvePrincipalAllowlist`/`resolveReleaseActor`: callers MUST
  * pass `loadTrustAnchorConfig()` (the default branch), never `loadConfig()`
  * or anything PR-checkout-derived, so a change cannot lower its own
@@ -1100,10 +1107,22 @@ export function resolveReviewPolicy(config: VinayaConfig | null): ReviewPolicy {
       `vinaya.config.json: reviewPolicy.maxRounds "${maxRounds}" is not a positive integer — fix the config, this never falls back to a default.`
     )
   }
+  // The task's own wall-clock budget, in minutes. Same refuse-never-downgrade
+  // discipline as the fields above, with one difference the round cap has no
+  // equivalent for: `0` is a LEGAL value that turns the budget off, so the
+  // floor here is zero rather than one. A negative or fractional value is
+  // still a config defect to fix, never a silent fallback.
+  const maxTaskMinutes = raw.maxTaskMinutes ?? DEFAULT_REVIEW_POLICY.maxTaskMinutes
+  if (!Number.isInteger(maxTaskMinutes) || maxTaskMinutes < 0) {
+    throw new Error(
+      `vinaya.config.json: reviewPolicy.maxTaskMinutes "${maxTaskMinutes}" is not a non-negative integer (0 turns the budget off) — fix the config, this never falls back to a default.`
+    )
+  }
   return {
     codeReviewThreshold: codeReviewThreshold as ReviewPolicy['codeReviewThreshold'],
     securityThreshold: securityThreshold as ReviewPolicy['securityThreshold'],
-    maxRounds
+    maxRounds,
+    maxTaskMinutes
   }
 }
 

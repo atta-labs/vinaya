@@ -122,12 +122,14 @@ describe('config', () => {
     expect(resolveReviewPolicy({ reviewPolicy: { codeReviewThreshold: 'MAJOR' } })).toEqual({
       codeReviewThreshold: 'MAJOR',
       securityThreshold: 'HIGH',
-      maxRounds: 3
+      maxRounds: 3,
+      maxTaskMinutes: 180
     })
     expect(resolveReviewPolicy({ reviewPolicy: { securityThreshold: 'MEDIUM' } })).toEqual({
       codeReviewThreshold: 'BLOCKER',
       securityThreshold: 'MEDIUM',
-      maxRounds: 3
+      maxRounds: 3,
+      maxTaskMinutes: 180
     })
   })
 
@@ -135,7 +137,8 @@ describe('config', () => {
     expect(resolveReviewPolicy({ reviewPolicy: { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH' } })).toEqual({
       codeReviewThreshold: 'MAJOR',
       securityThreshold: 'HIGH',
-      maxRounds: 3
+      maxRounds: 3,
+      maxTaskMinutes: 180
     })
   })
 
@@ -159,9 +162,32 @@ describe('config', () => {
     expect(resolveReviewPolicy({ reviewPolicy: { maxRounds: 5 } })).toEqual({
       codeReviewThreshold: 'BLOCKER',
       securityThreshold: 'HIGH',
-      maxRounds: 5
+      maxRounds: 5,
+      maxTaskMinutes: 180
     })
     expect(resolveReviewPolicy({})).toEqual(expect.objectContaining({ maxRounds: 3 }))
+  })
+
+  it('resolveReviewPolicy resolves a configured maxTaskMinutes, defaults to 180 when omitted, and accepts 0 as off', () => {
+    expect(resolveReviewPolicy({ reviewPolicy: { maxTaskMinutes: 45 } })).toEqual({
+      codeReviewThreshold: 'BLOCKER',
+      securityThreshold: 'HIGH',
+      maxRounds: 3,
+      maxTaskMinutes: 45
+    })
+    expect(resolveReviewPolicy({})).toEqual(expect.objectContaining({ maxTaskMinutes: 180 }))
+    // `0` is the one value that turns a bound OFF rather than tightening it,
+    // so it must resolve rather than refuse the way `maxRounds: 0` does.
+    expect(resolveReviewPolicy({ reviewPolicy: { maxTaskMinutes: 0 } })).toEqual(
+      expect.objectContaining({ maxTaskMinutes: 0 })
+    )
+  })
+
+  it('resolveReviewPolicy REFUSES a negative or fractional maxTaskMinutes, never falls back', () => {
+    expect(() => resolveReviewPolicy({ reviewPolicy: { maxTaskMinutes: -1 } })).toThrow(
+      /maxTaskMinutes "-1" is not a non-negative integer/
+    )
+    expect(() => resolveReviewPolicy({ reviewPolicy: { maxTaskMinutes: 12.5 } })).toThrow(/maxTaskMinutes/)
   })
 
   it('resolveReviewPolicy (#543 O4) REFUSES a non-positive-integer maxRounds, never falls back', () => {

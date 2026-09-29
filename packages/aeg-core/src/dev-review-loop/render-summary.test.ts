@@ -10,7 +10,8 @@ const CONFIG: LoopConfig = {
   task: 414,
   reviewers: ['code-reviewer', 'security'],
   models: { 'code-reviewer': 'sonnet', security: 'sonnet' },
-  maxRounds: 3
+  maxRounds: 3,
+  maxTaskMinutes: 180
 }
 
 function freshState() {

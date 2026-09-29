@@ -459,7 +459,7 @@ describe('round 5 review, MINOR — a failure that never reaches postWithRetry/r
 })
 
 describe('PAUSE_REASON_PROFILE — every reason whose next-action mentions `detail` presumes one is rendered (O3)', () => {
-  it('carries exactly the fourteen documented PauseReason members, no more, no fewer', () => {
+  it('carries exactly the fifteen documented PauseReason members, no more, no fewer', () => {
     expect(ALL_PAUSE_REASONS.sort()).toEqual(
       [
         'escalation',
@@ -469,6 +469,7 @@ describe('PAUSE_REASON_PROFILE — every reason whose next-action mentions `deta
         'reappearance',
         'repeat_finding',
         'repeat_failure',
+        'time_budget',
         'infrastructure',
         'no_push',
         'objectives_changed',

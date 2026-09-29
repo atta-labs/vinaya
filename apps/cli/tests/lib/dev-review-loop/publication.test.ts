@@ -114,7 +114,12 @@ describe('bindingOfPosted / unboundFields — publishRound’s manifest binding 
   })
 
   it('a changed policy digest refuses, and a missing Policy digest: echo is never grandfathered', () => {
-    const changedPolicy = policyDigest({ codeReviewThreshold: 'MAJOR', securityThreshold: 'LOW', maxRounds: 3 })
+    const changedPolicy = policyDigest({
+      codeReviewThreshold: 'MAJOR',
+      securityThreshold: 'LOW',
+      maxRounds: 3,
+      maxTaskMinutes: 180
+    })
     const stale = bindingOfPosted(posted(), manifest({ policyDigest: changedPolicy }))
     expect(stale.policyDigest).toBe(false)
 
@@ -149,7 +154,12 @@ describe('bindingOfPosted / unboundFields — publishRound’s manifest binding 
  */
 describe('publish-then-gate agreement on resolved findings (O3)', () => {
   const HEAD_SHA = '8365ca57e9f3a1b2c4d5e6f708192a3b4c5d6e7f'
-  const MAJOR_HIGH_POLICY: ReviewPolicy = { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH', maxRounds: 3 }
+  const MAJOR_HIGH_POLICY: ReviewPolicy = {
+    codeReviewThreshold: 'MAJOR',
+    securityThreshold: 'HIGH',
+    maxRounds: 3,
+    maxTaskMinutes: 180
+  }
   const MAJOR_HIGH_POLICY_DIGEST = policyDigest(MAJOR_HIGH_POLICY)
 
   const codeReviewBody = (verdict: string, findingLines: string[]) =>
