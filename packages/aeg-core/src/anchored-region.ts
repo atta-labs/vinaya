@@ -42,7 +42,7 @@
  * Deliberately minimal: seven field names, one shape. This is a delimiting
  * convention, not a metadata DSL; resist adding structure to it.
  *
- * `EVIDENCE` (fix/pr-report-emitter) differs from the other six in one way:
+ * `EVIDENCE` (fix/pr-report-emitter) differs from the other five in one way:
  * it is never hand-typed. `vinaya pr report --write` is the only writer, and
  * `check-evidence-fresh` is the only reader — no prose-fallback recognition
  * exists or is planned for this field, unlike the anchor-optional grammar
@@ -52,12 +52,13 @@
 import { maskCode } from '@attalabs/aeg-forge-state/strip-code'
 
 /**
- * The seven gate-read fields with an anchored home. `TOKENS`
- * joined here rather than through a second, parallel field list —
- * `pr-report.ts`'s own `AEG:TOKENS:START`/`:END` markers already use this
- * exact grammar, so the registry is the fix, not a workaround beside it.
+ * The six gate-read fields with an anchored home. A `TOKENS` entry belonged
+ * here while a pull-request body carried a token table; that table is retired
+ * — token use is recorded as the Vinaya log's own `usage` event — so nothing
+ * writes or reads that anchor any more. An older body that still carries the
+ * pair keeps it: no reader here resolves it, and no writer touches it.
  */
-export const ANCHOR_FIELDS = ['CLOSES', 'PROJECT', 'TIER', 'PREMISE', 'TEST-PLAN', 'EVIDENCE', 'TOKENS'] as const
+export const ANCHOR_FIELDS = ['CLOSES', 'PROJECT', 'TIER', 'PREMISE', 'TEST-PLAN', 'EVIDENCE'] as const
 
 export type AnchorField = (typeof ANCHOR_FIELDS)[number]
 
