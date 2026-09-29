@@ -1,0 +1,9 @@
+---
+'@attalabs/vinaya': patch
+---
+
+Every role the review loop dispatches — developer, code reviewer, security reviewer — now runs under a permission policy that refuses the commands which change the machine the agent runs on: every `security` subcommand except a `find-generic-password` read, plus `launchctl`, `crontab`, `defaults write`, `sudo`, `systemsetup`, `networksetup`, `pmset`, `dscl`, `chsh`, and `git config` at `--global` or `--system` scope. Repository-scoped `git config`, `defaults read`, and the exempted keychain read are untouched; the exempted read is now an explicit allow, so it resolves rather than falling through to the host's own approval prompt.
+
+The refusal is written twice: as `permissions.deny` entries a reader of the generated settings file can see, and as real argument inspection in the dispatched session's `PreToolUse` hook. The hook is what makes the guarantee hold for every spelling — a command inside a compound statement (`cd /tmp && security …`), behind an absolute path (`/usr/bin/security`), behind an environment prefix, or with the deciding flag in a late argument position. The policy version string moves to `v3`, so a run's first lifecycle line records which policy shape it started under.
+
+This is a floor, not a sandbox: it answers a shell command whose own text names one of these commands, and cannot answer for one reached through another interpreter. Confining that is the worker isolation boundary's job.

@@ -3231,6 +3231,207 @@ describe('buildRolePermissions — Issue #663, O1: an explicit per-role Bash all
   })
 })
 
+/**
+ * Issue #865 — the machine's own keychain, services and global settings are
+ * not a dispatched role's to change. Two layers, tested separately: the
+ * `permissions.deny` entries a reader of the generated `settings.json` can
+ * see (here), and `machineStateDetectorSource`'s real token inspection in
+ * the `PreToolUse` hook (the sibling block below), which is the half that
+ * carries the `find-generic-password` exemption and covers every alternate
+ * spelling.
+ */
+describe('buildRolePermissions — Issue #865, O1/O3: machine-state commands are denied for every dispatched role', () => {
+  const MACHINE_STATE_RULES = [
+    'Bash(launchctl*)',
+    'Bash(defaults write*)',
+    'Bash(systemsetup*)',
+    'Bash(networksetup*)',
+    'Bash(pmset*)',
+    'Bash(dscl*)',
+    'Bash(crontab*)',
+    'Bash(chsh*)',
+    'Bash(git config --global*)',
+    'Bash(git config --system*)',
+    'Bash(sudo*)'
+  ]
+
+  for (const role of ['developer', 'code-reviewer', 'security'] as const) {
+    it(`${role}: every machine-state family with no exemption is a written deny entry`, () => {
+      const perms = buildRolePermissions(role)
+      for (const rule of MACHINE_STATE_RULES) expect(perms.deny).toContain(rule)
+    })
+  }
+
+  it('the developer keeps repository-scoped `git config`, which Step 0 itself runs, while the global/system scopes are denied', () => {
+    const perms = buildRolePermissions('developer')
+    expect(perms.allow).toContain('Bash(git config:*)')
+    expect(perms.deny).toContain('Bash(git config --global*)')
+    expect(perms.deny).toContain('Bash(git config --system*)')
+  })
+
+  it('the exempted keychain read is an explicit allow entry, never merely unlisted — found live: unlisted meant the host classifier asked, and a non-interactive dispatch turns an ask into a refusal', () => {
+    for (const role of ['developer', 'code-reviewer', 'security'] as const) {
+      expect(buildRolePermissions(role).allow).toContain('Bash(security find-generic-password:*)')
+    }
+  })
+
+  it('no blanket `security` deny entry in the settings file — a broader deny beats a narrower allow, so one would take the exempted `find-generic-password` read down with it', () => {
+    for (const role of ['developer', 'code-reviewer', 'security'] as const) {
+      const perms = buildRolePermissions(role)
+      expect(perms.deny.some((r) => r.startsWith('Bash(security'))).toBe(false)
+    }
+  })
+
+  it('a role outside the three the loop dispatches still gets no rules at all', () => {
+    expect(buildRolePermissions('planner')).toEqual({ allow: [], deny: [] })
+    expect(buildRolePermissions('principal')).toEqual({ allow: [], deny: [] })
+  })
+
+  it('O3: the written policy names a version later than the one that denied no machine-state command', () => {
+    expect(PERMISSION_POLICY_VERSION).toBe('v3')
+    expect(PERMISSION_POLICY_VERSION).not.toBe('v2')
+  })
+})
+
+/**
+ * Issue #865, O1/O2 — the enforcement half. Built through the REAL `vinaya
+ * dispatch` CLI, exactly like the sibling hook blocks above: the generated
+ * script is what a dispatched session actually loads, never a hand-built
+ * stand-in. The helpers are re-declared here rather than shared because the
+ * sibling blocks' own copies are `describe`-scoped, the same duplication
+ * those two blocks already carry between them.
+ */
+describe('background-deny hook — Issue #865, O1/O2: machine-state commands, alone and inside a compound command', () => {
+  function freshDenyScriptPath(role: string): string {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const argvOut = join(cwd, 'argv.out')
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\nfor a in "$@"; do echo "$a"; done > "${argvOut}"\ncat > /dev/null\necho '{}'\nexit 0\n`
+    )
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    const r = runDispatch(
+      [role, '--agent', 'claude', '--prompt-file', promptFile],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(0)
+    const argv = readFileSync(argvOut, 'utf8').trim().split('\n')
+    const settingsPath = argv[argv.indexOf('--settings') + 1] as string
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as {
+      hooks: { PreToolUse: Array<{ hooks: Array<{ command: string }> }> }
+    }
+    const hookCommand = settings.hooks.PreToolUse[0]?.hooks[0]?.command as string
+    return hookCommand.slice('bun "'.length, -1)
+  }
+
+  function decisionFor(
+    scriptPath: string,
+    command: string
+  ): { permissionDecision: string; permissionDecisionReason: string } | null {
+    const result = spawnBudgeted(
+      [scriptPath],
+      {
+        input: JSON.stringify({ tool_name: 'Bash', tool_input: { command, run_in_background: false } }),
+        encoding: 'utf8'
+      },
+      'PreToolUse hook'
+    )
+    expect(result.status).toBe(0)
+    const out = result.stdout.trim()
+    return out === '' ? null : (JSON.parse(out).hookSpecificOutput as never)
+  }
+
+  /**
+   * The keychain subcommands are the origin incident's own two
+   * (`create-keychain`, `default-keychain -s`) plus the write twin of the
+   * one exempted read; every other entry is a family O1 names. Each is run
+   * BOTH alone and as the second statement of a compound command (O2) — the
+   * `cd &&` shape the incident could just as easily have taken.
+   */
+  const DENIED = [
+    'security create-keychain -p x /tmp/scratch.keychain',
+    'security default-keychain -s /tmp/scratch.keychain',
+    'security list-keychains -s /tmp/scratch.keychain',
+    'security add-generic-password -s svc -a acct -w secret',
+    'security delete-generic-password -s svc',
+    'launchctl unload /Library/LaunchAgents/com.example.plist',
+    'defaults write com.apple.finder AppleShowAllFiles true',
+    'defaults -currentHost write com.apple.screensaver idleTime 0',
+    'sudo rm /etc/hosts',
+    'systemsetup -setremotelogin on',
+    'networksetup -setdnsservers Wi-Fi 1.1.1.1',
+    'pmset -a displaysleep 1',
+    'dscl . -create /Users/x',
+    'crontab -r',
+    'chsh -s /bin/zsh',
+    'git config --global user.email a@b.c',
+    'git config --system core.editor vim'
+  ]
+
+  it('developer: each machine-state command is denied alone, and denied again as the second statement of a compound command', () => {
+    const scriptPath = freshDenyScriptPath('developer')
+    for (const command of DENIED) {
+      const alone = decisionFor(scriptPath, command)
+      expect(alone?.permissionDecision).toBe('deny')
+      expect(alone?.permissionDecisionReason).toMatch(/keychain, services or global settings/)
+
+      const compound = decisionFor(scriptPath, `cd /tmp && ${command}`)
+      expect(compound?.permissionDecision).toBe('deny')
+      expect(compound?.permissionDecisionReason).toMatch(/keychain, services or global settings/)
+    }
+  })
+
+  for (const role of ['code-reviewer', 'security'] as const) {
+    it(`${role}: the same refusal — the role that replaced this machine's default keychain was a security reviewer`, () => {
+      const scriptPath = freshDenyScriptPath(role)
+      expect(decisionFor(scriptPath, 'security default-keychain -s /tmp/x.keychain')?.permissionDecision).toBe('deny')
+      expect(decisionFor(scriptPath, 'cd /tmp && security create-keychain -p x y.keychain')?.permissionDecision).toBe(
+        'deny'
+      )
+      expect(decisionFor(scriptPath, 'git config --global user.name x')?.permissionDecision).toBe('deny')
+    })
+  }
+
+  it('an absolute path, an environment prefix, a newline separator and a trailing flag never hide the command — the shapes a settings-file prefix pattern cannot match', () => {
+    const scriptPath = freshDenyScriptPath('developer')
+    for (const command of [
+      '/usr/bin/security create-keychain -p x /tmp/y.keychain',
+      'SUDO_ASKPASS=/tmp/ask sudo -A rm /etc/hosts',
+      'echo start\nsecurity default-keychain -s /tmp/y.keychain',
+      'git config user.email a@b.c --global',
+      'echo one; /usr/sbin/systemsetup -setremotelogin on'
+    ]) {
+      expect(decisionFor(scriptPath, command)?.permissionDecision).toBe('deny')
+    }
+  })
+
+  it('the one exemption holds: a `find-generic-password` read resolves, alone and in a compound command — it is how a log header resolves from the login Keychain', () => {
+    const scriptPath = freshDenyScriptPath('developer')
+    expect(decisionFor(scriptPath, 'security find-generic-password -s "Vinaya Log" -a VINAYA_LOG_TOKEN -w')).toBeNull()
+    expect(decisionFor(scriptPath, 'cd /tmp && security find-generic-password -s svc -a acct -w')).toBeNull()
+    expect(decisionFor(scriptPath, '/usr/bin/security find-generic-password -s svc -w')).toBeNull()
+  })
+
+  it('reads and repository-scoped writes are untouched — this rule refuses state changes, not information', () => {
+    const scriptPath = freshDenyScriptPath('developer')
+    for (const command of [
+      'defaults read com.apple.finder',
+      'git config user.email a@b.c',
+      'git config --local push.autoSetupRemote true',
+      'echo "security create-keychain"',
+      'cat /tmp/defaults-write-notes.txt'
+    ]) {
+      expect(decisionFor(scriptPath, command)).toBeNull()
+    }
+  })
+})
+
 describe('buildWriteAccessScope — Issue #663, O1 round 2 fix: the real Write/Edit grant', () => {
   it('developer: a directory scope, realpath-resolved', () => {
     const dir = tempDir('vinaya-write-scope-')

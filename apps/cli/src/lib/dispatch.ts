@@ -803,6 +803,111 @@ export const COMMIT_PUSH_ON_DEFAULT_BRANCH_DENY_REASON =
   "Dispatched sessions cannot commit or push while the shell's working directory is a checkout on this repo's default branch — do this from a worktree instead. This is defense in depth beside the pre-push hook, not the only guard."
 
 /**
+ * The machine's own security and system state is not a dispatched role's to
+ * change. Origin, observed live: a dispatched security reviewer testing
+ * Keychain behaviour ran `security create-keychain` followed by `security
+ * default-keychain -s` on a temporary keychain, then deleted that keychain —
+ * which left the login keychain neither the default nor in the search list.
+ * From that moment `gh` read an invalid token and the `claude` CLI read no
+ * login at all, so every run on that machine died with "Not logged in" until
+ * the keychain list was restored by hand, some eight hours later. The
+ * Seatbelt boundary that would have contained it (§§3–4 of
+ * `apps/cli/specs/isolation.md`) is off on that host
+ * (`dispatch.requireWorkerIsolation: false`), so the dispatched role's own
+ * permission policy is the only barrier there is.
+ *
+ * Inspected here, in real tokens, rather than expressed only as
+ * `permissions.deny` entries, for two reasons this file's own history
+ * already records:
+ *
+ *  - **The one exemption cannot be written as a settings pattern.** A
+ *    `find-generic-password` READ must keep working — it is how a
+ *    `${VAR_NAME}` log header resolves from the login Keychain
+ *    (`worker-boundary.ts`) — while every other `security` subcommand is
+ *    refused. Expressing that as `deny: ['Bash(security:*)']` plus
+ *    `allow: ['Bash(security find-generic-password:*)']` does not work:
+ *    confirmed live against the installed binary (2.1.258), a BROADER deny
+ *    beats a NARROWER allow that also matches the same command text
+ *    (`{"allow":["Bash(echo forbidden:*)"],"deny":["Bash(echo:*)"]}` refused
+ *    `echo forbidden hello` outright), the mirror image of the
+ *    narrower-deny-wins precedence `buildRolePermissions`'s own doc comment
+ *    records. So a blanket settings deny on `security` would take the
+ *    exempted read down with it.
+ *  - **Argument order and spelling.** The same reason
+ *    `gitForceOrSkipVerifyDetectorSource` exists: a `deny` entry is a
+ *    literal command-string-PREFIX match, so `git config user.email x
+ *    --global` never matches `Bash(git config --global*)`, and
+ *    `/usr/bin/security create-keychain` never matches `Bash(security:*)`.
+ *    Token inspection generalizes over both; a fixed prefix cannot.
+ *
+ * Per STATEMENT, so a compound command is covered too (`cd /tmp && security
+ * default-keychain -s x` is the shape the origin incident could just as
+ * easily have taken) — reusing `commandStatements`/`stripLineComment`/
+ * `statementTokens` from the sibling detectors already embedded in the SAME
+ * generated script. A leading `VAR=value` environment assignment is skipped
+ * and `tokens[0]` is compared by basename, so neither an env prefix nor an
+ * absolute path hides the command being run.
+ *
+ * **This is a floor, not a sandbox** — the same limit `roles/developer.md`
+ * and `roles/security.md` now state in one line. It answers a Bash tool call
+ * whose own text names one of these commands; it cannot answer for one
+ * reached through another interpreter (a `python3 -c` that calls
+ * `subprocess`, a shell script the session writes and then runs). Closing
+ * THAT is the Seatbelt boundary's job, and turning it back on is its own
+ * task.
+ */
+function machineStateDetectorSource(): string {
+  return [
+    'function machineStateTokens(stmt) {',
+    '  let tokens = statementTokens(stmt);',
+    // A leading `VAR=value` assignment is part of the shell's own grammar,
+    // not the command — `SUDO_ASKPASS=/x sudo …` runs sudo all the same.
+    '  while (tokens.length > 0 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[0])) tokens = tokens.slice(1);',
+    '  return tokens;',
+    '}',
+    'function commandChangesMachineState(command) {',
+    "  if (typeof command !== 'string') return false;",
+    '  for (const raw of commandStatements(command)) {',
+    '    const tokens = machineStateTokens(stripLineComment(raw));',
+    '    if (tokens.length === 0) continue;',
+    // `/usr/bin/security` and `security` are the same command.
+    "    const cmd = tokens[0].split('/').pop();",
+    "    if (cmd === 'security') {",
+    // The ONE exemption: a `find-generic-password` read. Every other
+    // subcommand — `create-keychain`, `default-keychain`, `list-keychains
+    // -s`, `add-generic-password`, `delete-generic-password`, … — is refused.
+    "      if (tokens[1] !== 'find-generic-password') return true;",
+    '      continue;',
+    '    }',
+    "    if (cmd === 'launchctl' || cmd === 'sudo' || cmd === 'systemsetup') return true;",
+    "    if (cmd === 'networksetup' || cmd === 'pmset' || cmd === 'dscl') return true;",
+    "    if (cmd === 'crontab' || cmd === 'chsh') return true;",
+    "    if (cmd === 'defaults') {",
+    // `defaults read` is harmless; only a write changes the machine. The
+    // subcommand is not always `tokens[1]` — `defaults -currentHost write …`
+    // is an ordinary spelling — so every argument is scanned.
+    "      for (let i = 1; i < tokens.length; i++) if (tokens[i] === 'write') return true;",
+    '      continue;',
+    '    }',
+    "    if (cmd === 'git' && tokens[1] === 'config') {",
+    // Repository-scoped `git config` is a dispatched role's own business
+    // (Step 0 sets `push.autoSetupRemote` with it); the global and system
+    // scopes are the machine's.
+    '      for (let i = 2; i < tokens.length; i++) {',
+    '        const t = tokens[i];',
+    "        if (t === '--global' || t === '--system') return true;",
+    '      }',
+    '    }',
+    '  }',
+    '  return false;',
+    '}'
+  ].join('\n')
+}
+
+export const MACHINE_STATE_DENY_REASON =
+  "Dispatched sessions cannot change this machine's own keychain, services or global settings — `security` (except a `find-generic-password` read), `launchctl`, `crontab`, `defaults write`, `systemsetup`, `networksetup`, `pmset`, `dscl`, `chsh`, `sudo`, and `git config` at `--global`/`--system` scope. A test that needs one of these uses a fake. Enforced by argument inspection, so no flag ordering, absolute path, environment prefix or compound command defeats it."
+
+/**
  * The subagent tool (`Agent`/`Task` — both names are checked, as a
  * dispatched session may see either) defaults `run_in_background` to true,
  * so an unattended developer session that never sets it explicitly would
@@ -843,6 +948,7 @@ function backgroundDenyHookScript(): string {
     wholeSuiteTestCommandDetectorSource(),
     gitForceOrSkipVerifyDetectorSource(),
     defaultBranchCommitOrPushDetectorSource(),
+    machineStateDetectorSource(),
     '    const input = e.tool_input || {};',
     "    if (e.tool_name === 'Bash' && (input.run_in_background === true || commandBackgrounds(input.command))) {",
     denyOutput(BACKGROUND_DENY_REASON),
@@ -852,6 +958,8 @@ function backgroundDenyHookScript(): string {
     denyOutput(GIT_FORCE_OR_SKIP_VERIFY_DENY_REASON),
     "    } else if (e.tool_name === 'Bash' && commandCommitsOrPushesOnDefaultBranch(input.command)) {",
     denyOutput(COMMIT_PUSH_ON_DEFAULT_BRANCH_DENY_REASON),
+    "    } else if (e.tool_name === 'Bash' && commandChangesMachineState(input.command)) {",
+    denyOutput(MACHINE_STATE_DENY_REASON),
     "    } else if ((e.tool_name === 'Agent' || e.tool_name === 'Task') && input.run_in_background === true) {",
     denyOutput(SUBAGENT_BACKGROUND_DENY_REASON),
     '    }',
@@ -1136,11 +1244,56 @@ const DISPATCH_BASH_MAX_TIMEOUT_MS = '1800000'
  * a run's own log says which policy shape it started under without needing
  * to diff `dispatch.ts` against the run's own timestamp.
  */
-export const PERMISSION_POLICY_VERSION = 'v2'
+export const PERMISSION_POLICY_VERSION = 'v3'
 
 type RolePermissions = { allow: string[]; deny: string[] }
 
 const EMPTY_ROLE_PERMISSIONS: RolePermissions = { allow: [], deny: [] }
+
+/**
+ * The settings-file half of the machine-state refusal every dispatched role
+ * carries — self-documenting the intent in the written policy itself, the
+ * same "additive to the hook, not a replacement of it" posture
+ * `apps/cli/specs/isolation.md` §6 already records for the force-push rules.
+ * `machineStateDetectorSource`'s own real token inspection is what makes the
+ * guarantee hold for every spelling; these entries are what a reader of the
+ * generated `settings.json` can see.
+ *
+ * `security` is deliberately ABSENT from this list, and lives only in the
+ * hook: a blanket `Bash(security:*)` deny would also refuse the
+ * `find-generic-password` READ that must keep working, because a broader
+ * deny beats a narrower allow — see `machineStateDetectorSource`'s own doc
+ * comment for the live proof. Every family named here has no such exemption.
+ */
+/**
+ * O1's one exemption, written as an explicit `allow` — not left unlisted.
+ * Found live against the installed binary (2.1.258), running a REAL `claude
+ * -p` against the REAL settings file this module generates: with the read
+ * merely absent from both lists, `security find-generic-password -s … -w`
+ * came back with a POPULATED `permission_denials` array and `result: "Need
+ * approval to run the `security` command."` — the host's own classifier
+ * asking, which a non-interactive dispatch turns into an outright refusal,
+ * exactly the failure `apps/cli/specs/isolation.md` §6 already records for
+ * the unlisted commands that started this policy. "The hook declines to
+ * deny it" is therefore not the same as "it works." With this entry the
+ * same command resolves with an EMPTY `permission_denials` array and a real
+ * result, both alone and as the second statement of a compound command.
+ */
+const KEYCHAIN_READ_ALLOW_RULE = 'Bash(security find-generic-password:*)'
+
+const MACHINE_STATE_DENY_RULES: readonly string[] = [
+  'Bash(launchctl*)',
+  'Bash(defaults write*)',
+  'Bash(systemsetup*)',
+  'Bash(networksetup*)',
+  'Bash(pmset*)',
+  'Bash(dscl*)',
+  'Bash(crontab*)',
+  'Bash(chsh*)',
+  'Bash(git config --global*)',
+  'Bash(git config --system*)',
+  'Bash(sudo*)'
+]
 
 /**
  * The settings-file counterpart to `writeDispatchSettings`'s
@@ -1187,14 +1340,17 @@ const EMPTY_ROLE_PERMISSIONS: RolePermissions = { allow: [], deny: [] }
  * `roles/developer.md`/`reference.md` forbid: a force push in any of its
  * spellings, `--no-verify` on a commit or push, `git stash` (worktree
  * discipline — stash refs are shared across a repo's worktrees), a hard
- * reset, and `rm -rf`/`sudo`, neither of which any doctrine command needs.
+ * reset, `rm -rf`, and `MACHINE_STATE_DENY_RULES` — none of which any
+ * doctrine command needs.
  *
  * `code-reviewer`/`security` get read-only git/`gh` commands
  * (`roles/reviewer.md`: "CI is your input, never your job — read it, don't
  * reproduce it: no `bun install`, no re-running tests or checks"). A
  * forge-write/package/test command a Reviewer has no doctrine reason to run
  * is explicitly denied, the same defense-in-depth posture the Developer's own
- * deny list takes, rather than left to fall through as merely unlisted.
+ * deny list takes, rather than left to fall through as merely unlisted. Both
+ * roles carry `MACHINE_STATE_DENY_RULES` too — the role that broke this
+ * machine's keychain was a security reviewer.
  *
  * Every other role (`planner`/`principal`/`archivist`/`architect`) gets no
  * rules at all — this task's own Objectives name only these three roles, and
@@ -1234,7 +1390,8 @@ export function buildRolePermissions(role: Role): RolePermissions {
         'Bash(bun packages/aeg-core/bin/verify-dispatch.ts:*)',
         'Bash(bun packages/aeg-core/bin/verify-docs.ts:*)',
         'Bash(bun packages/aeg-core/bin/verify-task.ts:*)',
-        'Bash(bun apps/cli/src/index.ts:*)'
+        'Bash(bun apps/cli/src/index.ts:*)',
+        KEYCHAIN_READ_ALLOW_RULE
       ],
       deny: [
         'Bash(git push --force*)',
@@ -1246,7 +1403,7 @@ export function buildRolePermissions(role: Role): RolePermissions {
         'Bash(git stash*)',
         'Bash(git reset --hard*)',
         'Bash(rm -rf*)',
-        'Bash(sudo*)'
+        ...MACHINE_STATE_DENY_RULES
       ]
     }
   }
@@ -1261,7 +1418,8 @@ export function buildRolePermissions(role: Role): RolePermissions {
         'Bash(git fetch:*)',
         'Bash(gh pr view:*)',
         'Bash(gh pr diff:*)',
-        'Bash(gh issue view:*)'
+        'Bash(gh issue view:*)',
+        KEYCHAIN_READ_ALLOW_RULE
       ],
       deny: [
         'Bash(git push:*)',
@@ -1272,7 +1430,8 @@ export function buildRolePermissions(role: Role): RolePermissions {
         'Bash(gh pr merge:*)',
         'Bash(bun install:*)',
         'Bash(bun test:*)',
-        'Bash(bun run:*)'
+        'Bash(bun run:*)',
+        ...MACHINE_STATE_DENY_RULES
       ]
     }
   }
