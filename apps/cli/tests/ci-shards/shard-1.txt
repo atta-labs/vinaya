@@ -17,7 +17,6 @@ tests/checks/scan-context.test.ts
 tests/checks/surface-scope.test.ts
 tests/checks/sweeps-declare-include.test.ts
 tests/checks/token-collection-pointer-hardening.test.ts
-tests/checks/token-report-enforcement-logic.test.ts
 tests/commands/check-flip.test.ts
 tests/commands/dispatch.test.ts
 tests/commands/issue-objectives.test.ts

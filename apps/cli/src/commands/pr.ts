@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { formatTokenReportRow, type MeteringCapability, parsePremiseBlock } from '@attalabs/aeg-core'
+import { parsePremiseBlock } from '@attalabs/aeg-core'
 import { printJson } from '../lib/envelope'
 import {
   type BodyResult,
@@ -16,7 +16,6 @@ import {
 } from '../lib/forge-write'
 import { checkBareDigits } from '../checks/body-bare-digits-logic'
 import type { CheckError } from '../checks/contract'
-import { derivePhase, isoToday, resolveTokenReportCapability, writeTokensBlock } from '../lib/pr-report-engine'
 
 const RETRY_CREATE = 'vinaya pr create --validate-only …'
 const RETRY_EDIT = 'vinaya pr edit <n> --validate-only …'
@@ -265,41 +264,6 @@ function premiseOwnAdditionsErrors(body: string, baseBranch: string, retryComman
 }
 
 /**
- * The `AEG:TOKENS` row `pr create` splices into the body at
- * open — real figures on a metering-capable host, the same accepted
- * unavailable form `collectTokensAddition`'s own "any other incapable
- * reason" branch already writes (`— (${reason})` in the Agent/Model cell)
- * on every incapable host, `no-transcript-resolved` included. Never a
- * refusal: unlike `vinaya pr report --write` (a re-run is always possible),
- * `pr create` opens the PR exactly once, and `token-report`'s own
- * `missingSectionError` refuses a task PR that carries no row at all — so
- * the one outcome this function must never produce is no row.
- */
-/**
- * Pure half of `tokenRowForOpen`, below — split out so the two shapes
- * (`capable`: real figures; anything else: the accepted unavailable form)
- * are directly unit-testable against a fake `MeteringCapability`, without
- * driving the real pointer/transcript resolution `resolveMeteringCapability`
- * itself performs.
- */
-export function tokenReportRowForCapability(capability: MeteringCapability, phase: string, date: string): string {
-  if (capability.capable) {
-    return formatTokenReportRow({ phase, role: 'Developer', summary: capability.summary, date })
-  }
-  return formatTokenReportRow({
-    phase,
-    role: 'Developer',
-    summary: null,
-    modelOverride: `— (${capability.reason})`,
-    date
-  })
-}
-
-async function tokenRowForOpen(): Promise<string> {
-  return tokenReportRowForCapability(resolveTokenReportCapability(), await derivePhase(), isoToday())
-}
-
-/**
  * O1 — the ONE aggregation point `pr create`/`pr edit` both run: the
  * forge-write gates (legacy brief markers, `validateForgeWrite`'s configured
  * sections, bare digits, a Premise pin about this PR's own additions) and
@@ -409,9 +373,7 @@ export async function prCreateCommand(args: string[]): Promise<void> {
     reportPass(json, 'pr create')
     return
   }
-  const bodyWithTokens = writeTokensBlock(body, await tokenRowForOpen())
-  const finalBodyResult: BodyResult | null = bodyResult ? { ...bodyResult, body: bodyWithTokens } : null
-  runGhWrite(['pr', 'create'], ghArgs, finalBodyResult, json)
+  runGhWrite(['pr', 'create'], ghArgs, bodyResult, json)
 }
 
 export async function prEditCommand(args: string[]): Promise<void> {
@@ -480,6 +442,6 @@ export async function prEditCommand(args: string[]): Promise<void> {
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'pr create': { date: '2026-09-14', callsToday: 13, retiresVia: 'forgeWrite' },
+  'pr create': { date: '2026-09-29', callsToday: 9, retiresVia: 'forgeWrite' },
   'pr edit': { date: '2026-09-11', callsToday: 10, retiresVia: 'forgeWrite' }
 }

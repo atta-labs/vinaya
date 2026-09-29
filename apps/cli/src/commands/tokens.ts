@@ -346,7 +346,7 @@ function runDeclaredCollect(command: string, deps: TokensDeps): TranscriptSummar
 /** A declared script may legitimately do real work (hit an API, read a log) — longer than `config.ts`'s plumbing-only `GIT_IDENTITY_TIMEOUT_MS` — but a stuck or hostile process must not block `vinaya tokens` forever either (a code-review finding). */
 const COLLECT_COMMAND_TIMEOUT_MS = 30_000
 
-/** Exported so other commands collecting real usage figures (`pr-report.ts`'s `AEG:TOKENS` writer) share this exact I/O shim rather than a second copy of it. */
+/** Exported so any other caller collecting real usage figures shares this exact I/O shim rather than a second copy of it. */
 export function realDeps(): TokensDeps {
   return {
     ...hardenedMeteringDeps(),
@@ -363,12 +363,10 @@ export function realDeps(): TokensDeps {
 }
 
 /**
- * The single wording for "the probe could not reach real usage figures",
- * shared by `vinaya tokens` and by `pr report --write`'s `AEG:TOKENS` writer
- * (`pr-report.ts`'s `collectTokensAddition`) so one fact never reaches an
- * operator under two different names. The command prefix and whatever remedy
- * text follows are the caller's — the remedies differ per command, the fact
- * does not.
+ * The single wording for "the probe could not reach real usage figures", so
+ * one fact never reaches an operator under two different names. The command
+ * prefix and whatever remedy text follows are the caller's — the remedies
+ * differ per command, the fact does not.
  */
 export function meteringRefusalMessage(
   command: string,

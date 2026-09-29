@@ -71,7 +71,6 @@ describe('enforcement.md Ring 0/1/2 tables (implementation column)', () => {
     // `main-branch-refusal` row. fix/changeset-coverage-check
     // added the `changeset-coverage` row. fix/quoted-command-staleness
     // added the `quoted-command` row.
-    // A later task added the `token-report` row.
     // fix/pr-body-density-check added the `PR-report density` row.
     // A later task added the `doctrine-no-procedures` row.
     // fix/unfreeze-and-rerun removed the `pr-body-frozen` row
@@ -82,7 +81,9 @@ describe('enforcement.md Ring 0/1/2 tables (implementation column)', () => {
     // A later task added the `PR-body premise
     // reassertion` row.
     // A later task added the `Principal Test Plan wait` row.
-    expect(ring1.rows).toHaveLength(33)
+    // The `token-report` row was retired with the PR-body token table it
+    // policed — token use is recorded as the Vinaya log's own `usage` event.
+    expect(ring1.rows).toHaveLength(32)
 
     // (2026-07-13) removed the "Daily drift check — stuck row-adjacent
     // blockers" ring-2 row (its subject matter, stale-blocker.ts, was retired).

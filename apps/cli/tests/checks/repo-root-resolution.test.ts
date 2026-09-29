@@ -103,7 +103,6 @@ describe('RC3 — reader-resolvable-prose/retired-vocabulary are part of the ado
         'surface-scope',
         'test-plan',
         'token-collection-wired',
-        'token-report',
         'workspace-escape'
       ].sort()
     )

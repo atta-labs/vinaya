@@ -69,14 +69,6 @@ The block opens with `Head:` and a `Summary:` line — a file and line count der
 **Tier:** [0 | 1 | 3]
 <!-- AEG:TIER:END -->
 
-## Token report
-
-<!-- AEG:TOKENS:START -->
-| Phase | Role | Agent/Model | Tokens in | Tokens out | Cost | Date |
-|---|---|---|---|---|---|---|
-| [task-id]: develop | Developer | [model] | [exact in] | [exact out] | [cost] | [YYYY-MM-DD] |
-<!-- AEG:TOKENS:END -->
-
 ---
 
-**This body is written once, at open.** After the PR is open the Developer changes nothing outside the `AEG:EVIDENCE` anchor and one appended `AEG:TOKENS` row. The Principal's `[principal]` ticks are the Principal's writes and must survive every Developer edit. A round's response, its re-run evidence, and any disclosure the brief didn't anticipate are PR comments, never edits to this body. The brief itself never lives here — it is posted once, frozen, as the `aeg:brief:v1` comment on the task Issue (`vinaya task dispatch`); `pr create` refuses a body carrying either legacy `<!-- aeg:brief:start -->`/`<!-- aeg:brief:end -->` marker outright.
+**This body is written once, at open.** After the PR is open the Developer changes nothing outside the `AEG:EVIDENCE` anchor. The body carries no token table: a dispatched turn's token use is recorded as the Vinaya log's own `usage` event, never in this body. The Principal's `[principal]` ticks are the Principal's writes and must survive every Developer edit. A round's response, its re-run evidence, and any disclosure the brief didn't anticipate are PR comments, never edits to this body. The brief itself never lives here — it is posted once, frozen, as the `aeg:brief:v1` comment on the task Issue (`vinaya task dispatch`); `pr create` refuses a body carrying either legacy `<!-- aeg:brief:start -->`/`<!-- aeg:brief:end -->` marker outright.

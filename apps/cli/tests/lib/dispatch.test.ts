@@ -907,6 +907,47 @@ describe('dispatchRole — timeout ceiling', () => {
   }, 10_000)
 })
 
+// O4 — the Vinaya log's `usage` event is the record of a turn's token use now
+// that a pull-request body carries no token table. Nothing in the collection
+// path reads a PR body, so a clean dispatch still lands real figures: this
+// pins that end to end, against a fake role whose stdout carries exactly the
+// stream-json shape `parseClaudeUsage` reads.
+describe("dispatchRole — a dispatched role's usage event survives the PR-body token table's retirement", () => {
+  it('a clean dispatch emits one usage event carrying the real input/output/cache figures', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\ncat > /dev/null\necho '{"usage":{"input_tokens":91442,"output_tokens":7318,"cache_creation_input_tokens":40,"cache_read_input_tokens":60}}'\nexit 0\n`
+    )
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(0)
+
+    const lines = outboxLines(home, 'none') as Array<Record<string, unknown>>
+    const usageEvents = lines.filter((l) => l.kind === 'usage')
+    expect(usageEvents).toHaveLength(1)
+    expect(usageEvents[0]).toMatchObject({
+      event: 'observed',
+      // Both Anthropic cache fields sum into one figure — see `parseUsageDetail`.
+      units: { input: 91442, output: 7318, cache: 100 },
+      unknown_reason: null
+    })
+    // The turn itself is a clean one, so no failure path supplied these numbers.
+    expect(lines.find((l) => l.event === 'dispatch_failed')).toBeUndefined()
+    expect(lines.find((l) => l.event === 'outcome_received')).toBeDefined()
+  })
+})
+
 describe('dispatchRole — stderr content never decides the outcome', () => {
   it('a child that writes to stderr but exits 0 is still outcome_received, not a failure', () => {
     const home = tempDir('vinaya-dispatch-home-')

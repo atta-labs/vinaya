@@ -103,9 +103,7 @@ describe('runReportForOpenPr — a body-check refusal returns an outcome, never 
       })
       const preEditBody = ['<!-- AEG:EVIDENCE:START -->', 'old', '<!-- AEG:EVIDENCE:END -->'].join('\n')
 
-      const outcome = await callNeverExiting(() =>
-        runReportForOpenPr('1', preEditBody, result, { includeTokens: false, branch: 'task/x' })
-      )
+      const outcome = await callNeverExiting(() => runReportForOpenPr('1', preEditBody, result, { branch: 'task/x' }))
 
       expect(outcome.kind).toBe('body-checks-refused')
       if (outcome.kind === 'body-checks-refused') {
@@ -132,7 +130,7 @@ describe('runReportForOpenPr — pre-existing outcome paths are unchanged (O3 bo
         cwd
       })
       const outcome = await callNeverExiting(() =>
-        runReportForOpenPr('1', 'no evidence anchors here', result, { includeTokens: false, branch: 'task/x' })
+        runReportForOpenPr('1', 'no evidence anchors here', result, { branch: 'task/x' })
       )
       expect(outcome.kind).toBe('splice-refused')
     } finally {
@@ -192,7 +190,7 @@ describe('runReportForOpenPr — an unticked [principal] Test Plan box never ref
       })
 
       const outcome = await callNeverExiting(() =>
-        runReportForOpenPr('1', BODY_WITH_UNTICKED_PRINCIPAL, result, { includeTokens: false, branch: 'task/x' })
+        runReportForOpenPr('1', BODY_WITH_UNTICKED_PRINCIPAL, result, { branch: 'task/x' })
       )
 
       // Asserted over the whole outcome, not only a `body-checks-refused`
@@ -244,12 +242,9 @@ describe('a pushed evidence block survives the [principal] tick — evidence-fre
       cwd
     })
 
-    const pushed = spliceIntoLiveBody(BODY_WITH_UNTICKED_PRINCIPAL, result.blockInner, {
-      collected: false,
-      refusal: ''
-    })
+    const pushed = spliceIntoLiveBody(BODY_WITH_UNTICKED_PRINCIPAL, result.blockInner)
 
-    expect(evidenceVerdict(tick(pushed.body))).toBe('pass')
+    expect(evidenceVerdict(tick(pushed))).toBe('pass')
     // The incident this closes: the write was refused for the whole life of
     // the loop, so the tick landed on the untouched placeholder instead.
     expect(evidenceVerdict(tick(BODY_WITH_UNTICKED_PRINCIPAL))).toBe('fail')
@@ -316,7 +311,7 @@ describe('the evidence block a reused Test-plan entry produces passes body-bare-
       body: LIVE_BODY,
       cwd: tempCwd()
     })
-    return spliceIntoLiveBody(LIVE_BODY, result.blockInner, { collected: false, refusal: '' }).body
+    return spliceIntoLiveBody(LIVE_BODY, result.blockInner)
   }
 
   it('a per-file hit names its run — time, source and file count — with every digit inside a code span', async () => {

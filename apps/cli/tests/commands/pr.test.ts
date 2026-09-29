@@ -4,7 +4,6 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { tokenReportRowForCapability } from '../../src/commands/pr'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const REPO_ROOT = join(CLI_ROOT, '..', '..')
@@ -306,37 +305,6 @@ describe('vinaya pr create --validate-only — runs the registry PR_BODY checks 
     )
     expect(r.status).toBe(0)
     expect(r.stdout).toContain('PASS')
-  })
-})
-
-describe('tokenReportRowForCapability (pure) — O7 (#595)', () => {
-  it('a capable fake adapter with figures produces numbers', () => {
-    const row = tokenReportRowForCapability(
-      {
-        capable: true,
-        transcriptPath: '/fake/transcript.jsonl',
-        summary: {
-          components: { inputTokens: 100, outputTokens: 50, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
-          model: 'claude-sonnet-5',
-          messageCount: 2
-        }
-      },
-      '9: develop',
-      '2026-09-14'
-    )
-    expect(row).toBe('| 9: develop | Developer | claude-sonnet-5 | 100 | 50 | — | 2026-09-14 |')
-  })
-
-  it('an incapable fake adapter (no figures) produces the accepted unavailable form, never a bare —', () => {
-    const row = tokenReportRowForCapability(
-      { capable: false, reason: 'no-transcript-resolved', detail: 'no pointer found for this session' },
-      '9: develop',
-      '2026-09-14'
-    )
-    expect(row).toBe('| 9: develop | Developer | — (no-transcript-resolved) | — | — | — | 2026-09-14 |')
-    // The Agent/Model cell always carries the reason inline — never a bare
-    // `—` with nothing said about why.
-    expect(row.split('|')[3]?.trim()).not.toBe('—')
   })
 })
 

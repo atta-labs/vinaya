@@ -42,10 +42,9 @@ type CliResult = { status: number; stdout: string; stderr: string }
  * own Stop-hook transcript pointer or launch-record tee, regardless of the
  * child's own throwaway `cwd` (both key off these env vars, never the
  * caller's `cwd` — found live: a fixture repo in a fresh `mkdtempSync` dir
- * still resolved a real, capable token report when this suite runs from
+ * still resolved a real, capable metering verdict when this suite runs from
  * inside a genuine dispatched session). Stripped here so every test in this
- * file spawns the CLI as a host with no metering wiring of its own — the
- * fixed point the token-report fixture below actually asserts.
+ * file spawns the CLI as a host with no metering wiring of its own.
  */
 function runCli(args: string[], cwd: string, env: Record<string, string | undefined>): CliResult {
   const childEnv = { ...process.env, ...env }
@@ -235,22 +234,22 @@ describe('vinaya pr create — refuses a body still carrying the retired brief s
     expect(sentBody).not.toContain('aeg:brief')
   })
 
-  it('O7 (#595): splices an AEG:TOKENS row into the body actually sent to gh, never a bare-— row', () => {
+  // O1: `pr create` used to splice a token table into the body it sent. Token
+  // use is the Vinaya log's `usage` event now, so the body that reaches the
+  // forge carries no such block and no metering probe runs to build one.
+  it('sends the body with no token table, and never creates one', () => {
     const repo = initRepo()
     const bodyPath = join(repo, 'pr-body.md')
     writeFileSync(bodyPath, newShapedBody())
     const { path, createBodyLogPath } = stubGh('https://github.com/acme/widget/pull/46')
 
-    const r = runCli(['pr', 'create', '--body-file', bodyPath, '--title', 'Fix(cli): fills the token row'], repo, path)
+    const r = runCli(['pr', 'create', '--body-file', bodyPath, '--title', 'Fix(cli): no token table'], repo, path)
     expect(r.status).toBe(0)
 
     const sentBody = readFileSync(createBodyLogPath, 'utf-8')
-    expect(sentBody).toContain('<!-- AEG:TOKENS:START -->')
-    expect(sentBody).toContain('<!-- AEG:TOKENS:END -->')
-    expect(sentBody).toMatch(/\|\s*main:\s*develop\s*\|\s*Developer\s*\|/)
-    // This test sandbox resolves no real session transcript — the accepted
-    // unavailable form, never a bare `—` cell with no reason attached.
-    expect(sentBody).toMatch(/—\s*\([a-z-]+\)/)
+    expect(sentBody).not.toContain('AEG:TOKENS')
+    expect(sentBody).not.toContain('Token report')
+    expect(sentBody).toContain('## Decisions')
   })
 
   it('a body that only MENTIONS a legacy marker inline, backticked, in prose is not refused', () => {

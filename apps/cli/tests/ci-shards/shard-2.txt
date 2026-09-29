@@ -9,7 +9,6 @@ tests/checks/check-exec-bits.test.ts
 tests/checks/check-pr-premise-reassert-own-body.test.ts
 tests/checks/check-principal-test-plan-wait.test.ts
 tests/checks/check-test-plan-principal-owed.test.ts
-tests/checks/check-token-report-probe-crash.test.ts
 tests/checks/check-workspace-escape.test.ts
 tests/checks/core-parity.test.ts
 tests/checks/doc-neutral-ci-parity.test.ts

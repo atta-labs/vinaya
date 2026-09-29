@@ -15,7 +15,7 @@ import { reassertPrBodyPremise } from '../../src/checks/bin/check-pr-premise-rea
  *
  * `pr-body-473.md` is PR #473's own live body, captured verbatim with
  * `gh pr view 473 --json body -q .body` — the machine-emitted
- * `AEG:EVIDENCE`/`AEG:TOKENS` blocks, the real `AEG:PREMISE` pins this task
+ * `AEG:EVIDENCE` block, the real `AEG:PREMISE` pins this task
  * shipped, and the frozen brief pasted below in its `<details>` block
  * included. That last part is load-bearing the same way it was for the
  * precedent: the pasted reference brief's own `#### Premise pins` section
