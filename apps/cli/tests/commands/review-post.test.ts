@@ -289,7 +289,12 @@ describe('deriveCodeReviewVerdict — the command decides, not the caller', () =
     ).toBe('REQUEST_CHANGES')
   })
 
-  const THIS_REPO_POLICY: ReviewPolicy = { codeReviewThreshold: 'MAJOR', securityThreshold: 'HIGH', maxRounds: 3 }
+  const THIS_REPO_POLICY: ReviewPolicy = {
+    codeReviewThreshold: 'MAJOR',
+    securityThreshold: 'HIGH',
+    maxRounds: 3,
+    maxTaskMinutes: 180
+  }
 
   it("a MAJOR → REQUEST_CHANGES under this repository's own MAJOR/HIGH policy (which severities block is repository policy, #506, O1)", () => {
     expect(

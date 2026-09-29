@@ -237,7 +237,7 @@ describe('vinaya review status', () => {
     // proving this command reads the resolved policy, not a retired constant.
     const configuredResult = runCli(
       ['review', 'status', '381'],
-      stubPathWithConfig(pr, 0, { reviewPolicy: { maxRounds: 5 } })
+      stubPathWithConfig(pr, 0, { reviewPolicy: { maxRounds: 5, maxTaskMinutes: 180 } })
     )
     expect(statusLines(configuredResult.stdout)).toEqual(['CONTINUE'])
     expect(configuredResult.status).toBe(0)

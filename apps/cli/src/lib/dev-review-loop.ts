@@ -53,6 +53,8 @@ import {
   compareManifest,
   concludedLoopRefusal,
   DEFAULT_REVIEW_POLICY,
+  defaultControlStoreDeps,
+  readEarliestOwnership,
   DevReviewLoopEventSchema,
   initialLoopState,
   isConcludedJournal,
@@ -74,6 +76,7 @@ import {
   type ReviewPolicy,
   type RoundHeadIdentity,
   type RoundStats,
+  type TaskClock,
   type VerdictObservation
 } from '@attalabs/aeg-core'
 import {
@@ -92,6 +95,7 @@ import {
   postMarkedComment,
   upsertDeferredFindingsIssue
 } from './forge-write.js'
+import { controlStoreRoot } from './effects.js'
 import { createLogSink, drainLogSink, resolveLogAppendPath } from './log-sink.js'
 import { ensureRunDir, markProcessUnattended, runPath } from './run-paths.js'
 import { defaultTaskSweepAsyncDeps, sweepModernTasksAsync } from './task-sweep.js'
@@ -1509,7 +1513,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // successfully (O6: `config` must be valid — never built from a
       // not-yet-read `policy` — before that read even runs, so a crash
       // reading policy itself still reports against a real `maxRounds`).
-      maxRounds: DEFAULT_REVIEW_POLICY.maxRounds
+      maxRounds: DEFAULT_REVIEW_POLICY.maxRounds,
+      maxTaskMinutes: DEFAULT_REVIEW_POLICY.maxTaskMinutes
     }
     let state: LoopState = initialLoopState(config)
     // O1: this process's own per-round deferred findings, WITH the reviewer
@@ -1695,8 +1700,89 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     let deliveredFindingsIdentity: RoundHeadIdentity | null =
       recoveredLoopState.status === 'ok' ? recoveredLoopState.value.deliveredFindings : null
 
+    /**
+     * When the loop FIRST started on this task, as the durable control records
+     * report it — the instant the task's wall-clock budget is measured from,
+     * and the one figure that must not restart with this process. Resolved
+     * once, here, in falling order of authority:
+     *
+     *   1. the recovered `loop_state` record's own `taskStartedAt`, written by
+     *      the first driver to persist state for this task and carried forward
+     *      unchanged by every later one (including this one, below);
+     *   2. failing that, the earliest ownership epoch's `acquiredAt` — created
+     *      with `O_EXCL` and never overwritten, so it is the oldest durable
+     *      timestamp the store holds for this task. An epoch is claimed the
+     *      first time the task writes anything durable, so the real start is at
+     *      or before it: the budget then fires no earlier than it should, which
+     *      is the safe direction to be wrong in;
+     *   3. failing both — a task with no durable record at all, which is a task
+     *      starting now — this instant.
+     *
+     * A corrupt `loop_state` record never reaches here: it is refused inside
+     * the `try` below before any of this is read.
+     */
+    const taskStartedAt: string = (() => {
+      if (recoveredLoopState.status === 'ok' && recoveredLoopState.value.taskStartedAt !== null) {
+        return recoveredLoopState.value.taskStartedAt
+      }
+      try {
+        const earliest = readEarliestOwnership(defaultControlStoreDeps(controlStoreRoot), task)
+        if (earliest !== null) return earliest.acquiredAt
+      } catch {
+        // A store this process cannot read is not a reason to refuse a round —
+        // it only costs the budget its earlier floor, and the fallback below
+        // starts the clock now rather than inventing a start.
+      }
+      return new Date().toISOString()
+    })()
+    /**
+     * Milliseconds recorded against each phase so far, seeded from the
+     * recovered record so a restart continues one accounting rather than
+     * starting a second. Narration only: the budget is decided on elapsed time
+     * since `taskStartedAt`, never on this map, so a thin breakdown still stops
+     * the loop on time.
+     */
+    const phaseMs: Record<string, number> =
+      recoveredLoopState.status === 'ok' ? { ...recoveredLoopState.value.phaseMs } : {}
+    /** The phase this process is currently in, and when it entered it — the open interval `taskClock` closes when it reports, and `persistCurrentLoopState` folds into `phaseMs` on every phase change. */
+    let currentPhase: string | null = null
+    let currentPhaseSince = Date.now()
+
+    /**
+     * The task's wall clock, as `assessRound` is handed it at every round
+     * boundary and mechanical retry. `elapsedMs` is measured from
+     * `taskStartedAt` — the loop's first recorded start, not this process's —
+     * and `byPhaseMs` folds in the phase currently open, so the phase the loop
+     * is stuck in is visible in the breakdown rather than missing from it.
+     */
+    function taskClock(): TaskClock {
+      const now = Date.now()
+      const startedMs = Date.parse(taskStartedAt)
+      const byPhaseMs = { ...phaseMs }
+      if (currentPhase !== null) {
+        byPhaseMs[currentPhase] = (byPhaseMs[currentPhase] ?? 0) + Math.max(0, now - currentPhaseSince)
+      }
+      // An unparseable recorded start would otherwise read as `NaN`, and every
+      // comparison against a budget would then be false — a budget silently
+      // off. Zero elapsed is the same "does not fire" outcome, stated rather
+      // than arrived at by arithmetic on a non-number.
+      return { elapsedMs: Number.isFinite(startedMs) ? Math.max(0, now - startedMs) : 0, byPhaseMs }
+    }
+
     /** O1: writes the current in-memory round/budget/held-result/delivered-findings state to the control store — called at every meaningful transition below, never only at pause, so a kill mid-round has something fresher than "the last pause" to recover from. */
     function persistCurrentLoopState(phase: string, pauseReason?: string): void {
+      // Close the interval the previous phase held open before recording the
+      // new one, so `phaseMs` accumulates real time per phase rather than one
+      // total. A call naming the phase already current leaves the interval
+      // open — time keeps accruing to it — since nothing changed.
+      const now = Date.now()
+      if (currentPhase !== null && currentPhase !== phase) {
+        phaseMs[currentPhase] = (phaseMs[currentPhase] ?? 0) + Math.max(0, now - currentPhaseSince)
+        currentPhaseSince = now
+      } else if (currentPhase === null) {
+        currentPhaseSince = now
+      }
+      currentPhase = phase
       persistLoopState(task, {
         round,
         phase,
@@ -1709,7 +1795,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // itself. A re-exec (`checkStaleDriver`) and an attach both build a
         // fresh `LoopState`, so without this the next round would re-send the
         // developer at a finding or a failure that had already repeated.
-        repeatMemory: { blockingFindings: state.lastBlockingFindings, lastFailure: state.lastFailure }
+        repeatMemory: { blockingFindings: state.lastBlockingFindings, lastFailure: state.lastFailure },
+        // The task's own clock, carried forward unchanged (`taskStartedAt`) and
+        // accumulated (`phaseMs`), so the next driver to take this task over
+        // measures the same budget from the same instant.
+        taskStartedAt,
+        phaseMs: taskClock().byPhaseMs
       })
     }
     let devResumeId: string | null = null
@@ -2782,6 +2873,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // reference to it sees the real value from here on.
       policy = reviewPolicy()
       config.maxRounds = policy.maxRounds
+      config.maxTaskMinutes = policy.maxTaskMinutes
       repoRoot = d.repoRoot()
       baseHeadAtStart = d.gitRevParseOriginMain()
 
@@ -3463,12 +3555,16 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                   // returns `dispatch_developer`, leaving that rule untouched
                   // too.
                   if (unpushed.aheadCount > 0) {
-                    const firstAttempt = assessRound(state, {
-                      kind: 'mechanical_failure',
-                      round,
-                      failure: unpushedFailureMessage(headBeforeDispatch, unpushed),
-                      stats: computeStats(headBeforeDispatch, roundStartMs)
-                    })
+                    const firstAttempt = assessRound(
+                      state,
+                      {
+                        kind: 'mechanical_failure',
+                        round,
+                        failure: unpushedFailureMessage(headBeforeDispatch, unpushed),
+                        stats: computeStats(headBeforeDispatch, roundStartMs)
+                      },
+                      taskClock()
+                    )
                     state = firstAttempt.state
                     await logEvents(firstAttempt.events)
                     if (firstAttempt.decision.type === 'pause') {
@@ -3505,12 +3601,16 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                     // repeat, and falls through to the `no_push` pause exactly
                     // as before.
                     if (stillUnpushed.aheadCount > 0) {
-                      const resumedAttempt = assessRound(state, {
-                        kind: 'mechanical_failure',
-                        round,
-                        failure: unpushedFailureMessage(headBeforeDispatch, stillUnpushed),
-                        stats
-                      })
+                      const resumedAttempt = assessRound(
+                        state,
+                        {
+                          kind: 'mechanical_failure',
+                          round,
+                          failure: unpushedFailureMessage(headBeforeDispatch, stillUnpushed),
+                          stats
+                        },
+                        taskClock()
+                      )
                       state = resumedAttempt.state
                       await logEvents(resumedAttempt.events)
                       if (resumedAttempt.decision.type === 'pause') {
@@ -3569,12 +3669,16 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 // stall counter below, which is not a claim about any failure
                 // at all.
                 if (namedFailure !== null) {
-                  const stalled = assessRound(state, {
-                    kind: 'mechanical_failure',
-                    round,
-                    failure: detail,
-                    stats
-                  })
+                  const stalled = assessRound(
+                    state,
+                    {
+                      kind: 'mechanical_failure',
+                      round,
+                      failure: detail,
+                      stats
+                    },
+                    taskClock()
+                  )
                   state = stalled.state
                   await logEvents(stalled.events)
                   if (stalled.decision.type === 'pause') {
@@ -3672,7 +3776,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             stats: gate.stats,
             ...(failure !== undefined ? { failure } : {})
           }
-          const result = assessRound(state, obs)
+          const result = assessRound(state, obs, taskClock())
           state = result.state
           decision = result.decision
           if (decision.type === 'pause' && decision.reason === 'confidence' && decision.detail === undefined) {
@@ -3688,7 +3792,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           const stats = computeStats(head, roundStartMs)
           const confidence = readAndClearConfidence(round)
           const obs: Observations = { kind: 'gate', round, green: true, confidence, stats }
-          const result = assessRound(state, obs)
+          const result = assessRound(state, obs, taskClock())
           state = result.state
           decision = result.decision
           if (decision.type === 'pause' && decision.reason === 'confidence' && decision.detail === undefined) {
@@ -4024,7 +4128,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 round,
                 verdicts: roundVerdicts
               }
-              const result = assessRound(state, obs)
+              const result = assessRound(state, obs, taskClock())
               state = result.state
               decision = result.decision
               if (decision.type === 'pause' && decision.detail === undefined) {
