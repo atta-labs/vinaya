@@ -1,5 +1,43 @@
 # @atta/aeg-core
 
+## 0.36.0
+
+### Minor Changes
+
+- aaa7c00: Plan-time gate: `issue create`/`issue edit` refuse a task Issue whose Surface excludes a file the change is forced to touch — the command reference behind an introduced flag or command, the configuration reference and schema behind an introduced key, or every importer of a Boundary-pinned file. Each refusal names the exact directory glob to add.
+- 6ac74df: A task Issue may now carry a `## Premises` section: one line per fact about the code the plan rests on, written `` `<path>` contains `<text>` ``. `vinaya issue create` and `vinaya issue edit` evaluate every premise against the checkout and refuse the Issue naming the premise the file does not hold, and the dispatch render evaluates every premise again against the default branch and refuses preparation the same way. The rendered brief lists them under their own `## Premises` heading, so a Developer reads them as checked facts rather than as more of the Boundary's prose.
+  
+  A premise prefixed `after #<n>:` states a fact a task that has not merged yet will make true. It is accepted when the Issue is cut only if the Issue also declares `Depends-on` on that number, and is not evaluated then, because dispatch is the first moment it can be asserted at all. Neither does the dry brief render those commands run to grade the shape of the brief: premises at plan time have exactly one reader, the content gate, and it is the one that knows which are due.
+  
+  A Boundary that states the code's current shape — the whole words `already`, `currently` or `wired` — is refused unless the Issue carries at least one premise. The Boundary is read with its inline code spans intact, since that is the shape the claim is actually written in ("the signal is `already wired`, inert"); a fenced or indented block is still exempt, because a trigger word in a worked example is not a claim about the task's surface. A false "already wired" Boundary cost one task about 20 hours across five review rounds and two Principal rulings; the refusal asks for the claim to be written as a premise, not deleted.
+  
+  Issues that carry no `## Premises` section and whose Boundary uses none of those words behave exactly as before, and every brief already posted is unaffected — the heading renders only when the Issue has premises.
+
+### Patch Changes
+
+- 389d75f: A review finding now blocks only where the Developer can act on it this round. One exported function in `@attalabs/aeg-core` (`classifyFinding`) decides whether a finding blocks — the prose cap (a PR-body/comment/role-file location capped to MINOR), the out-of-Surface rule, and the unchanged-line rule — and both the merge gate (`checkReviewGate`) and the dev-review-loop's own classifier (`buildVerdictFromReport`) call it, neither keeping its own copy.
+  
+  From round 2 on, a code-review finding on a line that did not change between the previous round's head and the current head is deferred rather than blocking (a security finding at or above HIGH still blocks wherever it sits). In any round, a finding in a file the task's `## Surface` `in:` does not cover is deferred. A deferred finding keeps its reported severity and is listed — with its severity, `file:line`, and the reason — in the round's published summary and, when the gate is given the same context, the gate's own output. Round 1, an unrecoverable previous round head, and a gate with no deferral context all fall back to the prior behaviour: every in-Surface finding blocks.
+- fb1599f: `vinaya issue create` and `vinaya issue edit` now compare the files a task Issue's **Boundary** pins against the pinned files of every other open task Issue in the repository and the changed files of every open pull request. Share `planning.collisionThreshold` files or more (default three) with one of them, and declare no `Conflicts-with` edge naming it in either direction, and the write is refused, naming the other task and every shared file.
+  
+  Share fewer, and the Issue is accepted with each shared file and the task it is shared with printed as a warning. A small overlap is worth running in parallel — a merge conflict over one or two files costs minutes, while serializing a task costs a whole dispatch — so the default is deliberately permissive, and `planning.collisionThreshold: 0` turns the refusal off and leaves only the warning.
+  
+  The same comparison runs when a task is dispatched, scoped to open pull requests only, and prints the same warning or refusal. Only the first fifty open pull requests are read, so a busy repository never slows `issue create` to a crawl; when that bound is reached the output says so. An Issue whose Boundary pins no resolvable file makes no forge call at all.
+  
+  The existing package-level `checkConflictCompleteness` warning is unchanged and still runs — a domain overlap that shares no pinned file is still worth a hint.
+- 6480c9f: The developer review loop now pauses when the same mechanical failure ends two consecutive attempts, instead of dispatching the developer at it again. The pause is its own reason, `repeat_failure`, and its detail is the failure exactly as reported. Nothing bounded this before: a red gate advances no round number, so a loop stuck short of review could send the developer back indefinitely without approaching the round cap.
+  
+  Three kinds of attempt report their failure to the assessment: a mechanical gate that came back red for a pushed head (its failing check-runs, and any premise re-assertion that failed against the live body at that head); a push that was made and never landed — refused by a pre-push hook's own test run, or by the remote — which the loop reports as the branch, the unmoved head and the commits still waiting on it, since the refusal text itself never leaves the developer's session; and a stalled turn whose cause the loop can name, such as a conflict it never resolved. A turn that committed nothing attempted no push and reports nothing, keeping its existing one-resume-then-`no_push` bound; so does a stall with nothing to name, keeping the stalled-head bound and its `infrastructure` pause.
+  
+  Two attempts are matched on a normalised signature, never on raw string equality, which two runs of the same failure never satisfy: timestamps, temporary directories, process ids, durations and commit shas are replaced with placeholders, while the message's own words are kept, so `absent: maxRounds` and `absent: reviewers` stay two different failures. A green gate clears the chain, and a failure that could not be named never matches another unnamed one.
+  
+  Both repeat detectors — the previous reviewed round's blocking findings and the previous attempt's failure — are now carried in the control-store `loop_state` record, so a driver that re-execs itself mid-loop (the base branch moving over its own code) or an attach that starts fresh continues counting instead of forgetting that a finding or a failure had already repeated.
+- 6480c9f: The developer review loop now pauses when the same blocking finding — same reviewer role, same finding id — is still open in two consecutive reviewed rounds, instead of spending a third developer turn on work two turns have already failed to close. The pause is its own reason, `repeat_finding`, and its detail names the repeated key(s) (`open after two consecutive rounds: reviewer:F1`), so a Principal reading it never has to diff two rounds' reports.
+  
+  Three narrowings keep this distinct from the removed "resolved nothing this round" rule: identity is the reviewer role and the finding id together, so the same id from the two roles is two findings; only a finding the effective policy treated as blocking counts, since a non-blocking one never sent the developer back; and consecutive means consecutive reviewed rounds — a red gate or a low-confidence turn between them breaks nothing, because neither produced verdicts to compare. A round that resolves nothing but raises only new blocking findings still continues.
+- @attalabs/aeg-forge-state@0.36.0
+  - @attalabs/aeg-types@0.36.0
+
 ## 0.35.0
 
 ### Minor Changes
