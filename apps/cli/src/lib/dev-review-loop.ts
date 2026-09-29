@@ -73,8 +73,8 @@ import {
   type ReviewInputManifest,
   type ReviewPolicy,
   type RoundHeadIdentity,
-  type RoundRecord,
-  type RoundStats
+  type RoundStats,
+  type VerdictObservation
 } from '@attalabs/aeg-core'
 import {
   AGENT_VENDOR_NAMES,
@@ -921,16 +921,23 @@ function defaultDeps(): LoopDeps {
 }
 
 /**
- * Every deferred finding in the journal, flattened in round-then-report order
- * with the round that set it aside — the SAME `RoundRecord.deferred` data the
- * published summary renders, so the tracking Issue and the summary list the
- * same findings. Empty when no round deferred anything (O3).
+ * One round's deferred findings as tracking-Issue entries — each carrying the
+ * reviewer that reported it (`v.role`, O1's "reviewer" field), taken straight
+ * from the round's own verdict observations. The journal's `RoundRecord.deferred`
+ * (`@attalabs/aeg-core`) drops the role, and that type — like the summary that
+ * renders it — is out of this task's Surface, so the role is captured here at
+ * the one point it is still in hand, then accumulated per round by the loop.
+ * The severity/location/reason are the same facts the summary lists, so the
+ * two never disagree on the finding itself. Empty when the round deferred
+ * nothing (O3).
  */
-function collectDeferredFindings(rounds: RoundRecord[]): DeferredFindingEntry[] {
+function deferredEntriesForRound(round: number, verdicts: VerdictObservation[]): DeferredFindingEntry[] {
   const entries: DeferredFindingEntry[] = []
-  for (const r of rounds) {
-    for (const f of r.deferred ?? []) {
-      entries.push({ round: r.round, severity: f.severity, location: f.location, reason: f.reason })
+  for (const v of verdicts) {
+    for (const f of v.findings) {
+      if (f.deferred !== undefined) {
+        entries.push({ round, reviewer: v.role, severity: f.severity, location: f.location ?? '', reason: f.deferred })
+      }
     }
   }
   return entries
@@ -1503,6 +1510,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       maxRounds: DEFAULT_REVIEW_POLICY.maxRounds
     }
     let state: LoopState = initialLoopState(config)
+    // O1: this process's own per-round deferred findings, WITH the reviewer
+    // that reported each — keyed by round so a re-observed round replaces
+    // rather than duplicates. Captured from the verdict observations (the one
+    // place the role is still in hand) and read at publish to open/update the
+    // tracking Issue. Covers exactly the live rounds this process assessed —
+    // the same set the journal's own `deferred` carries, since a
+    // marker-reconstructed round has no deferred detail either.
+    const deferredByRound = new Map<number, DeferredFindingEntry[]>()
 
     // The `resumed` observation — a genuine
     // `--resume` attach, already authenticated (`resolveEscalation`, above)
@@ -3851,10 +3866,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 )
               }
 
+              const roundVerdicts = [reviewer.verdict.observation, security.verdict.observation]
+              // O1: capture this round's deferred findings WITH the reviewer
+              // role now, while the verdict observations are in hand — keyed by
+              // round so a re-observation replaces rather than duplicates.
+              deferredByRound.set(round, deferredEntriesForRound(round, roundVerdicts))
               const obs: Observations = {
                 kind: 'verdicts',
                 round,
-                verdicts: [reviewer.verdict.observation, security.verdict.observation]
+                verdicts: roundVerdicts
               }
               const result = assessRound(state, obs)
               state = result.state
@@ -3935,7 +3955,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // the same outer catch that turns a failed publication into an
           // infrastructure pause, retried idempotently next round (O2: found
           // by its body marker, never a second Issue).
-          const deferredFindings = collectDeferredFindings(state.rounds)
+          const deferredFindings = [...deferredByRound.entries()]
+            .sort(([a], [b]) => a - b)
+            .flatMap(([, entries]) => entries)
           const deferredIssue =
             deferredFindings.length > 0
               ? d.writeDeferredFindingsIssue({ prNumber, entries: deferredFindings })

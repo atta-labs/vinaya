@@ -1393,7 +1393,12 @@ function fakeForge(labelPresent = true): {
       labelExists = true
       return ''
     }
-    if (args[0] === 'issue' && args[1] === 'list') return JSON.stringify(issues)
+    // findDeferredFindingsIssue lists via `gh api --paginate … --jq '.[] | {number, body, state}'`,
+    // which streams one NDJSON object per issue; REST reports state lower-case.
+    if (args[0] === 'api')
+      return issues
+        .map((i) => JSON.stringify({ number: i.number, body: i.body, state: i.state.toLowerCase() }))
+        .join('\n')
     if (args[0] === 'issue' && args[1] === 'create') {
       const number = nextNumber++
       issues.push({ number, body: bodyFileArg(args), state: 'OPEN' })
@@ -1413,8 +1418,20 @@ function fakeForge(labelPresent = true): {
   return { gh, calls, issues }
 }
 
-const OUTSIDE = { round: 1, severity: 'MAJOR', location: 'x.ts:1', reason: 'outside-surface' as const }
-const UNCHANGED = { round: 2, severity: 'MINOR', location: 'y.ts:2', reason: 'unchanged-line' as const }
+const OUTSIDE = {
+  round: 1,
+  reviewer: 'reviewer',
+  severity: 'MAJOR',
+  location: 'x.ts:1',
+  reason: 'outside-surface' as const
+}
+const UNCHANGED = {
+  round: 2,
+  reviewer: 'security',
+  severity: 'MEDIUM',
+  location: 'y.ts:2',
+  reason: 'unchanged-line' as const
+}
 
 describe('upsertDeferredFindingsIssue — one tracking Issue per pull request (#854)', () => {
   it('creates the Issue listing each finding, labelled and marked, when none exists (O1)', () => {
@@ -1426,8 +1443,9 @@ describe('upsertDeferredFindingsIssue — one tracking Issue per pull request (#
     // O1: the marker names the pull request, and every finding is listed with
     // its severity, `file:line` and reason (the shared reason wording).
     expect(body).toContain(deferredFindingsMarker(55))
-    expect(body).toContain('- round 1 — MAJOR x.ts:1 — outside the Surface')
-    expect(body).toContain('- round 2 — MINOR y.ts:2 — unchanged line')
+    // O1: each line names the reviewer that reported it, its severity, file:line and reason.
+    expect(body).toContain('- round 1 — reviewer — MAJOR x.ts:1 — outside the Surface')
+    expect(body).toContain('- round 2 — security — MEDIUM y.ts:2 — unchanged line')
     // Fixed backlog label, no tranche label, so no plan gate applies.
     const createCall = forge.calls.find((a) => a[0] === 'issue' && a[1] === 'create')!
     expect(createCall).toContain('--label')
@@ -1484,8 +1502,8 @@ describe('upsertDeferredFindingsIssue — one tracking Issue per pull request (#
 
   it('renders `(no location)` for a finding that carried none', () => {
     const body = renderDeferredFindingsIssueBody(7, [
-      { round: 1, severity: 'BLOCKER', location: '', reason: 'outside-surface' }
+      { round: 1, reviewer: 'reviewer', severity: 'BLOCKER', location: '', reason: 'outside-surface' }
     ])
-    expect(body).toContain('- round 1 — BLOCKER (no location) — outside the Surface')
+    expect(body).toContain('- round 1 — reviewer — BLOCKER (no location) — outside the Surface')
   })
 })

@@ -1225,8 +1225,16 @@ describe('devReviewLoop — deferred findings tracked in one Issue per pull requ
     expect(world.deferredIssueWrites).toHaveLength(1)
     const write = world.deferredIssueWrites[0]!
     expect(write.prNumber).toBe(world.prNumber)
+    // O1: the entry carries the reviewer that reported it (the code-reviewer
+    // role, `'reviewer'`) alongside severity, file:line and reason.
     expect(write.entries).toEqual([
-      { round: 1, severity: 'BLOCKER', location: 'packages/aeg-core/src/foo.ts:10', reason: 'outside-surface' }
+      {
+        round: 1,
+        reviewer: 'reviewer',
+        severity: 'BLOCKER',
+        location: 'packages/aeg-core/src/foo.ts:10',
+        reason: 'outside-surface'
+      }
     ])
     // O1: publication received the tracking Issue's ref, to link from the summary.
     expect(world.publishedDeferredIssues).toEqual([{ issue: world.deferredIssueNumber }])

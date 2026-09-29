@@ -2388,9 +2388,11 @@ export const DEFERRED_FINDINGS_LABEL = 'vinaya/deferred'
 
 const DEFERRED_FINDINGS_LABEL_COLOR = 'BFD4F2'
 
-/** One deferred finding as the tracking Issue lists it — the same facts the published summary's deferred block carries, plus the round that set it aside. */
+/** One deferred finding as the tracking Issue lists it — the facts O1 requires: which reviewer reported it, its severity, `file:line`, and why it was set aside, plus the round. */
 export type DeferredFindingEntry = {
   round: number
+  /** The review role that reported it — `'reviewer'` (code review) or `'security'` (O1's "reviewer" field). */
+  reviewer: string
   severity: string
   /** The finding's own `file:line`, or `''` when it carried none. */
   location: string
@@ -2412,16 +2414,16 @@ function deferredFindingsTitle(prNumber: number): string {
 
 /**
  * The tracking Issue's body: the marker on line 1, then one bullet per
- * deferred finding in round-then-report order, each naming its round, original
- * severity, `file:line` (or `(no location)`), and why it was set aside — the
- * SAME facts the published summary's own deferred block renders, so the
- * durable backlog Issue and the summary never disagree. `DEFERRAL_REASON_TEXT`
- * is the one shared reason-wording map both read.
+ * deferred finding in round-then-report order, each naming its round, the
+ * reviewer that reported it, its original severity, `file:line` (or
+ * `(no location)`), and why it was set aside — the field set O1 requires.
+ * `DEFERRAL_REASON_TEXT` is the same shared reason-wording map the published
+ * summary's own deferred block reads.
  */
 export function renderDeferredFindingsIssueBody(prNumber: number, entries: DeferredFindingEntry[]): string {
   const lines = entries.map((e) => {
     const where = e.location.length > 0 ? e.location : '(no location)'
-    return `- round ${e.round} — ${e.severity} ${where} — ${DEFERRAL_REASON_TEXT[e.reason]}`
+    return `- round ${e.round} — ${e.reviewer} — ${e.severity} ${where} — ${DEFERRAL_REASON_TEXT[e.reason]}`
   })
   return [
     deferredFindingsMarker(prNumber),
@@ -2460,25 +2462,36 @@ function ensureDeferredFindingsLabel(gh: GhRunner): void {
   ])
 }
 
-type ForgeIssueRow = { number: number; body: string; state: string }
+type ForgeIssueRow = { number: number; body: string | null; state: string }
 
-/** The open-or-closed tracking Issue whose body carries `marker`, or `null` — the find-by-marker that makes a republish idempotent (O2), scoped to the fixed label, never a title match. */
+/**
+ * The open-or-closed tracking Issue whose body carries `marker`, or `null` —
+ * the find-by-marker that makes a republish idempotent (O2), scoped to the
+ * fixed label, never a title match.
+ *
+ * Lists EVERY `vinaya/deferred` Issue through `gh api --paginate`, which
+ * follows the REST `Link` header across all pages, rather than a single capped
+ * `gh issue list --limit` page: one tracking Issue persists per pull request
+ * (closed ones counted too), so once more than a page of them accumulates
+ * repo-wide, an older pull request's Issue would drop off a capped page and
+ * its republish would open a second, breaking O2 at scale (security review,
+ * round 2, LOW). `--jq` streams one `{number, body, state}` object per line
+ * across every page; the REST `state` is lower-case (`open`/`closed`), which
+ * the caller's own `toUpperCase()` reopen check already accounts for.
+ */
 function findDeferredFindingsIssue(gh: GhRunner, marker: string): ForgeIssueRow | null {
-  const rows = JSON.parse(
-    gh([
-      'issue',
-      'list',
-      '--label',
-      DEFERRED_FINDINGS_LABEL,
-      '--state',
-      'all',
-      '--json',
-      'number,body,state',
-      '--limit',
-      '100'
-    ])
-  ) as ForgeIssueRow[]
-  return rows.find((r) => r.body.includes(marker)) ?? null
+  const raw = gh([
+    'api',
+    '--paginate',
+    `repos/{owner}/{repo}/issues?state=all&labels=${encodeURIComponent(DEFERRED_FINDINGS_LABEL)}&per_page=100`,
+    '--jq',
+    '.[] | {number, body, state}'
+  ])
+  const rows = raw
+    .split('\n')
+    .filter((line) => line.trim().length > 0)
+    .map((line) => JSON.parse(line) as ForgeIssueRow)
+  return rows.find((r) => (r.body ?? '').includes(marker)) ?? null
 }
 
 function writeIssueBodyFromFile(gh: GhRunner, ghCmd: string[], body: string): string {
@@ -2524,7 +2537,7 @@ export function upsertDeferredFindingsIssue(
   const existing = findDeferredFindingsIssue(gh, marker)
   if (existing) {
     if (existing.state.toUpperCase() === 'CLOSED') gh(['issue', 'reopen', String(existing.number)])
-    if (existing.body.trim() !== body.trim())
+    if ((existing.body ?? '').trim() !== body.trim())
       writeIssueBodyFromFile(gh, ['issue', 'edit', String(existing.number)], body)
     return { issue: existing.number }
   }
