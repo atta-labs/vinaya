@@ -64,8 +64,10 @@ import {
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import {
   describeFolderFallback,
+  type FolderFallbackRecord,
   LOG_CONTEXT_LOOKUP_DEADLINE_MS,
   LOG_DESTINATION_ANCHOR_DEADLINE_MS,
+  readFolderFallbackState,
   type ResolvedLogDestination,
   resolveLogDestinationFrom,
   withDeadline
@@ -106,6 +108,8 @@ export type DoctorDeps = {
   probeLogServer: (url: string, headers: Record<string, string> | undefined) => Promise<LogServerProbe>
   /** Reads a `logs.headers` credential from the macOS login Keychain — so doctor can report WHERE each credential was found (environment, Keychain, or nowhere), never its value (O4). The SAME reader delivery uses, so the two can never disagree. Optional and injected so the check is provable on Linux CI where the real Keychain is absent; an omitted entry falls back to the real reader (which returns `null` off macOS), so every existing `DoctorDeps` constructor keeps compiling unchanged. */
   readLogCredentialKeychain?: (variable: string) => string | null
+  /** O3: the last time an unattended run fell back to the local folder although a server was configured — read from the machine-local state file the sink records it in, so the cause survives a launch path that keeps no standard error. `null` when none is recorded. Optional and injected so the check is provable with a fixture; an omitted entry falls back to the real per-repository reader, so every existing `DoctorDeps` constructor keeps compiling unchanged. */
+  readLastLogFallback?: () => Promise<FolderFallbackRecord | null>
 }
 
 function readVersion(): string {
@@ -273,8 +277,14 @@ export function realDeps(): DoctorDeps {
     meteringCapability: () => resolveMeteringCapability(hardenedMeteringDeps()),
     resolveLogDestination: resolveLogDestinationForDoctor,
     probeLogServer: probeLogDestinationServer,
-    readLogCredentialKeychain: readLogHeaderKeychainCredential
+    readLogCredentialKeychain: readLogHeaderKeychainCredential,
+    readLastLogFallback: readLastLogFallbackReal
   }
+}
+
+/** The real per-repository read of the O3 fallback state file — the default when a `DoctorDeps` omits its own `readLastLogFallback`. Bounded like every other forge read doctor makes. */
+async function readLastLogFallbackReal(): Promise<FolderFallbackRecord | null> {
+  return readFolderFallbackState(await withDeadline(resolveRepo(), LOG_CONTEXT_LOOKUP_DEADLINE_MS, null))
 }
 
 // ---------------------------------------------------------------------------
@@ -1456,6 +1466,21 @@ async function diagnoseLogDestination(deps: DoctorDeps): Promise<Finding[]> {
   ])
 }
 
+/**
+ * O3: the last folder fallback this machine recorded for this repository —
+ * "last fallback: <time>, <reason>". A historical fact, not a live probe: the
+ * `[logs]` finding above already reports where events go NOW, and this line
+ * survives a launch path that discarded the sink's one-per-process standard
+ * error line, which is exactly how the Mac reroute went unseen (`apps/cli/
+ * specs/log.md` § Durable fallback reasons). `info` always — the reroute may
+ * be long past and already fixed; the record is kept so it is not invisible.
+ */
+async function diagnoseLastLogFallback(deps: DoctorDeps): Promise<Finding[]> {
+  const record = await (deps.readLastLogFallback ?? readLastLogFallbackReal)()
+  if (record === null) return []
+  return [info('logs-fallback', `last fallback: ${record.at}, ${record.reason}`)]
+}
+
 // ---------------------------------------------------------------------------
 // Report rendering
 // ---------------------------------------------------------------------------
@@ -1547,6 +1572,7 @@ export async function runDoctor(args: string[], deps: DoctorDeps): Promise<numbe
   findings.push(diagnoseCodeowners(repo.repoRoot))
   findings.push(...diagnoseTestCi(repo.repoRoot))
   findings.push(...(await diagnoseLogDestination(deps)))
+  findings.push(...(await diagnoseLastLogFallback(deps)))
 
   const healthy = findings.every((f) => f.severity === 'ok' || f.severity === 'info')
 

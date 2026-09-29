@@ -856,13 +856,24 @@ export const VinayaConfigSchema = z.object({
         .refine((v) => isAbsolute(v), { message: 'logs.folder: must be an absolute path' })
         .optional(),
       url: z.string().url().optional(),
-      headers: z.record(z.string()).optional()
+      headers: z.record(z.string()).optional(),
+      // The READ credential `vinaya log selftest` presents to read its own
+      // test event back (O1) — distinct from `headers`, which is the
+      // write-only INGEST credential the server refuses on a read route. Same
+      // `${VAR_NAME}` + Keychain resolution (`resolveLogsHeaderValues`), and
+      // never trust-anchor gated the way `url` is: it is this machine's own
+      // credential for reading back from a URL that gate already approved, not
+      // a destination a pull request's diff could redirect.
+      readHeaders: z.record(z.string()).optional()
     })
     .refine((v) => [v.folder, v.url].filter((x) => x !== undefined).length <= 1, {
       message: 'logs: set at most one of folder/url'
     })
     .refine((v) => v.headers === undefined || v.url !== undefined, {
       message: 'logs: headers requires url'
+    })
+    .refine((v) => v.readHeaders === undefined || v.url !== undefined, {
+      message: 'logs: readHeaders requires url'
     })
     .optional()
 })
