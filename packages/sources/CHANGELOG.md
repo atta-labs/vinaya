@@ -1,5 +1,37 @@
 # @atta/vinaya-sources
 
+## 0.36.0
+
+### Minor Changes
+
+- 1f4ed5c: On macOS a `logs.headers` credential referenced as `${VAR_NAME}` now falls back to the login Keychain when that variable is unset in the process environment, so an Operator the Claude desktop app starts — whose environment carries no `VINAYA_LOG_TOKEN` — delivers logs with no token copied into any settings file (issue #841). The value is read from a generic-password item under the service `Vinaya Log`, keyed by the variable name as its account. The environment still wins wherever the variable is set, and Linux behaviour is unchanged (the read is darwin-only).
+  
+  A new command, `vinaya log set-credential <VAR_NAME>`, stores that value into the Keychain from standard input — never a command-line argument a `ps` listing could show — and prints nothing of it.
+  
+  `vinaya doctor`'s `[logs]` check now reports where each log credential was found — the environment, the macOS login Keychain, or nowhere — never its value.
+
+### Patch Changes
+
+- 915343a: A `vinaya` process started with a `PATH` that does not contain the GitHub CLI's install folder — as the Claude desktop app starts an Operator's task tools on macOS, whose `PATH` lacks `/opt/homebrew/bin` — now still runs `gh`. At process start, before any command runs, the CLI appends a standard `gh` install location (`/opt/homebrew/bin`, `/usr/local/bin`) to its own `PATH` when `gh` is not already reachable and that folder holds an executable `gh`; every child process it spawns inherits the amended `PATH`, so all 23 `gh`-by-name call sites — including the unattended trust-anchor read that decides where a run's telemetry is delivered — resolve it. A `PATH` that already finds `gh` is left unchanged, and existing entries are never reordered or removed.
+  
+  `vinaya doctor` gains a `[gh]` finding: when `gh` is at none of those locations and not on `PATH`, it reports that `gh` is missing and names the standard locations it searched.
+- fb1599f: `vinaya issue create` and `vinaya issue edit` now compare the files a task Issue's **Boundary** pins against the pinned files of every other open task Issue in the repository and the changed files of every open pull request. Share `planning.collisionThreshold` files or more (default three) with one of them, and declare no `Conflicts-with` edge naming it in either direction, and the write is refused, naming the other task and every shared file.
+  
+  Share fewer, and the Issue is accepted with each shared file and the task it is shared with printed as a warning. A small overlap is worth running in parallel — a merge conflict over one or two files costs minutes, while serializing a task costs a whole dispatch — so the default is deliberately permissive, and `planning.collisionThreshold: 0` turns the refusal off and leaves only the warning.
+  
+  The same comparison runs when a task is dispatched, scoped to open pull requests only, and prints the same warning or refusal. Only the first fifty open pull requests are read, so a busy repository never slows `issue create` to a crawl; when that bound is reached the output says so. An Issue whose Boundary pins no resolvable file makes no forge call at all.
+  
+  The existing package-level `checkConflictCompleteness` warning is unchanged and still runs — a domain overlap that shares no pinned file is still worth a hint.
+- Updated dependencies [389d75f]
+- Updated dependencies [aaa7c00]
+- Updated dependencies [6ac74df]
+- Updated dependencies [fb1599f]
+- Updated dependencies [6480c9f]
+- Updated dependencies [6480c9f]
+  - @attalabs/aeg-core@0.36.0
+  - @attalabs/aeg-forge-state@0.36.0
+  - @attalabs/aeg-types@0.36.0
+
 ## 0.35.0
 
 ### Minor Changes
