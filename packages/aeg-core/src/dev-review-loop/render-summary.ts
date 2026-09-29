@@ -76,7 +76,8 @@ function countCells(record: RoundRecord): string[] {
  */
 const NOT_REVIEWED_REASON_TEXT: Record<NotReviewedReason, string> = {
   checks_red: 'checks red',
-  low_confidence: 'low confidence'
+  low_confidence: 'low confidence',
+  mechanical_failure: 'mechanical failure'
 }
 
 function outcomeCell(record: RoundRecord): string {

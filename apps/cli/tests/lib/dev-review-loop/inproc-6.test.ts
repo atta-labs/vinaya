@@ -113,7 +113,9 @@ describe('devReviewLoop — a clean head falls into conflict while reviewers wor
     })
 
     expect(result.finalDecision.type).toBe('pause')
-    expect(result.finalDecision).toMatchObject({ reason: 'infrastructure' })
+    // Both conflict-retry turns ended on the same unresolved conflict, so the
+    // repeat-failure stop names it rather than the generic stall bound.
+    expect(result.finalDecision).toMatchObject({ reason: 'repeat_failure' })
     const detail = (result.finalDecision as { detail?: string }).detail ?? ''
     expect(detail).toMatch(/conflict never resolved/)
     expect(world.publishedRounds).toHaveLength(0)

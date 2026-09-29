@@ -92,11 +92,42 @@ export type RoundStats = {
  * round, before the loop pauses (spec §6.7's bounded re-ask).
  */
 export type Observations =
-  | ({ kind: 'gate' } & { round: number; green: boolean; confidence?: Confidence; stats: RoundStats })
+  | ({ kind: 'gate' } & {
+      round: number
+      green: boolean
+      confidence?: Confidence
+      stats: RoundStats
+      /**
+       * The mechanical failure that made this gate red, verbatim — the
+       * failing check-run names and premise re-assert messages the driver
+       * already holds, exactly as it would print them. Read only when
+       * `green` is false, and only to match this attempt's failure against
+       * the previous one's (`normalizeFailureSignature`, `assess-round.ts`);
+       * a red gate whose cause the driver could not name omits it, which
+       * breaks the repeat chain rather than matching an unknown to an
+       * unknown.
+       */
+      failure?: string
+    })
   | ({ kind: 'verdicts' } & {
       round: number
       verdicts: VerdictObservation[]
     })
+  /**
+   * A mechanical failure that ended an attempt WITHOUT producing a head for
+   * the gate to read — a push the developer could not land (refused by a
+   * pre-push hook, or by the remote), or a turn that pushed nothing at all.
+   * There is no gate result to report for such an attempt, so it cannot
+   * arrive as a `gate` observation; it carries only the failure the driver
+   * observed, which the same `'repeat_failure'` rule matches against the
+   * previous attempt's. Unlike a `gate` observation, a non-repeat here
+   * records nothing but the signature: no round record, no events, no round
+   * accounting — the attempt produced no head, so there is nothing about it
+   * to publish, and the driver's own bounds (one resume then `'no_push'`,
+   * the stalled-head bound then `'infrastructure'`) still govern a first
+   * occurrence.
+   */
+  | ({ kind: 'mechanical_failure' } & { round: number; failure: string; stats: RoundStats })
 
 /**
  * `'infrastructure'`: a review
@@ -151,6 +182,23 @@ export type Observations =
  * what the merge gate (which DOES re-resolve policy fresh on every run)
  * already checks.
  *
+ * `'repeat_finding'`: the same blocking finding — same reviewer role, same
+ * finding id — was still open in two consecutive reviewed rounds. Unlike
+ * `'reappearance'` (an id the reviewer itself marked `resolved` and then
+ * reported again), nothing here was ever claimed fixed: the finding simply
+ * never left, and a third developer turn on it is a turn the loop has no
+ * reason to expect anything new from. Decided by `assessRound`, which
+ * carries the repeated key(s) in the pause's own `detail`.
+ *
+ * `'repeat_failure'`: two consecutive attempts ended on the same mechanical
+ * failure — a refused push, a premise re-check mismatch, a forge or network
+ * error, a failed pre-push test — matched by the normalised signature
+ * `normalizeFailureSignature` derives (`assess-round.ts`), never by raw
+ * string equality: the volatile parts of such a message (timestamps,
+ * temporary paths, process ids, durations) differ between two runs of the
+ * SAME failure. The driver reports the failure text it already has on the
+ * gate observation; the pause's `detail` is that exact message, unnormalised.
+ *
  * `'no_push'`: a developer turn
  * ended with a dirty worktree or local commits ahead of the remote, and no
  * new head appeared on the branch even after one foreground resume asking
@@ -168,6 +216,8 @@ export type PauseReason =
   | 'no_progress'
   | 'confidence'
   | 'reappearance'
+  | 'repeat_finding'
+  | 'repeat_failure'
   | 'infrastructure'
   | 'no_push'
   | 'objectives_changed'
@@ -184,7 +234,15 @@ export type Decision =
   | {
       type: 'pause'
       reason: PauseReason
-      /** Set only for `'infrastructure'` — the role and missing artifact(s) the driver observed; every other reason omits it. */
+      /**
+       * The pause's own narration, when the deciding component has one:
+       * `'infrastructure'` (the role and missing artifact(s) the driver
+       * observed), `'max_rounds'` (the configured cap), `'repeat_finding'`
+       * (the reviewer-qualified finding key(s) open two rounds running), and
+       * `'repeat_failure'` (the exact failure message, unnormalised). Every
+       * other reason omits it here — the driver narrates several of them
+       * itself from facts it already holds (`deriveVerdictPauseDetail`).
+       */
       detail?: string
     }
 
@@ -210,13 +268,16 @@ export type RoundOutcome = 'green' | 'changes_requested' | 'escalated' | 'stoppe
  *   - `'checks_red'` — the round's gate observation was not green, so reviewers
  *     were never dispatched;
  *   - `'low_confidence'` — a below-threshold confidence sent the developer back
- *     without dispatching reviewers.
+ *     without dispatching reviewers;
+ *   - `'mechanical_failure'` — the same mechanical failure ended two
+ *     consecutive attempts that never produced a head (`'repeat_failure'`),
+ *     so no gate ever judged one and no reviewer ever saw it.
  *
  * `outcome` stays whatever the round would otherwise carry (both reasons are
  * `changes_requested` today), so the `round_ended` log event a reader parses is
  * unaffected — only the summary table's rendering changes.
  */
-export type NotReviewedReason = 'checks_red' | 'low_confidence'
+export type NotReviewedReason = 'checks_red' | 'low_confidence' | 'mechanical_failure'
 
 /** One deferred finding, as the published summary reports it (O4) — its original severity, its `file:line`, and why this round set it aside, never its reported severity mutated. */
 export type DeferredFindingRow = {
@@ -281,6 +342,21 @@ export type LoopState = {
   extraTurnUsed: boolean
   /** The most recent round's combined id → state map, carried forward for the next round's comparison. */
   lastIds: Map<string, string | null>
+  /**
+   * The previous REVIEWED round's blocking-and-open finding keys
+   * (`<role>:<id>`, sorted), for the `'repeat_finding'` stop. Rounds no
+   * reviewer saw (a red gate, a low-confidence turn) never touch it: two
+   * consecutive rounds means two consecutive rounds that produced verdicts,
+   * not two iterations of the driver's loop.
+   */
+  lastBlockingFindings: string[]
+  /**
+   * The previous attempt's mechanical failure — its normalised `signature`
+   * (what two attempts are matched on) and the `message` as reported (what
+   * the pause names). `null` whenever the last attempt reached a green gate,
+   * or failed with no reported cause: either breaks the repeat chain.
+   */
+  lastFailure: { signature: string; message: string } | null
   /** Running sums for `journal_finalized` — updated once per concluded round, never recomputed from `rounds` (which carries counts only, not diff stats). */
   totalWallMs: number
   totalFilesChanged: number
@@ -293,6 +369,8 @@ export function initialLoopState(config: LoopConfig): LoopState {
     pending: null,
     extraTurnUsed: false,
     lastIds: new Map(),
+    lastBlockingFindings: [],
+    lastFailure: null,
     totalWallMs: 0,
     totalFilesChanged: 0
   }

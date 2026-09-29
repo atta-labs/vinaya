@@ -133,7 +133,7 @@ describe('devReviewLoop — O1 (#595): a blank/dash-only token-report row never 
 // --- a stale Premise pin pauses like a red gate, never a driver exit (O4) ---
 
 describe('devReviewLoop — a stale Premise pin pauses like a red gate, never a driver exit (O4)', () => {
-  it('produces one developer resume naming the failing premise line, then the SAME bounded infrastructure pause — never an uncaught exit', async () => {
+  it('produces one developer resume naming the failing premise line, then a decided pause naming that same failure — never an uncaught exit', async () => {
     const world = makeWorld({
       gate: 'green',
       prBody: `**Premise:**\n- pinned.ts contains: OLD_SYMBOL\n\nCloses #${9001}`
@@ -148,9 +148,12 @@ describe('devReviewLoop — a stale Premise pin pauses like a red gate, never a 
     const { deps, prompts } = withCapturedDeveloperDispatch(world)
     const result = await runLoopInProcessSafe(world, deps, { gatePollMaxAttempts: 2, gatePollIntervalMs: 5 })
 
-    // A clean, decided pause — never an uncaught crash.
+    // A clean, decided pause — never an uncaught crash. The same premise
+    // mismatch ended two consecutive attempts, so it is the repeat-failure
+    // stop that fires, naming the failure rather than the generic stall.
     expect(result.finalDecision.type).toBe('pause')
-    expect((result.finalDecision as { reason: string }).reason).toBe('infrastructure')
+    expect((result.finalDecision as { reason: string }).reason).toBe('repeat_failure')
+    expect((result.finalDecision as { detail: string }).detail).toMatch(/dispatch-gate premise:/)
 
     // The developer's SECOND turn (the first resume — round 1's own fresh
     // push-and-open dispatch is prompts[0]) is where the premise failure
@@ -166,9 +169,9 @@ describe('devReviewLoop — a stale Premise pin pauses like a red gate, never a 
       string,
       unknown
     >
-    expect(pauseState.reason).toBe('infrastructure')
+    expect(pauseState.reason).toBe('repeat_failure')
 
-    const pauseComment = world.postedComments.find((c) => c.marker === '<!-- aeg:loop:paused:infrastructure -->')
+    const pauseComment = world.postedComments.find((c) => c.marker === '<!-- aeg:loop:paused:repeat_failure -->')
     expect(pauseComment).toBeDefined()
     expect((pauseComment as { body: string }).body).toMatch(/dispatch-gate premise:/)
   })
@@ -220,6 +223,55 @@ describe('devReviewLoop — O2 (#543): unpushed real work is resumed once, then 
     expect(resumeEvent?.kind).toBe('dev_review_loop')
     expect(resumeEvent?.branch).toBe(world.branch)
     expect(resumeEvent?.detail as string).toMatch(/smoke\.ts/)
+  })
+
+  it('a push that was made and never landed, twice, is the repeat-failure stop — naming the exact failure, not a dirty-file list', async () => {
+    // A refused push — by a pre-push hook's own test run, or by the remote —
+    // is what commits ahead of the remote with an unmoved head means. The
+    // refusal text itself never leaves the developer's session, so the
+    // message the loop matches and names is everything it CAN observe of
+    // that push: the branch, the head that did not move, and the commits
+    // waiting on it. Observed once before the resume and once after, and
+    // identical both times, so the repeat stop fires rather than the
+    // one-resume `no_push` rule.
+    const world = makeWorld({ gate: 'red' })
+    const { deps } = withCapturedDeveloperDispatch(world, {
+      readUnpushedWorkDetail: () => ({ dirtyFiles: [], aheadCount: 2 })
+    })
+    const result = await runLoopInProcessSafe(world, deps, { gatePollMaxAttempts: 2, gatePollIntervalMs: 5 })
+
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'repeat_failure' })
+    expect((result.finalDecision as { detail: string }).detail).toBe(
+      `push never landed on ${world.branch}: head ${world.head} unchanged; 2 commit(s) ahead of the remote, worktree clean`
+    )
+    const conditions = outboxLines(world)
+      .filter((l) => l.event === 'stop_condition_met')
+      .map((l) => l.condition)
+    expect(conditions).toContain('repeat_failure')
+    const pauseState = JSON.parse(readFileSync(join(controlDir(world), 'pause-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
+    expect(pauseState.reason).toBe('repeat_failure')
+    expect(pauseState.detail).toMatch(/push never landed/)
+  })
+
+  it('a worktree the developer never committed attempted no push, so it stays with the one-resume no_push rule', async () => {
+    // The other half of the split: nothing is ahead of the remote, so no
+    // push was ever made and there is no push failure to match — this is
+    // `no_push`'s own case, unchanged, and no repeat-failure condition is
+    // ever logged for it.
+    const world = makeWorld({ gate: 'red' })
+    const { deps } = withCapturedDeveloperDispatch(world, {
+      readUnpushedWorkDetail: () => ({ dirtyFiles: ['smoke.ts'], aheadCount: 0 })
+    })
+    const result = await runLoopInProcessSafe(world, deps, { gatePollMaxAttempts: 2, gatePollIntervalMs: 5 })
+
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'no_push' })
+    const conditions = outboxLines(world)
+      .filter((l) => l.event === 'stop_condition_met')
+      .map((l) => l.condition)
+    expect(conditions).not.toContain('repeat_failure')
   })
 })
 
@@ -786,8 +838,11 @@ describe('devReviewLoop — a conflicting head is sent back to the developer, ne
     const { deps, prompts } = withCapturedDeveloperDispatch(world)
     const result = await runLoopInProcessSafe(world, deps, { gatePollMaxAttempts: 2, gatePollIntervalMs: 5 })
 
+    // The same unresolved conflict ended both retries, so the repeat-failure
+    // stop names it rather than the generic stall bound reporting it.
     expect(result.finalDecision.type).toBe('pause')
-    expect((result.finalDecision as { reason: string }).reason).toBe('infrastructure')
+    expect((result.finalDecision as { reason: string }).reason).toBe('repeat_failure')
+    expect((result.finalDecision as { detail: string }).detail).toMatch(/conflict never resolved/)
 
     // No reviewer was ever dispatched — the conflict was caught before any
     // reviewer read this head.
@@ -806,7 +861,7 @@ describe('devReviewLoop — a conflicting head is sent back to the developer, ne
     expect(conflictPrompt).toMatch(/behind the base in a way that conflicts/)
     expect(conflictPrompt).toMatch(/apps\/cli\/src\/lib\/dev-review-loop\.ts/)
 
-    const pauseComment = world.postedComments.find((c) => c.marker === '<!-- aeg:loop:paused:infrastructure -->')
+    const pauseComment = world.postedComments.find((c) => c.marker === '<!-- aeg:loop:paused:repeat_failure -->')
     expect(pauseComment).toBeDefined()
     const body = (pauseComment as { body: string }).body
     expect(body).toMatch(/conflict never resolved/)

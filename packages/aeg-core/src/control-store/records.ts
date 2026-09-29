@@ -204,6 +204,25 @@ export const LoopStateRecordSchema = z
     heldResult: roundHeadIdentity.nullable(),
     /** The round+head whose findings have already been delivered to the developer once — `null` until a delivery happens; read back so a later attach never redelivers the same (round, head) pair. */
     deliveredFindings: roundHeadIdentity.nullable(),
+    /**
+     * The loop's two repeat detectors, carried across a process boundary:
+     * the previous reviewed round's blocking-and-open finding keys, and the
+     * previous attempt's mechanical failure. Both live in the driver's
+     * in-memory `LoopState`, which a re-exec (the driver replacing itself
+     * when the base branch moves over its own code) and an attach both
+     * start fresh — so without this field the very next round would re-send
+     * the developer at a finding or a failure that had in fact already
+     * repeated, the exact outcome the two repeat stops exist to prevent.
+     * Optional: a record written before this field existed still parses, and
+     * reads back as no memory rather than as a corrupt record.
+     */
+    repeatMemory: z
+      .object({
+        blockingFindings: z.array(z.string()),
+        lastFailure: z.object({ signature: z.string(), message: z.string() }).nullable()
+      })
+      .strict()
+      .optional(),
     recordedAt: isoTimestamp
   })
   .strict()

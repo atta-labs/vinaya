@@ -31,6 +31,15 @@
  *   progress; it is removed. The `no_progress` condition and pause reason
  *   survive only for the driver's own attach-redelivery pause and for
  *   already-written journals, never as an assessment exit here.
+ * - Two further exits, each with its own `condition` value and pause reason,
+ *   stop a loop that is repeating itself rather than converging: the same
+ *   BLOCKING finding — same reviewer role, same finding id — still open in
+ *   two consecutive reviewed rounds (`condition: 'repeat_finding'`), and two
+ *   consecutive attempts ending on the same mechanical failure
+ *   (`condition: 'repeat_failure'`). Neither revives `no_progress`: a round
+ *   that resolves nothing but raises only new findings still continues, and
+ *   a round whose repeated finding is non-blocking continues too. Both name
+ *   what repeated in the pause's own `detail`.
  *
  * Reuse, not a second counter: the id-state map for each round is built by
  * calling `groupRounds` (`../review-status`) with synthetic same-key
@@ -174,7 +183,15 @@ function findingsComparedEvent(state: LoopState, fc: FindingsCompared): DevRevie
 function stopConditionMetEvent(
   state: LoopState,
   round: number,
-  condition: 'green' | 'max_rounds' | 'no_progress' | 'escalated' | 'confidence' | 'reappearance'
+  condition:
+    | 'green'
+    | 'max_rounds'
+    | 'no_progress'
+    | 'escalated'
+    | 'confidence'
+    | 'reappearance'
+    | 'repeat_finding'
+    | 'repeat_failure'
 ): DevReviewLoopEventInput {
   return { ...loopEventEnvelope(state), event: 'stop_condition_met', round, condition }
 }
@@ -320,6 +337,87 @@ function computeFindingsCompared(
   return { round, open, resolved, new: newIds, recurring }
 }
 
+/**
+ * A round's BLOCKING, still-open findings as `<role>:<id>` keys, sorted and
+ * de-duplicated — the identity the `'repeat_finding'` stop compares across
+ * rounds. Two deliberate narrowings: a finding counts as the same one only by
+ * reviewer role AND id (the same id from the two roles is two findings, since
+ * each role numbers its own report), and only a finding the effective policy
+ * treated as `blocking` counts at all — a `non_blocking` finding never sent
+ * the developer back, so its repeat is not a loop failing to converge. A
+ * finding whose treatment the observation does not state is not counted
+ * either: the stop pauses a task, and an unstated treatment is not evidence.
+ * A deferred finding is excluded by the same test, without naming deferral at
+ * all: `policyTreatment` reads `non_blocking` whenever `deferred` is set
+ * (`types.ts`), and a finding the round never asked the developer to act on
+ * cannot be one the developer failed to close.
+ */
+function blockingOpenKeys(verdicts: VerdictObservation[]): string[] {
+  const keys = new Set<string>()
+  for (const v of verdicts) {
+    for (const f of v.findings) {
+      if (f.policyTreatment !== 'blocking') continue
+      if (f.state === 'resolved') continue
+      keys.add(`${v.role}:${f.id}`)
+    }
+  }
+  return [...keys].sort()
+}
+
+/**
+ * The fixed volatile-token list the `'repeat_failure'` stop matches on —
+ * everything that naturally differs between two runs of the SAME failure and
+ * nothing that distinguishes two DIFFERENT ones. Timestamps, temporary
+ * directories, process ids, durations and commit shas become a fixed
+ * placeholder; the message's own words — which check failed, which premise
+ * pin is absent — survive untouched, so `absent: maxRounds` and
+ * `absent: reviewers` never collapse into one signature.
+ */
+const VOLATILE_TOKENS: readonly { pattern: RegExp; replacement: string }[] = [
+  // ISO-8601 timestamps, with or without fractional seconds and zone.
+  { pattern: /\d{4}-\d{2}-\d{2}[t ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:z|[+-]\d{2}:?\d{2})?/g, replacement: '<ts>' },
+  // A bare clock time — a log line's own prefix.
+  { pattern: /\b\d{1,2}:\d{2}:\d{2}\b/g, replacement: '<ts>' },
+  // Temporary directories — the per-run scratch paths a retry never reuses.
+  { pattern: /(?:\/private)?\/(?:tmp|var\/folders)\/[^\s,;)'"]*/g, replacement: '<tmp>' },
+  // Process ids, however the producer spells them.
+  { pattern: /\b(?:pid|process)[ =:]+\d+/g, replacement: 'pid <pid>' },
+  // Durations: 1200ms, 1.2s, 90 seconds, 3m.
+  { pattern: /\b\d+(?:\.\d+)?\s*(?:ms|s|m|h|milliseconds?|seconds?|minutes?|hours?)\b/g, replacement: '<dur>' },
+  // Commit shas and other long hex runs.
+  { pattern: /\b[0-9a-f]{7,40}\b/g, replacement: '<sha>' }
+]
+
+/**
+ * What the `'repeat_failure'` rule makes of one reported failure: the
+ * `{signature, message}` pair to remember (`null` for a failure the driver
+ * could not name — nothing left after normalisation), and whether it matches
+ * the previous attempt's. Shared by both observation kinds that can carry a
+ * mechanical failure, so a repeat means the same thing whether or not the
+ * attempt produced a head.
+ */
+function matchFailure(
+  state: LoopState,
+  reported: string | undefined
+): { failure: { signature: string; message: string } | null; repeat: boolean } {
+  const message = reported?.trim() ?? ''
+  const signature = message === '' ? '' : normalizeFailureSignature(message)
+  if (signature === '') return { failure: null, repeat: false }
+  return { failure: { signature, message }, repeat: state.lastFailure?.signature === signature }
+}
+
+/**
+ * One mechanical failure's matching signature (O3) — lower-cased, volatile
+ * tokens replaced per the fixed list above, whitespace collapsed. Pure and
+ * total: any string in, a signature out; the empty string for a message with
+ * nothing left, which the caller treats as no signature at all.
+ */
+export function normalizeFailureSignature(message: string): string {
+  let out = message.toLowerCase()
+  for (const { pattern, replacement } of VOLATILE_TOKENS) out = out.replace(pattern, replacement)
+  return out.replace(/\s+/g, ' ').trim()
+}
+
 function mergedIds(
   priorIds: Map<string, string | null>,
   currentIds: Map<string, string | null>
@@ -331,7 +429,7 @@ function mergedIds(
 
 function assessGate(
   state: LoopState,
-  obs: { round: number; green: boolean; confidence?: Confidence; stats: RoundStats }
+  obs: { round: number; green: boolean; confidence?: Confidence; stats: RoundStats; failure?: string }
 ): { decision: Decision; state: LoopState; events: DevReviewLoopEventInput[] } {
   const events: DevReviewLoopEventInput[] = []
   const isNewRound = state.pending === null || state.pending.round !== obs.round
@@ -348,16 +446,51 @@ function assessGate(
   events.push(gateResultReadEvent(state, obs.round, obs.stats.head, obs.green, obs.confidence))
 
   if (!obs.green) {
+    // The mechanical failure that ended this attempt, matched against the
+    // previous attempt's by normalised signature — never by raw equality,
+    // which two runs of the same failure never satisfy (different
+    // timestamps, scratch paths, process ids, durations). A failure the
+    // driver could not name at all (`undefined`, or nothing left after
+    // normalisation) is no signature: it breaks the chain rather than
+    // matching one unknown to another.
+    const { failure, repeat } = matchFailure(state, obs.failure)
+    if (repeat && failure !== null) {
+      events.push(stopConditionMetEvent(state, obs.round, 'repeat_failure'))
+      events.push(pausedEvent(state, obs.round, 'principal_item'))
+      events.push(roundEndedEvent(state, obs.round, obs.stats, 'changes_requested'))
+      const record = buildUnreviewedRecord(obs.round, null, 'stopped', 'checks_red')
+      const preFinalize: LoopState = {
+        ...state,
+        rounds: [...state.rounds, record],
+        pending: null,
+        lastFailure: failure,
+        ...withRoundStats(state, obs.stats)
+      }
+      events.push(journalFinalizedEvent(preFinalize, obs.stats.head, 'stopped'))
+      // The pause carries the failure as reported, not the signature: the
+      // normalised form exists only to match two attempts, never to be read.
+      return {
+        decision: { type: 'pause', reason: 'repeat_failure', detail: failure.message },
+        state: preFinalize,
+        events
+      }
+    }
     events.push(roundEndedEvent(state, obs.round, obs.stats, 'changes_requested'))
     const record = buildUnreviewedRecord(obs.round, null, 'changes_requested', 'checks_red')
     const newState: LoopState = {
       ...state,
       rounds: [...state.rounds, record],
       pending: null,
+      lastFailure: failure,
       ...withRoundStats(state, obs.stats)
     }
     return { decision: { type: 'dispatch_developer' }, state: newState, events }
   }
+
+  // Past the red branch the gate is green: whatever mechanical failure the
+  // previous attempt hit is over, so the repeat chain starts again from
+  // nothing. Every state this function returns below carries that.
+  const clearedFailure = { lastFailure: null } as const
 
   if (obs.round === 1) {
     const pending: PendingRound = {
@@ -367,7 +500,7 @@ function assessGate(
       confidence: obs.confidence ?? null,
       priorIds: state.lastIds
     }
-    return { decision: { type: 'dispatch_reviewers' }, state: { ...state, pending }, events }
+    return { decision: { type: 'dispatch_reviewers' }, state: { ...state, ...clearedFailure, pending }, events }
   }
 
   // Round ≥ 2: the confidence gate.
@@ -382,6 +515,7 @@ function assessGate(
       const record = buildRoundRecord(obs.round, [], null, 'stopped')
       const preFinalize: LoopState = {
         ...state,
+        ...clearedFailure,
         rounds: [...state.rounds, record],
         pending: null,
         ...withRoundStats(state, obs.stats)
@@ -396,7 +530,7 @@ function assessGate(
       confidence: null,
       priorIds: state.lastIds
     }
-    return { decision: { type: 'ask_confidence' }, state: { ...state, pending }, events }
+    return { decision: { type: 'ask_confidence' }, state: { ...state, ...clearedFailure, pending }, events }
   }
 
   if (confidence.value < 50) {
@@ -407,6 +541,7 @@ function assessGate(
       const record = buildRoundRecord(obs.round, [], confidence, 'stopped')
       const preFinalize: LoopState = {
         ...state,
+        ...clearedFailure,
         rounds: [...state.rounds, record],
         pending: null,
         ...withRoundStats(state, obs.stats)
@@ -418,6 +553,7 @@ function assessGate(
     const record = buildUnreviewedRecord(obs.round, confidence, 'changes_requested', 'low_confidence')
     const newState: LoopState = {
       ...state,
+      ...clearedFailure,
       rounds: [...state.rounds, record],
       pending: null,
       extraTurnUsed: true,
@@ -433,7 +569,7 @@ function assessGate(
     confidence,
     priorIds: state.lastIds
   }
-  return { decision: { type: 'dispatch_reviewers' }, state: { ...state, pending }, events }
+  return { decision: { type: 'dispatch_reviewers' }, state: { ...state, ...clearedFailure, pending }, events }
 }
 
 function assessVerdicts(
@@ -451,6 +587,12 @@ function assessVerdicts(
   events.push(findingsComparedEvent(state, fc))
 
   const carriedIds = mergedIds(pending.priorIds, currentIds)
+  // This round's blocking-and-open finding keys, compared against the
+  // PREVIOUS reviewed round's before any exit below can consume them, and
+  // carried into every state this function returns — a round the loop pauses
+  // on still records what it saw, exactly as `lastIds` does.
+  const currentBlocking = blockingOpenKeys(obs.verdicts)
+  const repeatedBlocking = currentBlocking.filter((key) => state.lastBlockingFindings.includes(key))
   const confidence = pending.confidence
 
   const hasEscalate = obs.verdicts.some((v) => v.verdict === 'ESCALATE')
@@ -464,6 +606,7 @@ function assessVerdicts(
       rounds: [...state.rounds, record],
       pending: null,
       lastIds: carriedIds,
+      lastBlockingFindings: currentBlocking,
       ...withRoundStats(state, pending.stats)
     }
     events.push(journalFinalizedEvent(preFinalize, pending.stats.head, 'stopped'))
@@ -483,6 +626,7 @@ function assessVerdicts(
       rounds: [...state.rounds, record],
       pending: null,
       lastIds: carriedIds,
+      lastBlockingFindings: currentBlocking,
       ...withRoundStats(state, pending.stats)
     }
     events.push(journalFinalizedEvent(preFinalize, pending.stats.head, 'merged_ready'))
@@ -499,10 +643,38 @@ function assessVerdicts(
       rounds: [...state.rounds, record],
       pending: null,
       lastIds: carriedIds,
+      lastBlockingFindings: currentBlocking,
       ...withRoundStats(state, pending.stats)
     }
     events.push(journalFinalizedEvent(preFinalize, pending.stats.head, 'stopped'))
     return { decision: { type: 'pause', reason: 'reappearance' }, state: preFinalize, events }
+  }
+
+  if (repeatedBlocking.length > 0) {
+    events.push(stopConditionMetEvent(state, obs.round, 'repeat_finding'))
+    events.push(pausedEvent(state, obs.round, 'principal_item'))
+    events.push(roundEndedEvent(state, obs.round, pending.stats, 'changes_requested'))
+    const record = buildRoundRecord(obs.round, obs.verdicts, confidence, 'stopped')
+    const preFinalize: LoopState = {
+      ...state,
+      rounds: [...state.rounds, record],
+      pending: null,
+      lastIds: carriedIds,
+      lastBlockingFindings: currentBlocking,
+      ...withRoundStats(state, pending.stats)
+    }
+    events.push(journalFinalizedEvent(preFinalize, pending.stats.head, 'stopped'))
+    // The pause names the finding(s), so a Principal reading it never has to
+    // diff two rounds' reports to learn what the developer could not close.
+    return {
+      decision: {
+        type: 'pause',
+        reason: 'repeat_finding',
+        detail: `open after two consecutive rounds: ${repeatedBlocking.join(', ')}`
+      },
+      state: preFinalize,
+      events
+    }
   }
 
   if (obs.round > state.config.maxRounds) {
@@ -515,6 +687,7 @@ function assessVerdicts(
       rounds: [...state.rounds, record],
       pending: null,
       lastIds: carriedIds,
+      lastBlockingFindings: currentBlocking,
       ...withRoundStats(state, pending.stats)
     }
     events.push(journalFinalizedEvent(preFinalize, pending.stats.head, 'stopped'))
@@ -533,9 +706,50 @@ function assessVerdicts(
     rounds: [...state.rounds, record],
     pending: null,
     lastIds: carriedIds,
+    lastBlockingFindings: currentBlocking,
     ...withRoundStats(state, pending.stats)
   }
   return { decision: { type: 'dispatch_developer' }, state: newState, events }
+}
+
+/**
+ * An attempt that ended on a mechanical failure without producing a head.
+ * The SAME `'repeat_failure'` rule the gate path applies, on an observation
+ * that has no gate result to carry: a second consecutive attempt whose
+ * failure normalises to the previous one's signature pauses, naming the
+ * failure exactly as the driver reported it. A first occurrence — or an
+ * attempt whose failure differs from the previous one's — records the
+ * signature and nothing else: no round record, no events, no diff-stat
+ * accounting, since no head was produced and the driver's own first-occurrence
+ * bounds still govern what happens next.
+ */
+function assessMechanicalFailure(
+  state: LoopState,
+  obs: { round: number; failure: string; stats: RoundStats }
+): { decision: Decision; state: LoopState; events: DevReviewLoopEventInput[] } {
+  const { failure, repeat } = matchFailure(state, obs.failure)
+  if (repeat && failure !== null) {
+    const events: DevReviewLoopEventInput[] = [
+      stopConditionMetEvent(state, obs.round, 'repeat_failure'),
+      pausedEvent(state, obs.round, 'principal_item'),
+      roundEndedEvent(state, obs.round, obs.stats, 'changes_requested')
+    ]
+    const record = buildUnreviewedRecord(obs.round, null, 'stopped', 'mechanical_failure')
+    const preFinalize: LoopState = {
+      ...state,
+      rounds: [...state.rounds, record],
+      pending: null,
+      lastFailure: failure,
+      ...withRoundStats(state, obs.stats)
+    }
+    events.push(journalFinalizedEvent(preFinalize, obs.stats.head, 'stopped'))
+    return {
+      decision: { type: 'pause', reason: 'repeat_failure', detail: failure.message },
+      state: preFinalize,
+      events
+    }
+  }
+  return { decision: { type: 'dispatch_developer' }, state: { ...state, lastFailure: failure }, events: [] }
 }
 
 /**
@@ -549,5 +763,6 @@ export function assessRound(
   observations: Observations
 ): { decision: Decision; state: LoopState; events: DevReviewLoopEventInput[] } {
   if (observations.kind === 'gate') return assessGate(state, observations)
+  if (observations.kind === 'mechanical_failure') return assessMechanicalFailure(state, observations)
   return assessVerdicts(state, observations)
 }

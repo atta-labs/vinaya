@@ -644,6 +644,8 @@ export type RecoveredLoopState = {
   budgets: LoopBudgets
   heldResult: RoundHeadIdentity | null
   deliveredFindings: RoundHeadIdentity | null
+  /** The two repeat detectors as last persisted — `null` for a record written before this field existed, which reads back as no memory (both detectors start empty), never as a corrupt record. */
+  repeatMemory: { blockingFindings: string[]; lastFailure: { signature: string; message: string } | null } | null
 }
 
 /**
@@ -670,7 +672,8 @@ export function recoverLoopState(
       round: parsed.value.round,
       budgets: parsed.value.budgets,
       heldResult: parsed.value.heldResult,
-      deliveredFindings: parsed.value.deliveredFindings
+      deliveredFindings: parsed.value.deliveredFindings,
+      repeatMemory: parsed.value.repeatMemory ?? null
     }
   }
 }
@@ -807,6 +810,20 @@ export const PAUSE_REASON_PROFILE: Record<
     requestedAuthority: 'principal',
     attemptedRecovery: 'none — a previously-resolved finding reappeared, which the loop never auto-dismisses.',
     nextActions: ['Confirm whether the reappearance is a real regression or a reviewer false positive.']
+  },
+  repeat_finding: {
+    requestedAuthority: 'principal',
+    attemptedRecovery:
+      'one further developer turn on the same blocking finding, which left it open — a third was not spent.',
+    nextActions: [
+      'Read the finding key(s) in `detail`, then rule on the finding itself or redirect the work that cannot close it.'
+    ]
+  },
+  repeat_failure: {
+    requestedAuthority: 'operator',
+    attemptedRecovery:
+      'one further attempt, which ended on the same mechanical failure — the message is in `detail`, unnormalised.',
+    nextActions: ['Fix the mechanical failure named in `detail`, then resume.']
   },
   infrastructure: {
     requestedAuthority: 'operator',

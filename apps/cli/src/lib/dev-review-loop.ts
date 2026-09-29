@@ -705,7 +705,9 @@ export function describeConfidencePauseDetail(confidence: Confidence): string {
  * verdicts it built `Observations` from. `max_rounds` is excluded: it
  * already carries its own `detail` from `assessRound` (`max rounds: <n>`),
  * so this is never called for it (see the `decision.detail === undefined`
- * guard at each call site). `assessVerdicts` no longer decides a
+ * guard at each call site) — and so, for the same reason, is
+ * `'repeat_finding'`, whose own `detail` from `assessRound` names the
+ * reviewer-qualified finding key(s) that stayed open two rounds running. `assessVerdicts` no longer decides a
  * `'no_progress'` pause at all — the driver's own attach-redelivery pause is
  * the only `'no_progress'` source now, and it builds its own `detail` inline
  * rather than here.
@@ -1647,6 +1649,19 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // forces the next `--resume` to require a ruling rather than granting a
     // fresh bare-command allowance off a corruption-erased count.
     const recoveredLoopState = recoverLoopState(task)
+    // The two repeat detectors survive this process boundary, because this
+    // process may BE one: `checkStaleDriver` re-execs the driver mid-loop with
+    // no in-memory handoff, and an attach starts from nothing. Seeded here
+    // rather than inside `initialLoopState` (which is pure, and has no store
+    // to read); absent, or a record written before this field existed, leaves
+    // both empty — the pre-existing behaviour, never a false match.
+    if (recoveredLoopState.status === 'ok' && recoveredLoopState.value.repeatMemory !== null) {
+      state = {
+        ...state,
+        lastBlockingFindings: recoveredLoopState.value.repeatMemory.blockingFindings,
+        lastFailure: recoveredLoopState.value.repeatMemory.lastFailure
+      }
+    }
     /**
      * O2: never reset by a restart — seeded from the control store, never
      * hardcoded to `0` the way a fresh in-memory run otherwise would be.
@@ -1688,7 +1703,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         pauseReason,
         budgets: { mechanicalRetries: gateStalledStreak, reviewRounds: round, infrastructureRetries },
         heldResult: heldResultIdentity,
-        deliveredFindings: deliveredFindingsIdentity
+        deliveredFindings: deliveredFindingsIdentity,
+        // The two repeat detectors, read straight off the live `LoopState`
+        // this call is persisting — never a second copy the driver maintains
+        // itself. A re-exec (`checkStaleDriver`) and an attach both build a
+        // fresh `LoopState`, so without this the next round would re-send the
+        // developer at a finding or a failure that had already repeated.
+        repeatMemory: { blockingFindings: state.lastBlockingFindings, lastFailure: state.lastFailure }
       })
     }
     let devResumeId: string | null = null
@@ -2054,6 +2075,22 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       return unpushed.dirtyFiles.length > 0
         ? `dirty file(s): ${unpushed.dirtyFiles.join(', ')}`
         : `${unpushed.aheadCount} commit(s) ahead of the remote, worktree clean`
+    }
+
+    /**
+     * The mechanical failure of an attempt whose push never landed, as a
+     * message — everything this driver can observe of one, which is
+     * everything it will ever have: the refusal text itself (a pre-push hook
+     * refusing, the remote refusing) exists only inside the developer's own
+     * session, and what survives the turn is the head that did not move plus
+     * `readUnpushedWorkDetail`'s reading of the worktree. Fed to `assessRound`
+     * as a `mechanical_failure` observation, where the same normalised
+     * signature that matches two red gates matches two of these; also what
+     * the resulting pause names, so the message a reader gets is this exact
+     * text.
+     */
+    function unpushedFailureMessage(head: string, unpushed: { dirtyFiles: string[]; aheadCount: number }): string {
+      return `push never landed on ${branch}: head ${head} unchanged; ${unpushedWorkResumeDetail(unpushed)}`
     }
 
     /**
@@ -3413,6 +3450,33 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 const unpushed = d.readUnpushedWorkDetail(worktreePathForBranch())
                 if (unpushed.dirtyFiles.length > 0 || unpushed.aheadCount > 0) {
                   unpushedResumeAttempted = true
+                  // A push that was made and did not land is the failure
+                  // this task's repeat stop exists for, so this attempt's own
+                  // message goes to the assessment before the resume is spent
+                  // — and the assessment, never this driver, decides whether
+                  // it has now seen the same one twice. Commits ahead of the
+                  // remote is what tells that case apart from a worktree the
+                  // developer simply never committed: the latter attempted no
+                  // push at all, so there is no push failure to match, and it
+                  // stays entirely with the one-resume-then-`no_push` rule
+                  // below. A first occurrence records the signature and
+                  // returns `dispatch_developer`, leaving that rule untouched
+                  // too.
+                  if (unpushed.aheadCount > 0) {
+                    const firstAttempt = assessRound(state, {
+                      kind: 'mechanical_failure',
+                      round,
+                      failure: unpushedFailureMessage(headBeforeDispatch, unpushed),
+                      stats: computeStats(headBeforeDispatch, roundStartMs)
+                    })
+                    state = firstAttempt.state
+                    await logEvents(firstAttempt.events)
+                    if (firstAttempt.decision.type === 'pause') {
+                      decision = firstAttempt.decision
+                      persistCurrentLoopState('pause', firstAttempt.decision.reason)
+                      continue
+                    }
+                  }
                   await logUnpushedWorkResume(round, unpushedWorkResumeDetail(unpushed))
                   await postUnpushedWorkResumeComment(round, headBeforeDispatch, unpushed)
                   await dispatchDeveloper(COMMIT_AND_PUSH_PROMPT, round)
@@ -3432,6 +3496,29 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                   } else {
                     const stillUnpushed = d.readUnpushedWorkDetail(worktreePathForBranch())
                     const stats = computeStats(headBeforeDispatch, roundStartMs)
+                    // The resume's own attempt, reported the same way and
+                    // under the same commits-ahead condition. Two attempts
+                    // whose failure normalises the same way are the repeat
+                    // this task's stop owns, and the pause names that exact
+                    // message; a resume that failed DIFFERENTLY — or one that
+                    // pushed nothing because nothing was committed — is not a
+                    // repeat, and falls through to the `no_push` pause exactly
+                    // as before.
+                    if (stillUnpushed.aheadCount > 0) {
+                      const resumedAttempt = assessRound(state, {
+                        kind: 'mechanical_failure',
+                        round,
+                        failure: unpushedFailureMessage(headBeforeDispatch, stillUnpushed),
+                        stats
+                      })
+                      state = resumedAttempt.state
+                      await logEvents(resumedAttempt.events)
+                      if (resumedAttempt.decision.type === 'pause') {
+                        decision = resumedAttempt.decision
+                        persistCurrentLoopState('pause', resumedAttempt.decision.reason)
+                        continue
+                      }
+                    }
                     const detail = `branch ${branch}; dirty file(s): ${
                       stillUnpushed.dirtyFiles.length > 0
                         ? stillUnpushed.dirtyFiles.join(', ')
@@ -3456,14 +3543,46 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 // budget of `MAX_GATE_STALLED_TURNS` turns.
                 persistCurrentLoopState('dispatch_developer')
                 const stats = computeStats(headBeforeDispatch, roundStartMs)
-                const detail =
+                // A conflict is a named failure whether or not the file list
+                // could be read — the conflict itself is the cause, and its
+                // text is unchanged from before this stop existed. A red-gate
+                // stall is named only by the check-runs the developer was sent
+                // back for; with none of those, this stall has no named cause
+                // at all.
+                const namedFailure =
                   conflictFiles !== null
-                    ? `head ${headBeforeDispatch} unchanged after dispatch; conflict never resolved (file(s): ${
+                    ? `conflict never resolved (file(s): ${
                         conflictFiles.length > 0 ? conflictFiles.join(', ') : '(unknown)'
                       })`
-                    : `head ${headBeforeDispatch} unchanged after dispatch; failing check-run(s): ${
-                        lastFailingChecks.length > 0 ? lastFailingChecks.join(', ') : '(unknown)'
-                      }`
+                    : lastFailingChecks.length > 0
+                      ? `failing check-run(s): ${lastFailingChecks.join(', ')}`
+                      : null
+                const detail = `head ${headBeforeDispatch} unchanged after dispatch; ${
+                  namedFailure ?? 'no named failure for this head — the developer pushed nothing for the gate to judge'
+                }`
+                // A stall the driver CAN name — the conflicting files, or the
+                // check-runs the developer was sent back for — is a mechanical
+                // failure like any other, and the assessment decides whether
+                // this is the second attempt to end on it. A stall it cannot
+                // name is not reported: an unnamed failure is not evidence of
+                // a repeat, and a genuinely idle turn stays with the bounded
+                // stall counter below, which is not a claim about any failure
+                // at all.
+                if (namedFailure !== null) {
+                  const stalled = assessRound(state, {
+                    kind: 'mechanical_failure',
+                    round,
+                    failure: detail,
+                    stats
+                  })
+                  state = stalled.state
+                  await logEvents(stalled.events)
+                  if (stalled.decision.type === 'pause') {
+                    decision = stalled.decision
+                    persistCurrentLoopState('pause', stalled.decision.reason)
+                    continue
+                  }
+                }
                 if (gateStalledStreak < MAX_GATE_STALLED_TURNS) {
                   continue
                 }
@@ -3523,7 +3642,36 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           }
           unpushedResumeAttempted = false
           const confidence = round >= 2 && gateGreen ? readAndClearConfidence(round) : undefined
-          const obs: Observations = { kind: 'gate', round, green: gateGreen, confidence, stats: gate.stats }
+          // The mechanical failure this attempt ended on, handed to the
+          // assessment verbatim — the same failing check-run names and
+          // premise re-assert messages this driver already prints in the
+          // gate-red retry prompt, never a second, differently-worded
+          // description of the same facts. Only the assessment decides what
+          // a repeat is: it normalises this text (`normalizeFailureSignature`,
+          // `@attalabs/aeg-core`) and pauses when two consecutive attempts
+          // match. A red gate whose cause could not be named sends nothing,
+          // which is exactly how "unknown never matches unknown" is spelled.
+          //
+          // This is the ONLY site that feeds it, and it bounds what the stop
+          // can cover: a failure reaches here only if the developer pushed a
+          // head for the gate to read. A refused push never does — its
+          // refusal text lives in the developer's own session, and all this
+          // driver can read afterwards is `readUnpushedWorkDetail`'s dirty
+          // files and commits-ahead count, never why the push was refused —
+          // and neither does a test that fails inside the pre-push hook,
+          // for the same reason. Both are bounded a turn EARLIER instead, by
+          // the unmoved-head paths above (`no_push` after one resume,
+          // `infrastructure` at `MAX_GATE_STALLED_TURNS`); neither compares
+          // signatures, because neither has a failure message to compare.
+          const failure = gateGreen || lastFailingChecks.length === 0 ? undefined : lastFailingChecks.join('; ')
+          const obs: Observations = {
+            kind: 'gate',
+            round,
+            green: gateGreen,
+            confidence,
+            stats: gate.stats,
+            ...(failure !== undefined ? { failure } : {})
+          }
           const result = assessRound(state, obs)
           state = result.state
           decision = result.decision

@@ -224,12 +224,15 @@ describe('devReviewLoop — a red gate the developer never fixes pauses, bounded
     }
 
     const result = await runLoopInProcess(world, { task: world.task, agent: 'claude' }, { dispatchRole })
-    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
+    // The same failing check ended both stalled turns, so the repeat-failure
+    // stop names it; the bound the driver keeps for a stall it cannot name is
+    // unchanged behind it.
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'repeat_failure' })
 
     // O3: the developer was told which check-run actually failed, never a
     // bare "CI is red" and never the review gate's own name.
     const pauseComment = world.postedComments[0]!.body
-    expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:infrastructure -->$/m)
+    expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:repeat_failure -->$/m)
     expect(pauseComment).toMatch(/Vinaya CI/)
     expect(pauseComment).not.toMatch(/review gate/i)
     expect(pauseComment).toMatch(/Vinaya CI \(run 1\)/)
@@ -241,13 +244,13 @@ describe('devReviewLoop — a red gate the developer never fixes pauses, bounded
     expect(loopEvents.filter((e) => e === 'stop_condition_met')).toHaveLength(1)
     expect(loopEvents.filter((e) => e === 'paused')).toHaveLength(1)
     const stop = outboxLines(world).find((l) => l.event === 'stop_condition_met') as Record<string, unknown>
-    expect(stop.condition).toBe('principal_stop')
+    expect(stop.condition).toBe('repeat_failure')
 
     const pauseState = JSON.parse(readFileSync(join(controlDir(world), 'pause-state.json'), 'utf8')) as Record<
       string,
       unknown
     >
-    expect(pauseState.reason).toBe('infrastructure')
+    expect(pauseState.reason).toBe('repeat_failure')
     expect(pauseState.detail).toMatch(/head .* unchanged/)
     expect(pauseState.detail).toMatch(/Vinaya CI \(run 1\)/)
 
