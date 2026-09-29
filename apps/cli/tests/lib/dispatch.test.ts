@@ -3501,6 +3501,78 @@ describe('background-deny hook — Issue #865, O1/O2: machine-state commands, al
     }
   })
 
+  /**
+   * Round 3 finding. `eval` runs its argument in the SAME shell process, and
+   * `<shell> -c <text>` runs text that is likewise right here in the call —
+   * neither is the "built somewhere this call cannot see" case the deny
+   * reason carves out, so neither may hide a command from this rule.
+   */
+  it('a reinterpreting wrapper does not hide the command it runs — the inner text is judged like any other command', () => {
+    const scriptPath = freshDenyScriptPath('developer')
+    for (const command of [
+      'eval sudo rm /etc/hosts',
+      'eval security create-keychain -p x /tmp/scratch.keychain',
+      "eval 'sudo rm /etc/hosts'",
+      'eval "security default-keychain -s /tmp/scratch.keychain"',
+      'eval "cd /tmp && sudo rm /etc/hosts"',
+      "eval 'true | sudo rm /etc/hosts'",
+      'env eval sudo rm /etc/hosts',
+      "bash -c 'sudo rm /etc/hosts'",
+      'sh -c "launchctl unload /Library/LaunchAgents/x.plist"',
+      "/bin/bash -c 'defaults import com.apple.finder /tmp/evil.plist'",
+      "zsh -c 'git config --global user.email a@b.c'"
+    ]) {
+      const decision = decisionFor(scriptPath, command)
+      expect(decision?.permissionDecision).toBe('deny')
+      expect(decision?.permissionDecisionReason).toMatch(/keychain, services or global settings/)
+    }
+  })
+
+  it('quoting the command word itself does not hide it — the shell runs it all the same', () => {
+    const scriptPath = freshDenyScriptPath('developer')
+    for (const command of [
+      "'sudo' rm /etc/hosts",
+      '"security" create-keychain -p x /tmp/scratch.keychain',
+      "'defaults' write com.apple.finder AppleShowAllFiles true"
+    ]) {
+      expect(decisionFor(scriptPath, command)?.permissionDecision).toBe('deny')
+    }
+  })
+
+  it('a wrapper whose text this call does not contain is refused rather than approved unread', () => {
+    const scriptPath = freshDenyScriptPath('developer')
+    expect(decisionFor(scriptPath, 'eval "$CMD"')?.permissionDecision).toBe('deny')
+    expect(decisionFor(scriptPath, 'bash -c "$CMD"')?.permissionDecision).toBe('deny')
+    // The braced shell spelling, assembled rather than written literally —
+    // as a literal it reads to the linter as a JS template placeholder.
+    const braced = `$${'{STEP}'}`
+    expect(decisionFor(scriptPath, `eval "${braced}"`)?.permissionDecision).toBe('deny')
+  })
+
+  it('a wrapper carrying ordinary readable work is not refused, and the exempted read survives one', () => {
+    const scriptPath = freshDenyScriptPath('developer')
+    for (const command of [
+      "eval 'echo hello'",
+      "bash -c 'echo hello'",
+      'eval "security find-generic-password -s svc -a acct -w"',
+      "sh -c 'git config user.email a@b.c'",
+      'echo eval',
+      "grep -rn 'eval' apps/cli/src | head"
+    ]) {
+      expect(decisionFor(scriptPath, command)).toBeNull()
+    }
+  })
+
+  for (const role of ['code-reviewer', 'security'] as const) {
+    it(`${role}: the same refusal through a reinterpreting wrapper`, () => {
+      const scriptPath = freshDenyScriptPath(role)
+      expect(decisionFor(scriptPath, 'eval security default-keychain -s /tmp/x.keychain')?.permissionDecision).toBe(
+        'deny'
+      )
+      expect(decisionFor(scriptPath, "bash -c 'sudo rm /etc/hosts'")?.permissionDecision).toBe('deny')
+    })
+  }
+
   it('the exempted read survives every one of those shapes — it is how a log header resolves from the login Keychain', () => {
     const scriptPath = freshDenyScriptPath('developer')
     for (const command of [

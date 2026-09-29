@@ -692,6 +692,39 @@ export function wholeSuiteTestCommandDetectorSource(): string {
     // alternation so a two-character operator is never split as two
     // one-character ones. Substitution bodies found above are queued and
     // split the same way, bounded so a pathological nesting cannot spin.
+    // `eval <text>` and `<shell> -c <text>` run TEXT THAT IS RIGHT HERE, in
+    // this same call — `eval` in the very same shell process. Neither is the
+    // "a command built somewhere this call cannot see" case; both are
+    // ordinary command text wearing one extra word (round 3 code review,
+    // BLOCKER, confirmed live: `eval sudo rm /etc/hosts` and `bash -c 'sudo
+    // rm /etc/hosts'` each read as a statement whose first token was
+    // `eval`/`bash`, matching nothing). So the inner text is handed back to
+    // this same splitter and judged like any other command. Both the raw
+    // remainder and a quote-stripped copy are queued: `eval` consumes one
+    // layer of quoting before the shell re-reads the text, so `eval 'sudo rm
+    // x'` must be seen as `sudo rm x`, and dropping quote characters is what
+    // makes that true whichever chunk they were written around.
+    'const REINTERPRET_PREFIX = /^(?:(?:[A-Za-z_][A-Za-z0-9_]*=\\S*|env|command|builtin|exec|time|nice|stdbuf)\\s+)*/;',
+    'function reinterpretedCommands(stmt) {',
+    "  if (typeof stmt !== 'string') return [];",
+    '  const body = stmt.trim().replace(REINTERPRET_PREFIX, "");',
+    '  const tokens = body.split(/\\s+/).filter(Boolean);',
+    '  if (tokens.length < 2) return [];',
+    "  const head = tokens[0].split('/').pop();",
+    '  let rest = null;',
+    "  if (head === 'eval') {",
+    '    rest = body.slice(tokens[0].length);',
+    "  } else if (head === 'bash' || head === 'sh' || head === 'zsh' || head === 'dash' || head === 'ksh') {",
+    "    const flag = tokens.indexOf('-c');",
+    '    if (flag === -1) return [];',
+    "    const at = body.indexOf('-c', tokens.slice(0, flag).join(' ').length);",
+    '    if (at === -1) return [];',
+    '    rest = body.slice(at + 2);',
+    '  }',
+    "  if (rest === null || rest.trim() === '') return [];",
+    "  const dequoted = rest.replace(/['\"]/g, '');",
+    '  return rest === dequoted ? [rest] : [rest, dequoted];',
+    '}',
     'function commandStatements(command) {',
     '  const statements = [];',
     '  const queue = [command];',
@@ -702,14 +735,19 @@ export function wholeSuiteTestCommandDetectorSource(): string {
     "    if (typeof current !== 'string' || current.length === 0) continue;",
     '    for (const body of substitutionBodies(current)) queue.push(body);',
     '    const masked = maskQuoted(maskSubstitutions(current));',
+    '    const fragments = [];',
     '    let last = 0;',
     '    const re = /;|&&|\\|\\||\\||&|\\n/g;',
     '    let m;',
     '    while ((m = re.exec(masked)) !== null) {',
-    '      statements.push(current.slice(last, m.index));',
+    '      fragments.push(current.slice(last, m.index));',
     '      last = m.index + m[0].length;',
     '    }',
-    '    statements.push(current.slice(last));',
+    '    fragments.push(current.slice(last));',
+    '    for (const fragment of fragments) {',
+    '      statements.push(fragment);',
+    '      for (const inner of reinterpretedCommands(fragment)) queue.push(inner);',
+    '    }',
     '  }',
     '  return statements;',
     '}',
@@ -931,12 +969,18 @@ export const COMMIT_PUSH_ON_DEFAULT_BRANCH_DENY_REASON =
  * none of those hides what is actually being run.
  *
  * **This is a floor, not a sandbox** — the same limit `roles/developer.md`
- * and `roles/security.md` now state in one line. It answers a Bash tool call
- * whose own text names one of these commands; it cannot answer for one
- * reached through another interpreter (a `python3 -c` that calls
- * `subprocess`, a shell script the session writes and then runs). Closing
- * THAT is the Seatbelt boundary's job, and turning it back on is its own
- * task.
+ * and `roles/security.md` now state in one line. The line the limit is
+ * actually drawn at is TEXT THIS CALL CONTAINS, not "the shell versus
+ * another interpreter" (round 3 code review, correctly: `eval` runs in the
+ * same shell process, and its argument is right here, so it is read and
+ * judged like any other command — see `reinterpretedCommands`). What
+ * remains out of reach is a command this call's own text does not carry: a
+ * script the session wrote and then runs (`bash ./x.sh`, `source ./x.sh`),
+ * a `python3` program that calls `subprocess`, a value only the running
+ * shell knows. The narrow case where that opacity is visible IN a
+ * reinterpreting wrapper — `eval "$CMD"` — is refused here rather than
+ * approved unread; the rest is the Seatbelt boundary's job, and turning it
+ * back on is its own task.
  */
 function machineStateDetectorSource(): string {
   return [
@@ -944,8 +988,11 @@ function machineStateDetectorSource(): string {
     '  let tokens = statementTokens(stmt);',
     // A subshell or brace group leaves its punctuation glued to the first
     // token — `(sudo rm x)` tokenizes as `(sudo`, `{ sudo rm x; }` as a
-    // bare `{` — and `!` negates the command that follows it.
-    "  if (tokens.length > 0) tokens = [tokens[0].replace(/^[({!]+/, '')].concat(tokens.slice(1));",
+    // bare `{` — and `!` negates the command that follows it. A quote
+    // character can be glued on the same way: `statementTokens` is a plain
+    // whitespace split with no quote awareness (round 3 code review), so
+    // `'sudo` and `"sudo` are both spellings of `sudo`.
+    "  if (tokens.length > 0) tokens = [tokens[0].replace(/^[({!'\"]+/, '').replace(/['\"]+$/, '')].concat(tokens.slice(1));",
     "  while (tokens.length > 0 && tokens[0] === '') tokens = tokens.slice(1);",
     // A leading `VAR=value` assignment is part of the shell's own grammar,
     // not the command — `SUDO_ASKPASS=/x sudo …` runs sudo all the same —
@@ -976,6 +1023,16 @@ function machineStateDetectorSource(): string {
     // subcommand — `create-keychain`, `default-keychain`, `list-keychains
     // -s`, `add-generic-password`, `delete-generic-password`, … — is refused.
     "      if (tokens[1] !== 'find-generic-password') return true;",
+    '      continue;',
+    '    }',
+    // `eval <text>`/`<shell> -c <text>` have already been re-split by
+    // `commandStatements`, so the ordinary case is judged on the inner text
+    // itself. What is left is the case where the text is NOT in this call —
+    // `eval "$CMD"` — and a barrier that cannot read what it is being asked
+    // to approve does not approve it. A `$(…)` body is lifted and judged, so
+    // only an unresolved parameter expansion counts here.
+    "    if (cmd === 'eval' || ((cmd === 'bash' || cmd === 'sh' || cmd === 'zsh' || cmd === 'dash' || cmd === 'ksh') && tokens.indexOf('-c') !== -1)) {",
+    '      if (/\\$(?!\\()/.test(raw)) return true;',
     '      continue;',
     '    }',
     "    if (cmd === 'launchctl' || cmd === 'sudo' || cmd === 'systemsetup') return true;",
@@ -1025,7 +1082,7 @@ function machineStateDetectorSource(): string {
 }
 
 export const MACHINE_STATE_DENY_REASON =
-  "Dispatched sessions cannot change this machine's own keychain, services or global settings — `security` (except a `find-generic-password` read), `launchctl`, `crontab`, a mutating `defaults` subcommand, `systemsetup`, `networksetup`, `pmset`, `dscl`, `chsh`, `sudo`, and `git config` at `--global`/`--system` scope. A test that needs one of these uses a fake. Every statement of the command is inspected, substituted bodies included, so argument order, an absolute path, an environment or wrapper prefix, a pipe, a background `&` or a command substitution does not hide the command. This is a floor, not a sandbox: it reads the shell text of the call, and cannot answer for a command another interpreter builds at runtime."
+  "Dispatched sessions cannot change this machine's own keychain, services or global settings — `security` (except a `find-generic-password` read), `launchctl`, `crontab`, a mutating `defaults` subcommand, `systemsetup`, `networksetup`, `pmset`, `dscl`, `chsh`, `sudo`, and `git config` at `--global`/`--system` scope. A test that needs one of these uses a fake. Every statement of the command is inspected, and so is the text inside a substitution, an `eval` or a `<shell> -c` — argument order, an absolute path, quoting, an environment or wrapper prefix, a pipe, a background `&` do not hide the command, and an `eval`/`-c` whose text this call does not itself contain is refused rather than approved unread. This is a floor, not a sandbox: what it reads is the shell text of this call, so a command that only exists inside a file or a program this call merely starts is beyond it."
 
 /**
  * The subagent tool (`Agent`/`Task` — both names are checked, as a

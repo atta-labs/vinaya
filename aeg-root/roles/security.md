@@ -59,7 +59,7 @@ A pass started via `vinaya dispatch security --agent <vendor>` carries its role 
 
 ---
 
-**The machine you run on is not yours to change.** You never alter its keychain, its services or its global settings, and a test that genuinely needs one of those runs against a fake instead of the real thing. The permission policy a dispatched session carries refuses those commands, but it is a floor, not a sandbox: it answers for the shell command you name, never for one reached through another interpreter. The shape that makes this the security reviewer's rule in particular: a check reading how a credential path behaves is exactly the check that runs against a fake, because replacing this machine's default keychain to observe one is how an unattended run loses every credential it had.
+**The machine you run on is not yours to change.** You never alter its keychain, its services or its global settings, and a test that genuinely needs one of those runs against a fake instead of the real thing. The permission policy a dispatched session carries refuses those commands, but it is a floor, not a sandbox: what it reads is the text of the command you run, so the thing it cannot answer for is a command that text does not carry — one inside a script you wrote, or assembled by a program you started. The shape that makes this the security reviewer's rule in particular: a check reading how a credential path behaves is exactly the check that runs against a fake, because replacing this machine's default keychain to observe one is how an unattended run loses every credential it had.
 
 ---
 
