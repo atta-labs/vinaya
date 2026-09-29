@@ -175,6 +175,11 @@ case "$ARGS" in
   *"issue comment ${ISSUE_NUMBER}"*)
     echo "https://github.com/${OWNER}/${REPO}/issues/${ISSUE_NUMBER}#issuecomment-1"
     ;;
+  "issue list --state open"*|"pr list --state open"*)
+    # The two listings the pinned-file collision gate makes at dispatch — an
+    # empty forge, so this fixture stays about reaching the developer.
+    echo "[]"
+    ;;
   *)
     echo "unhandled gh: $ARGS" >&2
     exit 1

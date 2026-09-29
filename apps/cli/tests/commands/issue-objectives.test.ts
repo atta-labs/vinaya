@@ -164,6 +164,12 @@ if [ "$1" = "label" ] && [ "$2" = "list" ]; then
   echo '[{"name":"vinaya/tranche:demo"}]'
   exit 0
 fi
+# The two listings the pinned-file collision gate makes — an empty forge, so
+# this fixture stays about the objectives edit and not about a fetch failure.
+if [ "$2" = "list" ]; then
+  echo '[]'
+  exit 0
+fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
   case "$*" in
     *title*) cat "${fullContextJsonPath}" ;;
@@ -784,6 +790,12 @@ function readState() {
 
 if (args[0] === 'api' && args[1] === 'user') {
   console.log('daniboomerang')
+  process.exit(0)
+}
+// The two listings the pinned-file collision gate makes — an empty forge, so
+// this fixture stays about the objectives edit and not about a fetch failure.
+if (args[1] === 'list') {
+  console.log('[]')
   process.exit(0)
 }
 if (args[0] === 'issue' && args[1] === 'view') {

@@ -65,3 +65,4 @@ tests/lib/turbo-test-task-uncached.test.ts
 tests/conformance/matrix.test.ts
 tests/log-destination-isolation.test.ts
 tests/lib/dev-review-loop/takeover-phase.test.ts
+tests/lib/planning-collisions.test.ts

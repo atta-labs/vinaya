@@ -261,6 +261,8 @@ export {
   checkBoundaryClaimsNeedPremise,
   checkConflictCompleteness,
   checkDocsWithinSurface,
+  checkFileCollisions,
+  DEFAULT_COLLISION_THRESHOLD,
   checkDocumentationCitesObjective,
   checkEdgeIdsWholeNumbers,
   checkIssueBriefSections,
@@ -307,6 +309,7 @@ export type {
   CommandReferenceEntry,
   CommandReferenceFacts,
   ConfigReferenceFacts,
+  FileCollisionResult,
   FrozenSection,
   IssueDocumentation,
   IssueDocumentationSource,
@@ -319,6 +322,7 @@ export type {
   SurfaceScopeResult,
   SurfaceScopeViolation,
   ProjectPath,
+  TaskFileFacts,
   TaskIssueFacts,
   TaskSurfaceFacts
 } from './issue-validation'

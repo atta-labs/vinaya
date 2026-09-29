@@ -43,6 +43,7 @@ import { dispatchRole, isAgentClass, resolveClassModel, type AgentClass } from '
 import { assembleAndRenderBrief, assembleAndRenderBriefForIssue } from './brief-assembly.js'
 import { loadTrustAnchorConfig, resolvePrincipalAllowlist } from './config.js'
 import { collectTaskIssueErrors, currentGhLogin, postMarkedComment } from './forge-write.js'
+import { emitCheckError } from '../checks/contract'
 
 export { AEG_BRIEF_V1_MARKER, briefHash, contentAfterTwoLines } from '@attalabs/aeg-core'
 
@@ -146,9 +147,19 @@ function fetchIssueLabels(n: number): string[] {
  * about-to-be-written) body against itself, never a create.
  *
  * A `severity: 'warning'` finding (an unmerged Depends-on, an open
- * Conflicts-with PR) is reported but never refuses on its own — the same
- * split `validateTaskIssue` itself applies; a real `error` finding throws,
- * naming every finding, warnings included.
+ * Conflicts-with PR, a pinned-file overlap under the collision threshold) is
+ * reported but never refuses on its own — the same split `validateTaskIssue`
+ * itself applies; a real `error` finding throws, naming every finding,
+ * warnings included. Warnings are EMITTED here rather than discarded: the
+ * pinned-file collision gate's whole under-threshold half is a warning, and a
+ * dispatch that swallowed it would tell the Operator nothing about the work
+ * already in flight on these files.
+ *
+ * The collision comparison runs here against OPEN PULL REQUESTS ONLY
+ * (`collisionScope`). At dispatch the other open task Issues are plans, not
+ * edits — serializing against a plan that may never be dispatched costs a
+ * whole task for nothing — while an open pull request is someone's branch
+ * touching these files right now.
  */
 export async function validateIssueWriteGate(
   body: string,
@@ -156,15 +167,24 @@ export async function validateIssueWriteGate(
   issue: number,
   retryCommand: string
 ): Promise<void> {
-  const { errors } = await collectTaskIssueErrors(body, null, labels, retryCommand, issue, {
-    kind: 'edit',
-    issueRef: String(issue)
-  })
+  const { errors } = await collectTaskIssueErrors(
+    body,
+    null,
+    labels,
+    retryCommand,
+    issue,
+    { kind: 'edit', issueRef: String(issue) },
+    undefined,
+    'pull-requests'
+  )
   const blocking = errors.filter((e) => e.severity !== 'warning')
-  if (blocking.length === 0) return
+  if (blocking.length === 0) {
+    for (const e of errors) emitCheckError(e)
+    return
+  }
   throw new DispatchTaskError(
-    `Issue #${issue}'s write gate refused — the same findings \`vinaya issue edit\` would report:\n${blocking
-      .map((e) => `  - [${e.check}] ${e.message}`)
+    `Issue #${issue}'s write gate refused — the same findings \`vinaya issue edit\` would report:\n${errors
+      .map((e) => `  - [${e.severity}] [${e.check}] ${e.message}`)
       .join('\n')}`
   )
 }

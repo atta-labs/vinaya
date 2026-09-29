@@ -212,6 +212,21 @@ export function expandGlob(glob: string): string[] {
     .filter(Boolean)
 }
 
+/**
+ * `git ls-files` — every tracked path in the repository, the snapshot
+ * `resolveBoundaryPaths` resolves a Boundary token against. Exported so a
+ * caller outside the render path (the file-collision gate in
+ * `forge-write.ts`) resolves pinned-file tokens through exactly the same
+ * snapshot and the same resolver the renderer itself uses, rather than a
+ * second listing of its own.
+ */
+export function listTrackedFiles(): string[] {
+  return git(['ls-files'])
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
 export function sha256OfFile(path: string): string {
   return createHash('sha256').update(readFileSync(path)).digest('hex')
 }
@@ -842,10 +857,7 @@ export async function assembleAndRenderBrief(
   // Boundary rationale field actually names — the only per-task source
   // precise enough to produce a brief a developer can act on, since a
   // directory-level Surface glob can only ever name a whole directory.
-  const allTrackedFiles = git(['ls-files'])
-    .split('\n')
-    .map((s) => s.trim())
-    .filter(Boolean)
+  const allTrackedFiles = listTrackedFiles()
   const boundaryTokens = extractBoundaryFilePaths(rationale.boundary ?? '')
   const surfaceFiles: SurfaceFileFact[] = resolveBoundaryPaths(boundaryTokens, allTrackedFiles)
     .sort()
@@ -1147,10 +1159,7 @@ export async function assembleAndRenderBriefForIssue(
     }
   }
 
-  const allTrackedFiles = git(['ls-files'])
-    .split('\n')
-    .map((s) => s.trim())
-    .filter(Boolean)
+  const allTrackedFiles = listTrackedFiles()
   const boundaryTokens = extractBoundaryFilePaths(rationale.boundary ?? '')
   const surfaceFiles: SurfaceFileFact[] = resolveBoundaryPaths(boundaryTokens, allTrackedFiles)
     .sort()

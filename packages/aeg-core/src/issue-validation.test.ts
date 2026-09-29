@@ -10,6 +10,7 @@ import {
   checkBoundaryClaimsNeedPremise,
   checkConflictCompleteness,
   checkEdgeIdsWholeNumbers,
+  checkFileCollisions,
   checkIssueBriefSections,
   checkIssueObjectives,
   checkIssuePremises,
@@ -50,6 +51,7 @@ import {
   parseIssueStopConditions,
   parseIssueSurface,
   parseIssueTestPlan,
+  type TaskFileFacts,
   type TaskIssueFacts,
   type TaskSurfaceFacts
 } from './issue-validation'
@@ -965,6 +967,109 @@ describe('checkSurfaceOverlap (task-run-v1 11, O5)', () => {
     expect(r.status).toBe('fail')
     expect(r.errors.length).toBe(1)
     expect(r.errors[0]).toMatch(/43/)
+  })
+})
+
+describe('checkFileCollisions', () => {
+  const A = 'packages/aeg-core/src/issue-validation.ts'
+  const B = 'apps/cli/src/lib/forge-write.ts'
+  const C = 'apps/cli/src/lib/config.ts'
+  const D = 'packages/sources/src/config-reference.ts'
+
+  const peer = (ref: string, files: string[], conflictsWith: string[] = []): TaskFileFacts => ({
+    ref,
+    label: `task Issue #${ref}`,
+    files,
+    conflictsWith
+  })
+  const subject = (files: string[], conflictsWith: string[] = []) => ({ ref: '851', files, conflictsWith })
+
+  it('refuses at the threshold, naming the other task and every shared file', () => {
+    const r = checkFileCollisions(subject([A, B, C, D]), [peer('860', [A, B, C])], 3)
+    expect(r.warnings).toEqual([])
+    expect(r.refusals).toHaveLength(1)
+    expect(r.refusals[0]).toMatch(/task Issue #860/)
+    for (const f of [A, B, C]) expect(r.refusals[0]).toContain(f)
+    expect(r.refusals[0]).not.toContain(D)
+  })
+
+  it('refuses above the threshold too', () => {
+    const r = checkFileCollisions(subject([A, B, C, D]), [peer('860', [A, B, C, D])], 3)
+    expect(r.refusals).toHaveLength(1)
+  })
+
+  it('accepts a two-file overlap and warns, naming each shared file and the task it is shared with', () => {
+    const r = checkFileCollisions(subject([A, B, C]), [peer('860', [A, B])], 3)
+    expect(r.refusals).toEqual([])
+    expect(r.warnings).toHaveLength(1)
+    expect(r.warnings[0]).toMatch(/task Issue #860/)
+    expect(r.warnings[0]).toContain(A)
+    expect(r.warnings[0]).toContain(B)
+    expect(r.warnings[0]).not.toContain(C)
+  })
+
+  it('is silent when the subject declares the edge on the other task', () => {
+    expect(checkFileCollisions(subject([A, B, C], ['860']), [peer('860', [A, B, C])], 3)).toEqual({
+      refusals: [],
+      warnings: []
+    })
+  })
+
+  it('is silent when only the OTHER task declares the edge — one-sided is enough, as elsewhere', () => {
+    expect(checkFileCollisions(subject([A, B, C]), [peer('860', [A, B, C], ['#851'])], 3)).toEqual({
+      refusals: [],
+      warnings: []
+    })
+  })
+
+  it('a threshold of 0 turns the refusal off and leaves the overlap as a warning', () => {
+    const r = checkFileCollisions(subject([A, B, C, D]), [peer('860', [A, B, C, D])], 0)
+    expect(r.refusals).toEqual([])
+    expect(r.warnings).toHaveLength(1)
+    expect(r.warnings[0]).toMatch(/collisionThreshold/)
+  })
+
+  it('is silent when the two share no file at all', () => {
+    expect(checkFileCollisions(subject([A, B]), [peer('860', [C, D])], 3)).toEqual({ refusals: [], warnings: [] })
+  })
+
+  it('is silent when the subject pins no file — nothing to compare', () => {
+    expect(checkFileCollisions(subject([]), [peer('860', [A, B, C])], 3)).toEqual({ refusals: [], warnings: [] })
+  })
+
+  it('never compares a task against itself, even if `peers` includes it', () => {
+    expect(checkFileCollisions(subject([A, B, C]), [peer('851', [A, B, C])], 3)).toEqual({
+      refusals: [],
+      warnings: []
+    })
+  })
+
+  it('counts a file shared with an open pull request the same as one shared with an Issue', () => {
+    const pull: TaskFileFacts = {
+      ref: '860',
+      label: 'pull request #862 (task Issue #860)',
+      files: [A, B, C],
+      conflictsWith: []
+    }
+    const r = checkFileCollisions(subject([A, B, C]), [pull], 3)
+    expect(r.refusals).toHaveLength(1)
+    expect(r.refusals[0]).toMatch(/pull request #862/)
+  })
+
+  it('counts a duplicated path in a peer once, so a repeated file cannot inflate the count past the threshold', () => {
+    const r = checkFileCollisions(subject([A, B]), [peer('860', [A, A, A, B])], 3)
+    expect(r.refusals).toEqual([])
+    expect(r.warnings).toHaveLength(1)
+  })
+
+  it('reports one finding per colliding peer, not only the first', () => {
+    const r = checkFileCollisions(subject([A, B, C]), [peer('860', [A, B, C]), peer('861', [A, B, C])], 3)
+    expect(r.refusals).toHaveLength(2)
+  })
+
+  it('a not-yet-created Issue (no ref of its own) still collides against its peers', () => {
+    const r = checkFileCollisions({ ref: '', files: [A, B, C], conflictsWith: [] }, [peer('860', [A, B, C])], 3)
+    expect(r.refusals).toHaveLength(1)
   })
 })
 

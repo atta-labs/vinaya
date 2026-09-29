@@ -36,6 +36,7 @@ import {
   checkDocsWithinSurface,
   checkDocUpdateList,
   checkEdgeIdsWholeNumbers,
+  checkFileCollisions,
   checkForField,
   checkForgeTitle,
   checkIssueBriefSections,
@@ -75,6 +76,7 @@ import {
   type DeferralReason,
   deriveBuiltinCrossCuttingDefaults,
   deriveWorkspacePackageDomains,
+  extractBoundaryFilePaths,
   type DispatchBlockerClass,
   DOC_OWNERS_PATH,
   findTrancheSlug,
@@ -87,10 +89,12 @@ import {
   isTaskIssueLabelSet,
   parseIssueSurface,
   parsePnpmWorkspaceYaml,
+  parseRationaleFields,
   parseRegistry,
   type ProjectPath,
   readTierFromPrBody,
   resolveNewestFrozenBrief,
+  type TaskFileFacts,
   type TaskSurfaceFacts,
   trancheLabel
 } from '@attalabs/aeg-core'
@@ -102,6 +106,8 @@ import {
   canRenderBriefFromHere,
   DRAFT_ISSUE_SENTINEL,
   expandGlob,
+  listTrackedFiles,
+  resolveBoundaryPaths,
   resolveTrancheTaskId
 } from './brief-assembly'
 import {
@@ -122,6 +128,7 @@ import {
   loadConfig,
   loadConfigChecked,
   loadTrustAnchorConfig,
+  resolveCollisionThreshold,
   resolveGateCutovers,
   resolvePrincipalAllowlist
 } from './config'
@@ -1219,6 +1226,8 @@ const ISSUE_CONTENT_RECOVERY = {
     "Rewrite the named sentence so it does not assign ownership of this task's own objective to another task — depend on the other task instead (`Dependency rationale`), or fold the work back into this task's own Objectives/Parts. Then re-run `{cmd}`.",
   partsCoverageAndSequence:
     'Fix the named `## Parts` defect — cite every declared objective from at least one Part, and number Parts contiguously from 1 — then re-run `{cmd}`.',
+  fileCollision:
+    "Declare a `Conflicts-with` entry naming the other task (either direction is enough) so the two serialize, or narrow this task's Boundary `Pinned files:` so it no longer shares that many files with work already in flight. Then re-run `{cmd}`.",
   introducedCommands:
     "Add the named directory glob to `## Surface`'s `in:` list so this task can write the command reference row the flag/command needs, or drop the flag/command from the Objectives and Parts. Then re-run `{cmd}`.",
   introducedConfigKeys:
@@ -1270,6 +1279,17 @@ export type IssueContentInput = {
   milestoneSiblings: TaskSurfaceFacts[] | null
   /** How this subject is referred to in a sibling's `Conflicts-with` — its Issue number, or `''` for a not-yet-created Issue (a sibling cannot yet name a number that does not exist). */
   subjectRef: string
+  /**
+   * The open task Issues and/or open pull requests this Issue's pinned files
+   * are compared against, already resolved by the caller — `null` when they
+   * could not be resolved at all, the same seam-is-dormant-when-absent
+   * convention `milestoneSiblings`/`docOwnersContent` already use here.
+   */
+  collisionPeers: CollisionPeers | null
+  /** This Issue's own pinned files (`pinnedFilesOf`), resolved by the caller from the body about to be written. */
+  subjectFiles: string[]
+  /** The resolved `planning.collisionThreshold` — `0` turns the refusal off and leaves only the warning. */
+  collisionThreshold: number
   /** The command reference this repository ships (`readCommandReference`) — `file: null` ⇒ dormant. */
   commandReference: CommandReferenceFacts
   /** The configuration reference and schema this repository ships (`readConfigReference`) — no files ⇒ dormant. */
@@ -1350,6 +1370,42 @@ export function validateIssueContent(input: IssueContentInput): CheckError[] {
       errors.push(makeCheckError(CHECK_ISSUE_CONTENT, message, nameTheFix(message, instruction)))
     }
   }
+
+  // The file-level collision gate emits findings at BOTH severities from one
+  // comparison, which the uniform loop above cannot express: a refusal blocks
+  // the write, a warning is printed and the Issue is accepted.
+  if (input.collisionPeers !== null) {
+    const collisionInstruction = ISSUE_CONTENT_RECOVERY.fileCollision.replace('{cmd}', input.retryCommand)
+    const collisions = checkFileCollisions(
+      { ref: input.subjectRef, files: input.subjectFiles, conflictsWith: subjectDeps.conflictsWith },
+      input.collisionPeers.peers,
+      input.collisionThreshold
+    )
+    for (const message of collisions.refusals) {
+      errors.push(makeCheckError(CHECK_ISSUE_CONTENT, message, nameTheFix(message, collisionInstruction)))
+    }
+    for (const message of collisions.warnings) {
+      errors.push(
+        makeCheckError(
+          CHECK_ISSUE_CONTENT,
+          message,
+          'No action required — the two tasks run in parallel; whichever pull request merges second resolves the overlap.',
+          'warning'
+        )
+      )
+    }
+    if (input.collisionPeers.capHit) {
+      errors.push(
+        makeCheckError(
+          CHECK_ISSUE_CONTENT,
+          `issue-validation file collision: only the first ${MAX_COLLISION_PULL_REQUESTS} open pull requests were read, so a collision with an older open pull request would not have been seen.`,
+          'Close or merge stale open pull requests, or check the older ones by hand, if this repository routinely keeps more open at once than the gate reads.',
+          'warning'
+        )
+      )
+    }
+  }
+
   return errors
 }
 
@@ -1738,6 +1794,195 @@ function fetchOpenTaskSurfaceSiblings(
 }
 
 /**
+ * How many open pull requests the collision gate reads changed files for.
+ * A busy repository must never make `vinaya issue create` crawl, and the
+ * forge charges per pull request for a file list however it is asked for, so
+ * the read is bounded rather than exhaustive; when the bound is reached the
+ * gate says so in its own output instead of silently grading a subset.
+ */
+export const MAX_COLLISION_PULL_REQUESTS = 50
+
+/**
+ * Which peers a collision run compares against. `issue create`/`issue edit`
+ * compare against both open task Issues and open pull requests; a dispatch
+ * compares against open pull requests only — by then every other task Issue
+ * is a plan, not work in flight, and the question the dispatch is asking is
+ * narrower: is anyone editing these files RIGHT NOW.
+ */
+export type CollisionScope = 'issues-and-pull-requests' | 'pull-requests'
+
+export type CollisionPeers = { peers: TaskFileFacts[]; capHit: boolean }
+type FetchCollisionPeersResult = { ok: true; value: CollisionPeers } | { ok: false; error: CheckError }
+
+/** One open Issue, exactly as `gh issue list --json number,body,labels` returns it. */
+export type OpenIssueRow = { number: number; body: string; labels: Array<{ name: string }> }
+/** One open pull request, exactly as `gh pr list --json number,files,closingIssuesReferences` returns it. */
+export type OpenPullRow = {
+  number: number
+  files: Array<{ path: string }>
+  closingIssuesReferences: Array<{ number: number }>
+}
+
+/**
+ * A task Issue body's own pinned files, resolved to real tracked paths —
+ * `extractBoundaryFilePaths` over the Boundary field, then
+ * `resolveBoundaryPaths` against a `git ls-files` snapshot. Both are the
+ * renderer's own functions (`brief-render.ts` and `brief-assembly.ts`
+ * respectively, the pair that builds a brief's own §4 file list), so what the
+ * collision gate calls "this task's files" is by construction the same set
+ * the dispatched brief will pin — never a second parser of the same prose.
+ */
+export function pinnedFilesOf(body: string, allTrackedFiles: string[]): string[] {
+  return resolveBoundaryPaths(extractBoundaryFilePaths(parseRationaleFields(body).boundary ?? ''), allTrackedFiles)
+}
+
+/**
+ * Every open task Issue in the repository and/or every open pull request,
+ * reduced to `TaskFileFacts`. Repo-wide for Issues, deliberately unlike
+ * `fetchOpenTaskSurfaceSiblings` above: that gate compares DIRECTORY globs
+ * and its peer group is defined as one Milestone, while a file-level
+ * collision is a collision whatever Milestone the other task sits in — two
+ * tranches editing the same four files collide exactly as hard as two tasks
+ * in one.
+ *
+ * In `pull-requests` scope no Issue row becomes a peer at all: at dispatch
+ * the other open task Issues are plans, not edits, and serializing against a
+ * plan that may never be dispatched costs a whole task for nothing.
+ *
+ * An open pull request carries no rationale of its own, so its `conflictsWith`
+ * is filled from the task Issue it closes — which is why the Issue listing is
+ * still read in both scopes, and only its use as a peer differs. A pull
+ * request that closes the subject Issue is the subject's OWN branch and is
+ * dropped, never compared against itself.
+ *
+ * Pure over two already-fetched listings, so the scope rule, the
+ * self-exclusion and the pull-request-to-Issue mapping are all testable
+ * without a forge; `fetchCollisionPeers` below adds nothing but the two `gh`
+ * calls, and a fetch or parse failure there is a RETURNED finding, never a
+ * `refuse()` from inside it — the same fold-into-the-union posture
+ * `fetchOpenTaskSurfaceSiblings` was given, and for the same reason: a `gh`
+ * hiccup must not erase the findings the caller has already collected.
+ */
+export function buildCollisionPeers(
+  scope: CollisionScope,
+  subjectIssueNumber: number | null,
+  issues: OpenIssueRow[],
+  pulls: OpenPullRow[],
+  allTrackedFiles: string[]
+): TaskFileFacts[] {
+  const conflictsByIssue = new Map<number, string[]>()
+  const peers: TaskFileFacts[] = []
+
+  for (const issue of issues) {
+    const labels = issue.labels.map((l) => l.name)
+    if (!isTaskIssueLabelSet(labels) && !isTaskIssueBodyShaped(issue.body)) continue
+    conflictsByIssue.set(issue.number, parseRationaleDeps(issue.body).conflictsWith)
+    if (scope !== 'issues-and-pull-requests') continue
+    if (issue.number === subjectIssueNumber) continue
+    const files = pinnedFilesOf(issue.body, allTrackedFiles)
+    if (files.length === 0) continue
+    peers.push({
+      ref: String(issue.number),
+      label: `task Issue #${issue.number}`,
+      files,
+      conflictsWith: conflictsByIssue.get(issue.number) ?? []
+    })
+  }
+
+  for (const pull of pulls) {
+    const closes = pull.closingIssuesReferences[0]?.number ?? null
+    if (closes !== null && closes === subjectIssueNumber) continue
+    const files = pull.files.map((f) => f.path)
+    if (files.length === 0) continue
+    peers.push({
+      ref: closes === null ? `pull/${pull.number}` : String(closes),
+      label: closes === null ? `pull request #${pull.number}` : `pull request #${pull.number} (task Issue #${closes})`,
+      files,
+      conflictsWith: closes === null ? [] : (conflictsByIssue.get(closes) ?? [])
+    })
+  }
+
+  return peers
+}
+
+function fetchCollisionPeers(
+  scope: CollisionScope,
+  subjectIssueNumber: number | null,
+  allTrackedFiles: string[],
+  retryCommand: string
+): FetchCollisionPeersResult {
+  const failed = (message: string): FetchCollisionPeersResult => ({
+    ok: false,
+    error: makeCheckError(
+      'forge-fetch',
+      message,
+      `Check \`gh auth status\` and network, then re-run \`${retryCommand}\`. The write is refused rather than passed through unvalidated.`
+    )
+  })
+
+  // Even in `pull-requests` scope the Issue listing is still read: an open
+  // pull request carries no rationale of its own, so the `Conflicts-with`
+  // edges that exempt it live on the Issue it closes.
+  let issueOut: string
+  try {
+    issueOut = execFileSync(
+      'gh',
+      ['issue', 'list', '--state', 'open', '--json', 'number,body,labels', '--limit', '2000'],
+      {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe']
+      }
+    )
+  } catch (err) {
+    return failed(
+      `Could not list open Issues (\`gh issue list\`) to check pinned-file collisions: ${(err as Error).message}`
+    )
+  }
+  let issues: OpenIssueRow[]
+  try {
+    issues = JSON.parse(issueOut)
+  } catch {
+    return failed('Could not parse `gh issue list --json number,body,labels` output.')
+  }
+
+  let prOut: string
+  try {
+    prOut = execFileSync(
+      'gh',
+      [
+        'pr',
+        'list',
+        '--state',
+        'open',
+        '--json',
+        'number,files,closingIssuesReferences',
+        '--limit',
+        String(MAX_COLLISION_PULL_REQUESTS)
+      ],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
+    )
+  } catch (err) {
+    return failed(
+      `Could not list open pull requests (\`gh pr list\`) to check pinned-file collisions: ${(err as Error).message}`
+    )
+  }
+  let pulls: OpenPullRow[]
+  try {
+    pulls = JSON.parse(prOut)
+  } catch {
+    return failed('Could not parse `gh pr list --json number,files,closingIssuesReferences` output.')
+  }
+
+  return {
+    ok: true,
+    value: {
+      peers: buildCollisionPeers(scope, subjectIssueNumber, issues, pulls, allTrackedFiles),
+      capHit: pulls.length >= MAX_COLLISION_PULL_REQUESTS
+    }
+  }
+}
+
+/**
  * Best-effort read of an Issue's CURRENT title from the forge — used only to
  * fill `validateRenderedBriefForIssue`'s render input when an `issue edit`
  * carries no `--title` of its own (the common case: nobody re-passes
@@ -2000,7 +2245,8 @@ export async function collectTaskIssueErrors(
   retryCommand: string,
   issueNumber: number | null,
   milestoneSource?: MilestoneSource,
-  deps: TaskIssueValidationDeps = defaultTaskIssueValidationDeps
+  deps: TaskIssueValidationDeps = defaultTaskIssueValidationDeps,
+  collisionScope: CollisionScope = 'issues-and-pull-requests'
 ): Promise<{ errors: CheckError[]; renderSkipped: string | null }> {
   const errors: CheckError[] = []
 
@@ -2035,6 +2281,22 @@ export async function collectTaskIssueErrors(
     }
   }
 
+  // The pinned-file collision gate's own inputs. A body that pins no
+  // resolvable file cannot collide with anything, so the two forge listings
+  // are never made for it — that keeps the gate free on a non-task Issue and
+  // on any checkout where the pinned tokens resolve to nothing. When they do
+  // resolve, a fetch failure folds into the same union, exactly like the
+  // Milestone sibling fetch above; `null` peers leave the gate dormant rather
+  // than silently passing every overlap.
+  const allTrackedFiles = listTrackedFiles()
+  const subjectFiles = pinnedFilesOf(body, allTrackedFiles)
+  let collisionPeers: CollisionPeers | null = null
+  if (subjectFiles.length > 0) {
+    const peersResult = fetchCollisionPeers(collisionScope, issueNumber, allTrackedFiles, retryCommand)
+    if (peersResult.ok) collisionPeers = peersResult.value
+    else errors.push(peersResult.error)
+  }
+
   errors.push(
     ...validateIssueContent({
       body,
@@ -2049,6 +2311,9 @@ export async function collectTaskIssueErrors(
       docOwnersContent: readDocOwnersContent(),
       milestoneSiblings,
       subjectRef: issueNumber !== null ? String(issueNumber) : '',
+      collisionPeers,
+      subjectFiles,
+      collisionThreshold: resolveCollisionThreshold(loadConfig()),
       commandReference: readCommandReference(),
       configReference: readConfigReference(),
       pinnedFileImporters: readPinnedFileImporters(body),
