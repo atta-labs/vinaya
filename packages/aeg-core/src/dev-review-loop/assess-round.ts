@@ -21,8 +21,10 @@
  * - The three exits are decided here and nowhere else: an id previously
  *   `resolved` reported again (`stop_condition_met` `condition: 'reappearance'`),
  *   a confidence collapse per the rule above (`condition: 'confidence'`), and
- *   rounds over 3 (`condition: 'max_rounds'`) — distinct `condition` values a
- *   2026-09-06 amendment adds to `stop_condition_met.condition` so a reader
+ *   a round that reaches the cap without going green (`condition: 'max_rounds'`;
+ *   the default cap is 3, so rounds 1–3 run and the loop pauses after round
+ *   3's review, and a green round at the cap still publishes) — distinct
+ *   `condition` values a 2026-09-06 amendment adds to `stop_condition_met.condition` so a reader
  *   tells a confidence collapse and a finding reappearance apart from each
  *   other and from the round cap. A fourth exit once lived here too — two
  *   consecutive rounds resolving no id (`condition: 'no_progress'`) — but it
@@ -691,7 +693,7 @@ function assessVerdicts(
     }
   }
 
-  if (obs.round > state.config.maxRounds) {
+  if (obs.round >= state.config.maxRounds) {
     events.push(stopConditionMetEvent(state, obs.round, 'max_rounds'))
     events.push(pausedEvent(state, obs.round, 'principal_item'))
     events.push(roundEndedEvent(state, obs.round, pending.stats, 'changes_requested'))
@@ -783,8 +785,9 @@ function minutesOf(ms: number): number {
  * only, exactly as it did before this budget existed.
  *
  * The comparison is strictly greater, so a task sitting exactly on its budget
- * has not passed it — the same "over the cap, not at it" reading
- * `obs.round > state.config.maxRounds` already takes of the round cap.
+ * has not passed it. The round cap reads the other way: a round that REACHES
+ * `state.config.maxRounds` without going green pauses, since the cap is the
+ * number of rounds that run.
  */
 export function taskBudgetExceeded(maxTaskMinutes: number, clock: TaskClock): boolean {
   if (maxTaskMinutes <= 0) return false
