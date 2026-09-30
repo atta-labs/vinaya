@@ -3258,7 +3258,10 @@ describe('buildRolePermissions — Issue #663, O1: an explicit per-role Bash all
         'Bash(gh pr merge:*)',
         'Bash(bun install:*)',
         'Bash(bun test:*)',
-        'Bash(bun run:*)'
+        'Bash(bun run:*)',
+        // role-reach-v1 task 5, O4: the agent-config scanner's own launcher —
+        // a dispatched reviewer reads the driver-run scan, never runs one.
+        'Bash(npx:*)'
       ]) {
         expect(perms.deny).toContain(rule)
       }
