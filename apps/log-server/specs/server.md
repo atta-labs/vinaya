@@ -4,7 +4,7 @@ Status: draft
 
 Everything below ships.
 
-A small server that receives the events a Vinaya installation delivers to a `logs.url` destination (`apps/cli/specs/log.md` § The destination), keeps every one of them, lets a reader page through them from any position, and pushes each new one to live viewers as it arrives. It runs on Cloudflare's free plan and costs nothing at the volume measured below. Any Vinaya adopter can deploy their own copy; the sending side needs no change, because the server accepts exactly what the CLI already sends.
+A small server that receives the events a Vinaya installation delivers to a `logs.url` destination (`apps/cli/specs/log.md` § The destination), keeps every one of them, lets a reader page through them from any position, and pushes each new one to live viewers as it arrives. It runs on Cloudflare's free plan and can absorb the volume its known adopters have produced to date; beyond that volume, cost or stricter limits apply. Any Vinaya adopter can deploy their own copy; the sending side needs no change, because the server accepts exactly what the CLI already sends.
 
 It is telemetry, never authority. Nothing in Vinaya reads this server to decide dispatch, approval, publication or recovery, and an outage here never fails or slows a run: the sender keeps events in its local retry queue until the server is back.
 
@@ -19,19 +19,24 @@ Nothing else: no D1 database, no R2 bucket, no scheduled job.
 
 ## 2. Free-plan budget
 
-Measured on this repository's own local logs from the day check events started being recorded: about 7,000 events a day on average, 15,925 on the busiest day, 925 bytes per event (3 to 15 MB a day). CI adds 10 to 41 check runs a day on top. The design is sized against 20,000 events a day.
+Measured 2026-09-26 to 2026-09-30 by reading every stored event from each of the three delivering repositories (atta-labs/vinaya, attalabs, onchain-rewind) through the read route and the stats route's byte count. Peak day 2026-09-27 carried about 43,000 events across the three, totaling about 40 MB of database growth at peak. The free plan can absorb this volume but hits its first ceiling — the daily rows-written cap — before storage becomes a constraint.
 
-| Limit (Workers Free) | Use at 20,000 events a day | Allowance |
+| Limit (Workers Free) | Measured 2026-09-26 to 2026-09-30 | Allowance |
 |---|---|---|
-| Worker requests | at most one per delivered batch, so at most 20,000 | 100,000 a day |
+| Worker requests | one per batch; at peak 43,000 events in one batch on 2026-09-27 yields one request | 100,000 a day |
 | Durable Object requests | one per ingest, one per read page, one per live connection | 100,000 a day |
-| Durable Object SQLite rows written | two per new event (the row and its identity index): 40,000 | 100,000 a day |
+| Durable Object SQLite rows written | two per new event (the row and its identity index): peak about 87,000 a day on 2026-09-27 | 100,000 a day |
 | Durable Object SQLite rows read | reads page through by row number, never a scan | 5,000,000 a day |
 | Durable Object CPU per request | a 5 MiB batch parses and inserts in milliseconds | 30 seconds |
 | Outgoing WebSocket messages | one per event per viewer | not billed |
-| Durable Object storage | about 8 MB a day | 5 GB per account, 10 GB per object |
+| Durable Object storage | about 40 MB a day at peak | 5 GB per account, 10 GB per object |
 
-**The one ceiling that arrives on its own is storage: about eighteen months at the measured volume.** The stats route (§ 5) reports each repository's size so that day is visible long before it comes. Moving closed months to compressed archive storage is the planned answer and is not built here.
+**The first ceiling is the daily rows-written cap: at peak measured volume (about 87,000 rows a day on 2026-09-27), the free plan's 100,000 daily limit is reached.** When ingest past that cap is attempted, the sender's ingest request is refused; the sender keeps the batch in its retry queue and resends it later. Storage (about 40 MB a day at peak) would reach the 5 GB account cap in roughly four months at the measured volume.
+
+Three ways are open to reduce or absorb the volume without choosing now:
+- Record fewer repeated events at the source.
+- Retire (delete) old rows from the log, tracked against the daily allowance.
+- Move to a paid plan on Cloudflare with higher daily limits.
 
 ## 3. Identity and duplicates
 
@@ -72,7 +77,7 @@ The `UNIQUE` index on `event_id` is the only index either table carries: each ad
 
 One ingest is one SQLite transaction: a request answered `200` has every one of its lines durably stored, and a request that fails stored none of them.
 
-**Rows are never deleted, and the counts in § 5 depend on it.** Nothing here removes a row, which is what lets `seq` be a plain rowid rather than an AUTOINCREMENT column — and, for the same reason, lets the stats route read `MAX(rowid)` as the exact count of each table. `COUNT(*)` would be a scan: at eighteen months of the measured volume that is millions of row reads for one stats call, against a daily read allowance of five million. A later change that deletes rows — the archiving of closed months § 2 names — has to replace those two reads with real counters in the same change.
+**Rows are never deleted, and the counts in § 5 depend on it.** Nothing here removes a row, which is what lets `seq` be a plain rowid rather than an AUTOINCREMENT column — and, for the same reason, lets the stats route read `MAX(rowid)` as the exact count of each table. `COUNT(*)` would be a scan: at the measured volume before the storage cap is reached (roughly four months), that is millions of row reads for one stats call, against a daily read allowance of five million. Any future change that deletes rows has to replace those two `MAX(rowid)` reads with real counters to keep stats calls bounded.
 
 ## 5. The wire contract
 
