@@ -843,9 +843,9 @@ export const VinayaConfigSchema = z.object({
   // `${VAR_NAME}` instead of a literal secret — resolved at delivery time,
   // by the trusted process only, so a credential never sits in the
   // committed config (`resolveLogsHeaderValues`, below). When that variable is
-  // unset in the process environment, the value falls back to the macOS login
-  // Keychain; the environment still wins where it is set, and on
-  // Linux the fallback is a no-op.
+  // unset in the process environment, the reference resolves to the empty
+  // string — the environment is the one source, so a missing credential
+  // surfaces as an authentication failure at the destination, not a fallback.
   //
   // **Default-branch only, for an unattended caller** — the exact rule
   // `runtimeDir` already carries: the destination is a
@@ -863,7 +863,7 @@ export const VinayaConfigSchema = z.object({
       // The READ credential `vinaya log selftest` presents to read its own
       // test event back (O1) — distinct from `headers`, which is the
       // write-only INGEST credential the server refuses on a read route. Same
-      // `${VAR_NAME}` + Keychain resolution (`resolveLogsHeaderValues`), and
+      // `${VAR_NAME}` environment-variable resolution (`resolveLogsHeaderValues`), and
       // never trust-anchor gated the way `url` is: it is this machine's own
       // credential for reading back from a URL that gate already approved, not
       // a destination a pull request's diff could redirect.
