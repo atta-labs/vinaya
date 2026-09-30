@@ -28,6 +28,7 @@ import { promisify } from 'node:util'
 import { resolveRepo as resolveRepoDefault, resolveTaskIssueRef } from '@attalabs/aeg-forge-state'
 import {
   buildHeader,
+  type HeaderInput,
   type Host,
   type LogEvent,
   LogEventSchema,
@@ -47,7 +48,14 @@ import {
   type VinayaConfig
 } from './config.js'
 import { readLogHeaderKeychainCredential } from './worker-boundary.js'
-import { isInsideRepo, isUnattendedProcess, repoRootSync, runtimeDirForRepoAsync } from './run-paths.js'
+import {
+  isInsideRepo,
+  isUnattendedProcess,
+  RUNTIME_DIR_ENV_KEY,
+  repoRootSync,
+  resolveRuntimeDir,
+  runtimeDirForRepoAsync
+} from './run-paths.js'
 import { appendLoopLogLine, loopLogPathFor } from './loop-log.js'
 import { drainOutboxToWebhook } from './log-webhook-drain.js'
 import { packageRoot } from './package-root.js'
@@ -180,6 +188,13 @@ export type LogSinkDeps = {
     repo: RepoRef | null,
     env: NodeJS.ProcessEnv
   ) => ResolvedLogDestination | Promise<ResolvedLogDestination>
+  /**
+   * Where `logSync` writes when this sink has not resolved its destination
+   * yet — answered synchronously, from the environment and the working
+   * tree's own config alone, with no process spawned and no trust-anchor
+   * read (`unresolvedLogDestination`). Never a folder on a CI host.
+   */
+  unresolvedLogDestination: (env: NodeJS.ProcessEnv) => ResolvedLogDestination
 }
 
 // Quiet: the fallback warning goes to stdout, and every process that logs —
@@ -387,7 +402,11 @@ export function resolveLogDestinationFrom(input: {
             'a logs.url server destination is configured, but this job holds no delivery credential (a fork pull request, or a missing repository secret)'
         }
       }
-      return { kind: 'server', url: effective.url, headers: resolveLogsHeaderValues(effective.headers, input.env) }
+      return {
+        kind: 'server',
+        url: effective.url,
+        headers: resolveLogsHeaderValues(effective.headers, input.env, input.readKeychain)
+      }
     }
     return {
       kind: 'none',
@@ -395,7 +414,11 @@ export function resolveLogDestinationFrom(input: {
     }
   }
   if (effective && 'url' in effective) {
-    return { kind: 'server', url: effective.url, headers: resolveLogsHeaderValues(effective.headers, input.env) }
+    return {
+      kind: 'server',
+      url: effective.url,
+      headers: resolveLogsHeaderValues(effective.headers, input.env, input.readKeychain)
+    }
   }
   if (effective && 'folder' in effective && isInsideRepo(effective.folder, input.repoRoot)) {
     effective = null
@@ -478,6 +501,51 @@ async function defaultResolveLogDestination(
     defaultFolder: join(await runtimeDirForRepoAsync(repo), 'logs'),
     repoRoot
   })
+}
+
+/**
+ * The destination `logSync` falls back to when the process is ending before
+ * its sink resolved one — synchronous, and built only from what needs no
+ * process and no network: the environment, the working tree's own
+ * `vinaya.config.json`, and the filesystem walk `repoRootSync` makes.
+ *
+ * A CI host records nothing: a folder there is no destination (the same rule
+ * `resolveLogDestinationFrom` applies), and a server cannot be confirmed
+ * without the default branch's config. Anywhere else the event goes to the
+ * folder `log()` itself falls back to when a server cannot be confirmed: the
+ * working tree's own `logs.folder` for an attended caller, otherwise
+ * `<runtimeDir>/logs` for an unresolved repository. A server is never chosen
+ * here, even an attended caller's own: the queue a drain reads is named by
+ * the repository, which this function cannot know without `git`, so a line
+ * queued under `unresolved` would never be delivered, while a folder line is
+ * delivered later by `vinaya log send`. The Keychain is never read: its
+ * reader spawns `security`, and a folder carries no credential anyway.
+ */
+export function unresolvedLogDestination(env: NodeJS.ProcessEnv): ResolvedLogDestination {
+  if (hostFromEnv(env) === 'ci') {
+    return {
+      kind: 'none',
+      reason: 'the process ended before its log destination was resolved, and a CI job never records to a folder'
+    }
+  }
+  const localConfig = loadConfig()
+  const unattended = isUnattendedProcess(process.env)
+  const repoRoot = repoRootSync()
+  const runtimeDir =
+    process.env[RUNTIME_DIR_ENV_KEY] ||
+    resolveRuntimeDir({ repo: null, localConfig, trustAnchorConfig: null, unattended, repoRoot })
+  const defaultFolder = join(runtimeDir, 'logs')
+  const resolved = resolveLogDestinationFrom({
+    localConfig,
+    trustAnchorConfig: null,
+    unattended,
+    env,
+    defaultFolder,
+    repoRoot,
+    readKeychain: () => null
+  })
+  if (resolved.kind === 'folder' && resolved.fallbackReason === undefined) return resolved
+  return { kind: 'folder', folder: defaultFolder }
 }
 
 /**
@@ -1032,6 +1100,9 @@ let branchIssueFallbackEnabled = true
  */
 const branchIssueByCwd = new Map<string, Promise<number | null>>()
 
+/** The answers `branchIssueByCwd` has already settled, by the same key — what `logSync` reads, since it cannot await the promise. */
+const branchIssueSettledByCwd = new Map<string, number | null>()
+
 /**
  * The bounded read, shared across this process when it is the REAL one and
  * kept private when a caller injected its own.
@@ -1050,11 +1121,15 @@ function branchIssueRead(key: string, read: () => Promise<number | null>, shared
   if (cached !== undefined) return cached
   const reading = withDeadline(Promise.resolve().then(read), LOG_CONTEXT_LOOKUP_DEADLINE_MS, null)
   branchIssueByCwd.set(key, reading)
+  reading.then((value) => branchIssueSettledByCwd.set(key, value))
   return reading
 }
 
 /** The checkout's `HEAD`, memoised for the PROCESS by directory — the same reasoning as `branchIssueByCwd`: a commit cannot change under one process's gate events, and a run of checks must not cost a `git` call each. */
 const headShaByCwd = new Map<string, Promise<string | null>>()
+
+/** The commits `headShaByCwd` has already settled — `branchIssueSettledByCwd`'s counterpart. */
+const headShaSettledByCwd = new Map<string, string | null>()
 
 /** The bounded `HEAD` read: shared across this process when it is the REAL read, private when a caller injected its own (`branchIssueRead`'s reasoning). */
 function headShaRead(key: string, read: () => Promise<string | null>, shared: boolean): Promise<string | null> {
@@ -1063,6 +1138,7 @@ function headShaRead(key: string, read: () => Promise<string | null>, shared: bo
   if (cached !== undefined) return cached
   const reading = withDeadline(Promise.resolve().then(read), LOG_CONTEXT_LOOKUP_DEADLINE_MS, null)
   headShaByCwd.set(key, reading)
+  reading.then((value) => headShaSettledByCwd.set(key, value))
   return reading
 }
 
@@ -1099,7 +1175,8 @@ function defaultDeps(): Omit<LogSinkDeps, 'resolveBranchIssue' | 'resolveHeadSha
     vinayaVersion: () => readVinayaVersion(),
     stderr: defaultStderr,
     inputVersions: () => undefined,
-    resolveLogDestination: defaultResolveLogDestination
+    resolveLogDestination: defaultResolveLogDestination,
+    unresolvedLogDestination
   }
 }
 
@@ -1237,6 +1314,7 @@ function appendLine(path: string, line: string, warn: (message: string) => void)
 /** Injectable for tests; the default instance below is wired to the real reads (env, git, the resolved `logs` destination). */
 export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
   log: (e: LogEventInput) => void
+  logSync: (e: LogEventInput) => void
   runId: string
   warmup: () => void
   drain: () => Promise<void>
@@ -1296,6 +1374,7 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
   // never a dropped event.
   const readerIsReal = overrides.resolveBranchIssue === undefined
   let ownBranchIssue: Promise<number | null> | undefined
+  let ownBranchIssueSettled: number | null = null
   const branchIssueOnce = (repo: RepoRef | null): Promise<number | null> => {
     // A process that serves several tasks answers `null` here without ever
     // reading a branch — see `setBranchIssueFallback`.
@@ -1303,8 +1382,20 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
     const slug = safeRepoSlug(repo)
     const read = (): Promise<number | null> => deps.resolveBranchIssue(slug)
     if (readerIsReal) return branchIssueRead(`${deps.cwd()}\u0000${slug ?? ''}`, read, true)
-    if (ownBranchIssue === undefined) ownBranchIssue = branchIssueRead(deps.cwd(), read, false)
+    if (ownBranchIssue === undefined) {
+      ownBranchIssue = branchIssueRead(deps.cwd(), read, false)
+      ownBranchIssue.then((value) => {
+        ownBranchIssueSettled = value
+      })
+    }
     return ownBranchIssue
+  }
+  // What `branchIssueOnce` has already answered, read without waiting: `null`
+  // when the read never ran or has not settled — never a lookup of its own.
+  const branchIssueIfSettled = (repo: RepoRef | null): number | null => {
+    if (!branchIssueFallbackEnabled) return null
+    if (!readerIsReal) return ownBranchIssueSettled
+    return branchIssueSettledByCwd.get(`${deps.cwd()}\u0000${safeRepoSlug(repo) ?? ''}`) ?? null
   }
 
   // The commit a gate event was checked at — read lazily, only for a gate
@@ -1312,11 +1403,19 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
   // reader of its own keeps that answer to itself.
   const headShaReaderIsReal = overrides.resolveHeadSha === undefined
   let ownHeadSha: Promise<string | null> | undefined
+  let ownHeadShaSettled: string | null = null
   const headShaOnce = (): Promise<string | null> => {
     if (headShaReaderIsReal) return headShaRead(deps.cwd(), deps.resolveHeadSha, true)
-    if (ownHeadSha === undefined) ownHeadSha = headShaRead(deps.cwd(), deps.resolveHeadSha, false)
+    if (ownHeadSha === undefined) {
+      ownHeadSha = headShaRead(deps.cwd(), deps.resolveHeadSha, false)
+      ownHeadSha.then((value) => {
+        ownHeadShaSettled = value
+      })
+    }
     return ownHeadSha
   }
+  const headShaIfSettled = (): string | null =>
+    headShaReaderIsReal ? (headShaSettledByCwd.get(deps.cwd()) ?? null) : ownHeadShaSettled
 
   // `deps.resolveRepo()` (the real default is `@attalabs/aeg-forge-state`'s
   // `resolveRepo`) is called at most ONCE per sink, its result — including a
@@ -1361,6 +1460,9 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
   // synchronously, so lines land in call order.
   type SinkContext = { repo: RepoRef | null; doctrine: string; destination: ResolvedLogDestination }
   let contextCache: Promise<SinkContext> | undefined
+  // The same context once it has settled, for `logSync`, which cannot await
+  // it — `undefined` until the warm-up (or a first `log()`) has finished.
+  let settledContext: SinkContext | undefined
   const context = (): Promise<SinkContext> => {
     if (contextCache === undefined) {
       const env = deps.env()
@@ -1369,7 +1471,8 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
         doctrine()
       ]).then(async ([resolved, doctrineValue]) => {
         const repo = resolved && isSafeRepoSegment(resolved.owner) && isSafeRepoSegment(resolved.repo) ? resolved : null
-        return { repo, doctrine: doctrineValue, destination: await deps.resolveLogDestination(repo, env) }
+        settledContext = { repo, doctrine: doctrineValue, destination: await deps.resolveLogDestination(repo, env) }
+        return settledContext
       })
     }
     return contextCache
@@ -1416,28 +1519,31 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
       })
   }
 
-  function log(e: LogEventInput): void {
-    try {
-      const env = deps.env()
-      const host = hostFromEnv(env)
-      const now = deps.now()
-      const mySeq = seq++
-      // Captured synchronously, as plain values, at the moment `log()` is
-      // called — never a live reference into `env` read later inside the
-      // `.then()` below. The real `deps.env()` IS `process.env` itself (one
-      // shared, mutable object across the whole process), and this module's
-      // own callers set VINAYA_TASK/VINAYA_RUN for the duration of a single
-      // `log()` call, then restore them (`dev-review-loop.ts`'s
-      // `cancelDevReviewLoop`) — safe in a one-task-
-      // per-process CLI, but the multi-tenant `vinaya task-tools serve` MCP
-      // server (`task-tools/server.ts`) dispatches calls for DIFFERENT tasks
-      // without awaiting each to completion before the next. Reading `env.*`
-      // lazily inside the `.then()` would race: this call's own header could
-      // pick up a CONCURRENT caller's task/run value if that caller's own
-      // mutation lands between this synchronous call and the microtask
-      // below. Snapshotting here closes that race regardless of what
-      // `process.env` does afterward (round 2 security review, HIGH).
-      const envFields = {
+  /** What a call knows at the moment it is made — see `snapshot`. */
+  type CallSnapshot = { host: Host; now: Date; seq: number; envFields: HeaderInput['env'] }
+
+  // Captured synchronously, as plain values, at the moment `log()` or
+  // `logSync()` is called — never a live reference into `env` read later
+  // inside `log()`'s `.then()`. The real `deps.env()` IS `process.env` itself
+  // (one shared, mutable object across the whole process), and this module's
+  // own callers set VINAYA_TASK/VINAYA_RUN for the duration of a single
+  // `log()` call, then restore them (`dev-review-loop.ts`'s
+  // `cancelDevReviewLoop`) — safe in a one-task-
+  // per-process CLI, but the multi-tenant `vinaya task-tools serve` MCP
+  // server (`task-tools/server.ts`) dispatches calls for DIFFERENT tasks
+  // without awaiting each to completion before the next. Reading `env.*`
+  // lazily inside the `.then()` would race: this call's own header could
+  // pick up a CONCURRENT caller's task/run value if that caller's own
+  // mutation lands between this synchronous call and the microtask
+  // below. Snapshotting here closes that race regardless of what
+  // `process.env` does afterward (round 2 security review, HIGH).
+  const snapshot = (): CallSnapshot => {
+    const env = deps.env()
+    return {
+      host: hostFromEnv(env),
+      now: deps.now(),
+      seq: seq++,
+      envFields: {
         role: env.VINAYA_ROLE,
         task: env.VINAYA_TASK,
         round: env.VINAYA_ROUND,
@@ -1458,110 +1564,131 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
         runtime: env.VINAYA_RUNTIME,
         source: env.VINAYA_SOURCE
       }
+    }
+  }
+
+  /**
+   * Everything after the lookups, shared by `log()` and `logSync()` so the two
+   * can never build, validate, redact or place a line differently: the header,
+   * the schema check, the redaction, and the one synchronous append. Only
+   * `log()` asks for delivery (`deliver`) — `logSync` runs as the process
+   * ends, where a drain started now would be cut off holding the queue's lock.
+   */
+  const writeEvent = (
+    e: LogEventInput,
+    call: CallSnapshot,
+    ctx: SinkContext,
+    branchIssue: number | null,
+    headSha: string | null,
+    deliver: boolean
+  ): void => {
+    const { repo, doctrine: doctrineValue, destination } = ctx
+    if (destination.kind === 'none') {
+      // O3: one visible line per process — never per event, which would
+      // spam a CI job's output once per check — naming exactly why
+      // nothing is being recorded (no server configured, or this job
+      // holds no delivery credential). Never a failure: recording
+      // nothing is the sanctioned outcome here, not a degraded one.
+      warnOnce(`vinaya: not recording — ${destination.reason}\n`)
+      return
+    }
+    if (destination.kind === 'folder' && destination.fallbackReason) {
+      // O2: one visible line per process — never per event — naming why an
+      // unattended run that DID configure a `logs.url` server is writing to
+      // the local folder instead of that server, so the silent reroute the
+      // Mac hit is never silent again. Delivery to the folder
+      // still proceeds: falling back is a degraded outcome, not a failure,
+      // and `vinaya log send` recovers the folder's events later.
+      warnOnce(`vinaya: ${describeFolderFallback(destination.fallbackReason)}\n`)
+    }
+    const built = buildHeader({
+      now: call.now,
+      runId,
+      seq: call.seq,
+      repo: repo ? `${repo.owner}/${repo.repo}` : null,
+      vinaya: deps.vinayaVersion(),
+      doctrine: doctrineValue,
+      host: call.host,
+      hostname: deps.hostname(),
+      env: call.envFields,
+      branchIssue,
+      eventId: randomUUID(),
+      processId,
+      inputVersions: deps.inputVersions()
+    })
+    // A gate event names the commit it was checked at, omitted when the
+    // commit cannot be resolved. No other family carries it here.
+    const header = headSha === null ? built : { ...built, subject: { ...built.subject, sha: headSha } }
+    // O3: keep the fallback reason where a launch path that discards
+    // standard error still surfaces it — the task's own driver.log (when
+    // the event names a task) and the state file `vinaya doctor` reports.
+    // Done here, after the header names the issue, so the driver.log line
+    // lands under the right task; guarded to once per process.
+    if (destination.kind === 'folder' && destination.fallbackReason && !folderFallbackRecorded) {
+      folderFallbackRecorded = true
+      recordFolderFallback(
+        repo,
+        header.subject.issue,
+        destination.fallbackReason,
+        call.now,
+        // The fallback always resolves the DEFAULT `<runtimeDir>/logs`
+        // folder, so its parent is the task's runtime dir — where
+        // `driver.log` lives.
+        dirname(destination.folder),
+        join(deps.home(), '.vinaya')
+      )
+    }
+    // `header` spreads LAST: it carries the only trusted `meta`/`subject`
+    // values (environment/remote/package/tree-derived), and `e`'s type
+    // excludes those keys but a caller passing a wider-typed or `as any`
+    // value could still smuggle a `meta`/`subject` property through —
+    // TS's excess-property check only fires on a fresh object literal,
+    // never on a variable. Spreading `header` second means a forged
+    // field in `e` is always overwritten, never honored.
+    const full = { ...e, ...header }
+    const parsed = LogEventSchema.safeParse(full)
+    if (!parsed.success) {
+      warnOnce(`vinaya: log() refused an invalid payload — ${parsed.error.issues[0]?.message ?? 'schema violation'}\n`)
+      return
+    }
+    const line = `${JSON.stringify(redact(parsed.data, deps.home()))}\n`
+    if (destination.kind === 'server') {
+      // The local outbox is the retry queue for a server destination
+      // (O2) — appended first, synchronously with every other
+      // destination, THEN drained: the append itself never waits on
+      // the network (Traps: "append locally first, drain
+      // asynchronously").
+      appendLine(outboxPathFor(deps, repo, header.subject.issue), line, warnOnce)
+      if (deliver) scheduleWebhookDrain(header.subject.issue, destination.url, destination.headers)
+    } else {
+      appendLine(outboxPathFor({ outboxRoot: () => destination.folder }, repo, header.subject.issue), line, warnOnce)
+    }
+  }
+
+  function log(e: LogEventInput): void {
+    try {
+      const call = snapshot()
       const write = async (): Promise<void> => {
-        const { repo, doctrine: doctrineValue, destination: resolvedDestination } = await context()
-        if (resolvedDestination.kind === 'none') {
-          // O3: one visible line per process — never per event, which would
-          // spam a CI job's output once per check — naming exactly why
-          // nothing is being recorded (no server configured, or this job
-          // holds no delivery credential). Never a failure: recording
-          // nothing is the sanctioned outcome here, not a degraded one.
-          //
-          // Checked BEFORE the branch lookup below, never after: a process
-          // recording nothing must spend no `git rev-parse`, and above all
-          // no credentialed `gh issue list`, resolving an attribution no
-          // event will ever carry (round 1 security review, LOW) — the CI
-          // job deliberately built to hold no delivery credential is
-          // exactly the one that would otherwise pay that forge call on
-          // every check it runs.
-          warnOnce(`vinaya: not recording — ${resolvedDestination.reason}\n`)
+        const ctx = await context()
+        // Checked BEFORE the branch lookup below, never after: a process
+        // recording nothing must spend no `git rev-parse`, and above all
+        // no credentialed `gh issue list`, resolving an attribution no
+        // event will ever carry (round 1 security review, LOW) — the CI
+        // job deliberately built to hold no delivery credential is
+        // exactly the one that would otherwise pay that forge call on
+        // every check it runs. `writeEvent` names why nothing is recorded.
+        if (ctx.destination.kind === 'none') {
+          writeEvent(e, call, ctx, null, null, true)
           return
-        }
-        if (resolvedDestination.kind === 'folder' && resolvedDestination.fallbackReason) {
-          // O2: one visible line per process — never per event — naming why an
-          // unattended run that DID configure a `logs.url` server is writing to
-          // the local folder instead of that server, so the silent reroute the
-          // Mac hit is never silent again. Delivery to the folder
-          // still proceeds: falling back is a degraded outcome, not a failure,
-          // and `vinaya log send` recovers the folder's events later.
-          warnOnce(`vinaya: ${describeFolderFallback(resolvedDestination.fallbackReason)}\n`)
         }
         // Only an event whose own snapshot carries no task asks the branch
         // what task this is; every `log()` call that does await the SAME
         // memoised promise. Call order is held by the write chain below,
         // not by this await, so an event that skips the lookup can never
         // overtake an earlier one that waited for it.
-        const branchIssue = envFields.task ? null : await branchIssueOnce(repo)
-        const built = buildHeader({
-          now,
-          runId,
-          seq: mySeq,
-          repo: repo ? `${repo.owner}/${repo.repo}` : null,
-          vinaya: deps.vinayaVersion(),
-          doctrine: doctrineValue,
-          host,
-          hostname: deps.hostname(),
-          env: envFields,
-          branchIssue,
-          eventId: randomUUID(),
-          processId,
-          inputVersions: deps.inputVersions()
-        })
-        // A gate event names the commit it was checked at, omitted when the
-        // commit cannot be resolved. No other family carries it here.
+        const branchIssue = call.envFields.task ? null : await branchIssueOnce(ctx.repo)
         const headSha = e.kind === 'gate' ? await headShaOnce() : null
-        const header = headSha === null ? built : { ...built, subject: { ...built.subject, sha: headSha } }
-        // O3: keep the fallback reason where a launch path that discards
-        // standard error still surfaces it — the task's own driver.log (when
-        // the event names a task) and the state file `vinaya doctor` reports.
-        // Done here, after the header names the issue, so the driver.log line
-        // lands under the right task; guarded to once per process.
-        if (resolvedDestination.kind === 'folder' && resolvedDestination.fallbackReason && !folderFallbackRecorded) {
-          folderFallbackRecorded = true
-          recordFolderFallback(
-            repo,
-            header.subject.issue,
-            resolvedDestination.fallbackReason,
-            now,
-            // The fallback always resolves the DEFAULT `<runtimeDir>/logs`
-            // folder, so its parent is the task's runtime dir — where
-            // `driver.log` lives.
-            dirname(resolvedDestination.folder),
-            join(deps.home(), '.vinaya')
-          )
-        }
-        // `header` spreads LAST: it carries the only trusted `meta`/`subject`
-        // values (environment/remote/package/tree-derived), and `e`'s type
-        // excludes those keys but a caller passing a wider-typed or `as any`
-        // value could still smuggle a `meta`/`subject` property through —
-        // TS's excess-property check only fires on a fresh object literal,
-        // never on a variable. Spreading `header` second means a forged
-        // field in `e` is always overwritten, never honored.
-        const full = { ...e, ...header }
-        const parsed = LogEventSchema.safeParse(full)
-        if (!parsed.success) {
-          warnOnce(
-            `vinaya: log() refused an invalid payload — ${parsed.error.issues[0]?.message ?? 'schema violation'}\n`
-          )
-          return
-        }
-        const line = `${JSON.stringify(redact(parsed.data, deps.home()))}\n`
-        const destination = resolvedDestination
-        if (destination.kind === 'server') {
-          // The local outbox is the retry queue for a server destination
-          // (O2) — appended first, synchronously with every other
-          // destination, THEN drained: the append itself never waits on
-          // the network (Traps: "append locally first, drain
-          // asynchronously").
-          appendLine(outboxPathFor(deps, repo, header.subject.issue), line, warnOnce)
-          scheduleWebhookDrain(header.subject.issue, destination.url, destination.headers)
-        } else {
-          appendLine(
-            outboxPathFor({ outboxRoot: () => destination.folder }, repo, header.subject.issue),
-            line,
-            warnOnce
-          )
-        }
+        writeEvent(e, call, ctx, branchIssue, headSha, true)
       }
       // Every event's write is queued behind the one before it, so the
       // outbox holds them in `log()` call order — the order `meta.seq`
@@ -1582,6 +1709,39 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
       written.finally(() => pendingWrites.delete(written))
     } catch (err) {
       warnOnce(`vinaya: log() failed — ${err instanceof Error ? err.message : String(err)}\n`)
+    }
+  }
+
+  /**
+   * `log()` for a caller about to end the process: the line is on disk when
+   * this returns. Nothing is awaited and nothing is spawned — the repository,
+   * the doctrine and the destination are the ones this sink's shared context
+   * already settled (its warm-up, or an earlier `log()`), and the branch's
+   * Issue and a gate's commit are the ones an earlier lookup already
+   * answered. What was never resolved is not guessed: `meta.repo` and
+   * `subject.issue` are `null`, `meta.doctrine` is `unknown`, a gate carries
+   * no commit, and the destination is `unresolvedLogDestination`'s — which
+   * records nothing on a CI host. A server destination's line waits in the
+   * local retry queue for the next drain; none is started here.
+   */
+  function logSync(e: LogEventInput): void {
+    try {
+      const call = snapshot()
+      let ctx = settledContext
+      if (ctx === undefined) {
+        const destination = deps.unresolvedLogDestination(deps.env())
+        if (destination.kind === 'folder') {
+          warnOnce(
+            `vinaya: the process ended before its log destination was resolved — the event is written to ${destination.folder}; \`vinaya log send\` delivers it to a configured server later\n`
+          )
+        }
+        ctx = { repo: null, doctrine: 'unknown', destination }
+      }
+      const branchIssue = ctx.destination.kind === 'none' || call.envFields.task ? null : branchIssueIfSettled(ctx.repo)
+      const headSha = e.kind === 'gate' && ctx.destination.kind !== 'none' ? headShaIfSettled() : null
+      writeEvent(e, call, ctx, branchIssue, headSha, false)
+    } catch (err) {
+      warnOnce(`vinaya: logSync() failed — ${err instanceof Error ? err.message : String(err)}\n`)
     }
   }
 
@@ -1627,7 +1787,7 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
     await drainChain.catch(() => undefined)
   }
 
-  return { log, runId, warmup, drain }
+  return { log, logSync, runId, warmup, drain }
 }
 
 const defaultSink = createLogSink()
@@ -1657,6 +1817,20 @@ export function currentRunId(): string {
  */
 export function log(e: LogEventInput): void {
   defaultSink.log(e)
+}
+
+/**
+ * `logSync(e)` — `log(e)` for a caller that ends the process straight after
+ * it: validated and redacted exactly as `log()`'s line, and appended to the
+ * same file before it returns, with nothing awaited and no process spawned.
+ * It reuses what the default sink has already resolved (`warmupLogSink`, or
+ * an earlier `log()`), records `null` or `unknown` for what it has not, and
+ * never delivers: a server destination's line waits in the local retry queue
+ * for the next drain (`apps/cli/specs/log.md` § Recording at process exit).
+ * Returns `void`, never throws.
+ */
+export function logSync(e: LogEventInput): void {
+  defaultSink.logSync(e)
 }
 
 /**
