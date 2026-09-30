@@ -15,6 +15,7 @@ import {
   renderTaskBudgetDetail,
   taskBudgetExceeded
 } from './assess-round'
+import { activeBudgetMs, isActiveBudgetPhase } from '../task-phase-history'
 import { initialLoopState, SEVERITY_COLUMNS } from './types'
 import type { LoopConfig, TaskClock } from './types'
 
@@ -888,11 +889,22 @@ describe('assessRound — buildRoundRecord collects deferred findings (O4)', () 
 
 const MINUTE = 60_000
 
-/** A clock reading: `elapsed` minutes spent in total, split across the phases named. */
+/** A clock reading: `elapsed` minutes on the budget clock, split across the phases named — `elapsed` set independently so a test can probe `taskBudgetExceeded` on the one figure it reads. */
 function clock(elapsedMinutes: number, byPhaseMinutes: Record<string, number> = {}): TaskClock {
   const byPhaseMs: Record<string, number> = {}
   for (const [phase, minutes] of Object.entries(byPhaseMinutes)) byPhaseMs[phase] = minutes * MINUTE
   return { elapsedMs: elapsedMinutes * MINUTE, byPhaseMs }
+}
+
+/**
+ * The clock exactly as the driver builds it (`taskClock`, apps/cli): `byPhaseMs`
+ * is the full record, and `elapsedMs` is the ACTIVE sum over it — so a test can
+ * hand in a task that sat paused for hours and prove the budget ignores it.
+ */
+function activeClock(byPhaseMinutes: Record<string, number>): TaskClock {
+  const byPhaseMs: Record<string, number> = {}
+  for (const [phase, minutes] of Object.entries(byPhaseMinutes)) byPhaseMs[phase] = minutes * MINUTE
+  return { elapsedMs: activeBudgetMs(byPhaseMs), byPhaseMs }
 }
 
 describe('taskBudgetExceeded (O1, O3)', () => {
@@ -936,6 +948,86 @@ describe('renderPhaseBreakdown (O1)', () => {
     expect(renderTaskBudgetDetail(180, clock(214, { dispatch_developer: 190, dispatch_reviewers: 24 }))).toBe(
       'task time budget: 180 min, spent 214 min — developing 190 min, reviewing 24 min'
     )
+  })
+
+  it('the detail names ONLY the active phases it summed — paused and publishing time is never named (O3)', () => {
+    // The full record carries 20 hours paused and 5 minutes publishing; the
+    // detail reports neither, and the phases it does name sum to the active
+    // time it reports as spent.
+    const spentClock = activeClock({
+      dispatch_developer: 190,
+      dispatch_reviewers: 24,
+      pause: 20 * 60,
+      publish: 5
+    })
+    expect(renderTaskBudgetDetail(180, spentClock)).toBe(
+      'task time budget: 180 min, spent 214 min — developing 190 min, reviewing 24 min'
+    )
+  })
+})
+
+describe('activeBudgetMs / isActiveBudgetPhase (O1)', () => {
+  it('developing, reviewing and awaiting confidence are active work', () => {
+    expect(isActiveBudgetPhase('dispatch_developer')).toBe(true)
+    expect(isActiveBudgetPhase('dispatch_reviewers')).toBe(true)
+    expect(isActiveBudgetPhase('ask_confidence')).toBe(true)
+    expect(
+      activeBudgetMs({ dispatch_developer: 30 * MINUTE, dispatch_reviewers: 10 * MINUTE, ask_confidence: 2 * MINUTE })
+    ).toBe(42 * MINUTE)
+  })
+
+  it('paused and publishing time is never active — a task that only sat waiting has spent nothing', () => {
+    expect(isActiveBudgetPhase('pause')).toBe(false)
+    expect(isActiveBudgetPhase('publish')).toBe(false)
+    expect(activeBudgetMs({ pause: 20 * 60 * MINUTE, publish: 5 * MINUTE })).toBe(0)
+    expect(activeBudgetMs({ dispatch_developer: 40 * MINUTE, pause: 20 * 60 * MINUTE, publish: 5 * MINUTE })).toBe(
+      40 * MINUTE
+    )
+  })
+
+  it('an unknown recorded phase is not counted — the budget under-counts rather than pause on a word it cannot vouch is work', () => {
+    expect(isActiveBudgetPhase('some_new_phase')).toBe(false)
+    expect(activeBudgetMs({ dispatch_developer: 10 * MINUTE, some_new_phase: 99 * MINUTE })).toBe(10 * MINUTE)
+  })
+
+  it('a negative recorded value contributes nothing rather than subtracting from the sum', () => {
+    expect(activeBudgetMs({ dispatch_developer: 50 * MINUTE, dispatch_reviewers: -5 * MINUTE })).toBe(50 * MINUTE)
+  })
+})
+
+describe('the budget counts active work, not age (O2)', () => {
+  // The task that motivated this fix: first started 20 hours ago, resumed only
+  // to re-cast a verdict, with 40 minutes of real developing behind it.
+  it('a task 20 hours old with only 40 active minutes has not blown a 180-min budget', () => {
+    const twentyHoursMostlyWaiting = activeClock({ dispatch_developer: 40, pause: 20 * 60 })
+    expect(twentyHoursMostlyWaiting.elapsedMs).toBe(40 * MINUTE)
+    expect(taskBudgetExceeded(180, twentyHoursMostlyWaiting)).toBe(false)
+  })
+
+  it('the same task once it has spent 200 active minutes pauses', () => {
+    const twoHundredActiveMinutes = activeClock({ dispatch_developer: 190, dispatch_reviewers: 10, pause: 20 * 60 })
+    expect(twoHundredActiveMinutes.elapsedMs).toBe(200 * MINUTE)
+    expect(taskBudgetExceeded(180, twoHundredActiveMinutes)).toBe(true)
+  })
+
+  it('the clock the driver builds pauses at a round boundary, naming only the active time and phases', () => {
+    // Round 1 gate red under budget (40 active min), then the retry lands the
+    // task at 200 active minutes — with 20 hours of that spent paused, which the
+    // pause never names and never counts.
+    const { decisions } = runScenario(
+      freshState(),
+      [fakeGate(1, false, { failure: 'check `test` failed' }), fakeGate(1, false, { failure: 'a different failure' })],
+      (i) =>
+        i === 0
+          ? activeClock({ dispatch_developer: 40, pause: 20 * 60 })
+          : activeClock({ dispatch_developer: 190, dispatch_reviewers: 10, pause: 20 * 60 })
+    )
+    expect(decisions[0]).toEqual({ type: 'dispatch_developer' })
+    expect(decisions[1]).toEqual({
+      type: 'pause',
+      reason: 'time_budget',
+      detail: 'task time budget: 180 min, spent 200 min — developing 190 min, reviewing 10 min'
+    })
   })
 })
 

@@ -210,13 +210,16 @@ export type Observations =
  * `detail` is set for this reason too, naming the branch and the dirty
  * file(s) observed.
  *
- * `'time_budget'`: the task's total wall-clock time, measured from the loop's
- * first recorded start for it, passed `ReviewPolicy.maxTaskMinutes`. Unlike
- * every other bound here it counts neither rounds nor attempts, so it is the
- * one stop a loop cannot outrun by never advancing: time spent pushing,
- * rebasing, waiting on checks and retrying all counts toward it. Decided by
+ * `'time_budget'`: the task's ACTIVE working time — the sum of the phases a
+ * driver spent developing, reviewing and awaiting confidence, never the hours
+ * it sat paused, published or driverless — passed `ReviewPolicy.maxTaskMinutes`.
+ * Unlike every other bound here it counts neither rounds nor attempts, so it is
+ * the one stop a loop cannot outrun by never advancing: time spent pushing,
+ * rebasing, waiting on checks and retrying all counts toward it (it is recorded
+ * as developing), while time waiting on a Principal does not. Decided by
  * `assessRound` from the clock its caller reads (this module has none of its
- * own); `detail` names the budget and where the time went, phase by phase.
+ * own); `detail` names the budget, the active time spent, and the active phases
+ * that time was summed from.
  */
 export type PauseReason =
   | 'escalation'
@@ -249,8 +252,8 @@ export type Decision =
        * observed), `'max_rounds'` (the configured cap), `'repeat_finding'`
        * (the reviewer-qualified finding key(s) open two rounds running),
        * `'repeat_failure'` (the exact failure message, unnormalised), and
-       * `'time_budget'` (the budget, the elapsed time, and the phase
-       * breakdown). Every
+       * `'time_budget'` (the budget, the active time spent, and the active
+       * phases it was summed from). Every
        * other reason omits it here — the driver narrates several of them
        * itself from facts it already holds (`deriveVerdictPauseDetail`).
        */
@@ -344,19 +347,26 @@ export type LoopConfig = {
  * DRIVER and handed to `assessRound`, never measured here: this module has no
  * clock, the same way it has no config read.
  *
- * `elapsedMs` is measured from the loop's FIRST recorded start for this task,
- * taken from the durable control records rather than from the current
- * process's own start — a driver that was killed and restarted, or that
- * re-execed itself when the base branch moved, must not hand back a clock that
- * begins again at zero, since a loop restarted often enough would then never
- * approach the budget at all.
+ * `elapsedMs` is the task's ACTIVE working time: the sum of the phases a driver
+ * spent working the task forward (`activeBudgetMs` over `byPhaseMs` —
+ * developing, reviewing, awaiting confidence), and nothing else. Time the task
+ * sat `paused` waiting for a Principal, time it spent `publishing` an approved
+ * pull request, and any stretch with no driver running at all are excluded — so
+ * a task first started days ago is measured by the minutes it worked, not by
+ * its age. It is a sum over per-phase times the durable control records carry
+ * across a restart, so a driver that was killed, taken over, or re-execed
+ * itself continues one budget rather than beginning a fresh one.
  *
- * `byPhaseMs` is what the loop itself recorded against each phase it worked
- * in, keyed by the phase names the loop persists (`dispatch_developer`,
- * `dispatch_reviewers`, and so on). It is narration, not the decision: the
- * stop is decided on `elapsedMs` alone, so a breakdown that is thin — a run
- * whose earlier phases were recorded by a driver that has since died — still
- * stops on time and simply reports less about where the time went.
+ * `byPhaseMs` is the FULL record of what the loop recorded against each phase
+ * it worked in, keyed by the phase names the loop persists (`dispatch_developer`,
+ * `dispatch_reviewers`, and so on) — inactive phases (`pause`, `publish`)
+ * included, so it is a faithful account of where all the time went. The budget
+ * is decided on `elapsedMs`, which sums only the active subset; a breakdown
+ * that is thin — a run whose earlier phases were recorded by a driver that has
+ * since died — still stops on time and simply reports less about where the
+ * time went. The `'time_budget'` pause's detail names only the active phases
+ * (`renderTaskBudgetDetail`), so the phases it lists sum to the time it reports
+ * as spent.
  */
 export type TaskClock = {
   elapsedMs: number

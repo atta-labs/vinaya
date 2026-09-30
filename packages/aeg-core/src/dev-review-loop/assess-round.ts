@@ -41,14 +41,16 @@
  *   a round whose repeated finding is non-blocking continues too. Both name
  *   what repeated in the pause's own `detail`.
  * - One further exit bounds the task by TIME rather than by rounds or repeats:
- *   the wall clock since the loop's first recorded start for this task passing
- *   `ReviewPolicy.maxTaskMinutes` (`condition: 'time_budget'`). It is the one
- *   exit a loop cannot outrun by never advancing — the round cap bounds review
- *   rounds, and a loop stuck pushing, rebasing and retrying advances no round
- *   at all — and the one whose measurement this module cannot make itself: the
- *   caller reads the clock and hands it in, since a start that survives a
- *   driver restart lives in the durable control records, which nothing in this
- *   package may read.
+ *   the task's ACTIVE working time — the sum of the phases a driver spent
+ *   developing, reviewing and awaiting confidence, never the hours it sat
+ *   paused, published or driverless — passing `ReviewPolicy.maxTaskMinutes`
+ *   (`condition: 'time_budget'`). It is the one exit a loop cannot outrun by
+ *   never advancing — the round cap bounds review rounds, and a loop stuck
+ *   pushing, rebasing and retrying advances no round at all — and the one whose
+ *   measurement this module cannot make itself: the caller reads the clock and
+ *   hands it in (`TaskClock.elapsedMs`, already the active sum), since the
+ *   per-phase times that survive a driver restart live in the durable control
+ *   records, which nothing in this package may read.
  *
  * Reuse, not a second counter: the id-state map for each round is built by
  * calling `groupRounds` (`../review-status`) with synthetic same-key
@@ -62,7 +64,7 @@
  */
 
 import { groupRounds, type Round, type VerdictComment } from '../review-status'
-import { taskPhaseLabel } from '../task-phase-history'
+import { isActiveBudgetPhase, taskPhaseLabel } from '../task-phase-history'
 import {
   SEVERITY_COLUMNS,
   type Confidence,
@@ -772,11 +774,13 @@ function minutesOf(ms: number): number {
 }
 
 /**
- * `true` when the task has spent longer than `maxTaskMinutes`. `0` — and any
- * value below it, which `resolveReviewPolicy` refuses at config load and this
- * predicate still treats as off rather than as a budget already blown — turns
- * the budget off: the loop then bounds rounds only, exactly as it did before
- * this budget existed.
+ * `true` when the task has spent longer than `maxTaskMinutes` in ACTIVE work —
+ * `clock.elapsedMs`, which the caller has already summed from the active phases
+ * alone (`activeBudgetMs`), so paused, publishing and driverless time can never
+ * blow the budget. `0` — and any value below it, which `resolveReviewPolicy`
+ * refuses at config load and this predicate still treats as off rather than as
+ * a budget already blown — turns the budget off: the loop then bounds rounds
+ * only, exactly as it did before this budget existed.
  *
  * The comparison is strictly greater, so a task sitting exactly on its budget
  * has not passed it — the same "over the cap, not at it" reading
@@ -811,13 +815,25 @@ export function renderPhaseBreakdown(byPhaseMs: Record<string, number>): string 
 }
 
 /**
- * The `'time_budget'` pause's own `detail` — the budget, what was actually
- * spent, and the phase breakdown, in that order, so a Principal reading it
- * learns whether the budget is too tight or one phase ran away without
- * opening the run's log.
+ * The `'time_budget'` pause's own `detail` — the budget, the ACTIVE time
+ * actually spent, and the breakdown of the active phases that time was summed
+ * from, in that order, so a Principal reading it learns whether the budget is
+ * too tight or one working phase ran away without opening the run's log.
+ *
+ * `spent` is `clock.elapsedMs` — the very figure `taskBudgetExceeded` compared
+ * against the budget — and the breakdown names ONLY the active phases
+ * (`isActiveBudgetPhase`), so the numbers in the breakdown sum to the number
+ * reported as spent. Time the task sat `paused` or `publishing` is in
+ * `byPhaseMs` (the full record) but is deliberately absent here: it never
+ * counted toward the budget, so the pause never names it as time the budget
+ * spent.
  */
 export function renderTaskBudgetDetail(maxTaskMinutes: number, clock: TaskClock): string {
-  return `task time budget: ${maxTaskMinutes} min, spent ${minutesOf(clock.elapsedMs)} min — ${renderPhaseBreakdown(clock.byPhaseMs)}`
+  const activePhaseMs: Record<string, number> = {}
+  for (const [phase, ms] of Object.entries(clock.byPhaseMs)) {
+    if (isActiveBudgetPhase(phase)) activePhaseMs[phase] = ms
+  }
+  return `task time budget: ${maxTaskMinutes} min, spent ${minutesOf(clock.elapsedMs)} min — ${renderPhaseBreakdown(activePhaseMs)}`
 }
 
 /**
