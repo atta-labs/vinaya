@@ -92,7 +92,12 @@ import {
   tasksExecutionRoot
 } from './run-paths.js'
 import { basename, dirname, join } from 'node:path'
-import { buildWorkerEnv, hasSubscriptionLogin, resolveWorkerBoundaryLaunch } from './worker-boundary.js'
+import {
+  buildWorkerEnv,
+  hasSubscriptionLogin,
+  resolveWorkerBoundaryLaunch,
+  stageCodexPolicyHome
+} from './worker-boundary.js'
 import { repoRoot } from './diff-evidence.js'
 
 /**
@@ -3538,10 +3543,40 @@ export async function dispatchRole(
   // O1/O2: the machine-state deny floor a Claude dispatch carries
   // as `permissions.deny`, translated into Codex's execpolicy `.rules` grammar
   // for the SAME role. In-memory here (no I/O, so no dispatch-time failure to
-  // fail-closed on); `resolveWorkerBoundaryLaunch` writes it into this run's
-  // own staged `CODEX_HOME/rules/` and fails the boundary closed if that write
-  // fault occurs. `null` for a role that carries no floor on the Claude side.
+  // fail-closed on). `null` for a role that carries no floor on the Claude
+  // side. Two paths stage it into a run-scoped `CODEX_HOME/rules/`, never the
+  // operator's `~/.codex`: `resolveWorkerBoundaryLaunch` when the worker
+  // boundary runs, and `stageCodexPolicyHome` (below) when it does not — so the
+  // floor rides EVERY Codex dispatch the way a Claude dispatch's deny policy
+  // rides `--settings`. This is round 2 review's Reviewer MAJOR / Security HIGH
+  // (F1): before it, the run-scoped home existed only inside the boundary, so
+  // an isolation-off (the incident host's own posture) or attended Codex run
+  // got no floor while the log claimed one.
   const codexExecpolicyRules = agent === 'codex' ? buildCodexExecpolicyRules(role) : null
+  // O1 (round 2 review, Reviewer/Security F1): the run-scoped `CODEX_HOME` that
+  // carries the floor is staged by `resolveWorkerBoundaryLaunch` ONLY when the
+  // worker boundary runs. For a Codex dispatch that runs WITHOUT it (isolation
+  // off — the incident host's own posture — or an attended start), stage the
+  // equivalent here, into a run-scoped runtime dir (no per-exit cleanup, the
+  // same lifecycle `writeCodexDispatchHooks`/`writeDispatchSettings` use), so
+  // the floor rides EVERY Codex dispatch the way Claude's `--settings` does.
+  // `null` when the operator has no `~/.codex/auth.json` to re-home from (a
+  // keychain-only login can't be re-pointed) — the lifecycle line then says the
+  // floor was not applied rather than claiming a protection that is not there.
+  const willUseWorkerBoundary = opts.unattended === true && requireIsolation
+  const codexPolicyHome =
+    agent === 'codex' && codexExecpolicyRules !== null && !willUseWorkerBoundary
+      ? stageCodexPolicyHome({
+          targetDir: join(
+            runPath(runtimeDirForThisRepo(), scopeOf(opts.task, opts.pr), { area: 'hooks' }),
+            role,
+            'codex-home',
+            runId
+          ),
+          realHome: homedir(),
+          execpolicyRules: codexExecpolicyRules
+        })
+      : null
   // The first lifecycle line this role's dispatch writes —
   // every earlier `writeLifecycle` call in this function sits behind an
   // early-return refusal branch (binary not resolvable, non-Claude
@@ -3550,16 +3585,31 @@ export async function dispatchRole(
     writeLifecycle(
       `[vinaya dispatch ${effectId}] ${role} via ${agent}: permission policy ${PERMISSION_POLICY_VERSION} written to ${dispatchSettingsPath}`
     )
-  } else if (agent === 'codex' && codexExecpolicyRules !== null) {
-    // O1/O3: a Codex dispatch of a floor-carrying role now
-    // carries the SAME machine-state policy under the SAME version string,
-    // through Codex's own mechanism — an execpolicy `.rules` file
-    // (`prefix_rule(..., decision = "forbidden")`) `resolveWorkerBoundaryLaunch`
-    // stages into this run's own `CODEX_HOME/rules/`, never the operator's
-    // `~/.codex`. Named in the same first lifecycle position a Claude
-    // dispatch names its policy, so the run log reads the same for both agents.
+  } else if (
+    agent === 'codex' &&
+    codexExecpolicyRules !== null &&
+    (willUseWorkerBoundary || codexPolicyHome !== null)
+  ) {
+    // O1/O3: a Codex dispatch of a floor-carrying role carries the SAME
+    // machine-state policy under the SAME version string, through Codex's own
+    // mechanism — an execpolicy `.rules` file (`prefix_rule(..., decision =
+    // "forbidden")`) staged into this run's own `CODEX_HOME/rules/`, never the
+    // operator's `~/.codex`. Staged either by the worker boundary
+    // (`willUseWorkerBoundary`) or, when no boundary runs, by
+    // `stageCodexPolicyHome` above — so the log reads the same for both agents
+    // whenever the floor is actually in force.
     writeLifecycle(
       `[vinaya dispatch ${effectId}] ${role} via ${agent}: permission policy ${PERMISSION_POLICY_VERSION} — machine-state commands (keychain, services, global settings) denied via Codex execpolicy staged into this run's CODEX_HOME/rules`
+    )
+  } else if (agent === 'codex' && codexExecpolicyRules !== null) {
+    // Rules were generated, but no run-scoped `CODEX_HOME` could carry them:
+    // no worker boundary runs this dispatch AND the operator has no
+    // `~/.codex/auth.json` to re-home from (a keychain-only login can't be
+    // re-pointed without breaking auth — `stageCodexPolicyHome`). So the Codex
+    // child runs against the operator's own `~/.codex` with no floor. Stated
+    // honestly, never as a protected run (round 2 review, Security MEDIUM F2).
+    writeLifecycle(
+      `[vinaya dispatch ${effectId}] ${role} via ${agent}: machine-state execpolicy ${PERMISSION_POLICY_VERSION} generated but NOT staged this run — no run-scoped CODEX_HOME (no worker boundary, and no re-homable ~/.codex login); machine-state commands are NOT denied for this agent`
     )
   } else if (agent !== 'claude') {
     // The Claude-side policy also wires a `PreToolUse` hook that judges every
@@ -3938,7 +3988,17 @@ export async function dispatchRole(
             // closes.
             ...codexEnvExtras!.attribution
           })
-        : { ...process.env, ...attribution }
+        : {
+            ...process.env,
+            ...attribution,
+            // O1 (round 2 review, F1): a non-boundary Codex dispatch points at
+            // the run-scoped `CODEX_HOME` `stageCodexPolicyHome` built (the
+            // operator's `~/.codex` symlinked through, plus this run's rules),
+            // so the machine-state floor is discovered even with no worker
+            // boundary. Omitted (child keeps the inherited/operator home) when
+            // nothing was staged — a non-Codex dispatch, or no re-homable login.
+            ...(codexPolicyHome ? { CODEX_HOME: codexPolicyHome.codexHome } : {})
+          }
     })
 
     // O1/O3: bind the child's own identity onto the launch record right

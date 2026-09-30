@@ -3934,13 +3934,15 @@ describe('writeDispatchSettings — Issue #663, O1/O3: the permission policy is 
   }
 
   /**
-   * O1/O3: a `--agent codex` dispatch of a floor-carrying role now carries the
-   * same machine-state deny list a Claude dispatch does, through Codex's own
-   * execpolicy, and names that policy — under the same version string a Claude
-   * dispatch names — in the same first lifecycle position, so a Codex run log
-   * reads the same as a Claude one, never as an unprotected run.
+   * O1/O3 honesty (round 2 review, Security MEDIUM F2): when neither path can
+   * carry the floor — no worker boundary (attended here, and non-Darwin) AND no
+   * operator `~/.codex/auth.json` to re-home from (this fresh HOME has none, the
+   * keychain-only edge `stageCodexPolicyHome` returns null for) — the lifecycle
+   * line must say the policy was generated but NOT applied, naming the version,
+   * never claiming a protected run. (The staged cases are the boundary path and
+   * the re-homable-login sibling test just below.)
    */
-  it('a codex dispatch of a floor-carrying role names its machine-state execpolicy under the shared version', () => {
+  it('a codex dispatch that can stage no run-scoped CODEX_HOME reports its execpolicy generated but NOT staged', () => {
     const home = tempDir('vinaya-dispatch-home-')
     const cwd = tempDir('vinaya-dispatch-cwd-')
     const binDir = tempDir('vinaya-dispatch-bin-')
@@ -3958,12 +3960,65 @@ describe('writeDispatchSettings — Issue #663, O1/O3: the permission policy is 
     expect(r.status).toBe(0)
 
     const lines = readFileSync(roleLogPath, 'utf8').trim().split('\n')
-    const policyLine = lines.find((l) => l.includes('permission policy'))
+    const policyLine = lines.find((l) => l.includes('execpolicy'))
     expect(policyLine).toBeDefined()
-    expect(policyLine).toContain(`permission policy ${PERMISSION_POLICY_VERSION}`)
-    expect(policyLine).toContain('Codex execpolicy')
-    // Never the "unprotected" claim a Claude dispatch's own sibling case makes.
-    expect(policyLine).not.toContain('NO permission policy')
+    // Names the version it generated, but is explicit that it is NOT staged /
+    // NOT denied this run — never the "denied via ... staged into" claim.
+    expect(policyLine).toContain(PERMISSION_POLICY_VERSION)
+    expect(policyLine).toContain('NOT staged')
+    expect(policyLine).toContain('NOT denied')
+    expect(policyLine).not.toContain('denied via Codex execpolicy staged')
+  })
+
+  /**
+   * O1 (round 2 review, Reviewer MAJOR / Security HIGH F1): with no worker
+   * boundary but an operator `~/.codex/auth.json` to re-home from, the floor
+   * IS staged on this every-run path — the Codex child receives a run-scoped
+   * `CODEX_HOME` whose `rules/` carries the machine-state deny floor, with the
+   * operator's auth symlinked through — so a `--agent codex` role is refused
+   * the same commands a Claude role is, the way Claude's `--settings` applies
+   * on every run.
+   */
+  it('a codex dispatch with no boundary but a re-homable ~/.codex login stages the floor into a run-scoped CODEX_HOME', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    // The operator is logged in via auth.json — the re-homable case.
+    mkdirSync(join(home, '.codex'), { recursive: true })
+    writeFileSync(join(home, '.codex', 'auth.json'), '{"tokens":{"access_token":"operator-token"}}')
+    const codexHomeOut = join(cwd, 'codex-home.txt')
+    writeFakeBinary(
+      binDir,
+      'codex',
+      `#!/bin/sh\nprintf '%s' "$CODEX_HOME" > "${codexHomeOut}"\nwhile read -r line; do :; done\ncat > /dev/null\necho '{}'\nexit 0\n`
+    )
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    const roleLogPath = join(cwd, 'role.log')
+
+    const r = runDispatch(
+      ['developer', '--agent', 'codex', '--prompt-file', promptFile, '--role-log-path', roleLogPath],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(0)
+
+    // The lifecycle line claims the floor — because it is genuinely staged.
+    const policyLine = readFileSync(roleLogPath, 'utf8')
+      .trim()
+      .split('\n')
+      .find((l) => l.includes('execpolicy'))
+    expect(policyLine).toContain('denied via Codex execpolicy staged')
+
+    // The child actually received a run-scoped CODEX_HOME whose rules dir
+    // carries the machine-state floor, with the operator's auth symlinked in.
+    const codexHome = readFileSync(codexHomeOut, 'utf8').trim()
+    expect(codexHome).not.toBe('')
+    expect(readFileSync(join(codexHome, 'rules', 'vinaya-machine-state.rules'), 'utf8')).toContain(
+      'prefix_rule(pattern = ["sudo"], decision = "forbidden"'
+    )
+    expect(readFileSync(join(codexHome, 'auth.json'), 'utf8')).toContain('operator-token')
   })
 
   it("O3: the role's first lifecycle line names the permission policy version it wrote", () => {

@@ -35,9 +35,11 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync
 } from 'node:fs'
 import { execFileSync } from 'node:child_process'
@@ -295,6 +297,77 @@ export function resolveCodexAccessToken(
     accessTokenFromCodexAuth(readFile(join(codexHome, CODEX_AUTH_FILE_NAME))) ??
     accessTokenFromCodexAuth(readKeychain(codexHome))
   )
+}
+
+/** The one filename this run's machine-state floor is written under, in either staging path. */
+export const CODEX_POLICY_RULES_FILE = 'vinaya-machine-state.rules'
+
+/**
+ * Round 2 review (Reviewer MAJOR / Security HIGH, F1): the
+ * machine-state execpolicy floor must ride EVERY Codex dispatch, the way a
+ * Claude dispatch's `permissions.deny` rides `--settings` on every run — not
+ * only inside the worker-isolation boundary. `resolveWorkerBoundaryLaunch`
+ * stages a run-scoped `CODEX_HOME` (with the rules) only when that boundary
+ * runs (`opts.unattended && requireIsolation`); this stages the equivalent for
+ * a Codex dispatch that runs WITHOUT it — isolation off (the incident host's
+ * own posture, where the floor is meant to be the only barrier) or an attended
+ * start — so the child discovers the same floor either way.
+ *
+ * `targetDir` becomes a home that symlinks every entry of the operator's real
+ * `~/.codex` (its `auth.json`, `config.toml`, plugins, sessions — so
+ * authentication, configuration and `exec resume` behave exactly as an
+ * unstaged run against `~/.codex` would) EXCEPT `rules`, which becomes a real
+ * directory carrying the operator's own rules (symlinked through) plus this
+ * run's machine-state floor. Most-restrictive-wins in Codex's own layering, so
+ * a forbidding rule here only ever tightens.
+ *
+ * Returns `null` when the operator has no `~/.codex/auth.json` to re-home from
+ * — a keychain-only login is keyed by the home PATH and cannot be re-pointed,
+ * so the caller leaves `CODEX_HOME` alone and logs the floor as unstaged rather
+ * than breaking authentication. Never writes the operator's real `~/.codex`;
+ * it only reads it and symlinks into `targetDir`.
+ *
+ * Verified live against `codex-cli 0.152.1`: a SYMLINKED `auth.json`
+ * authenticates identically to a real one (both reach the API with the token,
+ * failing only on the token's own validity), and a `.rules` file under
+ * `<CODEX_HOME>/rules/` is loaded at startup (a malformed one errors before the
+ * turn). The full authenticated multi-turn `exec resume` cannot be proven from
+ * a host with no operator login — the same disclosed limit
+ * `runRealCodexLoginWithAccessToken` already carries; a run-scoped `CODEX_HOME`
+ * with `exec resume` is the shape `resolveWorkerBoundaryLaunch` already ships.
+ */
+export function stageCodexPolicyHome(input: {
+  targetDir: string
+  realHome: string
+  execpolicyRules: string
+}): { codexHome: string } | null {
+  const operatorHome = join(input.realHome, '.codex')
+  if (!existsSync(join(operatorHome, CODEX_AUTH_FILE_NAME))) return null
+  try {
+    mkdirSync(input.targetDir, { recursive: true, mode: 0o700 })
+    // Idempotent across a resumed turn that reuses the same run-scoped path:
+    // clear any prior contents before re-symlinking.
+    for (const entry of readdirSync(input.targetDir)) {
+      rmSync(join(input.targetDir, entry), { recursive: true, force: true })
+    }
+    for (const entry of readdirSync(operatorHome)) {
+      if (entry === 'rules') continue
+      symlinkSync(join(operatorHome, entry), join(input.targetDir, entry))
+    }
+    const scopedRules = join(input.targetDir, 'rules')
+    mkdirSync(scopedRules, { recursive: true, mode: 0o700 })
+    const operatorRules = join(operatorHome, 'rules')
+    if (existsSync(operatorRules)) {
+      for (const entry of readdirSync(operatorRules)) {
+        if (entry === CODEX_POLICY_RULES_FILE) continue
+        symlinkSync(join(operatorRules, entry), join(scopedRules, entry))
+      }
+    }
+    writeFileSync(join(scopedRules, CODEX_POLICY_RULES_FILE), input.execpolicyRules, { mode: 0o600 })
+    return { codexHome: input.targetDir }
+  } catch {
+    return null
+  }
 }
 
 export type CodexAuthPreflightResult = { ok: true } | { ok: false; reason: string }
@@ -1368,7 +1441,7 @@ export function resolveWorkerBoundaryLaunch(
         // never launches unprotected.
         const rulesDir = join(codexHomeDir, 'rules')
         mkdirSync(rulesDir, { recursive: true, mode: 0o700 })
-        writeFileSync(join(rulesDir, 'vinaya-machine-state.rules'), opts.codexExecpolicyRules, { mode: 0o600 })
+        writeFileSync(join(rulesDir, CODEX_POLICY_RULES_FILE), opts.codexExecpolicyRules, { mode: 0o600 })
       }
       if (opts.codexHooksPath) {
         // Round 7 review, BLOCKER: see `buildCodexHooksMarketplace`'s own

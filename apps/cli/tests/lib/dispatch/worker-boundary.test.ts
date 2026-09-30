@@ -23,12 +23,15 @@ import {
   resolveCodexAccessToken,
   resolveOAuthConfigSourceDir,
   resolveWorkerBoundaryLaunch,
+  stageCodexPolicyHome,
+  CODEX_POLICY_RULES_FILE,
   SUBSCRIPTION_LOGIN_AGENTS,
   hasSubscriptionLogin,
   stageOAuthCredential,
   WORKER_ENV_ALLOWLIST_KEYS,
   type WorkerBoundaryDeps
 } from '../../../src/lib/worker-boundary'
+import { readlinkSync, lstatSync } from 'node:fs'
 
 /**
  * `worker-isolation-v1` task 3 (`#560`) — O2's env allowlist, O3's host
@@ -2223,5 +2226,63 @@ describe('the confined role reaches only its OWN task folder under the new layou
     } finally {
       result.launch.cleanup()
     }
+  })
+})
+
+describe('stageCodexPolicyHome — Issue #884 round 2 (F1): the floor rides a non-boundary Codex dispatch too', () => {
+  const RULES = 'prefix_rule(pattern = ["sudo"], decision = "forbidden", justification = "x")\n'
+
+  function operatorHome(prefix: string, opts: { auth?: boolean; extraRule?: boolean } = {}): string {
+    const realHome = tempDir(prefix)
+    const codex = join(realHome, '.codex')
+    mkdirSync(codex, { recursive: true })
+    if (opts.auth !== false) {
+      writeFileSync(join(codex, 'auth.json'), '{"tokens":{"access_token":"operator-token"}}')
+    }
+    writeFileSync(join(codex, 'config.toml'), 'model = "gpt-5.6-sol"\n')
+    if (opts.extraRule) {
+      mkdirSync(join(codex, 'rules'), { recursive: true })
+      writeFileSync(join(codex, 'rules', 'operator.rules'), 'prefix_rule(pattern = ["foo"], decision = "prompt")\n')
+    }
+    return realHome
+  }
+
+  it('re-homes the operator ~/.codex by symlink and overlays a real rules dir carrying the floor', () => {
+    const realHome = operatorHome('vinaya-codex-policy-op-', { extraRule: true })
+    const targetDir = join(tempDir('vinaya-codex-policy-target-'), 'codex-home')
+
+    const result = stageCodexPolicyHome({ targetDir, realHome, execpolicyRules: RULES })
+    expect(result).not.toBeNull()
+    expect(result?.codexHome).toBe(targetDir)
+
+    // auth.json and config.toml are SYMLINKS to the operator's real files, so
+    // authentication and configuration are exactly the unstaged run's.
+    expect(lstatSync(join(targetDir, 'auth.json')).isSymbolicLink()).toBe(true)
+    expect(readlinkSync(join(targetDir, 'auth.json'))).toBe(join(realHome, '.codex', 'auth.json'))
+    expect(readFileSync(join(targetDir, 'auth.json'), 'utf8')).toContain('operator-token')
+    expect(lstatSync(join(targetDir, 'config.toml')).isSymbolicLink()).toBe(true)
+
+    // rules is a REAL directory (not a symlink), carrying our floor as a real
+    // file plus the operator's own rules symlinked through.
+    expect(lstatSync(join(targetDir, 'rules')).isSymbolicLink()).toBe(false)
+    expect(lstatSync(join(targetDir, 'rules', CODEX_POLICY_RULES_FILE)).isSymbolicLink()).toBe(false)
+    expect(readFileSync(join(targetDir, 'rules', CODEX_POLICY_RULES_FILE), 'utf8')).toBe(RULES)
+    expect(lstatSync(join(targetDir, 'rules', 'operator.rules')).isSymbolicLink()).toBe(true)
+  })
+
+  it('returns null when the operator has no auth.json to re-home from (keychain-only login), never overriding CODEX_HOME', () => {
+    const realHome = operatorHome('vinaya-codex-policy-noauth-', { auth: false })
+    const targetDir = join(tempDir('vinaya-codex-policy-noauth-target-'), 'codex-home')
+    expect(stageCodexPolicyHome({ targetDir, realHome, execpolicyRules: RULES })).toBeNull()
+  })
+
+  it('is idempotent across a resumed turn that reuses the same run-scoped path', () => {
+    const realHome = operatorHome('vinaya-codex-policy-resume-')
+    const targetDir = join(tempDir('vinaya-codex-policy-resume-target-'), 'codex-home')
+    expect(stageCodexPolicyHome({ targetDir, realHome, execpolicyRules: RULES })).not.toBeNull()
+    // A second call (a resumed turn) must not throw on the already-symlinked entries.
+    const second = stageCodexPolicyHome({ targetDir, realHome, execpolicyRules: RULES })
+    expect(second).not.toBeNull()
+    expect(readFileSync(join(targetDir, 'rules', CODEX_POLICY_RULES_FILE), 'utf8')).toBe(RULES)
   })
 })
