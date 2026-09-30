@@ -262,13 +262,15 @@ Round 1 never asks for confidence. From round 2 on, a green gate reads `.vinaya-
 
 `assessRound` decides every exit — the driver never re-derives one:
 
+<!-- AEG:CLAIM: packages/aeg-core/src/review-policy.ts contains:export const DEFAULT_MAX_ROUNDS = 3 -->
+<!-- AEG:CLAIM: packages/aeg-core/src/dev-review-loop/assess-round.ts contains:if (obs.round >= state.config.maxRounds) { -->
 | Exit | Trigger | `Decision` |
 | --- | --- | --- |
 | green | both verdicts clean, every objective MET | `publish` |
 | stalled | a fingerprint resolved earlier reappears (`reappearance`) | `pause` |
 | repeating a finding | the same blocking finding — same reviewer role, same finding id — is still open in two consecutive reviewed rounds | `pause{reason:'repeat_finding', detail:'open after two consecutive rounds: <role>:<id>, …'}` |
 | repeating a failure | two consecutive attempts end on the same mechanical failure, matched by normalised signature | `pause{reason:'repeat_failure', detail:'<the failure, as reported>'}` |
-| capped | round count exceeds `reviewPolicy.maxRounds` (`doctrine-fixes-v1` task 1, `#543`, O4 — repository policy, default 3, resolved once by the driver into `LoopConfig.maxRounds`; no longer a hardcoded constant) | `pause{reason:'max_rounds', detail:'max rounds: <n>'}` |
+| capped | a round that is not green reaches `reviewPolicy.maxRounds` — rounds 1 to `maxRounds` run and the loop pauses after the last one's review, and a green round at the cap still publishes (`doctrine-fixes-v1` task 1, `#543`, O4 — repository policy, default 3, resolved once by the driver into `LoopConfig.maxRounds`; no longer a hardcoded constant) | `pause{reason:'max_rounds', detail:'max rounds: <n>'}` |
 | out of time | the task's ACTIVE working time — the sum of the phases a driver spent developing, reviewing and awaiting confidence, never time paused, publishing or driverless — exceeds `reviewPolicy.maxTaskMinutes` (default 180; `0` turns the budget off) | `pause{reason:'time_budget', detail:'task time budget: <n> min, spent <m> min — <phase> <k> min, …'}` |
 | escalated | either reviewer returns `ESCALATE` | `pause{reason:'escalation'}` |
 
