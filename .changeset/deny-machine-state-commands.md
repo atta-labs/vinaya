@@ -1,0 +1,11 @@
+---
+'@attalabs/vinaya': patch
+---
+
+Every role the review loop dispatches — developer, code reviewer, security reviewer — now runs under a permission policy that refuses the commands which change the machine the agent runs on: `security` (every subcommand), `launchctl`, `defaults` (every subcommand), `crontab`, `sudo`, `systemsetup`, `networksetup`, `pmset`, `dscl`, `chsh`, and `git config` at `--global` or `--system` scope. Repository-scoped `git config`, which a dispatched developer's own first step runs, is untouched. Denying the agent `security` outright costs nothing: Vinaya's own Keychain reads run in Vinaya's own code, never through a dispatched agent's shell, and this policy governs only what the agent itself runs through its tools.
+
+The refusal is written as `permissions.deny` entries in the host's own `Bash(<command>:*)` rule grammar, which the host matches against each part of a compound command itself — no Vinaya-written analysis of command text is involved. Verified live against the installed binary with a real headless run: `echo start && security list-keychains`, `true | sudo -n launchctl list`, `echo a; crontab -l`, `git config --system --get user.name` and `networksetup -listallnetworkservices` are each refused, while `git config --get push.autoSetupRemote` still runs. The policy version string moves to `v3`, so a run's first lifecycle line records which policy shape it started under.
+
+This is a floor, not a sandbox. A deny entry matches a command prefix, so the same command reached another way — behind a wrapper word, through another interpreter, or inside a script the session wrote and then runs — is beyond it. Confining that is the worker isolation boundary's job.
+
+The policy is written for Claude dispatches only, because no equivalent refusal mechanism has been confirmed live for another vendor — a Codex dispatch gets hooks that can log a call but not refuse one, and a Gemini dispatch gets no settings file at all. That predates this change and is not closed by it, but it is no longer silent: such a dispatch's first lifecycle line now reads `NO permission policy — machine-state commands … are NOT denied for this agent`, in the same place a Claude dispatch names its policy version, so a run log tells a protected run from an unprotected one.

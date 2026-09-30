@@ -1136,11 +1136,71 @@ const DISPATCH_BASH_MAX_TIMEOUT_MS = '1800000'
  * a run's own log says which policy shape it started under without needing
  * to diff `dispatch.ts` against the run's own timestamp.
  */
-export const PERMISSION_POLICY_VERSION = 'v2'
+export const PERMISSION_POLICY_VERSION = 'v3'
 
 type RolePermissions = { allow: string[]; deny: string[] }
 
 const EMPTY_ROLE_PERMISSIONS: RolePermissions = { allow: [], deny: [] }
+
+/**
+ * The machine's own security and system state is not a dispatched role's to
+ * change. Origin, observed live: a dispatched security reviewer testing
+ * Keychain behaviour ran `security create-keychain` followed by `security
+ * default-keychain -s` on a temporary keychain, then deleted that keychain —
+ * which left the login keychain neither the default nor in the search list.
+ * From that moment `gh` read an invalid token and the `claude` CLI read no
+ * login at all, so every run on that machine died with "Not logged in" until
+ * the keychain list was restored by hand, some eight hours later. The
+ * Seatbelt boundary that would have contained it (§§3–4 of
+ * `apps/cli/specs/isolation.md`) is off on that host
+ * (`dispatch.requireWorkerIsolation: false`), so the dispatched role's own
+ * permission policy is the only barrier there is.
+ *
+ * Expressed as `permissions.deny` entries in the host's OWN `Bash(<command>:*)`
+ * grammar, and nothing else — the host matches each part of a compound
+ * command against them itself. Confirmed live against the installed binary
+ * (2.1.258), running a REAL `claude -p` against a settings file carrying
+ * exactly these entries: `echo start && security list-keychains` came back
+ * with a POPULATED `permission_denials` array and `result: "User deny
+ * permission. Command not run."`, and so did `true | sudo -n launchctl
+ * list`, `echo a; crontab -l`, `echo three && git config --system --get
+ * user.name` and `echo four && networksetup -listallnetworkservices`. The
+ * repository-scoped `git config` Step 0 itself runs is untouched: `echo five
+ * && git config --get push.autoSetupRemote` resolved with an EMPTY
+ * `permission_denials` array and its real output.
+ *
+ * Whole commands, not subcommands, wherever no doctrine command needs the
+ * family at all — `security` in full (the Keychain reads Vinaya's own
+ * credential paths make run in Vinaya's own code, `find-generic-password` in
+ * `worker-boundary.ts` and the log-credential lookup, never through a
+ * dispatched agent's shell), `defaults` in full rather than `defaults write`
+ * alone. `git config` is the one family split by scope, because the
+ * repository scope is a dispatched role's own business.
+ *
+ * **This is a floor, not a sandbox** — the same limit `roles/developer.md`
+ * and `roles/security.md` state in one line. A deny entry matches a command
+ * PREFIX, so the floor is what the host's own matcher reaches: it does not
+ * reach a command wearing a wrapper word, one an unusual flag order puts
+ * ahead of the matched prefix, another interpreter, an alias, or a script
+ * file the session wrote and then runs. The containment for those is the
+ * worker sandbox, and turning it back on is its own task. A hand-written
+ * parser of shell text is not that containment either: every tokenizer tried
+ * here was defeated by the next spelling found, so none is kept.
+ */
+const MACHINE_STATE_DENY_RULES: readonly string[] = [
+  'Bash(security:*)',
+  'Bash(launchctl:*)',
+  'Bash(defaults:*)',
+  'Bash(systemsetup:*)',
+  'Bash(networksetup:*)',
+  'Bash(pmset:*)',
+  'Bash(dscl:*)',
+  'Bash(crontab:*)',
+  'Bash(chsh:*)',
+  'Bash(git config --global:*)',
+  'Bash(git config --system:*)',
+  'Bash(sudo:*)'
+]
 
 /**
  * The settings-file counterpart to `writeDispatchSettings`'s
@@ -1187,14 +1247,17 @@ const EMPTY_ROLE_PERMISSIONS: RolePermissions = { allow: [], deny: [] }
  * `roles/developer.md`/`reference.md` forbid: a force push in any of its
  * spellings, `--no-verify` on a commit or push, `git stash` (worktree
  * discipline — stash refs are shared across a repo's worktrees), a hard
- * reset, and `rm -rf`/`sudo`, neither of which any doctrine command needs.
+ * reset, `rm -rf`, and `MACHINE_STATE_DENY_RULES` — none of which any
+ * doctrine command needs.
  *
  * `code-reviewer`/`security` get read-only git/`gh` commands
  * (`roles/reviewer.md`: "CI is your input, never your job — read it, don't
  * reproduce it: no `bun install`, no re-running tests or checks"). A
  * forge-write/package/test command a Reviewer has no doctrine reason to run
  * is explicitly denied, the same defense-in-depth posture the Developer's own
- * deny list takes, rather than left to fall through as merely unlisted.
+ * deny list takes, rather than left to fall through as merely unlisted. Both
+ * roles carry `MACHINE_STATE_DENY_RULES` too — the role that broke this
+ * machine's keychain was a security reviewer.
  *
  * Every other role (`planner`/`principal`/`archivist`/`architect`) gets no
  * rules at all — this task's own Objectives name only these three roles, and
@@ -1246,7 +1309,11 @@ export function buildRolePermissions(role: Role): RolePermissions {
         'Bash(git stash*)',
         'Bash(git reset --hard*)',
         'Bash(rm -rf*)',
-        'Bash(sudo*)'
+        // Kept in its original glob form beside `MACHINE_STATE_DENY_RULES`'s
+        // own `Bash(sudo:*)`, which is narrower: the glob also covers
+        // `sudoedit`, and a policy revision is no place to give coverage back.
+        'Bash(sudo*)',
+        ...MACHINE_STATE_DENY_RULES
       ]
     }
   }
@@ -1272,7 +1339,8 @@ export function buildRolePermissions(role: Role): RolePermissions {
         'Bash(gh pr merge:*)',
         'Bash(bun install:*)',
         'Bash(bun test:*)',
-        'Bash(bun run:*)'
+        'Bash(bun run:*)',
+        ...MACHINE_STATE_DENY_RULES
       ]
     }
   }
@@ -3389,6 +3457,23 @@ export async function dispatchRole(
   if (dispatchSettingsPath !== null) {
     writeLifecycle(
       `[vinaya dispatch ${effectId}] ${role} via ${agent}: permission policy ${PERMISSION_POLICY_VERSION} written to ${dispatchSettingsPath}`
+    )
+  } else if (agent !== 'claude') {
+    // The policy above — the machine-state deny entries AND the
+    // `PreToolUse` hook that judges every statement of a command — is
+    // written for `claude` alone, because no equivalent refusal mechanism
+    // has been confirmed live for another vendor (the sibling
+    // `writeCodexDispatchHooks` wires a `PostToolUse` logger and a `Stop`
+    // gate, neither of which can refuse a call before it runs). That
+    // predates this policy and is not something this line fixes. What it
+    // fixes is the SILENCE: before it, a `--agent codex`/`--agent gemini`
+    // dispatch ran with no permission policy at all and said nothing, so
+    // an operator or an auditor reading the run log saw the same output
+    // as a protected run (round 4 security review, MEDIUM). An absence
+    // this consequential is stated in the log, in the same first
+    // lifecycle position where a Claude dispatch names its policy.
+    writeLifecycle(
+      `[vinaya dispatch ${effectId}] ${role} via ${agent}: NO permission policy — machine-state commands (keychain, services, global settings) are NOT denied for this agent; only claude carries policy ${PERMISSION_POLICY_VERSION}`
     )
   }
   // Round 5 review, MEDIUM: an unattended, isolation-required Claude dispatch

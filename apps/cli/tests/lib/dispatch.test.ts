@@ -3272,6 +3272,103 @@ describe('buildRolePermissions — Issue #663, O1: an explicit per-role Bash all
   })
 })
 
+/**
+ * Issue #865 — the machine's own keychain, services and global settings are
+ * not a dispatched role's to change. One layer only: `permissions.deny`
+ * entries in the host's own `Bash(<command>:*)` grammar, which the host
+ * matches against each part of a compound command itself. There is no
+ * hand-written parser of shell text to test — every tokenizer tried here was
+ * defeated by the next spelling found, and the containment for a wrapper
+ * word, another interpreter or a script file is the worker sandbox, tracked
+ * separately. What the live proof of the host's own matching is, and what it
+ * does not reach, `MACHINE_STATE_DENY_RULES`'s own doc comment records.
+ */
+describe('buildRolePermissions — Issue #865, O1/O2/O3: machine-state commands are denied for every dispatched role', () => {
+  const MACHINE_STATE_RULES = [
+    'Bash(security:*)',
+    'Bash(launchctl:*)',
+    'Bash(defaults:*)',
+    'Bash(systemsetup:*)',
+    'Bash(networksetup:*)',
+    'Bash(pmset:*)',
+    'Bash(dscl:*)',
+    'Bash(crontab:*)',
+    'Bash(chsh:*)',
+    'Bash(git config --global:*)',
+    'Bash(git config --system:*)',
+    'Bash(sudo:*)'
+  ]
+
+  for (const role of ['developer', 'code-reviewer', 'security'] as const) {
+    it(`${role}: every machine-state family is a written deny entry, in the host's own rule grammar`, () => {
+      const perms = buildRolePermissions(role)
+      for (const rule of MACHINE_STATE_RULES) expect(perms.deny).toContain(rule)
+    })
+  }
+
+  it('the whole `security` command is denied — no exemption entry survives, because Vinaya reads the Keychain in its own code, not through a dispatched agent’s shell', () => {
+    for (const role of ['developer', 'code-reviewer', 'security'] as const) {
+      const perms = buildRolePermissions(role)
+      expect(perms.deny).toContain('Bash(security:*)')
+      expect(perms.allow.some((r) => r.startsWith('Bash(security'))).toBe(false)
+    }
+  })
+
+  it('every machine-state deny entry is in the host’s own `Bash(<command>:*)` form — the matching this policy relies on, never a hand-rolled pattern', () => {
+    for (const rule of MACHINE_STATE_RULES) expect(rule.endsWith(':*)')).toBe(true)
+  })
+
+  it('the developer keeps repository-scoped `git config`, which Step 0 itself runs, while the global/system scopes are denied', () => {
+    const perms = buildRolePermissions('developer')
+    expect(perms.allow).toContain('Bash(git config:*)')
+    expect(perms.deny).toContain('Bash(git config --global:*)')
+    expect(perms.deny).toContain('Bash(git config --system:*)')
+  })
+
+  it('a role outside the three the loop dispatches still gets no rules at all', () => {
+    expect(buildRolePermissions('planner')).toEqual({ allow: [], deny: [] })
+    expect(buildRolePermissions('principal')).toEqual({ allow: [], deny: [] })
+  })
+
+  it('O3: the written policy names a version later than the one that denied no machine-state command', () => {
+    expect(PERMISSION_POLICY_VERSION).toBe('v3')
+    expect(PERMISSION_POLICY_VERSION).not.toBe('v2')
+  })
+
+  it('nothing else in either role’s policy regressed — every rule the previous policy carried is still there', () => {
+    const developer = buildRolePermissions('developer')
+    for (const rule of [
+      'Bash(git push:*)',
+      'Bash(git commit:*)',
+      'Bash(gh pr create:*)',
+      'Bash(bun apps/cli/src/index.ts:*)'
+    ]) {
+      expect(developer.allow).toContain(rule)
+    }
+    for (const rule of [
+      'Bash(git push --force*)',
+      'Bash(git push -f*)',
+      'Bash(git commit --no-verify*)',
+      'Bash(git push --no-verify*)',
+      'Bash(git stash*)',
+      'Bash(git reset --hard*)',
+      'Bash(rm -rf*)',
+      'Bash(sudo*)'
+    ]) {
+      expect(developer.deny).toContain(rule)
+    }
+    for (const role of ['code-reviewer', 'security'] as const) {
+      const perms = buildRolePermissions(role)
+      for (const rule of ['Bash(git log:*)', 'Bash(gh pr view:*)', 'Bash(gh issue view:*)']) {
+        expect(perms.allow).toContain(rule)
+      }
+      for (const rule of ['Bash(git push:*)', 'Bash(bun install:*)', 'Bash(bun test:*)']) {
+        expect(perms.deny).toContain(rule)
+      }
+    }
+  })
+})
+
 describe('buildWriteAccessScope — Issue #663, O1 round 2 fix: the real Write/Edit grant', () => {
   it('developer: a directory scope, realpath-resolved', () => {
     const dir = tempDir('vinaya-write-scope-')
@@ -3717,6 +3814,42 @@ describe('writeDispatchSettings — Issue #663, O1/O3: the permission policy is 
     expect(devSettings.permissions.allow).toContain('Bash(git commit:*)')
     expect(revSettings.permissions.allow).not.toContain('Bash(git commit:*)')
   })
+
+  /**
+   * Round 4 security review, MEDIUM. The policy is written for `claude`
+   * alone, and no vendor-agnostic refusal mechanism has been confirmed live
+   * — that predates this task and is not closed here. What is closed is the
+   * silence: a `--agent codex`/`--agent gemini` dispatch used to run with no
+   * permission policy at all and leave a run log indistinguishable from a
+   * protected one.
+   */
+  for (const agent of ['codex', 'gemini'] as const) {
+    it(`an agent that carries no permission policy says so in its own first lifecycle line (${agent})`, () => {
+      const home = tempDir('vinaya-dispatch-home-')
+      const cwd = tempDir('vinaya-dispatch-cwd-')
+      const binDir = tempDir('vinaya-dispatch-bin-')
+      writeFakeBinary(binDir, agent, `#!/bin/sh\nwhile read -r line; do :; done\ncat > /dev/null\necho '{}'\nexit 0\n`)
+      const promptFile = join(cwd, 'prompt.txt')
+      writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+      const roleLogPath = join(cwd, 'role.log')
+
+      const r = runDispatch(
+        ['developer', '--agent', agent, '--prompt-file', promptFile, '--role-log-path', roleLogPath],
+        cwd,
+        home,
+        `${binDir}:${pathWithoutRealVendors()}`
+      )
+      expect(r.status).toBe(0)
+
+      const lines = readFileSync(roleLogPath, 'utf8').trim().split('\n')
+      const policyLine = lines.find((l) => l.includes('permission policy'))
+      expect(policyLine).toBeDefined()
+      expect(policyLine).toContain('NO permission policy')
+      expect(policyLine).toMatch(/machine-state commands .* are NOT denied for this agent/)
+      // Never the claim a protected run makes.
+      expect(policyLine).not.toContain(`permission policy ${PERMISSION_POLICY_VERSION} written to`)
+    })
+  }
 
   it("O3: the role's first lifecycle line names the permission policy version it wrote", () => {
     const home = tempDir('vinaya-dispatch-home-')
