@@ -2200,15 +2200,20 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
 // imports `config.ts` directly (to cover `resolveCollisionThreshold`, the
 // pinned-file collision threshold's own resolver), so a `config.ts` change
 // now selects that one extra suite. Same rule.
+//
+// Raised 24 → 25: `apps/cli/tests/lib/log-custom.test.ts` imports `config.ts`
+// (to prove `logs.events` is refused at load) and `log-sink.ts` (to write a
+// custom event through a real sink) directly, so a change to either now
+// selects that one extra suite. Same rule.
 describe('selectAffectedTestFiles depth: "one" — reference change-set ceilings (Issue #707, O1)', () => {
-  it('a change to the log sink (log-sink.ts/config.ts/run-paths.ts) selects at most 24 files', () => {
+  it('a change to the log sink (log-sink.ts/config.ts/run-paths.ts) selects at most 25 files', () => {
     const changed = [
       join(REPO_ROOT, 'apps/cli/src/lib/log-sink.ts'),
       join(REPO_ROOT, 'apps/cli/src/lib/config.ts'),
       join(REPO_ROOT, 'apps/cli/src/lib/run-paths.ts')
     ]
     const { selected } = selectAffectedTestFiles(REPO_ROOT, changed, { depth: 'one' })
-    expect(selected.length).toBeLessThanOrEqual(24)
+    expect(selected.length).toBeLessThanOrEqual(25)
   })
 
   it('a change to a widely imported export of the shared core package selects at most 25 files', () => {
