@@ -13,7 +13,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture.js'
+import { spawnBudgetedAsync, spawnSyncBudgeted, stripVinayaEnv } from './process-fixture.js'
 import {
   createLogSink,
   folderFallbackStatePath,
@@ -1396,3 +1396,105 @@ const GATE_EVENT = {
   outcome: 'pass' as const,
   payload: {}
 }
+
+describe('logSync — the next drain delivers it once (O4)', () => {
+  const LOG_SINK_MODULE = join(import.meta.dir, '..', '..', 'src', 'lib', 'log-sink.ts')
+  const DRAIN_MODULE = join(import.meta.dir, '..', '..', 'src', 'lib', 'log-webhook-drain.ts')
+
+  function startServer(): { url: string; lines: Array<Record<string, any>>; stop: () => void } {
+    const lines: Array<Record<string, any>> = []
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        for (const l of (await req.text()).split('\n').filter(Boolean)) lines.push(JSON.parse(l))
+        return new Response('ok')
+      }
+    })
+    return { url: `http://127.0.0.1:${server.port}/ingest`, lines, stop: () => server.stop() }
+  }
+
+  async function runScript(cwd: string, home: string, name: string, body: string): Promise<string> {
+    const script = join(cwd, `${name}.ts`)
+    writeFileSync(script, body)
+    const r = await spawnBudgetedAsync(
+      ['bun', script],
+      { cwd, env: { ...stripVinayaEnv(), HOME: home } },
+      undefined,
+      name
+    )
+    expect(r.status).toBe(0)
+    return r.stdout
+  }
+
+  const sinkScript = (
+    url: string,
+    call: string
+  ): string => `import { createLogSink } from ${JSON.stringify(LOG_SINK_MODULE)}
+const sink = createLogSink({
+  env: () => ({ VINAYA_ROLE: 'developer', VINAYA_TASK: '404' }),
+  resolveLogDestination: () => ({ kind: 'server', url: ${JSON.stringify(url)} })
+})
+${call}`
+
+  it('a line written just before exit waits in the queue, is posted by the next drain with its own event id, and never again', async () => {
+    const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-logsync-drain-')))
+    const home = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-logsync-home-')))
+    spawnSync('git', ['init', '--quiet'], { cwd })
+    spawnSync('git', ['remote', 'add', 'origin', 'git@github.com:test-owner/test-repo.git'], { cwd })
+    const queue = join(home, '.vinaya', 'outbox', 'test-owner-test-repo', '404.ndjson')
+    const server = startServer()
+    try {
+      // Warmed up, then the queue is read straight after the call, with
+      // nothing awaited in between: the line is already there. The process
+      // then stays alive long enough that a drain, had logSync started one,
+      // would have posted — none may.
+      const stdout = await runScript(
+        cwd,
+        home,
+        'exit-now',
+        sinkScript(
+          server.url,
+          `import { readFileSync } from 'node:fs'
+sink.warmup()
+await new Promise((r) => setTimeout(r, 1500))
+sink.logSync({ kind: 'dispatch', event: 'dispatched', payload: {}, target_role: 'developer', model: 'sonnet', effect_id: 'at-exit', prompt_hash: 'sha256:abc' })
+process.stdout.write(readFileSync(${JSON.stringify(queue)}, 'utf8'))
+await new Promise((r) => setTimeout(r, 1500))
+process.exit(0)`
+        )
+      )
+      expect(stdout).toContain('"effect_id":"at-exit"')
+      expect(server.lines).toHaveLength(0)
+      const queued = readFileSync(queue, 'utf8').trim().split('\n')
+      expect(queued).toHaveLength(1)
+      const eventId = JSON.parse(queued[0]!).meta.event_id as string
+
+      // The next process's own event drains the queue: the exit line first,
+      // with the id it was written with, then the new one.
+      await runScript(
+        cwd,
+        home,
+        'next-event',
+        sinkScript(
+          server.url,
+          `sink.log({ kind: 'dispatch', event: 'dispatched', payload: {}, target_role: 'developer', model: 'sonnet', effect_id: 'later', prompt_hash: 'sha256:abc' })
+await sink.drain()`
+        )
+      )
+      expect(server.lines.map((l) => l.effect_id)).toEqual(['at-exit', 'later'])
+      expect(server.lines[0]?.meta.event_id).toBe(eventId)
+
+      // A further drain finds nothing left to post.
+      await runScript(
+        cwd,
+        home,
+        'drain-again',
+        `import { drainOutboxToWebhook } from ${JSON.stringify(DRAIN_MODULE)}
+await drainOutboxToWebhook(404, ${JSON.stringify(server.url)})`
+      )
+      expect(server.lines).toHaveLength(2)
+    } finally {
+      server.stop()
+    }
+  }, 60_000)
+})
