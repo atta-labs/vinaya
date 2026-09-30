@@ -106,7 +106,7 @@ subject: {
 
 ## The families shipped so far
 
-`kind` is a closed union of `'dispatch' | 'dev_review_loop' | 'forge_write' | 'gate' | 'operation' | 'usage' | 'role_attempt' | 'handoff' | 'effect'`. `command`/`tokens` are still refused by name — `command` folds into `operation`, `tokens` into `usage`, so neither is a separate `kind`. Every event carries `duration_ms?` and a `payload` field; every family puts its real content in named top-level fields instead, so `payload` ships as an empty, `.strict()` object (an extra key inside it is still a schema violation).
+`kind` is a closed union of `'dispatch' | 'dev_review_loop' | 'forge_write' | 'gate' | 'operation' | 'usage' | 'role_attempt' | 'handoff' | 'effect' | 'custom'` — `custom` being the one family whose events a consumer declares itself (§ Custom events, below). `command`/`tokens` are still refused by name — `command` folds into `operation`, `tokens` into `usage`, so neither is a separate `kind`. Every event carries `duration_ms?` and a `payload` field; every family puts its real content in named top-level fields instead, so `payload` ships as an empty, `.strict()` object (an extra key inside it is still a schema violation).
 
 **`dispatch`** — `target_role`, `model`, `round?`, `effect_id` on every event:
 
@@ -145,13 +145,47 @@ A caller that already resolved an objectives/brief/ruling/policy identity before
 Additive to the three above — nothing about `dispatch`/`dev_review_loop`/`forge_write` changed. Every one of these six carries `meta`/`subject` (the same versioned envelope) and `.strict()` payloads, same as before.
 
 - **`gate`** — one gate runner's attempted check: `check`, `check_version`, `policy_version`, `input_fingerprint`, one event `checked` with `outcome: 'pass' | 'fail' | 'wait' | 'skip' | 'invalid_input' | 'unavailable_dependency' | 'timeout' | 'cancelled'` and an optional `reason`.
-- **`operation`** — a normalized operation/tool call (the spec's "command dispatcher"): `operation`, `target`, one event `completed` with `result: 'ok' | 'error' | 'refused' | 'timeout' | 'cancelled' | 'unavailable'` and `error_class`. Never raw secret-bearing arguments — `redact()` still runs over the full event regardless.
+- **`operation`** — a normalized operation/tool call (the spec's "command dispatcher"): `operation`, `target`, one event `completed` with `result: 'ok' | 'error' | 'refused' | 'timeout' | 'cancelled' | 'unavailable'` and `error_class`. An optional `field_names` lists the field names an outcome concerns — set only by a refused custom event (§ Custom events), never a value. Never raw secret-bearing arguments — `redact()` still runs over the full event regardless.
 - **`usage`** — the spec's "usage collector", and the one record of a dispatched turn's token use: a pull-request body carries no token table, and no role reports its own figures onto the forge for a dispatched turn (`aeg-root/tranche-model.md` §12). What follows is that family's shape: `model`, `source`, `semantics: 'cumulative' | 'delta'`, one event `observed` with `units: { input, output, cache }` (each `nonnegative().nullable()` — unknown usage is `null`, never coerced to `0`) and `unknown_reason`. `dispatchRole` is its real caller (`task-log-v1` task 5, O2, above) — always `semantics: 'cumulative'`, since one dispatch is one full vendor invocation.
 - **`role_attempt`** — a role ATTEMPT's own normalized outcome, distinct from `dispatch`'s parent-side view of dispatching one: `actor` (opaque, NOT `RoleSchema` — this family is not limited to the closed doctrine `Role` union), `attempt`, `effect_id` (mirrors the paired `dispatch` line's own field — the evidence identity a reader joins the two families on), `model` (the runtime's own genuine receipt when the vendor gave one, else the pre-completion request label — `task-log-v1` task 5, O1), one event `attempted` with `outcome: 'completed' | 'incomplete' | 'infrastructure_failed' | 'cancelled' | 'timed_out' | 'capability_refused'` and the same nullable `usage` shape `dispatch_failed` already uses. Named `role_attempt`, not `role`, so it never collides with this module's own `Role`/`RoleSchema` export. `dispatchRole` is the family's per-vendor-launch caller (above); `devReviewLoop` is a second caller for a narrower case — when a reviewer/security report itself fails to validate (`ReviewerReportParseFailure`/`ReviewerInfrastructureFailure`, `apps/cli/specs/loop.md`), it logs one more `role_attempt` line (`outcome: 'incomplete'` or `'infrastructure_failed'`, `usage: null`) so that failure is a durable record distinct from a clean, empty `verdicts_read`.
 - **`handoff`** — a human handoff/escalation, raised then resolved: `class` (`'authority' | 'strategy' | 'product'`, reusing `dispatch`'s own `escalation` outcome enum rather than inventing a second name for the identical concept), `reason`; `raised` carries `requested_decision`, `resolved` carries `resolution`/`resolved_by` — two disjoint `.strict()` shapes, not one shape with everything optional.
 - **`effect`** — the spec's "shared effect executor": a generic external effect's `attempted`/`observed`/`verified` outcome (`'success' | 'failure' | 'uncertain'` on the latter two), keyed by `effect_id` and an opaque `target: { kind, ref }`. Additive to, and does not replace, `forge_write` above, which stays exactly as it was — one specific effect this schema does not yet generalize `forge_write` into. Fail-open observation only ("telemetry never substitutes for required intent," the spec's own words) — never the fail-closed control store `control-store-v1` adds.
 
 **`gate`'s real caller (`task-log-v1` 3, Issue #563)** — `apps/cli/src/checks/runner.ts`'s `runChecks`/`runOne` is the chokepoint: one `checked` observation per terminal outcome a single check attempt reaches, including a check killed mid-flight by SIGINT/SIGTERM (recorded `outcome: 'cancelled'` from the signal handler itself, since a killed check never reaches one of `runOne`'s own return statements to log itself — and suppressed there if it does, closing a real double-emission race the fixture tests caught live). `check_version` is fixed to `CHECK_SCHEMA_VERSION` (the check contract's own schema version); `policy_version` is honestly `null` — no per-check policy-version concept exists in the registry yet, left for a later task to set for real, the same "declared, not yet real" pattern this file already documents for `input_versions`/`lineage`. `input_fingerprint` is a `sha256` digest of the check's own constructed input (its allowlisted env plus, for a diff-scoped check, its sorted changed-file list) — never the values themselves, so a forwarded secret never reaches the log even hashed-and-readable. `reason` is always a short structured code (`missing_env:<KEY>`, `spawn_failed:<code>`, `timeout_ms:<n>`, `malformed_output`, `unexpected_exit_code:<n>`, `errors:<n>`, `pending_principal_action`, `signal:<SIGINT|SIGTERM>`), never a check's own free-text `CheckError.message`, which can itself echo PR/Issue body content the check was validating. Hook and CI invocations are distinguished from a plain interactive CLI run by `meta.host` alone (`'hook'`/`'ci'`/`'cli'`) — the generated pre-commit/pre-push hooks (`apps/cli/src/lib/artifacts.ts`) now set `VINAYA_HOST=hook` before invoking `vinaya check`; CI is already `GITHUB_ACTIONS`-derived. The other five families in this section still ship with zero real callers.
+
+## Custom events: a consumer's own, declared in configuration
+
+A repository records events Vinaya does not know about by declaring them in its own `vinaya.config.json`, under the existing `logs` key — no code written, and no new top-level key:
+
+```json
+{
+  "logs": {
+    "events": {
+      "acme.deploy": {
+        "fields": { "env": ["prod", "staging"], "count": "number", "note": "text", "ok": "boolean" }
+      }
+    }
+  }
+}
+```
+
+**The declaration.** Each entry of `logs.events` names one event and its flat fields. A field's type is `"text"`, `"number"`, `"boolean"` (yes/no), or a list of words the value must be one of. The rules, checked when the config loads — a declaration that breaks one is refused with a message naming the entry (and the field, when a field is at fault):
+
+- The name is `<namespace>.<event>`, matching `^[a-z][a-z0-9_]*\.[a-z][a-z0-9_.]*$`, at most 64 characters.
+- The `vinaya.` namespace is reserved for Vinaya's own events and cannot be declared.
+- At most 20 fields per event; a field name is lowercase letters, digits and `_`, starting with a letter, at most 64 characters.
+- A list of words names at least one word and at most 50, none twice; a word is lowercase letters, digits, `_` and `-`, at most 64 characters.
+- Nothing else sits beside `fields`: no nested values, no lists as values, no free-form JSON.
+
+`logs.events` is not a destination — it says what may be recorded, never where to — so it is not subject to the default-branch-only rule `logs.folder` and `logs.url` carry for an unattended caller. An events-only `logs` setting declares no destination, and the default folder applies.
+
+**The `custom` family.** One event, `recorded`, carrying `name` (the declared name — data, never the discriminator) and `fields` (the values, flat: text of at most 500 characters, a finite number, or a boolean). `kind` and `event` are fixed; a `custom` event never sets its own header, kind or family. A `custom` line is valid only under a `schema: 3` header — the family is newer than `1` and `2`, so a line claiming either with a `custom` body is one this log never wrote.
+
+**Recording one.** `emitCustomEvent(name, fields)` (`apps/cli/src/lib/log-custom.ts`) reads the declarations from the loaded config, checks the event (`checkCustomEvent`, pure, `packages/aeg-core/src/log/custom.ts`), and writes through `log()` — the same header, destination and redaction as every other event. A declared name with every declared field present, each of its declared type, and no other field writes exactly one `custom` line. Every declared field is required.
+
+**A refusal is recorded, never silent.** When the name is undeclared, or a field is missing, extra, of the wrong type or too long, no `custom` line is written. Instead exactly one `operation` event is: `operation: 'log.emit'`, `result: 'refused'`, `error_class` the reason class (`undeclared`, `missing_field`, `extra_field`, `wrong_type`, `too_long`, the first that applies in that order), `field_names` the fields in that class, and `target` the name when it is shaped like one. Never a field value — a rejected value may be the secret — and an extra field name not shaped like one is recorded as `<unrecordable>`. The caller receives the same refusal as the return value.
+
+**Redaction.** A secret-shaped value in a custom field is redacted exactly as in every other event: `redact()` walks every string leaf of the line, `fields` included (§ Redaction).
 
 ## The storage contract (`task-log-v1` task 2, Issue #562)
 

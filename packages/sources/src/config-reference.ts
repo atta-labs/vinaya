@@ -740,12 +740,16 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
       "Where the Vinaya Log delivers events LIVE, as they occur — no end-of-round batch, no tracker or code-host comment, and no `logPublish` key any more (removed: a config still carrying it is refused, naming this key). A folder (`logs.folder`) or a server (`logs.url`), never both. Absent — this key's own default — events go to a folder under this repository's own `runtimeDir`: `<runtimeDir>/logs/<owner>-<repo>/<task>.ndjson`, one line appended per event, in order, readable while the run is still going.",
       `A server destination (\`logs.url\`) delivers each event as it occurs too: the sink appends it to a small local retry queue first, then drains that queue in one POST — the queue holds events only while the server is unreachable, and a later event's own drain catches up whatever is still queued, in order, once it is back. \`logs.headers\` are extra HTTP headers merged into that POST; a value may reference an environment variable with \${VAR_NAME} instead of a literal secret, resolved at delivery time so a credential never sits in the committed config.`,
       "Read from the default branch only by an unattended caller, the same rule `runtimeDir` carries: a `logs.folder`/`logs.url` the working tree declares but the default branch does not is refused, and the per-repository default folder is used instead — a pull request under review cannot redirect an unattended run's own telemetry by editing its own diff. An interactively-run command honours the working tree directly. `logs.folder` must also be an absolute path, for the same reason `runtimeDir` requires one.",
-      "A CI job never falls back to a folder, credentialed or not: it delivers to the configured `logs.url` when this job's own environment resolves every referenced header credential to a real value, and otherwise records nothing for this run and says so in the job's own output — never a tracker, a code-host comment, or a CI artifact. A job holding no credential (a fork pull request; GitHub withholds repository secrets from one) is exactly this second case, not a failure."
+      "A CI job never falls back to a folder, credentialed or not: it delivers to the configured `logs.url` when this job's own environment resolves every referenced header credential to a real value, and otherwise records nothing for this run and says so in the job's own output — never a tracker, a code-host comment, or a CI artifact. A job holding no credential (a fork pull request; GitHub withholds repository secrets from one) is exactly this second case, not a failure.",
+      '`logs.events` declares the repository\'s own log events by name, each `<namespace>.<event>` (lowercase, at most 64 characters; the `vinaya.` namespace is reserved) with at most 20 flat `fields`, each typed `"text"`, `"number"`, `"boolean"`, or a list of words the value must be one of. Every declared field is required; nested values and lists are never a value, and a text value is at most 500 characters. A declaration that breaks a rule is refused at load, naming the entry. A declared event is recorded as one `custom` line; an undeclared or malformed one writes none and records one `operation` refusal (`log.emit`) naming the reason and the field names, never the values. Not a destination, so not read from the default branch only.'
     ],
     example: `{
   "logs": {
     "url": "https://ingest.example.com/vinaya",
-    "headers": { "authorization": "Bearer \${VINAYA_LOG_TOKEN}" }
+    "headers": { "authorization": "Bearer \${VINAYA_LOG_TOKEN}" },
+    "events": {
+      "acme.deploy": { "fields": { "env": ["prod", "staging"], "count": "number", "ok": "boolean" } }
+    }
   }
 }`
   }
