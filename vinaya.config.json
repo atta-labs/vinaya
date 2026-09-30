@@ -27,7 +27,8 @@
   },
   "logs": {
     "url": "https://vinaya-log-server.estevez-dani.workers.dev/v1/repos/atta-labs/vinaya/events",
-    "headers": { "authorization": "Bearer ${VINAYA_LOG_TOKEN}" }
+    "headers": { "authorization": "Bearer ${VINAYA_LOG_TOKEN}" },
+    "readHeaders": { "authorization": "Bearer ${VINAYA_LOG_READ_TOKEN}" }
   },
   "releaseActor": "daniboomerang",
   "reviewPolicy": {
