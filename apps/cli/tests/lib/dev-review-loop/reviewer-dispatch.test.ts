@@ -24,7 +24,8 @@ import {
   persistManifestRecord,
   renderReviewerDispatchPrompt,
   renderReviewerPrompt,
-  ReviewerReportParseFailure
+  ReviewerReportParseFailure,
+  roleDoctrinePieces
 } from '../../../src/lib/dev-review-loop/reviewer-dispatch'
 import type { ReviewerPromptFacts, ReviewerPromptPiece } from '../../../src/lib/dev-review-loop/reviewer-dispatch'
 
@@ -443,6 +444,33 @@ describe('renderReviewerDispatchPrompt — carries the role doctrine as a fact',
     const withOmitted = renderReviewerDispatchPrompt('reviewer', FACTS, '/tmp/work')
     expect(withNull).not.toContain('YOUR ROLE DOCTRINE')
     expect(withNull).toBe(withOmitted)
+  })
+
+  // O3: an adopter override (or even a core body) whose own wording matches a
+  // banned phrase must render, not crash every round. The short versions today
+  // literally say a reviewer posts comments and "writes nothing to disk".
+  const DOCTRINE_WITH_BANNED_PHRASES =
+    'You judge the PR. The developer says it is done, and clearly it works.\n\n' +
+    '## What you check\n\n1. In my opinion, check that the PR body says what the brief asked.'
+
+  it('renders a role doctrine carrying banned phrases, verbatim, instead of ending the round (O3)', () => {
+    const render = () => renderReviewerDispatchPrompt('reviewer', FACTS, '/tmp/work', DOCTRINE_WITH_BANNED_PHRASES)
+    expect(render).not.toThrow()
+    const prompt = render()
+    expect(prompt).toContain('The developer says it is done, and clearly it works.')
+    expect(prompt).toContain('In my opinion, check that the PR body says what the brief asked.')
+  })
+
+  it('holds the injected doctrine out of the text the banned-framing lint reads (O3)', () => {
+    const pieces = [
+      ...buildReviewerPromptPieces(FACTS),
+      ...roleDoctrinePieces('reviewer', DOCTRINE_WITH_BANNED_PHRASES)
+    ]
+    const driverText = driverAuthoredPromptText(pieces)
+    expect(lintReviewerPrompt(driverText)).toEqual([])
+    expect(driverText).not.toContain('clearly')
+    expect(driverText).not.toContain('In my opinion')
+    expect(driverText).not.toContain('The developer says')
   })
 })
 
