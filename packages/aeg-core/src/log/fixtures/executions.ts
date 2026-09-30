@@ -18,7 +18,11 @@ export const EXECUTION_NAMES = [
   'green-one-round',
   'three-rounds-recurring-finding',
   'paused-and-resumed',
-  'escalated-handoff'
+  'escalated-handoff',
+  'gate-two-commits',
+  'gate-no-commit',
+  'gate-same-commit-twice',
+  'usage-and-models'
 ] as const
 export type ExecutionName = (typeof EXECUTION_NAMES)[number]
 
@@ -159,6 +163,51 @@ function finishGreen(rec: Recorder, loop: LoopEmit, rounds: number, finalHead: s
   })
 }
 
+/** One run of a check. `sha` absent records no commit at all. */
+function gateRun(rec: Recorder, check: string, fingerprint: string, outcome: string, sha?: string): void {
+  rec.emit(
+    {
+      kind: 'gate',
+      event: 'checked',
+      check,
+      check_version: '1',
+      policy_version: null,
+      input_fingerprint: fingerprint,
+      outcome
+    },
+    { host: 'ci', ...(sha ? { sha } : {}) }
+  )
+}
+
+function usage(
+  rec: Recorder,
+  model: string | null,
+  semantics: 'cumulative' | 'delta',
+  units: { input: number | null; output: number | null; cache: number | null },
+  unknownReason: string | null = null
+): void {
+  rec.emit(
+    { kind: 'usage', event: 'observed', model, source: 'claude', semantics, units, unknown_reason: unknownReason },
+    { host: 'cli' }
+  )
+}
+
+function roleAttempt(rec: Recorder, role: Role, model: string, attempt: number, outcome: string): void {
+  rec.emit(
+    {
+      kind: 'role_attempt',
+      event: 'attempted',
+      actor: 'claude',
+      attempt,
+      effect_id: `eff-${rec.hex(8)}`,
+      model,
+      outcome,
+      usage: null
+    },
+    { role, host: 'loop' }
+  )
+}
+
 type Scenario = { description: string; issue: number; build: (rec: Recorder) => void }
 
 const SCENARIOS: Record<ExecutionName, Scenario> = {
@@ -269,6 +318,50 @@ const SCENARIOS: Record<ExecutionName, Scenario> = {
         final_head: base,
         result: 'stopped'
       })
+    }
+  },
+  'gate-two-commits': {
+    description:
+      'The same check on the same input fingerprint at two different commits, failing at the first and passing at the second.',
+    issue: 105,
+    build(rec) {
+      const fingerprint = `fp-${rec.hex(8)}`
+      gateRun(rec, 'test', fingerprint, 'fail', rec.sha())
+      gateRun(rec, 'test', fingerprint, 'pass', rec.sha())
+    }
+  },
+  'gate-no-commit': {
+    description:
+      'The same check on the same input fingerprint twice with no commit recorded, passing and then failing.',
+    issue: 106,
+    build(rec) {
+      const fingerprint = `fp-${rec.hex(8)}`
+      gateRun(rec, 'lint', fingerprint, 'pass')
+      gateRun(rec, 'lint', fingerprint, 'fail')
+    }
+  },
+  'gate-same-commit-twice': {
+    description: 'A check that passes at one commit twice, on the same input fingerprint.',
+    issue: 107,
+    build(rec) {
+      const fingerprint = `fp-${rec.hex(8)}`
+      const sha = rec.sha()
+      gateRun(rec, 'build', fingerprint, 'pass', sha)
+      gateRun(rec, 'build', fingerprint, 'pass', sha)
+    }
+  },
+  'usage-and-models': {
+    description:
+      'Two cumulative and three delta usage observations across two models, one of them with every unit unknown, and a role attempt retried with its usage unknown both times.',
+    issue: 108,
+    build(rec) {
+      usage(rec, 'opus', 'cumulative', { input: 1000, output: 200, cache: 500 })
+      usage(rec, 'opus', 'cumulative', { input: 2500, output: 600, cache: 1200 })
+      usage(rec, 'sonnet', 'delta', { input: 300, output: 80, cache: 0 })
+      usage(rec, 'sonnet', 'delta', { input: 150, output: 40, cache: null })
+      usage(rec, 'sonnet', 'delta', { input: null, output: null, cache: null }, 'the vendor reported no usage')
+      roleAttempt(rec, 'developer', 'sonnet', 1, 'infrastructure_failed')
+      roleAttempt(rec, 'developer', 'sonnet', 2, 'completed')
     }
   }
 }
