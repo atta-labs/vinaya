@@ -395,6 +395,72 @@ describe('class 1 — unresolvable references — the gate can see what it bans'
     expect(findings).toEqual([])
   })
 
+  describe('per-file limit (object form of specGrandfather)', () => {
+    const SPEC = 'apps/vinaya/specs/vinaya-spec.md'
+    const run = (content: string, grandfather: Record<string, number>) =>
+      checkUnresolvableReferences(
+        [{ path: SPEC, content }],
+        READER_FACING_PREFIX,
+        READER_FACING_SUFFIX,
+        [],
+        undefined,
+        grandfather
+      )
+
+    it('passes a file carrying exactly its limit', () => {
+      expect(run('closed by (#365) and (#366).', { [SPEC]: 2 })).toEqual([])
+    })
+
+    it('passes a file below its limit', () => {
+      expect(run('closed by (#365).', { [SPEC]: 2 })).toEqual([])
+    })
+
+    it('fails a file above its limit, naming the file, its count and its limit', () => {
+      const findings = run('closed by (#365), (#366) and (#367).', { [SPEC]: 2 })
+      expect(findings.length).toBe(3)
+      for (const f of findings) {
+        expect(f.file).toBe(SPEC)
+        expect(f.blocking).toBe(true)
+        expect(f.message).toContain(`${SPEC} carries 3 such findings`)
+        expect(f.message).toContain('limit of 2')
+      }
+    })
+
+    it('a limit of zero fails the first citation and passes a clean file', () => {
+      expect(run('closed by (#365).', { [SPEC]: 0 }).length).toBe(1)
+      expect(run('states its facts plainly.', { [SPEC]: 0 })).toEqual([])
+    })
+
+    it('counts the task-number rule too, with the same patterns as the ungrandfathered class', () => {
+      const content = 'Delivered by task 4, see aeg-coherence-v1 and (#365).'
+      const ungrandfathered = checkUnresolvableReferences(
+        [{ path: SPEC, content }],
+        READER_FACING_PREFIX,
+        READER_FACING_SUFFIX
+      )
+      expect(ungrandfathered.length).toBe(3)
+      expect(run(content, { [SPEC]: 3 })).toEqual([])
+      expect(run(content, { [SPEC]: 2 }).length).toBe(3)
+    })
+
+    it('leaves a spec that is not listed fully checked', () => {
+      expect(run('closed by (#365).', { 'apps/other/specs/x.md': 5 }).length).toBe(1)
+    })
+
+    it('reaches a default-path spec through checkReaderResolvableProse', () => {
+      const findings = checkReaderResolvableProse(
+        [{ path: 'SPEC.md', content: 'closed by (#365), (#366).' }],
+        [],
+        READER_FACING_PREFIX,
+        READER_FACING_SUFFIX,
+        [],
+        undefined,
+        { 'SPEC.md': 1 }
+      )
+      expect(findings.length).toBe(2)
+    })
+  })
+
   it('red before green — a seeded violation fails, then the fix passes', () => {
     const violating = checkUnresolvableReferences(
       [{ path: 'aeg-root/roles/developer.md', content: 'This closed the gap (#365).' }],
