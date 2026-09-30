@@ -1345,7 +1345,7 @@ export function buildRolePermissions(role: Role): RolePermissions {
         'Bash(bun install:*)',
         'Bash(bun test:*)',
         'Bash(bun run:*)',
-        // role-reach-v1 task 5, O4: a dispatched reviewer never runs the
+        // task 5, O4: a dispatched reviewer never runs the
         // agent-config scanner itself — the driver runs it outside the
         // reviewer's trust and hands the result to the security prompt. `npx`
         // is the scanner's own launcher (`npx ... ecc-agentshield scan`); it,

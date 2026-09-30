@@ -398,7 +398,7 @@ export type LoopDeps = {
    */
   resolveTaskSurface?: (task: number) => IssueSurface | null
   /**
-   * role-reach-v1 task 5, O1: the configured agent-config scanner argv, from
+   * task 5, O1: the configured agent-config scanner argv, from
    * the default-branch trust anchor (`resolveSecurityScanCommand` +
    * `loadTrustAnchorConfig`). `null` when no `securityScan.command` is set —
    * the security pass is then told no scanner is configured. Optional, for the
@@ -408,14 +408,14 @@ export type LoopDeps = {
    */
   resolveSecurityScanCommand?: () => readonly string[] | null
   /**
-   * role-reach-v1 task 5, O1: the pull request's changed paths (`base...head`),
+   * task 5, O1: the pull request's changed paths (`base...head`),
    * for the scan's applicability decision. Absent leaves the changed-path list
    * empty, so a configured scanner reports `not_applicable` rather than
    * scanning paths the driver could not read.
    */
   gitChangedPaths?: (base: string, head: string) => readonly string[]
   /**
-   * role-reach-v1 task 5, O2: runs the configured scanner over the head-verified
+   * task 5, O2: runs the configured scanner over the head-verified
    * candidate copy with a constructed environment (no forge credential), a time
    * limit and an output cap (`defaultRunSecurityScanSubprocess`). A fixture
    * injects a fake here to exercise the scan path without spawning a process.
@@ -621,7 +621,7 @@ function defaultGitUnifiedDiff(from: string, to: string): string | null {
   }
 }
 
-// --- the agent-configuration security scan (role-reach-v1 task 5) -----------
+// --- the agent-configuration security scan (task 5) -----------
 
 /** O2: the scanner subprocess's wall-time ceiling — a stuck scanner is reported `failed` (a timeout), never a pause the loop waits on. */
 const SECURITY_SCAN_TIMEOUT_MS = 120_000
@@ -4152,7 +4152,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             d.readWorktreeHead
           )
 
-          // role-reach-v1 task 5 (O1/O2/O3): ONCE per round, after the
+          // task 5 (O1/O2/O3): ONCE per round, after the
           // head-verified candidate is built and BEFORE either reviewer is
           // dispatched, decide the agent-config scan from the pull request's
           // changed paths and run the configured scanner on that candidate copy

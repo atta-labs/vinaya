@@ -571,8 +571,7 @@ export const SECRET_SCAN_CHECK = 'atta-labs/secret-scan'
  * A git commit sha as it appears free in `gh pr checks`/`gh pr view` evidence:
  * 7–40 hex, word-bounded, AND carrying at least one hex LETTER (the `(?=…[a-f])`
  * lookahead), so a purely-decimal token in the same evidence — a check run id,
- * a line number, a duration — is never mistaken for a commit (role-reach-v1
- * task 5, O6).
+ * a line number, a duration — is never mistaken for a commit (task 5, O6).
  */
 const EVIDENCE_COMMIT_SHA = /\b(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b/gi
 

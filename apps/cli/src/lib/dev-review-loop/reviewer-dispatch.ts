@@ -80,7 +80,7 @@ export type ReviewerPromptFacts = {
    */
   deferralContext?: FindingDeferralContext
   /**
-   * role-reach-v1 task 5, O1/O3: the round's agent-configuration scan outcome,
+   * task 5, O1/O3: the round's agent-configuration scan outcome,
    * decided once by the driver (`decideSecurityScan`) before either reviewer
    * dispatches. Rendered into the SECURITY prompt only (`renderReviewerDispatchPrompt`),
    * never the code-reviewer's — the scan is a fact piece the security pass reads
@@ -129,7 +129,7 @@ export type ReviewerPromptPiece = { readonly driver: string } | { readonly fact:
 const driverPiece = (text: string): ReviewerPromptPiece => ({ driver: text })
 const factPiece = (text: string): ReviewerPromptPiece => ({ fact: text })
 
-// --- the agent-configuration security scan (role-reach-v1 task 5) -----------
+// --- the agent-configuration security scan (task 5) -----------
 
 /**
  * The fixed agent-configuration path list the scan applies to (Boundary: fixed
