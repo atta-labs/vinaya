@@ -101,74 +101,37 @@ describe('resolveTrustAnchorLogsDestination (pure) — a PR cannot grant itself 
   })
 })
 
-describe('resolveLogsHeaderValues (pure) — env-var references, else the macOS Keychain, never a literal secret in config', () => {
-  // The Keychain reader is always injected here: the substitution is pure where
-  // it is tested, and CI runs on Linux where the real Keychain is absent. A
-  // reader that throws proves the branch it stands in is never taken.
-  const noKeychain = (): string | null => null
-  const throwingKeychain = (): string | null => {
-    throw new Error('the environment should have won — the Keychain must not be read')
-  }
-
+describe('resolveLogsHeaderValues (pure) — env-var references, never a literal secret in config', () => {
   it('returns undefined for undefined headers', () => {
-    expect(resolveLogsHeaderValues(undefined, {}, noKeychain)).toBeUndefined()
+    expect(resolveLogsHeaderValues(undefined, {})).toBeUndefined()
   })
 
   it('substitutes a variable reference from the given env', () => {
-    expect(resolveLogsHeaderValues({ authorization: 'Bearer ${TOKEN}' }, { TOKEN: 'abc123' }, noKeychain)).toEqual({
+    expect(resolveLogsHeaderValues({ authorization: 'Bearer ${TOKEN}' }, { TOKEN: 'abc123' })).toEqual({
       authorization: 'Bearer abc123'
     })
   })
 
-  it('resolves an unset variable to the empty string when neither env nor Keychain has it, never throwing', () => {
-    expect(resolveLogsHeaderValues({ authorization: 'Bearer ${MISSING}' }, {}, noKeychain)).toEqual({
+  it('O1: resolves an unset variable to the empty string, never throwing', () => {
+    expect(resolveLogsHeaderValues({ authorization: 'Bearer ${MISSING}' }, {})).toEqual({
       authorization: 'Bearer '
     })
   })
 
   it('leaves a header with no variable reference untouched', () => {
-    expect(resolveLogsHeaderValues({ 'x-plain': 'literal' }, {}, noKeychain)).toEqual({ 'x-plain': 'literal' })
+    expect(resolveLogsHeaderValues({ 'x-plain': 'literal' }, {})).toEqual({ 'x-plain': 'literal' })
   })
 
-  it('O1: falls back to the Keychain when the variable is unset in the environment', () => {
-    const keychain = (name: string): string | null => (name === 'VINAYA_LOG_TOKEN' ? 'kc-secret' : null)
-    expect(resolveLogsHeaderValues({ authorization: 'Bearer ${VINAYA_LOG_TOKEN}' }, {}, keychain)).toEqual({
-      authorization: 'Bearer kc-secret'
-    })
-  })
-
-  it('O3: the environment wins over the Keychain when the variable is set', () => {
-    // `throwingKeychain` proves the Keychain is not even consulted for a set var.
-    expect(
-      resolveLogsHeaderValues(
-        { authorization: 'Bearer ${VINAYA_LOG_TOKEN}' },
-        { VINAYA_LOG_TOKEN: 'env-secret' },
-        throwingKeychain
-      )
-    ).toEqual({ authorization: 'Bearer env-secret' })
-  })
-
-  it('O3: a variable set to the empty string still wins — the Keychain is not consulted', () => {
-    expect(
-      resolveLogsHeaderValues(
-        { authorization: 'Bearer ${VINAYA_LOG_TOKEN}' },
-        { VINAYA_LOG_TOKEN: '' },
-        throwingKeychain
-      )
-    ).toEqual({
+  it('O3: a variable set to the empty string resolves to the empty string', () => {
+    expect(resolveLogsHeaderValues({ authorization: 'Bearer ${VINAYA_LOG_TOKEN}' }, { VINAYA_LOG_TOKEN: '' })).toEqual({
       authorization: 'Bearer '
     })
   })
 
-  it('resolves a mix — env for the set reference, Keychain for the unset one', () => {
-    const keychain = (name: string): string | null => (name === 'FROM_KC' ? 'kc' : null)
+  it('resolves a mix — the set reference from the environment, the unset one to empty', () => {
     expect(
-      resolveLogsHeaderValues(
-        { authorization: 'Bearer ${FROM_ENV}', 'x-extra': 'v=${FROM_KC}' },
-        { FROM_ENV: 'env' },
-        keychain
-      )
-    ).toEqual({ authorization: 'Bearer env', 'x-extra': 'v=kc' })
+      resolveLogsHeaderValues({ authorization: 'Bearer ${FROM_ENV}', 'x-extra': 'v=${MISSING}' }, { FROM_ENV: 'env' })
+    ).toEqual({ authorization: 'Bearer env', 'x-extra': 'v=' })
   })
 })
 
@@ -554,77 +517,33 @@ describe('resolveLogDestinationFrom — CI never falls back to a folder (O3)', (
       reason: 'no server destination is configured for CI delivery (vinaya.config.json logs.url)'
     })
   })
-
-  it('delivers live when the credential is absent from the environment but held in the Keychain — the same fallback delivery substitutes with (O1)', () => {
-    expect(
-      resolveLogDestinationFrom({
-        localConfig: {
-          logs: { url: 'https://ingest.example.com/vinaya', headers: { authorization: 'Bearer ${VINAYA_LOG_TOKEN}' } }
-        } as VinayaConfig,
-        trustAnchorConfig: {
-          logs: { url: 'https://ingest.example.com/vinaya', headers: { authorization: 'Bearer ${VINAYA_LOG_TOKEN}' } }
-        } as VinayaConfig,
-        unattended: true,
-        env: CI_ENV, // VINAYA_LOG_TOKEN nowhere in the environment
-        defaultFolder: DEFAULT_FOLDER,
-        readKeychain: (name) => (name === 'VINAYA_LOG_TOKEN' ? 'from-keychain' : null)
-      })
-    ).toEqual({
-      kind: 'server',
-      url: 'https://ingest.example.com/vinaya',
-      // The header is still substituted by resolveLogsHeaderValues' own real
-      // default (Linux → Keychain absent → empty), so this asserts only that
-      // the credential CHECK no longer rejected a Keychain-held token.
-      headers: { authorization: 'Bearer ' }
-    })
-  })
 })
 
-// --- logsCredentialMissing (pure) — the check itself, env then Keychain (O1) -
-// The environment always wins; the injected Keychain reader is consulted only
-// when the variable is absent or empty there, so a token stored solely in the
-// Keychain reads back as present. On Linux the real default reader returns
-// `null`, so with neither source set the answer is unchanged (O3).
+// --- logsCredentialMissing (pure) — the check itself, over the environment ---
+// An absent or empty variable is missing; on a CI runner a withheld fork
+// secret arrives as an empty string, so "empty" and "absent" are one signal.
 
 describe('logsCredentialMissing (pure)', () => {
   const HEADERS = { authorization: 'Bearer ${VINAYA_LOG_TOKEN}' }
-  const noKeychain = () => null
 
   it('is false when there are no headers — nothing to be missing', () => {
-    expect(logsCredentialMissing(undefined, {}, noKeychain)).toBe(false)
+    expect(logsCredentialMissing(undefined, {})).toBe(false)
   })
 
   it('is false when a header references no variable at all', () => {
-    expect(logsCredentialMissing({ authorization: 'Bearer static' }, {}, noKeychain)).toBe(false)
+    expect(logsCredentialMissing({ authorization: 'Bearer static' }, {})).toBe(false)
   })
 
-  it('is true when the variable is set in neither the environment nor the Keychain', () => {
-    expect(logsCredentialMissing(HEADERS, {}, noKeychain)).toBe(true)
+  it('is true when the variable is not set in the environment', () => {
+    expect(logsCredentialMissing(HEADERS, {})).toBe(true)
   })
 
-  it('is false when the variable is set in the environment (the environment wins)', () => {
-    expect(logsCredentialMissing(HEADERS, { VINAYA_LOG_TOKEN: 'env-token' }, noKeychain)).toBe(false)
+  it('is false when the variable is set in the environment', () => {
+    expect(logsCredentialMissing(HEADERS, { VINAYA_LOG_TOKEN: 'env-token' })).toBe(false)
   })
 
-  it('is false when the environment is empty but the Keychain holds the token', () => {
-    expect(logsCredentialMissing(HEADERS, {}, (name) => (name === 'VINAYA_LOG_TOKEN' ? 'kc-token' : null))).toBe(false)
-  })
-
-  it('is true when the environment var is empty (a withheld fork secret) and the Keychain is empty too', () => {
-    expect(logsCredentialMissing(HEADERS, { VINAYA_LOG_TOKEN: '' }, noKeychain)).toBe(true)
-  })
-
-  it('is true when the Keychain returns an empty string — an empty value is no credential, exactly as an empty env var', () => {
-    expect(logsCredentialMissing(HEADERS, {}, () => '')).toBe(true)
-  })
-
-  it('never consults the Keychain when the environment already has the value', () => {
-    let consulted = false
-    logsCredentialMissing(HEADERS, { VINAYA_LOG_TOKEN: 'env-token' }, () => {
-      consulted = true
-      return 'kc-token'
-    })
-    expect(consulted).toBe(false)
+  it('is true when the environment var is empty (a withheld fork secret)', () => {
+    expect(logsCredentialMissing(HEADERS, { VINAYA_LOG_TOKEN: '' })).toBe(true)
   })
 })
 

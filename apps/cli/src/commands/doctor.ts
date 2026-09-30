@@ -44,7 +44,6 @@ import { CLAUDE_SETTINGS_PATH } from '../lib/claude-stop-hook-emitter.js'
 import { GEMINI_COMMAND_PATH } from '../lib/gemini-command-emitter.js'
 import { type DoctrineSource, resolveDoctrineRootInfo } from './doctrine.js'
 import { detectVendoredVinaya } from '../lib/self-host.js'
-import { readLogHeaderKeychainCredential } from '../lib/worker-boundary.js'
 import {
   type BriefSection,
   GLOBAL_CONFIG_PATH,
@@ -106,8 +105,6 @@ export type DoctorDeps = {
   resolveLogDestination: () => Promise<LogDestinationTarget>
   /** Does the destination accept this machine's credential — answered without storing an event. */
   probeLogServer: (url: string, headers: Record<string, string> | undefined) => Promise<LogServerProbe>
-  /** Reads a `logs.headers` credential from the macOS login Keychain — so doctor can report WHERE each credential was found (environment, Keychain, or nowhere), never its value (O4). The SAME reader delivery uses, so the two can never disagree. Optional and injected so the check is provable on Linux CI where the real Keychain is absent; an omitted entry falls back to the real reader (which returns `null` off macOS), so every existing `DoctorDeps` constructor keeps compiling unchanged. */
-  readLogCredentialKeychain?: (variable: string) => string | null
   /** O3: the last time an unattended run fell back to the local folder although a server was configured — read from the machine-local state file the sink records it in, so the cause survives a launch path that keeps no standard error. `null` when none is recorded. Optional and injected so the check is provable with a fixture; an omitted entry falls back to the real per-repository reader, so every existing `DoctorDeps` constructor keeps compiling unchanged. */
   readLastLogFallback?: () => Promise<FolderFallbackRecord | null>
 }
@@ -277,7 +274,6 @@ export function realDeps(): DoctorDeps {
     meteringCapability: () => resolveMeteringCapability(hardenedMeteringDeps()),
     resolveLogDestination: resolveLogDestinationForDoctor,
     probeLogServer: probeLogDestinationServer,
-    readLogCredentialKeychain: readLogHeaderKeychainCredential,
     readLastLogFallback: readLastLogFallbackReal
   }
 }
@@ -1330,30 +1326,22 @@ export function urlForDisplay(url: string): string {
 
 /**
  * O4: where each credential a `logs.headers` value references was found — the
- * environment, the macOS login Keychain, or nowhere — reported through the EXACT
- * reader delivery uses (`resolveLogsHeaderValues`'s own default), so the two can
- * never disagree about where the value comes from. The value itself is never
- * read into the report: only the environment-variable's presence and the
- * Keychain read's null-ness are inspected. `info` always — this line reports a
- * fact; the destination probe above already reddens the command when a credential
- * is actually refused. `null` when no `${VAR}` is referenced at all.
+ * environment, or nowhere — reported through the EXACT source delivery uses
+ * (`resolveLogsHeaderValues` substitutes each `${VAR}` from the environment),
+ * so the two can never disagree about where the value comes from. The value
+ * itself is never read into the report: only the environment variable's
+ * presence is inspected. `info` always — this line reports a fact; the
+ * destination probe above already reddens the command when a credential is
+ * actually refused. `null` when no `${VAR}` is referenced at all.
  *
- * The precedence mirrors the substitution exactly (O3): a variable that is SET
- * in the environment (`!== undefined`, even to the empty string) is where the
- * value comes from, so it is reported as the environment; only a genuinely
- * absent variable is looked up in the Keychain.
+ * A variable that is SET in the environment (`!== undefined`, even to the empty
+ * string) is where the value comes from; anything else is not set.
  */
-function logCredentialSourceFinding(
-  credentialVars: readonly string[],
-  readKeychain: (variable: string) => string | null,
-  env: NodeJS.ProcessEnv
-): Finding | null {
+function logCredentialSourceFinding(credentialVars: readonly string[], env: NodeJS.ProcessEnv): Finding | null {
   if (credentialVars.length === 0) return null
-  const parts = credentialVars.map((name) => {
-    if (env[name] !== undefined) return `${name}: found in the environment`
-    if (readKeychain(name) !== null) return `${name}: found in the macOS login Keychain`
-    return `${name}: found in neither the environment nor the macOS login Keychain`
-  })
+  const parts = credentialVars.map((name) =>
+    env[name] !== undefined ? `${name}: found in the environment` : `${name}: not set in the environment`
+  )
   // A distinct `[log-credential]` line, beside the `[logs]` destination finding
   // rather than folded into it, so the source is reported on every destination
   // kind — including a healthy server, where the destination line is `ok`.
@@ -1365,11 +1353,7 @@ function logCredentialSourceFinding(
 
 async function diagnoseLogDestination(deps: DoctorDeps): Promise<Finding[]> {
   const { destination, credentialVars } = await deps.resolveLogDestination()
-  const source = logCredentialSourceFinding(
-    credentialVars,
-    deps.readLogCredentialKeychain ?? readLogHeaderKeychainCredential,
-    process.env
-  )
+  const source = logCredentialSourceFinding(credentialVars, process.env)
   const withSource = (findings: Finding[]): Finding[] => (source ? [...findings, source] : findings)
   const fix =
     credentialVars.length > 0

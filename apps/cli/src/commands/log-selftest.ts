@@ -19,7 +19,7 @@ import { hostname as osHostname, homedir } from 'node:os'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { buildHeader, LogEventSchema, redact } from '@attalabs/aeg-core'
-import { loadConfig, type LogHeaderKeychainReader, resolveLogsHeaderValues, type VinayaConfig } from '../lib/config.js'
+import { loadConfig, resolveLogsHeaderValues, type VinayaConfig } from '../lib/config.js'
 import {
   logsCredentialMissing,
   type ResolvedLogDestination,
@@ -27,7 +27,6 @@ import {
   resolveUnattendedLogDestination,
   resolveUnattendedServerSetting
 } from '../lib/log-sink.js'
-import { readLogHeaderKeychainCredential } from '../lib/worker-boundary.js'
 import { packageRoot } from '../lib/package-root.js'
 
 /** The fixed marker every self-test event carries, so a reader can exclude it from real telemetry (Traps). */
@@ -55,7 +54,7 @@ export type LogSelftestDeps = {
   resolveServerSetting: () => Promise<{ url: string; headers?: Record<string, string> } | null>
   /** The working tree's RAW `logs.readHeaders` (the read credential, `${VAR}` un-substituted), or `undefined` when none is configured. */
   readReadHeaders: () => Record<string, string> | undefined
-  /** Substitutes `${VAR}`/Keychain in a header map — `resolveLogsHeaderValues`. */
+  /** Substitutes `${VAR}` references in a header map — `resolveLogsHeaderValues`. */
   resolveHeaders: (headers: Record<string, string> | undefined) => Record<string, string> | undefined
   /** The last stored `seq` before the send, so the read-back pages forward from there. */
   readLastSeq: (
@@ -69,15 +68,6 @@ export type LogSelftestDeps = {
   /** Builds the marked test event's serialized (redacted) ndjson line, carrying `eventId` as its own `meta.event_id`. */
   buildLine: (eventId: string) => string
   env: NodeJS.ProcessEnv
-  /**
-   * The macOS-Keychain fallback `logsCredentialMissing` consults when a
-   * credential variable is absent from `env` (O2) — the SAME
-   * `readLogHeaderKeychainCredential` delivery substitutes with, so a token
-   * stored only in the Keychain is counted as present here exactly as it is
-   * when a real send resolves the header. Injected so a Linux test drives it
-   * with a fake; the real default is darwin-only and returns `null` elsewhere.
-   */
-  readKeychain: LogHeaderKeychainReader
   newNonce: () => string
   maxPages: number
   stdout: (text: string) => void
@@ -157,7 +147,6 @@ export function realLogSelftestDeps(): LogSelftestDeps {
     resolveServerSetting: () => resolveUnattendedServerSetting(),
     readReadHeaders: () => config?.logs?.readHeaders,
     resolveHeaders: (headers) => resolveLogsHeaderValues(headers, process.env),
-    readKeychain: readLogHeaderKeychainCredential,
     readLastSeq: async (url, headers) => {
       try {
         const response = await fetch(statsUrlFrom(url), {
@@ -291,7 +280,7 @@ export async function runLogSelftest(deps: LogSelftestDeps): Promise<SelftestRes
   // the network only to come back `401`, and the honest reason is that the
   // credential is absent here, named by the variable to set.
   const rawServer = await deps.resolveServerSetting()
-  if (rawServer && logsCredentialMissing(rawServer.headers, deps.env, deps.readKeychain)) {
+  if (rawServer && logsCredentialMissing(rawServer.headers, deps.env)) {
     const vars = credentialVars(rawServer.headers)
     return {
       pass: false,
@@ -309,7 +298,7 @@ export async function runLogSelftest(deps: LogSelftestDeps): Promise<SelftestRes
         "no read credential is configured — set `logs.readHeaders` in vinaya.config.json to the server's read token (referenced by variable name rather than written out), so the self-test can read its own event back."
     }
   }
-  if (logsCredentialMissing(rawRead, deps.env, deps.readKeychain)) {
+  if (logsCredentialMissing(rawRead, deps.env)) {
     const vars = credentialVars(rawRead)
     return {
       pass: false,

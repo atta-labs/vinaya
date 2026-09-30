@@ -15,7 +15,6 @@ import { dispatchCommand } from './commands/dispatch.js'
 import { doctorCommand } from './commands/doctor.js'
 import { logSelftestCommand } from './commands/log-selftest.js'
 import { logSendCommand } from './commands/log-send.js'
-import { logSetCredentialCommand } from './commands/log-set-credential.js'
 import { doctrineCommand } from './commands/doctrine.js'
 import { ejectCommand } from './commands/eject.js'
 import { initCommand, initProductCommand } from './commands/init.js'
@@ -352,12 +351,8 @@ try {
         await logSendCommand(rest)
       } else if (subcommand === 'selftest') {
         process.exit(await logSelftestCommand(rest))
-      } else if (subcommand === 'set-credential') {
-        process.exit(await logSetCredentialCommand(rest))
       } else {
-        console.error(
-          `Unknown 'log' subcommand: ${subcommand ?? '(none)'} (expected 'selftest', 'send', or 'set-credential')`
-        )
+        console.error(`Unknown 'log' subcommand: ${subcommand ?? '(none)'} (expected 'selftest' or 'send')`)
         process.exit(2)
       }
       break
