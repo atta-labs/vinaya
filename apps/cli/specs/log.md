@@ -67,7 +67,7 @@ meta: {
 subject: {
   issue: number | null          // VINAYA_TASK; the checked-out task branch's Issue when that is unset; null when neither names one
   pr?: number
-  sha?: string
+  sha?: string                  // a gate event only: the full 40-character commit id of the checkout's HEAD; absent when unresolvable
   role: Role | 'unattributed'   // VINAYA_ROLE; never self-declared by the caller
   round?: number                // VINAYA_ROUND
   objectives_version?: string   // deviation from the spec's `number` — vinaya-log-v1 task 1
@@ -76,6 +76,8 @@ subject: {
 ```
 
 `Role` is the doctrine-facing spelling from the spec's Role union: `planner | developer | code-reviewer | security | principal | archivist | architect` — not the `roles/*.md` filenames `resolveDoctrineRootInfo` resolves those names to.
+
+**`subject.sha` on a gate event.** Every `gate` `checked` event records the commit it was checked at: the full 40-character id `git rev-parse HEAD` names in the sink's own working directory. The field is omitted — never a branch name, never a guess — when `git` is missing, the directory is in no repository, or the answer is not a 40-character hex id. It is resolved once per process and directory, lazily, only when a gate event is written, and reused for every later gate event, so no event costs a `git` call; a process recording nothing never reads it. No other family carries it yet. `HEAD` is what the checkout holds, not what the change's author pushed: a pull-request CI job checks out a merge commit of the pull request into its base, so a gate event from that job records that merge commit, not the pull request's head. The field is not part of `input_fingerprint`, which hashes the check's allowlisted environment and, for a diff-scoped check, the sorted changed-file list, never file contents; the two answer different questions. Together they tell a repeat of a run on unchanged code (same commit, same fingerprint) from a re-run on new code (a different commit) — and let a gate result be joined to the commit a run was made on.
 
 ## The families shipped so far
 

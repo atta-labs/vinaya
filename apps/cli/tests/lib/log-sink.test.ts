@@ -1031,3 +1031,81 @@ describe('O3 — a folder fallback keeps its reason (driver.log + doctor state f
     expect(existsSync(join(rtDir, 'tasks-execution'))).toBe(false)
   })
 })
+
+describe('log-sink — the commit a gate event was checked at', () => {
+  const GATE = {
+    kind: 'gate' as const,
+    event: 'checked' as const,
+    check: 'fixture',
+    check_version: '1',
+    policy_version: null,
+    input_fingerprint: 'f',
+    outcome: 'pass' as const,
+    payload: {}
+  }
+  const subjectsOf = (dir: string): Array<Record<string, unknown>> =>
+    readFileSync(join(dir, 'outbox', 'atta-labs-vinaya', '404.ndjson'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l).subject)
+
+  it("records the checkout's HEAD as subject.sha", async () => {
+    const { dir, deps } = testDeps()
+    const git = (...args: string[]): string => {
+      const r = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' })
+      if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr}`)
+      return r.stdout.trim()
+    }
+    git('init', '--initial-branch=main')
+    git('config', 'user.email', 'test@example.com')
+    git('config', 'user.name', 'Test')
+    writeFileSync(join(dir, 'a.txt'), 'a')
+    git('add', 'a.txt')
+    git('commit', '-m', 'init')
+    const head = git('rev-parse', 'HEAD')
+    expect(head).toMatch(/^[0-9a-f]{40}$/)
+    const sink = createLogSink(deps)
+    sink.log(GATE)
+    sink.log(GATE)
+    await sink.drain()
+    const [first, second] = subjectsOf(dir)
+    expect(first?.sha).toBe(head)
+    expect(second?.sha).toBe(head)
+  })
+
+  it('omits subject.sha outside any git repository', async () => {
+    const { dir, deps } = testDeps()
+    const sink = createLogSink(deps)
+    sink.log(GATE)
+    await sink.drain()
+    const [subject] = subjectsOf(dir)
+    expect(subject).toBeDefined()
+    expect('sha' in (subject ?? {})).toBe(false)
+  })
+
+  it('resolves the commit once for many gate events', async () => {
+    let reads = 0
+    const { dir, deps } = testDeps({
+      resolveHeadSha: () => {
+        reads++
+        return Promise.resolve('b'.repeat(40))
+      }
+    })
+    const sink = createLogSink(deps)
+    for (let i = 0; i < 5; i++) sink.log(GATE)
+    await sink.drain()
+    expect(subjectsOf(dir)).toHaveLength(5)
+    expect(reads).toBe(1)
+  })
+
+  it('never puts the commit on an event that is not a gate', async () => {
+    const { dir, deps } = testDeps({ resolveHeadSha: () => Promise.resolve('a'.repeat(40)) })
+    const sink = createLogSink(deps)
+    sink.log(DISPATCHED)
+    sink.log(GATE)
+    await sink.drain()
+    const [dispatch, gate] = subjectsOf(dir)
+    expect('sha' in (dispatch ?? {})).toBe(false)
+    expect(gate?.sha).toBe('a'.repeat(40))
+  })
+})
