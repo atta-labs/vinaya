@@ -26,7 +26,7 @@ This seam sits between the seat that decides **what is true and what is allowed*
 
 **What it does not carry** — a duration the Operator authored: it promises, deadlines and estimates none. A typical time a read itself returned is not one of those, and crosses labelled as history with its sample count.
 
-**How it physically runs** — downward, the carrier is the Operator's tool grant: the task tools the server serves, and nothing that could rule, approve, or merge. Upward, the carrier is the persisted escalation packet, whose `requestedAuthority` field names the Principal as the seat that must decide. Neither direction is a status write — the run's branch, pull request, and pause record are the status, read rather than restated.
+**How it physically runs** — downward, the carrier is the Operator's tool grant: the served task tools, nothing that could rule, approve, or merge. Upward, the carrier is the persisted escalation packet, whose `requestedAuthority` field names the Principal as the seat that must decide. Neither direction is a status write — the run's branch, pull request, and pause record are the status, read rather than restated.
 
 ---
 
