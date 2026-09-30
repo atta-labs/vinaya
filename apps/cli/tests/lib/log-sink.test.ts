@@ -6,13 +6,14 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   statSync,
   symlinkSync,
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture.js'
+import { spawnBudgetedAsync, spawnSyncBudgeted, stripVinayaEnv } from './process-fixture.js'
 import {
   createLogSink,
   folderFallbackStatePath,
@@ -22,6 +23,7 @@ import {
   resolveLogAppendPath,
   setBranchIssueFallback,
   taskRefFromBranch,
+  unresolvedLogDestination,
   type LogSinkDeps
 } from '../../src/lib/log-sink.js'
 
@@ -524,7 +526,7 @@ describe('log-sink — what the branch lookup costs, and when (O1)', () => {
       }[forge]
       writeFileSync(join(binDir, 'gh'), ghScript, { mode: 0o755 })
 
-      const sinkModule = new URL('../../src/lib/log-sink.ts', import.meta.url).pathname
+      const sinkModule = join(import.meta.dir, '..', '..', 'src', 'lib', 'log-sink.ts')
       const probe = join(scratch, 'probe.ts')
       writeFileSync(
         probe,
@@ -553,7 +555,7 @@ describe('log-sink — what the branch lookup costs, and when (O1)', () => {
       const run = spawnSyncBudgeted(
         'bun',
         [probe, repoDir, outbox],
-        { encoding: 'utf8', env: { ...stripVinayaEnv(), PATH: `${binDir}:${process.env.PATH ?? ''}` } },
+        { cwd: tmpdir(), encoding: 'utf8', env: { ...stripVinayaEnv(), PATH: `${binDir}:${process.env.PATH ?? ''}` } },
         60_000,
         'branch-confirmation probe'
       )
@@ -646,7 +648,7 @@ describe('log-sink — CI has no branch checked out (O1)', () => {
     git('checkout', '--detach', head)
     writeFileSync(join(binDir, 'gh'), '#!/bin/sh\necho \'{"number":321}\'\n', { mode: 0o755 })
 
-    const sinkModule = new URL('../../src/lib/log-sink.ts', import.meta.url).pathname
+    const sinkModule = join(import.meta.dir, '..', '..', 'src', 'lib', 'log-sink.ts')
     const probe = join(scratch, 'probe.ts')
     writeFileSync(
       probe,
@@ -660,7 +662,7 @@ describe('log-sink — CI has no branch checked out (O1)', () => {
     const run = spawnSyncBudgeted(
       'bun',
       [probe, repoDir],
-      { encoding: 'utf8', env: { ...stripVinayaEnv(), PATH: `${binDir}:${process.env.PATH ?? ''}` } },
+      { cwd: tmpdir(), encoding: 'utf8', env: { ...stripVinayaEnv(), PATH: `${binDir}:${process.env.PATH ?? ''}` } },
       60_000,
       'detached-HEAD probe'
     )
@@ -707,7 +709,7 @@ describe('log-sink — one read per process, not per sink (O1)', () => {
       mode: 0o755
     })
 
-    const sinkModule = new URL('../../src/lib/log-sink.ts', import.meta.url).pathname
+    const sinkModule = join(import.meta.dir, '..', '..', 'src', 'lib', 'log-sink.ts')
     const probe = join(scratch, 'probe.ts')
     writeFileSync(
       probe,
@@ -742,7 +744,7 @@ describe('log-sink — one read per process, not per sink (O1)', () => {
     const run = spawnSyncBudgeted(
       'bun',
       [probe, first, second, outbox],
-      { encoding: 'utf8', env: { ...stripVinayaEnv(), PATH: `${binDir}:${process.env.PATH ?? ''}` } },
+      { cwd: tmpdir(), encoding: 'utf8', env: { ...stripVinayaEnv(), PATH: `${binDir}:${process.env.PATH ?? ''}` } },
       60_000,
       'shared-read probe'
     )
@@ -807,7 +809,7 @@ describe('log-sink — the trust-anchor config is cached per repository (O1, O3)
       { mode: 0o755 }
     )
 
-    const sinkModule = new URL('../../src/lib/log-sink.ts', import.meta.url).pathname
+    const sinkModule = join(import.meta.dir, '..', '..', 'src', 'lib', 'log-sink.ts')
     const probe = join(scratch, 'probe.ts')
     writeFileSync(
       probe,
@@ -831,7 +833,7 @@ describe('log-sink — the trust-anchor config is cached per repository (O1, O3)
     const run = spawnSyncBudgeted(
       'bun',
       [probe, repoA, repoB],
-      { encoding: 'utf8', env: probeEnv },
+      { cwd: tmpdir(), encoding: 'utf8', env: probeEnv },
       60_000,
       'anchor-per-repo probe'
     )
@@ -932,7 +934,7 @@ describe('log-sink — the branch read outlives nothing (O1)', () => {
     // at, and the process cannot exit while it runs.
     const binDir = mkdtempSync(join(tmpdir(), 'vinaya-hanging-git-'))
     writeFileSync(join(binDir, 'git'), '#!/bin/sh\nsleep 30\n', { mode: 0o755 })
-    const sinkModule = new URL('../../src/lib/log-sink.ts', import.meta.url).pathname
+    const sinkModule = join(import.meta.dir, '..', '..', 'src', 'lib', 'log-sink.ts')
     const probe = join(binDir, 'probe.ts')
     writeFileSync(
       probe,
@@ -945,7 +947,7 @@ describe('log-sink — the branch read outlives nothing (O1)', () => {
     const run = spawnSyncBudgeted(
       'bun',
       [probe, binDir],
-      { encoding: 'utf8', env: { ...stripVinayaEnv(), PATH: `${binDir}:${process.env.PATH ?? ''}` } },
+      { cwd: tmpdir(), encoding: 'utf8', env: { ...stripVinayaEnv(), PATH: `${binDir}:${process.env.PATH ?? ''}` } },
       25_000,
       'branch-read probe'
     )
@@ -1155,4 +1157,353 @@ describe('log-sink — the commit a gate event was checked at', () => {
     expect('sha' in (dispatch ?? {})).toBe(false)
     expect(gate?.sha).toBe('a'.repeat(40))
   })
+})
+
+describe('logSync — recording an event as the process ends (O1, O2, O3, O5)', () => {
+  const lineFile = (dir: string, issue = '404'): string => join(dir, 'outbox', 'atta-labs-vinaya', `${issue}.ndjson`)
+  const readLines = (path: string): Array<Record<string, any>> =>
+    readFileSync(path, 'utf8')
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l))
+
+  it('O1: the line is on disk when logSync returns, with the header the warmed-up sink resolved', async () => {
+    const { dir, deps } = testDeps()
+    const sink = createLogSink(deps)
+    sink.warmup()
+    await flush()
+    const returned = sink.logSync(DISPATCHED)
+    // Read with no await in between: the append happened inside the call.
+    const [line] = readLines(lineFile(dir))
+    expect(returned).toBeUndefined()
+    expect(line?.meta.schema).toBe(3)
+    expect(line?.meta.repo).toBe('atta-labs/vinaya')
+    expect(line?.meta.run_id).toBe(sink.runId)
+    expect(typeof line?.meta.event_id).toBe('string')
+    expect(line?.subject.issue).toBe(404)
+    expect(line?.subject.role).toBe('developer')
+    expect(line?.effect_id).toBe('e1')
+  })
+
+  it('O2: before the sink resolves anything, it looks nothing up and guesses nothing', () => {
+    const calls: string[] = []
+    const { dir, deps } = testDeps({
+      env: () => ({ VINAYA_ROLE: 'developer' }),
+      resolveRepo: () => {
+        calls.push('repo')
+        return Promise.resolve({ owner: 'atta-labs', repo: 'vinaya' })
+      },
+      resolveLogDestination: () => {
+        calls.push('destination')
+        return { kind: 'folder', folder: join(dir, 'outbox') }
+      },
+      resolveBranchIssue: () => {
+        calls.push('branch')
+        return Promise.resolve(7)
+      },
+      resolveHeadSha: () => {
+        calls.push('sha')
+        return Promise.resolve('a'.repeat(40))
+      },
+      unresolvedLogDestination: () => ({ kind: 'folder', folder: join(dir, 'unresolved-folder') })
+    })
+    const sink = createLogSink(deps)
+    sink.logSync(DISPATCHED)
+    sink.logSync({ ...GATE_EVENT })
+    expect(calls).toEqual([])
+    const lines = readLines(join(dir, 'unresolved-folder', 'unresolved', 'none.ndjson'))
+    expect(lines).toHaveLength(2)
+    expect(lines[0]?.meta.repo).toBeNull()
+    expect(lines[0]?.meta.doctrine).toBe('unknown')
+    expect(lines[0]?.subject.issue).toBeNull()
+    expect(lines[1]?.subject.sha).toBeUndefined()
+  })
+
+  it('O2: reuses the Issue and the commit an earlier lookup already answered, without asking again', async () => {
+    let branchReads = 0
+    let shaReads = 0
+    const { dir, deps } = testDeps({
+      env: () => ({ VINAYA_ROLE: 'developer' }),
+      resolveBranchIssue: () => {
+        branchReads++
+        return Promise.resolve(77)
+      },
+      resolveHeadSha: () => {
+        shaReads++
+        return Promise.resolve('b'.repeat(40))
+      }
+    })
+    const sink = createLogSink(deps)
+    sink.log({ ...GATE_EVENT })
+    await flush()
+    sink.logSync({ ...GATE_EVENT })
+    const lines = readLines(lineFile(dir, '77'))
+    expect(lines).toHaveLength(2)
+    expect(lines[1]?.subject.issue).toBe(77)
+    expect(lines[1]?.subject.sha).toBe('b'.repeat(40))
+    expect(lines[1]?.meta.seq).toBe(1)
+    expect([branchReads, shaReads]).toEqual([1, 1])
+  })
+
+  it('O3: its line is validated and redacted exactly as a log() line is', async () => {
+    const { dir, deps } = testDeps()
+    const sink = createLogSink(deps)
+    // A string under the home directory is one `redact` rewrites.
+    const event = { ...DISPATCHED, model: join(dir, 'secret', 'model.txt') }
+    sink.log(event)
+    await flush()
+    sink.logSync(event)
+    const [viaLog, viaSync] = readLines(lineFile(dir))
+    expect(viaSync?.model).toEqual(viaLog?.model)
+    expect(viaSync?.model).not.toContain(dir)
+    const { meta: _m1, ...restLog } = viaLog ?? {}
+    const { meta: _m2, ...restSync } = viaSync ?? {}
+    expect(restSync).toEqual(restLog)
+  })
+
+  it('O3: an invalid payload is refused with the usual warning, and nothing is written', async () => {
+    const messages: string[] = []
+    const { dir, deps } = testDeps({ stderr: (m) => messages.push(m) })
+    const sink = createLogSink(deps)
+    sink.warmup()
+    await flush()
+    expect(() => sink.logSync({ kind: 'dispatch', event: 'dispatched' } as any)).not.toThrow()
+    expect(existsSync(lineFile(dir))).toBe(false)
+    expect(messages.join('')).toContain('refused an invalid payload')
+  })
+
+  it('O3: a write that cannot happen never throws — one warning, and the caller carries on', async () => {
+    const messages: string[] = []
+    const { dir, deps } = testDeps({ stderr: (m) => messages.push(m) })
+    // The destination folder is a regular file, so no directory can be made under it.
+    writeFileSync(join(dir, 'blocked'), 'x')
+    const sink = createLogSink({
+      ...deps,
+      resolveLogDestination: () => ({ kind: 'folder', folder: join(dir, 'blocked') })
+    })
+    sink.warmup()
+    await flush()
+    expect(() => sink.logSync(DISPATCHED)).not.toThrow()
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toContain('log outbox write failed')
+  })
+
+  it('O3: a destination reader that throws is swallowed after the warning', () => {
+    const messages: string[] = []
+    const { deps } = testDeps({
+      stderr: (m) => messages.push(m),
+      unresolvedLogDestination: () => {
+        throw new Error('boom')
+      }
+    })
+    const sink = createLogSink(deps)
+    expect(() => sink.logSync(DISPATCHED)).not.toThrow()
+    expect(messages[0]).toContain('logSync() failed — boom')
+  })
+
+  it('O5: in a CI host with no server destination resolved, it records nothing and says why once', () => {
+    const messages: string[] = []
+    const { dir, deps } = testDeps({
+      env: () => ({ VINAYA_TASK: '404', GITHUB_ACTIONS: 'true' }),
+      stderr: (m) => messages.push(m),
+      unresolvedLogDestination
+    })
+    const sink = createLogSink(deps)
+    sink.logSync(DISPATCHED)
+    sink.logSync(DISPATCHED)
+    expect(readdirSync(dir)).toEqual([])
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toContain('not recording')
+    expect(messages[0]).toContain('never records to a folder')
+  })
+
+  it('O5: in a CI host whose resolved destination is `none`, it records nothing, as log() does', async () => {
+    const { dir, deps } = testDeps({
+      env: () => ({ VINAYA_TASK: '404', GITHUB_ACTIONS: 'true' }),
+      resolveLogDestination: () => ({ kind: 'none', reason: 'no server destination is configured for CI delivery' })
+    })
+    const sink = createLogSink(deps)
+    sink.warmup()
+    await flush()
+    sink.logSync(DISPATCHED)
+    expect(existsSync(join(dir, 'outbox'))).toBe(false)
+  })
+
+  it('O2: the real default sink spawns no process at all, and the line lands before process.exit', () => {
+    const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-logsync-nospawn-')))
+    const logSinkModule = join(import.meta.dir, '..', '..', 'src', 'lib', 'log-sink.ts')
+    // The working tree declares a server: with the repository unknown, the
+    // line must still go to a folder, never to a queue no drain reads.
+    writeFileSync(
+      join(cwd, 'vinaya.config.json'),
+      JSON.stringify({
+        logs: { url: 'https://logs.example.com/ingest' }
+      })
+    )
+    const probe = join(cwd, 'probe.mjs')
+    writeFileSync(
+      probe,
+      `const cp = require('node:child_process')
+const calls = []
+for (const name of ['execFileSync', 'spawnSync', 'execSync', 'execFile', 'spawn', 'exec', 'fork']) {
+  cp[name] = (...args) => {
+    calls.push(name + ' ' + String(args[0]))
+    throw new Error('process spawned by logSync: ' + name)
+  }
+}
+for (const name of ['spawn', 'spawnSync']) {
+  Bun[name] = (...args) => {
+    calls.push('Bun.' + name)
+    throw new Error('process spawned by logSync: Bun.' + name)
+  }
+}
+const { logSync } = await import(${JSON.stringify(logSinkModule)})
+logSync({ kind: 'dispatch', event: 'dispatched', payload: {}, target_role: 'developer', model: 'sonnet', effect_id: 'cold-exit', prompt_hash: 'sha256:abc' })
+process.stdout.write(JSON.stringify({ calls }))
+process.exit(0)`
+    )
+    const r = spawnSyncBudgeted(
+      'bun',
+      [probe],
+      { cwd, encoding: 'utf8', env: { ...stripVinayaEnv(), HOME: cwd, VINAYA_TASK: '404' } },
+      20_000,
+      'logSync no-spawn probe'
+    )
+    expect(r.status).toBe(0)
+    expect(JSON.parse(r.stdout).calls).toEqual([])
+    const landed = (dir: string): string[] =>
+      readdirSync(dir, { recursive: true, encoding: 'utf8' })
+        .filter((f) => f.endsWith('.ndjson'))
+        .map((f) => readFileSync(join(dir, f), 'utf8'))
+    expect(existsSync(join(cwd, '.vinaya', 'outbox'))).toBe(false)
+    const [line] = landed(join(cwd, '.vinaya'))
+    expect(line).toContain('"effect_id":"cold-exit"')
+    const parsed = JSON.parse(line!.trim())
+    expect(parsed.meta.repo).toBeNull()
+    expect(parsed.meta.doctrine).toBe('unknown')
+    expect(parsed.subject.issue).toBe(404)
+  }, 30_000)
+
+  it('the unresolved destination never picks a server, and is never a folder in CI', () => {
+    expect(unresolvedLogDestination({ GITHUB_ACTIONS: 'true' }).kind).toBe('none')
+    // This checkout's own config declares a `logs.url` server: with the
+    // repository unknown, the queue a drain reads cannot be named, so the
+    // line goes to the default folder instead.
+    const local = unresolvedLogDestination({})
+    expect(local.kind).toBe('folder')
+    if (local.kind === 'folder') expect(local.folder.endsWith('logs')).toBe(true)
+  })
+})
+
+const GATE_EVENT = {
+  kind: 'gate' as const,
+  event: 'checked' as const,
+  check: 'fixture',
+  check_version: '1',
+  policy_version: null,
+  input_fingerprint: 'f',
+  outcome: 'pass' as const,
+  payload: {}
+}
+
+describe('logSync — the next drain delivers it once (O4)', () => {
+  const LOG_SINK_MODULE = join(import.meta.dir, '..', '..', 'src', 'lib', 'log-sink.ts')
+  const DRAIN_MODULE = join(import.meta.dir, '..', '..', 'src', 'lib', 'log-webhook-drain.ts')
+
+  function startServer(): { url: string; lines: Array<Record<string, any>>; stop: () => void } {
+    const lines: Array<Record<string, any>> = []
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        for (const l of (await req.text()).split('\n').filter(Boolean)) lines.push(JSON.parse(l))
+        return new Response('ok')
+      }
+    })
+    return { url: `http://127.0.0.1:${server.port}/ingest`, lines, stop: () => server.stop() }
+  }
+
+  async function runScript(cwd: string, home: string, name: string, body: string): Promise<string> {
+    const script = join(cwd, `${name}.ts`)
+    writeFileSync(script, body)
+    const r = await spawnBudgetedAsync(
+      ['bun', script],
+      { cwd, env: { ...stripVinayaEnv(), HOME: home } },
+      undefined,
+      name
+    )
+    expect(r.status).toBe(0)
+    return r.stdout
+  }
+
+  const sinkScript = (
+    url: string,
+    call: string
+  ): string => `import { createLogSink } from ${JSON.stringify(LOG_SINK_MODULE)}
+const sink = createLogSink({
+  env: () => ({ VINAYA_ROLE: 'developer', VINAYA_TASK: '404' }),
+  resolveLogDestination: () => ({ kind: 'server', url: ${JSON.stringify(url)} })
+})
+${call}`
+
+  it('a line written just before exit waits in the queue, is posted by the next drain with its own event id, and never again', async () => {
+    const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-logsync-drain-')))
+    const home = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-logsync-home-')))
+    spawnSync('git', ['init', '--quiet'], { cwd })
+    spawnSync('git', ['remote', 'add', 'origin', 'git@github.com:test-owner/test-repo.git'], { cwd })
+    const queue = join(home, '.vinaya', 'outbox', 'test-owner-test-repo', '404.ndjson')
+    const server = startServer()
+    try {
+      // Warmed up, then the queue is read straight after the call, with
+      // nothing awaited in between: the line is already there. The process
+      // then stays alive long enough that a drain, had logSync started one,
+      // would have posted — none may.
+      const stdout = await runScript(
+        cwd,
+        home,
+        'exit-now',
+        sinkScript(
+          server.url,
+          `import { readFileSync } from 'node:fs'
+sink.warmup()
+await new Promise((r) => setTimeout(r, 1500))
+sink.logSync({ kind: 'dispatch', event: 'dispatched', payload: {}, target_role: 'developer', model: 'sonnet', effect_id: 'at-exit', prompt_hash: 'sha256:abc' })
+process.stdout.write(readFileSync(${JSON.stringify(queue)}, 'utf8'))
+await new Promise((r) => setTimeout(r, 1500))
+process.exit(0)`
+        )
+      )
+      expect(stdout).toContain('"effect_id":"at-exit"')
+      expect(server.lines).toHaveLength(0)
+      const queued = readFileSync(queue, 'utf8').trim().split('\n')
+      expect(queued).toHaveLength(1)
+      const eventId = JSON.parse(queued[0]!).meta.event_id as string
+
+      // The next process's own event drains the queue: the exit line first,
+      // with the id it was written with, then the new one.
+      await runScript(
+        cwd,
+        home,
+        'next-event',
+        sinkScript(
+          server.url,
+          `sink.log({ kind: 'dispatch', event: 'dispatched', payload: {}, target_role: 'developer', model: 'sonnet', effect_id: 'later', prompt_hash: 'sha256:abc' })
+await sink.drain()`
+        )
+      )
+      expect(server.lines.map((l) => l.effect_id)).toEqual(['at-exit', 'later'])
+      expect(server.lines[0]?.meta.event_id).toBe(eventId)
+
+      // A further drain finds nothing left to post.
+      await runScript(
+        cwd,
+        home,
+        'drain-again',
+        `import { drainOutboxToWebhook } from ${JSON.stringify(DRAIN_MODULE)}
+await drainOutboxToWebhook(404, ${JSON.stringify(server.url)})`
+      )
+      expect(server.lines).toHaveLength(2)
+    } finally {
+      server.stop()
+    }
+  }, 60_000)
 })
