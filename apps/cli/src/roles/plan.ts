@@ -120,3 +120,60 @@ export async function resolveRoleDoctrineText(role: 'reviewer' | 'security'): Pr
   if (resolved === undefined) return null
   return extractShortVersionAndChecklist(resolved.contract.body)
 }
+
+/**
+ * Which FILE `vinaya doctrine --role <renderId>` serves, resolved through the
+ * SAME role plan the review loop uses (`resolveRoleDoctrineText` above, O3):
+ * a `default` role is served from `<doctrine-root>/roles/<role_id>.md`; an
+ * `overridden` or `additive` role from its config-declared contract file. The
+ * command reads whatever file this returns — so an override's own frontmatter
+ * (read-receipt token and all) and body reach `--print` unchanged, and an
+ * additive role is served instead of reported unknown (O1, O2).
+ *
+ * Returns the file path plus the servable role names (the plan's render ids,
+ * `actor: 'human'` roles excluded — `--role`'s output is handed to an agent
+ * tool as operating instructions, so `principal` must never resolve through it,
+ * the same structured exclusion `listRoleNames` applied before this resolver).
+ * `found: false` carries the same `validNames` so the command's "not a known
+ * role" refusal lists overrides and additives too. `available: false` mirrors
+ * `buildRolePlan`'s own no-doctrine refusal.
+ */
+export type RoleFileResolution =
+  | { available: false; reason: string }
+  | { available: true; found: false; validNames: string[] }
+  | { available: true; found: true; path: string; validNames: string[] }
+
+export async function resolveRoleFile(renderId: string): Promise<RoleFileResolution> {
+  const root = resolveDoctrineRoot()
+  if (root === null) return { available: false, reason: NO_DOCTRINE_REASON }
+
+  const configResult = loadConfigChecked()
+  const configFilePath = configResult.ok ? configPath() : configResult.path
+  const configDir = configFilePath ? dirname(configFilePath) : null
+  const configRoles = configResult.ok ? configResult.config?.roles : undefined
+
+  const plan = await buildRolePlan(configDir, configRoles)
+  if (!plan.available) return { available: false, reason: plan.reason }
+
+  const servable = plan.resolved.filter((entry) => entry.contract.actor !== 'human')
+  const validNames = servable.map((entry) => entry.renderId).sort()
+
+  const match = servable.find((entry) => entry.renderId === renderId)
+  if (match === undefined) return { available: true, found: false, validNames }
+
+  // A `default` role's file is the core `<root>/roles/<role_id>.md` — the exact
+  // path the command computed before this resolver existed (core doctrine
+  // guarantees the filename equals the `role_id`).
+  if (match.source === 'core') {
+    return { available: true, found: true, path: join(root, 'roles', `${match.renderId}.md`), validNames }
+  }
+
+  // An `overridden`/`additive` role is served from its config contract,
+  // resolved relative to the repo-local config's directory. `match.name` is
+  // that config's own key, and a config-sourced entry only ever reaches
+  // `resolved` when that directory and entry were present — the guard below is
+  // defensive for the type-checker, never a reachable branch.
+  const entry = configRoles?.[match.name]
+  if (configDir === null || entry === undefined) return { available: true, found: false, validNames }
+  return { available: true, found: true, path: join(configDir, entry.contract), validNames }
+}
