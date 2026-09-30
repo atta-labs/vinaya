@@ -16,11 +16,11 @@
  */
 
 import { describe, it, expect } from 'bun:test'
-import { execFileSync } from 'node:child_process'
 import { mkdtempSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, delimiter } from 'node:path'
 import { buildCodexExecpolicyRules } from '../../src/lib/dispatch.js'
+import { spawnSyncBudgeted, stripVinayaEnv, PROCESS_FIXTURE_BUDGET_MS } from './process-fixture.js'
 
 /** The `codex` binary on PATH, or `null` when the host carries none. */
 function findCodex(): string | null {
@@ -33,14 +33,21 @@ function findCodex(): string | null {
 
 const CODEX = findCodex()
 
-/** The execpolicy decision Codex reports for `command`, or `'allow'` when no rule forbids it. */
+/**
+ * The execpolicy decision Codex reports for `command`, or `'allow'` when no
+ * rule forbids it. Routes through the shared `spawnSyncBudgeted` helper (its
+ * SIGKILL budget) with a `VINAYA_*`-stripped environment, so this real-process
+ * call carries the same two-halves discipline `process-fixture.ts` codifies.
+ */
 function codexDecision(codex: string, rulesPath: string, command: string[]): string {
-  const out = execFileSync(codex, ['execpolicy', 'check', '--rules', rulesPath, ...command], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    timeout: 20_000
-  })
-  return (JSON.parse(out) as { decision?: string }).decision ?? 'allow'
+  const r = spawnSyncBudgeted(
+    codex,
+    ['execpolicy', 'check', '--rules', rulesPath, ...command],
+    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: stripVinayaEnv() },
+    PROCESS_FIXTURE_BUDGET_MS,
+    'codex execpolicy check'
+  )
+  return (JSON.parse(r.stdout) as { decision?: string }).decision ?? 'allow'
 }
 
 const describeLive = CODEX ? describe : describe.skip
