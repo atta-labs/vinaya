@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'bun:test'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture.js'
@@ -1043,11 +1052,12 @@ describe('log-sink — the commit a gate event was checked at', () => {
     outcome: 'pass' as const,
     payload: {}
   }
-  const subjectsOf = (dir: string): Array<Record<string, unknown>> =>
-    readFileSync(join(dir, 'outbox', 'atta-labs-vinaya', '404.ndjson'), 'utf8')
-      .trim()
-      .split('\n')
+  const subjectsOf = (dir: string): Array<Record<string, unknown>> => {
+    const folder = join(dir, 'outbox', 'atta-labs-vinaya')
+    return readdirSync(folder)
+      .flatMap((name) => readFileSync(join(folder, name), 'utf8').trim().split('\n'))
       .map((l) => JSON.parse(l).subject)
+  }
 
   it("records the checkout's HEAD as subject.sha", async () => {
     const { dir, deps } = testDeps()
