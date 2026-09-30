@@ -15,9 +15,10 @@
 
 import { afterEach, describe, expect, it } from 'bun:test'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   claimDepsForOneRead,
   confidenceFromSummaryComments,
@@ -2510,5 +2511,107 @@ describe('resumeCommandFor', () => {
     expect(resumeCommandFor(682, 'codex', 'gpt-5.6-terra')).toBe(
       'vinaya dev-review-loop --resume 682 --agent codex --model gpt-5.6-terra'
     )
+  })
+})
+
+/**
+ * The backlog half of `gatherTaskStatusList` — the forge reads it makes are
+ * `gh` subprocesses, so each case runs the reader in a child process against a
+ * `gh` stub on `PATH` and a throwaway home, and counts what the stub was asked.
+ *
+ * Issue 701 is a planned backlog task (frozen brief, no outbox directory), 702
+ * an Issue whose comments only mention a brief, 703 an ordinary Issue no search
+ * finds — its comments must never be read — and 704 a backlog task a run has
+ * already written an outbox directory for.
+ */
+describe('gatherTaskStatusList — planned backlog tasks', () => {
+  const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
+  const frozen = {
+    body: '<!-- aeg:brief:v1 -->\nBrief hash: deadbeef\n\nA brief body.',
+    author: { login: 'daniboomerang' }
+  }
+  const chatter = { body: 'quotes aeg:brief in passing', author: { login: 'daniboomerang' } }
+
+  function run(selector: string): { rows: Array<{ issue: number; state: { kind: string } }>; calls: string[] } {
+    const home = tempDir()
+    const bin = join(home, 'bin')
+    mkdirSync(bin, { recursive: true })
+    const calls = join(home, 'gh-calls')
+    const issues = [701, 702, 703, 704].map((number) => ({ number, title: `Backlog ${number}`, labels: [] }))
+    const script = `#!/bin/sh
+echo "$*" >> "${calls}"
+if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
+  case "$*" in
+    *--search*) echo '[{"number":701},{"number":702}]' ;;
+    *) cat "${join(home, 'issues.json')}" ;;
+  esac
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
+  case "$3" in
+    701|704) cat "${join(home, 'frozen.json')}" ;;
+    702) cat "${join(home, 'chatter.json')}" ;;
+    *) echo "gh stub: issue view $3 must never be read" >&2; exit 1 ;;
+  esac
+  exit 0
+fi
+if [ "$1" = "pr" ]; then echo '[]'; exit 0; fi
+echo "gh stub: unhandled: $*" >&2
+exit 1
+`
+    writeFileSync(join(home, 'issues.json'), JSON.stringify(issues))
+    writeFileSync(join(home, 'frozen.json'), JSON.stringify({ comments: [frozen] }))
+    writeFileSync(join(home, 'chatter.json'), JSON.stringify({ comments: [chatter] }))
+    writeFileSync(join(bin, 'gh'), script)
+    chmodSync(join(bin, 'gh'), 0o755)
+    // 704 carries the outbox directory a dispatched run leaves behind.
+    mkdirSync(join(home, '.vinaya', 'runtime', 'acme-widget', 'tasks-execution', '704'), { recursive: true })
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      HOME: home,
+      PATH: `${bin}:${process.env.PATH ?? ''}`,
+      AEG_REPO: 'acme/widget'
+    }
+    for (const key of Object.keys(env)) if (key.startsWith('VINAYA_')) delete env[key]
+    delete env.GITHUB_ACTIONS
+    const child = spawnSync(
+      'bun',
+      [
+        '-e',
+        `import { gatherTaskStatusList } from './src/lib/task-status.ts'
+const view = gatherTaskStatusList(${selector}, 'skip')
+console.log('ROWS:' + JSON.stringify(view.rows.map((r) => ({ issue: r.issue, state: r.state }))))`
+      ],
+      { cwd: CLI_ROOT, env, encoding: 'utf8', timeout: 20_000 }
+    )
+    const line = String(child.stdout)
+      .split('\n')
+      .find((l) => l.startsWith('ROWS:'))
+    if (!line) throw new Error(`reader printed no rows\n${child.stdout}\n${child.stderr}`)
+    return {
+      rows: JSON.parse(line.slice('ROWS:'.length)),
+      calls: readFileSync(calls, 'utf8').split('\n').filter(Boolean)
+    }
+  }
+
+  it('reads a named frozen, never-started backlog Issue as not started', () => {
+    const { rows, calls } = run('{ issue: 701 }')
+    expect(rows).toEqual([{ issue: 701, state: { kind: 'not_started' } }])
+    expect(calls.filter((c) => c.includes('--search'))).toEqual([])
+  })
+
+  it('leaves out a named backlog Issue with no frozen brief', () => {
+    expect(run('{ issue: 702 }').rows).toEqual([])
+  })
+
+  it('lists every frozen, never-started backlog Issue from one search, and leaves out the rest', () => {
+    const { rows, calls } = run('null')
+    expect(rows.map((r) => [r.issue, r.state.kind]).sort()).toEqual([
+      [701, 'not_started'],
+      [704, 'no_driver']
+    ])
+    expect(calls.filter((c) => c.includes('--search'))).toHaveLength(1)
+    // 703 is no search hit, so its comments are never read.
+    expect(calls.some((c) => c.startsWith('issue view 703'))).toBe(false)
   })
 })

@@ -180,6 +180,34 @@ function hasOutboxDir(root: string, task: number): boolean {
   }
 }
 
+/**
+ * The open Issues whose comments mention a frozen brief's marker — ONE forge
+ * query however many there are, so a listing finds the planned backlog tasks
+ * without reading the comments of every open Issue. A candidate list, not a
+ * claim: the phrase can also sit in an ordinary comment, so a row is shown only
+ * once `hasFrozenBrief` has read that Issue's own brief. A failed query finds
+ * none — the listing then shows what the outbox accounts for, as it did before.
+ */
+function listBriefCandidateIssues(): Set<number> {
+  try {
+    const raw = sh('gh', [
+      'issue',
+      'list',
+      '--state',
+      'open',
+      '--search',
+      '"aeg:brief" in:comments',
+      '--json',
+      'number',
+      '--limit',
+      String(OPEN_ISSUE_LIST_LIMIT)
+    ])
+    return new Set((JSON.parse(raw) as Array<{ number: number }>).map((issue) => issue.number))
+  } catch {
+    return new Set()
+  }
+}
+
 type RawComment = { body: string; author?: { login?: string } | null }
 
 function fetchIssueComments(issue: number): { body: string; author: string | null }[] {
@@ -1640,6 +1668,7 @@ export function gatherTaskStatusList(
   const readPrFacts = prFacts === 'read' ? prFactsReaderFor(allowlist) : noPrFactsRead
   const rows: TaskStatusRow[] = []
   const briefFrozenIssues = new Set<number>()
+  let briefCandidates: Set<number> | null = null
   for (const ref of listOpenTaskIssues()) {
     // A named read builds ONLY the row it named — before any per-row read is
     // made, so the pull-request budget is spent on that row rather than on
@@ -1650,12 +1679,30 @@ export function gatherTaskStatusList(
     // also drops the forge cost of a named read from one Issue read per open task
     // to one.
     if (selector !== null && !taskStatusIdentityMatches(selector, rowIdentityFor(ref))) continue
-    // A backlog ref only ever becomes a candidate once the loop has
-    // already written it an outbox directory — see `hasOutboxDir`'s own doc
-    // comment. A tranche-labeled ref carries no such gate: O4 lists every open
+    // A backlog ref is a candidate when the loop has already written it an
+    // outbox directory (`hasOutboxDir`), when it was NAMED (the one read the
+    // row costs anyway), or — in a full listing — when the one brief query
+    // found it. A tranche-labeled ref carries no such gate: O4 lists every open
     // tranche task Issue, a not-yet-frozen (planned) one as `not started`.
-    if (ref.kind === 'backlog' && !hasOutboxDir(root, ref.issue)) continue
-    const built = buildRow(ref, allowlist, history, readComments, claimDeps, readPrFacts)
+    const unstartedBacklog = ref.kind === 'backlog' && !hasOutboxDir(root, ref.issue)
+    if (unstartedBacklog && selector === null) {
+      briefCandidates ??= listBriefCandidateIssues()
+      if (!briefCandidates.has(ref.issue)) continue
+    }
+    let built: ReturnType<typeof buildRow>
+    try {
+      built = buildRow(ref, allowlist, history, readComments, claimDeps, readPrFacts)
+    } catch (error) {
+      // A search hit is only a candidate: one whose own read fails is not a
+      // task this listing can show, and must not take the other rows with it.
+      if (unstartedBacklog) continue
+      throw error
+    }
+    // A backlog Issue with no frozen brief and no run is not a task: left out.
+    if (unstartedBacklog && !built.briefFrozen) continue
+    // Frozen but with no outbox directory and no start claim: nothing has run,
+    // which is `not started`, not the `no driver` a vanished run reads as.
+    if (unstartedBacklog && built.row.state.kind === 'no_driver') built.row.state = { kind: 'not_started' }
     rows.push(built.row)
     if (built.briefFrozen) briefFrozenIssues.add(built.row.issue)
   }
