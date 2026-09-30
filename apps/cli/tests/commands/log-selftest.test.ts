@@ -42,6 +42,10 @@ function deps(overrides: Partial<LogSelftestDeps> = {}): { deps: LogSelftestDeps
     }),
     readReadHeaders: () => ({ authorization: 'Bearer ${VINAYA_LOG_READ_TOKEN}' }),
     resolveHeaders: () => ({ authorization: `Bearer ${SECRET}` }),
+    // The macOS-Keychain fallback is a no-op by default here (Linux CI has no
+    // Keychain); the O2 case below overrides it to prove a token held only in
+    // the Keychain is counted as present.
+    readKeychain: () => null,
     readLastSeq: async () => ({ kind: 'accepted', status: 200, lastSeq: 5 }),
     post: async () => ({ kind: 'accepted', status: 200 }),
     read: async () => pageWithEvent(),
@@ -138,6 +142,32 @@ describe('vinaya log selftest — each FAIL names the one reason that stopped it
       expect(result.reason).toContain('no ingest credential')
       expect(result.reason).toContain('VINAYA_LOG_TOKEN')
       expect(result.reason).not.toContain(SECRET)
+    }
+  })
+
+  it('O2: the ingest credential check passes when the token is absent from the environment but held in the Keychain', async () => {
+    // The exact shape of the Principal's macOS box: `vinaya log set-credential
+    // VINAYA_LOG_TOKEN` stored the ingest token in the login Keychain, and the
+    // variable is unset in the environment. Before #880 this failed the check;
+    // now the fallback reader supplies it, so the self-test proceeds to a real
+    // send and round-trips to PASS.
+    const { deps: d } = deps({
+      env: { VINAYA_LOG_READ_TOKEN: SECRET }, // VINAYA_LOG_TOKEN unset in the environment
+      readKeychain: (name) => (name === 'VINAYA_LOG_TOKEN' ? SECRET : null)
+    })
+    expect(await runLogSelftest(d)).toEqual({ pass: true })
+  })
+
+  it('O2: still FAILs, naming the variable, when the token is in neither the environment nor the Keychain', async () => {
+    const { deps: d } = deps({
+      env: { VINAYA_LOG_READ_TOKEN: SECRET }, // VINAYA_LOG_TOKEN unset
+      readKeychain: () => null // and the Keychain holds nothing either
+    })
+    const result = await runLogSelftest(d)
+    expect(result.pass).toBe(false)
+    if (!result.pass) {
+      expect(result.reason).toContain('no ingest credential')
+      expect(result.reason).toContain('VINAYA_LOG_TOKEN')
     }
   })
 
