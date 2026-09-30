@@ -26,7 +26,7 @@ This seam sits between the seat that decides **what is true and what is allowed*
 
 **What it does not carry** — a duration the Operator authored: it promises, deadlines and estimates none. A typical time a read itself returned is not one of those, and crosses labelled as history with its sample count.
 
-**How it physically runs** — downward, the carrier is the Operator's tool grant: the six task tools plus the status-follow read, and nothing that could rule, approve, or merge. Upward, the carrier is the persisted escalation packet, whose `requestedAuthority` field names the Principal as the seat that must decide. Neither direction is a status write — the run's branch, pull request, and pause record are the status, read rather than restated.
+**How it physically runs** — downward, the carrier is the Operator's tool grant: the task tools the server serves, and nothing that could rule, approve, or merge. Upward, the carrier is the persisted escalation packet, whose `requestedAuthority` field names the Principal as the seat that must decide. Neither direction is a status write — the run's branch, pull request, and pause record are the status, read rather than restated.
 
 ---
 
@@ -48,7 +48,7 @@ The Operator seat was, for a period, a set of tools with no role text: any sessi
 
 Two carriers, one per direction:
 
-1. **Downward — the tool grant.** The Operator holds `task_start`, `task_status`, `task_escalation_read`, `task_pr_read`, `task_resume`, `task_cancel`, and the status-follow read. The grant is the delegation: it is exactly the process authority the Principal hands down, and it contains no tool that could rule, approve, publish a review, merge, or edit an Issue. The router refuses any call outside it, so the delegation cannot silently widen.
+1. **Downward — the tool grant.** The Operator holds `task_start`, `task_status`, `task_escalation_read`, `task_pr_read`, `task_resume`, and `task_cancel` — the task tools the server serves. The grant is the delegation: it is exactly the process authority the Principal hands down, and it contains no tool that could rule, approve, publish a review, merge, or edit an Issue. The router refuses any call outside it, so the delegation cannot silently widen.
 2. **Upward — the escalation packet.** A paused run's persisted packet carries a `requestedAuthority` field. When it names the Principal, the Operator presents that packet — reason, inputs, held evidence, attempted recovery, and permitted next actions, verbatim — and waits for the Principal's ruling, approval, or merge.
 
 ---
@@ -58,7 +58,7 @@ Two carriers, one per direction:
 | The Principal may ask the Operator to… | The Operator may ask the Principal to… |
 |---|---|
 | Run a specific already-planned, dispatchable task (`task_start`, or the `task run` composition) | Rule on an escalation the packet addresses to the Principal |
-| Read a task's grounded status, or follow it (`task_status`, status-follow read) | Approve or merge — the ratification acts the Operator structurally cannot perform |
+| Read a task's grounded status (`task_status`) | Approve or merge — the ratification acts the Operator structurally cannot perform |
 | Read why that task's own pull request is red — its check results and its principal-authored review record (`task_pr_read`) | Decide what a red check or a held verdict means for the task — the Operator names what it read, and never rules on it |
 | Present a paused run's escalation packet (`task_escalation_read`) | Resolve a Principal-authority pause (round cap, repeated finding, repeated failure, time budget, confidence, reappearance) with a decision, not a retry |
 | Request continuation or cancellation of a run (`task_resume`, `task_cancel`) | Address a scope or criteria change to the Planner — the Principal redirects it there, as the Operator cannot edit the Issue |

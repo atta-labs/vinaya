@@ -1,28 +1,20 @@
 import { describe, expect, it } from 'bun:test'
 import { join } from 'node:path'
-import { isOperatorGranted, OPERATOR_STATUS_FOLLOW, OPERATOR_TOOL_GRANT, TASK_TOOL_NAMES } from '@attalabs/aeg-core'
+import { isOperatorGranted, OPERATOR_TOOL_GRANT, TASK_TOOL_CATALOG, TASK_TOOL_NAMES } from '@attalabs/aeg-core'
 import { discoverRoleNames, renderAgentSkill, roleAllowedTools } from '../../src/lib/agents-skills-emitter.js'
 import { refuseUngrantedTool } from '../../src/lib/task-tools/router.js'
+import { createTaskToolsMcpServer } from '../../src/lib/task-tools/server.js'
 
 /**
- * O2 — the Operator's grant is one fact with three representations that must
- * never drift: the role doc's `allowed-tools` frontmatter, the machine-
- * readable `OPERATOR_TOOL_GRANT`, and the generated skill's `allowed-tools`.
- * The router refuses any tool outside that one grant.
+ * The Operator's grant is one fact with four representations that must never
+ * drift: the role doc's `allowed-tools` frontmatter, the machine-readable
+ * `OPERATOR_TOOL_GRANT`, the generated skill's `allowed-tools`, and the tool
+ * list the task-tools server serves. The router refuses any tool outside that
+ * one grant.
  */
 
 // apps/cli/tests/lib -> repo root is four levels up.
 const REAL_DOCTRINE_ROOT = join(import.meta.dir, '..', '..', '..', '..', 'aeg-root')
-
-const EXPECTED_GRANT = [
-  'task_start',
-  'task_status',
-  'task_escalation_read',
-  'task_pr_read',
-  'task_resume',
-  'task_cancel',
-  'task_status_follow'
-]
 
 // Tools an Operator must NEVER be able to reach — the seat's whole point is
 // that holding the run button is not holding content or ratification
@@ -37,16 +29,14 @@ const UNGRANTED = [
   'Write',
   'gh',
   'task_plan',
+  'task_status_follow', // a tool the server never served is not granted
   'task_start ' // a trailing-space near-miss is still not the granted name
 ]
 
-describe('OPERATOR_TOOL_GRANT — the six task tools plus status follow, and nothing else', () => {
-  it('is exactly the six catalog tools plus the status-follow read', () => {
-    expect([...OPERATOR_TOOL_GRANT] as string[]).toEqual(EXPECTED_GRANT)
-    expect(OPERATOR_TOOL_GRANT).toContain(OPERATOR_STATUS_FOLLOW)
-    for (const name of TASK_TOOL_NAMES) expect(OPERATOR_TOOL_GRANT).toContain(name)
-    // Seven grants: six typed tools + one follow read. No more.
-    expect(OPERATOR_TOOL_GRANT.length as number).toBe(TASK_TOOL_NAMES.length + 1)
+describe('OPERATOR_TOOL_GRANT — the catalog task tools, and nothing else', () => {
+  it('is exactly the catalog tool names', () => {
+    expect([...OPERATOR_TOOL_GRANT]).toEqual([...TASK_TOOL_NAMES])
+    expect(OPERATOR_TOOL_GRANT.length).toBe(TASK_TOOL_CATALOG.length)
   })
 
   it('isOperatorGranted admits every granted tool and refuses everything else', () => {
@@ -78,7 +68,7 @@ describe('refuseUngrantedTool — the router refuses any tool outside the grant 
   })
 })
 
-describe('the grant has one source of truth across all three surfaces (O2)', () => {
+describe('the grant has one source of truth across the doc, the skill, the catalog and the server (O1, O3)', () => {
   it('the operator role doc discovers as a real, agent role', () => {
     const roles = discoverRoleNames(REAL_DOCTRINE_ROOT)
     expect(roles).toContain('operator')
@@ -90,8 +80,17 @@ describe('the grant has one source of truth across all three surfaces (O2)', () 
 
   it('the generated skill carries the same allowed-tools grant', () => {
     const skill = renderAgentSkill('operator', null, roleAllowedTools(REAL_DOCTRINE_ROOT, 'operator'))
-    expect(skill).toContain(`allowed-tools: ${EXPECTED_GRANT.join(', ')}`)
+    expect(skill).toContain(`allowed-tools: ${[...TASK_TOOL_NAMES].join(', ')}`)
     expect(skill).toContain('name: vinaya-operator')
+  })
+
+  it("the task-tools server's tools/list serves exactly the granted tools", async () => {
+    const server = createTaskToolsMcpServer({ serverVersion: '0.0.0-test' })
+    const line = await server.handleLine(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }))
+    const served = (JSON.parse(line ?? '{}').result?.tools ?? []).map((t: { name: string }) => t.name)
+    expect([...served].sort()).toEqual([...OPERATOR_TOOL_GRANT].sort())
+    expect([...served].sort()).toEqual([...roleAllowedTools(REAL_DOCTRINE_ROOT, 'operator')].sort())
+    for (const name of served) expect(refuseUngrantedTool(name)).toBeNull()
   })
 
   it('a role with no allowed-tools frontmatter renders the unchanged pointer (no grant line)', () => {
