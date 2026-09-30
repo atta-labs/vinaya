@@ -569,13 +569,22 @@ export const SECRET_SCAN_CHECK = 'atta-labs/secret-scan'
 
 /**
  * Whether a `SECRETS:` line that opens with "none found" cites the required
- * secret-scan check's result. The loop's security verdict and `vinaya review
- * post` both apply this one rule: a clean claim is backed by that check's
- * result, cited by name — never by a scanner run or its pasted output.
+ * secret-scan check's PASSING result. The loop's security verdict and `vinaya
+ * review post` both apply this one rule: a clean claim is backed by that
+ * check's result, cited by name with a passing conclusion — never by a
+ * scanner run or its pasted output. A line naming the check beside a failing,
+ * missing, skipped or negated conclusion does not back the claim.
  */
 export function noneFoundClaimCitesScanCheck(claim: string, evidence: string | null): boolean {
   if (!opensNoneFoundClaim(claim)) return true
-  return `${claim}\n${evidence ?? ''}`.includes(SECRET_SCAN_CHECK)
+  return `${claim}\n${evidence ?? ''}`
+    .split('\n')
+    .some(
+      (line) =>
+        line.includes(SECRET_SCAN_CHECK) &&
+        /\b(pass|passed|passing|success|successful)\b/i.test(line) &&
+        !/\b(fail|failed|failing|failure|missing|skipped|pending|cancelled|not|never|no)\b/i.test(line)
+    )
 }
 
 /**
@@ -2048,8 +2057,8 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
   }
   if (opensNoneFoundClaim(secrets) && !noneFoundClaimCitesScanCheck(secrets, secretsEvidence)) {
     refuseCmd(
-      `\`--secrets-evidence-file\` does not name the \`${SECRET_SCAN_CHECK}\` check — security.md: "SECRETS: none found" is backed by that required check's result, cited by name.`,
-      `Put the \`${SECRET_SCAN_CHECK}\` check's name and conclusion on the judged head in the evidence file, then re-run.`
+      `\`--secrets-evidence-file\` does not show a passing \`${SECRET_SCAN_CHECK}\` check — security.md: "SECRETS: none found" is backed by that required check's passing result, cited by name.`,
+      `Put the \`${SECRET_SCAN_CHECK}\` check's name and its passing conclusion on the judged head in the evidence file, then re-run.`
     )
   }
   const principalAllowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())

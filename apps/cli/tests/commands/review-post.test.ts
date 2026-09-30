@@ -2470,3 +2470,18 @@ describe('opensNoneFoundClaim — a trailed clean claim is held to the same evid
     expect(noneFoundClaimCitesScanCheck('none found — no leaks', null)).toBe(false)
   })
 })
+
+describe('noneFoundClaimCitesScanCheck — the cited check must have passed', () => {
+  it('refuses a clean claim naming the check beside a failing, missing or negated conclusion', () => {
+    expect(noneFoundClaimCitesScanCheck('none found — atta-labs/secret-scan failed', null)).toBe(false)
+    expect(noneFoundClaimCitesScanCheck('none found — atta-labs/secret-scan missing from the checks', null)).toBe(false)
+    expect(noneFoundClaimCitesScanCheck('none found — did not run atta-labs/secret-scan passed', null)).toBe(false)
+    expect(noneFoundClaimCitesScanCheck('none found', 'atta-labs/secret-scan\tfail\t5s')).toBe(false)
+    expect(noneFoundClaimCitesScanCheck('none found', 'atta-labs/secret-scan\tpending')).toBe(false)
+  })
+
+  it('accepts the check named with a passing conclusion, as `gh pr checks` prints it', () => {
+    expect(noneFoundClaimCitesScanCheck('none found', 'atta-labs/secret-scan\tpass\t5s')).toBe(true)
+    expect(noneFoundClaimCitesScanCheck('none found — atta-labs/secret-scan passed', null)).toBe(true)
+  })
+})

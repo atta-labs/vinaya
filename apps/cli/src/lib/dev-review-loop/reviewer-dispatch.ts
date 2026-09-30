@@ -906,7 +906,7 @@ export function buildVerdictFromReport(
       role,
       'report.txt',
       sessionId,
-      new Error(`a \`SECRETS: none found\` line must cite the \`${SECRET_SCAN_CHECK}\` check's result by name`),
+      new Error(`a \`SECRETS: none found\` line must cite a passing \`${SECRET_SCAN_CHECK}\` check result by name`),
       handle.effectId ?? null,
       handle.durationMs
     )
