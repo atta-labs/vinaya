@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
+  assembleDeveloperDoctrine,
+  DEVELOPER_CHECKLIST_HEADINGS,
   developerBranchFor,
+  extractDeveloperSection,
   launchNeverSpawned,
   reconcileLaunch,
-  type ReconcileLaunchDeps
+  type ReconcileLaunchDeps,
+  renderDeveloperDoctrineBlock
 } from '../../../src/lib/dev-review-loop/developer-dispatch'
 import type { LaunchRecord, ParsedLaunch } from '../../../src/lib/dispatch'
 
@@ -159,5 +163,102 @@ describe('reconcileLaunch — a launch refused before any process started (O1/O2
     }
     const out = reconcileLaunch(parsed, { requireContinuity: true }, noProcess)
     expect(out.kind).toBe('resume')
+  })
+})
+
+// --- the developer doctrine prepended to a fresh dispatch (role-reach-v1/2) ---
+
+// A short version followed by the two checklist sections and an unrelated
+// third — the reference-document shape `resolveDeveloperDoctrineText` reads for
+// the core role. The trailing `---` rule closes the short version exactly as
+// the real developer role file does.
+const DEV_SHORT = 'THE SHORT VERSION.\n\nYou execute one brief on one branch.\n\n---'
+const REFERENCE_BODY = [
+  '## Stop conditions',
+  '',
+  'STOP when a pre-flight check fails.',
+  '- a `depends-on` PR is not merged',
+  '',
+  '## What the Developer does NOT do',
+  '',
+  'Author own briefs.',
+  '',
+  '## Verification before reporting done',
+  '',
+  'Run typecheck, lint, tests before opening the PR.',
+  '',
+  '## Verification — the phase between review and merge',
+  '',
+  'Runs the Test Plan against a booted app.'
+].join('\n')
+
+describe('extractDeveloperSection', () => {
+  it('returns a `## <heading>` section body up to the next `## ` heading, trimmed', () => {
+    expect(extractDeveloperSection(REFERENCE_BODY, 'Stop conditions')).toBe(
+      'STOP when a pre-flight check fails.\n- a `depends-on` PR is not merged'
+    )
+    // Bounded by the NEXT `## ` — never bleeds into `## Verification — the
+    // phase between review and merge`, which follows it.
+    expect(extractDeveloperSection(REFERENCE_BODY, 'Verification before reporting done')).toBe(
+      'Run typecheck, lint, tests before opening the PR.'
+    )
+  })
+
+  it('returns an empty string when the heading is absent', () => {
+    expect(extractDeveloperSection(REFERENCE_BODY, 'What you check')).toBe('')
+  })
+})
+
+describe('assembleDeveloperDoctrine', () => {
+  it('is the short version (trailing rule stripped) plus both checklist sections, in doctrine order', () => {
+    const out = assembleDeveloperDoctrine(DEV_SHORT, REFERENCE_BODY)
+    expect(out).toBe(
+      [
+        'THE SHORT VERSION.\n\nYou execute one brief on one branch.',
+        '## Stop conditions\n\nSTOP when a pre-flight check fails.\n- a `depends-on` PR is not merged',
+        '## Verification before reporting done\n\nRun typecheck, lint, tests before opening the PR.'
+      ].join('\n\n')
+    )
+    // The trailing `---` that closes the short version never survives into the block.
+    expect(out).not.toContain('---')
+    // The two headings appear in the ruled order — Stop conditions before Verification.
+    const [a, b] = DEVELOPER_CHECKLIST_HEADINGS
+    expect((out ?? '').indexOf(`## ${a}`)).toBeLessThan((out ?? '').indexOf(`## ${b}`))
+  })
+
+  it('drops a section absent from the source rather than fabricating it — the reviewer graceful-degrade precedent', () => {
+    const onlyStop = '## Stop conditions\n\nSTOP when a pre-flight check fails.'
+    expect(assembleDeveloperDoctrine(DEV_SHORT, onlyStop)).toBe(
+      'THE SHORT VERSION.\n\nYou execute one brief on one branch.\n\n## Stop conditions\n\nSTOP when a pre-flight check fails.'
+    )
+  })
+
+  it('returns the short version alone when the source carries neither section', () => {
+    expect(assembleDeveloperDoctrine(DEV_SHORT, 'no headings here')).toBe(
+      'THE SHORT VERSION.\n\nYou execute one brief on one branch.'
+    )
+  })
+
+  it('reads both sections from the same body — the adopter-override shape, where they live inline', () => {
+    const overrideBody = `${DEV_SHORT}\n\n${REFERENCE_BODY}`
+    const out = assembleDeveloperDoctrine(DEV_SHORT, overrideBody)
+    expect(out).toContain('## Stop conditions')
+    expect(out).toContain('## Verification before reporting done')
+  })
+
+  it('returns null when there is no short version at all (an unresolved role)', () => {
+    expect(assembleDeveloperDoctrine(null, REFERENCE_BODY)).toBeNull()
+    expect(assembleDeveloperDoctrine('   \n  ', REFERENCE_BODY)).toBeNull()
+  })
+})
+
+describe('renderDeveloperDoctrineBlock', () => {
+  it('labels the block and names the doctrine COMMAND, never a repository path an adopter lacks (O2)', () => {
+    const block = renderDeveloperDoctrineBlock(assembleDeveloperDoctrine(DEV_SHORT, REFERENCE_BODY) ?? '')
+    expect(block).toContain('YOUR ROLE DOCTRINE')
+    expect(block).toContain('THE SHORT VERSION.')
+    expect(block).toContain('## Stop conditions')
+    expect(block).toContain('bun apps/cli/src/index.ts doctrine --role developer --print')
+    expect(block).not.toContain('aeg-root/roles/developer.md')
   })
 })

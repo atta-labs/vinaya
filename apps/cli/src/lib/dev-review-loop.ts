@@ -133,6 +133,8 @@ import {
   findOpenPrForBranch,
   LaunchContinuityLost,
   recoverDeveloperLaunch,
+  renderDeveloperDoctrineBlock,
+  resolveDeveloperDoctrineText,
   resolveIssueObjectives,
   reviewPolicy,
   taskFromPrBody,
@@ -400,6 +402,18 @@ export type LoopDeps = {
    * a fixture that does not stub it runs with no doctrine injected.
    */
   resolveReviewerDoctrine?: (role: 'reviewer' | 'security') => Promise<string | null>
+  /**
+   * O1: the developer role's published doctrine — its short
+   * version plus its `## Stop conditions` and `## Verification before reporting
+   * done` sections (the developer's checklist, Principal ruling) — resolved
+   * through the SAME override-aware role plan `vinaya check --plan` renders
+   * (`resolveDeveloperDoctrineText`). A fresh (non-resumed) developer session is
+   * prepended this OUTSIDE the frozen brief, so the brief text and its
+   * verdict-binding hash are untouched (O3). `null` when no doctrine can be
+   * resolved — the dispatch then carries the brief alone, the pre-task shape.
+   * Optional: a fixture that does not stub it runs with no doctrine prepended.
+   */
+  resolveDeveloperDoctrine?: () => Promise<string | null>
   /** The task's round journal, rebuilt from the pull request's principal-authored forge markers (developer round markers, the published summary) — never a log event, a flushed log comment or the telemetry outbox. */
   fetchLoopHistory: (prNumber: number | null) => ReconstructedJournal
   sleep: (ms: number) => Promise<void>
@@ -899,6 +913,7 @@ function defaultDeps(): LoopDeps {
     gitUnifiedDiff: defaultGitUnifiedDiff,
     resolveTaskSurface: defaultResolveTaskSurface,
     resolveReviewerDoctrine: resolveRoleDoctrineText,
+    resolveDeveloperDoctrine: resolveDeveloperDoctrineText,
     fetchLoopHistory,
     sleep: defaultSleep,
     now: () => Date.now(),
@@ -2161,21 +2176,21 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
 
     const PUSH_AND_OPEN_PROMPT = [
       'Your turn ended without a push: this branch has no head on the remote yet.',
-      'The push and the pull-request open are foreground steps per aeg-root/roles/developer.md — run them now, in the foreground, and wait for each to finish:',
+      'The push and the pull-request open are foreground steps per your role doctrine (`bun apps/cli/src/index.ts doctrine --role developer --print`) — run them now, in the foreground, and wait for each to finish:',
       '`git push` (from this task’s worktree), then',
       '`bun apps/cli/src/index.ts pr create --body-file <path> --title "<title>"`.'
     ].join('\n\n')
 
     const OPEN_PR_PROMPT = [
       'This branch already exists with no open pull request for it.',
-      'Open the pull request through the validated path per aeg-root/roles/developer.md:',
+      'Open the pull request through the validated path per your role doctrine (`bun apps/cli/src/index.ts doctrine --role developer --print`):',
       '`bun apps/cli/src/index.ts pr create --body-file <path> --title "<title>"`.'
     ].join('\n\n')
 
     /** Mid-round unpushed-work resume — distinct from `PUSH_AND_OPEN_PROMPT` (round-1 entry, no head at all yet): this branch already has commits on the remote, the developer's LATEST turn just didn't add a new one. */
     const COMMIT_AND_PUSH_PROMPT = [
       'Your last turn ended without pushing: this worktree has uncommitted changes and/or local commits ahead of the remote, but the branch has no new head.',
-      'Committing and pushing are foreground steps per aeg-root/roles/developer.md — run them now, in the foreground, and wait for each to finish:',
+      'Committing and pushing are foreground steps per your role doctrine (`bun apps/cli/src/index.ts doctrine --role developer --print`) — run them now, in the foreground, and wait for each to finish:',
       '`git add -A && git commit -m "<message>"` (only if there are uncommitted changes), then',
       '`git push` from this task’s worktree.'
     ].join('\n\n')
@@ -2288,7 +2303,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         files.length > 0 ? files.map((f) => `- ${f}`).join('\n') : '(no specific file could be determined)'
       return [
         'This branch is behind the base in a way that conflicts — it cannot merge as-is.',
-        'Merge or rebase the base and resolve before pushing again, per aeg-root/roles/developer.md: run `git merge origin/main` (or `git rebase origin/main`) from this worktree, resolve the conflicting file(s) below, then `git push` once resolved. Conflicting file(s):',
+        'Merge or rebase the base and resolve before pushing again, per your role doctrine (`bun apps/cli/src/index.ts doctrine --role developer --print`): run `git merge origin/main` (or `git rebase origin/main`) from this worktree, resolve the conflicting file(s) below, then `git push` once resolved. Conflicting file(s):',
         fileList
       ].join('\n\n')
     }
@@ -3076,7 +3091,27 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // (O1). What happens next — check, at most one resume, poll — is
             // O2/O3/O9's own job, never blind.
             const brief = d.fetchFrozenBrief(task)
-            await dispatchDeveloper(brief, round, { skipResumeContext: true })
+            // O1/O3: a genuinely fresh (non-resumed) developer
+            // session is prepended its role's short version and its two
+            // checklist sections — resolved through the override-aware role
+            // plan — OUTSIDE the frozen brief, so the brief text and its
+            // verdict-binding hash (`briefHashOf(fetchFrozenBrief(task))`, never
+            // this prompt) are untouched. A resumed session already holds this
+            // from its first turn (`devResumeId !== null`) and is never
+            // re-prepended (Traps to avoid). Best-effort: an unresolvable
+            // doctrine dispatches the brief alone, the pre-task shape.
+            let developerDoctrine: string | null = null
+            if (devResumeId === null) {
+              try {
+                developerDoctrine = d.resolveDeveloperDoctrine ? await d.resolveDeveloperDoctrine() : null
+              } catch {
+                developerDoctrine = null
+              }
+            }
+            const round1Prompt = developerDoctrine
+              ? `${renderDeveloperDoctrineBlock(developerDoctrine)}\n\n${brief}`
+              : brief
+            await dispatchDeveloper(round1Prompt, round, { skipResumeContext: true })
 
             try {
               prNumber = await afterDeveloperTurnBeforePrPoll(false)
@@ -3519,7 +3554,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                       // — so it is never null in this branch (code review, round 1, MINOR:
                       // the prior 'CI was red...' fallback below this was unreachable).
                       `Round ${round} review findings:\n\n${lastReviewContext}\n`,
-              'Address the findings above per aeg-root/roles/developer.md. Commit the fix, then run `git push` from this worktree to push it as a new commit on the SAME branch; do not open a new PR.',
+              'Address the findings above per your role doctrine (`bun apps/cli/src/index.ts doctrine --role developer --print`). Commit the fix, then run `git push` from this worktree to push it as a new commit on the SAME branch; do not open a new PR.',
               round >= 2 ? confidencePromptLine(thisRoundConfidencePath) : '',
               isReviewFindingsRetry ? roundResponsePromptLine(thisRoundResponsePath) : ''
             ]

@@ -133,6 +133,8 @@ export type LoopWorld = {
   surface?: IssueSurface | null
   /** O1/O2: the per-role doctrine the fake `resolveReviewerDoctrine` returns into each reviewer/security prompt; `undefined` (the default) injects no doctrine block. */
   roleDoctrine?: Partial<Record<'reviewer' | 'security', string | null>>
+  /** role-reach-v1/2, O1: the developer doctrine the fake `resolveDeveloperDoctrine` prepends to a fresh (non-resumed) developer dispatch; `undefined`/`null` (the default) prepends nothing, the pre-task shape. */
+  developerDoctrine?: string | null
   /**
    * Per-round role outcomes; a round with no entry uses the clean default.
    * A role's value may be a single `RoleOutcome` (every attempt in the round
@@ -352,6 +354,10 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
     // O1/O2: default to the world's own per-role doctrine (a fixture states its
     // own; the default is `null` — no doctrine injected, the pre-task shape).
     resolveReviewerDoctrine: async (role) => world.roleDoctrine?.[role] ?? null,
+    // role-reach-v1/2, O1: default to the world's own developer doctrine (a
+    // fixture states its own; the default is `null` — nothing prepended, the
+    // pre-task shape).
+    resolveDeveloperDoctrine: async () => world.developerDoctrine ?? null,
     resolveHead: (_branch) => {
       if (!world.developerPushed) throw new Error('resolveHead: branch has no head on origin yet (in-process fake)')
       return world.head
