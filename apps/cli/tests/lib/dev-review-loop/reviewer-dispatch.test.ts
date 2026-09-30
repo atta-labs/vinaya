@@ -472,6 +472,25 @@ describe('renderReviewerDispatchPrompt — carries the role doctrine as a fact',
     expect(driverText).not.toContain('In my opinion')
     expect(driverText).not.toContain('The developer says')
   })
+
+  it('carries one precedence sentence: the dispatch output instructions win over the doctrine wording (O4)', () => {
+    const prompt = renderReviewerDispatchPrompt('reviewer', FACTS, '/tmp/work', REVIEWER_DOCTRINE)
+    expect(prompt).toContain('the dispatch instructions below take precedence')
+    expect(prompt).toContain('writing nothing to disk')
+    // The precedence sentence sits between the doctrine and the file-writing instructions.
+    const doctrineAt = prompt.indexOf('YOUR ROLE DOCTRINE')
+    const precedenceAt = prompt.indexOf('take precedence')
+    const findingsAt = prompt.indexOf('Write your findings to')
+    expect(doctrineAt).toBeLessThan(precedenceAt)
+    expect(precedenceAt).toBeLessThan(findingsAt)
+  })
+
+  it('the precedence sentence is driver text the lint reads, and carries no banned phrase (O4)', () => {
+    const pieces = roleDoctrinePieces('security', 'A short version.\n\n## What you check\n\n1. Secrets.')
+    const driverText = driverAuthoredPromptText(pieces)
+    expect(driverText).toContain('take precedence')
+    expect(lintReviewerPrompt(driverText)).toEqual([])
+  })
 })
 
 // --- the deferral rules the loop's classifier applies (convergence-v1 task 1, #853) ---

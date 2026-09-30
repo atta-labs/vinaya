@@ -187,7 +187,17 @@ export function roleDoctrinePieces(
     driverPiece(
       `\n\nYOUR ROLE DOCTRINE — the short version and the "What you check" list for ${label} role, the same doctrine an interactive reviewer reads. Treat it as what to look for:\n\n`
     ),
-    factPiece(roleDoctrine.trim())
+    factPiece(roleDoctrine.trim()),
+    // O4: the dispatch's own file hand-off wins over the doctrine's output
+    // wording. The short versions still say a reviewer posts PR comments and
+    // "writes nothing to disk"; this dispatch contradicts that on purpose
+    // (rewriting the short versions is a later phase, by Principal ruling), so
+    // the block states the precedence plainly rather than leaving the reviewer
+    // to reconcile two conflicting instructions. Driver text, so the lint reads
+    // it — it carries no banned phrase.
+    driverPiece(
+      '\n\nWhere the doctrine above describes its OWN output — posting pull-request comments, running `vinaya review post`, "writing nothing to disk" — the dispatch instructions below take precedence: write the findings, report and objectives files named below to the work directory. The doctrine tells you WHAT to check; these instructions tell you WHERE to put the result.'
+    )
   ]
 }
 
