@@ -4,9 +4,9 @@ Status: draft
 
 One `log(e)`, one sink, one outbox per task. The full design is the Linear "Tech spec — The Vinaya Log"; this file is the durable, in-repo reference for what has shipped — the schema, the header, and the append — not a restatement of the whole spec.
 
-## The envelope: `schema: 1` and `schema: 2` (`task-log-v1` 1)
+## The envelope: `schema: 1`, `2` and `3` (`task-log-v1` 1)
 
-`meta.schema` is a discriminated union. `1` is the original header — every field below in "The header, on every line," nothing more — and stays exactly as it was: a line already on disk, or a fixture recorded before `task-log-v1`, keeps parsing without a schema violation just because it predates the fields below. `buildHeader` (`packages/aeg-core/src/log/envelope.ts`) builds `2` for every event from this task forward; `1` is a read-side compatibility shape only, never something a caller asks `buildHeader` to produce.
+`meta.schema` is a discriminated union. `1` is the original header — every field below in "The header, on every line," nothing more — and stays exactly as it was: a line already on disk, or a fixture recorded before `task-log-v1`, keeps parsing without a schema violation just because it predates the fields below. `buildHeader` (`packages/aeg-core/src/log/envelope.ts`) builds `3` for every event (see "`schema: 3`" below); `1` and `2` are read-side compatibility shapes only, never something a caller asks `buildHeader` to produce, and a line of either reads back unchanged.
 
 `schema: 2` adds:
 
@@ -49,6 +49,31 @@ Every new field is declared here and honestly `null`/`'unavailable'` until a lat
 `packages/aeg-core/src/log/` is the policy layer: the zod schema (`LogEventSchema`), the pure envelope builder (`buildHeader`), and `redact`. No filesystem, no network, no process (`surface.md` "The rule"). `apps/cli/src/lib/log-sink.ts` is the one write: every environment read, remote read, package read, hostname and git call lives there, and it is the only file that opens the outbox path — proved by `apps/cli/tests/lib/log-callers.test.ts`.
 
 **A `log-sink.ts`-only change is now reachable by pre-push selection through every test that exercises it by spawning the built CLI, not only the tests that import it directly.** Measured live: a change to this file alone made `vinaya check --all` print a warning twenty-five times instead of once, a real regression the file-import-only selector (`apps/cli/src/lib/test-selector.ts`) had no edge to catch, caught only because CI runs everything — `apps/cli/tests/commands/check.test.ts`, which spawns `bun apps/cli/src/index.ts check --all` as a subprocess and imports neither this file nor anything that does, stayed unselected. `apps/cli/src/lib/cli-spawn-tests.ts` closes this the same way `repo-scanner-tests.ts` closes the analogous gap for a test that reads the repository tree instead of importing it: a synthetic edge from the spawning test straight to the CLI entrypoint's own `all:` node, so the entrypoint's real, already-computed import edges (which reach this file) do the rest.
+
+
+### `schema: 3` — the work, the way of working, the runtime and the source
+
+`schema: 3` is every `schema: 2` field, unchanged, plus four more. It is a new version rather than extra fields on `2` on purpose: a log server that knows only `1` and `2` stores a `3` line verbatim as an unknown-version record (`apps/log-server/specs/server.md` § 3), where an extra field on `2` would make it reject the line as invalid and lose the event.
+
+```
+work: {
+  ref: string | null       // the unit of work, OPAQUE — an Issue number as text, a ticket key,
+                           // a branch name; never parsed. VINAYA_WORK_REF, else the Issue
+                           // number subject.issue carries (as text), else null
+  repo: string | null      // the repository, as meta.repo
+  change: string | null    // the change under review (a pull request, a merge request); null until named
+  revision: string | null  // the revision (a commit); null until named
+}
+flow: {
+  id: string | null        // the way of working this event belongs to. VINAYA_FLOW; unset reads
+                           // 'vinaya', because Vinaya's own process genuinely is that flow
+  version: string | null   // VINAYA_FLOW_VERSION, else null
+}
+runtime: string | null     // the runtime that produced the event (VINAYA_RUNTIME), else null
+source: string | null      // the source that emitted it (VINAYA_SOURCE), else null
+```
+
+Every value is `null` where unknown and never invented. `subject.issue` is unchanged: a Vinaya task's Issue number still fills it, and still becomes `work.ref` as text when `VINAYA_WORK_REF` is unset. An empty environment variable reads as unset. `actor_id`, `work.ref` and `flow.id` are all opaque, so an event from a process with no tracker Issue, an actor that is not a doctrine role and a flow that is not `vinaya` is written and read back through the storage contract unchanged. Any other `meta.schema` number stays an unknown-version record.
 
 ## The header, on every line
 
@@ -135,7 +160,7 @@ Additive to the three above — nothing about `dispatch`/`dev_review_loop`/`forg
 - **Stable identity across retry, concurrent append and a lost acknowledgement (O2).** `recordIdentity` reads a `schema: 2` line's `event_id` (generated once per `log()` call), falling back to `${run_id}:${seq}` for a `schema: 1` line — the same pair the flush's `<!-- aeg:log:… -->` marker is keyed on. `append` is idempotent by that identity: re-appending an already-stored batch is a no-op (reported in `AppendOutcome.duplicates`), so a retry after a lost acknowledgement collapses to one record rather than a duplicate.
 - **Acknowledged records alone are removed (O2).** `acknowledge(identities)` removes exactly the identities it is handed — never a positional truncation that could drop a record the forge never confirmed.
 - **Overflow is reported, not silent (O2).** A capacity-bounded store's `append` returns an `OverflowDiagnostic` naming the dropped identities — the observable loss the outbox rotation's single overwritten `<name>.1.ndjson` slot never surfaced.
-- **Read-back validates version and provenance, and keeps unknown-version records (O3).** `classifyStoredLine` / `readPage` run the full `LogEventSchema` (validating a `schema: 2` line's provenance), re-apply `redact()` at the read (transport) boundary, and — for a line whose `meta.schema` is outside `KNOWN_SCHEMA_VERSIONS` (`1`, `2`) — return an `unknown_version` record that keeps the line verbatim for diagnosis rather than dropping it or failing the whole page. A known version that fails validation is `invalid` (corrupt), a distinct outcome from `unknown_version`.
+- **Read-back validates version and provenance, and keeps unknown-version records (O3).** `classifyStoredLine` / `readPage` run the full `LogEventSchema` (validating a `schema: 2` line's provenance), re-apply `redact()` at the read (transport) boundary, and — for a line whose `meta.schema` is outside `KNOWN_SCHEMA_VERSIONS` (`1`, `2`, `3`) — return an `unknown_version` record that keeps the line verbatim for diagnosis rather than dropping it or failing the whole page. A known version that fails validation is `invalid` (corrupt), a distinct outcome from `unknown_version`.
 
 **Both backends implement the contract.** The deterministic fixture backend (`createFixtureStore`) is the in-memory twin the tests exercise (`packages/aeg-core/src/log/store.test.ts`). The real one is the live `logs` destination below: the sink's append is its write side, `classifyStoredLine` its read/transport-redaction side (run again before a server drain posts), and a server destination's tail-preserving, per-chunk truncate-on-confirmed-delivery is its acknowledgement side — the GitHub-comment adapter that used to fill this role (`vinaya log flush`) is deleted (task-files-v1 6, O1). Redaction runs at BOTH boundaries — `log()` redacts before the append (sink), `classifyStoredLine` redacts again before a drain (transport) — so a secret is filtered even if one boundary's pattern set has a gap.
 
@@ -319,7 +344,7 @@ The lookup runs at most **once per process, per working directory and repository
 
 **The child dies with the deadline.** Both reads (`git rev-parse`, and `gh issue list` for a tranche branch) spawn with `timeout: LOG_CONTEXT_LOOKUP_DEADLINE_MS` and `SIGKILL`, not just a deadline on the promise: a hanging, proxied or unauthenticated `gh` that outlived the answer would hold the event loop open and delay the whole process's exit — on the pre-push-hook path above all.
 
-`VINAYA_RUN`, `VINAYA_ATTEMPT`, `VINAYA_PARENT_EVENT` (`task-log-v1` 1) are read the same way, into `meta.lineage` on a `schema: 2` header. `VINAYA_ATTEMPT`/`VINAYA_PARENT_EVENT` read back `null` on every current line, honestly, until a later task sets them.
+`VINAYA_RUN`, `VINAYA_ATTEMPT`, `VINAYA_PARENT_EVENT` (`task-log-v1` 1) are read the same way, into `meta.lineage` on a `schema: 2` or `3` header. `VINAYA_WORK_REF`, `VINAYA_FLOW`, `VINAYA_FLOW_VERSION`, `VINAYA_RUNTIME` and `VINAYA_SOURCE` are read the same way, into `meta.work.ref`, `meta.flow` and `meta.runtime`/`meta.source` on a `schema: 3` header. `VINAYA_ATTEMPT`/`VINAYA_PARENT_EVENT` read back `null` on every current line, honestly, until a later task sets them.
 
 **`lineage.run` (`task-log-v1` task 6, O1/O2).** `devReviewLoop` sets `VINAYA_RUN` to its own run's `loop_id` at the very top of `runDevReviewLoopBody`, before this process logs a single line — every `dev_review_loop` event it emits AND every `effect`/`operation` event a downstream call into `effects.ts`/`broker.ts` fires in the SAME process (a pause post, an escalation write) therefore share one `lineage.run`, which is this task's own title made literal: "one correlated history." A caller that never sets `VINAYA_RUN` still gets an honest, non-`null` value — the sink defaults `lineage.run` to this process's own `run_id` (already the identity every line this process writes shares via `meta.run_id`) rather than leaving the slot `null` for want of an opt-in producer. A DIFFERENT process — a `--resume` continuing a paused run, a `--cancel` invocation, a driver re-exec — mints its own fresh `loop_id`/`run_id` and therefore its own `lineage.run`, distinct from whatever process paused it: `lineage.run` correlates one PROCESS's own lines, not a task's entire cross-restart history (`subject.issue`, unchanged, is what already ties every process's lines to the same task).
 

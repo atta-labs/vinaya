@@ -452,3 +452,36 @@ describe('pre-task-log-v1 fixtures — verdict findings, the pre-O3 minimal shap
     expect(LogEventSchema.safeParse(line).success).toBe(true)
   })
 })
+
+describe('schema 1 and 2 lines keep parsing beside schema 3', () => {
+  const v2 = {
+    ...meta,
+    schema: 2 as const,
+    event_id: 'e-old',
+    process_id: 'p-old',
+    actor_id: 'developer',
+    lineage: { run: null, attempt: null, parent: null },
+    input_versions: { objectives_version: null, brief_hash: null, ruling_ordinal: null, policy_digest: null },
+    provenance: 'env_correlated' as const
+  }
+
+  it('a schema 2 line without the schema 3 fields still parses, and reads back unchanged', () => {
+    const line = { ...dispatchBase, meta: v2, event: 'dispatched' as const, prompt_hash: 'sha256:abc' }
+    const parsed = LogEventSchema.safeParse(line)
+    expect(parsed.success).toBe(true)
+    if (parsed.success) expect(parsed.data.meta).toEqual(v2)
+  })
+
+  it('a schema 3 line parses with the work, flow, runtime and source blocks', () => {
+    const v3 = {
+      ...v2,
+      schema: 3 as const,
+      work: { ref: 'ACME-17', repo: null, change: null, revision: null },
+      flow: { id: 'acme', version: null },
+      runtime: null,
+      source: null
+    }
+    const line = { ...dispatchBase, meta: v3, event: 'dispatched' as const, prompt_hash: 'sha256:abc' }
+    expect(LogEventSchema.safeParse(line).success).toBe(true)
+  })
+})

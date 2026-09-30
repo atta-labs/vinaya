@@ -146,10 +146,58 @@ const HeaderMetaV2Schema = z
   })
   .strict()
 
-const HeaderMetaSchema = z.discriminatedUnion('schema', [HeaderMetaV1Schema, HeaderMetaV2Schema])
-export { HeaderMetaV1Schema, HeaderMetaV2Schema, LineageSchema, InputVersionsSchema, ProvenanceSchema }
+/** The unit of work an event belongs to (schema 3). `ref` is opaque — an Issue number as text, a ticket key, a branch name; the log never parses it. Each part is `null` until a caller names it, never guessed. */
+const WorkSchema = z
+  .object({
+    ref: z.string().nullable(),
+    repo: z.string().nullable(),
+    change: z.string().nullable(),
+    revision: z.string().nullable()
+  })
+  .strict()
+
+/** The way of working an event belongs to (schema 3): an opaque id and a version. Vinaya's own process reads `id: 'vinaya'`; a foreign one names itself or stays `null`. */
+const FlowSchema = z
+  .object({
+    id: z.string().nullable(),
+    version: z.string().nullable()
+  })
+  .strict()
+
+/** Schema 3 = every schema 2 field, unchanged, plus `work`, `flow`, `runtime` and `source`. A new version rather than extra fields on 2: a server that knows only 1 and 2 keeps a 3 line as an unknown-version record, where an extra field on 2 would be rejected as invalid. */
+const HeaderMetaV3Schema = z
+  .object({
+    schema: z.literal(3),
+    ...headerMetaCore,
+    event_id: z.string().min(1),
+    process_id: z.string().min(1),
+    actor_id: z.string().nullable(),
+    lineage: LineageSchema,
+    input_versions: InputVersionsSchema,
+    provenance: ProvenanceSchema,
+    work: WorkSchema,
+    flow: FlowSchema,
+    runtime: z.string().nullable(),
+    source: z.string().nullable()
+  })
+  .strict()
+
+const HeaderMetaSchema = z.discriminatedUnion('schema', [HeaderMetaV1Schema, HeaderMetaV2Schema, HeaderMetaV3Schema])
+export {
+  HeaderMetaV1Schema,
+  HeaderMetaV2Schema,
+  HeaderMetaV3Schema,
+  WorkSchema,
+  FlowSchema,
+  LineageSchema,
+  InputVersionsSchema,
+  ProvenanceSchema
+}
 export type HeaderMetaV1 = z.infer<typeof HeaderMetaV1Schema>
 export type HeaderMetaV2 = z.infer<typeof HeaderMetaV2Schema>
+export type HeaderMetaV3 = z.infer<typeof HeaderMetaV3Schema>
+export type Work = z.infer<typeof WorkSchema>
+export type Flow = z.infer<typeof FlowSchema>
 export type Lineage = z.infer<typeof LineageSchema>
 export type InputVersions = z.infer<typeof InputVersionsSchema>
 export type Provenance = z.infer<typeof ProvenanceSchema>
