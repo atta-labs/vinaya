@@ -81,7 +81,7 @@ describe('devReviewLoop — the reviewer prompt names the objectives file, and o
         1: {
           security: {
             findings: '',
-            report: 'CONFIG_SCAN: clean\nSECRETS: none found\n',
+            report: 'CONFIG_SCAN: clean\nSECRETS: none found — atta-labs/secret-scan passed\n',
             objectives: null,
             sessionId: 'sec-session-1'
           }
@@ -148,7 +148,7 @@ describe('devReviewLoop — issue-711 O6: a reviewer whose objectives.txt does n
           ],
           security: {
             findings: '',
-            report: 'CONFIG_SCAN: clean\nSECRETS: none found\n',
+            report: 'CONFIG_SCAN: clean\nSECRETS: none found — atta-labs/secret-scan passed\n',
             objectives: 'O1|MET|done.\nO2|MET|done too.\n',
             sessionId: 'sec-session-1'
           }
@@ -193,7 +193,7 @@ describe('devReviewLoop — issue-711 O6: a reviewer whose objectives.txt does n
           },
           security: {
             findings: '',
-            report: 'CONFIG_SCAN: clean\nSECRETS: none found\n',
+            report: 'CONFIG_SCAN: clean\nSECRETS: none found — atta-labs/secret-scan passed\n',
             objectives: 'O1|MET|done.\nO2|MET|done too.\n',
             sessionId: 'sec-session-1'
           }

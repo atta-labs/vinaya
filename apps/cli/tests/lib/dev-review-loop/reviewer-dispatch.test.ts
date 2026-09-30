@@ -556,3 +556,50 @@ describe('buildVerdictFromReport — deferral context (O2/O3/O4)', () => {
     expect(result.observation.verdict).toBe('REQUEST CHANGES')
   })
 })
+
+describe('buildVerdictFromReport — the security SECRETS: line follows the same rule as review post', () => {
+  let workDir: string
+  beforeEach(() => {
+    workDir = mkdtempSync(join(tmpdir(), 'rd-secrets-'))
+    writeFileSync(join(workDir, 'findings.txt'), '')
+  })
+  afterEach(() => rmSync(workDir, { recursive: true, force: true }))
+
+  const MANIFEST: ReviewInputManifest = {
+    headSha: 'a'.repeat(40),
+    baseSha: 'e'.repeat(40),
+    briefHash: 'b'.repeat(64),
+    objectivesVersion: 'c'.repeat(64),
+    rulingOrdinal: 0,
+    policyDigest: 'd'.repeat(64)
+  }
+  const HANDLE: DispatchHandle = {
+    exitCode: 0,
+    durationMs: 100,
+    usage: { input: 10, output: 5 },
+    resumeId: 'session-1',
+    timedOut: false
+  }
+
+  it('refuses a bare "none found" that cites no secret-scan check result', () => {
+    writeFileSync(join(workDir, 'report.txt'), 'CONFIG_SCAN: clean\nSECRETS: none found')
+    expect(() =>
+      buildVerdictFromReport('security', workDir, 'claude', 764, HANDLE, MANIFEST, DEFAULT_REVIEW_POLICY, [])
+    ).toThrow(/atta-labs\/secret-scan/)
+  })
+
+  it('accepts a "none found" that cites the required check', () => {
+    writeFileSync(join(workDir, 'report.txt'), 'CONFIG_SCAN: clean\nSECRETS: none found — atta-labs/secret-scan passed')
+    const result = buildVerdictFromReport(
+      'security',
+      workDir,
+      'claude',
+      764,
+      HANDLE,
+      MANIFEST,
+      DEFAULT_REVIEW_POLICY,
+      []
+    )
+    expect(result.rendered).toContain('SECRETS: none found — atta-labs/secret-scan passed')
+  })
+})

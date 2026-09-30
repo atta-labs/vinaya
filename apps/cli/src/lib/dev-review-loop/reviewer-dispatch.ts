@@ -41,13 +41,15 @@ import {
   type Finding,
   FindingsParseError,
   isEscalationClass,
+  noneFoundClaimCitesScanCheck,
   type ObjectiveResult,
   ObjectivesParseError,
   parseFindingsFile,
   parseObjectivesFile,
   renderCodeReviewComment,
   renderEscalationComment,
-  renderSecurityComment
+  renderSecurityComment,
+  SECRET_SCAN_CHECK
 } from '../../commands/review-post.js'
 import type { AgentVendor, DispatchHandle } from '../dispatch.js'
 import { ensureRunDir, runPath, runtimeDirForThisRepo, tasksExecutionRoot } from '../run-paths.js'
@@ -897,6 +899,19 @@ export function buildVerdictFromReport(
     )
   }
 
+  // The same rule `vinaya review post` applies: a clean claim cites the
+  // required secret-scan check's result by name, never a scanner run.
+  if (!noneFoundClaimCitesScanCheck(report.SECRETS, null)) {
+    throw new ReviewerReportParseFailure(
+      role,
+      'report.txt',
+      sessionId,
+      new Error(`a \`SECRETS: none found\` line must cite the \`${SECRET_SCAN_CHECK}\` check's result by name`),
+      handle.effectId ?? null,
+      handle.durationMs
+    )
+  }
+
   const verdict = deriveSecurityVerdict(blockingEligibleFindings, policy)
   const rendered = renderSecurityComment({
     headSha,
@@ -970,7 +985,7 @@ export function renderReviewerDispatchPrompt(
     '  If findings.txt is non-empty, also write `FINDING_IDS: <id>,<id>,...` — one id per findings.txt line, in the SAME order, e.g. `F1,F2,F3`. A report with findings but no matching `FINDING_IDS:` line is sent back once for this alone.',
     ...(role === 'security'
       ? [
-          '`SECRETS:` is required — never leave it blank or omit it, even when you found nothing: write `SECRETS: none found` only after you actually checked.'
+          `\`SECRETS:\` is required — never leave it blank or omit it. The secret scan is the required \`${SECRET_SCAN_CHECK}\` CI check: read its result on this PR (\`gh pr checks\`), never run a scanner yourself or paste its output. Write \`SECRETS: none found — ${SECRET_SCAN_CHECK} passed\` only when that check ran and passed; if it is missing from the PR's checks or failed, say so on the line instead. Your own read of the diff for a credential the scanner's rules cannot see still applies.`
         ]
       : []),
     'To escalate instead of casting a verdict, write only `ESCALATE: authority|strategy|product` and `SUMMARY: <text>` to report.txt.'

@@ -24,6 +24,7 @@ import {
   invalidObjectiveEvidenceReason,
   isEscalationClass,
   missingPriorIds,
+  noneFoundClaimCitesScanCheck,
   type ObjectiveResult,
   ObjectivesParseError,
   parseChangedLineRanges,
@@ -2433,5 +2434,22 @@ describe('a Search: pattern using `|` alternation no longer breaks parsing (revi
   it('says nothing about alternation for an ordinary malformed line (too few `|` delimiters, no Search: text)', () => {
     expect(() => parseFindingsFile('MAJOR|a/b.md:1', ['MAJOR'])).toThrow(/at least 2/)
     expect(() => parseFindingsFile('MAJOR|a/b.md:1', ['MAJOR'])).not.toThrow(/alternation/)
+  })
+})
+
+describe('noneFoundClaimCitesScanCheck — one SECRETS: rule for the loop and review post', () => {
+  it('a "none found" claim with no citation of the required check is unbacked', () => {
+    expect(noneFoundClaimCitesScanCheck('none found', null)).toBe(false)
+    expect(noneFoundClaimCitesScanCheck('none found', '(scanner ran, 0 findings)')).toBe(false)
+    expect(noneFoundClaimCitesScanCheck('None-found', 'gitleaks: 0 leaks detected')).toBe(false)
+  })
+
+  it('a "none found" claim citing atta-labs/secret-scan is backed, in the claim or in the evidence', () => {
+    expect(noneFoundClaimCitesScanCheck('none found — atta-labs/secret-scan passed', null)).toBe(true)
+    expect(noneFoundClaimCitesScanCheck('none found', 'atta-labs/secret-scan: pass')).toBe(true)
+  })
+
+  it('a claim that reports findings is not held to the citation', () => {
+    expect(noneFoundClaimCitesScanCheck('listed above, redacted', null)).toBe(true)
   })
 })

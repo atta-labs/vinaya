@@ -86,7 +86,7 @@ export const CLEAN_REVIEWER: RoleOutcome = {
 }
 export const CLEAN_SECURITY: RoleOutcome = {
   findings: '',
-  report: 'CONFIG_SCAN: clean\nSECRETS: none found\n',
+  report: 'CONFIG_SCAN: clean\nSECRETS: none found — atta-labs/secret-scan passed\n',
   objectives: 'O1|MET|done.\n',
   sessionId: 'sec-session-1'
 }

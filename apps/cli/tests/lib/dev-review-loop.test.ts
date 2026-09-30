@@ -204,7 +204,7 @@ case "$VINAYA_ROLE" in
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
-    printf 'CONFIG_SCAN: clean\\nSECRETS: none found\\n' > "$WD/report.txt"
+    printf 'CONFIG_SCAN: clean\\nSECRETS: none found — atta-labs/secret-scan passed\\n' > "$WD/report.txt"
     echo '{"session_id":"sec-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
   *)
@@ -1448,7 +1448,7 @@ case "$VINAYA_ROLE" in
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
-    printf 'CONFIG_SCAN: clean\\nSECRETS: none found\\n' > "$WD/report.txt"
+    printf 'CONFIG_SCAN: clean\\nSECRETS: none found — atta-labs/secret-scan passed\\n' > "$WD/report.txt"
     echo '{"session_id":"sec-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
   *)
@@ -2188,7 +2188,7 @@ case "$VINAYA_ROLE" in
     mkdir -p "$WD"
     printf 'this is not a valid finding line at all, token=ghp_abcdefghijklmnopqrstuvwxyz012345\\n' > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
-    printf 'CONFIG_SCAN: clean\\nSECRETS: none found\\n' > "$WD/report.txt"
+    printf 'CONFIG_SCAN: clean\\nSECRETS: none found — atta-labs/secret-scan passed\\n' > "$WD/report.txt"
     echo "invocation" >> "$HOME/.security-invocations"
     echo '{"session_id":"sec-session-garbage","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
@@ -2664,7 +2664,7 @@ case "$VINAYA_ROLE" in
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
-    printf 'CONFIG_SCAN: clean\\nSECRETS: none found\\n' > "$WD/report.txt"
+    printf 'CONFIG_SCAN: clean\\nSECRETS: none found — atta-labs/secret-scan passed\\n' > "$WD/report.txt"
     echo '{"session_id":"sec-session-1","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
   *)
@@ -2760,7 +2760,7 @@ case "$VINAYA_ROLE" in
     mkdir -p "$WD"
     : > "$WD/findings.txt"
     printf 'O1|MET|done.\\n' > "$WD/objectives.txt"
-    printf 'CONFIG_SCAN: clean\\nSECRETS: none found\\n' > "$WD/report.txt"
+    printf 'CONFIG_SCAN: clean\\nSECRETS: none found — atta-labs/secret-scan passed\\n' > "$WD/report.txt"
     echo '{"session_id":"sec-session-'"$VINAYA_ROUND"'","usage":{"input_tokens":8,"output_tokens":4}}'
     ;;
   *)
