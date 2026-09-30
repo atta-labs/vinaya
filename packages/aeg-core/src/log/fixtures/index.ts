@@ -8,3 +8,5 @@ export {
   LOW_TRUST_VINAYA_VERSION
 } from './generator'
 export type { FixtureLine, FixtureValidity } from './generator'
+export { FACT_SHEETS } from './fact-sheets'
+export type { FactSheet } from './fact-sheets'
