@@ -595,7 +595,20 @@ export const COMMANDS: readonly Command[] = [
     flags: [{ flag: '--yes', description: 'Skip the confirmation prompt' }],
     details: [
       'Refuses if any task Issue attached to the named tranche is still open, naming each one — closing a tranche with unresolved work is never silently allowed.',
-      'Once every task Issue is closed, prompts for confirmation (unless `--yes`) and closes the GitHub Milestone.'
+      "Once every task Issue is closed, prompts for confirmation (unless `--yes`), records the tranche's retrospective in the Milestone its task Issues are attached to, and closes that Milestone once nothing else in it is still open.",
+      "A tranche none of whose task Issues carry a Milestone gets one: a Milestone titled with the tranche's slug is created, the tranche's closed task Issues are attached to it, the retrospective is recorded, and it is closed — so the tranche reads as archived. An Issue already on a Milestone is never moved.",
+      'Idempotent: on a tranche whose Milestone is already closed and carries its retrospective, changes nothing and says it is already archived.',
+      "The generated `vinaya-archivist.yml` workflow runs it after a task pull request merges, and again when an Issue labeled with the tranche closes without a merge (dropped, replaced or closed by hand) — the tranche's slug read from that Issue's own label."
+    ],
+    status: 'shipped'
+  },
+  {
+    name: 'archive tranches',
+    description: 'Archive every finished tranche that has no closed Milestone carrying its retrospective',
+    flags: [{ flag: '--yes', description: 'Skip the confirmation prompt' }],
+    details: [
+      'Walks every `vinaya/tranche:<slug>` label, skips each tranche that still has an open task Issue, and runs `archive tranche` for each finished one whose Milestone is not already closed with its retrospective. One tranche failing does not stop the others; the exit code reports it.',
+      'The generated `vinaya-archivist.yml` workflow calls it on its daily scheduled run, so a tranche that finished before the workflow could see it is archived within a day. Running it again when every finished tranche is archived changes nothing and says so.'
     ],
     status: 'shipped'
   },

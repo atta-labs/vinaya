@@ -9,6 +9,8 @@ import {
   appendRetrospectiveSection,
   fetchMilestoneIssueStates,
   fetchTrancheIssuesByLabel,
+  hasRetrospectiveSection,
+  isArchivedMilestone,
   renderArchiveTokensLine,
   renderRetrospectiveSection,
   resolveTaskMilestone,
@@ -16,6 +18,7 @@ import {
   runArchive,
   milestoneCloseDecision,
   runArchiveTranche,
+  runArchiveTranches,
   trancheArchivalStatus
 } from '../src/commands/archive.js'
 
@@ -23,6 +26,21 @@ const INCAPABLE: MeteringCapability = {
   capable: false,
   reason: 'no-transcript-resolved',
   detail: 'test default — no transcript pointer set up'
+}
+
+/** Runs `fn` with `process.stdout.write` captured, returning what it printed and its exit code. */
+async function runCaptured(fn: () => Promise<number>): Promise<{ exit: number; stdout: string }> {
+  const original = process.stdout.write.bind(process.stdout)
+  let stdout = ''
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    stdout += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString()
+    return true
+  }) as typeof process.stdout.write
+  try {
+    return { exit: await fn(), stdout }
+  } finally {
+    process.stdout.write = original
+  }
 }
 
 function archiveDeps(overrides: Partial<ArchiveDeps> = {}): ArchiveDeps {
@@ -943,5 +961,267 @@ describe('runArchiveTranche — a Milestone stays open while a tranche it declar
         expect(patchedBody()?.state).toBe('closed')
       }
     )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// A tranche whose Issues carry no Milestone is archived into a Milestone
+// titled with its slug; a finished tranche already archived is left alone; and
+// `archive tranches` archives every finished, unarchived tranche.
+// ---------------------------------------------------------------------------
+
+type FakeIssue = {
+  number: number
+  title: string
+  state: 'open' | 'closed'
+  milestone: { number: number; title: string } | null
+}
+type FakeMilestone = { number: number; title: string; state: 'open' | 'closed'; description: string | null }
+
+const ARCHIVED_DESCRIPTION = '### Retrospective: done-v1\n\n- Tasks: 1\n- Rounds per task: #7 (1)\n- Merged PRs: #7\n'
+
+/**
+ * A fake `gh` for the whole-repository reads and writes this command makes:
+ * labels, per-label Issues, the Milestone list, one Milestone by number, and
+ * the writes (create, attach, patch), every write appended to `writes.log` as
+ * `<argv>\n<stdin>\n` so a test reads exactly what would have reached GitHub.
+ */
+function withFakeGhForRepo<T>(
+  opts: {
+    labels: string[]
+    issuesBySlug: Record<string, FakeIssue[]>
+    milestones: FakeMilestone[]
+    createdMilestoneNumber?: number
+  },
+  fn: (writes: () => string[]) => Promise<T>
+): Promise<T> {
+  const dir = mkdtempSync(join(tmpdir(), 'vinaya-archive-repo-fakegh-'))
+  writeFileSync(join(dir, 'labels.json'), JSON.stringify(opts.labels.map((name) => ({ name }))))
+  writeFileSync(join(dir, 'milestones.json'), JSON.stringify(opts.milestones))
+  for (const [slug, issues] of Object.entries(opts.issuesBySlug)) {
+    writeFileSync(join(dir, `issues-${slug}.json`), JSON.stringify(issues))
+  }
+  for (const m of opts.milestones) writeFileSync(join(dir, `milestone-${m.number}.json`), JSON.stringify(m))
+  writeFileSync(join(dir, 'writes.log'), '')
+  const created = opts.createdMilestoneNumber ?? 99
+  const script = `#!/usr/bin/env bash
+args="$*"
+case "$args" in
+  "api -X POST "*"/milestones "*)
+    echo "$args" >> "${dir}/writes.log"; cat >> "${dir}/writes.log"; echo >> "${dir}/writes.log"
+    echo '{"number":${created},"title":"created","description":null,"state":"open"}'
+    ;;
+  "api -X PATCH "*)
+    echo "$args" >> "${dir}/writes.log"; cat >> "${dir}/writes.log"; echo >> "${dir}/writes.log"
+    ;;
+  "api repos/"*"/labels?"*)
+    cat "${dir}/labels.json"
+    ;;
+  "api repos/"*"/milestones?"*)
+    cat "${dir}/milestones.json"
+    ;;
+  "api repos/"*"/milestones/"*)
+    n="\${args##*/milestones/}"
+    cat "${dir}/milestone-$n.json"
+    ;;
+  "api repos/"*"/issues?"*"labels=vinaya%2Ftranche%3A"*)
+    slug="$(printf '%s' "$args" | sed -n 's/.*labels=vinaya%2Ftranche%3A\\([^&]*\\)&.*/\\1/p')"
+    cat "${dir}/issues-$slug.json"
+    ;;
+  "issue list"*"--milestone"*)
+    echo '[]'
+    ;;
+  "pr list"*)
+    echo '[]'
+    ;;
+  *)
+    echo "fake gh: unhandled: $args" >&2
+    exit 1
+    ;;
+esac
+`
+  const ghPath = join(dir, 'gh')
+  writeFileSync(ghPath, script)
+  chmodSync(ghPath, 0o755)
+  const originalPath = process.env.PATH
+  process.env.PATH = `${dir}:${originalPath}`
+  return fn(() => {
+    const raw = readFileSync(join(dir, 'writes.log'), 'utf8')
+    return raw.split('\n').filter((line) => line.length > 0)
+  }).finally(() => {
+    process.env.PATH = originalPath
+    rmSync(dir, { recursive: true, force: true })
+  })
+}
+
+const bare = (number: number, state: 'open' | 'closed' = 'closed'): FakeIssue => ({
+  number,
+  title: `task ${number}`,
+  state,
+  milestone: null
+})
+
+describe('hasRetrospectiveSection / isArchivedMilestone', () => {
+  it('finds the tranche’s own heading and no other', () => {
+    expect(hasRetrospectiveSection(ARCHIVED_DESCRIPTION, 'done-v1')).toBe(true)
+    expect(hasRetrospectiveSection(ARCHIVED_DESCRIPTION, 'done')).toBe(false)
+    expect(hasRetrospectiveSection('', 'done-v1')).toBe(false)
+  })
+
+  it('archived means closed AND carrying the retrospective — an open one is still to be finished', () => {
+    expect(isArchivedMilestone({ state: 'closed', description: ARCHIVED_DESCRIPTION }, 'done-v1')).toBe(true)
+    expect(isArchivedMilestone({ state: 'open', description: ARCHIVED_DESCRIPTION }, 'done-v1')).toBe(false)
+    expect(isArchivedMilestone({ state: 'closed', description: null }, 'done-v1')).toBe(false)
+  })
+})
+
+describe('runArchiveTranche — a tranche whose Issues carry no Milestone', () => {
+  it('creates a Milestone titled with the slug, attaches every closed task Issue, records the retrospective and closes it', async () => {
+    await withFakeGhForRepo(
+      { labels: [], issuesBySlug: { 'done-v1': [bare(11), bare(12)] }, milestones: [], createdMilestoneNumber: 42 },
+      async (writes) => {
+        const out = await runCaptured(() => runArchiveTranche(['done-v1', '--yes'], archiveDeps()))
+        expect(out.exit).toBe(0)
+        const log = writes()
+        expect(log[0]).toContain('-X POST')
+        expect(log[0]).toContain('/milestones')
+        expect(JSON.parse(log[1] as string)).toEqual({ title: 'done-v1' })
+        expect(log.filter((l) => l.includes('-X PATCH') && l.includes('/issues/'))).toHaveLength(2)
+        expect(log.some((l) => l.includes('/issues/11'))).toBe(true)
+        expect(log.some((l) => l.includes('/issues/12'))).toBe(true)
+        expect(log.filter((l) => l.startsWith('{"milestone":42}'))).toHaveLength(2)
+        const patch = log.find((l) => l.startsWith('{"description"')) as string
+        expect(JSON.parse(patch).state).toBe('closed')
+        expect(JSON.parse(patch).description).toContain('### Retrospective: done-v1')
+        expect(out.stdout).toContain('Milestone #42')
+        expect(out.stdout).not.toContain('no Milestone attached')
+      }
+    )
+  })
+
+  it('reuses an existing open Milestone already titled with the slug rather than creating a second', async () => {
+    await withFakeGhForRepo(
+      {
+        labels: [],
+        issuesBySlug: { 'done-v1': [bare(11)] },
+        milestones: [{ number: 7, title: 'done-v1', state: 'open', description: null }]
+      },
+      async (writes) => {
+        const out = await runCaptured(() => runArchiveTranche(['done-v1', '--yes'], archiveDeps()))
+        expect(out.exit).toBe(0)
+        expect(writes().some((l) => l.includes('-X POST'))).toBe(false)
+        expect(writes().some((l) => l.includes('/milestones/7'))).toBe(true)
+      }
+    )
+  })
+
+  it('never creates a Milestone or moves an Issue when any of the tranche’s Issues already carries one', async () => {
+    await withFakeGhForRepo(
+      {
+        labels: [],
+        issuesBySlug: {
+          'done-v1': [bare(11), { ...bare(12), milestone: { number: 15, title: 'Shared Milestone' } }]
+        },
+        milestones: [{ number: 15, title: 'Shared Milestone', state: 'open', description: null }]
+      },
+      async (writes) => {
+        const out = await runCaptured(() => runArchiveTranche(['done-v1', '--yes'], archiveDeps()))
+        expect(out.exit).toBe(0)
+        expect(writes().some((l) => l.includes('-X POST'))).toBe(false)
+        expect(writes().some((l) => l.includes('/issues/'))).toBe(false)
+        expect(writes().some((l) => l.includes('/milestones/15'))).toBe(true)
+      }
+    )
+  })
+
+  it('a second run on the archived tranche changes nothing and says it is already archived', async () => {
+    await withFakeGhForRepo(
+      {
+        labels: [],
+        issuesBySlug: { 'done-v1': [bare(11)] },
+        milestones: [{ number: 42, title: 'done-v1', state: 'closed', description: ARCHIVED_DESCRIPTION }]
+      },
+      async (writes) => {
+        const out = await runCaptured(() => runArchiveTranche(['done-v1', '--yes'], archiveDeps()))
+        expect(out.exit).toBe(0)
+        expect(out.stdout).toContain('already archived')
+        expect(writes()).toEqual([])
+      }
+    )
+  })
+
+  it('a second run on a tranche archived into its shared Milestone changes nothing and says so', async () => {
+    await withFakeGhForRepo(
+      {
+        labels: [],
+        issuesBySlug: { 'done-v1': [{ ...bare(11), milestone: { number: 15, title: 'Shared Milestone' } }] },
+        milestones: [{ number: 15, title: 'Shared Milestone', state: 'closed', description: ARCHIVED_DESCRIPTION }]
+      },
+      async (writes) => {
+        const out = await runCaptured(() => runArchiveTranche(['done-v1', '--yes'], archiveDeps()))
+        expect(out.exit).toBe(0)
+        expect(out.stdout).toContain('already archived')
+        expect(writes()).toEqual([])
+      }
+    )
+  })
+
+  it('still refuses while a task Issue is open, creating nothing', async () => {
+    await withFakeGhForRepo(
+      { labels: [], issuesBySlug: { 'done-v1': [bare(11), bare(12, 'open')] }, milestones: [] },
+      async (writes) => {
+        const out = await runCaptured(() => runArchiveTranche(['done-v1', '--yes'], archiveDeps()))
+        expect(out.exit).toBe(1)
+        expect(writes()).toEqual([])
+      }
+    )
+  })
+})
+
+describe('runArchiveTranches', () => {
+  it('archives each finished, unarchived tranche and skips open and already-archived ones', async () => {
+    await withFakeGhForRepo(
+      {
+        labels: ['vinaya/tranche:fresh-v1', 'vinaya/tranche:open-v1', 'vinaya/tranche:done-v1', 'vinaya/waiver:docs'],
+        issuesBySlug: {
+          'fresh-v1': [bare(21)],
+          'open-v1': [bare(31), bare(32, 'open')],
+          'done-v1': [bare(11)]
+        },
+        milestones: [{ number: 42, title: 'done-v1', state: 'closed', description: ARCHIVED_DESCRIPTION }],
+        createdMilestoneNumber: 50
+      },
+      async (writes) => {
+        const out = await runCaptured(() => runArchiveTranches(['--yes'], archiveDeps()))
+        expect(out.exit).toBe(0)
+        const log = writes()
+        expect(log.filter((l) => l.includes('-X POST'))).toHaveLength(1)
+        expect(JSON.parse(log.find((l) => l.startsWith('{"title"')) as string)).toEqual({ title: 'fresh-v1' })
+        expect(log.some((l) => l.includes('/issues/21'))).toBe(true)
+        expect(log.some((l) => l.includes('/issues/31') || l.includes('/issues/32') || l.includes('/issues/11'))).toBe(
+          false
+        )
+      }
+    )
+  })
+
+  it('run again once everything is archived, changes nothing and says so', async () => {
+    await withFakeGhForRepo(
+      {
+        labels: ['vinaya/tranche:done-v1'],
+        issuesBySlug: { 'done-v1': [bare(11)] },
+        milestones: [{ number: 42, title: 'done-v1', state: 'closed', description: ARCHIVED_DESCRIPTION }]
+      },
+      async (writes) => {
+        const out = await runCaptured(() => runArchiveTranches(['--yes'], archiveDeps()))
+        expect(out.exit).toBe(0)
+        expect(out.stdout).toContain('already archived')
+        expect(writes()).toEqual([])
+      }
+    )
+  })
+
+  it('refuses when not a git repository', async () => {
+    expect(await runArchiveTranches(['--yes'], archiveDeps({ detectRepo: async () => null }))).toBe(1)
   })
 })

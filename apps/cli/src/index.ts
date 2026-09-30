@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { archiveCommand, archiveTrancheCommand } from './commands/archive.js'
+import { archiveCommand, archiveTrancheCommand, archiveTranchesCommand } from './commands/archive.js'
 import { auditCommand } from './commands/audit.js'
 import { briefRenderCommand } from './commands/brief.js'
 import { checkCommand } from './commands/check.js'
@@ -172,6 +172,8 @@ try {
       const [subcommand, ...rest] = args
       if (subcommand === 'tranche') {
         await archiveTrancheCommand(rest)
+      } else if (subcommand === 'tranches') {
+        await archiveTranchesCommand(rest)
       } else {
         await archiveCommand(args)
       }
