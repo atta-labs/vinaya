@@ -24,7 +24,10 @@ export type { TokenSourcePr } from './parse-token-report'
 export { deriveReviewStatus, parseDeveloperRoundMarker, renderReviewStatus } from './review-status'
 export type { ReviewStatus, ReviewStatusInput } from './review-status'
 export {
+  activeBudgetMs,
   emptyPhaseSamples,
+  INACTIVE_BUDGET_PHASES,
+  isActiveBudgetPhase,
   isRecordedLoopPhase,
   medianOf,
   MIN_PHASE_HISTORY_SAMPLES,

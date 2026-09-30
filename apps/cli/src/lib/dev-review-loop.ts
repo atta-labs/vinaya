@@ -47,6 +47,7 @@ import { existsSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
 import {
+  activeBudgetMs,
   assessRound,
   briefHash as briefHashOf,
   buildReviewInputManifest,
@@ -1698,8 +1699,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
 
     /**
      * When the loop FIRST started on this task, as the durable control records
-     * report it — the instant the task's wall-clock budget is measured from,
-     * and the one figure that must not restart with this process. Resolved
+     * report it — carried forward unchanged by every driver as the task's own
+     * origin timestamp (`task status`, the recovery record). It no longer sets
+     * the time budget's clock: the budget counts active phase time, not age
+     * (`taskClock`/`activeBudgetMs`), so a restart resetting this would not
+     * reset the budget. It is still resolved from the oldest durable record so
+     * the origin a reader sees does not jump forward on a takeover. Resolved
      * once, here, in falling order of authority:
      *
      *   1. the recovered `loop_state` record's own `taskStartedAt`, written by
@@ -1734,9 +1739,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     /**
      * Milliseconds recorded against each phase so far, seeded from the
      * recovered record so a restart continues one accounting rather than
-     * starting a second. Narration only: the budget is decided on elapsed time
-     * since `taskStartedAt`, never on this map, so a thin breakdown still stops
-     * the loop on time.
+     * starting a second. This map IS the budget's clock now: `taskClock` sums
+     * its ACTIVE phases into `elapsedMs` (`activeBudgetMs`), so a thin
+     * breakdown — a run whose earlier phases were recorded by a driver that has
+     * since died — is measured by the active time it can still account for, and
+     * simply reports less about where the rest went.
      */
     const phaseMs: Record<string, number> =
       recoveredLoopState.status === 'ok' ? { ...recoveredLoopState.value.phaseMs } : {}
@@ -1745,24 +1752,28 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     let currentPhaseSince = Date.now()
 
     /**
-     * The task's wall clock, as `assessRound` is handed it at every round
-     * boundary and mechanical retry. `elapsedMs` is measured from
-     * `taskStartedAt` — the loop's first recorded start, not this process's —
-     * and `byPhaseMs` folds in the phase currently open, so the phase the loop
-     * is stuck in is visible in the breakdown rather than missing from it.
+     * The task's own clock, as `assessRound` is handed it at every round
+     * boundary and mechanical retry. `byPhaseMs` is the loop's recorded time
+     * per phase, with the phase currently open folded in, so the phase the loop
+     * is stuck in is visible in the breakdown rather than missing from it — the
+     * full record, `pause` and `publish` phases included.
+     *
+     * `elapsedMs` is what the budget is measured against, and it counts ONLY
+     * the active phases in that record (`activeBudgetMs`): the time a driver
+     * spent developing, reviewing and awaiting confidence, never the hours the
+     * task sat paused, published, or with no driver at all (which is not
+     * recorded against any phase in the first place). It is a sum over the same
+     * `byPhaseMs` that survives a driver restart, so — unlike the wall clock
+     * since `taskStartedAt` this once measured — a task resumed days after its
+     * first start is bounded by the minutes it has worked, not by its age.
      */
     function taskClock(): TaskClock {
       const now = Date.now()
-      const startedMs = Date.parse(taskStartedAt)
       const byPhaseMs = { ...phaseMs }
       if (currentPhase !== null) {
         byPhaseMs[currentPhase] = (byPhaseMs[currentPhase] ?? 0) + Math.max(0, now - currentPhaseSince)
       }
-      // An unparseable recorded start would otherwise read as `NaN`, and every
-      // comparison against a budget would then be false — a budget silently
-      // off. Zero elapsed is the same "does not fire" outcome, stated rather
-      // than arrived at by arithmetic on a non-number.
-      return { elapsedMs: Number.isFinite(startedMs) ? Math.max(0, now - startedMs) : 0, byPhaseMs }
+      return { elapsedMs: activeBudgetMs(byPhaseMs), byPhaseMs }
     }
 
     /** O1: writes the current in-memory round/budget/held-result/delivered-findings state to the control store — called at every meaningful transition below, never only at pause, so a kill mid-round has something fresher than "the last pause" to recover from. */
