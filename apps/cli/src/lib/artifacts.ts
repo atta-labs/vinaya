@@ -47,6 +47,8 @@ export const TRACKED_HOOK_DIR = '.vinaya/hooks'
 
 export type HookDir = '.husky' | '.git/hooks' | typeof TRACKED_HOOK_DIR
 
+export const HOOK_DIRS: readonly HookDir[] = ['.husky', '.git/hooks', TRACKED_HOOK_DIR]
+
 export type InitContext = {
   owner: string
   repo: string
@@ -1785,6 +1787,27 @@ and every PR reads as unreviewed. \`vinaya doctor\` reports when this is unset.`
 // ---------------------------------------------------------------------------
 // Op builders
 // ---------------------------------------------------------------------------
+
+/**
+ * Every git-hook path `vinaya init` can emit — one `<hookDir>/<name>` per hook
+ * per install directory. Read off `buildInitOps` itself, so a hook added there
+ * appears here with no second list to keep in step.
+ */
+export function initHookPaths(): string[] {
+  const paths = new Set<string>()
+  for (const hookDir of HOOK_DIRS) {
+    const ops = buildInitOps({
+      owner: '',
+      repo: '',
+      hookDir,
+      selfHost: null,
+      ciSetup: null,
+      agents: new Set<AgentVendor>()
+    })
+    for (const op of ops) if (op.kind === 'managed-block' && op.group === 'Git hooks') paths.add(op.path)
+  }
+  return [...paths]
+}
 
 /** The full forward change-set for `vinaya init`. */
 export function buildInitOps(ctx: InitContext): Op[] {

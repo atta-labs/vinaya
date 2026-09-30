@@ -1,7 +1,7 @@
 /**
  * Planner→Brief Issue-rationale grammar. Pure — no `fs`, no `fetch`,
- * no `process.env`. The tool-layer gate (`bin/open-issue.ts`, invoked because
- * the `check-forge-gates.sh` hook denies raw `gh issue create`) calls
+ * no `process.env`. The local gate (`bin/open-issue.ts`, the sanctioned way to
+ * create an Issue; no hook refuses a raw `gh issue create`) calls
  * `checkIssueRationale` before any task Issue can reach the forge.
  *
  * A task Issue's body must carry every producer field of the

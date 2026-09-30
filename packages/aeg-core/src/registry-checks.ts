@@ -22,6 +22,7 @@
  * (`'fail'` on any violation).
  */
 
+import { extractCitedPaths } from './doctrine-portability'
 import { GATE_AUDIENCE, isShipped, NON_GATE_BINS } from './gate-audience'
 import type { GateRow } from './registry-parse'
 
@@ -39,14 +40,76 @@ export type RegistryCheckResult = {
   findings: RegistryFinding[]
 }
 
+/** The hook directories a doctrine citation may name a script under. */
+const HOOK_DIR_PREFIXES: readonly string[] = ['.claude/hooks/', '.vinaya/hooks/', '.husky/', '.git/hooks/']
+
+/** A bare hook-script name — `check-*.sh` — cited with no directory. */
+const BARE_HOOK_NAME = /^check-[A-Za-z0-9_.-]*\.sh$/
+
+/** One doctrine file's path and text, read by the caller. */
+export type HookScanFile = { path: string; content: string }
+
+/** What G1's hook-reference half needs from its caller: the doctrine files to
+ * scan, and every hook path that counts as shipped (tracked in git, or emitted
+ * by `vinaya init`). */
+export type HookReferenceInput = { docs: HookScanFile[]; shipped: ReadonlySet<string> }
+
+function basename(path: string): string {
+  return path.slice(path.lastIndexOf('/') + 1)
+}
+
+function lineOf(content: string, index: number): number {
+  let line = 1
+  for (let i = 0; i < index; i++) if (content.charCodeAt(i) === 10) line++
+  return line
+}
+
 /**
- * G1 — every row's non-empty `implementation` resolves on disk. Blocking as
- * of task 8 (re-graded from report-only: eleven permanent `info` findings on
- * every run had become indistinguishable from silence, which is how the gap
- * this tranche closes stayed invisible; the report-only window had already
- * cleared the backlog it existed to surface).
+ * Every inline-code token in `docs` that names a hook script that is not in
+ * `shipped`: a full path under a hook directory (`.claude/hooks/`,
+ * `.vinaya/hooks/`, `.husky/`, `.git/hooks/`), or a bare `check-*.sh` name that
+ * matches the basename of no shipped path. A directory or glob token
+ * (`.husky/`, `.husky/*`) names no single script and is never a finding.
  */
-export function checkG1(rows: GateRow[], existsFn: (path: string) => boolean): RegistryCheckResult {
+export function findUnshippedHookRefs(docs: HookScanFile[], shipped: ReadonlySet<string>): RegistryFinding[] {
+  const shippedNames = new Set([...shipped].map(basename))
+  const findings: RegistryFinding[] = []
+  const flag = (doc: HookScanFile, token: string, index: number): void => {
+    findings.push({
+      path: doc.path,
+      reason: `${doc.path}:${lineOf(doc.content, index)} names hook "${token}", which is neither tracked in git nor emitted by \`vinaya init\``
+    })
+  }
+  for (const doc of docs) {
+    for (const { cited, index } of extractCitedPaths(doc.content)) {
+      if (cited.endsWith('/') || !HOOK_DIR_PREFIXES.some((p) => cited.startsWith(p))) continue
+      if (!shipped.has(cited)) flag(doc, cited, index)
+    }
+    const spanPattern = /`([^`\n]+)`/g
+    let match: RegExpExecArray | null = spanPattern.exec(doc.content)
+    while (match !== null) {
+      const token = match[1] ?? ''
+      if (BARE_HOOK_NAME.test(token) && !shippedNames.has(token)) flag(doc, token, match.index)
+      match = spanPattern.exec(doc.content)
+    }
+  }
+  return findings
+}
+
+/**
+ * G1 — every row's non-empty `implementation` resolves on disk, and — when the
+ * caller supplies `hookRefs` — every hook script the doctrine names is shipped
+ * (`findUnshippedHookRefs`). Blocking as of task 8 (re-graded from
+ * report-only: eleven permanent `info` findings on every run had become
+ * indistinguishable from silence, which is how the gap this tranche closes
+ * stayed invisible; the report-only window had already cleared the backlog it
+ * existed to surface).
+ */
+export function checkG1(
+  rows: GateRow[],
+  existsFn: (path: string) => boolean,
+  hookRefs?: HookReferenceInput
+): RegistryCheckResult {
   const findings: RegistryFinding[] = []
   for (const row of rows) {
     if (row.implementation === '') continue
@@ -58,6 +121,7 @@ export function checkG1(rows: GateRow[], existsFn: (path: string) => boolean): R
       })
     }
   }
+  if (hookRefs) findings.push(...findUnshippedHookRefs(hookRefs.docs, hookRefs.shipped))
   return { check: 'G1', status: findings.length > 0 ? 'fail' : 'pass', findings }
 }
 

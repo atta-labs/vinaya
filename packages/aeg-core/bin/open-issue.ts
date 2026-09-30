@@ -2,8 +2,8 @@
 
 /**
  * open-issue — the ONLY sanctioned way to create or body-edit an Issue in
- * this repo. The `check-forge-gates.sh` PreToolUse hook denies raw
- * `gh issue create` / `gh issue edit --body*`, directing every agent here.
+ * this repo. No hook intercepts a raw `gh issue create` /
+ * `gh issue edit`; ring-1 CI re-validation is the backstop for one.
  *
  * Gate: a task Issue (any `vinaya/tranche:<slug>` label) must carry the full
  * eight-field Planner's rationale in its body (`checkIssueRationale`,
