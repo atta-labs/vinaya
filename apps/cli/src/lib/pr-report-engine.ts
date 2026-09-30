@@ -19,7 +19,7 @@ import { dirname, join, resolve as resolvePath } from 'node:path'
 import { promisify } from 'node:util'
 import { type AnchorField, anchoredRegionBounds, extractFencedBlocks, locateTestPlanSection } from '@attalabs/aeg-core'
 import { coreCheckRegistry } from '../checks/registry'
-import { buildCheckEnv } from '../checks/runner'
+import { buildCheckEnv, CHECK_EXCLUDE_ENV } from '../checks/runner'
 import { ScanContext } from '../checks/scan-context'
 import { loadConfig } from './config'
 import { collectBodyCheckErrors } from './forge-write.js'
@@ -106,6 +106,36 @@ import { ensureRunDir, runPath, runtimeDirForThisRepo } from './run-paths.js'
 
 const EVIDENCE_START = '<!-- AEG:EVIDENCE:START -->'
 const EVIDENCE_END = '<!-- AEG:EVIDENCE:END -->'
+
+/**
+ * The one check name that is self-referential inside `vinaya pr report`: it
+ * grades the `AEG:EVIDENCE` block this very command is about to (re)write, so
+ * both places this command would otherwise let it run against the PRE-write
+ * body leave it out —
+ *   - Group B's rendered outcomes (a stale `fail` that is a fact about the
+ *     body BEFORE this write, not after — see `buildReport`), and
+ *   - a Group C `vinaya check --all` run (which grades the previous block and
+ *     could never record that command passing).
+ * CI's own `vinaya check --all --diff-only` is `evidence-fresh`'s authoritative
+ * run, unaffected by either exclusion (O3). One constant so the two exclusions
+ * can never name different strings.
+ */
+const EVIDENCE_FRESH_CHECK = 'evidence-fresh'
+
+/**
+ * True when a Test Plan command runs this CLI's own `check --all` — a bare
+ * `check` argv token together with an `--all` token, however the invocation
+ * spells the binary before it (`bun apps/cli/src/index.ts check --all`,
+ * `vinaya check --all`, and the same with a trailing `--diff-only`). Group C
+ * leaves `evidence-fresh` out of exactly these runs (O1) and
+ * records that it did (O2) — never any other command, and a check named on
+ * its own (`vinaya check evidence-fresh`) is not `--all` and is untouched.
+ * Exported for direct unit coverage rather than only through a spawned run.
+ */
+export function commandRunsCheckAll(command: string): boolean {
+  const tokens = command.trim().split(/\s+/)
+  return tokens.includes('check') && tokens.includes('--all')
+}
 
 // `node:child_process`'s async `execFile`, promisified — never
 // `execFileSync`/`spawnSync`. Bun 1.2.14's synchronous spawn kept spinning
@@ -480,6 +510,8 @@ export type GroupCCommandResult = {
   overflowed: boolean
   /** Set only when this result was reused from a prior green run against the identical head, working tree and command — names the run it reused rather than silently re-presenting cached output as freshly run. `undefined` for every command this call actually executed. */
   reusedFrom?: string
+  /** Set only for a Group C command that runs `check --all` (`commandRunsCheckAll`): this run left `evidence-fresh` out, because it would grade the AEG:EVIDENCE block this same report is about to write. `renderGroupC` states that omission on one line below the command's fence (O2); `undefined` for every other command, where `evidence-fresh` was never in play. */
+  omittedEvidenceFresh?: boolean
 }
 export type GroupC = { commands: GroupCCommandResult[] }
 
@@ -1217,9 +1249,20 @@ export async function computeGroupC(
   // original one-after-another order.
   const commands: GroupCCommandResult[] = []
   for (const line of extractAgentCommandLines(prBody)) {
-    commands.push(
-      await runAgentCommand(agentCommandText(line), undefined, cwd, { PR_BODY: prBody, ...extraEnv }, cache)
-    )
+    const command = agentCommandText(line)
+    // A Group C `check --all` run grades `evidence-fresh` against the
+    // PRE-write AEG:EVIDENCE block — this report writes the new block only
+    // AFTER Group C runs — so left alone it can only ever record that command
+    // FAILING, never passing. Leave `evidence-fresh` out via the
+    // runner's own exclusion channel, carried as `CHECK_EXCLUDE_ENV` into the
+    // spawned `vinaya check` process, never by rewriting the recorded command
+    // text. Every OTHER command, and every other run of `evidence-fresh`
+    // (Group B, CI, the pre-push hook), is untouched (O3).
+    const omitsEvidenceFresh = commandRunsCheckAll(command)
+    const commandEnv: Record<string, string> = { PR_BODY: prBody, ...extraEnv }
+    if (omitsEvidenceFresh) commandEnv[CHECK_EXCLUDE_ENV] = EVIDENCE_FRESH_CHECK
+    const result = await runAgentCommand(command, undefined, cwd, commandEnv, cache)
+    commands.push(omitsEvidenceFresh ? { ...result, omittedEvidenceFresh: true } : result)
   }
   return { commands }
 }
@@ -1262,7 +1305,19 @@ export function renderGroupC(groupC: GroupC): string {
     // its own fence — never inside it, so the fence stays byte-identical to
     // what a fresh run of the same command would have produced.
     const reused = c.reusedFrom ? [`\n_Reused from ${c.reusedFrom} — not re-run._`] : []
-    return [`#### C${i + 1}: \`${c.command}\``, '', '```', output, '```', ...reused].join('\n')
+    // O2: a `check --all` run that left `evidence-fresh` out says so on one
+    // line, and why — so a reader never mistakes the omission for a pass. Like
+    // the reuse note, it sits BELOW the fence (never inside it), so the fence
+    // stays byte-identical to the command's real output and `evidence-fresh`'s
+    // own attestation — which reads the `#### C<n>:` heading lines alone, never
+    // this prose — is unaffected. Every digit-bearing token is inside a code
+    // span, so `body-bare-digits` never refuses the body this note rides into.
+    const omitted = c.omittedEvidenceFresh
+      ? [
+          `\n_\`evidence-fresh\` was left out of this run: it grades the \`AEG:EVIDENCE\` block this same \`vinaya pr report\` is about to write, so here it can only fail against the previous block. CI's own \`vinaya check --all --diff-only\` is its authoritative run._`
+        ]
+      : []
+    return [`#### C${i + 1}: \`${c.command}\``, '', '```', output, '```', ...reused, ...omitted].join('\n')
   })
   return ['### Group C — Test Plan commands', '', blocks.join('\n\n')].join('\n')
 }
@@ -1486,7 +1541,7 @@ export async function buildReport(
   // rendered outcomes and `gatesFailed` — a self-referential staleness
   // artifact must not itself redden a report that is otherwise clean.
   const outcomes = gateResult.outcomes
-    .filter((o) => o.name !== 'evidence-fresh')
+    .filter((o) => o.name !== EVIDENCE_FRESH_CHECK)
     .map((o) => (shouldRenderAsSkipped(o, gradedBody) ? { ...o, status: 'skipped' } : o))
   // PR_NUMBER/BRANCH: read from the SAME source Group B's gate child already
   // reads them from (`opts.envOverlay ?? process.env` — `runRealGates`'s own

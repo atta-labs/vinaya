@@ -41,6 +41,22 @@ export type RunOptions = {
    */
   skipFull?: boolean
   /**
+   * Check names to leave OUT of this run entirely — skipped (`skipped`, not
+   * run) at the same point `skipFull`/`localOnly` skip, ahead of the
+   * scope/diff logic and independent of every one of them. Unlike those two
+   * blanket switches this names specific checks by identity: its one caller is
+   * `vinaya pr report`'s Group C (`lib/pr-report-engine.ts`), which runs a
+   * Test Plan's own `vinaya check --all` from the PR head and would otherwise
+   * grade `evidence-fresh` against the very `AEG:EVIDENCE` block that same
+   * report is about to write — a self-inflicted staleness failure the command
+   * could never record passing, never a fact about the command.
+   * The command text a Group C run records is never rewritten to carry an
+   * exclude flag; the exclusion travels as `CHECK_EXCLUDE_ENV` into the spawned
+   * `vinaya check` process instead. Never set by CI, the pre-push hook, or
+   * Group B's own `check --all --diff-only` — see `pr-report-engine.ts`.
+   */
+  excludeChecks?: string[]
+  /**
    * Injectable for tests — defaults to the process-wide Vinaya Log sink
    * (`../lib/log-sink.js`'s `log`), the same singleton every check attempt
    * in a real `vinaya check`/hook/CI invocation shares one `run_id` through
@@ -54,6 +70,20 @@ export type RunOptions = {
 export function defaultParallelism(): number {
   return Math.max(1, cpus().length)
 }
+
+/**
+ * The environment channel a caller populates `RunOptions.excludeChecks` from
+ * when it spawns `vinaya check` as a subprocess and, by contract, must not
+ * edit the command text it runs — `vinaya pr report`'s Group C.
+ * A comma-separated list of check names; `commands/check.ts` reads it into
+ * `excludeChecks`. The runner itself never reads the environment — this
+ * constant only names the agreed variable so the one reader and the one
+ * writer cannot drift. It is NOT a declared `env` key on any check, so
+ * `buildCheckEnv` strips it from every spawned CHECK's own child environment:
+ * an exclusion can never propagate past the single `vinaya check` process a
+ * caller set it on into the checks that process itself runs.
+ */
+export const CHECK_EXCLUDE_ENV = 'VINAYA_CHECK_EXCLUDE'
 
 function isCheckError(value: unknown): value is CheckError {
   if (typeof value !== 'object' || value === null) return false
@@ -145,9 +175,13 @@ function inputFingerprintFor(spec: CheckSpec, opts: RunOptions, callerEnv: NodeJ
  * pre-push/CI" switch, not a per-check scoping decision.
  *
  * Independently, a `requiresOpenPr` check is skipped whenever `opts.localOnly`
- * is set, regardless of scope/diff — see `RunOptions.localOnly`.
+ * is set, regardless of scope/diff — see `RunOptions.localOnly`. And ahead of
+ * all of those, a check whose name the caller named in `opts.excludeChecks` is
+ * skipped outright, regardless of scope/diff/localOnly/skipFull — see
+ * `RunOptions.excludeChecks`.
  */
 function shouldSkip(spec: CheckSpec, opts: RunOptions): { skip: boolean; reason?: string } {
+  if (opts.excludeChecks?.includes(spec.name)) return { skip: true, reason: 'excluded-by-caller' }
   if (opts.localOnly && spec.requiresOpenPr) return { skip: true, reason: 'requires-open-pr, local-only' }
   if (opts.skipFull && spec.scope === 'full') return { skip: true, reason: 'full-scope, pre-commit' }
   if (spec.scope !== 'diff') return { skip: false }

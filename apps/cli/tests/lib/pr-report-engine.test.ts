@@ -24,6 +24,8 @@ import { agentCommandText, extractAgentCommandLines } from '../../src/commands/p
 import { checkBareDigits } from '../../src/checks/body-bare-digits-logic'
 import {
   buildReport,
+  commandRunsCheckAll,
+  computeGroupC,
   describeReuse,
   type GateRunResult,
   type GroupC,
@@ -367,4 +369,109 @@ describe('a Test-plan entry that really ran renders exactly as before (O2)', () 
       ].join('\n')
     )
   })
+})
+
+// ---------------------------------------------------------------------------
+// #788 — a Test Plan naming `check --all` can never record it passing while
+// `evidence-fresh` inside that Group C run grades the very AEG:EVIDENCE block
+// this same report is about to write. Group C leaves `evidence-fresh` out of
+// exactly those runs (O1), says so on one line (O2), and touches nothing else
+// (O3). The exclusion travels as an env var into the spawned `vinaya check`,
+// never by rewriting the recorded command text.
+// ---------------------------------------------------------------------------
+
+describe('commandRunsCheckAll — which Group C commands drop evidence-fresh (#788)', () => {
+  it('is true for a `check --all` invocation however the binary is spelled', () => {
+    expect(commandRunsCheckAll('bun apps/cli/src/index.ts check --all')).toBe(true)
+    expect(commandRunsCheckAll('vinaya check --all')).toBe(true)
+    expect(commandRunsCheckAll('vinaya check --all --diff-only')).toBe(true)
+  })
+
+  it('is false for anything that is not a bare `check` + `--all` pair', () => {
+    // A different command entirely.
+    expect(commandRunsCheckAll('bun test apps/cli/tests/lib/pr-report-engine.test.ts')).toBe(false)
+    // A single check named on its own is not `--all` — never excluded (O3).
+    expect(commandRunsCheckAll('vinaya check evidence-fresh')).toBe(false)
+    // Token-exact: `checking`/`--all-of-them` are not `check`/`--all`.
+    expect(commandRunsCheckAll('echo checking --all-of-them')).toBe(false)
+  })
+})
+
+describe('renderGroupC — the O2 omission note for a `check --all` run (#788)', () => {
+  const CHECK_ALL: GroupC['commands'][number] = {
+    command: 'bun apps/cli/src/index.ts check --all',
+    output: 'all checks green',
+    exitCode: 0,
+    timedOut: false,
+    overflowed: false
+  }
+
+  it('names the omission and why, appended BELOW the fence so the fence is byte-identical', () => {
+    const plain = renderGroupC({ commands: [CHECK_ALL] })
+    const omitted = renderGroupC({ commands: [{ ...CHECK_ALL, omittedEvidenceFresh: true }] })
+
+    // The whole plain render — heading, fence, output — is an exact prefix of
+    // the omitted one: the note adds only trailing prose, changing no byte a
+    // fresh run of the same command would have produced (and none
+    // `evidence-fresh`'s own `#### C<n>:` heading attestation reads).
+    expect(omitted.startsWith(plain)).toBe(true)
+    const note = omitted.slice(plain.length)
+    expect(note).toContain('`evidence-fresh` was left out of this run')
+    expect(note).toContain("CI's own `vinaya check --all --diff-only` is its authoritative run")
+  })
+
+  it('a run WITHOUT the flag renders exactly as before — no note (O3)', () => {
+    expect(renderGroupC({ commands: [CHECK_ALL] })).not.toContain('was left out of this run')
+  })
+
+  it('the note passes body-bare-digits once spliced into a real live body (O2)', async () => {
+    const LIVE_BODY = [
+      '## Evidence',
+      '',
+      '<!-- AEG:EVIDENCE:START -->',
+      EVIDENCE_PLACEHOLDER_TEXT,
+      '<!-- AEG:EVIDENCE:END -->',
+      ''
+    ].join('\n')
+    const result = await buildReport({
+      groupA: FIXED_GROUP_A,
+      gateRunner: () => PASSING_GATES,
+      groupC: { commands: [{ ...CHECK_ALL, omittedEvidenceFresh: true }] },
+      body: LIVE_BODY,
+      cwd: tempCwd()
+    })
+    const spliced = spliceIntoLiveBody(LIVE_BODY, result.blockInner)
+    expect(spliced).toContain('`evidence-fresh` was left out of this run')
+    expect(checkBareDigits(spliced).violations).toEqual([])
+  }, 20000)
+})
+
+describe('computeGroupC — the exclusion reaches only the `check --all` command (#788)', () => {
+  // Two Test Plan commands, each echoing `$VINAYA_CHECK_EXCLUDE` so its own
+  // spawned environment is observable in its recorded output. Only the first
+  // is a `check --all` command, so only its spawn should carry the exclusion.
+  const BODY = [
+    '## Test Plan',
+    '',
+    '```',
+    'echo check --all exclude=$VINAYA_CHECK_EXCLUDE → prints evidence-fresh',
+    'echo probe exclude=$VINAYA_CHECK_EXCLUDE → prints nothing',
+    '```',
+    ''
+  ].join('\n')
+
+  it('the `check --all` command sees evidence-fresh excluded and is flagged; the other sees nothing', async () => {
+    const groupC = await computeGroupC(BODY, tempCwd())
+    expect(groupC.commands).toHaveLength(2)
+
+    // The `check --all` command: env carried the exclusion, and the result is
+    // flagged so `renderGroupC` can state it (O1, O2).
+    expect(groupC.commands[0]?.omittedEvidenceFresh).toBe(true)
+    expect(groupC.commands[0]?.output).toBe('check --all exclude=evidence-fresh')
+
+    // The other command: the exclusion env was never set for it, so the
+    // variable expands to empty — never leaked from the sibling command (O3).
+    expect(groupC.commands[1]?.omittedEvidenceFresh).toBeFalsy()
+    expect(groupC.commands[1]?.output).toBe('probe exclude=')
+  }, 20000)
 })
