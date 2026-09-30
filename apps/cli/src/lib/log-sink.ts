@@ -159,6 +159,14 @@ export type LogSinkDeps = {
    */
   resolveBranchIssue: (repo: string | null) => Promise<number | null>
   /**
+   * The full commit id the sink's `cwd` checkout's `HEAD` names, or `null`
+   * when it cannot be resolved — the real default is `resolveHeadSha` (one
+   * `git rev-parse HEAD`). Asked only for a gate event, called at most once
+   * per process per working directory, and never blocking an event past the
+   * shared lookup deadline.
+   */
+  resolveHeadSha: () => Promise<string | null>
+  /**
    * The `logs` setting's resolved destination for this process (O1/O4) —
    * `vinaya.config.json`'s `logs`, trust-anchor-gated for an unattended
    * caller exactly as `runtimeDir` already is, falling back to a folder
@@ -1045,6 +1053,29 @@ function branchIssueRead(key: string, read: () => Promise<number | null>, shared
   return reading
 }
 
+/** The checkout's `HEAD`, memoised for the PROCESS by directory — the same reasoning as `branchIssueByCwd`: a commit cannot change under one process's gate events, and a run of checks must not cost a `git` call each. */
+const headShaByCwd = new Map<string, Promise<string | null>>()
+
+/** The bounded `HEAD` read: shared across this process when it is the REAL read, private when a caller injected its own (`branchIssueRead`'s reasoning). */
+function headShaRead(key: string, read: () => Promise<string | null>, shared: boolean): Promise<string | null> {
+  if (!shared) return withDeadline(Promise.resolve().then(read), LOG_CONTEXT_LOOKUP_DEADLINE_MS, null)
+  const cached = headShaByCwd.get(key)
+  if (cached !== undefined) return cached
+  const reading = withDeadline(Promise.resolve().then(read), LOG_CONTEXT_LOOKUP_DEADLINE_MS, null)
+  headShaByCwd.set(key, reading)
+  return reading
+}
+
+/** `git -C <cwd> rev-parse HEAD` — the full 40-character commit id, or `null` when `git` fails or answers anything else (never a branch name or a guess). An async child, like every other read behind the sink. */
+export async function resolveHeadSha(cwd: string): Promise<string | null> {
+  try {
+    const out = (await execFileAsync('git', ['-C', cwd, 'rev-parse', 'HEAD'], { encoding: 'utf8' })).stdout.trim()
+    return /^[0-9a-f]{40}$/.test(out) ? out : null
+  } catch {
+    return null
+  }
+}
+
 /** Set once, at a process's own entry point, before it builds any sink. */
 export function setBranchIssueFallback(enabled: boolean): void {
   branchIssueFallbackEnabled = enabled
@@ -1056,7 +1087,7 @@ export function setBranchIssueFallback(enabled: boolean): void {
  * are merged, so `createLogSink` binds it there (and `resolveLogAppendPath`
  * binds its own, below, against the same `cwd`).
  */
-function defaultDeps(): Omit<LogSinkDeps, 'resolveBranchIssue'> {
+function defaultDeps(): Omit<LogSinkDeps, 'resolveBranchIssue' | 'resolveHeadSha'> {
   return {
     outboxRoot: () => join(GLOBAL_VINAYA_HOME, 'outbox'),
     home: () => homedir(),
@@ -1218,6 +1249,7 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
     // given a `cwd` of its own never reports its own `meta.repo` from one
     // checkout and its branch-derived `subject.issue` from another.
     resolveBranchIssue: (repo) => resolveBranchIssue(deps.cwd(), deps.env(), repo),
+    resolveHeadSha: () => resolveHeadSha(deps.cwd()),
     ...overrides
   }
   const runId = deps.env().VINAYA_RUN_ID || randomUUID()
@@ -1273,6 +1305,17 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
     if (readerIsReal) return branchIssueRead(`${deps.cwd()}\u0000${slug ?? ''}`, read, true)
     if (ownBranchIssue === undefined) ownBranchIssue = branchIssueRead(deps.cwd(), read, false)
     return ownBranchIssue
+  }
+
+  // The commit a gate event was checked at — read lazily, only for a gate
+  // event, once per process and directory (`headShaByCwd`); a sink given a
+  // reader of its own keeps that answer to itself.
+  const headShaReaderIsReal = overrides.resolveHeadSha === undefined
+  let ownHeadSha: Promise<string | null> | undefined
+  const headShaOnce = (): Promise<string | null> => {
+    if (headShaReaderIsReal) return headShaRead(deps.cwd(), deps.resolveHeadSha, true)
+    if (ownHeadSha === undefined) ownHeadSha = headShaRead(deps.cwd(), deps.resolveHeadSha, false)
+    return ownHeadSha
   }
 
   // `deps.resolveRepo()` (the real default is `@attalabs/aeg-forge-state`'s
@@ -1449,7 +1492,7 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
         // not by this await, so an event that skips the lookup can never
         // overtake an earlier one that waited for it.
         const branchIssue = envFields.task ? null : await branchIssueOnce(repo)
-        const header = buildHeader({
+        const built = buildHeader({
           now,
           runId,
           seq: mySeq,
@@ -1464,6 +1507,10 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
           processId,
           inputVersions: deps.inputVersions()
         })
+        // A gate event names the commit it was checked at, omitted when the
+        // commit cannot be resolved. No other family carries it here.
+        const headSha = e.kind === 'gate' ? await headShaOnce() : null
+        const header = headSha === null ? built : { ...built, subject: { ...built.subject, sha: headSha } }
         // O3: keep the fallback reason where a launch path that discards
         // standard error still surfaces it — the task's own driver.log (when
         // the event names a task) and the state file `vinaya doctor` reports.

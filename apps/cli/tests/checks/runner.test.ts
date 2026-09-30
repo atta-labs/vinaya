@@ -1,8 +1,11 @@
-import { execSync } from 'node:child_process'
+import { execSync, spawnSync } from 'node:child_process'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { describe, expect, it } from 'bun:test'
 import { join } from 'node:path'
 import type { CheckSpec } from '../../src/checks/contract'
 import { buildCheckEnv, runChecks } from '../../src/checks/runner'
+import { createLogSink } from '../../src/lib/log-sink'
 
 const FIXTURES = join(import.meta.dir, '..', 'fixtures', 'checks')
 const PASSING = join(FIXTURES, 'passing-check.ts')
@@ -427,5 +430,39 @@ describe('buildCheckEnv', () => {
     const out = buildCheckEnv({ PATH: '/custom/bin' }, BASELINE_CALLER_ENV)
     expect(out.HOME).toBe(BASELINE_CALLER_ENV.HOME)
     expect(out.LANG).toBe(BASELINE_CALLER_ENV.LANG)
+  })
+})
+
+describe('runChecks — the commit a gate event records', () => {
+  it("carries the checkout's HEAD on the gate event a run logs, through the real sink", async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vinaya-runner-sha-'))
+    const git = (...args: string[]): string => {
+      const r = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' })
+      if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr}`)
+      return r.stdout.trim()
+    }
+    git('init', '--initial-branch=main')
+    git('config', 'user.email', 'test@example.com')
+    git('config', 'user.name', 'Test')
+    writeFileSync(join(dir, 'a.txt'), 'a')
+    git('add', 'a.txt')
+    git('commit', '-m', 'init')
+    const sink = createLogSink({
+      resolveLogDestination: () => ({ kind: 'folder', folder: join(dir, 'outbox') }),
+      outboxRoot: () => join(dir, 'outbox'),
+      home: () => dir,
+      cwd: () => dir,
+      env: () => ({ VINAYA_ROLE: 'developer', VINAYA_TASK: '404' }),
+      resolveRepo: () => Promise.resolve({ owner: 'atta-labs', repo: 'vinaya' }),
+      resolveBranchIssue: () => Promise.resolve(null),
+      stderr: () => {}
+    })
+    await runChecks([fullScope({ name: 'passing', run: PASSING })], { ...BASE_OPTS, log: sink.log })
+    await sink.drain()
+    const lines = readFileSync(join(dir, 'outbox', 'atta-labs-vinaya', '404.ndjson'), 'utf8')
+      .trim()
+      .split('\n')
+    const gate = lines.map((l) => JSON.parse(l)).find((e) => e.kind === 'gate')
+    expect(gate.subject.sha).toBe(git('rev-parse', 'HEAD'))
   })
 })
