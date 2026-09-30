@@ -190,6 +190,13 @@ const LOG_SEND_PATH = 'apps/cli/src/commands/log-send.ts'
  * directly. Same "imports the sink's pure helpers, never `log()`" shape.
  */
 const LOG_SELFTEST_PATH = 'apps/cli/src/commands/log-selftest.ts'
+/**
+ * The writer of a consumer's own declared events: it checks one event
+ * against `logs.events` and calls `log()` once — a `custom` line, or the
+ * `operation` refusal naming why none was written. It never touches the
+ * outbox path itself, so it joins `CALLER_ALLOWLIST` alone.
+ */
+const LOG_CUSTOM_PATH = 'apps/cli/src/lib/log-custom.ts'
 /** Exactly what `DOCTOR_PATH` is allowed to take from the sink module (sorted). */
 const DOCTOR_SINK_IMPORTS = [
   'FolderFallbackRecord',
@@ -214,7 +221,8 @@ const CALLER_ALLOWLIST = new Set([
   BROKER_PATH,
   DOCTOR_PATH,
   LOG_SEND_PATH,
-  LOG_SELFTEST_PATH
+  LOG_SELFTEST_PATH,
+  LOG_CUSTOM_PATH
 ])
 const OUTBOX_TRUNCATE_ALLOWLIST = new Set([LOG_WEBHOOK_DRAIN_LIB_PATH])
 const OUTBOX_HELD_VERDICT_ALLOWLIST = new Set([
@@ -523,6 +531,14 @@ const PRODUCER_BOUNDARIES: ProducerBoundary[] = [
     requires: [{ kind: 'operation', event: 'completed' }]
   },
   {
+    name: 'emitCustomEvent — a declared event recorded, or its refusal',
+    files: [LOG_CUSTOM_PATH],
+    requires: [
+      { kind: 'custom', event: 'recorded' },
+      { kind: 'operation', event: 'completed' }
+    ]
+  },
+  {
     name: 'task-tools cancel/resume handlers',
     files: [TASK_TOOLS_CANCEL_PATH, TASK_TOOLS_RESUME_PATH],
     requires: [{ kind: 'operation', event: 'completed' }]
@@ -607,7 +623,8 @@ const FAMILY_EXPORTS: Array<{ exportName: string; kind: string }> = [
   { exportName: 'UsageEventSchema', kind: 'usage' },
   { exportName: 'RoleAttemptEventSchema', kind: 'role_attempt' },
   { exportName: 'HandoffEventSchema', kind: 'handoff' },
-  { exportName: 'EffectEventSchema', kind: 'effect' }
+  { exportName: 'EffectEventSchema', kind: 'effect' },
+  { exportName: 'CustomEventSchema', kind: 'custom' }
 ]
 
 describe('log coverage — O1 (task-log-v1 7, Issue #567): every schema event maps to a producer boundary', () => {
@@ -616,11 +633,11 @@ describe('log coverage — O1 (task-log-v1 7, Issue #567): every schema event ma
     familyEventsFromSchema(schemaSource, exportName, kind)
   )
 
-  it('sanity: the schema really does declare 28 kind/event pairs across 9 families today', () => {
+  it('sanity: the schema really does declare 29 kind/event pairs across 10 families today', () => {
     // A change to this number is a real schema change (a family or event
     // added/removed) — update it alongside PRODUCER_BOUNDARIES /
     // LOG_COVERAGE_EXEMPTIONS in the same diff, never silently.
-    expect(allDeclaredEvents.length).toBe(28)
+    expect(allDeclaredEvents.length).toBe(29)
   })
 
   it('every declared kind/event pair is required by a producer boundary, or named in LOG_COVERAGE_EXEMPTIONS', () => {
