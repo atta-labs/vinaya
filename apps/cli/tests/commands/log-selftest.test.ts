@@ -42,6 +42,10 @@ function deps(overrides: Partial<LogSelftestDeps> = {}): { deps: LogSelftestDeps
     }),
     readReadHeaders: () => ({ authorization: 'Bearer ${VINAYA_LOG_READ_TOKEN}' }),
     resolveHeaders: () => ({ authorization: `Bearer ${SECRET}` }),
+    // The macOS-Keychain fallback is a no-op by default here (Linux CI has no
+    // Keychain); the O2 case below overrides it to prove a token held only in
+    // the Keychain is counted as present.
+    readKeychain: () => null,
     readLastSeq: async () => ({ kind: 'accepted', status: 200, lastSeq: 5 }),
     post: async () => ({ kind: 'accepted', status: 200 }),
     read: async () => pageWithEvent(),
