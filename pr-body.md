@@ -39,15 +39,16 @@ bun apps/cli/src/index.ts check --all → exits 0
 ## Evidence
 
 <!-- AEG:EVIDENCE:START -->
-Head: eabc5eb2259032bde363075ab90341939841f257
-Summary: `1 file changed, 11 insertions(+), 6 deletions(-)`
+Head: 597558fcf016e6287e1cd19328063d2b48d85915
+Summary: `2 files changed, 251 insertions(+), 6 deletions(-)`
 
 ### Group A — recomputable
 
-`git diff 16205d87e9645eefdac82ffa9742466c8343b9c7...eabc5eb2259032bde363075ab90341939841f257 --numstat`
+`git diff 16205d87e9645eefdac82ffa9742466c8343b9c7...597558fcf016e6287e1cd19328063d2b48d85915 --numstat`
 
 ```
 11	6	apps/log-server/specs/server.md
+240	0	pr-body.md
 ```
 
 ### Group B — attested
@@ -76,8 +77,7 @@ issue-assignment: pass
 main-branch-refusal: pass
 no-disk-state: pass
 pr-premise-reassert: pass
-pr-report-density: fail
-  error: pr-report-density Scope: "## Scope" holds 6 paragraphs — the canonical PR-report form (aeg-root/roles/developer.md § PR body) requires exactly one. Collapse it to one paragraph; move the rest into a section of your own below the canonical four ("Add anything you want beneath the four sections", developer.md), a commit message, or the changeset — never into the AEG:EVIDENCE block, which is emitted only, never hand-typed.
+pr-report-density: pass
 quoted-command: pass
 reader-resolvable-prose: pass
 registry-gates: pass
@@ -94,9 +94,17 @@ workspace-escape: pass
 #### C1: `bun apps/cli/src/index.ts check --all`
 
 ```
-[exit 1]
-[... 1467 earlier characters truncated ...]
-report-density","severity":"error","message":"pr-report-density Scope: \"## Scope\" holds 6 paragraphs — the canonical PR-report form (aeg-root/roles/developer.md § PR body) requires exactly one. Collapse it to one paragraph; move the rest into a section of your own below the canonical four (\"Add anything you want beneath the four sections\", developer.md), a commit message, or the changeset — never into the AEG:EVIDENCE block, which is emitted only, never hand-typed.","agent_recovery_prompt":"Collapse the named section to exactly one paragraph, then re-run `vinaya check pr-report-density`."}
+[... 717 earlier characters truncated ...]
+edures: pass (137ms)
+✓ exec-bits: pass (287ms)
+✓ ci-shard-coverage: pass (102ms)
+✓ workspace-escape: pass (361ms)
+✓ changeset-coverage: pass (334ms)
+✓ quoted-command: pass (209ms)
+✓ main-branch-refusal: pass (144ms)
+✓ token-collection-wired: pass (90ms)
+✓ atta-labs/secret-scan: pass (114ms)
+vinaya: log delivery to https://vinaya-log-server.estevez-dani.workers.dev/v1/repos/atta-labs/vinaya/events failed — queued in the local outbox, retried on the next event: log webhook drain: POST to https://vinaya-log-server.estevez-dani.workers.dev/v1/repos/atta-labs/vinaya/events returned 401 Unauthorized
 ```
 
 _`evidence-fresh` was left out of this run: it grades the `AEG:EVIDENCE` block this same `vinaya pr report` is about to write, so here it can only fail against the previous block. CI's own `vinaya check --all --diff-only` is its authoritative run._
