@@ -89,6 +89,7 @@ export type QuarantineRecord = {
   /** `meta.schema` when readable, else `null`. */
   schema: number | null
   reason: string
+  /** The line's text after redaction — a secret in a line that failed validation never reaches a cache. */
   raw: string
   /** sha256 (hex) of `raw` — what keys a quarantine record, since `identity` can be absent. */
   contentHash: string

@@ -2,12 +2,15 @@
  * The one normaliser: a stored log line in, exactly one dataset row or
  * exactly one quarantine record out (`apps/cli/specs/log-sync.md`).
  * Validation, schema-version handling and redaction are
- * `classifyStoredLine`'s; this module only maps its three outcomes. Pure —
+ * `classifyStoredLine`'s; this module only maps its three outcomes, and
+ * applies the same `redact` to a quarantined line's raw text, which the
+ * classifier keeps verbatim. Pure —
  * `node:crypto` is the one import outside this package.
  */
 
 import { createHash } from 'node:crypto'
 import type { Provenance } from '../schema'
+import { redact } from '../redact'
 import { classifyStoredLine } from '../store'
 import {
   type DatasetRow,
@@ -70,6 +73,7 @@ export function isLowTrustVersion(version: string): boolean {
 export function normalizeStoredLine(raw: string, origin: RowOrigin | null = null): NormalizedLine {
   const classified = classifyStoredLine(raw, '')
   if (classified.status !== 'ok') {
+    const raw = redact(classified.raw, '')
     return {
       type: 'quarantine',
       record: {
@@ -77,8 +81,8 @@ export function normalizeStoredLine(raw: string, origin: RowOrigin | null = null
         identity: classified.identity,
         schema: classified.status === 'unknown_version' ? classified.schema : null,
         reason: classified.reason,
-        raw: classified.raw,
-        contentHash: sha256(classified.raw),
+        raw,
+        contentHash: sha256(raw),
         origin
       }
     }

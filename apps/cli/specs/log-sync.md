@@ -11,7 +11,7 @@ The sender's queue contract, `LogStore` (`packages/aeg-core/src/log/store.ts` �
 `normalizeStoredLine(raw, origin)` (`normalize.ts`) turns one stored line into **exactly one** of:
 
 - a **row** (`DatasetRow`, `row.ts`) — the line validated under a schema version this build knows (`1`, `2` or `3`);
-- a **quarantine record** (`QuarantineRecord`) — the line names a schema version this build does not know, or fails validation under the one it names, or is not JSON at all. It holds the reason, the raw text, the identity when one can be read, the schema version when one can be read, and the sha256 of the raw text. It produces no row.
+- a **quarantine record** (`QuarantineRecord`) — the line names a schema version this build does not know, or fails validation under the one it names, or is not JSON at all. It holds the reason, the raw text with the same redaction every read applies (a secret in a line that failed validation never reaches a cache), the identity when one can be read, the schema version when one can be read, and the sha256 of the raw text. It produces no row.
 
 Validation, version handling and redaction are `classifyStoredLine`'s (`store.ts`), called with an empty home directory; the normaliser only maps its three outcomes (`ok` to a row, `unknown_version` and `invalid` to quarantine). There is no second validator.
 

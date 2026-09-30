@@ -279,6 +279,21 @@ describe('quarantine (O2)', () => {
     expect(record.reason).toBe('not valid JSON')
   })
 
+  it('redacts a secret in the raw text it keeps', () => {
+    const token = `ghp_${'a'.repeat(36)}`
+    const raw = operation({ schema: 99, ...core, ...v2Fields, event_id: 'future-2', actor_id: token })
+    const record = quarantineOf(raw)
+    expect(record.raw).not.toContain(token)
+    expect(record.raw).toContain('<redacted>')
+    expect(record.contentHash).toBe(createHash('sha256').update(record.raw).digest('hex'))
+  })
+
+  it('a schema 3 work object without a ref is invalid, not a row with an unknown work reference', () => {
+    const { ref: _ref, ...workWithoutRef } = v3Fields.work
+    const raw = operation({ schema: 3, ...core, ...v2Fields, ...v3Fields, work: workWithoutRef })
+    expect(quarantineOf(raw).status).toBe('invalid')
+  })
+
   it('carries its origin', () => {
     const result = normalizeStoredLine('nope', { source: 'folder:/logs', position: 'x.ndjson:1' })
     expect(result.type === 'quarantine' && result.record.origin).toEqual({
