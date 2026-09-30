@@ -89,6 +89,52 @@ export function phaseHistoryClassFor(phase: string): PhaseHistoryClass | null {
   return null
 }
 
+// --- which phases count as WORK, for the task time budget -------------------
+
+/**
+ * The recorded phases the task time budget does NOT count — the two a driver
+ * sits in without working the task forward: `pause` (the task is waiting for a
+ * Principal) and `publish` (the pull request is already approved and the loop
+ * is only posting). Every other recorded phase is a driver doing the task's
+ * own work — `dispatch_developer` (developing, which spans the push and the
+ * gate wait after it, and the mechanical retries recorded under the same
+ * word), `dispatch_reviewers` (reviewing), and `ask_confidence` (a developer
+ * re-ask turn, not separable from the developing it interrupts).
+ */
+export const INACTIVE_BUDGET_PHASES = ['pause', 'publish'] as const
+
+/**
+ * Whether a recorded phase is ACTIVE work the time budget counts. A phase this
+ * vocabulary does not know is NOT active: an unknown recorded word is no
+ * evidence a driver was working, and the budget exists to bound work, so the
+ * safe direction on an unknown is to under-count (the task runs longer) rather
+ * than to pause it on a phase that cannot be vouched for — the very failure
+ * the first cut of this budget produced when it counted wall-clock age.
+ *
+ * Time with no driver running at all is never recorded against any phase, so
+ * it is excluded by its own absence from the map, never by this predicate.
+ */
+export function isActiveBudgetPhase(phase: string): boolean {
+  return isRecordedLoopPhase(phase) && !(INACTIVE_BUDGET_PHASES as readonly string[]).includes(phase)
+}
+
+/**
+ * The task time budget's clock: the sum of every ACTIVE phase's recorded
+ * milliseconds, and nothing else. This is the one figure the budget is decided
+ * on (`taskBudgetExceeded`), and the total the pause detail reports as spent —
+ * so a task that sat paused, published, or driverless for hours is measured by
+ * the minutes it actually worked, never by its age. A negative recorded value
+ * (a clock skew a driver could have written) contributes nothing rather than
+ * subtracting from the sum.
+ */
+export function activeBudgetMs(byPhaseMs: Record<string, number>): number {
+  let sum = 0
+  for (const [phase, ms] of Object.entries(byPhaseMs)) {
+    if (isActiveBudgetPhase(phase) && ms > 0) sum += ms
+  }
+  return sum
+}
+
 // --- typical phase times, from merged pull requests -------------------------
 
 /** One comment as a history read sees it: its body, its author, and the forge's own creation timestamp. */
