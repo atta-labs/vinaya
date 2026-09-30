@@ -50,7 +50,13 @@ export const DEFAULT_REVIEW_POLICY: ReviewPolicy = {
 export type ReviewPolicy = {
   codeReviewThreshold: CodeReviewSeverity
   securityThreshold: SecuritySeverity
-  /** The dev-review-loop's own round cap — repository policy, not a hardcoded constant. Resolved once per loop run, same trust class as the two thresholds above. */
+  /**
+   * The dev-review-loop's own round cap — repository policy, not a hardcoded
+   * constant. Resolved once per loop run, same trust class as the two
+   * thresholds above. NOT part of `policyDigest` (`review-input-manifest.ts`):
+   * a round cap bounds how long the loop runs, never whether a finding in an
+   * already-cast verdict blocks, so changing it must not invalidate a verdict.
+   */
   maxRounds: number
   /**
    * The dev-review-loop's own wall-clock budget for one task, in minutes,
@@ -61,7 +67,9 @@ export type ReviewPolicy = {
    * instead of setting a number large enough to never fire.
    *
    * Same trust class and same resolution point as the fields above: read from
-   * the default branch, resolved once per loop run.
+   * the default branch, resolved once per loop run. Like `maxRounds`, NOT part
+   * of `policyDigest` (`review-input-manifest.ts`): the budget bounds how long
+   * the loop runs, never whether a finding in an already-cast verdict blocks.
    */
   maxTaskMinutes: number
 }

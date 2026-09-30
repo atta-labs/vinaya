@@ -60,35 +60,32 @@ export function briefHash(brief: string): string {
 }
 
 /**
- * `sha256` of the effective review policy — one canonical field order
- * (`codeReviewThreshold`, `securityThreshold`, `maxRounds`, then
- * `maxTaskMinutes`) so two callers resolving the identical `ReviewPolicy`
+ * `sha256` of the two review-policy settings that decide whether a verdict's
+ * findings block — `codeReviewThreshold` and `securityThreshold` — in one
+ * canonical field order so two callers resolving the identical `ReviewPolicy`
  * value always agree on its digest regardless of how they built the object
- * literal.
+ * literal. This is what a verdict binds against: change either threshold and
+ * verdicts cast under the old one no longer cover the policy, so the gate
+ * demands a fresh round (O2).
  *
- * `maxRounds` — the incoming round-policy field (O1; Traps to avoid: "include the incoming round-policy field in the
- * relevant configuration identity") — is part of the digest so the policy
- * identity a verdict binds against is the COMPLETE effective policy, not just
- * its two severity thresholds. A run whose round cap changed under a verdict
- * is a policy change the gate must see, the same as a threshold change. The
- * one-time cost is the same fail-closed transition every other field in this
- * family already paid: a verdict cast before this field entered the digest
- * carries the old digest and needs one fresh review round.
- *
- * `maxTaskMinutes` — the task's wall-clock budget — is in the digest for the
- * identical reason, and pays the identical one-time cost: a run whose time
- * budget changed under a verdict is a policy change the gate must see, so the
- * digest covers the COMPLETE effective policy rather than the subset that
- * happened to exist when this function was written.
+ * `maxRounds` and `maxTaskMinutes` are deliberately LEFT OUT of the digest
+ * (O1). They are the loop's own limits — the round cap and the wall-clock
+ * budget — and they bound only how long the loop runs, never whether a finding
+ * in an already-cast verdict blocks. Folding them in (as this digest once did)
+ * meant that merely changing a limit re-computed the digest and re-opened every
+ * approved pull request for a fresh review round with no code change — twice in
+ * two days, once for removing a `maxRounds` override and once for adding
+ * `maxTaskMinutes`. Because the two limits cannot change any verdict's block
+ * decision, the digest a verdict binds to covers the blocking thresholds only
+ * (a Principal decision). The fields still live on `ReviewPolicy` and the
+ * loop still reads them; they are simply not part of this identity.
  */
 export function policyDigest(policy: ReviewPolicy): string {
   return createHash('sha256')
     .update(
       JSON.stringify({
         codeReviewThreshold: policy.codeReviewThreshold,
-        securityThreshold: policy.securityThreshold,
-        maxRounds: policy.maxRounds,
-        maxTaskMinutes: policy.maxTaskMinutes
+        securityThreshold: policy.securityThreshold
       })
     )
     .digest('hex')

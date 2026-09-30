@@ -58,7 +58,7 @@ describe('briefHash / policyDigest', () => {
     )
   })
 
-  it('policyDigest folds in the round-policy field — maxRounds changes the digest (#555, O1)', () => {
+  it('policyDigest ignores the round cap — two policies differing only in maxRounds share one digest (#874, O1)', () => {
     const three = policyDigest({
       codeReviewThreshold: 'BLOCKER',
       securityThreshold: 'HIGH',
@@ -71,16 +71,16 @@ describe('briefHash / policyDigest', () => {
       maxRounds: 5,
       maxTaskMinutes: 180
     })
-    expect(three).not.toBe(five)
+    expect(three).toBe(five)
   })
 
-  it("policyDigest folds in the task's time budget — a changed budget is a policy change the gate must see", () => {
+  it("policyDigest ignores the task's time budget — a changed budget never moves the digest (#874, O1)", () => {
     const base = { codeReviewThreshold: 'BLOCKER', securityThreshold: 'HIGH', maxRounds: 3 } as const
     const threeHours = policyDigest({ ...base, maxTaskMinutes: 180 })
     const oneHour = policyDigest({ ...base, maxTaskMinutes: 60 })
     const off = policyDigest({ ...base, maxTaskMinutes: 0 })
-    expect(threeHours).not.toBe(oneHour)
-    expect(threeHours).not.toBe(off)
+    expect(threeHours).toBe(oneHour)
+    expect(threeHours).toBe(off)
   })
 })
 
