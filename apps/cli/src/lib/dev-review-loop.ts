@@ -43,7 +43,8 @@
 
 import { randomUUID } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
 import { loadTrustAnchorConfig, resolveSecurityScanCommand } from './config.js'
@@ -680,17 +681,39 @@ function scanStreamToString(stream: Buffer | string | null | undefined): string 
  * missing, a timeout, or an output overflow — is `ok: false`, which the loop
  * reports to the reviewer and the Log as `failed` and continues past.
  */
-function defaultRunSecurityScanSubprocess(command: readonly string[], cwd: string): SecurityScanRun {
+export function defaultRunSecurityScanSubprocess(command: readonly string[], scanTargetDir: string): SecurityScanRun {
   const exe = command[0]
   if (exe === undefined) return { ok: false, reason: 'the configured securityScan.command is empty' }
+  // Round-2 security review, HIGH: the scan target is a PULL-REQUEST-AUTHORED
+  // checkout, so it must never steer the subprocess's own config resolution.
+  // `npx --yes <pkg>@<ver>` reads `.npmrc` from the process cwd AND its
+  // ancestors AND from `$HOME`; a pull request that committed an `.npmrc`
+  // registry redirect at its repo root — or a real `$HOME/.npmrc` — would
+  // otherwise make it fetch and run an ATTACKER package under the pinned name,
+  // executing code on the driver host with the real `~/.ssh`/OAuth credentials
+  // readable at `~`. Run instead from a FRESH, EMPTY sandbox directory used as
+  // BOTH cwd and `HOME` (`WORKER_ENV_ALLOWLIST_KEYS` carries the real `HOME`,
+  // overridden here): outside the repository, with no `.npmrc`, so the scan
+  // target is only ever the directory passed as the final ARGUMENT, never the
+  // cwd, and no PR-committed or user npm config is on any path the resolver
+  // walks. This is the config-steering half; a full OS sandbox against a
+  // trusted package reading an absolute credential path is the worker
+  // boundary's own task (`apps/cli/specs/isolation.md` §§3–4), off on Linux.
+  let sandbox: string
+  try {
+    sandbox = mkdtempSync(join(tmpdir(), 'vinaya-scan-'))
+  } catch (err) {
+    return { ok: false, reason: `could not create a scan sandbox: ${err instanceof Error ? err.message : String(err)}` }
+  }
   const env: NodeJS.ProcessEnv = {}
   for (const key of WORKER_ENV_ALLOWLIST_KEYS) {
     const value = process.env[key]
     if (value !== undefined) env[key] = value
   }
+  env.HOME = sandbox
   try {
-    const output = execFileSync(exe, [...command.slice(1), cwd], {
-      cwd,
+    const output = execFileSync(exe, [...command.slice(1), scanTargetDir], {
+      cwd: sandbox,
       env,
       encoding: 'utf8',
       timeout: SECURITY_SCAN_TIMEOUT_MS,
@@ -716,6 +739,12 @@ function defaultRunSecurityScanSubprocess(command: readonly string[], cwd: strin
     const combined = `${scanStreamToString(e.stdout)}${scanStreamToString(e.stderr)}`.trim()
     if (typeof e.status === 'number' && combined.length > 0) return { ok: true, output: combined }
     return { ok: false, reason: e.message }
+  } finally {
+    try {
+      rmSync(sandbox, { recursive: true, force: true })
+    } catch {
+      // Best-effort cleanup — a leaked temp dir never fails the scan.
+    }
   }
 }
 

@@ -9,6 +9,7 @@ import {
   type ReviewInputManifest
 } from '@attalabs/aeg-core'
 import type { DispatchHandle } from '../../../src/lib/dispatch'
+import { defaultRunSecurityScanSubprocess } from '../../../src/lib/dev-review-loop'
 import {
   AGENT_CONFIG_GLOBS,
   buildManifestRecord,
@@ -891,5 +892,41 @@ describe('securityScanPieces / renderReviewerDispatchPrompt — the scan reaches
     // Would throw if the lint read the fact piece; it must not.
     const prompt = renderReviewerDispatchPrompt('security', { ...FACTS, configScan: scan }, '/tmp/work')
     expect(prompt).toContain('the finding is clearly a leak')
+  })
+})
+
+describe('defaultRunSecurityScanSubprocess — the real runner isolates the scanner (O2, round-2 security HIGH)', () => {
+  it('strips the forge token and runs from a fresh sandbox HOME/cwd, never the PR-authored scan target', () => {
+    const target = mkdtempSync(join(tmpdir(), 'vinaya-scan-target-'))
+    const priorGh = process.env.GH_TOKEN
+    const priorGithub = process.env.GITHUB_TOKEN
+    process.env.GH_TOKEN = 'forge-token-sentinel-gh'
+    process.env.GITHUB_TOKEN = 'forge-token-sentinel-github'
+    try {
+      // A shell probe (not a bun process reading process.env, which reads back
+      // {} under a sandbox) dumps the child's real environment and cwd; the
+      // runner appends `target` as the final arg, which `sh -c` binds to $0,
+      // leaving `env`/`pwd` to run.
+      const result = defaultRunSecurityScanSubprocess(['sh', '-c', 'env; echo "PWD=$(pwd)"'], target)
+      expect(result.ok).toBe(true)
+      if (result.ok) {
+        // O2: no forge credential reaches the scanner child.
+        expect(result.output).not.toContain('forge-token-sentinel-gh')
+        expect(result.output).not.toContain('forge-token-sentinel-github')
+        // HIGH fix: HOME is a fresh scan sandbox, never the real host HOME, so
+        // the real user's `~/.npmrc`/`~/.ssh` are not reachable at `~`.
+        expect(result.output).toMatch(/^HOME=.*vinaya-scan-/m)
+        // HIGH fix: the scanner never runs FROM the PR-authored target dir, so a
+        // `.npmrc` committed there cannot steer npx resolution — cwd is the sandbox.
+        expect(result.output).not.toContain(`PWD=${target}`)
+        expect(result.output).toMatch(/^PWD=.*vinaya-scan-/m)
+      }
+    } finally {
+      if (priorGh === undefined) delete process.env.GH_TOKEN
+      else process.env.GH_TOKEN = priorGh
+      if (priorGithub === undefined) delete process.env.GITHUB_TOKEN
+      else process.env.GITHUB_TOKEN = priorGithub
+      rmSync(target, { recursive: true, force: true })
+    }
   })
 })
