@@ -706,6 +706,18 @@ function defaultReadUnpushedWorkDetail(worktreePath: string): { dirtyFiles: stri
 }
 
 /**
+ * The `no_push` pause's detail: the branch, then only what is really
+ * unpushed — the dirty file(s), and the count of commits ahead of the remote
+ * when there are any. Never a claim about commits when there are none.
+ */
+function noPushPauseDetail(branch: string, unpushed: { dirtyFiles: string[]; aheadCount: number }): string {
+  const parts = [`branch ${branch}`]
+  if (unpushed.dirtyFiles.length > 0) parts.push(`dirty file(s): ${unpushed.dirtyFiles.join(', ')}`)
+  if (unpushed.aheadCount > 0) parts.push(`${unpushed.aheadCount} commit(s) ahead of the remote`)
+  return parts.join('; ')
+}
+
+/**
  * O1/O3: `assessRound`'s own `'confidence'` pause (`packages/aeg-core`, out
  * of this task's Surface — the guard itself is untouched) carries no
  * `detail` at all for either branch that reaches it (a re-asked turn that
@@ -3683,14 +3695,24 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                         continue
                       }
                     }
-                    const detail = `branch ${branch}; dirty file(s): ${
-                      stillUnpushed.dirtyFiles.length > 0
-                        ? stillUnpushed.dirtyFiles.join(', ')
-                        : '(none — commits ahead of the remote only)'
-                    }`
-                    await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
-                    decision = { type: 'pause', reason: 'no_push', detail }
-                    continue
+                    // Nothing dirty, nothing ahead, and the remote branch
+                    // already at the head this turn started on: the work IS
+                    // pushed, so there is nothing for a Principal to rule on.
+                    // Decided from the worktree's own reading, never from the
+                    // developer's reply; it falls through to the gate and
+                    // reviewers exactly like a resume that moved the head.
+                    if (
+                      stillUnpushed.dirtyFiles.length === 0 &&
+                      stillUnpushed.aheadCount === 0 &&
+                      d.resolveHead(branch) === headBeforeDispatch
+                    ) {
+                      resolvedByUnpushedResume = true
+                    } else {
+                      const detail = noPushPauseDetail(branch, stillUnpushed)
+                      await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
+                      decision = { type: 'pause', reason: 'no_push', detail }
+                      continue
+                    }
                   }
                 }
               }
