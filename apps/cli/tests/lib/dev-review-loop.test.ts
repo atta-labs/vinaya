@@ -1084,6 +1084,27 @@ describe('devReviewLoop — round 1 start creates the task branch on the remote 
   })
 })
 
+describe('devReviewLoop — the developer flow still works on the loop-created branch (O3)', () => {
+  // REAL PROCESS: exercises the REAL `createRemoteTaskBranch` (`git push origin
+  // origin/main:refs/heads/<branch>`, answered by the fixture's fake git) on the
+  // genuinely-fresh path, then the Developer's own worktree setup and first
+  // push, all the way to publish — proving the branch the loop creates at start
+  // does not disturb the Developer's own downstream flow on the same branch.
+  it('creates the branch at start with the explicit origin/main refspec, then dispatches, opens the PR, and publishes', () => {
+    const { home, cwd, path } = setUp()
+    const r = runLoop(home, cwd, path)
+    expect(r.status).toBe(0)
+    expect(r.stdout).toMatch(/publish/)
+
+    // The loop's own start-of-run branch creation reached the remote: the fake
+    // git recorded exactly the `origin/main:refs/heads/<branch>` refspec, never
+    // a force-push and never a branch checkout.
+    const pushes = readFileSync(join(home, '.fake-git-pushes'), 'utf8')
+    expect(pushes).toMatch(new RegExp(`origin origin/main:refs/heads/${BRANCH}`))
+    expect(pushes).not.toMatch(/--force|\+/)
+  }, 45000)
+})
+
 describe('devReviewLoop — round 1 clean, ends on publish', () => {
   it('dispatches the developer then both reviewers and publishes with no findings', async () => {
     const world = makeWorld()
