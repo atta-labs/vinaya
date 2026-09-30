@@ -14,7 +14,12 @@
 import { createRecorder, FIXTURE_SEED, type EmitOptions, type FixtureLine, type Recorder } from './generator'
 import type { Role } from '../schema'
 
-export const EXECUTION_NAMES = ['green-one-round'] as const
+export const EXECUTION_NAMES = [
+  'green-one-round',
+  'three-rounds-recurring-finding',
+  'paused-and-resumed',
+  'escalated-handoff'
+] as const
 export type ExecutionName = (typeof EXECUTION_NAMES)[number]
 
 export type FixtureExecution = {
@@ -29,6 +34,15 @@ type Finding = {
   severity: string
   severity_scale: string
   policy_treatment: 'blocking' | 'non_blocking'
+}
+
+function finding(id: string, severity: string, blocking: boolean): Finding {
+  return {
+    id,
+    severity,
+    severity_scale: 'code-review',
+    policy_treatment: blocking ? 'blocking' : 'non_blocking'
+  }
 }
 
 type LoopEmit = (event: string, fields: Record<string, unknown>, options?: EmitOptions) => Record<string, unknown>
@@ -156,6 +170,105 @@ const SCENARIOS: Record<ExecutionName, Scenario> = {
       const head = rec.sha()
       const files = runRound(rec, loop, { n: 1, base: rec.sha(), head, findings: [] })
       finishGreen(rec, loop, 1, head, files)
+    }
+  },
+  'three-rounds-recurring-finding': {
+    description:
+      'Three rounds: one finding recurs in round 2 beside a new one, and both are resolved in round 3. The developer states confidence from round 2 on — once straight away, once after the one extra turn.',
+    issue: 102,
+    build(rec) {
+      const loop = openLoop(rec)
+      const [h0, h1, h2, h3] = [rec.sha(), rec.sha(), rec.sha(), rec.sha()] as [string, string, string, string]
+      const auth = finding('fnd-auth-1', 'MAJOR', true)
+      const docs = finding('fnd-docs-2', 'MINOR', false)
+      let files = runRound(rec, loop, { n: 1, base: h0, head: h1, findings: [auth] })
+      files += runRound(rec, loop, {
+        n: 2,
+        base: h1,
+        head: h2,
+        findings: [auth, docs],
+        compared: { open: ['fnd-auth-1', 'fnd-docs-2'], resolved: [], new: ['fnd-docs-2'], recurring: ['fnd-auth-1'] },
+        confidence: {
+          confidence_value: 70,
+          confidence_reason: 'the auth path is covered, the docs are not',
+          extra_turn_spent: false
+        }
+      })
+      files += runRound(rec, loop, {
+        n: 3,
+        base: h2,
+        head: h3,
+        findings: [],
+        compared: { open: [], resolved: ['fnd-auth-1', 'fnd-docs-2'], new: [], recurring: [] },
+        confidence: {
+          confidence_value: 92,
+          confidence_reason: 'every finding is addressed and covered by a test',
+          extra_turn_spent: true
+        }
+      })
+      finishGreen(rec, loop, 3, h3, files)
+    }
+  },
+  'paused-and-resumed': {
+    description:
+      'Round 1 asks for changes and the loop pauses for a principal item; the principal resumes it, and round 2 finishes green.',
+    issue: 103,
+    build(rec) {
+      const loop = openLoop(rec)
+      const [h0, h1, h2] = [rec.sha(), rec.sha(), rec.sha()] as [string, string, string]
+      const queue = finding('fnd-q-1', 'MAJOR', true)
+      let files = runRound(rec, loop, { n: 1, base: h0, head: h1, findings: [queue] })
+      loop('paused', { round: 1, reason: 'principal_item' })
+      loop('resumed', { round: 1, by: 'principal' })
+      files += runRound(rec, loop, {
+        n: 2,
+        base: h1,
+        head: h2,
+        findings: [],
+        compared: { open: [], resolved: ['fnd-q-1'], new: [], recurring: [] }
+      })
+      finishGreen(rec, loop, 2, h2, files)
+    }
+  },
+  'escalated-handoff': {
+    description:
+      'The developer escalates a strategy question in round 1; it becomes a handoff to a human, and the loop stops unresolved.',
+    issue: 104,
+    build(rec) {
+      const loop = openLoop(rec)
+      const base = rec.sha()
+      loop('round_started', { round: 1, base_head: base })
+      const developer = dispatch(rec, 'developer', 'sonnet', 1)
+      developer({ type: 'escalation', class: 'strategy', comment_id: rec.commentId() })
+      rec.emit(
+        {
+          kind: 'handoff',
+          event: 'raised',
+          class: 'strategy',
+          reason: 'the brief assumes an approach the codebase no longer takes',
+          requested_decision: 'keep the brief as written, or re-plan the task'
+        },
+        { round: 1, role: 'developer', host: 'loop' }
+      )
+      loop('stop_condition_met', { round: 1, condition: 'escalated' })
+      loop('round_ended', {
+        round: 1,
+        base_head: base,
+        head: base,
+        files_changed: 0,
+        insertions: 0,
+        deletions: 0,
+        wall_ms: rec.int(60_000, 600_000),
+        outcome: 'escalated'
+      })
+      loop('journal_finalized', {
+        rounds: 1,
+        total_wall_ms: rec.elapsedMs(),
+        time_to_green_ms: null,
+        files_changed_total: 0,
+        final_head: base,
+        result: 'stopped'
+      })
     }
   }
 }
