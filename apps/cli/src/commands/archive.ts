@@ -22,6 +22,7 @@ import {
   resolveMeteringCapability,
   taskRefFromBranch,
   trancheLabel,
+  trancheSlugOf,
   type MergedPrFacts,
   type MeteringCapability,
   type TranscriptSummary
@@ -329,7 +330,7 @@ export async function archiveCommand(args: string[]): Promise<void> {
 // --yes skips the confirm prompt, same convention as init/eject/upgrade.
 // ---------------------------------------------------------------------------
 
-type Milestone = { number: number; title: string; description: string | null }
+type Milestone = { number: number; title: string; description: string | null; state?: 'open' | 'closed' }
 type TaskMilestoneRef = { number: number; title: string }
 type LabeledIssueRef = { number: number; title: string; state: 'OPEN' | 'CLOSED'; milestone: TaskMilestoneRef | null }
 type TaskPrForRetrospective = { number: number; comments: { body: string }[] }
@@ -496,6 +497,64 @@ export function appendRetrospectiveSection(description: string, slug: string, se
   return `${trimmed}${trimmed.length > 0 ? '\n\n' : ''}${section}\n`
 }
 
+/** True when `description` already carries this tranche's `### Retrospective: <slug>` section. */
+export function hasRetrospectiveSection(description: string, slug: string): boolean {
+  const escapedSlug = slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`(^|\\n)### Retrospective: ${escapedSlug}\\n`).test(description)
+}
+
+/** A tranche is archived once a CLOSED Milestone carries its retrospective — the one fact the Planner's gate reads. */
+export function isArchivedMilestone(milestone: Pick<Milestone, 'state' | 'description'>, slug: string): boolean {
+  return milestone.state === 'closed' && hasRetrospectiveSection(milestone.description ?? '', slug)
+}
+
+/**
+ * Every Milestone the repository holds, in any state, across as many pages as
+ * it takes — the same explicit page walk `fetchTrancheIssuesByLabel` uses, for
+ * the same reason: a fixed cap silently drops the tail.
+ */
+function fetchAllMilestones(repoFlag: string): Milestone[] {
+  const out: Milestone[] = []
+  const params = new URLSearchParams({ state: 'all', per_page: String(ISSUES_PER_PAGE) })
+  for (let page = 1; page <= ISSUES_MAX_PAGES; page++) {
+    params.set('page', String(page))
+    const batch = shJson<Milestone[]>(['gh', 'api', `repos/${repoFlag}/milestones?${params.toString()}`])
+    out.push(...batch)
+    if (batch.length < ISSUES_PER_PAGE) return out
+  }
+  throw new Error(
+    `fetchAllMilestones: ${repoFlag} did not terminate within ${ISSUES_MAX_PAGES} pages (${ISSUES_MAX_PAGES * ISSUES_PER_PAGE} items) — refusing to keep walking.`
+  )
+}
+
+/**
+ * The Milestone titled exactly `title`, or `null`. A tranche whose Issues
+ * carry no Milestone is archived into one titled with its slug — looking for
+ * it first is what keeps a second run, or a run that died after creating it,
+ * from creating a duplicate.
+ */
+export function findMilestoneByTitle(repoFlag: string, title: string): Milestone | null {
+  return fetchAllMilestones(repoFlag).find((m) => m.title === title) ?? null
+}
+
+/** Every tranche slug the repository has a `vinaya/tranche:<slug>` label for. */
+export function fetchTrancheSlugs(repoFlag: string): string[] {
+  const out: string[] = []
+  const params = new URLSearchParams({ per_page: String(ISSUES_PER_PAGE) })
+  for (let page = 1; page <= ISSUES_MAX_PAGES; page++) {
+    params.set('page', String(page))
+    const batch = shJson<Array<{ name: string }>>(['gh', 'api', `repos/${repoFlag}/labels?${params.toString()}`])
+    for (const { name } of batch) {
+      const slug = trancheSlugOf(name)
+      if (slug !== null && slug.length > 0) out.push(slug)
+    }
+    if (batch.length < ISSUES_PER_PAGE) return out
+  }
+  throw new Error(
+    `fetchTrancheSlugs: ${repoFlag} did not terminate within ${ISSUES_MAX_PAGES} pages (${ISSUES_MAX_PAGES * ISSUES_PER_PAGE} items) — refusing to keep walking.`
+  )
+}
+
 function parseTrancheArgs(args: string[]): { slug: string | null; yes: boolean } {
   const yes = args.includes('--yes')
   const slug = args.find((a) => !a.startsWith('--')) ?? null
@@ -647,19 +706,75 @@ export async function runArchiveTranche(args: string[], deps: ArchiveDeps): Prom
     return 1
   }
 
-  // The target Milestone is whatever the tranche's own task
-  // Issues are attached to — never a Milestone titled exactly the slug
-  // (the legacy, now-superseded assumption). No Issue in the tranche
-  // carrying a Milestone at all means there is nothing to write a
-  // retrospective into yet.
+  return (await archiveCompleteTranche({ owner: repo.owner, repo: repo.repo, repoFlag }, slug, issues, yes, deps)).exit
+}
+
+type ArchiveOutcome = { exit: number; changed: boolean }
+
+/**
+ * Everything `archive tranche` does once a tranche is known to be finished:
+ * find or create the Milestone, record the retrospective, close it when
+ * nothing else holds it open. Idempotent — a tranche whose Milestone is
+ * already closed and carries its retrospective changes nothing and says so.
+ *
+ * The target Milestone is whatever the tranche's own task Issues are attached
+ * to — never a Milestone titled exactly the slug for a tranche that has one.
+ * A tranche none of whose Issues carry a Milestone gets one titled with its
+ * slug, its closed task Issues attached, so it can read as archived; an
+ * Issue already on a Milestone is never moved, and a tranche with some Issues
+ * on a Milestone keeps that Milestone and never reaches the branch that
+ * creates one.
+ */
+async function archiveCompleteTranche(
+  ctx: { owner: string; repo: string; repoFlag: string },
+  slug: string,
+  issues: LabeledIssueRef[],
+  yes: boolean,
+  deps: ArchiveDeps
+): Promise<ArchiveOutcome> {
+  const { repoFlag } = ctx
   const taskMilestone = resolveTaskMilestone(issues)
-  if (!taskMilestone) {
-    process.stdout.write(
-      `Tranche '${slug}' is complete (${issues.length} task(s), all closed) — no Milestone attached to write a retrospective into.\n`
-    )
-    return 0
+  let milestone: Milestone
+  let confirmed = false
+  let created = false
+  if (taskMilestone) {
+    milestone = shJson<Milestone>(['gh', 'api', `repos/${repoFlag}/milestones/${taskMilestone.number}`])
+  } else {
+    const existing = findMilestoneByTitle(repoFlag, slug)
+    if (existing && isArchivedMilestone(existing, slug)) {
+      process.stdout.write(alreadyArchivedMessage(slug, existing.number))
+      return { exit: 0, changed: false }
+    }
+    if (!yes) {
+      const ok = await promptYesNo(
+        `Tranche '${slug}' is complete but none of its ${issues.length} task(s) carry a Milestone — ${existing ? `use Milestone #${existing.number}` : `create a Milestone titled '${slug}'`}, attach them, record the retrospective and close it?`,
+        false
+      )
+      closeStdin()
+      if (!ok) {
+        process.stdout.write('Aborted. Nothing was changed.\n')
+        return { exit: 0, changed: false }
+      }
+    }
+    confirmed = true
+    if (existing) {
+      milestone = existing
+    } else {
+      created = true
+      milestone = createMilestone(repoFlag, slug)
+    }
+    for (const issue of issues) {
+      sh(
+        ['gh', 'api', '-X', 'PATCH', `repos/${repoFlag}/issues/${issue.number}`, '--input', '-'],
+        JSON.stringify({ milestone: milestone.number })
+      )
+    }
   }
-  const milestone = shJson<Milestone>(['gh', 'api', `repos/${repoFlag}/milestones/${taskMilestone.number}`])
+
+  if (isArchivedMilestone(milestone, slug)) {
+    process.stdout.write(alreadyArchivedMessage(slug, milestone.number))
+    return { exit: 0, changed: false }
+  }
 
   // O7: the Milestone can hold other tranches or backlog tasks — closing
   // it the moment THIS tranche finishes would close out work that is
@@ -683,10 +798,10 @@ export async function runArchiveTranche(args: string[], deps: ArchiveDeps): Prom
   const verdict = milestoneCloseDecision({
     otherWorkOpen,
     declaresIntents: hasTrancheIntentsSection(description),
-    declared: await declaredTranches(repo.owner, repo.repo, description, slug, deps)
+    declared: await declaredTranches(ctx.owner, ctx.repo, description, slug, deps)
   })
 
-  if (!yes) {
+  if (!yes && !confirmed) {
     const prompt = verdict.close
       ? `Close tranche '${slug}''s Milestone (#${milestone.number}, all tasks closed)?`
       : `Record tranche '${slug}''s retrospective in Milestone #${milestone.number} (${verdict.reasons.join('; ')} — leaving it open)?`
@@ -694,7 +809,7 @@ export async function runArchiveTranche(args: string[], deps: ArchiveDeps): Prom
     closeStdin()
     if (!ok) {
       process.stdout.write('Aborted. Nothing was changed.\n')
-      return 0
+      return { exit: 0, changed: false }
     }
   }
 
@@ -726,21 +841,114 @@ export async function runArchiveTranche(args: string[], deps: ArchiveDeps): Prom
     ['gh', 'api', '-X', 'PATCH', `repos/${repoFlag}/milestones/${milestone.number}`, '--input', '-'],
     JSON.stringify(patch)
   )
+  const madeNote = created ? ', created because none of its tasks carried one' : ''
   process.stdout.write(
     verdict.close
-      ? `Tranche '${slug}' closed (Milestone #${milestone.number}), retrospective recorded.\n`
-      : `Tranche '${slug}' retrospective recorded in Milestone #${milestone.number} (left open — ${verdict.reasons.join('; ')}).\n`
+      ? `Tranche '${slug}' closed (Milestone #${milestone.number}${madeNote}), retrospective recorded.\n`
+      : `Tranche '${slug}' retrospective recorded in Milestone #${milestone.number}${madeNote} (left open — ${verdict.reasons.join('; ')}).\n`
   )
-  return 0
+  return { exit: 0, changed: true }
+}
+
+function alreadyArchivedMessage(slug: string, milestoneNumber: number): string {
+  return `Tranche '${slug}' is already archived (Milestone #${milestoneNumber} is closed and carries its retrospective) — nothing changed.\n`
+}
+
+/**
+ * Creates the Milestone a Milestone-less tranche is archived into. GitHub
+ * refuses a second Milestone with the same title, so when two runs race (a
+ * task Issue closed by hand at the moment its last sibling merges) the loser
+ * finds the winner's Milestone instead of failing.
+ */
+function createMilestone(repoFlag: string, title: string): Milestone {
+  try {
+    return JSON.parse(
+      sh(['gh', 'api', '-X', 'POST', `repos/${repoFlag}/milestones`, '--input', '-'], JSON.stringify({ title }))
+    ) as Milestone
+  } catch (error) {
+    const raced = findMilestoneByTitle(repoFlag, title)
+    if (raced) return raced
+    throw error
+  }
+}
+
+/**
+ * `vinaya archive tranches` — archive every finished tranche the forge shows
+ * no closed retrospective Milestone for. The catch-up the daily scheduled run
+ * makes, so a tranche that finished before the workflow could see it (or
+ * whose closing event was missed) is archived within a day. A tranche with an
+ * open task Issue is skipped, never refused; one whose archival fails does not
+ * stop the others, and the exit code reports it.
+ */
+export async function runArchiveTranches(args: string[], deps: ArchiveDeps): Promise<number> {
+  const yes = args.includes('--yes')
+  const repo = await deps.detectRepo()
+  if (!repo) {
+    console.error('Error: not a git repository. Run `vinaya archive tranches` from inside your repo.')
+    return 1
+  }
+  if (!repo.owner || !repo.repo) {
+    console.error('Error: could not resolve a GitHub owner/repo from the `origin` remote.')
+    return 1
+  }
+  const repoFlag = `${repo.owner}/${repo.repo}`
+  const ctx = { owner: repo.owner, repo: repo.repo, repoFlag }
+
+  const pending: Array<{ slug: string; issues: LabeledIssueRef[] }> = []
+  for (const slug of [...new Set(fetchTrancheSlugs(repoFlag))]) {
+    const issues = fetchTrancheIssuesByLabel(repoFlag, trancheLabel(slug))
+    if (trancheArchivalStatus(issues).kind !== 'complete') continue
+    const taskMilestone = resolveTaskMilestone(issues)
+    const milestone = taskMilestone
+      ? shJson<Milestone>(['gh', 'api', `repos/${repoFlag}/milestones/${taskMilestone.number}`])
+      : findMilestoneByTitle(repoFlag, slug)
+    if (milestone && isArchivedMilestone(milestone, slug)) continue
+    pending.push({ slug, issues })
+  }
+
+  if (pending.length === 0) {
+    process.stdout.write('Every finished tranche is already archived — nothing changed.\n')
+    return 0
+  }
+  if (!yes) {
+    const ok = await promptYesNo(
+      `Archive ${pending.length} finished tranche(s): ${pending.map((p) => p.slug).join(', ')}?`,
+      false
+    )
+    closeStdin()
+    if (!ok) {
+      process.stdout.write('Aborted. Nothing was changed.\n')
+      return 0
+    }
+  }
+
+  let failed = 0
+  for (const { slug, issues } of pending) {
+    try {
+      const outcome = await archiveCompleteTranche(ctx, slug, issues, true, deps)
+      if (outcome.exit !== 0) failed++
+    } catch (error) {
+      failed++
+      console.error(
+        `Error: tranche '${slug}' was not archived — ${error instanceof Error ? error.message : String(error)}`
+      )
+    }
+  }
+  return failed === 0 ? 0 : 1
 }
 
 export async function archiveTrancheCommand(args: string[]): Promise<void> {
   process.exit(await runArchiveTranche(args, realDeps()))
 }
 
+export async function archiveTranchesCommand(args: string[]): Promise<void> {
+  process.exit(await runArchiveTranches(args, realDeps()))
+}
+
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
   archive: { date: '2026-09-05', callsToday: 2, retiresVia: 'collectTokens' },
-  'archive tranche': { date: '2026-09-05', callsToday: 3, retiresVia: 'collectTokens' }
+  'archive tranche': { date: '2026-09-05', callsToday: 3, retiresVia: 'collectTokens' },
+  'archive tranches': { date: '2026-09-30', callsToday: 3, retiresVia: 'collectTokens' }
 }

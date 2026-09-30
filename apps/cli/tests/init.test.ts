@@ -697,11 +697,11 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const files = generated()
 
-    // Seven invocations — the "Export task-log artifact" step task-log-v1
+    // Nine invocations (the archivist's issue-closed job and its daily catch-up add one each) — the "Export task-log artifact" step task-log-v1
     // task 4 added is deleted outright (task-files-v1 6, O1/O2): telemetry
     // delivers live to a configured server destination now, so there is no
     // artifact left to export.
-    expect(occurrences(files, `${PUBLISHED_RUN} `)).toBe(7)
+    expect(occurrences(files, `${PUBLISHED_RUN} `)).toBe(9)
     // …and none of them unpinned. An unpinned `npx` is NOT "latest". Where
     // the generated checks workflow carries an install step — only when the
     // adopter declares `ci.setup` — a repo carrying `@attalabs/vinaya` as a
@@ -735,11 +735,12 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     }
     // Count, not just uniqueness: a set-only assertion would still pass if the
     // workflows lost their pin entirely and the hook alone contributed the
-    // single value. Seven workflow invocations (O4, issue-545: the
-    // archivist's post-merge job now also self-archives the tranche) plus one
+    // single value. Nine workflow invocations (O4, issue-545: the
+    // archivist's post-merge job now also self-archives the tranche; its
+    // issue-closed job does the same for a hand-closed task) plus one
     // hook — the "Export task-log artifact" step task-log-v1 task 4 added is
     // deleted outright (task-files-v1 6, O1/O2).
-    expect(specs).toHaveLength(8)
+    expect(specs).toHaveLength(10)
     expect([...new Set(specs)]).toEqual([OWN_VERSION])
   })
 
@@ -785,6 +786,38 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
       const wf = files.get(path) ?? ''
       expect(`${path}: ${wf.includes('concurrency:')}`).toBe(`${path}: false`)
     }
+  })
+
+  it('the archivist workflow archives the tranche when a labeled task Issue closes without a merge', async () => {
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const wf = generated().get(ARCHIVIST_WORKFLOW_PATH) ?? ''
+    expect(wf).toContain('  issues:\n    types: [closed]\n')
+    const job = wf.split('\n  issue-closed:')[1]?.split('\n  daily-drift:')[0] ?? ''
+    expect(job).not.toBe('')
+    // Runs only for an Issue that carries a tranche label, and reads the slug
+    // from that label — never from a branch name.
+    expect(job).toContain("contains(join(github.event.issue.labels.*.name, ','), 'vinaya/tranche:')")
+    expect(job).toContain('ltrimstr("vinaya/tranche:")')
+    expect(job).not.toContain('headRefName')
+    expect(job).toContain('archive tranche "$SLUG" --yes')
+    // A refusal while task Issues remain open is the expected outcome.
+    expect(job).toContain('continue-on-error: true')
+    // The only write permission is `issues: write`; no pull-request code runs.
+    expect(job).toContain('issues: write')
+    expect(job).not.toContain('pull-requests: write')
+    expect(job).not.toContain('contents: write')
+    expect(job).not.toContain('pull_request')
+  })
+
+  it('the archivist workflow archives every finished tranche on its daily run', async () => {
+    await captureStdout(() => runInit(['--yes'], makeDeps()))
+    const wf = generated().get(ARCHIVIST_WORKFLOW_PATH) ?? ''
+    const job = wf.split('\n  daily-drift:')[1]?.split('\n  direct-main-push-detection:')[0] ?? ''
+    expect(job).toContain("github.event_name == 'schedule'")
+    expect(job).toContain('archive tranches --yes')
+    // A refusal or failure here must never redden the notification channel.
+    const step = job.split('Archive every finished tranche not yet archived')[1] ?? ''
+    expect(step).toContain('continue-on-error: true')
   })
 
   it('the verdict retrigger re-runs ONE run — re-running all fights the concurrency group', async () => {
@@ -902,21 +935,21 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     // its own setup-bun. `files`/`occurrences` cover the five paths in
     // `WORKFLOWS` above — body-checks.yml is not one of them (see the O2
     // boundary test, which reads it directly for that reason) — so:
-    // checks(1) + review(1) + verdict(1) + archivist(3) = 6.
+    // checks(1) + review(1) + verdict(1) + archivist(4) = 7.
     expect(occurrences(files, 'oven-sh/setup-bun@v2')).toBe(0)
-    expect(occurrences(files, `oven-sh/setup-bun@${SETUP_BUN_SHA}`)).toBe(6)
+    expect(occurrences(files, `oven-sh/setup-bun@${SETUP_BUN_SHA}`)).toBe(7)
 
     // The install runs against the PR's own dependency manifest.
-    expect(occurrences(files, 'bun install --frozen-lockfile --ignore-scripts')).toBe(6)
+    expect(occurrences(files, 'bun install --frozen-lockfile --ignore-scripts')).toBe(7)
     expect(occurrences(files, 'bun install --frozen-lockfile\n')).toBe(0)
 
     // O1: every install is preceded by a restore of Bun's own install cache,
     // keyed on the lockfile — so a second workflow on the same commit
     // installs nothing it doesn't already have. `vinaya-checks.yml`'s
     // install (O2, above) gets one too.
-    expect(occurrences(files, 'Restore Bun install cache')).toBe(6)
-    expect(occurrences(files, 'actions/cache@v4')).toBe(6)
-    expect(occurrences(files, `key: bun-\${{ runner.os }}-\${{ hashFiles('bun.lock', 'bun.lockb') }}`)).toBe(6)
+    expect(occurrences(files, 'Restore Bun install cache')).toBe(7)
+    expect(occurrences(files, 'actions/cache@v4')).toBe(7)
+    expect(occurrences(files, `key: bun-\${{ runner.os }}-\${{ hashFiles('bun.lock', 'bun.lockb') }}`)).toBe(7)
 
     // Default checkout writes GITHUB_TOKEN into .git/config as an http
     // extraheader — in the same workspace the build then executes.
@@ -933,18 +966,18 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     await captureStdout(() => runInit(['--yes'], makeDeps()))
     const files = generated()
 
-    // All seven invocations move — none left on the broken path. The
+    // All nine invocations move — none left on the broken path. The
     // "Export task-log artifact" step task-log-v1 task 4 added is deleted
     // outright (task-files-v1 6, O1/O2).
     expect(occurrences(files, 'npx --yes @attalabs/vinaya')).toBe(0)
-    expect(occurrences(files, VENDORED_BIN)).toBe(7)
-    // Every job in `WORKFLOWS` installs (6 — see the setup-bun count above);
+    expect(occurrences(files, VENDORED_BIN)).toBe(9)
+    // Every job in `WORKFLOWS` installs (7 — see the setup-bun count above);
     // only the jobs that actually BUILD their own copy run the build
     // command — every one except `vinaya-checks.yml`, which downloads the
     // shared build instead (O2) but still installs for the downloaded
     // dist's runtime deps.
-    expect(occurrences(files, `oven-sh/setup-bun@${SETUP_BUN_SHA}`)).toBe(6)
-    expect(occurrences(files, 'bun run --cwd apps/cli build')).toBe(5)
+    expect(occurrences(files, `oven-sh/setup-bun@${SETUP_BUN_SHA}`)).toBe(7)
+    expect(occurrences(files, 'bun run --cwd apps/cli build')).toBe(6)
 
     // Per-file: the exact subcommands, in the built-binary shape.
     const checks = files.get(CHECKS_WORKFLOW_PATH) ?? ''
@@ -960,7 +993,7 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
     expect(archivist).toContain(`${VENDORED_BIN} archive --merge-sha=${SIGIL}{{ github.sha }}`)
     expect(archivist).toContain(`${VENDORED_BIN} audit --only=dead-branches`)
     expect(archivist).toContain(`${VENDORED_BIN} audit --only=direct-push --sha=${SIGIL}{{ github.sha }}`)
-    expect(occurrences(new Map([[ARCHIVIST_WORKFLOW_PATH, archivist]]), 'setup-bun')).toBe(3)
+    expect(occurrences(new Map([[ARCHIVIST_WORKFLOW_PATH, archivist]]), 'setup-bun')).toBe(4)
 
     // O2: `vinaya-checks.yml` never builds; it downloads the artifact
     // `ci.yml` uploads (but still installs, for the downloaded dist's
@@ -1053,9 +1086,10 @@ describe('generated workflows: published vs vendored invocation (atta-labs/attal
       // GH_TOKEN on every step that talks to the forge: checks 2 (fetch PR
       // body, run checks) + 1 more when vendored (find the shared build,
       // O2), review 2 (require a verdict before building, O3; review gate),
-      // verdict 3 (resolve-head, evaluate, retrigger), archivist 4 (archive,
-      // the O4 self-archive step, dead-branch audit, direct-push audit).
-      expect(occurrences(files, expr('GH_TOKEN', 'secrets.GITHUB_TOKEN'))).toBe(vendored ? 12 : 11)
+      // verdict 3 (resolve-head, evaluate, retrigger), archivist 6 (archive,
+      // the O4 self-archive step, the issue-closed self-archive step,
+      // dead-branch audit, the daily tranche catch-up, direct-push audit).
+      expect(occurrences(files, expr('GH_TOKEN', 'secrets.GITHUB_TOKEN'))).toBe(vendored ? 14 : 13)
     }
   })
 
