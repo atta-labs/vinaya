@@ -101,3 +101,29 @@ export type {
   UsageEvent,
   UsageUnits
 } from './schema'
+export {
+  isLowTrustVersion,
+  known,
+  LOW_TRUST_BELOW_VERSION,
+  normalizeStoredLine,
+  unknownBecause
+} from './sync'
+export type {
+  Dataset,
+  DatasetRow,
+  JsonObject,
+  LogCache,
+  LogSource,
+  Measured,
+  NormalizedLine,
+  PutOutcome,
+  QuarantineRecord,
+  RowEdit,
+  RowOrigin,
+  RowTrust,
+  SourceCursor,
+  SourceGap,
+  SourceLine,
+  SourcePage,
+  UnknownableField
+} from './sync'
