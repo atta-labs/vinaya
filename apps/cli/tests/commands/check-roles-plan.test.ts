@@ -12,6 +12,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { extractShortVersionAndChecklist } from '@attalabs/aeg-core/docs'
+import { buildRolePlan } from '../../src/roles/plan'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
@@ -189,6 +191,60 @@ describe('vinaya check --plan — roles half resolves against real bundled doctr
     expect(result.roles.available).toBe(true)
     if (!result.roles.available) return
     expect(result.roles.errors).toEqual([{ key: 'badkey', reason: 'bare key has no "/" and matches no core role id' }])
+  })
+
+  it('the reviewer doctrine resolves through the plan: an override supplies its own text, not the core reviewer body (O2)', async () => {
+    const { repo } = fixture()
+    const override = [
+      '---',
+      'title: Custom Reviewer',
+      'order: 4',
+      'role_id: reviewer',
+      'description: A custom reviewer contract.',
+      'actor: agent',
+      'performs:',
+      '  - review-the-pull-request',
+      'refuses_when: Never.',
+      'summary: Ever?',
+      '---',
+      '## The short version',
+      '',
+      'The override reviewer judges differently. **You own** — the verdict.',
+      '',
+      '---',
+      '',
+      '## What you check',
+      '',
+      "1. OVERRIDE CHECK: the override's own checklist item.",
+      ''
+    ].join('\n')
+    writeContract(repo, 'custom-reviewer.md', override)
+
+    const rolePlan = await buildRolePlan(repo, { reviewer: { contract: './custom-reviewer.md' } })
+    expect(rolePlan.available).toBe(true)
+    if (!rolePlan.available) return
+    const reviewer = rolePlan.resolved.find((r) => r.renderId === 'reviewer')
+    expect(reviewer?.state).toBe('overridden')
+
+    const text = extractShortVersionAndChecklist(reviewer?.contract.body ?? '')
+    expect(text).toContain('The override reviewer judges differently.')
+    expect(text).toContain("OVERRIDE CHECK: the override's own checklist item.")
+    // The core reviewer's own short version never leaks through the override.
+    expect(text).not.toContain('did not write the code')
+  })
+
+  it('a default (un-overridden) security role resolves the CORE security doctrine through the plan (O2)', async () => {
+    const rolePlan = await buildRolePlan(null, undefined)
+    expect(rolePlan.available).toBe(true)
+    if (!rolePlan.available) return
+    const security = rolePlan.resolved.find((r) => r.renderId === 'security')
+    expect(security?.state).toBe('default')
+
+    const text = extractShortVersionAndChecklist(security?.contract.body ?? '')
+    // The core security short version and its own checklist, verbatim.
+    expect(text).toContain('leak a secret')
+    expect(text).toContain('## What you check')
+    expect(text).toContain('Secret / credential leakage')
   })
 
   it('the human table renders a RENDERS AS column and does not crash', async () => {
