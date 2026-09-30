@@ -245,6 +245,28 @@ describe('vinaya doctrine --role — configured overrides and additive roles (Is
     expect(print.stdout).toContain('TOKENLESS-OVERRIDE')
   })
 
+  it('serves and lists an additive role declared in config, instead of reporting it unknown (O2)', async () => {
+    const { repo, home } = roleFixture(
+      { roles: { 'acme/qa-lead': { contract: './qa-lead.md' } } },
+      { 'qa-lead.md': contract('qa-lead', { ackToken: 'qa99feed', marker: 'ADDITIVE-QA-LEAD' }) }
+    )
+    // Served under its render id (the post-"/" segment), token and body intact.
+    const print = await runCli(['doctrine', '--role', 'qa-lead', '--print'], repo, home)
+    expect(print.code).toBe(0)
+    expect(print.stdout.split('\n')[0]).toBe('qa99feed')
+    expect(print.stdout).toContain('ADDITIVE-QA-LEAD')
+
+    const path = await runCli(['doctrine', '--role', 'qa-lead'], repo, home)
+    expect(path.stdout.trim().endsWith('qa-lead.md')).toBe(true)
+
+    // Listed: a DIFFERENT unknown name's refusal now names the additive role
+    // among the servable ones.
+    const unknown = await runCli(['doctrine', '--role', 'no-such-role'], repo, home)
+    expect(unknown.code).toBe(1)
+    expect(unknown.stderr).toContain("'no-such-role' is not a known role")
+    expect(unknown.stderr).toContain('qa-lead')
+  })
+
   it('serves the SAME override text the review loop resolves for that role (O3)', async () => {
     const overrideConfig = { reviewer: { contract: './loop-parity-reviewer.md' } }
     const { repo, home } = roleFixture(
