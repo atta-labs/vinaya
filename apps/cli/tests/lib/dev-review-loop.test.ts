@@ -1067,6 +1067,20 @@ describe('devReviewLoop — round 1 start creates the task branch on the remote 
     expect(world.remoteBranchCreations).toEqual([])
   })
 
+  it('leaves an existing remote branch untouched when it carries no open PR yet (O2)', async () => {
+    // The other O2 sub-case: the branch is already on the remote
+    // (`remoteBranchExists` → `resolveHead` succeeds) but no open PR carries it
+    // (`findOpenPrForBranch` null) — a crash-recovery re-entry after a prior
+    // process pushed the branch without opening a PR. The round-1 entry takes
+    // the branchExists-true path (`afterDeveloperTurnBeforePrPoll` resumes once
+    // to open the PR), never the genuinely-fresh path, so the remote-branch
+    // creation never runs against an already-existing branch.
+    const world = makeWorld({ remoteBranchExists: true })
+    const result = await runLoopInProcess(world)
+    expect(result.finalDecision.type).toBe('publish')
+    expect(world.remoteBranchCreations).toEqual([])
+  })
+
   it('a failed branch creation is swallowed — the loop still dispatches and publishes (O1 trap)', async () => {
     // The Developer's own first push creates the same branch later, so a push
     // failure at start must never stop the loop: it is logged and swallowed.

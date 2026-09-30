@@ -109,6 +109,15 @@ export type LoopWorld = {
   prState: 'OPEN' | 'MERGED' | 'CLOSED'
   /** Flips true the first time the Developer role is dispatched — the head then resolves and the PR opens, exactly as the fake `gh` keyed on `.fake-dev-invoked`. */
   developerPushed: boolean
+  /**
+   * O2 (issue #919): the branch already exists on the remote (`resolveHead`
+   * succeeds) with no push behind it yet — decoupled from `developerPushed`,
+   * and from `findOpenPrForBranch` (which stays `null` while this is set), so a
+   * fixture can reach the branch-exists-with-no-open-PR sub-case of the
+   * round-1 entry, where `afterDeveloperTurnBeforePrPoll` resumes to open the
+   * PR and `createRemoteTaskBranch` must NOT fire. Defaults `false`.
+   */
+  remoteBranchExists: boolean
   /** The developer's local worktree head; defaults to `head` (nothing unpushed). */
   worktreeHead: string
   gate: 'green' | 'red' | 'pending'
@@ -256,6 +265,7 @@ export function makeWorld(overrides: Partial<LoopWorld> = {}): LoopWorld {
     prNumber: 123,
     prState: 'OPEN',
     developerPushed: false,
+    remoteBranchExists: false,
     worktreeHead: sha('a'),
     gate: 'green',
     failingCheckRuns: [],
@@ -362,7 +372,12 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
     // pre-task shape).
     resolveDeveloperDoctrine: async () => world.developerDoctrine ?? null,
     resolveHead: (_branch) => {
-      if (!world.developerPushed) throw new Error('resolveHead: branch has no head on origin yet (in-process fake)')
+      // The branch resolves once the Developer has pushed, OR when a fixture
+      // declares the remote branch already exists with no push behind it yet
+      // (`remoteBranchExists`) — the latter reaches O2's branch-exists-with-no-
+      // open-PR sub-case, kept independent of `findOpenPrForBranch`.
+      if (!world.developerPushed && !world.remoteBranchExists)
+        throw new Error('resolveHead: branch has no head on origin yet (in-process fake)')
       return world.head
     },
     fetchCiConclusion: (_head) => world.gate,
