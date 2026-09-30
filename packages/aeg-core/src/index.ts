@@ -712,6 +712,8 @@ export type {
   UsageUnits
 } from './log'
 export {
+  cacheContractCases,
+  createMemoryCache,
   isLowTrustVersion,
   known,
   LOW_TRUST_BELOW_VERSION,
@@ -719,6 +721,7 @@ export {
   unknownBecause
 } from './log'
 export type {
+  CacheContractCase,
   Dataset,
   DatasetRow,
   JsonObject,

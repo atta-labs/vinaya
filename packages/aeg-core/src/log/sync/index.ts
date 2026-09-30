@@ -1,3 +1,5 @@
+export type { CacheContractCase } from './cache-contract'
+export { cacheContractCases } from './cache-contract'
 export type {
   Dataset,
   LogCache,
@@ -11,6 +13,7 @@ export type {
 } from './contracts'
 export type { Measured } from './measured'
 export { known, unknownBecause } from './measured'
+export { createMemoryCache } from './memory-cache'
 export { isLowTrustVersion, normalizeStoredLine } from './normalize'
 export type {
   DatasetRow,

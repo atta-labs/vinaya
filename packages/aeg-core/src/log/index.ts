@@ -102,6 +102,8 @@ export type {
   UsageUnits
 } from './schema'
 export {
+  cacheContractCases,
+  createMemoryCache,
   isLowTrustVersion,
   known,
   LOW_TRUST_BELOW_VERSION,
@@ -109,6 +111,7 @@ export {
   unknownBecause
 } from './sync'
 export type {
+  CacheContractCase,
   Dataset,
   DatasetRow,
   JsonObject,
