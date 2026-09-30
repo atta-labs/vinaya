@@ -2491,3 +2491,49 @@ describe('noneFoundClaimCitesScanCheck — the cited check must have passed', ()
     expect(noneFoundClaimCitesScanCheck('none found — atta-labs/secret-scan passed', null)).toBe(true)
   })
 })
+
+describe('noneFoundClaimCitesScanCheck — the evidence must tie to the judged head (role-reach-v1 task 5, O6)', () => {
+  const HEAD = 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2'
+  const OTHER = 'f6e5d4c3b2a1f6e5d4c3b2a1f6e5d4c3b2a1f6e5'
+
+  it('accepts when the evidence names the passing check beside the judged head', () => {
+    const evidence = `HEAD ${HEAD}\natta-labs/secret-scan\tpass\t5s`
+    expect(noneFoundClaimCitesScanCheck('none found', evidence, HEAD)).toBe(true)
+  })
+
+  it('accepts an abbreviated judged-head sha in the evidence', () => {
+    const evidence = `${HEAD.slice(0, 12)} atta-labs/secret-scan passed`
+    expect(noneFoundClaimCitesScanCheck('none found', evidence, HEAD)).toBe(true)
+  })
+
+  it('refuses when the passing check is tied to no head at all', () => {
+    expect(noneFoundClaimCitesScanCheck('none found', 'atta-labs/secret-scan\tpass\t5s', HEAD)).toBe(false)
+  })
+
+  it('refuses when the evidence names a different commit than the judged head', () => {
+    const evidence = `HEAD ${OTHER}\natta-labs/secret-scan\tpass\t5s`
+    expect(noneFoundClaimCitesScanCheck('none found', evidence, HEAD)).toBe(false)
+  })
+
+  it('refuses a passing line for the judged head sitting beside a foreign head', () => {
+    const evidence = `judged ${HEAD} passed; earlier ${OTHER} also on file\natta-labs/secret-scan\tpass\t5s`
+    expect(noneFoundClaimCitesScanCheck('none found', evidence, HEAD)).toBe(false)
+  })
+
+  it('still refuses a failing check even when the judged head is named', () => {
+    const evidence = `HEAD ${HEAD}\natta-labs/secret-scan\tfail\t9s`
+    expect(noneFoundClaimCitesScanCheck('none found', evidence, HEAD)).toBe(false)
+  })
+
+  it('does not mistake a decimal check-run id for a foreign commit sha', () => {
+    // `gh pr checks` output carries a 10-digit run id in its URL — purely
+    // decimal, so it is never read as a commit and never a foreign head.
+    const evidence = `HEAD ${HEAD}\natta-labs/secret-scan\tpass\t5s\thttps://github.com/o/r/actions/runs/1234567890`
+    expect(noneFoundClaimCitesScanCheck('none found', evidence, HEAD)).toBe(true)
+  })
+
+  it('skips the head check entirely when no judged head is supplied (the dispatched-loop path)', () => {
+    expect(noneFoundClaimCitesScanCheck('none found — atta-labs/secret-scan passed', null)).toBe(true)
+    expect(noneFoundClaimCitesScanCheck('none found', 'atta-labs/secret-scan\tpass\t5s')).toBe(true)
+  })
+})

@@ -568,25 +568,61 @@ export function opensNoneFoundClaim(value: string): boolean {
 export const SECRET_SCAN_CHECK = 'atta-labs/secret-scan'
 
 /**
- * Whether a `SECRETS:` line that opens with "none found" cites the required
- * secret-scan check's PASSING result. The loop's security verdict and `vinaya
- * review post` both apply this one rule: a clean claim is backed by that
- * check's result, cited by name with a passing conclusion — never by a
- * scanner run or its pasted output. A line naming the check beside a failing,
- * missing, skipped or negated conclusion does not back the claim.
+ * A git commit sha as it appears free in `gh pr checks`/`gh pr view` evidence:
+ * 7–40 hex, word-bounded, AND carrying at least one hex LETTER (the `(?=…[a-f])`
+ * lookahead), so a purely-decimal token in the same evidence — a check run id,
+ * a line number, a duration — is never mistaken for a commit (role-reach-v1
+ * task 5, O6).
  */
-export function noneFoundClaimCitesScanCheck(claim: string, evidence: string | null): boolean {
+const EVIDENCE_COMMIT_SHA = /\b(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b/gi
+
+/** Whether two shas name the same commit, tolerant of one being an abbreviation of the other (either a prefix of the other). */
+function shaNamesSameCommit(a: string, b: string): boolean {
+  const x = a.toLowerCase()
+  const y = b.toLowerCase()
+  return x.startsWith(y) || y.startsWith(x)
+}
+
+/**
+ * Whether a `SECRETS:` line that opens with "none found" cites the required
+ * secret-scan check's PASSING result on the judged head. The loop's security
+ * verdict and `vinaya review post` both apply this one rule: a clean claim is
+ * backed by that check's result, cited by name with a passing conclusion —
+ * never by a scanner run or its pasted output. A line naming the check beside a
+ * failing, missing, skipped or negated conclusion does not back the claim.
+ *
+ * O6: when `judgedHead` is supplied (the `review post` command, which resolves
+ * the PR's real head), the evidence must ALSO tie the passing result to THAT
+ * head — it must name the judged head's sha (7–40 hex) and name no OTHER
+ * commit: a scan result read on a different commit, or an evidence file that
+ * names the check passing but ties it to no head at all, backs nothing. A
+ * `null` judgedHead (the default, and the dispatched-loop path, whose head
+ * binding is the verdict comment's own `Judged head:` line, not this evidence
+ * file) skips the head check — the pre-O6 behaviour, unchanged.
+ */
+export function noneFoundClaimCitesScanCheck(
+  claim: string,
+  evidence: string | null,
+  judgedHead: string | null = null
+): boolean {
   if (!opensNoneFoundClaim(claim)) return true
-  const cited = `${claim}\n${evidence ?? ''}`.split('\n').filter((line) => line.includes(SECRET_SCAN_CHECK))
+  const text = `${claim}\n${evidence ?? ''}`
+  const cited = text.split('\n').filter((line) => line.includes(SECRET_SCAN_CHECK))
   // Every line naming the check must show it passing: one passing line beside a failing one backs nothing.
-  return (
+  const passingCited =
     cited.length > 0 &&
     cited.every(
       (line) =>
         /\b(pass|passed|passing|success|successful)\b/i.test(line) &&
         !/\b(fail|failed|failing|failure|missing|skipped|pending|cancelled|not|never|no)\b/i.test(line)
     )
-  )
+  if (!passingCited) return false
+  if (judgedHead === null) return true
+  // O6: the evidence must name the judged head and no foreign commit.
+  const shas = text.match(EVIDENCE_COMMIT_SHA) ?? []
+  const namesJudged = shas.some((sha) => shaNamesSameCommit(sha, judgedHead))
+  const namesForeign = shas.some((sha) => !shaNamesSameCommit(sha, judgedHead))
+  return namesJudged && !namesForeign
 }
 
 /**
@@ -2040,13 +2076,19 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
   }
   const verdict = derived
 
+  // Resolved up front (O6): the `SECRETS: none found` evidence must tie its
+  // passing scan-check result to this exact head, so the head is needed for the
+  // `noneFoundClaimCitesScanCheck` gate below, not only for the rendered
+  // `Judged head:` line further down.
+  const headSha = resolveHeadSha(pr)
+
   const configScan = requireFlag(flags, '--config-scan')
   const secrets = requireFlag(flags, '--secrets')
   const secretsEvidenceFile = flags.get('--secrets-evidence-file')
   if (opensNoneFoundClaim(secrets) && !secretsEvidenceFile) {
     refuseCmd(
       `\`--secrets\` normalizes to "none found" but no \`--secrets-evidence-file\` was given — security.md: "SECRETS: none found" must cite the result of the required \`${SECRET_SCAN_CHECK}\` check; without it the line is an unbacked self-attestation.`,
-      `Pass \`--secrets-evidence-file <path>\` holding the \`${SECRET_SCAN_CHECK}\` check's result on the judged head (its name and conclusion, as \`gh pr checks\` shows it) — do not run a scanner or paste its output — or change \`--secrets\` to describe what was found instead.`
+      `Pass \`--secrets-evidence-file <path>\` holding the \`${SECRET_SCAN_CHECK}\` check's result on the judged head ${headSha} (its name and conclusion, as \`gh pr checks\` shows it, beside that head's sha) — do not run a scanner or paste its output — or change \`--secrets\` to describe what was found instead.`
     )
   }
   let secretsEvidence: string | null = null
@@ -2057,15 +2099,13 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
       refuseCmd(`Could not read secrets evidence file at ${secretsEvidenceFile}.`, 'Check the path and re-run.')
     }
   }
-  if (opensNoneFoundClaim(secrets) && !noneFoundClaimCitesScanCheck(secrets, secretsEvidence)) {
+  if (opensNoneFoundClaim(secrets) && !noneFoundClaimCitesScanCheck(secrets, secretsEvidence, headSha)) {
     refuseCmd(
-      `\`--secrets-evidence-file\` does not show a passing \`${SECRET_SCAN_CHECK}\` check — security.md: "SECRETS: none found" is backed by that required check's passing result, cited by name.`,
-      `Put the \`${SECRET_SCAN_CHECK}\` check's name and its passing conclusion on the judged head in the evidence file, then re-run.`
+      `\`--secrets-evidence-file\` does not show a passing \`${SECRET_SCAN_CHECK}\` check tied to the judged head ${headSha} — security.md: "SECRETS: none found" is backed by that required check's passing result on the head you judged, cited by name, and never beside a different commit.`,
+      `Put the \`${SECRET_SCAN_CHECK}\` check's name and its passing conclusion in the evidence file beside the judged head sha ${headSha} — and no other commit's sha — then re-run.`
     )
   }
   const principalAllowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
-
-  const headSha = resolveHeadSha(pr)
 
   const objectivesResolution = resolveObjectivesForPr(pr)
   const { objectivesVersion: resolvedObjectivesVersion, objectiveResults } = resolveObjectiveResultsForCommand(
