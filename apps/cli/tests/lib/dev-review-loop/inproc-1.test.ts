@@ -236,3 +236,38 @@ describe('devReviewLoop — the reviewer prompt carries its resolved role doctri
     expect(securityDispatch?.prompt).toContain('1. Secret / credential leakage.')
   })
 })
+
+describe('devReviewLoop — a fresh developer session is prepended its role doctrine outside the frozen brief (role-reach-v1/2, O1/O3)', () => {
+  const DEV_DOCTRINE =
+    'DEVELOPER SHORT VERSION.\n\n## Stop conditions\n\nSTOP when a pre-flight check fails.\n\n## Verification before reporting done\n\nRun typecheck, lint, tests before opening the PR.'
+
+  it('prepends the resolved doctrine to the round-1 dispatch, with the frozen brief carried verbatim after it (hash untouched)', async () => {
+    const world = makeWorld({ developerDoctrine: DEV_DOCTRINE })
+    await runLoopInProcess(world)
+    const dev = world.dispatches.find((d) => d.role === 'developer')
+    expect(dev).toBeDefined()
+    const prompt = dev?.prompt ?? ''
+    // O1: the block, its label, and both checklist sections all reach the developer.
+    expect(prompt).toContain('YOUR ROLE DOCTRINE')
+    expect(prompt).toContain('DEVELOPER SHORT VERSION.')
+    expect(prompt).toContain('## Stop conditions')
+    expect(prompt).toContain('## Verification before reporting done')
+    // O2: the block names the doctrine command, never a repository path.
+    expect(prompt).toContain('bun apps/cli/src/index.ts doctrine --role developer --print')
+    // O3: the frozen brief is carried VERBATIM as a contiguous suffix — the
+    // doctrine is prepended OUTSIDE it, so the text the brief hash binds is
+    // byte-for-byte unchanged.
+    expect(prompt).toContain(world.frozenBrief)
+    expect(prompt.endsWith(world.frozenBrief)).toBe(true)
+    // The doctrine sits BEFORE the brief.
+    expect(prompt.indexOf('YOUR ROLE DOCTRINE')).toBeLessThan(prompt.indexOf(world.frozenBrief))
+  })
+
+  it('prepends nothing when no doctrine resolves — the dispatch is the frozen brief alone, the pre-task shape', async () => {
+    const world = makeWorld({ developerDoctrine: null })
+    await runLoopInProcess(world)
+    const dev = world.dispatches.find((d) => d.role === 'developer')
+    expect(dev?.prompt).toBe(world.frozenBrief)
+    expect(dev?.prompt).not.toContain('YOUR ROLE DOCTRINE')
+  })
+})

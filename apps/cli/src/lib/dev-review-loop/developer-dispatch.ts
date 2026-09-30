@@ -9,9 +9,9 @@
  * path it always had.
  */
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { hostname as osHostname, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import {
   defaultIsPidAlive,
   isPrincipal,
@@ -28,8 +28,17 @@ import {
   resolveNewestFrozenBrief,
   type ReviewPolicy
 } from '@attalabs/aeg-core'
+import { extractShortVersion } from '@attalabs/aeg-core/docs'
 import { hasLabel } from '@attalabs/aeg-forge-state'
-import { loadTrustAnchorConfig, resolvePrincipalAllowlist, resolveReviewPolicy } from '../config.js'
+import { resolveDoctrineRoot } from '../../commands/doctrine.js'
+import { buildRolePlan } from '../../roles/plan.js'
+import {
+  configPath,
+  loadConfigChecked,
+  loadTrustAnchorConfig,
+  resolvePrincipalAllowlist,
+  resolveReviewPolicy
+} from '../config.js'
 import {
   type AgentVendor,
   getProcessSnapshot,
@@ -563,6 +572,110 @@ export function withPromptFile<T>(prompt: string, fn: (promptFile: string) => T)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+}
+
+// --- developer role doctrine, prepended to a fresh dispatch -------------------
+
+/**
+ * O1: the two `## …` sections of the developer role's REFERENCE document that
+ * the Principal ruled are the developer's checklist — honoured on every fresh
+ * (non-resumed) developer session. Unlike the reviewer's `## What you check`,
+ * these live in `roles/developer/reference.md`, not in the role file the role
+ * plan resolves (`roles/developer.md`), so `resolveDeveloperDoctrineText` reads
+ * that reference document for the core role; an override carries them inline.
+ */
+export const DEVELOPER_CHECKLIST_HEADINGS = ['Stop conditions', 'Verification before reporting done'] as const
+
+/**
+ * Pure: the body of a `## <heading>` section of `body` — everything up to the
+ * next `## ` heading, trimmed — or `''` when the heading is absent. Same shape
+ * as `extractObjectivesSection`, but heading-parameterised for the two
+ * developer checklist sections.
+ */
+export function extractDeveloperSection(body: string, heading: string): string {
+  const lines = body.split('\n')
+  const start = lines.findIndex((l) => l.trim() === `## ${heading}`)
+  if (start === -1) return ''
+  const rest = lines.slice(start + 1)
+  const end = rest.findIndex((l) => /^##\s/.test(l))
+  return (end === -1 ? rest : rest.slice(0, end)).join('\n').trim()
+}
+
+/**
+ * O1, pure: the developer doctrine a fresh dispatch is prepended — the short
+ * version (its trailing `---` rule stripped, exactly as the reviewer injection
+ * does) followed by whichever of the two `DEVELOPER_CHECKLIST_HEADINGS`
+ * sections `checklistSource` actually carries. A section absent from
+ * `checklistSource` is dropped, never fabricated — the same graceful degrade
+ * `extractShortVersionAndChecklist` makes for the reviewer; a missing override
+ * section is a Planner-level escalation, never an invented one. Returns `null`
+ * when there is no short version at all (a body no validated role contract can
+ * have — `validateRoleContract` requires that section), so `null` here only
+ * ever names an unresolved role.
+ */
+export function assembleDeveloperDoctrine(shortVersion: string | null, checklistSource: string): string | null {
+  if (shortVersion === null) return null
+  const short = shortVersion.replace(/\n*-{3,}[ \t]*$/, '').trimEnd()
+  if (short.trim().length === 0) return null
+  const sections = DEVELOPER_CHECKLIST_HEADINGS.map((heading) => {
+    const body = extractDeveloperSection(checklistSource, heading)
+    return body.length === 0 ? null : `## ${heading}\n\n${body}`
+  }).filter((section): section is string => section !== null)
+  return sections.length === 0 ? short : `${short}\n\n${sections.join('\n\n')}`
+}
+
+/** The developer role's reference document (`roles/developer/reference.md`) under the resolved doctrine root, or `null` when no bundled doctrine can be found or the file is unreadable — the same install-aware root `resolveDeveloperDoctrineText`'s own `buildRolePlan` resolves the short version through. */
+function readDeveloperReferenceDoc(): string | null {
+  const root = resolveDoctrineRoot()
+  if (root === null) return null
+  try {
+    return readFileSync(join(root, 'roles', 'developer', 'reference.md'), 'utf8')
+  } catch {
+    return null
+  }
+}
+
+/**
+ * O1: the developer's published doctrine — its short version plus its
+ * `## Stop conditions` and `## Verification before reporting done` sections —
+ * resolved through the SAME override-aware role plan `vinaya check --plan`
+ * renders (`buildRolePlan`), so an adopter's `roles.developer` override supplies
+ * its own body. The short version is the developer role file's own; the two
+ * checklist sections live in the role's REFERENCE document for the core role (a
+ * separate file the role plan does not carry) and in the override's own body
+ * for an override. Returns `null` when no doctrine can be resolved (no bundled
+ * doctrine, or the developer role absent from the plan) — the caller then
+ * dispatches with the frozen brief alone, exactly the pre-task behaviour.
+ */
+export async function resolveDeveloperDoctrineText(): Promise<string | null> {
+  const configResult = loadConfigChecked()
+  const configFilePath = configResult.ok ? configPath() : configResult.path
+  const plan = await buildRolePlan(
+    configFilePath ? dirname(configFilePath) : null,
+    configResult.ok ? configResult.config?.roles : undefined
+  )
+  if (!plan.available) return null
+  const resolved = plan.resolved.find((entry) => entry.renderId === 'developer')
+  if (resolved === undefined) return null
+  // Core role: the two checklist sections live in the reference document, not
+  // the role file the plan resolves. An override replaces the whole contract,
+  // so its own body is the only place its sections can live.
+  const checklistSource =
+    resolved.state === 'default' ? (readDeveloperReferenceDoc() ?? resolved.contract.body) : resolved.contract.body
+  return assembleDeveloperDoctrine(extractShortVersion(resolved.contract.body), checklistSource)
+}
+
+/**
+ * O1/O2: wraps the resolved developer doctrine in a block prepended, OUTSIDE
+ * the frozen brief, to a fresh (non-resumed) developer session. Names the
+ * doctrine command — never a repository path an adopter's checkout lacks — for
+ * the full reference beyond these two checklist sections.
+ */
+export function renderDeveloperDoctrineBlock(doctrine: string): string {
+  return [
+    "YOUR ROLE DOCTRINE — the developer role's short version and its checklist (its Stop conditions and its Verification before reporting done), the same doctrine an interactive developer reads. Run `bun apps/cli/src/index.ts doctrine --role developer --print` for its full reference. This is your operating instruction; the frozen brief for this task follows it.",
+    doctrine.trim()
+  ].join('\n\n')
 }
 
 /**
