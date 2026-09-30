@@ -166,7 +166,7 @@ describe('overflow is reported, not silent (O2)', () => {
 describe('unknown-version records are kept for diagnosis (O3)', () => {
   it('a schema version this build does not know is preserved, not dropped, and reported', () => {
     const future = JSON.stringify({
-      meta: { schema: 3, run_id: 'rF', seq: 0, event_id: 'future-1' },
+      meta: { schema: 99, run_id: 'rF', seq: 0, event_id: 'future-1' },
       kind: 'something_new',
       payload: { anything: true }
     })
@@ -179,14 +179,14 @@ describe('unknown-version records are kept for diagnosis (O3)', () => {
     const unknown = page.records.find((r) => r.status === 'unknown_version')
     expect(unknown).toBeDefined()
     if (unknown?.status === 'unknown_version') {
-      expect(unknown.schema).toBe(3)
+      expect(unknown.schema).toBe(99)
       expect(unknown.raw).toContain('something_new')
       expect(unknown.identity).toBe('future-1')
     }
   })
 
   it('KNOWN_SCHEMA_VERSIONS mirrors the discriminated header union', () => {
-    expect([...KNOWN_SCHEMA_VERSIONS]).toEqual([1, 2])
+    expect([...KNOWN_SCHEMA_VERSIONS]).toEqual([1, 2, 3])
   })
 
   it('a corrupt line (known version, failed validation) is `invalid`, distinct from unknown_version', () => {
@@ -209,6 +209,50 @@ describe('unknown-version records are kept for diagnosis (O3)', () => {
     const rec = classifyStoredLine(JSON.stringify(forgeWrite(metaV2('r1', 0, 'e'), 'ok')), HOME)
     expect(rec.status).toBe('ok')
     if (rec.status === 'ok') expect(rec.provenance).toBe('env_correlated')
+  })
+})
+
+describe('schema 3 (O3, O4)', () => {
+  /** A valid `schema: 3` header: a foreign work reference, actor, flow, runtime and source. */
+  function metaV3(runId: string, seq: number, eventId: string): Record<string, unknown> {
+    return {
+      ...metaV2(runId, seq, eventId),
+      schema: 3,
+      actor_id: 'reviewer-bot',
+      work: { ref: 'ACME-17', repo: 'acme/site', change: 'pr-9', revision: 'abc123' },
+      flow: { id: 'acme-release', version: '4' },
+      runtime: 'codex',
+      source: 'acme-ci'
+    }
+  }
+
+  it('an event whose work ref is not an Issue number, whose actor is not a doctrine role and whose flow is not vinaya round-trips unchanged', () => {
+    const written = forgeWrite(metaV3('r1', 0, 'e-3'), 'ok')
+    const store = createFixtureStore({ home: HOME })
+    store.append([JSON.stringify(written)])
+    const rec = store.readPage(null, 10).records[0]
+    expect(rec?.status).toBe('ok')
+    if (rec?.status === 'ok') {
+      expect(rec.schema).toBe(3)
+      expect(rec.identity).toBe('e-3')
+      expect(rec.provenance).toBe('env_correlated')
+      expect(rec.event.meta).toEqual(written.meta)
+      expect(JSON.parse(rec.postLine).meta).toEqual(written.meta)
+    }
+  })
+
+  it('a schema-3 line missing its work block is invalid, and schema 2 refuses the schema-3 fields', () => {
+    const missing = forgeWrite(metaV3('r1', 0, 'e-4'), 'ok')
+    delete (missing.meta as Record<string, unknown>).work
+    expect(classifyStoredLine(JSON.stringify(missing), HOME).status).toBe('invalid')
+
+    const extra = forgeWrite({ ...metaV2('r1', 0, 'e-5'), runtime: 'codex' }, 'ok')
+    expect(classifyStoredLine(JSON.stringify(extra), HOME).status).toBe('invalid')
+  })
+
+  it('a schema 4 line is still kept verbatim as an unknown-version record', () => {
+    const rec = classifyStoredLine(JSON.stringify({ meta: { schema: 4, run_id: 'r', seq: 0, event_id: 'f-4' } }), HOME)
+    expect(rec.status).toBe('unknown_version')
   })
 })
 

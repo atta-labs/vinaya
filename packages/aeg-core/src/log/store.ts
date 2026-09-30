@@ -32,10 +32,10 @@ import { LogEventSchema, type LogEvent, type Provenance } from './schema'
  * The schema versions this build validates in full. A stored line carrying a
  * `meta.schema` outside this set is neither trusted nor discarded — it is
  * kept as an `unknown_version` read record (O3). Mirrors the
- * `HeaderMetaSchema` discriminated union in `schema.ts` (`1` | `2`); a future
+ * `HeaderMetaSchema` discriminated union in `schema.ts` (`1` | `2` | `3`); a future
  * task widening that union widens this set in the same change.
  */
-export const KNOWN_SCHEMA_VERSIONS = [1, 2] as const
+export const KNOWN_SCHEMA_VERSIONS = [1, 2, 3] as const
 
 /**
  * A record's stable identity across retry, concurrent append and a lost
@@ -94,7 +94,7 @@ export type ReadRecord =
       runId: string
       seq: number
       schema: number
-      /** Trust provenance for a `schema: 2` line; `null` for a `schema: 1` line, which has no such field. */
+      /** Trust provenance for a `schema: 2` or `3` line; `null` for a `schema: 1` line, which has no such field. */
       provenance: Provenance | null
       /** The re-validated event. */
       event: LogEvent
@@ -177,7 +177,7 @@ export function classifyStoredLine(raw: string, home: string): ReadRecord {
   }
 
   const redacted = redact(event, home)
-  const provenance = version === 2 ? ((event.meta as { provenance?: Provenance }).provenance ?? null) : null
+  const provenance = version >= 2 ? ((event.meta as { provenance?: Provenance }).provenance ?? null) : null
   return {
     status: 'ok',
     identity,
