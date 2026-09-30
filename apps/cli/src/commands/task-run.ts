@@ -2,8 +2,12 @@
  * `vinaya task run <tranche> <n> --agent <claude|codex|gemini> [--model <model>]` — argv
  * parsing around `runTask` (`lib/task-run.js`), plus `colourLoopLine`
  * (`lib/dispatch.js`) to role-colour its two summary lines the same way
- * `dev-review-loop`'s own equivalent lines already are — two lib calls,
- * exempt (see `apps/cli/specs/surface.md`'s Exemptions table), the same
+ * `dev-review-loop`'s own equivalent lines already are, and the two continuation
+ * builders a paused run's summary reuses rather than duplicate — `resumeCommandFor`
+ * (`lib/task-status.js`) for the `--resume <pr>` form, `noPushResumeCommandFor`
+ * (`lib/dev-review-loop/pause-resume.js`) for the pre-first-push `task run`
+ * form — exempt
+ * (see `apps/cli/specs/surface.md`'s Exemptions table), the same
  * `sharedCommandShell` retirement target `dev-review-loop`'s own command
  * already carries. One command, from a planned Issue to a reviewed pull
  * request, exactly one developer started.
@@ -14,9 +18,10 @@
  * newer Principal ruling lands (or, for `'infrastructure'`/`'stale_driver'`,
  * after a bounded backoff). `1` (below) is reached only for the one pause
  * this run can never watch: the pre-first-push escalation, which has no
- * pull request yet — still resumed by hand with `vinaya task run <tranche>
- * <n>` (no `--resume` flag on this command; `runTask` composes the loop
- * fresh every call, it carries no resume state of its own). An
+ * pull request yet — still resumed by hand with the `vinaya task run` command
+ * for this task's own branch (`<tranche> <n>` or `--issue <n>`; no `--resume`
+ * flag on this command; `runTask` composes the loop fresh every call, it
+ * carries no resume state of its own). An
  * `--resume`/`--cancel` an operator issues directly against `dev-review-loop`
  * stays a one-shot debug/direct entry, unaffected by this.
  *
@@ -38,6 +43,8 @@ import { DISPATCH_AGENTS, type DispatchAgent } from '../lib/dispatch-task.js'
 import { loadConfig } from '../lib/config.js'
 import { runTask, type RunTaskResult } from '../lib/task-run.js'
 import { startBackgroundRun } from '../lib/task-run-background.js'
+import { resumeCommandFor } from '../lib/task-status.js'
+import { noPushResumeCommandFor } from '../lib/dev-review-loop/pause-resume.js'
 
 /** Any failure other than a usage/argv error or a policy `pause` — see the module doc comment's exit-code table. */
 const TASK_RUN_FAILURE_EXIT_CODE = 3
@@ -108,6 +115,33 @@ function resolveAgentOrReport(parsed: ParsedFlags): DispatchAgent | null {
   return agentRaw as DispatchAgent
 }
 
+/**
+ * The continuation command `reportRunTaskResult` prints beneath a pause
+ * summary. A pause held against an already-open pull request (`prNumber > 0`)
+ * is continued through `dev-review-loop --resume <pr>` — `resumeCommandFor`,
+ * the exact string `task status` and the pause comment already render. The one
+ * pause with no pull request yet — the pre-first-push escalation, `prNumber
+ * <= 0` — has nothing for `--resume` to anchor to, so its continuation is a
+ * fresh `vinaya task run` against the task's OWN branch: `task run <tranche>
+ * <n>` for a tranche task, `task run --issue <n>` for a backlog one. That form
+ * is rendered by `noPushResumeCommandFor` — the SAME `noPushResumeArgv` builder
+ * the Issue pause comment and `task-tools`' permitted-next-actions already use,
+ * never a second copy that hardcodes one address form (round 2 review: the
+ * `--issue <n>` form alone is refused for a `vinaya/tranche:*` Issue, so a
+ * tranche task needs the `<tranche> <n>` form). Either way it carries the
+ * `--agent`/`--model` this run was invoked with unchanged (O1), and it never
+ * prints a `dev-review-loop --resume` line with an absent pull-request number
+ * (`0`/`-1`), a command that could not work because that entry derives its task
+ * from a pull request.
+ */
+export function pauseResumeCommand(
+  result: Pick<RunTaskResult, 'prNumber' | 'task' | 'branch'>,
+  invocation: { agent: DispatchAgent; model?: string }
+): string {
+  if (result.prNumber > 0) return resumeCommandFor(result.prNumber, invocation.agent, invocation.model)
+  return noPushResumeCommandFor(result.task, result.branch, invocation.agent, invocation.model)
+}
+
 /** The publish/pause summary — shared by the tranche-keyed and `--issue` invocations, which differ only in how `result` was obtained. */
 function reportRunTaskResult(result: RunTaskResult, invocation: { agent: DispatchAgent; model?: string }): void {
   // `prUrl` is `null` only when the repo genuinely could not be resolved
@@ -148,15 +182,16 @@ function reportRunTaskResult(result: RunTaskResult, invocation: { agent: Dispatc
   }
 
   // O2: a paused loop's exit and summary are distinct from a published run —
-  // the exact resume command is printed here, never left to the reader to
-  // reconstruct (the loop's own pause comment on the PR carries the same
-  // command, but this is the command's OWN summary, per the brief).
+  // the exact continuation command is printed here, never left to the reader
+  // to reconstruct (the loop's own pause comment, on the PR or — for the
+  // pre-first-push pause — on the Issue, carries the same command, but this is
+  // the command's OWN summary, per the brief). `pauseResumeCommand` picks the
+  // `--resume <pr>` form or the `task run --issue <n>` form by whether a pull
+  // request actually exists.
   process.stdout.write(
     `${colourLoopLine(`vinaya task run: task ${result.task}, ${prRef} — paused (${decision.reason})`, process.stdout)}\n`
   )
-  process.stdout.write(
-    `Resume with: vinaya dev-review-loop --resume ${result.prNumber} --agent ${invocation.agent}${invocation.model ? ` --model ${invocation.model}` : ''}\n`
-  )
+  process.stdout.write(`Resume with: ${pauseResumeCommand(result, invocation)}\n`)
   process.exit(1)
 }
 
@@ -270,5 +305,5 @@ export async function taskRunCommand(args: string[]): Promise<void> {
 import type { SurfaceExemption } from '../lib/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'task run': { date: '2026-09-15', callsToday: 4, retiresVia: 'sharedCommandShell' }
+  'task run': { date: '2026-09-30', callsToday: 6, retiresVia: 'sharedCommandShell' }
 }

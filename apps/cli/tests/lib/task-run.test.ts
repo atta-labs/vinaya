@@ -134,7 +134,7 @@ describe('runTask — O1: fresh task, one developer started', () => {
     )
 
     expect(calls).toEqual(['prepareTask', 'developerBranchFor', 'findOpenPrForBranch', 'devReviewLoop'])
-    expect(result).toEqual({ ...PUBLISH_RESULT, prUrl: null })
+    expect(result).toEqual({ ...PUBLISH_RESULT, prUrl: null, branch: 'task/task-run-v1/2' })
   })
 
   it('never passes --agent-shaped data into prepareTask (Traps to avoid) — prepareTask only ever sees { tranche, n }', async () => {
@@ -165,7 +165,7 @@ describe('runTask — O1: fresh task, one developer started', () => {
         devReviewLoop: async () => pauseResult
       })
     )
-    expect(result).toEqual({ ...pauseResult, prUrl: null })
+    expect(result).toEqual({ ...pauseResult, prUrl: null, branch: 'task/t/1' })
   })
 
   it('prUrl is the real https://github.com/<owner>/<repo>/pull/<n> URL when the repo resolves', async () => {
@@ -324,7 +324,7 @@ describe('runTask — O1 (task-run-v1 21, #541): a backlog Issue runs the identi
     )
 
     expect(calls).toEqual(['prepareIssueTask', 'developerBranchFor', 'findOpenPrForBranch', 'devReviewLoop'])
-    expect(result).toEqual({ ...PUBLISH_RESULT, prUrl: null })
+    expect(result).toEqual({ ...PUBLISH_RESULT, prUrl: null, branch: 'task/issue-541' })
   })
 
   it('on an "already dispatched" refusal, re-resolves the Issue via assembleAndRenderBriefForIssue (read-only) and still calls devReviewLoop once', async () => {
@@ -352,7 +352,7 @@ describe('runTask — O1 (task-run-v1 21, #541): a backlog Issue runs the identi
     )
 
     expect(calls).toEqual(['prepareIssueTask', 'assembleAndRenderBriefForIssue', 'devReviewLoop'])
-    expect(result).toEqual({ ...PUBLISH_RESULT, prUrl: null })
+    expect(result).toEqual({ ...PUBLISH_RESULT, prUrl: null, branch: 'task/issue-541' })
   })
 
   it('an open developer pull request refuses a second start on the --issue path too, never calling devReviewLoop', async () => {
@@ -421,7 +421,7 @@ describe('runTask — O3: already-frozen brief is reused, not re-posted', () => 
     )
 
     expect(calls).toEqual(['prepareTask', 'assembleAndRenderBrief', 'devReviewLoop'])
-    expect(result).toEqual({ ...PUBLISH_RESULT, prUrl: null })
+    expect(result).toEqual({ ...PUBLISH_RESULT, prUrl: null, branch: 'task/task-run-v1/2' })
   })
 
   it('fails clearly (never starts the loop) when the already-dispatched re-resolution itself cannot derive the Issue', async () => {
