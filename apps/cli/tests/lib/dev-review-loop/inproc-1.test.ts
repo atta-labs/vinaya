@@ -217,3 +217,22 @@ describe('devReviewLoop — the loop’s exit sites (O6)', () => {
     expect(typeof lock?.pid).toBe('number')
   })
 })
+
+describe('devReviewLoop — the reviewer prompt carries its resolved role doctrine (role-reach-v1 task 1, O1/O2)', () => {
+  it('injects the code-reviewer and security doctrine the resolver returned into each dispatched prompt', async () => {
+    const world = makeWorld({
+      roleDoctrine: {
+        reviewer: 'REVIEWER SHORT VERSION.\n\n## What you check\n\n1. Does the code match the brief?',
+        security: 'SECURITY SHORT VERSION.\n\n## What you check\n\n1. Secret / credential leakage.'
+      }
+    })
+    await runLoopInProcess(world)
+    const reviewerDispatch = world.dispatches.find((d) => d.role === 'code-reviewer')
+    const securityDispatch = world.dispatches.find((d) => d.role === 'security')
+    expect(reviewerDispatch?.prompt).toContain('YOUR ROLE DOCTRINE')
+    expect(reviewerDispatch?.prompt).toContain('REVIEWER SHORT VERSION.')
+    expect(reviewerDispatch?.prompt).toContain('1. Does the code match the brief?')
+    expect(securityDispatch?.prompt).toContain('SECURITY SHORT VERSION.')
+    expect(securityDispatch?.prompt).toContain('1. Secret / credential leakage.')
+  })
+})

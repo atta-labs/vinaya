@@ -49,6 +49,8 @@ import type { DocFrontmatter } from './types'
 
 export const SHORT_VERSION_HEADING = 'The short version'
 export const REFERENCE_HEADING = 'Reference'
+/** The reviewer/security checklist heading a dispatched review pass carries alongside the short version. */
+export const WHAT_YOU_CHECK_HEADING = 'What you check'
 
 /** Words. Under the floor means something was dropped; over the ceiling means
  * the reference is being summarised instead of the rule being stated. */
@@ -146,6 +148,34 @@ function sectionBody(body: string, heading: string): string | null {
  */
 export function extractShortVersion(body: string): string | null {
   return sectionBody(body, SHORT_VERSION_HEADING)
+}
+
+/** Strip the trailing `---` horizontal rule (and the blank lines around it) that closes every short version — the reviewer prompt carries the prose, never the rule (Traps to avoid). */
+function stripTrailingRule(text: string): string {
+  return text.replace(/\n*-{3,}[ \t]*$/, '').trimEnd()
+}
+
+/**
+ * The published role doctrine a dispatched reviewer/security pass is handed as
+ * a fact: the role's short version (with the trailing `---` rule stripped),
+ * followed by its `## What you check` section verbatim when the body carries
+ * one. Reuses `extractShortVersion` so the injected short version and the
+ * `/docs` page can never disagree about what "published" means.
+ *
+ * Returns `null` when the body carries no `## The short version` at all — a
+ * body no resolvable role contract can have (`validateRoleContract` requires
+ * that section), so `null` here only ever names an unvalidated body. When the
+ * short version is present but `## What you check` is not, returns the short
+ * version alone rather than inventing a checklist: an adopter override missing
+ * the checklist heading is a Planner-level escalation (Stop conditions), never
+ * a fabricated section.
+ */
+export function extractShortVersionAndChecklist(body: string): string | null {
+  const shortRaw = extractShortVersion(body)
+  if (shortRaw === null) return null
+  const short = stripTrailingRule(shortRaw)
+  const whatYouCheck = sectionBody(body, WHAT_YOU_CHECK_HEADING)
+  return whatYouCheck === null ? short : `${short}\n\n## ${WHAT_YOU_CHECK_HEADING}\n\n${whatYouCheck}`
 }
 
 /**

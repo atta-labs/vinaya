@@ -165,6 +165,32 @@ export function renderReviewerPrompt(facts: ReviewerPromptFacts): string {
   return joinReviewerPromptPieces(buildReviewerPromptPieces(facts))
 }
 
+/**
+ * The role-doctrine block, as prompt pieces (O1): the framing label is
+ * `driver` text — the lint's subject — while the role text itself is a `fact`
+ * the lint never reads (O3). That is the same split that already holds a
+ * Principal's ruling out of the lint, applied to doctrine the driver does not
+ * author: an adopter override whose short version happens to carry a banned
+ * phrase renders and the round proceeds, rather than crashing every round
+ * (Traps to avoid). A `null`/blank doctrine contributes no pieces at all — the
+ * dispatch's pre-task shape, unchanged. The precedence sentence that resolves
+ * the doctrine's own output wording against this dispatch's file hand-off is
+ * appended here too (O4, `renderReviewerDispatchPrompt`).
+ */
+export function roleDoctrinePieces(
+  role: 'reviewer' | 'security',
+  roleDoctrine: string | null
+): readonly ReviewerPromptPiece[] {
+  if (roleDoctrine === null || roleDoctrine.trim().length === 0) return []
+  const label = role === 'reviewer' ? 'the code-reviewer' : 'the security reviewer'
+  return [
+    driverPiece(
+      `\n\nYOUR ROLE DOCTRINE — the short version and the "What you check" list for ${label} role, the same doctrine an interactive reviewer reads. Treat it as what to look for:\n\n`
+    ),
+    factPiece(roleDoctrine.trim())
+  ]
+}
+
 // --- held-verdict outbox ---------------------------------------------------
 
 /**
@@ -944,13 +970,22 @@ export function hasObjectivesFacts(facts: ReviewerPromptFacts): boolean {
 export function renderReviewerDispatchPrompt(
   role: 'reviewer' | 'security',
   facts: ReviewerPromptFacts,
-  workDir: string
+  workDir: string,
+  /**
+   * O1/O2: this role's published doctrine — short version plus `## What you
+   * check`, already resolved through the role plan (override-aware) by the
+   * driver's `resolveReviewerDoctrine` dep. `null` (the default) injects no
+   * doctrine block, the dispatch's pre-task shape and the fallback for a round
+   * whose doctrine could not be resolved.
+   */
+  roleDoctrine: string | null = null
 ): string {
-  const pieces = buildReviewerPromptPieces(facts)
+  const pieces = [...buildReviewerPromptPieces(facts), ...roleDoctrinePieces(role, roleDoctrine)]
   const base = joinReviewerPromptPieces(pieces)
-  // The lint reads the renderer's own fixed text only. A Principal ruling or
-  // an Issue's objectives may say anything at all — that prose is carried
-  // through verbatim, never censored and never able to end the round.
+  // The lint reads the renderer's own fixed text only. A Principal ruling, an
+  // Issue's objectives, or an injected role doctrine may say anything at all —
+  // that prose is carried through verbatim as a `fact` piece, never censored
+  // and never able to end the round (O3).
   const lint = lintReviewerPrompt(driverAuthoredPromptText(pieces))
   if (lint.length > 0) {
     throw new Error(

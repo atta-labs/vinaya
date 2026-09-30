@@ -394,6 +394,58 @@ describe('renderReviewerPrompt — the banned-framing lint checks only the text 
   })
 })
 
+// --- the reviewer prompt carries its role doctrine (role-reach-v1 task 1) ----
+
+describe('renderReviewerDispatchPrompt — carries the role doctrine as a fact', () => {
+  const MANIFEST: ReviewInputManifest = {
+    headSha: 'a'.repeat(40),
+    baseSha: 'e'.repeat(40),
+    briefHash: 'b'.repeat(64),
+    objectivesVersion: 'c'.repeat(64),
+    rulingOrdinal: 2,
+    policyDigest: 'd'.repeat(64)
+  }
+  const FACTS: ReviewerPromptFacts = {
+    objectives: 'O1. Do the thing.',
+    resolvedObjectives: [{ id: 'O1', text: 'Do the thing.' }],
+    rulings: [],
+    ciConclusion: 'green',
+    revision: 'f'.repeat(40),
+    manifest: MANIFEST
+  }
+  const REVIEWER_DOCTRINE =
+    'You judge one open pull request against the brief it came from.\n\n## What you check\n\n1. Does the code match the brief?\n2. Honest tests.'
+
+  it('injects the resolved short version and "What you check" list into a reviewer prompt (O1)', () => {
+    const prompt = renderReviewerDispatchPrompt('reviewer', FACTS, '/tmp/work', REVIEWER_DOCTRINE)
+    expect(prompt).toContain('YOUR ROLE DOCTRINE')
+    expect(prompt).toContain('for the code-reviewer role')
+    expect(prompt).toContain('You judge one open pull request against the brief it came from.')
+    expect(prompt).toContain('## What you check')
+    expect(prompt).toContain('1. Does the code match the brief?')
+    // The doctrine sits before the dispatch's own output instructions.
+    expect(prompt.indexOf('YOUR ROLE DOCTRINE')).toBeLessThan(prompt.indexOf('Write your findings to'))
+  })
+
+  it('labels the block for the security reviewer when the role is security (O1)', () => {
+    const prompt = renderReviewerDispatchPrompt(
+      'security',
+      FACTS,
+      '/tmp/work',
+      'You ask one question a correctness review does not.\n\n## What you check\n\n1. Secret / credential leakage.'
+    )
+    expect(prompt).toContain('for the security reviewer role')
+    expect(prompt).toContain('1. Secret / credential leakage.')
+  })
+
+  it('injects no doctrine block when the doctrine is null — the pre-task shape, unchanged', () => {
+    const withNull = renderReviewerDispatchPrompt('reviewer', FACTS, '/tmp/work', null)
+    const withOmitted = renderReviewerDispatchPrompt('reviewer', FACTS, '/tmp/work')
+    expect(withNull).not.toContain('YOUR ROLE DOCTRINE')
+    expect(withNull).toBe(withOmitted)
+  })
+})
+
 // --- the deferral rules the loop's classifier applies (convergence-v1 task 1, #853) ---
 
 describe('deferral helpers (O2/O3)', () => {

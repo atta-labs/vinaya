@@ -25,6 +25,15 @@ export type RoleContract = {
   performs: string[]
   refusesWhen: string
   summary: string
+  /**
+   * The contract's markdown body — everything below the frontmatter, verbatim.
+   * Carried through the plan so a consumer resolving an OVERRIDDEN role reads
+   * the override's own prose (its short version, its `## What you check`),
+   * never the core role's — the dev-review-loop's reviewer dispatch resolves
+   * the injected role doctrine this way rather than re-reading config
+   * separately (Traps to avoid). Frontmatter-only consumers ignore it.
+   */
+  body: string
 }
 
 export type RoleContractValidation = { ok: true; contract: RoleContract } | { ok: false; errors: string[] }
@@ -110,7 +119,8 @@ export function validateRoleContract(content: string): RoleContractValidation {
       actor: actor as RoleActor,
       performs: performs as string[],
       refusesWhen: refusesWhen as string,
-      summary: summary as string
+      summary: summary as string,
+      body
     }
   }
 }

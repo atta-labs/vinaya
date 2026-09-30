@@ -97,6 +97,7 @@ import {
   upsertDeferredFindingsIssue
 } from './forge-write.js'
 import { controlStoreRoot } from './effects.js'
+import { resolveRoleDoctrineText } from '../roles/plan.js'
 import { createLogSink, drainLogSink, resolveLogAppendPath } from './log-sink.js'
 import { ensureRunDir, markProcessUnattended, runPath } from './run-paths.js'
 import { defaultTaskSweepAsyncDeps, sweepModernTasksAsync } from './task-sweep.js'
@@ -389,6 +390,16 @@ export type LoopDeps = {
    * rules off, the loop's pre-task behaviour.
    */
   resolveTaskSurface?: (task: number) => IssueSurface | null
+  /**
+   * O1/O2: the published doctrine — short version plus `## What you check` —
+   * for the dispatched review role, resolved through the SAME override-aware
+   * role plan `vinaya check --plan` renders (`resolveRoleDoctrineText`). The
+   * reviewer prompt carries it as a fact piece. `null` when no doctrine can be
+   * resolved (no bundled doctrine, the role absent from the plan) — the
+   * dispatch then carries no doctrine block, the pre-task behaviour. Optional:
+   * a fixture that does not stub it runs with no doctrine injected.
+   */
+  resolveReviewerDoctrine?: (role: 'reviewer' | 'security') => Promise<string | null>
   /** The task's round journal, rebuilt from the pull request's principal-authored forge markers (developer round markers, the published summary) — never a log event, a flushed log comment or the telemetry outbox. */
   fetchLoopHistory: (prNumber: number | null) => ReconstructedJournal
   sleep: (ms: number) => Promise<void>
@@ -887,6 +898,7 @@ function defaultDeps(): LoopDeps {
     gitDiffShortstat: defaultGitDiffShortstat,
     gitUnifiedDiff: defaultGitUnifiedDiff,
     resolveTaskSurface: defaultResolveTaskSurface,
+    resolveReviewerDoctrine: resolveRoleDoctrineText,
     fetchLoopHistory,
     sleep: defaultSleep,
     now: () => Date.now(),
@@ -2481,6 +2493,16 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     ): Promise<{ verdict: RoundVerdictParse; findingsUncitable: boolean }> {
       const hasObjectives = hasObjectivesFacts(facts)
       const dispatchRoleName = role === 'reviewer' ? ('code-reviewer' as const) : ('security' as const)
+      // O1/O2: resolved once per role, before the attempt loop — the doctrine
+      // does not change between a failed first attempt and its fresh retry.
+      // A dep that throws (or is absent) leaves the doctrine block off rather
+      // than failing the round, the pre-task behaviour.
+      let roleDoctrine: string | null = null
+      try {
+        roleDoctrine = d.resolveReviewerDoctrine ? await d.resolveReviewerDoctrine(role) : null
+      } catch {
+        roleDoctrine = null
+      }
       let lastMissing: string[] = []
       let lastParseFailure: ReviewerReportParseFailure | null = null
       // Round 2 review, MAJOR: captured so a `ReviewerInfrastructureFailure`
@@ -2491,7 +2513,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       for (let attempt = 1; attempt <= 2; attempt++) {
         const workDir = reviewerWorkDir(root, task, roundNum, role, attempt)
         ensureRunDir(workDir, root)
-        const prompt = renderReviewerDispatchPrompt(role, facts, workDir)
+        const prompt = renderReviewerDispatchPrompt(role, facts, workDir, roleDoctrine)
         // O1/O2: a fresh, writable copy of this round's shared,
         // read-only candidate (built once, below, before both roles
         // dispatch) — never the candidate itself, never the sibling role's
