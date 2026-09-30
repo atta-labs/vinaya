@@ -577,14 +577,16 @@ export const SECRET_SCAN_CHECK = 'atta-labs/secret-scan'
  */
 export function noneFoundClaimCitesScanCheck(claim: string, evidence: string | null): boolean {
   if (!opensNoneFoundClaim(claim)) return true
-  return `${claim}\n${evidence ?? ''}`
-    .split('\n')
-    .some(
+  const cited = `${claim}\n${evidence ?? ''}`.split('\n').filter((line) => line.includes(SECRET_SCAN_CHECK))
+  // Every line naming the check must show it passing: one passing line beside a failing one backs nothing.
+  return (
+    cited.length > 0 &&
+    cited.every(
       (line) =>
-        line.includes(SECRET_SCAN_CHECK) &&
         /\b(pass|passed|passing|success|successful)\b/i.test(line) &&
         !/\b(fail|failed|failing|failure|missing|skipped|pending|cancelled|not|never|no)\b/i.test(line)
     )
+  )
 }
 
 /**

@@ -2480,6 +2480,12 @@ describe('noneFoundClaimCitesScanCheck — the cited check must have passed', ()
     expect(noneFoundClaimCitesScanCheck('none found', 'atta-labs/secret-scan\tpending')).toBe(false)
   })
 
+  it('refuses evidence holding a passing and a failing line for the check', () => {
+    expect(
+      noneFoundClaimCitesScanCheck('none found', 'atta-labs/secret-scan\tpass\t5s\natta-labs/secret-scan\tfail\t9s')
+    ).toBe(false)
+  })
+
   it('accepts the check named with a passing conclusion, as `gh pr checks` prints it', () => {
     expect(noneFoundClaimCitesScanCheck('none found', 'atta-labs/secret-scan\tpass\t5s')).toBe(true)
     expect(noneFoundClaimCitesScanCheck('none found — atta-labs/secret-scan passed', null)).toBe(true)
