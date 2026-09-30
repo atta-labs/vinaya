@@ -40,16 +40,16 @@
  * validates a doctrine row's `product`-audience claim against
  * `coreCheckRegistry()`, which only this package can import without closing
  * a dependency cycle — same reasoning `gate-audience.ts` documents for
- * 'GATE_AUDIENCE' itself.
+ * `GATE_AUDIENCE` itself.
  *
  * DORMANT WHEN ABSENT, EXPLICITLY (the same discipline
- * 'evaluateC5'/'.vinaya/doc-owners' already uses): G1–G6 validate
+ * `evaluateC5`/`.vinaya/doc-owners` already uses): G1–G6 validate
  * `aeg-root/enforcement.md` against THIS monorepo's
  * own `aeg-root/roles/`/`aeg-root/contracts/` doctrine-authoring tree — a
  * fact about how AEG's own doctrine is developed, not something any
  * `vinaya init` install ever produces (settled by experiment: a fresh
  * `npm i @attalabs/vinaya` + `vinaya init --yes` repo carries no
- * 'aeg-root/' at all — the doctrine ships read-only inside
+ * `aeg-root/` at all — the doctrine ships read-only inside
  * `node_modules/@attalabs/vinaya/aeg-root`). Redirecting to that installed
  * copy would not fix this: G4 resolves the enforcement rows' own cited
  * issue/PR numbers against the CALLING repo's git remote
@@ -60,7 +60,7 @@
  * absent `aeg-root/enforcement.md` made this adapter `exit(0)` with zero
  * findings — indistinguishable, in `vinaya check --all`'s own output, from
  * a real pass that inspected a real doctrine tree (confirmed: a fresh
- * adopter fixture reported `registry-gates: pass` while 'aeg-root/' did
+ * adopter fixture reported `registry-gates: pass` while `aeg-root/` did
  * not exist to inspect). It now instead emits one `warning`-severity
  * finding announcing the dormancy and its reason before exiting 0 — the
  * `check-reader-resolvable-prose` shape (an announced no-op), applied here
