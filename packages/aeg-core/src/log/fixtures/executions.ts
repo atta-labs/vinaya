@@ -11,8 +11,16 @@
  * The hand-written answer key for each execution is in `./fact-sheets`.
  */
 
-import { createRecorder, FIXTURE_SEED, type EmitOptions, type FixtureLine, type Recorder } from './generator'
-import type { Role } from '../schema'
+import {
+  createRecorder,
+  FIXTURE_REPO,
+  FIXTURE_SEED,
+  LOW_TRUST_VINAYA_VERSION,
+  type EmitOptions,
+  type FixtureLine,
+  type Recorder
+} from './generator'
+import type { HeaderMetaV1, HeaderMetaV2, Role } from '../schema'
 
 export const EXECUTION_NAMES = [
   'green-one-round',
@@ -22,7 +30,8 @@ export const EXECUTION_NAMES = [
   'gate-two-commits',
   'gate-no-commit',
   'gate-same-commit-twice',
-  'usage-and-models'
+  'usage-and-models',
+  'historical-and-hostile-lines'
 ] as const
 export type ExecutionName = (typeof EXECUTION_NAMES)[number]
 
@@ -208,6 +217,17 @@ function roleAttempt(rec: Recorder, role: Role, model: string, attempt: number, 
   )
 }
 
+/** A completed operation — the smallest event, so a line's header is all that differs between the historical lines below. */
+const operationFields = {
+  kind: 'operation',
+  event: 'completed',
+  payload: {},
+  operation: 'authenticate-invocation',
+  target: null,
+  result: 'ok',
+  error_class: null
+}
+
 type Scenario = { description: string; issue: number; build: (rec: Recorder) => void }
 
 const SCENARIOS: Record<ExecutionName, Scenario> = {
@@ -362,6 +382,99 @@ const SCENARIOS: Record<ExecutionName, Scenario> = {
       usage(rec, 'sonnet', 'delta', { input: null, output: null, cache: null }, 'the vendor reported no usage')
       roleAttempt(rec, 'developer', 'sonnet', 1, 'infrastructure_failed')
       roleAttempt(rec, 'developer', 'sonnet', 2, 'completed')
+    }
+  },
+  'historical-and-hostile-lines': {
+    description:
+      'Lines a reader meets in an old or damaged store: schema 1, schema 2, a low-trust line from a CLI older than 0.33.0 with no attribution, a current line, a line of a schema version no build knows, a line that fails validation, and one event delivered twice.',
+    issue: 109,
+    build(rec) {
+      const common = { repo: FIXTURE_REPO, doctrine: 'fixture-doctrine-old', host: 'cli' as const }
+      const v1: HeaderMetaV1 = {
+        schema: 1,
+        ts: rec.tick().toISOString(),
+        run_id: `run-legacy-${rec.hex(6)}`,
+        seq: 0,
+        vinaya: '0.24.0',
+        machine: rec.hex(64),
+        ...common
+      }
+      rec.push({ meta: v1, subject: { issue: rec.issue, role: 'developer' }, ...operationFields })
+
+      const v2Base: Omit<HeaderMetaV2, 'run_id' | 'ts' | 'machine' | 'event_id' | 'process_id'> = {
+        schema: 2,
+        seq: 3,
+        vinaya: '0.31.0',
+        actor_id: 'developer',
+        lineage: { run: null, attempt: null, parent: null },
+        input_versions: { objectives_version: null, brief_hash: null, ruling_ordinal: null, policy_digest: null },
+        provenance: 'env_correlated',
+        ...common
+      }
+      const v2: HeaderMetaV2 = {
+        ...v2Base,
+        ts: rec.tick().toISOString(),
+        run_id: `run-legacy-${rec.hex(6)}`,
+        machine: rec.hex(64),
+        event_id: `evt-${rec.hex(12)}`,
+        process_id: `proc-${rec.hex(8)}`
+      }
+      rec.push({ meta: v2, subject: { issue: rec.issue, role: 'developer' }, ...operationFields })
+
+      const lowTrust: HeaderMetaV2 = {
+        ...v2,
+        ts: rec.tick().toISOString(),
+        run_id: `run-legacy-${rec.hex(6)}`,
+        seq: 0,
+        vinaya: LOW_TRUST_VINAYA_VERSION,
+        machine: rec.hex(64),
+        event_id: `evt-${rec.hex(12)}`,
+        process_id: `proc-${rec.hex(8)}`,
+        actor_id: null,
+        provenance: 'unavailable'
+      }
+      rec.push({ meta: lowTrust, subject: { issue: null, role: 'unattributed' }, ...operationFields })
+
+      const current = rec.emit(
+        {
+          kind: 'operation',
+          event: 'completed',
+          operation: 'authenticate-invocation',
+          target: null,
+          result: 'ok',
+          error_class: null
+        },
+        { host: 'cli' }
+      )
+
+      const future = rec.build(
+        {
+          kind: 'operation',
+          event: 'completed',
+          operation: 'authenticate-invocation',
+          target: null,
+          result: 'ok',
+          error_class: null
+        },
+        { host: 'cli' }
+      )
+      rec.push({ ...future, meta: { ...(future.meta as object), schema: 9, telepathy: true } }, 'unknown_version')
+
+      const failing = rec.build(
+        {
+          kind: 'gate',
+          event: 'checked',
+          check: 'lint',
+          check_version: '1',
+          policy_version: null,
+          input_fingerprint: null,
+          outcome: 'bogus'
+        },
+        { host: 'ci' }
+      )
+      rec.push(failing, 'invalid')
+
+      rec.pushRaw(JSON.stringify(current), 'valid')
     }
   }
 }
