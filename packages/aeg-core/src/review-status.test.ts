@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { blockingVerdict, cleanVerdict, fakeGate, fakeVerdicts, runScenario } from './dev-review-loop/fakes'
+import { initialLoopState } from './dev-review-loop/types'
 import { deriveReviewStatus, parseDeveloperRoundMarker, renderReviewStatus } from './review-status'
 
 const ALLOWLIST = ['daniboomerang']
@@ -266,6 +268,45 @@ describe('deriveReviewStatus — PAUSE: max-rounds', () => {
       maxRounds: 3
     })
     expect(status).toEqual({ state: 'PAUSE', reason: 'max-rounds', round: 3 })
+  })
+
+  it('agrees with the loop: the same three-round history pauses both at round 3, and neither pauses at round 2', () => {
+    const config = {
+      loopId: 'loop-1',
+      task: 1,
+      reviewers: ['code-reviewer', 'security'],
+      models: { 'code-reviewer': 'sonnet', security: 'sonnet' },
+      maxRounds: 3,
+      maxTaskMinutes: 180
+    }
+    const round = (n: number) => [
+      fakeGate(n, true, n === 1 ? undefined : { confidence: { value: 80 } }),
+      fakeVerdicts(n, [
+        blockingVerdict('reviewer', [
+          ...(n > 1 ? [{ id: `F${n - 1}`, severity: 'major' as const, state: 'resolved' as const }] : []),
+          { id: `F${n}`, severity: 'major' as const, state: 'open' as const }
+        ]),
+        cleanVerdict('security')
+      ])
+    ]
+    const comments = [
+      principal(verdict('1111111', [finding(1, null)])),
+      roundComment(1),
+      principal(verdict('2222222', [finding(1, 'resolved'), finding(2, null)])),
+      roundComment(2),
+      principal(verdict(HEAD, [finding(2, 'resolved'), finding(3, null)]))
+    ]
+    const status = (upTo: number, headSha: string) =>
+      deriveReviewStatus({ comments: comments.slice(0, upTo), headSha, principalAllowlist: ALLOWLIST, maxRounds: 3 })
+
+    const twoRounds = runScenario(initialLoopState(config), [...round(1), ...round(2)])
+    expect(twoRounds.decisions.at(-1)).toEqual({ type: 'dispatch_developer' })
+    expect(status(4, '2222222')).toEqual({ state: 'CONTINUE' })
+
+    const threeRounds = runScenario(initialLoopState(config), [...round(1), ...round(2), ...round(3)])
+    expect(threeRounds.decisions.at(-1)).toMatchObject({ type: 'pause', reason: 'max_rounds' })
+    expect(status(5, HEAD)).toEqual({ state: 'PAUSE', reason: 'max-rounds', round: 3 })
+    expect(threeRounds.state.rounds).toHaveLength(3)
   })
 
   it('groups a code-review and a security verdict on the same judged head as ONE round', () => {

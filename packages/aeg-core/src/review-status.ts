@@ -226,8 +226,11 @@ export function deriveReviewStatus(input: ReviewStatusInput): ReviewStatus {
     return { state: 'PAUSE', reason: 'objectives-moved', round: rounds.length }
   }
 
-  // max-rounds — the count alone. The loop may still be converging; it has
-  // simply run long enough that the Principal decides whether it continues.
+  // max-rounds — the count alone: the cap is the number of rounds that run,
+  // so the round that reaches it is the last, and the Principal decides
+  // whether the loop continues. The loop pauses at the same round
+  // (`assessRound` compares `obs.round >= maxRounds`); a green round is the
+  // one difference — the loop publishes it, this read has no green signal.
   if (rounds.length >= input.maxRounds) return { state: 'PAUSE', reason: 'max-rounds', round: rounds.length }
 
   return { state: 'CONTINUE' }
