@@ -1816,11 +1816,13 @@ type FetchCollisionPeersResult = { ok: true; value: CollisionPeers } | { ok: fal
 
 /** One open Issue, exactly as `gh issue list --json number,body,labels` returns it. */
 export type OpenIssueRow = { number: number; body: string; labels: Array<{ name: string }> }
-/** One open pull request, exactly as `gh pr list --json number,files,closingIssuesReferences` returns it. */
+/** One open pull request, exactly as `gh pr list --json number,files,closingIssuesReferences,headRefName,body` returns it. */
 export type OpenPullRow = {
   number: number
   files: Array<{ path: string }>
   closingIssuesReferences: Array<{ number: number }>
+  headRefName: string
+  body: string
 }
 
 /**
@@ -1851,9 +1853,11 @@ export function pinnedFilesOf(body: string, allTrackedFiles: string[]): string[]
  *
  * An open pull request carries no rationale of its own, so its `conflictsWith`
  * is filled from the task Issue it closes — which is why the Issue listing is
- * still read in both scopes, and only its use as a peer differs. A pull
- * request that closes the subject Issue is the subject's OWN branch and is
- * dropped, never compared against itself.
+ * still read in both scopes, and only its use as a peer differs. The subject's
+ * OWN pull request is dropped, never compared against itself — recognised by
+ * its closing reference, its task branch name, or a `Closes #<n>` line in its
+ * body, since the forge can return the closing list empty even when the body
+ * names the Issue.
  *
  * Pure over two already-fetched listings, so the scope rule, the
  * self-exclusion and the pull-request-to-Issue mapping are all testable
@@ -1863,6 +1867,34 @@ export function pinnedFilesOf(body: string, allTrackedFiles: string[]): string[]
  * `fetchOpenTaskSurfaceSiblings` was given, and for the same reason: a `gh`
  * hiccup must not erase the findings the caller has already collected.
  */
+/**
+ * The task Issue number a task branch names, or null if the branch is not a
+ * dispatched task branch. Both dispatched forms end in the Issue number —
+ * `task/issue-<n>` (an untranched task) and `task/<slug>/<n>` (a tranche's
+ * nth task) — so the match is anchored to the end of the string, and `\d+` is
+ * greedy: it consumes the whole trailing run, so a longer branch number is
+ * read whole and never yields a shorter subject as a substring.
+ */
+function branchTaskIssueNumber(branch: string): number | null {
+  const match = /^task\/(?:issue-|.+\/)(\d+)$/.exec(branch)
+  return match ? Number(match[1]) : null
+}
+
+/**
+ * Whether a pull-request body names `issue` in a GitHub closing line —
+ * `Closes`, `Fixes` or `Resolves` (case-insensitive), then a hash and the
+ * Issue number. The number capture is greedy, so it consumes the whole digit
+ * run — a longer closing number compares whole and never substring-matches a
+ * shorter subject.
+ */
+function bodyClosesIssue(body: string, issue: number): boolean {
+  const closing = /\b(?:closes|fixes|resolves)\b\s*:?\s*#(\d+)/gi
+  for (const match of body.matchAll(closing)) {
+    if (Number(match[1]) === issue) return true
+  }
+  return false
+}
+
 export function buildCollisionPeers(
   scope: CollisionScope,
   subjectIssueNumber: number | null,
@@ -1891,7 +1923,20 @@ export function buildCollisionPeers(
 
   for (const pull of pulls) {
     const closes = pull.closingIssuesReferences[0]?.number ?? null
-    if (closes !== null && closes === subjectIssueNumber) continue
+    // The subject's OWN pull request is never a peer of itself. The forge can
+    // return an empty `closingIssuesReferences` even for a body that says
+    // `Closes #<n>`, so a closing reference is only the first of three ways a
+    // pull request can name the subject — its task branch (`task/issue-<n>`,
+    // `task/<slug>/<n>`) and a `Closes/Fixes/Resolves #<n>` body line are the
+    // other two. A pull request naming no subject Issue by any of the three is
+    // compared exactly as before.
+    if (
+      subjectIssueNumber !== null &&
+      (closes === subjectIssueNumber ||
+        branchTaskIssueNumber(pull.headRefName) === subjectIssueNumber ||
+        bodyClosesIssue(pull.body, subjectIssueNumber))
+    )
+      continue
     const files = pull.files.map((f) => f.path)
     if (files.length === 0) continue
     peers.push({
@@ -1955,7 +2000,7 @@ function fetchCollisionPeers(
         '--state',
         'open',
         '--json',
-        'number,files,closingIssuesReferences',
+        'number,files,closingIssuesReferences,headRefName,body',
         '--limit',
         String(MAX_COLLISION_PULL_REQUESTS)
       ],
@@ -1970,7 +2015,7 @@ function fetchCollisionPeers(
   try {
     pulls = JSON.parse(prOut)
   } catch {
-    return failed('Could not parse `gh pr list --json number,files,closingIssuesReferences` output.')
+    return failed('Could not parse `gh pr list --json number,files,closingIssuesReferences,headRefName,body` output.')
   }
 
   return {
