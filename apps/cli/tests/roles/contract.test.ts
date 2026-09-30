@@ -30,7 +30,7 @@ describe('validateRoleContract', () => {
     const result = validateRoleContract(VALID)
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.contract).toEqual({
+    expect(result.contract).toMatchObject({
       roleId: 'foo',
       title: 'Foo',
       order: 1,
@@ -40,6 +40,11 @@ describe('validateRoleContract', () => {
       refusesWhen: 'Never.\n',
       summary: 'Ever needed foo?'
     })
+    // The markdown body is carried through verbatim so an overridden role's own
+    // prose reaches the reviewer dispatch (see `RoleContract.body`).
+    expect(result.contract.body).toContain('## The short version')
+    expect(result.contract.body).toContain('Foo does foo, and nothing else.')
+    expect(result.contract.body).toContain('## Reference')
   })
 
   it('accepts a non-integer "order" (a fractional insertion point)', () => {

@@ -4,6 +4,7 @@ import {
   enforcementPublishedText,
   evaluatePublishedProse,
   extractShortVersion,
+  extractShortVersionAndChecklist,
   publishedDoctrineBody,
   type PublishedProseEntry
 } from './published-prose'
@@ -61,6 +62,66 @@ describe('extractShortVersion / publishedDoctrineBody', () => {
   it('never leaks the reference when the short version is missing', () => {
     const body = '# Title\n\nA preamble.\n\n## Reference\n\nInternal detail: D-135.'
     expect(publishedDoctrineBody(body)).toBe('# Title\n\nA preamble.')
+  })
+})
+
+describe('extractShortVersionAndChecklist — the reviewer/security dispatch fact', () => {
+  /** A role body shaped like `reviewer.md`: short version, its trailing `---` rule, a Reference wall, then a `## What you check` list. */
+  function roleWithChecklist(): string {
+    return [
+      '# Reviewer — Role Reference',
+      '',
+      '## The short version',
+      '',
+      `You judge one open pull request against the brief. ${filler(160)}`,
+      '',
+      '**You own** — the verdict.',
+      '',
+      '---',
+      '',
+      '## Reference',
+      '',
+      'The long reference nobody injects.',
+      '',
+      '## What you check',
+      '',
+      '1. Does the code match the brief?',
+      '2. Honest tests.',
+      '',
+      '## Prose is self-contained',
+      '',
+      'A later section that must not be carried.'
+    ].join('\n')
+  }
+
+  it('carries the short version and the "## What you check" list, and nothing after it', () => {
+    const out = extractShortVersionAndChecklist(roleWithChecklist())
+    expect(out).not.toBeNull()
+    expect(out).toContain('You judge one open pull request against the brief')
+    expect(out).toContain('## What you check')
+    expect(out).toContain('1. Does the code match the brief?')
+    expect(out).toContain('2. Honest tests.')
+    // The Reference wall between them, and the section after the checklist, are never carried.
+    expect(out).not.toContain('The long reference nobody injects')
+    expect(out).not.toContain('A later section that must not be carried')
+  })
+
+  it('strips the trailing `---` rule that closes the short version', () => {
+    const out = extractShortVersionAndChecklist(roleWithChecklist()) ?? ''
+    // The short version's own text survives; the horizontal rule that closed it does not.
+    expect(out).toContain('**You own** — the verdict.')
+    expect(/^-{3,}\s*$/m.test(out.split('## What you check')[0] ?? '')).toBe(false)
+  })
+
+  it('returns the short version alone when the body carries no checklist — never a fabricated one', () => {
+    const out = extractShortVersionAndChecklist(roleShortVersion())
+    expect(out).not.toBeNull()
+    expect(out).toContain('You execute one brief')
+    expect(out).not.toContain('## What you check')
+  })
+
+  it('returns null when the body carries no short version at all', () => {
+    expect(extractShortVersionAndChecklist('# Title\n\n## What you check\n\n1. thing')).toBeNull()
   })
 })
 

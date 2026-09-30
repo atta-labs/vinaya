@@ -94,8 +94,8 @@ export const CLEAN_SECURITY: RoleOutcome = {
 /** One posted comment, recorded by a forge-write fake in place of a real `gh` post. */
 export type PostedComment = { kind: 'issue' | 'pr'; ref: string; marker: string; body: string }
 
-/** One dispatch the fake `dispatchRole` recorded — role and round, so a test can assert the sequence of dispatches. */
-export type DispatchRecord = { role: string; round: number; resumeId: string | null }
+/** One dispatch the fake `dispatchRole` recorded — role, round, and the exact prompt it was handed (dropped before; recorded now so a test can assert the reviewer prompt carries its role doctrine — Traps to avoid). `prompt` is optional so the file-local fakes that predate this recording still type-check. */
+export type DispatchRecord = { role: string; round: number; resumeId: string | null; prompt?: string }
 
 export type LoopWorld = {
   task: number
@@ -131,6 +131,8 @@ export type LoopWorld = {
   roundDiff?: string
   /** O3: the task Issue's `## Surface` a fixture wants the driver to resolve (`resolveTaskSurface`); `undefined` (the default) leaves the out-of-Surface rule inactive. */
   surface?: IssueSurface | null
+  /** O1/O2: the per-role doctrine the fake `resolveReviewerDoctrine` returns into each reviewer/security prompt; `undefined` (the default) injects no doctrine block. */
+  roleDoctrine?: Partial<Record<'reviewer' | 'security', string | null>>
   /**
    * Per-round role outcomes; a round with no entry uses the clean default.
    * A role's value may be a single `RoleOutcome` (every attempt in the round
@@ -326,13 +328,13 @@ function handle(resumeId: string | null, effectId: string): DispatchHandle {
 export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
   let dispatchSeq = 0
   return {
-    dispatchRole: async (role, _agent, _prompt, opts): Promise<DispatchHandle> => {
+    dispatchRole: async (role, _agent, prompt, opts): Promise<DispatchHandle> => {
       const round = opts.round ?? 1
       world.dispatchCountByRole[role] = (world.dispatchCountByRole[role] ?? 0) + 1
       if (role === 'developer') {
         world.developerPushed = true
         const sessionId = world.roleOutcomes[round]?.developer?.sessionId ?? 'dev-session-1'
-        world.dispatches.push({ role, round, resumeId: sessionId })
+        world.dispatches.push({ role, round, resumeId: sessionId, prompt })
         return handle(sessionId, `eff-dev-${++dispatchSeq}`)
       }
       // code-reviewer | security: write the role's artifacts into the work
@@ -344,9 +346,12 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
       const attempt = world.dispatches.filter((d) => d.role === role && d.round === round).length + 1
       const outcome = roleOutcomeFor(world, reviewRole, round, attempt)
       if (workDir && !outcome.writesNothing) writeRoleArtifacts(workDir, outcome)
-      world.dispatches.push({ role, round, resumeId: outcome.sessionId })
+      world.dispatches.push({ role, round, resumeId: outcome.sessionId, prompt })
       return handle(outcome.sessionId, `eff-${reviewRole}-${++dispatchSeq}`)
     },
+    // O1/O2: default to the world's own per-role doctrine (a fixture states its
+    // own; the default is `null` — no doctrine injected, the pre-task shape).
+    resolveReviewerDoctrine: async (role) => world.roleDoctrine?.[role] ?? null,
     resolveHead: (_branch) => {
       if (!world.developerPushed) throw new Error('resolveHead: branch has no head on origin yet (in-process fake)')
       return world.head

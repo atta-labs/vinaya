@@ -18,12 +18,14 @@ export {
   enforcementPublishedText,
   evaluatePublishedProse,
   extractShortVersion,
+  extractShortVersionAndChecklist,
   publishedDoctrineBody,
   readabilityErrors,
   REFERENCE_HEADING,
   ROLE_BLOCKS,
   SHORT_VERSION_HEADING,
   SHORT_VERSION_MAX_WORDS,
-  SHORT_VERSION_MIN_WORDS
+  SHORT_VERSION_MIN_WORDS,
+  WHAT_YOU_CHECK_HEADING
 } from './published-prose'
 export type { PublishedProseEntry, PublishedProseResult } from './published-prose'

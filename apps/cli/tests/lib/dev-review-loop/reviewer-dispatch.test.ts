@@ -24,7 +24,8 @@ import {
   persistManifestRecord,
   renderReviewerDispatchPrompt,
   renderReviewerPrompt,
-  ReviewerReportParseFailure
+  ReviewerReportParseFailure,
+  roleDoctrinePieces
 } from '../../../src/lib/dev-review-loop/reviewer-dispatch'
 import type { ReviewerPromptFacts, ReviewerPromptPiece } from '../../../src/lib/dev-review-loop/reviewer-dispatch'
 
@@ -391,6 +392,104 @@ describe('renderReviewerPrompt — the banned-framing lint checks only the text 
     const rendered = renderReviewerPrompt({ ...FACTS, objectives: '   ', resolvedObjectives: [] })
     expect(rendered).toContain('OBJECTIVES:\n(none found on the Issue)')
     expect(rendered).toContain('RULINGS ON THIS PR:\n(none)')
+  })
+})
+
+// --- the reviewer prompt carries its role doctrine (role-reach-v1 task 1) ----
+
+describe('renderReviewerDispatchPrompt — carries the role doctrine as a fact', () => {
+  const MANIFEST: ReviewInputManifest = {
+    headSha: 'a'.repeat(40),
+    baseSha: 'e'.repeat(40),
+    briefHash: 'b'.repeat(64),
+    objectivesVersion: 'c'.repeat(64),
+    rulingOrdinal: 2,
+    policyDigest: 'd'.repeat(64)
+  }
+  const FACTS: ReviewerPromptFacts = {
+    objectives: 'O1. Do the thing.',
+    resolvedObjectives: [{ id: 'O1', text: 'Do the thing.' }],
+    rulings: [],
+    ciConclusion: 'green',
+    revision: 'f'.repeat(40),
+    manifest: MANIFEST
+  }
+  const REVIEWER_DOCTRINE =
+    'You judge one open pull request against the brief it came from.\n\n## What you check\n\n1. Does the code match the brief?\n2. Honest tests.'
+
+  it('injects the resolved short version and "What you check" list into a reviewer prompt (O1)', () => {
+    const prompt = renderReviewerDispatchPrompt('reviewer', FACTS, '/tmp/work', REVIEWER_DOCTRINE)
+    expect(prompt).toContain('YOUR ROLE DOCTRINE')
+    expect(prompt).toContain('for the code-reviewer role')
+    expect(prompt).toContain('You judge one open pull request against the brief it came from.')
+    expect(prompt).toContain('## What you check')
+    expect(prompt).toContain('1. Does the code match the brief?')
+    // The doctrine sits before the dispatch's own output instructions.
+    expect(prompt.indexOf('YOUR ROLE DOCTRINE')).toBeLessThan(prompt.indexOf('Write your findings to'))
+  })
+
+  it('labels the block for the security reviewer when the role is security (O1)', () => {
+    const prompt = renderReviewerDispatchPrompt(
+      'security',
+      FACTS,
+      '/tmp/work',
+      'You ask one question a correctness review does not.\n\n## What you check\n\n1. Secret / credential leakage.'
+    )
+    expect(prompt).toContain('for the security reviewer role')
+    expect(prompt).toContain('1. Secret / credential leakage.')
+  })
+
+  it('injects no doctrine block when the doctrine is null — the pre-task shape, unchanged', () => {
+    const withNull = renderReviewerDispatchPrompt('reviewer', FACTS, '/tmp/work', null)
+    const withOmitted = renderReviewerDispatchPrompt('reviewer', FACTS, '/tmp/work')
+    expect(withNull).not.toContain('YOUR ROLE DOCTRINE')
+    expect(withNull).toBe(withOmitted)
+  })
+
+  // O3: an adopter override (or even a core body) whose own wording matches a
+  // banned phrase must render, not crash every round. The short versions today
+  // literally say a reviewer posts comments and "writes nothing to disk".
+  const DOCTRINE_WITH_BANNED_PHRASES =
+    'You judge the PR. The developer says it is done, and clearly it works.\n\n' +
+    '## What you check\n\n1. In my opinion, check that the PR body says what the brief asked.'
+
+  it('renders a role doctrine carrying banned phrases, verbatim, instead of ending the round (O3)', () => {
+    const render = () => renderReviewerDispatchPrompt('reviewer', FACTS, '/tmp/work', DOCTRINE_WITH_BANNED_PHRASES)
+    expect(render).not.toThrow()
+    const prompt = render()
+    expect(prompt).toContain('The developer says it is done, and clearly it works.')
+    expect(prompt).toContain('In my opinion, check that the PR body says what the brief asked.')
+  })
+
+  it('holds the injected doctrine out of the text the banned-framing lint reads (O3)', () => {
+    const pieces = [
+      ...buildReviewerPromptPieces(FACTS),
+      ...roleDoctrinePieces('reviewer', DOCTRINE_WITH_BANNED_PHRASES)
+    ]
+    const driverText = driverAuthoredPromptText(pieces)
+    expect(lintReviewerPrompt(driverText)).toEqual([])
+    expect(driverText).not.toContain('clearly')
+    expect(driverText).not.toContain('In my opinion')
+    expect(driverText).not.toContain('The developer says')
+  })
+
+  it('carries one precedence sentence: the dispatch output instructions win over the doctrine wording (O4)', () => {
+    const prompt = renderReviewerDispatchPrompt('reviewer', FACTS, '/tmp/work', REVIEWER_DOCTRINE)
+    expect(prompt).toContain('the dispatch instructions below take precedence')
+    expect(prompt).toContain('writing nothing to disk')
+    // The precedence sentence sits between the doctrine and the file-writing instructions.
+    const doctrineAt = prompt.indexOf('YOUR ROLE DOCTRINE')
+    const precedenceAt = prompt.indexOf('take precedence')
+    const findingsAt = prompt.indexOf('Write your findings to')
+    expect(doctrineAt).toBeLessThan(precedenceAt)
+    expect(precedenceAt).toBeLessThan(findingsAt)
+  })
+
+  it('the precedence sentence is driver text the lint reads, and carries no banned phrase (O4)', () => {
+    const pieces = roleDoctrinePieces('security', 'A short version.\n\n## What you check\n\n1. Secrets.')
+    const driverText = driverAuthoredPromptText(pieces)
+    expect(driverText).toContain('take precedence')
+    expect(lintReviewerPrompt(driverText)).toEqual([])
   })
 })
 

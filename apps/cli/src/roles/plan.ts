@@ -12,9 +12,11 @@
  * relative to cwd, which is only correct inside this monorepo itself.
  */
 import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { extractShortVersionAndChecklist } from '@attalabs/aeg-core/docs'
 import { createFileDoctrineSource } from '@attalabs/vinaya-sources'
 import { resolveDoctrineRoot } from '../commands/doctrine'
+import { configPath, loadConfigChecked } from '../lib/config'
 import type { RoleEntry } from '../lib/config'
 import { type RoleContract, validateRoleContract } from './contract'
 import { type ResolvedRole, type RoleConfigInput, type RoleResolverFailure, resolveRoles } from './resolver'
@@ -90,4 +92,31 @@ export async function buildRolePlan(
   }
 
   return { available: true, ...resolveRoles(core, configInput) }
+}
+
+/**
+ * The published role doctrine — short version plus `## What you check` — for a
+ * dispatched review pass, resolved through the SAME role plan `vinaya check
+ * --plan` renders (O2): an overridden reviewer/security role supplies the
+ * override's own body, a default role the core body. `'reviewer'` here is the
+ * doctrine role id `code-reviewer` resolves to (the dispatch's own alias — see
+ * `../commands/doctrine.ts`'s `ROLE_ALIASES`).
+ *
+ * Reads the repo-local config the same way `check.ts` does, so an adopter's
+ * `roles` override is honoured. Returns `null` when no doctrine can be
+ * resolved (no bundled doctrine, or the role is absent from the plan) — the
+ * caller then dispatches without the injected doctrine rather than failing the
+ * round, exactly the pre-task behaviour.
+ */
+export async function resolveRoleDoctrineText(role: 'reviewer' | 'security'): Promise<string | null> {
+  const configResult = loadConfigChecked()
+  const configFilePath = configResult.ok ? configPath() : configResult.path
+  const plan = await buildRolePlan(
+    configFilePath ? dirname(configFilePath) : null,
+    configResult.ok ? configResult.config?.roles : undefined
+  )
+  if (!plan.available) return null
+  const resolved = plan.resolved.find((entry) => entry.renderId === role)
+  if (resolved === undefined) return null
+  return extractShortVersionAndChecklist(resolved.contract.body)
 }

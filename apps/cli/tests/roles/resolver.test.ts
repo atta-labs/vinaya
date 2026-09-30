@@ -12,6 +12,7 @@ function role(overrides: Partial<RoleContract> = {}): RoleContract {
     performs: ['write-the-code'],
     refusesWhen: 'Never.',
     summary: 'Ever?',
+    body: '## The short version\n\nThe role does the thing.',
     ...overrides
   }
 }
