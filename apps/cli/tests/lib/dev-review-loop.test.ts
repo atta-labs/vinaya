@@ -817,6 +817,12 @@ fi
 if [ "$1" = "fetch" ]; then
   exit 0
 fi
+if [ "$1" = "push" ]; then
+  # O1 (#919): the loop creates the task branch on the remote at start with
+  # \`git push origin origin/main:refs/heads/<branch>\` — record it and succeed.
+  echo "$@" >> "$HOME/.fake-git-pushes"
+  exit 0
+fi
 if [ "$1" = "diff" ]; then
   echo " 2 files changed, 10 insertions(+), 3 deletions(-)"
   exit 0
@@ -1034,6 +1040,49 @@ function setUp(): { home: string; cwd: string; path: string } {
   writeFakeGit(binDir)
   return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
 }
+
+describe('devReviewLoop — round 1 start creates the task branch on the remote (O1/O2)', () => {
+  it('creates the developer branch at origin/main on a fresh start, before any developer dispatch (O1)', async () => {
+    // Default world: no remote branch (`developerPushed` false → `resolveHead`
+    // throws) and no open PR (`findOpenPrForBranch` null) — the genuinely-fresh
+    // round-1 path. The loop creates the branch once, at start, and reaches
+    // publish exactly as before; the Developer's own turn (which flips
+    // `developerPushed`) still runs on that branch (O3).
+    const world = makeWorld()
+    const result = await runLoopInProcess(world)
+    expect(result.finalDecision.type).toBe('publish')
+    expect(world.remoteBranchCreations).toEqual([world.branch])
+    // O1: the creation fired, not the developer's push, as the first thing —
+    // the branch existed for GitHub before the one developer dispatch.
+    expect(world.dispatchCountByRole.developer).toBe(1)
+  })
+
+  it('leaves an existing remote branch untouched when an open PR already carries it (O2)', async () => {
+    // `developerPushed: true` → `findOpenPrForBranch` returns a PR and the
+    // round-1 entry attaches to it instead of dispatching fresh; the
+    // remote-branch creation is on the fresh path only, so it never runs.
+    const world = makeWorld({ developerPushed: true })
+    const result = await runLoopInProcess(world)
+    expect(result.finalDecision.type).toBe('publish')
+    expect(world.remoteBranchCreations).toEqual([])
+  })
+
+  it('a failed branch creation is swallowed — the loop still dispatches and publishes (O1 trap)', async () => {
+    // The Developer's own first push creates the same branch later, so a push
+    // failure at start must never stop the loop: it is logged and swallowed.
+    const world = makeWorld()
+    let attempted = 0
+    const result = await runLoopInProcess(world, undefined, {
+      createRemoteTaskBranch: () => {
+        attempted += 1
+        throw new Error('simulated push rejection')
+      }
+    })
+    expect(attempted).toBe(1)
+    expect(result.finalDecision.type).toBe('publish')
+    expect(world.dispatchCountByRole.developer).toBe(1)
+  })
+})
 
 describe('devReviewLoop — round 1 clean, ends on publish', () => {
   it('dispatches the developer then both reviewers and publishes with no findings', async () => {
@@ -2582,6 +2631,12 @@ fi
 if [ "$1" = "fetch" ]; then
   exit 0
 fi
+if [ "$1" = "push" ]; then
+  # O1 (#919): the loop creates the task branch on the remote at start with
+  # \`git push origin origin/main:refs/heads/<branch>\` — record it and succeed.
+  echo "$@" >> "$HOME/.fake-git-pushes"
+  exit 0
+fi
 if [ "$1" = "diff" ]; then
   echo " 2 files changed, 10 insertions(+), 3 deletions(-)"
   exit 0
@@ -2813,6 +2868,12 @@ if [ "$1" = "-C" ] && [ "$3" = "rev-parse" ] && [ "$4" = "HEAD" ]; then
   exit 0
 fi
 if [ "$1" = "fetch" ]; then
+  exit 0
+fi
+if [ "$1" = "push" ]; then
+  # O1 (#919): the loop creates the task branch on the remote at start with
+  # \`git push origin origin/main:refs/heads/<branch>\` — record it and succeed.
+  echo "$@" >> "$HOME/.fake-git-pushes"
   exit 0
 fi
 if [ "$1" = "diff" ]; then

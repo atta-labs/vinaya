@@ -169,6 +169,8 @@ export type LoopWorld = {
   /** Set if `blockEvidenceUntilReviewerStarts` never observed a reviewer start within its budget. */
   evidenceReportTimedOut: boolean
   // --- recorded side effects, for assertions ---
+  /** O1/O2: each developer branch the loop created on the remote at round-1 start (`createRemoteTaskBranch`) — empty on a start that found the branch already there (an open PR, or a remote branch with none). */
+  remoteBranchCreations: string[]
   postedComments: PostedComment[]
   dispatches: DispatchRecord[]
   /** How many times each role was dispatched, cumulative across rounds. */
@@ -271,6 +273,7 @@ export function makeWorld(overrides: Partial<LoopWorld> = {}): LoopWorld {
     prBody: `Closes #${task}`,
     shortstat: ' 2 files changed, 10 insertions(+), 3 deletions(-)',
     roleOutcomes: {},
+    remoteBranchCreations: [],
     evidenceOutcome: { ok: true, gatesFailed: false },
     blockEvidenceUntilReviewerStarts: false,
     reviewerDispatchStarted: false,
@@ -385,6 +388,11 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
     fetchSourceRevision: (_issue) => world.sourceRevision,
     developerBranchFor: (_n) => world.branch,
     findOpenPrForBranch: (branch) => (world.developerPushed ? { number: world.prNumber, branch } : null),
+    // O1/O2: record the round-1 remote-branch creation so a test can assert it
+    // fires exactly on the genuinely-fresh path and never on an attach/reentry.
+    createRemoteTaskBranch: (branch) => {
+      world.remoteBranchCreations.push(branch)
+    },
     readResumeRecord: () => null,
     runtimeDir: () => world.runtimeDir,
     repoRoot: () => world.repoRoot,

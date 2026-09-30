@@ -536,6 +536,22 @@ export function developerBranchFor(
   )
 }
 
+/**
+ * O1: creates `branch` on the remote at `origin/main`'s tip — the loop's
+ * round-1 fresh-dispatch path calls it once, so GitHub shows the task in flight
+ * from its first minute rather than only after the Developer's own first push.
+ * Pushes an explicit `origin/main:refs/heads/<branch>` refspec: the source is
+ * the local `origin/main` tracking ref, so the branch is never checked out in
+ * this checkout (Traps to avoid) and nothing in the working tree moves, and it
+ * is never force-pushed. Throws on any git failure; the one caller catches it,
+ * logs, and continues, since the Developer's own first push creates the same
+ * branch later. Paired with `developerBranchFor` above — that names the branch,
+ * this is what first makes it exist on the remote.
+ */
+export function createRemoteTaskBranch(branch: string): void {
+  sh('git', ['push', 'origin', `origin/main:refs/heads/${branch}`])
+}
+
 type PrRef = { number: number; branch: string }
 
 /** `null` when no open PR carries `branch` as its head yet — polled, never treated as a final answer on one read. */

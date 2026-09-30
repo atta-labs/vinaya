@@ -117,6 +117,7 @@ import {
   sh
 } from './dev-review-loop/gate-reading.js'
 import {
+  createRemoteTaskBranch,
   describeObjectivesEdit,
   developerBranchFor,
   DeveloperStopSignal,
@@ -331,6 +332,17 @@ export type LoopDeps = {
   fetchSourceRevision: typeof fetchSourceRevision
   developerBranchFor: (issueNumber: number) => string
   findOpenPrForBranch: typeof findOpenPrForBranch
+  /**
+   * O1: creates this task's developer branch on the remote at `origin/main`'s
+   * tip, so GitHub shows the task in flight from its first minute — the round-1
+   * fresh-dispatch path calls it once, ONLY when the branch exists neither as an
+   * open PR nor on the remote (O2 leaves an existing one untouched). Pushes the
+   * tip via an explicit refspec, never by checking the branch out in this
+   * checkout, and never force-pushes. Throwing is tolerated by the one caller —
+   * logged, then the loop continues, since the Developer's own first push
+   * creates the same branch later.
+   */
+  createRemoteTaskBranch: (branch: string) => void
   /** O4: the durable session id `dispatch.ts` last recorded for this repo+role+vendor+task, or `null`. */
   readResumeRecord: (
     task: number,
@@ -902,6 +914,7 @@ function defaultDeps(): LoopDeps {
     fetchSourceRevision,
     developerBranchFor: (n) => developerBranchFor(n),
     findOpenPrForBranch,
+    createRemoteTaskBranch,
     readResumeRecord: (task, agent, repo) => realReadResumeRecord('developer', agent, repo, task),
     runtimeDir,
     resolveLogAppendPath,
@@ -3087,6 +3100,26 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // resumes once to open the PR and polls (O2/O3).
             prNumber = await afterDeveloperTurnBeforePrPoll(true)
           } else {
+            // O1/O2: the branch exists neither as an open PR (checked above)
+            // nor on the remote (`resolveHead` just threw) — create it now, at
+            // `origin/main`'s tip, BEFORE the first Developer turn below, so a
+            // dashboard reading only GitHub counts this task in flight from its
+            // first minute instead of only after the Developer's first push
+            // (often an hour later, and never at all for a run that dies before
+            // pushing). A failed push is logged and swallowed here, never a
+            // reason the loop stops: the Developer's own first push creates the
+            // same branch later (Traps to avoid). The default dep pushes an
+            // explicit refspec from `origin/main`, never checking the branch out
+            // in this checkout and never force-pushing.
+            try {
+              d.createRemoteTaskBranch(branch)
+              console.error(`vinaya dev-review-loop: created task branch ${branch} on origin at start`)
+            } catch (err) {
+              console.error(
+                `vinaya dev-review-loop: could not create task branch ${branch} on origin at start: ${err instanceof Error ? err.message : String(err)} — continuing; the developer's first push will create it`
+              )
+            }
+
             // Round 1: fresh dispatch, brief read from the frozen Issue comment
             // (O1). What happens next — check, at most one resume, poll — is
             // O2/O3/O9's own job, never blind.
