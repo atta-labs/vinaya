@@ -29,7 +29,6 @@ const UNGRANTED = [
   'Write',
   'gh',
   'task_plan',
-  'task_status_follow', // a tool the server never served is not granted
   'task_start ' // a trailing-space near-miss is still not the granted name
 ]
 
