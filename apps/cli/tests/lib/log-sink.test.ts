@@ -709,6 +709,100 @@ describe('log-sink — one read per process, not per sink (O1)', () => {
   }, 120_000)
 })
 
+describe('log-sink — the trust-anchor config is cached per repository (O1, O3)', () => {
+  it("logs from two repositories, each reading its own config once, neither served the other's", () => {
+    // The REAL trust-anchor read, in a child, with a counting `gh` on `PATH`
+    // that answers each repository its OWN `logs.url` — the exact shape a
+    // `bun:test` runner takes when one file drives this repository's checkout
+    // and a later file drives a fixture repository of its own. Before the
+    // cache was keyed by repository root the first read filled a single slot
+    // and the second repository was served the first's config; this proves it
+    // is not, and that one repository still reads exactly once (O3).
+    const scratch = mkdtempSync(join(tmpdir(), 'vinaya-anchor-perrepo-'))
+    const binDir = join(scratch, 'bin')
+    const calls = join(scratch, 'gh-calls')
+    mkdirSync(binDir)
+    const repoNamed = (name: string): string => {
+      const dir = join(scratch, name)
+      mkdirSync(dir)
+      const git = (...args: string[]): void => {
+        const r = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' })
+        if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr}`)
+      }
+      git('init', '--initial-branch=main')
+      git('config', 'user.email', 'test@example.com')
+      git('config', 'user.name', 'Test')
+      // A real remote so `trustAnchorRepoAsync` resolves `attalabs/<name>` from
+      // it; the working tree carries NO `vinaya.config.json`, so the local
+      // config is null and only the anchor read (the `gh` shim) decides the
+      // destination.
+      git('remote', 'add', 'origin', `https://github.com/attalabs/${name}.git`)
+      writeFileSync(join(dir, 'a.txt'), 'a')
+      git('add', 'a.txt')
+      git('commit', '-m', 'init')
+      return dir
+    }
+    const repoA = repoNamed('repo-a')
+    const repoB = repoNamed('repo-b')
+    // The shim reads which repository `gh api repos/attalabs/<name>/contents/…`
+    // was asked for, records it (one line per real read), and answers that
+    // repository its own `logs.url` as base64 `.content`.
+    writeFileSync(
+      join(binDir, 'gh'),
+      '#!/bin/sh\n' +
+        'case "$2" in\n' +
+        '  *repo-a*) name=repo-a ;;\n' +
+        '  *repo-b*) name=repo-b ;;\n' +
+        '  *) exit 1 ;;\n' +
+        'esac\n' +
+        `echo "$name" >> ${JSON.stringify(calls)}\n` +
+        'printf \'%s\' "{\\"logs\\":{\\"url\\":\\"https://$name.example/ingest\\"}}" | base64 | tr -d \'\\n\'\n' +
+        'echo\n',
+      { mode: 0o755 }
+    )
+
+    const sinkModule = new URL('../../src/lib/log-sink.ts', import.meta.url).pathname
+    const probe = join(scratch, 'probe.ts')
+    writeFileSync(
+      probe,
+      `import { resolveUnattendedServerSetting, resetTrustAnchorConfigMemo } from ${JSON.stringify(sinkModule)}\n` +
+        'const [a, b] = process.argv.slice(2) as [string, string]\n' +
+        'resetTrustAnchorConfigMemo()\n' +
+        'process.chdir(a)\n' +
+        'const a1 = await resolveUnattendedServerSetting()\n' +
+        'const a2 = await resolveUnattendedServerSetting()\n' +
+        'process.chdir(b)\n' +
+        'const b1 = await resolveUnattendedServerSetting()\n' +
+        'console.log(JSON.stringify({ a1: a1?.url ?? null, a2: a2?.url ?? null, b1: b1?.url ?? null }))\n'
+    )
+    // Clear the runner/AEG repo hints so `trustAnchorRepoAsync` resolves each
+    // repository from ITS OWN git remote, not one process-wide slug.
+    const probeEnv: NodeJS.ProcessEnv = { ...stripVinayaEnv(), PATH: `${binDir}:${process.env.PATH ?? ''}` }
+    delete probeEnv.GITHUB_REPOSITORY
+    delete probeEnv.AEG_REPO
+    delete probeEnv.GH_TOKEN
+    delete probeEnv.GITHUB_TOKEN
+    const run = spawnSyncBudgeted(
+      'bun',
+      [probe, repoA, repoB],
+      { encoding: 'utf8', env: probeEnv },
+      60_000,
+      'anchor-per-repo probe'
+    )
+    if (run.status !== 0) throw new Error(`probe failed: ${run.stderr}`)
+    const answer = JSON.parse(run.stdout.trim().split('\n').pop() as string)
+    // Each repository resolved its OWN url; the second read of repo-a reused
+    // the first (same url, no extra call), and repo-b was never served repo-a's.
+    expect(answer.a1).toBe('https://repo-a.example/ingest')
+    expect(answer.a2).toBe('https://repo-a.example/ingest')
+    expect(answer.b1).toBe('https://repo-b.example/ingest')
+    // Exactly one real anchor read per repository: repo-a once despite two
+    // resolutions (O3), repo-b once — never repo-a twice, never repo-b served
+    // from repo-a's slot.
+    expect(readFileSync(calls, 'utf8').trim().split('\n').sort()).toEqual(['repo-a', 'repo-b'])
+  }, 120_000)
+})
+
 describe('log-sink — a process that serves several tasks (O1)', () => {
   it('never reads the branch once the fallback is off, and keeps issue null', async () => {
     let calls = 0

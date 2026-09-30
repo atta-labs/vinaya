@@ -413,33 +413,39 @@ export function resolveLogDestinationFrom(input: {
  * most once per sink instance.
  */
 // The default branch's config cannot change within one process, so it is read
-// once per process, not once per sink: the loop driver alone holds several
-// sinks (its own, one per dispatched role, the module default), and each
-// extra read is one more child process whose exit the pinned Bun can lose.
-let processTrustAnchorOnce: Promise<VinayaConfig | null> | undefined
-function processTrustAnchor(): Promise<VinayaConfig | null> {
-  if (processTrustAnchorOnce === undefined) processTrustAnchorOnce = safeLoadTrustAnchorConfig()
-  return processTrustAnchorOnce
+// once per process PER REPOSITORY, not once per sink: the loop driver alone
+// holds several sinks (its own, one per dispatched role, the module default),
+// and each extra read is one more child process whose exit the pinned Bun can
+// lose. Keyed by the resolved repository root the sink already carries, so a
+// process that logs from two repositories — a `bun:test` runner loading many
+// test files, each driving its own fixture repository — reads each
+// repository's config exactly once (O3) and never serves one repository's
+// config to another (O1). A `null` root (a directory in no git repository at
+// all) keys one shared slot, where the trust-anchor read answers `null`
+// regardless of where it ran, so no two such directories can cross.
+const processTrustAnchorByRepo = new Map<string | null, Promise<VinayaConfig | null>>()
+function processTrustAnchor(repoRoot: string | null): Promise<VinayaConfig | null> {
+  const cached = processTrustAnchorByRepo.get(repoRoot)
+  if (cached !== undefined) return cached
+  const reading = safeLoadTrustAnchorConfig()
+  processTrustAnchorByRepo.set(repoRoot, reading)
+  return reading
 }
 
 /**
- * Test-only: drops the memoized default-branch config so the next unattended
+ * Test-only: drops every memoized default-branch config so the next unattended
  * `log()` reads it again, from the working directory in force then.
  *
- * The answer depends on where it was read from, and inside one `bun:test`
- * process the file that reads it first is not the file that depends on it:
- * read from this repository's own checkout it returns a config declaring a
- * `logs.url` server, and read from a temporary fixture directory that is not a
- * git repository at all it returns `null`. An unattended fixture whose own
- * config declares no `logs` setting is therefore delivered to the real server
- * when an earlier file cached the first answer, and to its own folder when
- * nothing did — that fixture's events vanish from the folder it reads back,
- * for no reason but which file ran before it. A test file whose code path
- * reaches an unattended `log()` calls this in its own teardown, next to
- * `run-paths.ts`'s `resetRuntimeDirCache`.
+ * With the cache keyed by repository root (`processTrustAnchorByRepo`), a
+ * process logging from two repositories already keeps their configs apart, so
+ * nothing depends on calling this any more — the cross-repository leak it once
+ * guarded against (an earlier file's checkout config served to a later file's
+ * fixture repository) is closed at the cache itself. It stays exported and
+ * working for a test that still wants a clean slate for its own reasons, next
+ * to `run-paths.ts`'s `resetRuntimeDirCache`.
  */
 export function resetTrustAnchorConfigMemo(): void {
-  processTrustAnchorOnce = undefined
+  processTrustAnchorByRepo.clear()
 }
 
 async function defaultResolveLogDestination(
@@ -452,13 +458,17 @@ async function defaultResolveLogDestination(
   // attribution, and reading trust from that would treat an attended parent
   // as unattended — a forge read on every dispatch the parent logs.
   const unattended = isUnattendedProcess(process.env)
+  // Resolved once and used for both the trust-anchor cache key and the
+  // inside-the-repo folder refusal, so the config cached under this root is the
+  // one read for it.
+  const repoRoot = repoRootSync()
   return resolveLogDestinationFrom({
     localConfig,
-    trustAnchorConfig: unattended ? await processTrustAnchor() : null,
+    trustAnchorConfig: unattended ? await processTrustAnchor(repoRoot) : null,
     unattended,
     env,
     defaultFolder: join(await runtimeDirForRepoAsync(repo), 'logs'),
-    repoRoot: repoRootSync()
+    repoRoot
   })
 }
 
@@ -478,13 +488,14 @@ export async function resolveUnattendedLogDestination(
 ): Promise<ResolvedLogDestination> {
   const resolved = await resolveRepoDefault()
   const repo = resolved && isSafeRepoSegment(resolved.owner) && isSafeRepoSegment(resolved.repo) ? resolved : null
+  const repoRoot = repoRootSync()
   return resolveLogDestinationFrom({
     localConfig: loadConfig(),
-    trustAnchorConfig: await processTrustAnchor(),
+    trustAnchorConfig: await processTrustAnchor(repoRoot),
     unattended: true,
     env,
     defaultFolder: join(await runtimeDirForRepoAsync(repo), 'logs'),
-    repoRoot: repoRootSync()
+    repoRoot
   })
 }
 
@@ -504,7 +515,7 @@ export async function resolveUnattendedServerSetting(): Promise<{
   headers?: Record<string, string>
 } | null> {
   const local = resolveLogsSetting(loadConfig())
-  const anchor = await processTrustAnchor()
+  const anchor = await processTrustAnchor(repoRootSync())
   const effective = local ? resolveTrustAnchorLogsDestination(local, anchor) : resolveLogsSetting(anchor)
   return effective && 'url' in effective ? { url: effective.url, headers: effective.headers } : null
 }
