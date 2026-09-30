@@ -1026,7 +1026,8 @@ function archivistWorkflow(selfHost: VendoredVinaya | null): string {
   return `# ${MANAGED_NOTE}
 #
 # The ring-2 post-merge/scheduled mechanisms: per-task Archivist provenance
-# + close-out (post-merge), dead-branch-push drift (daily-drift, a
+# + close-out (post-merge), tranche self-archive when a task Issue closes
+# without a merge (issue-closed), dead-branch-push drift (daily-drift, a
 # notification channel — never fails red), and direct-main-push detection
 # (direct-main-push-detection, a real pass/fail).
 name: Vinaya Archivist
@@ -1034,6 +1035,8 @@ name: Vinaya Archivist
 on:
   push:
     branches: [main]
+  issues:
+    types: [closed]
   schedule:
     - cron: "0 2 * * *"  # daily at 02:00 UTC
   workflow_dispatch:
@@ -1078,6 +1081,50 @@ ${vinayaSetupSteps(selfHost)}      - name: Run vinaya archive
           SLUG="$(printf '%s' "$BRANCH" | sed -n 's#^task/\\([^/]*\\)/.*#\\1#p')"
           if [ -z "$SLUG" ]; then exit 0; fi
           ${vinayaRun(selfHost, 'archive tranche')} "$SLUG" --yes
+
+  issue-closed:
+    name: Tranche Self-Archive (task Issue closed)
+    # A task Issue closed by hand — dropped, replaced, or moved — merges no
+    # pull request, so the post-merge job never runs for it and a tranche whose
+    # last open task closed this way would never archive. The slug comes from
+    # the Issue's own \`vinaya/tranche:\` label, never from a branch name: a
+    # hand-closed task has no task branch. The job checks out and builds the
+    # default branch only — an \`issues\` event carries no pull-request code —
+    # and its one write permission is \`issues: write\`.
+    if: github.event_name == 'issues' && contains(join(github.event.issue.labels.*.name, ','), 'vinaya/tranche:')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # The job builds and runs code from this checkout, and the default
+          # writes GITHUB_TOKEN into .git/config as an http extraheader —
+          # readable by anything the build executes. Nothing here pushes.
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+${vinayaSetupSteps(selfHost)}      - name: Self-archive the tranche this Issue belongs to
+        # \`vinaya archive tranche\` already IS the "any open task Issue left"
+        # check — refusing (exit 1) while task Issues remain open is the
+        # expected outcome on every close but the last, never a reason to fail
+        # this job. The Issue number is the only event field read, and the
+        # labels are re-read from the forge, so no label text reaches a shell
+        # unquoted.
+        continue-on-error: true
+        env:
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: \${{ github.event.issue.number }}
+        run: |
+          SLUGS="$(gh issue view "$ISSUE_NUMBER" -R \${{ github.repository }} --json labels --jq '.labels[].name | select(startswith("vinaya/tranche:")) | ltrimstr("vinaya/tranche:")')"
+          for SLUG in $SLUGS; do
+            case "$SLUG" in ''|-*|*[!A-Za-z0-9._-]*) continue ;; esac
+            ${vinayaRun(selfHost, 'archive tranche')} "$SLUG" --yes
+          done
 
   daily-drift:
     name: Daily Drift Check (dead-branch pushes)
