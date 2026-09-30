@@ -81,6 +81,13 @@ describe('each route accepts its own token and no other', () => {
     expect((await SELF.fetch(url('stats'), { headers: bearer(READ) })).status).toBe(200)
   })
 
+  it('refuses the rejected route without a token, with the wrong one, or with the ingest token', async () => {
+    expect((await SELF.fetch(url('rejected'))).status).toBe(401)
+    expect((await SELF.fetch(url('rejected'), { headers: bearer('not-the-token') })).status).toBe(401)
+    expect((await SELF.fetch(url('rejected'), { headers: bearer(INGEST) })).status).toBe(401)
+    expect((await SELF.fetch(url('rejected'), { headers: bearer(READ) })).status).toBe(200)
+  })
+
   it('never echoes a token back in a refusal', async () => {
     const response = await ingest(bearer(READ))
     const body = await response.text()

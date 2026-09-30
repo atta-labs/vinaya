@@ -304,6 +304,58 @@ describe('stats make the storage ceiling visible before it is reached', () => {
   })
 })
 
+async function rejected(repo: string): Promise<Response> {
+  return await SELF.fetch(url(repo, 'rejected'), { headers: { authorization: `Bearer ${READ}` } })
+}
+
+type RejectedReport = {
+  repo: string
+  window: number
+  reasons: { reason: string; count: number }[]
+  recent: { id: number; received_at: number; reason: string; line: string | null }[]
+}
+
+describe('the rejected route shows why lines were refused', () => {
+  it('groups the reasons and returns the newest lines', async () => {
+    const repo = freshRepo()
+    await post(repo, ['not json', 'still not json', JSON.stringify({ no: 'identity' }), line(repo, 1)].join('\n'))
+
+    const body = (await (await rejected(repo)).json()) as RejectedReport
+    expect(body.repo).toBe(repo)
+    expect(body.reasons.reduce((n, r) => n + r.count, 0)).toBe(3)
+    expect(body.reasons.every((r) => r.count >= 1)).toBe(true)
+    expect(body.recent.map((r) => r.line)).toEqual([JSON.stringify({ no: 'identity' }), 'still not json', 'not json'])
+    expect(body.recent[0]?.reason).toBe('invalid:no readable meta.schema')
+    expect(body.recent[0]?.id).toBeGreaterThan(body.recent[1]?.id as number)
+  })
+
+  it('returns at most twenty lines and leaves the stats count as it was', async () => {
+    const repo = freshRepo()
+    await post(repo, Array.from({ length: 25 }, (_, i) => `bad ${i}`).join('\n'))
+
+    const body = (await (await rejected(repo)).json()) as RejectedReport
+    expect(body.recent.length).toBe(20)
+    expect(body.recent[0]?.line).toBe('bad 24')
+    expect(body.reasons.reduce((n, r) => n + r.count, 0)).toBe(25)
+    expect(((await (await stats(repo)).json()) as Record<string, unknown>).rejected).toBe(25)
+  })
+
+  it('groups oversized lines as one reason and keeps the stored size in the recent list', async () => {
+    const repo = freshRepo()
+    await post(repo, ['x'.repeat(1024 * 1024 + 1), 'y'.repeat(1024 * 1024 + 2)].join('\n'))
+
+    const body = (await (await rejected(repo)).json()) as RejectedReport
+    expect(body.reasons).toEqual([{ reason: 'too_large', count: 2 }])
+    expect(body.recent[0]?.reason).toBe(`too_large:${1024 * 1024 + 2}`)
+    expect((body.recent[0]?.line ?? '').length).toBeLessThanOrEqual(64 * 1024)
+  })
+
+  it('reports an empty table as empty', async () => {
+    const repo = freshRepo()
+    expect(await (await rejected(repo)).json()).toEqual({ repo, window: 1000, reasons: [], recent: [] })
+  })
+})
+
 /** A live viewer's socket, with everything it has been sent and how it was closed. */
 type Viewer = {
   socket: WebSocket

@@ -24,7 +24,7 @@ export interface Env {
   REPO_LOG: DurableObjectNamespace<RepoLog>
   /** Write-only bearer token, accepted on the ingest route alone. A Worker secret, never in the repository. */
   INGEST_TOKEN: string
-  /** Read-only bearer token, accepted on the read, stats and live routes alone. A Worker secret, never in the repository. */
+  /** Read-only bearer token, accepted on the read, stats, rejected and live routes alone. A Worker secret, never in the repository. */
   READ_TOKEN: string
 }
 
@@ -36,6 +36,15 @@ export const MAX_BODY_BYTES = 8 * 1024 * 1024
 
 /** How much of a rejected line is kept for diagnosis (spec § 4). */
 const REJECTED_LINE_BYTES = 64 * 1024
+
+/**
+ * How many of the newest rejected rows the rejected route groups by reason,
+ * and how many of them it returns whole (spec § 5, "Rejected"). The bound is
+ * what keeps one call to a fixed number of row reads however large the table
+ * has grown.
+ */
+export const REJECTED_GROUP_WINDOW = 1000
+export const REJECTED_RECENT_MAX = 20
 
 /** The read route's default and maximum page size (spec § 5). */
 export const READ_LIMIT_MAX = 1000
@@ -170,6 +179,8 @@ export class RepoLog extends DurableObject<Env> {
         return this.readPage(url)
       case 'stats':
         return this.stats(parsed.route)
+      case 'rejected':
+        return this.rejectedReport(parsed.route)
       case 'live':
         return this.live(url)
     }
@@ -358,6 +369,49 @@ export class RepoLog extends DurableObject<Env> {
       oldest_ts: oldest?.ts ?? null,
       newest_ts: newest?.ts ?? null,
       last_seq: lastSeq
+    })
+  }
+
+  /**
+   * Why lines were refused (spec § 5, "Rejected"): the newest
+   * `REJECTED_GROUP_WINDOW` rejected rows counted by reason, and the newest
+   * `REJECTED_RECENT_MAX` of them with the truncated line the table holds.
+   *
+   * A `too_large:<bytes>` reason carries the line's size, which would make
+   * every oversized line its own group, so those group as `too_large`. The
+   * window is a bounded read of the table's tail, never a scan of all of it:
+   * reads are budgeted (spec § 2).
+   */
+  private rejectedReport(route: Route): Response {
+    const reasons = this.sql
+      .exec<{ reason: string; count: number }>(
+        `SELECT CASE WHEN reason LIKE 'too_large:%' THEN 'too_large' ELSE reason END AS reason, COUNT(*) AS count
+           FROM (SELECT reason FROM rejected ORDER BY id DESC LIMIT ?)
+          GROUP BY 1
+          ORDER BY count DESC, reason ASC`,
+        REJECTED_GROUP_WINDOW
+      )
+      .toArray()
+      .map((row) => ({ reason: row.reason, count: Number(row.count) }))
+
+    const recent = this.sql
+      .exec<{ id: number; received_at: number; reason: string; line: string | null }>(
+        'SELECT id, received_at, reason, line FROM rejected ORDER BY id DESC LIMIT ?',
+        REJECTED_RECENT_MAX
+      )
+      .toArray()
+      .map((row) => ({
+        id: Number(row.id),
+        received_at: Number(row.received_at),
+        reason: row.reason,
+        line: row.line
+      }))
+
+    return Response.json({
+      repo: repoName(route),
+      window: REJECTED_GROUP_WINDOW,
+      reasons,
+      recent
     })
   }
 
