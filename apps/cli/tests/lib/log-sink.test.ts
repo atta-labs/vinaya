@@ -100,6 +100,43 @@ describe('log-sink — a valid line', () => {
     expect(parsed.meta.lineage.run).toBe('loop-abc')
   })
 
+  it("writes schema 3: the work reference defaults to the task's Issue number as text, the flow to vinaya, everything else null", async () => {
+    const { dir, deps } = testDeps()
+    const { log } = createLogSink(deps)
+    log(DISPATCHED)
+    await flush()
+    const parsed = JSON.parse(readFileSync(join(dir, 'outbox', 'atta-labs-vinaya', '404.ndjson'), 'utf8').trim())
+    expect(parsed.meta.schema).toBe(3)
+    expect(parsed.subject.issue).toBe(404)
+    expect(parsed.meta.work).toEqual({ ref: '404', repo: 'atta-labs/vinaya', change: null, revision: null })
+    expect(parsed.meta.flow).toEqual({ id: 'vinaya', version: null })
+    expect(parsed.meta.runtime).toBeNull()
+    expect(parsed.meta.source).toBeNull()
+  })
+
+  it('reads the work reference, flow, runtime and source from VINAYA_WORK_REF, VINAYA_FLOW, VINAYA_FLOW_VERSION, VINAYA_RUNTIME and VINAYA_SOURCE', async () => {
+    const { dir, deps } = testDeps({
+      env: () => ({
+        VINAYA_ROLE: 'developer',
+        VINAYA_TASK: '404',
+        VINAYA_WORK_REF: 'ACME-17',
+        VINAYA_FLOW: 'acme-release',
+        VINAYA_FLOW_VERSION: '4',
+        VINAYA_RUNTIME: 'codex',
+        VINAYA_SOURCE: 'acme-ci'
+      })
+    })
+    const { log } = createLogSink(deps)
+    log(DISPATCHED)
+    await flush()
+    const parsed = JSON.parse(readFileSync(join(dir, 'outbox', 'atta-labs-vinaya', '404.ndjson'), 'utf8').trim())
+    expect(parsed.meta.work.ref).toBe('ACME-17')
+    expect(parsed.meta.flow).toEqual({ id: 'acme-release', version: '4' })
+    expect(parsed.meta.runtime).toBe('codex')
+    expect(parsed.meta.source).toBe('acme-ci')
+    expect(parsed.subject.issue).toBe(404)
+  })
+
   it('two calls in the same millisecond each carry a distinct, correctly-assigned seq', async () => {
     // `seq` is assigned synchronously at call time (call order), not at
     // write time — two overlapping async appends are not guaranteed to
