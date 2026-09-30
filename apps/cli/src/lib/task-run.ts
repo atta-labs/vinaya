@@ -94,8 +94,17 @@ export type RunTaskInput = ({ tranche: string; n: number } | { issue: number }) 
  * directly, so its own final decision can also read `'ended'` (the pull
  * request merged, closed, or was cancelled while this run watched a pause)
  * alongside the pre-existing `'publish'`/`'pause'`.
+ *
+ * `branch` — the developer branch this run actually resolved and ran on
+ * (`developerBranchFor(issue)`, below), surfaced so the exit summary's
+ * continuation command for a pre-first-push pause (`prNumber <= 0`, no PR to
+ * anchor a `--resume` to) is rendered from the SAME `noPushResumeArgv` builder
+ * the pause comment uses — `task run <tranche> <n>` for a tranche task,
+ * `task run --issue <n>` for a backlog one — rather than a second, drifting
+ * copy that hardcoded one form (round 2 review). Reusing the already-resolved
+ * value adds no forge read.
  */
-export type RunTaskResult = DriverResult & { prUrl: string | null }
+export type RunTaskResult = DriverResult & { prUrl: string | null; branch: string }
 
 /**
  * Injection seam for `apps/cli/tests/lib/task-run.test.ts` — same convention
@@ -318,5 +327,5 @@ export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRu
       : { task: issue, agent, ...(resolvedModel ? { model: resolvedModel } : {}) }
   )
   const prUrl = await resolvePrUrl(deps.resolveRepo, loopResult.prNumber)
-  return { ...loopResult, prUrl }
+  return { ...loopResult, prUrl, branch }
 }
