@@ -526,7 +526,7 @@ describe('log-sink — what the branch lookup costs, and when (O1)', () => {
       }[forge]
       writeFileSync(join(binDir, 'gh'), ghScript, { mode: 0o755 })
 
-      const sinkModule = new URL('../../src/lib/log-sink.ts', import.meta.url).pathname
+      const sinkModule = join(import.meta.dir, '..', '..', 'src', 'lib', 'log-sink.ts')
       const probe = join(scratch, 'probe.ts')
       writeFileSync(
         probe,
@@ -555,7 +555,7 @@ describe('log-sink — what the branch lookup costs, and when (O1)', () => {
       const run = spawnSyncBudgeted(
         'bun',
         [probe, repoDir, outbox],
-        { encoding: 'utf8', env: { ...stripVinayaEnv(), PATH: `${binDir}:${process.env.PATH ?? ''}` } },
+        { cwd: tmpdir(), encoding: 'utf8', env: { ...stripVinayaEnv(), PATH: `${binDir}:${process.env.PATH ?? ''}` } },
         60_000,
         'branch-confirmation probe'
       )
@@ -648,7 +648,7 @@ describe('log-sink — CI has no branch checked out (O1)', () => {
     git('checkout', '--detach', head)
     writeFileSync(join(binDir, 'gh'), '#!/bin/sh\necho \'{"number":321}\'\n', { mode: 0o755 })
 
-    const sinkModule = new URL('../../src/lib/log-sink.ts', import.meta.url).pathname
+    const sinkModule = join(import.meta.dir, '..', '..', 'src', 'lib', 'log-sink.ts')
     const probe = join(scratch, 'probe.ts')
     writeFileSync(
       probe,
@@ -662,7 +662,7 @@ describe('log-sink — CI has no branch checked out (O1)', () => {
     const run = spawnSyncBudgeted(
       'bun',
       [probe, repoDir],
-      { encoding: 'utf8', env: { ...stripVinayaEnv(), PATH: `${binDir}:${process.env.PATH ?? ''}` } },
+      { cwd: tmpdir(), encoding: 'utf8', env: { ...stripVinayaEnv(), PATH: `${binDir}:${process.env.PATH ?? ''}` } },
       60_000,
       'detached-HEAD probe'
     )
@@ -709,7 +709,7 @@ describe('log-sink — one read per process, not per sink (O1)', () => {
       mode: 0o755
     })
 
-    const sinkModule = new URL('../../src/lib/log-sink.ts', import.meta.url).pathname
+    const sinkModule = join(import.meta.dir, '..', '..', 'src', 'lib', 'log-sink.ts')
     const probe = join(scratch, 'probe.ts')
     writeFileSync(
       probe,
@@ -744,7 +744,7 @@ describe('log-sink — one read per process, not per sink (O1)', () => {
     const run = spawnSyncBudgeted(
       'bun',
       [probe, first, second, outbox],
-      { encoding: 'utf8', env: { ...stripVinayaEnv(), PATH: `${binDir}:${process.env.PATH ?? ''}` } },
+      { cwd: tmpdir(), encoding: 'utf8', env: { ...stripVinayaEnv(), PATH: `${binDir}:${process.env.PATH ?? ''}` } },
       60_000,
       'shared-read probe'
     )
@@ -809,7 +809,7 @@ describe('log-sink — the trust-anchor config is cached per repository (O1, O3)
       { mode: 0o755 }
     )
 
-    const sinkModule = new URL('../../src/lib/log-sink.ts', import.meta.url).pathname
+    const sinkModule = join(import.meta.dir, '..', '..', 'src', 'lib', 'log-sink.ts')
     const probe = join(scratch, 'probe.ts')
     writeFileSync(
       probe,
@@ -833,7 +833,7 @@ describe('log-sink — the trust-anchor config is cached per repository (O1, O3)
     const run = spawnSyncBudgeted(
       'bun',
       [probe, repoA, repoB],
-      { encoding: 'utf8', env: probeEnv },
+      { cwd: tmpdir(), encoding: 'utf8', env: probeEnv },
       60_000,
       'anchor-per-repo probe'
     )
@@ -934,7 +934,7 @@ describe('log-sink — the branch read outlives nothing (O1)', () => {
     // at, and the process cannot exit while it runs.
     const binDir = mkdtempSync(join(tmpdir(), 'vinaya-hanging-git-'))
     writeFileSync(join(binDir, 'git'), '#!/bin/sh\nsleep 30\n', { mode: 0o755 })
-    const sinkModule = new URL('../../src/lib/log-sink.ts', import.meta.url).pathname
+    const sinkModule = join(import.meta.dir, '..', '..', 'src', 'lib', 'log-sink.ts')
     const probe = join(binDir, 'probe.ts')
     writeFileSync(
       probe,
@@ -947,7 +947,7 @@ describe('log-sink — the branch read outlives nothing (O1)', () => {
     const run = spawnSyncBudgeted(
       'bun',
       [probe, binDir],
-      { encoding: 'utf8', env: { ...stripVinayaEnv(), PATH: `${binDir}:${process.env.PATH ?? ''}` } },
+      { cwd: tmpdir(), encoding: 'utf8', env: { ...stripVinayaEnv(), PATH: `${binDir}:${process.env.PATH ?? ''}` } },
       25_000,
       'branch-read probe'
     )
@@ -1337,7 +1337,7 @@ describe('logSync — recording an event as the process ends (O1, O2, O3, O5)', 
     writeFileSync(
       join(cwd, 'vinaya.config.json'),
       JSON.stringify({
-        logs: { url: 'https://logs.example.com/ingest', headers: { authorization: 'Bearer ${VINAYA_LOG_TOKEN}' } }
+        logs: { url: 'https://logs.example.com/ingest' }
       })
     )
     const probe = join(cwd, 'probe.mjs')
