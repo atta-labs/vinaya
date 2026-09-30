@@ -64,7 +64,20 @@ export type HeaderInput = {
   doctrine: string
   host: Host
   hostname: string
-  env: { role?: string; task?: string; round?: string; run?: string; attempt?: string; parent?: string }
+  env: {
+    role?: string
+    task?: string
+    round?: string
+    run?: string
+    attempt?: string
+    parent?: string
+    /** `VINAYA_WORK_REF`, `VINAYA_FLOW`, `VINAYA_FLOW_VERSION`, `VINAYA_RUNTIME`, `VINAYA_SOURCE` — the schema 3 identities a caller states; absent or empty reads `null` (`flow.id` reads `vinaya`). */
+    workRef?: string
+    flow?: string
+    flowVersion?: string
+    runtime?: string
+    source?: string
+  }
   /**
    * The Issue the caller's own checked-out branch names, for a process that
    * carries no `VINAYA_TASK` — `subject.issue`'s fallback, never its
@@ -97,9 +110,9 @@ export type HeaderInput = {
  * `subject.issue` come only from `input.env`/`input.subject`, never
  * self-declared by whatever's building the rest of the event.
  *
- * Always builds `schema: 2` (this task forward) — `schema: 1` remains a
- * read-side compatibility shape only, for a line already on disk before
- * this task; `buildHeader` never writes it.
+ * Always builds `schema: 3` — `schema: 1` and `2` remain read-side
+ * compatibility shapes only, for a line already on disk; `buildHeader` never
+ * writes them.
  */
 export function buildHeader(input: HeaderInput): Header {
   const role: Subject['role'] = isRole(input.env.role) ? input.env.role : 'unattributed'
@@ -110,9 +123,10 @@ export function buildHeader(input: HeaderInput): Header {
     ...(round !== undefined ? { round } : {}),
     ...(input.subject ?? {})
   }
+  const issue = subject.issue
   return {
     meta: {
-      schema: 2,
+      schema: 3,
       ts: input.now.toISOString(),
       run_id: input.runId,
       seq: input.seq,
@@ -135,7 +149,20 @@ export function buildHeader(input: HeaderInput): Header {
         ruling_ordinal: input.inputVersions?.rulingOrdinal ?? null,
         policy_digest: input.inputVersions?.policyDigest ?? null
       },
-      provenance: provenanceFor(input)
+      provenance: provenanceFor(input),
+      work: {
+        // A stated reference wins; failing that the Issue number `subject.issue` already carries; never anything guessed.
+        ref: lineageFieldFromEnv(input.env.workRef) ?? (issue === null ? null : String(issue)),
+        repo: input.repo,
+        change: null,
+        revision: null
+      },
+      flow: {
+        id: lineageFieldFromEnv(input.env.flow) ?? 'vinaya',
+        version: lineageFieldFromEnv(input.env.flowVersion)
+      },
+      runtime: lineageFieldFromEnv(input.env.runtime),
+      source: lineageFieldFromEnv(input.env.source)
     },
     subject
   }

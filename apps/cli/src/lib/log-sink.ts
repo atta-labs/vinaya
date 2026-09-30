@@ -1408,7 +1408,12 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
         // forever for want of a caller that never opts in.
         run: env.VINAYA_RUN || runId,
         attempt: env.VINAYA_ATTEMPT,
-        parent: env.VINAYA_PARENT_EVENT
+        parent: env.VINAYA_PARENT_EVENT,
+        workRef: env.VINAYA_WORK_REF,
+        flow: env.VINAYA_FLOW,
+        flowVersion: env.VINAYA_FLOW_VERSION,
+        runtime: env.VINAYA_RUNTIME,
+        source: env.VINAYA_SOURCE
       }
       const write = async (): Promise<void> => {
         const { repo, doctrine: doctrineValue, destination: resolvedDestination } = await context()

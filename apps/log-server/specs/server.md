@@ -40,12 +40,12 @@ Three ways are open to reduce or absorb the volume without choosing now:
 
 ## 3. Identity and duplicates
 
-Every stored event has one identity: `meta.event_id` for a `schema: 2` line, `${meta.run_id}:${meta.seq}` for a `schema: 1` line — `recordIdentity` from `@attalabs/aeg-core`'s log module, the same function the sender's storage contract uses, so the server and the sender can never disagree about what counts as the same event. The identity column is `UNIQUE` and every insert is `INSERT OR IGNORE`: a batch resent after a lost acknowledgement stores nothing new and reports the repeats as duplicates.
+Every stored event has one identity: `meta.event_id` for a `schema: 2` or `schema: 3` line, `${meta.run_id}:${meta.seq}` for a `schema: 1` line — `recordIdentity` from `@attalabs/aeg-core`'s log module, the same function the sender's storage contract uses, so the server and the sender can never disagree about what counts as the same event. The identity column is `UNIQUE` and every insert is `INSERT OR IGNORE`: a batch resent after a lost acknowledgement stores nothing new and reports the repeats as duplicates.
 
 Each line is classified with that module's `classifyStoredLine`, the same read-side validation and redaction the sender runs before it posts:
 
 - **`ok`** — stored, as the redacted line `classifyStoredLine` returns.
-- **`unknown_version`** — a `meta.schema` the server's copy of the schema does not know yet. Stored with its identity and `status: 'unknown_version'`, verbatim, never dropped: a newer sender talking to an older server loses nothing. A line this build cannot validate is also one it must not rewrite, so no redaction is re-applied to it — the sender already redacted before it posted.
+- **`unknown_version`** — a `meta.schema` the server's copy of the schema does not know yet. Stored with its identity and `status: 'unknown_version'`, verbatim, never dropped: a newer sender talking to an older server loses nothing. The sender writes `schema: 3` (`apps/cli/specs/log.md`); until the server is redeployed with the current schema module, every event it sends is stored this way, verbatim, and it validates them once redeployed. A line this build cannot validate is also one it must not rewrite, so no redaction is re-applied to it — the sender already redacted before it posted.
 - **`invalid`**, or a line with no identity at all, or a line over 1 MiB — kept in a separate rejected record with the reason, never in the event sequence.
 
 `classifyStoredLine(raw, home)` rewrites absolute paths under `home` to `~/…`. The server is not the machine that produced the event and has no such directory, so it passes the empty string: every other redaction the function applies — GitHub tokens, `Authorization: Bearer …` values — still runs, and no path rewriting happens on arrival at all.

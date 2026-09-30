@@ -285,7 +285,7 @@ describe('buildSelftestLine — a schema-valid marked event carrying its own id'
     expect(parsed.kind).toBe('operation')
     expect(parsed.operation).toBe(LOG_SELFTEST_OPERATION)
     expect(parsed.meta.event_id).toBe('my-event-id')
-    expect(parsed.meta.schema).toBe(2)
+    expect(parsed.meta.schema).toBe(3)
     expect(line.endsWith('\n')).toBe(true)
   })
 })

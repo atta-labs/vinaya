@@ -37,7 +37,7 @@ describe('buildHeader', () => {
     const { subject, meta } = buildHeader({ ...baseInput, branchIssue: 792 })
     expect(subject.issue).toBe(792)
     // A branch is not an environment correlation — provenance is untouched.
-    expect(meta.schema === 2 && meta.provenance).toBe('unavailable')
+    expect(meta.schema === 3 && meta.provenance).toBe('unavailable')
   })
 
   it('never lets a branch-derived Issue override one the env actually names (O2)', () => {
@@ -55,13 +55,13 @@ describe('buildHeader', () => {
     // from the checkout. Saying `env_correlated` there would present a
     // guess as a correlation.
     const guessedWithRole = buildHeader({ ...baseInput, env: { role: 'developer' }, branchIssue: 792 })
-    expect(guessedWithRole.meta.schema === 2 && guessedWithRole.meta.provenance).toBe('unavailable')
+    expect(guessedWithRole.meta.schema === 3 && guessedWithRole.meta.provenance).toBe('unavailable')
     const guessedWithBadTask = buildHeader({ ...baseInput, env: { role: 'developer', task: 'abc' }, branchIssue: 792 })
     expect(guessedWithBadTask.subject.issue).toBe(792)
-    expect(guessedWithBadTask.meta.schema === 2 && guessedWithBadTask.meta.provenance).toBe('unavailable')
+    expect(guessedWithBadTask.meta.schema === 3 && guessedWithBadTask.meta.provenance).toBe('unavailable')
     // An env-named task keeps the correlation it really has.
     const named = buildHeader({ ...baseInput, env: { role: 'developer', task: '412' }, branchIssue: 792 })
-    expect(named.meta.schema === 2 && named.meta.provenance).toBe('env_correlated')
+    expect(named.meta.schema === 3 && named.meta.provenance).toBe('env_correlated')
   })
 
   it('leaves issue null for an unparseable VINAYA_TASK', () => {
@@ -72,7 +72,7 @@ describe('buildHeader', () => {
   it('fills meta.schema/ts/run_id/seq/repo/vinaya/doctrine/host from the input', () => {
     const { meta } = buildHeader(baseInput)
     expect(meta).toMatchObject({
-      schema: 2,
+      schema: 3,
       ts: '2026-09-05T00:00:00.000Z',
       run_id: 'run-1',
       seq: 0,
@@ -83,9 +83,9 @@ describe('buildHeader', () => {
     })
   })
 
-  it('builds schema: 2 — event_id/process_id passed through, lineage/input_versions/provenance default to unavailable-not-invented', () => {
+  it('builds schema: 3 — event_id/process_id passed through, lineage/input_versions/provenance default to unavailable-not-invented', () => {
     const { meta } = buildHeader(baseInput)
-    if (meta.schema !== 2) throw new Error('expected schema 2')
+    if (meta.schema !== 3) throw new Error('expected schema 3')
     expect(meta.event_id).toBe('event-1')
     expect(meta.process_id).toBe('process-1')
     expect(meta.actor_id).toBeNull()
@@ -101,19 +101,19 @@ describe('buildHeader', () => {
 
   it('fills lineage from VINAYA_RUN / VINAYA_ATTEMPT / VINAYA_PARENT_EVENT', () => {
     const { meta } = buildHeader({ ...baseInput, env: { run: 'run-abc', attempt: '2', parent: 'event-0' } })
-    if (meta.schema !== 2) throw new Error('expected schema 2')
+    if (meta.schema !== 3) throw new Error('expected schema 3')
     expect(meta.lineage).toEqual({ run: 'run-abc', attempt: 2, parent: 'event-0' })
   })
 
   it('leaves lineage.attempt null for an unparseable VINAYA_ATTEMPT', () => {
     const { meta } = buildHeader({ ...baseInput, env: { attempt: 'abc' } })
-    if (meta.schema !== 2) throw new Error('expected schema 2')
+    if (meta.schema !== 3) throw new Error('expected schema 3')
     expect(meta.lineage.attempt).toBeNull()
   })
 
   it('fills actor_id from VINAYA_ROLE even when the role is NOT a known doctrine role — opaque, never validated against ROLE_VALUES', () => {
     const { meta } = buildHeader({ ...baseInput, env: { role: 'ci-gate' } })
-    if (meta.schema !== 2) throw new Error('expected schema 2')
+    if (meta.schema !== 3) throw new Error('expected schema 3')
     expect(meta.actor_id).toBe('ci-gate')
     // subject.role, unlike actor_id, stays validated and falls back to unattributed
   })
@@ -128,7 +128,7 @@ describe('buildHeader', () => {
         policyDigest: 'sha256:def'
       }
     })
-    if (meta.schema !== 2) throw new Error('expected schema 2')
+    if (meta.schema !== 3) throw new Error('expected schema 3')
     expect(meta.input_versions).toEqual({
       objectives_version: 'deadbeef',
       brief_hash: 'sha256:abc',
@@ -139,14 +139,57 @@ describe('buildHeader', () => {
 
   it('derives provenance: env_correlated when role or task is present, never upgrading itself to parent_attributed', () => {
     const { meta } = buildHeader({ ...baseInput, env: { role: 'developer' } })
-    if (meta.schema !== 2) throw new Error('expected schema 2')
+    if (meta.schema !== 3) throw new Error('expected schema 3')
     expect(meta.provenance).toBe('env_correlated')
   })
 
   it('honors an explicit provenance override from a caller that structurally knows it', () => {
     const { meta } = buildHeader({ ...baseInput, provenance: 'parent_attributed' })
-    if (meta.schema !== 2) throw new Error('expected schema 2')
+    if (meta.schema !== 3) throw new Error('expected schema 3')
     expect(meta.provenance).toBe('parent_attributed')
+  })
+
+  it('names work, flow, runtime and source: none set reads null, except flow.id which is vinaya and a work ref that is the Issue number as text', () => {
+    const empty = buildHeader(baseInput).meta
+    if (empty.schema !== 3) throw new Error('expected schema 3')
+    expect(empty.work).toEqual({ ref: null, repo: 'atta-labs/vinaya', change: null, revision: null })
+    expect(empty.flow).toEqual({ id: 'vinaya', version: null })
+    expect(empty.runtime).toBeNull()
+    expect(empty.source).toBeNull()
+
+    const task = buildHeader({ ...baseInput, env: { task: '412' } })
+    if (task.meta.schema !== 3) throw new Error('expected schema 3')
+    expect(task.meta.work.ref).toBe('412')
+    expect(task.subject.issue).toBe(412)
+
+    const branch = buildHeader({ ...baseInput, branchIssue: 792 })
+    if (branch.meta.schema !== 3) throw new Error('expected schema 3')
+    expect(branch.meta.work.ref).toBe('792')
+  })
+
+  it('takes work ref, flow id and version, runtime and source from the environment, and a stated work ref wins over the Issue number', () => {
+    const { meta, subject } = buildHeader({
+      ...baseInput,
+      env: { task: '412', workRef: 'PROJ-9', flow: 'acme', flowVersion: '2', runtime: 'codex', source: 'ci' }
+    })
+    if (meta.schema !== 3) throw new Error('expected schema 3')
+    expect(meta.work.ref).toBe('PROJ-9')
+    expect(meta.flow).toEqual({ id: 'acme', version: '2' })
+    expect(meta.runtime).toBe('codex')
+    expect(meta.source).toBe('ci')
+    expect(subject.issue).toBe(412)
+  })
+
+  it('treats an empty environment value as unset', () => {
+    const { meta } = buildHeader({
+      ...baseInput,
+      env: { workRef: '', flow: '', flowVersion: '', runtime: '', source: '' }
+    })
+    if (meta.schema !== 3) throw new Error('expected schema 3')
+    expect(meta.work.ref).toBeNull()
+    expect(meta.flow).toEqual({ id: 'vinaya', version: null })
+    expect(meta.runtime).toBeNull()
+    expect(meta.source).toBeNull()
   })
 
   it('hashes the hostname into meta.machine — never the raw name', () => {
