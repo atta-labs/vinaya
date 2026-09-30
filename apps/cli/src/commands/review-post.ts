@@ -559,6 +559,11 @@ export function isNoneFoundClaim(value: string): boolean {
   return value.trim().toLowerCase().replace(/[-_]+/g, ' ').replace(/\s+/g, ' ') === 'none found'
 }
 
+/** Whether a `SECRETS:` value opens with the clean claim, however it is trailed (`none found — no leaks`). */
+export function opensNoneFoundClaim(value: string): boolean {
+  return value.trim().toLowerCase().replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').startsWith('none found')
+}
+
 /** The required CI check whose result backs a `SECRETS: none found` line — the one source of that evidence. */
 export const SECRET_SCAN_CHECK = 'atta-labs/secret-scan'
 
@@ -569,8 +574,7 @@ export const SECRET_SCAN_CHECK = 'atta-labs/secret-scan'
  * result, cited by name — never by a scanner run or its pasted output.
  */
 export function noneFoundClaimCitesScanCheck(claim: string, evidence: string | null): boolean {
-  const opensNoneFound = claim.trim().toLowerCase().replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').startsWith('none found')
-  if (!opensNoneFound) return true
+  if (!opensNoneFoundClaim(claim)) return true
   return `${claim}\n${evidence ?? ''}`.includes(SECRET_SCAN_CHECK)
 }
 
@@ -2028,7 +2032,7 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
   const configScan = requireFlag(flags, '--config-scan')
   const secrets = requireFlag(flags, '--secrets')
   const secretsEvidenceFile = flags.get('--secrets-evidence-file')
-  if (isNoneFoundClaim(secrets) && !secretsEvidenceFile) {
+  if (opensNoneFoundClaim(secrets) && !secretsEvidenceFile) {
     refuseCmd(
       `\`--secrets\` normalizes to "none found" but no \`--secrets-evidence-file\` was given — security.md: "SECRETS: none found" must cite the result of the required \`${SECRET_SCAN_CHECK}\` check; without it the line is an unbacked self-attestation.`,
       `Pass \`--secrets-evidence-file <path>\` holding the \`${SECRET_SCAN_CHECK}\` check's result on the judged head (its name and conclusion, as \`gh pr checks\` shows it) — do not run a scanner or paste its output — or change \`--secrets\` to describe what was found instead.`
@@ -2042,7 +2046,7 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
       refuseCmd(`Could not read secrets evidence file at ${secretsEvidenceFile}.`, 'Check the path and re-run.')
     }
   }
-  if (isNoneFoundClaim(secrets) && !noneFoundClaimCitesScanCheck(secrets, secretsEvidence)) {
+  if (opensNoneFoundClaim(secrets) && !noneFoundClaimCitesScanCheck(secrets, secretsEvidence)) {
     refuseCmd(
       `\`--secrets-evidence-file\` does not name the \`${SECRET_SCAN_CHECK}\` check — security.md: "SECRETS: none found" is backed by that required check's result, cited by name.`,
       `Put the \`${SECRET_SCAN_CHECK}\` check's name and conclusion on the judged head in the evidence file, then re-run.`

@@ -274,7 +274,7 @@ describe('renderSecurityComment — matches the gate the merge check actually ca
     expect(verifyPostedSecurity(asComment(body), 'PASS', HEAD, PRINCIPALS, body, null, 0).ok).toBe(true)
   })
 
-  it('pastes the secrets evidence above the SECRETS: line', () => {
+  it('pastes the cited secret-scan check result above the SECRETS: line', () => {
     const body = renderSecurityComment({
       ...TOKENS,
       headSha: HEAD,
@@ -282,7 +282,7 @@ describe('renderSecurityComment — matches the gate the merge check actually ca
       findings: [],
       configScan: 'clean',
       secrets: 'none found',
-      secretsEvidence: 'gitleaks: 0 leaks detected',
+      secretsEvidence: 'atta-labs/secret-scan: pass',
       objectivesVersion: null,
       rulingOrdinal: 0,
       briefHash: null,
@@ -290,7 +290,7 @@ describe('renderSecurityComment — matches the gate the merge check actually ca
       baseSha: null,
       objectiveResults: null
     })
-    const evidenceIdx = body.indexOf('gitleaks: 0 leaks detected')
+    const evidenceIdx = body.indexOf('atta-labs/secret-scan: pass')
     const secretsLineIdx = body.indexOf('SECRETS: none found')
     expect(evidenceIdx).toBeGreaterThan(-1)
     expect(evidenceIdx).toBeLessThan(secretsLineIdx)

@@ -25,6 +25,7 @@ import {
   isEscalationClass,
   missingPriorIds,
   noneFoundClaimCitesScanCheck,
+  opensNoneFoundClaim,
   type ObjectiveResult,
   ObjectivesParseError,
   parseChangedLineRanges,
@@ -2451,5 +2452,21 @@ describe('noneFoundClaimCitesScanCheck — one SECRETS: rule for the loop and re
 
   it('a claim that reports findings is not held to the citation', () => {
     expect(noneFoundClaimCitesScanCheck('listed above, redacted', null)).toBe(true)
+  })
+})
+
+describe('opensNoneFoundClaim — a trailed clean claim is held to the same evidence rule', () => {
+  it('a claim that opens with "none found" is a clean claim even with trailing text', () => {
+    expect(opensNoneFoundClaim('none found')).toBe(true)
+    expect(opensNoneFoundClaim('None-found — no leaks')).toBe(true)
+    expect(opensNoneFoundClaim('none found (unverified)')).toBe(true)
+  })
+
+  it('a claim that reports findings is not', () => {
+    expect(opensNoneFoundClaim('listed above, redacted')).toBe(false)
+  })
+
+  it('a trailed clean claim with no citation is unbacked, as on the loop path', () => {
+    expect(noneFoundClaimCitesScanCheck('none found — no leaks', null)).toBe(false)
   })
 })
