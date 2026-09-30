@@ -24,6 +24,8 @@ import {
   invalidObjectiveEvidenceReason,
   isEscalationClass,
   missingPriorIds,
+  noneFoundClaimCitesScanCheck,
+  opensNoneFoundClaim,
   type ObjectiveResult,
   ObjectivesParseError,
   parseChangedLineRanges,
@@ -2433,5 +2435,59 @@ describe('a Search: pattern using `|` alternation no longer breaks parsing (revi
   it('says nothing about alternation for an ordinary malformed line (too few `|` delimiters, no Search: text)', () => {
     expect(() => parseFindingsFile('MAJOR|a/b.md:1', ['MAJOR'])).toThrow(/at least 2/)
     expect(() => parseFindingsFile('MAJOR|a/b.md:1', ['MAJOR'])).not.toThrow(/alternation/)
+  })
+})
+
+describe('noneFoundClaimCitesScanCheck — one SECRETS: rule for the loop and review post', () => {
+  it('a "none found" claim with no citation of the required check is unbacked', () => {
+    expect(noneFoundClaimCitesScanCheck('none found', null)).toBe(false)
+    expect(noneFoundClaimCitesScanCheck('none found', '(scanner ran, 0 findings)')).toBe(false)
+    expect(noneFoundClaimCitesScanCheck('None-found', 'gitleaks: 0 leaks detected')).toBe(false)
+  })
+
+  it('a "none found" claim citing atta-labs/secret-scan is backed, in the claim or in the evidence', () => {
+    expect(noneFoundClaimCitesScanCheck('none found — atta-labs/secret-scan passed', null)).toBe(true)
+    expect(noneFoundClaimCitesScanCheck('none found', 'atta-labs/secret-scan: pass')).toBe(true)
+  })
+
+  it('a claim that reports findings is not held to the citation', () => {
+    expect(noneFoundClaimCitesScanCheck('listed above, redacted', null)).toBe(true)
+  })
+})
+
+describe('opensNoneFoundClaim — a trailed clean claim is held to the same evidence rule', () => {
+  it('a claim that opens with "none found" is a clean claim even with trailing text', () => {
+    expect(opensNoneFoundClaim('none found')).toBe(true)
+    expect(opensNoneFoundClaim('None-found — no leaks')).toBe(true)
+    expect(opensNoneFoundClaim('none found (unverified)')).toBe(true)
+  })
+
+  it('a claim that reports findings is not', () => {
+    expect(opensNoneFoundClaim('listed above, redacted')).toBe(false)
+  })
+
+  it('a trailed clean claim with no citation is unbacked, as on the loop path', () => {
+    expect(noneFoundClaimCitesScanCheck('none found — no leaks', null)).toBe(false)
+  })
+})
+
+describe('noneFoundClaimCitesScanCheck — the cited check must have passed', () => {
+  it('refuses a clean claim naming the check beside a failing, missing or negated conclusion', () => {
+    expect(noneFoundClaimCitesScanCheck('none found — atta-labs/secret-scan failed', null)).toBe(false)
+    expect(noneFoundClaimCitesScanCheck('none found — atta-labs/secret-scan missing from the checks', null)).toBe(false)
+    expect(noneFoundClaimCitesScanCheck('none found — did not run atta-labs/secret-scan passed', null)).toBe(false)
+    expect(noneFoundClaimCitesScanCheck('none found', 'atta-labs/secret-scan\tfail\t5s')).toBe(false)
+    expect(noneFoundClaimCitesScanCheck('none found', 'atta-labs/secret-scan\tpending')).toBe(false)
+  })
+
+  it('refuses evidence holding a passing and a failing line for the check', () => {
+    expect(
+      noneFoundClaimCitesScanCheck('none found', 'atta-labs/secret-scan\tpass\t5s\natta-labs/secret-scan\tfail\t9s')
+    ).toBe(false)
+  })
+
+  it('accepts the check named with a passing conclusion, as `gh pr checks` prints it', () => {
+    expect(noneFoundClaimCitesScanCheck('none found', 'atta-labs/secret-scan\tpass\t5s')).toBe(true)
+    expect(noneFoundClaimCitesScanCheck('none found — atta-labs/secret-scan passed', null)).toBe(true)
   })
 })

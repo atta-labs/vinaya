@@ -525,7 +525,7 @@ export type SecurityInput = TokensInput & {
   configScan: string
   /** The `SECRETS:` line's own text, e.g. `none found` or `listed above, redacted`. */
   secrets: string
-  /** Raw scanner output backing a `none found` claim; null when not supplied. */
+  /** The required secret-scan check's cited result backing a `none found` claim; null when not supplied. */
   secretsEvidence: string | null
   /** `null` when this PR's Issue predates `OBJECTIVES_SINCE_ISSUE` — no `Objectives version:` line renders at all. */
   objectivesVersion: string | null
@@ -559,6 +559,36 @@ export function isNoneFoundClaim(value: string): boolean {
   return value.trim().toLowerCase().replace(/[-_]+/g, ' ').replace(/\s+/g, ' ') === 'none found'
 }
 
+/** Whether a `SECRETS:` value opens with the clean claim, however it is trailed (`none found — no leaks`). */
+export function opensNoneFoundClaim(value: string): boolean {
+  return value.trim().toLowerCase().replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').startsWith('none found')
+}
+
+/** The required CI check whose result backs a `SECRETS: none found` line — the one source of that evidence. */
+export const SECRET_SCAN_CHECK = 'atta-labs/secret-scan'
+
+/**
+ * Whether a `SECRETS:` line that opens with "none found" cites the required
+ * secret-scan check's PASSING result. The loop's security verdict and `vinaya
+ * review post` both apply this one rule: a clean claim is backed by that
+ * check's result, cited by name with a passing conclusion — never by a
+ * scanner run or its pasted output. A line naming the check beside a failing,
+ * missing, skipped or negated conclusion does not back the claim.
+ */
+export function noneFoundClaimCitesScanCheck(claim: string, evidence: string | null): boolean {
+  if (!opensNoneFoundClaim(claim)) return true
+  const cited = `${claim}\n${evidence ?? ''}`.split('\n').filter((line) => line.includes(SECRET_SCAN_CHECK))
+  // Every line naming the check must show it passing: one passing line beside a failing one backs nothing.
+  return (
+    cited.length > 0 &&
+    cited.every(
+      (line) =>
+        /\b(pass|passed|passing|success|successful)\b/i.test(line) &&
+        !/\b(fail|failed|failing|failure|missing|skipped|pending|cancelled|not|never|no)\b/i.test(line)
+    )
+  )
+}
+
 /**
  * Renders `security.md`'s exact bare template. Same no-caller-injection
  * guarantee as `renderCodeReviewComment` for `VERDICT:`/`Judged head:`/
@@ -567,9 +597,9 @@ export function isNoneFoundClaim(value: string): boolean {
  * block. The `OBJECTIVES:` block
  * renders BEFORE `CONFIG SCAN:`, only when `input.objectiveResults`
  * is non-null. When
- * `secretsEvidence` is supplied, the scanner's raw output is pasted in a
+ * `secretsEvidence` is supplied, the cited check result is pasted in a
  * fenced block ABOVE the `SECRETS:` line, per `security.md`'s own rule that
- * the pasted evidence must appear there to back the claim.
+ * the cited evidence must appear there to back the claim.
  */
 export function renderSecurityComment(input: SecurityInput): string {
   const sorted = sortBySeverity(input.findings, SECURITY_SEVERITIES)
@@ -2013,10 +2043,10 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
   const configScan = requireFlag(flags, '--config-scan')
   const secrets = requireFlag(flags, '--secrets')
   const secretsEvidenceFile = flags.get('--secrets-evidence-file')
-  if (isNoneFoundClaim(secrets) && !secretsEvidenceFile) {
+  if (opensNoneFoundClaim(secrets) && !secretsEvidenceFile) {
     refuseCmd(
-      '`--secrets` normalizes to "none found" but no `--secrets-evidence-file` was given — security.md: "SECRETS: none found" with no scan output pasted is an unbacked self-attestation.',
-      'Pass `--secrets-evidence-file <path>` containing the actual scanner output, or change `--secrets` to describe what was found instead.'
+      `\`--secrets\` normalizes to "none found" but no \`--secrets-evidence-file\` was given — security.md: "SECRETS: none found" must cite the result of the required \`${SECRET_SCAN_CHECK}\` check; without it the line is an unbacked self-attestation.`,
+      `Pass \`--secrets-evidence-file <path>\` holding the \`${SECRET_SCAN_CHECK}\` check's result on the judged head (its name and conclusion, as \`gh pr checks\` shows it) — do not run a scanner or paste its output — or change \`--secrets\` to describe what was found instead.`
     )
   }
   let secretsEvidence: string | null = null
@@ -2026,6 +2056,12 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
     } catch {
       refuseCmd(`Could not read secrets evidence file at ${secretsEvidenceFile}.`, 'Check the path and re-run.')
     }
+  }
+  if (opensNoneFoundClaim(secrets) && !noneFoundClaimCitesScanCheck(secrets, secretsEvidence)) {
+    refuseCmd(
+      `\`--secrets-evidence-file\` does not show a passing \`${SECRET_SCAN_CHECK}\` check — security.md: "SECRETS: none found" is backed by that required check's passing result, cited by name.`,
+      `Put the \`${SECRET_SCAN_CHECK}\` check's name and its passing conclusion on the judged head in the evidence file, then re-run.`
+    )
   }
   const principalAllowlist = resolvePrincipalAllowlist(loadTrustAnchorConfig())
 
