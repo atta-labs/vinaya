@@ -86,9 +86,7 @@ export function policyDigest(policy: ReviewPolicy): string {
     .update(
       JSON.stringify({
         codeReviewThreshold: policy.codeReviewThreshold,
-        securityThreshold: policy.securityThreshold,
-        maxRounds: policy.maxRounds,
-        maxTaskMinutes: policy.maxTaskMinutes
+        securityThreshold: policy.securityThreshold
       })
     )
     .digest('hex')
