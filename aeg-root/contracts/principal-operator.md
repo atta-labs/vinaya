@@ -18,7 +18,7 @@ This seam sits between the seat that decides **what is true and what is allowed*
 
 **What crosses, downward** — the Principal names which already-planned task the Operator should run, and may ask it to pause, resume, or cancel one. That is the whole of what the Principal delegates: process, over an already-dispatchable task. The Principal never asks the Operator to plan it, size it, edit its Issue, or change its criteria — none of those are the Operator's to do.
 
-**What crosses, upward** — the Operator brings the Principal every escalation packet the controller addressed to the Principal: an escalation, a round cap reached, repeated findings with no progress, an unresolved confidence question, a reappeared finding. The Operator presents the packet as recorded and asks for a ruling, an approval, or a merge. It never supplies the decision itself.
+**What crosses, upward** — the Operator brings the Principal every escalation packet the controller addressed to the Principal: an escalation, a round cap reached, a blocking finding open in two consecutive rounds, a repeated mechanical failure, an exhausted time budget, an unresolved confidence question, a reappeared finding. The Operator presents the packet as recorded and asks for a ruling, an approval, or a merge. It never supplies the decision itself.
 
 **The hand-off is malformed when** — the Operator is asked to exercise content or ratification authority (rule, approve, publish a review, merge, edit an Issue, re-scope), or when a Principal-addressed escalation is cleared by the Operator rather than presented. Either way the boundary between process and content authority has been crossed, and the seam's whole purpose is to make that crossing visible and refused.
 
@@ -60,7 +60,7 @@ Two carriers, one per direction:
 | Run a specific already-planned, dispatchable task (`task_start`, or the `task run` composition) | Rule on an escalation the packet addresses to the Principal |
 | Read a task's grounded status, or follow it (`task_status`, status-follow read) | Approve or merge — the ratification acts the Operator structurally cannot perform |
 | Read why that task's own pull request is red — its check results and its principal-authored review record (`task_pr_read`) | Decide what a red check or a held verdict means for the task — the Operator names what it read, and never rules on it |
-| Present a paused run's escalation packet (`task_escalation_read`) | Resolve a Principal-authority pause (round cap, no-progress, confidence, reappearance) with a decision, not a retry |
+| Present a paused run's escalation packet (`task_escalation_read`) | Resolve a Principal-authority pause (round cap, repeated finding, repeated failure, time budget, confidence, reappearance) with a decision, not a retry |
 | Request continuation or cancellation of a run (`task_resume`, `task_cancel`) | Address a scope or criteria change to the Planner — the Principal redirects it there, as the Operator cannot edit the Issue |
 
 ### What the pull-request read carries

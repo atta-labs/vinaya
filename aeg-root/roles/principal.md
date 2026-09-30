@@ -97,7 +97,7 @@ Until a coordinator program exists, the Principal is the loop's coordinator, per
 - **Track the id set.** Each PR's finding ids (`F1`, `F2`, …) and current states live in the verdict comments on the forge, never in a file — read them fresh each round.
 <!-- AEG:CLAIM: packages/aeg-core/src/review-policy.ts contains:export const DEFAULT_MAX_ROUNDS = 3 -->
 <!-- AEG:CLAIM: packages/aeg-core/src/dev-review-loop/assess-round.ts contains:if (obs.round >= state.config.maxRounds) { -->
-- **Apply the pause triggers.** The loop pauses when a resolved id reappears, when one blocking id stays `open` in two consecutive reviewed rounds, when the developer's confidence collapses, when a reviewer escalates, and after round three's review when that round is not green (the default cap; a green round publishes). No fourth round runs until you rule.
+- **Apply the pause triggers.** The loop pauses when a resolved id reappears, when one blocking id stays `open` in two consecutive reviewed rounds, when the developer's confidence collapses, when a reviewer escalates, when the same mechanical failure repeats, when the task's time budget runs out, and after round three's review when that round is not green (the default cap; a green round publishes). No fourth round runs until you rule.
 - **Pause with the label.** Apply `vinaya/needs:principal-input`; never invent a new label or status field.
 - **Work the stall menu, cheapest first.** A different role in the seat, resume with the trigger overridden, reseed the Developer, abandon.
 - **Give the go on surfaced findings.** A finding outside round two's delta, any non-blocking severity, waits on this decision rather than driving the verdict.
