@@ -1027,8 +1027,9 @@ function archivistWorkflow(selfHost: VendoredVinaya | null): string {
 #
 # The ring-2 post-merge/scheduled mechanisms: per-task Archivist provenance
 # + close-out (post-merge), tranche self-archive when a task Issue closes
-# without a merge (issue-closed), dead-branch-push drift (daily-drift, a
-# notification channel — never fails red), and direct-main-push detection
+# without a merge (issue-closed), dead-branch-push drift and the daily
+# tranche catch-up (daily-drift, a notification channel — never fails red),
+# and direct-main-push detection
 # (direct-main-push-detection, a real pass/fail).
 name: Vinaya Archivist
 
@@ -1150,6 +1151,16 @@ ${vinayaSetupSteps(selfHost)}      - name: Run vinaya audit --only=dead-branches
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
         run: ${vinayaRun(selfHost, 'audit --only=dead-branches')}
+      - name: Archive every finished tranche not yet archived
+        # The catch-up the two event-driven triggers cannot make: a tranche that
+        # finished before this workflow existed, or whose closing event was
+        # missed, is archived here within a day. A tranche still holding an open
+        # task Issue is skipped, and archiving what is already archived changes
+        # nothing, so the schedule can call it every day.
+        continue-on-error: true
+        env:
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+        run: ${vinayaRun(selfHost, 'archive tranches')} --yes
 
   direct-main-push-detection:
     name: Direct-Main-Push Detection
