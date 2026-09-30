@@ -456,6 +456,79 @@ describe('LogEventSchema — operation family (O2)', () => {
   })
 })
 
+describe('LogEventSchema — operation field_names (a refused custom event)', () => {
+  it('parses a refusal naming the fields it concerns', () => {
+    const line = {
+      ...operationEvent,
+      operation: 'log.emit',
+      result: 'refused' as const,
+      error_class: 'missing_field',
+      field_names: ['count', 'note']
+    }
+    expect(LogEventSchema.safeParse(line).success).toBe(true)
+  })
+
+  it('refuses field_names that are not a list of names', () => {
+    expect(LogEventSchema.safeParse({ ...operationEvent, field_names: [{ value: 'x' }] }).success).toBe(false)
+  })
+})
+
+const metaV3 = {
+  ...metaV2,
+  schema: 3 as const,
+  work: { ref: '890', repo: 'atta-labs/vinaya', change: null, revision: null },
+  flow: { id: 'vinaya', version: null },
+  runtime: null,
+  source: null
+}
+
+const customEvent = {
+  meta: metaV3,
+  subject,
+  kind: 'custom' as const,
+  event: 'recorded' as const,
+  payload: {},
+  name: 'acme.deploy',
+  fields: { env: 'prod', count: 3, ok: true }
+}
+
+describe('LogEventSchema — custom family', () => {
+  it('parses a custom event under a schema 3 header', () => {
+    expect(LogEventSchema.safeParse(customEvent).success).toBe(true)
+  })
+
+  it('refuses a custom event under a schema 1 or schema 2 header', () => {
+    expect(LogEventSchema.safeParse({ ...customEvent, meta }).success).toBe(false)
+    expect(LogEventSchema.safeParse({ ...customEvent, meta: metaV2 }).success).toBe(false)
+  })
+
+  it('refuses an event other than recorded — the name is data, never the discriminator', () => {
+    expect(LogEventSchema.safeParse({ ...customEvent, event: 'acme.deploy' }).success).toBe(false)
+  })
+
+  it('refuses a name that is not <namespace>.<event>', () => {
+    expect(LogEventSchema.safeParse({ ...customEvent, name: 'deploy' }).success).toBe(false)
+    expect(LogEventSchema.safeParse({ ...customEvent, name: 'Acme.Deploy' }).success).toBe(false)
+    expect(LogEventSchema.safeParse({ ...customEvent, name: `acme.${'a'.repeat(64)}` }).success).toBe(false)
+  })
+
+  it('refuses a nested object, a list or null as a field value', () => {
+    expect(LogEventSchema.safeParse({ ...customEvent, fields: { env: { region: 'eu' } } }).success).toBe(false)
+    expect(LogEventSchema.safeParse({ ...customEvent, fields: { env: ['eu'] } }).success).toBe(false)
+    expect(LogEventSchema.safeParse({ ...customEvent, fields: { env: null } }).success).toBe(false)
+  })
+
+  it('refuses a text value over 500 characters and more than 20 fields', () => {
+    expect(LogEventSchema.safeParse({ ...customEvent, fields: { note: 'x'.repeat(501) } }).success).toBe(false)
+    const many = Object.fromEntries(Array.from({ length: 21 }, (_, i) => [`f${i}`, i]))
+    expect(LogEventSchema.safeParse({ ...customEvent, fields: many }).success).toBe(false)
+  })
+
+  it('refuses an extra top-level key — kind, header and body are fixed', () => {
+    expect(LogEventSchema.safeParse({ ...customEvent, family: 'acme' }).success).toBe(false)
+  })
+})
+
 const usageEvent = {
   meta,
   subject,

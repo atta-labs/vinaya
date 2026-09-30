@@ -17,6 +17,7 @@ import {
   type ReviewPolicy,
   SECURITY_SEVERITY_ORDER
 } from '@attalabs/aeg-core'
+import { CustomEventDeclarationsSchema } from '@attalabs/aeg-core/log'
 import { AGENT_VENDORS, type AgentVendor } from './agent-vendors.js'
 import { CLAUDE_COMMAND_PATH } from './claude-command-emitter.js'
 import { GEMINI_COMMAND_PATH } from './gemini-command-emitter.js'
@@ -867,7 +868,14 @@ export const VinayaConfigSchema = z.object({
       // never trust-anchor gated the way `url` is: it is this machine's own
       // credential for reading back from a URL that gate already approved, not
       // a destination a pull request's diff could redirect.
-      readHeaders: z.record(z.string()).optional()
+      readHeaders: z.record(z.string()).optional(),
+      // The consumer's own log events, declared by name — each a flat set of
+      // fields typed text, number, boolean or one of a listed set of words
+      // (`CustomEventDeclarationsSchema`, `@attalabs/aeg-core/log`). A
+      // declaration that breaks a rule is refused here, at load, naming the
+      // entry. Not a destination, so not trust-anchor gated the way
+      // `folder`/`url` are: it says what may be recorded, never where to.
+      events: CustomEventDeclarationsSchema.optional()
     })
     .refine((v) => [v.folder, v.url].filter((x) => x !== undefined).length <= 1, {
       message: 'logs: set at most one of folder/url'
