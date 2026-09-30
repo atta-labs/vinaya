@@ -87,7 +87,7 @@ import {
   parseEnforcementRegistry,
   type RegistryCheckResult
 } from '@attalabs/aeg-core'
-import { initHookPaths } from '../../lib/artifacts.js'
+import { initHookPaths } from '../../lib/init-hook-paths.js'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { coreCheckRegistry } from '../registry.js'
 

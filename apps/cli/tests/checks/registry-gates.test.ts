@@ -3,7 +3,8 @@ import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
-import { buildInitOps, HOOK_DIRS, initHookPaths } from '../../src/lib/artifacts.js'
+import { buildInitOps } from '../../src/lib/artifacts.js'
+import { HOOK_DIRS, initHookPaths } from '../../src/lib/init-hook-paths.js'
 
 // Task `vinaya-adopter-portability-v1` 2 (Issue #232): before this fix, an
 // absent `aeg-root/enforcement.md` made `check-registry-gates.ts` exit 0 with
