@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'bun:test'
+import { pauseResumeCommand } from '../../src/commands/task-run.js'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
@@ -204,5 +205,48 @@ describe('vinaya task run --issue — argv parsing (task-run-v1 task 15, O1)', (
     expect(r.status).toBe(2)
     expect(r.stderr).toContain('--agent')
     expect(r.stderr).toContain('is required')
+  })
+})
+
+// #785 (O1): the exit summary's continuation command names a pull request only
+// when one exists. A pause held against an open pull request resumes through
+// `dev-review-loop --resume <pr>`; the one pause with no pull request yet — the
+// pre-first-push escalation, `prNumber` `0` or `-1` — continues with a fresh
+// `task run --issue <n>`, never a broken `--resume 0`/`--resume -1`.
+describe('vinaya task run — pauseResumeCommand (#785, O1)', () => {
+  it('names `dev-review-loop --resume <pr>` for a pause with a real pull request', () => {
+    expect(pauseResumeCommand({ prNumber: 501, task: 785 }, { agent: 'claude' })).toBe(
+      'vinaya dev-review-loop --resume 501 --agent claude'
+    )
+  })
+
+  it('carries --model through the --resume form when the run named one', () => {
+    expect(pauseResumeCommand({ prNumber: 682, task: 785 }, { agent: 'codex', model: 'gpt-5.6-terra' })).toBe(
+      'vinaya dev-review-loop --resume 682 --agent codex --model gpt-5.6-terra'
+    )
+  })
+
+  it('names `task run --issue <n>` for a before-any-push pause (prNumber 0), never `--resume 0`', () => {
+    const command = pauseResumeCommand({ prNumber: 0, task: 785 }, { agent: 'claude' })
+    expect(command).toBe('vinaya task run --issue 785 --agent claude')
+    expect(command).not.toContain('--resume')
+  })
+
+  it('names `task run --issue <n>` for a before-any-push pause (prNumber -1), never `--resume -1`', () => {
+    const command = pauseResumeCommand({ prNumber: -1, task: 785 }, { agent: 'gemini' })
+    expect(command).toBe('vinaya task run --issue 785 --agent gemini')
+    expect(command).not.toContain('--resume')
+  })
+
+  it('carries --model through the --issue form too, and keeps the task Issue number', () => {
+    expect(pauseResumeCommand({ prNumber: 0, task: 512 }, { agent: 'claude', model: 'opus' })).toBe(
+      'vinaya task run --issue 512 --agent claude --model opus'
+    )
+  })
+
+  it('omits --model when the run named none', () => {
+    expect(pauseResumeCommand({ prNumber: 0, task: 512 }, { agent: 'claude' })).toBe(
+      'vinaya task run --issue 512 --agent claude'
+    )
   })
 })
