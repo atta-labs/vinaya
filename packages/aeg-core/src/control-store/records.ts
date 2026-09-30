@@ -119,8 +119,10 @@ export type TransitionRecord = z.infer<typeof TransitionRecordSchema>
  * against: repository and work (the PR/branch this round belongs to), base and
  * candidate (`baseSha`/`headSha`), instruction and criteria versions
  * (`briefHash`/`objectivesVersion`), rulings (`rulingOrdinal`), and the
- * complete effective policy identity (`policyDigest`, which folds in the
- * round-policy field). `baseSha`/`briefHash`/`objectivesVersion` are nullable
+ * blocking-threshold policy identity (`policyDigest`, which covers
+ * `codeReviewThreshold`/`securityThreshold` only — the loop's own limits
+ * `maxRounds`/`maxTaskMinutes` are left out; see `review-input-manifest.ts`).
+ * `baseSha`/`briefHash`/`objectivesVersion` are nullable
  * exactly where the manifest itself is (`review-input-manifest.ts`'s own
  * `null` = "nothing resolvable to bind against"); `rulingOrdinal`/
  * `policyDigest` are never null, the same as on the manifest.
