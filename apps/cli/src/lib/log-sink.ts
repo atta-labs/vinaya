@@ -37,7 +37,6 @@ import {
 } from '@attalabs/aeg-core'
 import {
   GLOBAL_VINAYA_HOME,
-  type LogHeaderKeychainReader,
   loadConfig,
   loadTrustAnchorConfigAsync,
   resolveLogsHeaderValues,
@@ -46,7 +45,6 @@ import {
   type LogsDestination,
   type VinayaConfig
 } from './config.js'
-import { readLogHeaderKeychainCredential } from './worker-boundary.js'
 import { isInsideRepo, isUnattendedProcess, repoRootSync, runtimeDirForRepoAsync } from './run-paths.js'
 import { appendLoopLogLine, loopLogPathFor } from './loop-log.js'
 import { drainOutboxToWebhook } from './log-webhook-drain.js'
@@ -290,41 +288,23 @@ async function safeLoadTrustAnchorConfig(): Promise<VinayaConfig | null> {
  */
 /**
  * O3: a `logs.url` header referencing `${VAR_NAME}` whose named variable holds
- * no credential in EITHER of the two places `resolveLogsHeaderValues`
- * substitutes it from — the process environment, or (its fallback) the macOS
- * login Keychain (service "Vinaya Log", account = the variable name). The
- * environment wins (O3): the Keychain is consulted only when the variable is
- * absent or empty in `env`, through the SAME `readLogHeaderKeychainCredential`
- * reader the substitution uses, so the check and the delivery it gates can
- * never disagree about whether a credential exists — the very bug this closes,
- * where a token stored only in the Keychain read back as "missing" and the
- * self-test rejected a credential delivery would actually send.
+ * no credential in the process environment — the one place
+ * `resolveLogsHeaderValues` substitutes it from — so the check and the delivery
+ * it gates can never disagree about whether a credential exists.
  *
- * "Absent or empty" are the same signal for BOTH sources: GitHub Actions sets a
+ * An absent OR empty variable is the same signal: GitHub Actions sets a
  * secret-backed env var to an empty string for a fork pull request (the secret
- * is withheld, never the variable), and an empty Keychain value is no
- * credential either. A destination with no headers at all (no credential
- * concept) never trips this — there is nothing to be missing. `readKeychain` is
- * injected (defaulting to the real, per-process-cached reader) so tests, which
- * run on Linux where the real Keychain is absent, drive it with a fake; the
- * default reader is darwin-only and returns `null` everywhere else, so Linux
- * behaviour with neither source set is unchanged.
+ * is withheld, never the variable), and an empty value is no credential either.
+ * A destination with no headers at all (no credential concept) never trips this
+ * — there is nothing to be missing.
  */
-export function logsCredentialMissing(
-  headers: Record<string, string> | undefined,
-  env: NodeJS.ProcessEnv,
-  readKeychain: LogHeaderKeychainReader = readLogHeaderKeychainCredential
-): boolean {
+export function logsCredentialMissing(headers: Record<string, string> | undefined, env: NodeJS.ProcessEnv): boolean {
   if (!headers) return false
   const varPattern = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g
   for (const value of Object.values(headers)) {
     for (const match of value.matchAll(varPattern)) {
       const name = match[1] as string
-      // The environment wins; the Keychain is consulted only when the variable
-      // is absent or empty there — and an empty Keychain value counts as
-      // missing too, exactly as an empty env var does.
       if (env[name]) continue
-      if (readKeychain(name)) continue
       return true
     }
   }
@@ -338,11 +318,6 @@ export function resolveLogDestinationFrom(input: {
   env: NodeJS.ProcessEnv
   defaultFolder: string
   repoRoot?: string | null
-  // The Keychain fallback `logsCredentialMissing` consults after the
-  // environment (O1), injected so a Linux test can prove the credential-present
-  // case; omitted in production, where the real per-process-cached reader is
-  // the default — the SAME reader delivery substitutes with.
-  readKeychain?: LogHeaderKeychainReader
 }): ResolvedLogDestination {
   const local = resolveLogsSetting(input.localConfig)
   let effective: LogsDestination | null = null
@@ -380,7 +355,7 @@ export function resolveLogDestinationFrom(input: {
   // since the trust-anchor gate above already applies identically to both.
   if (hostFromEnv(input.env) === 'ci') {
     if (effective && 'url' in effective) {
-      if (logsCredentialMissing(effective.headers, input.env, input.readKeychain)) {
+      if (logsCredentialMissing(effective.headers, input.env)) {
         return {
           kind: 'none',
           reason:

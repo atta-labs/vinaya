@@ -64,5 +64,4 @@ tests/checks/runner/cancelled.test.ts
 tests/run-paths-only.test.ts
 tests/conformance/claude.test.ts
 tests/gh-path.test.ts
-tests/commands/log-set-credential.test.ts
 tests/commands/log-selftest.test.ts
