@@ -179,12 +179,25 @@ const DOCTOR_PATH = 'apps/cli/src/commands/doctor.ts'
  * check below.
  */
 const LOG_SEND_PATH = 'apps/cli/src/commands/log-send.ts'
+/**
+ * `vinaya log selftest` (O1) proves delivery end to end. Like `DOCTOR_PATH`
+ * and `LOG_SEND_PATH` it is NOT a producer — it calls no `log()` and builds no
+ * sink. It imports the sink's own unattended destination resolution
+ * (`resolveUnattendedLogDestination`/`resolveUnattendedServerSetting`, so the
+ * self-test resolves exactly as the loop does), the `logsCredentialMissing`
+ * predicate, the `ResolvedLogDestination` type and `describeFolderFallback`,
+ * and sends its one marked event through the server's ingest contract
+ * directly. Same "imports the sink's pure helpers, never `log()`" shape.
+ */
+const LOG_SELFTEST_PATH = 'apps/cli/src/commands/log-selftest.ts'
 /** Exactly what `DOCTOR_PATH` is allowed to take from the sink module (sorted). */
 const DOCTOR_SINK_IMPORTS = [
+  'FolderFallbackRecord',
   'LOG_CONTEXT_LOOKUP_DEADLINE_MS',
   'LOG_DESTINATION_ANCHOR_DEADLINE_MS',
   'ResolvedLogDestination',
   'describeFolderFallback',
+  'readFolderFallbackState',
   'resolveLogDestinationFrom',
   'withDeadline'
 ]
@@ -200,7 +213,8 @@ const CALLER_ALLOWLIST = new Set([
   EFFECTS_PATH,
   BROKER_PATH,
   DOCTOR_PATH,
-  LOG_SEND_PATH
+  LOG_SEND_PATH,
+  LOG_SELFTEST_PATH
 ])
 const OUTBOX_TRUNCATE_ALLOWLIST = new Set([LOG_WEBHOOK_DRAIN_LIB_PATH])
 const OUTBOX_HELD_VERDICT_ALLOWLIST = new Set([

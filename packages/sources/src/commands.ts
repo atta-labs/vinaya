@@ -750,6 +750,17 @@ export const COMMANDS: readonly Command[] = [
     status: 'shipped'
   },
   {
+    name: 'log selftest',
+    description:
+      'Prove log delivery works end to end: send one marked test event and read it back — PASS (exit 0) or FAIL with the one reason (exit 1)',
+    details: [
+      "Resolves the destination exactly as an UNATTENDED review-loop run does in this repository — the same trust-anchor read and credential lookup, forced unattended so running it by hand proves the launch path's own resolution, not a human's. It sends one test event to the configured `logs.url` server, then reads it back from the server by the event's own id through the server's cursor read.",
+      "PASS (exit 0) only when the event round-trips. Otherwise FAIL (exit 1) with the ONE reason that stopped it: no server is configured, the default branch's config could not be read to confirm the url (and why), this host holds no ingest or read credential, the server refused with its status, or the event could not be read back. It never prints a credential value.",
+      "The read-back needs a READ credential distinct from the write-only ingest one the server refuses on a read route: set `logs.readHeaders` in vinaya.config.json to the server's read token (referenced by variable name, resolved from the environment or the macOS Keychain exactly as `logs.headers` is). The test event is marked `operation: 'log.selftest'` so a reader can exclude it from real telemetry."
+    ],
+    status: 'shipped'
+  },
+  {
     name: 'log send',
     description: "Deliver this repository's locally-held log events to the configured `logs.url` server, once",
     flags: [{ flag: '--json', description: 'Enveloped JSON output (schema: 1)' }],

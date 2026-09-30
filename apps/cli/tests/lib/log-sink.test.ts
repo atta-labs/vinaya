@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'bun:test'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture.js'
 import {
   createLogSink,
+  folderFallbackStatePath,
   OUTBOX_MAX_BYTES,
+  readFolderFallbackState,
+  recordFolderFallback,
   resolveLogAppendPath,
   setBranchIssueFallback,
   taskRefFromBranch,
@@ -815,4 +818,122 @@ describe('log-sink — the branch read outlives nothing (O1)', () => {
     // on a `git` nobody needs any more.
     expect(elapsed).toBeLessThan(20_000)
   }, 40_000)
+})
+
+describe('O3 — a folder fallback keeps its reason (driver.log + doctor state file)', () => {
+  const REPO = { owner: 'acme', repo: 'widget' }
+
+  it('folderFallbackStatePath keys by repo under the given root, `unresolved` for a null repo', () => {
+    expect(folderFallbackStatePath(REPO, '/state')).toBe(join('/state', 'fallback', 'acme-widget.json'))
+    expect(folderFallbackStatePath(null, '/state')).toBe(join('/state', 'fallback', 'unresolved.json'))
+  })
+
+  it('recordFolderFallback writes the reason to driver.log AND a readable state file', () => {
+    const runtimeDir = mkdtempSync(join(tmpdir(), 'vinaya-fallback-rt-'))
+    const stateRoot = mkdtempSync(join(tmpdir(), 'vinaya-fallback-state-'))
+    recordFolderFallback(
+      REPO,
+      648,
+      { kind: 'anchor-unreadable', intendedUrl: 'https://logs.example.com/x' },
+      new Date('2026-01-02T03:04:05.000Z'),
+      runtimeDir,
+      stateRoot
+    )
+
+    const driverLog = readFileSync(join(runtimeDir, 'tasks-execution', '648', 'output', 'driver.log'), 'utf8')
+    expect(driverLog).toContain('[log] ')
+    expect(driverLog).toContain('https://logs.example.com/x')
+    expect(driverLog).toContain('could not be read')
+
+    const record = readFolderFallbackState(REPO, stateRoot)
+    expect(record?.kind).toBe('anchor-unreadable')
+    expect(record?.at).toBe('2026-01-02T03:04:05.000Z')
+    expect(record?.intendedUrl).toBe('https://logs.example.com/x')
+    expect(record?.reason).toContain('could not be read')
+  })
+
+  it('records the state file even when no task is named (no driver.log to write to)', () => {
+    const runtimeDir = mkdtempSync(join(tmpdir(), 'vinaya-fallback-rt-'))
+    const stateRoot = mkdtempSync(join(tmpdir(), 'vinaya-fallback-state-'))
+    recordFolderFallback(
+      REPO,
+      null,
+      { kind: 'anchor-mismatch', intendedUrl: 'https://logs.example.com/y' },
+      new Date('2026-02-02T00:00:00.000Z'),
+      runtimeDir,
+      stateRoot
+    )
+    expect(existsSync(join(runtimeDir, 'tasks-execution'))).toBe(false)
+    expect(readFolderFallbackState(REPO, stateRoot)?.kind).toBe('anchor-mismatch')
+  })
+
+  it('readFolderFallbackState is null for a missing or corrupt file', () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), 'vinaya-fallback-state-'))
+    expect(readFolderFallbackState(REPO, stateRoot)).toBeNull()
+    const path = folderFallbackStatePath(REPO, stateRoot)
+    mkdirSync(join(stateRoot, 'fallback'), { recursive: true })
+    writeFileSync(path, 'not json{')
+    expect(readFolderFallbackState(REPO, stateRoot)).toBeNull()
+  })
+
+  it('the sink records the fallback once per process when a server was configured but refused', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'vinaya-fallback-home-'))
+    const rtDir = mkdtempSync(join(tmpdir(), 'vinaya-fallback-sinkrt-'))
+    const folder = join(rtDir, 'logs') // dirname(folder) is the runtime dir
+    const sink = createLogSink({
+      outboxRoot: () => join(folder),
+      home: () => home,
+      hostname: () => 'test-host',
+      cwd: () => rtDir,
+      now: () => new Date('2026-03-03T03:03:03.000Z'),
+      // The unattended fallback shape: a server was configured, the trust
+      // anchor could not confirm it, events go to the default folder.
+      resolveLogDestination: () => ({
+        kind: 'folder',
+        folder,
+        fallbackReason: { kind: 'anchor-unreadable', intendedUrl: 'https://logs.example.com/z' }
+      }),
+      resolveRepo: async () => REPO,
+      env: () => ({ VINAYA_TASK: '777' }),
+      resolveBranchIssue: async () => null,
+      stderr: () => {}
+    })
+    sink.log(DISPATCHED)
+    sink.log(DISPATCHED)
+    await flush()
+    await sink.drain()
+
+    // driver.log under the task's own runtime dir, named by the event's issue.
+    const driverLog = readFileSync(join(rtDir, 'tasks-execution', '777', 'output', 'driver.log'), 'utf8')
+    const lines = driverLog.split('\n').filter((l) => l.includes('[log] '))
+    expect(lines.length).toBe(1) // once per process, not per event
+    expect(driverLog).toContain('https://logs.example.com/z')
+
+    // state file under the injected home's `.vinaya`, so doctor can report it.
+    const record = readFolderFallbackState(REPO, join(home, '.vinaya'))
+    expect(record?.kind).toBe('anchor-unreadable')
+    expect(record?.intendedUrl).toBe('https://logs.example.com/z')
+  })
+
+  it('the sink does NOT record a fallback for an ordinary default folder (no server configured)', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'vinaya-nofallback-home-'))
+    const rtDir = mkdtempSync(join(tmpdir(), 'vinaya-nofallback-rt-'))
+    const folder = join(rtDir, 'logs')
+    const sink = createLogSink({
+      outboxRoot: () => folder,
+      home: () => home,
+      hostname: () => 'test-host',
+      cwd: () => rtDir,
+      resolveLogDestination: () => ({ kind: 'folder', folder }), // no fallbackReason
+      resolveRepo: async () => REPO,
+      env: () => ({ VINAYA_TASK: '777' }),
+      resolveBranchIssue: async () => null,
+      stderr: () => {}
+    })
+    sink.log(DISPATCHED)
+    await flush()
+    await sink.drain()
+    expect(readFolderFallbackState(REPO, join(home, '.vinaya'))).toBeNull()
+    expect(existsSync(join(rtDir, 'tasks-execution'))).toBe(false)
+  })
 })

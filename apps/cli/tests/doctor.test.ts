@@ -70,6 +70,8 @@ function doctorDeps(overrides: Partial<DoctorDeps> = {}): DoctorDeps {
     // Nothing in the Keychain by default — CI is Linux, where the real reader
     // returns null anyway. The O4 cases below override this to prove each source.
     readLogCredentialKeychain: () => null,
+    // No folder fallback recorded by default; the O3 case below overrides this.
+    readLastLogFallback: async () => null,
     ...overrides
   }
 }
@@ -1291,6 +1293,32 @@ describe('vinaya doctor — the log destination works (Issue #793)', () => {
     expect(found).toHaveLength(1)
     return found[0] as Finding
   }
+
+  it('reports the last folder fallback recorded in the state file, at info (O3)', async () => {
+    await runInit(['--yes'], initDeps())
+    const report = await runDoctorJson({
+      readLastLogFallback: async () => ({
+        at: '2026-09-28T10:00:00.000Z',
+        reason:
+          'not delivering to the configured log server https://logs.example.com — the default branch could not be read',
+        intendedUrl: 'https://logs.example.com',
+        kind: 'anchor-unreadable'
+      })
+    })
+    const found = report.findings.filter((f) => f.check === 'logs-fallback')
+    expect(found).toHaveLength(1)
+    expect(found[0]?.severity).toBe('info')
+    expect(found[0]?.message).toContain('last fallback: 2026-09-28T10:00:00.000Z')
+    expect(found[0]?.message).toContain('the default branch could not be read')
+    // A historical record never reddens the command on its own.
+    expect(report.healthy).toBe(true)
+  })
+
+  it('reports no fallback line when none is recorded', async () => {
+    await runInit(['--yes'], initDeps())
+    const report = await runDoctorJson({ readLastLogFallback: async () => null })
+    expect(report.findings.filter((f) => f.check === 'logs-fallback')).toHaveLength(0)
+  })
 
   it('reports a server that accepts this machine credential, and stays healthy', async () => {
     await runInit(['--yes'], initDeps())

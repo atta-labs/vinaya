@@ -19,6 +19,7 @@ import {
   openSync,
   readFileSync,
   renameSync,
+  writeFileSync,
   writeSync
 } from 'node:fs'
 import { hostname as osHostname, homedir } from 'node:os'
@@ -45,6 +46,7 @@ import {
   type VinayaConfig
 } from './config.js'
 import { isInsideRepo, isUnattendedProcess, repoRootSync, runtimeDirForRepoAsync } from './run-paths.js'
+import { appendLoopLogLine, loopLogPathFor } from './loop-log.js'
 import { drainOutboxToWebhook } from './log-webhook-drain.js'
 import { packageRoot } from './package-root.js'
 
@@ -284,7 +286,7 @@ async function safeLoadTrustAnchorConfig(): Promise<VinayaConfig | null> {
  * no real delivery credential. A destination with no headers at all (no
  * credential concept) never trips this — there is nothing to be missing.
  */
-function logsCredentialMissing(headers: Record<string, string> | undefined, env: NodeJS.ProcessEnv): boolean {
+export function logsCredentialMissing(headers: Record<string, string> | undefined, env: NodeJS.ProcessEnv): boolean {
   if (!headers) return false
   const varPattern = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g
   for (const value of Object.values(headers)) {
@@ -427,6 +429,137 @@ async function defaultResolveLogDestination(
     defaultFolder: join(await runtimeDirForRepoAsync(repo), 'logs'),
     repoRoot: repoRootSync()
   })
+}
+
+/**
+ * The destination an UNATTENDED run resolves for THIS repository, forced —
+ * exactly what `defaultResolveLogDestination` computes, but with `unattended`
+ * pinned `true` rather than read from `isUnattendedProcess(process.env)`, so
+ * `vinaya log selftest` proves the review-loop's own delivery path even when a
+ * human runs the self-test at a terminal (O1). It reuses the SAME memoized
+ * trust-anchor read (`processTrustAnchor`), the SAME trust-anchor rule
+ * (`resolveLogDestinationFrom` → `resolveTrustAnchorLogsDestination`), and the
+ * SAME credential lookup (`resolveLogsHeaderValues`, inside
+ * `resolveLogDestinationFrom`) — it never re-implements any of them.
+ */
+export async function resolveUnattendedLogDestination(
+  env: NodeJS.ProcessEnv = process.env
+): Promise<ResolvedLogDestination> {
+  const resolved = await resolveRepoDefault()
+  const repo = resolved && isSafeRepoSegment(resolved.owner) && isSafeRepoSegment(resolved.repo) ? resolved : null
+  return resolveLogDestinationFrom({
+    localConfig: loadConfig(),
+    trustAnchorConfig: await processTrustAnchor(),
+    unattended: true,
+    env,
+    defaultFolder: join(await runtimeDirForRepoAsync(repo), 'logs'),
+    repoRoot: repoRootSync()
+  })
+}
+
+/**
+ * The RAW effective server `logs` setting an unattended run would honour — the
+ * SAME trust-anchor decision `resolveUnattendedLogDestination` makes (sharing
+ * its one memoized `processTrustAnchor` read), but returned BEFORE
+ * `resolveLogsHeaderValues` substitutes `${VAR}` in the headers. `vinaya log
+ * selftest` needs the un-substituted form to tell a genuinely-missing
+ * credential (`logsCredentialMissing`) apart from a server that refused a
+ * present one, and to name the variable to set — a substitution leaves only an
+ * empty header, which `Bearer ` (scheme + empty) does not read back as empty.
+ * `null` when a server is not the effective unattended destination.
+ */
+export async function resolveUnattendedServerSetting(): Promise<{
+  url: string
+  headers?: Record<string, string>
+} | null> {
+  const local = resolveLogsSetting(loadConfig())
+  const anchor = await processTrustAnchor()
+  const effective = local ? resolveTrustAnchorLogsDestination(local, anchor) : resolveLogsSetting(anchor)
+  return effective && 'url' in effective ? { url: effective.url, headers: effective.headers } : null
+}
+
+/**
+ * O3: the one machine-local record of the LAST time an unattended run fell
+ * back to the local folder although a server was configured — what `vinaya
+ * doctor` reports as "last fallback: <time>, <reason>", so the cause survives
+ * a launch path that keeps no standard error. Written beside the outbox under
+ * the machine's Vinaya home, keyed by repository the same `<owner>-<repo>` way
+ * the outbox is (`unresolved` when the remote could not be resolved), never in
+ * the repository tree (doctrine forbids task state there).
+ */
+export type FolderFallbackRecord = {
+  at: string
+  reason: string
+  intendedUrl: string
+  kind: FolderFallbackReason['kind']
+}
+
+export function folderFallbackStatePath(repo: RepoRef | null, stateRoot: string = GLOBAL_VINAYA_HOME): string {
+  const dirName = repo ? `${repo.owner}-${repo.repo}` : 'unresolved'
+  return join(stateRoot, 'fallback', `${dirName}.json`)
+}
+
+/** The last recorded folder fallback for `repo`, or `null` when none is recorded or the file cannot be read/parsed (doctor degrades to "no fallback recorded", never a throw). `stateRoot` defaults to the machine's Vinaya home; a test isolates it by passing its own. */
+export function readFolderFallbackState(
+  repo: RepoRef | null,
+  stateRoot: string = GLOBAL_VINAYA_HOME
+): FolderFallbackRecord | null {
+  try {
+    const parsed = JSON.parse(readFileSync(folderFallbackStatePath(repo, stateRoot), 'utf8')) as unknown
+    if (
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      typeof (parsed as FolderFallbackRecord).at === 'string' &&
+      typeof (parsed as FolderFallbackRecord).reason === 'string'
+    ) {
+      return parsed as FolderFallbackRecord
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * O3: writes the fallback reason where the driver already writes its log
+ * (the task's own `driver.log`, when the event names a task) AND into the
+ * machine-local state file `vinaya doctor` reports — in addition to the
+ * existing one-per-process standard-error line, which the launch path does not
+ * keep. Best-effort throughout: a narration/state write must never break the
+ * run it is narrating, the same posture every other append here takes.
+ *
+ * `runtimeDir` is the task's runtime directory (`driver.log` lives at
+ * `<runtimeDir>/tasks-execution/<issue>/output/driver.log`); in the fallback
+ * case it is exactly `dirname(destination.folder)`, since a refused `logs.url`
+ * always falls back to the DEFAULT `<runtimeDir>/logs` folder, never a
+ * configured one. `stateRoot` is the machine's Vinaya home. Both are passed by
+ * the sink from values a test can inject, so the two writes are isolatable.
+ */
+export function recordFolderFallback(
+  repo: RepoRef | null,
+  issue: number | null,
+  reason: FolderFallbackReason,
+  now: Date,
+  runtimeDir: string,
+  stateRoot: string = GLOBAL_VINAYA_HOME
+): void {
+  const message = describeFolderFallback(reason)
+  if (issue !== null) {
+    appendLoopLogLine(loopLogPathFor(repo, issue, runtimeDir), `[log] ${message}`)
+  }
+  try {
+    const record: FolderFallbackRecord = {
+      at: now.toISOString(),
+      reason: message,
+      intendedUrl: reason.intendedUrl,
+      kind: reason.kind
+    }
+    const path = folderFallbackStatePath(repo, stateRoot)
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+    writeFileSync(path, `${JSON.stringify(record)}\n`, { mode: 0o600 })
+  } catch {
+    // Best-effort — the stderr line and driver.log line already carry the reason.
+  }
 }
 
 function isEnoent(err: unknown): boolean {
@@ -1052,6 +1185,10 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
   const processId = randomUUID()
   let seq = 0
   let warned = false
+  // O3: the driver.log line and the doctor state file are written at most
+  // ONCE per process, like the stderr warning above — a persistently rerouted
+  // run must not append a fresh line per event to its task's narration.
+  let folderFallbackRecorded = false
   const warnOnce = (message: string): void => {
     if (warned) return
     warned = true
@@ -1280,6 +1417,25 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
           processId,
           inputVersions: deps.inputVersions()
         })
+        // O3: keep the fallback reason where a launch path that discards
+        // standard error still surfaces it — the task's own driver.log (when
+        // the event names a task) and the state file `vinaya doctor` reports.
+        // Done here, after the header names the issue, so the driver.log line
+        // lands under the right task; guarded to once per process.
+        if (resolvedDestination.kind === 'folder' && resolvedDestination.fallbackReason && !folderFallbackRecorded) {
+          folderFallbackRecorded = true
+          recordFolderFallback(
+            repo,
+            header.subject.issue,
+            resolvedDestination.fallbackReason,
+            now,
+            // The fallback always resolves the DEFAULT `<runtimeDir>/logs`
+            // folder, so its parent is the task's runtime dir — where
+            // `driver.log` lives.
+            dirname(resolvedDestination.folder),
+            join(deps.home(), '.vinaya')
+          )
+        }
         // `header` spreads LAST: it carries the only trusted `meta`/`subject`
         // values (environment/remote/package/tree-derived), and `e`'s type
         // excludes those keys but a caller passing a wider-typed or `as any`
