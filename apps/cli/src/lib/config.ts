@@ -595,7 +595,14 @@ export const VinayaConfigSchema = z.object({
       // citing a tranche, an Issue, or a document outside this repository.
       // Exempts a path the defaults below brought in exactly as it exempts
       // one under an app's own `specs/**`.
-      specGrandfather: z.array(z.string().min(1)).optional(),
+      //
+      // Two forms. An array exempts each listed file entirely. An object maps
+      // each listed file to the most spec-class findings it may carry: above
+      // its number the file fails, at or below it passes, so a listed file
+      // can no longer gain a citation and its number only goes down.
+      specGrandfather: z
+        .union([z.array(z.string().min(1)), z.record(z.string().min(1), z.number().int().min(0))])
+        .optional(),
       // Repo-relative files or folders ADDED to the spec class, on top of
       // the defaults every repository gets with no configuration at all: a
       // root `SPEC.md`, a root `CONTEXT.md`, every `.md` under `docs/adr/`,
