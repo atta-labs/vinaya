@@ -33,7 +33,7 @@ export type ResolvedRole = {
   name: string
   state: RoleResolutionState
   source: 'core' | 'config'
-  /** The role's own `role_id` — what every renderer (this table, `DiagramModel`, `vinaya doctrine --role`) actually shows. Equals `name` for `default`/`overridden`; the post-"/" segment for `additive`. */
+  /** The role's own `role_id` — what every renderer (this table, `DiagramModel`, `vinaya doctrine --role`, which resolves through this plan via `plan.ts`'s `resolveRoleFile`) actually shows. Equals `name` for `default`/`overridden`; the post-"/" segment for `additive`. */
   renderId: string
   contract: RoleContract
   /**

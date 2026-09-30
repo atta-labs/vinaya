@@ -10,8 +10,14 @@ const CLI_ENTRY = join(import.meta.dir, '..', 'src', 'index.ts')
 // NOT in the same file as doctrine-pointer.test.ts, deliberately: that file
 // mock.module()s package-root.js, and this command needs the real resolver.
 
-/** Capture process.stdout.write output during `fn`, returning the output. */
-function captureStdout(fn: () => void): string {
+/**
+ * Capture process.stdout.write output during `fn`, returning the output.
+ * `fn` may be async: `doctrineCommand` is now async (its `--role` branch
+ * awaits the shared role plan `resolveRoleFile`), so the capture must await it
+ * before restoring stdout — otherwise a `--role … --print` write lands after
+ * the original writer is back and is lost.
+ */
+async function captureStdout(fn: () => void | Promise<void>): Promise<string> {
   const original = process.stdout.write.bind(process.stdout)
   let buf = ''
   process.stdout.write = ((chunk: string) => {
@@ -19,7 +25,7 @@ function captureStdout(fn: () => void): string {
     return true
   }) as typeof process.stdout.write
   try {
-    fn()
+    await fn()
   } finally {
     process.stdout.write = original
   }
@@ -27,22 +33,22 @@ function captureStdout(fn: () => void): string {
 }
 
 describe('vinaya doctrine', () => {
-  it('prints an absolute front-door path that exists on this machine', () => {
-    const printed = captureStdout(() => doctrineCommand([])).trim()
+  it('prints an absolute front-door path that exists on this machine', async () => {
+    const printed = (await captureStdout(() => doctrineCommand([]))).trim()
     expect(isAbsolute(printed)).toBe(true)
     expect(printed.endsWith(join('aeg-root', 'skills', 'aeg', 'SKILL.md'))).toBe(true)
     expect(existsSync(printed)).toBe(true)
   })
 
-  it('--json emits the envelope with a coherent root/entry pair', () => {
-    const out = captureStdout(() => doctrineCommand(['--json']))
+  it('--json emits the envelope with a coherent root/entry pair', async () => {
+    const out = await captureStdout(() => doctrineCommand(['--json']))
     const parsed = JSON.parse(out)
     expect(parsed.schema).toBe(1)
     expect(parsed.data.entry).toBe(join(parsed.data.root, 'skills', 'aeg', 'SKILL.md'))
     expect(existsSync(parsed.data.entry)).toBe(true)
   })
 
-  it('--role <name> resolves straight to roles/<name>.md under the same root', () => {
+  it('--role <name> resolves straight to roles/<name>.md under the same root', async () => {
     const root = resolveDoctrineRoot()
     if (root === null) throw new Error('no doctrine root on this machine — cannot exercise --role')
     const [firstRole] = readdirSync(join(root, 'roles'))
@@ -51,23 +57,23 @@ describe('vinaya doctrine', () => {
       .sort()
     if (firstRole === undefined) throw new Error('no role files found under aeg-root/roles')
 
-    const printed = captureStdout(() => doctrineCommand(['--role', firstRole])).trim()
+    const printed = (await captureStdout(() => doctrineCommand(['--role', firstRole]))).trim()
     expect(isAbsolute(printed)).toBe(true)
     expect(printed).toBe(join(root, 'roles', `${firstRole}.md`))
     expect(existsSync(printed)).toBe(true)
   })
 
-  it('--template <name> resolves to templates/<name>-template.md under the same root (Issue #807)', () => {
+  it('--template <name> resolves to templates/<name>-template.md under the same root (Issue #807)', async () => {
     const root = resolveDoctrineRoot()
     if (root === null) throw new Error('no doctrine root on this machine — cannot exercise --template')
 
-    const printed = captureStdout(() => doctrineCommand(['--template', 'pr-report'])).trim()
+    const printed = (await captureStdout(() => doctrineCommand(['--template', 'pr-report']))).trim()
     expect(printed).toBe(join(root, 'templates', 'pr-report-template.md'))
     expect(existsSync(printed)).toBe(true)
   })
 
-  it('--template <name> --print emits the template body, frontmatter stripped (Issue #807)', () => {
-    const printed = captureStdout(() => doctrineCommand(['--template', 'pr-report', '--print']))
+  it('--template <name> --print emits the template body, frontmatter stripped (Issue #807)', async () => {
+    const printed = await captureStdout(() => doctrineCommand(['--template', 'pr-report', '--print']))
     // The brief names this command where it used to name a path only this
     // repository has, so its output must be the report the Developer starts
     // from — not a path, and not the file's frontmatter.
@@ -76,7 +82,7 @@ describe('vinaya doctrine', () => {
     expect(printed).toContain('<!-- AEG:CLOSES:START -->')
   })
 
-  it('--role <name> --json emits the envelope with a coherent root/entry pair', () => {
+  it('--role <name> --json emits the envelope with a coherent root/entry pair', async () => {
     const root = resolveDoctrineRoot()
     if (root === null) throw new Error('no doctrine root on this machine — cannot exercise --role')
     const [firstRole] = readdirSync(join(root, 'roles'))
@@ -85,7 +91,7 @@ describe('vinaya doctrine', () => {
       .sort()
     if (firstRole === undefined) throw new Error('no role files found under aeg-root/roles')
 
-    const out = captureStdout(() => doctrineCommand(['--role', firstRole, '--json']))
+    const out = await captureStdout(() => doctrineCommand(['--role', firstRole, '--json']))
     const parsed = JSON.parse(out)
     expect(parsed.schema).toBe(1)
     expect(parsed.data.entry).toBe(join(parsed.data.root, 'roles', `${firstRole}.md`))
@@ -120,7 +126,7 @@ describe('vinaya doctrine', () => {
     expect(stderr).toContain('brief')
   })
 
-  it('a templates/ file that is not *-template.md is never enumerated as a name (round 2, F3)', () => {
+  it('a templates/ file that is not *-template.md is never enumerated as a name (round 2, F3)', async () => {
     const root = resolveDoctrineRoot()
     if (root === null) throw new Error('no doctrine root on this machine — cannot exercise --template')
     const stray = join(root, 'templates', 'round-2-stray.md')
@@ -132,6 +138,10 @@ describe('vinaya doctrine', () => {
       // it must be exact inverses: an optional-suffix strip offered `stray`
       // and then died on an uncaught ENOENT for `stray-template.md`, and a
       // DIRECTORY named `*-template.md` passes a name test and fails the read.
+      // `doctrineCommand` is async now, so a `process.exit` override throws
+      // into a rejected promise rather than a synchronous throw — assert on
+      // `.rejects`. The `--template` branch runs before any `await`, so the
+      // throw still happens synchronously inside the promise.
       let stderr = ''
       const originalWrite = process.stderr.write.bind(process.stderr)
       const originalExit = process.exit.bind(process)
@@ -143,8 +153,8 @@ describe('vinaya doctrine', () => {
         throw new Error(`exit:${code}`)
       }) as typeof process.exit
       try {
-        expect(() => doctrineCommand(['--template', 'round-2-stray'])).toThrow('exit:1')
-        expect(() => doctrineCommand(['--template', 'round-2-stray-template'])).toThrow('exit:1')
+        await expect(doctrineCommand(['--template', 'round-2-stray'])).rejects.toThrow('exit:1')
+        await expect(doctrineCommand(['--template', 'round-2-stray-template'])).rejects.toThrow('exit:1')
       } finally {
         process.stderr.write = originalWrite
         process.exit = originalExit
@@ -212,32 +222,32 @@ describe('vinaya doctrine', () => {
     expect(stderr).toContain('--role planner')
   })
 
-  it("--print emits the resolved file's body (frontmatter stripped), not its path", () => {
+  it("--print emits the resolved file's body (frontmatter stripped), not its path", async () => {
     const root = resolveDoctrineRoot()
     if (root === null) throw new Error('no doctrine root on this machine')
-    const printed = captureStdout(() => doctrineCommand(['--role', 'developer', '--print']))
-    const path = captureStdout(() => doctrineCommand(['--role', 'developer'])).trim()
+    const printed = await captureStdout(() => doctrineCommand(['--role', 'developer', '--print']))
+    const path = (await captureStdout(() => doctrineCommand(['--role', 'developer']))).trim()
     expect(printed).not.toContain(path)
     expect(printed).toContain('Developer')
     // Frontmatter's opening fence is never in the printed output.
     expect(printed.trimStart().startsWith('---')).toBe(false)
   })
 
-  it('--role <name> without --print stays byte-identical to the path-only output — a flag, never a default', () => {
-    const withoutFlag = captureStdout(() => doctrineCommand(['--role', 'developer']))
+  it('--role <name> without --print stays byte-identical to the path-only output — a flag, never a default', async () => {
+    const withoutFlag = await captureStdout(() => doctrineCommand(['--role', 'developer']))
     // Re-running the exact same call is the byte-identical proof: nothing
     // about resolving `--print`'s presence/absence touches this branch.
-    expect(captureStdout(() => doctrineCommand(['--role', 'developer']))).toBe(withoutFlag)
+    expect(await captureStdout(() => doctrineCommand(['--role', 'developer']))).toBe(withoutFlag)
     expect(withoutFlag.trim().endsWith(join('roles', 'developer.md'))).toBe(true)
   })
 
-  it("bare (no --role) --print emits the front door's body, not its path", () => {
-    const printed = captureStdout(() => doctrineCommand(['--print']))
-    const path = captureStdout(() => doctrineCommand([])).trim()
+  it("bare (no --role) --print emits the front door's body, not its path", async () => {
+    const printed = await captureStdout(() => doctrineCommand(['--print']))
+    const path = (await captureStdout(() => doctrineCommand([]))).trim()
     expect(printed).not.toContain(path)
   })
 
-  it("--print --role <name> emits every agent role's ack-token as its own first line (O2)", () => {
+  it("--print --role <name> emits every agent role's ack-token as its own first line (O2)", async () => {
     const root = resolveDoctrineRoot()
     if (root === null) throw new Error('no doctrine root on this machine')
     const roleNames = readdirSync(join(root, 'roles'))
@@ -252,7 +262,7 @@ describe('vinaya doctrine', () => {
       const { data } = matter(readFileSync(join(root, 'roles', `${role}.md`), 'utf8'))
       const ackToken = data['ack-token']
       expect(typeof ackToken, `${role}.md carries no ack-token frontmatter`).toBe('string')
-      const printed = captureStdout(() => doctrineCommand(['--role', role, '--print']))
+      const printed = await captureStdout(() => doctrineCommand(['--role', role, '--print']))
       expect(printed.split('\n')[0]).toBe(ackToken)
     }
   })
@@ -293,14 +303,14 @@ describe('vinaya doctrine', () => {
     expect(existsSync(join(root, 'roles', 'planner', 'reference.md'))).toBe(true)
   })
 
-  it('actor: agent and actor: either roles both still resolve — the exclusion is actor-specific, not a blanket narrowing', () => {
+  it('actor: agent and actor: either roles both still resolve — the exclusion is actor-specific, not a blanket narrowing', async () => {
     const root = resolveDoctrineRoot()
     if (root === null) throw new Error('no doctrine root on this machine')
     // developer.md is actor: agent; archivist.md is actor: either — both must
     // still be reachable, proving this isn't an accidental narrowing to a
     // single actor value.
     for (const role of ['developer', 'archivist']) {
-      const printed = captureStdout(() => doctrineCommand(['--role', role])).trim()
+      const printed = (await captureStdout(() => doctrineCommand(['--role', role]))).trim()
       expect(printed).toBe(join(root, 'roles', `${role}.md`))
       expect(existsSync(printed)).toBe(true)
     }

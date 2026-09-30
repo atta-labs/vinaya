@@ -153,7 +153,7 @@ try {
       break
     }
     case 'doctrine': {
-      doctrineCommand(args)
+      await doctrineCommand(args)
       break
     }
     case 'upgrade': {

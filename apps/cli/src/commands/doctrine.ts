@@ -14,6 +14,7 @@ import { dirname, join, sep } from 'node:path'
 import matter from 'gray-matter'
 import { printJson } from '../lib/envelope.js'
 import { packageRoot } from '../lib/package-root.js'
+import { resolveRoleFile } from '../roles/plan.js'
 
 /** The doctrine's front door, relative to its `aeg-root/`. */
 export const ENTRY_SEGMENTS = ['skills', 'aeg', 'SKILL.md'] as const
@@ -129,31 +130,6 @@ export function hasDoctrineEntry(root: string): boolean {
   return existsSync(join(root, ...ENTRY_SEGMENTS))
 }
 
-/**
- * Role names actually available under `<root>/roles/`, from `*.md` filenames —
- * never a hardcoded list. Excludes any role whose frontmatter declares
- * `actor: human` (`principal`) — `--role` hands its output to a third-party
- * agent tool as operating instructions (`.agents/skills/`, `.claude/commands/`,
- * `.gemini/commands/` all shell out to this exact flag), so a human-only role
- * must never resolve through it: doing so would tell an AI tool to act with
- * the one authority this doctrine deliberately never grants an agent. Filtered
- * on the same structured `actor` signal `agents-skills-emitter.ts`'s own
- * `discoverRoleNames()` already uses, not a hardcoded name exclusion, so a
- * future human-only role is excluded automatically.
- */
-function listRoleNames(root: string): string[] {
-  const rolesDir = join(root, 'roles')
-  if (!existsSync(rolesDir)) return []
-  return readdirSync(rolesDir)
-    .filter((name) => name.endsWith('.md'))
-    .map((name) => name.slice(0, -'.md'.length))
-    .filter((roleName) => {
-      const { data } = matter(readFileSync(join(rolesDir, `${roleName}.md`), 'utf8'))
-      return data.actor !== 'human'
-    })
-    .sort()
-}
-
 /** The filename shape a `--template` name is derived from, and rebuilt into. */
 const TEMPLATE_SUFFIX = '-template.md'
 
@@ -180,7 +156,7 @@ function listTemplateNames(root: string): string[] {
     .sort()
 }
 
-export function doctrineCommand(args: string[]): void {
+export async function doctrineCommand(args: string[]): Promise<void> {
   const root = resolveDoctrineRoot()
   if (root === null) {
     process.stderr.write(
@@ -232,15 +208,26 @@ export function doctrineCommand(args: string[]): void {
       )
       process.exit(1)
     }
-    const validRoleNames = listRoleNames(root)
-    if (roleName === undefined || roleName.startsWith('--') || !validRoleNames.includes(roleName)) {
+    // Resolve the (alias-canonicalised) name through the SAME role plan the
+    // review loop resolves against (`../roles/plan.ts`'s `resolveRoleFile`), so
+    // a config override or additive role is served here too — not just the bare
+    // `<root>/roles/<name>.md` files enumerated under the doctrine root. A
+    // missing name / a bare `--flag` in the value slot matches no render id, so
+    // it falls to the "not a known role" refusal below, which lists the
+    // servable names (overrides and additives included).
+    const resolution = await resolveRoleFile(roleName !== undefined && !roleName.startsWith('--') ? roleName : '')
+    if (!resolution.available) {
+      process.stderr.write(`vinaya doctrine --role: ${resolution.reason}\n`)
+      process.exit(1)
+    }
+    if (!resolution.found) {
       process.stderr.write(
         `vinaya doctrine --role: '${requested ?? ''}' is not a known role. ` +
-          `Valid role names: ${validRoleNames.join(', ')}\n`
+          `Valid role names: ${resolution.validNames.join(', ')}\n`
       )
       process.exit(1)
     }
-    entry = join(root, 'roles', `${roleName}.md`)
+    entry = resolution.path
   } else {
     entry = join(root, ...ENTRY_SEGMENTS)
   }
