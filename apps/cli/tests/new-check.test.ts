@@ -5,7 +5,6 @@ import { join } from 'node:path'
 import type { CheckSpec } from '../src/checks/contract'
 import { coreCheckRegistry } from '../src/checks/registry'
 import { runChecks } from '../src/checks/runner'
-import { resetTrustAnchorConfigMemo } from '../src/lib/log-sink.js'
 
 const CLI_ENTRY = join(import.meta.dir, '..', 'src', 'index.ts')
 
@@ -16,20 +15,18 @@ afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true })
     tmpDir = undefined
   }
-  // The round-trip below calls `runChecks` in this very process, and
-  // `runChecks` logs — so the default branch's own config, which an unattended
-  // caller reads over the trust anchor, is read from THIS repository's checkout
-  // and memoized for the whole `bun:test` process. A later file driving a
-  // temporary world of its own is then told the default branch declares a
-  // `logs.url` server, and delivers its events there instead of to that
-  // world's own folder, which it reads back empty:
-  // `lib/dev-review-loop/inproc-1.test.ts` fails its `journal_finalized` count
-  // exactly that way, and only when it runs after this file. Every
-  // process-lifetime memo this file populates is dropped here, in the file that
-  // populated it — the destination the world's own runtime dir resolves to is
-  // the harness's own to reset (`dev-review-loop-harness.ts`), and does not
-  // need dropping here.
-  resetTrustAnchorConfigMemo()
+  // No trust-anchor reset is needed here any more. The round-trip below calls
+  // `runChecks` in this very process, and `runChecks` logs — so the default
+  // branch's own config is read over the trust anchor from THIS repository's
+  // checkout. It used to be memoized for the whole `bun:test` process in a
+  // single unkeyed slot, so a later file driving a temporary fixture
+  // repository was served this checkout's `logs.url` server and delivered its
+  // events there instead of to its own folder, which it read back empty
+  // (`lib/dev-review-loop/inproc-1.test.ts`'s `journal_finalized` count, only
+  // when it ran after this file). The sink now keys that cache by repository
+  // root (`log-sink.ts`'s `processTrustAnchorByRepo`), so this checkout's
+  // config never reaches another repository's fixture and nothing has to be
+  // reset between files.
 })
 
 describe('vinaya new check (scaffold round-trip)', () => {
