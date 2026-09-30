@@ -182,31 +182,103 @@ export function readLogHeaderKeychainCredential(variable: string): string | null
   return value
 }
 
+/** The variable name is the item's account, and it is the one field this module puts on `security`'s own command line (both the store command it feeds `security -i` and the read-back's argument list). It is never a secret, but it MUST be a plain identifier so it cannot alter how `security -i`'s tokeniser parses the store command — the same shape `log-set-credential.ts` already validates before calling in, re-asserted here so the module is safe against any future caller. */
+const LOG_HEADER_KEYCHAIN_ACCOUNT_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
+
+/** Runs `/usr/bin/security` with `input` on its standard input, returning the child's stdout; throws exactly as `execFileSync` does on a non-zero exit. Exported so the macOS round-trip test (`log-set-credential.test.ts`) drives the EXACT production runner while recording its argument list (O2/O5), rather than a second exec shape that could drift from this one. */
+export function runRealSecurityCommand(args: readonly string[], input: string): string {
+  return execFileSync('/usr/bin/security', args as string[], {
+    input,
+    encoding: 'utf8',
+    stdio: ['pipe', 'pipe', 'ignore'],
+    timeout: 5_000,
+    maxBuffer: 1024 * 1024
+  })
+}
+
+export type StoreLogHeaderKeychainDeps = {
+  /** The runner both the store and the read-back go through; defaults to the real `/usr/bin/security`. Injected so a Linux-CI test can record every invocation's argument list (O2) and a macOS test can wrap the real runner to prove the round trip (O5). */
+  runSecurity?: (args: readonly string[], input: string) => string
+  /** The trailing keychain path both the store and the read-back target. Omitted in production — the default (login) keychain, exactly what the delivery read consults. Set to a throwaway keychain FILE in the macOS test, never the login keychain (this task's Traps). */
+  keychain?: string
+  /** Overridable only so the darwin-only guard can be exercised from Linux CI alongside an injected `runSecurity`; defaults to the real platform. */
+  platform?: NodeJS.Platform
+}
+
+/** Reads the just-stored item straight back from `security` (never the per-process cache), for the round-trip confirmation below. `null` when the item is absent — `find-generic-password` exits non-zero and the runner throws. `-w` prints the password and a trailing newline, which is stripped, exactly as the delivery read (`readRealLogHeaderKeychainCredential`) does. */
+function readBackLogHeaderKeychainCredential(
+  runSecurity: (args: readonly string[], input: string) => string,
+  variable: string,
+  keychainArgs: readonly string[]
+): string | null {
+  try {
+    return runSecurity(
+      ['find-generic-password', '-s', LOG_HEADER_KEYCHAIN_SERVICE, '-a', variable, '-w', ...keychainArgs],
+      ''
+    ).replace(/\n$/, '')
+  } catch {
+    return null
+  }
+}
+
 /**
  * Stores a `logs.headers` credential in the login Keychain under
  * `LOG_HEADER_KEYCHAIN_SERVICE`, keyed by the variable NAME as its account
- * (O2). The value reaches `security` through STANDARD INPUT — `-w`
- * is passed LAST with no value on the command line, so `ps` can never show it —
- * and `-U` updates an existing item in place rather than refusing. Never prints,
- * returns or puts the value in an error; a failure message carries only the
- * process's exit code. The real macOS stdin round-trip is not live-verifiable on
- * this Linux authoring host — the disclosed-limit posture this module already
- * takes for the Codex `--with-access-token` path — so tests inject a fake store;
- * the invocation shape follows this task's own Traps section.
+ * (O2), then confirms the write by reading the item back and refusing unless it
+ * round-trips (O4).
+ *
+ * The value reaches `security` ONLY through the standard-input command stream of
+ * `security -i`, hex-encoded with `-X` — so it is never a `security` argument a
+ * `ps` listing could show (O2), and no space, quote or backslash in it can change
+ * how `security -i`'s tokeniser parses the store command (O3). An earlier shape
+ * — `add-generic-password … -w` with `-w` LAST and empty and the value piped to
+ * stdin — did NOT do this: `-w` last means "prompt for the password", which
+ * `security` reads from the terminal, so with no terminal the command exited 0
+ * and stored nothing. That silent success is exactly why the store now confirms
+ * by reading back rather than trusting the exit code. `-U` updates an existing
+ * item in place. Never prints, returns or puts the value in an error; a failure
+ * message carries only the process's exit code (store) or names the variable, and
+ * never the value (round-trip mismatch).
  */
-export function storeLogHeaderKeychainCredential(variable: string, value: string): void {
-  if (process.platform !== 'darwin') {
+export function storeLogHeaderKeychainCredential(
+  variable: string,
+  value: string,
+  deps: StoreLogHeaderKeychainDeps = {}
+): void {
+  const platform = deps.platform ?? process.platform
+  if (platform !== 'darwin') {
     throw new Error('storing a log credential in the Keychain is supported only on macOS')
   }
+  if (!LOG_HEADER_KEYCHAIN_ACCOUNT_PATTERN.test(variable)) {
+    throw new Error(`refusing to store the ${variable} log credential: the variable name is not a plain identifier`)
+  }
+  const runSecurity = deps.runSecurity ?? runRealSecurityCommand
+  const keychainArgs = deps.keychain === undefined ? [] : [deps.keychain]
+
+  // The command `security -i` reads: the service is a fixed constant quoted for
+  // its tokeniser, the account is the validated plain identifier, and the value
+  // is hex so nothing in it can be a token boundary. A trailing keychain path (if
+  // any) is quoted the same way.
+  const hex = Buffer.from(value, 'utf8').toString('hex')
+  const keychainToken = keychainArgs.length === 0 ? '' : ` ${JSON.stringify(keychainArgs[0])}`
+  const command =
+    `add-generic-password -U -s ${JSON.stringify(LOG_HEADER_KEYCHAIN_SERVICE)} ` +
+    `-a ${variable} -X ${hex}${keychainToken}\n`
   try {
-    execFileSync(
-      '/usr/bin/security',
-      ['add-generic-password', '-U', '-s', LOG_HEADER_KEYCHAIN_SERVICE, '-a', variable, '-w'],
-      { input: value, stdio: ['pipe', 'ignore', 'ignore'], timeout: 5_000 }
-    )
+    runSecurity(['-i'], command)
   } catch (error) {
     const e = error as { status?: number | null }
     throw new Error(`security add-generic-password failed (exit ${e.status ?? 'unknown'})`)
+  }
+
+  // O4: `security -i` reports success even when the write did not happen, so the
+  // only trustworthy confirmation is to read the item back and compare.
+  const readBack = readBackLogHeaderKeychainCredential(runSecurity, variable, keychainArgs)
+  if (readBack !== value) {
+    throw new Error(
+      `storing the ${variable} log credential did not round-trip: the Keychain item is ` +
+        `${readBack === null ? 'absent' : 'different'} after the write`
+    )
   }
   logHeaderKeychainCache.set(variable, value)
 }

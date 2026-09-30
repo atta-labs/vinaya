@@ -6,9 +6,10 @@
 // listing could show — `printf %s "$TOKEN" | vinaya log set-credential
 // VINAYA_LOG_TOKEN`. Only the variable NAME, which is not a secret, sits on the
 // command line. The command prints a confirmation naming the variable and never
-// echoes, returns, or logs the value; the low-level `security add-generic-password`
-// invocation (`-w` last and empty, value on stdin) lives in `worker-boundary.ts`,
-// beside the Codex worker's own Keychain access.
+// echoes, returns, or logs the value; the low-level `security` invocation —
+// `add-generic-password … -X <hex>` fed to `security -i` over standard input, then
+// a read-back that confirms the write (O4) — lives in `worker-boundary.ts`, beside
+// the Codex worker's own Keychain access.
 
 import { storeLogHeaderKeychainCredential } from '../lib/worker-boundary.js'
 
@@ -42,9 +43,10 @@ export function realLogSetCredentialDeps(): LogSetCredentialDeps {
 }
 
 /**
- * Returns the process exit code — `0` on a stored credential, `2` for a missing
- * or malformed variable name or empty stdin, `1` when the Keychain write itself
- * failed (its message carries only the process's exit code, never the value).
+ * Returns the process exit code — `0` on a stored credential the store CONFIRMED
+ * by reading it back, `2` for a missing or malformed variable name or empty stdin,
+ * `1` when the Keychain write failed or did not round-trip (its message carries
+ * only the process's exit code or names the variable, never the value).
  */
 export async function logSetCredentialCommand(
   args: string[],
