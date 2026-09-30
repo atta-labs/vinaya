@@ -19,7 +19,7 @@
  * overflow past a store's capacity is REPORTED (`AppendOutcome.overflow`),
  * never the silent single-slot overwrite the outbox rotation performed.
  * Read-back (`readPage` / `classifyStoredLine`) validates each line's schema
- * version and — for a `schema: 2` line — its provenance, re-applies
+ * version and — for a `schema: 2` or `3` line — its provenance, re-applies
  * `redact()` at the read (transport) boundary, and PRESERVES a record whose
  * schema version this build has never heard of as an `unknown_version`
  * record for diagnosis rather than dropping it or failing the whole page.
@@ -39,7 +39,7 @@ export const KNOWN_SCHEMA_VERSIONS = [1, 2, 3] as const
 
 /**
  * A record's stable identity across retry, concurrent append and a lost
- * acknowledgement (O2). A `schema: 2` line carries a per-event `event_id`,
+ * acknowledgement (O2). A `schema: 2` or `3` line carries a per-event `event_id`,
  * generated once per `log()` call — that is the identity. A `schema: 1` line
  * predates `event_id`; its identity is `${run_id}:${seq}`, the same
  * `run_id`/`seq` pair the flush's `<!-- aeg:log:<run_id>:<seq> -->` marker is
@@ -119,7 +119,7 @@ export type ReadRecord =
 
 /**
  * Classifies one stored line: validates its schema version and (for
- * `schema: 2`) its provenance, re-applies `redact(event, home)` at this read
+ * `schema: 2` or `3`) its provenance, re-applies `redact(event, home)` at this read
  * (transport) boundary, and distinguishes three outcomes:
  *
  *  - `ok` — a known schema version that fully re-validated. `postLine` is the

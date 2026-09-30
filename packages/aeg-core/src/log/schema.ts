@@ -16,8 +16,9 @@
  * same thing) or `2` (adds `event_id`, `process_id`, `lineage`,
  * `input_versions`, `provenance` — O1's "task/run/attempt/parent lineage,
  * producer sequence, opaque role and process identifiers, input versions
- * and trust provenance"). `buildHeader` (`envelope.ts`) builds `2` for
- * every event from this task forward; `1` exists so a line already on disk
+ * and trust provenance") or `3` (adds `work`, `flow`, `runtime`, `source`).
+ * `buildHeader` (`envelope.ts`) builds `3` for every event; `1` and `2`
+ * exist so a line already on disk
  * (or a fixture recorded before this task) keeps parsing, never a schema
  * violation just because it predates these fields (O1's "compatible").
  * Absent per-field data on a `2` header is `null`, never invented — the
