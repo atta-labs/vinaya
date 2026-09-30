@@ -1232,6 +1232,14 @@ export type WorkerBoundaryLaunchOpts = {
   stageOAuthCredential?: boolean
   stageCodexCredential?: boolean
   codexHooksPath?: string | null
+  /**
+   * The execpolicy `.rules` text (`dispatch.ts`'s
+   * `buildCodexExecpolicyRules`) that denies this run's machine-state
+   * commands — written verbatim into the staged `CODEX_HOME/rules/`, where
+   * Codex discovers it at startup, never the operator's own `~/.codex`.
+   * `null`/omitted for `claude`/`gemini` or a role that carries no floor.
+   */
+  codexExecpolicyRules?: string | null
 }
 
 /**
@@ -1348,6 +1356,20 @@ export function resolveWorkerBoundaryLaunch(
         ].join('\n'),
         { mode: 0o600 }
       )
+      if (opts.codexExecpolicyRules) {
+        // The machine-state deny floor for this Codex run. Unlike
+        // the hooks above — which the real Codex CLI only discovers inside an
+        // installed plugin's directory — execpolicy `.rules` files ARE
+        // discovered from `<CODEX_HOME>/rules/*.rules` directly (live-verified
+        // against `codex-cli 0.152.1`), so a plain write into the staged home
+        // is all Codex needs. A write fault throws here, is caught by this
+        // function's own outer `try`, and returns a boundary refusal — so an
+        // unattended dispatch that cannot establish this policy fails closed,
+        // never launches unprotected.
+        const rulesDir = join(codexHomeDir, 'rules')
+        mkdirSync(rulesDir, { recursive: true, mode: 0o700 })
+        writeFileSync(join(rulesDir, 'vinaya-machine-state.rules'), opts.codexExecpolicyRules, { mode: 0o600 })
+      }
       if (opts.codexHooksPath) {
         // Round 7 review, BLOCKER: see `buildCodexHooksMarketplace`'s own
         // doc comment for why this is a plugin install, never a bare file

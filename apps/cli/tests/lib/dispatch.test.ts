@@ -58,6 +58,7 @@ import {
   getProcessSnapshot,
   matchesCapturedIdentity,
   buildRolePermissions,
+  buildCodexExecpolicyRules,
   buildWriteAccessScope,
   addCodexWritableDirs,
   PERMISSION_POLICY_VERSION,
@@ -3369,6 +3370,84 @@ describe('buildRolePermissions — Issue #865, O1/O2/O3: machine-state commands 
   })
 })
 
+describe('buildCodexExecpolicyRules — Issue #884: a Codex dispatch carries the same machine-state floor', () => {
+  // The families O1 names, and the token pattern each `Bash(<prefix>:*)` glob
+  // translates to. Kept here as the test's own independent expectation — the
+  // generator derives the SAME set from `buildRolePermissions().deny`, so a
+  // divergence between the two is the bug this catches.
+  const EXPECTED_PATTERNS: Array<[string, string[]]> = [
+    ['security', ['security']],
+    ['launchctl', ['launchctl']],
+    ['defaults', ['defaults']],
+    ['systemsetup', ['systemsetup']],
+    ['networksetup', ['networksetup']],
+    ['pmset', ['pmset']],
+    ['dscl', ['dscl']],
+    ['crontab', ['crontab']],
+    ['chsh', ['chsh']],
+    ['git config --global', ['git', 'config', '--global']],
+    ['git config --system', ['git', 'config', '--system']],
+    ['sudo', ['sudo']]
+  ]
+
+  for (const role of ['developer', 'code-reviewer', 'security'] as const) {
+    it(`${role}: every machine-state family is a forbidden prefix_rule, in Codex's own grammar`, () => {
+      const rules = buildCodexExecpolicyRules(role)
+      expect(rules).not.toBeNull()
+      for (const [, pattern] of EXPECTED_PATTERNS) {
+        expect(rules).toContain(`prefix_rule(pattern = ${JSON.stringify(pattern)}, decision = "forbidden"`)
+      }
+    })
+  }
+
+  it('the deny floor and the role gating are BOTH read out of buildRolePermissions — never a second list', () => {
+    for (const role of ['developer', 'code-reviewer', 'security', 'planner', 'principal', 'architect'] as const) {
+      const deny = buildRolePermissions(role).deny
+      const machineGlobs = deny.filter((rule) => EXPECTED_PATTERNS.some(([prefix]) => rule === `Bash(${prefix}:*)`))
+      const rules = buildCodexExecpolicyRules(role)
+      if (machineGlobs.length === 0) {
+        // A role that carries no floor on the Claude side carries none here.
+        expect(rules).toBeNull()
+      } else {
+        // …and exactly one forbidden rule per machine-state glob that role denies.
+        expect(rules).not.toBeNull()
+        const forbiddenCount = (rules as string).match(/decision = "forbidden"/g)?.length ?? 0
+        expect(forbiddenCount).toBe(machineGlobs.length)
+      }
+    }
+  })
+
+  it('a role outside the three the loop dispatches gets no .rules file at all', () => {
+    expect(buildCodexExecpolicyRules('planner')).toBeNull()
+    expect(buildCodexExecpolicyRules('principal')).toBeNull()
+    expect(buildCodexExecpolicyRules('archivist')).toBeNull()
+    expect(buildCodexExecpolicyRules('architect')).toBeNull()
+  })
+
+  it('git config is split by scope: global/system forbidden, repository scope guarded by a not_match', () => {
+    const rules = buildCodexExecpolicyRules('developer') as string
+    // The two scoped prefixes are forbidden…
+    expect(rules).toContain('prefix_rule(pattern = ["git","config","--global"], decision = "forbidden"')
+    expect(rules).toContain('prefix_rule(pattern = ["git","config","--system"], decision = "forbidden"')
+    // …but a bare `["git","config"]` prefix — which would refuse Step 0's own
+    // repository-scoped `git config` — is never emitted, and the not_match
+    // pins that split into the file's own Codex load-time validation.
+    expect(rules).not.toContain('prefix_rule(pattern = ["git","config"],')
+    expect(rules).toContain('not_match = [["git","config","x"]]')
+  })
+
+  it('O3: the .rules file carries the same version string the Claude Code policy carries', () => {
+    const rules = buildCodexExecpolicyRules('developer') as string
+    expect(rules).toContain(`permission policy ${PERMISSION_POLICY_VERSION}`)
+  })
+
+  it('the file records that it is generated for the run, never written into the operator’s ~/.codex', () => {
+    const rules = buildCodexExecpolicyRules('developer') as string
+    expect(rules).toContain('do not edit by hand')
+    expect(rules).toContain('~/.codex')
+  })
+})
+
 describe('buildWriteAccessScope — Issue #663, O1 round 2 fix: the real Write/Edit grant', () => {
   it('developer: a directory scope, realpath-resolved', () => {
     const dir = tempDir('vinaya-write-scope-')
@@ -3816,15 +3895,18 @@ describe('writeDispatchSettings — Issue #663, O1/O3: the permission policy is 
   })
 
   /**
-   * Round 4 security review, MEDIUM. The policy is written for `claude`
-   * alone, and no vendor-agnostic refusal mechanism has been confirmed live
-   * — that predates this task and is not closed here. What is closed is the
-   * silence: a `--agent codex`/`--agent gemini` dispatch used to run with no
-   * permission policy at all and leave a run log indistinguishable from a
-   * protected one.
+   * Round 4 security review, MEDIUM. A `--agent gemini` dispatch — and a
+   * `--agent codex` dispatch of a role that carries no machine-state floor —
+   * runs with no permission policy, and says so in its first lifecycle line,
+   * so a run log is never indistinguishable from a protected one. A Codex
+   * dispatch of a floor-carrying role is the separate case just below: it now
+   * DOES carry the machine-state deny list, through Codex's own execpolicy.
    */
-  for (const agent of ['codex', 'gemini'] as const) {
-    it(`an agent that carries no permission policy says so in its own first lifecycle line (${agent})`, () => {
+  for (const [agent, role] of [
+    ['gemini', 'developer'],
+    ['codex', 'planner']
+  ] as const) {
+    it(`an agent that carries no permission policy says so in its own first lifecycle line (${agent}/${role})`, () => {
       const home = tempDir('vinaya-dispatch-home-')
       const cwd = tempDir('vinaya-dispatch-cwd-')
       const binDir = tempDir('vinaya-dispatch-bin-')
@@ -3834,7 +3916,7 @@ describe('writeDispatchSettings — Issue #663, O1/O3: the permission policy is 
       const roleLogPath = join(cwd, 'role.log')
 
       const r = runDispatch(
-        ['developer', '--agent', agent, '--prompt-file', promptFile, '--role-log-path', roleLogPath],
+        [role, '--agent', agent, '--prompt-file', promptFile, '--role-log-path', roleLogPath],
         cwd,
         home,
         `${binDir}:${pathWithoutRealVendors()}`
@@ -3850,6 +3932,39 @@ describe('writeDispatchSettings — Issue #663, O1/O3: the permission policy is 
       expect(policyLine).not.toContain(`permission policy ${PERMISSION_POLICY_VERSION} written to`)
     })
   }
+
+  /**
+   * O1/O3: a `--agent codex` dispatch of a floor-carrying role now carries the
+   * same machine-state deny list a Claude dispatch does, through Codex's own
+   * execpolicy, and names that policy — under the same version string a Claude
+   * dispatch names — in the same first lifecycle position, so a Codex run log
+   * reads the same as a Claude one, never as an unprotected run.
+   */
+  it('a codex dispatch of a floor-carrying role names its machine-state execpolicy under the shared version', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    writeFakeBinary(binDir, 'codex', `#!/bin/sh\nwhile read -r line; do :; done\ncat > /dev/null\necho '{}'\nexit 0\n`)
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    const roleLogPath = join(cwd, 'role.log')
+
+    const r = runDispatch(
+      ['developer', '--agent', 'codex', '--prompt-file', promptFile, '--role-log-path', roleLogPath],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(0)
+
+    const lines = readFileSync(roleLogPath, 'utf8').trim().split('\n')
+    const policyLine = lines.find((l) => l.includes('permission policy'))
+    expect(policyLine).toBeDefined()
+    expect(policyLine).toContain(`permission policy ${PERMISSION_POLICY_VERSION}`)
+    expect(policyLine).toContain('Codex execpolicy')
+    // Never the "unprotected" claim a Claude dispatch's own sibling case makes.
+    expect(policyLine).not.toContain('NO permission policy')
+  })
 
   it("O3: the role's first lifecycle line names the permission policy version it wrote", () => {
     const home = tempDir('vinaya-dispatch-home-')

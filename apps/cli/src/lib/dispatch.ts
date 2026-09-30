@@ -1347,6 +1347,91 @@ export function buildRolePermissions(role: Role): RolePermissions {
   return EMPTY_ROLE_PERMISSIONS
 }
 
+/** The one machine-state command family the Claude side splits by scope. */
+const GIT_CONFIG_TOKENS = ['git', 'config'] as const
+
+/**
+ * The Codex-side counterpart to `buildRolePermissions`' machine-state `deny`
+ * block — the SAME floor `MACHINE_STATE_DENY_RULES` gives a Claude Code
+ * dispatch, translated into Codex's own per-run command-policy grammar so a
+ * `vinaya dispatch <role> --agent codex` run refuses the same commands a
+ * `--agent claude` run of that role refuses (keychain, services, global
+ * settings). Returns the text of an execpolicy `.rules` file, or `null` for a
+ * role that carries no floor on the Claude side either.
+ *
+ * **Mechanism, established live against the installed binary (`codex-cli
+ * 0.152.1`).** Codex has no `permissions.deny` list; its per-run command
+ * policy is an execpolicy `.rules` file written in a small Starlark dialect —
+ * `prefix_rule(pattern = [...tokens], decision = "forbidden", …)` — which
+ * Codex discovers by scanning `<CODEX_HOME>/rules/*.rules` at startup (no
+ * `config.toml` key points at it; it is directory-discovered). `worker-boundary.ts`
+ * writes this text into THIS run's own staged `CODEX_HOME/rules/`, never the
+ * operator's `~/.codex`. The refusal was proven without a real
+ * `security`/`launchctl` call, with Codex's own dry-run checker:
+ *
+ *     $ codex execpolicy check --rules vinaya-machine-state.rules \
+ *         security default-keychain -s /tmp/x.keychain
+ *     {"matchedRules":[{"prefixRuleMatch":{"matchedPrefix":["security"],
+ *       "decision":"forbidden", …}}],"decision":"forbidden"}
+ *     $ codex execpolicy check --rules vinaya-machine-state.rules \
+ *         git config push.autoSetupRemote true
+ *     {"matchedRules":[]}          # repository-scoped git config: not forbidden
+ *
+ * `decision = "forbidden"` "blocks execution without prompting" (Codex's own
+ * docs); the whole list came back `forbidden`, and every doctrine command a
+ * Developer runs (`git commit`/`git push`/`gh pr create`/repository-scoped
+ * `git config`, which Step 0 itself runs) came back with no forbidding rule —
+ * the same scope split the Claude side draws between `Bash(git config
+ * --global:*)`/`Bash(git config --system:*)` and `Bash(git config:*)`.
+ *
+ * **Never a second list.** The commands and the role gating are BOTH read back
+ * out of `buildRolePermissions(role).deny` (filtered to the
+ * `MACHINE_STATE_DENY_RULES` entries), so this function owns neither: a role
+ * that carries no floor there carries none here, and a command added to
+ * `MACHINE_STATE_DENY_RULES` appears in both policies at once. Each
+ * `Bash(<prefix>:*)` glob becomes one `prefix_rule` whose `pattern` is
+ * `<prefix>` split on whitespace (`Bash(security:*)` → `["security"]`;
+ * `Bash(git config --global:*)` → `["git","config","--global"]`). Codex's
+ * prefix match is token-for-token — the same family/prefix match the host's
+ * own `Bash(<prefix>:*)` grammar performs, so this is the same floor with the
+ * same disclosed limit (`roles/developer.md`): a command reached under a
+ * wrapper word, through another interpreter, or with an unusual flag order is
+ * not caught, and the worker sandbox is the containment for those.
+ *
+ * Every rule carries a `match` example, and each git-config-scope rule a
+ * `not_match` proving repository-scoped `git config` stays allowed; Codex
+ * validates both when it loads the file (live-confirmed: a wrong example fails
+ * the load), so a mistranslation — or a later widening of the git-config
+ * prefix to `["git","config"]`, which would refuse Step 0 — fails the file's
+ * own load rather than shipping a silent parity hole.
+ */
+export function buildCodexExecpolicyRules(role: Role): string | null {
+  const deny = buildRolePermissions(role).deny
+  const machineRules = MACHINE_STATE_DENY_RULES.filter((rule) => deny.includes(rule))
+  if (machineRules.length === 0) return null
+
+  const justification = 'machine-state command denied for a dispatched role — the operator runs this, not the agent'
+  const lines: string[] = [
+    `# Vinaya machine-state deny floor for a dispatched Codex run — permission policy ${PERMISSION_POLICY_VERSION}.`,
+    '# Generated from MACHINE_STATE_DENY_RULES (apps/cli/src/lib/dispatch.ts), the SAME list a Claude',
+    '# Code dispatch denies via permissions.deny — do not edit by hand. Codex discovers it from',
+    "# <CODEX_HOME>/rules/*.rules at startup; it is written into this run's own staged CODEX_HOME,",
+    "# never the operator's ~/.codex. Mechanism/syntax established live against codex-cli 0.152.1.",
+    ''
+  ]
+  for (const rule of machineRules) {
+    const tokens = rule.slice('Bash('.length, -':*)'.length).split(/\s+/).filter(Boolean)
+    const isGitConfigScope =
+      tokens.length > GIT_CONFIG_TOKENS.length && GIT_CONFIG_TOKENS.every((token, i) => tokens[i] === token)
+    const notMatch = isGitConfigScope ? `, not_match = ${JSON.stringify([[...GIT_CONFIG_TOKENS, 'x']])}` : ''
+    lines.push(
+      `prefix_rule(pattern = ${JSON.stringify(tokens)}, decision = "forbidden", ` +
+        `justification = ${JSON.stringify(justification)}, match = ${JSON.stringify([[...tokens, 'x']])}${notMatch})`
+    )
+  }
+  return `${lines.join('\n')}\n`
+}
+
 export type WriteAccessScope =
   | { kind: 'directory'; allowedDir: string; extraFiles: string[] }
   | { kind: 'exact-files'; paths: string[] }
@@ -3450,6 +3535,13 @@ export async function dispatchRole(
       : null
   const codexHooksPath =
     agent === 'codex' ? writeCodexDispatchHooks(runId, documentationSources, scopeOf(opts.task, opts.pr), role) : null
+  // O1/O2: the machine-state deny floor a Claude dispatch carries
+  // as `permissions.deny`, translated into Codex's execpolicy `.rules` grammar
+  // for the SAME role. In-memory here (no I/O, so no dispatch-time failure to
+  // fail-closed on); `resolveWorkerBoundaryLaunch` writes it into this run's
+  // own staged `CODEX_HOME/rules/` and fails the boundary closed if that write
+  // fault occurs. `null` for a role that carries no floor on the Claude side.
+  const codexExecpolicyRules = agent === 'codex' ? buildCodexExecpolicyRules(role) : null
   // The first lifecycle line this role's dispatch writes —
   // every earlier `writeLifecycle` call in this function sits behind an
   // early-return refusal branch (binary not resolvable, non-Claude
@@ -3458,20 +3550,28 @@ export async function dispatchRole(
     writeLifecycle(
       `[vinaya dispatch ${effectId}] ${role} via ${agent}: permission policy ${PERMISSION_POLICY_VERSION} written to ${dispatchSettingsPath}`
     )
+  } else if (agent === 'codex' && codexExecpolicyRules !== null) {
+    // O1/O3: a Codex dispatch of a floor-carrying role now
+    // carries the SAME machine-state policy under the SAME version string,
+    // through Codex's own mechanism — an execpolicy `.rules` file
+    // (`prefix_rule(..., decision = "forbidden")`) `resolveWorkerBoundaryLaunch`
+    // stages into this run's own `CODEX_HOME/rules/`, never the operator's
+    // `~/.codex`. Named in the same first lifecycle position a Claude
+    // dispatch names its policy, so the run log reads the same for both agents.
+    writeLifecycle(
+      `[vinaya dispatch ${effectId}] ${role} via ${agent}: permission policy ${PERMISSION_POLICY_VERSION} — machine-state commands (keychain, services, global settings) denied via Codex execpolicy staged into this run's CODEX_HOME/rules`
+    )
   } else if (agent !== 'claude') {
-    // The policy above — the machine-state deny entries AND the
-    // `PreToolUse` hook that judges every statement of a command — is
-    // written for `claude` alone, because no equivalent refusal mechanism
-    // has been confirmed live for another vendor (the sibling
+    // The Claude-side policy also wires a `PreToolUse` hook that judges every
+    // statement of a command; the Codex side above matches only the
+    // machine-state deny floor, not that hook (the sibling
     // `writeCodexDispatchHooks` wires a `PostToolUse` logger and a `Stop`
-    // gate, neither of which can refuse a call before it runs). That
-    // predates this policy and is not something this line fixes. What it
-    // fixes is the SILENCE: before it, a `--agent codex`/`--agent gemini`
-    // dispatch ran with no permission policy at all and said nothing, so
-    // an operator or an auditor reading the run log saw the same output
-    // as a protected run (round 4 security review, MEDIUM). An absence
-    // this consequential is stated in the log, in the same first
-    // lifecycle position where a Claude dispatch names its policy.
+    // gate, neither of which can refuse a call before it runs). This branch
+    // is what remains: `gemini`, and a Codex dispatch of a role that carries
+    // no floor on the Claude side either. Before the Documentation read-gate's
+    // own fix such a dispatch ran silently; an absence this consequential is stated in the
+    // log, in the same first lifecycle position where a Claude dispatch names
+    // its policy (round 4 security review, MEDIUM).
     writeLifecycle(
       `[vinaya dispatch ${effectId}] ${role} via ${agent}: NO permission policy — machine-state commands (keychain, services, global settings) are NOT denied for this agent; only claude carries policy ${PERMISSION_POLICY_VERSION}`
     )
@@ -3570,6 +3670,9 @@ export async function dispatchRole(
             stageOAuthCredential: agent === 'claude',
             stageCodexCredential: agent === 'codex',
             codexHooksPath,
+            // O1/O2: staged into this run's own `CODEX_HOME/rules/`
+            // beside the hooks plugin, discovered by Codex at startup.
+            codexExecpolicyRules,
             // Round 5 review, CRITICAL fix: scoped to THIS dispatch's own
             // exact FILE, never its containing directory. The round-4 fix
             // (scoping to the repo-segment DIRECTORY, `dirname(outboxPath)`/
