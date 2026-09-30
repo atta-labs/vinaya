@@ -380,7 +380,7 @@ export function anyGateFailed(outcomes: GateOutcome[]): boolean {
 export async function runRealGates(cwd?: string, env?: NodeJS.ProcessEnv): Promise<GateRunResult> {
   const entry = resolveSelfEntry()
   // `node:child_process`, not `Bun.spawn`: this package ships a
-  // `#!/usr/bin/env node` bin with `engines.node >= 20`, so a `Bun.*` call
+  // `#!/usr/bin/env node` bin with `engines.node >= 22.13`, so a `Bun.*` call
   // here is a `ReferenceError: Bun is not defined` for every adopter running
   // the published CLI under node — Group B could never run for them. It
   // failed closed (the ReferenceError escapes the narrowed catch below
