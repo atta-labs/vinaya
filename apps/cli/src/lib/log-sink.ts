@@ -402,11 +402,7 @@ export function resolveLogDestinationFrom(input: {
             'a logs.url server destination is configured, but this job holds no delivery credential (a fork pull request, or a missing repository secret)'
         }
       }
-      return {
-        kind: 'server',
-        url: effective.url,
-        headers: resolveLogsHeaderValues(effective.headers, input.env, input.readKeychain)
-      }
+      return { kind: 'server', url: effective.url, headers: resolveLogsHeaderValues(effective.headers, input.env) }
     }
     return {
       kind: 'none',
@@ -414,11 +410,7 @@ export function resolveLogDestinationFrom(input: {
     }
   }
   if (effective && 'url' in effective) {
-    return {
-      kind: 'server',
-      url: effective.url,
-      headers: resolveLogsHeaderValues(effective.headers, input.env, input.readKeychain)
-    }
+    return { kind: 'server', url: effective.url, headers: resolveLogsHeaderValues(effective.headers, input.env) }
   }
   if (effective && 'folder' in effective && isInsideRepo(effective.folder, input.repoRoot)) {
     effective = null
@@ -518,8 +510,9 @@ async function defaultResolveLogDestination(
  * here, even an attended caller's own: the queue a drain reads is named by
  * the repository, which this function cannot know without `git`, so a line
  * queued under `unresolved` would never be delivered, while a folder line is
- * delivered later by `vinaya log send`. The Keychain is never read: its
- * reader spawns `security`, and a folder carries no credential anyway.
+ * delivered later by `vinaya log send`. A `logs.url` is therefore dropped
+ * before the decision, which also keeps the Keychain unread: substituting a
+ * server's headers spawns `security`, and a folder carries no credential.
  */
 export function unresolvedLogDestination(env: NodeJS.ProcessEnv): ResolvedLogDestination {
   if (hostFromEnv(env) === 'ci') {
@@ -528,7 +521,8 @@ export function unresolvedLogDestination(env: NodeJS.ProcessEnv): ResolvedLogDes
       reason: 'the process ended before its log destination was resolved, and a CI job never records to a folder'
     }
   }
-  const localConfig = loadConfig()
+  const loaded = loadConfig()
+  const localConfig = loaded?.logs?.url !== undefined ? { ...loaded, logs: undefined } : loaded
   const unattended = isUnattendedProcess(process.env)
   const repoRoot = repoRootSync()
   const runtimeDir =
@@ -541,11 +535,9 @@ export function unresolvedLogDestination(env: NodeJS.ProcessEnv): ResolvedLogDes
     unattended,
     env,
     defaultFolder,
-    repoRoot,
-    readKeychain: () => null
+    repoRoot
   })
-  if (resolved.kind === 'folder' && resolved.fallbackReason === undefined) return resolved
-  return { kind: 'folder', folder: defaultFolder }
+  return resolved.kind === 'folder' ? resolved : { kind: 'folder', folder: defaultFolder }
 }
 
 /**

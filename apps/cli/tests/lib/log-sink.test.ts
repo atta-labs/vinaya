@@ -1332,6 +1332,14 @@ describe('logSync — recording an event as the process ends (O1, O2, O3, O5)', 
   it('O2: the real default sink spawns no process at all, and the line lands before process.exit', () => {
     const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-logsync-nospawn-')))
     const logSinkModule = join(import.meta.dir, '..', '..', 'src', 'lib', 'log-sink.ts')
+    // A server whose header names a variable the environment does not hold:
+    // resolving it would read the Keychain, which spawns `security`.
+    writeFileSync(
+      join(cwd, 'vinaya.config.json'),
+      JSON.stringify({
+        logs: { url: 'https://logs.example.com/ingest', headers: { authorization: 'Bearer ${VINAYA_LOG_TOKEN}' } }
+      })
+    )
     const probe = join(cwd, 'probe.mjs')
     writeFileSync(
       probe,
