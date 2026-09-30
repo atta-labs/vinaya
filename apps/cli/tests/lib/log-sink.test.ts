@@ -1332,8 +1332,8 @@ describe('logSync — recording an event as the process ends (O1, O2, O3, O5)', 
   it('O2: the real default sink spawns no process at all, and the line lands before process.exit', () => {
     const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-logsync-nospawn-')))
     const logSinkModule = join(import.meta.dir, '..', '..', 'src', 'lib', 'log-sink.ts')
-    // A server whose header names a variable the environment does not hold:
-    // resolving it would read the Keychain, which spawns `security`.
+    // The working tree declares a server: with the repository unknown, the
+    // line must still go to a folder, never to a queue no drain reads.
     writeFileSync(
       join(cwd, 'vinaya.config.json'),
       JSON.stringify({
@@ -1375,6 +1375,7 @@ process.exit(0)`
       readdirSync(dir, { recursive: true, encoding: 'utf8' })
         .filter((f) => f.endsWith('.ndjson'))
         .map((f) => readFileSync(join(dir, f), 'utf8'))
+    expect(existsSync(join(cwd, '.vinaya', 'outbox'))).toBe(false)
     const [line] = landed(join(cwd, '.vinaya'))
     expect(line).toContain('"effect_id":"cold-exit"')
     const parsed = JSON.parse(line!.trim())

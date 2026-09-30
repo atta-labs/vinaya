@@ -101,8 +101,7 @@ describe('router -> COMMANDS coverage', () => {
         'release',
         'dispatch',
         'log selftest',
-        'log send',
-        'log set-credential'
+        'log send'
       ])
     )
   })

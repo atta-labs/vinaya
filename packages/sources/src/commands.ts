@@ -769,7 +769,7 @@ export const COMMANDS: readonly Command[] = [
     details: [
       "Resolves the destination exactly as an UNATTENDED review-loop run does in this repository — the same trust-anchor read and credential lookup, forced unattended so running it by hand proves the launch path's own resolution, not a human's. It sends one test event to the configured `logs.url` server, then reads it back from the server by the event's own id through the server's cursor read.",
       "PASS (exit 0) only when the event round-trips. Otherwise FAIL (exit 1) with the ONE reason that stopped it: no server is configured, the default branch's config could not be read to confirm the url (and why), this host holds no ingest or read credential, the server refused with its status, or the event could not be read back. It never prints a credential value.",
-      "The read-back needs a READ credential distinct from the write-only ingest one the server refuses on a read route: set `logs.readHeaders` in vinaya.config.json to the server's read token (referenced by variable name, resolved from the environment or the macOS Keychain exactly as `logs.headers` is). The test event is marked `operation: 'log.selftest'` so a reader can exclude it from real telemetry."
+      "The read-back needs a READ credential distinct from the write-only ingest one the server refuses on a read route: set `logs.readHeaders` in vinaya.config.json to the server's read token (referenced by variable name, resolved from the environment exactly as `logs.headers` is). The test event is marked `operation: 'log.selftest'` so a reader can exclude it from real telemetry."
     ],
     status: 'shipped'
   },
@@ -781,16 +781,6 @@ export const COMMANDS: readonly Command[] = [
       "For a run whose events ended up on local disk instead of the configured server — an unattended run that fell back to the local folder because the trust-anchor read could not confirm its `logs.url` (a developer machine slower than the read deadline, or genuinely offline), or a retry queue holding a backlog or a `.draining.ndjson` a dead drain left behind. It moves the local folder's events into the retry queue and drains every queue for this repository through the SAME webhook delivery a live event uses.",
       "It resolves the destination exactly the way a normal event does — the sink's own decision over `vinaya.config.json`'s `logs` setting, trust-anchor-gated for an unattended caller — never a URL passed on the command line. A repository whose destination is a folder (or none) has nothing to send to a server and the command says so.",
       'Safe to run more than once: the server stores events by `event_id` and ignores one it already holds, so a re-sent chunk creates no duplicate, and a second run finds the folder emptied and the queue drained.'
-    ],
-    status: 'shipped'
-  },
-  {
-    name: 'log set-credential',
-    description: 'Store a `logs.headers` delivery credential in the macOS login Keychain, read from standard input',
-    details: [
-      'For a `logs.url` server whose `headers` reference a credential by variable name (`{ "authorization": "Bearer ${VINAYA_LOG_TOKEN}" }`) on a host where that variable is not in the process environment — the case an Operator the Claude desktop app starts on macOS hits, since the token lives in an interactive shell file the app never reads. It stores the value so header resolution finds it in the Keychain when the environment does not, with no token copied into any settings file.',
-      'The value is read from STANDARD INPUT, never a command-line argument a `ps` listing could show — `printf %s "$TOKEN" | vinaya log set-credential VINAYA_LOG_TOKEN`. Only the variable NAME, which is not a secret, sits on the command line; the value is stored under the Keychain service `Vinaya Log` keyed by that name. The command prints a confirmation naming the variable and never echoes, returns, or logs the value.',
-      'macOS only (Linux keyrings are out of scope); it refuses with a clear message elsewhere. The environment still wins over the Keychain wherever the variable is set, so this changes nothing for a host that already exports it.'
     ],
     status: 'shipped'
   }
