@@ -591,6 +591,28 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     example: `{ "reviewPolicy": { "maxTaskMinutes": 240 } }`
   },
   {
+    key: 'securityScan',
+    type: 'object (optional)',
+    semantics: [
+      "The agent-configuration security scanner the dev-review-loop runs before the security pass. When a pull request touches agent configuration (`.claude/**`, `.mcp.json`, `.agents/**` — a fixed list, never configurable) and this key is set, the driver runs the scanner once per round on the head-verified candidate copy, in a constructed environment carrying no forge credential, with a time limit and an output cap, and hands the result to the security reviewer's prompt as input to its judgement — never the verdict.",
+      "The scan runs outside the driver's trust: the security reviewer itself is denied `npx` and never runs a scanner. Absent, the security pass is told no scanner is configured and the round proceeds unchanged — a missing, not-applicable, or failed scan never pauses the loop.",
+      "Read only from the default-branch trust anchor (the same trust class as `reviewPolicy`/`principals`), never the pull request's own checkout: the key names a subprocess that runs in the driver's environment, so a pull request must not be able to redirect it in its own diff."
+    ],
+    example: `{
+  "securityScan": {
+    "command": ["npx", "--yes", "ecc-agentshield@1.6.0", "scan"]
+  }
+}`
+  },
+  {
+    key: 'securityScan.command',
+    type: 'string[] (required within securityScan, min 1)',
+    semantics: [
+      'The scanner as an argv list — its first element the executable, the rest its arguments, the package version pinned in the args (`["npx", "--yes", "ecc-agentshield@1.6.0", "scan"]`). The loop appends the directory to scan (the head-verified candidate copy) as a final argument and spawns it via `execFile`, never a shell, so no element is shell-interpreted. A completed run\'s output reaches the reviewer verbatim; its exit code is not read as a verdict.'
+    ],
+    example: `{ "securityScan": { "command": ["npx", "--yes", "ecc-agentshield@1.6.0", "scan"] } }`
+  },
+  {
     key: 'gateCutovers',
     type: 'object (optional)',
     semantics: [
