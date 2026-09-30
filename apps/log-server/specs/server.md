@@ -81,7 +81,7 @@ Every route lives under `/v1/repos/<owner>/<repo>/`. `<owner>` and `<repo>` matc
 Two tokens, both Worker secrets, never in the repository:
 
 - **`INGEST_TOKEN`** — write-only. Accepted on the ingest route only. This is the value CI holds as `VINAYA_LOG_TOKEN`.
-- **`READ_TOKEN`** — read-only. Accepted on the read, stats and live routes only.
+- **`READ_TOKEN`** — read-only. Accepted on the read, stats, rejected and live routes only.
 
 Each token is compared in constant time — both values are hashed and the fixed-width digests compared byte by byte, so neither a token's length nor the position of its first wrong byte is observable in the time taken. Presenting one token on the other's route is `401`, the same as no token. A token is never logged and never echoed in a response. A route whose secret is not configured at all answers `500`, never `200`: an unset secret must not become a token that matches the empty string.
 
@@ -136,6 +136,19 @@ authorization: Bearer <READ_TOKEN>
 ```
 
 `{"repo":"<owner>/<repo>","events":n,"rejected":n,"bytes":n,"oldest_ts":"…","newest_ts":"…","last_seq":n}` — `repo` is the object's own lower-cased name, `bytes` is the Durable Object's own database size, and `oldest_ts`/`newest_ts` are the `meta.ts` of the first and last events in arrival order (`null` when the log is empty). Counts come from `MAX(rowid)`, for the reason § 4 gives.
+
+### Rejected
+
+```
+GET /v1/repos/<owner>/<repo>/rejected
+authorization: Bearer <READ_TOKEN>
+```
+
+Why lines were refused, so lost events can be diagnosed. `{"repo":"<owner>/<repo>","window":1000,"reasons":[{"reason":"…","count":n}],"recent":[{"id":n,"received_at":n,"reason":"…","line":"…"}]}`.
+
+`reasons` counts the newest `window` (`1000`) rejected rows by reason, most frequent first; a repository with fewer rows counts them all. `recent` is the newest twenty rejected rows, newest first, each with the reason and the line as stored — already truncated to the first 64 KiB (§ 4), and possibly `null`. Both come from a read of the table's tail, never a scan of all of it, for the read-budget reason § 4 gives. Nothing beyond what the `rejected` table holds is returned, and the stats route's `rejected` count is unchanged.
+
+The reason values are `invalid:<why>` (the line failed the schema's validation; `<why>` is the validator's own reason), `too_large:<bytes>` (the line was over 1 MiB) and `no_identity` (the line carried no `event_id`). `reasons` groups every `too_large:<bytes>` as `too_large`, because the size would otherwise make each oversized line its own group; `recent` shows the full stored value.
 
 ### Live
 

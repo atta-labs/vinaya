@@ -17,7 +17,7 @@
 const SEGMENT = /^[A-Za-z0-9._-]+$/
 
 export type Route = {
-  kind: 'ingest' | 'read' | 'stats' | 'live'
+  kind: 'ingest' | 'read' | 'stats' | 'rejected' | 'live'
   owner: string
   repo: string
 }
@@ -72,7 +72,7 @@ export function repoName(route: Pick<Route, 'owner' | 'repo'>): string {
 }
 
 /**
- * `/v1/repos/<owner>/<repo>/<events|stats|live>`. A malformed repository
+ * `/v1/repos/<owner>/<repo>/<events|stats|rejected|live>`. A malformed repository
  * segment is `400`, an unknown path `404`, a known path with the wrong method
  * `405`.
  */
@@ -93,6 +93,10 @@ export function parseRoute(url: URL, method: string): RouteResult {
   }
   if (tail === 'stats') {
     if (method === 'GET') return { ok: true, route: { kind: 'stats', owner, repo } }
+    return { ok: false, status: 405 }
+  }
+  if (tail === 'rejected') {
+    if (method === 'GET') return { ok: true, route: { kind: 'rejected', owner, repo } }
     return { ok: false, status: 405 }
   }
   if (tail === 'live') {
