@@ -10,7 +10,7 @@ import {
   type ResolverFailure,
   type ResolveResult
 } from '../checks/resolver'
-import { defaultParallelism, runChecks } from '../checks/runner'
+import { CHECK_EXCLUDE_ENV, defaultParallelism, runChecks } from '../checks/runner'
 import { type ConfigLoadResult, configPath, loadConfigChecked } from '../lib/config'
 import { printJson } from '../lib/envelope'
 import { buildRolePlan, type RolePlan } from '../roles/plan'
@@ -372,6 +372,18 @@ export async function checkCommand(args: string[]): Promise<void> {
 
   const changed = diffOnly ? changedFiles() : null
 
+  // A comma-separated list of check names to leave out of THIS run, read from
+  // the environment rather than argv: the one caller that needs it (`vinaya pr
+  // report`'s Group C) spawns `vinaya check --all` from a Test
+  // Plan and must not edit that recorded command text, so it carries the
+  // exclusion as `CHECK_EXCLUDE_ENV` instead. Absent/empty for every ordinary
+  // invocation — CI, the pre-push hook, a hand-run `vinaya check` — which then
+  // pass an empty list and exclude nothing.
+  const excludeChecks = (process.env[CHECK_EXCLUDE_ENV] ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+
   const outcomes =
     specsToRun.length > 0
       ? await runChecks(specsToRun, {
@@ -380,7 +392,8 @@ export async function checkCommand(args: string[]): Promise<void> {
           changedFiles: changed,
           defaultTimeoutMs: 30_000,
           localOnly,
-          skipFull
+          skipFull,
+          excludeChecks
         })
       : []
 

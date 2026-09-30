@@ -172,6 +172,30 @@ describe('runChecks', () => {
     expect(outcome?.status).toBe('pass')
   })
 
+  it('excludeChecks leaves a named check out and runs every unnamed one (#788)', async () => {
+    // FAILING for the excluded one, to prove this is a real skip — not a pass
+    // that coincides with a fixture whose predicate never ran (the exact
+    // self-inflicted `evidence-fresh` red a Group C `check --all` run hits).
+    const excluded = fullScope({ name: 'evidence-fresh', run: FAILING, scope: 'diff' })
+    const other = fullScope({ name: 'other', run: PASSING })
+    const [excludedOutcome, otherOutcome] = await runChecks([excluded, other], {
+      ...BASE_OPTS,
+      excludeChecks: ['evidence-fresh']
+    })
+    expect(excludedOutcome?.status).toBe('skipped')
+    expect(excludedOutcome?.exitCode).toBeNull()
+    expect(excludedOutcome?.skipReason).toBe('excluded-by-caller')
+    expect(otherOutcome?.status).toBe('pass')
+    expect(otherOutcome?.skipReason).toBeUndefined()
+  })
+
+  it('excludeChecks unset (the default) runs the check that another run would exclude (#788 — O3)', async () => {
+    const spec = fullScope({ name: 'evidence-fresh', run: PASSING, scope: 'diff' })
+    const [outcome] = await runChecks([spec], BASE_OPTS)
+    expect(outcome?.status).toBe('pass')
+    expect(outcome?.skipReason).toBeUndefined()
+  })
+
   it("kills a timed-out check's whole process group — a grandchild it spawned does not survive", async () => {
     const [outcome] = await runChecks(
       [fullScope({ name: 'spawns-grandchild', run: SPAWNS_GRANDCHILD, timeoutMs: 1000 })],
