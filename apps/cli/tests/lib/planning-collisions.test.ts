@@ -179,10 +179,17 @@ describe('buildCollisionPeers — which peers each scope compares against', () =
     labels: [{ name: 'vinaya/tranche:demo' }]
   })
 
-  const pull = (number: number, files: string[], closes: number[] = []) => ({
+  const pull = (
+    number: number,
+    files: string[],
+    closes: number[] = [],
+    extra: { headRefName?: string; body?: string } = {}
+  ) => ({
     number,
     files: files.map((path) => ({ path })),
-    closingIssuesReferences: closes.map((n) => ({ number: n }))
+    closingIssuesReferences: closes.map((n) => ({ number: n })),
+    headRefName: extra.headRefName ?? `feature/pr-${number}`,
+    body: extra.body ?? ''
   })
 
   it('compares against both open task Issues and open pull requests at issue create/edit', () => {
@@ -203,6 +210,28 @@ describe('buildCollisionPeers — which peers each scope compares against', () =
 
   it('drops the pull request that closes the subject Issue — that is the subject’s own branch', () => {
     expect(buildCollisionPeers('pull-requests', 851, [], [pull(862, [A, B], [851])], tracked)).toEqual([])
+  })
+
+  it('drops the subject’s own pull request by its task branch when the forge returns no closing reference', () => {
+    const ownPull = pull(862, [A, B], [], { headRefName: 'task/issue-851' })
+    expect(buildCollisionPeers('pull-requests', 851, [], [ownPull], tracked)).toEqual([])
+    // and the tranche branch shape resolves to the same trailing Issue number
+    const tranchePull = pull(863, [A, B], [], { headRefName: 'task/role-reach/851' })
+    expect(buildCollisionPeers('pull-requests', 851, [], [tranchePull], tracked)).toEqual([])
+  })
+
+  it('drops the subject’s own pull request by a `Closes #<n>` body line, case-insensitively, when the closing list is empty', () => {
+    for (const keyword of ['Closes', 'fixes', 'RESOLVES']) {
+      const ownPull = pull(862, [A, B], [], { body: `Some summary.\n\n${keyword} #851\n` })
+      expect(buildCollisionPeers('pull-requests', 851, [], [ownPull], tracked)).toEqual([])
+    }
+  })
+
+  it('still compares a pull request that names no task Issue — branch and body match neither the subject nor a substring of it', () => {
+    // #8510 must not match subject 851 through either the branch or the body.
+    const other = pull(862, [A], [], { headRefName: 'task/issue-8510', body: 'Closes #8510\n' })
+    const peers = buildCollisionPeers('pull-requests', 851, [], [other], tracked)
+    expect(peers).toEqual([{ ref: 'pull/862', label: 'pull request #862', files: [A], conflictsWith: [] }])
   })
 
   it('drops the subject’s own Issue row', () => {
