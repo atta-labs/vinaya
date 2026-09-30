@@ -575,7 +575,7 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     key: 'reviewPolicy.maxRounds',
     type: 'number (optional, positive integer)',
     semantics: [
-      "The dev-review-loop's own round cap — replaces a hardcoded constant. Defaults to 3 when omitted. A round past this cap pauses `max_rounds`, naming the configured value. Any non-positive-integer value refuses config load rather than falling back."
+      "The dev-review-loop's own round cap — replaces a hardcoded constant. Defaults to 3 when omitted: rounds 1 to 3 run, and a round that reaches the cap without going green pauses `max_rounds`, naming the configured value, so no further round runs without a Principal ruling; a green round at the cap still publishes. Any non-positive-integer value refuses config load rather than falling back."
     ],
     example: `{ "reviewPolicy": { "maxRounds": 5 } }`
   },

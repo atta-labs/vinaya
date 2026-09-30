@@ -203,7 +203,7 @@ describe('devReviewLoop — issue-711 F1: a max_rounds pause right after a genui
   it('appends the patch-carry note to the max_rounds detail', async () => {
     const HELD_HEAD = sha('a')
     const NEW_HEAD = sha('c')
-    const ROUND = 4 // > DEFAULT_MAX_ROUNDS (3) — the round cap itself
+    const ROUND = 4 // >= DEFAULT_MAX_ROUNDS (3) — past the round cap, so its review pauses
     const world = makeWorld({
       developerPushed: true,
       head: NEW_HEAD,
