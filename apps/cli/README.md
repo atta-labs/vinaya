@@ -4,7 +4,7 @@ The `vinaya` bin — Vinaya's npm-distributed CLI, published to the public npm r
 
 ## Install
 
-The published artifact is a Node-executable bundle — plain Node ≥ 20 is enough, through any package manager:
+The published artifact is a Node-executable bundle — plain Node ≥ 22.13 is enough, through any package manager:
 
 ```bash
 npx @attalabs/vinaya init        # or: pnpm dlx / yarn dlx / bunx
@@ -77,7 +77,7 @@ Today the schema carries one surface:
 
 Both `rings` fields are plain booleans — no conditional logic. Ring 0 (git hooks) and the CI/branch-protection guarantee are never represented in this schema, by design — they are not configurable.
 
-Both fields are additive, never disabling: `false` (the default — every `vinaya init` starter config reads `false` for both) is a no-op, leaving the underlying mechanism running exactly as it does with no config at all. `true` is the opt-in accelerator — the only value that changes behavior — and skips it. `ring1_forgeWriteInterception: true` skips `pr`/`issue create|edit`'s `briefSchema` validation entirely; `ring2_asyncAudits: true` skips `vinaya archive`'s provenance work and `vinaya audit`'s dead-branch-push notification, exiting `0` without doing anything for those two — it does **not** skip `vinaya audit`'s direct-main-push detection, which stays unconditional on purpose: that check is a real pass/fail catching a branch-protection bypass, and gating a security-relevant detection behind a flag readable from ordinary PR content would let the bypass silently disable the check that catches it.
+`ring1_forgeWriteInterception` is the opt-out: `true` (the default, and this repo's value) runs `pr`/`issue create|edit`'s `briefSchema` validation and `false` skips it entirely. `ring2_asyncAudits` is the opt-in accelerator: `false` is a no-op, and `ring2_asyncAudits: true` skips `vinaya archive`'s provenance work and `vinaya audit`'s dead-branch-push notification, exiting `0` without doing anything for those two — it does **not** skip `vinaya audit`'s direct-main-push detection, which stays unconditional on purpose: that check is a real pass/fail catching a branch-protection bypass, and gating a security-relevant detection behind a flag readable from ordinary PR content would let the bypass silently disable the check that catches it.
 
 ### Blast-radius collision domains
 

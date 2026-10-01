@@ -6,7 +6,6 @@ import { join } from 'node:path'
 import {
   acquireOwnership,
   defaultControlStoreDeps,
-  OPERATOR_STATUS_FOLLOW,
   type PauseReason,
   TASK_NEXT_ACTIONS,
   TASK_TOOL_NAMES,
@@ -381,7 +380,7 @@ const PAUSE_ROW_DISPOSITION: Record<string, PauseDisposition> = {
 
 // --- does the named tool accept this state? ---------------------------------
 
-const GRANTED: readonly string[] = [...TASK_TOOL_NAMES, OPERATOR_STATUS_FOLLOW]
+const GRANTED: readonly string[] = TASK_TOOL_NAMES
 
 async function taskStartAccepts(root: string, state: TaskLoopState): Promise<{ ok: boolean; message: string }> {
   const launches: unknown[] = []

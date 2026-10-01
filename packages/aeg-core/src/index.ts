@@ -343,8 +343,14 @@ export type {
 } from './diagram-model'
 export { parseEnforcementRegistry } from './registry-parse'
 export type { GateRing, GateRow } from './registry-parse'
-export { checkG1, checkG2, checkG3, checkG4, checkG5, checkG6 } from './registry-checks'
-export type { RegistryCheckResult, RegistryCheckStatus, RegistryFinding } from './registry-checks'
+export { checkG1, checkG2, checkG3, checkG4, checkG5, checkG6, findUnshippedHookRefs } from './registry-checks'
+export type {
+  HookReferenceInput,
+  HookScanFile,
+  RegistryCheckResult,
+  RegistryCheckStatus,
+  RegistryFinding
+} from './registry-checks'
 export { applyScaffoldPlan, computeScaffoldPlan, PLACEHOLDER } from './registry-scaffold'
 export type { ScaffoldPlan, ScaffoldSkip, ScaffoldStub } from './registry-scaffold'
 export { ACTIONS, CROSSING_KEYWORDS } from './actions'
@@ -386,10 +392,11 @@ export {
   normalizeSpecPath,
   parseGlossaryTerms,
   PRODUCT_SLUG_SCOPE,
+  specGrandfatherPaths,
   stripNonProse,
   TASK_NUMBER_PATTERN
 } from './reader-resolvable-prose'
-export type { ProseFileClass, ProseFinding, ProseSourceFile } from './reader-resolvable-prose'
+export type { ProseFileClass, ProseFinding, ProseSourceFile, SpecGrandfather } from './reader-resolvable-prose'
 export {
   checkQuotedCommandStaleness,
   evaluateCitedQuotes,
@@ -447,7 +454,6 @@ export {
   isOperatorGranted,
   isTaskToolName,
   MAX_PAGE_LIMIT,
-  OPERATOR_STATUS_FOLLOW,
   OPERATOR_TOOL_GRANT,
   TASK_CANCEL_TOOL,
   TASK_ESCALATION_READ_TOOL,
@@ -710,6 +716,35 @@ export type {
   Subject,
   UsageEvent,
   UsageUnits
+} from './log'
+export {
+  cacheContractCases,
+  createMemoryCache,
+  isLowTrustVersion,
+  known,
+  LOW_TRUST_BELOW_VERSION,
+  normalizeStoredLine,
+  unknownBecause
+} from './log'
+export type {
+  CacheContractCase,
+  Dataset,
+  DatasetRow,
+  JsonObject,
+  LogCache,
+  LogSource,
+  Measured,
+  NormalizedLine,
+  PutOutcome,
+  QuarantineRecord,
+  RowEdit,
+  RowOrigin,
+  RowTrust,
+  SourceCursor,
+  SourceGap,
+  SourceLine,
+  SourcePage,
+  UnknownableField
 } from './log'
 export {
   acquireOwnership,

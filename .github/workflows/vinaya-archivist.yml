@@ -36,7 +36,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       # Pinned to a commit, not the mutable `v2` tag. This is the first
       # THIRD-PARTY action this generator writes into an adopter's repository,
       # and it runs in the same job that then builds and executes pull-request
@@ -114,7 +114,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       # Pinned to a commit, not the mutable `v2` tag. This is the first
       # THIRD-PARTY action this generator writes into an adopter's repository,
       # and it runs in the same job that then builds and executes pull-request
@@ -182,7 +182,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       # Pinned to a commit, not the mutable `v2` tag. This is the first
       # THIRD-PARTY action this generator writes into an adopter's repository,
       # and it runs in the same job that then builds and executes pull-request
@@ -248,7 +248,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       # Pinned to a commit, not the mutable `v2` tag. This is the first
       # THIRD-PARTY action this generator writes into an adopter's repository,
       # and it runs in the same job that then builds and executes pull-request

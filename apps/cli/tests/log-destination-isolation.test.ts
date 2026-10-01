@@ -1051,7 +1051,8 @@ const BOUNDARY_PRODUCERS = [
   'EffectExecutor',
   'drainOutboxToWebhook',
   'createTaskCancelHandler',
-  'createTaskResumeHandler'
+  'createTaskResumeHandler',
+  'emitCustomEvent'
 ] as const
 const LOG_PRODUCERS: readonly string[] = [...SINK_PRODUCERS, ...BOUNDARY_PRODUCERS]
 

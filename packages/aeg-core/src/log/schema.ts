@@ -44,6 +44,14 @@
  */
 
 import { z } from 'zod'
+import {
+  CUSTOM_EVENT_MAX_FIELDS,
+  CUSTOM_EVENT_NAME_MAX_LENGTH,
+  CUSTOM_EVENT_NAME_PATTERN,
+  CUSTOM_FIELD_NAME_MAX_LENGTH,
+  CUSTOM_FIELD_NAME_PATTERN,
+  CUSTOM_TEXT_MAX_LENGTH
+} from './custom'
 
 /**
  * The one bound shared by `gate_result_read.confidence_reason` below and the
@@ -619,7 +627,8 @@ export const ForgeWriteEventSchema = z.discriminatedUnion('event', [
 export type ForgeWriteEvent = z.infer<typeof ForgeWriteEventSchema>
 
 // ---------------------------------------------------------------------------
-// `gate` family (O2) — one gate runner's attempted check. `loop` (the
+// `gate` family (O2) — one gate runner's check run: a `summary` per run and a
+// `checked` event for each check that did not pass. `loop` (the
 // spec's "loop coordinator") is already typed by `dev_review_loop` above;
 // this task does not introduce a second loop schema for it.
 
@@ -654,6 +663,27 @@ export const GateEventSchema = z.discriminatedUnion('event', [
       outcome: GateOutcomeSchema,
       reason: z.string().optional()
     })
+    .strict(),
+  // One per check run. A run records this and a `checked` event only for a
+  // check that did not pass, so the Log's volume tracks failures, not the
+  // number of checks. `ran` counts the checks that executed (`passed` +
+  // `failed`); `skipped` are not in it. `failed` is every executed check that
+  // did not pass — a failure, a wait, a timeout or an error — and
+  // `failed_checks` names them. The run's total time is the envelope's
+  // `duration_ms`.
+  z
+    .object({
+      meta: HeaderMetaSchema,
+      subject: SubjectSchema,
+      kind: z.literal('gate'),
+      ...envelopeTail,
+      event: z.literal('summary'),
+      ran: z.number().int().nonnegative(),
+      passed: z.number().int().nonnegative(),
+      failed: z.number().int().nonnegative(),
+      skipped: z.number().int().nonnegative(),
+      failed_checks: z.array(z.string())
+    })
     .strict()
 ])
 export type GateEvent = z.infer<typeof GateEventSchema>
@@ -681,7 +711,12 @@ export const OperationEventSchema = z.discriminatedUnion('event', [
       ...operationShared,
       event: z.literal('completed'),
       result: OperationResultSchema,
-      error_class: z.string().nullable()
+      error_class: z.string().nullable(),
+      // The field NAMES an operation's outcome concerns — a refused `custom`
+      // event's missing, extra or mistyped fields — never their values,
+      // since a rejected value may be the secret. Optional: no other
+      // operation sets it, and a line written before it existed still parses.
+      field_names: z.array(z.string().max(CUSTOM_FIELD_NAME_MAX_LENGTH)).max(CUSTOM_EVENT_MAX_FIELDS).optional()
     })
     .strict()
 ])
@@ -809,8 +844,10 @@ export type HandoffEvent = z.infer<typeof HandoffEventSchema>
 
 // ---------------------------------------------------------------------------
 // `effect` family (O2) — the spec's "shared effect executor": a generic
-// external effect's attempted/observed/verified outcome, including failure
-// and uncertainty. This is additive to, and does not replace, the existing
+// external effect's outcome, including failure and uncertainty. The
+// executor records ONE `verified` event per write, carrying its final
+// outcome; `attempted` and `observed` stay parseable so a line stored
+// before that change still reads, but nothing emits them any more. This is additive to, and does not replace, the existing
 // `forge_write` family, which stays exactly as it was — a forge write is
 // one specific effect this schema does not yet generalize `forge_write`
 // into; "telemetry never substitutes for required intent" (the spec's own
@@ -845,8 +882,43 @@ export const EffectEventSchema = z.discriminatedUnion('event', [
 export type EffectEvent = z.infer<typeof EffectEventSchema>
 
 // ---------------------------------------------------------------------------
+// `custom` family — an event a consumer declared under `logs.events` in its
+// own `vinaya.config.json` (`custom.ts`). `kind` and `event` are fixed; the
+// declared name is data in `name`, and the values sit flat under `fields`,
+// never nested. Whether `name` is declared and each value matches its
+// declared type is the writer's check (`checkCustomEvent`) — this schema
+// holds only the shape every declaration shares. Valid under a schema 3
+// header only: the family is newer than 1 and 2, so a line claiming either
+// with a `custom` body is not one this log ever wrote.
 
-/** Every family shipped so far: the first three (`dispatch`, `dev_review_loop`, `forge_write`) plus this task's six (`gate`, `operation`, `usage`, `role_attempt`, `handoff`, `effect`). `kind: 'command' | 'tokens'` is still refused — `command` folds into `operation`, `tokens` into `usage`, so neither name is a separate family. */
+const CustomFieldValueSchema = z.union([z.string().max(CUSTOM_TEXT_MAX_LENGTH), z.number().finite(), z.boolean()])
+
+const customShared = {
+  meta: HeaderMetaV3Schema,
+  subject: SubjectSchema,
+  kind: z.literal('custom'),
+  ...envelopeTail
+}
+
+export const CustomEventSchema = z.discriminatedUnion('event', [
+  z
+    .object({
+      ...customShared,
+      event: z.literal('recorded'),
+      name: z.string().max(CUSTOM_EVENT_NAME_MAX_LENGTH).regex(CUSTOM_EVENT_NAME_PATTERN),
+      fields: z
+        .record(z.string().max(CUSTOM_FIELD_NAME_MAX_LENGTH).regex(CUSTOM_FIELD_NAME_PATTERN), CustomFieldValueSchema)
+        .refine((f) => Object.keys(f).length <= CUSTOM_EVENT_MAX_FIELDS, {
+          message: `custom: at most ${CUSTOM_EVENT_MAX_FIELDS} fields`
+        })
+    })
+    .strict()
+])
+export type CustomEvent = z.infer<typeof CustomEventSchema>
+
+// ---------------------------------------------------------------------------
+
+/** Every family shipped so far: the first three (`dispatch`, `dev_review_loop`, `forge_write`), the six after them (`gate`, `operation`, `usage`, `role_attempt`, `handoff`, `effect`), and `custom`, a consumer's own declared event. `kind: 'command' | 'tokens'` is still refused — `command` folds into `operation`, `tokens` into `usage`, so neither name is a separate family. */
 export const LogEventSchema = z.union([
   DispatchEventSchema,
   DevReviewLoopEventSchema,
@@ -856,6 +928,7 @@ export const LogEventSchema = z.union([
   UsageEventSchema,
   RoleAttemptEventSchema,
   HandoffEventSchema,
-  EffectEventSchema
+  EffectEventSchema,
+  CustomEventSchema
 ])
 export type LogEvent = z.infer<typeof LogEventSchema>

@@ -295,18 +295,34 @@ export function legacySlugPattern(legacySlugs: readonly string[]): RegExp | null
  * `PRODUCT_SLUG_SCOPE`) is checked only against `TRANCHE_SLUG_VN_PATTERN`,
  * and its finding is `blocking: true`; every other finding is `blocking: false`.
  */
+/**
+ * The spec class's exemption. The array form lists paths skipped entirely; the
+ * object form maps each listed path to the most findings that file may carry —
+ * a file above its number fails, at or below it passes, and the number is
+ * lowered as the file is rewritten.
+ */
+export type SpecGrandfather = readonly string[] | Readonly<Record<string, number>>
+
+/** Every listed path in either form, in the order written. */
+export function specGrandfatherPaths(specGrandfather: SpecGrandfather): string[] {
+  return Array.isArray(specGrandfather) ? [...specGrandfather] : Object.keys(specGrandfather)
+}
+
 export function checkUnresolvableReferences(
   files: readonly ProseSourceFile[],
   readerFacingPrefix: string,
   readerFacingSuffix: string,
   legacySlugs: readonly string[] = [],
   shipsPrefix: string = SHIPS_PREFIX,
-  specGrandfather: readonly string[] = [],
+  specGrandfather: SpecGrandfather = [],
   specPaths: readonly string[] = DEFAULT_SPEC_PATHS
 ): ProseFinding[] {
   const findings: ProseFinding[] = []
   const legacyPattern = legacySlugPattern(legacySlugs)
-  const grandfathered = new Set(specGrandfather)
+  const grandfatheredWhole = new Set(Array.isArray(specGrandfather) ? (specGrandfather as readonly string[]) : [])
+  const limits = new Map<string, number>(
+    Array.isArray(specGrandfather) ? [] : Object.entries(specGrandfather as Readonly<Record<string, number>>)
+  )
   // `group` names the capture holding the actual cited text — the plain
   // patterns have none (report the whole match), the boundary-checked
   // legacy-slug pattern reports its group 2 so the boundary chars around it
@@ -343,8 +359,9 @@ export function checkUnresolvableReferences(
     // is matched against every spec-class file, so it exempts a default path
     // (a root spec, a decision record) exactly as it exempts a
     // per-product one — one exemption for the class, not one per path
-    // source.
-    if (cls === 'spec' && grandfathered.has(file.path)) continue
+    // source. A path listed with a number is not skipped: its findings are
+    // counted below and reported only once they exceed that number.
+    if (cls === 'spec' && grandfatheredWhole.has(file.path)) continue
     const blocking = cls === 'product' || cls === 'spec'
     const scrubbed =
       cls === 'product' ? stripNonProseForProduct(file.path, file.content) : stripNonProse(file.path, file.content)
@@ -352,6 +369,7 @@ export function checkUnresolvableReferences(
     // reference pattern set, never the narrower product-code list — plus the
     // task-number rule that applies to this class alone.
     const patternsToRun = cls === 'product' ? productPatterns : cls === 'spec' ? specPatterns : patterns
+    const fileFindings: ProseFinding[] = []
     for (const { pattern, what, group } of patternsToRun) {
       pattern.lastIndex = 0
       let match: RegExpExecArray | null = pattern.exec(scrubbed)
@@ -366,7 +384,7 @@ export function checkUnresolvableReferences(
         // one character that can never itself start the cited text, and an
         // empty boundary (start of file) resolves to offset zero.
         const citedIndex = match.index + match[0].indexOf(cited)
-        findings.push({
+        fileFindings.push({
           file: file.path,
           line: lineAt(scrubbed, citedIndex),
           message: `references ${what} ("${cited}") a reader outside this repo's tracker cannot resolve`,
@@ -375,6 +393,16 @@ export function checkUnresolvableReferences(
         match = pattern.exec(scrubbed)
       }
     }
+    const limit = cls === 'spec' ? limits.get(file.path) : undefined
+    if (limit !== undefined) {
+      if (fileFindings.length <= limit) continue
+      // Every finding of the over-limit file carries the count and the limit,
+      // so whichever ones a diff-scoped run prints still name both.
+      for (const f of fileFindings) {
+        f.message += `; ${file.path} carries ${fileFindings.length} such findings, over its proseGates.specGrandfather limit of ${limit}`
+      }
+    }
+    findings.push(...fileFindings)
   }
   return findings
 }
@@ -637,7 +665,7 @@ export function checkReaderResolvableProse(
   readerFacingSuffix: string,
   legacySlugs: readonly string[] = [],
   shipsPrefix: string = SHIPS_PREFIX,
-  specGrandfather: readonly string[] = [],
+  specGrandfather: SpecGrandfather = [],
   specPaths: readonly string[] = DEFAULT_SPEC_PATHS
 ): ProseFinding[] {
   return [

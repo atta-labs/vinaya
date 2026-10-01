@@ -120,6 +120,7 @@ import {
   sh
 } from './dev-review-loop/gate-reading.js'
 import {
+  createRemoteTaskBranch,
   describeObjectivesEdit,
   developerBranchFor,
   DeveloperStopSignal,
@@ -139,7 +140,7 @@ import {
   renderDeveloperDoctrineBlock,
   resolveDeveloperDoctrineText,
   resolveIssueObjectives,
-  reviewPolicy,
+  reviewPolicyForLoop,
   taskFromPrBody,
   withPromptFile
 } from './dev-review-loop/developer-dispatch.js'
@@ -267,6 +268,8 @@ export {
   NO_SOURCE_REVISION,
   parseObjectivesEditComment,
   resolveIssueObjectives,
+  reviewPolicy,
+  reviewPolicyForLoop,
   taskFromPrBody
 } from './dev-review-loop/developer-dispatch.js'
 export type {
@@ -322,6 +325,16 @@ export {
 export type LoopDeps = {
   dispatchRole: typeof realDispatchRole
   resolveHead: typeof resolveHead
+  /**
+   * The repository's review policy, read once per run from the default
+   * branch's trust anchor — `reviewPolicyForLoop`, the fail-loud variant: a
+   * FAILED read throws (after its own retry), which the setup-phase `try`
+   * turns into a decided `pause(infrastructure)` rather than letting the loop
+   * cast a verdict under the built-in default policy the gate would reject; a
+   * missing/no-policy config resolves to the defaults. Injected so a test can
+   * drive both paths without a real forge.
+   */
+  reviewPolicy: typeof reviewPolicyForLoop
   fetchCiConclusion: typeof fetchCiConclusion
   /** O3: named check-runs, never the review gate's own (excluded upstream). */
   fetchFailingCheckRuns: typeof fetchFailingCheckRuns
@@ -337,6 +350,17 @@ export type LoopDeps = {
   fetchSourceRevision: typeof fetchSourceRevision
   developerBranchFor: (issueNumber: number) => string
   findOpenPrForBranch: typeof findOpenPrForBranch
+  /**
+   * O1: creates this task's developer branch on the remote at `origin/main`'s
+   * tip, so GitHub shows the task in flight from its first minute — the round-1
+   * fresh-dispatch path calls it once, ONLY when the branch exists neither as an
+   * open PR nor on the remote (O2 leaves an existing one untouched). Pushes the
+   * tip via an explicit refspec, never by checking the branch out in this
+   * checkout, and never force-pushes. Throwing is tolerated by the one caller —
+   * logged, then the loop continues, since the Developer's own first push
+   * creates the same branch later.
+   */
+  createRemoteTaskBranch: (branch: string) => void
   /** O4: the durable session id `dispatch.ts` last recorded for this repo+role+vendor+task, or `null`. */
   readResumeRecord: (
     task: number,
@@ -862,6 +886,18 @@ function defaultReadUnpushedWorkDetail(worktreePath: string): { dirtyFiles: stri
 }
 
 /**
+ * The `no_push` pause's detail: the branch, then only what is really
+ * unpushed — the dirty file(s), and the count of commits ahead of the remote
+ * when there are any. Never a claim about commits when there are none.
+ */
+function noPushPauseDetail(branch: string, unpushed: { dirtyFiles: string[]; aheadCount: number }): string {
+  const parts = [`branch ${branch}`]
+  if (unpushed.dirtyFiles.length > 0) parts.push(`dirty file(s): ${unpushed.dirtyFiles.join(', ')}`)
+  if (unpushed.aheadCount > 0) parts.push(`${unpushed.aheadCount} commit(s) ahead of the remote`)
+  return parts.join('; ')
+}
+
+/**
  * O1/O3: `assessRound`'s own `'confidence'` pause (`packages/aeg-core`, out
  * of this task's Surface — the guard itself is untouched) carries no
  * `detail` at all for either branch that reaches it (a re-asked turn that
@@ -1047,6 +1083,7 @@ function defaultDeps(): LoopDeps {
   return {
     dispatchRole: realDispatchRole,
     resolveHead,
+    reviewPolicy: reviewPolicyForLoop,
     fetchCiConclusion,
     fetchFailingCheckRuns,
     fetchRulings,
@@ -1058,6 +1095,7 @@ function defaultDeps(): LoopDeps {
     fetchSourceRevision,
     developerBranchFor: (n) => developerBranchFor(n),
     findOpenPrForBranch,
+    createRemoteTaskBranch,
     readResumeRecord: (task, agent, repo) => realReadResumeRecord('developer', agent, repo, task),
     runtimeDir,
     resolveLogAppendPath,
@@ -3042,8 +3080,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
 
     // The `try` below now wraps EVERY executable statement from here
     // through the end of this function — including the driver's own SETUP
-    // (`reviewPolicy()`, `d.repoRoot()`, `d.gitRevParseOriginMain()`, each a
-    // real forge/git read that can throw) and round 1's own fresh-dispatch
+    // (`d.reviewPolicy()`, `d.repoRoot()`, `d.gitRevParseOriginMain()`, each a
+    // real forge/git read that can throw — a FAILED policy read pauses
+    // `infrastructure` here rather than casting a verdict under the
+    // built-in default policy) and round 1's own fresh-dispatch
     // entry (`fetchFrozenBrief`, a real forge read that can throw), not
     // merely the later `runRoundLoop()` call. A forge-read failure, a
     // dispatch failure, or any other thrown exception anywhere in this span
@@ -3074,7 +3114,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // (built above with the repo-wide default) is corrected in place the
       // moment this succeeds — same object, every closure already holding a
       // reference to it sees the real value from here on.
-      policy = reviewPolicy()
+      policy = d.reviewPolicy()
       config.maxRounds = policy.maxRounds
       config.maxTaskMinutes = policy.maxTaskMinutes
       repoRoot = d.repoRoot()
@@ -3246,6 +3286,26 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // resumes once to open the PR and polls (O2/O3).
             prNumber = await afterDeveloperTurnBeforePrPoll(true)
           } else {
+            // O1/O2: the branch exists neither as an open PR (checked above)
+            // nor on the remote (`resolveHead` just threw) — create it now, at
+            // `origin/main`'s tip, BEFORE the first Developer turn below, so a
+            // dashboard reading only GitHub counts this task in flight from its
+            // first minute instead of only after the Developer's first push
+            // (often an hour later, and never at all for a run that dies before
+            // pushing). A failed push is logged and swallowed here, never a
+            // reason the loop stops: the Developer's own first push creates the
+            // same branch later (Traps to avoid). The default dep pushes an
+            // explicit refspec from `origin/main`, never checking the branch out
+            // in this checkout and never force-pushing.
+            try {
+              d.createRemoteTaskBranch(branch)
+              console.error(`vinaya dev-review-loop: created task branch ${branch} on origin at start`)
+            } catch (err) {
+              console.error(
+                `vinaya dev-review-loop: could not create task branch ${branch} on origin at start: ${err instanceof Error ? err.message : String(err)} — continuing; the developer's first push will create it`
+              )
+            }
+
             // Round 1: fresh dispatch, brief read from the frozen Issue comment
             // (O1). What happens next — check, at most one resume, poll — is
             // O2/O3/O9's own job, never blind.
@@ -3842,14 +3902,24 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                         continue
                       }
                     }
-                    const detail = `branch ${branch}; dirty file(s): ${
-                      stillUnpushed.dirtyFiles.length > 0
-                        ? stillUnpushed.dirtyFiles.join(', ')
-                        : '(none — commits ahead of the remote only)'
-                    }`
-                    await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
-                    decision = { type: 'pause', reason: 'no_push', detail }
-                    continue
+                    // Nothing dirty, nothing ahead, and the remote branch
+                    // already at the head this turn started on: the work IS
+                    // pushed, so there is nothing for a Principal to rule on.
+                    // Decided from the worktree's own reading, never from the
+                    // developer's reply; it falls through to the gate and
+                    // reviewers exactly like a resume that moved the head.
+                    if (
+                      stillUnpushed.dirtyFiles.length === 0 &&
+                      stillUnpushed.aheadCount === 0 &&
+                      d.resolveHead(branch) === headBeforeDispatch
+                    ) {
+                      resolvedByUnpushedResume = true
+                    } else {
+                      const detail = noPushPauseDetail(branch, stillUnpushed)
+                      await logEvents(driverDecidedPauseEvents(config.loopId, state, round, stats))
+                      decision = { type: 'pause', reason: 'no_push', detail }
+                      continue
+                    }
                   }
                 }
               }

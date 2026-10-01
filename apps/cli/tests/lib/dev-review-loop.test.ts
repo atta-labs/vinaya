@@ -78,6 +78,7 @@ import {
   renderDeveloperRoundComment,
   renderReviewerPrompt,
   type ReviewerPromptFacts,
+  reviewPolicyForLoop,
   routeCompletionEvents
 } from '../../src/lib/dev-review-loop.js'
 import {
@@ -817,6 +818,12 @@ fi
 if [ "$1" = "fetch" ]; then
   exit 0
 fi
+if [ "$1" = "push" ]; then
+  # O1 (#919): the loop creates the task branch on the remote at start with
+  # \`git push origin origin/main:refs/heads/<branch>\` — record it and succeed.
+  echo "$@" >> "$HOME/.fake-git-pushes"
+  exit 0
+fi
 if [ "$1" = "diff" ]; then
   echo " 2 files changed, 10 insertions(+), 3 deletions(-)"
   exit 0
@@ -1034,6 +1041,84 @@ function setUp(): { home: string; cwd: string; path: string } {
   writeFakeGit(binDir)
   return { home, cwd, path: `${binDir}:${pathWithoutRealVendors()}` }
 }
+
+describe('devReviewLoop — round 1 start creates the task branch on the remote (O1/O2)', () => {
+  it('creates the developer branch at origin/main on a fresh start, before any developer dispatch (O1)', async () => {
+    // Default world: no remote branch (`developerPushed` false → `resolveHead`
+    // throws) and no open PR (`findOpenPrForBranch` null) — the genuinely-fresh
+    // round-1 path. The loop creates the branch once, at start, and reaches
+    // publish exactly as before; the Developer's own turn (which flips
+    // `developerPushed`) still runs on that branch (O3).
+    const world = makeWorld()
+    const result = await runLoopInProcess(world)
+    expect(result.finalDecision.type).toBe('publish')
+    expect(world.remoteBranchCreations).toEqual([world.branch])
+    // O1: the creation fired, not the developer's push, as the first thing —
+    // the branch existed for GitHub before the one developer dispatch.
+    expect(world.dispatchCountByRole.developer).toBe(1)
+  })
+
+  it('leaves an existing remote branch untouched when an open PR already carries it (O2)', async () => {
+    // `developerPushed: true` → `findOpenPrForBranch` returns a PR and the
+    // round-1 entry attaches to it instead of dispatching fresh; the
+    // remote-branch creation is on the fresh path only, so it never runs.
+    const world = makeWorld({ developerPushed: true })
+    const result = await runLoopInProcess(world)
+    expect(result.finalDecision.type).toBe('publish')
+    expect(world.remoteBranchCreations).toEqual([])
+  })
+
+  it('leaves an existing remote branch untouched when it carries no open PR yet (O2)', async () => {
+    // The other O2 sub-case: the branch is already on the remote
+    // (`remoteBranchExists` → `resolveHead` succeeds) but no open PR carries it
+    // (`findOpenPrForBranch` null) — a crash-recovery re-entry after a prior
+    // process pushed the branch without opening a PR. The round-1 entry takes
+    // the branchExists-true path (`afterDeveloperTurnBeforePrPoll` resumes once
+    // to open the PR), never the genuinely-fresh path, so the remote-branch
+    // creation never runs against an already-existing branch.
+    const world = makeWorld({ remoteBranchExists: true })
+    const result = await runLoopInProcess(world)
+    expect(result.finalDecision.type).toBe('publish')
+    expect(world.remoteBranchCreations).toEqual([])
+  })
+
+  it('a failed branch creation is swallowed — the loop still dispatches and publishes (O1 trap)', async () => {
+    // The Developer's own first push creates the same branch later, so a push
+    // failure at start must never stop the loop: it is logged and swallowed.
+    const world = makeWorld()
+    let attempted = 0
+    const result = await runLoopInProcess(world, undefined, {
+      createRemoteTaskBranch: () => {
+        attempted += 1
+        throw new Error('simulated push rejection')
+      }
+    })
+    expect(attempted).toBe(1)
+    expect(result.finalDecision.type).toBe('publish')
+    expect(world.dispatchCountByRole.developer).toBe(1)
+  })
+})
+
+describe('devReviewLoop — the developer flow still works on the loop-created branch (O3)', () => {
+  // REAL PROCESS: exercises the REAL `createRemoteTaskBranch` (`git push origin
+  // origin/main:refs/heads/<branch>`, answered by the fixture's fake git) on the
+  // genuinely-fresh path, then the Developer's own worktree setup and first
+  // push, all the way to publish — proving the branch the loop creates at start
+  // does not disturb the Developer's own downstream flow on the same branch.
+  it('creates the branch at start with the explicit origin/main refspec, then dispatches, opens the PR, and publishes', () => {
+    const { home, cwd, path } = setUp()
+    const r = runLoop(home, cwd, path)
+    expect(r.status).toBe(0)
+    expect(r.stdout).toMatch(/publish/)
+
+    // The loop's own start-of-run branch creation reached the remote: the fake
+    // git recorded exactly the `origin/main:refs/heads/<branch>` refspec, never
+    // a force-push and never a branch checkout.
+    const pushes = readFileSync(join(home, '.fake-git-pushes'), 'utf8')
+    expect(pushes).toMatch(new RegExp(`origin origin/main:refs/heads/${BRANCH}`))
+    expect(pushes).not.toMatch(/--force|\+/)
+  }, 45000)
+})
 
 describe('devReviewLoop — round 1 clean, ends on publish', () => {
   it('dispatches the developer then both reviewers and publishes with no findings', async () => {
@@ -1337,8 +1422,8 @@ describe('devReviewLoop — restart fixtures (task-log-v1 task 6, O3): equivalen
     expect(runsInOrder[0]).not.toBe(runsInOrder[1])
   }, 45000)
 
-  // REAL PROCESS: publishRound real forge round-trip — asserts on real EffectExecutor attempted/observed/verified lines from real forge writes
-  it("the rerun's own effect events reconcile the FIRST run's identities — an idempotent 'verified' replay, never a second 'attempted', for the SAME effect_id across the restart (O1/O3)", () => {
+  // REAL PROCESS: publishRound real forge round-trip — asserts on real EffectExecutor verified lines from real forge writes
+  it("the rerun's own effect events reconcile the FIRST run's identities — an idempotent 'verified' replay, one line per run, for the SAME effect_id across the restart (O1/O3)", () => {
     const { home, cwd, path } = setUp()
 
     const r1 = runLoop(home, cwd, path)
@@ -1373,13 +1458,12 @@ describe('devReviewLoop — restart fixtures (task-log-v1 task 6, O3): equivalen
       const forId = byId.get(key)
       expect(forId, `no effect events for ${key}`).toBeDefined()
       const events = (forId ?? []).map((l) => l.event)
-      // First run: a fresh write — attempted, then observed(success), then
-      // verified(success). Second run: the SAME identity is already
-      // 'verified' on disk, so `EffectExecutor.reconcileExisting` emits only
-      // one more 'verified' line — never a second 'attempted', which would
-      // mean the executor forgot this write ever happened.
-      expect(events).toEqual(['attempted', 'observed', 'verified', 'verified'])
-      expect(events.filter((e) => e === 'attempted')).toHaveLength(1)
+      // First run: a fresh write — one verified(success). Second run: the
+      // SAME identity is already 'verified' on disk, so
+      // `EffectExecutor.reconcileExisting` emits its own one 'verified' line
+      // under the same effect_id — never a second write, never an
+      // 'attempted' or 'observed'.
+      expect(events).toEqual(['verified', 'verified'])
     }
   }, 45000)
 
@@ -1541,13 +1625,13 @@ describe('devReviewLoop — escalation pauses, --resume continues after a ruling
     expect(pausedEvents).toHaveLength(1)
     // `postPauseComment` (`pause-resume.ts`) runs through the SAME
     // `EffectExecutor` this task instruments — its own `effect` family
-    // `attempted`/`observed`/`verified` sequence for the pause-comment post
+    // one `verified` event for the pause-comment post
     // lands in this SAME outbox file, alongside the policy layer's own
     // `dev_review_loop` events, because both are `log()` calls made from
     // this one process.
     const effectEvents = lines.filter((l) => l.kind === 'effect')
     expect(effectEvents.length).toBeGreaterThan(0)
-    expect(effectEvents.map((e) => e.event)).toEqual(expect.arrayContaining(['attempted', 'observed', 'verified']))
+    expect(effectEvents.map((e) => e.event)).toContain('verified')
     const runs = new Set(
       [...pausedEvents, ...effectEvents].map((l) => (l.meta as { lineage: { run: string | null } }).lineage.run)
     )
@@ -1564,6 +1648,14 @@ function writeFakeGhPauseCommentFailsOnce(dir: string): void {
     dir,
     'gh',
     `#!/bin/sh
+if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then
+  # issue #945: this read must be 404-shaped (a MISSING config file → the
+  # defaults path), never a generic failure — \`reviewPolicy\` now treats a
+  # non-404 read failure as an infrastructure pause, which would mask this
+  # scenario's own escalation pause. See \`writeFakeGh\`'s #668 note.
+  echo "gh: HTTP 404 Not Found (test stub — no vinaya.config.json on the default branch)" >&2
+  exit 1
+fi
 STATE_DIR="$HOME/.fake-gh-posted-comments"
 mkdir -p "$STATE_DIR"
 if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
@@ -1639,6 +1731,14 @@ function writeFakeGhPauseCommentNeverSucceeds(dir: string): void {
     dir,
     'gh',
     `#!/bin/sh
+if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then
+  # issue #945: this read must be 404-shaped (a MISSING config file → the
+  # defaults path), never a generic failure — \`reviewPolicy\` now treats a
+  # non-404 read failure as an infrastructure pause, which would mask this
+  # scenario's own escalation pause. See \`writeFakeGh\`'s #668 note.
+  echo "gh: HTTP 404 Not Found (test stub — no vinaya.config.json on the default branch)" >&2
+  exit 1
+fi
 STATE_DIR="$HOME/.fake-gh-posted-comments"
 mkdir -p "$STATE_DIR"
 if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
@@ -2582,6 +2682,12 @@ fi
 if [ "$1" = "fetch" ]; then
   exit 0
 fi
+if [ "$1" = "push" ]; then
+  # O1 (#919): the loop creates the task branch on the remote at start with
+  # \`git push origin origin/main:refs/heads/<branch>\` — record it and succeed.
+  echo "$@" >> "$HOME/.fake-git-pushes"
+  exit 0
+fi
 if [ "$1" = "diff" ]; then
   echo " 2 files changed, 10 insertions(+), 3 deletions(-)"
   exit 0
@@ -2813,6 +2919,12 @@ if [ "$1" = "-C" ] && [ "$3" = "rev-parse" ] && [ "$4" = "HEAD" ]; then
   exit 0
 fi
 if [ "$1" = "fetch" ]; then
+  exit 0
+fi
+if [ "$1" = "push" ]; then
+  # O1 (#919): the loop creates the task branch on the remote at start with
+  # \`git push origin origin/main:refs/heads/<branch>\` — record it and succeed.
+  echo "$@" >> "$HOME/.fake-git-pushes"
   exit 0
 fi
 if [ "$1" = "diff" ]; then
@@ -4384,4 +4496,135 @@ describe('the start-of-run sweep never delays the loop, and re-checks before rem
     expect(r.stderr).toContain('kept Issue #8002')
     expect(r.stderr).toContain('open — Issue #8002 open, no pull request yet')
   }, 80_000)
+})
+
+// --- issue #945: a failed policy read never casts a verdict under the defaults ---
+
+/**
+ * The origin incident (2026-10-01): during a GitHub API limit the trust-anchor
+ * read failed, `loadTrustAnchorConfig` swallowed it to `null`, and the loop ran
+ * under the `BLOCKER` default while this repository's `reviewPolicy` sets
+ * `MAJOR`; the merge gate read the real policy and refused both verdicts on a
+ * policy-digest mismatch, so a clean review could not merge. `reviewPolicyForLoop`
+ * is the loop-only variant that reads through `loadTrustAnchorConfigOrThrow` and
+ * tells a FAILED read (retry, then throw → pause) apart from a missing/no-policy
+ * config (defaults). The config-level read variant itself is covered in
+ * `apps/cli/tests/config.test.ts`; the shared non-throwing `reviewPolicy` is
+ * exercised by `apps/cli/tests/commands/review-status.test.ts`.
+ */
+describe('reviewPolicyForLoop (issue #945) — retries a failed read, then throws; a null/no-policy config is the defaults path', () => {
+  it('retries the read, then throws naming the read error when every attempt fails (O1/O3)', () => {
+    let reads = 0
+    const load = () => {
+      reads += 1
+      throw new Error('gh: API rate limit exceeded (HTTP 403)')
+    }
+    expect(() => reviewPolicyForLoop(load)).toThrow(/could not read the repository's review policy/)
+    // Two attempts — the read was genuinely retried before giving up.
+    expect(reads).toBe(2)
+  })
+
+  it('a read that fails once then succeeds recovers on the retry (O1)', () => {
+    let reads = 0
+    const load = () => {
+      reads += 1
+      if (reads === 1) throw new Error('gh: transient failure')
+      return null
+    }
+    expect(reviewPolicyForLoop(load)).toEqual(DEFAULT_REVIEW_POLICY)
+    expect(reads).toBe(2)
+  })
+
+  it('a null read (missing file / no config) resolves to the built-in defaults, not a throw (O2)', () => {
+    let reads = 0
+    expect(
+      reviewPolicyForLoop(() => {
+        reads += 1
+        return null
+      })
+    ).toEqual(DEFAULT_REVIEW_POLICY)
+    expect(reads).toBe(1)
+  })
+
+  it('a config present without a reviewPolicy resolves to the built-in defaults (O2)', () => {
+    expect(reviewPolicyForLoop(() => ({ principals: ['someone'] }))).toEqual(DEFAULT_REVIEW_POLICY)
+  })
+
+  it('a readable reviewPolicy is honoured verbatim', () => {
+    const policy = reviewPolicyForLoop(() => ({ reviewPolicy: { codeReviewThreshold: 'MAJOR' } }))
+    expect(policy.codeReviewThreshold).toBe('MAJOR')
+  })
+
+  it('a present-but-unknown severity is a config defect, thrown WITHOUT retry (not a read failure)', () => {
+    let reads = 0
+    const load = () => {
+      reads += 1
+      return { reviewPolicy: { codeReviewThreshold: 'NOT-A-SEVERITY' } }
+    }
+    // `resolveReviewPolicy`'s own refusal, surfaced on the first attempt — the
+    // read itself succeeded, so it is never retried.
+    expect(() => reviewPolicyForLoop(load)).toThrow(/not one of/)
+    expect(reads).toBe(1)
+  })
+})
+
+describe('devReviewLoop — a failed policy read pauses infrastructure and casts no verdict (issue #945, O1/O3)', () => {
+  it('retries the read, then pauses infrastructure naming the error, dispatching no reviewer or developer', async () => {
+    const world = makeWorld()
+    let loadCalls = 0
+    // The REAL loop policy reader (`reviewPolicyForLoop`) over a forge read that
+    // always fails — so the loop runs the genuine retry-then-throw path.
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {
+        reviewPolicy: () =>
+          reviewPolicyForLoop(() => {
+            loadCalls += 1
+            throw new Error('gh: API rate limit exceeded (HTTP 403)')
+          })
+      }
+    )
+
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
+    // The read was retried before the loop gave up (O1).
+    expect(loadCalls).toBe(2)
+    // No verdict was cast: neither reviewer, nor even the developer, was ever
+    // dispatched — the failed read stops the round during setup (O1).
+    expect(world.dispatchCountByRole['code-reviewer'] ?? 0).toBe(0)
+    expect(world.dispatchCountByRole.security ?? 0).toBe(0)
+    expect(world.dispatchCountByRole.developer ?? 0).toBe(0)
+
+    // The pause record and its comment name the failed read, so the Principal
+    // can tell a forge outage from a policy problem (O3).
+    const pauseState = JSON.parse(readFileSync(join(ipControlDir(world), 'pause-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
+    expect(pauseState.reason).toBe('infrastructure')
+    expect(String(pauseState.detail)).toMatch(/review policy/)
+    const pauseComment = world.postedComments.find((c) => /aeg:loop:paused:infrastructure/.test(c.body))
+    expect(pauseComment).toBeDefined()
+    expect(pauseComment!.body).toMatch(/review policy/)
+    // Nothing resembling a verdict was ever posted.
+    expect(world.postedComments.some((c) => /^VERDICT:/m.test(c.body))).toBe(false)
+  })
+
+  it('a null read (missing / policy-less config) does not stop the round — the loop runs under the defaults (O2)', async () => {
+    const world = makeWorld()
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {
+        // The real loop policy reader over a config that resolves to null (a
+        // missing file, or one present without a reviewPolicy): the defaults path,
+        // which publishes exactly as a clean round always has — the failed-read
+        // pause is reached ONLY by a genuine read failure, never by an absent config.
+        reviewPolicy: () => reviewPolicyForLoop(() => null)
+      }
+    )
+    expect(result.finalDecision.type).toBe('publish')
+    expect(world.dispatchCountByRole['code-reviewer'] ?? 0).toBeGreaterThanOrEqual(1)
+    expect(world.dispatchCountByRole.security ?? 0).toBeGreaterThanOrEqual(1)
+  })
 })

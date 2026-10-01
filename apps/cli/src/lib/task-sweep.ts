@@ -79,7 +79,18 @@ function readIfExists(path: string): string | null {
 
 export type IssueState = 'OPEN' | 'CLOSED'
 export type PrState = 'OPEN' | 'MERGED' | 'CLOSED'
-export type PrLookup = { number: number; state: PrState }
+export type PrLookup = { number: number; state: PrState; headSha?: string }
+
+const PR_LOOKUP_FIELDS = 'number,state,headRefName,headRefOid'
+
+function prLookupFrom(out: string, branch: string): PrLookup | null {
+  const list = JSON.parse(out) as { number: number; state: PrState; headRefName: string; headRefOid?: string }[]
+  const found = list.find((p) => p.headRefName === branch)
+  if (!found) return null
+  return found.headRefOid
+    ? { number: found.number, state: found.state, headSha: found.headRefOid }
+    : { number: found.number, state: found.state }
+}
 
 /** Throws on any read failure — the caller reads that as "forge unreadable," never as a fabricated state. */
 export function fetchIssueState(issue: number): IssueState {
@@ -89,10 +100,8 @@ export function fetchIssueState(issue: number): IssueState {
 
 /** `null` when no pull request (of any state) has ever had `branch` as its head — a real, distinguishable answer from a read failure, which throws instead. `--state all` is deliberate: an OPEN-only lookup could never observe MERGED/CLOSED, the two states that decide `finished`. */
 export function fetchPrForBranch(branch: string): PrLookup | null {
-  const out = sh('gh', ['pr', 'list', '--head', branch, '--state', 'all', '--json', 'number,state,headRefName'])
-  const list = JSON.parse(out) as { number: number; state: PrState; headRefName: string }[]
-  const found = list.find((p) => p.headRefName === branch)
-  return found ? { number: found.number, state: found.state } : null
+  const out = sh('gh', ['pr', 'list', '--head', branch, '--state', 'all', '--json', PR_LOOKUP_FIELDS])
+  return prLookupFrom(out, branch)
 }
 
 // --- classification ---------------------------------------------------------
@@ -357,19 +366,8 @@ export async function fetchIssueStateAsync(issue: number): Promise<IssueState> {
 
 /** Async twin of `fetchPrForBranch` — same `gh` call and result shape, non-blocking. */
 export async function fetchPrForBranchAsync(branch: string): Promise<PrLookup | null> {
-  const out = await shAsync('gh', [
-    'pr',
-    'list',
-    '--head',
-    branch,
-    '--state',
-    'all',
-    '--json',
-    'number,state,headRefName'
-  ])
-  const list = JSON.parse(out) as { number: number; state: PrState; headRefName: string }[]
-  const found = list.find((p) => p.headRefName === branch)
-  return found ? { number: found.number, state: found.state } : null
+  const out = await shAsync('gh', ['pr', 'list', '--head', branch, '--state', 'all', '--json', PR_LOOKUP_FIELDS])
+  return prLookupFrom(out, branch)
 }
 
 /** Async twin of `fetchPrBody` — same `gh` call and result shape, non-blocking. */
@@ -409,6 +407,47 @@ export async function developerBranchForAsync(issueNumber: number): Promise<stri
   )
 }
 
+export type WorktreeEntry = { path: string; branch: string | null; locked: boolean }
+export type WorktreeListing = { main: string; entries: WorktreeEntry[] }
+
+/** Parses `git worktree list --porcelain`: blank-line separated blocks, the first being the main worktree. The branch is read from the `branch refs/heads/…` line, never from the folder's name. */
+export function parseWorktreeList(porcelain: string): WorktreeListing {
+  const entries: WorktreeEntry[] = []
+  for (const block of porcelain.split(/\n\s*\n/)) {
+    let path: string | null = null
+    let branch: string | null = null
+    let locked = false
+    for (const line of block.split('\n')) {
+      if (line.startsWith('worktree ')) path = line.slice('worktree '.length)
+      else if (line.startsWith('branch refs/heads/')) branch = line.slice('branch refs/heads/'.length)
+      else if (line === 'locked' || line.startsWith('locked ')) locked = true
+    }
+    if (path !== null) entries.push({ path, branch, locked })
+  }
+  const main = entries[0]?.path
+  if (main === undefined) throw new Error('`git worktree list --porcelain` reported no worktree')
+  return { main, entries: entries.slice(1) }
+}
+
+async function listWorktreesAsync(): Promise<WorktreeListing> {
+  return parseWorktreeList(await shAsync('git', ['worktree', 'list', '--porcelain']))
+}
+
+export async function worktreeHasUncommittedAsync(path: string): Promise<boolean> {
+  return (await shAsync('git', ['-C', path, 'status', '--porcelain'])) !== ''
+}
+
+export async function worktreeHasUnpushedCommitsAsync(path: string, prHeadSha: string | null): Promise<boolean> {
+  const head = await shAsync('git', ['-C', path, 'rev-parse', 'HEAD'])
+  if (prHeadSha !== null && head === prHeadSha) return false
+  return (await shAsync('git', ['-C', path, 'branch', '-r', '--contains', head])) === ''
+}
+
+export async function removeWorktreeAsync(main: string, path: string): Promise<void> {
+  await shAsync('git', ['-C', main, 'worktree', 'remove', path])
+  await shAsync('git', ['-C', main, 'worktree', 'prune'])
+}
+
 export type TaskSweepAsyncDeps = {
   runtimeDir: () => string
   isDriverPidAlive: (pid: number) => boolean
@@ -420,6 +459,14 @@ export type TaskSweepAsyncDeps = {
   fetchPrBody: (pr: number) => Promise<string>
   taskFromPrBody: (body: string) => number | null
   rm: (path: string) => void
+  /** The repository's main worktree and every worktree `git worktree list --porcelain` reports, from any checkout of it. */
+  listWorktrees: () => Promise<WorktreeListing>
+  /** True iff `git status --porcelain` in `path` names anything — tracked change or untracked, non-ignored file. */
+  worktreeHasUncommitted: (path: string) => Promise<boolean>
+  /** True iff the worktree's HEAD is a commit no remote holds: neither the pull request's own head nor reachable from any remote-tracking ref. */
+  worktreeHasUnpushedCommits: (path: string, prHeadSha: string | null) => Promise<boolean>
+  /** `git worktree remove` (never forced) followed by `git worktree prune`, run against the main worktree. */
+  removeWorktree: (main: string, path: string) => Promise<void>
 }
 
 export const defaultTaskSweepAsyncDeps: TaskSweepAsyncDeps = {
@@ -432,7 +479,11 @@ export const defaultTaskSweepAsyncDeps: TaskSweepAsyncDeps = {
   fetchPrForBranch: fetchPrForBranchAsync,
   fetchPrBody: fetchPrBodyAsync,
   taskFromPrBody: realTaskFromPrBody,
-  rm: (path) => rmSync(path, { recursive: true, force: true })
+  rm: (path) => rmSync(path, { recursive: true, force: true }),
+  listWorktrees: listWorktreesAsync,
+  worktreeHasUncommitted: worktreeHasUncommittedAsync,
+  worktreeHasUnpushedCommits: worktreeHasUnpushedCommitsAsync,
+  removeWorktree: removeWorktreeAsync
 }
 
 async function resolveIssueForScopeAsync(
@@ -556,7 +607,7 @@ export async function sweepModernTasksAsync(
   try {
     names = readdirSync(tasksExecutionRoot(root))
   } catch {
-    return { removed: [], kept: [] }
+    names = []
   }
 
   const total = names.length
@@ -627,6 +678,132 @@ export async function sweepModernTasksAsync(
   for (const r of results) {
     if (r.removed) removed.push(r.entry)
     else kept.push(r.entry)
+  }
+
+  const worktrees = await sweepWorktreesAsync(root, names, excludeScope, onDecision, deps)
+  removed.push(...worktrees.removed)
+  kept.push(...worktrees.kept)
+  return { removed, kept }
+}
+
+// --- task worktrees under `.worktrees/` -------------------------------------
+// Every task the loop runs gets its own checkout, with its own installed
+// dependencies, and nothing else ever removes it. Same decision as a task
+// folder, on a second location — but a checkout can hold work that exists
+// nowhere else, so on top of the pull-request state it must also be fully
+// pushed and clean.
+
+type WorktreeClass = { kind: 'finished'; reason: string } | { kind: 'keep'; reason: string }
+
+/** Branches whose task a live driver lock names. `null` when a live lock's task could not be resolved to a branch — the caller then keeps every worktree, since a live task cannot be told from a finished one. */
+async function liveTaskBranches(root: string, names: string[], deps: TaskSweepAsyncDeps): Promise<Set<string> | null> {
+  const live = new Set<string>()
+  for (const name of names) {
+    const scope = scopeFromSegment(name)
+    const lock = deps.readDriverLockForScope(root, scope)
+    if (!lock || !deps.isDriverPidAlive(lock.pid)) continue
+    try {
+      const resolved = await resolveIssueForScopeAsync(scope, deps)
+      if (resolved.issue === null) return null
+      live.add(await deps.developerBranchFor(resolved.issue))
+    } catch {
+      return null
+    }
+  }
+  return live
+}
+
+async function classifyWorktree(
+  entry: WorktreeEntry,
+  liveBranches: Set<string> | null,
+  ownBranch: string | null,
+  deps: TaskSweepAsyncDeps
+): Promise<WorktreeClass> {
+  const keep = (reason: string): WorktreeClass => ({ kind: 'keep', reason })
+  const branch = entry.branch
+  if (branch === null) return keep('no branch checked out')
+  if (!branch.startsWith('task/')) return keep(`\`${branch}\` is not a task branch`)
+  if (branch === ownBranch) return keep('this run’s own task — never swept by its own driver')
+  if (entry.locked) return keep('the worktree is locked')
+  if (liveBranches === null) return keep('a live driver lock names a task that could not be resolved to a branch')
+  if (liveBranches.has(branch)) return keep('a live driver lock names this task')
+
+  let pr: PrLookup | null
+  try {
+    pr = await deps.fetchPrForBranch(branch)
+  } catch (err) {
+    return keep(`could not read the pull request for branch \`${branch}\`: ${message(err)}`)
+  }
+  if (pr === null) return keep('no pull request exists for its branch')
+  if (pr.state === 'OPEN') return keep(`PR #${pr.number} is open`)
+
+  try {
+    if (await deps.worktreeHasUncommitted(entry.path)) return keep('it has uncommitted changes')
+    if (await deps.worktreeHasUnpushedCommits(entry.path, pr.headSha ?? null)) {
+      return keep('its branch has commits the remote lacks')
+    }
+  } catch (err) {
+    return keep(`could not inspect the worktree: ${message(err)}`)
+  }
+  return { kind: 'finished', reason: `PR #${pr.number} is ${pr.state.toLowerCase()}, fully pushed and clean` }
+}
+
+async function sweepWorktreesAsync(
+  root: string,
+  folderNames: string[],
+  excludeScope: RunScope | undefined,
+  onDecision: (decision: SweepAsyncDecision) => void,
+  deps: TaskSweepAsyncDeps
+): Promise<SweepReport> {
+  const removed: SweepEntry[] = []
+  const kept: SweepEntry[] = []
+  let listing: WorktreeListing
+  try {
+    listing = await deps.listWorktrees()
+  } catch {
+    return { removed, kept }
+  }
+  const worktreesDir = `${resolvePath(listing.main, '.worktrees')}${sep}`
+  const candidates = listing.entries.filter((e) => resolvePath(e.path).startsWith(worktreesDir))
+  if (candidates.length === 0) return { removed, kept }
+
+  let ownBranch: string | null = null
+  if (typeof excludeScope === 'number') {
+    try {
+      ownBranch = await deps.developerBranchFor(excludeScope)
+    } catch {
+      ownBranch = null
+    }
+  }
+  const liveBranches = await liveTaskBranches(root, folderNames, deps)
+
+  let completed = 0
+  const total = candidates.length
+  const record = (label: string, wasRemoved: boolean, reason: string): void => {
+    ;(wasRemoved ? removed : kept).push({ folder: label, reason })
+    completed++
+    onDecision({ completed, total, folder: label, removed: wasRemoved, reason })
+  }
+
+  for (const entry of candidates) {
+    const label = `worktree ${resolvePath(entry.path).slice(resolvePath(listing.main).length + 1)}`
+    const cls = await classifyWorktree(entry, liveBranches, ownBranch, deps)
+    if (cls.kind === 'keep') {
+      record(label, false, `kept — ${cls.reason}`)
+      continue
+    }
+    // Same discipline as a task folder: read again immediately before removing.
+    const recheck = await classifyWorktree(entry, liveBranches, ownBranch, deps)
+    if (recheck.kind === 'keep') {
+      record(label, false, `kept — ${recheck.reason}`)
+      continue
+    }
+    try {
+      await deps.removeWorktree(listing.main, entry.path)
+      record(label, true, recheck.reason)
+    } catch (err) {
+      record(label, false, `finished (${recheck.reason}) but could not be removed: ${message(err)}`)
+    }
   }
   return { removed, kept }
 }

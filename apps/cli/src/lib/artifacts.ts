@@ -29,23 +29,13 @@ import { buildClaudeCommandOps } from './claude-command-emitter.js'
 import { buildClaudeStopHookOps } from './claude-stop-hook-emitter.js'
 import type { VinayaConfig } from './config.js'
 import { buildGeminiCommandOp } from './gemini-command-emitter.js'
+import { type HookDir, TRACKED_HOOK_DIR } from './init-hook-paths.js'
 import type { CreateLabelOp, Op } from './ops.js'
 import { ownVersion } from './own-version.js'
 import { REVIEW_GATE_WORKFLOW_NAME } from './review-gate-check-name.js'
 import type { VendoredVinaya } from './self-host.js'
 
-/**
- * The tracked hook directory — the default install target since
- * a real migration. Unlike `.git/hooks` (which git never versions, so a
- * fresh clone silently has NO ring-0 enforcement), files here are committed
- * and travel with the repo; `core.hooksPath` (relative, shared config) routes
- * git at them in the primary checkout and every linked worktree alike. The
- * irreducible per-clone residue is one `git config core.hooksPath
- * .vinaya/hooks` — `doctor` reports it whenever it is missing.
- */
-export const TRACKED_HOOK_DIR = '.vinaya/hooks'
-
-export type HookDir = '.husky' | '.git/hooks' | typeof TRACKED_HOOK_DIR
+export { type HookDir, TRACKED_HOOK_DIR } from './init-hook-paths.js'
 
 export type InitContext = {
   owner: string
@@ -540,7 +530,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 ${vinayaSetupSteps(selfHost, 'shared-build')}${adopterSetupStep(ciSetup)}      # PR_BODY is what makes test-plan/closes-n/pr-report-density EVALUATE:
       # none of the three fetches the body itself (all read
       # \`process.env.PR_BODY\` only) — without it they read "no body —
@@ -760,7 +750,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 ${vinayaSetupSteps(selfHost, 'trusted')}      - name: Review gate
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
@@ -831,7 +821,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 ${vinayaSetupSteps(selfHost, 'trusted')}      # PR_BODY is what makes body-bare-digits EVALUATE at all — the bin
       # reads \`process.env.PR_BODY\` only, never fetches it itself. Fetched
       # live from the forge, never the event payload — same reasoning as
@@ -863,7 +853,7 @@ ${verifiedFetchPrBodyStep()}      - name: Body checks
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 ${vinayaSetupSteps(selfHost, 'trusted')}      # PR_BODY is what makes this check EVALUATE at all — the bin reads
       # \`process.env.PR_BODY\` only, never fetches it itself. Fetched live from
       # the forge, same reasoning as the sibling job's identical step above.
@@ -929,7 +919,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 ${vinayaSetupSteps(selfHost, 'trusted')}      - name: Review gate (verdict evaluation)
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
@@ -1061,7 +1051,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 ${vinayaSetupSteps(selfHost)}      - name: Run vinaya archive
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
@@ -1108,7 +1098,7 @@ ${vinayaSetupSteps(selfHost)}      - name: Run vinaya archive
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 ${vinayaSetupSteps(selfHost)}      - name: Self-archive the tranche this Issue belongs to
         # \`vinaya archive tranche\` already IS the "any open task Issue left"
         # check — refusing (exit 1) while task Issues remain open is the
@@ -1145,7 +1135,7 @@ ${vinayaSetupSteps(selfHost)}      - name: Self-archive the tranche this Issue b
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 ${vinayaSetupSteps(selfHost)}      - name: Run vinaya audit --only=dead-branches
         continue-on-error: true # never-red — this job is a notification channel, not a gate
         env:
@@ -1180,7 +1170,7 @@ ${vinayaSetupSteps(selfHost)}      - name: Run vinaya audit --only=dead-branches
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 ${vinayaSetupSteps(selfHost)}      - name: Run vinaya audit --only=direct-push
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}

@@ -412,10 +412,10 @@ describe('EffectExecutor', () => {
 })
 
 /**
- * task-log-v1 task 6 (O1): the `effect` log family's `attempted`/`observed`/
- * `verified` outcomes, one call per real external write and one idempotent
- * `verified` observation per replay — never a second `attempted` for a
- * replay that performed no new write. `effect_id` is the control-store
+ * task-log-v1 task 6 (O1): the `effect` log family's write outcome: ONE
+ * `verified` event per execute call, carrying its final outcome (`success`,
+ * `failure` or `uncertain`) — never a separate `attempted` or `observed`
+ * line, and a replay that performed no new write records its own one. `effect_id` is the control-store
  * `key` itself, held fixed across every event in one test (O3: idempotent
  * observation identities).
  */
@@ -427,7 +427,7 @@ describe('EffectExecutor — effect log events (task-log-v1 task 6, O1/O3)', () 
     return { executor: new EffectExecutor(deps, task, acquired.epoch, (e) => events.push(e)), events }
   }
 
-  it('emits attempted → observed(success) → verified(success), all under the same effect_id, for a fresh write', () => {
+  it('emits one verified(success) for a fresh write, under the key as effect_id', () => {
     const { executor, events } = loggingExecutor(1)
     executor.execute({
       key: 'k1',
@@ -435,14 +435,12 @@ describe('EffectExecutor — effect log events (task-log-v1 task 6, O1/O3)', () 
       poster: () => 'https://example.com/comment/1',
       reconcile: neverReconcile
     })
-    expect(events.map((e) => e.event)).toEqual(['attempted', 'observed', 'verified'])
-    const effectIds = new Set(events.map((e) => (e as { effect_id: string }).effect_id))
-    expect(effectIds).toEqual(new Set(['k1']))
-    expect((events[1] as { outcome: string }).outcome).toBe('success')
-    expect((events[2] as { outcome: string }).outcome).toBe('success')
+    expect(events.map((e) => e.event)).toEqual(['verified'])
+    expect((events[0] as { effect_id: string }).effect_id).toBe('k1')
+    expect((events[0] as { outcome: string }).outcome).toBe('success')
   })
 
-  it('an idempotent replay of an already-verified write emits only a verified(success) observation — never a second attempted', () => {
+  it('an idempotent replay of an already-verified write emits one verified(success) observation of its own', () => {
     const { executor, events } = loggingExecutor(1)
     const identity = { operation: 'pr-comment', target: 'pr:1', inputVersion: 1, payloadDigest: sha256Hex('body') }
     executor.execute({ key: 'k1', identity, poster: () => 'https://example.com/comment/1', reconcile: neverReconcile })
@@ -459,7 +457,7 @@ describe('EffectExecutor — effect log events (task-log-v1 task 6, O1/O3)', () 
     expect((events[0] as { effect_id: string }).effect_id).toBe('k1')
   })
 
-  it('a poster failure emits attempted → observed(failure), never a verified event, and rethrows', () => {
+  it('a poster failure emits one verified(failure) event and rethrows', () => {
     const { executor, events } = loggingExecutor(1)
     expect(() =>
       executor.execute({
@@ -471,11 +469,11 @@ describe('EffectExecutor — effect log events (task-log-v1 task 6, O1/O3)', () 
         reconcile: neverReconcile
       })
     ).toThrow('simulated crash')
-    expect(events.map((e) => e.event)).toEqual(['attempted', 'observed'])
-    expect((events[1] as { outcome: string }).outcome).toBe('failure')
+    expect(events.map((e) => e.event)).toEqual(['verified'])
+    expect((events[0] as { outcome: string }).outcome).toBe('failure')
   })
 
-  it('a lost acknowledgement that reconciles ambiguous emits observed(uncertain), visible rather than silently dropped (O3: visible gaps)', () => {
+  it('a lost acknowledgement that reconciles ambiguous emits verified(uncertain), visible rather than silently dropped (O3: visible gaps)', () => {
     const { executor, events } = loggingExecutor(1)
     const identity = { operation: 'pr-comment', target: 'pr:1', inputVersion: 1, payloadDigest: sha256Hex('body') }
     expect(() =>
@@ -499,12 +497,12 @@ describe('EffectExecutor — effect log events (task-log-v1 task 6, O1/O3)', () 
         reconcile: () => ({ outcome: 'ambiguous', reason: 'gh unreachable' })
       })
     ).toThrow(EffectRetryRefusedError)
-    expect(events.map((e) => e.event)).toEqual(['observed'])
+    expect(events.map((e) => e.event)).toEqual(['verified'])
     expect((events[0] as { outcome: string; effect_id: string }).outcome).toBe('uncertain')
     expect((events[0] as { effect_id: string }).effect_id).toBe('k1')
   })
 
-  it("a reconciliation confirming the write already landed emits observed(success) → verified(success), never a repeated 'attempted'", () => {
+  it('a reconciliation confirming the write already landed emits one verified(success)', () => {
     const { executor, events } = loggingExecutor(1)
     const identity = { operation: 'pr-comment', target: 'pr:1', inputVersion: 1, payloadDigest: sha256Hex('body') }
     expect(() =>
@@ -524,10 +522,11 @@ describe('EffectExecutor — effect log events (task-log-v1 task 6, O1/O3)', () 
       poster: () => 'should-not-be-called',
       reconcile: () => ({ outcome: 'confirmed', url: 'https://example.com/comment/already-there' })
     })
-    expect(events.map((e) => e.event)).toEqual(['observed', 'verified'])
+    expect(events.map((e) => e.event)).toEqual(['verified'])
+    expect((events[0] as { outcome: string }).outcome).toBe('success')
   })
 
-  it('a corrupt existing record emits observed(uncertain), the SAME line the ambiguous-reconciliation branch emits, before refusing (round 2 review, MAJOR)', () => {
+  it('a corrupt existing record emits verified(uncertain), the SAME line the ambiguous-reconciliation branch emits, before refusing (round 2 review, MAJOR)', () => {
     const { executor, events } = loggingExecutor(1)
     executor.execute({
       key: 'k1',
@@ -547,7 +546,7 @@ describe('EffectExecutor — effect log events (task-log-v1 task 6, O1/O3)', () 
         reconcile: neverReconcile
       })
     ).toThrow(EffectRetryRefusedError)
-    expect(events.map((e) => e.event)).toEqual(['observed'])
+    expect(events.map((e) => e.event)).toEqual(['verified'])
     expect((events[0] as { outcome: string; effect_id: string }).outcome).toBe('uncertain')
     expect((events[0] as { effect_id: string }).effect_id).toBe('k1')
   })

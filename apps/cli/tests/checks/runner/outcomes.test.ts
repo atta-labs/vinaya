@@ -15,38 +15,38 @@ function fullScope(overrides: Partial<CheckSpec> & Pick<CheckSpec, 'name' | 'run
   return { scope: 'full', ...overrides }
 }
 
-function capture(): { events: LogEventInput[]; log: (e: LogEventInput) => void } {
+/** `events` holds the per-check `checked` observations (a check that did not pass); `summaries` the run's one `summary`. */
+function capture(): {
+  events: LogEventInput[]
+  summaries: LogEventInput[]
+  log: (e: LogEventInput) => void
+} {
   const events: LogEventInput[] = []
-  return { events, log: (e) => events.push(e) }
+  const summaries: LogEventInput[] = []
+  return {
+    events,
+    summaries,
+    log: (e) => (e.kind === 'gate' && e.event === 'summary' ? summaries : events).push(e)
+  }
 }
 
 const BASE_OPTS = { parallel: 1, diffOnly: false, changedFiles: null, defaultTimeoutMs: 5000 }
 
 /**
- * One `gate` `checked` observation per terminal
- * outcome the runner can reach, each carrying `check_version`,
+ * One `gate` `checked` observation per terminal outcome the runner can reach
+ * for a check that did not pass (a pass and a skip record none — the run's
+ * `summary` counts them), each carrying `check_version`,
  * `policy_version`, `input_fingerprint`, `outcome`, `duration_ms` and a
  * structured `reason` (never a check's own free-text `CheckError.message`,
  * which the fixture bodies below deliberately vary to prove that).
  */
 describe('runChecks — gate observations, one per terminal outcome', () => {
-  it('pass', async () => {
-    const { events, log } = capture()
+  it('pass — records no event of its own, only the run summary', async () => {
+    const { events, summaries, log } = capture()
     const [outcome] = await runChecks([fullScope({ name: 'passing', run: PASSING })], { ...BASE_OPTS, log })
     expect(outcome?.status).toBe('pass')
-    expect(events).toHaveLength(1)
-    const e = events[0] as Extract<LogEventInput, { kind: 'gate' }>
-    expect(e.kind).toBe('gate')
-    expect(e.event).toBe('checked')
-    expect(e.check).toBe('passing')
-    expect(e.outcome).toBe('pass')
-    expect(e.reason).toBeUndefined()
-    expect(e.check_version).toBe('1')
-    expect(e.policy_version).toBeNull()
-    expect(typeof e.input_fingerprint).toBe('string')
-    expect((e.input_fingerprint as string).length).toBeGreaterThan(0)
-    expect(typeof e.duration_ms).toBe('number')
-    expect(e.payload).toEqual({})
+    expect(events).toHaveLength(0)
+    expect(summaries).toHaveLength(1)
   })
 
   it('fail — rejected, structured reason names only the error count, never the message', async () => {
@@ -54,7 +54,7 @@ describe('runChecks — gate observations, one per terminal outcome', () => {
     const [outcome] = await runChecks([fullScope({ name: 'failing', run: FAILING })], { ...BASE_OPTS, log })
     expect(outcome?.status).toBe('fail')
     expect(events).toHaveLength(1)
-    const e = events[0] as Extract<LogEventInput, { kind: 'gate' }>
+    const e = events[0] as Extract<LogEventInput, { kind: 'gate'; event: 'checked' }>
     expect(e.outcome).toBe('fail')
     expect(e.reason).toBe('errors:1')
     expect(e.reason).not.toContain('fixture finding')
@@ -66,13 +66,13 @@ describe('runChecks — gate observations, one per terminal outcome', () => {
     expect(outcome?.status).toBe('fail')
     expect(outcome?.errors[0]?.pending).toBe(true)
     expect(events).toHaveLength(1)
-    const e = events[0] as Extract<LogEventInput, { kind: 'gate' }>
+    const e = events[0] as Extract<LogEventInput, { kind: 'gate'; event: 'checked' }>
     expect(e.outcome).toBe('wait')
     expect(e.reason).toBe('pending_principal_action')
   })
 
-  it('skip — a diff-scoped check with no matching include glob', async () => {
-    const { events, log } = capture()
+  it('skip — a diff-scoped check with no matching include glob records no event, only a skipped count', async () => {
+    const { events, summaries, log } = capture()
     const spec = fullScope({ name: 'scoped', run: PASSING, scope: 'diff', include: ['apps/other/**'] })
     const [outcome] = await runChecks([spec], {
       ...BASE_OPTS,
@@ -81,31 +81,26 @@ describe('runChecks — gate observations, one per terminal outcome', () => {
       log
     })
     expect(outcome?.status).toBe('skipped')
-    expect(events).toHaveLength(1)
-    const e = events[0] as Extract<LogEventInput, { kind: 'gate' }>
-    expect(e.outcome).toBe('skip')
-    expect(e.reason).toBe('no-matching-include-glob')
-    expect(e.duration_ms).toBe(0)
+    expect(events).toHaveLength(0)
+    expect(summaries[0]).toMatchObject({ ran: 0, skipped: 1, failed_checks: [] })
   })
 
-  it('skip — requiresOpenPr under localOnly names its own reason', async () => {
-    const { events, log } = capture()
+  it('skip — requiresOpenPr under localOnly records no event, and the outcome names its own reason', async () => {
+    const { events, summaries, log } = capture()
     const spec = fullScope({ name: 'pr-only', run: PASSING, requiresOpenPr: true })
-    await runChecks([spec], { ...BASE_OPTS, localOnly: true, log })
-    expect(events).toHaveLength(1)
-    const e = events[0] as Extract<LogEventInput, { kind: 'gate' }>
-    expect(e.outcome).toBe('skip')
-    expect(e.reason).toBe('requires-open-pr, local-only')
+    const [outcome] = await runChecks([spec], { ...BASE_OPTS, localOnly: true, log })
+    expect(events).toHaveLength(0)
+    expect(summaries[0]).toMatchObject({ skipped: 1 })
+    expect(outcome?.skipReason).toBe('requires-open-pr, local-only')
   })
 
-  it('skip — skipFull names its own reason', async () => {
-    const { events, log } = capture()
+  it('skip — skipFull records no event, and the outcome names its own reason', async () => {
+    const { events, summaries, log } = capture()
     const spec = fullScope({ name: 'full-one', run: PASSING, scope: 'full' })
-    await runChecks([spec], { ...BASE_OPTS, skipFull: true, log })
-    expect(events).toHaveLength(1)
-    const e = events[0] as Extract<LogEventInput, { kind: 'gate' }>
-    expect(e.outcome).toBe('skip')
-    expect(e.reason).toBe('full-scope, pre-commit')
+    const [outcome] = await runChecks([spec], { ...BASE_OPTS, skipFull: true, log })
+    expect(events).toHaveLength(0)
+    expect(summaries[0]).toMatchObject({ skipped: 1 })
+    expect(outcome?.skipReason).toBe('full-scope, pre-commit')
   })
 
   it('timeout', async () => {
@@ -116,7 +111,7 @@ describe('runChecks — gate observations, one per terminal outcome', () => {
     })
     expect(outcome?.status).toBe('timeout')
     expect(events).toHaveLength(1)
-    const e = events[0] as Extract<LogEventInput, { kind: 'gate' }>
+    const e = events[0] as Extract<LogEventInput, { kind: 'gate'; event: 'checked' }>
     expect(e.outcome).toBe('timeout')
     expect(e.reason).toBe('timeout_ms:300')
   })
@@ -126,7 +121,7 @@ describe('runChecks — gate observations, one per terminal outcome', () => {
     const [outcome] = await runChecks([fullScope({ name: 'malformed', run: MALFORMED })], { ...BASE_OPTS, log })
     expect(outcome?.status).toBe('error')
     expect(events).toHaveLength(1)
-    const e = events[0] as Extract<LogEventInput, { kind: 'gate' }>
+    const e = events[0] as Extract<LogEventInput, { kind: 'gate'; event: 'checked' }>
     expect(e.outcome).toBe('invalid_input')
     expect(e.reason).toBe('malformed_output')
   })
@@ -139,7 +134,7 @@ describe('runChecks — gate observations, one per terminal outcome', () => {
     })
     expect(outcome?.status).toBe('error')
     expect(events).toHaveLength(1)
-    const e = events[0] as Extract<LogEventInput, { kind: 'gate' }>
+    const e = events[0] as Extract<LogEventInput, { kind: 'gate'; event: 'checked' }>
     expect(e.outcome).toBe('unavailable_dependency')
     expect(e.reason).toBe('spawn_failed:ENOENT')
   })
@@ -154,20 +149,21 @@ describe('runChecks — gate observations, one per terminal outcome', () => {
     })
     expect(outcome?.status).toBe('error')
     expect(events).toHaveLength(1)
-    const e = events[0] as Extract<LogEventInput, { kind: 'gate' }>
+    const e = events[0] as Extract<LogEventInput, { kind: 'gate'; event: 'checked' }>
     expect(e.outcome).toBe('unavailable_dependency')
     expect(e.reason).toBe('missing_env:SECRET_TOKEN')
   })
 
   it('the input fingerprint never carries a forwarded secret value in the clear', async () => {
     const { events, log } = capture()
-    const spec = fullScope({ name: 'with-secret', run: PASSING, env: { SECRET_TOKEN: true } })
+    // A failing check, because a passing one records no event to read the fingerprint from.
+    const spec = fullScope({ name: 'with-secret', run: FAILING, env: { SECRET_TOKEN: true } })
     await runChecks([spec], {
       ...BASE_OPTS,
       callerEnv: { PATH: process.env.PATH as string, SECRET_TOKEN: 'sk-super-secret-value' },
       log
     })
-    const e = events[0] as Extract<LogEventInput, { kind: 'gate' }>
+    const e = events[0] as Extract<LogEventInput, { kind: 'gate'; event: 'checked' }>
     expect(e.input_fingerprint).not.toContain('sk-super-secret-value')
     // sha256 hex digest — fixed shape, not the JSON it was built from.
     expect(e.input_fingerprint as string).toMatch(/^[0-9a-f]{64}$/)

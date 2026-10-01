@@ -6,15 +6,22 @@
  */
 
 import { afterEach, describe, expect, it } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   classifyTaskFolder,
+  parseWorktreeList,
+  removeWorktreeAsync,
   runTaskSweep,
   sweepLegacyLayout,
   sweepModernTasks,
-  type TaskSweepDeps
+  sweepModernTasksAsync,
+  type TaskSweepAsyncDeps,
+  type TaskSweepDeps,
+  worktreeHasUncommittedAsync,
+  worktreeHasUnpushedCommitsAsync
 } from '../../src/lib/task-sweep.js'
 import { runPath } from '../../src/lib/run-paths.js'
 
@@ -511,5 +518,240 @@ describe('runTaskSweep', () => {
     const result = runTaskSweep({ includeLegacy: false }, deps, undefined, home)
     expect(result.modern.removed.map((r) => r.folder)).toEqual(['Issue #501'])
     expect(result.legacy.entries).toEqual([])
+  })
+})
+
+describe('sweepModernTasksAsync — task worktrees under .worktrees/', () => {
+  const MAIN = '/repo'
+  const wt = (branch: string | null, extra: { locked?: boolean; name?: string } = {}) => ({
+    path: `${MAIN}/.worktrees/${extra.name ?? branch ?? 'detached'}`,
+    branch,
+    locked: extra.locked ?? false
+  })
+
+  function asyncDeps(root: string, overrides: Partial<TaskSweepAsyncDeps> = {}) {
+    const removedPaths: string[] = []
+    const deps: TaskSweepAsyncDeps = {
+      runtimeDir: () => root,
+      isDriverPidAlive: () => false,
+      readDriverLockForScope: () => null,
+      readPauseStateForScope: () => null,
+      fetchIssueState: async () => 'OPEN',
+      developerBranchFor: async (issue) => `task/issue-${issue}`,
+      fetchPrForBranch: async () => null,
+      fetchPrBody: async () => '',
+      taskFromPrBody: () => null,
+      rm: () => {},
+      listWorktrees: async () => ({ main: MAIN, entries: [] }),
+      worktreeHasUncommitted: async () => false,
+      worktreeHasUnpushedCommits: async () => false,
+      removeWorktree: async (_main, path) => {
+        removedPaths.push(path)
+      },
+      ...overrides
+    }
+    return { deps, removedPaths }
+  }
+
+  const merged = async () => ({ number: 9, state: 'MERGED' as const })
+
+  it('removes a worktree whose pull request is merged or closed, fully pushed and clean, and lists it', async () => {
+    const root = tempDir('vinaya-sweep-wt-')
+    const { deps, removedPaths } = asyncDeps(root, {
+      listWorktrees: async () => ({ main: MAIN, entries: [wt('task/issue-1'), wt('task/issue-2')] }),
+      fetchPrForBranch: async (b) =>
+        b.endsWith('1') ? { number: 9, state: 'MERGED' } : { number: 10, state: 'CLOSED' }
+    })
+    const report = await sweepModernTasksAsync(undefined, () => {}, deps)
+    expect(removedPaths).toEqual([`${MAIN}/.worktrees/task/issue-1`, `${MAIN}/.worktrees/task/issue-2`])
+    expect(report.removed.map((r) => r.folder)).toEqual([
+      'worktree .worktrees/task/issue-1',
+      'worktree .worktrees/task/issue-2'
+    ])
+    expect(report.removed[0]?.reason).toContain('PR #9 is merged')
+  })
+
+  it('reads the branch from the worktree list, never from the folder name', async () => {
+    const root = tempDir('vinaya-sweep-wt-name-')
+    const asked: string[] = []
+    const { deps, removedPaths } = asyncDeps(root, {
+      listWorktrees: async () => ({ main: MAIN, entries: [wt('task/issue-3', { name: 'something-else' })] }),
+      fetchPrForBranch: async (b) => {
+        asked.push(b)
+        return merged()
+      }
+    })
+    await sweepModernTasksAsync(undefined, () => {}, deps)
+    expect(asked).toContain('task/issue-3')
+    expect(removedPaths).toEqual([`${MAIN}/.worktrees/something-else`])
+  })
+
+  const keepCases: [string, Partial<TaskSweepAsyncDeps>, ReturnType<typeof wt>, string][] = [
+    [
+      'open pull request',
+      { fetchPrForBranch: async () => ({ number: 4, state: 'OPEN' }) },
+      wt('task/issue-4'),
+      'PR #4 is open'
+    ],
+    ['no pull request', { fetchPrForBranch: async () => null }, wt('task/issue-5'), 'no pull request'],
+    [
+      'unpushed commits',
+      { fetchPrForBranch: merged, worktreeHasUnpushedCommits: async () => true },
+      wt('task/issue-6'),
+      'commits the remote lacks'
+    ],
+    [
+      'uncommitted changes',
+      { fetchPrForBranch: merged, worktreeHasUncommitted: async () => true },
+      wt('task/issue-7'),
+      'uncommitted changes'
+    ],
+    [
+      'forge read failure',
+      {
+        fetchPrForBranch: async () => {
+          throw new Error('gh: offline')
+        }
+      },
+      wt('task/issue-8'),
+      'gh: offline'
+    ],
+    ['locked worktree', { fetchPrForBranch: merged }, wt('task/issue-10', { locked: true }), 'locked'],
+    ['detached HEAD', { fetchPrForBranch: merged }, wt(null), 'no branch'],
+    ['non-task branch', { fetchPrForBranch: merged }, wt('feature/x'), 'not a task branch']
+  ]
+  for (const [name, overrides, entry, reason] of keepCases) {
+    it(`keeps a worktree with ${name}, with the reason`, async () => {
+      const root = tempDir('vinaya-sweep-wt-keep-')
+      const { deps, removedPaths } = asyncDeps(root, {
+        ...overrides,
+        listWorktrees: async () => ({ main: MAIN, entries: [entry] })
+      })
+      const report = await sweepModernTasksAsync(undefined, () => {}, deps)
+      expect(removedPaths).toEqual([])
+      expect(report.removed).toEqual([])
+      expect(report.kept).toHaveLength(1)
+      expect(report.kept[0]?.reason).toContain(reason)
+    })
+  }
+
+  it('keeps a worktree whose task a live driver lock names, and the run’s own task', async () => {
+    const root = tempDir('vinaya-sweep-wt-live-')
+    mkdirSync(runPath(root, 11, { area: 'task' }), { recursive: true })
+    const { deps, removedPaths } = asyncDeps(root, {
+      listWorktrees: async () => ({ main: MAIN, entries: [wt('task/issue-11'), wt('task/issue-12')] }),
+      fetchPrForBranch: merged,
+      readDriverLockForScope: (_r, scope) => (scope === 11 ? { pid: 4242, startedAt: 'now' } : null),
+      isDriverPidAlive: (pid) => pid === 4242
+    })
+    const report = await sweepModernTasksAsync(12, () => {}, deps)
+    expect(removedPaths).toEqual([])
+    const kept = Object.fromEntries(report.kept.map((k) => [k.folder, k.reason]))
+    expect(kept['worktree .worktrees/task/issue-11']).toContain('live driver lock')
+    expect(kept['worktree .worktrees/task/issue-12']).toContain('own task')
+  })
+
+  it('keeps every worktree when a live lock cannot be resolved to a branch', async () => {
+    const root = tempDir('vinaya-sweep-wt-unresolved-')
+    mkdirSync(runPath(root, { pr: 30 }, { area: 'task' }), { recursive: true })
+    const { deps, removedPaths } = asyncDeps(root, {
+      listWorktrees: async () => ({ main: MAIN, entries: [wt('task/issue-13')] }),
+      fetchPrForBranch: merged,
+      readDriverLockForScope: () => ({ pid: 4242, startedAt: 'now' }),
+      isDriverPidAlive: () => true
+    })
+    await sweepModernTasksAsync(undefined, () => {}, deps)
+    expect(removedPaths).toEqual([])
+  })
+
+  it('ignores worktrees outside .worktrees/', async () => {
+    const root = tempDir('vinaya-sweep-wt-outside-')
+    const { deps, removedPaths } = asyncDeps(root, {
+      listWorktrees: async () => ({
+        main: MAIN,
+        entries: [{ path: '/elsewhere/task-14', branch: 'task/issue-14', locked: false }]
+      }),
+      fetchPrForBranch: merged
+    })
+    const report = await sweepModernTasksAsync(undefined, () => {}, deps)
+    expect(removedPaths).toEqual([])
+    expect(report).toEqual({ removed: [], kept: [] })
+  })
+
+  it('keeps the worktree when the pull request moves between the first read and the removal', async () => {
+    const root = tempDir('vinaya-sweep-wt-recheck-')
+    let reads = 0
+    const { deps, removedPaths } = asyncDeps(root, {
+      listWorktrees: async () => ({ main: MAIN, entries: [wt('task/issue-15')] }),
+      fetchPrForBranch: async () => ({ number: 9, state: ++reads === 1 ? 'MERGED' : 'OPEN' })
+    })
+    const report = await sweepModernTasksAsync(undefined, () => {}, deps)
+    expect(removedPaths).toEqual([])
+    expect(report.kept[0]?.reason).toContain('PR #9 is open')
+  })
+
+  it('parses git worktree list --porcelain: main first, branch from refs/heads, locked flag', () => {
+    const listing = parseWorktreeList(
+      [
+        'worktree /repo\nHEAD aaa\nbranch refs/heads/main',
+        'worktree /repo/.worktrees/task/issue-1\nHEAD bbb\nbranch refs/heads/task/issue-1\nlocked reason',
+        'worktree /repo/.worktrees/x\nHEAD ccc\ndetached',
+        ''
+      ].join('\n\n')
+    )
+    expect(listing.main).toBe('/repo')
+    expect(listing.entries).toEqual([
+      { path: '/repo/.worktrees/task/issue-1', branch: 'task/issue-1', locked: true },
+      { path: '/repo/.worktrees/x', branch: null, locked: false }
+    ])
+  })
+})
+
+describe('worktree removal against a real temporary repository', () => {
+  const git = (cwd: string, ...args: string[]) =>
+    execFileSync('git', ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { encoding: 'utf8' }).trim()
+
+  function setup() {
+    const base = realpathSync(tempDir('vinaya-sweep-real-'))
+    const origin = join(base, 'origin.git')
+    const main = join(base, 'main')
+    execFileSync('git', ['init', '--bare', '-b', 'main', origin])
+    execFileSync('git', ['clone', '-q', origin, main])
+    writeFileSync(join(main, 'a.txt'), 'a')
+    git(main, 'add', '.')
+    git(main, 'commit', '-q', '-m', 'init')
+    git(main, 'push', '-q', 'origin', 'HEAD:main')
+    const wtPath = join(main, '.worktrees', 'task', 'issue-1')
+    git(main, 'worktree', 'add', '-q', '-b', 'task/issue-1', wtPath)
+    return { main, wtPath }
+  }
+
+  it('removes a pushed, clean worktree through git, leaving the worktree list consistent', async () => {
+    const { main, wtPath } = setup()
+    writeFileSync(join(wtPath, 'b.txt'), 'b')
+    git(wtPath, 'add', '.')
+    git(wtPath, 'commit', '-q', '-m', 'work')
+    git(wtPath, 'push', '-q', 'origin', 'task/issue-1')
+    expect(await worktreeHasUncommittedAsync(wtPath)).toBe(false)
+    expect(await worktreeHasUnpushedCommitsAsync(wtPath, null)).toBe(false)
+
+    await removeWorktreeAsync(main, wtPath)
+
+    expect(existsSync(wtPath)).toBe(false)
+    expect(git(main, 'worktree', 'list', '--porcelain')).not.toContain('issue-1')
+  })
+
+  it('sees an unpushed commit and an uncommitted file, and git refuses to remove a dirty worktree', async () => {
+    const { main, wtPath } = setup()
+    writeFileSync(join(wtPath, 'b.txt'), 'b')
+    git(wtPath, 'add', '.')
+    git(wtPath, 'commit', '-q', '-m', 'work')
+    expect(await worktreeHasUnpushedCommitsAsync(wtPath, null)).toBe(true)
+    expect(await worktreeHasUnpushedCommitsAsync(wtPath, git(wtPath, 'rev-parse', 'HEAD'))).toBe(false)
+
+    writeFileSync(join(wtPath, 'c.txt'), 'c')
+    expect(await worktreeHasUncommittedAsync(wtPath)).toBe(true)
+    await expect(removeWorktreeAsync(main, wtPath)).rejects.toThrow()
+    expect(existsSync(wtPath)).toBe(true)
   })
 })

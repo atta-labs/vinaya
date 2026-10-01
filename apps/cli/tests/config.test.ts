@@ -19,6 +19,7 @@ import {
   isCanonicalHookBlockPath,
   lintEnvDeclarations,
   loadTrustAnchorConfig,
+  loadTrustAnchorConfigOrThrow,
   readRepoCiSetup,
   resolveCiTrustAnchorProbeRef,
   resolveAgentVendors,
@@ -1397,5 +1398,51 @@ describe('resolveSecurityScanCommand — the configured agent-config scanner (ro
     expect(VinayaConfigSchema.safeParse({ securityScan: { command: [] } }).success).toBe(false)
     expect(VinayaConfigSchema.safeParse({ securityScan: { command: [''] } }).success).toBe(false)
     expect(VinayaConfigSchema.safeParse({ securityScan: {} }).success).toBe(false)
+  })
+})
+
+// --- issue #945: a failed trust-anchor read is distinct from a missing config ---
+
+/**
+ * The origin incident (2026-10-01): during a GitHub API limit the trust-anchor
+ * read failed, `loadTrustAnchorConfig` swallowed it to `null`, and the
+ * dev-review-loop ran under the `BLOCKER` default while this repository's
+ * `reviewPolicy` sets `MAJOR`; the merge gate read the real policy and refused
+ * both verdicts on a policy-digest mismatch, so a clean review could not merge.
+ * `loadTrustAnchorConfigOrThrow` is the loop-only variant that tells a FAILED
+ * read (throw) apart from a missing/no-policy config (null → defaults).
+ */
+describe('loadTrustAnchorConfigOrThrow (issue #945) — a failed read is distinct from a missing/no-policy config', () => {
+  const b64 = (obj: unknown): string => Buffer.from(JSON.stringify(obj), 'utf8').toString('base64')
+  const execFileLikeError = (stderr: string): Error =>
+    Object.assign(new Error('Command failed: gh api repos/o/r/contents/vinaya.config.json --jq .content'), { stderr })
+
+  it('a missing config file (404) resolves to null — the defaults path, exactly as loadTrustAnchorConfig', () => {
+    const err = execFileLikeError('gh: Not Found (HTTP 404)')
+    expect(
+      loadTrustAnchorConfigOrThrow(() => {
+        throw err
+      })
+    ).toBeNull()
+  })
+
+  it('a genuine read failure (a rate limit / outage, not a 404) THROWS rather than silently defaulting', () => {
+    const err = execFileLikeError('gh: API rate limit exceeded (HTTP 403)')
+    expect(() =>
+      loadTrustAnchorConfigOrThrow(() => {
+        throw err
+      })
+    ).toThrow(/trust-anchor config from the default branch/)
+  })
+
+  it('a readable config with a reviewPolicy is returned as-is', () => {
+    const config = loadTrustAnchorConfigOrThrow(() => b64({ reviewPolicy: { codeReviewThreshold: 'MAJOR' } }))
+    expect(config?.reviewPolicy?.codeReviewThreshold).toBe('MAJOR')
+  })
+
+  it('a readable config without a reviewPolicy is returned with reviewPolicy undefined — the defaults path', () => {
+    const config = loadTrustAnchorConfigOrThrow(() => b64({ principals: ['someone'] }))
+    expect(config).not.toBeNull()
+    expect(config?.reviewPolicy).toBeUndefined()
   })
 })

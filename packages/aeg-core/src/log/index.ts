@@ -1,5 +1,37 @@
 export { buildHeader } from './envelope'
+export {
+  CUSTOM_EVENT_MAX_FIELDS,
+  CUSTOM_EVENT_NAME_MAX_LENGTH,
+  CUSTOM_EVENT_NAME_PATTERN,
+  CUSTOM_EVENT_RESERVED_NAMESPACE,
+  CUSTOM_FIELD_NAME_MAX_LENGTH,
+  CUSTOM_FIELD_NAME_PATTERN,
+  CUSTOM_TEXT_MAX_LENGTH,
+  CustomEventDeclarationsSchema,
+  checkCustomEvent,
+  UNRECORDABLE_FIELD_NAME
+} from './custom'
+export type {
+  CustomEventCheck,
+  CustomEventDeclaration,
+  CustomEventDeclarations,
+  CustomEventRefusalReason,
+  CustomFieldType,
+  CustomFieldValue
+} from './custom'
 export type { HeaderInput } from './envelope'
+export {
+  buildExecution,
+  buildExecutions,
+  EXECUTION_NAMES,
+  FACT_SHEETS,
+  FIXTURE_EPOCH,
+  FIXTURE_REPO,
+  FIXTURE_SEED,
+  FIXTURE_VINAYA_VERSION,
+  LOW_TRUST_VINAYA_VERSION
+} from './fixtures'
+export type { ExecutionName, FactSheet, FixtureExecution, FixtureLine, FixtureValidity } from './fixtures'
 export { redact } from './redact'
 export {
   classifyStoredLine,
@@ -20,6 +52,7 @@ export type {
 } from './store'
 export {
   CONFIDENCE_REASON_MAX_LENGTH,
+  CustomEventSchema,
   DispatchEventSchema,
   DevReviewLoopEventSchema,
   EffectEventSchema,
@@ -49,6 +82,7 @@ export {
   UsageEventSchema
 } from './schema'
 export type {
+  CustomEvent,
   DispatchEvent,
   DispatchOutcome,
   DevReviewLoopEvent,
@@ -79,3 +113,32 @@ export type {
   UsageEvent,
   UsageUnits
 } from './schema'
+export {
+  cacheContractCases,
+  createMemoryCache,
+  isLowTrustVersion,
+  known,
+  LOW_TRUST_BELOW_VERSION,
+  normalizeStoredLine,
+  unknownBecause
+} from './sync'
+export type {
+  CacheContractCase,
+  Dataset,
+  DatasetRow,
+  JsonObject,
+  LogCache,
+  LogSource,
+  Measured,
+  NormalizedLine,
+  PutOutcome,
+  QuarantineRecord,
+  RowEdit,
+  RowOrigin,
+  RowTrust,
+  SourceCursor,
+  SourceGap,
+  SourceLine,
+  SourcePage,
+  UnknownableField
+} from './sync'

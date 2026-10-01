@@ -60,15 +60,15 @@ function readGateLines(dir: string, issue: string): Array<Record<string, unknown
  * real separate check-runner invocations against the same task actually do.
  */
 describe('runChecks — gate correlation across hook/CLI/CI callers', () => {
-  it('one gate line per spec, per call — never more, never fewer, for a single invocation', async () => {
+  it('one gate line per run when every check passes — a summary, never one line per check', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'vinaya-gate-correlation-'))
     const sink = sinkFor(dir, { VINAYA_TASK: '900' })
     const specs = [fullScope({ name: 'a', run: PASSING }), fullScope({ name: 'b', run: PASSING })]
     await runChecks(specs, { ...BASE_OPTS, log: sink.log })
     await flush()
     const lines = readGateLines(dir, '900')
-    expect(lines).toHaveLength(2)
-    expect(lines.map((l) => l.check).sort()).toEqual(['a', 'b'])
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toMatchObject({ event: 'summary', ran: 2, passed: 2, failed: 0, skipped: 0, failed_checks: [] })
   })
 
   it('a hook-invoked run reads meta.host: "hook" — never collapsed into plain "cli"', async () => {
@@ -107,6 +107,7 @@ describe('runChecks — gate correlation across hook/CLI/CI callers', () => {
     await runChecks([spec], { ...BASE_OPTS, log: ciSink.log })
     await flush()
     const lines = readGateLines(dir, '904')
+    // one summary per run, one run per caller
     expect(lines).toHaveLength(2)
     const hosts = lines.map((l) => (l.meta as Record<string, unknown>).host).sort()
     expect(hosts).toEqual(['ci', 'hook'])

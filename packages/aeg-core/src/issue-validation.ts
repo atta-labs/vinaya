@@ -1,7 +1,7 @@
 /**
  * Planner→Brief Issue-rationale grammar. Pure — no `fs`, no `fetch`,
- * no `process.env`. The tool-layer gate (`bin/open-issue.ts`, invoked because
- * the `check-forge-gates.sh` hook denies raw `gh issue create`) calls
+ * no `process.env`. The local gate (`bin/open-issue.ts`, the sanctioned way to
+ * create an Issue; no hook refuses a raw `gh issue create`) calls
  * `checkIssueRationale` before any task Issue can reach the forge.
  *
  * A task Issue's body must carry every producer field of the
@@ -1158,8 +1158,8 @@ export function checkIssueType(_body: string, labels: string[]): IssueSectionRes
 // through one product's lens instead of every consumer's); a `## References`
 // block copied brief-time content into the Issue, where it goes stale before
 // work starts; and nothing forced the rationale to name the docs/skills it
-// touches, because the skill-check hook fires on file edits and a forge write
-// edits no file. The checks below are those three failures turned into
+// touches, because no other check observes what the Planner read before a forge
+// write. The checks below are those three failures turned into
 // deterministic functions on the surface they happened on.
 //
 // EVERY ONE OF THEM READS BLOCK-STRIPPED TEXT, via the single exported
@@ -1728,8 +1728,8 @@ const NO_DOC_SURFACE_RE = /(?:\*\*)?\s*no-doc-surface/i
 /**
  * **D — no read-obligation signal.** The root cause of A and B both: nothing
  * forced the Planner to read the docs and skills governing the surface it was
- * planning, because the skill-check hook fires on file edits and cutting an
- * Issue edits no file. Requiring a concrete doc path in `Docs to keep coherent`
+ * planning, because no other check observes what the Planner read before cutting
+ * an Issue. Requiring a concrete doc path in `Docs to keep coherent`
  * / `Traps to avoid` makes the read leave an artifact — you cannot name
  * `.claude/skills/ui-library-system/SKILL.md` as the design anchor without
  * having gone looking for it.
@@ -1745,7 +1745,7 @@ export function checkRationaleNamesDocs(body: string): IssueSectionResult {
   return {
     status: 'fail',
     errors: [
-      'issue-validation docs read: neither "Docs to keep coherent" nor "Traps to avoid" names a concrete doc path (aeg-root/…, .claude/skills/…, apps/*/CLAUDE.md, apps/*/specs/…). Naming one is the artifact of having read the surface being planned — the forge write triggers no skill-check hook, so this field is the only read-obligation signal. For a genuinely doc-less surface, write the explicit `no-doc-surface` sentinel.'
+      'issue-validation docs read: neither "Docs to keep coherent" nor "Traps to avoid" names a concrete doc path (aeg-root/…, .claude/skills/…, apps/*/CLAUDE.md, apps/*/specs/…). Naming one is the artifact of having read the surface being planned — no other check observes what you read before the forge write, so this field is the only read-obligation signal. For a genuinely doc-less surface, write the explicit `no-doc-surface` sentinel.'
     ]
   }
 }

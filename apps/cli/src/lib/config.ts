@@ -17,6 +17,7 @@ import {
   type ReviewPolicy,
   SECURITY_SEVERITY_ORDER
 } from '@attalabs/aeg-core'
+import { CustomEventDeclarationsSchema } from '@attalabs/aeg-core/log'
 import { AGENT_VENDORS, type AgentVendor } from './agent-vendors.js'
 import { CLAUDE_COMMAND_PATH } from './claude-command-emitter.js'
 import { GEMINI_COMMAND_PATH } from './gemini-command-emitter.js'
@@ -594,7 +595,14 @@ export const VinayaConfigSchema = z.object({
       // citing a tranche, an Issue, or a document outside this repository.
       // Exempts a path the defaults below brought in exactly as it exempts
       // one under an app's own `specs/**`.
-      specGrandfather: z.array(z.string().min(1)).optional(),
+      //
+      // Two forms. An array exempts each listed file entirely. An object maps
+      // each listed file to the most spec-class findings it may carry: above
+      // its number the file fails, at or below it passes, so a listed file
+      // can no longer gain a citation and its number only goes down.
+      specGrandfather: z
+        .union([z.array(z.string().min(1)), z.record(z.string().min(1), z.number().int().min(0))])
+        .optional(),
       // Repo-relative files or folders ADDED to the spec class, on top of
       // the defaults every repository gets with no configuration at all: a
       // root `SPEC.md`, a root `CONTEXT.md`, every `.md` under `docs/adr/`,
@@ -887,7 +895,14 @@ export const VinayaConfigSchema = z.object({
       // never trust-anchor gated the way `url` is: it is this machine's own
       // credential for reading back from a URL that gate already approved, not
       // a destination a pull request's diff could redirect.
-      readHeaders: z.record(z.string()).optional()
+      readHeaders: z.record(z.string()).optional(),
+      // The consumer's own log events, declared by name — each a flat set of
+      // fields typed text, number, boolean or one of a listed set of words
+      // (`CustomEventDeclarationsSchema`, `@attalabs/aeg-core/log`). A
+      // declaration that breaks a rule is refused here, at load, naming the
+      // entry. Not a destination, so not trust-anchor gated the way
+      // `folder`/`url` are: it says what may be recorded, never where to.
+      events: CustomEventDeclarationsSchema.optional()
     })
     .refine((v) => [v.folder, v.url].filter((x) => x !== undefined).length <= 1, {
       message: 'logs: set at most one of folder/url'
@@ -1638,6 +1653,37 @@ export function loadTrustAnchorConfig(fetcher: TrustAnchorFetcher = ghFetchTrust
     base64 = fetcher()
   } catch (err) {
     return trustAnchorFetchFailed(err)
+  }
+  return parseTrustAnchorContent(base64)
+}
+
+/**
+ * `loadTrustAnchorConfig`, but a genuine forge-read FAILURE (the fetch threw
+ * for any reason OTHER than the file being absent — a rate limit, a timeout, an
+ * unreachable or unauthenticated `gh`) is RE-THROWN rather than swallowed into
+ * the built-in defaults. A missing file (404 — the repository simply has no
+ * `vinaya.config.json` on its default branch) still resolves to `null`, exactly
+ * as `loadTrustAnchorConfig` does, and so does a file that is present but parses
+ * to no usable config: neither is a failed read, and every resolver reads `null`
+ * as "use the built-in defaults."
+ *
+ * The dev-review-loop's review-policy read (`reviewPolicy` in
+ * `dev-review-loop/developer-dispatch.ts`) is the ONE caller that
+ * must distinguish these: a verdict cast under the guessed default policy after
+ * a failed read is rejected by the merge gate, which reads the repository's real
+ * policy, so a clean review cannot merge. This is the variant that caller uses —
+ * never a change to `loadTrustAnchorConfig`'s own return, which every other
+ * caller (the log sink, the checks) still relies on to swallow-and-default.
+ */
+export function loadTrustAnchorConfigOrThrow(
+  fetcher: TrustAnchorFetcher = ghFetchTrustAnchorConfig
+): VinayaConfig | null {
+  let base64: string
+  try {
+    base64 = fetcher()
+  } catch (err) {
+    if (isMissingFileError(err)) return null
+    throw new Error(`could not read the trust-anchor config from the default branch: ${firstLine(err)}`)
   }
   return parseTrustAnchorContent(base64)
 }
