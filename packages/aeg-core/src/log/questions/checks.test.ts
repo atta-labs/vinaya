@@ -91,6 +91,49 @@ describe('question 6 — which check catches most', () => {
   })
 })
 
+const at = (seconds: number) => `2026-09-05T00:00:${String(seconds).padStart(2, '0')}.000Z`
+
+/** A `checked` line for `check`/`outcome` at `at`, built from a fixture's own gate line so it stays schema-valid. */
+function checked(id: string, check: string, outcome: string, atTime: string): string {
+  const object = JSON.parse(rawLines('gate-two-commits')[0] as string)
+  object.check = check
+  object.outcome = outcome
+  object.meta.ts = atTime
+  object.meta.event_id = `evt-checked-${id}`
+  return JSON.stringify(object)
+}
+
+describe('question 6 — a run of consecutive failures is one episode, corrected from its first failure', () => {
+  it('measures correction time from the first failure of a run, not its most recent one', () => {
+    const lines = [
+      checked('a', 'test', 'fail', at(0)),
+      checked('b', 'test', 'fail', at(10)),
+      checked('c', 'test', 'pass', at(20))
+    ]
+    const answer = checkOutcomes(datasetOf(lines))
+    expect(answer.checks).toEqual([{ check: 'test', failures: 2, correctionTimesMs: known([20_000]) }])
+    expect(answer.coverage.unknowns).toEqual([{ figure: 'falseRejections', reason: 'no labels recorded' }])
+  })
+
+  it('still reports each failed episode and leaves an unresolved one uncorrected', () => {
+    const lines = [
+      checked('a', 'test', 'fail', at(0)),
+      checked('b', 'test', 'pass', at(10)),
+      checked('c', 'test', 'fail', at(20)),
+      checked('d', 'test', 'fail', at(30))
+    ]
+    const answer = checkOutcomes(datasetOf(lines))
+    expect(answer.checks).toEqual([{ check: 'test', failures: 3, correctionTimesMs: known([10_000]) }])
+    expect(answer.coverage.unknowns).toEqual([
+      {
+        figure: 'test.correctionTimesMs',
+        reason: '2 of 3 failures of test were never followed by a pass of the same unit'
+      },
+      { figure: 'falseRejections', reason: 'no labels recorded' }
+    ])
+  })
+})
+
 describe('question 6 — a check run summary states the totals a checked line cannot', () => {
   /** A check run's summary line, built from a fixture's own gate line so it stays schema-valid. */
   function summary(ran: number, passed: number, failed: number, skipped: number): string {

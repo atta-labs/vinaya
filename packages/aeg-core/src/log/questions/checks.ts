@@ -45,22 +45,30 @@ function timeOf(row: DatasetRow): number {
   return Date.parse(row.time)
 }
 
-/** The correction times from a failure to the next pass of the same check, for one unit, ascending — and how many failures saw none. */
+/**
+ * The correction times from the first failure of a run to the next pass of
+ * the same check, for one unit, ascending — and how many failures saw none.
+ * A run of consecutive failures before a pass is one episode, corrected
+ * once, from its first failure — a later failure in the same open episode
+ * never restarts the clock or counts as its own uncorrected failure.
+ */
 function correctionsOf(events: readonly CheckedEvent[]): { times: number[]; uncorrected: number } {
   const sorted = [...events].sort((a, b) => a.time - b.time)
   const times: number[] = []
   let uncorrected = 0
-  let openFailure: number | null = null
+  let episodeStart: number | null = null
+  let episodeFailures = 0
   for (const event of sorted) {
     if (event.outcome === 'fail') {
-      if (openFailure !== null) uncorrected++
-      openFailure = event.time
-    } else if (event.outcome === 'pass' && openFailure !== null) {
-      times.push(event.time - openFailure)
-      openFailure = null
+      if (episodeStart === null) episodeStart = event.time
+      episodeFailures++
+    } else if (event.outcome === 'pass' && episodeStart !== null) {
+      times.push(event.time - episodeStart)
+      episodeStart = null
+      episodeFailures = 0
     }
   }
-  if (openFailure !== null) uncorrected++
+  if (episodeStart !== null) uncorrected += episodeFailures
   return { times: times.sort((a, b) => a - b), uncorrected }
 }
 
