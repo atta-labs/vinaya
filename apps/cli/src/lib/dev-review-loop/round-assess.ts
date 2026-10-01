@@ -183,6 +183,46 @@ export function spendsInfrastructureRetry(err: unknown): boolean {
   return !(err instanceof DispatchSignInRefused)
 }
 
+/**
+ * Ruling 986-1: the developer dispatch-success history one `devReviewLoop` run
+ * keeps so a resume failure can be classified correctly. Two independent
+ * facts, from the SAME latched state so they can never drift:
+ *
+ * - `hasSucceeded` — whether ANY developer dispatch has succeeded this run.
+ *   Gates whether a resume failure is the "worked, now won't resume"
+ *   stop-and-escalate at all (`assertDispatchOrEscalate`'s
+ *   `previousDispatchSucceededForVendor`), rather than a plain first-dispatch
+ *   failure.
+ * - `succeededBeforeRound(round)` — whether a dispatch in a round STRICTLY
+ *   EARLIER than `round` succeeded. This is the "worked last round, broke now"
+ *   product escalation; it must NOT be confused with a same-round follow-up
+ *   resume failing after this round's own earlier dispatch succeeded.
+ *
+ * The round is LATCHED to the FIRST success and never overwritten (round-3
+ * review MAJOR): a most-recent-success tracker would move to the current round
+ * when round ≥2's own main resume succeeds, after which that round's
+ * same-round `COMMIT_AND_PUSH` resume failing would wrongly read as a
+ * first-resume failure even though an earlier round genuinely succeeded.
+ */
+export class DeveloperDispatchHistory {
+  private firstSuccessRound: number | null = null
+
+  /** Records a successful developer dispatch in `round`. Latches the FIRST such round; a later success never moves it. */
+  recordSuccess(round: number): void {
+    if (this.firstSuccessRound === null) this.firstSuccessRound = round
+  }
+
+  /** True once any developer dispatch has succeeded this run. */
+  get hasSucceeded(): boolean {
+    return this.firstSuccessRound !== null
+  }
+
+  /** True when a dispatch in a round strictly earlier than `round` succeeded. */
+  succeededBeforeRound(round: number): boolean {
+    return this.firstSuccessRound !== null && this.firstSuccessRound < round
+  }
+}
+
 export async function assertDispatchOrEscalate(
   handle: DispatchHandle,
   vendor: AgentVendor,

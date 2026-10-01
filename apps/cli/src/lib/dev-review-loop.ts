@@ -177,6 +177,7 @@ import {
 import {
   assertDispatchOrEscalate,
   CONFIDENCE_FILE_NAME,
+  DeveloperDispatchHistory,
   DispatchSignInRefused,
   confidencePromptLine,
   developerRoundMarker,
@@ -2062,15 +2063,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       })
     }
     let devResumeId: string | null = null
-    let devDispatchSucceededBefore = false
-    // Ruling 986-1: the round number of the last developer
-    // dispatch that succeeded, so a resume failure can tell "a PREVIOUS round
-    // succeeded" (the genuine "worked last round, broke now" product
-    // escalation) apart from "this round's own fresh dispatch succeeded, then
-    // its same-round resume to push/open the PR failed" — the latter has no
-    // last round to have succeeded (round 1), so the crash message must not
-    // claim one. `null` until the first success.
-    let lastDispatchSuccessRound: number | null = null
+    // Ruling 986-1: the developer dispatch-success history — "has any dispatch
+    // succeeded" (the resume-escalation gate) and "did a strictly-earlier
+    // round succeed" (the "worked last round, broke now" product escalation,
+    // as opposed to a same-round follow-up resume failing after this round's
+    // own dispatch succeeded), both off ONE latched first-success round so
+    // they can never drift. See `DeveloperDispatchHistory`'s own doc comment.
+    const devDispatchHistory = new DeveloperDispatchHistory()
     let lastReviewContext: string | null = null
     // The manifest the most recent `dispatch_reviewers` round was dispatched
     // against (O3) — hoisted here so the sibling `publish` block can
@@ -2327,13 +2326,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         handle,
         dispatchAgent,
         isResume,
-        devDispatchSucceededBefore,
+        devDispatchHistory.hasSucceeded,
         'the developer',
-        lastDispatchSuccessRound !== null && lastDispatchSuccessRound < roundNum
+        devDispatchHistory.succeededBeforeRound(roundNum)
       )
       if (!handle.failureReason) {
-        devDispatchSucceededBefore = true
-        lastDispatchSuccessRound = roundNum
+        devDispatchHistory.recordSuccess(roundNum)
         if (handle.resumeId) devResumeId = handle.resumeId
       }
       return handle
