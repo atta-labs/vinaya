@@ -28,6 +28,13 @@
  * simplification) is met by that per-finding tagging, not by the CheckSpec
  * count.
  *
+ * G1 also scans every markdown file under `aeg-root/` for a hook script the
+ * doctrine names — a path under a hook directory or a bare `check-*.sh` name — and
+ * fails one that is neither tracked in git nor emitted by `vinaya init`
+ * (`initHookPaths`, read off `buildInitOps`). The standalone
+ * `verify-registry.ts` cannot import those init paths, so it keeps G1's
+ * implementation-resolves half only.
+ *
  * G6 is the one G-check that genuinely needs to live
  * here rather than in `aeg-core`'s standalone `verify-registry.ts`: it
  * validates a doctrine row's `product`-audience claim against
@@ -67,6 +74,7 @@
 
 import { execSync, execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 import matter from 'gray-matter'
 import {
   checkG1,
@@ -75,9 +83,11 @@ import {
   checkG4,
   checkG5,
   checkG6,
+  type HookScanFile,
   parseEnforcementRegistry,
   type RegistryCheckResult
 } from '@attalabs/aeg-core'
+import { initHookPaths } from '../../lib/init-hook-paths.js'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../contract'
 import { coreCheckRegistry } from '../registry.js'
 
@@ -85,6 +95,7 @@ const CHECK_NAME = 'registry-gates'
 const ENFORCEMENT_PATH = 'aeg-root/enforcement.md'
 const ROLES_DIR = 'aeg-root/roles'
 const CONTRACTS_DIR = 'aeg-root/contracts'
+const DOCTRINE_DIR = 'aeg-root'
 
 function isGithubCrossingLine(line: string): boolean {
   const createMatch = /\bgh\s+(pr|issue)\s+create\b/.test(line)
@@ -132,6 +143,22 @@ function findCrossingFiles(candidateFiles: string[]): string[] {
       .split('\n')
       .some((line) => isGithubCrossingLine(line))
   )
+}
+
+function readHookScanFiles(dir: string): HookScanFile[] {
+  const out: HookScanFile[] = []
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const rel = join(dir, entry.name)
+    if (entry.isDirectory()) out.push(...readHookScanFiles(rel))
+    else if (entry.name.endsWith('.md')) out.push({ path: rel, content: readFileSync(rel, 'utf8') })
+  }
+  return out
+}
+
+/** Every hook path that counts as shipped: tracked in git, or emitted by `vinaya init`. */
+function shippedHookPaths(): Set<string> {
+  const tracked = sh('git ls-files').split('\n').filter(Boolean)
+  return new Set([...tracked, ...initHookPaths()])
 }
 
 type GatesRoleFrontmatter = { file: string; role_id: string; performs: string[]; refuses_when: string }
@@ -279,7 +306,7 @@ async function main(): Promise<void> {
         ]
       }
 
-  const g1 = checkG1(rows, existsSync)
+  const g1 = checkG1(rows, existsSync, { docs: readHookScanFiles(DOCTRINE_DIR), shipped: shippedHookPaths() })
   const g2 = checkG2(rows, candidateFiles)
   const g3 = checkG3(ring0Rows, crossingFiles)
   const g5 = checkG5(roles, contracts)

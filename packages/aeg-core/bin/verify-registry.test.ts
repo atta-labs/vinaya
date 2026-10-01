@@ -2,11 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { isGithubCrossingLine } from './verify-registry'
 
 /**
- * `isGithubCrossingLine` claims to mirror `.claude/hooks/check-forge-gates.sh`
- * exactly. These cases pin two idioms the hook's `gh api`/`curl` blocks treat
- * as sufficient write-signal that an earlier revision of this detector missed:
- * bare `-f`/`-F` flags on `gh api` (no explicit `-X POST`), and `--json` on
- * curl/wget. Both are drawn directly from the hook's own grep patterns.
+ * `isGithubCrossingLine` recognises the gated GitHub-mutating class. These
+ * cases pin two idioms that count as sufficient write-signal and that an
+ * earlier revision of this detector missed: bare `-f`/`-F` flags on `gh api`
+ * (no explicit `-X POST`), and `--json` on curl/wget.
  */
 describe('isGithubCrossingLine', () => {
   it('flags `gh api -f` targeting /issues even without -X POST', () => {

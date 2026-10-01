@@ -215,8 +215,12 @@ function extractVendorMentions(content: string): { name: string; index: number }
   return found
 }
 
-/** Every inline-backtick span in `content`, tested against `CITED_PATH_PATTERN`. */
-function extractCitedPaths(content: string): { cited: string; index: number }[] {
+/**
+ * Every inline-backtick span in `content`, tested against `CITED_PATH_PATTERN`.
+ * Exported so `registry-checks.ts`'s hook-path scan reuses this extractor
+ * rather than carrying a second one.
+ */
+export function extractCitedPaths(content: string): { cited: string; index: number }[] {
   const found: { cited: string; index: number }[] = []
   const spanPattern = /`([^`\n]+)`/g
   let match: RegExpExecArray | null = spanPattern.exec(content)
