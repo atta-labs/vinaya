@@ -1030,7 +1030,7 @@ export function renderReviewerDispatchPrompt(
     '  If findings.txt is non-empty, also write `FINDING_IDS: <id>,<id>,...` — one id per findings.txt line, in the SAME order, e.g. `F1,F2,F3`. A report with findings but no matching `FINDING_IDS:` line is sent back once for this alone.',
     ...(role === 'security'
       ? [
-          `\`SECRETS:\` is required — never leave it blank or omit it. The secret scan is the required \`${SECRET_SCAN_CHECK}\` CI check: read its result on this PR (\`gh pr checks\`), never run a scanner yourself or paste its output. Write \`SECRETS: none found — ${SECRET_SCAN_CHECK} passed\` only when that check ran and passed; if it is missing from the PR's checks or failed, say so on the line instead. Your own read of the diff for a credential the scanner's rules cannot see still applies.`
+          `\`SECRETS:\` is required — never leave it blank or omit it. The secret scan is the required \`${SECRET_SCAN_CHECK}\` CI check: the scan runs inside the \`vinaya check --all --diff-only\` CI job, so read its result from that job on this PR — \`gh pr checks\` lists no separate \`${SECRET_SCAN_CHECK}\` entry — and never run a scanner yourself or paste its output. Write \`SECRETS: none found — ${SECRET_SCAN_CHECK} passed\` only when that job ran and the scan passed, with any note from your own read of the diff on the lines below it; if the job failed or did not run, say so on the line instead. Your own read of the diff for a credential the scanner's rules cannot see still applies.`
         ]
       : []),
     'To escalate instead of casting a verdict, write only `ESCALATE: authority|strategy|product` and `SUMMARY: <text>` to report.txt.'

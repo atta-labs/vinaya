@@ -2049,7 +2049,7 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
   if (opensNoneFoundClaim(secrets) && !secretsEvidenceFile) {
     refuseCmd(
       `\`--secrets\` normalizes to "none found" but no \`--secrets-evidence-file\` was given — security.md: "SECRETS: none found" must cite the result of the required \`${SECRET_SCAN_CHECK}\` check; without it the line is an unbacked self-attestation.`,
-      `Pass \`--secrets-evidence-file <path>\` holding the \`${SECRET_SCAN_CHECK}\` check's result on the judged head (its name and conclusion, as \`gh pr checks\` shows it) — do not run a scanner or paste its output — or change \`--secrets\` to describe what was found instead.`
+      `Pass \`--secrets-evidence-file <path>\` holding the \`${SECRET_SCAN_CHECK}\` check's result on the judged head (its name and conclusion, taken from the \`vinaya check --all --diff-only\` CI job that runs it) — do not run a scanner or paste its output — or change \`--secrets\` to describe what was found instead.`
     )
   }
   let secretsEvidence: string | null = null
