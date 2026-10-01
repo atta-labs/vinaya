@@ -1122,6 +1122,35 @@ describe('log-sink — the commit a gate event was checked at', () => {
     expect(second?.sha).toBe(head)
   })
 
+  it("records the checkout's HEAD on a run's gate summary too", async () => {
+    const { dir, deps } = testDeps()
+    const git = (...args: string[]): string => {
+      const r = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' })
+      if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr}`)
+      return r.stdout.trim()
+    }
+    git('init', '--initial-branch=main')
+    git('config', 'user.email', 'test@example.com')
+    git('config', 'user.name', 'Test')
+    writeFileSync(join(dir, 'a.txt'), 'a')
+    git('add', 'a.txt')
+    git('commit', '-m', 'init')
+    const sink = createLogSink(deps)
+    sink.log({
+      kind: 'gate',
+      event: 'summary',
+      ran: 1,
+      passed: 1,
+      failed: 0,
+      skipped: 0,
+      failed_checks: [],
+      payload: {}
+    })
+    await sink.drain()
+    const [subject] = subjectsOf(dir)
+    expect(subject?.sha).toBe(git('rev-parse', 'HEAD'))
+  })
+
   it('omits subject.sha outside any git repository', async () => {
     const { dir, deps } = testDeps()
     const sink = createLogSink(deps)

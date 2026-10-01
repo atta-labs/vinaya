@@ -358,7 +358,7 @@ describe('retention-gap fixtures — gate/operation/handoff/effect (O3): the min
     const line = { ...gateBase, event: 'checked' as const, outcome: 'pass' as const }
     const result = LogEventSchema.safeParse(line)
     expect(result.success).toBe(true)
-    if (result.success && result.data.kind === 'gate') {
+    if (result.success && result.data.kind === 'gate' && result.data.event === 'checked') {
       expect(result.data.policy_version).toBeNull()
       expect(result.data.input_fingerprint).toBeNull()
       expect(Object.hasOwn(result.data, 'reason')).toBe(false)

@@ -63,7 +63,8 @@ describe('runChecks — SIGINT/SIGTERM records every in-flight check as cancelle
       .split('\n')
       .filter(Boolean)
       .map((l) => JSON.parse(l))
-    const gateLines = lines.filter((l) => l.kind === 'gate')
+    // The run's own `summary` may follow (the handler's kill lets `runChecks` finish before the process exits); this test is about the per-check `checked` line.
+    const gateLines = lines.filter((l) => l.kind === 'gate' && l.event === 'checked')
     expect(gateLines).toHaveLength(1)
     expect(gateLines[0].check).toBe('hang')
     expect(gateLines[0].outcome).toBe('cancelled')
@@ -97,7 +98,8 @@ describe('runChecks — SIGINT/SIGTERM records every in-flight check as cancelle
       .split('\n')
       .filter(Boolean)
       .map((l) => JSON.parse(l))
-    const gateLines = lines.filter((l) => l.kind === 'gate')
+    // The run's own `summary` may follow (the handler's kill lets `runChecks` finish before the process exits); this test is about the per-check `checked` line.
+    const gateLines = lines.filter((l) => l.kind === 'gate' && l.event === 'checked')
     expect(gateLines).toHaveLength(1)
     expect(gateLines[0].check).toBe('hang')
     expect(gateLines[0].outcome).toBe('cancelled')

@@ -262,7 +262,7 @@ describe('requestEffect', () => {
  * (`effects.ts`) for a request that clears authorization.
  */
 describe('requestEffect — operation log events (task-log-v1 task 6, O1)', () => {
-  it("emits operation(ok) then the effect executor's attempted/observed/verified sequence for an authorized request", () => {
+  it("emits operation(ok) then the effect executor's one final verified event for an authorized request", () => {
     const events: LogEventInput[] = []
     requestEffect(
       deps,
@@ -278,12 +278,7 @@ describe('requestEffect — operation log events (task-log-v1 task 6, O1)', () =
       },
       (e) => events.push(e)
     )
-    expect(events.map((e) => `${e.kind}:${e.event}`)).toEqual([
-      'operation:completed',
-      'effect:attempted',
-      'effect:observed',
-      'effect:verified'
-    ])
+    expect(events.map((e) => `${e.kind}:${e.event}`)).toEqual(['operation:completed', 'effect:verified'])
   })
 
   it('emits only operation(refused) — never reaching the effect executor — for an ungranted operation', () => {

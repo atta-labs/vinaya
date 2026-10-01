@@ -38,7 +38,7 @@ and, beside the columns:
 - `contentHash` — the sha256 of the line as the read boundary serialises it after redaction (`classifyStoredLine`'s `postLine`), so the same event read from two places hashes the same;
 - `origin` — the source id and the line's position in it.
 
-`kind` and `event` are plain text and the body is untyped JSON. Nothing on this path switches over the family or the event name, so a family added later — a consumer's own declared `custom` events included — is stored and read back without a code change here.
+`kind` and `event` are plain text and the body is untyped JSON. Nothing on this path switches over the family or the event name, so a family added later — a consumer's own declared `custom` events included — is stored and read back without a code change here. The same holds for an event a family adds or stops recording: a `gate` `summary` (a check run's counts, failing check names and total time) and the single `effect` `verified` line a forge write records become rows like any other, their fields in `payload`.
 
 **Identity is the event's, never its position.** Two sources can hold the same event — a folder and the server it was forwarded to — so a row's position in its source is provenance (`origin`), never part of its identity or its hash.
 

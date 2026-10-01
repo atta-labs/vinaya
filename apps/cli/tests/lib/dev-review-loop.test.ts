@@ -1421,8 +1421,8 @@ describe('devReviewLoop — restart fixtures (task-log-v1 task 6, O3): equivalen
     expect(runsInOrder[0]).not.toBe(runsInOrder[1])
   }, 45000)
 
-  // REAL PROCESS: publishRound real forge round-trip — asserts on real EffectExecutor attempted/observed/verified lines from real forge writes
-  it("the rerun's own effect events reconcile the FIRST run's identities — an idempotent 'verified' replay, never a second 'attempted', for the SAME effect_id across the restart (O1/O3)", () => {
+  // REAL PROCESS: publishRound real forge round-trip — asserts on real EffectExecutor verified lines from real forge writes
+  it("the rerun's own effect events reconcile the FIRST run's identities — an idempotent 'verified' replay, one line per run, for the SAME effect_id across the restart (O1/O3)", () => {
     const { home, cwd, path } = setUp()
 
     const r1 = runLoop(home, cwd, path)
@@ -1457,13 +1457,12 @@ describe('devReviewLoop — restart fixtures (task-log-v1 task 6, O3): equivalen
       const forId = byId.get(key)
       expect(forId, `no effect events for ${key}`).toBeDefined()
       const events = (forId ?? []).map((l) => l.event)
-      // First run: a fresh write — attempted, then observed(success), then
-      // verified(success). Second run: the SAME identity is already
-      // 'verified' on disk, so `EffectExecutor.reconcileExisting` emits only
-      // one more 'verified' line — never a second 'attempted', which would
-      // mean the executor forgot this write ever happened.
-      expect(events).toEqual(['attempted', 'observed', 'verified', 'verified'])
-      expect(events.filter((e) => e === 'attempted')).toHaveLength(1)
+      // First run: a fresh write — one verified(success). Second run: the
+      // SAME identity is already 'verified' on disk, so
+      // `EffectExecutor.reconcileExisting` emits its own one 'verified' line
+      // under the same effect_id — never a second write, never an
+      // 'attempted' or 'observed'.
+      expect(events).toEqual(['verified', 'verified'])
     }
   }, 45000)
 
@@ -1625,13 +1624,13 @@ describe('devReviewLoop — escalation pauses, --resume continues after a ruling
     expect(pausedEvents).toHaveLength(1)
     // `postPauseComment` (`pause-resume.ts`) runs through the SAME
     // `EffectExecutor` this task instruments — its own `effect` family
-    // `attempted`/`observed`/`verified` sequence for the pause-comment post
+    // one `verified` event for the pause-comment post
     // lands in this SAME outbox file, alongside the policy layer's own
     // `dev_review_loop` events, because both are `log()` calls made from
     // this one process.
     const effectEvents = lines.filter((l) => l.kind === 'effect')
     expect(effectEvents.length).toBeGreaterThan(0)
-    expect(effectEvents.map((e) => e.event)).toEqual(expect.arrayContaining(['attempted', 'observed', 'verified']))
+    expect(effectEvents.map((e) => e.event)).toContain('verified')
     const runs = new Set(
       [...pausedEvents, ...effectEvents].map((l) => (l.meta as { lineage: { run: string | null } }).lineage.run)
     )
