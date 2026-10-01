@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'bun:test'
-import { spawnSync } from 'node:child_process'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
@@ -17,6 +16,7 @@ import {
   LOCK_WAIT_MS,
   createSqliteCache
 } from '../../src/lib/log-cache-sqlite.js'
+import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture.js'
 
 // The durable SQLite backend against the shared contract and this backend's
 // own durability guarantees (`apps/cli/specs/log-sync.md`). Every case opens
@@ -413,9 +413,9 @@ describe('log-cache-sqlite — the lazy import (O7)', () => {
     const importOnlyScript = join(tmpDir(), 'import-only.mjs')
     writeFileSync(importOnlyScript, `import { createSqliteCache } from '${bundlePath}'\n`)
 
-    const result = spawnSync('node', [importOnlyScript], { encoding: 'utf8' })
+    const result = spawnSyncBudgeted('node', [importOnlyScript], { encoding: 'utf8', env: stripVinayaEnv() })
     expect(result.status).toBe(0)
-    expect((result.stderr ?? '').toLowerCase()).not.toContain('sqlite')
+    expect(result.stderr.toLowerCase()).not.toContain('sqlite')
   })
 
   it('a subprocess running under real Node opens, writes and reads the cache (O7, the Node-vs-bun trap)', async () => {
@@ -443,12 +443,12 @@ describe('log-cache-sqlite — the lazy import (O7)', () => {
       ].join('\n')
     )
 
-    const result = spawnSync('node', [driverScript], { encoding: 'utf8' })
+    const result = spawnSyncBudgeted('node', [driverScript], { encoding: 'utf8', env: stripVinayaEnv() })
     expect(result.status).toBe(0)
     // The module's own experimental warning is never silenced (traps,
     // `apps/cli/specs/log-sync.md`) — proof the load genuinely reached
     // real `node:sqlite`, not bun's.
-    expect((result.stderr ?? '').toLowerCase()).toContain('sqlite')
+    expect(result.stderr.toLowerCase()).toContain('sqlite')
 
     const lastLine = result.stdout.trim().split('\n').pop() as string
     const parsed = JSON.parse(lastLine) as {
