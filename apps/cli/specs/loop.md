@@ -154,6 +154,28 @@ its own driver, since the forge could in principle report it finished (a
 stale read, or a genuine race against an external close) at the exact
 moment this run is about to write into that same folder.
 
+The same sweep also removes finished task **worktrees** from the repository's
+`.worktrees/` folder — every task run gets its own checkout with its own
+installed dependencies, and nothing else ever removes it, so a busy machine
+fills its disk. The branch is read from `git worktree list --porcelain`,
+never from the folder's name; worktrees outside `.worktrees/` are never
+looked at. A worktree is removed only when its branch's pull request is
+merged or closed AND its branch has no commit the remote lacks (its HEAD is
+the pull request's head, or is reachable from a remote-tracking ref) AND
+`git status --porcelain` is empty. Every other worktree is kept and its
+decision line says why: the pull request is open, no pull request exists,
+the branch has commits the remote lacks, it has uncommitted changes, a live
+driver lock names its task (when a live lock's task cannot be resolved to a
+branch, every worktree is kept), it is this run's own task, it is locked, or
+a forge or git read failed. A worktree classified `finished` is classified a
+second time immediately before removal, like a task folder. Removal is
+`git worktree remove` — never forced, so git itself refuses a dirty or locked
+checkout — followed by `git worktree prune`, never a plain directory delete,
+so the repository's worktree list stays consistent. Each decision is
+printed and reported exactly like a task folder's, labelled
+`worktree .worktrees/<branch>`. `vinaya task sweep` on demand does not
+sweep worktrees.
+
 The driver's own start-of-run call never reaches the legacy-layout half
 of the sweep (`sweepLegacyLayout`, `--include-legacy`) at all — its
 result was always discarded here even before this change (`runTaskSweep`
