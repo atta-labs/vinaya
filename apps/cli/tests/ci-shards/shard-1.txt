@@ -68,3 +68,4 @@ tests/process-fixture-coverage.test.ts
 tests/lib/task-tools/operator-state-actions.test.ts
 tests/commands/log-send.test.ts
 tests/lib/log-sync.test.ts
+tests/commands/sync.test.ts
