@@ -442,6 +442,15 @@ export type LoopDeps = {
   fetchLoopHistory: (prNumber: number | null) => ReconstructedJournal
   sleep: (ms: number) => Promise<void>
   now: () => number
+  /**
+   * O1 (driver liveness): starts the driver's liveness heartbeat — a repeating timer
+   * that fires `cb` every `intervalMs` while the process is alive, returning
+   * a function that stops it. The production default is a real `setInterval`
+   * whose handle is `.unref()`'d, so it NEVER keeps the process alive once
+   * the loop's own work is done (Traps). Injected so a test drives the
+   * callback on a fake clock, with no real timer and no five-minute wait.
+   */
+  setHeartbeat: (cb: () => void, intervalMs: number) => () => void
   prPollMaxAttempts: number
   prPollIntervalMs: number
   gatePollMaxAttempts: number
@@ -803,6 +812,22 @@ function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+/** O1 (driver liveness): the driver's liveness heartbeat interval — one `driver_heartbeat` at most every five minutes while the process is alive, well inside the Log server's own daily write limit for one loop. */
+const DRIVER_HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000
+
+/**
+ * O1 (driver liveness): the production `LoopDeps.setHeartbeat` — a real `setInterval`
+ * whose handle is `.unref()`'d so a still-pending timer never keeps the
+ * process alive after the loop's own work has returned (Traps). The returned
+ * stop function clears it; `recordDriverExited` calls it before writing any
+ * `driver_exited`, so the heartbeat always stops before the exit line.
+ */
+function defaultSetHeartbeat(cb: () => void, intervalMs: number): () => void {
+  const timer = setInterval(cb, intervalMs)
+  timer.unref?.()
+  return () => clearInterval(timer)
+}
+
 /**
  * The redaction itself lives in `sanitizePublicPauseDetail`
  * (`dev-review-loop/pause-resume.js`), applied unconditionally INSIDE
@@ -955,6 +980,7 @@ function defaultDeps(): LoopDeps {
     fetchLoopHistory,
     sleep: defaultSleep,
     now: () => Date.now(),
+    setHeartbeat: defaultSetHeartbeat,
     // O3: env-overridable the same way the gate poll
     // budget already is (`gatePollEnvOverride`'s own doc comment) — a real
     // subprocess test exercising the PR-poll timeout path needs this in
@@ -2766,19 +2792,54 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // forge journal event for the same exit needs a `packages/aeg-core`
     // schema change, out of this task's declared Surface, and is left for a
     // later task with that Surface.
-    // `exitTraceWritten` guards the three call sites below (reexec success,
-    // an uncaught error, a process signal) from ever firing twice for the
-    // same exit.
+    // `exitTraceWritten` guards every call site below (reexec success, an
+    // uncaught error, a process signal, and a normal publish/pause return)
+    // from ever firing twice for the same exit.
+    // O1 (driver liveness): set once the heartbeat is started below, cleared here first
+    // so the timer is stopped before any `driver_exited` is written (Traps)
+    // and a stray heartbeat can never land after the exit line.
+    let stopHeartbeat: () => void = () => {}
     let exitTraceWritten = false
-    function recordDriverExited(reason: 'reexec' | 'error' | 'signal'): void {
+    function recordDriverExited(reason: 'finished' | 'paused' | 'reexec' | 'error' | 'signal'): void {
       if (exitTraceWritten) return
       exitTraceWritten = true
+      stopHeartbeat()
       const describedDecision = decision.type === 'pause' ? `pause(${decision.reason})` : decision.type
-      appendRoleLine(
-        loopLogPath,
-        'dev-review-loop',
-        `driver_exited: reason=${reason} last_decision=${describedDecision}`
-      )
+      // The role log stays DIAGNOSTIC, not routine (`apps/cli/specs/loop.md`,
+      // "A driver that exits with no decision on record"): only the abnormal
+      // exits it has always traced write a line here — a clean `finished`/
+      // `paused` return already leaves its decision on the forge and in the
+      // control store, so a role-log line there would make the trace routine.
+      if (reason !== 'finished' && reason !== 'paused') {
+        appendRoleLine(
+          loopLogPath,
+          'dev-review-loop',
+          `driver_exited: reason=${reason} last_decision=${describedDecision}`
+        )
+      }
+      // O2/O3 (driver liveness): the Log event, on EVERY exit path — the lifecycle twin
+      // of `driver_heartbeat`, so Mission Control can tell a loop that
+      // finished or paused from one that is still running or died. Emitted
+      // from this ONE guarded function, so one exit writes it exactly once
+      // (Traps). Fire-and-forget: `log` never throws and a failed delivery is
+      // dropped like any other event — each exit path drains the sink on its
+      // way out (the reexec/signal handlers, the outer `finally`), never this
+      // call. Guarded like the heartbeat's own emit so a build/emit fault
+      // never undoes an exit already in progress.
+      try {
+        const event: DevReviewLoopEventInput = {
+          kind: 'dev_review_loop',
+          payload: {},
+          loop_id: config.loopId,
+          event: 'driver_exited',
+          task,
+          reason,
+          last_decision: describedDecision
+        }
+        log(event)
+      } catch {
+        // Telemetry — never a reason to crash on the way out.
+      }
     }
     // Registered once `decision`/`loopLogPath` both exist, so a signal
     // arriving mid-round can still name a real last decision rather than
@@ -2813,6 +2874,38 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       await drainAllLogSinks()
       process.exit(130)
     })
+
+    // O1 (driver liveness): the Log's one positive "this loop is running" signal. A
+    // Developer turn can run for an hour with no other Log event, and a loop
+    // in its first turn or one that died before pushing looks the same as a
+    // finished one from the Log alone — so a heartbeat says "still alive"
+    // and carries where the loop is (round/phase) and its PR once one
+    // exists. Fire-and-forget: `log` never throws and a failed delivery is
+    // dropped like any other event (Traps) — the callback never blocks or
+    // fails the round, and a build/emit fault is swallowed rather than left
+    // to crash the timer. Started here, once the signal handlers and
+    // `decision`/`loopLogPath` exist, so it covers even the first Developer
+    // turn; stopped by `recordDriverExited` before any exit line. The
+    // production timer is `.unref()`'d, so it never keeps the process alive.
+    function emitDriverHeartbeat(): void {
+      try {
+        const event: DevReviewLoopEventInput = {
+          kind: 'dev_review_loop',
+          payload: {},
+          loop_id: config.loopId,
+          event: 'driver_heartbeat',
+          task,
+          round,
+          phase: currentPhase ?? 'starting',
+          ...(prNumber > 0 ? { pr: prNumber } : {})
+        }
+        log(event)
+      } catch {
+        // A heartbeat is pure telemetry — never a reason to crash the timer
+        // or the round. Dropped, exactly like a delivery that fails.
+      }
+    }
+    stopHeartbeat = d.setHeartbeat(emitDriverHeartbeat, DRIVER_HEARTBEAT_INTERVAL_MS)
 
     // Round 2 review, BLOCKER: `firstPass`/`pendingCompletionEvents` are
     // declared here, in this function's own scope — never inside the `try`
@@ -3241,7 +3334,13 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                   escalationRecord?.rulingOrdinal
                 )
               )
-              return { finalDecision: { type: 'pause', reason: 'escalation', detail }, prNumber: 0, task }
+              // Set `decision` before recording, so the `driver_exited`
+              // event's `last_decision` names this escalation pause rather
+              // than the default `dispatch_developer` this pre-round-loop path
+              // never moved off.
+              decision = { type: 'pause', reason: 'escalation', detail }
+              recordDriverExited('paused')
+              return { finalDecision: decision, prNumber: 0, task }
             }
           }
         }
@@ -3406,7 +3505,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               if (isConcludedJournal(freshHistory)) {
                 heldResultIdentity = null
                 persistCurrentLoopState('publish')
-                return { finalDecision: { type: 'publish' }, prNumber, task }
+                decision = { type: 'publish' }
+                recordDriverExited('finished')
+                return { finalDecision: decision, prNumber, task }
               }
               round = heldClean.round
               lastDispatchedManifest = heldClean.manifest
@@ -3419,7 +3520,15 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         }
       }
 
-      return await runRoundLoop()
+      // O2 (driver liveness): the one chokepoint every round-loop exit funnels through
+      // — `runRoundLoop`'s own publish and decided-pause returns all land
+      // here. One `driver_exited` per exit, its reason read from the actual
+      // final decision (`publish` → finished, any pause → paused), guarded so
+      // it never double-writes with the escalation/publish early returns
+      // above or the crash `catch` below.
+      const loopResult = await runRoundLoop()
+      recordDriverExited(loopResult.finalDecision.type === 'publish' ? 'finished' : 'paused')
+      return loopResult
     } catch (err) {
       // A genuinely uncaught error — a gate error, a
       // dispatch error, a forge read error, any thrown exception on the

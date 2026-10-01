@@ -277,7 +277,9 @@ describe('devReviewLoop — round 1 blocked, round 2 genuinely resumes', () => {
       'findings_compared',
       'stop_condition_met',
       'round_ended',
-      'journal_finalized'
+      'journal_finalized',
+      // #949, O2: the driver's clean-publish exit event, last.
+      'driver_exited'
     ])
     const rounds = lines.filter((l) => l.event === 'round_started').map((l) => (l as Record<string, unknown>).round)
     expect(rounds).toEqual([1, 2])
