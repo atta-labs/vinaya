@@ -165,19 +165,15 @@ const MERGED_PR_COMMENTS = [
 ]
 
 /**
- * The published summary table the confidence column reads for a run that has
- * published — the shape `renderSummary` actually posts for the common case: ONE
- * round, whose confidence cell is the not-asked glyph, because round 1 is never
- * asked for a confidence at all. A fixture claiming a round-1 percentage would
- * assert against a table the loop can never write.
+ * The published marker the confidence column reads for a run that has
+ * published — the shape `renderPublishedMarker` actually posts for the common
+ * case: ONE round, whose confidence cell is the not-asked cell, because round 1
+ * is never asked for a confidence at all. A fixture claiming a round-1
+ * percentage would assert against a marker the loop can never write.
  */
 const PUBLISHED_SUMMARY_COMMENTS = [
   {
-    ...principalComment(
-      '| round | blocker | major | minor | critical | high | medium | low | confidence | outcome |\n' +
-        '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n' +
-        '| 1 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | — | green |'
-    ),
+    ...principalComment('<!-- aeg:loop:published head=abc123 confidence=1:- -->'),
     createdAt: '2026-09-22T12:00:00.000Z'
   }
 ]

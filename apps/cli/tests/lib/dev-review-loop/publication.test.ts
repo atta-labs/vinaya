@@ -27,7 +27,7 @@ import {
   type ReviewPolicy
 } from '@attalabs/aeg-core'
 import type { VerdictExtraction } from '@attalabs/aeg-core'
-import { bindingOfPosted, unboundFields } from '../../../src/lib/dev-review-loop/publication'
+import { bindingOfPosted, publicationComment, unboundFields } from '../../../src/lib/dev-review-loop/publication'
 
 const HEAD = 'a'.repeat(40)
 const BASE = 'f'.repeat(40)
@@ -216,5 +216,30 @@ describe('publish-then-gate agreement on resolved findings (O3)', () => {
       posted.value === 'PASS' &&
       evaluateSecurityReview(consequentialFindings(posted.findingSeverities), MAJOR_HIGH_POLICY).outcome === 'blocked'
     expect(securityBlocks).toBe(false)
+  })
+})
+
+describe('publicationComment — the loop posts no round table (O1, O2)', () => {
+  const journal = {
+    rounds: [
+      { round: 1, countsBySeverity: { blocker: 1 }, confidence: null, outcome: 'changes_requested' as const },
+      { round: 2, countsBySeverity: { blocker: 0 }, confidence: { value: 90 }, outcome: 'green' as const }
+    ]
+  }
+
+  it('is the hidden marker line alone when nothing was deferred — no table, no counts, no outcome', () => {
+    expect(publicationComment(journal, 'abc1234')).toBe('<!-- aeg:loop:published head=abc1234 confidence=1:-,2:90 -->')
+  })
+
+  it('adds one sentence linking the deferred-findings Issue, and nothing else, when one was opened or updated', () => {
+    expect(publicationComment(journal, 'abc1234', { issue: 77 } as never)).toBe(
+      '<!-- aeg:loop:published head=abc1234 confidence=1:-,2:90 -->\n\nDeferred findings that no longer block a round are tracked in #77.'
+    )
+  })
+
+  it('never re-parses as a verdict through either gate extractor, link included', () => {
+    const body = publicationComment(journal, 'abc1234', { issue: 77 } as never)
+    expect(extractCodeReviewVerdict([body]).danglingNote).not.toBeNull()
+    expect(extractSecurityReviewVerdict([body]).danglingNote).not.toBeNull()
   })
 })

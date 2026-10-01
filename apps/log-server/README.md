@@ -4,7 +4,7 @@ The reference destination for Vinaya log events: a Cloudflare Worker and one SQL
 
 Private to this repository — never published to npm. Each adopter deploys their own copy.
 
-`specs/server.md` is the contract: the shape, the free-plan budget it is sized against, how identity and duplicates work, the storage layout and the wire contract. Read it before changing anything here.
+`specs/server.md` is the contract: the shape, the plan budget it is sized against, how identity and duplicates work, the storage layout and the wire contract. Read it before changing anything here.
 
 ## Layout
 

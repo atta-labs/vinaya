@@ -4,10 +4,10 @@ import {
   isConcludedJournal,
   isPublishedSummaryComment,
   nextRoundNumber,
-  reconstructRounds,
-  SUMMARY_TABLE_HEADER
+  PUBLISHED_MARKER_LINE,
+  reconstructRounds
 } from './journal-reconstruction'
-import { renderSummary } from './render-summary'
+import { renderPublishedMarker } from './render-summary'
 
 describe('reconstructRounds — from the forge markers, never a log event', () => {
   it('returns an empty journal for no markers and no published summary', () => {
@@ -190,18 +190,23 @@ describe('concludedLoopRefusal — the refusal a resume against a truly conclude
 })
 
 describe('isPublishedSummaryComment', () => {
-  it('recognizes a real rendered summary comment by its header', () => {
-    const summary = renderSummary({
-      rounds: [{ round: 1, countsBySeverity: {}, confidence: null, outcome: 'green' }]
-    })
-    expect(isPublishedSummaryComment(summary)).toBe(true)
+  it('recognizes a real rendered publication comment by its marker line', () => {
+    const marker = renderPublishedMarker(
+      { rounds: [{ round: 1, countsBySeverity: {}, confidence: null, outcome: 'green' }] },
+      'abc1234'
+    )
+    expect(isPublishedSummaryComment(marker)).toBe(true)
   })
 
-  it('recognizes the header even when a comment prepends other lines before the table', () => {
-    expect(isPublishedSummaryComment(`some preamble\n\n${SUMMARY_TABLE_HEADER}\n| 1 | 0 |`)).toBe(true)
+  it('recognizes the marker even when the comment carries other lines around it', () => {
+    expect(
+      isPublishedSummaryComment(
+        '<!-- aeg:loop:published head=abc1234 confidence=1:- -->\n\nDeferred findings are tracked in #9.'
+      )
+    ).toBe(true)
   })
 
-  it('is false for an ordinary comment with no summary header', () => {
+  it('is false for an ordinary comment with no marker', () => {
     expect(isPublishedSummaryComment('just an ordinary comment')).toBe(false)
   })
 
@@ -209,9 +214,13 @@ describe('isPublishedSummaryComment', () => {
     expect(isPublishedSummaryComment('<!-- aeg:developer:round-2 -->\nHead: abc1234')).toBe(false)
   })
 
-  it("the detector header equals render-summary's own header — they cannot drift", () => {
-    const summary = renderSummary({ rounds: [] })
-    expect(summary.split('\n')[0]).toBe(SUMMARY_TABLE_HEADER)
+  it('is false for the old round table — the loop no longer posts one', () => {
+    expect(isPublishedSummaryComment('| round | blocker | major |\n| --- | --- | --- |\n| 1 | 0 | 0 |')).toBe(false)
+  })
+
+  it("the detector pattern matches render-published-marker's own line — they cannot drift", () => {
+    const marker = renderPublishedMarker({ rounds: [] }, 'abc1234')
+    expect(PUBLISHED_MARKER_LINE.test(marker)).toBe(true)
   })
 })
 

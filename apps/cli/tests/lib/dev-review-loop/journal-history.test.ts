@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { nextRoundNumber, renderSummary, type ReviewGateFact } from '@attalabs/aeg-core'
+import { nextRoundNumber, renderPublishedMarker, type ReviewGateFact } from '@attalabs/aeg-core'
 import { loopHistoryFromComments } from '../../../src/lib/dev-review-loop/journal-history'
 import type { MarkerComment } from '../../../src/lib/dev-review-loop/developer-dispatch'
 
@@ -13,12 +13,15 @@ function roundMarker(round: number, author: string = PRINCIPAL): MarkerComment {
 
 const SUMMARY_URL = 'https://forge.example/pr/7#issuecomment-1'
 
-/** The ready-for-merge summary comment exactly as `publishRound` posts it. */
+/** The ready-for-merge publication comment exactly as `publishRound` posts it. */
 function summaryComment(rounds: number[], author: string = PRINCIPAL): MarkerComment {
   return {
-    body: renderSummary({
-      rounds: rounds.map((round) => ({ round, countsBySeverity: {}, confidence: null, outcome: 'changes_requested' }))
-    }),
+    body: renderPublishedMarker(
+      {
+        rounds: rounds.map((round) => ({ round, countsBySeverity: {}, confidence: null, outcome: 'changes_requested' }))
+      },
+      'abc1234'
+    ),
     author,
     url: SUMMARY_URL
   }
