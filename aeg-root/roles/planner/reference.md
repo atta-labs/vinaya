@@ -311,7 +311,7 @@ When a plan **does** write a repo file — a spec change, most often — open it
 git worktree add .worktrees/plan/<tranche> -b plan/<tranche> origin/main && cd .worktrees/plan/<tranche> && bun install --frozen-lockfile --silent
 ```
 
-In the attalabs reference implementation, pre-commit/pre-push guards refuse a direct commit or push to `main` and a session merge-gate hook refuses a red merge. This repo has neither local guard: a direct push to `main` is detected after the fact by the ring-2 `direct-main-push` audit, and a red merge is held by the required review-gate check plus branch protection — detected-and-gated on the forge side rather than refused locally.
+This repo has no local guard on `main`: a direct push to `main` is detected after the fact by the ring-2 `direct-main-push` audit, and a red merge is held by the required review-gate check plus branch protection — detected-and-gated on the forge side rather than refused locally.
 
 **Only one open plan PR per tranche, at a time — mechanically enforced (task 19), for the case where a plan PR exists at all.** Two concurrent plan PRs for the same tranche, each cut from `origin/main` before the other merged, is the race that produced two competing plan PRs for the same tranche. the `single-plan-pr` check (`vinaya check single-plan-pr`, wired into every adopter's generated CI) still refuses outright a plan PR whose diff touches a tranche's topology file while another OPEN PR's diff already touches it — relevant now mainly to the historical `completed/*.md` files, since new tranches no longer have a live topology file to race on.
 
