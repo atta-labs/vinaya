@@ -121,7 +121,9 @@ A question is a pure function over a `Dataset` (`packages/aeg-core/src/log/quest
 
 An answer is descriptive. It reports what the log recorded and never that one choice caused another.
 
-**The map.** `QUESTIONS` (`questions/index.ts`) holds one entry per question under its number — `q1`, `q3`, `q4` — each with its number, its title and the function that answers it over a dataset. A question not in the map is not yet answered.
+**The map.** `QUESTIONS` (`questions/index.ts`) holds one entry per question under its number — `q1` through `q7` — each with its number, its title and the function that answers it over a dataset. A question not in the map is not yet answered.
+
+**Human labels** (`HumanLabel`, `questions/labels.ts`) carry a fact the Log never captures on its own: a later reversal, an incident, a human's verdict that a gate's rejection was false. A label states its `kind` (`'false_rejection'`, `'reversal'` or `'incident'`), the unit of work it names and its `provenance` — freeform text naming where it came from. A label is an optional second argument to the question that reads it, never a row the Log stored; with none supplied, every figure that depends on one reads unknown with the reason `'no labels recorded'` (`NO_LABELS_REASON`), never zero. A gate rejection is not, by itself, evidence of a prevented bug, and no recorded escape is not evidence of zero escapes — a label is the only way either judgment enters a question's answer, and it always arrives from outside the Log.
 
 ### Question 1 — does a cheaper model finish?
 
@@ -132,6 +134,15 @@ An answer is descriptive. It reports what the log recorded and never that one ch
 - **green** — units whose loop recorded the `green` stop condition; **paused** — units whose loop paused at least once (a unit can be both); **escalated** — units whose loop recorded the `escalated` stop condition;
 - **roundsToGreen** — for the green units, how many went green in one round, in two, and so on, ascending;
 - **timeToGreenMs** — the loop's own `time_to_green_ms` of each green unit, ascending, taken from the unit's last `journal_finalized` line. It is unknown, with the reason, when no unit went green or none recorded one; a green unit without one is named in `unknowns`.
+
+### Question 2 — are reviewers strict?
+
+`reviewerStrictness`. For each reviewer role and model named by a `dispatch`'s `outcome_received` line whose outcome is a `'verdict'`:
+
+- **verdictsRead**, **approved**, **changesRequested** — every such verdict, and how it read. `'APPROVE'` and `'PASS'` read as approved; `'REQUEST CHANGES'` and `'FAIL'` read as changes requested — the same split `dev-review-loop/assess-round.ts` already draws between the two review scales this doctrine carries;
+- **findings** — the findings and blockers those verdicts carried, by severity, split by what the verdict decided (`'approved'`, `'changes_requested'`). A finding's `policy_treatment: 'blocking'` makes it a blocker; anything else does not.
+
+The answer never scores whether a reviewer was *right* to approve or request changes — only what was decided and what was reported alongside it.
 
 ### Question 3 — what does a unit of work cost?
 
@@ -156,6 +167,18 @@ A figure is the sum of its terms and is **known only when every term states it**
 **Elapsed and summed are different things.** Work overlaps — two dispatches can run at once — so each duration is reported twice: `summedMs`, every interval's length added together, and `elapsedMs`, the length of the union of the intervals, which counts an overlap once. They are equal only when nothing overlapped. Neither is ever presented as the other.
 
 A category with no complete interval is unknown, with the reason — nothing recorded, or intervals that never ended (a dispatch with no outcome line, a pause never resumed, a check run with no duration). A category with some complete intervals reports them and counts the ones it could not measure in `incomplete`. A duration is never zero unless a line states it.
+
+### Question 5 — does the product catch anything?
+
+`catchesAndEscapes(dataset, labels?)`. A **catch** is something the Log recorded directly: a `checkFailures` count (`gate` `checked` lines with `outcome: 'fail'`) plus a `findingsResolved` count (finding ids named in a `findings_compared` line's `resolved` list) — their sum is `catches`. An **escape** is not something the Log can ever record on its own — this task's own boundary is explicit that a gate rejection is not automatically a prevented bug and that no recorded escape is not proof of zero escapes — so `escapes` is unknown, with the reason `'no labels recorded'`, unless a `HumanLabel` of kind `'reversal'` or `'incident'` was supplied; a `'false_rejection'` label names the opposite case and is never counted as an escape. With labels supplied but none naming an escape, `escapes` is a stated zero, not unknown.
+
+### Question 6 — which check catches most?
+
+`checkOutcomes(dataset, labels?)`. For each check a `gate` `checked` line names, ascending by name: its **failures** (`outcome: 'fail'` lines), and **correctionTimesMs** — a run of one or more consecutive failures of that same check for the same unit of work is one episode, and its correction time runs from the *first* failure of that episode to the next `pass`, ascending; a later failure inside the same still-open episode never restarts the clock, nor counts as its own separate uncorrected failure. A check with no recorded failure reads `correctionTimesMs` as unknown with that reason; a check whose failures include an episode still open at the end of the data (no later `pass`) reads the episodes that did close as `correctionTimesMs`, and counts every failure of the still-open episode in `unknowns`, rather than folding either case into an empty but known list. By the convention Question 7 states below, a run ordinarily records a passing check only in its `summary` line, not as its own `checked` line — a standalone `checked` `pass` line is the exception this figure can use when one was in fact recorded, not something a check's absence of failures implies. Across the whole dataset, **ran**, **passed** and **skipped** are summed from every `gate` `summary` line's own count — these are a run's own totals, not attributable to one check, since a `summary` line never names which checks passed. **falseRejections** is a `'false_rejection'` label naming a unit this check failed for, counted; unknown with `'no labels recorded'` when no label was supplied at all, a stated zero when labels were supplied but none matches.
+
+### Question 7 — are checks deterministic?
+
+`determinism`. As far as this data can ever say: a run ordinarily records a passing check only in its `summary` line, not as its own `checked` line, so a pass and a fail of the same input essentially never appear side by side — and even on the rare line that does record a passing `checked` event (which Question 6's `correctionTimesMs` reads when present), that one observation is never enough to establish the dataset-wide property determinism actually is. `determinism` is therefore **always** unknown, with that reason, regardless of what the dataset holds. What the query does state: every `failures` entry — a `gate` `checked` line with `outcome: 'fail'` — by its `check`, `checkVersion`, `inputFingerprint` and `commit`, ascending by check then time. A fingerprint hashes a check's environment and changed files, not file contents, so the same fingerprint failing at two different commits is never, by itself, evidence of non-determinism; a failure with no commit recorded reads `commit` as unknown, never as deterministic or not.
 
 <!-- AEG:CLAIM: packages/aeg-core/src/log/sync/engine.ts contains:export async function syncSource(source: LogSource, cache: LogCache, options: SyncOptions): Promise<SyncSummary> { -->
 <!-- AEG:CLAIM: packages/aeg-core/src/log/sync/normalize.ts contains:const classified = classifyStoredLine(raw, '') -->

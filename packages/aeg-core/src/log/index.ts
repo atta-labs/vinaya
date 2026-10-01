@@ -149,20 +149,41 @@ export type {
   SyncSummary,
   UnknownableField
 } from './sync'
-export { completionByModel, QUESTIONS, timeByUnit, usageByUnitAndRole } from './questions'
+export {
+  catchesAndEscapes,
+  checkOutcomes,
+  completionByModel,
+  determinism,
+  NO_LABELS_REASON,
+  QUESTIONS,
+  reviewerStrictness,
+  timeByUnit,
+  usageByUnitAndRole
+} from './questions'
 export type {
+  CatchesAnswer,
+  CheckOutcome,
+  ChecksAnswer,
   CompletionAnswer,
   Coverage,
+  DeterminismAnswer,
+  FailureRecord,
+  HumanLabel,
+  HumanLabelKind,
+  JudgmentAnswer,
   ModelCompletion,
   Question,
   QuestionId,
+  ReviewerStrictness,
   RoleUsage,
   RoundsToGreen,
+  SeverityFindings,
   Span,
   TimeAnswer,
   UnitTime,
   UnitUsage,
   UnknownFigure,
   UsageAnswer,
-  UsageTotals
+  UsageTotals,
+  VerdictFindings
 } from './questions'

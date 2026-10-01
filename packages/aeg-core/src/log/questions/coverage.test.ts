@@ -2,13 +2,19 @@ import { describe, expect, it } from 'vitest'
 import { buildExecutions } from '../fixtures'
 import { createMemoryCache, normalizeStoredLine, known } from '../sync'
 import type { Dataset } from '../sync'
+import { catchesAndEscapes } from './catches'
+import { checkOutcomes } from './checks'
 import { completionByModel } from './completion'
+import { determinism } from './determinism'
+import { reviewerStrictness } from './judgment'
 import { timeByUnit } from './time'
 import { usageByUnitAndRole } from './usage'
 
 /**
  * Every answer states the same coverage facts about the dataset it read: the
- * rows, the low-trust ones left out, the gaps and the quarantined lines.
+ * rows, the low-trust ones left out, the gaps and the quarantined lines. q5
+ * and q6 are run with no labels, so their own label-dependent figures are
+ * unknown too — `reason` is checked the same as every other unknown here.
  */
 
 function datasetWithGap(): Dataset {
@@ -26,8 +32,12 @@ describe('every answer states its coverage', () => {
   const dataset = datasetWithGap()
   const answers = {
     q1: completionByModel(dataset),
+    q2: reviewerStrictness(dataset),
     q3: usageByUnitAndRole(dataset),
-    q4: timeByUnit(dataset)
+    q4: timeByUnit(dataset),
+    q5: catchesAndEscapes(dataset),
+    q6: checkOutcomes(dataset),
+    q7: determinism(dataset)
   }
 
   for (const [name, answer] of Object.entries(answers)) {
