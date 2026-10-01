@@ -39,6 +39,30 @@ describe('logs — schema mutual exclusion (see also tests/config.test.ts)', () 
   it('accepts a folder-only config', () => {
     expect(VinayaConfigSchema.safeParse({ logs: { folder: '/var/lib/vinaya/logs' } }).success).toBe(true)
   })
+
+  it('O3: this repository declares readHeaders with a distinct read credential, and a test holds it to three rules', async () => {
+    // Load the root vinaya.config.json from this repository.
+    // This is an integration test that validates the actual configuration file.
+    const configPath = join(import.meta.dir, '..', '..', '..', '..', 'vinaya.config.json')
+    const configText = readFileSync(configPath, 'utf8')
+    const config = JSON.parse(configText) as VinayaConfig
+
+    // Rule 1: readHeaders must be present when logs.url is configured.
+    expect(config.logs?.url).toBeDefined()
+    expect(config.logs?.readHeaders).toBeDefined()
+
+    // Rule 2: readHeaders must reference a variable, not a literal token.
+    const readAuthHeader = config.logs?.readHeaders?.authorization
+    expect(readAuthHeader).toBeDefined()
+    expect(readAuthHeader).toMatch(/\$\{[A-Z_]+\}/)
+    expect(readAuthHeader).not.toMatch(/^Bearer [a-zA-Z0-9_-]+$/) // Not a literal
+
+    // Rule 3: readHeaders must reference a distinct read credential, not the ingest variable.
+    const ingestAuthHeader = config.logs?.headers?.authorization
+    expect(ingestAuthHeader).toContain('VINAYA_LOG_TOKEN')
+    expect(readAuthHeader).not.toContain('VINAYA_LOG_TOKEN')
+    expect(readAuthHeader).toContain('VINAYA_LOG_READ_TOKEN')
+  })
 })
 
 describe('resolveLogsSetting (pure)', () => {
