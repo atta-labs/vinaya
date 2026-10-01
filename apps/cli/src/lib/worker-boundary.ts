@@ -55,7 +55,12 @@ export const WORKER_ENV_ALLOWLIST_KEYS = [
   'HTTPS_PROXY',
   'HTTP_PROXY',
   'NO_PROXY',
-  'TMPDIR'
+  'TMPDIR',
+  // Account names, not secrets — any process running as this user resolves
+  // them. Claude Code's own Keychain lookup needs both, and without them
+  // `claude -p` prints "Not logged in" even where a login exists.
+  'USER',
+  'LOGNAME'
 ] as const
 
 /**
@@ -66,8 +71,9 @@ export const WORKER_ENV_ALLOWLIST_KEYS = [
  * on the dispatch path.
  *
  * - `claude` — the OAuth session credential in the Claude config directory
- *   (`resolveOAuthConfigSourceDir`), staged as a scoped copy
- *   (`stageOAuthCredential`).
+ *   (`resolveOAuthConfigSourceDir`), or, where Claude Code keeps it in the
+ *   macOS Keychain and writes no file, that Keychain entry — either way
+ *   staged as a scoped copy (`stageOAuthCredential`).
  * - `codex` — the cached ChatGPT session (`auth.json` under `CODEX_HOME`,
  *   or the macOS credential-store item), read by the trusted controller
  *   (`resolveCodexAccessToken`) and replayed into a task-scoped
@@ -87,6 +93,9 @@ export function hasSubscriptionLogin(agent: string): boolean {
 
 const CODEX_AUTH_FILE_NAME = 'auth.json'
 const CODEX_KEYCHAIN_SERVICE = 'Codex Auth'
+
+/** The macOS Keychain service name Claude Code keeps its subscription login under — the entry `claude` itself reads and writes, in place of `.credentials.json`, on a Mac. */
+export const CLAUDE_KEYCHAIN_SERVICE = 'Claude Code-credentials'
 
 function accessTokenFromCodexAuth(raw: string | null): string | null {
   if (raw === null) return null
@@ -124,6 +133,46 @@ function readRealCodexKeychainCredential(codexHome: string): string | null {
   }
 }
 
+/**
+ * Trusted-controller-only read of Claude Code's macOS Keychain login, run
+ * OUTSIDE the sandbox (the profile denies the Keychain on purpose). `null` on
+ * any failure — non-darwin host, entry absent, `security` missing, timeout —
+ * and never throws. The returned text is a credential: callers stage it to a
+ * 0600 file and never log it or put it on argv.
+ */
+export function readRealClaudeKeychainCredential(): string | null {
+  if (process.platform !== 'darwin') return null
+  try {
+    const out = execFileSync('/usr/bin/security', ['find-generic-password', '-s', CLAUDE_KEYCHAIN_SERVICE, '-w'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 5_000,
+      maxBuffer: 1024 * 1024
+    }).trim()
+    return out.length > 0 ? out : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The text to stage as `.credentials.json` from a Keychain payload: only the
+ * `claudeAiOauth` object — the subscription login Claude reads from that
+ * file — never the unrelated MCP server tokens the same Keychain item also
+ * carries. `null` when the payload is not JSON or carries no such object.
+ */
+function claudeLoginFromKeychainPayload(raw: string | null): string | null {
+  if (raw === null) return null
+  try {
+    const parsed = JSON.parse(raw) as { claudeAiOauth?: unknown }
+    const login = parsed.claudeAiOauth
+    if (typeof login !== 'object' || login === null) return null
+    return JSON.stringify({ claudeAiOauth: login })
+  } catch {
+    return null
+  }
+}
+
 export function resolveCodexAccessToken(
   sourceEnv: Readonly<Record<string, string | undefined>>,
   realHome: string,
@@ -148,9 +197,8 @@ export const CODEX_POLICY_RULES_FILE = 'vinaya-machine-state.rules'
  * only inside the worker-isolation boundary. `resolveWorkerBoundaryLaunch`
  * stages a run-scoped `CODEX_HOME` (with the rules) only when that boundary
  * runs (`opts.unattended && requireIsolation`); this stages the equivalent for
- * a Codex dispatch that runs WITHOUT it — isolation off (the incident host's
- * own posture, where the floor is meant to be the only barrier) or an attended
- * start — so the child discovers the same floor either way.
+ * a Codex dispatch that runs WITHOUT it — an attended start (an unattended
+ * Codex start requires the boundary and refuses where it is unavailable) — so the child discovers the same floor either way.
  *
  * `targetDir` becomes a home that symlinks every entry of the operator's real
  * `~/.codex` (its `auth.json`, `config.toml`, plugins, sessions — so
@@ -490,11 +538,15 @@ export function stageOAuthCredential(
   sourceEnv: Readonly<Record<string, string | undefined>>,
   realHome: string,
   scratchTmpDir: string,
-  deps: Pick<WorkerBoundaryDeps, 'readOAuthCredentialFile'> = {}
+  deps: Pick<WorkerBoundaryDeps, 'readOAuthCredentialFile' | 'readClaudeKeychainCredential'> = {}
 ): { configDir: string } | null {
   const sourceConfigDir = resolveOAuthConfigSourceDir(sourceEnv, realHome)
   const readFile = deps.readOAuthCredentialFile ?? readRealOAuthCredentialFile
-  const contents = readFile(join(sourceConfigDir, OAUTH_CREDENTIAL_FILE_NAME))
+  const readKeychain = deps.readClaudeKeychainCredential ?? readRealClaudeKeychainCredential
+  // The file wins where a host has one (a Linux host signs in that way);
+  // the Keychain is the route on a Mac, where Claude Code writes no file.
+  const contents =
+    readFile(join(sourceConfigDir, OAUTH_CREDENTIAL_FILE_NAME)) ?? claudeLoginFromKeychainPayload(readKeychain())
   if (contents === null) return null
   const stagedConfigDir = join(scratchTmpDir, 'claude-config')
   mkdirSync(stagedConfigDir, { recursive: true })
@@ -570,6 +622,8 @@ export type WorkerBoundaryDeps = {
    * back to the real file read.
    */
   readOAuthCredentialFile?: (path: string) => string | null
+  /** Reads Claude Code's Keychain login (`readRealClaudeKeychainCredential`); `null` when absent. Injectable so staging is provable without a real Keychain entry. */
+  readClaudeKeychainCredential?: () => string | null
   readCodexKeychainCredential?: (codexHome: string) => string | null
   runCodexLoginWithAccessToken?: (input: {
     binaryPath: string
@@ -592,6 +646,7 @@ export type WorkerBoundaryDeps = {
 export const REAL_WORKER_BOUNDARY_DEPS: WorkerBoundaryDeps = {
   detectHost: detectRealHost,
   readOAuthCredentialFile: readRealOAuthCredentialFile,
+  readClaudeKeychainCredential: readRealClaudeKeychainCredential,
   readCodexKeychainCredential: readRealCodexKeychainCredential,
   runCodexLoginWithAccessToken: runRealCodexLoginWithAccessToken,
   runCodexAuthPreflight: runRealCodexAuthPreflight,

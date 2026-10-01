@@ -5,7 +5,11 @@
  */
 
 import type { Dataset } from '../sync'
+import { catchesAndEscapes } from './catches'
+import { checkOutcomes } from './checks'
 import { completionByModel } from './completion'
+import { determinism } from './determinism'
+import { reviewerStrictness } from './judgment'
 import { timeByUnit } from './time'
 import { usageByUnitAndRole } from './usage'
 
@@ -19,15 +23,29 @@ export type Question<Answer> = {
 
 export const QUESTIONS = {
   q1: { number: 1, title: 'Does a cheaper model finish?', run: completionByModel },
+  q2: { number: 2, title: 'Are reviewers strict?', run: reviewerStrictness },
   q3: { number: 3, title: 'What does a unit of work cost?', run: usageByUnitAndRole },
-  q4: { number: 4, title: 'Where does the time go?', run: timeByUnit }
+  q4: { number: 4, title: 'Where does the time go?', run: timeByUnit },
+  q5: { number: 5, title: 'Does the product catch anything?', run: catchesAndEscapes },
+  q6: { number: 6, title: 'Which check catches most?', run: checkOutcomes },
+  q7: { number: 7, title: 'Are checks deterministic?', run: determinism }
 } satisfies Record<`q${number}`, Question<unknown>>
 
 export type QuestionId = keyof typeof QUESTIONS
 
+export { catchesAndEscapes } from './catches'
+export type { CatchesAnswer } from './catches'
+export { checkOutcomes } from './checks'
+export type { CheckOutcome, ChecksAnswer } from './checks'
 export { completionByModel } from './completion'
 export type { CompletionAnswer, ModelCompletion, RoundsToGreen } from './completion'
 export type { Coverage, UnknownFigure } from './common'
+export { determinism } from './determinism'
+export type { DeterminismAnswer, FailureRecord } from './determinism'
+export { reviewerStrictness } from './judgment'
+export type { JudgmentAnswer, ReviewerStrictness, SeverityFindings, VerdictFindings } from './judgment'
+export { NO_LABELS_REASON } from './labels'
+export type { HumanLabel, HumanLabelKind } from './labels'
 export { timeByUnit } from './time'
 export type { Span, TimeAnswer, UnitTime } from './time'
 export { usageByUnitAndRole } from './usage'

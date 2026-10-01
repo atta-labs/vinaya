@@ -95,6 +95,12 @@ export function objectField(row: DatasetRow, key: string): JsonObject | null {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as JsonObject) : null
 }
 
+/** An array-of-strings field of the row's family body, or `[]` when absent or not an array of strings. */
+export function stringArrayField(row: DatasetRow, key: string): string[] {
+  const value: unknown = row.payload[key]
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+}
+
 export function compareText(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0
 }

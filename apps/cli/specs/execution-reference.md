@@ -40,7 +40,7 @@ permitted/forbidden lists and the security rationale behind each.
 | Actor | Role | Boundary enforced by |
 | ----- | ---- | --------------------- |
 | Controller | Runs `devReviewLoop`/`task run`; holds the Operator's own forge login and model credentials; the only actor that spawns Worker, Reviewer and repository subprocesses | `apps/cli/src/lib/dispatch.ts`, `dev-review-loop.ts` |
-| Worker (Developer) | Reads/writes its own worktree; runs the declared toolchain; pushes and opens a PR on its own branch only | `apps/cli/src/lib/worker-boundary.ts` (Seatbelt sandbox on Darwin under `dispatch.requireWorkerIsolation`) |
+| Worker (Developer) | Reads/writes its own worktree; runs the declared toolchain; pushes and opens a PR on its own branch only | `apps/cli/src/lib/worker-boundary.ts` (Seatbelt sandbox on Darwin, always on where supported) |
 | Reviewer | Reads the repository at a judged head; writes findings to a driver-chosen work directory; never holds any forge-write credential | Same `worker-boundary.ts` profile, with every forge-write grant denied |
 | Operator | The task-scoped external client described in Section A | `packages/aeg-core/src/task-tools.ts`'s `OPERATOR_TOOL_GRANT` + `apps/cli/src/lib/task-tools/router.ts`'s `refuseUngrantedTool` |
 | Repository subprocess | Reads/writes only what the Controller explicitly constructs into its environment | `apps/cli/src/checks/runner.ts`'s `buildCheckEnv` (never `{ ...process.env }` spread) |

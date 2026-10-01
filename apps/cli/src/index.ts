@@ -13,6 +13,7 @@ import { demoBreakCommand } from './commands/demo.js'
 import { devReviewLoopCommand } from './commands/dev-review-loop.js'
 import { dispatchCommand } from './commands/dispatch.js'
 import { doctorCommand } from './commands/doctor.js'
+import { logEmitCommand } from './commands/log-emit.js'
 import { logSelftestCommand } from './commands/log-selftest.js'
 import { logSendCommand } from './commands/log-send.js'
 import { doctrineCommand } from './commands/doctrine.js'
@@ -359,8 +360,10 @@ try {
         await logSendCommand(rest)
       } else if (subcommand === 'selftest') {
         process.exit(await logSelftestCommand(rest))
+      } else if (subcommand === 'emit') {
+        process.exit(await logEmitCommand(rest))
       } else {
-        console.error(`Unknown 'log' subcommand: ${subcommand ?? '(none)'} (expected 'selftest' or 'send')`)
+        console.error(`Unknown 'log' subcommand: ${subcommand ?? '(none)'} (expected 'selftest', 'send' or 'emit')`)
         process.exit(2)
       }
       break

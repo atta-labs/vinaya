@@ -774,6 +774,20 @@ export const COMMANDS: readonly Command[] = [
     status: 'shipped'
   },
   {
+    name: 'log emit',
+    description:
+      'Record a consumer-declared event (`logs.events` in vinaya.config.json) from a script or agent outside Vinaya',
+    flags: [
+      { flag: "--json '<json>'", description: 'The field values as one JSON object (else read from standard input)' }
+    ],
+    details: [
+      "Reads the field values as ONE JSON object — `--json '<json>'` or piped on standard input, never positional arguments — and records them through `emitCustomEvent`, the same chokepoint every custom event goes through, so the refusal event and the redaction stay in one place.",
+      'A declared event with every field present and of its declared type exits 0 and prints the event name and the kind of destination it was recorded toward (`folder`, `server`, or `none`) — never a field value. A refused event (an undeclared name, or a missing, extra, wrong-typed or too-long field) exits 1 and prints the reason class and the field names — never a value, since a rejected value may be the secret. A missing event name, unreadable JSON, or JSON that is not a flat object is a usage error: exit 2, before anything is recorded.',
+      'A process with only `VINAYA_WORK_REF` and `VINAYA_FLOW` set, and no Vinaya role or task, still gets a header carrying that work reference and way-of-working id — the same environment read every event already honours (`apps/cli/specs/log.md` § Attribution).'
+    ],
+    status: 'shipped'
+  },
+  {
     name: 'log send',
     description: "Deliver this repository's locally-held log events to the configured `logs.url` server, once",
     flags: [{ flag: '--json', description: 'Enveloped JSON output (schema: 1)' }],

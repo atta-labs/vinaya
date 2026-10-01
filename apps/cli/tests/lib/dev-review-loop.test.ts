@@ -409,24 +409,28 @@ function setUpReviewGateOwnCheckFails(): { home: string; cwd: string; path: stri
 
 describe('devReviewLoop — the mechanical gate excludes the review gate’s own check-run (O1)', () => {
   // REAL PROCESS: subject is the real fetchCiConclusion/fetchFailingCheckRuns check-run-exclusion filter, which the in-process harness replaces entirely with a world-backed fake — no faithful in-pro
-  it('reads green and publishes off a real CI success, even though "vinaya review gate" itself reads failure', () => {
-    const { home, cwd, path } = setUpReviewGateOwnCheckFails()
-    const r = runLoop(home, cwd, path)
-    expect(r.status).toBe(0)
-    expect(r.stdout).toMatch(/publish/)
+  it.skipIf(process.platform === 'darwin')(
+    'reads green and publishes off a real CI success, even though "vinaya review gate" itself reads failure',
+    () => {
+      const { home, cwd, path } = setUpReviewGateOwnCheckFails()
+      const r = runLoop(home, cwd, path)
+      expect(r.status).toBe(0)
+      expect(r.stdout).toMatch(/publish/)
 
-    const loopEvents = outboxLines(home)
-      .filter((l) => l.kind === 'dev_review_loop')
-      .map((l) => l.event)
-    // A red gate would have dispatched the developer again instead of the
-    // reviewers — `gate_result_read` with `green: true` proves the review
-    // gate's own failing check-run was excluded, not merely tolerated.
-    const gateRead = outboxLines(home).find((l) => l.event === 'gate_result_read') as
-      | Record<string, unknown>
-      | undefined
-    expect(gateRead?.green).toBe(true)
-    expect(loopEvents).toContain('verdicts_read')
-  }, 45000)
+      const loopEvents = outboxLines(home)
+        .filter((l) => l.kind === 'dev_review_loop')
+        .map((l) => l.event)
+      // A red gate would have dispatched the developer again instead of the
+      // reviewers — `gate_result_read` with `green: true` proves the review
+      // gate's own failing check-run was excluded, not merely tolerated.
+      const gateRead = outboxLines(home).find((l) => l.event === 'gate_result_read') as
+        | Record<string, unknown>
+        | undefined
+      expect(gateRead?.green).toBe(true)
+      expect(loopEvents).toContain('verdicts_read')
+    },
+    45000
+  )
 })
 
 /**
@@ -715,66 +719,70 @@ exit 1
 
 describe('devReviewLoop — O9 (task-run-v1 21, #541, round 2 review BLOCKER): a crash between a green round_ended and journal_finalized never resets numbering on reattach', () => {
   // REAL PROCESS: subject is fetchLoopHistory's real forge-marker (pr-comment) round reconstruction on reattach, which the harness fakes to always return empty — faithfully converting it would mean
-  it('round 2 dispatches directly (never round 1 again), and the eventual published marker still carries round 1', () => {
-    const home = tempDir('vinaya-drl-home-')
-    const cwd = tempDir('vinaya-drl-cwd-')
-    const binDir = tempDir('vinaya-drl-bin-')
-    writeFakeClaude(binDir)
-    writeFakeGhCrashOnceThenReattach(binDir)
-    writeFakeGit(binDir)
-    const path = `${binDir}:${pathWithoutRealVendors()}`
+  it.skipIf(process.platform === 'darwin')(
+    'round 2 dispatches directly (never round 1 again), and the eventual published marker still carries round 1',
+    () => {
+      const home = tempDir('vinaya-drl-home-')
+      const cwd = tempDir('vinaya-drl-cwd-')
+      const binDir = tempDir('vinaya-drl-bin-')
+      writeFakeClaude(binDir)
+      writeFakeGhCrashOnceThenReattach(binDir)
+      writeFakeGit(binDir)
+      const path = `${binDir}:${pathWithoutRealVendors()}`
 
-    // Round 1: gate green, reviewers clean, `round_ended(outcome: 'green')`
-    // logs — then `publishRound` crashes posting the security verdict,
-    // before the REAL `journal_finalized` (the one `publishRound` itself
-    // would trigger) is ever reached. O10's own crash-recovery fix (above)
-    // still logs its OWN `journal_finalized`, but with `result: 'stopped'`
-    // — never `'merged_ready'`, which only the real publish path can ever
-    // write — so it must never be mistaken for a genuine completion. Both
-    // lines land live, in the local default destination — read directly,
-    // never via a flush-then-forge-read round trip ([task-files-v1] 5, O3).
-    const r1 = runLoopNoPauseCommentRetry(home, cwd, path)
-    expect(r1.status).not.toBe(0)
-    const linesAfterCrash = outboxLines(home)
-    expect(linesAfterCrash.some((l) => l.event === 'round_ended' && l.outcome === 'green')).toBe(true)
-    expect(linesAfterCrash.some((l) => l.event === 'journal_finalized' && l.result === 'merged_ready')).toBe(false)
+      // Round 1: gate green, reviewers clean, `round_ended(outcome: 'green')`
+      // logs — then `publishRound` crashes posting the security verdict,
+      // before the REAL `journal_finalized` (the one `publishRound` itself
+      // would trigger) is ever reached. O10's own crash-recovery fix (above)
+      // still logs its OWN `journal_finalized`, but with `result: 'stopped'`
+      // — never `'merged_ready'`, which only the real publish path can ever
+      // write — so it must never be mistaken for a genuine completion. Both
+      // lines land live, in the local default destination — read directly,
+      // never via a flush-then-forge-read round trip ([task-files-v1] 5, O3).
+      const r1 = runLoopNoPauseCommentRetry(home, cwd, path)
+      expect(r1.status).not.toBe(0)
+      const linesAfterCrash = outboxLines(home)
+      expect(linesAfterCrash.some((l) => l.event === 'round_ended' && l.outcome === 'green')).toBe(true)
+      expect(linesAfterCrash.some((l) => l.event === 'journal_finalized' && l.result === 'merged_ready')).toBe(false)
 
-    // Swap to a `gh` with no crash logic — round 2's own posts must succeed
-    // — then reattach with a plain `--task`, exactly as an operator
-    // re-running the same command after the crash would. Round ≥ 2's
-    // confidence gate reads a file the developer would normally write; an
-    // ATTACH never dispatches the developer at all (the code is already on
-    // the remote), so it's pre-seeded here exactly as
-    // `setUpAttachRecoversHeldRound`'s own round-2 fixtures do.
-    writeFakeGhReattachSucceeds(binDir)
-    const worktreeDir = join(cwd, '.worktrees', BRANCH)
-    mkdirSync(worktreeDir, { recursive: true })
-    mkdirSync(developerDir(home, 2), { recursive: true })
-    writeFileSync(
-      join(developerDir(home, 2), CONFIDENCE_FILE_NAME),
-      'CONFIDENCE: 90 — same code, already reviewed clean once\n'
-    )
-    const r2 = runLoop(home, cwd, path)
-    expect(r2.status).toBe(0)
-    expect(r2.stdout).toMatch(/publish/)
+      // Swap to a `gh` with no crash logic — round 2's own posts must succeed
+      // — then reattach with a plain `--task`, exactly as an operator
+      // re-running the same command after the crash would. Round ≥ 2's
+      // confidence gate reads a file the developer would normally write; an
+      // ATTACH never dispatches the developer at all (the code is already on
+      // the remote), so it's pre-seeded here exactly as
+      // `setUpAttachRecoversHeldRound`'s own round-2 fixtures do.
+      writeFakeGhReattachSucceeds(binDir)
+      const worktreeDir = join(cwd, '.worktrees', BRANCH)
+      mkdirSync(worktreeDir, { recursive: true })
+      mkdirSync(developerDir(home, 2), { recursive: true })
+      writeFileSync(
+        join(developerDir(home, 2), CONFIDENCE_FILE_NAME),
+        'CONFIDENCE: 90 — same code, already reviewed clean once\n'
+      )
+      const r2 = runLoop(home, cwd, path)
+      expect(r2.status).toBe(0)
+      expect(r2.stdout).toMatch(/publish/)
 
-    // The bug this test guards: round 2 must be a NEW round on the SAME
-    // code, never round 1 redone. `writeFakeClaude` organizes reviewer
-    // work directories by `$VINAYA_ROUND` — round 2's own directories only
-    // exist if the driver genuinely advanced past round 1's own numbering.
-    expect(existsSync(join(roundDir(home, 2), 'reviewer-work'))).toBe(true)
-    expect(existsSync(join(roundDir(home, 2), 'security-work'))).toBe(true)
+      // The bug this test guards: round 2 must be a NEW round on the SAME
+      // code, never round 1 redone. `writeFakeClaude` organizes reviewer
+      // work directories by `$VINAYA_ROUND` — round 2's own directories only
+      // exist if the driver genuinely advanced past round 1's own numbering.
+      expect(existsSync(join(roundDir(home, 2), 'reviewer-work'))).toBe(true)
+      expect(existsSync(join(roundDir(home, 2), 'security-work'))).toBe(true)
 
-    // The published marker — round 2's real, live computation — still
-    // names round 1, reconstructed from the round-1 developer marker round 1
-    // posted to the PR before it crashed, never dropped just because it never
-    // got to publish (Origin, PR #536).
-    const files = postedCommentFiles(home)
-    const summaryFile = files[files.length - 1] as string
-    const summary = readFileSync(join(home, '.fake-gh-posted-comments', summaryFile), 'utf8')
-    expect(summary).toMatch(/^<!-- aeg:loop:published head=\S+ confidence=1:\S+,2:\S+ -->$/m)
-    expect(summary).not.toContain('| round |')
-  }, 45000)
+      // The published marker — round 2's real, live computation — still
+      // names round 1, reconstructed from the round-1 developer marker round 1
+      // posted to the PR before it crashed, never dropped just because it never
+      // got to publish (Origin, PR #536).
+      const files = postedCommentFiles(home)
+      const summaryFile = files[files.length - 1] as string
+      const summary = readFileSync(join(home, '.fake-gh-posted-comments', summaryFile), 'utf8')
+      expect(summary).toMatch(/^<!-- aeg:loop:published head=\S+ confidence=1:\S+,2:\S+ -->$/m)
+      expect(summary).not.toContain('| round |')
+    },
+    45000
+  )
 })
 
 /**
@@ -846,37 +854,6 @@ function runResume(home: string, cwd: string, path: string, pr: number): CliResu
 
 function runCancel(home: string, cwd: string, path: string, pr: number): CliResult {
   return runDevReviewLoopArgs(home, cwd, path, ['--cancel', String(pr), '--agent', 'claude'])
-}
-
-/**
- * Round 6 fix, live-reproduced on the declared supported host (Darwin):
- * every fixture in this file signals through `$HOME` (`.fake-dev-invoked`,
- * `.dev-invocations`, `.reviewer-dispatch-started`, `.fake-gh-posted-
- * comments`, …) — this suite is entirely about LOOP LOGIC (round
- * assessment, publish/pause/resume), never about the isolation boundary
- * itself (that is `worker-boundary.test.ts`'s own, dedicated, real
- * `sandbox-exec` coverage). Task 3 (`#560`)'s round-2 fix made
- * `requireWorkerIsolation` default `true` on Darwin — the correct O3
- * behavior for a real dispatch, but it means a Developer/Reviewer dispatch
- * from this suite is confined for real, on this one host, and its
- * confined `allowedDir` (the worktree/repo-root fallback) is a DIFFERENT
- * directory from `$HOME`: every fixture's `$HOME`-based signal silently
- * fails to write, and the loop waits forever for state that can never
- * arrive. Writing (or merging into) `cwd`'s own `vinaya.config.json` here
- * — the SAME repo-local config `loadConfig()` already resolves everything
- * else from — opts these loop-logic fixtures out of a feature they were
- * never designed to exercise, without touching the two existing scenarios
- * that already write their own `cwd`-local config for an unrelated key
- * (`logPublish`).
- */
-function disableIsolationForFixture(cwd: string): void {
-  const path = join(cwd, 'vinaya.config.json')
-  const existing = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {}
-  if (existing.dispatch?.requireWorkerIsolation !== undefined) return
-  writeFileSync(
-    path,
-    JSON.stringify({ ...existing, dispatch: { ...existing.dispatch, requireWorkerIsolation: false } })
-  )
 }
 
 /**
@@ -979,6 +956,11 @@ const FIXTURE_GITHUB_REPOSITORY = 'vinaya-fixture-owner/vinaya-fixture-repo'
  * child's own captured output, before the test framework's own outer
  * timeout can kill the whole run with no diagnostic at all.
  */
+// Scenarios marked `it.skipIf(process.platform === 'darwin')` dispatch a fake
+// developer or reviewer that signals through `$HOME`. The worker sandbox is
+// always on where it is supported, so on macOS that dispatch is confined for
+// real and cannot write there; the boundary has its own live coverage in
+// `dispatch/worker-boundary.test.ts`, and these scenarios run on Linux CI.
 const SUBPROCESS_BUDGET_MS = 40_000
 
 function runDevReviewLoopArgs(
@@ -989,7 +971,6 @@ function runDevReviewLoopArgs(
   extraEnv: Record<string, string> = {},
   budgetMs: number = SUBPROCESS_BUDGET_MS
 ): CliResult {
-  disableIsolationForFixture(cwd)
   // `spawnSync` (never `execFileSync`) — it hands back stdout AND stderr on
   // BOTH the success and the non-zero-exit path; `execFileSync` only
   // surfaces piped stderr via the thrown error, so a passing run's own
@@ -1106,19 +1087,23 @@ describe('devReviewLoop — the developer flow still works on the loop-created b
   // genuinely-fresh path, then the Developer's own worktree setup and first
   // push, all the way to publish — proving the branch the loop creates at start
   // does not disturb the Developer's own downstream flow on the same branch.
-  it('creates the branch at start with the explicit origin/main refspec, then dispatches, opens the PR, and publishes', () => {
-    const { home, cwd, path } = setUp()
-    const r = runLoop(home, cwd, path)
-    expect(r.status).toBe(0)
-    expect(r.stdout).toMatch(/publish/)
+  it.skipIf(process.platform === 'darwin')(
+    'creates the branch at start with the explicit origin/main refspec, then dispatches, opens the PR, and publishes',
+    () => {
+      const { home, cwd, path } = setUp()
+      const r = runLoop(home, cwd, path)
+      expect(r.status).toBe(0)
+      expect(r.stdout).toMatch(/publish/)
 
-    // The loop's own start-of-run branch creation reached the remote: the fake
-    // git recorded exactly the `origin/main:refs/heads/<branch>` refspec, never
-    // a force-push and never a branch checkout.
-    const pushes = readFileSync(join(home, '.fake-git-pushes'), 'utf8')
-    expect(pushes).toMatch(new RegExp(`origin origin/main:refs/heads/${BRANCH}`))
-    expect(pushes).not.toMatch(/--force|\+/)
-  }, 45000)
+      // The loop's own start-of-run branch creation reached the remote: the fake
+      // git recorded exactly the `origin/main:refs/heads/<branch>` refspec, never
+      // a force-push and never a branch checkout.
+      const pushes = readFileSync(join(home, '.fake-git-pushes'), 'utf8')
+      expect(pushes).toMatch(new RegExp(`origin origin/main:refs/heads/${BRANCH}`))
+      expect(pushes).not.toMatch(/--force|\+/)
+    },
+    45000
+  )
 })
 
 describe('devReviewLoop — round 1 clean, ends on publish', () => {
@@ -1194,44 +1179,51 @@ describe('devReviewLoop — round 1 clean, ends on publish', () => {
   // forge and that a rerun posts none of them twice is a real `gh` comment
   // round-trip, not reproducible against an in-memory fake without
   // re-implementing the thing under test.
-  it('publishes the two verdicts then the summary, in order, self-verified — and a rerun posts nothing twice (O1)', () => {
-    const { home, cwd, path } = setUp()
-    const r1 = runLoop(home, cwd, path)
-    expect(r1.status).toBe(0)
-    expect(r1.stdout).toMatch(/publish/)
+  it.skipIf(process.platform === 'darwin')(
+    'publishes the two verdicts then the summary, in order, self-verified — and a rerun posts nothing twice (O1)',
+    () => {
+      const { home, cwd, path } = setUp()
+      const r1 = runLoop(home, cwd, path)
+      expect(r1.status).toBe(0)
+      expect(r1.stdout).toMatch(/publish/)
 
-    const firstRunFiles = postedCommentFiles(home)
-    // One more than before: the driver now posts the round
-    // marker comment itself, ahead of both reviewer verdicts — the
-    // Developer's turn never posts one any more (O1).
-    expect(firstRunFiles).toHaveLength(4)
+      const firstRunFiles = postedCommentFiles(home)
+      // One more than before: the driver now posts the round
+      // marker comment itself, ahead of both reviewer verdicts — the
+      // Developer's turn never posts one any more (O1).
+      expect(firstRunFiles).toHaveLength(4)
 
-    const [roundCommentFile, reviewerFile, securityFile, summaryFile] = firstRunFiles
-    const roundCommentPosted = readFileSync(join(home, '.fake-gh-posted-comments', roundCommentFile as string), 'utf8')
-    expect(roundCommentPosted).toMatch(/^<!-- aeg:developer:round-1 -->$/m)
-    expect(roundCommentPosted).toMatch(new RegExp(`^Head: ${HEAD_SHA}$`, 'm'))
+      const [roundCommentFile, reviewerFile, securityFile, summaryFile] = firstRunFiles
+      const roundCommentPosted = readFileSync(
+        join(home, '.fake-gh-posted-comments', roundCommentFile as string),
+        'utf8'
+      )
+      expect(roundCommentPosted).toMatch(/^<!-- aeg:developer:round-1 -->$/m)
+      expect(roundCommentPosted).toMatch(new RegExp(`^Head: ${HEAD_SHA}$`, 'm'))
 
-    const reviewerPosted = readFileSync(join(home, '.fake-gh-posted-comments', reviewerFile as string), 'utf8')
-    expect(reviewerPosted).toMatch(/^VERDICT: APPROVE$/m)
-    expect(reviewerPosted).toMatch(new RegExp(`^Judged head: ${HEAD_SHA}$`, 'm'))
+      const reviewerPosted = readFileSync(join(home, '.fake-gh-posted-comments', reviewerFile as string), 'utf8')
+      expect(reviewerPosted).toMatch(/^VERDICT: APPROVE$/m)
+      expect(reviewerPosted).toMatch(new RegExp(`^Judged head: ${HEAD_SHA}$`, 'm'))
 
-    const securityPosted = readFileSync(join(home, '.fake-gh-posted-comments', securityFile as string), 'utf8')
-    expect(securityPosted).toMatch(/^VERDICT: PASS$/m)
+      const securityPosted = readFileSync(join(home, '.fake-gh-posted-comments', securityFile as string), 'utf8')
+      expect(securityPosted).toMatch(/^VERDICT: PASS$/m)
 
-    const summaryPosted = readFileSync(join(home, '.fake-gh-posted-comments', summaryFile as string), 'utf8')
-    expect(summaryPosted).toMatch(/^<!-- aeg:loop:published head=\S+ confidence=1:\S+ -->$/m)
-    expect(summaryPosted).not.toContain('| round |')
-    expect(summaryPosted).not.toMatch(/^VERDICT:/m)
-    expect(summaryPosted).not.toMatch(/^Judged head:/m)
+      const summaryPosted = readFileSync(join(home, '.fake-gh-posted-comments', summaryFile as string), 'utf8')
+      expect(summaryPosted).toMatch(/^<!-- aeg:loop:published head=\S+ confidence=1:\S+ -->$/m)
+      expect(summaryPosted).not.toContain('| round |')
+      expect(summaryPosted).not.toMatch(/^VERDICT:/m)
+      expect(summaryPosted).not.toMatch(/^Judged head:/m)
 
-    // Same deterministic fixture, same $HOME: a rerun reaches round 1 clean
-    // → publish again, but `postForgeEffectOnce`'s effect records from the
-    // first run make it post nothing a second time.
-    const r2 = runLoop(home, cwd, path)
-    expect(r2.status).toBe(0)
-    expect(r2.stdout).toMatch(/publish/)
-    expect(postedCommentFiles(home)).toEqual(firstRunFiles)
-  }, 45000)
+      // Same deterministic fixture, same $HOME: a rerun reaches round 1 clean
+      // → publish again, but `postForgeEffectOnce`'s effect records from the
+      // first run make it post nothing a second time.
+      const r2 = runLoop(home, cwd, path)
+      expect(r2.status).toBe(0)
+      expect(r2.stdout).toMatch(/publish/)
+      expect(postedCommentFiles(home)).toEqual(firstRunFiles)
+    },
+    45000
+  )
 
   it('runs the evidence report once, from the driver, with no developer resume for it', async () => {
     // The driver runs `runEvidenceReport` itself, once, in the SAME round as
@@ -1585,107 +1577,119 @@ describe('devReviewLoop — restart fixtures (task-log-v1 task 6, O3): equivalen
   ]
 
   // REAL PROCESS: publishRound's real gh/EffectExecutor round-trip (postPrCommentOnce shells out to real gh directly, bypassing every injected dep) cannot be exercised via the in-process fake publis
-  it('a second whole-task run reproduces the SAME dev_review_loop event shape under a DIFFERENT lineage.run — two genuine runs, never one fabricated as a continuation of the other', () => {
-    const { home, cwd, path } = setUp()
+  it.skipIf(process.platform === 'darwin')(
+    'a second whole-task run reproduces the SAME dev_review_loop event shape under a DIFFERENT lineage.run — two genuine runs, never one fabricated as a continuation of the other',
+    () => {
+      const { home, cwd, path } = setUp()
 
-    const r1 = runLoop(home, cwd, path)
-    expect(r1.status).toBe(0)
-    const linesAfterR1 = outboxLines(home)
-    const loopEventsR1 = linesAfterR1.filter((l) => l.kind === 'dev_review_loop').map((l) => l.event)
-    expect(loopEventsR1).toEqual(CANONICAL_ROUND_1_SHAPE)
+      const r1 = runLoop(home, cwd, path)
+      expect(r1.status).toBe(0)
+      const linesAfterR1 = outboxLines(home)
+      const loopEventsR1 = linesAfterR1.filter((l) => l.kind === 'dev_review_loop').map((l) => l.event)
+      expect(loopEventsR1).toEqual(CANONICAL_ROUND_1_SHAPE)
 
-    const r2 = runLoop(home, cwd, path)
-    expect(r2.status).toBe(0)
+      const r2 = runLoop(home, cwd, path)
+      expect(r2.status).toBe(0)
 
-    const allLines = outboxLines(home)
-    const loopLines = allLines.filter((l) => l.kind === 'dev_review_loop')
-    // Every dev_review_loop line partitions cleanly by lineage.run into
-    // exactly two runs — the SAME canonical shape twice, never one merged
-    // 16-event stream and never a shape that only makes sense assuming the
-    // two processes shared state they never actually shared.
-    const runsInOrder = [...new Set(loopLines.map((l) => (l.meta as { lineage: { run: string } }).lineage.run))]
-    expect(runsInOrder).toHaveLength(2)
-    for (const run of runsInOrder) {
-      expect(
-        loopLines.filter((l) => (l.meta as { lineage: { run: string } }).lineage.run === run).map((l) => l.event)
-      ).toEqual(CANONICAL_ROUND_1_SHAPE)
-    }
-    // The restart itself is visible directly in the data, not inferred: two
-    // distinct process identities, never a single lineage.run silently
-    // spanning both runs as if nothing happened in between.
-    expect(runsInOrder[0]).not.toBe(runsInOrder[1])
-  }, 45000)
+      const allLines = outboxLines(home)
+      const loopLines = allLines.filter((l) => l.kind === 'dev_review_loop')
+      // Every dev_review_loop line partitions cleanly by lineage.run into
+      // exactly two runs — the SAME canonical shape twice, never one merged
+      // 16-event stream and never a shape that only makes sense assuming the
+      // two processes shared state they never actually shared.
+      const runsInOrder = [...new Set(loopLines.map((l) => (l.meta as { lineage: { run: string } }).lineage.run))]
+      expect(runsInOrder).toHaveLength(2)
+      for (const run of runsInOrder) {
+        expect(
+          loopLines.filter((l) => (l.meta as { lineage: { run: string } }).lineage.run === run).map((l) => l.event)
+        ).toEqual(CANONICAL_ROUND_1_SHAPE)
+      }
+      // The restart itself is visible directly in the data, not inferred: two
+      // distinct process identities, never a single lineage.run silently
+      // spanning both runs as if nothing happened in between.
+      expect(runsInOrder[0]).not.toBe(runsInOrder[1])
+    },
+    45000
+  )
 
   // REAL PROCESS: publishRound real forge round-trip — asserts on real EffectExecutor verified lines from real forge writes
-  it("the rerun's own effect events reconcile the FIRST run's identities — an idempotent 'verified' replay, one line per run, for the SAME effect_id across the restart (O1/O3)", () => {
-    const { home, cwd, path } = setUp()
+  it.skipIf(process.platform === 'darwin')(
+    "the rerun's own effect events reconcile the FIRST run's identities — an idempotent 'verified' replay, one line per run, for the SAME effect_id across the restart (O1/O3)",
+    () => {
+      const { home, cwd, path } = setUp()
 
-    const r1 = runLoop(home, cwd, path)
-    expect(r1.status).toBe(0)
-    const r2 = runLoop(home, cwd, path)
-    expect(r2.status).toBe(0)
-    // No new forge write landed on the rerun — the pre-existing O1 proof
-    // (`postedCommentFiles` unchanged) this task's own fixture already
-    // established; the assertions below are the RAW EVENT counterpart of
-    // that same fact.
-    expect(postedCommentFiles(home)).toHaveLength(4)
+      const r1 = runLoop(home, cwd, path)
+      expect(r1.status).toBe(0)
+      const r2 = runLoop(home, cwd, path)
+      expect(r2.status).toBe(0)
+      // No new forge write landed on the rerun — the pre-existing O1 proof
+      // (`postedCommentFiles` unchanged) this task's own fixture already
+      // established; the assertions below are the RAW EVENT counterpart of
+      // that same fact.
+      expect(postedCommentFiles(home)).toHaveLength(4)
 
-    const effectLines = outboxLines(home).filter((l) => l.kind === 'effect') as Array<{
-      effect_id: string
-      event: string
-      outcome?: string
-    }>
-    expect(effectLines.length).toBeGreaterThan(0)
+      const effectLines = outboxLines(home).filter((l) => l.kind === 'effect') as Array<{
+        effect_id: string
+        event: string
+        outcome?: string
+      }>
+      expect(effectLines.length).toBeGreaterThan(0)
 
-    const byId = new Map<string, typeof effectLines>()
-    for (const l of effectLines) {
-      const arr = byId.get(l.effect_id) ?? []
-      arr.push(l)
-      byId.set(l.effect_id, arr)
-    }
-    // The reviewer- and security-verdict posts (`publishRound`'s own
-    // `postPrCommentOnce`, the shared `EffectExecutor`) are keyed by round,
-    // not by process — `1-reviewer-verdict`/`1-security-verdict` are the
-    // SAME identity string a fresh process re-derives independently, which
-    // is exactly what makes a genuine cross-process replay observable here.
-    for (const key of ['1-reviewer-verdict', '1-security-verdict']) {
-      const forId = byId.get(key)
-      expect(forId, `no effect events for ${key}`).toBeDefined()
-      const events = (forId ?? []).map((l) => l.event)
-      // First run: a fresh write — one verified(success). Second run: the
-      // SAME identity is already 'verified' on disk, so
-      // `EffectExecutor.reconcileExisting` emits its own one 'verified' line
-      // under the same effect_id — never a second write, never an
-      // 'attempted' or 'observed'.
-      expect(events).toEqual(['verified', 'verified'])
-    }
-  }, 45000)
+      const byId = new Map<string, typeof effectLines>()
+      for (const l of effectLines) {
+        const arr = byId.get(l.effect_id) ?? []
+        arr.push(l)
+        byId.set(l.effect_id, arr)
+      }
+      // The reviewer- and security-verdict posts (`publishRound`'s own
+      // `postPrCommentOnce`, the shared `EffectExecutor`) are keyed by round,
+      // not by process — `1-reviewer-verdict`/`1-security-verdict` are the
+      // SAME identity string a fresh process re-derives independently, which
+      // is exactly what makes a genuine cross-process replay observable here.
+      for (const key of ['1-reviewer-verdict', '1-security-verdict']) {
+        const forId = byId.get(key)
+        expect(forId, `no effect events for ${key}`).toBeDefined()
+        const events = (forId ?? []).map((l) => l.event)
+        // First run: a fresh write — one verified(success). Second run: the
+        // SAME identity is already 'verified' on disk, so
+        // `EffectExecutor.reconcileExisting` emits its own one 'verified' line
+        // under the same effect_id — never a second write, never an
+        // 'attempted' or 'observed'.
+        expect(events).toEqual(['verified', 'verified'])
+      }
+    },
+    45000
+  )
 
   // REAL PROCESS: publishRound real forge round-trip — real cross-process restart + real outbox file on disk
-  it('the controller never reads the Vinaya Log to decide — deleting the local outbox between the two runs changes nothing about the rerun’s own decision (O2/O3)', () => {
-    const { home, cwd, path } = setUp()
+  it.skipIf(process.platform === 'darwin')(
+    'the controller never reads the Vinaya Log to decide — deleting the local outbox between the two runs changes nothing about the rerun’s own decision (O2/O3)',
+    () => {
+      const { home, cwd, path } = setUp()
 
-    const r1 = runLoop(home, cwd, path)
-    expect(r1.status).toBe(0)
-    const firstRunFiles = postedCommentFiles(home)
-    expect(firstRunFiles).toHaveLength(4)
+      const r1 = runLoop(home, cwd, path)
+      expect(r1.status).toBe(0)
+      const firstRunFiles = postedCommentFiles(home)
+      expect(firstRunFiles).toHaveLength(4)
 
-    // The ONLY input this suite's own restart tests otherwise leave
-    // untouched between runs — gone, not merely unread, so a controller
-    // that secretly depended on replaying it would fail loudly here rather
-    // than passing by accident.
-    const outboxPath = join(home, '.vinaya', 'runtime', 'unresolved', 'logs', 'unresolved', `${TASK}.ndjson`)
-    expect(existsSync(outboxPath)).toBe(true)
-    rmSync(outboxPath)
+      // The ONLY input this suite's own restart tests otherwise leave
+      // untouched between runs — gone, not merely unread, so a controller
+      // that secretly depended on replaying it would fail loudly here rather
+      // than passing by accident.
+      const outboxPath = join(home, '.vinaya', 'runtime', 'unresolved', 'logs', 'unresolved', `${TASK}.ndjson`)
+      expect(existsSync(outboxPath)).toBe(true)
+      rmSync(outboxPath)
 
-    const r2 = runLoop(home, cwd, path)
-    expect(r2.status).toBe(0)
-    expect(r2.stdout).toMatch(/publish/)
-    // The identical decision — nothing reposted — still holds with no log to
-    // consult: idempotency here comes from `postForgeEffectOnce`'s/the
-    // control store's own durable records, never from re-reading this file.
-    expect(postedCommentFiles(home)).toEqual(firstRunFiles)
-  }, 45000)
+      const r2 = runLoop(home, cwd, path)
+      expect(r2.status).toBe(0)
+      expect(r2.stdout).toMatch(/publish/)
+      // The identical decision — nothing reposted — still holds with no log to
+      // consult: idempotency here comes from `postForgeEffectOnce`'s/the
+      // control store's own durable records, never from re-reading this file.
+      expect(postedCommentFiles(home)).toEqual(firstRunFiles)
+    },
+    45000
+  )
 })
 
 // --- pause and --resume (O2) ------------------------------------------------
@@ -1776,24 +1780,27 @@ describe('devReviewLoop — one driver per task (review-validity-v1 task 7, #498
   })
 
   // REAL PROCESS: driver-lock-between-processes + stderr shape of the CLI
-  it('O2: a dead pid record is treated as absent — takes over, runs, and clears the lock on exit', () => {
-    const { home, cwd, path } = setUp()
-    const startedAt = '2026-09-10T00:00:00.000Z'
-    const stalePid = deadPid()
-    writeDriverLockFixture(home, { pid: stalePid, startedAt })
+  it.skipIf(process.platform === 'darwin')(
+    'O2: a dead pid record is treated as absent — takes over, runs, and clears the lock on exit',
+    () => {
+      const { home, cwd, path } = setUp()
+      const startedAt = '2026-09-10T00:00:00.000Z'
+      const stalePid = deadPid()
+      writeDriverLockFixture(home, { pid: stalePid, startedAt })
 
-    const r = runLoop(home, cwd, path)
+      const r = runLoop(home, cwd, path)
 
-    expect(r.status).toBe(0)
-    expect(r.stdout).toMatch(/publish/)
-    // O3: the stale takeover is visible on stderr, naming the stale pid and start time.
-    expect(r.stderr).toContain('vinaya dev-review-loop:')
-    expect(r.stderr).toContain('no longer alive')
-    expect(r.stderr).toContain(String(stalePid))
-    expect(r.stderr).toContain(startedAt)
-    // O2: cleared on the normal-exit path, same as every other exit.
-    expect(existsSync(driverLockPath(home))).toBe(false)
-  })
+      expect(r.status).toBe(0)
+      expect(r.stdout).toMatch(/publish/)
+      // O3: the stale takeover is visible on stderr, naming the stale pid and start time.
+      expect(r.stderr).toContain('vinaya dev-review-loop:')
+      expect(r.stderr).toContain('no longer alive')
+      expect(r.stderr).toContain(String(stalePid))
+      expect(r.stderr).toContain(startedAt)
+      // O2: cleared on the normal-exit path, same as every other exit.
+      expect(existsSync(driverLockPath(home))).toBe(false)
+    }
+  )
 })
 
 function setUpPauseResume(): { home: string; cwd: string; path: string } {
@@ -2008,81 +2015,101 @@ const FAST_PAUSE_RETRY_ENV = {
 
 describe('devReviewLoop — O1 (`[task-operator-v1]`/Issue #662): the pause comment post itself retries with backoff, and this function itself never crashes the driver', () => {
   // REAL PROCESS: harness's fake postPauseComment bypasses postWithRetry entirely; no retry logic to observe in-process
-  it('a post that fails once then succeeds recovers in-process: the pause is posted, the reason is intact, and one recovered infrastructure_retry event is logged', () => {
-    const home = tempDir('vinaya-drl-home-')
-    const cwd = tempDir('vinaya-drl-cwd-')
-    const binDir = tempDir('vinaya-drl-bin-')
-    writeFakeClaudePauseThenResumeScenario(binDir)
-    writeFakeGhPauseCommentFailsOnce(binDir)
-    writeFakeGit(binDir)
-    const path = `${binDir}:${pathWithoutRealVendors()}`
+  it.skipIf(process.platform === 'darwin')(
+    'a post that fails once then succeeds recovers in-process: the pause is posted, the reason is intact, and one recovered infrastructure_retry event is logged',
+    () => {
+      const home = tempDir('vinaya-drl-home-')
+      const cwd = tempDir('vinaya-drl-cwd-')
+      const binDir = tempDir('vinaya-drl-bin-')
+      writeFakeClaudePauseThenResumeScenario(binDir)
+      writeFakeGhPauseCommentFailsOnce(binDir)
+      writeFakeGit(binDir)
+      const path = `${binDir}:${pathWithoutRealVendors()}`
 
-    const r = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], FAST_PAUSE_RETRY_ENV)
-    expect(r.status).not.toBe(0)
-    expect(r.stdout).toMatch(/paused \(escalation\)/)
+      const r = runDevReviewLoopArgs(
+        home,
+        cwd,
+        path,
+        ['--task', String(TASK), '--agent', 'claude'],
+        FAST_PAUSE_RETRY_ENV
+      )
+      expect(r.status).not.toBe(0)
+      expect(r.stdout).toMatch(/paused \(escalation\)/)
 
-    // The pause comment DID land, despite the one transient failure.
-    const pausedFiles = postedCommentFiles(home)
-    expect(pausedFiles).toHaveLength(2)
-    const pauseComment = readFileSync(join(home, '.fake-gh-posted-comments', pausedFiles[1] as string), 'utf8')
-    expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:escalation -->$/m)
+      // The pause comment DID land, despite the one transient failure.
+      const pausedFiles = postedCommentFiles(home)
+      expect(pausedFiles).toHaveLength(2)
+      const pauseComment = readFileSync(join(home, '.fake-gh-posted-comments', pausedFiles[1] as string), 'utf8')
+      expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:escalation -->$/m)
 
-    // The local pause state — the authoritative record — carries the REAL
-    // reason (escalation), never clobbered into a synthetic 'infrastructure'
-    // one by the retry episode.
-    const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
-      string,
-      unknown
-    >
-    expect(pauseState.reason).toBe('escalation')
+      // The local pause state — the authoritative record — carries the REAL
+      // reason (escalation), never clobbered into a synthetic 'infrastructure'
+      // one by the retry episode.
+      const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
+        string,
+        unknown
+      >
+      expect(pauseState.reason).toBe('escalation')
 
-    const retryEvent = outboxLines(home).find((l) => l.event === 'infrastructure_retry') as
-      | Record<string, unknown>
-      | undefined
-    expect(retryEvent).toBeDefined()
-    expect(retryEvent?.failure_kind).toBe('pause_comment_post')
-    expect(retryEvent?.attempts).toBe(2)
-    expect(retryEvent?.outcome).toBe('recovered')
-  }, 45000)
+      const retryEvent = outboxLines(home).find((l) => l.event === 'infrastructure_retry') as
+        | Record<string, unknown>
+        | undefined
+      expect(retryEvent).toBeDefined()
+      expect(retryEvent?.failure_kind).toBe('pause_comment_post')
+      expect(retryEvent?.attempts).toBe(2)
+      expect(retryEvent?.outcome).toBe('recovered')
+    },
+    45000
+  )
 
   // REAL PROCESS: the pause comment's own retry-with-backoff (postWithRetry) is the subject, and the in-process fake bypasses it
-  it('a post that never succeeds exhausts its bound WITHOUT crashing — the driver exits resumable, the pause reason is intact, and one exhausted infrastructure_retry event is logged', () => {
-    const home = tempDir('vinaya-drl-home-')
-    const cwd = tempDir('vinaya-drl-cwd-')
-    const binDir = tempDir('vinaya-drl-bin-')
-    writeFakeClaudePauseThenResumeScenario(binDir)
-    writeFakeGhPauseCommentNeverSucceeds(binDir)
-    writeFakeGit(binDir)
-    const path = `${binDir}:${pathWithoutRealVendors()}`
+  it.skipIf(process.platform === 'darwin')(
+    'a post that never succeeds exhausts its bound WITHOUT crashing — the driver exits resumable, the pause reason is intact, and one exhausted infrastructure_retry event is logged',
+    () => {
+      const home = tempDir('vinaya-drl-home-')
+      const cwd = tempDir('vinaya-drl-cwd-')
+      const binDir = tempDir('vinaya-drl-bin-')
+      writeFakeClaudePauseThenResumeScenario(binDir)
+      writeFakeGhPauseCommentNeverSucceeds(binDir)
+      writeFakeGit(binDir)
+      const path = `${binDir}:${pathWithoutRealVendors()}`
 
-    const r = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], FAST_PAUSE_RETRY_ENV)
-    expect(r.status).not.toBe(0)
-    // The ORIGINAL reason — never a generic uncaught-error crash, and never
-    // reported through the synthetic 'infrastructure' path a thrown post
-    // failure used to fall into.
-    expect(r.stdout).toMatch(/paused \(escalation\)/)
+      const r = runDevReviewLoopArgs(
+        home,
+        cwd,
+        path,
+        ['--task', String(TASK), '--agent', 'claude'],
+        FAST_PAUSE_RETRY_ENV
+      )
+      expect(r.status).not.toBe(0)
+      // The ORIGINAL reason — never a generic uncaught-error crash, and never
+      // reported through the synthetic 'infrastructure' path a thrown post
+      // failure used to fall into.
+      expect(r.stdout).toMatch(/paused \(escalation\)/)
 
-    // The pause comment never landed — only the round marker comment (the
-    // FIRST `pr comment` call) is on disk.
-    expect(postedCommentFiles(home)).toHaveLength(1)
+      // The pause comment never landed — only the round marker comment (the
+      // FIRST `pr comment` call) is on disk.
+      expect(postedCommentFiles(home)).toHaveLength(1)
 
-    // The local pause state is still the authoritative, correct record —
-    // this is the "pause intact" O1 asks for.
-    const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
-      string,
-      unknown
-    >
-    expect(pauseState.reason).toBe('escalation')
-    expect(pauseState.round).toBe(1)
+      // The local pause state is still the authoritative, correct record —
+      // this is the "pause intact" O1 asks for.
+      const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
+        string,
+        unknown
+      >
+      expect(pauseState.reason).toBe('escalation')
+      expect(pauseState.round).toBe(1)
 
-    const retryEvent = outboxLines(home).find((l) => l.event === 'infrastructure_retry') as
-      | Record<string, unknown>
-      | undefined
-    expect(retryEvent).toBeDefined()
-    expect(retryEvent?.failure_kind).toBe('pause_comment_post')
-    expect(retryEvent?.attempts).toBe(3)
-    expect(retryEvent?.outcome).toBe('exhausted')
-  }, 45000)
+      const retryEvent = outboxLines(home).find((l) => l.event === 'infrastructure_retry') as
+        | Record<string, unknown>
+        | undefined
+      expect(retryEvent).toBeDefined()
+      expect(retryEvent?.failure_kind).toBe('pause_comment_post')
+      expect(retryEvent?.attempts).toBe(3)
+      expect(retryEvent?.outcome).toBe('exhausted')
+    },
+    45000
+  )
 })
 
 // --- control-store-v1 task 6, #556: escalation record, resolution replay, cancel ---
@@ -2113,90 +2140,102 @@ function seedRuling(home: string, commentName: string): void {
 
 describe('devReviewLoop — --cancel (O3)', () => {
   // REAL PROCESS: trailing assertion needs a real --resume attempt
-  it('cancels a paused run once — durable, and a second cancel is refused as a replay', () => {
-    const { home, cwd, path } = setUpPauseResume()
+  it.skipIf(process.platform === 'darwin')(
+    'cancels a paused run once — durable, and a second cancel is refused as a replay',
+    () => {
+      const { home, cwd, path } = setUpPauseResume()
 
-    const paused = runLoop(home, cwd, path)
-    expect(paused.status).not.toBe(0)
+      const paused = runLoop(home, cwd, path)
+      expect(paused.status).not.toBe(0)
 
-    seedRuling(home, 'comment-3.md')
+      seedRuling(home, 'comment-3.md')
 
-    const cancelled = runCancel(home, cwd, path, 123)
-    expect(cancelled.status).toBe(0)
-    expect(cancelled.stdout).toMatch(/cancelled/)
+      const cancelled = runCancel(home, cwd, path, 123)
+      expect(cancelled.status).toBe(0)
+      expect(cancelled.stdout).toMatch(/cancelled/)
 
-    const resolutionPath = resolutionRecordPath(home, TASK, 1, HEAD_SHA)
-    expect(existsSync(resolutionPath)).toBe(true)
-    const resolution = JSON.parse(readFileSync(resolutionPath, 'utf8')) as Record<string, unknown>
-    expect(resolution.decision).toBe('cancel')
+      const resolutionPath = resolutionRecordPath(home, TASK, 1, HEAD_SHA)
+      expect(existsSync(resolutionPath)).toBe(true)
+      const resolution = JSON.parse(readFileSync(resolutionPath, 'utf8')) as Record<string, unknown>
+      expect(resolution.decision).toBe('cancel')
 
-    // Idempotent: a second --cancel against the SAME already-cancelled
-    // escalation is refused as a replay, never a second transition.
-    const cancelledAgain = runCancel(home, cwd, path, 123)
-    expect(cancelledAgain.status).not.toBe(0)
-    expect(cancelledAgain.stderr).toMatch(/already has a consumed resolution|replay refused/)
+      // Idempotent: a second --cancel against the SAME already-cancelled
+      // escalation is refused as a replay, never a second transition.
+      const cancelledAgain = runCancel(home, cwd, path, 123)
+      expect(cancelledAgain.status).not.toBe(0)
+      expect(cancelledAgain.stderr).toMatch(/already has a consumed resolution|replay refused/)
 
-    // A cancelled pause never goes on to resume — the SAME escalation's
-    // resolution is already consumed, by the cancel above.
-    const resumeAfterCancel = runResume(home, cwd, path, 123)
-    expect(resumeAfterCancel.status).not.toBe(0)
-    expect(resumeAfterCancel.stderr).toMatch(/already has a consumed resolution|replay refused/)
-  }, 45000)
+      // A cancelled pause never goes on to resume — the SAME escalation's
+      // resolution is already consumed, by the cancel above.
+      const resumeAfterCancel = runResume(home, cwd, path, 123)
+      expect(resumeAfterCancel.status).not.toBe(0)
+      expect(resumeAfterCancel.stderr).toMatch(/already has a consumed resolution|replay refused/)
+    },
+    45000
+  )
 
   // REAL PROCESS: needs its own successful cancel to complete; the module-level default log sink (log-sink.ts) caches its destination/context on its first-ever write for the whole bun:test process,
-  it('a replayed cancel is refused WITHOUT bumping the task epoch (code review, round 2, HIGH)', () => {
-    const { home, cwd, path } = setUpPauseResume()
+  it.skipIf(process.platform === 'darwin')(
+    'a replayed cancel is refused WITHOUT bumping the task epoch (code review, round 2, HIGH)',
+    () => {
+      const { home, cwd, path } = setUpPauseResume()
 
-    const paused = runLoop(home, cwd, path)
-    expect(paused.status).not.toBe(0)
+      const paused = runLoop(home, cwd, path)
+      expect(paused.status).not.toBe(0)
 
-    seedRuling(home, 'comment-3.md')
+      seedRuling(home, 'comment-3.md')
 
-    const cancelled = runCancel(home, cwd, path, 123)
-    expect(cancelled.status).toBe(0)
-    const epochsAfterFirstCancel = ownershipEpochFiles(home, TASK)
-    expect(epochsAfterFirstCancel.length).toBeGreaterThan(0)
+      const cancelled = runCancel(home, cwd, path, 123)
+      expect(cancelled.status).toBe(0)
+      const epochsAfterFirstCancel = ownershipEpochFiles(home, TASK)
+      expect(epochsAfterFirstCancel.length).toBeGreaterThan(0)
 
-    // A duplicate/replayed cancel against the SAME already-consumed
-    // escalation must be refused before it ever claims a new epoch — a
-    // replayed decision must not move state it was already consumed for.
-    const cancelledAgain = runCancel(home, cwd, path, 123)
-    expect(cancelledAgain.status).not.toBe(0)
-    expect(cancelledAgain.stderr).toMatch(/already has a consumed resolution|replay refused/)
-    expect(ownershipEpochFiles(home, TASK)).toEqual(epochsAfterFirstCancel)
-  }, 45000)
+      // A duplicate/replayed cancel against the SAME already-consumed
+      // escalation must be refused before it ever claims a new epoch — a
+      // replayed decision must not move state it was already consumed for.
+      const cancelledAgain = runCancel(home, cwd, path, 123)
+      expect(cancelledAgain.status).not.toBe(0)
+      expect(cancelledAgain.stderr).toMatch(/already has a consumed resolution|replay refused/)
+      expect(ownershipEpochFiles(home, TASK)).toEqual(epochsAfterFirstCancel)
+    },
+    45000
+  )
 })
 
 describe('devReviewLoop — --cancel refuses a mismatched --agent (code review, round 2, MAJOR)', () => {
   // REAL PROCESS: the log sink memoizes its destination per process, so a second in-process cancel in one runner never lands its final event
-  it('refuses to terminate under an --agent that does not match the run’s actual dispatched agent', () => {
-    const { home, cwd, path } = setUpPauseResume()
+  it.skipIf(process.platform === 'darwin')(
+    'refuses to terminate under an --agent that does not match the run’s actual dispatched agent',
+    () => {
+      const { home, cwd, path } = setUpPauseResume()
 
-    // `runLoop` always dispatches under `--agent claude` (its own fixed
-    // helper) — the escalation record persists that as the run's real
-    // agent at pause time.
-    const paused = runLoop(home, cwd, path)
-    expect(paused.status).not.toBe(0)
+      // `runLoop` always dispatches under `--agent claude` (its own fixed
+      // helper) — the escalation record persists that as the run's real
+      // agent at pause time.
+      const paused = runLoop(home, cwd, path)
+      expect(paused.status).not.toBe(0)
 
-    seedRuling(home, 'comment-3.md')
+      seedRuling(home, 'comment-3.md')
 
-    const escalation = JSON.parse(readFileSync(escalationRecordPath(home, TASK, 1, HEAD_SHA), 'utf8')) as Record<
-      string,
-      unknown
-    >
-    expect(escalation.agent).toBe('claude')
+      const escalation = JSON.parse(readFileSync(escalationRecordPath(home, TASK, 1, HEAD_SHA), 'utf8')) as Record<
+        string,
+        unknown
+      >
+      expect(escalation.agent).toBe('claude')
 
-    const mismatched = runDevReviewLoopArgs(home, cwd, path, ['--cancel', '123', '--agent', 'codex'])
-    expect(mismatched.status).not.toBe(0)
-    expect(mismatched.stderr).toMatch(/dispatched under agent 'claude', not 'codex'/)
+      const mismatched = runDevReviewLoopArgs(home, cwd, path, ['--cancel', '123', '--agent', 'codex'])
+      expect(mismatched.status).not.toBe(0)
+      expect(mismatched.stderr).toMatch(/dispatched under agent 'claude', not 'codex'/)
 
-    // Refused before ever consuming the resolution — a correctly-agented
-    // cancel afterward still succeeds against the SAME still-open pause.
-    expect(existsSync(resolutionRecordPath(home, TASK, 1, HEAD_SHA))).toBe(false)
-    const cancelled = runCancel(home, cwd, path, 123)
-    expect(cancelled.status).toBe(0)
-    expect(cancelled.stdout).toMatch(/cancelled/)
-  }, 45000)
+      // Refused before ever consuming the resolution — a correctly-agented
+      // cancel afterward still succeeds against the SAME still-open pause.
+      expect(existsSync(resolutionRecordPath(home, TASK, 1, HEAD_SHA))).toBe(false)
+      const cancelled = runCancel(home, cwd, path, 123)
+      expect(cancelled.status).toBe(0)
+      expect(cancelled.stdout).toMatch(/cancelled/)
+    },
+    45000
+  )
 })
 
 // --- round 2: a genuine resume, not just a clean round 1 -------------------
@@ -2246,77 +2285,80 @@ exit 0
 }
 
 describe('devReviewLoop — a reviewer that wrote nothing cast no verdict (O1/O2)', () => {
-  it('retries once into a fresh work directory, then pauses naming the role and the missing artifacts — nothing held or published', async () => {
-    // Security writes NO artifact files, on both its attempts.
-    const world = makeWorld({ roleOutcomes: { 1: { security: { ...CLEAN_SECURITY, writesNothing: true } } } })
-    const result = await runLoopInProcess(world)
-    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
+  it.skipIf(process.platform === 'darwin')(
+    'retries once into a fresh work directory, then pauses naming the role and the missing artifacts — nothing held or published',
+    async () => {
+      // Security writes NO artifact files, on both its attempts.
+      const world = makeWorld({ roleOutcomes: { 1: { security: { ...CLEAN_SECURITY, writesNothing: true } } } })
+      const result = await runLoopInProcess(world)
+      expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
 
-    // Two genuinely separate dispatches for the failing role — one attempt,
-    // one fresh retry — never the same call read twice.
-    expect(world.dispatchCountByRole.security).toBe(2)
+      // Two genuinely separate dispatches for the failing role — one attempt,
+      // one fresh retry — never the same call read twice.
+      expect(world.dispatchCountByRole.security).toBe(2)
 
-    // The retry used a genuinely fresh directory — the first attempt's own
-    // directory is never reused or resumed.
-    expect(existsSync(join(ipRoundDir(world, 1), 'security-work'))).toBe(true)
-    expect(existsSync(join(ipRoundDir(world, 1), 'security-work-retry1'))).toBe(true)
+      // The retry used a genuinely fresh directory — the first attempt's own
+      // directory is never reused or resumed.
+      expect(existsSync(join(ipRoundDir(world, 1), 'security-work'))).toBe(true)
+      expect(existsSync(join(ipRoundDir(world, 1), 'security-work-retry1'))).toBe(true)
 
-    // Nothing held or published for this round: no security verdict file
-    // ever got written, and the round never advanced past 1. The code-review
-    // role finishes clean well before security's own retry exhausts — its
-    // held verdict must not survive on disk either (round 1 review finding,
-    // BLOCKER, PR #489: `writeHeldVerdict` used to run inside `dispatchReviewer`
-    // itself, so the succeeding role's file was already written by the time
-    // `Promise.all` rejected on its sibling).
-    expect(existsSync(join(ipRoundDir(world, 1), 'reviewer.md'))).toBe(false)
-    expect(existsSync(join(ipRoundDir(world, 1), 'security.md'))).toBe(false)
-    const pauseState = JSON.parse(readFileSync(join(ipControlDir(world), 'pause-state.json'), 'utf8')) as Record<
-      string,
-      unknown
-    >
-    expect(pauseState.round).toBe(1)
-    expect(pauseState.reason).toBe('infrastructure')
+      // Nothing held or published for this round: no security verdict file
+      // ever got written, and the round never advanced past 1. The code-review
+      // role finishes clean well before security's own retry exhausts — its
+      // held verdict must not survive on disk either (round 1 review finding,
+      // BLOCKER, PR #489: `writeHeldVerdict` used to run inside `dispatchReviewer`
+      // itself, so the succeeding role's file was already written by the time
+      // `Promise.all` rejected on its sibling).
+      expect(existsSync(join(ipRoundDir(world, 1), 'reviewer.md'))).toBe(false)
+      expect(existsSync(join(ipRoundDir(world, 1), 'security.md'))).toBe(false)
+      const pauseState = JSON.parse(readFileSync(join(ipControlDir(world), 'pause-state.json'), 'utf8')) as Record<
+        string,
+        unknown
+      >
+      expect(pauseState.round).toBe(1)
+      expect(pauseState.reason).toBe('infrastructure')
 
-    // Two comments: the round marker (posted before either
-    // reviewer even dispatches) and the pause. Never a verdict.
-    expect(world.postedComments).toHaveLength(2)
-    const pauseComment = world.postedComments[1]!.body
-    expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:infrastructure -->$/m)
-    expect(pauseComment).toMatch(/security/)
-    expect(pauseComment).toMatch(/findings\.txt/)
-    expect(pauseComment).toMatch(/report\.txt/)
-    expect(pauseComment).not.toMatch(/^VERDICT:/m)
+      // Two comments: the round marker (posted before either
+      // reviewer even dispatches) and the pause. Never a verdict.
+      expect(world.postedComments).toHaveLength(2)
+      const pauseComment = world.postedComments[1]!.body
+      expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:infrastructure -->$/m)
+      expect(pauseComment).toMatch(/security/)
+      expect(pauseComment).toMatch(/findings\.txt/)
+      expect(pauseComment).toMatch(/report\.txt/)
+      expect(pauseComment).not.toMatch(/^VERDICT:/m)
 
-    // O5 (review-validity-v1 task 5, `#488`; regression, PR #489 round 2,
-    // MAJOR): this pause used to build its `Decision` by hand and skip the
-    // log entirely — zero `dev_review_loop` events for the round.
-    // `driverDecidedPauseEvents` now logs the same four events every other
-    // pause reason gets (this task's own declared Surface excludes
-    // `packages/aeg-core`, so this is driver-built, reusing the schema's
-    // existing `'principal_stop'`/`'principal_item'` values, never a new
-    // schema value — see that function's own doc comment).
-    const loopEvents = ipOutboxLines(world)
-      .filter((l) => l.kind === 'dev_review_loop')
-      .map((l) => l.event)
-    expect(loopEvents).toEqual([
-      'loop_started',
-      'round_started',
-      'gate_result_read',
-      'stop_condition_met',
-      'paused',
-      'round_ended',
-      'journal_finalized',
-      // #949, O2: the driver's own exit event, after the round's pause record.
-      'driver_exited'
-    ])
-    const stop = ipOutboxLines(world).find((l) => l.event === 'stop_condition_met') as Record<string, unknown>
-    expect(stop.condition).toBe('principal_stop')
-    const journalFinalized = ipOutboxLines(world).find((l) => l.event === 'journal_finalized') as Record<
-      string,
-      unknown
-    >
-    expect(journalFinalized.result).toBe('stopped')
-  })
+      // O5 (review-validity-v1 task 5, `#488`; regression, PR #489 round 2,
+      // MAJOR): this pause used to build its `Decision` by hand and skip the
+      // log entirely — zero `dev_review_loop` events for the round.
+      // `driverDecidedPauseEvents` now logs the same four events every other
+      // pause reason gets (this task's own declared Surface excludes
+      // `packages/aeg-core`, so this is driver-built, reusing the schema's
+      // existing `'principal_stop'`/`'principal_item'` values, never a new
+      // schema value — see that function's own doc comment).
+      const loopEvents = ipOutboxLines(world)
+        .filter((l) => l.kind === 'dev_review_loop')
+        .map((l) => l.event)
+      expect(loopEvents).toEqual([
+        'loop_started',
+        'round_started',
+        'gate_result_read',
+        'stop_condition_met',
+        'paused',
+        'round_ended',
+        'journal_finalized',
+        // #949, O2: the driver's own exit event, after the round's pause record.
+        'driver_exited'
+      ])
+      const stop = ipOutboxLines(world).find((l) => l.event === 'stop_condition_met') as Record<string, unknown>
+      expect(stop.condition).toBe('principal_stop')
+      const journalFinalized = ipOutboxLines(world).find((l) => l.event === 'journal_finalized') as Record<
+        string,
+        unknown
+      >
+      expect(journalFinalized.result).toBe('stopped')
+    }
+  )
 })
 
 /**
@@ -2420,29 +2462,33 @@ function setUpSupersededCiFailure(): { home: string; cwd: string; path: string }
 
 describe('devReviewLoop — a superseded check-run failure never pauses a healthy PR (driver-lifecycle-v1 task 2, #607, O1)', () => {
   // REAL PROCESS: tests gate-reading.ts's real REST-shape dedup-by-newest-run algorithm, which the in-process harness's fetchCiConclusion/fetchFailingCheckRuns fakes bypass entirely (they read world
-  it('reads the gate green off the newer, deduped run and reaches round 1 reviewer dispatch — never a CI-red retry', () => {
-    const { home, cwd, path } = setUpSupersededCiFailure()
-    const r = runLoop(home, cwd, path)
-    expect(r.status).not.toBe(0)
-    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+  it.skipIf(process.platform === 'darwin')(
+    'reads the gate green off the newer, deduped run and reaches round 1 reviewer dispatch — never a CI-red retry',
+    () => {
+      const { home, cwd, path } = setUpSupersededCiFailure()
+      const r = runLoop(home, cwd, path)
+      expect(r.status).not.toBe(0)
+      expect(r.stdout).toMatch(/paused \(infrastructure\)/)
 
-    // The gate never read red: round 1's developer is dispatched exactly
-    // once — there is no second, CI-red-retry dev-prompt file — and the
-    // eventual pause is the reviewer-infrastructure case (security wrote
-    // nothing), never the gate-red case. A regression that fell back to the
-    // raw, undeduped check-run list would instead resume the developer with
-    // a "CI is red" prompt and never reach this point.
-    expect(existsSync(join(home, '.dev-prompt-2.txt'))).toBe(false)
+      // The gate never read red: round 1's developer is dispatched exactly
+      // once — there is no second, CI-red-retry dev-prompt file — and the
+      // eventual pause is the reviewer-infrastructure case (security wrote
+      // nothing), never the gate-red case. A regression that fell back to the
+      // raw, undeduped check-run list would instead resume the developer with
+      // a "CI is red" prompt and never reach this point.
+      expect(existsSync(join(home, '.dev-prompt-2.txt'))).toBe(false)
 
-    const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
-      string,
-      unknown
-    >
-    expect(pauseState.round).toBe(1)
-    expect(pauseState.reason).toBe('infrastructure')
-    expect(pauseState.detail).toMatch(/security/)
-    expect(pauseState.detail).not.toMatch(/failing check-run/)
-  }, 45000)
+      const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
+        string,
+        unknown
+      >
+      expect(pauseState.round).toBe(1)
+      expect(pauseState.reason).toBe('infrastructure')
+      expect(pauseState.detail).toMatch(/security/)
+      expect(pauseState.detail).not.toMatch(/failing check-run/)
+    },
+    45000
+  )
 })
 
 // --- a findings.txt that still does not parse is infrastructure, never an
@@ -2509,72 +2555,78 @@ function setUpReviewerWritesGarbageFindings(): { home: string; cwd: string; path
 
 describe('devReviewLoop — a findings.txt line that still does not parse is an infrastructure pause (review-validity-v1 task 8, #506, O6)', () => {
   // REAL PROCESS: the dispatch outcome line it joins against is logged by the real dispatchRole, which the in-process harness replaces
-  it('retries once into a fresh work directory, then pauses naming the file, the line, and the reviewer session id — never an uncaught throw', () => {
-    const { home, cwd, path } = setUpReviewerWritesGarbageFindings()
-    const r = runLoop(home, cwd, path)
-    expect(r.status).not.toBe(0)
-    expect(r.stdout).toMatch(/paused \(infrastructure\)/)
+  it.skipIf(process.platform === 'darwin')(
+    'retries once into a fresh work directory, then pauses naming the file, the line, and the reviewer session id — never an uncaught throw',
+    () => {
+      const { home, cwd, path } = setUpReviewerWritesGarbageFindings()
+      const r = runLoop(home, cwd, path)
+      expect(r.status).not.toBe(0)
+      expect(r.stdout).toMatch(/paused \(infrastructure\)/)
 
-    // Two genuinely separate dispatches — one attempt, one fresh retry.
-    const invocations = readFileSync(join(home, '.security-invocations'), 'utf8').trim().split('\n').filter(Boolean)
-    expect(invocations).toHaveLength(2)
+      // Two genuinely separate dispatches — one attempt, one fresh retry.
+      const invocations = readFileSync(join(home, '.security-invocations'), 'utf8').trim().split('\n').filter(Boolean)
+      expect(invocations).toHaveLength(2)
 
-    const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
-      string,
-      unknown
-    >
-    expect(pauseState.round).toBe(1)
-    expect(pauseState.reason).toBe('infrastructure')
+      const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
+        string,
+        unknown
+      >
+      expect(pauseState.round).toBe(1)
+      expect(pauseState.reason).toBe('infrastructure')
 
-    // Two comments: the round marker and the pause.
-    const pausedFiles = postedCommentFiles(home)
-    expect(pausedFiles).toHaveLength(2)
-    const pauseComment = readFileSync(join(home, '.fake-gh-posted-comments', pausedFiles[1] as string), 'utf8')
-    expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:infrastructure -->$/m)
-    // Names the file, the line (inside the parse error's own message), and
-    // the reviewer's session id — O6's three required facts.
-    expect(pauseComment).toMatch(/findings\.txt/)
-    expect(pauseComment).toMatch(/line 1/)
-    expect(pauseComment).toMatch(/sec-session-garbage/)
-    expect(pauseComment).not.toMatch(/^VERDICT:/m)
+      // Two comments: the round marker and the pause.
+      const pausedFiles = postedCommentFiles(home)
+      expect(pausedFiles).toHaveLength(2)
+      const pauseComment = readFileSync(join(home, '.fake-gh-posted-comments', pausedFiles[1] as string), 'utf8')
+      expect(pauseComment).toMatch(/^<!-- aeg:loop:paused:infrastructure -->$/m)
+      // Names the file, the line (inside the parse error's own message), and
+      // the reviewer's session id — O6's three required facts.
+      expect(pauseComment).toMatch(/findings\.txt/)
+      expect(pauseComment).toMatch(/line 1/)
+      expect(pauseComment).toMatch(/sec-session-garbage/)
+      expect(pauseComment).not.toMatch(/^VERDICT:/m)
 
-    // This pause reaches `postPauseComment` from `ReviewerReportParseFailure`'s
-    // own message, never from the outer crash catch — a distinct call site
-    // that must sanitize too. The garbage line above embeds a
-    // credential-shaped token; it must never reach the PUBLIC pause comment
-    // un-redacted, even though it DOES reach the reviewer's own retry prompt
-    // and the machine-local pause-state.json.
-    expect(pauseComment).not.toContain('ghp_abcdefghijklmnopqrstuvwxyz012345')
-    expect(pauseComment).toContain('<redacted>')
+      // This pause reaches `postPauseComment` from `ReviewerReportParseFailure`'s
+      // own message, never from the outer crash catch — a distinct call site
+      // that must sanitize too. The garbage line above embeds a
+      // credential-shaped token; it must never reach the PUBLIC pause comment
+      // un-redacted, even though it DOES reach the reviewer's own retry prompt
+      // and the machine-local pause-state.json.
+      expect(pauseComment).not.toContain('ghp_abcdefghijklmnopqrstuvwxyz012345')
+      expect(pauseComment).toContain('<redacted>')
 
-    // An invalid report is a failure observation,
-    // never something indistinguishable from a clean round: no `verdicts_read`
-    // was ever logged for this round (the throw happened before `assessRound`
-    // saw a `verdicts` observation), but a `role_attempt` line names the
-    // security role's own failed attempt explicitly.
-    const events = outboxLines(home)
-    expect(events.some((e) => e.event === 'verdicts_read')).toBe(false)
-    // `dispatchRole`'s own per-attempt `role_attempt` lines (developer,
-    // both reviewer attempts) are ALSO present now
-    // — this is the additional one dev-review-loop.ts logs for the
-    // security role's own invalid report, distinguished by its outcome.
-    const failureAttempt = events.find((e) => e.kind === 'role_attempt' && e.outcome === 'incomplete') as
-      | { effect_id: string; duration_ms: number }
-      | undefined
-    expect(failureAttempt).toMatchObject({ actor: 'security', outcome: 'incomplete', usage: null })
+      // An invalid report is a failure observation,
+      // never something indistinguishable from a clean round: no `verdicts_read`
+      // was ever logged for this round (the throw happened before `assessRound`
+      // saw a `verdicts` observation), but a `role_attempt` line names the
+      // security role's own failed attempt explicitly.
+      const events = outboxLines(home)
+      expect(events.some((e) => e.event === 'verdicts_read')).toBe(false)
+      // `dispatchRole`'s own per-attempt `role_attempt` lines (developer,
+      // both reviewer attempts) are ALSO present now
+      // — this is the additional one dev-review-loop.ts logs for the
+      // security role's own invalid report, distinguished by its outcome.
+      const failureAttempt = events.find((e) => e.kind === 'role_attempt' && e.outcome === 'incomplete') as
+        | { effect_id: string; duration_ms: number }
+        | undefined
+      expect(failureAttempt).toMatchObject({ actor: 'security', outcome: 'incomplete', usage: null })
 
-    // Round 2 review, MAJOR (fixed): this failure's own `effect_id` must be
-    // the SAME id the failing security attempt's own `dispatch` line(s)
-    // carry — never a freshly minted, unjoinable one — and its `duration_ms`
-    // must be that one attempt's own duration, not the whole round's.
-    const securityDispatchOutcomeLines = events.filter(
-      (e) =>
-        e.kind === 'dispatch' && (e as { target_role?: string }).target_role === 'security' && e.event !== 'dispatched'
-    ) as Array<{ effect_id: string; duration_ms: number }>
-    const matching = securityDispatchOutcomeLines.find((l) => l.effect_id === failureAttempt?.effect_id)
-    expect(matching).toBeDefined()
-    expect(failureAttempt?.duration_ms).toBe(matching?.duration_ms)
-  }, 45000)
+      // Round 2 review, MAJOR (fixed): this failure's own `effect_id` must be
+      // the SAME id the failing security attempt's own `dispatch` line(s)
+      // carry — never a freshly minted, unjoinable one — and its `duration_ms`
+      // must be that one attempt's own duration, not the whole round's.
+      const securityDispatchOutcomeLines = events.filter(
+        (e) =>
+          e.kind === 'dispatch' &&
+          (e as { target_role?: string }).target_role === 'security' &&
+          e.event !== 'dispatched'
+      ) as Array<{ effect_id: string; duration_ms: number }>
+      const matching = securityDispatchOutcomeLines.find((l) => l.effect_id === failureAttempt?.effect_id)
+      expect(matching).toBeDefined()
+      expect(failureAttempt?.duration_ms).toBe(matching?.duration_ms)
+    },
+    45000
+  )
 })
 
 // --- O2/O3: a red gate that the developer never fixes pauses, bounded ------
@@ -2748,80 +2800,88 @@ function setUpNeverPushesSupersededSuccessThenCurrentFailure(): { home: string; 
 
 describe('devReviewLoop — a genuinely failing current check-run still pauses, even beside a superseded success (driver-lifecycle-v1 task 2, #607, O2)', () => {
   // REAL PROCESS: the real check-run dedup in the gate reader is the subject and is bypassed by the harness's fakes
-  it('pauses with the same reason and detail shape as a single failing run, naming the CURRENT failing check', () => {
-    const { home, cwd, path } = setUpNeverPushesSupersededSuccessThenCurrentFailure()
-    const r = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
-      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '2',
-      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '10'
-    })
-    expect(r.status).not.toBe(0)
-    // The same current failing check-run ended both stalled turns, so the
-    // repeat-failure stop names it — the bound behind it is unchanged for a
-    // stall the driver cannot name.
-    expect(r.stdout).toMatch(/paused \(repeat_failure\)/)
+  it.skipIf(process.platform === 'darwin')(
+    'pauses with the same reason and detail shape as a single failing run, naming the CURRENT failing check',
+    () => {
+      const { home, cwd, path } = setUpNeverPushesSupersededSuccessThenCurrentFailure()
+      const r = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
+        VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '2',
+        VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '10'
+      })
+      expect(r.status).not.toBe(0)
+      // The same current failing check-run ended both stalled turns, so the
+      // repeat-failure stop names it — the bound behind it is unchanged for a
+      // stall the driver cannot name.
+      expect(r.stdout).toMatch(/paused \(repeat_failure\)/)
 
-    const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
-      string,
-      unknown
-    >
-    expect(pauseState.reason).toBe('repeat_failure')
-    expect(pauseState.detail).toMatch(/head .* unchanged/)
-    // Same shape as the single-failing-run case above: the surviving,
-    // CURRENT failure (run 2) is named — never the superseded success (run
-    // 1), and never a bare check name with no run identity to audit it
-    // against (O3, `#607`).
-    expect(pauseState.detail).toMatch(/Vinaya CI \(run 2, started 2026-09-14T10:05:00Z\)/)
-    expect(pauseState.detail).not.toMatch(/run 1/)
+      const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
+        string,
+        unknown
+      >
+      expect(pauseState.reason).toBe('repeat_failure')
+      expect(pauseState.detail).toMatch(/head .* unchanged/)
+      // Same shape as the single-failing-run case above: the surviving,
+      // CURRENT failure (run 2) is named — never the superseded success (run
+      // 1), and never a bare check name with no run identity to audit it
+      // against (O3, `#607`).
+      expect(pauseState.detail).toMatch(/Vinaya CI \(run 2, started 2026-09-14T10:05:00Z\)/)
+      expect(pauseState.detail).not.toMatch(/run 1/)
 
-    const gateRedPrompt = readFileSync(join(home, '.dev-prompt-2.txt'), 'utf8')
-    expect(gateRedPrompt).toMatch(/CI is red on the last head/)
-    expect(gateRedPrompt).toMatch(/Vinaya CI \(run 2, started 2026-09-14T10:05:00Z\)/)
-  }, 45000)
+      const gateRedPrompt = readFileSync(join(home, '.dev-prompt-2.txt'), 'utf8')
+      expect(gateRedPrompt).toMatch(/CI is red on the last head/)
+      expect(gateRedPrompt).toMatch(/Vinaya CI \(run 2, started 2026-09-14T10:05:00Z\)/)
+    },
+    45000
+  )
 })
 
 describe('devReviewLoop — O4 (#595): a re-exec child whose own first gate read is red stays alive and pauses, never exits', () => {
   // REAL PROCESS: genuinely process-level — subject is a real re-exec producing a second OS process (parent hands off, a distinct child process reads its own first gate); the in-process harness runs
-  it('the parent hands off mid-round-1, and the child — CI red on its own first read — ends bounded-paused, never crashed', () => {
-    const home = tempDir('vinaya-drl-home-')
-    const cwd = tempDir('vinaya-drl-cwd-')
-    const binDir = tempDir('vinaya-drl-bin-')
-    writeFakeClaudeBaseMovesAfterFirstTurn(binDir)
-    writeFakeGhAlwaysRedCi(binDir)
-    writeFakeGitBaseMovesWithSuccessfulPull(binDir)
-    const path = `${binDir}:${pathWithoutRealVendors()}`
+  it.skipIf(process.platform === 'darwin')(
+    'the parent hands off mid-round-1, and the child — CI red on its own first read — ends bounded-paused, never crashed',
+    () => {
+      const home = tempDir('vinaya-drl-home-')
+      const cwd = tempDir('vinaya-drl-cwd-')
+      const binDir = tempDir('vinaya-drl-bin-')
+      writeFakeClaudeBaseMovesAfterFirstTurn(binDir)
+      writeFakeGhAlwaysRedCi(binDir)
+      writeFakeGitBaseMovesWithSuccessfulPull(binDir)
+      const path = `${binDir}:${pathWithoutRealVendors()}`
 
-    const r = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
-      VINAYA_DEV_REVIEW_LOOP_PR_POLL_MAX_ATTEMPTS: '5',
-      VINAYA_DEV_REVIEW_LOOP_PR_POLL_INTERVAL_MS: '5',
-      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '5',
-      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '5'
-    })
+      const r = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
+        VINAYA_DEV_REVIEW_LOOP_PR_POLL_MAX_ATTEMPTS: '5',
+        VINAYA_DEV_REVIEW_LOOP_PR_POLL_INTERVAL_MS: '5',
+        VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '5',
+        VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '5'
+      })
 
-    // The re-exec (the parent's own hand-off) really happened.
-    expect(existsSync(join(home, '.git-pull-called'))).toBe(true)
+      // The re-exec (the parent's own hand-off) really happened.
+      expect(existsSync(join(home, '.git-pull-called'))).toBe(true)
 
-    // The CHILD process — the one that actually ends this run — is alive
-    // and reached a DECIDED pause, never an uncaught crash: a real exit
-    // code this harness itself set (`d.exitProcess`/the pause-return path),
-    // never a bare stack trace, and never the parent's own re-exec exit
-    // code masquerading as success.
-    expect(r.status).not.toBe(0)
-    expect(r.stderr).not.toMatch(/Uncaught|TypeError|ReferenceError|at Object\./)
-    expect(r.stdout).toMatch(/paused \(repeat_failure\)/)
-    // Never `stale_driver` — the staleness was absorbed by the re-exec
-    // itself; what pauses the CHILD is its own red gate, a different fact.
-    // That the reason is `repeat_failure` is the repeat memory surviving the
-    // re-exec: the parent recorded this same failure before handing off, so
-    // the child's own first red read is the second attempt to end on it,
-    // which is precisely what it must not send the developer back at.
-    expect(r.stdout).not.toMatch(/paused \(stale_driver\)/)
+      // The CHILD process — the one that actually ends this run — is alive
+      // and reached a DECIDED pause, never an uncaught crash: a real exit
+      // code this harness itself set (`d.exitProcess`/the pause-return path),
+      // never a bare stack trace, and never the parent's own re-exec exit
+      // code masquerading as success.
+      expect(r.status).not.toBe(0)
+      expect(r.stderr).not.toMatch(/Uncaught|TypeError|ReferenceError|at Object\./)
+      expect(r.stdout).toMatch(/paused \(repeat_failure\)/)
+      // Never `stale_driver` — the staleness was absorbed by the re-exec
+      // itself; what pauses the CHILD is its own red gate, a different fact.
+      // That the reason is `repeat_failure` is the repeat memory surviving the
+      // re-exec: the parent recorded this same failure before handing off, so
+      // the child's own first red read is the second attempt to end on it,
+      // which is precisely what it must not send the developer back at.
+      expect(r.stdout).not.toMatch(/paused \(stale_driver\)/)
 
-    const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
-      string,
-      unknown
-    >
-    expect(pauseState.reason).toBe('repeat_failure')
-  }, 30000)
+      const pauseState = JSON.parse(readFileSync(join(controlDir(home), 'pause-state.json'), 'utf8')) as Record<
+        string,
+        unknown
+      >
+      expect(pauseState.reason).toBe('repeat_failure')
+    },
+    30000
+  )
 })
 
 // --- task-run-v1 13 (#508), O8: a base that moves past this driver's own code pauses `stale_driver` ---
@@ -2899,39 +2959,43 @@ exit 1
 
 describe('devReviewLoop — O7 (task-run-v1 task 15): a moved base re-execs in place instead of pausing', () => {
   // REAL PROCESS: a re-exec replaces the driver process with a child; the subject is that real process hand-off
-  it('pulls the default branch, re-execs onto the same task, and never pauses stale_driver', () => {
-    const home = tempDir('vinaya-drl-home-')
-    const cwd = tempDir('vinaya-drl-cwd-')
-    const binDir = tempDir('vinaya-drl-bin-')
-    writeFakeClaudeBaseMovesAfterFirstTurn(binDir)
-    writeFakeGh(binDir)
-    writeFakeGitBaseMovesWithSuccessfulPull(binDir)
-    const path = `${binDir}:${pathWithoutRealVendors()}`
+  it.skipIf(process.platform === 'darwin')(
+    'pulls the default branch, re-execs onto the same task, and never pauses stale_driver',
+    () => {
+      const home = tempDir('vinaya-drl-home-')
+      const cwd = tempDir('vinaya-drl-cwd-')
+      const binDir = tempDir('vinaya-drl-bin-')
+      writeFakeClaudeBaseMovesAfterFirstTurn(binDir)
+      writeFakeGh(binDir)
+      writeFakeGitBaseMovesWithSuccessfulPull(binDir)
+      const path = `${binDir}:${pathWithoutRealVendors()}`
 
-    // The re-exec attaches to the same task in a genuinely fresh process
-    // (the whole point of O7 — a stale in-memory driver must not keep
-    // running), so the polls that fresh process makes finding the
-    // already-open PR/gate need the same fast-poll overrides any other
-    // fixture exercising real polling in test time already uses.
-    runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
-      VINAYA_DEV_REVIEW_LOOP_PR_POLL_MAX_ATTEMPTS: '5',
-      VINAYA_DEV_REVIEW_LOOP_PR_POLL_INTERVAL_MS: '5',
-      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '5',
-      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '5'
-    })
+      // The re-exec attaches to the same task in a genuinely fresh process
+      // (the whole point of O7 — a stale in-memory driver must not keep
+      // running), so the polls that fresh process makes finding the
+      // already-open PR/gate need the same fast-poll overrides any other
+      // fixture exercising real polling in test time already uses.
+      runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
+        VINAYA_DEV_REVIEW_LOOP_PR_POLL_MAX_ATTEMPTS: '5',
+        VINAYA_DEV_REVIEW_LOOP_PR_POLL_INTERVAL_MS: '5',
+        VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '5',
+        VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '5'
+      })
 
-    // The pull path was actually taken — proof the re-exec attempt ran at all.
-    expect(existsSync(join(home, '.git-pull-called'))).toBe(true)
+      // The pull path was actually taken — proof the re-exec attempt ran at all.
+      expect(existsSync(join(home, '.git-pull-called'))).toBe(true)
 
-    // Never the stale_driver pause anywhere this run's own comments landed —
-    // the re-exec absorbed the staleness instead of handing it to a human.
-    const commentsDir = join(home, '.fake-gh-posted-comments')
-    if (existsSync(commentsDir)) {
-      for (const file of readdirSync(commentsDir)) {
-        expect(readFileSync(join(commentsDir, file), 'utf8')).not.toMatch(/aeg:loop:paused:stale_driver/)
+      // Never the stale_driver pause anywhere this run's own comments landed —
+      // the re-exec absorbed the staleness instead of handing it to a human.
+      const commentsDir = join(home, '.fake-gh-posted-comments')
+      if (existsSync(commentsDir)) {
+        for (const file of readdirSync(commentsDir)) {
+          expect(readFileSync(join(commentsDir, file), 'utf8')).not.toMatch(/aeg:loop:paused:stale_driver/)
+        }
       }
-    }
-  }, 30000)
+    },
+    30000
+  )
 })
 
 /**
@@ -2981,33 +3045,37 @@ exit 0
 
 describe('devReviewLoop — O1 (#548): the re-exec hands its lock to the child instead of refusing it', () => {
   // REAL PROCESS: the driver lock handed from a parent process to its re-exec'd child is the subject
-  it('clears the parent’s own live lock before spawning, so the child starts and publishes instead of dying to its own parent’s lock', () => {
-    const home = tempDir('vinaya-drl-home-')
-    const cwd = tempDir('vinaya-drl-cwd-')
-    const binDir = tempDir('vinaya-drl-bin-')
-    writeFakeClaudeBaseMovesThenCleanReview(binDir)
-    writeFakeGh(binDir)
-    writeFakeGitBaseMovesWithSuccessfulPull(binDir)
-    const path = `${binDir}:${pathWithoutRealVendors()}`
+  it.skipIf(process.platform === 'darwin')(
+    'clears the parent’s own live lock before spawning, so the child starts and publishes instead of dying to its own parent’s lock',
+    () => {
+      const home = tempDir('vinaya-drl-home-')
+      const cwd = tempDir('vinaya-drl-cwd-')
+      const binDir = tempDir('vinaya-drl-bin-')
+      writeFakeClaudeBaseMovesThenCleanReview(binDir)
+      writeFakeGh(binDir)
+      writeFakeGitBaseMovesWithSuccessfulPull(binDir)
+      const path = `${binDir}:${pathWithoutRealVendors()}`
 
-    // Found live, PR #547: without the fix, the parent's own lock (written
-    // at its own entry, still on disk and still live — the parent is
-    // blocked in `spawnSync`, not exited) refuses the child outright, and
-    // BOTH processes exit quietly with no pause, no publish, nothing posted.
-    const r = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
-      VINAYA_DEV_REVIEW_LOOP_PR_POLL_MAX_ATTEMPTS: '5',
-      VINAYA_DEV_REVIEW_LOOP_PR_POLL_INTERVAL_MS: '5',
-      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '5',
-      VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '5'
-    })
+      // Found live, PR #547: without the fix, the parent's own lock (written
+      // at its own entry, still on disk and still live — the parent is
+      // blocked in `spawnSync`, not exited) refuses the child outright, and
+      // BOTH processes exit quietly with no pause, no publish, nothing posted.
+      const r = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], {
+        VINAYA_DEV_REVIEW_LOOP_PR_POLL_MAX_ATTEMPTS: '5',
+        VINAYA_DEV_REVIEW_LOOP_PR_POLL_INTERVAL_MS: '5',
+        VINAYA_DEV_REVIEW_LOOP_GATE_POLL_MAX_ATTEMPTS: '5',
+        VINAYA_DEV_REVIEW_LOOP_GATE_POLL_INTERVAL_MS: '5'
+      })
 
-    expect(existsSync(join(home, '.git-pull-called'))).toBe(true)
-    expect(r.stderr).not.toMatch(/refuses to start/)
-    expect(r.status).toBe(0)
-    expect(r.stdout).toMatch(/publish/)
-    // The child cleared its own lock on its own normal exit.
-    expect(existsSync(driverLockPath(home))).toBe(false)
-  }, 30000)
+      expect(existsSync(join(home, '.git-pull-called'))).toBe(true)
+      expect(r.stderr).not.toMatch(/refuses to start/)
+      expect(r.status).toBe(0)
+      expect(r.stdout).toMatch(/publish/)
+      // The child cleared its own lock on its own normal exit.
+      expect(existsSync(driverLockPath(home))).toBe(false)
+    },
+    30000
+  )
 })
 
 // --- O4 (Issue #662): a --resume-started run's own stale-driver re-exec never re-authenticates the ruling it already consumed ---
@@ -3155,38 +3223,42 @@ const FAST_POLL_ENV = {
 
 describe('devReviewLoop — O4 (Issue #662): a resumed loop that hits a stale-driver restart before its next developer turn continues, never refusing the ruling it already consumed', () => {
   // REAL PROCESS: a --resume process and its re-exec'd child are two real processes; the hand-off between them is the subject
-  it('runs two rounds across the --resume process and its own re-exec’d child, publishing rather than crashing on a replayed resolution', () => {
-    const { home, cwd, path } = setUpResumeThenStaleDriver()
+  it.skipIf(process.platform === 'darwin')(
+    'runs two rounds across the --resume process and its own re-exec’d child, publishing rather than crashing on a replayed resolution',
+    () => {
+      const { home, cwd, path } = setUpResumeThenStaleDriver()
 
-    const paused = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], FAST_POLL_ENV)
-    expect(paused.status).not.toBe(0)
-    expect(paused.stdout).toMatch(/paused \(escalation\)/)
+      const paused = runDevReviewLoopArgs(home, cwd, path, ['--task', String(TASK), '--agent', 'claude'], FAST_POLL_ENV)
+      expect(paused.status).not.toBe(0)
+      expect(paused.stdout).toMatch(/paused \(escalation\)/)
 
-    writeFileSync(
-      join(home, '.fake-gh-posted-comments', 'comment-2.md'),
-      `<!-- aeg:principal:ruling:${TASK}-1 -->\nGo ahead and fix it.\n`
-    )
+      writeFileSync(
+        join(home, '.fake-gh-posted-comments', 'comment-2.md'),
+        `<!-- aeg:principal:ruling:${TASK}-1 -->\nGo ahead and fix it.\n`
+      )
 
-    const resumed = runDevReviewLoopArgs(home, cwd, path, ['--resume', '123', '--agent', 'claude'], FAST_POLL_ENV)
+      const resumed = runDevReviewLoopArgs(home, cwd, path, ['--resume', '123', '--agent', 'claude'], FAST_POLL_ENV)
 
-    // Before the fix, the re-exec'd child rebuilt `--resume 123`, re-ran the
-    // top-of-function resume gate, and `resolveEscalation` threw
-    // `ReplayedResolutionError` against the SAME resolution this process had
-    // already consumed at its own start — uncaught, before this process's
-    // outer `try`/`finally` even begins, so nothing traced it: the run died
-    // with no pause and no publish. The fix (`buildReexecArgs` always
-    // `--task`) means the child instead attaches to the open PR and
-    // continues round 2 itself.
-    expect(resumed.stderr).not.toMatch(/ReplayedResolutionError|already consumed|nothing to resume from/)
-    expect(existsSync(join(home, '.git-pull-called'))).toBe(true)
-    expect(resumed.status).toBe(0)
-    expect(resumed.stdout).toMatch(/publish/)
+      // Before the fix, the re-exec'd child rebuilt `--resume 123`, re-ran the
+      // top-of-function resume gate, and `resolveEscalation` threw
+      // `ReplayedResolutionError` against the SAME resolution this process had
+      // already consumed at its own start — uncaught, before this process's
+      // outer `try`/`finally` even begins, so nothing traced it: the run died
+      // with no pause and no publish. The fix (`buildReexecArgs` always
+      // `--task`) means the child instead attaches to the open PR and
+      // continues round 2 itself.
+      expect(resumed.stderr).not.toMatch(/ReplayedResolutionError|already consumed|nothing to resume from/)
+      expect(existsSync(join(home, '.git-pull-called'))).toBe(true)
+      expect(resumed.status).toBe(0)
+      expect(resumed.stdout).toMatch(/publish/)
 
-    // Both rounds genuinely ran — round 1's held BLOCKER verdict (recovered
-    // by the re-exec'd child from disk) and round 2's clean one.
-    expect(readFileSync(join(roundDir(home, 1), 'reviewer.md'), 'utf8')).toMatch(/^VERDICT: REQUEST CHANGES$/m)
-    expect(readFileSync(join(roundDir(home, 2), 'reviewer.md'), 'utf8')).toMatch(/^VERDICT: APPROVE$/m)
-  }, 30000)
+      // Both rounds genuinely ran — round 1's held BLOCKER verdict (recovered
+      // by the re-exec'd child from disk) and round 2's clean one.
+      expect(readFileSync(join(roundDir(home, 1), 'reviewer.md'), 'utf8')).toMatch(/^VERDICT: REQUEST CHANGES$/m)
+      expect(readFileSync(join(roundDir(home, 2), 'reviewer.md'), 'utf8')).toMatch(/^VERDICT: APPROVE$/m)
+    },
+    30000
+  )
 })
 
 describe('buildReexecArgs (pure) — O7 re-exec carries the original --json intent through the restart (task-run-v1 21, #541, round 2 review MINOR)', () => {
@@ -4326,40 +4398,44 @@ function setUpPrincipalOwedRedReviewGate(): { home: string; cwd: string; path: s
 
 describe('devReviewLoop — a principal-owed red never redispatches the developer (review-validity-v1 11, O3)', () => {
   // REAL PROCESS: the real check-run filter that excludes the review gate's own check is the subject, and the in-process harness replaces it
-  it('dispatches both reviewers off the green mechanical gate, even with review-gate itself red', () => {
-    const { home, cwd, path } = setUpPrincipalOwedRedReviewGate()
-    const r = runLoop(home, cwd, path)
-    expect(r.status).toBe(0)
-    expect(r.stdout).toMatch(/publish/)
+  it.skipIf(process.platform === 'darwin')(
+    'dispatches both reviewers off the green mechanical gate, even with review-gate itself red',
+    () => {
+      const { home, cwd, path } = setUpPrincipalOwedRedReviewGate()
+      const r = runLoop(home, cwd, path)
+      expect(r.status).toBe(0)
+      expect(r.stdout).toMatch(/publish/)
 
-    // Proof reviewers (not the developer) were dispatched off round 1: the
-    // held-verdict files only the dispatch_reviewers branch writes exist.
-    const reviewerVerdict = readFileSync(join(roundDir(home, 1), 'reviewer.md'), 'utf8')
-    expect(reviewerVerdict).toMatch(/^VERDICT: APPROVE$/m)
-    const securityVerdict = readFileSync(join(roundDir(home, 1), 'security.md'), 'utf8')
-    expect(securityVerdict).toMatch(/^VERDICT: PASS$/m)
+      // Proof reviewers (not the developer) were dispatched off round 1: the
+      // held-verdict files only the dispatch_reviewers branch writes exist.
+      const reviewerVerdict = readFileSync(join(roundDir(home, 1), 'reviewer.md'), 'utf8')
+      expect(reviewerVerdict).toMatch(/^VERDICT: APPROVE$/m)
+      const securityVerdict = readFileSync(join(roundDir(home, 1), 'security.md'), 'utf8')
+      expect(securityVerdict).toMatch(/^VERDICT: PASS$/m)
 
-    // Proof the gate itself read green, and no second gate/developer round
-    // happened first — a red-gate retry would insert a second
-    // gate_result_read/round_started pair before verdicts_read.
-    const loopEvents = outboxLines(home)
-      .filter((l) => l.kind === 'dev_review_loop')
-      .map((l) => l.event)
-    expect(loopEvents).toEqual([
-      'loop_started',
-      'round_started',
-      'gate_result_read',
-      'verdicts_read',
-      'findings_compared',
-      'stop_condition_met',
-      'round_ended',
-      'journal_finalized',
-      // #949, O2: the clean-publish exit event, last.
-      'driver_exited'
-    ])
-    const gateResult = outboxLines(home).find((l) => l.event === 'gate_result_read') as Record<string, unknown>
-    expect(gateResult.green).toBe(true)
-  }, 45000)
+      // Proof the gate itself read green, and no second gate/developer round
+      // happened first — a red-gate retry would insert a second
+      // gate_result_read/round_started pair before verdicts_read.
+      const loopEvents = outboxLines(home)
+        .filter((l) => l.kind === 'dev_review_loop')
+        .map((l) => l.event)
+      expect(loopEvents).toEqual([
+        'loop_started',
+        'round_started',
+        'gate_result_read',
+        'verdicts_read',
+        'findings_compared',
+        'stop_condition_met',
+        'round_ended',
+        'journal_finalized',
+        // #949, O2: the clean-publish exit event, last.
+        'driver_exited'
+      ])
+      const gateResult = outboxLines(home).find((l) => l.event === 'gate_result_read') as Record<string, unknown>
+      expect(gateResult.green).toBe(true)
+    },
+    45000
+  )
 })
 
 // Issue #660, O3 — the two isolation properties added to
@@ -4369,28 +4445,31 @@ describe('devReviewLoop — a principal-owed red never redispatches the develope
 // child's own captured output rather than a bare timeout.
 describe('runDevReviewLoopArgs fixture isolation (Issue #660, O3)', () => {
   // REAL PROCESS: tests real OS-process env isolation between parent and spawned child; no separate child process in-process
-  it("a real, leaked VINAYA_RUNTIME_DIR in this test process's own env never redirects the child — it still writes under the fixture's own isolated $HOME, and nothing lands in the leaked directory", () => {
-    const { home, cwd, path } = setUp()
-    const leakedRuntimeDir = tempDir('vinaya-drl-leaked-runtime-')
-    const prevRuntimeDir = process.env.VINAYA_RUNTIME_DIR
-    // The same shape this Developer session's own dispatched environment
-    // genuinely carries — reproduced live: `runDevReviewLoopArgs` used to
-    // spread `...process.env` first, so this leaked straight into the
-    // child, which resolved its runtime directory from it instead of the
-    // fixture's own `$HOME` (`resolveRuntimeDirUncached` checks the env key
-    // before ever calling `homedir()`).
-    process.env.VINAYA_RUNTIME_DIR = leakedRuntimeDir
-    try {
-      const r = runLoop(home, cwd, path)
-      expect(r.status).toBe(0)
-    } finally {
-      if (prevRuntimeDir === undefined) delete process.env.VINAYA_RUNTIME_DIR
-      else process.env.VINAYA_RUNTIME_DIR = prevRuntimeDir
-    }
+  it.skipIf(process.platform === 'darwin')(
+    "a real, leaked VINAYA_RUNTIME_DIR in this test process's own env never redirects the child — it still writes under the fixture's own isolated $HOME, and nothing lands in the leaked directory",
+    () => {
+      const { home, cwd, path } = setUp()
+      const leakedRuntimeDir = tempDir('vinaya-drl-leaked-runtime-')
+      const prevRuntimeDir = process.env.VINAYA_RUNTIME_DIR
+      // The same shape this Developer session's own dispatched environment
+      // genuinely carries — reproduced live: `runDevReviewLoopArgs` used to
+      // spread `...process.env` first, so this leaked straight into the
+      // child, which resolved its runtime directory from it instead of the
+      // fixture's own `$HOME` (`resolveRuntimeDirUncached` checks the env key
+      // before ever calling `homedir()`).
+      process.env.VINAYA_RUNTIME_DIR = leakedRuntimeDir
+      try {
+        const r = runLoop(home, cwd, path)
+        expect(r.status).toBe(0)
+      } finally {
+        if (prevRuntimeDir === undefined) delete process.env.VINAYA_RUNTIME_DIR
+        else process.env.VINAYA_RUNTIME_DIR = prevRuntimeDir
+      }
 
-    expect(existsSync(join(roundDir(home, 1), 'reviewer.md'))).toBe(true)
-    expect(existsSync(join(leakedRuntimeDir, 'tasks-execution'))).toBe(false)
-  })
+      expect(existsSync(join(roundDir(home, 1), 'reviewer.md'))).toBe(true)
+      expect(existsSync(join(leakedRuntimeDir, 'tasks-execution'))).toBe(false)
+    }
+  )
 
   // REAL PROCESS: real subprocess spawn-timeout-kill and captured stdio; no process to kill in-process
   it('a subprocess that never exits is killed at its budget and throws with the budget figure and the captured output, never a bare timeout', () => {
@@ -4618,82 +4697,90 @@ exit 1
 // the interval is never deleted on a stale answer.
 describe('the start-of-run sweep never delays the loop, and re-checks before removing (Issue #697)', () => {
   // REAL PROCESS: the harness's sweepTasksAtStart fake is a no-op that only records the call; the real sweep's own concurrent forge-lookup/classification/removal logic and driver.log content are not
-  it('O1/O2: the run-start marker and the sweep-running line land in the loop log and on stderr before the sweep’s own forge lookup, and the developer is dispatched before that lookup ever answers', () => {
-    const home = tempDir('vinaya-drl-home-')
-    const cwd = tempDir('vinaya-drl-cwd-')
-    const binDir = tempDir('vinaya-drl-bin-')
-    writeFakeClaude(binDir)
-    writeFakeGhSweepBlocksUntilDevInvoked(binDir, 8001)
-    writeFakeGit(binDir)
-    const path = `${binDir}:${pathWithoutRealVendors()}`
+  it.skipIf(process.platform === 'darwin')(
+    'O1/O2: the run-start marker and the sweep-running line land in the loop log and on stderr before the sweep’s own forge lookup, and the developer is dispatched before that lookup ever answers',
+    () => {
+      const home = tempDir('vinaya-drl-home-')
+      const cwd = tempDir('vinaya-drl-cwd-')
+      const binDir = tempDir('vinaya-drl-bin-')
+      writeFakeClaude(binDir)
+      writeFakeGhSweepBlocksUntilDevInvoked(binDir, 8001)
+      writeFakeGit(binDir)
+      const path = `${binDir}:${pathWithoutRealVendors()}`
 
-    // A finished, unrelated task folder for the sweep to classify — its
-    // own `gh issue view --json state` call blocks (bounded) until the
-    // developer has already been dispatched.
-    mkdirSync(taskRunDir(home, 8001), { recursive: true })
+      // A finished, unrelated task folder for the sweep to classify — its
+      // own `gh issue view --json state` call blocks (bounded) until the
+      // developer has already been dispatched.
+      mkdirSync(taskRunDir(home, 8001), { recursive: true })
 
-    const r = runLoop(home, cwd, path)
-    expect(r.status).toBe(0)
-    expect(r.stdout).toMatch(/publish/)
+      const r = runLoop(home, cwd, path)
+      expect(r.status).toBe(0)
+      expect(r.stdout).toMatch(/publish/)
 
-    // O2: the developer was dispatched, and the sweep's own blocked lookup
-    // never stalled it — had dispatch waited on the sweep, the two would
-    // have deadlocked and the fake `gh` script's own bounded poll would
-    // have given up and left this marker behind.
-    expect(existsSync(join(home, '.fake-dev-invoked'))).toBe(true)
-    expect(existsSync(join(home, '.sweep-blocked-dispatch'))).toBe(false)
+      // O2: the developer was dispatched, and the sweep's own blocked lookup
+      // never stalled it — had dispatch waited on the sweep, the two would
+      // have deadlocked and the fake `gh` script's own bounded poll would
+      // have given up and left this marker behind.
+      expect(existsSync(join(home, '.fake-dev-invoked'))).toBe(true)
+      expect(existsSync(join(home, '.sweep-blocked-dispatch'))).toBe(false)
 
-    // O1: the run-start marker and the sweep-running line are both in the
-    // loop log (the same file `vinaya task status --follow` tails) and on
-    // this process's own stderr.
-    const driverLog = readFileSync(join(taskRunDir(home), 'output', 'driver.log'), 'utf8')
-    expect(driverLog).toMatch(/=== run started .*role=dev-review-loop/)
-    expect(driverLog).toContain('[dev-review-loop] sweep — running')
-    expect(r.stderr).toContain('vinaya dev-review-loop: sweep — running')
+      // O1: the run-start marker and the sweep-running line are both in the
+      // loop log (the same file `vinaya task status --follow` tails) and on
+      // this process's own stderr.
+      const driverLog = readFileSync(join(taskRunDir(home), 'output', 'driver.log'), 'utf8')
+      expect(driverLog).toMatch(/=== run started .*role=dev-review-loop/)
+      expect(driverLog).toContain('[dev-review-loop] sweep — running')
+      expect(r.stderr).toContain('vinaya dev-review-loop: sweep — running')
 
-    // The sweep genuinely ran to completion (not merely skipped) — the
-    // other, unrelated finished folder it found is gone.
-    expect(existsSync(taskRunDir(home, 8001))).toBe(false)
+      // The sweep genuinely ran to completion (not merely skipped) — the
+      // other, unrelated finished folder it found is gone.
+      expect(existsSync(taskRunDir(home, 8001))).toBe(false)
 
-    // O3: each decision is printed with a running count as it is made —
-    // two folders total (this run's own excluded task, plus the seeded
-    // one), so the excluded task's own decision lands first as `[1/2]`
-    // (no forge lookup needed) and the removal lands last as `[2/2]`,
-    // after the developer's own dispatch line already appears above it.
-    expect(r.stderr).toContain('sweep — [1/2] kept Issue #9001')
-    expect(r.stderr).toContain('sweep — [2/2] removed Issue #8001')
-  }, 45000)
+      // O3: each decision is printed with a running count as it is made —
+      // two folders total (this run's own excluded task, plus the seeded
+      // one), so the excluded task's own decision lands first as `[1/2]`
+      // (no forge lookup needed) and the removal lands last as `[2/2]`,
+      // after the developer's own dispatch line already appears above it.
+      expect(r.stderr).toContain('sweep — [1/2] kept Issue #9001')
+      expect(r.stderr).toContain('sweep — [2/2] removed Issue #8001')
+    },
+    45000
+  )
 
   // REAL PROCESS: the start-of-run sweep is the subject; sweepTasksAtStart is faked wholesale, so the real double-classification/removal timing this test proves is unobservable in-process
-  it('O4: a folder found finished is classified again immediately before removal — a task revived in the interval is kept, never deleted on the stale first read', () => {
-    const home = tempDir('vinaya-drl-home-')
-    const cwd = tempDir('vinaya-drl-cwd-')
-    const binDir = tempDir('vinaya-drl-bin-')
-    writeFakeClaude(binDir)
-    writeFakeGhSweepRevivedBetweenChecks(binDir, 8002)
-    writeFakeGit(binDir)
-    const path = `${binDir}:${pathWithoutRealVendors()}`
+  it.skipIf(process.platform === 'darwin')(
+    'O4: a folder found finished is classified again immediately before removal — a task revived in the interval is kept, never deleted on the stale first read',
+    () => {
+      const home = tempDir('vinaya-drl-home-')
+      const cwd = tempDir('vinaya-drl-cwd-')
+      const binDir = tempDir('vinaya-drl-bin-')
+      writeFakeClaude(binDir)
+      writeFakeGhSweepRevivedBetweenChecks(binDir, 8002)
+      writeFakeGit(binDir)
+      const path = `${binDir}:${pathWithoutRealVendors()}`
 
-    mkdirSync(taskRunDir(home, 8002), { recursive: true })
+      mkdirSync(taskRunDir(home, 8002), { recursive: true })
 
-    // This fixture deliberately overlaps the asynchronous sweep with a full
-    // developer + two-reviewer round. On a loaded CI shard it completed just
-    // beyond an earlier, tighter ceiling (twice in succession, then a third
-    // time only 13ms over a 45s ceiling), although the behavior itself was
-    // correct each time. Give this integration-heavy case a wider ceiling,
-    // with real headroom rather than another razor-thin margin, while
-    // retaining the tight default for every ordinary fixture in this file.
-    const r = runLoop(home, cwd, path, 75_000)
-    expect(r.status).toBe(0)
-    expect(r.stdout).toMatch(/publish/)
+      // This fixture deliberately overlaps the asynchronous sweep with a full
+      // developer + two-reviewer round. On a loaded CI shard it completed just
+      // beyond an earlier, tighter ceiling (twice in succession, then a third
+      // time only 13ms over a 45s ceiling), although the behavior itself was
+      // correct each time. Give this integration-heavy case a wider ceiling,
+      // with real headroom rather than another razor-thin margin, while
+      // retaining the tight default for every ordinary fixture in this file.
+      const r = runLoop(home, cwd, path, 75_000)
+      expect(r.status).toBe(0)
+      expect(r.stdout).toMatch(/publish/)
 
-    // The FIRST read (classification) said CLOSED — finished; the SECOND,
-    // immediately before removal, said OPEN — revived. The folder survives.
-    expect(existsSync(taskRunDir(home, 8002))).toBe(true)
-    expect(readFileSync(join(home, '.sweep-8002-state-calls'), 'utf8').trim()).toBe('2')
-    expect(r.stderr).toContain('kept Issue #8002')
-    expect(r.stderr).toContain('open — Issue #8002 open, no pull request yet')
-  }, 80_000)
+      // The FIRST read (classification) said CLOSED — finished; the SECOND,
+      // immediately before removal, said OPEN — revived. The folder survives.
+      expect(existsSync(taskRunDir(home, 8002))).toBe(true)
+      expect(readFileSync(join(home, '.sweep-8002-state-calls'), 'utf8').trim()).toBe('2')
+      expect(r.stderr).toContain('kept Issue #8002')
+      expect(r.stderr).toContain('open — Issue #8002 open, no pull request yet')
+    },
+    80_000
+  )
 })
 
 // --- issue #945: a failed policy read never casts a verdict under the defaults ---
