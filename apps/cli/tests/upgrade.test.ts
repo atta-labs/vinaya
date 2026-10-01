@@ -299,6 +299,28 @@ describe('vinaya upgrade', () => {
     expect(after.managed.files).toContain(MCP_JSON_PATH)
   })
 
+  it('recreates the commit-msg hook a pre-feature manifest never recorded, and records it as owned (issue-989)', async () => {
+    await runInit(['--yes'], initDeps())
+    // Simulate a repo initialised before the `commit-msg` hook existed: drop
+    // its block from the manifest AND disk, so the `!owned` retrofit branch
+    // (not the `!exists` one) is what runs.
+    const cfg = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    cfg.managed.blocks = (cfg.managed.blocks as Array<{ marker: string }>).filter((b) => b.marker !== 'commit-msg')
+    writeFileSync(join(root, CONFIG_PATH), `${JSON.stringify(cfg, null, 2)}\n`)
+    rmSync(join(root, '.husky/commit-msg'), { force: true })
+
+    let rc = -1
+    await captureStdout(async () => {
+      rc = await runUpgrade(['--yes'], upgradeDeps())
+    })
+    expect(rc).toBe(0)
+    expect(existsSync(join(root, '.husky/commit-msg'))).toBe(true)
+    expect(readFileSync(join(root, '.husky/commit-msg'), 'utf-8')).toContain('vinaya:managed:commit-msg')
+    // Recorded back into the manifest, so a second upgrade is a no-op for it.
+    const after = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
+    expect((after.managed.blocks as Array<{ marker: string }>).some((b) => b.marker === 'commit-msg')).toBe(true)
+  })
+
   it("never touches vinaya.config.json's adopter-owned keys (rings/checks/briefSchema)", async () => {
     await runInit(['--yes'], initDeps())
     const cfg = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf-8'))
