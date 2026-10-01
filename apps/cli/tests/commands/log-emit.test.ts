@@ -1,12 +1,18 @@
 import { describe, expect, it } from 'bun:test'
+import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { CustomEventDeclarations } from '@attalabs/aeg-core/log'
 import { emitCustomEvent } from '../../src/lib/log-custom.js'
+import { createLogSink } from '../../src/lib/log-sink.js'
 import { type LogEmitDeps, logEmitCommand } from '../../src/commands/log-emit.js'
 
 // The command is proved against injected seams — never a real destination —
 // the same shape `log-selftest.test.ts` uses: `emit`/`drain`/`resolveDestinationKind`
 // are decisions, not network or filesystem calls, so every exit code is
-// reproducible on Linux CI with no server and no config.
+// reproducible on Linux CI with no server and no config. The one exception is
+// the O3 describe block below, which drives a REAL (but fully isolated, local
+// `createLogSink` instance) to prove the written header, not a stub.
 
 const declarations: CustomEventDeclarations = {
   'acme.review_started': { fields: { phase: ['design', 'build', 'ship'] } }
@@ -156,5 +162,61 @@ describe('vinaya log emit — a usage error (O2)', () => {
     })
     await logEmitCommand(['acme.review_started', '--json', 'not json'], d)
     expect(called).toBe(false)
+  })
+})
+
+describe('vinaya log emit — a process outside Vinaya (O3)', () => {
+  /** A real sink writing to a fresh folder, with ONLY VINAYA_WORK_REF/VINAYA_FLOW
+   * set — no VINAYA_ROLE, no VINAYA_TASK — the exact environment O3 names. */
+  function externalProcessSink(): { dir: string; sink: ReturnType<typeof createLogSink> } {
+    const dir = mkdtempSync(join(tmpdir(), 'vinaya-log-emit-o3-'))
+    const sink = createLogSink({
+      resolveLogDestination: () => ({ kind: 'folder', folder: join(dir, 'outbox') }),
+      home: () => dir,
+      hostname: () => 'external-host',
+      cwd: () => dir,
+      now: () => new Date('2026-10-01T00:00:00.000Z'),
+      env: () => ({ VINAYA_WORK_REF: 'JIRA-4821', VINAYA_FLOW: 'acme-release-flow' }),
+      resolveRepo: () => Promise.resolve(null),
+      resolveBranchIssue: () => Promise.resolve(null),
+      vinayaVersion: () => '0.36.0',
+      stderr: () => {}
+    })
+    return { dir, sink }
+  }
+
+  function writtenLines(dir: string): Array<Record<string, unknown>> {
+    const folder = join(dir, 'outbox', 'unresolved')
+    if (!existsSync(folder)) return []
+    return readdirSync(folder).flatMap((file) =>
+      readFileSync(join(folder, file), 'utf8')
+        .trim()
+        .split('\n')
+        .filter((l) => l.length > 0)
+        .map((l) => JSON.parse(l) as Record<string, unknown>)
+    )
+  }
+
+  it("the recorded event's header carries the work reference and flow id from the environment alone", async () => {
+    const { dir, sink } = externalProcessSink()
+    const { deps: d } = deps({
+      emit: (name, fields) => emitCustomEvent(name, fields, { declarations: () => declarations, emit: sink.log }),
+      drain: () => sink.drain()
+    })
+    const code = await logEmitCommand(['acme.review_started', '--json', JSON.stringify(valid)], d)
+    expect(code).toBe(0)
+
+    const lines = writtenLines(dir)
+    expect(lines).toHaveLength(1)
+    const line = lines[0] as {
+      meta: { work: { ref: string | null }; flow: { id: string | null }; schema: number }
+      subject: { role: string; issue: number | null }
+    }
+    expect(line.meta.schema).toBe(3)
+    expect(line.meta.work.ref).toBe('JIRA-4821')
+    expect(line.meta.flow.id).toBe('acme-release-flow')
+    // No Vinaya role or task was set — the header says so honestly.
+    expect(line.subject.role).toBe('unattributed')
+    expect(line.subject.issue).toBeNull()
   })
 })
