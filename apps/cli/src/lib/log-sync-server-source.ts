@@ -26,6 +26,7 @@ import {
   unknownBecause
 } from '@attalabs/aeg-core'
 import { resolveLogsHeaderValues } from './config.js'
+import { logsCredentialMissing } from './log-sink.js'
 
 /** The server's own page bound (`apps/log-server/specs/server.md` § 5: `limit`'s default and maximum). */
 export const SERVER_SOURCE_PAGE_MAX = 1000
@@ -49,6 +50,15 @@ export function statsUrlFrom(eventsUrl: string): string {
 /** `.../events` → `.../rejected` (`apps/log-server/specs/server.md` § 5). */
 export function rejectedUrlFrom(eventsUrl: string): string {
   return swapEventsTail(eventsUrl, 'rejected')
+}
+
+/** The `${VAR}` names a header template references — never a value, named in a refused-credential reason (O5), the same convention `vinaya log selftest` uses. */
+function credentialVarNames(headers: Record<string, string> | undefined): string[] {
+  const names = new Set<string>()
+  for (const value of Object.values(headers ?? {})) {
+    for (const match of value.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g)) names.add(match[1] as string)
+  }
+  return [...names]
 }
 
 /**
@@ -110,8 +120,25 @@ async function discard(response: Response): Promise<void> {
 export function createServerLogSource(deps: ServerSourceDeps): ServerLogSource {
   let totalRowsRead = 0
 
-  /** The one place that calls `fetch`. Never throws on a non-2xx status — a caller decides what its own route's status means — only on a timeout or an unreachable server. */
+  /** Named once, naming the `${VAR}` references in `readHeaders` — never the resolved value, on a local miss or a server-reported 401 alike (O5). */
+  function credentialRefusedReason(): string {
+    const vars = credentialVarNames(deps.readHeaders)
+    return vars.length > 0
+      ? `the read credential was refused — set ${vars.join(', ')} to the server's read token (the value is never printed).`
+      : 'the read credential was refused by the log server.'
+  }
+
+  /**
+   * The one place that calls `fetch`. Never throws on a non-2xx status — a
+   * caller decides what its own route's 401 (always a refused credential)
+   * or other status means. Does throw on a missing credential, checked
+   * locally before any request leaves this process, so a `${VAR}` unset in
+   * this environment is never sent as the literal string `${VAR}`.
+   */
   async function get(url: string): Promise<Response> {
+    if (logsCredentialMissing(deps.readHeaders, deps.env)) {
+      throw new ServerSourceError('credential', credentialRefusedReason())
+    }
     try {
       return await deps.fetchImpl(url, {
         method: 'GET',
@@ -138,7 +165,7 @@ export function createServerLogSource(deps: ServerSourceDeps): ServerLogSource {
     const response = await get(url.toString())
     if (response.status === 401) {
       await discard(response)
-      throw new ServerSourceError('credential', 'the read credential was refused by the log server.')
+      throw new ServerSourceError('credential', credentialRefusedReason())
     }
     if (!response.ok) {
       await discard(response)
@@ -186,7 +213,7 @@ export function createServerLogSource(deps: ServerSourceDeps): ServerLogSource {
       }
       if (response.status === 401) {
         await discard(response)
-        const reason = 'the read credential was refused by the log server.'
+        const reason = credentialRefusedReason()
         return { head: unknownBecause(reason), storedCount: unknownBecause(reason), gap: unknownBecause(reason) }
       }
       if (!response.ok) {
@@ -219,7 +246,7 @@ export function createServerLogSource(deps: ServerSourceDeps): ServerLogSource {
       }
       if (response.status === 401) {
         await discard(response)
-        return { available: false, reason: 'the read credential was refused by the log server.' }
+        return { available: false, reason: credentialRefusedReason() }
       }
       if (response.status === 404) {
         await discard(response)
