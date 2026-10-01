@@ -26,7 +26,6 @@ import {
   unknownBecause
 } from '@attalabs/aeg-core'
 import { resolveLogsHeaderValues } from './config.js'
-import { logsCredentialMissing } from './log-sink.js'
 
 /** The server's own page bound (`apps/log-server/specs/server.md` § 5: `limit`'s default and maximum). */
 export const SERVER_SOURCE_PAGE_MAX = 1000
@@ -59,6 +58,24 @@ function credentialVarNames(headers: Record<string, string> | undefined): string
     for (const match of value.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g)) names.add(match[1] as string)
   }
   return [...names]
+}
+
+/**
+ * Whether any `${VAR}` reference in `headers` is unset in `env` — the same
+ * check `log-sink.ts`'s `logsCredentialMissing` makes, duplicated here
+ * rather than imported: `log-callers.test.ts` (O2) restricts which files may
+ * import from that module at all, and this source is not on that allowlist
+ * — rightly, since it has no business pulling in the sink's own write-path
+ * dependencies for one pure predicate.
+ */
+function credentialMissing(headers: Record<string, string> | undefined, env: NodeJS.ProcessEnv): boolean {
+  if (!headers) return false
+  for (const value of Object.values(headers)) {
+    for (const match of value.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g)) {
+      if (!env[match[1] as string]) return true
+    }
+  }
+  return false
 }
 
 /**
@@ -136,7 +153,7 @@ export function createServerLogSource(deps: ServerSourceDeps): ServerLogSource {
    * this environment is never sent as the literal string `${VAR}`.
    */
   async function get(url: string): Promise<Response> {
-    if (logsCredentialMissing(deps.readHeaders, deps.env)) {
+    if (credentialMissing(deps.readHeaders, deps.env)) {
       throw new ServerSourceError('credential', credentialRefusedReason())
     }
     try {
