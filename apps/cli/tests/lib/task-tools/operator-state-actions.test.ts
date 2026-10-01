@@ -27,8 +27,11 @@ import {
   createTaskStartHandler,
   defaultHeldAgent,
   defaultPauseDisposition,
+  defaultRulingPlacement,
   INFRASTRUCTURE_RETRY_BOUND,
-  type PauseDisposition
+  type PauseDisposition,
+  type PauseRulingDeps,
+  resolvePauseDisposition
 } from '../../../src/lib/task-tools/start.js'
 import type { CallerContext } from '../../../src/lib/task-tools/server.js'
 
@@ -183,7 +186,13 @@ function writePublishedRound(root: string, task: number, round: number): void {
  * has no durable record, so a pause-only fixture could never show the paused
  * row's own action working — it would only ever show it refusing.
  */
-function writePause(root: string, task: number, round: number, reason: PauseReason = 'escalation'): void {
+function writePause(
+  root: string,
+  task: number,
+  round: number,
+  reason: PauseReason = 'escalation',
+  rulingOrdinal = 0
+): void {
   const escalationId = escalationIdFor(task, round, 'abc123')
   writeControlFile(root, task, 'pause-state.json', {
     task,
@@ -214,10 +223,15 @@ function writePause(root: string, task: number, round: number, reason: PauseReas
     recipient: 'principal',
     briefHash: null,
     objectivesVersion: null,
-    rulingOrdinal: 0,
+    rulingOrdinal,
     policyDigest: 'digest',
     recordedAt: '2026-09-26T00:00:00.000Z'
   })
+}
+
+/** A pause whose escalation records the ruling ordinal it was raised under — so a ruling must POSTDATE `rulingOrdinal` to authenticate continuing it. */
+function writePauseRaisedUnderRuling(root: string, task: number, round: number, rulingOrdinal: number): void {
+  writePause(root, task, round, 'escalation', rulingOrdinal)
 }
 
 /** The loop's own recorded retry budget — what decides whether an `infrastructure` pause is still inside the bound the loop resumes it without a ruling within. */
@@ -372,6 +386,7 @@ function readDoctrinePauseTable(): { waitingFor: string; next: string }[] {
  */
 const PAUSE_ROW_DISPOSITION: Record<string, PauseDisposition> = {
   'a decision nobody has made yet': 'awaiting_ruling',
+  'a ruling already posted, not yet applied': 'ruled',
   'a decision already taken as resume': 'resolved_resume',
   'an automatic hiccup the loop resumes itself': 'self_resuming',
   'a decision already taken as cancel': 'resolved_cancel',
@@ -411,6 +426,15 @@ async function taskStartAccepts(root: string, state: TaskLoopState): Promise<{ o
     // continuation reads, never a hand-written answer.
     pauseDisposition: (issue) => defaultPauseDisposition(issue, root),
     heldAgent: (issue) => defaultHeldAgent(issue, root),
+    // This harness drives only the pure-local disposition, so it never produces
+    // `ruled` and never reaches the hand-off; the `ruled` continuation is driven
+    // against the real resume handler in `start.test.ts`. A trivial stub keeps
+    // the deps complete.
+    resume: async () => ({
+      ok: false as const,
+      error: { kind: 'precondition' as const, message: 'conformance harness does not drive the ruled hand-off' }
+    }),
+    rulingPlacement: () => null,
     isPidAlive: () => false,
     processSnapshot: () => null,
     captureChildSnapshot: () => null,
@@ -825,6 +849,80 @@ describe("the Operator's doctrine and the Operator's tools agree, state for stat
 
       // No pause record at all — every non-paused state.
       expect(defaultPauseDisposition(TASK, tempDir())).toBe('none')
+    })
+
+    it('upgrades awaiting_ruling to ruled when a ruling that postdates the pause is already posted (O1)', () => {
+      // `writePause` writes the escalation record with `rulingOrdinal: 0`, so a
+      // posted ruling at ordinal 1 postdates the pause and authenticates it —
+      // the exact check `task_resume` makes, reused by the ruling-aware reader.
+      const root = tempDir()
+      writePause(root, TASK, 2, 'escalation')
+      // No ruling posted → still awaiting, never upgraded.
+      const none: PauseRulingDeps = {
+        fetchRulings: () => [],
+        fetchNewestRulingOrdinal: () => 0,
+        fetchIssueRulings: () => [],
+        fetchNewestIssueRulingOrdinal: () => 0
+      }
+      expect(resolvePauseDisposition(TASK, root, none)).toBe('awaiting_ruling')
+      // A ruling newer than the pause's own → ruled.
+      const fresh: PauseRulingDeps = {
+        fetchRulings: () => ['RULING: resume.'],
+        fetchNewestRulingOrdinal: () => 1,
+        fetchIssueRulings: () => [],
+        fetchNewestIssueRulingOrdinal: () => 0
+      }
+      expect(resolvePauseDisposition(TASK, root, fresh)).toBe('ruled')
+    })
+
+    it('never upgrades a stale ruling no newer than the one the pause was raised under', () => {
+      // The escalation here was raised under ruling ordinal 5; a ruling still at
+      // 5 (or below) is an older approval that never spoke to this pause.
+      const root = tempDir()
+      writePauseRaisedUnderRuling(root, TASK, 2, 5)
+      const stale: PauseRulingDeps = {
+        fetchRulings: () => ['RULING: older.'],
+        fetchNewestRulingOrdinal: () => 5,
+        fetchIssueRulings: () => [],
+        fetchNewestIssueRulingOrdinal: () => 0
+      }
+      expect(resolvePauseDisposition(TASK, root, stale)).toBe('awaiting_ruling')
+    })
+
+    it('leaves every non-awaiting disposition untouched, making no forge read for it', () => {
+      // Only a genuinely undecided pause pays for the ruling read; a resolved or
+      // self-resuming one is returned as-is, so a thrown fetcher is never called.
+      const selfResuming = tempDir()
+      writePause(selfResuming, TASK, 2, 'infrastructure')
+      const throwing: PauseRulingDeps = {
+        fetchRulings: () => {
+          throw new Error('must not be called')
+        },
+        fetchNewestRulingOrdinal: () => {
+          throw new Error('must not be called')
+        },
+        fetchIssueRulings: () => {
+          throw new Error('must not be called')
+        },
+        fetchNewestIssueRulingOrdinal: () => {
+          throw new Error('must not be called')
+        }
+      }
+      expect(resolvePauseDisposition(TASK, selfResuming, throwing)).toBe('self_resuming')
+    })
+
+    it('names where a still-unruled pause wants its ruling, and the next ordinal (O2)', () => {
+      const root = tempDir()
+      writePauseRaisedUnderRuling(root, TASK, 2, 3)
+      const deps: PauseRulingDeps = {
+        fetchRulings: () => [],
+        fetchNewestRulingOrdinal: () => 3,
+        fetchIssueRulings: () => [],
+        fetchNewestIssueRulingOrdinal: () => 0
+      }
+      // `writePause*` records prNumber 900, so the ruling goes on PR 900, and the
+      // next ordinal is one past the newest already posted there.
+      expect(defaultRulingPlacement(TASK, root, deps)).toEqual({ pr: 900, issue: TASK, nextOrdinal: 4 })
     })
   })
 

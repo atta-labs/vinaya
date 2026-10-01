@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import type { TaskToolRef } from '@attalabs/aeg-core'
+import type { TaskResumeResult, TaskToolRef } from '@attalabs/aeg-core'
 import { spawnSync } from 'node:child_process'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -23,12 +23,14 @@ import {
   isSafeRequestId,
   normalizeStartRecord,
   readStartClaims,
+  type RulingPlacement,
   START_STALE_CLAIM_GRACE_MS,
   TASK_RUN_COMMAND_ENV,
   type LaunchResult,
   type RequestStore,
   type StartRecord
 } from '../../../src/lib/task-tools/start.js'
+import type { TaskToolCallResult } from '../../../src/lib/task-tools/handlers.js'
 
 /**
  * `task_start` driven in-process with injected deps: an in-memory idempotency
@@ -93,6 +95,11 @@ function harness(
     loopState?: (issue: number, ref: TaskToolRef, ownRequestId: string) => TaskLoopState
     pauseDisposition?: (issue: number) => PauseDisposition
     heldAgent?: (issue: number) => AgentVendor | null
+    resume?: (
+      input: { task: TaskToolRef },
+      ctx: CallerContext
+    ) => TaskToolCallResult<TaskResumeResult> | Promise<TaskToolCallResult<TaskResumeResult>>
+    rulingPlacement?: (issue: number) => RulingPlacement | null
     isPidAlive?: (pid: number) => boolean
     processSnapshot?: (pid: number) => ProcessSnapshot | null
     captureChildSnapshot?: (pid: number) => ProcessSnapshot | null
@@ -101,6 +108,7 @@ function harness(
   } = {}
 ) {
   const launches: LaunchRecord[] = []
+  const resumes: { task: TaskToolRef }[] = []
   const { store, map } = memStore()
   const handler = createTaskStartHandler({
     repoRoot: () => overrides.repoRoot ?? REPO_ROOT,
@@ -119,6 +127,27 @@ function harness(
     pauseDisposition: overrides.pauseDisposition ?? (() => 'none'),
     // No pause record by default, so the configured agent is the one used.
     heldAgent: overrides.heldAgent ?? (() => null),
+    // The `task_resume` hand-off a `ruled` pause takes — records the call so a
+    // test can prove the ruled path delegates rather than launching, and
+    // answers a started continuation by default.
+    resume: async (input, ctx) => {
+      resumes.push(input)
+      return (
+        overrides.resume?.(input, ctx) ?? {
+          ok: true,
+          result: {
+            task: ISSUE,
+            pr: null,
+            escalationId: 'esc-1',
+            outcome: 'started',
+            authenticatedBy: 'principal-1',
+            authenticatedFrom: 'issue-1'
+          }
+        }
+      )
+    },
+    // No ruling placement by default; the refusal falls back to generic text.
+    rulingPlacement: overrides.rulingPlacement ?? (() => null),
     isPidAlive: overrides.isPidAlive ?? (() => false),
     processSnapshot: overrides.processSnapshot ?? (() => null),
     // The capture and the later check answer the same table by default, so a
@@ -133,7 +162,7 @@ function harness(
     },
     now: overrides.now ?? (() => '2026-01-01T00:00:00.000Z')
   })
-  return { handler, launches, map }
+  return { handler, launches, resumes, map }
 }
 
 describe('task_start handler', () => {
@@ -213,6 +242,11 @@ describe('task_start handler', () => {
         loopState: () => ({ kind: 'not_started' }),
         pauseDisposition: () => 'none',
         heldAgent: () => null,
+        resume: async () => ({
+          ok: false as const,
+          error: { kind: 'precondition' as const, message: 'not used in this test' }
+        }),
+        rulingPlacement: () => null,
         isPidAlive: () => false,
         processSnapshot: () => null,
         captureChildSnapshot: () => null,
@@ -692,6 +726,117 @@ describe('task_start handler', () => {
       }
       expect(launches).toHaveLength(0)
       expect(map.size).toBe(0)
+    })
+
+    it('continues a ruled pause by handing it to task_resume, never by launching itself (O1)', async () => {
+      // A ruling that postdates the pause is already posted: the authentication
+      // `task_resume` makes has, in effect, passed. `task_start` finishes it by
+      // delegating to the resume handler — reusing its resolution write and Log
+      // event — rather than relaunching `task run` past that authentication.
+      const { handler, launches, resumes } = harness({
+        loopState: () => ({ kind: 'paused', reason: 'escalation', round: 2 }),
+        pauseDisposition: () => 'ruled'
+      })
+      const result = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(result.ok).toBe(true)
+      if (result.ok) expect(result.result.started).toBe(true)
+      expect(launches).toHaveLength(0) // never its own launch
+      expect(resumes).toEqual([{ task: { tranche: 'unattended-run-v1', id: '17' } }])
+    })
+
+    it('reports a ruled continuation already launched by an earlier call as started:false', async () => {
+      const { handler } = harness({
+        loopState: () => ({ kind: 'paused', reason: 'escalation', round: 2 }),
+        pauseDisposition: () => 'ruled',
+        resume: () => ({
+          ok: true,
+          result: {
+            task: ISSUE,
+            pr: 900,
+            escalationId: 'esc-1',
+            outcome: 'already_resumed',
+            authenticatedBy: 'principal-1',
+            authenticatedFrom: '900-9'
+          }
+        })
+      })
+      const result = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(result.ok).toBe(true)
+      if (result.ok) expect(result.result.started).toBe(false)
+    })
+
+    it('releases its claim and surfaces the error when the ruled hand-off refuses, so a retry re-delegates', async () => {
+      let refuseOnce = true
+      const { handler, map, resumes } = harness({
+        loopState: () => ({ kind: 'paused', reason: 'escalation', round: 2 }),
+        pauseDisposition: () => 'ruled',
+        resume: () =>
+          refuseOnce
+            ? { ok: false, error: { kind: 'authority', message: 'ruling went stale between the read and the call' } }
+            : {
+                ok: true,
+                result: {
+                  task: ISSUE,
+                  pr: 900,
+                  escalationId: 'esc-1',
+                  outcome: 'started',
+                  authenticatedBy: 'principal-1',
+                  authenticatedFrom: '900-10'
+                }
+              }
+      })
+      const first = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(first.ok).toBe(false)
+      if (!first.ok) expect(first.error.kind).toBe('authority')
+      expect(map.size).toBe(0) // claim released — a retry is not stuck replaying a continuation that never happened
+
+      refuseOnce = false
+      const retry = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(retry.ok).toBe(true)
+      if (retry.ok) expect(retry.result.started).toBe(true)
+      expect(resumes).toHaveLength(2) // re-delegated, not stuck
+    })
+
+    it('is idempotent for a ruled pause — a repeat of the same request hands it over once', async () => {
+      const { handler, resumes } = harness({
+        loopState: () => ({ kind: 'paused', reason: 'escalation', round: 2 }),
+        pauseDisposition: () => 'ruled'
+      })
+      const first = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      const second = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(first.ok && second.ok).toBe(true)
+      if (second.ok) expect(second.result.started).toBe(false)
+      expect(resumes).toHaveLength(1) // the claim this call kept replays, never a second hand-off
+    })
+
+    it('names the pull request, the next marker and the command when a pause still awaits a ruling (O2)', async () => {
+      const { handler } = harness({
+        loopState: () => ({ kind: 'paused', reason: 'escalation', round: 2 }),
+        pauseDisposition: () => 'awaiting_ruling',
+        rulingPlacement: () => ({ pr: 517, issue: 601, nextOrdinal: 4 })
+      })
+      const result = await handler({ tranche: 'unattended-run-v1', id: '17' }, CALLER)
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error.message).toContain('PR #517')
+        expect(result.error.message).toContain('vinaya pr rule 517 --file')
+        expect(result.error.message).toContain('<!-- aeg:principal:ruling:517-4 -->')
+        expect(result.error.message).toContain('task_resume')
+      }
+    })
+
+    it('names the Issue and the marker for a pause that predates any pull request (O2)', async () => {
+      const { handler } = harness({
+        loopState: () => ({ kind: 'paused', reason: 'escalation', round: 2 }),
+        pauseDisposition: () => 'awaiting_ruling',
+        rulingPlacement: () => ({ pr: null, issue: 729, nextOrdinal: 1 })
+      })
+      const result = await handler({ issue: 729 }, CALLER)
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error.message).toContain('Issue #729')
+        expect(result.error.message).toContain('<!-- aeg:principal:ruling:729-1 -->')
+      }
     })
 
     it('continues a pause whose ruling was already given and whose driver then died', async () => {
