@@ -2505,4 +2505,28 @@ describe('noneFoundClaimCitesScanCheck — the cited check must have passed', ()
     expect(noneFoundClaimCitesScanCheck('none found', 'atta-labs/secret-scan\tpass\t5s')).toBe(true)
     expect(noneFoundClaimCitesScanCheck('none found — atta-labs/secret-scan passed', null)).toBe(true)
   })
+
+  it('a clean passing citation is not poisoned by negations in trailing explanatory prose', () => {
+    // One `SECRETS:` value is a single physical line of several sentences. The
+    // passing citation lives in its own clause; the honest prose that follows
+    // ("I did not run a scanner myself", "no live credential", "not a real
+    // secret") must not negate it, since none of it names the check.
+    expect(
+      noneFoundClaimCitesScanCheck(
+        'none found — atta-labs/secret-scan passed. I did not run a scanner myself; my read of the diff found no live credential: the only match is a synthetic placeholder, not a real secret.',
+        null
+      )
+    ).toBe(true)
+    // A second passing citation of the check in a later clause is still weighed, and still passes.
+    expect(
+      noneFoundClaimCitesScanCheck(
+        'none found — atta-labs/secret-scan passed; evidence block shows "atta-labs/secret-scan: pass". I could not re-run it locally.',
+        null
+      )
+    ).toBe(true)
+    // But a negation IN THE SAME CLAUSE as the check still rejects — the clause, not the whole value, is what "beside" scopes.
+    expect(
+      noneFoundClaimCitesScanCheck('none found — atta-labs/secret-scan did not pass. Nothing else to report.', null)
+    ).toBe(false)
+  })
 })

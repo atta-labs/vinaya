@@ -2,11 +2,12 @@
 
 /**
  * open-pr — the ONLY sanctioned way to open or body-edit a PR in this repo
- *. The `check-forge-gates.sh` PreToolUse hook denies raw
- * `gh pr create` / `gh pr edit --body*`, directing every agent here. This
+ *. A dispatched reviewer's permissions deny raw
+ * `gh pr create` / `gh pr edit`; no hook intercepts a raw write from any other
+ * session, so ring-1 CI re-validation is the backstop for one. This
  * wrapper runs the full deterministic contract gate LOCALLY, before anything
  * reaches the forge — prevention, not detection. A malformed PR body is
- * refused at the tool layer; the agent fixes it in-session and retries. CI
+ * refused by this wrapper; the agent fixes it in-session and retries. CI
  * runs the identical checks (same aeg-core code) purely as a backstop.
  *
  * Usage:

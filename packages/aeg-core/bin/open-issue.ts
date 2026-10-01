@@ -2,8 +2,8 @@
 
 /**
  * open-issue — the ONLY sanctioned way to create or body-edit an Issue in
- * this repo. The `check-forge-gates.sh` PreToolUse hook denies raw
- * `gh issue create` / `gh issue edit --body*`, directing every agent here.
+ * this repo. No hook intercepts a raw `gh issue create` /
+ * `gh issue edit`; ring-1 CI re-validation is the backstop for one.
  *
  * Gate: a task Issue (any `vinaya/tranche:<slug>` label) must carry the full
  * eight-field Planner's rationale in its body (`checkIssueRationale`,
@@ -23,8 +23,8 @@
  * against `.vinaya/projects.md`),
  * `checkNoBriefContent` (brief-shaped sections belong in the brief, not here),
  * `checkRationaleNamesDocs` (name a doc/skill path, or the `no-doc-surface`
- * sentinel — the only read-obligation signal a forge write leaves, since the
- * skill-check hook fires on file edits and this edits none),
+ * sentinel — the only read-obligation signal a forge write leaves, since no
+ * other check observes what the Planner read before this forge write),
  * `checkIssueType` (exactly one `vinaya/type:*` label — `labels.ts`'s `type`
  * category, the commit-type vocabulary applied to the Issue instead of the
  * commit). **CREATE-only**, unlike its four siblings above: the label is

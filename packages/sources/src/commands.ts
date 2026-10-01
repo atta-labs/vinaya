@@ -477,7 +477,7 @@ export const COMMANDS: readonly Command[] = [
       {
         flag: '--secrets-evidence-file',
         description:
-          'security only: required whenever `--secrets` claims "none found" — the pasted scanner output backing that claim'
+          'security only: required whenever `--secrets` claims "none found" — the passing `atta-labs/secret-scan` check result on the judged head that backs it; never run or paste the scanner'
       },
       { flag: '--task-id', description: "the closing `Tokens:` line's task id" },
       { flag: '--model', description: "the closing `Tokens:` line's model name" },

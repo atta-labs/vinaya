@@ -124,17 +124,14 @@ function globCandidateFiles(): string[] {
 // ---------- G3: GitHub-crossing (create/body-edit) files ----------------------
 
 /**
- * Matches the exact mutation classes `.claude/hooks/check-forge-gates.sh`
- * itself intercepts (PR/Issue create, PR/Issue body/title edit, `gh api`
- * POST to `/pulls`|`/issues` or PATCH to `/pulls/N`|`/issues/N`, raw
- * curl/wget writes) — that hook's own comment is explicit that
- * comments/labels/close/reopen/merge are "sanctioned append operations",
- * not gated. Scoping crossingFiles any broader (e.g. to every file that
+ * Matches the mutation classes the doctrine gates at ring 0 (PR/Issue create,
+ * PR/Issue body/title edit, `gh api` POST to `/pulls`|`/issues` or PATCH to
+ * `/pulls/N`|`/issues/N`, raw curl/wget writes); comments/labels/close/
+ * reopen/merge are sanctioned append operations, not gated. Scoping crossingFiles any broader (e.g. to every file that
  * merely shells `gh issue view`) would flag
  * `archive-task.ts`/`dead-branch-audit.ts` — Ring-2
  * mechanisms that legitimately comment/label/close as scheduled CI jobs,
- * never as an interactive agent-session command check-forge-gates.sh could
- * ever see — producing false G3 STOP conditions on working, documented
+ * never as an interactive agent-session command — producing false G3 STOP conditions on working, documented
  * automation. This narrower reading is the one that matches what "no
  * seventh way into GitHub" (the Ring-0 create/body-edit gate) actually
  * guards.
@@ -143,7 +140,7 @@ function globCandidateFiles(): string[] {
  * an unrelated `gh pr edit --add-label` (line A) with an unrelated
  * `gh pr comment --body-file` (line B) must never cross-match "edit" from
  * A with "--body" from B into a false create/body-edit finding. Path
- * anchoring for `gh api` mirrors the hook exactly: POST matches the bare
+ * anchoring for `gh api`: POST matches the bare
  * collection endpoint (`/issues`, `/pulls`); PATCH requires an exact
  * `/issues/<n>`|`/pulls/<n>` with nothing trailing, so a sub-resource PATCH
  * (`/issues/comments/<id>`) is correctly excluded.

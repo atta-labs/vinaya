@@ -29,23 +29,13 @@ import { buildClaudeCommandOps } from './claude-command-emitter.js'
 import { buildClaudeStopHookOps } from './claude-stop-hook-emitter.js'
 import type { VinayaConfig } from './config.js'
 import { buildGeminiCommandOp } from './gemini-command-emitter.js'
+import { type HookDir, TRACKED_HOOK_DIR } from './init-hook-paths.js'
 import type { CreateLabelOp, Op } from './ops.js'
 import { ownVersion } from './own-version.js'
 import { REVIEW_GATE_WORKFLOW_NAME } from './review-gate-check-name.js'
 import type { VendoredVinaya } from './self-host.js'
 
-/**
- * The tracked hook directory — the default install target since
- * a real migration. Unlike `.git/hooks` (which git never versions, so a
- * fresh clone silently has NO ring-0 enforcement), files here are committed
- * and travel with the repo; `core.hooksPath` (relative, shared config) routes
- * git at them in the primary checkout and every linked worktree alike. The
- * irreducible per-clone residue is one `git config core.hooksPath
- * .vinaya/hooks` — `doctor` reports it whenever it is missing.
- */
-export const TRACKED_HOOK_DIR = '.vinaya/hooks'
-
-export type HookDir = '.husky' | '.git/hooks' | typeof TRACKED_HOOK_DIR
+export { type HookDir, TRACKED_HOOK_DIR } from './init-hook-paths.js'
 
 export type InitContext = {
   owner: string

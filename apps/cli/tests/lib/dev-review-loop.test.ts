@@ -78,6 +78,7 @@ import {
   renderDeveloperRoundComment,
   renderReviewerPrompt,
   type ReviewerPromptFacts,
+  reviewPolicyForLoop,
   routeCompletionEvents
 } from '../../src/lib/dev-review-loop.js'
 import {
@@ -1647,6 +1648,14 @@ function writeFakeGhPauseCommentFailsOnce(dir: string): void {
     dir,
     'gh',
     `#!/bin/sh
+if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then
+  # issue #945: this read must be 404-shaped (a MISSING config file → the
+  # defaults path), never a generic failure — \`reviewPolicy\` now treats a
+  # non-404 read failure as an infrastructure pause, which would mask this
+  # scenario's own escalation pause. See \`writeFakeGh\`'s #668 note.
+  echo "gh: HTTP 404 Not Found (test stub — no vinaya.config.json on the default branch)" >&2
+  exit 1
+fi
 STATE_DIR="$HOME/.fake-gh-posted-comments"
 mkdir -p "$STATE_DIR"
 if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
@@ -1722,6 +1731,14 @@ function writeFakeGhPauseCommentNeverSucceeds(dir: string): void {
     dir,
     'gh',
     `#!/bin/sh
+if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then
+  # issue #945: this read must be 404-shaped (a MISSING config file → the
+  # defaults path), never a generic failure — \`reviewPolicy\` now treats a
+  # non-404 read failure as an infrastructure pause, which would mask this
+  # scenario's own escalation pause. See \`writeFakeGh\`'s #668 note.
+  echo "gh: HTTP 404 Not Found (test stub — no vinaya.config.json on the default branch)" >&2
+  exit 1
+fi
 STATE_DIR="$HOME/.fake-gh-posted-comments"
 mkdir -p "$STATE_DIR"
 if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
@@ -4479,4 +4496,135 @@ describe('the start-of-run sweep never delays the loop, and re-checks before rem
     expect(r.stderr).toContain('kept Issue #8002')
     expect(r.stderr).toContain('open — Issue #8002 open, no pull request yet')
   }, 80_000)
+})
+
+// --- issue #945: a failed policy read never casts a verdict under the defaults ---
+
+/**
+ * The origin incident (2026-10-01): during a GitHub API limit the trust-anchor
+ * read failed, `loadTrustAnchorConfig` swallowed it to `null`, and the loop ran
+ * under the `BLOCKER` default while this repository's `reviewPolicy` sets
+ * `MAJOR`; the merge gate read the real policy and refused both verdicts on a
+ * policy-digest mismatch, so a clean review could not merge. `reviewPolicyForLoop`
+ * is the loop-only variant that reads through `loadTrustAnchorConfigOrThrow` and
+ * tells a FAILED read (retry, then throw → pause) apart from a missing/no-policy
+ * config (defaults). The config-level read variant itself is covered in
+ * `apps/cli/tests/config.test.ts`; the shared non-throwing `reviewPolicy` is
+ * exercised by `apps/cli/tests/commands/review-status.test.ts`.
+ */
+describe('reviewPolicyForLoop (issue #945) — retries a failed read, then throws; a null/no-policy config is the defaults path', () => {
+  it('retries the read, then throws naming the read error when every attempt fails (O1/O3)', () => {
+    let reads = 0
+    const load = () => {
+      reads += 1
+      throw new Error('gh: API rate limit exceeded (HTTP 403)')
+    }
+    expect(() => reviewPolicyForLoop(load)).toThrow(/could not read the repository's review policy/)
+    // Two attempts — the read was genuinely retried before giving up.
+    expect(reads).toBe(2)
+  })
+
+  it('a read that fails once then succeeds recovers on the retry (O1)', () => {
+    let reads = 0
+    const load = () => {
+      reads += 1
+      if (reads === 1) throw new Error('gh: transient failure')
+      return null
+    }
+    expect(reviewPolicyForLoop(load)).toEqual(DEFAULT_REVIEW_POLICY)
+    expect(reads).toBe(2)
+  })
+
+  it('a null read (missing file / no config) resolves to the built-in defaults, not a throw (O2)', () => {
+    let reads = 0
+    expect(
+      reviewPolicyForLoop(() => {
+        reads += 1
+        return null
+      })
+    ).toEqual(DEFAULT_REVIEW_POLICY)
+    expect(reads).toBe(1)
+  })
+
+  it('a config present without a reviewPolicy resolves to the built-in defaults (O2)', () => {
+    expect(reviewPolicyForLoop(() => ({ principals: ['someone'] }))).toEqual(DEFAULT_REVIEW_POLICY)
+  })
+
+  it('a readable reviewPolicy is honoured verbatim', () => {
+    const policy = reviewPolicyForLoop(() => ({ reviewPolicy: { codeReviewThreshold: 'MAJOR' } }))
+    expect(policy.codeReviewThreshold).toBe('MAJOR')
+  })
+
+  it('a present-but-unknown severity is a config defect, thrown WITHOUT retry (not a read failure)', () => {
+    let reads = 0
+    const load = () => {
+      reads += 1
+      return { reviewPolicy: { codeReviewThreshold: 'NOT-A-SEVERITY' } }
+    }
+    // `resolveReviewPolicy`'s own refusal, surfaced on the first attempt — the
+    // read itself succeeded, so it is never retried.
+    expect(() => reviewPolicyForLoop(load)).toThrow(/not one of/)
+    expect(reads).toBe(1)
+  })
+})
+
+describe('devReviewLoop — a failed policy read pauses infrastructure and casts no verdict (issue #945, O1/O3)', () => {
+  it('retries the read, then pauses infrastructure naming the error, dispatching no reviewer or developer', async () => {
+    const world = makeWorld()
+    let loadCalls = 0
+    // The REAL loop policy reader (`reviewPolicyForLoop`) over a forge read that
+    // always fails — so the loop runs the genuine retry-then-throw path.
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {
+        reviewPolicy: () =>
+          reviewPolicyForLoop(() => {
+            loadCalls += 1
+            throw new Error('gh: API rate limit exceeded (HTTP 403)')
+          })
+      }
+    )
+
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
+    // The read was retried before the loop gave up (O1).
+    expect(loadCalls).toBe(2)
+    // No verdict was cast: neither reviewer, nor even the developer, was ever
+    // dispatched — the failed read stops the round during setup (O1).
+    expect(world.dispatchCountByRole['code-reviewer'] ?? 0).toBe(0)
+    expect(world.dispatchCountByRole.security ?? 0).toBe(0)
+    expect(world.dispatchCountByRole.developer ?? 0).toBe(0)
+
+    // The pause record and its comment name the failed read, so the Principal
+    // can tell a forge outage from a policy problem (O3).
+    const pauseState = JSON.parse(readFileSync(join(ipControlDir(world), 'pause-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
+    expect(pauseState.reason).toBe('infrastructure')
+    expect(String(pauseState.detail)).toMatch(/review policy/)
+    const pauseComment = world.postedComments.find((c) => /aeg:loop:paused:infrastructure/.test(c.body))
+    expect(pauseComment).toBeDefined()
+    expect(pauseComment!.body).toMatch(/review policy/)
+    // Nothing resembling a verdict was ever posted.
+    expect(world.postedComments.some((c) => /^VERDICT:/m.test(c.body))).toBe(false)
+  })
+
+  it('a null read (missing / policy-less config) does not stop the round — the loop runs under the defaults (O2)', async () => {
+    const world = makeWorld()
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {
+        // The real loop policy reader over a config that resolves to null (a
+        // missing file, or one present without a reviewPolicy): the defaults path,
+        // which publishes exactly as a clean round always has — the failed-read
+        // pause is reached ONLY by a genuine read failure, never by an absent config.
+        reviewPolicy: () => reviewPolicyForLoop(() => null)
+      }
+    )
+    expect(result.finalDecision.type).toBe('publish')
+    expect(world.dispatchCountByRole['code-reviewer'] ?? 0).toBeGreaterThanOrEqual(1)
+    expect(world.dispatchCountByRole.security ?? 0).toBeGreaterThanOrEqual(1)
+  })
 })

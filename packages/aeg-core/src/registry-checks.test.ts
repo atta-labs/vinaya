@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { checkG1, checkG2, checkG3, checkG4, checkG5, checkG6 } from './registry-checks'
+import { checkG1, checkG2, checkG3, checkG4, checkG5, checkG6, findUnshippedHookRefs } from './registry-checks'
 import type { GateRow } from './registry-parse'
 
 function makeRow(overrides: Partial<GateRow> = {}): GateRow {
@@ -334,5 +334,52 @@ describe('checkG6', () => {
     const result = checkG6(rows, new Set(['registry-gates']))
     expect(result.status).toBe('pass')
     expect(result.findings).toHaveLength(0)
+  })
+})
+
+describe('findUnshippedHookRefs / checkG1 hook references', () => {
+  const shipped = new Set(['.claude/hooks/track-transcript.sh', '.husky/pre-push', '.vinaya/hooks/pre-push'])
+  const doc = (content: string) => [{ path: 'aeg-root/x.md', content }]
+
+  it('passes a shipped hook path and a path under no hook directory', () => {
+    const docs = doc('Runs `.husky/pre-push` and `.claude/hooks/track-transcript.sh`; see `apps/cli/src/x.ts`.')
+    expect(findUnshippedHookRefs(docs, shipped)).toEqual([])
+  })
+
+  it('flags a hook path under each hook directory that is not shipped', () => {
+    const docs = doc(
+      ['`.claude/hooks/check-forge-gates.sh`', '`.vinaya/hooks/nope`', '`.husky/nope`', '`.git/hooks/nope`'].join('\n')
+    )
+    const findings = findUnshippedHookRefs(docs, shipped)
+    expect(findings.map((f) => f.reason.match(/"([^"]+)"/)?.[1])).toEqual([
+      '.claude/hooks/check-forge-gates.sh',
+      '.vinaya/hooks/nope',
+      '.husky/nope',
+      '.git/hooks/nope'
+    ])
+    expect(findings[1]?.reason).toContain('aeg-root/x.md:2')
+  })
+
+  it('flags a bare check-*.sh name that no shipped path carries, and passes one that does', () => {
+    const docs = doc('`check-forge-gates.sh` and `check-real.sh`')
+    const findings = findUnshippedHookRefs(docs, new Set(['.claude/hooks/check-real.sh']))
+    expect(findings).toHaveLength(1)
+    expect(findings[0]?.reason).toContain('"check-forge-gates.sh"')
+  })
+
+  it('ignores directory and glob tokens, bare names outside the check-* pattern, and unquoted prose', () => {
+    const docs = doc('`.husky/` `.husky/*` `.claude/hooks/*.sh` `aeg.sh` check-forge-gates.sh')
+    expect(findUnshippedHookRefs(docs, new Set())).toEqual([])
+  })
+
+  it('checkG1 fails on an unshipped hook reference even when every implementation resolves', () => {
+    const rows = [makeRow({ implementation: 'real/file.ts' })]
+    const result = checkG1(rows, () => true, { docs: doc('`.claude/hooks/gone.sh`'), shipped })
+    expect(result.status).toBe('fail')
+    expect(result.findings[0]?.path).toBe('aeg-root/x.md')
+  })
+
+  it('checkG1 without hook input behaves as before', () => {
+    expect(checkG1([makeRow({ implementation: 'real/file.ts' })], () => true).status).toBe('pass')
   })
 })
