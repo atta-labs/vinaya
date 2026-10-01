@@ -35,23 +35,23 @@
  * what the numbering and the "already published?" decision need.
  */
 
-import { SEVERITY_COLUMNS, type RoundRecord } from './types'
+import type { RoundRecord } from './types'
 
 /**
- * The published summary's own header row, byte-for-byte as `render-summary.ts`
- * emits it — both derived from `SEVERITY_COLUMNS`, so the detector here and
- * the renderer there can never drift about what a summary comment looks like.
- * A principal-authored comment carrying this line is the ready-for-merge
- * summary itself: the one honest "the summary was actually published" signal,
+ * The published marker line — `<!-- aeg:loop:published head=<sha>
+ * confidence=<round>:<cell>,… -->`, as `render-summary.ts` emits it. A
+ * principal-authored comment carrying this line is the ready-for-merge
+ * publication itself: the one honest "the loop actually published" signal,
  * distinct from a round merely deciding `publish` (the control store's own
  * `loop_state.phase === 'publish'` is written before `publishRound` runs, so
- * it can never stand in for this).
+ * it can never stand in for this). Group 1 is the published head, group 2 the
+ * confidence entries.
  */
-export const SUMMARY_TABLE_HEADER = `| round | ${SEVERITY_COLUMNS.join(' | ')} | confidence | outcome |`
+export const PUBLISHED_MARKER_LINE = /^<!-- aeg:loop:published head=([0-9a-f]{7,64}) confidence=([^\s]*) -->$/
 
-/** True when `body` is (or contains, verbatim on its own line) the published summary's header — the caller has already confirmed the comment is principal-authored. */
+/** True when `body` carries the published marker verbatim on its own line — the caller has already confirmed the comment is principal-authored. */
 export function isPublishedSummaryComment(body: string): boolean {
-  return body.split('\n').some((line) => line.trim() === SUMMARY_TABLE_HEADER)
+  return body.split('\n').some((line) => PUBLISHED_MARKER_LINE.test(line.trim()))
 }
 
 /**

@@ -1,5 +1,5 @@
 export { assessRound, renderPhaseBreakdown, renderTaskBudgetDetail, taskBudgetExceeded } from './assess-round'
-export { parseSummaryConfidenceRows, renderSummary } from './render-summary'
+export { parseSummaryConfidenceRows, renderPublishedMarker } from './render-summary'
 export type { SummaryConfidenceRow } from './render-summary'
 export { initialLoopState } from './types'
 export {
@@ -7,8 +7,8 @@ export {
   isConcludedJournal,
   isPublishedSummaryComment,
   nextRoundNumber,
-  reconstructRounds,
-  SUMMARY_TABLE_HEADER
+  PUBLISHED_MARKER_LINE,
+  reconstructRounds
 } from './journal-reconstruction'
 export type { ReconstructedJournal, ReconstructionInput, ReviewGateFact } from './journal-reconstruction'
 export type {

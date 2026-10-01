@@ -241,7 +241,7 @@ describe('pre-task-log-v1 fixtures — forge_write family', () => {
  * fabricated default (a coerced `0`, a guessed `'unavailable'`, an injected
  * key that was never in the payload). Every assertion below reads the
  * schema's own parsed output directly; none of it calls a report-rendering
- * function (`renderSummary`, `vinaya pr report`'s engine, or any Studio
+ * function (`renderPublishedMarker`, `vinaya pr report`'s engine, or any Studio
  * artifact) — capture completeness is verified against the typed event
  * itself, never against a generated report (Traps to avoid).
  */

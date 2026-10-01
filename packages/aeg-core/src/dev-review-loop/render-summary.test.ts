@@ -1,351 +1,62 @@
 import { describe, expect, it } from 'vitest'
 import { extractCodeReviewVerdict, extractSecurityReviewVerdict } from '../verdict-extraction'
-import { blockingVerdict, cleanVerdict, fakeGate, fakeVerdicts, runScenario } from './fakes'
-import { DEFERRED_FINDINGS_HEADING, parseSummaryConfidenceRows, renderSummary } from './render-summary'
-import { initialLoopState, SEVERITY_COLUMNS } from './types'
-import type { LoopConfig, RoundRecord } from './types'
+import { isPublishedSummaryComment } from './journal-reconstruction'
+import { parseSummaryConfidenceRows, renderPublishedMarker } from './render-summary'
+import type { RoundRecord } from './types'
 
-const CONFIG: LoopConfig = {
-  loopId: 'loop-1',
-  task: 414,
-  reviewers: ['code-reviewer', 'security'],
-  models: { 'code-reviewer': 'sonnet', security: 'sonnet' },
-  maxRounds: 3,
-  maxTaskMinutes: 180
+function round(n: number, confidence: RoundRecord['confidence']): RoundRecord {
+  return { round: n, countsBySeverity: {}, confidence, outcome: 'green' }
 }
 
-function freshState() {
-  return initialLoopState(CONFIG)
-}
+const HEAD = 'abc1234def'
 
-/**
- * A round the loop assessed and found nothing in — every severity column
- * recorded at zero, exactly as `buildRoundRecord` writes one. Distinct from a
- * round rebuilt from the pull request's markers, whose counts have no source
- * at all and which `recordedCounts` therefore never stands in for.
- */
-function recordedCounts(findings: Partial<Record<(typeof SEVERITY_COLUMNS)[number], number>> = {}) {
-  const counts: Record<string, number> = {}
-  for (const key of SEVERITY_COLUMNS) counts[key] = findings[key] ?? 0
-  return counts
-}
-
-/** A round rebuilt from a round marker after a restart — no counts recorded, as `reconstructRounds` builds it. */
-function rebuiltRound(round: number, outcome: RoundRecord['outcome'] = 'changes_requested'): RoundRecord {
-  return { round, countsBySeverity: {}, confidence: null, outcome }
-}
-
-/**
- * A round no reviewer ever saw — its gate was red, or a low confidence sent the
- * developer back — as `buildUnreviewedRecord` (`assess-round.ts`) builds one: no
- * counts recorded, and a `notReviewed` reason. Distinct from `rebuiltRound`,
- * whose counts are also unknown but which DID reach review, so it keeps its
- * `outcome` rather than naming a not-reviewed reason.
- */
-function unreviewedRound(
-  round: number,
-  reason: NonNullable<RoundRecord['notReviewed']>,
-  confidence: RoundRecord['confidence'] = null
-): RoundRecord {
-  return { round, countsBySeverity: {}, confidence, outcome: 'changes_requested', notReviewed: reason }
-}
-
-describe('renderSummary — Part 4 (O4)', () => {
-  it('renders one row per round with the fixed severity columns, confidence, and outcome', () => {
-    const { state } = runScenario(freshState(), [
-      fakeGate(1, true),
-      fakeVerdicts(1, [
-        blockingVerdict('reviewer', [{ id: 'F1', severity: 'blocker', state: 'open' }]),
-        cleanVerdict('security')
-      ]),
-      fakeGate(2, true, { confidence: { value: 80 } }),
-      fakeVerdicts(2, [cleanVerdict('reviewer'), cleanVerdict('security')])
-    ])
-
-    const summary = renderSummary({ rounds: state.rounds })
-
-    expect(summary).toContain(
-      '| round | blocker | major | minor | critical | high | medium | low | confidence | outcome |'
+describe('renderPublishedMarker', () => {
+  it("is one hidden marker line carrying the head and each round's confidence", () => {
+    const marker = renderPublishedMarker(
+      { rounds: [round(1, null), round(2, { value: 80 }), round(3, 'absent')] },
+      HEAD
     )
-    expect(summary).toContain('| 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | — | changes_requested |')
-    expect(summary).toContain('| 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 80% | green |')
+    expect(marker).toBe(`<!-- aeg:loop:published head=${HEAD} confidence=1:-,2:80,3:absent -->`)
+  })
+
+  it('posts no round table and no finding text', () => {
+    const marker = renderPublishedMarker({ rounds: [round(1, null)] }, HEAD)
+    expect(marker).not.toContain('|')
+    expect(marker.split('\n')).toHaveLength(1)
   })
 
   it('never emits a line either verdict extractor reads as a real verdict', () => {
-    const { state } = runScenario(freshState(), [
-      fakeGate(1, true),
-      fakeVerdicts(1, [cleanVerdict('reviewer'), cleanVerdict('security')])
-    ])
-    const summary = renderSummary({ rounds: state.rounds })
-
-    expect(extractCodeReviewVerdict([summary]).danglingNote).not.toBeNull()
-    expect(extractSecurityReviewVerdict([summary]).danglingNote).not.toBeNull()
-    expect(summary).not.toMatch(/VERDICT:/)
-    expect(summary).not.toMatch(/Judged head:/)
-    expect(summary).not.toMatch(/Objectives version:/)
+    const marker = renderPublishedMarker({ rounds: [round(1, null), round(2, 'absent')] }, HEAD)
+    expect(extractCodeReviewVerdict([marker]).danglingNote).not.toBeNull()
+    expect(extractSecurityReviewVerdict([marker]).danglingNote).not.toBeNull()
   })
 
-  it('carries no finding text — no F<n> id, no file path', () => {
-    const { state } = runScenario(freshState(), [
-      fakeGate(1, true),
-      fakeVerdicts(1, [
-        blockingVerdict('reviewer', [{ id: 'F7', severity: 'major', state: 'open' }]),
-        cleanVerdict('security')
-      ])
-    ])
-    const summary = renderSummary({ rounds: state.rounds })
-
-    expect(summary).not.toMatch(/\bF\d+\b/)
-    expect(summary).not.toMatch(/apps\/cli|packages\/aeg-core/)
-  })
-
-  it('defeat: a journal with zero rounds renders one header row, no crash', () => {
-    const summary = renderSummary({ rounds: [] })
-    const lines = summary.split('\n')
-    expect(lines).toHaveLength(2)
-    expect(lines[0]).toContain('round')
-  })
-
-  it('defeat: outcome words never include APPROVE — only green, changes_requested, escalated, stopped', () => {
-    const summary = renderSummary({
-      rounds: [
-        rebuiltRound(1, 'green'),
-        rebuiltRound(2, 'changes_requested'),
-        rebuiltRound(3, 'escalated'),
-        rebuiltRound(4, 'stopped')
-      ]
-    })
-    expect(summary).not.toMatch(/APPROVE/)
-    for (const word of ['green', 'changes_requested', 'escalated', 'stopped']) {
-      expect(summary).toContain(word)
-    }
-  })
-
-  it('renders `absent` confidence distinctly from a numeric value or no confidence at all', () => {
-    const summary = renderSummary({
-      rounds: [
-        { round: 1, countsBySeverity: recordedCounts(), confidence: null, outcome: 'changes_requested' },
-        { round: 2, countsBySeverity: recordedCounts(), confidence: 'absent', outcome: 'changes_requested' },
-        { round: 3, countsBySeverity: recordedCounts(), confidence: { value: 60 }, outcome: 'green' }
-      ]
-    })
-    expect(summary).toContain('| 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | — | changes_requested |')
-    expect(summary).toContain('| 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | absent | changes_requested |')
-    expect(summary).toContain('| 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 60% | green |')
-  })
-})
-
-describe('renderSummary — a round whose counts are unknown never reads as a clean round', () => {
-  it('reports nothing for a round rebuilt from a marker, and numbers — zero included — for rounds the loop recorded', () => {
-    const summary = renderSummary({
-      rounds: [
-        rebuiltRound(1),
-        rebuiltRound(2),
-        {
-          round: 3,
-          countsBySeverity: recordedCounts({ blocker: 2, minor: 1 }),
-          confidence: null,
-          outcome: 'changes_requested'
-        },
-        { round: 4, countsBySeverity: recordedCounts(), confidence: { value: 90 }, outcome: 'green' }
-      ]
-    })
-
-    // Rounds 1-2 have no counts to report at all: the markers they were rebuilt
-    // from carry none. Reporting `0` there claimed the rounds were clean.
-    expect(summary).toContain('| 1 | — | — | — | — | — | — | — | — | changes_requested |')
-    expect(summary).toContain('| 2 | — | — | — | — | — | — | — | — | changes_requested |')
-    expect(summary).toContain('| 3 | 2 | 0 | 1 | 0 | 0 | 0 | 0 | — | changes_requested |')
-    // Round 4's zeros are a measurement the loop made, and still read as zeros.
-    expect(summary).toContain('| 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 90% | green |')
-  })
-
-  it('a round the loop really assessed and found nothing in reads `0`, not the unknown glyph', () => {
-    const { state } = runScenario(freshState(), [
-      fakeGate(1, true, { confidence: { value: 80 } }),
-      fakeVerdicts(1, [cleanVerdict('reviewer'), cleanVerdict('security')])
-    ])
-
-    const summary = renderSummary({ rounds: state.rounds })
-
-    expect(summary).toContain('| 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 80% | green |')
-  })
-
-  it('defeat: the header row is untouched, so a published summary is still detected', () => {
-    const rendered = renderSummary({ rounds: [rebuiltRound(1)] })
-
-    expect(rendered.split('\n')[0]).toBe(
-      '| round | blocker | major | minor | critical | high | medium | low | confidence | outcome |'
-    )
-  })
-
-  it('defeat: an unknown count cell is never read back as a confidence figure', () => {
-    const rendered = renderSummary({ rounds: [rebuiltRound(1)] })
-
-    // Every cell but the outcome reads `—`; the parser still reports exactly
-    // one row, and reads it as a round that was never asked for a confidence.
-    expect(parseSummaryConfidenceRows(rendered)).toEqual([{ round: 1, percent: null, asked: false }])
-  })
-})
-
-describe('renderSummary — a round no reviewer saw never reads as a reviewed round (Issue #824)', () => {
-  it('shows `—` counts and a not-reviewed outcome for an unreviewed round, and `0` for a reviewed clean round', () => {
-    const summary = renderSummary({
-      rounds: [
-        unreviewedRound(1, 'checks_red'),
-        { round: 2, countsBySeverity: recordedCounts(), confidence: { value: 80 }, outcome: 'green' }
-      ]
-    })
-
-    // Round 1 never reached review: no counts to report, and the outcome cell
-    // says so and why — never a `0`/`changes_requested` row read as a review
-    // that found nothing.
-    expect(summary).toContain('| 1 | — | — | — | — | — | — | — | — | not reviewed — checks red |')
-    // Round 2's zeros are a measurement the reviewers made, and still read `0`.
-    expect(summary).toContain('| 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 80% | green |')
-  })
-
-  it('names the low-confidence reason and still shows the confidence the developer stated', () => {
-    const summary = renderSummary({ rounds: [unreviewedRound(2, 'low_confidence', { value: 40 })] })
-
-    expect(summary).toContain('| 2 | — | — | — | — | — | — | — | 40% | not reviewed — low confidence |')
-  })
-
-  it('defeat: an unreviewed round is never emitted as a real verdict, and its outcome cell is not read as a confidence', () => {
-    const summary = renderSummary({ rounds: [unreviewedRound(1, 'checks_red')] })
-
-    expect(extractCodeReviewVerdict([summary]).danglingNote).not.toBeNull()
-    expect(extractSecurityReviewVerdict([summary]).danglingNote).not.toBeNull()
-    expect(summary).not.toMatch(/VERDICT:/)
-    // The outcome cell's em-dash never confuses the confidence read: the row is
-    // still parsed once, as a round never asked for a confidence.
-    expect(parseSummaryConfidenceRows(summary)).toEqual([{ round: 1, percent: null, asked: false }])
+  it('renders for a journal with zero rounds without crashing, and is still detected as published', () => {
+    expect(isPublishedSummaryComment(renderPublishedMarker({ rounds: [] }, HEAD))).toBe(true)
   })
 })
 
 describe('parseSummaryConfidenceRows', () => {
-  it("reads back every round's confidence from a table this module itself rendered", () => {
-    const { state } = runScenario(freshState(), [
-      fakeGate(1, true),
-      fakeVerdicts(1, [
-        blockingVerdict('reviewer', [{ id: 'F1', severity: 'blocker', state: 'open' }]),
-        cleanVerdict('security')
-      ]),
-      fakeGate(2, true, { confidence: { value: 80 } }),
-      fakeVerdicts(2, [cleanVerdict('reviewer'), cleanVerdict('security')])
-    ])
-
-    expect(parseSummaryConfidenceRows(renderSummary({ rounds: state.rounds }))).toEqual([
-      // Round 1 is never ASKED for a confidence — read back as not asked,
-      // which is a different fact from a round that was asked and stated
-      // nothing, and must never be reported as the developer's omission.
+  it("reads back every round's confidence from a marker this module itself rendered", () => {
+    const marker = renderPublishedMarker(
+      { rounds: [round(1, null), round(2, { value: 80 }), round(3, 'absent')] },
+      HEAD
+    )
+    expect(parseSummaryConfidenceRows(marker)).toEqual([
       { round: 1, percent: null, asked: false },
-      { round: 2, percent: 80, asked: true }
+      { round: 2, percent: 80, asked: true },
+      { round: 3, percent: null, asked: true }
     ])
   })
 
-  it('reads a summary quoted inside a longer comment, and nothing from prose or a differently-shaped table', () => {
-    const comment = [
-      'Ready for merge.',
-      '',
-      '| round | blocker | major | minor | critical | high | medium | low | confidence | outcome |',
-      '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
-      '| 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 95% | green |',
-      '',
-      '| round | confidence |',
-      '| --- | --- |',
-      '| 9 | 10% |'
-    ].join('\n')
-
-    expect(parseSummaryConfidenceRows(comment)).toEqual([{ round: 1, percent: 95, asked: true }])
+  it('reads a marker quoted inside a longer comment, and nothing from prose', () => {
+    const body = `Deferred findings are tracked in #12.\n\n<!-- aeg:loop:published head=${HEAD} confidence=2:70 -->\n\n| 9 | 99% |`
+    expect(parseSummaryConfidenceRows(body)).toEqual([{ round: 2, percent: 70, asked: true }])
+    expect(parseSummaryConfidenceRows('1:90 and 2:80, no marker')).toEqual([])
   })
 
-  it('tells a round that was asked and stated nothing apart from one that was never asked', () => {
-    const comment = [
-      '| round | blocker | major | minor | critical | high | medium | low | confidence | outcome |',
-      '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
-      '| 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | — | changes_requested |',
-      '| 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | absent | green |'
-    ].join('\n')
-
-    expect(parseSummaryConfidenceRows(comment)).toEqual([
-      { round: 1, percent: null, asked: false },
-      { round: 2, percent: null, asked: true }
-    ])
-  })
-
-  it('drops a row whose confidence cell exceeds the percentage a caller is allowed to publish', () => {
-    const comment = [
-      '| round | blocker | major | minor | critical | high | medium | low | confidence | outcome |',
-      '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
-      '| 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 500% | green |',
-      '| 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 100% | green |'
-    ].join('\n')
-
-    // Comment text is not a trusted source of a figure a tool result declares
-    // as 0-100, so the out-of-range row contributes nothing at all.
-    expect(parseSummaryConfidenceRows(comment)).toEqual([{ round: 2, percent: 100, asked: true }])
-  })
-})
-
-describe('renderSummary — deferred findings block (O4)', () => {
-  it('lists each deferred finding with its original severity, file:line and reason, below the table', () => {
-    const summary = renderSummary({
-      rounds: [
-        {
-          round: 2,
-          countsBySeverity: {},
-          confidence: null,
-          outcome: 'changes_requested',
-          deferred: [
-            { severity: 'MAJOR', location: 'packages/aeg-core/src/x.ts:42', reason: 'unchanged-line' },
-            { severity: 'MAJOR', location: 'apps/log-server/y.ts:3', reason: 'outside-surface' }
-          ]
-        }
-      ]
-    })
-    expect(summary).toContain(DEFERRED_FINDINGS_HEADING)
-    expect(summary).toContain('- round 2 — MAJOR packages/aeg-core/src/x.ts:42 — unchanged line')
-    expect(summary).toContain('- round 2 — MAJOR apps/log-server/y.ts:3 — outside the Surface')
-  })
-
-  it('a finding with no location reads (no location)', () => {
-    const summary = renderSummary({
-      rounds: [
-        {
-          round: 2,
-          countsBySeverity: {},
-          confidence: null,
-          outcome: 'green',
-          deferred: [{ severity: 'HIGH', location: '', reason: 'unchanged-line' }]
-        }
-      ]
-    })
-    expect(summary).toContain('- round 2 — HIGH (no location) — unchanged line')
-  })
-
-  it('renders no deferred block, and stays parseable, when no round deferred anything', () => {
-    const summary = renderSummary({
-      rounds: [{ round: 1, countsBySeverity: { major: 0 }, confidence: null, outcome: 'green' }]
-    })
-    expect(summary).not.toContain(DEFERRED_FINDINGS_HEADING)
-    // the deferred block is a plain list, never a table row, so the confidence
-    // parser still reads exactly the round rows it did before
-    expect(parseSummaryConfidenceRows(summary).map((r) => r.round)).toEqual([1])
-  })
-
-  it('the deferred block never parses as a summary row', () => {
-    const summary = renderSummary({
-      rounds: [
-        {
-          round: 1,
-          countsBySeverity: { major: 1 },
-          confidence: null,
-          outcome: 'green',
-          deferred: [{ severity: 'MAJOR', location: 'a.ts:1', reason: 'unchanged-line' }]
-        }
-      ]
-    })
-    expect(parseSummaryConfidenceRows(summary).map((r) => r.round)).toEqual([1])
+  it('drops an entry whose confidence exceeds the percentage a caller is allowed to publish, or is malformed', () => {
+    const body = `<!-- aeg:loop:published head=${HEAD} confidence=1:101,2:90,x:50,3:-5 -->`
+    expect(parseSummaryConfidenceRows(body)).toEqual([{ round: 2, percent: 90, asked: true }])
   })
 })

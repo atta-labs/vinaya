@@ -68,7 +68,7 @@ Two carriers, one per direction:
 The pull request the Operator may read is the one on the selected task's own branch, resolved from the task; a request naming any other is refused, not answered. What crosses is bounded to two things, and both are reports, never instructions:
 
 1. **What the forge reports about that head** — each required and reported check with its state and conclusion, and for a failed one its failure summary.
-2. **The principal-authored review record** — the newest verdicts and the head they judged, the round markers, the published summary table, and any pause comment.
+2. **The principal-authored review record** — the newest verdicts and the head they judged, the round markers, and any pause comment.
 
 A comment authored outside the principal allowlist is not part of the record: it casts no verdict the Operator may report, and the Operator never carries one up to the Principal as though it were. The read holds no forge-write credential, so nothing in this widening gives the Operator an act it did not already lack.
 
