@@ -366,3 +366,61 @@ describe('log-sync-folder-source — proven against real folders (O6)', () => {
     expect(readFileSync(join(foreignDir, '1.ndjson'), 'utf8')).toBe(before)
   })
 })
+
+describe('log-sync-folder-source — byte-accurate offsets for multibyte content (O1, round 2 review F1)', () => {
+  it('a line holding a multibyte UTF-8 character resumes at the real byte boundary, not a UTF-16 code-unit count', async () => {
+    const dir = tmpDir()
+    mkdirSync(repoDir(dir), { recursive: true })
+    const live = livePath(dir, '1010')
+    // '北' is one UTF-16 code unit but three UTF-8 bytes — a naive string-index
+    // cursor would undershoot the real byte offset by two bytes per line.
+    writeFileSync(live, jsonLine({ city: '北京' }) + jsonLine({ n: 2 }) + jsonLine({ n: 3 }))
+
+    const source = createFolderLogSource({ folderRoot: join(dir, 'outbox'), repo: REPO })
+    const page1 = await source.readPage(null, 1)
+    expect(page1.lines.map((l) => JSON.parse(l.raw))).toEqual([{ city: '北京' }])
+
+    // Resuming from the returned cursor must land exactly on the start of
+    // the next line — never a spurious fragment and never a re-read of any
+    // byte already consumed.
+    const page2 = await source.readPage(page1.next, 100)
+    expect(page2.lines.map((l) => JSON.parse(l.raw))).toEqual([{ n: 2 }, { n: 3 }])
+  })
+
+  it('a multibyte first line still fingerprints correctly and does not fire a false rotation', async () => {
+    const dir = tmpDir()
+    mkdirSync(repoDir(dir), { recursive: true })
+    const live = livePath(dir, '1011')
+    writeFileSync(live, jsonLine({ emoji: '🎉' }))
+
+    const source = createFolderLogSource({ folderRoot: join(dir, 'outbox'), repo: REPO })
+    const page1 = await source.readPage(null, 100)
+    expect(page1.lines).toHaveLength(1)
+
+    appendFileSync(live, jsonLine({ n: 2 }))
+    const page2 = await source.readPage(page1.next, 100)
+    expect(page2.lines.map((l) => JSON.parse(l.raw))).toEqual([{ n: 2 }])
+    expect(page2.gaps).toEqual([])
+  })
+})
+
+describe('log-sync-folder-source — a tampered cursor cannot escape the repo folder (round 2 security review, LOW)', () => {
+  it('a cursor key holding a path separator is dropped, never joined into a path', async () => {
+    const dir = tmpDir()
+    mkdirSync(repoDir(dir), { recursive: true })
+    const outboxRoot = join(dir, 'outbox')
+    const escapeTarget = join(outboxRoot, 'other-corp-other-repo')
+    mkdirSync(escapeTarget, { recursive: true })
+    writeFileSync(join(escapeTarget, '1.ndjson'), jsonLine({ secret: true }))
+
+    const tamperedCursor = JSON.stringify({
+      '../other-corp-other-repo/1': { offset: 0, firstLineFingerprint: null }
+    })
+
+    const source = createFolderLogSource({ folderRoot: outboxRoot, repo: REPO })
+    const page = await source.readPage(tamperedCursor, 100)
+    expect(page.lines).toEqual([])
+    // The foreign file was never opened for read through the tampered key.
+    expect(readFileSync(join(escapeTarget, '1.ndjson'), 'utf8')).toBe(jsonLine({ secret: true }))
+  })
+})

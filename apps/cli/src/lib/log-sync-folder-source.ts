@@ -54,11 +54,30 @@ export type FolderSourceDeps = {
   repo: { owner: string; repo: string } | null
 }
 
+/**
+ * Whether `name` is safe to join onto `repoDir` as `<name>.ndjson` /
+ * `<name>.1.ndjson`. A real stream name (`listLiveStreamNames`'s own
+ * `readdirSync` basenames) can never contain a path separator — the
+ * filesystem forbids one in a single component — but a cursor's `name` keys
+ * come from caller-supplied JSON and are joined unvalidated otherwise: a
+ * tampered key holding `/` or `\` segments (e.g. `../other-repo/1`) would
+ * have `join` resolve outside this one repository folder, the O5 scoping
+ * `O_NOFOLLOW` alone does not catch (round 2 security review, LOW).
+ */
+function isValidStreamName(name: string): boolean {
+  return name.length > 0 && !name.includes('/') && !name.includes('\\') && !name.includes('\0')
+}
+
 function parseCursor(cursor: SourceCursor | null): FolderCursorState {
   if (cursor === null) return {}
   try {
     const parsed = JSON.parse(cursor) as unknown
-    return typeof parsed === 'object' && parsed !== null ? (parsed as FolderCursorState) : {}
+    if (typeof parsed !== 'object' || parsed === null) return {}
+    const result: FolderCursorState = {}
+    for (const [name, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (isValidStreamName(name)) result[name] = value as StreamCursorState
+    }
+    return result
   } catch {
     return {}
   }
@@ -102,9 +121,9 @@ function regularFileSize(path: string): number | null {
   }
 }
 
-/** Reads `[from, to)` of `path`, under the same refusal rules as {@link regularFileSize}. `null` when the file cannot be read as a regular file. */
-function readRangeOf(path: string, from: number, to: number): string | null {
-  if (to <= from) return ''
+/** Reads `[from, to)` of `path` as raw bytes, under the same refusal rules as {@link regularFileSize}. `null` when the file cannot be read as a regular file. */
+function readRangeOf(path: string, from: number, to: number): Buffer | null {
+  if (to <= from) return Buffer.alloc(0)
   let fd: number
   try {
     fd = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW)
@@ -121,7 +140,7 @@ function readRangeOf(path: string, from: number, to: number): string | null {
       if (n === 0) break
       readTotal += n
     }
-    return buffer.toString('utf8', 0, readTotal)
+    return buffer.subarray(0, readTotal)
   } catch {
     return null
   } finally {
@@ -132,21 +151,32 @@ function readRangeOf(path: string, from: number, to: number): string | null {
 /** One complete line read from a stream file, with the byte range it occupied (newline included) so a caller can advance its offset exactly. */
 type CompleteLine = { text: string; startByte: number; endByte: number }
 
+/** The newline byte (`\n`, `0x0A`) — a single UTF-8 byte, so searching for it on the raw buffer is byte-exact regardless of what multibyte characters surround it. */
+const NEWLINE_BYTE = 0x0a
+
 /**
- * Splits `content` (read starting at file byte `baseOffset`) into complete
- * lines — a line with no trailing `\n` yet is the torn tail and is never
- * returned (O2): the sink's append writes a line and its newline in one
- * write, but a reader can still observe a partial one while the writer is
- * mid-write.
+ * Splits `content` (raw bytes read starting at file byte `baseOffset`) into
+ * complete lines — a line with no trailing `\n` yet is the torn tail and is
+ * never returned (O2): the sink's append writes a line and its newline in
+ * one write, but a reader can still observe a partial one while the writer
+ * is mid-write.
+ *
+ * Operates on the raw `Buffer`, never a decoded string: a UTF-16 JS string
+ * index is a code-unit count, not a byte count, so finding `\n` and slicing
+ * on a decoded string would silently desync `startByte`/`endByte` — and
+ * therefore the stored cursor offset — from the file's real byte positions
+ * the moment a line holds a multibyte UTF-8 character (round 2 review,
+ * BLOCKER). Each line's `text` is decoded from its own exact byte range
+ * only, once its bounds are known.
  */
-function completeLinesOf(content: string, baseOffset: number): CompleteLine[] {
+function completeLinesOf(content: Buffer, baseOffset: number): CompleteLine[] {
   const lines: CompleteLine[] = []
   let consumed = 0
   for (;;) {
-    const newlineAt = content.indexOf('\n', consumed)
+    const newlineAt = content.indexOf(NEWLINE_BYTE, consumed)
     if (newlineAt === -1) break
     lines.push({
-      text: content.slice(consumed, newlineAt),
+      text: content.toString('utf8', consumed, newlineAt),
       startByte: baseOffset + consumed,
       endByte: baseOffset + newlineAt + 1
     })
