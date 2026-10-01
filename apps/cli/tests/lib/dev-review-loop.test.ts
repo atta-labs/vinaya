@@ -4648,4 +4648,22 @@ describe('devReviewLoop — a failed policy read pauses infrastructure and casts
     // Nothing resembling a verdict was ever posted.
     expect(world.postedComments.some((c) => /^VERDICT:/m.test(c.body))).toBe(false)
   })
+
+  it('a null read (missing / policy-less config) does not stop the round — the loop runs under the defaults (O2)', async () => {
+    const world = makeWorld()
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {
+        // The real reviewPolicy over a config that resolves to null (a missing
+        // file, or one present without a reviewPolicy): the defaults path, which
+        // publishes exactly as a clean round always has — the failed-read pause is
+        // reached ONLY by a genuine read failure, never by an absent config.
+        reviewPolicy: () => reviewPolicy(() => null)
+      }
+    )
+    expect(result.finalDecision.type).toBe('publish')
+    expect(world.dispatchCountByRole['code-reviewer'] ?? 0).toBeGreaterThanOrEqual(1)
+    expect(world.dispatchCountByRole.security ?? 0).toBeGreaterThanOrEqual(1)
+  })
 })
