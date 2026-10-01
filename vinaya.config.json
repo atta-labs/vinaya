@@ -27,8 +27,12 @@
   },
   "logs": {
     "url": "https://vinaya-log-server.estevez-dani.workers.dev/v1/repos/atta-labs/vinaya/events",
-    "headers": { "authorization": "Bearer ${VINAYA_LOG_TOKEN}" },
-    "readHeaders": { "authorization": "Bearer ${VINAYA_LOG_READ_TOKEN}" }
+    "headers": {
+      "authorization": "Bearer ${VINAYA_LOG_TOKEN}"
+    },
+    "readHeaders": {
+      "authorization": "Bearer ${VINAYA_LOG_READ_TOKEN}"
+    }
   },
   "releaseActor": "daniboomerang",
   "reviewPolicy": {
@@ -125,6 +129,11 @@
       {
         "path": ".claude/hooks/track-transcript.sh",
         "marker": "track-transcript",
+        "comment": "hash"
+      },
+      {
+        "path": ".vinaya/hooks/commit-msg",
+        "marker": "commit-msg",
         "comment": "hash"
       }
     ],

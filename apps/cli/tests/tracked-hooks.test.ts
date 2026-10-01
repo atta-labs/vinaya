@@ -15,6 +15,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { DoctorDeps } from '../src/commands/doctor.js'
 import { runDoctor } from '../src/commands/doctor.js'
 import type { EjectDeps } from '../src/commands/eject.js'
@@ -37,6 +38,11 @@ import {
   unsetCoreHooksPath
 } from '../src/lib/detect.js'
 import type { LabelGateway } from '../src/lib/ops.js'
+
+// The real CLI source, invoked directly by `bun` instead of the hook's real
+// `npx --yes @attalabs/vinaya` body — same technique quickstart.test.ts uses,
+// keeps this network-free.
+const INDEX_TS = fileURLToPath(new URL('../src/index.ts', import.meta.url))
 
 let root: string
 
@@ -316,6 +322,37 @@ describe('ring 0 survives a clone', () => {
     } finally {
       git(root, ['worktree', 'remove', '--force', wtRoot])
     }
+  }, 20_000)
+})
+
+// ---------------------------------------------------------------------------
+// commit-msg — git actually fires the installed hook (issue-989)
+// ---------------------------------------------------------------------------
+describe('commit-msg hook fires on a real commit (issue-989)', () => {
+  it('refuses a bad header and accepts a good one, through the hook git actually runs', async () => {
+    gitInit(root)
+    git(root, ['add', 'README.md'])
+    git(root, ['commit', '-q', '-m', 'Chore: initial commit'])
+    await captureStdout(async () =>
+      runInit(
+        ['--yes'],
+        realishInitDeps(() => root)
+      )
+    )
+    // Swap the real hook's `npx --yes @attalabs/vinaya` body for one that
+    // invokes this workspace's own source directly, same technique
+    // quickstart.test.ts uses to stay network-free.
+    writeFileSync(
+      join(root, TRACKED_HOOK_DIR, 'commit-msg'),
+      `#!/usr/bin/env sh\nbun ${INDEX_TS} commit-msg "$1" "$2" || exit 1\n`,
+      { mode: 0o755 }
+    )
+
+    writeFileSync(join(root, 'file.txt'), 'x\n')
+    git(root, ['add', 'file.txt'])
+    expect(() => git(root, ['commit', '-q', '-m', 'Part 1 (O1): something'])).toThrow()
+    git(root, ['commit', '-q', '-m', 'Fix(cli): something'])
+    expect(git(root, ['log', '-1', '--format=%s'])).toBe('Fix(cli): something')
   }, 20_000)
 })
 
