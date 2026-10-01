@@ -7,11 +7,27 @@
  * this file's top level — so a command that never opens a cache pays
  * nothing for it.
  *
- * This part lands the storage shape and the dataset answers (O1, O4): one
- * row per identity, an edit recorded beside the first row, cursors/gaps/
- * quarantine read back as written, and the indexed columns a question reads
- * by. Schema versioning, the transaction-per-page guarantee, lock handling
- * and refusing a bad file or directory land in the parts that follow.
+ * This part adds the schema version and the transaction-per-page guarantee
+ * (O2, O3), on top of the storage shape and dataset answers (O1, O4) the
+ * previous part landed.
+ *
+ * **Schema.** `cache.sqlite`'s `PRAGMA user_version` names the schema this
+ * file was written under. Opening a file written by a newer version than
+ * this build knows refuses outright, naming the file and both versions; an
+ * older (including a brand-new, still-`0`) version runs every migration
+ * step between it and {@link CURRENT_SCHEMA_VERSION} inside one
+ * transaction before anything else touches the file.
+ *
+ * **Transaction per page.** A write transaction opens lazily on this
+ * cache's first `put`/`recordGap` since the last commit, and commits only
+ * when `setCursor` is called (or the cache is closed) — so everything a
+ * sync run stored since its last cursor advance is durable together with
+ * that advance, and a process killed before the next `setCursor` leaves the
+ * database at the previous one, a rerun resuming from there and
+ * re-processing the lost span (`put`'s own idempotency makes that replay
+ * harmless).
+ *
+ * Lock handling and refusing a bad file or directory land in the next part.
  */
 
 import { createRequire } from 'node:module'
@@ -39,8 +55,18 @@ import type {
 /** The database file's own name inside the directory the caller gives (Decisions, `apps/cli/specs/log-sync.md`). */
 export const CACHE_FILE_NAME = 'cache.sqlite'
 
-/** The schema this part creates, unconditionally and idempotently — schema versioning/migration lands in the next part. */
-const SCHEMA_SQL = `
+/** This build's schema version — bumped whenever a migration step is added below. */
+export const CURRENT_SCHEMA_VERSION = 1
+
+/** One migration step: brings a database from immediately-below `to` up to `to`, inside the caller's own transaction. */
+type Migration = { to: number; run(db: DatabaseSyncType): void }
+
+/** Index 0 creates the whole current schema fresh — the step every brand-new (`user_version` still `0`) file runs. A future schema bump adds a step here, from the version before it to the version after, written as an `ALTER`/`CREATE` against what the PRIOR step left behind, never a second full-schema literal. */
+const MIGRATIONS: readonly Migration[] = [
+  {
+    to: 1,
+    run(db) {
+      db.exec(`
   CREATE TABLE IF NOT EXISTS rows (
     identity TEXT PRIMARY KEY,
     schemaVersion INTEGER NOT NULL,
@@ -109,7 +135,10 @@ const SCHEMA_SQL = `
     editedHash TEXT NOT NULL,
     origin TEXT
   );
-`
+      `)
+    }
+  }
+]
 
 function gapKeyOf(gap: Pick<SourceGap, 'source' | 'from' | 'to' | 'reason'>): string {
   return JSON.stringify([gap.source, gap.from, gap.to, gap.reason])
@@ -274,6 +303,29 @@ function editFromRecord(record: EditRow): RowEdit {
 }
 
 /** A durable `LogCache` with the one extra lifecycle method a real file needs: `close()` releases the connection. */
+/** Opens (creating if absent) the schema version this build's `user_version` names, or refuses/migrates (O2). Runs before anything else touches the file. */
+function openSchema(db: DatabaseSyncType, dbPath: string): void {
+  const stored = (db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version
+  if (stored > CURRENT_SCHEMA_VERSION) {
+    throw new Error(
+      `cache database was written by a newer schema version (${stored}) than this build knows (${CURRENT_SCHEMA_VERSION}): ${dbPath}`
+    )
+  }
+  if (stored === CURRENT_SCHEMA_VERSION) return
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    for (const migration of MIGRATIONS) {
+      if (migration.to <= stored) continue
+      migration.run(db)
+    }
+    db.exec(`PRAGMA user_version = ${CURRENT_SCHEMA_VERSION}`)
+    db.exec('COMMIT')
+  } catch (err) {
+    db.exec('ROLLBACK')
+    throw err
+  }
+}
+
 export type SqliteLogCache = LogCache & { close(): void }
 
 /**
@@ -286,7 +338,7 @@ export function createSqliteCache(dir: string): SqliteLogCache {
 
   const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite')
   const db: DatabaseSyncType = new DatabaseSync(dbPath)
-  db.exec(SCHEMA_SQL)
+  openSchema(db, dbPath)
 
   const selectRowHash = db.prepare('SELECT contentHash FROM rows WHERE identity = $identity')
   const insertRow = db.prepare(`
@@ -326,6 +378,24 @@ export function createSqliteCache(dir: string): SqliteLogCache {
   `)
   const selectAllEdits = db.prepare('SELECT * FROM edits ORDER BY rowid ASC')
 
+  // The write transaction for the page in progress — begun lazily on this
+  // cache's first mutation since the last commit, committed by `setCursor`
+  // (or `close`), so a page's rows, quarantine records and new cursor land
+  // together (O3).
+  let pageOpen = false
+
+  function beginPage(): void {
+    if (pageOpen) return
+    db.exec('BEGIN IMMEDIATE')
+    pageOpen = true
+  }
+
+  function commitPage(): void {
+    if (!pageOpen) return
+    db.exec('COMMIT')
+    pageOpen = false
+  }
+
   function run(stmt: StatementSync, params: Record<string, SQLInputValue>): StatementResultingChanges {
     return stmt.run(params)
   }
@@ -344,6 +414,7 @@ export function createSqliteCache(dir: string): SqliteLogCache {
 
   return {
     put(line: NormalizedLine): PutOutcome {
+      beginPage()
       if (line.type === 'quarantine') {
         const record = line.record
         const outcome = run(insertQuarantine, {
@@ -379,9 +450,12 @@ export function createSqliteCache(dir: string): SqliteLogCache {
       return record?.cursor ?? null
     },
     setCursor(source: string, cursor: SourceCursor): void {
+      beginPage()
       run(upsertCursor, { source, cursor })
+      commitPage()
     },
     recordGap(gap: SourceGap): void {
+      beginPage()
       run(insertGap, {
         gapKey: gapKeyOf(gap),
         source: gap.source,
@@ -398,6 +472,7 @@ export function createSqliteCache(dir: string): SqliteLogCache {
       return dataset
     },
     close(): void {
+      commitPage()
       db.close()
     }
   }

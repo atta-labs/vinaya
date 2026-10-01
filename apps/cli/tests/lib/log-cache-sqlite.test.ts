@@ -10,7 +10,7 @@ import {
   type NormalizedLine,
   type RowOrigin
 } from '@attalabs/aeg-core'
-import { CACHE_FILE_NAME, createSqliteCache } from '../../src/lib/log-cache-sqlite.js'
+import { CACHE_FILE_NAME, CURRENT_SCHEMA_VERSION, createSqliteCache } from '../../src/lib/log-cache-sqlite.js'
 
 // The durable SQLite backend against the shared contract and this backend's
 // own durability guarantees (`apps/cli/specs/log-sync.md`). Every case opens
@@ -161,6 +161,143 @@ describe('log-cache-sqlite — the dataset answers from indexed columns and pars
       expect(coveredColumns.has('time')).toBe(true)
     } finally {
       db.close()
+    }
+  })
+})
+
+describe('log-cache-sqlite — schema version (O2)', () => {
+  it('refuses a database written by a newer schema version, naming the file and both versions', () => {
+    const dir = tmpDir()
+    const cache = createSqliteCache(dir)
+    cache.close()
+
+    const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite')
+    const raw = new DatabaseSync(dbPathOf(dir))
+    raw.exec('PRAGMA user_version = 999')
+    raw.close()
+
+    let thrown: unknown
+    try {
+      createSqliteCache(dir)
+    } catch (err) {
+      thrown = err
+    }
+    expect(thrown).toBeInstanceOf(Error)
+    expect(String(thrown)).toContain('999')
+    expect(String(thrown)).toContain(String(CURRENT_SCHEMA_VERSION))
+    expect(String(thrown)).toContain(dbPathOf(dir))
+  })
+
+  it('migrates an older database forward in one transaction without losing a row, cursor, gap, quarantine record or edit', () => {
+    const dir = tmpDir()
+    const cache = createSqliteCache(dir)
+    const first = operationLine({ eventId: 'e-1', origin: { source: 'a', position: '1' } })
+    cache.put(first)
+    // A different `result` gives a genuinely different content hash for the
+    // same identity — a real edit, the same way cache-contract.ts's own
+    // fixture produces one.
+    const edited = operationLine({ eventId: 'e-1', origin: { source: 'b', position: '2' }, result: 'error' })
+    cache.put(edited)
+    cache.recordGap({
+      source: 'folder:/logs',
+      from: 'a:1',
+      to: 'a:9',
+      reason: 'rotated away',
+      lost: { known: true, value: 8 }
+    })
+    cache.put(normalizeStoredLine('{"meta": torn', null))
+    cache.setCursor('folder:/logs', 'a.ndjson:10')
+    cache.close()
+
+    // Simulate an older on-disk database: the real schema is already in
+    // place (this build never shipped a structurally different one), so
+    // relabeling its own `user_version` back to 0 and reopening exercises
+    // the exact migration function a real version bump would use — proving
+    // it preserves data, not merely that it exists.
+    const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite')
+    const raw = new DatabaseSync(dbPathOf(dir))
+    raw.exec('PRAGMA user_version = 0')
+    raw.close()
+
+    const reopened = createSqliteCache(dir)
+    try {
+      const rows = reopened.dataset().rows()
+      expect(rows.map((r) => r.identity)).toEqual(['e-1'])
+      expect(reopened.edits()).toHaveLength(1)
+      expect(reopened.dataset().gaps()).toHaveLength(1)
+      expect(reopened.dataset().quarantined()).toHaveLength(1)
+      expect(reopened.cursor('folder:/logs')).toBe('a.ndjson:10')
+
+      const probe = new DatabaseSync(dbPathOf(dir))
+      try {
+        expect((probe.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(
+          CURRENT_SCHEMA_VERSION
+        )
+      } finally {
+        probe.close()
+      }
+    } finally {
+      reopened.close()
+    }
+  })
+})
+
+describe('log-cache-sqlite — one transaction per page (O3)', () => {
+  it('a page not yet advanced past its cursor is invisible to a fresh open — the same state a killed process would leave', () => {
+    const dir = tmpDir()
+    const writer = createSqliteCache(dir)
+    writer.put(operationLine({ eventId: 'e-1' }))
+    writer.recordGap({ source: 's', from: '1', to: '2', reason: 'rotated', lost: { known: false, reason: 'unknown' } })
+    // No setCursor() yet — the page is still open. A fresh connection to the
+    // same file, opened now, stands in for a process that resumes after a
+    // kill: it must see none of this page's work.
+    const beforeCommit = createSqliteCache(dir)
+    try {
+      expect(beforeCommit.dataset().rows()).toEqual([])
+      expect(beforeCommit.dataset().gaps()).toEqual([])
+      expect(beforeCommit.cursor('s')).toBeNull()
+    } finally {
+      beforeCommit.close()
+    }
+
+    // The writer now completes its page — the commit point.
+    writer.setCursor('s', 'cursor-1')
+    writer.close()
+
+    const afterCommit = createSqliteCache(dir)
+    try {
+      expect(
+        afterCommit
+          .dataset()
+          .rows()
+          .map((r) => r.identity)
+      ).toEqual(['e-1'])
+      expect(afterCommit.dataset().gaps()).toHaveLength(1)
+      expect(afterCommit.cursor('s')).toBe('cursor-1')
+    } finally {
+      afterCommit.close()
+    }
+  })
+
+  it('closing a cache with a page still open commits it rather than discarding it', () => {
+    const dir = tmpDir()
+    const writer = createSqliteCache(dir)
+    writer.put(operationLine({ eventId: 'e-1' }))
+    // Never called setCursor — close() must still flush this page (a
+    // quarantine-only run advances no cursor at all, and that work is not
+    // lost on a graceful shutdown).
+    writer.close()
+
+    const reopened = createSqliteCache(dir)
+    try {
+      expect(
+        reopened
+          .dataset()
+          .rows()
+          .map((r) => r.identity)
+      ).toEqual(['e-1'])
+    } finally {
+      reopened.close()
     }
   })
 })
