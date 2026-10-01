@@ -295,7 +295,7 @@ It prints `PASS` and exits `0` only when the event round-trips. Otherwise it pri
 
 ### Recording an event at process exit
 
-<!-- AEG:CLAIM: apps/cli/src/lib/log-sink.ts contains:export function logSync(e: LogEventInput): void { -->
+<!-- AEG:CLAIM: apps/cli/src/lib/log-sink.ts contains:export function logSync(e: LogEventInput, opts?: LogSyncOptions): void { -->
 <!-- AEG:CLAIM: apps/cli/src/lib/log-sink.ts contains:export function unresolvedLogDestination(env: NodeJS.ProcessEnv): ResolvedLogDestination { -->
 `logSync(e)` (`log-sink.ts`, and `logSync` on every `createLogSink` instance) is `log(e)` for a caller that ends the process straight after it: the event's line is appended before the call returns, so a `process.exit` on the next line loses nothing. Use it where awaiting `drainLogSink()` is not possible — a command that ends the process from any of many places — and use `log()` everywhere else; `logSync` does not replace the drain for events already in flight. An optional second argument, `{ quiet: true }`, drops the one warning it prints when the sink had not resolved its destination before the process ended; a failure to write still warns.
 
