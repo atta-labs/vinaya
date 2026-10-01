@@ -170,3 +170,132 @@ describe('O2 — a failed run keeps what it stored and the next run ends where a
     expect(identities(interrupted)).toEqual(['e-1', 'e-2', 'e-3', 'e-4'])
   })
 })
+
+function resultOf(cache: ReturnType<typeof createMemoryCache>, identity: string): unknown {
+  const row = cache
+    .dataset()
+    .rows()
+    .find((r) => r.identity === identity)
+  return (row?.payload as { result?: unknown } | undefined)?.result
+}
+
+describe('O3 — a re-read finds an edit and a deletion without touching the stored row', () => {
+  it('a held identity re-read with different content records an edit and keeps the first row', async () => {
+    const cache = createMemoryCache()
+    const original = [at(0, 'e-1', '2026-09-20T10:00:00.000Z', 'ok'), at(1, 'e-2', '2026-09-20T10:01:00.000Z', 'ok')]
+    await syncSource(fakeSource('folder:/a', { lines: original }), cache, { now: NOW })
+
+    const edited = [at(0, 'e-1', '2026-09-20T10:00:00.000Z', 'error'), original[1] as SourceLine]
+    const summary = await syncSource(fakeSource('folder:/a', { lines: edited }), cache, { now: NOW })
+
+    expect(summary.edits).toBe(1)
+    expect(summary.rowsStored).toBe(0)
+    // The first row is kept — the edit is recorded beside it, never over it.
+    expect(resultOf(cache, 'e-1')).toBe('ok')
+    expect(cache.edits().map((e) => e.identity)).toEqual(['e-1'])
+  })
+
+  it('a held identity gone from the re-read window is a deletion, and the row stays', async () => {
+    const cache = createMemoryCache()
+    const full = [
+      at(0, 'e-a', '2026-09-20T10:00:00.000Z'),
+      at(1, 'e-b', '2026-09-20T10:01:00.000Z'),
+      at(2, 'e-c', '2026-09-20T10:02:00.000Z'),
+      at(3, 'e-d', '2026-09-20T10:03:00.000Z'),
+      at(4, 'e-e', '2026-09-20T10:04:00.000Z')
+    ]
+    // A small look-back span, one line per page, so the anchor trails inside the stream.
+    const bounds = { now: NOW, pageLimit: 1, lookback: 3 }
+    await syncSource(fakeSource('folder:/a', { lines: full }), cache, bounds)
+    expect(cache.cursor('folder:/a')).not.toBeNull()
+
+    // e-d is edited out of the folder; the lines after it shift up.
+    const without = [full[0], full[1], full[2], full[4]] as SourceLine[]
+    const summary = await syncSource(fakeSource('folder:/a', { lines: without }), cache, bounds)
+
+    expect(summary.deletions).toBe(1)
+    expect(summary.deleted).toEqual([{ identity: 'e-d', origin: { source: 'folder:/a', position: 'p3' } }])
+    // The deleted row is kept — a rebuild could never recover it from the source.
+    expect(identities(cache)).toContain('e-d')
+  })
+
+  it('a line older than the re-read window is never mistaken for a deletion', async () => {
+    const cache = createMemoryCache()
+    const full = [
+      at(0, 'e-a', '2026-09-20T10:00:00.000Z'),
+      at(1, 'e-b', '2026-09-20T10:01:00.000Z'),
+      at(2, 'e-c', '2026-09-20T10:02:00.000Z'),
+      at(3, 'e-d', '2026-09-20T10:03:00.000Z')
+    ]
+    const bounds = { now: NOW, pageLimit: 1, lookback: 2 }
+    await syncSource(fakeSource('folder:/a', { lines: full }), cache, bounds)
+    // The source is unchanged; e-a and e-b are below the trailing window and
+    // must not be read as deletions just because this run did not re-read them.
+    const summary = await syncSource(fakeSource('folder:/a', { lines: full }), cache, bounds)
+    expect(summary.deletions).toBe(0)
+  })
+})
+
+describe('O4 — a lost span is a gap with its bounds, never a deletion', () => {
+  it('a gap the source reports is recorded with its bounds', async () => {
+    const cache = createMemoryCache()
+    const gap: SourceGap = {
+      source: 'server:https://logs',
+      from: 'p0',
+      to: 'p40',
+      reason: 'past retention',
+      lost: { known: true, value: 40 }
+    }
+    const summary = await syncSource(
+      fakeSource('server:https://logs', { lines: [at(41, 'e-1', '2026-09-20T10:00:00.000Z')], gaps: [gap] }),
+      cache,
+      { now: NOW }
+    )
+    expect(summary.gaps).toBe(1)
+    expect(cache.dataset().gaps()).toEqual([gap])
+  })
+
+  it('a source whose head is behind the stored cursor is a gap, not a silent reset', async () => {
+    const cache = createMemoryCache()
+    const lines = [
+      at(0, 'e-1', '2026-09-20T10:00:00.000Z'),
+      at(1, 'e-2', '2026-09-20T10:01:00.000Z'),
+      at(2, 'e-3', '2026-09-20T10:02:00.000Z')
+    ]
+    const bounds = { now: NOW, pageLimit: 1, lookback: 1 }
+    await syncSource(fakeSource('folder:/a', { lines }), cache, bounds)
+    expect(cache.cursor('folder:/a')).not.toBeNull()
+
+    // The folder was truncated: nothing remains at or after the stored cursor.
+    const summary = await syncSource(fakeSource('folder:/a', { lines: [] }), cache, bounds)
+    expect(summary.gaps).toBe(1)
+    expect(summary.deletions).toBe(0)
+    expect(cache.dataset().gaps()[0]?.reason).toBe('the source head is behind the stored cursor')
+  })
+
+  it('a missing identity inside a reported gap is reported as the gap, never as a deletion', async () => {
+    const cache = createMemoryCache()
+    const full = [
+      at(0, 'e-a', '2026-09-20T10:00:00.000Z'),
+      at(1, 'e-b', '2026-09-20T10:01:00.000Z'),
+      at(2, 'e-c', '2026-09-20T10:02:00.000Z')
+    ]
+    await syncSource(fakeSource('folder:/a', { lines: full }), cache, { now: NOW })
+
+    const gap: SourceGap = {
+      source: 'folder:/a',
+      from: 'p1',
+      to: 'p1',
+      reason: 'rotated away',
+      lost: { known: true, value: 1 }
+    }
+    const summary = await syncSource(
+      fakeSource('folder:/a', { lines: [full[0], full[2]] as SourceLine[], gaps: [gap] }),
+      cache,
+      { now: NOW }
+    )
+    // e-b is gone, but the source said it lost that span — a gap, not a deletion.
+    expect(summary.gaps).toBe(1)
+    expect(summary.deletions).toBe(0)
+  })
+})
