@@ -47,3 +47,8 @@ yarn-error.log*
 # a task worktree, read once and deleted by the driver. Never tracked.
 .vinaya-confidence
 .vinaya-round-response
+
+# A Developer's pull-request body draft, written at the worktree root and
+# posted via `pr create --body-file`. Never tracked.
+/pr-body.md
+/pr-body-*.md
