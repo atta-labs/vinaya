@@ -197,6 +197,14 @@ const LOG_SELFTEST_PATH = 'apps/cli/src/commands/log-selftest.ts'
  * outbox path itself, so it joins `CALLER_ALLOWLIST` alone.
  */
 const LOG_CUSTOM_PATH = 'apps/cli/src/lib/log-custom.ts'
+/**
+ * The CLI's one `cli_command` event at process exit: the entry script registers
+ * the handler (and hands it `logSync`), and `cli-operation-log.ts` builds the
+ * event, importing only the sink's types. Neither touches the outbox path
+ * itself, so both join `CALLER_ALLOWLIST` alone.
+ */
+const CLI_ENTRY_PATH = 'apps/cli/src/index.ts'
+const CLI_OPERATION_LOG_PATH = 'apps/cli/src/lib/cli-operation-log.ts'
 /** Exactly what `DOCTOR_PATH` is allowed to take from the sink module (sorted). */
 const DOCTOR_SINK_IMPORTS = [
   'FolderFallbackRecord',
@@ -222,7 +230,9 @@ const CALLER_ALLOWLIST = new Set([
   DOCTOR_PATH,
   LOG_SEND_PATH,
   LOG_SELFTEST_PATH,
-  LOG_CUSTOM_PATH
+  LOG_CUSTOM_PATH,
+  CLI_ENTRY_PATH,
+  CLI_OPERATION_LOG_PATH
 ])
 const OUTBOX_TRUNCATE_ALLOWLIST = new Set([LOG_WEBHOOK_DRAIN_LIB_PATH])
 const OUTBOX_HELD_VERDICT_ALLOWLIST = new Set([
