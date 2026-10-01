@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test'
+import { execFileSync } from 'node:child_process'
 import {
   appendFileSync,
   mkdirSync,
@@ -328,6 +329,21 @@ describe('log-sync-folder-source — refuses a symlink or a non-regular file (O5
     const page = await source.readPage(null, 100)
     expect(page.lines).toEqual([])
   })
+
+  // A FIFO opened for read in blocking mode waits for a writer that may
+  // never come. `O_NONBLOCK` on the read-side open is what keeps this a
+  // sub-second skip rather than an indefinite hang.
+  it('a FIFO at a stream path is skipped without hanging the read', async () => {
+    const dir = tmpDir()
+    mkdirSync(repoDir(dir), { recursive: true })
+    execFileSync('mkfifo', [livePath(dir, '888')])
+
+    const source = createFolderLogSource({ folderRoot: join(dir, 'outbox'), repo: REPO })
+    const started = Date.now()
+    const page = await source.readPage(null, 100)
+    expect(page.lines).toEqual([])
+    expect(Date.now() - started).toBeLessThan(10_000)
+  })
 })
 
 describe('log-sync-folder-source — proven against real folders (O6)', () => {
@@ -367,7 +383,7 @@ describe('log-sync-folder-source — proven against real folders (O6)', () => {
   })
 })
 
-describe('log-sync-folder-source — byte-accurate offsets for multibyte content (O1, round 2 review F1)', () => {
+describe('log-sync-folder-source — byte-accurate offsets for multibyte content (O1)', () => {
   it('a line holding a multibyte UTF-8 character resumes at the real byte boundary, not a UTF-16 code-unit count', async () => {
     const dir = tmpDir()
     mkdirSync(repoDir(dir), { recursive: true })
@@ -404,7 +420,7 @@ describe('log-sync-folder-source — byte-accurate offsets for multibyte content
   })
 })
 
-describe('log-sync-folder-source — a tampered cursor cannot escape the repo folder (round 2 security review, LOW)', () => {
+describe('log-sync-folder-source — a tampered cursor cannot escape the repo folder (O5)', () => {
   it('a cursor key holding a path separator is dropped, never joined into a path', async () => {
     const dir = tmpDir()
     mkdirSync(repoDir(dir), { recursive: true })

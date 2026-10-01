@@ -62,7 +62,7 @@ export type FolderSourceDeps = {
  * come from caller-supplied JSON and are joined unvalidated otherwise: a
  * tampered key holding `/` or `\` segments (e.g. `../other-repo/1`) would
  * have `join` resolve outside this one repository folder, the O5 scoping
- * `O_NOFOLLOW` alone does not catch (round 2 security review, LOW).
+ * `O_NOFOLLOW` alone does not catch — this check is what closes that gap.
  */
 function isValidStreamName(name: string): boolean {
   return name.length > 0 && !name.includes('/') && !name.includes('\\') && !name.includes('\0')
@@ -96,6 +96,13 @@ function repoDirFor(deps: FolderSourceDeps): string {
   return dirname(outboxPathFor({ outboxRoot: () => deps.folderRoot }, deps.repo, null))
 }
 
+// `O_NOFOLLOW` makes the kernel refuse an open through a symlink outright
+// instead of trusting a separate `lstat`-then-open race. `O_NONBLOCK` is
+// defensive against a planted FIFO: opening one for read in blocking mode
+// waits for a writer that may never come, hanging before `isFile()` ever
+// runs — the same pairing the sink's own append open uses (`log-sink.ts`).
+const READ_OPEN_FLAGS = fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK
+
 /**
  * The size of `path`, refusing a symlink (`O_NOFOLLOW`, atomic — no separate
  * `lstat`-then-open race) and anything that is not, once open, a regular
@@ -107,7 +114,7 @@ function repoDirFor(deps: FolderSourceDeps): string {
 function regularFileSize(path: string): number | null {
   let fd: number
   try {
-    fd = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW)
+    fd = openSync(path, READ_OPEN_FLAGS)
   } catch {
     return null
   }
@@ -126,7 +133,7 @@ function readRangeOf(path: string, from: number, to: number): Buffer | null {
   if (to <= from) return Buffer.alloc(0)
   let fd: number
   try {
-    fd = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW)
+    fd = openSync(path, READ_OPEN_FLAGS)
   } catch {
     return null
   }
@@ -165,9 +172,8 @@ const NEWLINE_BYTE = 0x0a
  * index is a code-unit count, not a byte count, so finding `\n` and slicing
  * on a decoded string would silently desync `startByte`/`endByte` — and
  * therefore the stored cursor offset — from the file's real byte positions
- * the moment a line holds a multibyte UTF-8 character (round 2 review,
- * BLOCKER). Each line's `text` is decoded from its own exact byte range
- * only, once its bounds are known.
+ * the moment a line holds a multibyte UTF-8 character. Each line's `text`
+ * is decoded from its own exact byte range only, once its bounds are known.
  */
 function completeLinesOf(content: Buffer, baseOffset: number): CompleteLine[] {
   const lines: CompleteLine[] = []
