@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { appendFileSync, mkdirSync, mkdtempSync, renameSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createLogSink, type LogSinkDeps } from '../../src/lib/log-sink.js'
@@ -226,5 +226,97 @@ describe('log-sync-folder-source — rotation is followed, from the recorded off
     // Reading still continues into whatever is live now — the loss is
     // reported, not fatal.
     expect(page2.lines.map((l) => JSON.parse(l.raw))).toEqual([{ gen: 'C', n: 1 }])
+  })
+})
+
+describe('log-sync-folder-source — the look-back read (O4)', () => {
+  it('re-reads the last lines of a known stream, an edited line coming back with its new text', async () => {
+    const dir = tmpDir()
+    mkdirSync(repoDir(dir), { recursive: true })
+    const live = livePath(dir, '111')
+    writeFileSync(live, jsonLine({ n: 1 }) + jsonLine({ n: 2 }) + jsonLine({ n: 3 }))
+
+    const source = createFolderLogSource({ folderRoot: join(dir, 'outbox'), repo: REPO })
+    const page1 = await source.readPage(null, 100)
+    expect(page1.lines).toHaveLength(3)
+
+    // A line inside the look-back window is hand-edited on disk.
+    writeFileSync(live, jsonLine({ n: 1 }) + jsonLine({ n: 'EDITED' }) + jsonLine({ n: 3 }))
+
+    const back = await source.lookback(page1.next, 2)
+    expect(back.lines.map((l) => JSON.parse(l.raw))).toEqual([{ n: 'EDITED' }, { n: 3 }])
+  })
+
+  it('a stream whose file has vanished returns nothing for the identities the cache holds inside the span', async () => {
+    const dir = tmpDir()
+    mkdirSync(repoDir(dir), { recursive: true })
+    const liveA = livePath(dir, '222')
+    const liveB = livePath(dir, '333')
+    writeFileSync(liveA, jsonLine({ n: 1 }))
+    writeFileSync(liveB, jsonLine({ n: 1 }))
+
+    const source = createFolderLogSource({ folderRoot: join(dir, 'outbox'), repo: REPO })
+    const page1 = await source.readPage(null, 100)
+    expect(page1.lines).toHaveLength(2)
+
+    rmSync(liveA)
+    const back = await source.lookback(page1.next, 10)
+    // Only the stream that still exists reports lines; the vanished one
+    // reports none, rather than throwing or inventing an empty record.
+    expect(back.lines.map((l) => JSON.parse(l.raw))).toEqual([{ n: 1 }])
+  })
+
+  it('does not advance the stored cursor — it is a side read, not a resumption point', async () => {
+    const dir = tmpDir()
+    await writeRealLines(dir, 444, 2)
+    const source = createFolderLogSource({ folderRoot: join(dir, 'outbox'), repo: REPO })
+    const page1 = await source.readPage(null, 100)
+    const back = await source.lookback(page1.next, 1)
+    expect(back.next).toBe(page1.next)
+  })
+})
+
+describe('log-sync-folder-source — refuses a symlink or a non-regular file (O5)', () => {
+  it('never follows a symlinked stream — it is excluded from the listing entirely', async () => {
+    const dir = tmpDir()
+    mkdirSync(repoDir(dir), { recursive: true })
+    const elsewhere = join(dir, 'elsewhere.ndjson')
+    writeFileSync(elsewhere, jsonLine({ secret: true }))
+    symlinkSync(elsewhere, livePath(dir, '555'))
+
+    const source = createFolderLogSource({ folderRoot: join(dir, 'outbox'), repo: REPO })
+    const page = await source.readPage(null, 100)
+    expect(page.lines).toEqual([])
+  })
+
+  it('refuses a rotated slot that is a symlink, reporting the gap rather than following it', async () => {
+    const dir = tmpDir()
+    mkdirSync(repoDir(dir), { recursive: true })
+    const live = livePath(dir, '666')
+    writeFileSync(live, jsonLine({ n: 1 }) + jsonLine({ n: 2 }))
+
+    const source = createFolderLogSource({ folderRoot: join(dir, 'outbox'), repo: REPO })
+    const page1 = await source.readPage(null, 1)
+    expect(page1.lines).toHaveLength(1)
+
+    const elsewhere = join(dir, 'elsewhere-2.ndjson')
+    writeFileSync(elsewhere, jsonLine({ secret: true }))
+    renameSync(live, join(dir, 'moved-aside.ndjson')) // keep the real unread tail off to the side, unread
+    symlinkSync(elsewhere, rotatedPath(dir, '666'))
+    writeFileSync(live, jsonLine({ n: 'fresh' }))
+
+    const page2 = await source.readPage(page1.next, 100)
+    expect(page2.gaps).toHaveLength(1)
+    expect(page2.lines.map((l) => JSON.parse(l.raw))).toEqual([{ n: 'fresh' }])
+  })
+
+  it('a non-regular entry named like a stream (a directory) is skipped, not read', async () => {
+    const dir = tmpDir()
+    mkdirSync(repoDir(dir), { recursive: true })
+    mkdirSync(livePath(dir, '777')) // a directory at the stream's own path
+
+    const source = createFolderLogSource({ folderRoot: join(dir, 'outbox'), repo: REPO })
+    const page = await source.readPage(null, 100)
+    expect(page.lines).toEqual([])
   })
 })
