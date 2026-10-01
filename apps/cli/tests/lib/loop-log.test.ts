@@ -9,11 +9,14 @@ import {
   LOOP_LOG_MAX_BYTES,
   loopLogPathFor
 } from '../../src/lib/loop-log'
+import { devReviewLoop, type LoopDeps } from '../../src/lib/dev-review-loop.js'
+import { cleanupWorlds, makeInProcessDeps, makeWorld, outboxLines, withWorldEnv } from './dev-review-loop-harness.js'
 
 const tempDirs: string[] = []
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
+afterEach(cleanupWorlds)
 function tempDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix))
   tempDirs.push(dir)
@@ -122,5 +125,135 @@ describe('appendRunStartMarker', () => {
     expect(lines.filter((l) => l.startsWith('=== run started')).length).toBe(2)
     expect(lines).toContain('[developer] round 1 narration')
     expect(lines).toContain('[developer] round 2 narration (after relaunch)')
+  })
+})
+
+// [log-portable-v1] 6, O1/O2/O3: the driver sets `process.env.VINAYA_HOST`
+// to `'loop'` once, at loop start, only when nothing upstream already named
+// a host — and restores whatever it found there once the run ends, publish
+// or pause alike. Driven in-process through `devReviewLoop()` itself (via
+// `withWorldEnv`, bypassing `runLoopInProcess`'s own default input/overrides
+// so each test can read `process.env.VINAYA_HOST` at the exact moment the
+// call returns, before the harness's own outer env restore would mask it).
+describe('devReviewLoop — the host attribution set at loop start', () => {
+  it("sets VINAYA_HOST to 'loop' for every event this run logs when nothing upstream named a host, and restores it to unset afterward", async () => {
+    const world = makeWorld()
+    const base = makeInProcessDeps(world)
+    const seenHosts: Array<string | undefined> = []
+    const dispatchRole: LoopDeps['dispatchRole'] = async (role, agent, prompt, opts) => {
+      seenHosts.push(process.env.VINAYA_HOST)
+      return base.dispatchRole!(role, agent, prompt, opts)
+    }
+    let hostDuringRun: string | undefined
+    let hostAfterReturn: string | undefined
+    const result = await withWorldEnv(world, async () => {
+      hostDuringRun = process.env.VINAYA_HOST
+      const r = await devReviewLoop({ task: world.task, agent: 'claude' }, { ...base, dispatchRole })
+      hostAfterReturn = process.env.VINAYA_HOST
+      return r
+    })
+
+    // The harness clears VINAYA_HOST before this closure runs — a clean
+    // starting point, never leaked from an earlier fixture.
+    expect(hostDuringRun).toBeUndefined()
+    expect(result.finalDecision.type).toBe('publish')
+    expect(seenHosts.length).toBeGreaterThan(0)
+    expect(seenHosts.every((h) => h === 'loop')).toBe(true)
+
+    const lines = outboxLines(world)
+    expect(lines.length).toBeGreaterThan(0)
+    expect(lines.every((l) => (l.meta as { host?: string } | undefined)?.host === 'loop')).toBe(true)
+
+    expect(hostAfterReturn).toBeUndefined()
+  })
+
+  it("never overwrites a host already set — a hook's own VINAYA_HOST='hook' survives the whole run, every event it logs keeps 'hook', and the value is restored (not cleared) after", async () => {
+    const world = makeWorld()
+    const base = makeInProcessDeps(world)
+    const seenHosts: Array<string | undefined> = []
+    const dispatchRole: LoopDeps['dispatchRole'] = async (role, agent, prompt, opts) => {
+      seenHosts.push(process.env.VINAYA_HOST)
+      return base.dispatchRole!(role, agent, prompt, opts)
+    }
+    let hostAfterReturn: string | undefined
+    const result = await withWorldEnv(world, async () => {
+      // Set AFTER `withWorldEnv`'s own clearing, so this simulates the real
+      // shape: something upstream of the driver (a hook that dispatched
+      // this very run) already named a host before the driver's own
+      // assignment ever runs.
+      process.env.VINAYA_HOST = 'hook'
+      const r = await devReviewLoop({ task: world.task, agent: 'claude' }, { ...base, dispatchRole })
+      hostAfterReturn = process.env.VINAYA_HOST
+      return r
+    })
+
+    expect(result.finalDecision.type).toBe('publish')
+    expect(seenHosts.length).toBeGreaterThan(0)
+    expect(seenHosts.every((h) => h === 'hook')).toBe(true)
+
+    const lines = outboxLines(world)
+    expect(lines.length).toBeGreaterThan(0)
+    expect(lines.every((l) => (l.meta as { host?: string } | undefined)?.host === 'hook')).toBe(true)
+
+    expect(hostAfterReturn).toBe('hook')
+  })
+
+  // A full publish under `GITHUB_ACTIONS` is deliberately NOT exercised here:
+  // `log-sink.ts`'s own O3 rule ("a CI job never falls back to a folder")
+  // means every one of this run's events resolves to `{kind: 'none'}` with
+  // no configured server — `logEvents`'s own `waitForOwnLoopLine` then burns
+  // its full 5s budget per event with nothing ever landing, which is exactly
+  // right for a real CI job's log() calls but far too slow for a test that
+  // logs a dozen events across a whole round. The quick developer-stop pause
+  // below reaches its outcome before any of that matters.
+  it("does not special-case CI — still sets VINAYA_HOST to 'loop' unconditionally when GITHUB_ACTIONS is set and VINAYA_HOST is unset; log-sink.ts's own precedence (GITHUB_ACTIONS checked before VINAYA_HOST, unchanged by this task) is what keeps the reported host 'ci'", async () => {
+    const world = makeWorld({ developerStop: 'ESCALATE: no brief section names this repo at all.' as never })
+    const base = makeInProcessDeps(world)
+    let hostSeenAtDeveloperDispatch: string | undefined
+    let ciSeenAtDeveloperDispatch: string | undefined
+    const dispatchRole: LoopDeps['dispatchRole'] = async (role, agent, prompt, opts) => {
+      if (role === 'developer') {
+        hostSeenAtDeveloperDispatch = process.env.VINAYA_HOST
+        ciSeenAtDeveloperDispatch = process.env.GITHUB_ACTIONS
+        return { exitCode: 0, durationMs: 1, usage: null, resumeId: null, timedOut: false, effectId: 'eff-dev-1' }
+      }
+      return base.dispatchRole!(role, agent, prompt, opts)
+    }
+    let hostAfterReturn: string | undefined
+    const result = await withWorldEnv(world, async () => {
+      process.env.GITHUB_ACTIONS = 'true'
+      const r = await devReviewLoop({ task: world.task, agent: 'claude' }, { ...base, dispatchRole })
+      hostAfterReturn = process.env.VINAYA_HOST
+      return r
+    })
+
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'escalation' })
+    expect(hostSeenAtDeveloperDispatch).toBe('loop')
+    expect(ciSeenAtDeveloperDispatch).toBe('true')
+    expect(hostAfterReturn).toBeUndefined()
+  })
+
+  it('restores the host after a pause too, not only after a clean publish', async () => {
+    const world = makeWorld({ developerStop: 'ESCALATE: no brief section names this repo at all.' as never })
+    const base = makeInProcessDeps(world)
+    // The default fake always marks a developer dispatch as pushed, which
+    // skips the one branch that reads `fetchDeveloperStop` — replaced here
+    // with one that never pushes, the same shape the escalation-pause
+    // fixtures elsewhere in this suite use to reach it.
+    const dispatchRole: LoopDeps['dispatchRole'] = async (role, agent, prompt, opts) => {
+      if (role === 'developer') {
+        return { exitCode: 0, durationMs: 1, usage: null, resumeId: null, timedOut: false, effectId: 'eff-dev-1' }
+      }
+      return base.dispatchRole!(role, agent, prompt, opts)
+    }
+    let hostAfterReturn: string | undefined
+    const result = await withWorldEnv(world, async () => {
+      const r = await devReviewLoop({ task: world.task, agent: 'claude' }, { ...base, dispatchRole })
+      hostAfterReturn = process.env.VINAYA_HOST
+      return r
+    })
+
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'escalation' })
+    expect(hostAfterReturn).toBeUndefined()
   })
 })

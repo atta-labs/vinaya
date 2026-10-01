@@ -1639,6 +1639,18 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
   // those clear the lock exactly as before, unchanged.
   let keepLockAlive = false
 
+  // O1/O3: captured BEFORE `runDevReviewLoopBody` ever sets
+  // `process.env.VINAYA_HOST` (below, alongside its own `VINAYA_RUN`
+  // assignment) — `undefined` when nothing upstream named a host, a real
+  // value when a hook already set `'hook'` (never overwritten; see the
+  // assignment's own comment) or this run is itself a child of another
+  // host this process inherited. Restored unconditionally in this `finally`,
+  // the same save/restore-around-one-call discipline `cancelDevReviewLoop`
+  // already uses for `VINAYA_TASK`/`VINAYA_RUN`, so a caller that stays
+  // alive past this call — a test runner, `task-tools serve`'s shared
+  // process — never keeps reading `'loop'` for work this call never did.
+  const prevHost = process.env.VINAYA_HOST
+
   try {
     return await runDevReviewLoopBody()
   } finally {
@@ -1649,6 +1661,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // (`devReviewLoopCommand`) calls `process.exit(1)` on a pause AFTER
     // this promise resolves, so draining here, before that return, is what
     // makes both log sinks land everything first.
+    if (prevHost === undefined) delete process.env.VINAYA_HOST
+    else process.env.VINAYA_HOST = prevHost
     await drainAllLogSinks()
     // O2/Traps: the sweep was never awaited before dispatch, but a run
     // that is about to exit must "let it finish… cleanly" rather than
@@ -1742,6 +1756,17 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     // this one process emits shares the same `lineage.run` value.
     const loopId = randomUUID()
     process.env.VINAYA_RUN = loopId
+    // O1/O2/O3: set only when nothing upstream already named a host — a
+    // hook that dispatched this run (or will later shell out to one, e.g.
+    // `git push` inside the loop) sets `VINAYA_HOST=hook` explicitly on its
+    // own command, which overrides whatever this process inherits for that
+    // one child regardless of what this line does; CI sets `GITHUB_ACTIONS`,
+    // which `log-sink.ts`'s `hostFromEnv` reads before it ever looks at
+    // `VINAYA_HOST` at all. Only a check genuinely started by the loop's own
+    // code, with no hook and no CI runner in the way, ever reaches this
+    // branch and reports `'loop'`. Restored in the outer `finally` above
+    // (`prevHost`) — never left set once this driver returns.
+    if (process.env.VINAYA_HOST === undefined) process.env.VINAYA_HOST = 'loop'
     const config: LoopConfig = {
       loopId,
       task: task,
