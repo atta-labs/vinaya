@@ -1158,8 +1158,8 @@ export function checkIssueType(_body: string, labels: string[]): IssueSectionRes
 // through one product's lens instead of every consumer's); a `## References`
 // block copied brief-time content into the Issue, where it goes stale before
 // work starts; and nothing forced the rationale to name the docs/skills it
-// touches, because the skill-check hook fires on file edits and a forge write
-// edits no file. The checks below are those three failures turned into
+// touches, because no other check observes what the Planner read before a forge
+// write. The checks below are those three failures turned into
 // deterministic functions on the surface they happened on.
 //
 // EVERY ONE OF THEM READS BLOCK-STRIPPED TEXT, via the single exported
@@ -1728,8 +1728,8 @@ const NO_DOC_SURFACE_RE = /(?:\*\*)?\s*no-doc-surface/i
 /**
  * **D — no read-obligation signal.** The root cause of A and B both: nothing
  * forced the Planner to read the docs and skills governing the surface it was
- * planning, because the skill-check hook fires on file edits and cutting an
- * Issue edits no file. Requiring a concrete doc path in `Docs to keep coherent`
+ * planning, because no other check observes what the Planner read before cutting
+ * an Issue. Requiring a concrete doc path in `Docs to keep coherent`
  * / `Traps to avoid` makes the read leave an artifact — you cannot name
  * `.claude/skills/ui-library-system/SKILL.md` as the design anchor without
  * having gone looking for it.
