@@ -2471,11 +2471,26 @@ describe('opensNoneFoundClaim — a trailed clean claim is held to the same evid
   })
 })
 
+describe('noneFoundClaimCitesScanCheck — only the words after the check name decide', () => {
+  it('accepts a passing citation whatever note the line carries, including "no" and "not"', () => {
+    expect(
+      noneFoundClaimCitesScanCheck('none found — atta-labs/secret-scan passed; found no real token in the diff', null)
+    ).toBe(true)
+    expect(noneFoundClaimCitesScanCheck('none found — atta-labs/secret-scan passing, nothing is not fine', null)).toBe(
+      true
+    )
+    expect(noneFoundClaimCitesScanCheck('none found — atta-labs/secret-scan success', null)).toBe(true)
+    expect(noneFoundClaimCitesScanCheck('none found', 'atta-labs/secret-scan\tpass\t5s\tno url')).toBe(true)
+  })
+})
+
 describe('noneFoundClaimCitesScanCheck — the cited check must have passed', () => {
   it('refuses a clean claim naming the check beside a failing, missing or negated conclusion', () => {
     expect(noneFoundClaimCitesScanCheck('none found — atta-labs/secret-scan failed', null)).toBe(false)
     expect(noneFoundClaimCitesScanCheck('none found — atta-labs/secret-scan missing from the checks', null)).toBe(false)
-    expect(noneFoundClaimCitesScanCheck('none found — did not run atta-labs/secret-scan passed', null)).toBe(false)
+    expect(noneFoundClaimCitesScanCheck('none found — atta-labs/secret-scan not present', null)).toBe(false)
+    expect(noneFoundClaimCitesScanCheck('none found — atta-labs/secret-scan skipped, no token', null)).toBe(false)
+    expect(noneFoundClaimCitesScanCheck('none found — checks passed, atta-labs/secret-scan', null)).toBe(false)
     expect(noneFoundClaimCitesScanCheck('none found', 'atta-labs/secret-scan\tfail\t5s')).toBe(false)
     expect(noneFoundClaimCitesScanCheck('none found', 'atta-labs/secret-scan\tpending')).toBe(false)
   })

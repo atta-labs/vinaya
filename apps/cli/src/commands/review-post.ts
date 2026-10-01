@@ -572,21 +572,24 @@ export const SECRET_SCAN_CHECK = 'atta-labs/secret-scan'
  * secret-scan check's PASSING result. The loop's security verdict and `vinaya
  * review post` both apply this one rule: a clean claim is backed by that
  * check's result, cited by name with a passing conclusion — never by a
- * scanner run or its pasted output. A line naming the check beside a failing,
- * missing, skipped or negated conclusion does not back the claim.
+ * scanner run or its pasted output. The conclusion is the first word after
+ * the check's name; the rest of the line (a trailing note such as "found no
+ * real token") never decides it. A check named beside a failing, missing,
+ * skipped, pending or absent conclusion, or not named at all, backs nothing.
  */
 export function noneFoundClaimCitesScanCheck(claim: string, evidence: string | null): boolean {
   if (!opensNoneFoundClaim(claim)) return true
   const cited = `${claim}\n${evidence ?? ''}`.split('\n').filter((line) => line.includes(SECRET_SCAN_CHECK))
   // Every line naming the check must show it passing: one passing line beside a failing one backs nothing.
-  return (
-    cited.length > 0 &&
-    cited.every(
-      (line) =>
-        /\b(pass|passed|passing|success|successful)\b/i.test(line) &&
-        !/\b(fail|failed|failing|failure|missing|skipped|pending|cancelled|not|never|no)\b/i.test(line)
-    )
-  )
+  return cited.length > 0 && cited.every((line) => scanCheckConclusionPasses(line))
+}
+
+/** Whether the word right after each naming of the check on `line` is a passing conclusion. */
+function scanCheckConclusionPasses(line: string): boolean {
+  return line
+    .split(SECRET_SCAN_CHECK)
+    .slice(1)
+    .every((after) => /^[\s:=\-–—|(`'"*]*(pass|passed|passing|success)\b/i.test(after))
 }
 
 /**
