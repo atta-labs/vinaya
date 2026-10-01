@@ -116,10 +116,14 @@ export type {
 export {
   cacheContractCases,
   createMemoryCache,
+  DEFAULT_LOOKBACK,
+  DEFAULT_MAX_PAGES,
+  DEFAULT_PAGE_LIMIT,
   isLowTrustVersion,
   known,
   LOW_TRUST_BELOW_VERSION,
   normalizeStoredLine,
+  syncSource,
   unknownBecause
 } from './sync'
 export type {
@@ -133,6 +137,7 @@ export type {
   NormalizedLine,
   PutOutcome,
   QuarantineRecord,
+  RowDeletion,
   RowEdit,
   RowOrigin,
   RowTrust,
@@ -140,5 +145,7 @@ export type {
   SourceGap,
   SourceLine,
   SourcePage,
+  SyncOptions,
+  SyncSummary,
   UnknownableField
 } from './sync'
