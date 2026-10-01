@@ -74,5 +74,21 @@ A quarantine record is keyed by the hash of its raw text. The cache also stores 
 
 The cache's behaviours are written once, as a list of cases (`cacheContractCases`, `cache-contract.ts`) that throw on the first broken expectation and import no test framework. Every backend's own test runs every case against a fresh instance of that backend. `createMemoryCache` (`memory-cache.ts`) is the in-memory backend — no I/O, no clock — that passes them and that every reader is tested against; a durable backend passes the same list.
 
+## The server source
+
+`createServerLogSource` (`apps/cli/src/lib/log-sync-server-source.ts`) is the `LogSource` that reads a log server over its wire contract (`apps/log-server/specs/server.md` § 5): the read route (`GET events?after=&limit=`, paged by `seq`, bounded at 1000 lines a request — the server's own maximum), the stats route (the server's head position and stored event count) and the rejected route (why lines were refused). It takes `fetch` itself, the destination's events URL and the raw `logs.readHeaders` as constructor arguments — never a resolved destination — so a fake `fetch` proves every behaviour with no network.
+
+**Credential.** The read credential is `logs.readHeaders`, always separate from the ingest credential (`logs.headers`): the server refuses the ingest token on a read route (§ 5), and this source's dependencies hold no code path that could reach it. A `${VAR}` reference unset in this process's environment is caught before any request leaves it; a server-reported `401` on any route is the same case. Either way the failure names the `${VAR}` to set and never the resolved value.
+
+**What the server retains.** `retention()` reads the stats route and states the server's head (`last_seq`) and stored event count as a `Measured<number>` pair, plus the gap between them: rows are never deleted on this server (`apps/log-server/specs/server.md` § 4), so a stored count below the head is a gap, never a deletion.
+
+**Look-back.** `lookback(cursor, span)` reads the `span` positions immediately before `cursor` with the same read route, by computing its own start position (`cursor - span`, clamped at zero) rather than a second route. `readPage` and `lookback` together report every row read so far on the instance, so a run's own cost is visible against the server's daily read allowance (`apps/log-server/specs/server.md` § 2).
+
+**Lost events.** `rejected()` reads the rejected route and reports its reasons and counts as a diagnostic. A server with no rejected route (a `404`, predating this route) is reported `available: false`, never as zero lost events.
+
+**Failure.** A page, a look-back, a retention read or a rejected read each fail with a reason naming one of: a refused credential, an unreachable server, a timeout, or a server error — never losing the caller's position, so a retry resumes from the same cursor.
+
 <!-- AEG:CLAIM: packages/aeg-core/src/log/sync/normalize.ts contains:const classified = classifyStoredLine(raw, '') -->
 <!-- AEG:CLAIM: packages/aeg-core/src/log/sync/row.ts contains:export const LOW_TRUST_BELOW_VERSION = '0.33.0' -->
+<!-- AEG:CLAIM: apps/cli/src/lib/log-sync-server-source.ts contains:export const SERVER_SOURCE_PAGE_MAX = 1000 -->
+<!-- AEG:CLAIM: apps/cli/src/lib/log-sync-server-source.ts contains:export const SERVER_SOURCE_TIMEOUT_MS = 10_000 -->
