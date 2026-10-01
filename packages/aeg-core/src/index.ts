@@ -712,6 +712,35 @@ export type {
   UsageUnits
 } from './log'
 export {
+  cacheContractCases,
+  createMemoryCache,
+  isLowTrustVersion,
+  known,
+  LOW_TRUST_BELOW_VERSION,
+  normalizeStoredLine,
+  unknownBecause
+} from './log'
+export type {
+  CacheContractCase,
+  Dataset,
+  DatasetRow,
+  JsonObject,
+  LogCache,
+  LogSource,
+  Measured,
+  NormalizedLine,
+  PutOutcome,
+  QuarantineRecord,
+  RowEdit,
+  RowOrigin,
+  RowTrust,
+  SourceCursor,
+  SourceGap,
+  SourceLine,
+  SourcePage,
+  UnknownableField
+} from './log'
+export {
   acquireOwnership,
   appendTransition,
   CONTROL_RECORD_VERSION,

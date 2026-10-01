@@ -540,7 +540,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 ${vinayaSetupSteps(selfHost, 'shared-build')}${adopterSetupStep(ciSetup)}      # PR_BODY is what makes test-plan/closes-n/pr-report-density EVALUATE:
       # none of the three fetches the body itself (all read
       # \`process.env.PR_BODY\` only) — without it they read "no body —
@@ -760,7 +760,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 ${vinayaSetupSteps(selfHost, 'trusted')}      - name: Review gate
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
@@ -831,7 +831,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 ${vinayaSetupSteps(selfHost, 'trusted')}      # PR_BODY is what makes body-bare-digits EVALUATE at all — the bin
       # reads \`process.env.PR_BODY\` only, never fetches it itself. Fetched
       # live from the forge, never the event payload — same reasoning as
@@ -863,7 +863,7 @@ ${verifiedFetchPrBodyStep()}      - name: Body checks
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 ${vinayaSetupSteps(selfHost, 'trusted')}      # PR_BODY is what makes this check EVALUATE at all — the bin reads
       # \`process.env.PR_BODY\` only, never fetches it itself. Fetched live from
       # the forge, same reasoning as the sibling job's identical step above.
@@ -929,7 +929,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 ${vinayaSetupSteps(selfHost, 'trusted')}      - name: Review gate (verdict evaluation)
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
@@ -1061,7 +1061,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 ${vinayaSetupSteps(selfHost)}      - name: Run vinaya archive
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
@@ -1108,7 +1108,7 @@ ${vinayaSetupSteps(selfHost)}      - name: Run vinaya archive
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 ${vinayaSetupSteps(selfHost)}      - name: Self-archive the tranche this Issue belongs to
         # \`vinaya archive tranche\` already IS the "any open task Issue left"
         # check — refusing (exit 1) while task Issues remain open is the
@@ -1145,7 +1145,7 @@ ${vinayaSetupSteps(selfHost)}      - name: Self-archive the tranche this Issue b
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 ${vinayaSetupSteps(selfHost)}      - name: Run vinaya audit --only=dead-branches
         continue-on-error: true # never-red — this job is a notification channel, not a gate
         env:
@@ -1180,7 +1180,7 @@ ${vinayaSetupSteps(selfHost)}      - name: Run vinaya audit --only=dead-branches
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 ${vinayaSetupSteps(selfHost)}      - name: Run vinaya audit --only=direct-push
         env:
           GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}

@@ -989,7 +989,7 @@ function resolveGitExecPath(): string | null {
  * bun-hosted — true only for this repo's own source invocation
  * (`bun apps/cli/src/index.ts`). The published, declared-supported entry
  * point (`apps/cli/scripts/build.ts`'s `--target=node` build, shipped with
- * a `#!/usr/bin/env node` shebang, `engines.node >=20`) runs under Node,
+ * a `#!/usr/bin/env node` shebang, `engines.node >=22.13`) runs under Node,
  * where `process.execPath` is Node's own binary and never contains `bun`
  * at all — silently granting exec over the wrong directory while the real
  * `bun` install (typically under `realHome`, denied elsewhere in this
