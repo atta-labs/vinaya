@@ -198,6 +198,20 @@ const LOG_SELFTEST_PATH = 'apps/cli/src/commands/log-selftest.ts'
  */
 const LOG_CUSTOM_PATH = 'apps/cli/src/lib/log-custom.ts'
 /**
+ * `vinaya log emit <event>` (`log-portable-v1` 3, O1/O2) is `LOG_CUSTOM_PATH`'s
+ * `emitCustomEvent` for a caller that is not Vinaya code at all — a script, a
+ * CI step, another agent runtime. Like `LOG_SEND_PATH` and `LOG_SELFTEST_PATH`
+ * it is NOT a producer of its own: the one `log()` call any successful
+ * invocation makes happens inside `emitCustomEvent`, already allowlisted
+ * above. It separately resolves the destination it just recorded toward, the
+ * SAME way a live event does, importing the sink's pure `resolveLogDestinationFrom`,
+ * `withDeadline`, `LOG_DESTINATION_ANCHOR_DEADLINE_MS` and the
+ * `ResolvedLogDestination` type, plus `drainLogSink` to wait for its own write
+ * to land before the process exits. Same "imports the sink's pure helpers,
+ * never `log()` directly" shape as `LOG_SEND_PATH`/`LOG_SELFTEST_PATH`.
+ */
+const LOG_EMIT_PATH = 'apps/cli/src/commands/log-emit.ts'
+/**
  * The CLI's one `cli_command` event at process exit: the entry script registers
  * the handler (and hands it `logSync`), and `cli-operation-log.ts` builds the
  * event, importing only the sink's types. Neither touches the outbox path
@@ -231,6 +245,7 @@ const CALLER_ALLOWLIST = new Set([
   LOG_SEND_PATH,
   LOG_SELFTEST_PATH,
   LOG_CUSTOM_PATH,
+  LOG_EMIT_PATH,
   CLI_ENTRY_PATH,
   CLI_OPERATION_LOG_PATH
 ])
