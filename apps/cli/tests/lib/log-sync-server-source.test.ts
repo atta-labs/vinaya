@@ -135,12 +135,12 @@ describe('log-sync-server-source — paging by position (O1)', () => {
     })
   })
 
-  it('a caught-up empty page repeats the asked-for cursor (Traps)', async () => {
+  it('a caught-up empty page reports next as null — the LogSource contract\'s "nothing followed" (Traps, F1)', async () => {
     const fake = createFakeServer({ events: events([1, 2]) })
     const src = source({ fetchImpl: fake })
     const page = await src.readPage('2', 10)
     expect(page.lines).toEqual([])
-    expect(page.next).toBe('2')
+    expect(page.next).toBeNull()
   })
 
   it('reads at most the page bound it is given, capped at the server max (O1, Traps: do not scan)', async () => {

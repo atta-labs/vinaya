@@ -201,7 +201,12 @@ export function createServerLogSource(deps: ServerSourceDeps): ServerLogSource {
         return { raw: JSON.stringify(parsed.event), position: String(parsed.seq) }
       })
     totalRowsRead += lines.length
-    const next: SourceCursor = nextHeader !== null ? nextHeader : String(after)
+    // An empty body is the server's own caught-up signal (its header then
+    // repeats the `after` asked for, per § 5) — the `LogSource` contract's
+    // `next` is `null` for exactly this case ("nothing followed"), not the
+    // repeated position, so a consumer that terminates on `next === null`
+    // actually stops.
+    const next: SourceCursor | null = lines.length === 0 ? null : (nextHeader ?? String(after))
     const gaps: SourceGap[] = []
     return { lines, next, gaps }
   }
