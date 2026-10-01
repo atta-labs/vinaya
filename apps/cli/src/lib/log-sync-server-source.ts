@@ -46,6 +46,11 @@ export function statsUrlFrom(eventsUrl: string): string {
   return swapEventsTail(eventsUrl, 'stats')
 }
 
+/** `.../events` → `.../rejected` (`apps/log-server/specs/server.md` § 5). */
+export function rejectedUrlFrom(eventsUrl: string): string {
+  return swapEventsTail(eventsUrl, 'rejected')
+}
+
 /**
  * What stopped a request, named so the engine can resume from the same
  * cursor (O5): `readPage`/`lookback` never advance past a failed page, so a
@@ -78,12 +83,21 @@ export type RetentionStatement = {
   gap: Measured<number>
 }
 
+export type RejectedReason = { reason: string; count: number }
+export type RejectedLine = { id: number; receivedAt: number; reason: string; line: string | null }
+/** A server with no `rejected` route (an older deployment, § 5) is `available: false`, never zero lost events (O4). */
+export type RejectedDiagnostic =
+  | { available: true; window: number; reasons: readonly RejectedReason[]; recent: readonly RejectedLine[] }
+  | { available: false; reason: string }
+
 export interface ServerLogSource extends LogSource {
   readPage(cursor: SourceCursor | null, limit: number): Promise<SourcePage>
   /** The `span` positions immediately before `cursor`, read with the same route as `readPage` by computing its start position (O3). */
   lookback(cursor: SourceCursor | null, span: number): Promise<SourcePage>
   /** What the server retains — its head and stored count, so a sync engine can tell a gap from a deletion (O2). */
   retention(): Promise<RetentionStatement>
+  /** The server's own rejected-line diagnostic — why lines were refused (O4). */
+  rejected(): Promise<RejectedDiagnostic>
   /** Every row this instance has read so far across `readPage` and `lookback` — the run's own read cost against the server's daily allowance (O3, `apps/log-server/specs/server.md` § 2). */
   rowsRead(): number
 }
@@ -194,6 +208,47 @@ export function createServerLogSource(deps: ServerSourceDeps): ServerLogSource {
             : known(0)
           : unknownBecause('the stats route did not report a usable head and stored count.')
       return { head, storedCount, gap }
+    },
+
+    async rejected() {
+      let response: Response
+      try {
+        response = await get(rejectedUrlFrom(deps.eventsUrl))
+      } catch (err) {
+        return { available: false, reason: err instanceof Error ? err.message : String(err) }
+      }
+      if (response.status === 401) {
+        await discard(response)
+        return { available: false, reason: 'the read credential was refused by the log server.' }
+      }
+      if (response.status === 404) {
+        await discard(response)
+        return {
+          available: false,
+          reason:
+            'the log server has no rejected route — redeploy it to get a lost-event diagnostic (an older server predates this route).'
+        }
+      }
+      if (!response.ok) {
+        await discard(response)
+        return { available: false, reason: `the log server returned ${response.status} reading its rejected route.` }
+      }
+      const body = (await response.json()) as {
+        window?: unknown
+        reasons?: unknown
+        recent?: unknown
+      }
+      const window = typeof body.window === 'number' ? body.window : 0
+      const reasons = Array.isArray(body.reasons) ? (body.reasons as RejectedReason[]) : []
+      const recent = Array.isArray(body.recent)
+        ? (body.recent as { id: number; received_at: number; reason: string; line: string | null }[]).map((r) => ({
+            id: r.id,
+            receivedAt: r.received_at,
+            reason: r.reason,
+            line: r.line
+          }))
+        : []
+      return { available: true, window, reasons, recent }
     },
 
     rowsRead() {
