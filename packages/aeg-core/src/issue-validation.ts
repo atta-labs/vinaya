@@ -1745,7 +1745,7 @@ export function checkRationaleNamesDocs(body: string): IssueSectionResult {
   return {
     status: 'fail',
     errors: [
-      'issue-validation docs read: neither "Docs to keep coherent" nor "Traps to avoid" names a concrete doc path (aeg-root/…, .claude/skills/…, apps/*/CLAUDE.md, apps/*/specs/…). Naming one is the artifact of having read the surface being planned — the forge write triggers no skill-check hook, so this field is the only read-obligation signal. For a genuinely doc-less surface, write the explicit `no-doc-surface` sentinel.'
+      'issue-validation docs read: neither "Docs to keep coherent" nor "Traps to avoid" names a concrete doc path (aeg-root/…, .claude/skills/…, apps/*/CLAUDE.md, apps/*/specs/…). Naming one is the artifact of having read the surface being planned — no other check observes what you read before the forge write, so this field is the only read-obligation signal. For a genuinely doc-less surface, write the explicit `no-doc-surface` sentinel.'
     ]
   }
 }

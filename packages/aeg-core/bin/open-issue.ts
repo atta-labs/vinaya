@@ -23,8 +23,8 @@
  * against `.vinaya/projects.md`),
  * `checkNoBriefContent` (brief-shaped sections belong in the brief, not here),
  * `checkRationaleNamesDocs` (name a doc/skill path, or the `no-doc-surface`
- * sentinel — the only read-obligation signal a forge write leaves, since the
- * skill-check hook fires on file edits and this edits none),
+ * sentinel — the only read-obligation signal a forge write leaves, since no
+ * other check observes what the Planner read before this forge write),
  * `checkIssueType` (exactly one `vinaya/type:*` label — `labels.ts`'s `type`
  * category, the commit-type vocabulary applied to the Issue instead of the
  * commit). **CREATE-only**, unlike its four siblings above: the label is
