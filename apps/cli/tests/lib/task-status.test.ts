@@ -19,6 +19,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, w
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { spawnSyncBudgeted, stripVinayaEnv } from './process-fixture.js'
 import {
   claimDepsForOneRead,
   confidenceFromSummaryComments,
@@ -2567,14 +2568,12 @@ exit 1
     // 704 carries the outbox directory a dispatched run leaves behind.
     mkdirSync(join(home, '.vinaya', 'runtime', 'acme-widget', 'tasks-execution', '704'), { recursive: true })
     const env: NodeJS.ProcessEnv = {
-      ...process.env,
+      ...stripVinayaEnv(),
       HOME: home,
       PATH: `${bin}:${process.env.PATH ?? ''}`,
       AEG_REPO: 'acme/widget'
     }
-    for (const key of Object.keys(env)) if (key.startsWith('VINAYA_')) delete env[key]
-    delete env.GITHUB_ACTIONS
-    const child = spawnSync(
+    const child = spawnSyncBudgeted(
       'bun',
       [
         '-e',
@@ -2582,7 +2581,7 @@ exit 1
 const view = gatherTaskStatusList(${selector}, 'skip')
 console.log('ROWS:' + JSON.stringify(view.rows.map((r) => ({ issue: r.issue, state: r.state }))))`
       ],
-      { cwd: CLI_ROOT, env, encoding: 'utf8', timeout: 20_000 }
+      { cwd: CLI_ROOT, env, encoding: 'utf8' }
     )
     const line = String(child.stdout)
       .split('\n')
