@@ -7,9 +7,9 @@
  * this file's top level — so a command that never opens a cache pays
  * nothing for it.
  *
- * This part adds the schema version and the transaction-per-page guarantee
- * (O2, O3), on top of the storage shape and dataset answers (O1, O4) the
- * previous part landed.
+ * This part adds lock handling and refusing a bad file or directory (O5, O6),
+ * on top of the storage shape, dataset answers, schema version and
+ * transaction-per-page guarantee (O1-O4) the previous parts landed.
  *
  * **Schema.** `cache.sqlite`'s `PRAGMA user_version` names the schema this
  * file was written under. Opening a file written by a newer version than
@@ -27,9 +27,20 @@
  * re-processing the lost span (`put`'s own idempotency makes that replay
  * harmless).
  *
- * Lock handling and refusing a bad file or directory land in the next part.
+ * **Locking.** `PRAGMA busy_timeout` ({@link LOCK_WAIT_MS}) makes a second
+ * process's write wait for this one to finish rather than racing it; past
+ * that wait it fails with a message naming the file, never silently
+ * overwriting. `journal_mode = WAL` lets a reader proceed from the last
+ * committed snapshot while a writer holds the lock.
+ *
+ * **Refusal.** A directory that does not exist or cannot be written, and a
+ * file that is not a SQLite database, both fail with a message naming the
+ * path and leave whatever was there untouched — checked with plain
+ * `node:fs` before `node:sqlite` is asked to open anything, and by mapping
+ * the module's own `errcode` for the rest.
  */
 
+import { accessSync, constants as fsConstants, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import type {
@@ -55,8 +66,22 @@ import type {
 /** The database file's own name inside the directory the caller gives (Decisions, `apps/cli/specs/log-sync.md`). */
 export const CACHE_FILE_NAME = 'cache.sqlite'
 
+/** How long a write waits for another process's lock before failing (Decisions). */
+export const LOCK_WAIT_MS = 5000
+
 /** This build's schema version — bumped whenever a migration step is added below. */
 export const CURRENT_SCHEMA_VERSION = 1
+
+const SQLITE_CANTOPEN = 14
+const SQLITE_NOTADB = 26
+const SQLITE_BUSY = 5
+const SQLITE_LOCKED = 6
+
+type SqliteError = Error & { code?: string; errcode?: number }
+
+function isSqliteError(err: unknown): err is SqliteError {
+  return err instanceof Error && 'code' in err
+}
 
 /** One migration step: brings a database from immediately-below `to` up to `to`, inside the caller's own transaction. */
 type Migration = { to: number; run(db: DatabaseSyncType): void }
@@ -139,6 +164,39 @@ const MIGRATIONS: readonly Migration[] = [
     }
   }
 ]
+
+/** `dir` exists, is a directory, and is writable — checked with plain `node:fs`, before `node:sqlite` is ever asked to open anything (O6). */
+function assertWritableDirectory(dir: string): void {
+  let stat: ReturnType<typeof statSync>
+  try {
+    stat = statSync(dir)
+  } catch {
+    throw new Error(`the cache directory does not exist: ${dir}`)
+  }
+  if (!stat.isDirectory()) throw new Error(`the cache directory is not a directory: ${dir}`)
+  try {
+    accessSync(dir, fsConstants.W_OK)
+  } catch {
+    throw new Error(`the cache directory is not writable: ${dir}`)
+  }
+}
+
+/** A lock-wait timeout (O5) from a sqlite error, or `null` when `err` is some other failure. */
+function lockFailure(err: unknown, dbPath: string): Error | null {
+  if (isSqliteError(err) && (err.errcode === SQLITE_BUSY || err.errcode === SQLITE_LOCKED)) {
+    return new Error(`the cache database is locked by another process, waited ${LOCK_WAIT_MS}ms: ${dbPath}`)
+  }
+  return null
+}
+
+/** A not-a-database or cannot-open failure (O6) from a sqlite error, naming `dbPath` — the caller's own error otherwise. */
+function openFailure(err: unknown, dbPath: string): Error {
+  if (isSqliteError(err)) {
+    if (err.errcode === SQLITE_NOTADB) return new Error(`not a SQLite database: ${dbPath}`)
+    if (err.errcode === SQLITE_CANTOPEN) return new Error(`cannot open the cache database: ${dbPath}`)
+  }
+  return err instanceof Error ? err : new Error(String(err))
+}
 
 function gapKeyOf(gap: Pick<SourceGap, 'source' | 'from' | 'to' | 'reason'>): string {
   return JSON.stringify([gap.source, gap.from, gap.to, gap.reason])
@@ -334,11 +392,26 @@ export type SqliteLogCache = LogCache & { close(): void }
  * the CLI that loads it.
  */
 export function createSqliteCache(dir: string): SqliteLogCache {
+  assertWritableDirectory(dir)
   const dbPath = join(dir, CACHE_FILE_NAME)
 
   const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite')
-  const db: DatabaseSyncType = new DatabaseSync(dbPath)
-  openSchema(db, dbPath)
+
+  let db: DatabaseSyncType
+  try {
+    db = new DatabaseSync(dbPath)
+  } catch (err) {
+    throw openFailure(err, dbPath)
+  }
+
+  try {
+    db.exec(`PRAGMA busy_timeout = ${LOCK_WAIT_MS}`)
+    db.exec('PRAGMA journal_mode = WAL')
+    openSchema(db, dbPath)
+  } catch (err) {
+    db.close()
+    throw lockFailure(err, dbPath) ?? openFailure(err, dbPath)
+  }
 
   const selectRowHash = db.prepare('SELECT contentHash FROM rows WHERE identity = $identity')
   const insertRow = db.prepare(`
@@ -386,7 +459,11 @@ export function createSqliteCache(dir: string): SqliteLogCache {
 
   function beginPage(): void {
     if (pageOpen) return
-    db.exec('BEGIN IMMEDIATE')
+    try {
+      db.exec('BEGIN IMMEDIATE')
+    } catch (err) {
+      throw lockFailure(err, dbPath) ?? err
+    }
     pageOpen = true
   }
 
@@ -397,7 +474,13 @@ export function createSqliteCache(dir: string): SqliteLogCache {
   }
 
   function run(stmt: StatementSync, params: Record<string, SQLInputValue>): StatementResultingChanges {
-    return stmt.run(params)
+    try {
+      return stmt.run(params)
+    } catch (err) {
+      const lock = lockFailure(err, dbPath)
+      if (lock) throw lock
+      throw err
+    }
   }
 
   const dataset: Dataset = {

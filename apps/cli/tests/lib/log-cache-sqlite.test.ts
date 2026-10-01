@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { mkdtempSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -10,7 +10,12 @@ import {
   type NormalizedLine,
   type RowOrigin
 } from '@attalabs/aeg-core'
-import { CACHE_FILE_NAME, CURRENT_SCHEMA_VERSION, createSqliteCache } from '../../src/lib/log-cache-sqlite.js'
+import {
+  CACHE_FILE_NAME,
+  CURRENT_SCHEMA_VERSION,
+  LOCK_WAIT_MS,
+  createSqliteCache
+} from '../../src/lib/log-cache-sqlite.js'
 
 // The durable SQLite backend against the shared contract and this backend's
 // own durability guarantees (`apps/cli/specs/log-sync.md`). Every case opens
@@ -299,5 +304,84 @@ describe('log-cache-sqlite — one transaction per page (O3)', () => {
     } finally {
       reopened.close()
     }
+  })
+})
+
+describe('log-cache-sqlite — lock wait and refusal (O5)', () => {
+  it(
+    'a second writer waits for the configured lock timeout, then fails with a message naming the file, never overwriting',
+    () => {
+      const dir = tmpDir()
+      const holder = createSqliteCache(dir)
+      // Opens the page's write transaction and leaves it open, holding the lock.
+      holder.put(operationLine({ eventId: 'e-1' }))
+
+      const contender = createSqliteCache(dir)
+      const start = Date.now()
+      let threw: unknown
+      try {
+        contender.put(operationLine({ eventId: 'e-2' }))
+      } catch (err) {
+        threw = err
+      }
+      const elapsedMs = Date.now() - start
+
+      expect(threw).toBeInstanceOf(Error)
+      expect(String(threw)).toContain(dbPathOf(dir))
+      expect(String(threw).toLowerCase()).toContain('locked')
+      // Waited roughly the configured timeout — not instant, not unbounded.
+      expect(elapsedMs).toBeGreaterThanOrEqual(LOCK_WAIT_MS - 500)
+      expect(elapsedMs).toBeLessThan(LOCK_WAIT_MS + 5000)
+
+      holder.setCursor('s', 'c1')
+      holder.close()
+      contender.close()
+
+      // The holder's own page, which DID complete, is intact — never overwritten.
+      const verify = createSqliteCache(dir)
+      try {
+        expect(
+          verify
+            .dataset()
+            .rows()
+            .map((r) => r.identity)
+        ).toEqual(['e-1'])
+      } finally {
+        verify.close()
+      }
+    },
+    LOCK_WAIT_MS + 10_000
+  )
+})
+
+describe('log-cache-sqlite — refusing a bad file or an unwritable directory (O6)', () => {
+  it('refuses a file that is not a SQLite database, naming the path, and leaves it untouched', () => {
+    const dir = tmpDir()
+    const path = dbPathOf(dir)
+    writeFileSync(path, 'not a sqlite database at all')
+    const before = readFileSync(path)
+
+    expect(() => createSqliteCache(dir)).toThrow(new RegExp(path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+
+    const after = readFileSync(path)
+    expect(after.equals(before)).toBe(true)
+  })
+
+  it('refuses a directory that cannot be written, naming the path', () => {
+    const dir = tmpDir()
+    const sub = join(dir, 'readonly')
+    mkdirSync(sub)
+    chmodSync(sub, 0o500)
+    try {
+      expect(() => createSqliteCache(sub)).toThrow(new RegExp(sub.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+      expect(statSync(sub).isDirectory()).toBe(true)
+    } finally {
+      chmodSync(sub, 0o700)
+    }
+  })
+
+  it('refuses a directory that does not exist, naming the path', () => {
+    const dir = join(tmpDir(), 'does-not-exist')
+    expect(() => createSqliteCache(dir)).toThrow(new RegExp(dir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
   })
 })
