@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, mkdtempSync, renameSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createLogSink, type LogSinkDeps } from '../../src/lib/log-sink.js'
@@ -140,5 +140,91 @@ describe('log-sync-folder-source — complete lines only (O2)', () => {
     const source = createFolderLogSource({ folderRoot: join(dir, 'outbox'), repo: REPO })
     const page = await source.readPage(null, 100)
     expect(page.lines).toEqual([])
+  })
+})
+
+function jsonLine(value: unknown): string {
+  return `${JSON.stringify(value)}\n`
+}
+
+function rotatedPath(dir: string, name: string): string {
+  return join(repoDir(dir), `${name}.1.ndjson`)
+}
+
+function livePath(dir: string, name: string): string {
+  return join(repoDir(dir), `${name}.ndjson`)
+}
+
+describe('log-sync-folder-source — rotation is followed, from the recorded offset (O3)', () => {
+  it('a clean rotation reads the unread tail from the slot, then continues into the new live file', async () => {
+    const dir = tmpDir()
+    mkdirSync(repoDir(dir), { recursive: true })
+    const live = livePath(dir, '707')
+    writeFileSync(live, jsonLine({ n: 1 }) + jsonLine({ n: 2 }) + jsonLine({ n: 3 }))
+
+    const source = createFolderLogSource({ folderRoot: join(dir, 'outbox'), repo: REPO })
+    const page1 = await source.readPage(null, 1) // consumes only { n: 1 }; cursor trails inside the still-live generation
+    expect(page1.lines.map((l) => JSON.parse(l.raw))).toEqual([{ n: 1 }])
+
+    // The generation the cursor still points into (3 lines) rotates into the
+    // slot untouched; a fresh live file starts.
+    renameSync(live, rotatedPath(dir, '707'))
+    writeFileSync(live, jsonLine({ n: 4 }))
+
+    const page2 = await source.readPage(page1.next, 100)
+    expect(page2.lines.map((l) => JSON.parse(l.raw))).toEqual([{ n: 2 }, { n: 3 }, { n: 4 }])
+    expect(page2.gaps).toEqual([])
+  })
+
+  it('a rotation with no retained slot is a retention gap, never a silent reset', async () => {
+    const dir = tmpDir()
+    mkdirSync(repoDir(dir), { recursive: true })
+    const live = livePath(dir, '808')
+    writeFileSync(live, jsonLine({ n: 1 }) + jsonLine({ n: 2 }) + jsonLine({ n: 3 }))
+
+    const source = createFolderLogSource({ folderRoot: join(dir, 'outbox'), repo: REPO })
+    const page1 = await source.readPage(null, 1)
+    expect(page1.lines).toHaveLength(1)
+
+    // The live file is replaced with no `.1.ndjson` ever created — a bare
+    // truncation, not a rotation the sink performed.
+    writeFileSync(live, jsonLine({ n: 'fresh' }))
+
+    const page2 = await source.readPage(page1.next, 100)
+    expect(page2.lines.map((l) => JSON.parse(l.raw))).toEqual([{ n: 'fresh' }])
+    expect(page2.gaps).toHaveLength(1)
+    expect(page2.gaps[0]?.reason).toContain('no retained slot')
+    expect(page2.gaps[0]?.lost).toEqual({ known: false, reason: expect.any(String) })
+  })
+
+  it('a slot overwritten by a second rotation before this reader reached it is a retention gap with its bounds (O6)', async () => {
+    const dir = tmpDir()
+    mkdirSync(repoDir(dir), { recursive: true })
+    const live = livePath(dir, '909')
+    writeFileSync(live, jsonLine({ gen: 'A', n: 1 }) + jsonLine({ gen: 'A', n: 2 }) + jsonLine({ gen: 'A', n: 3 }))
+
+    const source = createFolderLogSource({ folderRoot: join(dir, 'outbox'), repo: REPO })
+    const page1 = await source.readPage(null, 1) // reads gen A's first line only
+    expect(page1.lines.map((l) => JSON.parse(l.raw))).toEqual([{ gen: 'A', n: 1 }])
+
+    // Generation A rotates into the slot (its unread tail — lines 2 and 3 —
+    // still sits there, never read).
+    renameSync(live, rotatedPath(dir, '909'))
+    writeFileSync(live, jsonLine({ gen: 'B', n: 1 }))
+    // Generation B itself rotates before anything ever reads it, overwriting
+    // the slot and destroying generation A's unread tail with it.
+    renameSync(live, rotatedPath(dir, '909'))
+    writeFileSync(live, jsonLine({ gen: 'C', n: 1 }))
+
+    const page2 = await source.readPage(page1.next, 100)
+    expect(page2.gaps).toHaveLength(1)
+    expect(page2.gaps[0]?.source).toBe(source.id)
+    expect(page2.gaps[0]?.from).toContain('909:')
+    expect(page2.gaps[0]?.to).toBeNull()
+    expect(page2.gaps[0]?.reason).toContain('overwritten by a later rotation')
+    expect(page2.gaps[0]?.lost).toEqual({ known: false, reason: expect.any(String) })
+    // Reading still continues into whatever is live now — the loss is
+    // reported, not fatal.
+    expect(page2.lines.map((l) => JSON.parse(l.raw))).toEqual([{ gen: 'C', n: 1 }])
   })
 })
