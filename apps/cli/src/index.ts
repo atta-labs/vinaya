@@ -40,6 +40,7 @@ import { releaseCommand } from './commands/release.js'
 import { reviewPostCommand } from './commands/review-post.js'
 import { reviewStatusCommand } from './commands/review-status.js'
 import { runStudio } from './commands/studio.js'
+import { syncCommand } from './commands/sync.js'
 import { taskBriefCommand, taskDispatchCommand } from './commands/task.js'
 import { taskRunCommand } from './commands/task-run.js'
 import { taskStatusCommand } from './commands/task-status.js'
@@ -352,6 +353,10 @@ try {
     }
     case 'dev-review-loop': {
       await devReviewLoopCommand(args)
+      break
+    }
+    case 'sync': {
+      process.exit(await syncCommand(args))
       break
     }
     case 'log': {
