@@ -117,6 +117,17 @@ An answer is descriptive. It reports what the log recorded and never that one ch
 - **roundsToGreen** — for the green units, how many went green in one round, in two, and so on, ascending;
 - **timeToGreenMs** — the loop's own `time_to_green_ms` of each green unit, ascending, taken from the unit's last `journal_finalized` line. It is unknown, with the reason, when no unit went green or none recorded one; a green unit without one is named in `unknowns`.
 
+### Question 3 — what does a unit of work cost?
+
+`usageByUnitAndRole`. Usage by unit of work and by role, with the totals for each role across units. Retries and failed attempts are part of the cost: a failed or timed-out dispatch, and every attempt of a role, counts.
+
+Three kinds of record state usage, and each is counted by its own rule:
+
+- a **`usage` observation** states its units (`input`, `output`, `cache`) and whether it is `cumulative` or `delta`. A cumulative observation is a running total, so per run and model only the **last** one stands for all of them — cumulative observations are never added to each other. Delta observations are **additions**, each one counted. A cumulative total and a delta are never added to each other;
+- a **`dispatch`** line that ends a dispatch (`outcome_received`, `dispatch_failed`) and a **`role_attempt`** line each carry the usage of one attempt. A dispatch and the role attempt it ran share an effect id, so one attempt is one figure, taken from whichever line states it. These records have no cache count, so a cache total that includes one is unknown.
+
+A figure is the sum of its terms and is **known only when every term states it**. When any term does not, the figure is unknown with the reason (`2 of 6 observations record no input`); it is never counted as zero. A stated zero is a number. A role is the `target_role` of a dispatch, otherwise the role the line itself names; a line that names none reads `unattributed`.
+
 <!-- AEG:CLAIM: packages/aeg-core/src/log/sync/engine.ts contains:export async function syncSource(source: LogSource, cache: LogCache, options: SyncOptions): Promise<SyncSummary> { -->
 <!-- AEG:CLAIM: packages/aeg-core/src/log/sync/normalize.ts contains:const classified = classifyStoredLine(raw, '') -->
 <!-- AEG:CLAIM: packages/aeg-core/src/log/sync/row.ts contains:export const LOW_TRUST_BELOW_VERSION = '0.33.0' -->
