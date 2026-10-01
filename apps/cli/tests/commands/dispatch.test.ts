@@ -147,6 +147,7 @@ function outboxLines(home: string, issue: number | 'none'): Array<Record<string,
     .split('\n')
     .filter(Boolean)
     .map((l) => JSON.parse(l))
+    .filter((e) => !(e.kind === 'operation' && e.operation === 'cli_command'))
 }
 
 describe('vinaya dispatch — --task attribution', () => {

@@ -375,6 +375,7 @@ function outboxLines(home: string, issue: number | 'none'): unknown[] {
     .split('\n')
     .filter(Boolean)
     .map((l) => JSON.parse(l))
+    .filter((e) => !(e.kind === 'operation' && e.operation === 'cli_command'))
 }
 
 const PROMPT_FILE_CONTENT = 'do the thing'

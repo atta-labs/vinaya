@@ -66,6 +66,9 @@ type Envelope = { meta: unknown; subject: unknown }
 type StripEnvelope<T> = T extends Envelope ? Omit<T, 'meta' | 'subject'> : never
 export type LogEventInput = StripEnvelope<LogEvent>
 
+/** `quiet` drops the one warning `logSync` prints when the process ended before its destination resolved — for a caller that records on every run and may not add a line to a command's stderr. A failure to write still warns. */
+export type LogSyncOptions = { quiet?: boolean }
+
 type RepoRef = { owner: string; repo: string }
 
 /** Mirrors `envelope.ts`'s `HeaderInput.inputVersions` — read once per sink instance, applied to every line it logs. */
@@ -1280,7 +1283,7 @@ function appendLine(path: string, line: string, warn: (message: string) => void)
 /** Injectable for tests; the default instance below is wired to the real reads (env, git, the resolved `logs` destination). */
 export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
   log: (e: LogEventInput) => void
-  logSync: (e: LogEventInput) => void
+  logSync: (e: LogEventInput, opts?: LogSyncOptions) => void
   runId: string
   warmup: () => void
   drain: () => Promise<void>
@@ -1690,13 +1693,13 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
    * records nothing on a CI host. A server destination's line waits in the
    * local retry queue for the next drain; none is started here.
    */
-  function logSync(e: LogEventInput): void {
+  function logSync(e: LogEventInput, opts: LogSyncOptions = {}): void {
     try {
       const call = snapshot()
       let ctx = settledContext
       if (ctx === undefined) {
         const destination = deps.unresolvedLogDestination(deps.env())
-        if (destination.kind === 'folder') {
+        if (destination.kind === 'folder' && !opts.quiet) {
           warnOnce(
             `vinaya: the process ended before its log destination was resolved — the event is written to ${destination.folder}; \`vinaya log send\` delivers it to a configured server later\n`
           )
@@ -1795,8 +1798,8 @@ export function log(e: LogEventInput): void {
  * for the next drain (`apps/cli/specs/log.md` § Recording at process exit).
  * Returns `void`, never throws.
  */
-export function logSync(e: LogEventInput): void {
-  defaultSink.logSync(e)
+export function logSync(e: LogEventInput, opts?: LogSyncOptions): void {
+  defaultSink.logSync(e, opts)
 }
 
 /**

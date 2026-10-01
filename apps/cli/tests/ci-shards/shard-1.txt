@@ -38,6 +38,7 @@ tests/lib/log-callers.test.ts
 tests/lib/log-custom.test.ts
 tests/lib/log-destination.test.ts
 tests/lib/no-log-forge-writes.test.ts
+tests/lib/cli-operation-log.test.ts
 tests/lib/log-sink.test.ts
 tests/lib/log-sink-no-sync-spawn.test.ts
 tests/lib/loop-log.test.ts

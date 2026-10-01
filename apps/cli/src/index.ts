@@ -49,6 +49,8 @@ import { upgradeCommand } from './commands/upgrade.js'
 import { waiverCommand } from './commands/waiver.js'
 import { printJson } from './lib/envelope.js'
 import { ensureGhOnPath } from './lib/gh-path.js'
+import { recordCliOperationAtExit } from './lib/cli-operation-log.js'
+import { logSync } from './lib/log-sink.js'
 import { printHelp } from './lib/output.js'
 import { packageRoot } from './lib/package-root.js'
 import { resolveAuthorRepoSourceEntry } from './lib/self-host.js'
@@ -112,6 +114,12 @@ function readVersion(): string {
 }
 
 const [, , command, ...args] = process.argv
+
+recordCliOperationAtExit(process.argv.slice(2), {
+  on: (event, handler) => process.on(event, handler),
+  logSync,
+  now: Date.now
+})
 
 if (!command || command === 'help' || command === '--help' || command === '-h') {
   printHelp()
