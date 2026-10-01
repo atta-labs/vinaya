@@ -58,12 +58,7 @@
       ],
       "severity": "error"
     },
-    "specGrandfather": {
-      "apps/cli/specs/isolation.md": 18,
-      "apps/cli/specs/log.md": 34,
-      "apps/cli/specs/self-hosting.md": 17,
-      "apps/cli/specs/surface.md": 1
-    }
+    "specGrandfather": {}
   },
   "briefSchema": {
     "pr": {
