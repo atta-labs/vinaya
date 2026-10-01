@@ -2507,26 +2507,73 @@ describe('noneFoundClaimCitesScanCheck — the cited check must have passed', ()
   })
 
   it('a clean passing citation is not poisoned by negations in trailing explanatory prose', () => {
-    // One `SECRETS:` value is a single physical line of several sentences. The
-    // passing citation lives in its own clause; the honest prose that follows
-    // ("I did not run a scanner myself", "no live credential", "not a real
-    // secret") must not negate it, since none of it names the check.
+    // One `SECRETS:` value is a single physical line of several sentences. Only
+    // the word right after the check's name decides the conclusion; the honest
+    // prose that follows ("I did not run a scanner myself", "no live
+    // credential", "not a real secret") never negates it, since the rule reads
+    // nothing past that word.
     expect(
       noneFoundClaimCitesScanCheck(
         'none found — atta-labs/secret-scan passed. I did not run a scanner myself; my read of the diff found no live credential: the only match is a synthetic placeholder, not a real secret.',
         null
       )
     ).toBe(true)
-    // A second passing citation of the check in a later clause is still weighed, and still passes.
+    // A second naming of the check later in the line is weighed the same way — its own following word passes too.
     expect(
       noneFoundClaimCitesScanCheck(
         'none found — atta-labs/secret-scan passed; evidence block shows "atta-labs/secret-scan: pass". I could not re-run it locally.',
         null
       )
     ).toBe(true)
-    // But a negation IN THE SAME CLAUSE as the check still rejects — the clause, not the whole value, is what "beside" scopes.
+    // But a non-passing word right after the check's name rejects — the word after each naming is all that decides.
     expect(
       noneFoundClaimCitesScanCheck('none found — atta-labs/secret-scan did not pass. Nothing else to report.', null)
     ).toBe(false)
+  })
+})
+
+describe('noneFoundClaimCitesScanCheck — the evidence must tie to the judged head', () => {
+  const HEAD = 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2'
+  const OTHER = 'f6e5d4c3b2a1f6e5d4c3b2a1f6e5d4c3b2a1f6e5'
+
+  it('accepts when the evidence names the passing check beside the judged head', () => {
+    const evidence = `HEAD ${HEAD}\natta-labs/secret-scan\tpass\t5s`
+    expect(noneFoundClaimCitesScanCheck('none found', evidence, HEAD)).toBe(true)
+  })
+
+  it('accepts an abbreviated judged-head sha in the evidence', () => {
+    const evidence = `${HEAD.slice(0, 12)} atta-labs/secret-scan passed`
+    expect(noneFoundClaimCitesScanCheck('none found', evidence, HEAD)).toBe(true)
+  })
+
+  it('refuses when the passing check is tied to no head at all', () => {
+    expect(noneFoundClaimCitesScanCheck('none found', 'atta-labs/secret-scan\tpass\t5s', HEAD)).toBe(false)
+  })
+
+  it('refuses when the evidence names a different commit than the judged head', () => {
+    const evidence = `HEAD ${OTHER}\natta-labs/secret-scan\tpass\t5s`
+    expect(noneFoundClaimCitesScanCheck('none found', evidence, HEAD)).toBe(false)
+  })
+
+  it('refuses a passing line for the judged head sitting beside a foreign head', () => {
+    const evidence = `judged ${HEAD} passed; earlier ${OTHER} also on file\natta-labs/secret-scan\tpass\t5s`
+    expect(noneFoundClaimCitesScanCheck('none found', evidence, HEAD)).toBe(false)
+  })
+
+  it('still refuses a failing check even when the judged head is named', () => {
+    const evidence = `HEAD ${HEAD}\natta-labs/secret-scan\tfail\t9s`
+    expect(noneFoundClaimCitesScanCheck('none found', evidence, HEAD)).toBe(false)
+  })
+
+  it('does not mistake a decimal check-run id for a foreign commit sha', () => {
+    // `gh pr checks` output carries a 10-digit run id in its URL — purely
+    // decimal, so it is never read as a commit and never a foreign head.
+    const evidence = `HEAD ${HEAD}\natta-labs/secret-scan\tpass\t5s\thttps://github.com/o/r/actions/runs/1234567890`
+    expect(noneFoundClaimCitesScanCheck('none found', evidence, HEAD)).toBe(true)
+  })
+
+  it('skips the head check entirely when no judged head is supplied (the dispatched-loop path)', () => {
+    expect(noneFoundClaimCitesScanCheck('none found — atta-labs/secret-scan passed', null)).toBe(true)
+    expect(noneFoundClaimCitesScanCheck('none found', 'atta-labs/secret-scan\tpass\t5s')).toBe(true)
   })
 })

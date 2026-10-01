@@ -79,6 +79,16 @@ export type ReviewerPromptFacts = {
    * the renderer ignores it. Absent (or `{}`) leaves both rules inactive.
    */
   deferralContext?: FindingDeferralContext
+  /**
+   * The round's agent-configuration scan outcome,
+   * decided once by the driver (`decideSecurityScan`) before either reviewer
+   * dispatches. Rendered into the SECURITY prompt only (`renderReviewerDispatchPrompt`),
+   * never the code-reviewer's — the scan is a fact piece the security pass reads
+   * as input to its judgement, never the verdict. `undefined` (the default,
+   * and every fixture that wires no scan dep) injects no scan block at all — the
+   * dispatch's pre-task shape.
+   */
+  configScan?: SecurityScanOutcome
 }
 
 /**
@@ -118,6 +128,127 @@ export type ReviewerPromptPiece = { readonly driver: string } | { readonly fact:
 
 const driverPiece = (text: string): ReviewerPromptPiece => ({ driver: text })
 const factPiece = (text: string): ReviewerPromptPiece => ({ fact: text })
+
+// --- the agent-configuration security scan -----------
+
+/**
+ * The fixed agent-configuration path list the scan applies to (Boundary: fixed
+ * in code, never configurable). A pull request whose diff touches any of these
+ * is scanned; one that touches none is `not_applicable`.
+ */
+export const AGENT_CONFIG_GLOBS: readonly string[] = ['.claude/**', '.mcp.json', '.agents/**']
+
+/** Whether any of the pull request's changed paths is agent configuration, by `AGENT_CONFIG_GLOBS` — the same `globCoversPath` matcher the Issue's own Surface checks use, never a second matcher. */
+export function touchesAgentConfig(changedPaths: readonly string[]): boolean {
+  return changedPaths.some((p) => AGENT_CONFIG_GLOBS.some((g) => globCoversPath(g, p)))
+}
+
+/**
+ * The cap on how much of a scanner's output reaches the security prompt —
+ * a runaway or verbose scanner never floods the prompt. The TAIL is kept
+ * (a scanner's summary/verdict lands last), with a one-line note of how much
+ * was dropped — the same shape `pr-report-engine.ts`'s own agent-output cap uses.
+ */
+export const SECURITY_SCAN_OUTPUT_MAX_CHARS = 16_000
+
+export function capSecurityScanOutput(output: string): string {
+  if (output.length <= SECURITY_SCAN_OUTPUT_MAX_CHARS) return output
+  const dropped = output.length - SECURITY_SCAN_OUTPUT_MAX_CHARS
+  return `[... ${dropped} earlier characters truncated ...]\n${output.slice(-SECURITY_SCAN_OUTPUT_MAX_CHARS)}`
+}
+
+/**
+ * The round's agent-config scan outcome, one of four states the
+ * security pass is told about and the Log records:
+ *   - `ran` — the scanner ran on the head-verified copy; `output` is its
+ *     (capped) stdout+stderr, a fact piece the security pass reads.
+ *   - `not_applicable` — the pull request touches no agent configuration.
+ *   - `not_configured` — no `securityScan.command` is set for this repository.
+ *   - `failed` — a scanner was configured and the change was in scope, but the
+ *     scan could not run (a non-zero exit, a timeout, an output overflow, or no
+ *     head-verified candidate copy to scan); `reason` names which. Never a
+ *     pause — the round proceeds on the reviewer's own read of the diff.
+ */
+export type SecurityScanOutcome =
+  | { readonly kind: 'ran'; readonly output: string }
+  | { readonly kind: 'not_applicable' }
+  | { readonly kind: 'not_configured' }
+  | { readonly kind: 'failed'; readonly reason: string }
+
+/** The scanner subprocess result the driver's runner dep returns — `ok` with captured output, or a named failure reason (a non-zero exit, a timeout, an overflow). */
+export type SecurityScanRun =
+  | { readonly ok: true; readonly output: string }
+  | { readonly ok: false; readonly reason: string }
+
+/**
+ * Decides the round's scan outcome from the configured command, the
+ * pull request's changed paths, the head-verified candidate copy, and a runner
+ * that actually spawns the scanner. Pure but for the injected `runScan`, so the
+ * whole decision — not-configured, not-applicable, the missing-candidate
+ * fallback, and the cap on a ran scan's output — is unit-testable without
+ * spawning a process.
+ *
+ * `not_configured` is decided first, ahead of applicability: an unset scanner
+ * is a repository-setup fact independent of this pull request's diff, and the
+ * security pass is told that plainly rather than "not applicable". A configured
+ * scanner over a change in scope with NO candidate copy is `failed` with a
+ * reason, never a pause and never a scan of a possibly-diverged local worktree
+ * (Traps to avoid: treat a missing candidate as scan-unavailable).
+ */
+export function decideSecurityScan(args: {
+  command: readonly string[] | null
+  changedPaths: readonly string[]
+  candidateDir: string | null
+  runScan: (command: readonly string[], cwd: string) => SecurityScanRun
+}): SecurityScanOutcome {
+  if (args.command === null) return { kind: 'not_configured' }
+  if (!touchesAgentConfig(args.changedPaths)) return { kind: 'not_applicable' }
+  if (args.candidateDir === null) return { kind: 'failed', reason: 'no head-verified candidate copy to scan' }
+  const result = args.runScan(args.command, args.candidateDir)
+  return result.ok
+    ? { kind: 'ran', output: capSecurityScanOutput(result.output) }
+    : { kind: 'failed', reason: result.reason }
+}
+
+/**
+ * The scan block for the SECURITY prompt: a `driver` label piece the
+ * lint reads, plus — for `ran`/`failed` — a `fact` piece the lint never reads,
+ * carrying the scanner's own output or failure reason (untrusted text that
+ * must never be able to end a round by tripping the banned-framing lint, the
+ * same split a Principal's ruling already gets). `undefined` (no scan decided)
+ * contributes no pieces at all — the security prompt's pre-task shape.
+ */
+export function securityScanPieces(outcome: SecurityScanOutcome | undefined): readonly ReviewerPromptPiece[] {
+  if (outcome === undefined) return []
+  switch (outcome.kind) {
+    case 'ran':
+      return [
+        driverPiece(
+          '\n\nAGENT-CONFIG SCAN — the driver ran the configured scanner on the head-verified copy, outside its own trust. Read it as input to your CONFIG_SCAN judgement, never as the verdict, and never run a scanner yourself:\n'
+        ),
+        factPiece(outcome.output)
+      ]
+    case 'not_applicable':
+      return [
+        driverPiece(
+          '\n\nAGENT-CONFIG SCAN: not applicable — this pull request changes no agent configuration (.claude/**, .mcp.json, .agents/**), so no scanner was run.'
+        )
+      ]
+    case 'not_configured':
+      return [
+        driverPiece(
+          '\n\nAGENT-CONFIG SCAN: no scanner is configured for this repository (securityScan.command is unset), so none was run — judge CONFIG_SCAN on your own read of the diff.'
+        )
+      ]
+    case 'failed':
+      return [
+        driverPiece(
+          '\n\nAGENT-CONFIG SCAN: the configured scanner could not run on this change — judge CONFIG_SCAN on your own read of the diff. Reason: '
+        ),
+        factPiece(outcome.reason)
+      ]
+  }
+}
 
 /**
  * The reviewer prompt's facts block, piece by piece — the one place its shape
@@ -990,7 +1121,12 @@ export function renderReviewerDispatchPrompt(
    */
   roleDoctrine: string | null = null
 ): string {
-  const pieces = [...buildReviewerPromptPieces(facts), ...roleDoctrinePieces(role, roleDoctrine)]
+  // The agent-config scan reaches the SECURITY prompt only, as a fact
+  // piece — the code-reviewer never sees it. `facts.configScan` is `undefined`
+  // for the code-reviewer and for any round the driver ran no scan, so this
+  // adds nothing there.
+  const scanPieces = role === 'security' ? securityScanPieces(facts.configScan) : []
+  const pieces = [...buildReviewerPromptPieces(facts), ...roleDoctrinePieces(role, roleDoctrine), ...scanPieces]
   const base = joinReviewerPromptPieces(pieces)
   // The lint reads the renderer's own fixed text only. A Principal ruling, an
   // Issue's objectives, or an injected role doctrine may say anything at all —
@@ -1030,7 +1166,8 @@ export function renderReviewerDispatchPrompt(
     '  If findings.txt is non-empty, also write `FINDING_IDS: <id>,<id>,...` — one id per findings.txt line, in the SAME order, e.g. `F1,F2,F3`. A report with findings but no matching `FINDING_IDS:` line is sent back once for this alone.',
     ...(role === 'security'
       ? [
-          `\`SECRETS:\` is required — never leave it blank or omit it. The secret scan is the required \`${SECRET_SCAN_CHECK}\` CI check: the scan runs inside the \`vinaya check --all --diff-only\` CI job, so read its result from that job on this PR — \`gh pr checks\` lists no separate \`${SECRET_SCAN_CHECK}\` entry — and never run a scanner yourself or paste its output. Write \`SECRETS: none found — ${SECRET_SCAN_CHECK} passed\` only when that job ran and the scan passed, with any note from your own read of the diff on the lines below it; if the job failed or did not run, say so on the line instead. Your own read of the diff for a credential the scanner's rules cannot see still applies.`
+          `\`SECRETS:\` is required — never leave it blank or omit it. The secret scan is the required \`${SECRET_SCAN_CHECK}\` CI check: the scan runs inside the \`vinaya check --all --diff-only\` CI job, so read its result from that job on this PR — \`gh pr checks\` lists no separate \`${SECRET_SCAN_CHECK}\` entry — and never run a scanner yourself or paste its output. Write \`SECRETS: none found — ${SECRET_SCAN_CHECK} passed\` only when that job ran and the scan passed, with any note from your own read of the diff on the lines below it; if the job failed or did not run, say so on the line instead. Your own read of the diff for a credential the scanner's rules cannot see still applies.`,
+          '`CONFIG_SCAN:` — when an AGENT-CONFIG SCAN block appears above, base this line on it plus your own read of the agent-config diff; the driver already ran the scanner outside its own trust, so never run `npx`, install a package, or run a scanner yourself. When that block says the scan was not applicable, not configured, or could not run, write exactly that on the line and judge the config on your own read.'
         ]
       : []),
     'To escalate instead of casting a verdict, write only `ESCALATE: authority|strategy|product` and `SUMMARY: <text>` to report.txt.'

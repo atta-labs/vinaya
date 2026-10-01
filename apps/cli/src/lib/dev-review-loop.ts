@@ -43,9 +43,12 @@
 
 import { randomUUID } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
+import { loadTrustAnchorConfig, resolveSecurityScanCommand } from './config.js'
+import { WORKER_ENV_ALLOWLIST_KEYS } from './worker-boundary.js'
 import {
   activeBudgetMs,
   assessRound,
@@ -151,6 +154,7 @@ import {
   latestHeldRequestChanges,
   missingReviewerArtifacts,
   persistManifestRecord,
+  decideSecurityScan,
   readIfExists,
   renderReviewerDispatchPrompt,
   runtimeDir,
@@ -159,6 +163,8 @@ import {
   ReviewerReportParseFailure,
   reviewerWorkDir,
   type RoundVerdictParse,
+  type SecurityScanOutcome,
+  type SecurityScanRun,
   writeHeldVerdict
 } from './dev-review-loop/reviewer-dispatch.js'
 import {
@@ -417,6 +423,30 @@ export type LoopDeps = {
    */
   resolveTaskSurface?: (task: number) => IssueSurface | null
   /**
+   * The configured agent-config scanner argv, from
+   * the default-branch trust anchor (`resolveSecurityScanCommand` +
+   * `loadTrustAnchorConfig`). `null` when no `securityScan.command` is set —
+   * the security pass is then told no scanner is configured. Optional, for the
+   * same reason `gitUnifiedDiff`/`resolveTaskSurface` are: a fixture that stubs
+   * none of the three scan deps runs the loop with no scan at all, the
+   * pre-task shape.
+   */
+  resolveSecurityScanCommand?: () => readonly string[] | null
+  /**
+   * The pull request's changed paths (`base...head`),
+   * for the scan's applicability decision. Absent leaves the changed-path list
+   * empty, so a configured scanner reports `not_applicable` rather than
+   * scanning paths the driver could not read.
+   */
+  gitChangedPaths?: (base: string, head: string) => readonly string[]
+  /**
+   * Runs the configured scanner over the head-verified
+   * candidate copy with a constructed environment (no forge credential), a time
+   * limit and an output cap (`defaultRunSecurityScanSubprocess`). A fixture
+   * injects a fake here to exercise the scan path without spawning a process.
+   */
+  runSecurityScanSubprocess?: (command: readonly string[], cwd: string) => SecurityScanRun
+  /**
    * O1/O2: the published doctrine — short version plus `## What you check` —
    * for the dispatched review role, resolved through the SAME override-aware
    * role plan `vinaya check --plan` renders (`resolveRoleDoctrineText`). The
@@ -622,6 +652,132 @@ function defaultGitUnifiedDiff(from: string, to: string): string | null {
     })
   } catch {
     return null
+  }
+}
+
+// --- the agent-configuration security scan -----------
+
+/** The scanner subprocess's wall-time ceiling — a stuck scanner is reported `failed` (a timeout), never a pause the loop waits on. */
+const SECURITY_SCAN_TIMEOUT_MS = 120_000
+/** The scanner subprocess's output-buffer cap, so a runaway scanner can never flood the driver's memory (the prompt itself is capped separately, tighter, by `capSecurityScanOutput`). */
+const SECURITY_SCAN_MAX_BUFFER_BYTES = 8 * 1024 * 1024
+
+/**
+ * The configured scanner argv from the DEFAULT-BRANCH trust anchor — the
+ * same source `reviewPolicy()`/`principalAllowlist()` read, never the pull
+ * request's own checkout, so a pull request cannot choose the subprocess that
+ * runs in the driver's environment by editing its own `vinaya.config.json`.
+ */
+function defaultResolveSecurityScanCommand(): readonly string[] | null {
+  return resolveSecurityScanCommand(loadTrustAnchorConfig())
+}
+
+/** The pull request's changed paths, `git diff --name-only <base>...<head>` (the PR's own diff against its merge base). `[]` on any git failure — the scan is then `not_applicable` rather than run against paths that could not be read. */
+function defaultGitChangedPaths(base: string, head: string): readonly string[] {
+  try {
+    const out = execFileSync('git', ['diff', '--name-only', `${base}...${head}`], {
+      encoding: 'utf8',
+      maxBuffer: 16 * 1024 * 1024
+    })
+    return out
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+  } catch {
+    return []
+  }
+}
+
+/** `execFileSync`'s captured stream, as a string — a `Buffer` (the default) or an already-decoded string. */
+function scanStreamToString(stream: Buffer | string | null | undefined): string {
+  if (stream === null || stream === undefined) return ''
+  return typeof stream === 'string' ? stream : stream.toString('utf8')
+}
+
+/**
+ * Runs the configured scanner as a repository subprocess over `cwd` (the
+ * head-verified candidate copy, appended as the final argument), with:
+ *   - a CONSTRUCTED environment carrying only `WORKER_ENV_ALLOWLIST_KEYS` —
+ *     the same baseline `checks/runner.ts`'s `buildCheckEnv` gives every check
+ *     (`apps/cli/specs/isolation.md` §2), so NO forge credential
+ *     (`GH_TOKEN`/`GITHUB_TOKEN`) ever reaches a scanner running
+ *     pull-request-authored configuration;
+ *   - the pinned command the config names (`npx --yes <pkg>@<version> scan`),
+ *     spawned via `execFile`, never a shell — the argv is the config's list
+ *     plus the directory, so no shell interpretation of any element;
+ *   - a time limit and an output-buffer cap.
+ *
+ * A completed run's exit code is deliberately NOT read as a verdict (Traps to
+ * avoid: the scanner's exit codes are not proven live, so they are never relied
+ * on) — whatever it printed IS the scan result the security pass reads, passed
+ * through as `ok`. Only an inability to run to completion — the executable
+ * missing, a timeout, or an output overflow — is `ok: false`, which the loop
+ * reports to the reviewer and the Log as `failed` and continues past.
+ */
+export function defaultRunSecurityScanSubprocess(command: readonly string[], scanTargetDir: string): SecurityScanRun {
+  const exe = command[0]
+  if (exe === undefined) return { ok: false, reason: 'the configured securityScan.command is empty' }
+  // Round-2 security review, HIGH: the scan target is a PULL-REQUEST-AUTHORED
+  // checkout, so it must never steer the subprocess's own config resolution.
+  // `npx --yes <pkg>@<ver>` reads `.npmrc` from the process cwd AND its
+  // ancestors AND from `$HOME`; a pull request that committed an `.npmrc`
+  // registry redirect at its repo root — or a real `$HOME/.npmrc` — would
+  // otherwise make it fetch and run an ATTACKER package under the pinned name,
+  // executing code on the driver host with the real `~/.ssh`/OAuth credentials
+  // readable at `~`. Run instead from a FRESH, EMPTY sandbox directory used as
+  // BOTH cwd and `HOME` (`WORKER_ENV_ALLOWLIST_KEYS` carries the real `HOME`,
+  // overridden here): outside the repository, with no `.npmrc`, so the scan
+  // target is only ever the directory passed as the final ARGUMENT, never the
+  // cwd, and no PR-committed or user npm config is on any path the resolver
+  // walks. This is the config-steering half; a full OS sandbox against a
+  // trusted package reading an absolute credential path is the worker
+  // boundary's own task (`apps/cli/specs/isolation.md` §§3–4), off on Linux.
+  let sandbox: string
+  try {
+    sandbox = mkdtempSync(join(tmpdir(), 'vinaya-scan-'))
+  } catch (err) {
+    return { ok: false, reason: `could not create a scan sandbox: ${err instanceof Error ? err.message : String(err)}` }
+  }
+  const env: NodeJS.ProcessEnv = {}
+  for (const key of WORKER_ENV_ALLOWLIST_KEYS) {
+    const value = process.env[key]
+    if (value !== undefined) env[key] = value
+  }
+  env.HOME = sandbox
+  try {
+    const output = execFileSync(exe, [...command.slice(1), scanTargetDir], {
+      cwd: sandbox,
+      env,
+      encoding: 'utf8',
+      timeout: SECURITY_SCAN_TIMEOUT_MS,
+      maxBuffer: SECURITY_SCAN_MAX_BUFFER_BYTES,
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    return { ok: true, output }
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException & {
+      stdout?: Buffer | string
+      stderr?: Buffer | string
+      status?: number | null
+      signal?: string | null
+    }
+    if (e.code === 'ENOENT') return { ok: false, reason: `scanner executable not found: ${exe}` }
+    if (e.code === 'ENOBUFS' || e.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER')
+      return { ok: false, reason: `scanner output exceeded ${SECURITY_SCAN_MAX_BUFFER_BYTES} bytes` }
+    if (e.code === 'ETIMEDOUT' || e.signal === 'SIGTERM')
+      return { ok: false, reason: `scanner timed out after ${SECURITY_SCAN_TIMEOUT_MS}ms` }
+    // A run that exited non-zero: its output is the scan result, passed through
+    // (exit status not read as pass/fail). Only a run that printed nothing at
+    // all is a genuine failure with no result to hand the reviewer.
+    const combined = `${scanStreamToString(e.stdout)}${scanStreamToString(e.stderr)}`.trim()
+    if (typeof e.status === 'number' && combined.length > 0) return { ok: true, output: combined }
+    return { ok: false, reason: e.message }
+  } finally {
+    try {
+      rmSync(sandbox, { recursive: true, force: true })
+    } catch {
+      // Best-effort cleanup — a leaked temp dir never fails the scan.
+    }
   }
 }
 
@@ -974,6 +1130,9 @@ function defaultDeps(): LoopDeps {
     gitFetch: defaultGitFetch,
     gitDiffShortstat: defaultGitDiffShortstat,
     gitUnifiedDiff: defaultGitUnifiedDiff,
+    resolveSecurityScanCommand: defaultResolveSecurityScanCommand,
+    gitChangedPaths: defaultGitChangedPaths,
+    runSecurityScanSubprocess: defaultRunSecurityScanSubprocess,
     resolveTaskSurface: defaultResolveTaskSurface,
     resolveReviewerDoctrine: resolveRoleDoctrineText,
     resolveDeveloperDoctrine: resolveDeveloperDoctrineText,
@@ -4200,6 +4359,41 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             head,
             d.readWorktreeHead
           )
+
+          // ONCE per round, after the
+          // head-verified candidate is built and BEFORE either reviewer is
+          // dispatched, decide the agent-config scan from the pull request's
+          // changed paths and run the configured scanner on that candidate copy
+          // in a constructed environment with no forge credential. The outcome
+          // reaches the SECURITY prompt only (`facts.configScan` — the
+          // code-reviewer never sees it) and is recorded in the driver Log; a
+          // not-configured, not-applicable or failed scan is reported to the
+          // reviewer and logged, and the round proceeds — never a pause.
+          // The whole decision is wrapped so a scan-infrastructure error (an
+          // unreadable trust anchor, a git failure resolving changed paths)
+          // degrades to "the scan could not run" rather than crashing the round.
+          {
+            let scanOutcome: SecurityScanOutcome
+            try {
+              scanOutcome = decideSecurityScan({
+                command: d.resolveSecurityScanCommand ? d.resolveSecurityScanCommand() : null,
+                changedPaths: d.gitChangedPaths ? d.gitChangedPaths(baseSha, head) : [],
+                candidateDir,
+                runScan:
+                  d.runSecurityScanSubprocess ?? (() => ({ ok: false, reason: 'no scanner runner is available' }))
+              })
+            } catch (scanErr) {
+              scanOutcome = { kind: 'failed', reason: scanErr instanceof Error ? scanErr.message : String(scanErr) }
+            }
+            facts.configScan = scanOutcome
+            const scanDetail = scanOutcome.kind === 'failed' ? `failed reason=${scanOutcome.reason}` : scanOutcome.kind
+            appendRoleLine(
+              loopLogPath,
+              'dev-review-loop',
+              `security_scan: round=${round} head=${head} outcome=${scanDetail}`
+            )
+          }
+
           try {
             // O1/O2: the evidence report runs IN PARALLEL with both reviewer
             // dispatches, never before or after them — reviewers dispatch on

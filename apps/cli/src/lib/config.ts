@@ -711,6 +711,26 @@ export const VinayaConfigSchema = z.object({
       maxTaskMinutes: z.number().optional()
     })
     .optional(),
+  // The agent-configuration security scanner the review loop runs before the
+  // security pass. `command` is the scanner as an argv
+  // list — its first element the executable, the rest its arguments, a pinned
+  // version included in the args (`["npx", "--yes", "ecc-agentshield@1.6.0",
+  // "scan"]`). The loop appends the directory to scan (the head-verified
+  // candidate copy) as a final argument and runs it once per round, ONLY when
+  // the pull request touches agent configuration (`.claude/**`, `.mcp.json`,
+  // `.agents/**` — fixed in code, never configurable), with a constructed
+  // environment carrying no forge credential, a time limit and an output cap.
+  // Absent, the security pass is told no scanner is configured and the round
+  // proceeds unchanged — never a pause. Read, like `reviewPolicy`/`principals`,
+  // only from the default-branch trust anchor (`resolveSecurityScanCommand` +
+  // `loadTrustAnchorConfig`), never the pull request's own checkout: the key
+  // names a subprocess that runs in the driver's environment, so a pull request
+  // must not be able to choose it in its own diff.
+  securityScan: z
+    .object({
+      command: z.array(z.string().min(1)).min(1)
+    })
+    .optional(),
   // The five Issue/PR gate cutovers — one Issue/PR number per gate below
   // which that gate is grandfathered (an older Issue/PR passes
   // unconditionally). These were hardcoded constants in `@attalabs/aeg-core`
@@ -1149,6 +1169,24 @@ export function resolveReviewPolicy(config: VinayaConfig | null): ReviewPolicy {
     maxRounds,
     maxTaskMinutes
   }
+}
+
+/**
+ * The configured agent-configuration security scanner as an argv list, or
+ * `null` when unset. The review loop runs this
+ * before dispatching the security pass, on the head-verified candidate copy,
+ * appending the directory to scan as a final argument (`decideSecurityScan`).
+ *
+ * Same sourcing rule as `resolveReviewPolicy`/`resolvePrincipalAllowlist`: an
+ * unattended caller MUST pass `loadTrustAnchorConfig()` (the default branch),
+ * never `loadConfig()` or anything PR-checkout-derived — the command names a
+ * subprocess that runs in the driver's own environment, so a pull request must
+ * not be able to redirect it in its own diff. Pure: takes the already-loaded
+ * config, no I/O of its own.
+ */
+export function resolveSecurityScanCommand(config: VinayaConfig | null): readonly string[] | null {
+  const command = config?.securityScan?.command
+  return command && command.length > 0 ? command : null
 }
 
 /**

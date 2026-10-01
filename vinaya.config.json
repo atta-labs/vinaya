@@ -35,6 +35,9 @@
     "codeReviewThreshold": "MAJOR",
     "securityThreshold": "HIGH"
   },
+  "securityScan": {
+    "command": ["npx", "--yes", "ecc-agentshield@1.6.0", "scan"]
+  },
   "gateCutovers": {
     "objectivesSinceIssue": 404,
     "briefSectionsSinceIssue": 426,

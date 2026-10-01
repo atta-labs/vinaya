@@ -146,6 +146,12 @@ export type LoopWorld = {
   roundDiff?: string
   /** O3: the task Issue's `## Surface` a fixture wants the driver to resolve (`resolveTaskSurface`); `undefined` (the default) leaves the out-of-Surface rule inactive. */
   surface?: IssueSurface | null
+  /** The configured agent-config scanner argv the fake `resolveSecurityScanCommand` returns; `undefined`/`null` (the default) tells the security pass no scanner is configured. */
+  securityScanCommand?: readonly string[] | null
+  /** The pull request's changed paths the fake `gitChangedPaths` returns, deciding scan applicability; `undefined` (the default) is no changed paths, so a configured scanner reports `not_applicable`. */
+  changedPaths?: readonly string[]
+  /** The result the fake `runSecurityScanSubprocess` returns when the scan is configured and applicable; `undefined` (the default) is a clean run. */
+  securityScanResult?: { ok: true; output: string } | { ok: false; reason: string }
   /** O1/O2: the per-role doctrine the fake `resolveReviewerDoctrine` returns into each reviewer/security prompt; `undefined` (the default) injects no doctrine block. */
   roleDoctrine?: Partial<Record<'reviewer' | 'security', string | null>>
   /** role-reach-v1/2, O1: the developer doctrine the fake `resolveDeveloperDoctrine` prepends to a fresh (non-resumed) developer dispatch; `undefined`/`null` (the default) prepends nothing, the pre-task shape. */
@@ -434,6 +440,18 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
     // / `world.surface`; a test that stubs neither sees no deferral at all.
     gitUnifiedDiff: (_from, _to) => world.roundDiff ?? null,
     resolveTaskSurface: (_task) => world.surface ?? null,
+    // The agent-config scan's three deps, wired
+    // to the world so an in-process fixture drives the scan without a real
+    // trust-anchor fetch, a real `git diff`, or a spawned scanner. The defaults
+    // (no command, no changed paths) make every round's scan `not_configured` —
+    // the loop's pre-task behaviour, save the one new "no scanner configured"
+    // line the security prompt now always carries. A fixture sets
+    // `world.securityScanCommand` + `world.changedPaths` to exercise a real ran/
+    // not-applicable/failed decision.
+    resolveSecurityScanCommand: () => world.securityScanCommand ?? null,
+    gitChangedPaths: (_base, _head) => world.changedPaths ?? [],
+    runSecurityScanSubprocess: (_command, _cwd) =>
+      world.securityScanResult ?? { ok: true, output: '(fake scan: clean)' },
     fetchLoopHistory: (_pr) => ({ rounds: [], totalWallMs: 0, totalFilesChanged: 0, journalFinalized: null }) as never,
     // A real (but minimal) yield, never an instant no-op: `logEvents`' own
     // wait-for-landing busy-loops on `sleep`, and the log sink flushes its

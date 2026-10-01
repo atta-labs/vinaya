@@ -9,12 +9,16 @@ import {
   type ReviewInputManifest
 } from '@attalabs/aeg-core'
 import type { DispatchHandle } from '../../../src/lib/dispatch'
+import { defaultRunSecurityScanSubprocess } from '../../../src/lib/dev-review-loop'
 import {
+  AGENT_CONFIG_GLOBS,
   buildManifestRecord,
   buildReviewerPromptPieces,
   buildRoundDeferralContext,
   buildVerdictFromReport,
+  capSecurityScanOutput,
   controlStoreRootFor,
+  decideSecurityScan,
   driverAuthoredPromptText,
   lintReviewerPrompt,
   makeChangedLinePredicate,
@@ -25,9 +29,16 @@ import {
   renderReviewerDispatchPrompt,
   renderReviewerPrompt,
   ReviewerReportParseFailure,
-  roleDoctrinePieces
+  roleDoctrinePieces,
+  SECURITY_SCAN_OUTPUT_MAX_CHARS,
+  securityScanPieces,
+  touchesAgentConfig
 } from '../../../src/lib/dev-review-loop/reviewer-dispatch'
-import type { ReviewerPromptFacts, ReviewerPromptPiece } from '../../../src/lib/dev-review-loop/reviewer-dispatch'
+import type {
+  ReviewerPromptFacts,
+  ReviewerPromptPiece,
+  SecurityScanOutcome
+} from '../../../src/lib/dev-review-loop/reviewer-dispatch'
 
 // --- objective-id coverage at the driver (review-validity-v1 task 4, #478, O4) ---
 
@@ -700,5 +711,222 @@ describe('buildVerdictFromReport — the security SECRETS: line follows the same
       []
     )
     expect(result.rendered).toContain('SECRETS: none found — atta-labs/secret-scan passed')
+  })
+})
+
+// --- the agent-configuration security scan -----------
+
+describe('touchesAgentConfig — applicability from the fixed path list', () => {
+  it('is true for a change under any agent-config glob', () => {
+    expect(touchesAgentConfig(['.claude/settings.json'])).toBe(true)
+    expect(touchesAgentConfig(['.mcp.json'])).toBe(true)
+    expect(touchesAgentConfig(['.agents/skills/x/skill.md'])).toBe(true)
+    expect(touchesAgentConfig(['src/foo.ts', '.mcp.json'])).toBe(true)
+  })
+
+  it('is false for a change that touches no agent configuration', () => {
+    expect(touchesAgentConfig([])).toBe(false)
+    expect(touchesAgentConfig(['src/foo.ts', 'README.md'])).toBe(false)
+    // A sibling path that merely shares a prefix is not agent config.
+    expect(touchesAgentConfig(['claude/notes.md', 'mcp.json.bak'])).toBe(false)
+  })
+
+  it('exposes the fixed glob list', () => {
+    expect([...AGENT_CONFIG_GLOBS]).toEqual(['.claude/**', '.mcp.json', '.agents/**'])
+  })
+})
+
+describe('decideSecurityScan — the four outcomes', () => {
+  const ran = () => ({ ok: true as const, output: 'scanner: 0 findings' })
+  const neverRun = () => {
+    throw new Error('runScan must not be called')
+  }
+
+  it('is not_configured when no command is set — ahead of applicability', () => {
+    const out = decideSecurityScan({
+      command: null,
+      changedPaths: ['.mcp.json'],
+      candidateDir: '/tmp/candidate',
+      runScan: neverRun
+    })
+    expect(out).toEqual({ kind: 'not_configured' })
+  })
+
+  it('is not_applicable when the change touches no agent config, without running the scanner', () => {
+    const out = decideSecurityScan({
+      command: ['scan'],
+      changedPaths: ['src/foo.ts'],
+      candidateDir: '/tmp/candidate',
+      runScan: neverRun
+    })
+    expect(out).toEqual({ kind: 'not_applicable' })
+  })
+
+  it('is failed (never a pause) when a configured, in-scope scan has no candidate copy to scan', () => {
+    const out = decideSecurityScan({
+      command: ['scan'],
+      changedPaths: ['.mcp.json'],
+      candidateDir: null,
+      runScan: neverRun
+    })
+    expect(out).toEqual({ kind: 'failed', reason: 'no head-verified candidate copy to scan' })
+  })
+
+  it('runs the scanner and returns its (capped) output when configured and in scope', () => {
+    const calls: Array<{ command: readonly string[]; cwd: string }> = []
+    const out = decideSecurityScan({
+      command: ['npx', '--yes', 'ecc-agentshield@1.6.0', 'scan'],
+      changedPaths: ['.claude/hooks/x.ts'],
+      candidateDir: '/tmp/candidate',
+      runScan: (command, cwd) => {
+        calls.push({ command, cwd })
+        return ran()
+      }
+    })
+    expect(out).toEqual({ kind: 'ran', output: 'scanner: 0 findings' })
+    expect(calls).toEqual([{ command: ['npx', '--yes', 'ecc-agentshield@1.6.0', 'scan'], cwd: '/tmp/candidate' }])
+  })
+
+  it('is failed when the runner reports it could not run', () => {
+    const out = decideSecurityScan({
+      command: ['scan'],
+      changedPaths: ['.mcp.json'],
+      candidateDir: '/tmp/candidate',
+      runScan: () => ({ ok: false, reason: 'scanner timed out after 120000ms' })
+    })
+    expect(out).toEqual({ kind: 'failed', reason: 'scanner timed out after 120000ms' })
+  })
+
+  it('caps a ran scan output to the prompt ceiling', () => {
+    const huge = 'x'.repeat(SECURITY_SCAN_OUTPUT_MAX_CHARS + 5000)
+    const out = decideSecurityScan({
+      command: ['scan'],
+      changedPaths: ['.mcp.json'],
+      candidateDir: '/tmp/candidate',
+      runScan: () => ({ ok: true, output: huge })
+    })
+    expect(out.kind).toBe('ran')
+    if (out.kind === 'ran') {
+      expect(out.output.length).toBeLessThan(huge.length)
+      expect(out.output).toContain('earlier characters truncated')
+    }
+  })
+})
+
+describe('capSecurityScanOutput — bounds only an over-long scan', () => {
+  it('returns short output unchanged', () => {
+    expect(capSecurityScanOutput('clean')).toBe('clean')
+  })
+  it('keeps the tail and notes the drop for over-long output', () => {
+    const capped = capSecurityScanOutput('a'.repeat(SECURITY_SCAN_OUTPUT_MAX_CHARS + 100))
+    expect(capped).toContain('100 earlier characters truncated')
+    expect(capped.endsWith('a'.repeat(50))).toBe(true)
+  })
+})
+
+describe('securityScanPieces / renderReviewerDispatchPrompt — the scan reaches the security prompt only', () => {
+  const MANIFEST: ReviewInputManifest = {
+    headSha: 'a'.repeat(40),
+    baseSha: 'e'.repeat(40),
+    briefHash: 'b'.repeat(64),
+    objectivesVersion: 'c'.repeat(64),
+    rulingOrdinal: 0,
+    policyDigest: 'd'.repeat(64)
+  }
+  const FACTS: ReviewerPromptFacts = {
+    objectives: 'O1. Do the thing.',
+    resolvedObjectives: [{ id: 'O1', text: 'Do the thing.' }],
+    rulings: [],
+    ciConclusion: 'green',
+    revision: 'f'.repeat(40),
+    manifest: MANIFEST
+  }
+
+  it('contributes nothing when no scan was decided', () => {
+    expect(securityScanPieces(undefined)).toEqual([])
+  })
+
+  it("renders the scanner's output for the security pass, as a fact piece", () => {
+    const scan: SecurityScanOutcome = { kind: 'ran', output: 'agentshield: 1 finding — over-broad tool grant' }
+    const prompt = renderReviewerDispatchPrompt('security', { ...FACTS, configScan: scan }, '/tmp/work')
+    expect(prompt).toContain('AGENT-CONFIG SCAN')
+    expect(prompt).toContain('agentshield: 1 finding — over-broad tool grant')
+    // Driver-only text (the lint's subject) never carries the scanner's output.
+    const pieces = [...buildReviewerPromptPieces({ ...FACTS, configScan: scan }), ...securityScanPieces(scan)]
+    expect(driverAuthoredPromptText(pieces)).not.toContain('over-broad tool grant')
+  })
+
+  it('never shows the scan to the code-reviewer', () => {
+    const scan: SecurityScanOutcome = { kind: 'ran', output: 'agentshield output' }
+    const prompt = renderReviewerDispatchPrompt('reviewer', { ...FACTS, configScan: scan }, '/tmp/work')
+    expect(prompt).not.toContain('AGENT-CONFIG SCAN')
+    expect(prompt).not.toContain('agentshield output')
+  })
+
+  it('tells the security pass which non-ran reason it was', () => {
+    const notConfigured = renderReviewerDispatchPrompt(
+      'security',
+      { ...FACTS, configScan: { kind: 'not_configured' } },
+      '/tmp/work'
+    )
+    expect(notConfigured).toContain('no scanner is configured')
+
+    const notApplicable = renderReviewerDispatchPrompt(
+      'security',
+      { ...FACTS, configScan: { kind: 'not_applicable' } },
+      '/tmp/work'
+    )
+    expect(notApplicable).toContain('not applicable')
+
+    const failed = renderReviewerDispatchPrompt(
+      'security',
+      { ...FACTS, configScan: { kind: 'failed', reason: 'scanner timed out after 120000ms' } },
+      '/tmp/work'
+    )
+    expect(failed).toContain('could not run')
+    expect(failed).toContain('scanner timed out after 120000ms')
+  })
+
+  it('an injected scan with a banned phrase in its output never ends the round', () => {
+    const scan: SecurityScanOutcome = { kind: 'ran', output: 'the finding is clearly a leak — in my opinion' }
+    // Would throw if the lint read the fact piece; it must not.
+    const prompt = renderReviewerDispatchPrompt('security', { ...FACTS, configScan: scan }, '/tmp/work')
+    expect(prompt).toContain('the finding is clearly a leak')
+  })
+})
+
+describe('defaultRunSecurityScanSubprocess — the real runner isolates the scanner (round-2 security HIGH)', () => {
+  it('strips the forge token and runs from a fresh sandbox HOME/cwd, never the PR-authored scan target', () => {
+    const target = mkdtempSync(join(tmpdir(), 'vinaya-scan-target-'))
+    const priorGh = process.env.GH_TOKEN
+    const priorGithub = process.env.GITHUB_TOKEN
+    process.env.GH_TOKEN = 'forge-token-sentinel-gh'
+    process.env.GITHUB_TOKEN = 'forge-token-sentinel-github'
+    try {
+      // A shell probe (not a bun process reading process.env, which reads back
+      // {} under a sandbox) dumps the child's real environment and cwd; the
+      // runner appends `target` as the final arg, which `sh -c` binds to $0,
+      // leaving `env`/`pwd` to run.
+      const result = defaultRunSecurityScanSubprocess(['sh', '-c', 'env; echo "PWD=$(pwd)"'], target)
+      expect(result.ok).toBe(true)
+      if (result.ok) {
+        // No forge credential reaches the scanner child.
+        expect(result.output).not.toContain('forge-token-sentinel-gh')
+        expect(result.output).not.toContain('forge-token-sentinel-github')
+        // HIGH fix: HOME is a fresh scan sandbox, never the real host HOME, so
+        // the real user's `~/.npmrc`/`~/.ssh` are not reachable at `~`.
+        expect(result.output).toMatch(/^HOME=.*vinaya-scan-/m)
+        // HIGH fix: the scanner never runs FROM the PR-authored target dir, so a
+        // `.npmrc` committed there cannot steer npx resolution — cwd is the sandbox.
+        expect(result.output).not.toContain(`PWD=${target}`)
+        expect(result.output).toMatch(/^PWD=.*vinaya-scan-/m)
+      }
+    } finally {
+      if (priorGh === undefined) delete process.env.GH_TOKEN
+      else process.env.GH_TOKEN = priorGh
+      if (priorGithub === undefined) delete process.env.GITHUB_TOKEN
+      else process.env.GITHUB_TOKEN = priorGithub
+      rmSync(target, { recursive: true, force: true })
+    }
   })
 })

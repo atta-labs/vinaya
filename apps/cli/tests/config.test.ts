@@ -25,6 +25,7 @@ import {
   resolveAgentVendors,
   resolvePrincipalAllowlist as resolvePrincipalAllowlistStatic,
   resolveReviewPolicy,
+  resolveSecurityScanCommand,
   trustAnchorRepo,
   VinayaConfigSchema
 } from '../src/lib/config'
@@ -1378,6 +1379,25 @@ describe('tokens.collect trust cache', () => {
     expect(entry.script).toBe('scripts/a.js')
     expect(entry.scriptBlobHash).toBe('hash-1')
     expect(new Date(entry.trustedAt).toString()).not.toBe('Invalid Date')
+  })
+})
+
+describe('resolveSecurityScanCommand — the configured agent-config scanner', () => {
+  it('returns null when unset', () => {
+    expect(resolveSecurityScanCommand(null)).toBeNull()
+    expect(resolveSecurityScanCommand({})).toBeNull()
+  })
+
+  it('returns the configured argv list', () => {
+    const command = ['npx', '--yes', 'ecc-agentshield@1.6.0', 'scan']
+    expect(resolveSecurityScanCommand({ securityScan: { command } })).toEqual(command)
+  })
+
+  it('the schema requires a non-empty command array', () => {
+    expect(VinayaConfigSchema.safeParse({ securityScan: { command: ['scan'] } }).success).toBe(true)
+    expect(VinayaConfigSchema.safeParse({ securityScan: { command: [] } }).success).toBe(false)
+    expect(VinayaConfigSchema.safeParse({ securityScan: { command: [''] } }).success).toBe(false)
+    expect(VinayaConfigSchema.safeParse({ securityScan: {} }).success).toBe(false)
   })
 })
 

@@ -1345,6 +1345,13 @@ export function buildRolePermissions(role: Role): RolePermissions {
         'Bash(bun install:*)',
         'Bash(bun test:*)',
         'Bash(bun run:*)',
+        // A dispatched reviewer never runs the
+        // agent-config scanner itself — the driver runs it outside the
+        // reviewer's trust and hands the result to the security prompt. `npx`
+        // is the scanner's own launcher (`npx ... ecc-agentshield scan`); it,
+        // and the package install it implies, have no doctrine reason for
+        // either review role, so both are denied rather than left unlisted.
+        'Bash(npx:*)',
         ...MACHINE_STATE_DENY_RULES
       ]
     }
