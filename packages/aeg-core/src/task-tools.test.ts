@@ -51,35 +51,43 @@ describe('TASK_TOOL_CATALOG', () => {
   // The catalog text is the only documentation the Operator is served for this
   // tool, and the handler continues more states than a fresh start: an exited
   // or driverless run, a pause whose ruling was already consumed as a resume,
-  // an `infrastructure` pause inside the loop's own retry bound. Text that
-  // denied that stranded a run with no working action.
+  // an `infrastructure` pause inside the loop's own retry bound, and — issue-936
+  // — a pause whose Principal ruling is already posted and postdates the one it
+  // was raised under, which it continues by handing to `task_resume`'s own
+  // handler rather than relaunching past that authentication. Text that denied
+  // any of those stranded a run with no working action.
   //
-  // The refusal half is where this text went wrong twice, so both corrections
-  // are pinned too. The continuation this tool launches is NOT as strict as
-  // `task_resume`: it accepts any ruling standing on the pull request rather
-  // than one newer than the pause's own, and it cannot reach a pause recorded
-  // before any pull request existed, so that pause is continued by the
-  // fresh-attach path with its escalation unresolved. Text that promised a
-  // flat refusal of every awaiting-decision pause described a gate that is not
-  // there. And the loop's bare no-ruling allowance covers `infrastructure`
-  // only, never `stale_driver` — naming the bound without naming the reason
-  // over-promised by one pause reason.
-  it('task_start says which runs it continues, who owns a pause it will not, and where its own path is weaker', () => {
+  // The refusal half is pinned too: a pause still awaiting a decision with no
+  // such ruling yet posted is `task_resume`'s, and the refusal names where the
+  // ruling goes, the marker and the command. `task_resume` itself is unchanged.
+  // The loop's bare no-ruling allowance still covers `infrastructure` only,
+  // never `stale_driver`.
+  it('task_start says which runs it continues — a ruled pause hands to task_resume — and who owns one it will not', () => {
     const text = `${TASK_START_TOOL.purpose}\n${TASK_START_TOOL.boundaries}`
     expect(text).toMatch(/continue/i)
     expect(text).toMatch(/exited or driverless run/)
     expect(text).toMatch(/already consumed as a resume/)
     expect(text).toMatch(/`infrastructure` pause still under the loop’s own retry bound/)
     expect(text).toMatch(/`stale_driver` pause is outside that allowance/)
-    expect(text).toMatch(/A pause still awaiting a decision belongs to `task_resume`/)
-    expect(text).toMatch(/NEWER than the one the pause was already raised under/)
-    expect(text).toMatch(/does not make that check itself/)
-    expect(text).toMatch(/before any pull request existed/)
+    // It now continues a pause whose ruling is already posted, reusing
+    // `task_resume`'s own authentication rather than relaunching past it.
+    expect(text).toMatch(/a pause whose Principal ruling is already posted/)
+    expect(text).toMatch(/NEWER than the one the pause was raised under/)
+    expect(text).toMatch(/the SAME ordinal-freshness check, resolution write and Log event/)
+    // A still-unruled pause is refused, and the refusal names the place, the
+    // marker and the command.
+    expect(text).toMatch(/A pause still awaiting a decision with no such ruling yet posted belongs to `task_resume`/)
+    expect(text).toMatch(/the refusal names where the ruling goes/)
+    expect(text).toMatch(/the command that posts it/)
+    expect(text).toMatch(/`task_resume` stays available and unchanged/)
+    expect(text).toMatch(/before one existed/)
     expect(text).toMatch(/resolved as cancel is `task_cancel`|`task_cancel` reports a pause already resolved as cancel/)
-    // The two claims the handler falsified, in the order they were written:
-    // start-only, then a flat refusal of every awaiting-decision pause.
+    // The claims earlier revisions falsified must stay gone: start-only, a flat
+    // refusal of every awaiting-decision pause, and the weaker-path promise that
+    // this tool does not make `task_resume`'s own check.
     expect(text).not.toContain('it does not continue a paused one')
     expect(text).not.toContain('never this tool’s to continue')
+    expect(text).not.toContain('does not make that check itself')
   })
 
   it('taskToolByName throws for an unknown name', () => {
