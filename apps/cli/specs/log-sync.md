@@ -90,6 +90,33 @@ The cache's behaviours are written once, as a list of cases (`cacheContractCases
 
 **The summary.** `SyncSummary` reports the run's pages read, rows stored, duplicates seen, edits, deletions, gaps and quarantined lines, whether the run completed (reached the source's end without a failure) and whether more is available, and the failure when one ended it early. Because the cache keeps no deletion record, the summary is where a deletion is reported.
 
+## The questions
+
+A question is a pure function over a `Dataset` (`packages/aeg-core/src/log/questions/`): no I/O, no clock, and no switch over the event families — it picks rows by comparing `kind` and `event` as text. Its answer is built from `Measured`, so a figure the log cannot state is unknown with the reason, never a number that looks measured.
+
+**A unit of work is the work reference** (`workRef`). A row that names none cannot be attributed to a unit; it is left out of every unit figure and counted in the coverage.
+
+**Every answer states its coverage** (`Coverage`, `questions/common.ts`):
+
+- `rowsRead` — every row the dataset holds;
+- `lowTrustLeftOut` — rows of the low-trust rule, left out of every figure and counted out loud, never mixed in;
+- `unitUnknown` — trusted rows of the kinds the question reads whose unit is unknown;
+- `rowsUsed` — the trusted rows of those kinds with a known unit, which the figures are built from;
+- `gaps` and `quarantined` — what the dataset itself could not hold;
+- `unknowns` — each figure the answer could not compute, with the reason.
+
+An answer is descriptive. It reports what the log recorded and never that one choice caused another.
+
+### Question 1 — does a cheaper model finish?
+
+`completionByModel`. For each model, over the units of work it took part in:
+
+- **model** — the model a `dispatch` or a `role_attempt` line names. A unit that used two models counts under both. A unit none of whose lines names a model is reported as unknown, never attributed;
+- **started** — units with such a line;
+- **green** — units whose loop recorded the `green` stop condition; **paused** — units whose loop paused at least once (a unit can be both); **escalated** — units whose loop recorded the `escalated` stop condition;
+- **roundsToGreen** — for the green units, how many went green in one round, in two, and so on, ascending;
+- **timeToGreenMs** — the loop's own `time_to_green_ms` of each green unit, ascending, taken from the unit's last `journal_finalized` line. It is unknown, with the reason, when no unit went green or none recorded one; a green unit without one is named in `unknowns`.
+
 <!-- AEG:CLAIM: packages/aeg-core/src/log/sync/engine.ts contains:export async function syncSource(source: LogSource, cache: LogCache, options: SyncOptions): Promise<SyncSummary> { -->
 <!-- AEG:CLAIM: packages/aeg-core/src/log/sync/normalize.ts contains:const classified = classifyStoredLine(raw, '') -->
 <!-- AEG:CLAIM: packages/aeg-core/src/log/sync/row.ts contains:export const LOW_TRUST_BELOW_VERSION = '0.33.0' -->
