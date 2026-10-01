@@ -6,35 +6,24 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 /**
- * `worker-isolation-v1` task 3 (`#560`), O3: `--unattended` (`DispatchOpts.unattended`)
- * marks a `vinaya dispatch` invocation as an unattended start; the SEPARATE
- * `dispatch.requireWorkerIsolation` config setting (`config.ts`) decides
- * whether that actually requires `apps/cli/specs/isolation.md`'s OS-level
- * boundary — an explicit config value always wins, and an unset value
- * resolves platform-conditionally: `true` on Darwin, `false` elsewhere
- * (round 2 review, HIGH; `dispatch.ts`'s own doc comment on this default).
- * Both `--unattended` and the resolved setting must hold for a dispatch to
- * refuse before any spawn when the boundary cannot be established.
- * Exercised through the real `vinaya dispatch` CLI entry point
- * (`execFileSync('bun', [INDEX, ...])`), the same discipline and the same
- * scratch-`HOME`/non-git-`cwd` reasoning `apps/cli/tests/lib/dispatch.test.ts`'s
+ * O3: `--unattended` (`DispatchOpts.unattended`) marks a `vinaya dispatch`
+ * invocation as an unattended start. There is no setting behind it: the
+ * worker sandbox is on wherever it is supported (macOS), so an unattended
+ * dispatch there refuses before any spawn when the boundary cannot be
+ * established, and elsewhere a Claude start runs as it always has while a
+ * Codex start refuses. Exercised through the real `vinaya dispatch` CLI entry
+ * point (`execFileSync('bun', [INDEX, ...])`), the same discipline and the
+ * same scratch-`HOME`/non-git-`cwd` reasoning `apps/cli/tests/lib/dispatch.test.ts`'s
  * own header documents — never by importing `dispatchRole` in-process, which
  * would write real launch/outbox records under this machine's own `HOME`.
+ * The scratch `HOME` also keeps the host's real Keychain login out of reach,
+ * so a "no login" fixture really has none.
  *
- * This fixture's `cwd` is a plain temp dir, never a real git repo, so on a
- * host where the resolved setting is `true` (Darwin, or any host with an
- * explicit override), `repoRoot()` resolves `null` and the boundary is
- * unavailable — the SAME refusal as the explicit-on case, not the inert
- * case a Linux CI host sees. The available-boundary branch (the
- * profile/env/command a resolved launch actually produces) is unit-tested
- * directly, with injected host detection, in `worker-boundary.test.ts` —
- * this file proves the WIRING, host-conditional default included: with the
- * setting resolving on, `--unattended` never reaches the vendor binary at
- * all; with it resolving off, `--unattended` is inert (the pre-existing
- * `dev-review-loop`/`dispatch-task` automated-loop call sites' own posture);
- * a dispatch with neither flag nor setting is entirely unaffected on every
- * host (the pre-task-3 regression guard), since that path never evaluates
- * the setting at all.
+ * This fixture's `cwd` is a plain temp dir, never a real git repo, so on
+ * macOS `repoRoot()` resolves `null` and the boundary is unavailable. The
+ * available-boundary branch (the profile/env/command a resolved launch
+ * actually produces) is unit-tested directly, with injected host detection,
+ * in `worker-boundary.test.ts`.
  */
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
@@ -58,7 +47,7 @@ function tempDir(prefix: string): string {
 
 type Fixture = { home: string; cwd: string; binDir: string; promptFile: string; markerFile: string }
 
-function buildFixture(opts: { requireWorkerIsolation?: boolean } = {}): Fixture {
+function buildFixture(): Fixture {
   const home = tempDir('vinaya-unattended-home-')
   const cwd = tempDir('vinaya-unattended-cwd-')
   const binDir = tempDir('vinaya-unattended-bin-')
@@ -74,12 +63,6 @@ function buildFixture(opts: { requireWorkerIsolation?: boolean } = {}): Fixture 
     `#!/bin/sh\ntouch "${markerFile}"\ncat > /dev/null\nprintf '%s' '{"session_id":"sess-x","usage":{"input_tokens":1,"output_tokens":1}}'\nexit 0\n`
   )
   chmodSync(join(binDir, 'claude'), 0o755)
-  if (opts.requireWorkerIsolation !== undefined) {
-    writeFileSync(
-      join(cwd, 'vinaya.config.json'),
-      JSON.stringify({ dispatch: { requireWorkerIsolation: opts.requireWorkerIsolation } })
-    )
-  }
   return { home, cwd, binDir, promptFile, markerFile }
 }
 
@@ -155,48 +138,37 @@ function outboxLines(home: string): unknown[] {
 }
 
 describe('vinaya dispatch --unattended — O3 fail-closed refusal', () => {
-  it('refuses before ever spawning the vendor binary, with the boundary required and no boundary on this host', () => {
-    const fixture = buildFixture({ requireWorkerIsolation: true })
-    const result = runDispatch(fixture, ['--unattended'])
+  it.skipIf(process.platform !== 'darwin')(
+    'refuses before ever spawning the vendor binary, with the boundary required and no boundary resolvable',
+    () => {
+      const fixture = buildFixture()
+      const result = runDispatch(fixture, ['--unattended'])
 
-    expect(result.status).not.toBe(0)
-    expect(existsSync(fixture.markerFile)).toBe(false)
-    expect(result.stderr).toContain('refused')
-
-    const lines = outboxLines(fixture.home) as Array<{ event?: string; reason?: string }>
-    const failed = lines.find((l) => l.event === 'dispatch_failed')
-    expect(failed).toBeDefined()
-    expect(failed?.reason).toBe('refused')
-    // No 'dispatched' event either — the refusal happens before that line.
-    expect(lines.find((l) => l.event === 'dispatched')).toBeUndefined()
-  })
-
-  it("--unattended alone, with requireWorkerIsolation left unset, follows this host's resolved default", () => {
-    const fixture = buildFixture()
-    const result = runDispatch(fixture, ['--unattended'])
-
-    if (process.platform === 'darwin') {
-      // The unset default resolves `true` here, same as the explicit-on
-      // case above — this fixture's non-repo cwd makes the boundary
-      // unavailable, so the dispatch refuses the same way.
       expect(result.status).not.toBe(0)
       expect(existsSync(fixture.markerFile)).toBe(false)
       expect(result.stderr).toContain('refused')
-    } else {
+
+      const lines = outboxLines(fixture.home) as Array<{ event?: string; reason?: string }>
+      const failed = lines.find((l) => l.event === 'dispatch_failed')
+      expect(failed).toBeDefined()
+      expect(failed?.reason).toBe('refused')
+      // No 'dispatched' event either — the refusal happens before that line.
+      expect(lines.find((l) => l.event === 'dispatched')).toBeUndefined()
+    }
+  )
+
+  it.skipIf(process.platform === 'darwin')(
+    'a host with no sandbox support runs an unattended Claude start as it always has',
+    () => {
+      const fixture = buildFixture()
+      const result = runDispatch(fixture, ['--unattended'])
+
       expect(result.status).toBe(0)
       expect(existsSync(fixture.markerFile)).toBe(true)
     }
-  })
+  )
 
-  it('the config setting alone, with no --unattended flag, is inert — attribution AND the setting must both hold', () => {
-    const fixture = buildFixture({ requireWorkerIsolation: true })
-    const result = runDispatch(fixture, [])
-
-    expect(result.status).toBe(0)
-    expect(existsSync(fixture.markerFile)).toBe(true)
-  })
-
-  it('an attended dispatch (no --unattended, no config setting) is entirely unaffected — the pre-task-3 regression guard', () => {
+  it('an attended dispatch (no --unattended) is entirely unaffected — the pre-task-3 regression guard', () => {
     const fixture = buildFixture()
     const result = runDispatch(fixture, [])
 
@@ -220,9 +192,7 @@ describe('vinaya dispatch --unattended — O3 fail-closed refusal', () => {
  * own fixture shape, distinct from `buildFixture`'s deliberately-unavailable
  * one above.
  */
-function buildGitFixture(
-  opts: { requireWorkerIsolation?: boolean; homeCredential?: string } = {}
-): Fixture & { envCaptureFile: string } {
+function buildGitFixture(opts: { homeCredential?: string } = {}): Fixture & { envCaptureFile: string } {
   const home = tempDir('vinaya-unattended-oauth-home-')
   const cwd = tempDir('vinaya-unattended-oauth-cwd-')
   const binDir = tempDir('vinaya-unattended-oauth-bin-')
@@ -255,12 +225,6 @@ function buildGitFixture(
     ].join('\n')
   )
   chmodSync(join(binDir, 'claude'), 0o755)
-  if (opts.requireWorkerIsolation !== undefined) {
-    writeFileSync(
-      join(cwd, 'vinaya.config.json'),
-      JSON.stringify({ dispatch: { requireWorkerIsolation: opts.requireWorkerIsolation } })
-    )
-  }
   if (opts.homeCredential !== undefined) {
     mkdirSync(join(home, '.claude'), { recursive: true })
     writeFileSync(join(home, '.claude', '.credentials.json'), opts.homeCredential)
@@ -298,7 +262,7 @@ describe('vinaya dispatch --unattended — O2 fail-closed refusal (Issue #640, n
   it.skipIf(process.platform !== 'darwin')(
     'refuses before ever spawning the vendor binary, boundary resolved but no subscription login to stage',
     () => {
-      const fixture = buildGitFixture({ requireWorkerIsolation: true })
+      const fixture = buildGitFixture()
       const result = runDispatchNoAmbientLogin(fixture, ['--unattended'])
 
       expect(result.status).not.toBe(0)
@@ -309,6 +273,7 @@ describe('vinaya dispatch --unattended — O2 fail-closed refusal (Issue #640, n
       // O3: the refusal names where this looked and how to sign in, never
       // an API key — the operator can act on it without reading the source.
       expect(result.stderr).toContain(join(fixture.home, '.claude', '.credentials.json'))
+      expect(result.stderr).toContain('Claude Code-credentials')
       expect(result.stderr).toContain('/login')
       expect(result.stderr.toLowerCase()).not.toContain('api key')
 
@@ -324,7 +289,6 @@ describe('vinaya dispatch --unattended — O2 fail-closed refusal (Issue #640, n
     'succeeds, staging a scoped copy, when a real OAuth session credential exists at the fixture HOME — never refused',
     () => {
       const fixture = buildGitFixture({
-        requireWorkerIsolation: true,
         homeCredential: JSON.stringify({ accessToken: 'fixture-not-a-real-oauth-token' })
       })
       const result = runDispatchNoAmbientLogin(fixture, ['--unattended'])
@@ -344,7 +308,7 @@ describe('vinaya dispatch --unattended — O2 fail-closed refusal (Issue #640, n
   it.skipIf(process.platform !== 'darwin')(
     'O1: a vendor API key on the controller environment no longer authenticates anything — the same fixture still refuses, and still never spawns',
     () => {
-      const fixture = buildGitFixture({ requireWorkerIsolation: true })
+      const fixture = buildGitFixture()
       // The variable name is COMPOSED rather than written out, for the same
       // reason `worker-boundary.test.ts`'s own allowlist test composes
       // hers: no API-key name appears anywhere in this repository's
@@ -363,7 +327,7 @@ describe('vinaya dispatch --unattended — O2 fail-closed refusal (Issue #640, n
 
 describe('vinaya dispatch --unattended — O2 Gemini has no subscription login yet', () => {
   it('refuses before any spawn, naming the missing subscription login rather than a missing API key', () => {
-    const fixture = buildGitFixture({ requireWorkerIsolation: true })
+    const fixture = buildGitFixture()
     // A real fake `gemini` on the fixture PATH, so a refusal here can only
     // be the no-subscription-login one — never "binary not resolvable".
     writeFileSync(
@@ -392,8 +356,8 @@ exit 0
     expect(lines.find((l) => l.event === 'dispatched')).toBeUndefined()
   })
 
-  it('refuses on a host where the worker sandbox is off too — the refusal is about the login, not the boundary', () => {
-    const fixture = buildGitFixture({ requireWorkerIsolation: false })
+  it('the refusal is about the login, not the boundary — it names no boundary failure', () => {
+    const fixture = buildGitFixture()
     writeFileSync(
       join(fixture.binDir, 'gemini'),
       `#!/bin/sh
@@ -413,7 +377,7 @@ exit 0
   })
 
   it('an ATTENDED gemini dispatch is untouched — a human at their own terminal signs their vendor CLI in themselves', () => {
-    const fixture = buildGitFixture({ requireWorkerIsolation: false })
+    const fixture = buildGitFixture()
     writeFileSync(
       join(fixture.binDir, 'gemini'),
       `#!/bin/sh
@@ -432,41 +396,80 @@ exit 0
   })
 })
 
-describe('vinaya dispatch — O4 the worker sandbox off behaves exactly as today', () => {
-  it('an unconfined dispatch inherits the operator environment unchanged, so the agent signs in with its own subscription login', () => {
-    const fixture = buildGitFixture({ requireWorkerIsolation: false })
-    // The fake vendor reports back, through a shell probe rather than a
-    // `process.env` read, what its own environment actually carried — a
-    // confined child's `bun`/`node` reads `process.env` back empty under
-    // Seatbelt, so only a shell probe answers the same way on both paths.
+describe('vinaya dispatch --unattended — O4 a Codex start never runs outside the worker sandbox', () => {
+  it('refuses before any spawn on every host — no boundary resolvable, so no per-run CODEX_HOME and no real ~/.codex', () => {
+    const fixture = buildFixture()
     writeFileSync(
-      join(fixture.binDir, 'claude'),
-      [
-        '#!/bin/bash',
-        `touch "${fixture.markerFile}"`,
-        `printf '{"inherited":"%s","home":"%s"}' "$ISOLATION_FIXTURE_MARKER" "$HOME" > "${fixture.envCaptureFile}"`,
-        'cat > /dev/null',
-        `printf '%s' '{"session_id":"sess-x","usage":{"input_tokens":1,"output_tokens":1}}'`,
-        'exit 0'
-      ].join('\n')
+      join(fixture.binDir, 'codex'),
+      `#!/bin/sh\ntouch "${fixture.markerFile}"\ncat > /dev/null\nprintf '%s' '{}'\nexit 0\n`
     )
-    chmodSync(join(fixture.binDir, 'claude'), 0o755)
+    chmodSync(join(fixture.binDir, 'codex'), 0o755)
 
-    const result = runDispatchNoAmbientLogin(fixture, ['--unattended'], 'claude', {
-      ISOLATION_FIXTURE_MARKER: 'inherited-from-the-operator'
-    })
+    const result = runDispatchNoAmbientLogin(fixture, ['--unattended'], 'codex')
 
-    expect(result.status, `stderr: ${result.stderr}`).toBe(0)
-    expect(existsSync(fixture.markerFile)).toBe(true)
-    const captured = JSON.parse(readFileSync(fixture.envCaptureFile, 'utf8')) as {
-      inherited: string
-      home: string
-    }
-    // A variable no allowlist names: only a whole-environment spread
-    // carries it, which is exactly the sandbox-off path's own shape.
-    expect(captured.inherited).toBe('inherited-from-the-operator')
-    // And the child's HOME is the operator's real one, never a staged or
-    // synthetic directory — nothing about this path is rewritten.
-    expect(captured.home).toBe(fixture.home)
+    expect(result.status).not.toBe(0)
+    expect(existsSync(fixture.markerFile), 'the codex binary must never be spawned').toBe(false)
+    expect(result.stderr).toContain('refused')
+    expect(result.stderr).toContain('worker isolation boundary')
+    const lines = outboxLines(fixture.home) as Array<{ event?: string; reason?: string }>
+    expect(lines.find((l) => l.event === 'dispatch_failed')?.reason).toBe('refused')
+    expect(lines.find((l) => l.event === 'dispatched')).toBeUndefined()
   })
+
+  it.skipIf(process.platform === 'darwin')('names the host as the reason where the sandbox is unsupported', () => {
+    const fixture = buildGitFixture()
+    writeFileSync(
+      join(fixture.binDir, 'codex'),
+      `#!/bin/sh\ntouch "${fixture.markerFile}"\ncat > /dev/null\nprintf '%s' '{}'\nexit 0\n`
+    )
+    chmodSync(join(fixture.binDir, 'codex'), 0o755)
+
+    const result = runDispatchNoAmbientLogin(fixture, ['--unattended'], 'codex')
+
+    expect(result.status).not.toBe(0)
+    expect(existsSync(fixture.markerFile)).toBe(false)
+    expect(result.stderr).toContain('worker boundary unavailable on this host')
+  })
+})
+
+describe('vinaya dispatch — a host with no sandbox support behaves exactly as today', () => {
+  it.skipIf(process.platform === 'darwin')(
+    'an unconfined dispatch inherits the operator environment unchanged, so the agent signs in with its own subscription login',
+    () => {
+      const fixture = buildGitFixture()
+      // The fake vendor reports back, through a shell probe rather than a
+      // `process.env` read, what its own environment actually carried — a
+      // confined child's `bun`/`node` reads `process.env` back empty under
+      // Seatbelt, so only a shell probe answers the same way on both paths.
+      writeFileSync(
+        join(fixture.binDir, 'claude'),
+        [
+          '#!/bin/bash',
+          `touch "${fixture.markerFile}"`,
+          `printf '{"inherited":"%s","home":"%s"}' "$ISOLATION_FIXTURE_MARKER" "$HOME" > "${fixture.envCaptureFile}"`,
+          'cat > /dev/null',
+          `printf '%s' '{"session_id":"sess-x","usage":{"input_tokens":1,"output_tokens":1}}'`,
+          'exit 0'
+        ].join('\n')
+      )
+      chmodSync(join(fixture.binDir, 'claude'), 0o755)
+
+      const result = runDispatchNoAmbientLogin(fixture, ['--unattended'], 'claude', {
+        ISOLATION_FIXTURE_MARKER: 'inherited-from-the-operator'
+      })
+
+      expect(result.status, `stderr: ${result.stderr}`).toBe(0)
+      expect(existsSync(fixture.markerFile)).toBe(true)
+      const captured = JSON.parse(readFileSync(fixture.envCaptureFile, 'utf8')) as {
+        inherited: string
+        home: string
+      }
+      // A variable no allowlist names: only a whole-environment spread
+      // carries it, which is exactly the sandbox-off path's own shape.
+      expect(captured.inherited).toBe('inherited-from-the-operator')
+      // And the child's HOME is the operator's real one, never a staged or
+      // synthetic directory — nothing about this path is rewritten.
+      expect(captured.home).toBe(fixture.home)
+    }
+  )
 })

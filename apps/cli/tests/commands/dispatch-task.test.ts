@@ -413,32 +413,44 @@ beforeAll(async () => {
   }
 }, 120_000)
 
+// The fake vendor records its call under `$HOME`. The worker sandbox is always
+// on where it is supported, so on macOS this dispatch is confined for real and
+// cannot write there; the boundary has its own live coverage in
+// `dispatch/worker-boundary.test.ts`, and these run on Linux CI.
 describe('vinaya task dispatch --agent — reaches the real developer, on the published bundle (O1, O2)', () => {
-  it('the BUILT bundle (dist/index.js, under node) spawns the fake claude vendor with the frozen brief on stdin — no fallback instruction printed', async () => {
-    const fixture = buildFixture()
-    const r = await runTaskDispatch('node', DIST_INDEX, fixture)
-    expect(r.status).toBe(0)
-    expect(r.stdout).toContain('Posted:')
-    // The old dynamic-import fallback printed this instruction, naming a
-    // `--tranche` flag `dispatch` never accepted — its absence here is the
-    // regression proof, not merely a side note.
-    expect(r.stdout).not.toContain('is not available yet')
-    expect(r.stdout).not.toContain('start the developer yourself')
+  it.skipIf(process.platform === 'darwin')(
+    'the BUILT bundle (dist/index.js, under node) spawns the fake claude vendor with the frozen brief on stdin — no fallback instruction printed',
+    async () => {
+      const fixture = buildFixture()
+      const r = await runTaskDispatch('node', DIST_INDEX, fixture)
+      expect(r.status).toBe(0)
+      expect(r.stdout).toContain('Posted:')
+      // The old dynamic-import fallback printed this instruction, naming a
+      // `--tranche` flag `dispatch` never accepted — its absence here is the
+      // regression proof, not merely a side note.
+      expect(r.stdout).not.toContain('is not available yet')
+      expect(r.stdout).not.toContain('start the developer yourself')
 
-    const vendorCall = Bun.file(fixture.callLog)
-    expect(await vendorCall.exists()).toBe(true)
-    const receivedBrief = await vendorCall.text()
-    expect(receivedBrief).toContain('You are the AEG Developer.')
-    expect(receivedBrief).toContain('Closes #9001')
-  }, 30_000)
+      const vendorCall = Bun.file(fixture.callLog)
+      expect(await vendorCall.exists()).toBe(true)
+      const receivedBrief = await vendorCall.text()
+      expect(receivedBrief).toContain('You are the AEG Developer.')
+      expect(receivedBrief).toContain('Closes #9001')
+    },
+    30_000
+  )
 
-  it('the workspace TS source (src/index.ts, under bun) reaches the exact same dispatch function — same outcome as the bundle', async () => {
-    const fixture = buildFixture()
-    const r = await runTaskDispatch('bun', SRC_INDEX, fixture)
-    expect(r.status).toBe(0)
-    expect(r.stdout).toContain('Posted:')
+  it.skipIf(process.platform === 'darwin')(
+    'the workspace TS source (src/index.ts, under bun) reaches the exact same dispatch function — same outcome as the bundle',
+    async () => {
+      const fixture = buildFixture()
+      const r = await runTaskDispatch('bun', SRC_INDEX, fixture)
+      expect(r.status).toBe(0)
+      expect(r.stdout).toContain('Posted:')
 
-    const vendorCall = Bun.file(fixture.callLog)
-    expect(await vendorCall.exists()).toBe(true)
-  }, 30_000)
+      const vendorCall = Bun.file(fixture.callLog)
+      expect(await vendorCall.exists()).toBe(true)
+    },
+    30_000
+  )
 })
