@@ -311,6 +311,85 @@ describe('LogEventSchema — dev_review_loop family', () => {
     }
     expect(LogEventSchema.safeParse(line).success).toBe(false)
   })
+
+  it('parses a driver_heartbeat line with a pull request (#949, O1/O3)', () => {
+    const line = {
+      meta,
+      subject,
+      kind: 'dev_review_loop' as const,
+      event: 'driver_heartbeat' as const,
+      payload: {},
+      loop_id: 'loop-1',
+      task: 949,
+      pr: 950,
+      round: 2,
+      phase: 'dispatch_developer'
+    }
+    expect(LogEventSchema.safeParse(line).success).toBe(true)
+  })
+
+  it('parses a driver_heartbeat line before any pull request exists — `pr` omitted (#949, O1)', () => {
+    const line = {
+      meta,
+      subject,
+      kind: 'dev_review_loop' as const,
+      event: 'driver_heartbeat' as const,
+      payload: {},
+      loop_id: 'loop-1',
+      task: 949,
+      round: 1,
+      phase: 'dispatch_developer'
+    }
+    expect(LogEventSchema.safeParse(line).success).toBe(true)
+  })
+
+  it('parses a driver_exited line for each recognized reason (#949, O2/O3)', () => {
+    for (const reason of ['finished', 'paused', 'reexec', 'error', 'signal'] as const) {
+      const line = {
+        meta,
+        subject,
+        kind: 'dev_review_loop' as const,
+        event: 'driver_exited' as const,
+        payload: {},
+        loop_id: 'loop-1',
+        task: 949,
+        reason,
+        last_decision: reason === 'finished' ? 'publish' : 'pause(infrastructure)'
+      }
+      expect(LogEventSchema.safeParse(line).success).toBe(true)
+    }
+  })
+
+  it('refuses a driver_exited line with an unrecognized reason (#949, O2)', () => {
+    const line = {
+      meta,
+      subject,
+      kind: 'dev_review_loop' as const,
+      event: 'driver_exited' as const,
+      payload: {},
+      loop_id: 'loop-1',
+      task: 949,
+      reason: 'crashed',
+      last_decision: 'publish'
+    }
+    expect(LogEventSchema.safeParse(line).success).toBe(false)
+  })
+
+  it('refuses a driver_heartbeat line carrying an extra key (strict)', () => {
+    const line = {
+      meta,
+      subject,
+      kind: 'dev_review_loop' as const,
+      event: 'driver_heartbeat' as const,
+      payload: {},
+      loop_id: 'loop-1',
+      task: 949,
+      round: 1,
+      phase: 'publish',
+      machine: 'deadbeef'
+    }
+    expect(LogEventSchema.safeParse(line).success).toBe(false)
+  })
 })
 
 const validForgeWrite = {

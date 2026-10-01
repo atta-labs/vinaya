@@ -357,8 +357,10 @@ export const DispatchEventSchema = z.discriminatedUnion('event', [
 export type DispatchEvent = z.infer<typeof DispatchEventSchema>
 
 // ---------------------------------------------------------------------------
-// `dev_review_loop` family (§5.2) — twelve events (a later addition added
-// `cancelled`), `loop_id` shared on each.
+// `dev_review_loop` family (§5.2) — `loop_id` shared on each. Later
+// additions widened it past the spec's original set: `cancelled`,
+// `infrastructure_retry`, and (#949) the `driver_heartbeat`/`driver_exited`
+// liveness pair that lets a reader tell a running loop from a dead one.
 
 const loopShared = {
   meta: HeaderMetaSchema,
@@ -578,6 +580,48 @@ export const DevReviewLoopEventSchema = z.discriminatedUnion('event', [
       failure_kind: z.enum(['pause_comment_post', 'developer_connection']),
       attempts: z.number().int().positive(),
       outcome: z.enum(['recovered', 'exhausted'])
+    })
+    .strict(),
+  // (#949, O1/O3) A liveness ping the driver emits at most every five
+  // minutes while its process is alive — the Log's one positive signal that
+  // a loop is running, as opposed to finished, paused or dead. Before it, a
+  // loop in its first Developer turn and one that died before pushing both
+  // looked identical from the Log (`loop_started` with nothing after). A NEW,
+  // additive member: a line written before this task carries none of these
+  // fields and parses exactly as it always did. `task` is the task Issue
+  // (the same number `subject.issue` carries, repeated here so a reader has
+  // it without resolving the envelope); `pr` is the pull request once one
+  // exists (absent on a first turn before any PR has opened); `round` and
+  // `phase` are the loop's current round and phase (`phase` the same
+  // free-form string the control store's own `loop_state.phase` carries —
+  // `dispatch_developer`, `publish`, `pause`, …). The machine it runs on is
+  // `meta.machine`, on every line already.
+  z
+    .object({
+      ...loopShared,
+      event: z.literal('driver_heartbeat'),
+      task: z.number().int(),
+      pr: z.number().int().positive().optional(),
+      round: z.number().int(),
+      phase: z.string()
+    })
+    .strict(),
+  // (#949, O2/O3) Emitted exactly once when a review-loop driver process
+  // ends, on every exit path the driver already traces in its role log
+  // (a re-exec hand-off, an uncaught error, an OS signal) plus a normal
+  // return (a clean `publish` is `finished`, a decided pause is `paused`).
+  // The twin of `driver_heartbeat` above: a heartbeat says "still alive," a
+  // `driver_exited` says "stopped, and why." `last_decision` is the driver's
+  // last decision in the same form its role-log line records it — `publish`,
+  // or `pause(<reason>)`. A NEW, additive member; an earlier line parses
+  // unchanged.
+  z
+    .object({
+      ...loopShared,
+      event: z.literal('driver_exited'),
+      task: z.number().int(),
+      reason: z.enum(['finished', 'paused', 'reexec', 'error', 'signal']),
+      last_decision: z.string()
     })
     .strict()
 ])
