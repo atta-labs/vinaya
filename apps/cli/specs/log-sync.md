@@ -74,5 +74,22 @@ A quarantine record is keyed by the hash of its raw text. The cache also stores 
 
 The cache's behaviours are written once, as a list of cases (`cacheContractCases`, `cache-contract.ts`) that throw on the first broken expectation and import no test framework. Every backend's own test runs every case against a fresh instance of that backend. `createMemoryCache` (`memory-cache.ts`) is the in-memory backend — no I/O, no clock — that passes them and that every reader is tested against; a durable backend passes the same list.
 
+## The sync run
+
+`syncSource(source, cache, options)` (`engine.ts`) is the one algorithm that moves a source's lines into a cache. It is pure policy: a function over the source and cache it is handed, with the clock (`now`) and the bounds passed in `options`, no I/O and no clock read of its own. It returns a `SyncSummary` and never throws for a lost, edited or quarantined line — it reports them.
+
+**The cursor is the look-back anchor.** The cursor the cache stores for a source is not the head of what was consumed but a point that **trails** it by at most the look-back span. A run reads pages forward from that cursor, so the one read serves two ends at once: it resumes after a failure, and it re-reads the trailing look-back span every run. A forward-only cursor could never discover a line edited or deleted behind it; trailing the cursor is what makes every run re-read enough to find them.
+
+**Store, then advance.** Each page's rows and quarantine records are stored in the cache before anything else happens; the cursor is advanced to the new anchor only once the whole run's pages are stored, and a run that fails part way leaves the cursor where it was. A failure therefore keeps every page stored before it and never advances past a line it did not store — the next run resumes from the last stored cursor and ends in the same cache as an uninterrupted run. The overlap a resumed or repeated run re-reads deduplicates by identity (the cache's `put`), so a replayed page leaves one row per identity.
+
+**Edits and deletions.** Across the re-read span the run compares each line with what the cache holds. A held identity offered with different content is an **edit**, recorded beside the kept first row (`put` again). A held identity that lay inside the re-read span and the source no longer returns — judged within the time span the run actually re-read, so a row older or newer than the span is untouched — is a **deletion**, listed in the summary. Neither removes or overwrites the stored row: the cache is derived evidence and a rebuild cannot recover a deleted source line.
+
+**Gaps, never guessed.** The engine tells a deletion from a retention loss by asking the source, never by guessing. A span the source reports it cannot fill — rotated away, past retention, rejected, or a skip in its positions — is recorded as a **gap** with its bounds. A source whose head has fallen behind the stored cursor (it retained nothing from where the cache resumes) is itself recorded as a gap. A run that saw any gap reports no deletion for that run: a missing span is always a gap, never a deletion.
+
+**Bounds.** A run is bounded, because a server's daily read budget is finite: it reads at most `maxPages` pages (default 50) of at most `pageLimit` lines (default 1000), and re-reads at most a `lookback` span (default 1000 positions). A run that stops on its page bound reports `moreAvailable` and leaves its cursor trailing the last stored page, so the next run continues. All three bounds are options of the run, not constants of the algorithm.
+
+**The summary.** `SyncSummary` reports the run's pages read, rows stored, duplicates seen, edits, deletions, gaps and quarantined lines, whether the run completed (reached the source's end without a failure) and whether more is available, and the failure when one ended it early. Because the cache keeps no deletion record, the summary is where a deletion is reported.
+
+<!-- AEG:CLAIM: packages/aeg-core/src/log/sync/engine.ts contains:export async function syncSource(source: LogSource, cache: LogCache, options: SyncOptions): Promise<SyncSummary> { -->
 <!-- AEG:CLAIM: packages/aeg-core/src/log/sync/normalize.ts contains:const classified = classifyStoredLine(raw, '') -->
 <!-- AEG:CLAIM: packages/aeg-core/src/log/sync/row.ts contains:export const LOW_TRUST_BELOW_VERSION = '0.33.0' -->

@@ -11,6 +11,13 @@ export type {
   SourceLine,
   SourcePage
 } from './contracts'
+export {
+  DEFAULT_SYNC_LOOKBACK,
+  DEFAULT_SYNC_MAX_PAGES,
+  DEFAULT_SYNC_PAGE_LIMIT,
+  syncSource
+} from './engine'
+export type { RowDeletion, SyncOptions, SyncSummary } from './engine'
 export type { Measured } from './measured'
 export { known, unknownBecause } from './measured'
 export { createMemoryCache } from './memory-cache'

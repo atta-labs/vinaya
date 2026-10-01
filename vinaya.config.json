@@ -58,9 +58,7 @@
       ],
       "severity": "error"
     },
-    "specGrandfather": {
-      "apps/cli/specs/loop.md": 132
-    }
+    "specGrandfather": {}
   },
   "briefSchema": {
     "pr": {
