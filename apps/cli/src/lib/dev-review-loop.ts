@@ -2063,6 +2063,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     }
     let devResumeId: string | null = null
     let devDispatchSucceededBefore = false
+    // Ruling 986-1: the round number of the last developer
+    // dispatch that succeeded, so a resume failure can tell "a PREVIOUS round
+    // succeeded" (the genuine "worked last round, broke now" product
+    // escalation) apart from "this round's own fresh dispatch succeeded, then
+    // its same-round resume to push/open the PR failed" — the latter has no
+    // last round to have succeeded (round 1), so the crash message must not
+    // claim one. `null` until the first success.
+    let lastDispatchSuccessRound: number | null = null
     let lastReviewContext: string | null = null
     // The manifest the most recent `dispatch_reviewers` round was dispatched
     // against (O3) — hoisted here so the sibling `publish` block can
@@ -2315,9 +2323,17 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           }
         ])
       }
-      await assertDispatchOrEscalate(handle, dispatchAgent, isResume, devDispatchSucceededBefore, 'the developer')
+      await assertDispatchOrEscalate(
+        handle,
+        dispatchAgent,
+        isResume,
+        devDispatchSucceededBefore,
+        'the developer',
+        lastDispatchSuccessRound !== null && lastDispatchSuccessRound < roundNum
+      )
       if (!handle.failureReason) {
         devDispatchSucceededBefore = true
+        lastDispatchSuccessRound = roundNum
         if (handle.resumeId) devResumeId = handle.resumeId
       }
       return handle

@@ -475,6 +475,59 @@ describe('resolveWorkerBoundaryLaunch — O1 Apple developer-directory grant (Is
   })
 })
 
+describe('resolveWorkerBoundaryLaunch — task-tools MCP server `node` grant (ruling 986-1, Issue #985)', () => {
+  // The two host layouts the ruling names: Homebrew links `/opt/homebrew/bin/
+  // node` into a versioned Cellar `bin/` that `CANDIDATE_SYSTEM_BIN_DIRS` never
+  // reaches; nvm puts it under a versioned dir inside the otherwise-denied real
+  // HOME. Both are the REALPATH'd install `bin/` `resolveRealNodeExecDir`
+  // returns; injected here so one Linux host can prove both.
+  for (const { label, nodeExecDir } of [
+    { label: 'a Homebrew-style Cellar install', nodeExecDir: '/opt/homebrew/Cellar/node/22.9.0/bin' },
+    { label: 'an nvm-style versioned install', nodeExecDir: join(homedir(), '.nvm/versions/node/v22.9.0/bin') }
+  ]) {
+    it(`grants ${label} read AND exec, never write, so the MCP server's node can spawn`, () => {
+      const allowedDir = tempDir('vinaya-wb-node-allowed-')
+      const binDir = tempDir('vinaya-wb-node-bin-')
+      const fakeBinary = fakeBinaryIn(binDir)
+      const result = resolveWorkerBoundaryLaunch(
+        { binaryPath: fakeBinary, args: [], allowedDir, extraWritableDirs: [] },
+        { ...AVAILABLE_DEPS, resolveNodeExecDir: () => nodeExecDir }
+      )
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      try {
+        const profile = readFileSync(result.launch.args[1] as string, 'utf8')
+        // Exec: `posix_spawn 'node'` resolves through the symlink to this real
+        // install dir, which the process-exec allowlist must reach.
+        const execIdx = profile.indexOf('(allow process-exec')
+        expect(execIdx).toBeGreaterThan(-1)
+        expect(profile.indexOf(`(subpath "${nodeExecDir}")`, execIdx)).toBeGreaterThan(-1)
+        // Read: the node binary and its direct libraries must be openable.
+        expect(profile).toContain(`(subpath "${nodeExecDir}")`)
+        // Never write — absent from the read+write allow rule.
+        const rwIdx = profile.indexOf('(allow file-read* file-write*')
+        const rwEnd = profile.indexOf('))', rwIdx) + 2
+        expect(profile.slice(rwIdx, rwEnd)).not.toContain(nodeExecDir)
+      } finally {
+        result.launch.cleanup()
+      }
+    })
+  }
+
+  it('resolves node fresh at launch — a null result (no node on this host) grants nothing extra and never throws', () => {
+    const allowedDir = tempDir('vinaya-wb-nonode-allowed-')
+    const binDir = tempDir('vinaya-wb-nonode-bin-')
+    const fakeBinary = fakeBinaryIn(binDir)
+    const result = resolveWorkerBoundaryLaunch(
+      { binaryPath: fakeBinary, args: [], allowedDir, extraWritableDirs: [] },
+      { ...AVAILABLE_DEPS, resolveNodeExecDir: () => null }
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    result.launch.cleanup()
+  })
+})
+
 describe('resolveWorkerBoundaryLaunch — O3 task log file grant (Issue #985)', () => {
   it('grants a task log file and its rotation backup as literals, never the containing logs folder', () => {
     const allowedDir = tempDir('vinaya-wb-log-allowed-')

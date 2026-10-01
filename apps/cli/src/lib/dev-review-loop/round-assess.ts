@@ -187,8 +187,18 @@ export async function assertDispatchOrEscalate(
   handle: DispatchHandle,
   vendor: AgentVendor,
   isResume: boolean,
-  previousRoundSucceededForVendor: boolean,
-  subject: string
+  previousDispatchSucceededForVendor: boolean,
+  subject: string,
+  // Ruling 986-1: whether the earlier success that makes this a
+  // stop-and-escalate was in a PREVIOUS round, not this same one. False when
+  // the only prior success was this round's own fresh dispatch — e.g. round
+  // 1's fresh developer dispatch succeeds, then the same round's resume to
+  // push/open the PR fails. The escalation is identical either way (a session
+  // that worked will not resume; never fall back to a fresh one), but the
+  // message must not claim "after succeeding last round" when there is no
+  // last round. Defaulted so the reviewer call sites (never a resume) need
+  // not pass it.
+  succeededInEarlierRound = false
 ): Promise<void> {
   if (!handle.failureReason) return
   // Checked BEFORE the resume stop-and-escalate below: a vendor that cannot
@@ -196,9 +206,12 @@ export async function assertDispatchOrEscalate(
   // tenth, so a credential failure on a resumed round is never read as the
   // "this session worked last round and broke now" product escalation.
   if (handle.failureReason === 'authentication-failed') throw new DispatchSignInRefused(vendor, subject)
-  if (isResume && previousRoundSucceededForVendor) {
+  if (isResume && previousDispatchSucceededForVendor) {
+    const sinceClause = succeededInEarlierRound
+      ? 'after succeeding last round'
+      : "on the session's first resume — its own fresh dispatch earlier this round succeeded, but the resume did not"
     throw new DevReviewLoopResumeError(
-      `devReviewLoop: ${vendor}'s resume failed this round (${handle.failureReason}) after succeeding last round — ` +
+      `devReviewLoop: ${vendor}'s resume failed this round (${handle.failureReason}) ${sinceClause} — ` +
         `stop-and-escalate severity:product, vendor: ${vendor}. Never falling back to a fresh developer session (Principal ruling, 2026-09-04).`
     )
   }

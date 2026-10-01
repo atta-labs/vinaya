@@ -651,6 +651,18 @@ export type WorkerBoundaryDeps = {
    * real Mac, the same posture `detectHost` already takes.
    */
   resolveDeveloperDir?: () => string | null
+  /**
+   * Ruling 986-1: the real install `bin/` of the `node` the
+   * task-tools MCP server's registration starts (`resolveRealNodeExecDir`),
+   * or `null` when `node` is absent/unresolvable. Resolved fresh at launch
+   * and `realpath`'d, never hardcoded — a confined session that could not
+   * exec `node` crashed starting the MCP server. Injectable so a single test
+   * host can assert the profile's read+exec grant on BOTH a Homebrew-style
+   * (`/opt/homebrew/Cellar/node/<v>/bin`) and an nvm-style
+   * (`~/.nvm/versions/node/<v>/bin`) install directory, the same posture
+   * `resolveDeveloperDir` already takes.
+   */
+  resolveNodeExecDir?: () => string | null
 }
 
 export const REAL_WORKER_BOUNDARY_DEPS: WorkerBoundaryDeps = {
@@ -661,7 +673,8 @@ export const REAL_WORKER_BOUNDARY_DEPS: WorkerBoundaryDeps = {
   runCodexLoginWithAccessToken: runRealCodexLoginWithAccessToken,
   runCodexAuthPreflight: runRealCodexAuthPreflight,
   runCodexPluginInstall: runRealCodexPluginInstall,
-  resolveDeveloperDir: resolveRealDeveloperDir
+  resolveDeveloperDir: resolveRealDeveloperDir,
+  resolveNodeExecDir: resolveRealNodeExecDir
 }
 
 /** `true` only on a host `isolation.md` §3 actually names as supported — Darwin, `sandbox-exec` present. Injectable (`deps`) so a test can assert `dispatchRole`'s fail-closed wiring without needing a real macOS host — see `apps/cli/tests/lib/dispatch/worker-boundary.test.ts`. */
@@ -1093,6 +1106,34 @@ function resolveGitExecPath(): string | null {
 function resolveBunExecDir(): string | null {
   try {
     const out = execFileSync('which', ['bun'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+    return out.length > 0 ? dirname(realpathSync(out)) : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Ruling 986-1: the `node` the task-tools MCP server's own
+ * registration starts (`taskToolsServerInvocation`'s `node <bin>` self-host
+ * form, and `npx`'s own node too — `adapters.ts`). A confined Claude/Codex
+ * session that launches that server used to fail with `EPERM … posix_spawn
+ * 'node'`: the `node` on its PATH resolves, through symlinks, to a real
+ * binary OUTSIDE every granted directory — Homebrew links
+ * `/opt/homebrew/bin/node` into `/opt/homebrew/Cellar/node/<version>/bin/node`
+ * (the Cellar `bin/` is NOT in `CANDIDATE_SYSTEM_BIN_DIRS`, so the `/opt/
+ * homebrew/bin` grant does not reach it), and nvm puts it under
+ * `~/.nvm/versions/node/<version>/bin/node` (inside the otherwise-denied real
+ * HOME). Resolved the same "never assumed, verified live via `which`, then
+ * `realpath`'d" way `resolveBunExecDir`/`resolveGitExecPath` above resolve
+ * their own binaries, so the symlink is followed to the real install `bin/`
+ * on either host layout. Granted read AND exec (never write) by
+ * `resolveWorkerBoundaryLaunch` placing the result in `execAllowDirs`. `null`
+ * on a host with no `node` at all — nothing extra is granted, exactly like a
+ * missing `git`/`bun`.
+ */
+function resolveRealNodeExecDir(): string | null {
+  try {
+    const out = execFileSync('which', ['node'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
     return out.length > 0 ? dirname(realpathSync(out)) : null
   } catch {
     return null
@@ -1581,6 +1622,13 @@ export function resolveWorkerBoundaryLaunch(
     // closes. `null` off darwin or on a host without it: nothing extra is
     // granted, exactly like a missing `git`/`bun`.
     const developerDir = (deps.resolveDeveloperDir ?? resolveRealDeveloperDir)()
+    // Ruling 986-1: the real install `bin/` of the `node` the
+    // task-tools MCP server's registration starts — granted BOTH exec (its own
+    // rule) and read (via `readAllowDirs`, derived from this list), never write,
+    // so a confined session can actually spawn that server. `null` on a host
+    // without `node`: nothing extra is granted, exactly like a missing
+    // `git`/`bun`/developer dir. See `resolveRealNodeExecDir`'s doc comment.
+    const nodeExecDir = (deps.resolveNodeExecDir ?? resolveRealNodeExecDir)()
     const systemBinDirs = CANDIDATE_SYSTEM_BIN_DIRS.filter((d) => existsSync(d)).map((d) => realpathSync(d))
     const execAllowDirs = Array.from(
       new Set([
@@ -1589,6 +1637,7 @@ export function resolveWorkerBoundaryLaunch(
         ...(gitExecPath ? [gitExecPath] : []),
         ...(bunExecDir ? [bunExecDir] : []),
         ...(developerDir ? [developerDir] : []),
+        ...(nodeExecDir ? [nodeExecDir] : []),
         ...systemBinDirs
       ])
     )
