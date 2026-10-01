@@ -587,17 +587,10 @@ function shaNamesSameCommit(a: string, b: string): boolean {
  * secret-scan check's PASSING result on the judged head. The loop's security
  * verdict and `vinaya review post` both apply this one rule: a clean claim is
  * backed by that check's result, cited by name with a passing conclusion —
- * never by a scanner run or its pasted output. A clause naming the check beside
- * a failing, missing, skipped or negated conclusion does not back the claim.
- *
- * The pass/fail test runs per CLAUSE, not across the whole value: a reviewer's
- * clean citation ("… atta-labs/secret-scan passed.") is routinely trailed by
- * honest explanatory prose carrying unrelated negations ("I did not run a
- * scanner myself", "not a real secret") that must not poison the verdict — one
- * `SECRETS:` value is a single physical line of several sentences. Splitting on
- * clause boundaries (newline, period, semicolon, em-dash — never the hyphen in
- * the check name) weighs each occurrence of the check only against the words
- * beside it, which is what "beside" above has always meant.
+ * never by a scanner run or its pasted output. The conclusion is the first word
+ * after the check's name; the rest of the line (a trailing note such as "found
+ * no real token") never decides it. A check named beside a failing, missing,
+ * skipped, pending or absent conclusion, or not named at all, backs nothing.
  *
  * O6: when `judgedHead` is supplied (the `review post` command, which resolves
  * the PR's real head), the evidence must ALSO tie the passing result to THAT
@@ -615,15 +608,9 @@ export function noneFoundClaimCitesScanCheck(
 ): boolean {
   if (!opensNoneFoundClaim(claim)) return true
   const text = `${claim}\n${evidence ?? ''}`
-  const cited = text.split(/[\n.;—]/).filter((clause) => clause.includes(SECRET_SCAN_CHECK))
-  // Every clause naming the check must show it passing: one passing clause beside a failing one backs nothing.
-  const passingCited =
-    cited.length > 0 &&
-    cited.every(
-      (clause) =>
-        /\b(pass|passed|passing|success|successful)\b/i.test(clause) &&
-        !/\b(fail|failed|failing|failure|missing|skipped|pending|cancelled|not|never|no)\b/i.test(clause)
-    )
+  const cited = text.split('\n').filter((line) => line.includes(SECRET_SCAN_CHECK))
+  // Every line naming the check must show it passing: one passing line beside a failing one backs nothing.
+  const passingCited = cited.length > 0 && cited.every((line) => scanCheckConclusionPasses(line))
   if (!passingCited) return false
   if (judgedHead === null) return true
   // O6: the evidence must name the judged head and no foreign commit.
@@ -631,6 +618,14 @@ export function noneFoundClaimCitesScanCheck(
   const namesJudged = shas.some((sha) => shaNamesSameCommit(sha, judgedHead))
   const namesForeign = shas.some((sha) => !shaNamesSameCommit(sha, judgedHead))
   return namesJudged && !namesForeign
+}
+
+/** Whether the word right after each naming of the check on `line` is a passing conclusion. */
+function scanCheckConclusionPasses(line: string): boolean {
+  return line
+    .split(SECRET_SCAN_CHECK)
+    .slice(1)
+    .every((after) => /^[\s:=\-–—|(`'"*]*(pass|passed|passing|success)\b/i.test(after))
 }
 
 /**
@@ -2096,7 +2091,7 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
   if (opensNoneFoundClaim(secrets) && !secretsEvidenceFile) {
     refuseCmd(
       `\`--secrets\` normalizes to "none found" but no \`--secrets-evidence-file\` was given — security.md: "SECRETS: none found" must cite the result of the required \`${SECRET_SCAN_CHECK}\` check; without it the line is an unbacked self-attestation.`,
-      `Pass \`--secrets-evidence-file <path>\` holding the \`${SECRET_SCAN_CHECK}\` check's result on the judged head ${headSha} (its name and conclusion, as \`gh pr checks\` shows it, beside that head's sha) — do not run a scanner or paste its output — or change \`--secrets\` to describe what was found instead.`
+      `Pass \`--secrets-evidence-file <path>\` holding the \`${SECRET_SCAN_CHECK}\` check's result on the judged head ${headSha} (its name and conclusion, taken from the \`vinaya check --all --diff-only\` CI job that runs it, beside that head's sha) — do not run a scanner or paste its output — or change \`--secrets\` to describe what was found instead.`
     )
   }
   let secretsEvidence: string | null = null

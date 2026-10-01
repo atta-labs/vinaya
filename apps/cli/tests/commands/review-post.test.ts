@@ -2471,11 +2471,26 @@ describe('opensNoneFoundClaim — a trailed clean claim is held to the same evid
   })
 })
 
+describe('noneFoundClaimCitesScanCheck — only the words after the check name decide', () => {
+  it('accepts a passing citation whatever note the line carries, including "no" and "not"', () => {
+    expect(
+      noneFoundClaimCitesScanCheck('none found — atta-labs/secret-scan passed; found no real token in the diff', null)
+    ).toBe(true)
+    expect(noneFoundClaimCitesScanCheck('none found — atta-labs/secret-scan passing, nothing is not fine', null)).toBe(
+      true
+    )
+    expect(noneFoundClaimCitesScanCheck('none found — atta-labs/secret-scan success', null)).toBe(true)
+    expect(noneFoundClaimCitesScanCheck('none found', 'atta-labs/secret-scan\tpass\t5s\tno url')).toBe(true)
+  })
+})
+
 describe('noneFoundClaimCitesScanCheck — the cited check must have passed', () => {
   it('refuses a clean claim naming the check beside a failing, missing or negated conclusion', () => {
     expect(noneFoundClaimCitesScanCheck('none found — atta-labs/secret-scan failed', null)).toBe(false)
     expect(noneFoundClaimCitesScanCheck('none found — atta-labs/secret-scan missing from the checks', null)).toBe(false)
-    expect(noneFoundClaimCitesScanCheck('none found — did not run atta-labs/secret-scan passed', null)).toBe(false)
+    expect(noneFoundClaimCitesScanCheck('none found — atta-labs/secret-scan not present', null)).toBe(false)
+    expect(noneFoundClaimCitesScanCheck('none found — atta-labs/secret-scan skipped, no token', null)).toBe(false)
+    expect(noneFoundClaimCitesScanCheck('none found — checks passed, atta-labs/secret-scan', null)).toBe(false)
     expect(noneFoundClaimCitesScanCheck('none found', 'atta-labs/secret-scan\tfail\t5s')).toBe(false)
     expect(noneFoundClaimCitesScanCheck('none found', 'atta-labs/secret-scan\tpending')).toBe(false)
   })
@@ -2492,24 +2507,25 @@ describe('noneFoundClaimCitesScanCheck — the cited check must have passed', ()
   })
 
   it('a clean passing citation is not poisoned by negations in trailing explanatory prose', () => {
-    // One `SECRETS:` value is a single physical line of several sentences. The
-    // passing citation lives in its own clause; the honest prose that follows
-    // ("I did not run a scanner myself", "no live credential", "not a real
-    // secret") must not negate it, since none of it names the check.
+    // One `SECRETS:` value is a single physical line of several sentences. Only
+    // the word right after the check's name decides the conclusion; the honest
+    // prose that follows ("I did not run a scanner myself", "no live
+    // credential", "not a real secret") never negates it, since the rule reads
+    // nothing past that word.
     expect(
       noneFoundClaimCitesScanCheck(
         'none found — atta-labs/secret-scan passed. I did not run a scanner myself; my read of the diff found no live credential: the only match is a synthetic placeholder, not a real secret.',
         null
       )
     ).toBe(true)
-    // A second passing citation of the check in a later clause is still weighed, and still passes.
+    // A second naming of the check later in the line is weighed the same way — its own following word passes too.
     expect(
       noneFoundClaimCitesScanCheck(
         'none found — atta-labs/secret-scan passed; evidence block shows "atta-labs/secret-scan: pass". I could not re-run it locally.',
         null
       )
     ).toBe(true)
-    // But a negation IN THE SAME CLAUSE as the check still rejects — the clause, not the whole value, is what "beside" scopes.
+    // But a non-passing word right after the check's name rejects — the word after each naming is all that decides.
     expect(
       noneFoundClaimCitesScanCheck('none found — atta-labs/secret-scan did not pass. Nothing else to report.', null)
     ).toBe(false)
