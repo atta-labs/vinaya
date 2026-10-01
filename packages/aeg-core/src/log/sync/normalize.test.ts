@@ -302,3 +302,47 @@ describe('quarantine (O2)', () => {
     })
   })
 })
+
+describe('a gate summary line', () => {
+  const raw = JSON.stringify({
+    meta: { schema: 3, ...core, ...v2Fields, ...v3Fields },
+    subject: { issue: 921, role: 'developer', sha: 'b'.repeat(40) },
+    kind: 'gate',
+    event: 'summary',
+    duration_ms: 41000,
+    payload: {},
+    ran: 28,
+    passed: 26,
+    failed: 2,
+    skipped: 2,
+    failed_checks: ['typecheck', 'doc-coverage']
+  })
+
+  it('becomes one row carrying the commit, with the counts and failing names in the payload', () => {
+    const row = rowOf(raw)
+    expect(row.kind).toBe('gate')
+    expect(row.event).toBe('summary')
+    expect(row.commit).toBe('b'.repeat(40))
+    expect(row.payload).toMatchObject({ ran: 28, passed: 26, failed: 2, skipped: 2, duration_ms: 41000 })
+    expect((row.payload as { failed_checks: string[] }).failed_checks).toEqual(['typecheck', 'doc-coverage'])
+  })
+})
+
+describe('a final effect line', () => {
+  it('becomes one row whose payload carries the outcome of the write', () => {
+    const raw = JSON.stringify({
+      meta: { schema: 3, ...core, ...v2Fields, ...v3Fields },
+      subject: { issue: 921, role: 'developer' },
+      kind: 'effect',
+      event: 'verified',
+      payload: {},
+      effect_id: 'k1',
+      target: { kind: 'pr-comment', ref: 'pr:1' },
+      outcome: 'failure'
+    })
+    const row = rowOf(raw)
+    expect(row.kind).toBe('effect')
+    expect(row.event).toBe('verified')
+    expect(row.payload).toMatchObject({ effect_id: 'k1', outcome: 'failure' })
+  })
+})
