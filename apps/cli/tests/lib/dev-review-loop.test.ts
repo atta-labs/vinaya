@@ -102,6 +102,7 @@ import {
   CLEAN_SECURITY,
   cleanupWorlds,
   controlDir as ipControlDir,
+  makeInProcessDeps,
   makeWorld,
   outboxLines as ipOutboxLines,
   roundDir as ipRoundDir,
@@ -1158,7 +1159,10 @@ describe('devReviewLoop — round 1 clean, ends on publish', () => {
       'findings_compared',
       'stop_condition_met',
       'round_ended',
-      'journal_finalized'
+      'journal_finalized',
+      // #949, O2: the lifecycle event the driver now emits on its clean
+      // publish exit, after everything the round itself logged.
+      'driver_exited'
     ])
 
     const gateResult = lines.find((l) => l.event === 'gate_result_read') as Record<string, unknown>
@@ -1284,6 +1288,191 @@ describe('devReviewLoop — round 1 clean, ends on publish', () => {
   })
 })
 
+describe('devReviewLoop — the driver heartbeat (#949, O1)', () => {
+  afterEach(cleanupWorlds)
+
+  it('emits driver_heartbeat with round/phase while alive — no pr on the first turn, the pr once it exists', async () => {
+    const world = makeWorld()
+    let captured: (() => void) | null = null
+    let started = 0
+    // A separate world-backed deps instance whose real `dispatchRole` the
+    // override below delegates to after firing one heartbeat tick, so the
+    // round still proceeds to publish exactly as the clean fixture does.
+    const base = makeInProcessDeps(world)
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {
+        setHeartbeat: (cb) => {
+          captured = cb
+          started += 1
+          return () => {}
+        },
+        // Fire a five-minute tick synchronously mid-dispatch: during the long
+        // Developer turn (no PR yet) and during a later reviewer dispatch
+        // (PR resolved) — the two liveness moments O1 names.
+        dispatchRole: async (role, agent, prompt, opts) => {
+          captured?.()
+          return base.dispatchRole!(role, agent, prompt, opts)
+        }
+      }
+    )
+    expect(result.finalDecision.type).toBe('publish')
+    // The driver started exactly one heartbeat timer.
+    expect(started).toBe(1)
+
+    const heartbeats = ipOutboxLines(world).filter((l) => l.event === 'driver_heartbeat')
+    expect(heartbeats.length).toBeGreaterThan(0)
+    for (const hb of heartbeats) {
+      expect(hb.kind).toBe('dev_review_loop')
+      expect(hb.task).toBe(world.task)
+      expect(typeof hb.round).toBe('number')
+      expect(typeof hb.phase).toBe('string')
+    }
+    // The Developer turn fired before any PR existed — at least one heartbeat
+    // carries no `pr` at all (the Boundary's "first Developer turn" case)...
+    expect(heartbeats.some((hb) => hb.pr === undefined)).toBe(true)
+    // ...and once the developer pushed and the PR resolved, a later heartbeat
+    // carries exactly that pull request.
+    expect(heartbeats.some((hb) => hb.pr === world.prNumber)).toBe(true)
+  })
+
+  it('a heartbeat that throws on emit never crashes the round (#949, Traps)', async () => {
+    const world = makeWorld()
+    let captured: (() => void) | null = null
+    const base = makeInProcessDeps(world)
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {
+        setHeartbeat: (cb) => {
+          captured = cb
+          return () => {}
+        },
+        dispatchRole: async (role, agent, prompt, opts) => {
+          // The driver wraps its own emit in a try/catch; invoking the real
+          // callback here (which only ever calls fire-and-forget `log`) can
+          // never reject the dispatch, and the round still publishes.
+          captured?.()
+          return base.dispatchRole!(role, agent, prompt, opts)
+        }
+      }
+    )
+    expect(result.finalDecision.type).toBe('publish')
+  })
+
+  it("the production heartbeat timer is unref()'d so it never keeps the process alive (#949, Traps)", () => {
+    const source = readFileSync(join(import.meta.dir, '..', '..', 'src', 'lib', 'dev-review-loop.ts'), 'utf8')
+    const idx = source.indexOf('function defaultSetHeartbeat(')
+    expect(idx).toBeGreaterThan(-1)
+    const body = source.slice(idx, idx + 400)
+    expect(body).toMatch(/setInterval\(/)
+    expect(body).toMatch(/\.unref\?\.\(\)/)
+    expect(body).toMatch(/clearInterval\(/)
+  })
+})
+
+describe('devReviewLoop — the driver_exited lifecycle event (#949, O2/O3)', () => {
+  afterEach(cleanupWorlds)
+
+  it('a clean publish emits exactly one driver_exited reason=finished, stops the heartbeat, and writes no routine role-log line', async () => {
+    const world = makeWorld()
+    let stopped = 0
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {
+        setHeartbeat: () => () => {
+          stopped += 1
+        }
+      }
+    )
+    expect(result.finalDecision.type).toBe('publish')
+    // The timer the driver started was stopped on the way out.
+    expect(stopped).toBe(1)
+
+    const exits = ipOutboxLines(world).filter((l) => l.event === 'driver_exited')
+    expect(exits).toHaveLength(1)
+    const exit = exits[0] as Record<string, unknown>
+    expect(exit.kind).toBe('dev_review_loop')
+    expect(exit.task).toBe(world.task)
+    expect(exit.reason).toBe('finished')
+    expect(exit.last_decision).toBe('publish')
+
+    // The role log stays diagnostic: a clean return writes no `driver_exited`
+    // line there (Boundary — "diagnostic rather than routine").
+    const roleLogPath = join(ipTaskRunDir(world), 'output', 'driver.log')
+    if (existsSync(roleLogPath)) {
+      expect(readFileSync(roleLogPath, 'utf8')).not.toMatch(/driver_exited:/)
+    }
+  })
+
+  it('a decided pause emits one driver_exited reason=paused naming the pause reason', async () => {
+    // Security writes nothing on both attempts → a driver-decided
+    // infrastructure pause, returned normally (never a throw).
+    const world = makeWorld({ roleOutcomes: { 1: { security: { ...CLEAN_SECURITY, writesNothing: true } } } })
+    const result = await runLoopInProcess(world)
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
+
+    const exits = ipOutboxLines(world).filter((l) => l.event === 'driver_exited')
+    expect(exits).toHaveLength(1)
+    const exit = exits[0] as Record<string, unknown>
+    expect(exit.reason).toBe('paused')
+    expect(exit.last_decision).toBe('pause(infrastructure)')
+  })
+
+  it('an uncaught error emits one driver_exited reason=error and still writes the diagnostic role-log line', async () => {
+    const world = makeWorld()
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {
+        reviewPolicy: () => {
+          throw new Error('fake: trust-anchor read blew up')
+        }
+      }
+    )
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
+
+    const exits = ipOutboxLines(world).filter((l) => l.event === 'driver_exited')
+    expect(exits).toHaveLength(1)
+    expect((exits[0] as Record<string, unknown>).reason).toBe('error')
+
+    // An abnormal exit DOES leave the role-log trace — the signal a reader
+    // follows when no decision reached the forge.
+    const roleLogPath = join(ipTaskRunDir(world), 'output', 'driver.log')
+    expect(readFileSync(roleLogPath, 'utf8')).toMatch(/driver_exited: reason=error/)
+  })
+
+  it('recordDriverExited stops the heartbeat before it writes anything, on exactly one guarded path (#949, O1/Traps)', () => {
+    const source = readFileSync(join(import.meta.dir, '..', '..', 'src', 'lib', 'dev-review-loop.ts'), 'utf8')
+    const idx = source.indexOf('function recordDriverExited(')
+    expect(idx).toBeGreaterThan(-1)
+    const body = source.slice(idx, source.indexOf('\n    }\n', idx))
+    // Guarded against a double write for one exit.
+    expect(body).toMatch(/if \(exitTraceWritten\) return/)
+    const stopAt = body.indexOf('stopHeartbeat()')
+    const roleLineAt = body.indexOf('appendRoleLine(')
+    const logAt = body.indexOf('log(event)')
+    expect(stopAt).toBeGreaterThan(-1)
+    // The timer is cleared before any role-log line or Log event is written,
+    // so a stray tick can never land after the exit is recorded.
+    expect(roleLineAt).toBeGreaterThan(stopAt)
+    expect(logAt).toBeGreaterThan(stopAt)
+  })
+
+  it('the reexec and signal exit paths each record their own driver_exited reason (#949, O2)', () => {
+    const source = readFileSync(join(import.meta.dir, '..', '..', 'src', 'lib', 'dev-review-loop.ts'), 'utf8')
+    expect(source).toMatch(/recordDriverExited\('reexec'\)/)
+    expect(source).toMatch(/recordDriverExited\('signal'\)/)
+    expect(source).toMatch(/recordDriverExited\('error'\)/)
+    // The round-loop chokepoint maps a publish to `finished`, any pause to `paused`.
+    expect(source).toMatch(
+      /recordDriverExited\(loopResult\.finalDecision\.type === 'publish' \? 'finished' : 'paused'\)/
+    )
+  })
+})
+
 describe('devReviewLoop — deferred findings tracked in one Issue per pull request (#854)', () => {
   afterEach(cleanupWorlds)
 
@@ -1387,7 +1576,11 @@ describe('devReviewLoop — restart fixtures (task-log-v1 task 6, O3): equivalen
     'findings_compared',
     'stop_condition_met',
     'round_ended',
-    'journal_finalized'
+    'journal_finalized',
+    // #949, O2: each whole-task run now ends with its own clean-publish
+    // `driver_exited` — one per process, the same shape under each run's own
+    // distinct lineage.run.
+    'driver_exited'
   ]
 
   // REAL PROCESS: publishRound's real gh/EffectExecutor round-trip (postPrCommentOnce shells out to real gh directly, bypassing every injected dep) cannot be exercised via the in-process fake publis
@@ -2111,7 +2304,9 @@ describe('devReviewLoop — a reviewer that wrote nothing cast no verdict (O1/O2
       'stop_condition_met',
       'paused',
       'round_ended',
-      'journal_finalized'
+      'journal_finalized',
+      // #949, O2: the driver's own exit event, after the round's pause record.
+      'driver_exited'
     ])
     const stop = ipOutboxLines(world).find((l) => l.event === 'stop_condition_met') as Record<string, unknown>
     expect(stop.condition).toBe('principal_stop')
@@ -4157,7 +4352,9 @@ describe('devReviewLoop — a principal-owed red never redispatches the develope
       'findings_compared',
       'stop_condition_met',
       'round_ended',
-      'journal_finalized'
+      'journal_finalized',
+      // #949, O2: the clean-publish exit event, last.
+      'driver_exited'
     ])
     const gateResult = outboxLines(home).find((l) => l.event === 'gate_result_read') as Record<string, unknown>
     expect(gateResult.green).toBe(true)

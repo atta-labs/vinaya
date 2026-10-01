@@ -359,7 +359,7 @@ export type DispatchEvent = z.infer<typeof DispatchEventSchema>
 // ---------------------------------------------------------------------------
 // `dev_review_loop` family (§5.2) — `loop_id` shared on each. Later
 // additions widened it past the spec's original set: `cancelled`,
-// `infrastructure_retry`, and (#949) the `driver_heartbeat`/`driver_exited`
+// `infrastructure_retry`, and the `driver_heartbeat`/`driver_exited`
 // liveness pair that lets a reader tell a running loop from a dead one.
 
 const loopShared = {
@@ -582,7 +582,7 @@ export const DevReviewLoopEventSchema = z.discriminatedUnion('event', [
       outcome: z.enum(['recovered', 'exhausted'])
     })
     .strict(),
-  // (#949, O1/O3) A liveness ping the driver emits at most every five
+  // (O1/O3) A liveness ping the driver emits at most every five
   // minutes while its process is alive — the Log's one positive signal that
   // a loop is running, as opposed to finished, paused or dead. Before it, a
   // loop in its first Developer turn and one that died before pushing both
@@ -606,7 +606,7 @@ export const DevReviewLoopEventSchema = z.discriminatedUnion('event', [
       phase: z.string()
     })
     .strict(),
-  // (#949, O2/O3) Emitted exactly once when a review-loop driver process
+  // (O2/O3) Emitted exactly once when a review-loop driver process
   // ends, on every exit path the driver already traces in its role log
   // (a re-exec hand-off, an uncaught error, an OS signal) plus a normal
   // return (a clean `publish` is `finished`, a decided pause is `paused`).

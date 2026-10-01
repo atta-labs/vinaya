@@ -501,13 +501,16 @@ const PRODUCER_BOUNDARIES: ProducerBoundary[] = [
     ]
   },
   {
-    name: 'devReviewLoop driver — resume, cancel, unpushed-work resume, a failed reviewer report',
+    name: 'devReviewLoop driver — resume, cancel, unpushed-work resume, a failed reviewer report, liveness heartbeat and exit',
     files: [DEV_REVIEW_LOOP_PATH],
     requires: [
       { kind: 'dev_review_loop', event: 'resumed' },
       { kind: 'dev_review_loop', event: 'unpushed_work_resume' },
       { kind: 'dev_review_loop', event: 'cancelled' },
       { kind: 'dev_review_loop', event: 'infrastructure_retry' },
+      // #949, O1/O2: the driver's own liveness pair.
+      { kind: 'dev_review_loop', event: 'driver_heartbeat' },
+      { kind: 'dev_review_loop', event: 'driver_exited' },
       { kind: 'role_attempt', event: 'attempted' }
     ]
   },
@@ -636,11 +639,12 @@ describe('log coverage — O1 (task-log-v1 7, Issue #567): every schema event ma
     familyEventsFromSchema(schemaSource, exportName, kind)
   )
 
-  it('sanity: the schema really does declare 29 kind/event pairs across 10 families today', () => {
+  it('sanity: the schema really does declare 32 kind/event pairs across 10 families today', () => {
     // A change to this number is a real schema change (a family or event
     // added/removed) — update it alongside PRODUCER_BOUNDARIES /
     // LOG_COVERAGE_EXEMPTIONS in the same diff, never silently.
-    expect(allDeclaredEvents.length).toBe(30)
+    // #949 added `dev_review_loop` `driver_heartbeat` and `driver_exited` (30 → 32).
+    expect(allDeclaredEvents.length).toBe(32)
   })
 
   it('every declared kind/event pair is required by a producer boundary, or named in LOG_COVERAGE_EXEMPTIONS', () => {
