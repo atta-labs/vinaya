@@ -4,7 +4,7 @@ The `vinaya` bin — Vinaya's npm-distributed CLI, published to the public npm r
 
 ## Install
 
-The published artifact is a Node-executable bundle — plain Node ≥ 20 is enough, through any package manager:
+The published artifact is a Node-executable bundle — plain Node ≥ 22.13 is enough, through any package manager:
 
 ```bash
 npx @attalabs/vinaya init        # or: pnpm dlx / yarn dlx / bunx
