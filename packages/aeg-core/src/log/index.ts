@@ -116,9 +116,9 @@ export type {
 export {
   cacheContractCases,
   createMemoryCache,
-  DEFAULT_LOOKBACK,
-  DEFAULT_MAX_PAGES,
-  DEFAULT_PAGE_LIMIT,
+  DEFAULT_SYNC_LOOKBACK,
+  DEFAULT_SYNC_MAX_PAGES,
+  DEFAULT_SYNC_PAGE_LIMIT,
   isLowTrustVersion,
   known,
   LOW_TRUST_BELOW_VERSION,

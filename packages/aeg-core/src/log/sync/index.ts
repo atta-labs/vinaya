@@ -12,9 +12,9 @@ export type {
   SourcePage
 } from './contracts'
 export {
-  DEFAULT_LOOKBACK,
-  DEFAULT_MAX_PAGES,
-  DEFAULT_PAGE_LIMIT,
+  DEFAULT_SYNC_LOOKBACK,
+  DEFAULT_SYNC_MAX_PAGES,
+  DEFAULT_SYNC_PAGE_LIMIT,
   syncSource
 } from './engine'
 export type { RowDeletion, SyncOptions, SyncSummary } from './engine'

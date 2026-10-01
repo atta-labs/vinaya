@@ -21,21 +21,21 @@ import { normalizeStoredLine } from './normalize'
 import type { RowOrigin } from './row'
 
 /** The default look-back span: how many trailing positions a run re-reads to find edits and deletions. */
-export const DEFAULT_LOOKBACK = 1000
+export const DEFAULT_SYNC_LOOKBACK = 1000
 /** The default page bound: how many pages one run reads before it stops and reports more is available. */
-export const DEFAULT_MAX_PAGES = 50
+export const DEFAULT_SYNC_MAX_PAGES = 50
 /** The default page size: how many lines a single `readPage` asks for. */
-export const DEFAULT_PAGE_LIMIT = 1000
+export const DEFAULT_SYNC_PAGE_LIMIT = 1000
 
 /** The bounds and clock one sync run is given. The engine never reads the clock itself. */
 export type SyncOptions = {
   /** The run's wall-clock instant, passed in so the engine stays pure. */
   now: Date
-  /** At most this many pages this run (default {@link DEFAULT_MAX_PAGES}). */
+  /** At most this many pages this run (default {@link DEFAULT_SYNC_MAX_PAGES}). */
   maxPages?: number
-  /** At most this many lines per `readPage` (default {@link DEFAULT_PAGE_LIMIT}). */
+  /** At most this many lines per `readPage` (default {@link DEFAULT_SYNC_PAGE_LIMIT}). */
   pageLimit?: number
-  /** The trailing span re-read every run to find edits and deletions (default {@link DEFAULT_LOOKBACK}). */
+  /** The trailing span re-read every run to find edits and deletions (default {@link DEFAULT_SYNC_LOOKBACK}). */
   lookback?: number
 }
 
@@ -89,9 +89,9 @@ type Boundary = { cursor: SourceCursor | null; linesBefore: number }
  * The run returns a summary and never reads the clock.
  */
 export async function syncSource(source: LogSource, cache: LogCache, options: SyncOptions): Promise<SyncSummary> {
-  const maxPages = options.maxPages ?? DEFAULT_MAX_PAGES
-  const pageLimit = options.pageLimit ?? DEFAULT_PAGE_LIMIT
-  const lookback = options.lookback ?? DEFAULT_LOOKBACK
+  const maxPages = options.maxPages ?? DEFAULT_SYNC_MAX_PAGES
+  const pageLimit = options.pageLimit ?? DEFAULT_SYNC_PAGE_LIMIT
+  const lookback = options.lookback ?? DEFAULT_SYNC_LOOKBACK
   const id = source.id
 
   const startCursor = cache.cursor(id)
