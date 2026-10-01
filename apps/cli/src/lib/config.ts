@@ -1620,6 +1620,37 @@ export function loadTrustAnchorConfig(fetcher: TrustAnchorFetcher = ghFetchTrust
 }
 
 /**
+ * `loadTrustAnchorConfig`, but a genuine forge-read FAILURE (the fetch threw
+ * for any reason OTHER than the file being absent — a rate limit, a timeout, an
+ * unreachable or unauthenticated `gh`) is RE-THROWN rather than swallowed into
+ * the built-in defaults. A missing file (404 — the repository simply has no
+ * `vinaya.config.json` on its default branch) still resolves to `null`, exactly
+ * as `loadTrustAnchorConfig` does, and so does a file that is present but parses
+ * to no usable config: neither is a failed read, and every resolver reads `null`
+ * as "use the built-in defaults."
+ *
+ * The dev-review-loop's review-policy read (`reviewPolicy` in
+ * `dev-review-loop/developer-dispatch.ts`) is the ONE caller that
+ * must distinguish these: a verdict cast under the guessed default policy after
+ * a failed read is rejected by the merge gate, which reads the repository's real
+ * policy, so a clean review cannot merge. This is the variant that caller uses —
+ * never a change to `loadTrustAnchorConfig`'s own return, which every other
+ * caller (the log sink, the checks) still relies on to swallow-and-default.
+ */
+export function loadTrustAnchorConfigOrThrow(
+  fetcher: TrustAnchorFetcher = ghFetchTrustAnchorConfig
+): VinayaConfig | null {
+  let base64: string
+  try {
+    base64 = fetcher()
+  } catch (err) {
+    if (isMissingFileError(err)) return null
+    throw new Error(`could not read the trust-anchor config from the default branch: ${firstLine(err)}`)
+  }
+  return parseTrustAnchorContent(base64)
+}
+
+/**
  * `loadTrustAnchorConfig` for a caller that must never block the event loop
  * — the log sink, whose first event can land while a batch of async check
  * children is still running. A synchronous spawn at that moment can swallow

@@ -78,8 +78,10 @@ import {
   renderDeveloperRoundComment,
   renderReviewerPrompt,
   type ReviewerPromptFacts,
+  reviewPolicy,
   routeCompletionEvents
 } from '../../src/lib/dev-review-loop.js'
+import { loadTrustAnchorConfigOrThrow, type VinayaConfig } from '../../src/lib/config.js'
 import {
   deriveCodeReviewVerdict,
   renderCodeReviewComment,
@@ -1648,6 +1650,14 @@ function writeFakeGhPauseCommentFailsOnce(dir: string): void {
     dir,
     'gh',
     `#!/bin/sh
+if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then
+  # issue #945: this read must be 404-shaped (a MISSING config file → the
+  # defaults path), never a generic failure — \`reviewPolicy\` now treats a
+  # non-404 read failure as an infrastructure pause, which would mask this
+  # scenario's own escalation pause. See \`writeFakeGh\`'s #668 note.
+  echo "gh: HTTP 404 Not Found (test stub — no vinaya.config.json on the default branch)" >&2
+  exit 1
+fi
 STATE_DIR="$HOME/.fake-gh-posted-comments"
 mkdir -p "$STATE_DIR"
 if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
@@ -1723,6 +1733,14 @@ function writeFakeGhPauseCommentNeverSucceeds(dir: string): void {
     dir,
     'gh',
     `#!/bin/sh
+if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then
+  # issue #945: this read must be 404-shaped (a MISSING config file → the
+  # defaults path), never a generic failure — \`reviewPolicy\` now treats a
+  # non-404 read failure as an infrastructure pause, which would mask this
+  # scenario's own escalation pause. See \`writeFakeGh\`'s #668 note.
+  echo "gh: HTTP 404 Not Found (test stub — no vinaya.config.json on the default branch)" >&2
+  exit 1
+fi
 STATE_DIR="$HOME/.fake-gh-posted-comments"
 mkdir -p "$STATE_DIR"
 if [ "$1" = "issue" ] && [ "$2" = "view" ] && [ "$4" = "--json" ] && [ "$5" = "comments" ]; then
@@ -4480,4 +4498,154 @@ describe('the start-of-run sweep never delays the loop, and re-checks before rem
     expect(r.stderr).toContain('kept Issue #8002')
     expect(r.stderr).toContain('open — Issue #8002 open, no pull request yet')
   }, 80_000)
+})
+
+// --- issue #945: a failed policy read never casts a verdict under the defaults ---
+
+/**
+ * The origin incident (2026-10-01): during a GitHub API limit the trust-anchor
+ * read failed, `loadTrustAnchorConfig` swallowed it to `null`, and the loop ran
+ * under the `BLOCKER` default while this repository's `reviewPolicy` sets
+ * `MAJOR`; the merge gate read the real policy and refused both verdicts on a
+ * policy-digest mismatch, so a clean review could not merge. `reviewPolicy` now
+ * reads through `loadTrustAnchorConfigOrThrow`, which tells a FAILED read (pause)
+ * apart from a missing/no-policy config (defaults).
+ */
+describe('loadTrustAnchorConfigOrThrow (issue #945) — a failed read is distinct from a missing/no-policy config', () => {
+  const b64 = (obj: unknown): string => Buffer.from(JSON.stringify(obj), 'utf8').toString('base64')
+  const execFileLikeError = (stderr: string): Error =>
+    Object.assign(new Error('Command failed: gh api repos/o/r/contents/vinaya.config.json --jq .content'), { stderr })
+
+  it('a missing config file (404) resolves to null — the defaults path, exactly as loadTrustAnchorConfig', () => {
+    const err = execFileLikeError('gh: Not Found (HTTP 404)')
+    expect(
+      loadTrustAnchorConfigOrThrow(() => {
+        throw err
+      })
+    ).toBeNull()
+  })
+
+  it('a genuine read failure (a rate limit / outage, not a 404) THROWS rather than silently defaulting', () => {
+    const err = execFileLikeError('gh: API rate limit exceeded (HTTP 403)')
+    expect(() =>
+      loadTrustAnchorConfigOrThrow(() => {
+        throw err
+      })
+    ).toThrow(/trust-anchor config from the default branch/)
+  })
+
+  it('a readable config with a reviewPolicy is returned as-is', () => {
+    const config = loadTrustAnchorConfigOrThrow(() => b64({ reviewPolicy: { codeReviewThreshold: 'MAJOR' } }))
+    expect(config?.reviewPolicy?.codeReviewThreshold).toBe('MAJOR')
+  })
+
+  it('a readable config without a reviewPolicy is returned with reviewPolicy undefined — the defaults path', () => {
+    const config = loadTrustAnchorConfigOrThrow(() => b64({ principals: ['someone'] }))
+    expect(config).not.toBeNull()
+    expect(config?.reviewPolicy).toBeUndefined()
+  })
+})
+
+describe('reviewPolicy (issue #945) — retries a failed read, then throws; a null/no-policy config is the defaults path', () => {
+  it('retries the read, then throws naming the read error when every attempt fails (O1/O3)', () => {
+    let reads = 0
+    const load = (): VinayaConfig | null => {
+      reads += 1
+      throw new Error('gh: API rate limit exceeded (HTTP 403)')
+    }
+    expect(() => reviewPolicy(load)).toThrow(/could not read the repository's review policy/)
+    // Two attempts — the read was genuinely retried before giving up.
+    expect(reads).toBe(2)
+  })
+
+  it('a read that fails once then succeeds recovers on the retry (O1)', () => {
+    let reads = 0
+    const load = (): VinayaConfig | null => {
+      reads += 1
+      if (reads === 1) throw new Error('gh: transient failure')
+      return null
+    }
+    expect(reviewPolicy(load)).toEqual(DEFAULT_REVIEW_POLICY)
+    expect(reads).toBe(2)
+  })
+
+  it('a null read (missing file / no config) resolves to the built-in defaults, not a throw (O2)', () => {
+    let reads = 0
+    expect(
+      reviewPolicy(() => {
+        reads += 1
+        return null
+      })
+    ).toEqual(DEFAULT_REVIEW_POLICY)
+    expect(reads).toBe(1)
+  })
+
+  it('a config present without a reviewPolicy resolves to the built-in defaults (O2)', () => {
+    expect(reviewPolicy(() => ({ principals: ['someone'] }) as VinayaConfig)).toEqual(DEFAULT_REVIEW_POLICY)
+  })
+
+  it('a readable reviewPolicy is honoured verbatim', () => {
+    const policy = reviewPolicy(() => ({ reviewPolicy: { codeReviewThreshold: 'MAJOR' } }) as VinayaConfig)
+    expect(policy.codeReviewThreshold).toBe('MAJOR')
+  })
+
+  it('a present-but-unknown severity is a config defect, thrown WITHOUT retry (not a read failure)', () => {
+    let reads = 0
+    const load = (): VinayaConfig | null => {
+      reads += 1
+      return { reviewPolicy: { codeReviewThreshold: 'NOT-A-SEVERITY' } } as VinayaConfig
+    }
+    // `resolveReviewPolicy`'s own refusal, surfaced on the first attempt — the
+    // read itself succeeded, so it is never retried.
+    expect(() => reviewPolicy(load)).toThrow(/not one of/)
+    expect(reads).toBe(1)
+  })
+})
+
+describe('devReviewLoop — a failed policy read pauses infrastructure and casts no verdict (issue #945, O1/O3)', () => {
+  it('retries the read, then pauses infrastructure naming the error, dispatching no reviewer or developer', async () => {
+    const world = makeWorld()
+    const rateLimit = Object.assign(new Error('Command failed: gh api repos/o/r/contents/vinaya.config.json'), {
+      stderr: 'gh: API rate limit exceeded (HTTP 403)'
+    })
+    let loadCalls = 0
+    // The REAL reviewPolicy, reading through a forge whose fetch always fails
+    // with a non-404 error — so the loop runs the genuine retry-then-throw path.
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {
+        reviewPolicy: () =>
+          reviewPolicy(() =>
+            loadTrustAnchorConfigOrThrow(() => {
+              loadCalls += 1
+              throw rateLimit
+            })
+          )
+      }
+    )
+
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
+    // The read was retried before the loop gave up (O1).
+    expect(loadCalls).toBe(2)
+    // No verdict was cast: neither reviewer, nor even the developer, was ever
+    // dispatched — the failed read stops the round during setup (O1).
+    expect(world.dispatchCountByRole['code-reviewer'] ?? 0).toBe(0)
+    expect(world.dispatchCountByRole.security ?? 0).toBe(0)
+    expect(world.dispatchCountByRole.developer ?? 0).toBe(0)
+
+    // The pause record and its comment name the failed read, so the Principal
+    // can tell a forge outage from a policy problem (O3).
+    const pauseState = JSON.parse(readFileSync(join(ipControlDir(world), 'pause-state.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
+    expect(pauseState.reason).toBe('infrastructure')
+    expect(String(pauseState.detail)).toMatch(/review policy/)
+    const pauseComment = world.postedComments.find((c) => /aeg:loop:paused:infrastructure/.test(c.body))
+    expect(pauseComment).toBeDefined()
+    expect(pauseComment!.body).toMatch(/review policy/)
+    // Nothing resembling a verdict was ever posted.
+    expect(world.postedComments.some((c) => /^VERDICT:/m.test(c.body))).toBe(false)
+  })
 })
