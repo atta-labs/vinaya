@@ -86,6 +86,7 @@ import {
   runPath,
   RUNTIME_DIR_ENV_KEY,
   runtimeDirForRepo,
+  runtimeDirForRepoAsync,
   runtimeDirForThisRepo,
   type RunScope,
   scopeFromSegment,
@@ -3265,6 +3266,29 @@ export async function dispatchRole(
           resolveBranchIssue: () => Promise.resolve(null)
         })
       : null
+  // O3: the task log file a CONFINED child falls back to when it cannot
+  // confirm the configured log SERVER from inside the boundary — the real
+  // HOME where `gh`'s delivery credential lives is denied, so the child's own
+  // trust-anchor read fails and `log()` writes to the FOLDER destination
+  // (`<runtimeDir>/logs/<repo>/<task>.ndjson`) instead. This parent, running
+  // unconfined, may have resolved a `url` destination above and granted only
+  // the retry-queue outbox, leaving that folder file ungranted — where the
+  // child's own `log()` then dies with "log outbox target could not be
+  // opened", losing the role's whole telemetry stream. Resolved here by
+  // FORCING the folder destination (exactly what the child falls back to),
+  // and granted below as an exact literal — the single task log file, never
+  // its containing folder (plus its one rotation slot, so a cross-the-cap
+  // append inside the boundary cannot silently reintroduce the same denial).
+  // A `none`/CI destination writes nothing, so the extra literal grant is
+  // simply unused there, never harmful.
+  const folderLogPath = await resolveLogAppendPath(repo, issue, {
+    env: sinkEnv,
+    resolveLogDestination: async (r) => ({
+      kind: 'folder' as const,
+      folder: join(await runtimeDirForRepoAsync(r), 'logs')
+    }),
+    resolveBranchIssue: () => Promise.resolve(null)
+  })
 
   const effectId = randomUUID()
   const vendor = VENDOR_TABLE[agent]
@@ -3711,6 +3735,26 @@ export async function dispatchRole(
             // access token plus the task-scoped config/hooks described below.
             stageOAuthCredential: agent === 'claude',
             stageCodexCredential: agent === 'codex',
+            // O2: the PERSISTENT per-task directory this dispatch stages its
+            // subscription login and vendor session store into, so a round-2
+            // resume finds the round-1 session store it continues rather than
+            // the empty per-dispatch scratch dir that produced "No
+            // conversation found with session ID". Keyed by task/role/agent
+            // (exactly like the resume record `resumeRecordPathFor` sits
+            // beside, under the task's own `sessions/` folder), so it is
+            // stable across this task's rounds, stays well outside the real
+            // `~/.claude`, and — since `dev-review-loop.ts` dispatches its two
+            // reviewer roles CONCURRENTLY — never shares one mutable config
+            // directory two live vendor processes would race on. Removed when
+            // the loop ends (`dev-review-loop.ts`). Only the vendors whose
+            // login this module stages get one; every other agent refuses the
+            // unattended dispatch before reaching staging anyway.
+            stagedConfigDir: hasSubscriptionLogin(agent)
+              ? runPath(runtimeDirForRepo(repo), scopeOf(opts.task, opts.pr), {
+                  area: 'sessions',
+                  file: `${role}-${agent}-config`
+                })
+              : undefined,
             codexHooksPath,
             // O1/O2: staged into this run's own `CODEX_HOME/rules/`
             // beside the hooks plugin, discovered by Codex at startup.
@@ -3795,6 +3839,21 @@ export async function dispatchRole(
                   // best-effort, same reasoning as the outbox/resume dirs above.
                 }
                 files.push(f)
+              }
+              // O3: the folder-destination task log file (and its one
+              // rotation backup `<task>.1.ndjson`, which `log-sink.ts` writes
+              // when the live file crosses its size cap) the confined child
+              // falls back to — pre-create its folder here, by the trusted
+              // controller, so the child's own append needs only the exact
+              // `(literal ...)` grant plus the metadata traversal its parent
+              // already gets, never a write into an ungranted directory.
+              try {
+                mkdirSync(dirname(folderLogPath), { recursive: true })
+              } catch {
+                // best-effort, same reasoning as the outbox/resume dirs above.
+              }
+              for (const f of [folderLogPath, folderLogPath.replace(/\.ndjson$/, '.1.ndjson')]) {
+                if (!files.includes(f)) files.push(f)
               }
               return files
             })(),

@@ -407,3 +407,37 @@ export function cleanupAllReviewerIsolationArtifacts(root: string, task: number)
     if (/^\d+$/.test(name)) removeIsolationArtifactsIn(join(roundsDir, name))
   }
 }
+
+/**
+ * The staged per-task agent-config directory `dispatch.ts` resolves for a
+ * confined `claude`/`codex` dispatch — `sessions/<role>-<agent>-config`,
+ * beside that dispatch's own `<role>-<agent>.json` resume record. The
+ * SUFFIX, matched here, is what tells it apart from the resume-record files
+ * (which end `.json`) so a cleanup never touches a session record it should
+ * leave in place.
+ */
+const STAGED_AGENT_CONFIG_NAME_RE = /-config$/
+
+/**
+ * O2: removes every staged per-task agent-config directory for `task` — the
+ * Claude `CLAUDE_CONFIG_DIR`/Codex `CODEX_HOME` copies a confined dispatch
+ * stages under the task's own `sessions/` folder. Called ONCE, when the
+ * task's loop genuinely ENDS (its review published, or the task cancelled),
+ * NEVER on a pause: a paused loop resumes, and its next round's resume needs
+ * exactly the session store this would remove. The per-dispatch scratch temp
+ * dir is the launcher's own `cleanup()` to remove; this handles only the
+ * directory that deliberately outlives a single dispatch. Best-effort; never
+ * throws.
+ */
+export function cleanupAllStagedAgentConfigs(root: string, task: number): void {
+  const sessionsDir = runPath(root, task, { area: 'sessions' })
+  let entries: string[]
+  try {
+    entries = readdirSync(sessionsDir)
+  } catch {
+    return
+  }
+  for (const name of entries) {
+    if (STAGED_AGENT_CONFIG_NAME_RE.test(name)) removeIfPresent(join(sessionsDir, name))
+  }
+}
