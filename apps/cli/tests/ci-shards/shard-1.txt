@@ -41,6 +41,7 @@ tests/lib/no-log-forge-writes.test.ts
 tests/lib/cli-operation-log.test.ts
 tests/lib/log-sink.test.ts
 tests/lib/log-sink-no-sync-spawn.test.ts
+tests/lib/log-sync-server-source.test.ts
 tests/lib/loop-log.test.ts
 tests/new-check.test.ts
 tests/new-role.test.ts

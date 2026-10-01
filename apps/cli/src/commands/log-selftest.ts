@@ -20,6 +20,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { buildHeader, LogEventSchema, redact } from '@attalabs/aeg-core'
 import { loadConfig, resolveLogsHeaderValues, type VinayaConfig } from '../lib/config.js'
+import { statsUrlFrom } from '../lib/log-sync-server-source.js'
 import {
   logsCredentialMissing,
   type ResolvedLogDestination,
@@ -133,11 +134,6 @@ export function buildSelftestLine(eventId: string, repo: string | null, now: Dat
       `log selftest could not build a valid test event: ${parsed.error.issues[0]?.message ?? 'schema violation'}`
     )
   return `${JSON.stringify(redact(parsed.data, homedir()))}\n`
-}
-
-/** The stats/read/live routes share the ingest path with only the tail swapped: `.../events` → `.../stats`. */
-function statsUrlFrom(eventsUrl: string): string {
-  return eventsUrl.replace(/\/events(\?|$)/, '/stats$1')
 }
 
 export function realLogSelftestDeps(): LogSelftestDeps {
@@ -394,5 +390,5 @@ import type { SurfaceExemption } from '../lib/surface-exemption'
 // reader needs to see. The retirement target is a future `log-delivery.ts`
 // that owns "prove and deliver for this repo" behind one call.
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'log selftest': { date: '2026-09-29', callsToday: 7, retiresVia: 'logDeliveryChokepoint' }
+  'log selftest': { date: '2026-10-01', callsToday: 8, retiresVia: 'logDeliveryChokepoint' }
 }
