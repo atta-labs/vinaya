@@ -432,6 +432,232 @@ describe('resolveWorkerBoundaryLaunch — OAuth credential staging (O1, Issue #6
   })
 })
 
+describe('resolveWorkerBoundaryLaunch — O1 Apple developer-directory grant (Issue #985)', () => {
+  it('grants the resolved developer directory read AND exec, never write', () => {
+    const allowedDir = tempDir('vinaya-wb-devdir-allowed-')
+    const binDir = tempDir('vinaya-wb-devdir-bin-')
+    const fakeBinary = fakeBinaryIn(binDir)
+    const developerDir = tempDir('vinaya-wb-developer-')
+    const result = resolveWorkerBoundaryLaunch(
+      { binaryPath: fakeBinary, args: [], allowedDir, extraWritableDirs: [] },
+      { ...AVAILABLE_DEPS, resolveDeveloperDir: () => developerDir }
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    try {
+      const profile = readFileSync(result.launch.args[1] as string, 'utf8')
+      // Exec: the libxcrun shim re-execs the real git from under here.
+      const execIdx = profile.indexOf('(allow process-exec')
+      expect(execIdx).toBeGreaterThan(-1)
+      expect(profile.indexOf(`(subpath "${developerDir}")`, execIdx)).toBeGreaterThan(-1)
+      // Read: libxcrun.dylib (and the re-exec'd binary) must be openable.
+      expect(profile).toContain(`(subpath "${developerDir}")`)
+      // Never write — it is absent from the read+write allow rule.
+      const rwIdx = profile.indexOf('(allow file-read* file-write*')
+      const rwEnd = profile.indexOf('))', rwIdx) + 2
+      expect(profile.slice(rwIdx, rwEnd)).not.toContain(developerDir)
+    } finally {
+      result.launch.cleanup()
+    }
+  })
+
+  it('resolves the directory fresh at launch — a null result (off-darwin, or no xcode-select) grants nothing extra and never throws', () => {
+    const allowedDir = tempDir('vinaya-wb-nodevdir-allowed-')
+    const binDir = tempDir('vinaya-wb-nodevdir-bin-')
+    const fakeBinary = fakeBinaryIn(binDir)
+    const result = resolveWorkerBoundaryLaunch(
+      { binaryPath: fakeBinary, args: [], allowedDir, extraWritableDirs: [] },
+      { ...AVAILABLE_DEPS, resolveDeveloperDir: () => null }
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    result.launch.cleanup()
+  })
+})
+
+describe('resolveWorkerBoundaryLaunch — O3 task log file grant (Issue #985)', () => {
+  it('grants a task log file and its rotation backup as literals, never the containing logs folder', () => {
+    const allowedDir = tempDir('vinaya-wb-log-allowed-')
+    const binDir = tempDir('vinaya-wb-log-bin-')
+    const fakeBinary = fakeBinaryIn(binDir)
+    // Stands in for `<runtimeDir>/logs/<owner>-<repo>/` — the folder holding
+    // THIS task's log and every OTHER task's beside it.
+    const logsRepoDir = tempDir('vinaya-wb-logs-')
+    const taskLog = join(logsRepoDir, '985.ndjson')
+    const rotated = join(logsRepoDir, '985.1.ndjson')
+    const result = resolveWorkerBoundaryLaunch(
+      {
+        binaryPath: fakeBinary,
+        args: [],
+        allowedDir,
+        extraWritableDirs: [],
+        extraWritableFiles: [taskLog, rotated]
+      },
+      AVAILABLE_DEPS
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    try {
+      const profile = readFileSync(result.launch.args[1] as string, 'utf8')
+      // The task's own log file and its one rotation slot — each an exact literal.
+      expect(profile).toContain(`(literal "${taskLog}")`)
+      expect(profile).toContain(`(literal "${rotated}")`)
+      // The containing folder is never granted recursively — a sibling task's
+      // log in the same folder stays unreachable.
+      expect(profile).not.toContain(`(subpath "${logsRepoDir}")`)
+      // Its parent carries only the metadata-traversal grant.
+      expect(profile).toContain('(allow file-read-metadata')
+    } finally {
+      result.launch.cleanup()
+    }
+  })
+})
+
+describe('resolveWorkerBoundaryLaunch — O2 staged per-task config directory (Issue #985)', () => {
+  const FIXTURE = JSON.stringify({ accessToken: 'fixture-not-a-real-oauth-token' })
+
+  it('stages the credential into stagedConfigDir, not the ephemeral scratch dir', () => {
+    const allowedDir = tempDir('vinaya-wb-o2-allowed-')
+    const stagedConfigDir = join(tempDir('vinaya-wb-o2-parent-'), 'developer-claude-config')
+    const result = resolveWorkerBoundaryLaunch(
+      {
+        binaryPath: '/usr/bin/env',
+        args: [],
+        allowedDir,
+        extraWritableDirs: [],
+        stageOAuthCredential: true,
+        stagedConfigDir
+      },
+      { ...AVAILABLE_DEPS, readOAuthCredentialFile: () => FIXTURE }
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    try {
+      const configDir = result.launch.oauthConfigDir as string
+      expect(configDir).not.toBeNull()
+      // Under the task-scoped staged dir, NOT under the per-dispatch scratch.
+      expect(configDir.startsWith(realpathSync(stagedConfigDir))).toBe(true)
+      expect(configDir.startsWith(result.launch.tmpDir)).toBe(false)
+      expect(readFileSync(join(configDir, '.credentials.json'), 'utf8')).toBe(FIXTURE)
+    } finally {
+      result.launch.cleanup()
+    }
+  })
+
+  it('cleanup() removes the per-dispatch scratch dir but PRESERVES the per-task stagedConfigDir', () => {
+    const allowedDir = tempDir('vinaya-wb-o2-preserve-allowed-')
+    const stagedConfigDir = join(tempDir('vinaya-wb-o2-preserve-parent-'), 'developer-claude-config')
+    const result = resolveWorkerBoundaryLaunch(
+      {
+        binaryPath: '/usr/bin/env',
+        args: [],
+        allowedDir,
+        extraWritableDirs: [],
+        stageOAuthCredential: true,
+        stagedConfigDir
+      },
+      { ...AVAILABLE_DEPS, readOAuthCredentialFile: () => FIXTURE }
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const scratch = result.launch.tmpDir
+    const stagedCredential = join(realpathSync(stagedConfigDir), 'claude-config', '.credentials.json')
+    expect(existsSync(stagedCredential)).toBe(true)
+    result.launch.cleanup()
+    // The scratch temp dir is gone; the task-scoped store survives the dispatch.
+    expect(existsSync(scratch)).toBe(false)
+    expect(existsSync(stagedCredential)).toBe(true)
+  })
+
+  it('every dispatch of the same task reuses the SAME directory — a round-2 resume finds the round-1 store', () => {
+    const allowedDir = tempDir('vinaya-wb-o2-reuse-allowed-')
+    const stagedConfigDir = join(tempDir('vinaya-wb-o2-reuse-parent-'), 'developer-claude-config')
+    const round1 = resolveWorkerBoundaryLaunch(
+      {
+        binaryPath: '/usr/bin/env',
+        args: [],
+        allowedDir,
+        extraWritableDirs: [],
+        stageOAuthCredential: true,
+        stagedConfigDir
+      },
+      { ...AVAILABLE_DEPS, readOAuthCredentialFile: () => FIXTURE }
+    )
+    expect(round1.ok).toBe(true)
+    if (!round1.ok) return
+    const configDir1 = round1.launch.oauthConfigDir as string
+    round1.launch.cleanup()
+    // The round-1 store outlived its dispatch's own cleanup.
+    expect(existsSync(join(configDir1, '.credentials.json'))).toBe(true)
+    const round2 = resolveWorkerBoundaryLaunch(
+      {
+        binaryPath: '/usr/bin/env',
+        args: [],
+        allowedDir,
+        extraWritableDirs: [],
+        stageOAuthCredential: true,
+        stagedConfigDir
+      },
+      { ...AVAILABLE_DEPS, readOAuthCredentialFile: () => FIXTURE }
+    )
+    expect(round2.ok).toBe(true)
+    if (!round2.ok) return
+    try {
+      // Same directory, both rounds — not a fresh mkdtemp.
+      expect(round2.launch.oauthConfigDir).toBe(configDir1)
+    } finally {
+      round2.launch.cleanup()
+    }
+  })
+
+  it('grants stagedConfigDir read+write (parent only metadata) so the confined child can write its session store', () => {
+    const allowedDir = tempDir('vinaya-wb-o2-grant-allowed-')
+    const parent = tempDir('vinaya-wb-o2-grant-parent-')
+    const stagedConfigDir = join(parent, 'developer-claude-config')
+    const binDir = tempDir('vinaya-wb-o2-grant-bin-')
+    const fakeBinary = fakeBinaryIn(binDir)
+    const result = resolveWorkerBoundaryLaunch(
+      {
+        binaryPath: fakeBinary,
+        args: [],
+        allowedDir,
+        extraWritableDirs: [],
+        stageOAuthCredential: true,
+        stagedConfigDir
+      },
+      { ...AVAILABLE_DEPS, readOAuthCredentialFile: () => FIXTURE }
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    try {
+      const profile = readFileSync(result.launch.args[1] as string, 'utf8')
+      const staged = realpathSync(stagedConfigDir)
+      const rwIdx = profile.indexOf('(allow file-read* file-write*')
+      const rwEnd = profile.indexOf('))', rwIdx) + 2
+      expect(profile.slice(rwIdx, rwEnd)).toContain(`(subpath "${staged}")`)
+      // The parent `sessions/` folder gets traversal only, never a subpath read.
+      expect(profile).toContain(`(literal "${realpathSync(parent)}")`)
+      expect(profile).not.toContain(`(subpath "${realpathSync(parent)}")`)
+    } finally {
+      result.launch.cleanup()
+    }
+  })
+
+  it('without stagedConfigDir, staging falls back to the per-dispatch scratch dir and cleanup removes it (unchanged)', () => {
+    const allowedDir = tempDir('vinaya-wb-o2-fallback-allowed-')
+    const result = resolveWorkerBoundaryLaunch(
+      { binaryPath: '/usr/bin/env', args: [], allowedDir, extraWritableDirs: [], stageOAuthCredential: true },
+      { ...AVAILABLE_DEPS, readOAuthCredentialFile: () => FIXTURE }
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const configDir = result.launch.oauthConfigDir as string
+    expect(configDir.startsWith(result.launch.tmpDir)).toBe(true)
+    result.launch.cleanup()
+    expect(existsSync(configDir)).toBe(false)
+  })
+})
+
 describe('resolveWorkerBoundaryLaunch — Codex subscription preflight (O1, Issue #676)', () => {
   it('refuses a cached token when the bounded vendor probe rejects it', () => {
     const allowedDir = tempDir('vinaya-wb-codex-preflight-refused-')

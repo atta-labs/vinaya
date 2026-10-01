@@ -641,6 +641,16 @@ export type WorkerBoundaryDeps = {
     codexHome: string
     marketplaceDir: string
   }) => { ok: true } | { ok: false; reason: string }
+  /**
+   * O1: the active Apple developer directory `xcode-select -p` reports
+   * (`/Library/Developer/CommandLineTools` on a Command-Line-Tools host,
+   * `/Applications/Xcode.app/Contents/Developer` with full Xcode), or `null`
+   * when `xcode-select` is absent/failing, off darwin, or names a path that
+   * does not exist. Resolved at launch, never hardcoded. Injectable so a
+   * Linux test host can assert the profile's read+exec grant on it without a
+   * real Mac, the same posture `detectHost` already takes.
+   */
+  resolveDeveloperDir?: () => string | null
 }
 
 export const REAL_WORKER_BOUNDARY_DEPS: WorkerBoundaryDeps = {
@@ -650,7 +660,8 @@ export const REAL_WORKER_BOUNDARY_DEPS: WorkerBoundaryDeps = {
   readCodexKeychainCredential: readRealCodexKeychainCredential,
   runCodexLoginWithAccessToken: runRealCodexLoginWithAccessToken,
   runCodexAuthPreflight: runRealCodexAuthPreflight,
-  runCodexPluginInstall: runRealCodexPluginInstall
+  runCodexPluginInstall: runRealCodexPluginInstall,
+  resolveDeveloperDir: resolveRealDeveloperDir
 }
 
 /** `true` only on a host `isolation.md` §3 actually names as supported — Darwin, `sandbox-exec` present. Injectable (`deps`) so a test can assert `dispatchRole`'s fail-closed wiring without needing a real macOS host — see `apps/cli/tests/lib/dispatch/worker-boundary.test.ts`. */
@@ -1025,6 +1036,33 @@ export type WorkerBoundaryResolution = { ok: true; launch: WorkerBoundaryLaunch 
 /** Standard toolchain directories checked for presence on this host — never assumed. Only an existing directory is added to the profile's own `execAllowDirs`/read-allow list. */
 const CANDIDATE_SYSTEM_BIN_DIRS = ['/usr/bin', '/bin', '/usr/sbin', '/sbin', '/usr/local/bin', '/opt/homebrew/bin']
 
+/**
+ * O1: the active Apple developer directory behind macOS's Command Line Tools
+ * shims. `/usr/bin/git` (and every other `/usr/bin` developer-tool stub) is a
+ * thin `xcrun` shim that dlopen's `/Library/Developer/CommandLineTools/usr/lib/libxcrun.dylib`
+ * and re-execs the real tool from UNDER this directory — so a confined role
+ * granted `/usr/bin` exec but not this directory crashes before `git` ever
+ * runs with "xcrun: error: unable to load libxcrun (… file system sandbox
+ * blocked open())". Resolved fresh from `xcode-select -p` at every launch
+ * (never one hardcoded path — a host may point it at full Xcode or at the
+ * Command Line Tools), `realpath`'d, and returned only when it actually
+ * exists. `null` off darwin, or when `xcode-select` is absent, errors, or
+ * names a missing path — the profile then simply grants nothing extra, the
+ * same best-effort posture `resolveGitExecPath` below already takes. Granted
+ * read AND exec (never write) by `resolveWorkerBoundaryLaunch` placing it in
+ * `execAllowDirs`, which both the exec-allow and the read-allow rules draw
+ * from.
+ */
+function resolveRealDeveloperDir(): string | null {
+  if (process.platform !== 'darwin') return null
+  try {
+    const out = execFileSync('xcode-select', ['-p'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+    return out.length > 0 && existsSync(out) ? realpathSync(out) : null
+  } catch {
+    return null
+  }
+}
+
 /** Best-effort, `null` on any failure — a host with no `git` at all, or whose `git --exec-path` cannot be resolved, simply contributes nothing extra to the allowlist (git itself would then also fail to exec inside the confinement, which is a dispatch-time toolchain problem, never a reason to widen the profile). */
 function resolveGitExecPath(): string | null {
   try {
@@ -1198,6 +1236,26 @@ export type WorkerBoundaryLaunchOpts = {
    */
   stageOAuthCredential?: boolean
   stageCodexCredential?: boolean
+  /**
+   * O2: the PERSISTENT, per-task directory this dispatch stages its
+   * subscription login and vendor session store into — `claude-config/` for
+   * Claude's `CLAUDE_CONFIG_DIR`, `codex-home/` for Codex's `CODEX_HOME`.
+   *
+   * Unlike `scratchTmpDir` (a fresh `mkdtemp` per dispatch, removed by
+   * `cleanup()`), this directory belongs to the TASK, not to one dispatch:
+   * the caller (`dispatch.ts`) resolves the SAME path for every dispatch of
+   * the same task/role/agent, under the task's own runtime folder — never the
+   * real `~/.claude` — so a round-2 resume finds the round-1 session store it
+   * continues (closing the "No conversation found with session ID" failure a
+   * per-dispatch scratch dir caused by being removed after round 1), and the
+   * loop's own end removes it (`dev-review-loop.ts`). It is granted read+write
+   * in the profile (the confined child writes its session store here
+   * throughout the run) and, crucially, is NOT removed by `cleanup()`.
+   *
+   * Omitted (every pre-O2 caller and test): all staging falls back to
+   * `scratchTmpDir`, the original per-dispatch behavior, unchanged.
+   */
+  stagedConfigDir?: string
   codexHooksPath?: string | null
   /**
    * The execpolicy `.rules` text (`dispatch.ts`'s
@@ -1254,14 +1312,30 @@ export function resolveWorkerBoundaryLaunch(
     const runtimeDir = dirname(resolvedBinaryPath)
     const scratchTmpDir = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-worker-boundary-')))
 
-    // O1: staged into `scratchTmpDir` — a directory already
-    // granted read+write below (`readWriteDirs`) — so this never widens the
-    // profile beyond what the steady-state grant already covers. Resolved
-    // here, before `readWriteDirs`/`execAllowDirs` are built, purely so the
-    // staged path can be reported on the returned launch; it needs no
-    // profile entry of its own.
+    // O2: where the subscription login and vendor session store are staged.
+    // The PERSISTENT per-task directory when the caller named one (so a
+    // round-2 resume finds the round-1 session it continues), else the
+    // ephemeral `scratchTmpDir` — the original per-dispatch behavior, which
+    // `cleanup()` still removes. Created 0700 and `realpath`'d so the profile
+    // grant and the child's own `CLAUDE_CONFIG_DIR`/`CODEX_HOME` resolve to
+    // the identical canonical path (the "every substituted path must be
+    // canonicalized" discipline §3 states). When separate from
+    // `scratchTmpDir`, it is granted read+write below (via
+    // `vinayaWritableDirs`) and deliberately left out of `cleanup()`.
+    let stagedConfigBase = scratchTmpDir
+    if (opts.stagedConfigDir) {
+      mkdirSync(opts.stagedConfigDir, { recursive: true, mode: 0o700 })
+      stagedConfigBase = realpathSync(opts.stagedConfigDir)
+    }
+
+    // O1: staged into `stagedConfigBase` — a directory already granted
+    // read+write below (`readWriteDirs`) — so this never widens the profile
+    // beyond what the staging grant already covers. Resolved here, before
+    // `readWriteDirs`/`execAllowDirs` are built, purely so the staged path
+    // can be reported on the returned launch; it needs no profile entry of
+    // its own.
     const oauthConfigDir = opts.stageOAuthCredential
-      ? (stageOAuthCredential(process.env, realHome, scratchTmpDir, deps)?.configDir ?? null)
+      ? (stageOAuthCredential(process.env, realHome, stagedConfigBase, deps)?.configDir ?? null)
       : null
     const codexAccessToken = opts.stageCodexCredential
       ? resolveCodexAccessToken(
@@ -1273,86 +1347,102 @@ export function resolveWorkerBoundaryLaunch(
       : null
     let codexHomeDir: string | null = null
     if (opts.stageCodexCredential && codexAccessToken) {
-      codexHomeDir = join(scratchTmpDir, 'codex-home')
-      mkdirSync(codexHomeDir, { recursive: true, mode: 0o700 })
+      codexHomeDir = join(stagedConfigBase, 'codex-home')
 
-      // Round 5 review, BLOCKER: a bare `CODEX_ACCESS_TOKEN`
-      // env var is not a session the real Codex CLI accepts — this call is
-      // the fix: `codex login --with-access-token` reads the token from
-      // stdin and writes a real `auth.json` (its own `account_id`/
-      // `refresh_token` derivation) into the SCOPED `codexHomeDir`, never
-      // the operator's real `CODEX_HOME`. See `runRealCodexLoginWithAccessToken`'s
-      // own doc comment for what is and is not live-verified here.
-      const login = (deps.runCodexLoginWithAccessToken ?? runRealCodexLoginWithAccessToken)({
-        binaryPath: resolvedBinaryPath,
-        codexHome: codexHomeDir,
-        accessToken: codexAccessToken
-      })
-      if (!login.ok) {
-        rmSync(scratchTmpDir, { recursive: true, force: true })
-        throw new Error(`Codex subscription login failed: ${login.reason}`)
-      }
+      // O2: when the PERSISTENT per-task home already carries a staged
+      // session (a prior round's `codex login` wrote `auth.json`), reuse it
+      // rather than re-running the login/preflight/plugin-install chain. That
+      // reuse is the whole point of a per-task home surviving between rounds,
+      // and the only SAFE way to reuse it: `codex plugin add` is not
+      // idempotent against an already-installed plugin, so a blind re-run on
+      // round 2 would fail the dispatch. A fresh home (round 1, or the
+      // ephemeral `scratchTmpDir` fallback when no `stagedConfigDir` was
+      // named) runs the full setup below exactly as before.
+      const alreadyStaged = opts.stagedConfigDir !== undefined && existsSync(join(codexHomeDir, CODEX_AUTH_FILE_NAME))
+      if (!alreadyStaged) {
+        mkdirSync(codexHomeDir, { recursive: true, mode: 0o700 })
 
-      // Round 5 review, BLOCKER: this preflight must probe the
-      // SAME scoped `codexHomeDir` the confined worker will actually run
-      // against — probing the operator's real, unscoped `CODEX_HOME` (the
-      // prior shape) always reported the session usable even when the
-      // isolated worker's own brokered credential could not authenticate.
-      const authPreflight = (deps.runCodexAuthPreflight ?? runRealCodexAuthPreflight)({
-        binaryPath: resolvedBinaryPath,
-        codexHome: codexHomeDir,
-        cwd: scratchTmpDir,
-        realHome
-      })
-      if (!authPreflight.ok) {
-        rmSync(scratchTmpDir, { recursive: true, force: true })
-        throw new Error(`Codex subscription authentication preflight failed: ${authPreflight.reason}`)
-      }
-
-      writeFileSync(
-        join(codexHomeDir, 'config.toml'),
-        [
-          '[shell_environment_policy]',
-          'inherit = "all"',
-          'ignore_default_excludes = false',
-          '',
-          '[shell_environment_policy.filters]',
-          '# Codex itself receives this brokered session; its repository commands never do.',
-          '"CODEX_ACCESS_TOKEN" = "exclude"',
-          ''
-        ].join('\n'),
-        { mode: 0o600 }
-      )
-      if (opts.codexExecpolicyRules) {
-        // The machine-state deny floor for this Codex run. Unlike
-        // the hooks above — which the real Codex CLI only discovers inside an
-        // installed plugin's directory — execpolicy `.rules` files ARE
-        // discovered from `<CODEX_HOME>/rules/*.rules` directly (live-verified
-        // against `codex-cli 0.152.1`), so a plain write into the staged home
-        // is all Codex needs. A write fault throws here, is caught by this
-        // function's own outer `try`, and returns a boundary refusal — so an
-        // unattended dispatch that cannot establish this policy fails closed,
-        // never launches unprotected.
-        const rulesDir = join(codexHomeDir, 'rules')
-        mkdirSync(rulesDir, { recursive: true, mode: 0o700 })
-        writeFileSync(join(rulesDir, CODEX_POLICY_RULES_FILE), opts.codexExecpolicyRules, { mode: 0o600 })
-      }
-      if (opts.codexHooksPath) {
-        // Round 7 review, BLOCKER: see `buildCodexHooksMarketplace`'s own
-        // doc comment for why this is a plugin install, never a bare file
-        // write — a bare `hooks.json` at `CODEX_HOME` root is never
-        // discovered by the real Codex CLI.
-        const hooksContent = readFileSync(opts.codexHooksPath, 'utf8')
-        const marketplaceDir = join(scratchTmpDir, 'codex-hooks-marketplace')
-        buildCodexHooksMarketplace(marketplaceDir, hooksContent)
-        const install = (deps.runCodexPluginInstall ?? runRealCodexPluginInstall)({
+        // Round 5 review, BLOCKER: a bare `CODEX_ACCESS_TOKEN`
+        // env var is not a session the real Codex CLI accepts — this call is
+        // the fix: `codex login --with-access-token` reads the token from
+        // stdin and writes a real `auth.json` (its own `account_id`/
+        // `refresh_token` derivation) into the SCOPED `codexHomeDir`, never
+        // the operator's real `CODEX_HOME`. See `runRealCodexLoginWithAccessToken`'s
+        // own doc comment for what is and is not live-verified here.
+        const login = (deps.runCodexLoginWithAccessToken ?? runRealCodexLoginWithAccessToken)({
           binaryPath: resolvedBinaryPath,
           codexHome: codexHomeDir,
-          marketplaceDir
+          accessToken: codexAccessToken
         })
-        if (!install.ok) {
+        if (!login.ok) {
           rmSync(scratchTmpDir, { recursive: true, force: true })
-          throw new Error(`Codex documentation-gate hook install failed: ${install.reason}`)
+          throw new Error(`Codex subscription login failed: ${login.reason}`)
+        }
+
+        // Round 5 review, BLOCKER: this preflight must probe the
+        // SAME scoped `codexHomeDir` the confined worker will actually run
+        // against — probing the operator's real, unscoped `CODEX_HOME` (the
+        // prior shape) always reported the session usable even when the
+        // isolated worker's own brokered credential could not authenticate.
+        const authPreflight = (deps.runCodexAuthPreflight ?? runRealCodexAuthPreflight)({
+          binaryPath: resolvedBinaryPath,
+          codexHome: codexHomeDir,
+          cwd: scratchTmpDir,
+          realHome
+        })
+        if (!authPreflight.ok) {
+          rmSync(scratchTmpDir, { recursive: true, force: true })
+          throw new Error(`Codex subscription authentication preflight failed: ${authPreflight.reason}`)
+        }
+
+        writeFileSync(
+          join(codexHomeDir, 'config.toml'),
+          [
+            '[shell_environment_policy]',
+            'inherit = "all"',
+            'ignore_default_excludes = false',
+            '',
+            '[shell_environment_policy.filters]',
+            '# Codex itself receives this brokered session; its repository commands never do.',
+            '"CODEX_ACCESS_TOKEN" = "exclude"',
+            ''
+          ].join('\n'),
+          { mode: 0o600 }
+        )
+        if (opts.codexExecpolicyRules) {
+          // The machine-state deny floor for this Codex run. Unlike
+          // the hooks above — which the real Codex CLI only discovers inside an
+          // installed plugin's directory — execpolicy `.rules` files ARE
+          // discovered from `<CODEX_HOME>/rules/*.rules` directly (live-verified
+          // against `codex-cli 0.152.1`), so a plain write into the staged home
+          // is all Codex needs. A write fault throws here, is caught by this
+          // function's own outer `try`, and returns a boundary refusal — so an
+          // unattended dispatch that cannot establish this policy fails closed,
+          // never launches unprotected.
+          const rulesDir = join(codexHomeDir, 'rules')
+          mkdirSync(rulesDir, { recursive: true, mode: 0o700 })
+          writeFileSync(join(rulesDir, CODEX_POLICY_RULES_FILE), opts.codexExecpolicyRules, { mode: 0o600 })
+        }
+        if (opts.codexHooksPath) {
+          // Round 7 review, BLOCKER: see `buildCodexHooksMarketplace`'s own
+          // doc comment for why this is a plugin install, never a bare file
+          // write — a bare `hooks.json` at `CODEX_HOME` root is never
+          // discovered by the real Codex CLI. O2: the marketplace lives under
+          // `stagedConfigBase` (not the ephemeral `scratchTmpDir`) so a
+          // persistent per-task home's own plugin registry keeps pointing at
+          // a directory that survives the dispatch that installed it.
+          const hooksContent = readFileSync(opts.codexHooksPath, 'utf8')
+          const marketplaceDir = join(stagedConfigBase, 'codex-hooks-marketplace')
+          buildCodexHooksMarketplace(marketplaceDir, hooksContent)
+          const install = (deps.runCodexPluginInstall ?? runRealCodexPluginInstall)({
+            binaryPath: resolvedBinaryPath,
+            codexHome: codexHomeDir,
+            marketplaceDir
+          })
+          if (!install.ok) {
+            rmSync(scratchTmpDir, { recursive: true, force: true })
+            throw new Error(`Codex documentation-gate hook install failed: ${install.reason}`)
+          }
         }
       }
     }
@@ -1410,7 +1500,21 @@ export function resolveWorkerBoundaryLaunch(
     const bootstrapWriteDirs = (opts.bootstrapWritableSubpaths ?? []).map((rel) =>
       resolveExistingOrJoined(allowedDirReal, rel)
     )
-    const vinayaWritableDirs = opts.extraWritableDirs.map(canonical)
+    const vinayaWritableDirs = [
+      ...opts.extraWritableDirs.map(canonical),
+      // O2: the persistent per-task staged config dir is granted read+write
+      // exactly like a reviewer's own work dir — the confined child reads its
+      // staged login and writes its vendor session store here throughout the
+      // run. Its parent (the task's own `sessions/` folder) gets only the
+      // metadata-traversal grant every `vinayaWritableDirs` parent gets
+      // (`vinayaWritableParents`, below), never recursive read of its sibling
+      // roles' session records. Already `realpath`'d above, so it is included
+      // directly rather than re-run through `canonical`. Omitted entirely
+      // when no `stagedConfigDir` was named (staging fell back to
+      // `scratchTmpDir`, which is granted on its own below and removed by
+      // `cleanup()`).
+      ...(opts.stagedConfigDir ? [stagedConfigBase] : [])
+    ]
     const vinayaWritableFiles = (opts.extraWritableFiles ?? []).map(canonical)
     const vinayaReadOnlyDirs = (opts.extraReadOnlyDirs ?? []).map(canonical)
     // A dynamically-linked runtime must read its own direct libraries after
@@ -1470,6 +1574,13 @@ export function resolveWorkerBoundaryLaunch(
 
     const gitExecPath = resolveGitExecPath()
     const bunExecDir = resolveBunExecDir()
+    // O1: the active Apple developer directory behind the `/usr/bin` git/clang
+    // shims — placed in `execAllowDirs`, which grants BOTH exec (its own rule)
+    // and read (via `readAllowDirs`, derived from this list), never write. See
+    // `resolveRealDeveloperDir`'s doc comment for the libxcrun crash this
+    // closes. `null` off darwin or on a host without it: nothing extra is
+    // granted, exactly like a missing `git`/`bun`.
+    const developerDir = (deps.resolveDeveloperDir ?? resolveRealDeveloperDir)()
     const systemBinDirs = CANDIDATE_SYSTEM_BIN_DIRS.filter((d) => existsSync(d)).map((d) => realpathSync(d))
     const execAllowDirs = Array.from(
       new Set([
@@ -1477,6 +1588,7 @@ export function resolveWorkerBoundaryLaunch(
         runtimeDir,
         ...(gitExecPath ? [gitExecPath] : []),
         ...(bunExecDir ? [bunExecDir] : []),
+        ...(developerDir ? [developerDir] : []),
         ...systemBinDirs
       ])
     )
