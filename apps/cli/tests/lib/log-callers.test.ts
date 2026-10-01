@@ -124,6 +124,17 @@ import { fileURLToPath } from 'node:url'
  * destination uses — renamed from `log-webhook-flush.ts`/`flushOutboxToWebhook`
  * to `log-webhook-drain.ts`/`drainOutboxToWebhook` now that there is no
  * sibling GitHub-comment flush left for "flush" to distinguish it from.
+ *
+ * Amended by log-readers-v1 task 6 (#925, O1/O5): `log-sync-folder-source.ts`
+ * (`apps/cli/src/lib/`) imports `outboxPathFor` from `log-sink.js` — never
+ * `log()` itself — to derive the one repository folder a configured
+ * `logs.folder` destination names, the same read-only shape
+ * `journal-history.ts` already occupies above: it joins `CALLER_ALLOWLIST`
+ * alone. It also really does call `openSync`, but always `O_RDONLY`, to read
+ * a stream's own live or rotated file — never to append or truncate the
+ * outbox path itself — the same "mentions `outbox`, writes elsewhere (or
+ * nowhere)" false positive `OUTBOX_PROSE_MENTION_ALLOWLIST`'s own doc
+ * comment already describes, so it joins that allowlist too.
  */
 
 const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..', '..')
@@ -134,6 +145,7 @@ const DEV_REVIEW_LOOP_REVIEWER_DISPATCH_PATH = 'apps/cli/src/lib/dev-review-loop
 const DEV_REVIEW_LOOP_PUBLICATION_PATH = 'apps/cli/src/lib/dev-review-loop/publication.ts'
 const DEV_REVIEW_LOOP_PAUSE_RESUME_PATH = 'apps/cli/src/lib/dev-review-loop/pause-resume.ts'
 const DEV_REVIEW_LOOP_JOURNAL_HISTORY_PATH = 'apps/cli/src/lib/dev-review-loop/journal-history.ts'
+const LOG_SYNC_FOLDER_SOURCE_PATH = 'apps/cli/src/lib/log-sync-folder-source.ts'
 const TASK_TOOLS_RESUME_PATH = 'apps/cli/src/lib/task-tools/resume.ts'
 const TASK_TOOLS_CANCEL_PATH = 'apps/cli/src/lib/task-tools/cancel.ts'
 const RUNNER_PATH = 'apps/cli/src/checks/runner.ts'
@@ -222,6 +234,7 @@ const CALLER_ALLOWLIST = new Set([
   DISPATCH_PATH,
   DEV_REVIEW_LOOP_PATH,
   DEV_REVIEW_LOOP_JOURNAL_HISTORY_PATH,
+  LOG_SYNC_FOLDER_SOURCE_PATH,
   TASK_TOOLS_RESUME_PATH,
   TASK_TOOLS_CANCEL_PATH,
   RUNNER_PATH,
@@ -290,7 +303,13 @@ const LOOP_LOG_PATH = 'apps/cli/src/lib/loop-log.ts'
  * the check cannot tell where a write points, so the exemption is stated
  * here rather than the check silently widened.
  */
-const OUTBOX_PROSE_MENTION_ALLOWLIST = new Set([CONFIG_PATH, WORKER_BOUNDARY_PATH, RUN_PATHS_PATH, LOOP_LOG_PATH])
+const OUTBOX_PROSE_MENTION_ALLOWLIST = new Set([
+  CONFIG_PATH,
+  WORKER_BOUNDARY_PATH,
+  RUN_PATHS_PATH,
+  LOOP_LOG_PATH,
+  LOG_SYNC_FOLDER_SOURCE_PATH
+])
 
 function sourceFiles(dir: string, prefix: string): [string, string][] {
   const out: [string, string][] = []
