@@ -88,6 +88,27 @@ The cache's behaviours are written once, as a list of cases (`cacheContractCases
 
 **Failure.** A page, a look-back, a retention read or a rejected read each fail with a reason naming one of: a refused credential, an unreachable server, a timeout, or a server error — never losing the caller's position, so a retry resumes from the same cursor.
 
+## The folder source
+
+`createFolderLogSource` (`apps/cli/src/lib/log-sync-folder-source.ts`) is the `LogSource` that reads a log folder's own layout — `<folder>/<owner>-<repo>/<work>.ndjson`, rotated once at 8 MiB into a single overwritten `<work>.1.ndjson` slot (`log-sink.ts`). It is scoped to one repository: the directory it lists is the same one `outboxPathFor` (imported from the sink, never re-derived) already names for that repository, so a sibling repository's own files sharing the same folder root are never opened, listed or touched.
+
+**The stream.** Each `.ndjson` file directly inside that one directory, apart from a `.1.ndjson` rotation slot, is a stream, named by its file's own basename — the work reference the sink used, or the literal `none` for work with no tracker item, read like any other. A stream appearing or disappearing between runs is discovered fresh on every `readPage` call; nothing is cached between calls beyond the cursor below.
+
+**The cursor.** Opaque JSON: a map from stream name to the byte offset read so far into what is, at rest, the LIVE file, and a sha256 fingerprint of that live file's own first complete line. The fingerprint is what tells a rotation from a truncation once the same byte offset can name different bytes: a live file smaller than the recorded offset, or one whose first line no longer hashes to the recorded fingerprint, has rotated.
+
+**Complete lines only.** The sink's append writes a line and its trailing newline in one write, but a reader can still observe a half-written one while the writer is mid-write. A line with no `\n` yet — always the last bytes read — is never returned as a line and never quarantined; the cursor stops short of it, so the next run reads it once it is whole.
+
+**Rotation, followed.** Once a rotation is detected, the source reads the rotated slot from the recorded offset onward — *if* the slot's own first-line fingerprint still matches what was recorded, proving the slot holds that same generation's unread tail — then continues into the new live file from its own start. A slot that no longer matches (overwritten by a second rotation before this reader reached it) or does not exist at all (a bare truncation, not a rotation the sink performed) is a **retention gap**: a `SourceGap` naming the stream and the offset it trailed off at as its lower bound, no upper bound and no count — the overwritten bytes are gone, and only the sink itself could have counted them at the moment of rotation. Reading still continues into whatever is live now; the loss is reported, never fatal.
+
+The slot's own unread tail is drained in full in that one `readPage` call, never split across a page boundary and resumed later — the one exception to a page's own `limit`, so a single call can return more than `limit` lines when a rotation is mid-drain. The slot is bounded (the live file it was rotated from never exceeded `OUTBOX_MAX_BYTES`, 8 MiB), so the read itself is still bounded; the alternative — resuming a partial slot drain on a later call — would need a third cursor state tracking "mid-slot," which a page the size of a whole rotation generation already makes unnecessary.
+
+**Look-back.** `lookback(cursor, span)` — this source's own extension over the `LogSource` contract, mirroring the server source's identically-named method above — re-reads, independently of the stored cursor, the last `span` complete lines of each stream the cursor already knows, with their CURRENT on-disk content: an edited line comes back edited, and a stream whose live file has vanished returns nothing for the identities the cache holds inside that span, rather than inventing an empty record or throwing. It never advances or mutates the cursor; it is a side read, not a resumption point.
+
+**Refusal.** Every file this source opens — a live file, a rotated slot — is opened `O_NOFOLLOW`, so a symlink is refused atomically rather than raced against a separate `lstat`; the open descriptor is then confirmed a regular file before anything is read. The same open also carries `O_NONBLOCK`, so a FIFO planted at a stream's path is skipped rather than hanging the open call indefinitely waiting for a writer — the same pairing the sink's own append open uses. Neither check throws: a symlinked, FIFO or other non-regular entry is simply excluded from the stream listing, or, for a rotated slot, treated as a missing slot — a retention gap, not a crash. This source never writes, renames or deletes anything in the folder it reads.
+
+<!-- AEG:CLAIM: apps/cli/src/lib/log-sync-folder-source.ts contains:export function createFolderLogSource(deps: FolderSourceDeps): FolderLogSource { -->
+<!-- AEG:CLAIM: apps/cli/src/lib/log-sync-folder-source.ts contains:lookback(cursor: SourceCursor | null, span: number): Promise<SourcePage> -->
+
 ## The sync run
 
 `syncSource(source, cache, options)` (`engine.ts`) is the one algorithm that moves a source's lines into a cache. It is pure policy: a function over the source and cache it is handed, with the clock (`now`) and the bounds passed in `options`, no I/O and no clock read of its own. It returns a `SyncSummary` and never throws for a lost, edited or quarantined line — it reports them.
