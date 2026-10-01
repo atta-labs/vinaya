@@ -714,7 +714,7 @@ exit 1
 
 describe('devReviewLoop — O9 (task-run-v1 21, #541, round 2 review BLOCKER): a crash between a green round_ended and journal_finalized never resets numbering on reattach', () => {
   // REAL PROCESS: subject is fetchLoopHistory's real forge-marker (pr-comment) round reconstruction on reattach, which the harness fakes to always return empty — faithfully converting it would mean
-  it('round 2 dispatches directly (never round 1 again), and the eventual published table still lists round 1', () => {
+  it('round 2 dispatches directly (never round 1 again), and the eventual published marker still carries round 1', () => {
     const home = tempDir('vinaya-drl-home-')
     const cwd = tempDir('vinaya-drl-cwd-')
     const binDir = tempDir('vinaya-drl-bin-')
@@ -764,15 +764,15 @@ describe('devReviewLoop — O9 (task-run-v1 21, #541, round 2 review BLOCKER): a
     expect(existsSync(join(roundDir(home, 2), 'reviewer-work'))).toBe(true)
     expect(existsSync(join(roundDir(home, 2), 'security-work'))).toBe(true)
 
-    // The published summary — round 2's real, live computation — still
+    // The published marker — round 2's real, live computation — still
     // names round 1, reconstructed from the round-1 developer marker round 1
     // posted to the PR before it crashed, never dropped just because it never
     // got to publish (Origin, PR #536).
     const files = postedCommentFiles(home)
     const summaryFile = files[files.length - 1] as string
     const summary = readFileSync(join(home, '.fake-gh-posted-comments', summaryFile), 'utf8')
-    expect(summary).toMatch(/^\| 1 \|/m)
-    expect(summary).toMatch(/^\| 2 \|/m)
+    expect(summary).toMatch(/^<!-- aeg:loop:published head=\S+ confidence=1:\S+,2:\S+ -->$/m)
+    expect(summary).not.toContain('| round |')
   }, 45000)
 })
 
@@ -1215,7 +1215,8 @@ describe('devReviewLoop — round 1 clean, ends on publish', () => {
     expect(securityPosted).toMatch(/^VERDICT: PASS$/m)
 
     const summaryPosted = readFileSync(join(home, '.fake-gh-posted-comments', summaryFile as string), 'utf8')
-    expect(summaryPosted).toMatch(/\| round \|/)
+    expect(summaryPosted).toMatch(/^<!-- aeg:loop:published head=\S+ confidence=1:\S+ -->$/m)
+    expect(summaryPosted).not.toContain('| round |')
     expect(summaryPosted).not.toMatch(/^VERDICT:/m)
     expect(summaryPosted).not.toMatch(/^Judged head:/m)
 
