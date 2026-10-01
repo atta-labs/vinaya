@@ -1,0 +1,12 @@
+#!/usr/bin/env sh
+# >>> vinaya:managed:commit-msg >>>
+# Vinaya commit-message gate. Validates the message's first line against
+# this repo's Type(scope): Description convention.
+# This repo vendors the CLI, so `npx @attalabs/vinaya` resolves to its own
+# unbuilt workspace member. Run the built file instead.
+if [ ! -f apps/cli/dist/index.js ]; then
+  echo "vinaya: apps/cli/dist/index.js is missing — run \`bun run --cwd apps/cli build\`" >&2
+  exit 1
+fi
+VINAYA_HOST=hook node apps/cli/dist/index.js commit-msg "$1" "$2" || exit 1
+# <<< vinaya:managed:commit-msg <<<

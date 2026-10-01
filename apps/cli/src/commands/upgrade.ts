@@ -495,9 +495,13 @@ export function planUpgrade(
       // Retrofit: same reasoning as the settings.json branch
       // above, but this artifact IS a managed block — the append/regenerate
       // machinery just below already never clobbers foreign content, so
-      // there is no narrower `!exists` guard needed here.
+      // there is no narrower `!exists` guard needed here. The `commit-msg`
+      // hook is the same situation: a manifest written before that hook
+      // existed never recorded it, so the generic `!owned` branch would
+      // skip it forever as `not-installed`.
       const isRetrofitStopHookBlock = op.path === CLAUDE_STOP_HOOK_SCRIPT_PATH && op.marker === CLAUDE_STOP_HOOK_MARKER
-      const owned = ownedBlocks.has(blockKey(op.path, op.marker)) || isRetrofitStopHookBlock
+      const isRetrofitCommitMsgBlock = op.marker === 'commit-msg'
+      const owned = ownedBlocks.has(blockKey(op.path, op.marker)) || isRetrofitStopHookBlock || isRetrofitCommitMsgBlock
       let action: BlockAction
       if (!owned) {
         action = 'not-installed'
@@ -581,6 +585,23 @@ function withClaudeStopHookRecorded(manifest: ManagedManifest, plan: UpgradePlan
   )
   if (blockEntry && blockEntry.kind === 'managed-block' && blockEntry.action !== 'not-installed' && !alreadyRecorded) {
     blocks = [...blocks, { path: CLAUDE_STOP_HOOK_SCRIPT_PATH, marker: CLAUDE_STOP_HOOK_MARKER, comment: 'hash' }]
+  }
+
+  // Same retrofit, for the `commit-msg` hook: matched by marker alone since
+  // its path varies with hookDir (tracked/.husky/.git/hooks), unlike the
+  // Stop-hook script above which always lives at one fixed path.
+  const commitMsgEntry = plan.entries.find((e) => e.kind === 'managed-block' && e.op.marker === 'commit-msg')
+  const commitMsgAlreadyRecorded = blocks.some((b) => b.marker === 'commit-msg')
+  if (
+    commitMsgEntry &&
+    commitMsgEntry.kind === 'managed-block' &&
+    commitMsgEntry.action !== 'not-installed' &&
+    !commitMsgAlreadyRecorded
+  ) {
+    blocks = [
+      ...blocks,
+      { path: commitMsgEntry.op.path, marker: commitMsgEntry.op.marker, comment: commitMsgEntry.op.comment }
+    ]
   }
 
   if (files === manifest.files && blocks === manifest.blocks) return manifest
