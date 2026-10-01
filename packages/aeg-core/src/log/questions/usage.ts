@@ -39,7 +39,7 @@ export type UsageAnswer = {
   coverage: Coverage
 }
 
-const KINDS = ['usage', 'dispatch', 'role_attempt']
+const USAGE_KINDS = ['usage', 'dispatch', 'role_attempt']
 const FIELDS = ['input', 'output', 'cache'] as const
 type Field = (typeof FIELDS)[number]
 
@@ -121,7 +121,7 @@ function byRole(terms: readonly Term[], name: (role: string) => string, unknowns
 /** Question 3: usage by unit of work and by role. */
 export function usageByUnitAndRole(dataset: Dataset): UsageAnswer {
   const { rows, lowTrust } = trustedRows(dataset)
-  const used = rowsOfKinds(rows, KINDS)
+  const used = rowsOfKinds(rows, USAGE_KINDS)
   const terms = termsOf(used.withUnit)
   const unknowns: UnknownFigure[] = []
 

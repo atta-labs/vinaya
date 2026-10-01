@@ -40,7 +40,7 @@ export type TimeAnswer = {
   coverage: Coverage
 }
 
-const KINDS = ['dispatch', 'gate', 'dev_review_loop']
+const TIME_KINDS = ['dispatch', 'gate', 'dev_review_loop']
 const CATEGORIES = ['develop', 'review', 'check', 'wait'] as const
 type Category = (typeof CATEGORIES)[number]
 
@@ -145,7 +145,7 @@ function spanOf(category: Category, { done, incomplete }: Intervals): Measured<S
 /** Question 4: the develop, review, check and wait durations of each unit of work. */
 export function timeByUnit(dataset: Dataset): TimeAnswer {
   const { rows, lowTrust } = trustedRows(dataset)
-  const used = rowsOfKinds(rows, KINDS)
+  const used = rowsOfKinds(rows, TIME_KINDS)
   const unknowns: UnknownFigure[] = []
 
   const units = [...groupBy(used.withUnit, (row) => row.workRef)]

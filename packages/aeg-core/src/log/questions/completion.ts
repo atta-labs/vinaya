@@ -35,7 +35,7 @@ export type CompletionAnswer = {
   coverage: Coverage
 }
 
-const KINDS = ['dispatch', 'role_attempt', 'dev_review_loop']
+const COMPLETION_KINDS = ['dispatch', 'role_attempt', 'dev_review_loop']
 
 type UnitFacts = {
   models: Set<string>
@@ -81,7 +81,7 @@ function factsOf(rows: readonly DatasetRow[]): UnitFacts {
 /** Question 1: completion, rounds to green and time to green, by model. */
 export function completionByModel(dataset: Dataset): CompletionAnswer {
   const { rows, lowTrust } = trustedRows(dataset)
-  const used = rowsOfKinds(rows, KINDS)
+  const used = rowsOfKinds(rows, COMPLETION_KINDS)
   const unknowns: UnknownFigure[] = []
 
   const perModel = new Map<string, { started: number; units: UnitFacts[] }>()
