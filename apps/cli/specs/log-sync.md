@@ -107,6 +107,8 @@ A question is a pure function over a `Dataset` (`packages/aeg-core/src/log/quest
 
 An answer is descriptive. It reports what the log recorded and never that one choice caused another.
 
+**The map.** `QUESTIONS` (`questions/index.ts`) holds one entry per question under its number — `q1`, `q3`, `q4` — each with its number, its title and the function that answers it over a dataset. A question not in the map is not yet answered.
+
 ### Question 1 — does a cheaper model finish?
 
 `completionByModel`. For each model, over the units of work it took part in:
