@@ -197,9 +197,8 @@ export const CODEX_POLICY_RULES_FILE = 'vinaya-machine-state.rules'
  * only inside the worker-isolation boundary. `resolveWorkerBoundaryLaunch`
  * stages a run-scoped `CODEX_HOME` (with the rules) only when that boundary
  * runs (`opts.unattended && requireIsolation`); this stages the equivalent for
- * a Codex dispatch that runs WITHOUT it — isolation off (the incident host's
- * own posture, where the floor is meant to be the only barrier) or an attended
- * start — so the child discovers the same floor either way.
+ * a Codex dispatch that runs WITHOUT it — an attended start (an unattended
+ * Codex start requires the boundary and refuses where it is unavailable) — so the child discovers the same floor either way.
  *
  * `targetDir` becomes a home that symlinks every entry of the operator's real
  * `~/.codex` (its `auth.json`, `config.toml`, plugins, sessions — so

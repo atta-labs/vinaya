@@ -3551,13 +3551,13 @@ export async function dispatchRole(
   // floor rides EVERY Codex dispatch the way a Claude dispatch's deny policy
   // rides `--settings`. This is round 2 review's Reviewer MAJOR / Security HIGH
   // (F1): before it, the run-scoped home existed only inside the boundary, so
-  // an isolation-off (the incident host's own posture) or attended Codex run
+  // an attended Codex run
   // got no floor while the log claimed one.
   const codexExecpolicyRules = agent === 'codex' ? buildCodexExecpolicyRules(role) : null
   // O1 (round 2 review, Reviewer/Security F1): the run-scoped `CODEX_HOME` that
   // carries the floor is staged by `resolveWorkerBoundaryLaunch` ONLY when the
-  // worker boundary runs. For a Codex dispatch that runs WITHOUT it (isolation
-  // off — the incident host's own posture — or an attended start), stage the
+  // worker boundary runs. For a Codex dispatch that runs WITHOUT it (an
+  // attended start; an unattended one requires the boundary), stage the
   // equivalent here, into a run-scoped runtime dir (no per-exit cleanup, the
   // same lifecycle `writeCodexDispatchHooks`/`writeDispatchSettings` use), so
   // the floor rides EVERY Codex dispatch the way Claude's `--settings` does.

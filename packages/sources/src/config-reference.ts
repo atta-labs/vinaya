@@ -505,7 +505,7 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     key: 'dispatch',
     type: 'object (optional)',
     semantics: [
-      '`vinaya dispatch <role> --agent claude|codex|gemini` (`apps/cli/src/lib/dispatch.ts`) settings: the wall-time ceiling before the headless child is signaled, a default vendor for repos that always dispatch the same one, and whether an unattended start requires the worker isolation boundary.'
+      '`vinaya dispatch <role> --agent claude|codex|gemini` (`apps/cli/src/lib/dispatch.ts`) settings: the wall-time ceiling before the headless child is signaled, and a default vendor for repos that always dispatch the same one.'
     ],
     example: `{
   "dispatch": {
