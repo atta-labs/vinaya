@@ -299,3 +299,112 @@ describe('O4 — a lost span is a gap with its bounds, never a deletion', () => 
     expect(summary.deletions).toBe(0)
   })
 })
+
+/** A line naming a schema version no build knows — quarantined as `unknown_version`. */
+function unknownVersionLine(index: number, eventId: string): SourceLine {
+  return {
+    raw: JSON.stringify({ meta: { schema: 99, event_id: eventId, run_id: 'future-run', seq: 0 } }),
+    position: `p${index}`
+  }
+}
+
+/** A line that is not JSON — quarantined as `invalid`. */
+function tornLine(index: number): SourceLine {
+  return { raw: '{"meta": torn', position: `p${index}` }
+}
+
+describe('O5 — a bad line is quarantined and the rest of its page is still stored', () => {
+  it('an unknown version and a torn line are quarantined while every valid line is stored', async () => {
+    const cache = createMemoryCache()
+    const source = fakeSource('folder:/a', {
+      lines: [
+        at(0, 'e-1', '2026-09-20T10:00:00.000Z'),
+        unknownVersionLine(1, 'future-1'),
+        tornLine(2),
+        at(3, 'e-2', '2026-09-20T10:03:00.000Z')
+      ]
+    })
+    const summary = await syncSource(source, cache, { now: NOW })
+    expect(summary.quarantined).toBe(2)
+    expect(summary.rowsStored).toBe(2)
+    // The two valid lines became rows; neither bad line failed the page.
+    expect(identities(cache)).toEqual(['e-1', 'e-2'])
+    const quarantined = cache.dataset().quarantined()
+    expect(quarantined.map((q) => q.status).sort()).toEqual(['invalid', 'unknown_version'])
+  })
+})
+
+describe('O6 — a run is bounded and reports when more is available', () => {
+  it('stops on its page bound, reports more is available, and advances the cursor', async () => {
+    const cache = createMemoryCache()
+    const lines = [
+      at(0, 'e-1', '2026-09-20T10:00:00.000Z'),
+      at(1, 'e-2', '2026-09-20T10:01:00.000Z'),
+      at(2, 'e-3', '2026-09-20T10:02:00.000Z'),
+      at(3, 'e-4', '2026-09-20T10:03:00.000Z')
+    ]
+    const bounds = { now: NOW, pageLimit: 1, maxPages: 2, lookback: 1 }
+    const first = await syncSource(fakeSource('folder:/a', { lines }), cache, bounds)
+    expect(first.pagesRead).toBe(2)
+    expect(first.moreAvailable).toBe(true)
+    expect(first.completed).toBe(false)
+    expect(cache.cursor('folder:/a')).not.toBeNull()
+
+    // Each further run resumes from the bound and makes progress; the source
+    // drains in a bounded number of runs and the last one completes.
+    let last = first
+    for (let run = 0; run < 5 && last.moreAvailable; run++) {
+      last = await syncSource(fakeSource('folder:/a', { lines }), cache, bounds)
+    }
+    expect(last.completed).toBe(true)
+    expect(last.moreAvailable).toBe(false)
+    expect(identities(cache)).toEqual(['e-1', 'e-2', 'e-3', 'e-4'])
+  })
+
+  it('a completed run that reached the source end reports no more available', async () => {
+    const cache = createMemoryCache()
+    const summary = await syncSource(
+      fakeSource('folder:/a', { lines: [at(0, 'e-1', '2026-09-20T10:00:00.000Z')] }),
+      cache,
+      { now: NOW, maxPages: 50 }
+    )
+    expect(summary.completed).toBe(true)
+    expect(summary.moreAvailable).toBe(false)
+  })
+})
+
+describe('O7 — a run returns a summary of everything it did', () => {
+  it('reports pages, rows, duplicates, edits, deletions, gaps, quarantine and the run flags', async () => {
+    const cache = createMemoryCache()
+    const gap: SourceGap = {
+      source: 'folder:/a',
+      from: 'p9',
+      to: 'p9',
+      reason: 'rotated away',
+      lost: { known: true, value: 1 }
+    }
+    const summary = await syncSource(
+      fakeSource('folder:/a', {
+        lines: [at(0, 'e-1', '2026-09-20T10:00:00.000Z'), unknownVersionLine(1, 'future-1')],
+        gaps: [gap]
+      }),
+      cache,
+      { now: NOW }
+    )
+    expect(summary).toEqual({
+      source: 'folder:/a',
+      ranAt: NOW.toISOString(),
+      pagesRead: 1,
+      rowsStored: 1,
+      duplicates: 0,
+      edits: 0,
+      deletions: 0,
+      gaps: 1,
+      quarantined: 1,
+      completed: true,
+      moreAvailable: false,
+      failure: null,
+      deleted: []
+    })
+  })
+})
