@@ -12,8 +12,9 @@ import {
   recordCliOperationAtExit,
   UNKNOWN_CLI_TARGET
 } from '../../src/lib/cli-operation-log.js'
-import type { LogEventInput } from '../../src/lib/log-sink.js'
 import { isolatedConfigFixture, spawnSyncBudgeted } from './process-fixture.js'
+
+type LogEventInput = NonNullable<ReturnType<typeof cliOperationEvent>>
 
 const ENTRY = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'src', 'index.ts')
 
