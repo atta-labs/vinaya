@@ -193,6 +193,49 @@ A repository records events Vinaya does not know about by declaring them in its 
 
 **Redaction.** A secret-shaped value in a custom field is redacted exactly as in every other event: `redact()` walks every string leaf of the line, `fields` included (§ Redaction).
 
+### Recording one from the command line: `vinaya log emit`
+
+`vinaya log emit <event>` (`apps/cli/src/commands/log-emit.ts`) is `emitCustomEvent` for a caller that is not Vinaya code at all — a script, a CI step, another agent runtime. The field values are read as ONE JSON object — `--json '<json>'` or piped on standard input — never positional arguments, since the declared fields are flat and typed.
+
+A declared event with every field present and of its declared type exits `0` and prints the event name and the kind of destination it landed on — `folder`, `server`, or `none` (`log()`'s own sanctioned "nothing configured" outcome, e.g. a CI job holding no delivery credential) — resolved the SAME way a live event is (`resolveLogDestinationFrom`, trust-anchor-gated for an unattended caller, exactly as `vinaya log send` already resolves it; never forced unattended the way `log selftest` deliberately is, so a human running it by hand gets the attended resolution). A refused event (the same five reasons § Custom events names, above) exits `1` and prints the reason class and the field names — never a value. A missing event name, unreadable JSON, or JSON that is not a flat object is a usage error, caught before anything is recorded: exit `2` with a usage message.
+
+It waits for the sink to drain (`drainLogSink`) before it exits, so the just-recorded line is guaranteed to have landed before the process ends — the same guarantee every other command that logs then exits abruptly relies on (§ Fail-open, always, below).
+
+<!-- AEG:CLAIM: apps/cli/src/commands/log-emit.ts contains:export async function logEmitCommand( -->
+
+### Plugging your own process into the log
+
+A process that is not Vinaya — a deploy script, a CI step outside this repository's own checks, another agent's own runtime — records its own events the same way any consumer does: declare, set two environment variables, emit.
+
+**1. Declare the event.** Add it under `logs.events` in this repository's `vinaya.config.json`, naming its fields and their types (§ Custom events, above):
+
+```json
+{
+  "logs": {
+    "events": {
+      "acme.deploy_started": {
+        "fields": { "env": ["prod", "staging"], "service": "text" }
+      }
+    }
+  }
+}
+```
+
+**2. Set the environment.** `VINAYA_WORK_REF` names the unit of work this process is acting on — an Issue, a ticket, a deploy id, OPAQUE and never parsed — and `VINAYA_FLOW` names the way of working it belongs to (§ Attribution, below; `schema: 3`'s `work.ref`/`flow.id`). Neither needs a Vinaya role or task: a process with no `VINAYA_ROLE`/`VINAYA_TASK` set still gets a fully-attributed header from these two alone.
+
+```sh
+export VINAYA_WORK_REF=DEPLOY-4821
+export VINAYA_FLOW=acme-release
+```
+
+**3. Emit from the script.** Pipe the field values as one JSON object on standard input (or pass them with `--json`):
+
+```sh
+printf '{"env":"prod","service":"checkout-api"}' | vinaya log emit acme.deploy_started
+```
+
+This exits `0` and prints the event name and the kind of destination it was recorded toward; a malformed call exits `1` (a refused event) or `2` (a usage error) instead, exactly as § Recording one from the command line, above, describes. Neither command ever prints a field value.
+
 ## The storage contract
 
 `packages/aeg-core/src/log/store.ts` is the typed storage contract the sink and the flush share: one `LogStore` interface — `append`, `readPage`, `acknowledge`, `size` — plus the pure helpers both backends build on (`recordIdentity`, `classifyStoredLine`, `readPageFrom`) and a deterministic in-memory fixture backend (`createFixtureStore`). It is policy-layer pure — no filesystem, no network, no process (`apps/cli/specs/surface.md` "The rule") — so the adversarial fault cases below are provable against the fixture with no I/O.

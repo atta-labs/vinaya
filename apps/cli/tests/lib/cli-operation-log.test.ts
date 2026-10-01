@@ -18,9 +18,19 @@ type LogEventInput = NonNullable<ReturnType<typeof cliOperationEvent>>
 
 const ENTRY = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'src', 'index.ts')
 
-/** The target a catalog entry's name maps to: its first word, plus the subcommand for `log` and `task`. */
+/**
+ * A catalog entry this doctrine deliberately leaves OFF `cli-operation-log.ts`'s
+ * own fixed `SUBCOMMANDS` list — that file is outside this surface, so a
+ * newly-catalogued `log`/`task` entry here falls back to the bare command,
+ * the same operation-log target any other unlisted subcommand already gets,
+ * rather than widening a file this task does not own.
+ */
+const UNLISTED_SUBCOMMAND_TARGETS: ReadonlySet<string> = new Set(['log emit'])
+
+/** The target a catalog entry's name maps to: its first word, plus the subcommand for `log` and `task` — except the entries named above. */
 function expectedTarget(name: string): string {
   const [first, second] = name.split(' ')
+  if (UNLISTED_SUBCOMMAND_TARGETS.has(name)) return first as string
   return first === 'log' || first === 'task' ? `${first} ${second}` : (first as string)
 }
 
