@@ -137,7 +137,7 @@ import {
   renderDeveloperDoctrineBlock,
   resolveDeveloperDoctrineText,
   resolveIssueObjectives,
-  reviewPolicy,
+  reviewPolicyForLoop,
   taskFromPrBody,
   withPromptFile
 } from './dev-review-loop/developer-dispatch.js'
@@ -262,6 +262,8 @@ export {
   NO_SOURCE_REVISION,
   parseObjectivesEditComment,
   resolveIssueObjectives,
+  reviewPolicy,
+  reviewPolicyForLoop,
   taskFromPrBody
 } from './dev-review-loop/developer-dispatch.js'
 export type {
@@ -317,6 +319,16 @@ export {
 export type LoopDeps = {
   dispatchRole: typeof realDispatchRole
   resolveHead: typeof resolveHead
+  /**
+   * The repository's review policy, read once per run from the default
+   * branch's trust anchor — `reviewPolicyForLoop`, the fail-loud variant: a
+   * FAILED read throws (after its own retry), which the setup-phase `try`
+   * turns into a decided `pause(infrastructure)` rather than letting the loop
+   * cast a verdict under the built-in default policy the gate would reject; a
+   * missing/no-policy config resolves to the defaults. Injected so a test can
+   * drive both paths without a real forge.
+   */
+  reviewPolicy: typeof reviewPolicyForLoop
   fetchCiConclusion: typeof fetchCiConclusion
   /** O3: named check-runs, never the review gate's own (excluded upstream). */
   fetchFailingCheckRuns: typeof fetchFailingCheckRuns
@@ -915,6 +927,7 @@ function defaultDeps(): LoopDeps {
   return {
     dispatchRole: realDispatchRole,
     resolveHead,
+    reviewPolicy: reviewPolicyForLoop,
     fetchCiConclusion,
     fetchFailingCheckRuns,
     fetchRulings,
@@ -2908,8 +2921,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
 
     // The `try` below now wraps EVERY executable statement from here
     // through the end of this function — including the driver's own SETUP
-    // (`reviewPolicy()`, `d.repoRoot()`, `d.gitRevParseOriginMain()`, each a
-    // real forge/git read that can throw) and round 1's own fresh-dispatch
+    // (`d.reviewPolicy()`, `d.repoRoot()`, `d.gitRevParseOriginMain()`, each a
+    // real forge/git read that can throw — a FAILED policy read pauses
+    // `infrastructure` here rather than casting a verdict under the
+    // built-in default policy) and round 1's own fresh-dispatch
     // entry (`fetchFrozenBrief`, a real forge read that can throw), not
     // merely the later `runRoundLoop()` call. A forge-read failure, a
     // dispatch failure, or any other thrown exception anywhere in this span
@@ -2940,7 +2955,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // (built above with the repo-wide default) is corrected in place the
       // moment this succeeds — same object, every closure already holding a
       // reference to it sees the real value from here on.
-      policy = reviewPolicy()
+      policy = d.reviewPolicy()
       config.maxRounds = policy.maxRounds
       config.maxTaskMinutes = policy.maxTaskMinutes
       repoRoot = d.repoRoot()

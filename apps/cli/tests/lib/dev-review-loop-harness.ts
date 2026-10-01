@@ -61,7 +61,13 @@ import {
   type DeferredFindingsIssueRef,
   markedCommentBody
 } from '../../src/lib/forge-write.js'
-import { type IssueSurface, objectivesOf, objectivesVersion, renderObjectives } from '@attalabs/aeg-core'
+import {
+  DEFAULT_REVIEW_POLICY,
+  type IssueSurface,
+  objectivesOf,
+  objectivesVersion,
+  renderObjectives
+} from '@attalabs/aeg-core'
 import { FIXTURE_REPO, isolatedConfigFixture } from './process-fixture.js'
 
 /** The role output files a fake reviewer/security dispatch writes into its work dir — the exact grammar the real reviewer binary produces. */
@@ -364,6 +370,13 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
       world.dispatches.push({ role, round, resumeId: outcome.sessionId, prompt })
       return handle(outcome.sessionId, `eff-${reviewRole}-${++dispatchSeq}`)
     },
+    // issue #945: the policy read is injected here to the built-in defaults, so
+    // an in-process run neither reaches the real `gh api` trust-anchor read (a
+    // live network round-trip, 404 → defaults, per in-process test) nor depends
+    // on it resolving. A fixture exercising a FAILED read overrides this with a
+    // throwing `reviewPolicy`; one exercising a custom policy overrides it with
+    // its own value.
+    reviewPolicy: () => DEFAULT_REVIEW_POLICY,
     // O1/O2: default to the world's own per-role doctrine (a fixture states its
     // own; the default is `null` — no doctrine injected, the pre-task shape).
     resolveReviewerDoctrine: async (role) => world.roleDoctrine?.[role] ?? null,
