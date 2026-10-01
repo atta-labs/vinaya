@@ -171,6 +171,7 @@ import {
   buildReviewerScratch,
   buildVerifiedReviewerCandidate,
   cleanupAllReviewerIsolationArtifacts,
+  cleanupAllStagedAgentConfigs,
   cleanupReviewerIsolationForRound
 } from './dev-review-loop/reviewer-isolation.js'
 import {
@@ -3666,6 +3667,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
                 persistCurrentLoopState('publish')
                 decision = { type: 'publish' }
                 recordDriverExited('finished')
+                // O2: the loop ends here (published) and will not resume, so
+                // this task's staged per-dispatch agent-config homes are
+                // removed — never on a pause, whose resume still needs them.
+                cleanupAllStagedAgentConfigs(root, task)
                 return { finalDecision: decision, prNumber, task }
               }
               round = heldClean.round
@@ -3687,6 +3692,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // above or the crash `catch` below.
       const loopResult = await runRoundLoop()
       recordDriverExited(loopResult.finalDecision.type === 'publish' ? 'finished' : 'paused')
+      // O2: a published decision is the loop's genuine end — the task will
+      // not resume — so this task's staged per-dispatch agent-config homes
+      // (the Claude `CLAUDE_CONFIG_DIR`/Codex `CODEX_HOME` copies) are removed
+      // now. A pause deliberately keeps them: its own resume, next round,
+      // reads the very session store this would otherwise delete.
+      if (loopResult.finalDecision.type === 'publish') cleanupAllStagedAgentConfigs(root, task)
       return loopResult
     } catch (err) {
       // A genuinely uncaught error — a gate error, a
@@ -4986,6 +4997,10 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
   }
   const repo = await d.resolveRepo()
   d.terminateInFlightLaunchesOnShutdown(task, terminateAgent, repo)
+  // O2: a cancel is terminal — the loop will not resume — so this task's
+  // staged per-dispatch agent-config homes are removed, the same end-of-loop
+  // cleanup the published path performs.
+  cleanupAllStagedAgentConfigs(root, task)
   const fencedEffectKeys = fenceStartedEffectsAsUncertain(task, resolved.epoch)
 
   // The `cancelled` terminal observation — this
