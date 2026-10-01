@@ -5,11 +5,9 @@
  * (`createMemoryCache`) does. `node:sqlite` is loaded lazily, inside
  * {@link createSqliteCache} itself, via `createRequire` — never imported at
  * this file's top level — so a command that never opens a cache pays
- * nothing for it.
- *
- * This part adds lock handling and refusing a bad file or directory (O5, O6),
- * on top of the storage shape, dataset answers, schema version and
- * transaction-per-page guarantee (O1-O4) the previous parts landed.
+ * nothing for it, a Node below the floor still runs every other command,
+ * and the module's one-time experimental warning prints to standard error
+ * exactly where Node puts it (O7).
  *
  * **Schema.** `cache.sqlite`'s `PRAGMA user_version` names the schema this
  * file was written under. Opening a file written by a newer version than
@@ -389,7 +387,7 @@ export type SqliteLogCache = LogCache & { close(): void }
 /**
  * Opens (or creates) `<dir>/cache.sqlite` as a `LogCache` (O1). `node:sqlite`
  * is required here, lazily, via `createRequire` — this is the only place in
- * the CLI that loads it.
+ * the CLI that loads it (O7).
  */
 export function createSqliteCache(dir: string): SqliteLogCache {
   assertWritableDirectory(dir)

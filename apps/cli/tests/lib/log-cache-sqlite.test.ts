@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test'
+import { spawnSync } from 'node:child_process'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
@@ -383,5 +384,80 @@ describe('log-cache-sqlite — refusing a bad file or an unwritable directory (O
   it('refuses a directory that does not exist, naming the path', () => {
     const dir = join(tmpDir(), 'does-not-exist')
     expect(() => createSqliteCache(dir)).toThrow(new RegExp(dir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+  })
+})
+
+describe('log-cache-sqlite — the lazy import (O7)', () => {
+  it('no top-level import statement in this module names node:sqlite (only the open function may)', () => {
+    const source = readFileSync(join(import.meta.dir, '..', '..', 'src', 'lib', 'log-cache-sqlite.ts'), 'utf8')
+    const topLevelRuntimeImports = source
+      .split('\n')
+      .filter((line) => /^import\s+(?!type\b)/.test(line))
+      .join('\n')
+    expect(topLevelRuntimeImports).not.toContain('node:sqlite')
+  })
+
+  async function buildForNode(): Promise<string> {
+    const built = await Bun.build({
+      entrypoints: [join(import.meta.dir, '..', '..', 'src', 'lib', 'log-cache-sqlite.ts')],
+      target: 'node',
+      format: 'esm',
+      outdir: tmpDir()
+    })
+    expect(built.success).toBe(true)
+    return built.outputs[0]?.path as string
+  }
+
+  it('importing the module alone never loads node:sqlite — only calling createSqliteCache does', async () => {
+    const bundlePath = await buildForNode()
+    const importOnlyScript = join(tmpDir(), 'import-only.mjs')
+    writeFileSync(importOnlyScript, `import { createSqliteCache } from '${bundlePath}'\n`)
+
+    const result = spawnSync('node', [importOnlyScript], { encoding: 'utf8' })
+    expect(result.status).toBe(0)
+    expect((result.stderr ?? '').toLowerCase()).not.toContain('sqlite')
+  })
+
+  it('a subprocess running under real Node opens, writes and reads the cache (O7, the Node-vs-bun trap)', async () => {
+    const bundlePath = await buildForNode()
+    const cacheDir = tmpDir()
+
+    const driverScript = join(tmpDir(), 'driver.mjs')
+    writeFileSync(
+      driverScript,
+      [
+        `import { createSqliteCache } from '${bundlePath}'`,
+        `const cache = createSqliteCache('${cacheDir}')`,
+        'const row = {',
+        "  identity: 'e-1', schema: 3, kind: 'operation', event: 'completed', time: '2026-09-20T10:00:00.000Z',",
+        "  runId: 'r1', seq: 0, workRef: null, actor: null, cliVersion: '0.36.0', doctrine: 'd',",
+        "  flowId: null, flowVersion: null, host: 'cli', repo: null, provenance: 'unavailable', trust: 'unavailable',",
+        "  issue: null, pr: null, round: null, commit: null, role: 'unattributed', objectivesVersion: null,",
+        "  header: { meta: {}, subject: {} }, payload: { a: 1 }, contentHash: 'abc', origin: null, unknown: {}",
+        '}',
+        "const outcome = cache.put({ type: 'row', row })",
+        "cache.setCursor('x', 'cursor-1')",
+        'const rows = cache.dataset().rows()',
+        'cache.close()',
+        'console.log(JSON.stringify({ outcome, rowCount: rows.length, payload: rows[0] && rows[0].payload }))'
+      ].join('\n')
+    )
+
+    const result = spawnSync('node', [driverScript], { encoding: 'utf8' })
+    expect(result.status).toBe(0)
+    // The module's own experimental warning is never silenced (traps,
+    // `apps/cli/specs/log-sync.md`) — proof the load genuinely reached
+    // real `node:sqlite`, not bun's.
+    expect((result.stderr ?? '').toLowerCase()).toContain('sqlite')
+
+    const lastLine = result.stdout.trim().split('\n').pop() as string
+    const parsed = JSON.parse(lastLine) as {
+      outcome: { type: string; result: string }
+      rowCount: number
+      payload: { a: number }
+    }
+    expect(parsed.outcome).toEqual({ type: 'row', result: 'inserted' })
+    expect(parsed.rowCount).toBe(1)
+    expect(parsed.payload).toEqual({ a: 1 })
   })
 })
