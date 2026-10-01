@@ -149,3 +149,20 @@ export type {
   SyncSummary,
   UnknownableField
 } from './sync'
+export { completionByModel, QUESTIONS, timeByUnit, usageByUnitAndRole } from './questions'
+export type {
+  CompletionAnswer,
+  Coverage,
+  ModelCompletion,
+  Question,
+  QuestionId,
+  RoleUsage,
+  RoundsToGreen,
+  Span,
+  TimeAnswer,
+  UnitTime,
+  UnitUsage,
+  UnknownFigure,
+  UsageAnswer,
+  UsageTotals
+} from './questions'

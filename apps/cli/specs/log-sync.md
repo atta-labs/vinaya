@@ -90,6 +90,59 @@ The cache's behaviours are written once, as a list of cases (`cacheContractCases
 
 **The summary.** `SyncSummary` reports the run's pages read, rows stored, duplicates seen, edits, deletions, gaps and quarantined lines, whether the run completed (reached the source's end without a failure) and whether more is available, and the failure when one ended it early. Because the cache keeps no deletion record, the summary is where a deletion is reported.
 
+## The questions
+
+A question is a pure function over a `Dataset` (`packages/aeg-core/src/log/questions/`): no I/O, no clock, and no switch over the event families — it picks rows by comparing `kind` and `event` as text. Its answer is built from `Measured`, so a figure the log cannot state is unknown with the reason, never a number that looks measured.
+
+**A unit of work is the work reference** (`workRef`). A row that names none cannot be attributed to a unit; it is left out of every unit figure and counted in the coverage.
+
+**Every answer states its coverage** (`Coverage`, `questions/common.ts`):
+
+- `rowsRead` — every row the dataset holds;
+- `lowTrustLeftOut` — rows of the low-trust rule, left out of every figure and counted out loud, never mixed in;
+- `unitUnknown` — trusted rows of the kinds the question reads whose unit is unknown;
+- `rowsUsed` — the trusted rows of those kinds with a known unit, which the figures are built from;
+- `gaps` and `quarantined` — what the dataset itself could not hold;
+- `unknowns` — each figure the answer could not compute, with the reason.
+
+An answer is descriptive. It reports what the log recorded and never that one choice caused another.
+
+**The map.** `QUESTIONS` (`questions/index.ts`) holds one entry per question under its number — `q1`, `q3`, `q4` — each with its number, its title and the function that answers it over a dataset. A question not in the map is not yet answered.
+
+### Question 1 — does a cheaper model finish?
+
+`completionByModel`. For each model, over the units of work it took part in:
+
+- **model** — the model a `dispatch` or a `role_attempt` line names. A unit that used two models counts under both. A unit none of whose lines names a model is reported as unknown, never attributed;
+- **started** — units with such a line;
+- **green** — units whose loop recorded the `green` stop condition; **paused** — units whose loop paused at least once (a unit can be both); **escalated** — units whose loop recorded the `escalated` stop condition;
+- **roundsToGreen** — for the green units, how many went green in one round, in two, and so on, ascending;
+- **timeToGreenMs** — the loop's own `time_to_green_ms` of each green unit, ascending, taken from the unit's last `journal_finalized` line. It is unknown, with the reason, when no unit went green or none recorded one; a green unit without one is named in `unknowns`.
+
+### Question 3 — what does a unit of work cost?
+
+`usageByUnitAndRole`. Usage by unit of work and by role, with the totals for each role across units. Retries and failed attempts are part of the cost: a failed or timed-out dispatch, and every attempt of a role, counts.
+
+Three kinds of record state usage, and each is counted by its own rule:
+
+- a **`usage` observation** states its units (`input`, `output`, `cache`) and whether it is `cumulative` or `delta`. A cumulative observation is a running total, so per run and model only the **last** one stands for all of them — cumulative observations are never added to each other. Delta observations are **additions**, each one counted. A cumulative total and a delta are never added to each other;
+- a **`dispatch`** line that ends a dispatch (`outcome_received`, `dispatch_failed`) and a **`role_attempt`** line each carry the usage of one attempt. A dispatch and the role attempt it ran share an effect id, so one attempt is one figure, taken from whichever line states it. These records have no cache count, so a cache total that includes one is unknown.
+
+A figure is the sum of its terms and is **known only when every term states it**. When any term does not, the figure is unknown with the reason (`2 of 6 observations record no input`); it is never counted as zero. A stated zero is a number. A role is the `target_role` of a dispatch, otherwise the role the line itself names; a line that names none reads `unattributed`.
+
+### Question 4 — where does the time go?
+
+`timeByUnit`. For each unit of work, four durations, each built from intervals:
+
+- **develop** — a developer dispatch, from its `dispatched` line to the `outcome_received` or `dispatch_failed` line that ends it (matched by effect id);
+- **review** — the same for a `code-reviewer` or `security` dispatch. A dispatch of any other role is in neither;
+- **check** — a check run's own total time (the `duration_ms` of its `gate` `summary` line), measured backwards from that line. The per-check `checked` lines are not used, so a run is not counted twice;
+- **wait** — a pause, from the `paused` line to the `resumed` or `cancelled` line that ends it.
+
+**Elapsed and summed are different things.** Work overlaps — two dispatches can run at once — so each duration is reported twice: `summedMs`, every interval's length added together, and `elapsedMs`, the length of the union of the intervals, which counts an overlap once. They are equal only when nothing overlapped. Neither is ever presented as the other.
+
+A category with no complete interval is unknown, with the reason — nothing recorded, or intervals that never ended (a dispatch with no outcome line, a pause never resumed, a check run with no duration). A category with some complete intervals reports them and counts the ones it could not measure in `incomplete`. A duration is never zero unless a line states it.
+
 <!-- AEG:CLAIM: packages/aeg-core/src/log/sync/engine.ts contains:export async function syncSource(source: LogSource, cache: LogCache, options: SyncOptions): Promise<SyncSummary> { -->
 <!-- AEG:CLAIM: packages/aeg-core/src/log/sync/normalize.ts contains:const classified = classifyStoredLine(raw, '') -->
 <!-- AEG:CLAIM: packages/aeg-core/src/log/sync/row.ts contains:export const LOW_TRUST_BELOW_VERSION = '0.33.0' -->
