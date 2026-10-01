@@ -323,9 +323,13 @@ export function createFolderLogSource(deps: FolderSourceDeps): FolderLogSource {
     const lines: SourceLine[] = []
     const gaps: SourceGap[] = []
     let remaining = limit
+    let drainedEveryStream = true
 
     for (const name of names) {
-      if (remaining <= 0) break
+      if (remaining <= 0) {
+        drainedEveryStream = false
+        break
+      }
       const streamState = state[name] ?? { offset: 0, firstLineFingerprint: null }
       const result = readStream(name, streamState, remaining)
       nextState[name] = result.next
@@ -334,7 +338,14 @@ export function createFolderLogSource(deps: FolderSourceDeps): FolderLogSource {
       remaining -= result.lines.length
     }
 
-    return Promise.resolve({ lines, next: serializeCursor(nextState), gaps })
+    // "nothing followed" (`apps/cli/specs/log-sync.md`): every stream was
+    // checked and none had a new line, so there is nothing left to resume
+    // into right now — the same signal the server source gives on an empty
+    // page. A `limit` that cut the pass short before every stream was
+    // checked never reaches this with `lines.length === 0`, since reading
+    // the limit down to zero requires having read at least one line.
+    const next = lines.length === 0 && drainedEveryStream ? null : serializeCursor(nextState)
+    return Promise.resolve({ lines, next, gaps })
   }
 
   function lookback(cursor: SourceCursor | null, span: number): Promise<SourcePage> {

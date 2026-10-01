@@ -122,6 +122,20 @@ describe('log-sync-folder-source — the opaque per-stream cursor (O1)', () => {
     const page3 = await source.readPage(page2.next, 2)
     expect(page3.lines).toHaveLength(1)
   })
+
+  it('a drained folder — no new line anywhere, every stream checked — reports a null next cursor, like the server source on an empty page', async () => {
+    const dir = tmpDir()
+    await writeRealLines(dir, 1212, 2)
+    const source = createFolderLogSource({ folderRoot: join(dir, 'outbox'), repo: REPO })
+
+    const page1 = await source.readPage(null, 100)
+    expect(page1.lines).toHaveLength(2)
+    expect(page1.next).not.toBeNull()
+
+    const page2 = await source.readPage(page1.next, 100)
+    expect(page2.lines).toEqual([])
+    expect(page2.next).toBeNull()
+  })
 })
 
 describe('log-sync-folder-source — complete lines only (O2)', () => {
