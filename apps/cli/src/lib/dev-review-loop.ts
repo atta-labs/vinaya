@@ -3390,7 +3390,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
               // comment) must never re-run `publishRound`: its `journal`
               // argument is built from THIS process's own `state.rounds`,
               // empty here since `assessRound` never ran on this path, so a
-              // genuine re-post would render a summary table with no row for
+              // genuine re-post would render a marker with no entry for
               // the round it names — a real content drift
               // `postPrCommentOnce`'s idempotency keys off, and exactly the
               // "second run posts nothing new" invariant this driver already

@@ -1271,7 +1271,7 @@ describe('readLoopPhase (O1)', () => {
   })
 })
 
-/** The summary-table half of the confidence read, over one principal-authored comment — the same rule `publishedSummaryConfidence` applies after its forge read. */
+/** The published-marker half of the confidence read, over one principal-authored comment — the same rule `publishedSummaryConfidence` applies after its forge read. */
 function summaryConfidenceFor(body: string) {
   return confidenceFromSummaryComments([{ body, author: 'principal' }], ['principal'])
 }
@@ -1293,16 +1293,12 @@ describe('readLastConfidence (O1)', () => {
   })
 
   it('never reports a summary round the loop never asked as an absence — that round has no confidence at all', () => {
-    // The published summary's own table: round 1 is never asked for a
-    // confidence (its cell is the not-asked glyph), round 2 stated one.
-    const notAskedOnly = [
-      '| round | blocker | major | minor | critical | high | medium | low | confidence | outcome |',
-      '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
-      '| 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | — | green |'
-    ].join('\n')
+    // The published marker: round 1 is never asked for a confidence (its
+    // cell is the not-asked cell), round 2 stated one.
+    const notAskedOnly = '<!-- aeg:loop:published head=abc1234 confidence=1:- -->'
     expect(summaryConfidenceFor(notAskedOnly)).toBeNull()
 
-    const askedLater = `${notAskedOnly}\n| 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 80% | green |`
+    const askedLater = '<!-- aeg:loop:published head=abc1234 confidence=1:-,2:80 -->'
     expect(summaryConfidenceFor(askedLater)).toEqual({ round: 2, percent: 80, source: 'published-summary' })
   })
 
