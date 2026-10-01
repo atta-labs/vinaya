@@ -29,6 +29,7 @@ import {
   hasSubscriptionLogin,
   stageOAuthCredential,
   WORKER_ENV_ALLOWLIST_KEYS,
+  readRealClaudeKeychainCredential,
   type WorkerBoundaryDeps
 } from '../../../src/lib/worker-boundary'
 import { readlinkSync, lstatSync } from 'node:fs'
@@ -166,6 +167,12 @@ describe('buildWorkerEnv — O2 allowlist, never a spread', () => {
     expect(Object.keys(env)).toEqual(['PATH'])
   })
 
+  it('O1: USER and LOGNAME reach the confined child — Claude Code needs both to find its own login', () => {
+    const env = buildWorkerEnv({ PATH: '/usr/bin', USER: 'dev', LOGNAME: 'dev' }, {})
+    expect(env.USER).toBe('dev')
+    expect(env.LOGNAME).toBe('dev')
+  })
+
   it('O1: the allowlist itself names no credential variable — there is no key left to thread one through under', () => {
     for (const key of WORKER_ENV_ALLOWLIST_KEYS) {
       expect(/API_KEY|TOKEN|SECRET|PASSWORD/i.test(key), `${key} is credential-shaped`).toBe(false)
@@ -269,7 +276,10 @@ describe('resolveOAuthConfigSourceDir — O1 (Issue #640)', () => {
 describe('stageOAuthCredential — O1 (Issue #640)', () => {
   it('returns null, and writes nothing, when no credential file exists at the source', () => {
     const scratchTmpDir = tempDir('vinaya-wb-oauth-stage-none-')
-    const result = stageOAuthCredential({}, '/home/dev', scratchTmpDir, { readOAuthCredentialFile: () => null })
+    const result = stageOAuthCredential({}, '/home/dev', scratchTmpDir, {
+      readOAuthCredentialFile: () => null,
+      readClaudeKeychainCredential: () => null
+    })
     expect(result).toBeNull()
     expect(existsSync(join(scratchTmpDir, 'claude-config'))).toBe(false)
   })
@@ -304,9 +314,64 @@ describe('stageOAuthCredential — O1 (Issue #640)', () => {
     expect(requestedPath).toBe(join('/custom/config', '.credentials.json'))
   })
 
+  it('O1: stages the Keychain login as .credentials.json at mode 0600 when the config dir has no file', () => {
+    const scratchTmpDir = tempDir('vinaya-wb-oauth-stage-keychain-')
+    const login = { accessToken: 'fixture-not-a-real-access-token', refreshToken: 'fixture-not-a-real-refresh-token' }
+    const payload = JSON.stringify({ claudeAiOauth: login, mcpOAuth: { server: { accessToken: 'mcp-fixture' } } })
+    const result = stageOAuthCredential({}, '/home/dev', scratchTmpDir, {
+      readOAuthCredentialFile: () => null,
+      readClaudeKeychainCredential: () => payload
+    })
+    expect(result).not.toBeNull()
+    const stagedPath = join(result!.configDir, '.credentials.json')
+    expect(stagedPath.startsWith(scratchTmpDir)).toBe(true)
+    // Only the subscription login, never the unrelated MCP tokens the same Keychain item carries.
+    expect(JSON.parse(readFileSync(stagedPath, 'utf8'))).toEqual({ claudeAiOauth: login })
+    expect(lstatSync(stagedPath).mode & 0o777).toBe(0o600)
+  })
+
+  it('O1: a credentials file in the config dir wins over the Keychain, and the Keychain is not needed', () => {
+    const scratchTmpDir = tempDir('vinaya-wb-oauth-stage-file-wins-')
+    const fileContents = JSON.stringify({ claudeAiOauth: { accessToken: 'from-the-file' } })
+    const result = stageOAuthCredential({}, '/home/dev', scratchTmpDir, {
+      readOAuthCredentialFile: () => fileContents,
+      readClaudeKeychainCredential: () => JSON.stringify({ claudeAiOauth: { accessToken: 'from-the-keychain' } })
+    })
+    expect(readFileSync(join(result!.configDir, '.credentials.json'), 'utf8')).toBe(fileContents)
+  })
+
+  it('O1: a Keychain payload that is not JSON, or has no claudeAiOauth login, stages nothing', () => {
+    for (const payload of [
+      'not json at all',
+      JSON.stringify({ mcpOAuth: {} }),
+      JSON.stringify({ claudeAiOauth: 'x' })
+    ]) {
+      const scratchTmpDir = tempDir('vinaya-wb-oauth-stage-badkeychain-')
+      const result = stageOAuthCredential({}, '/home/dev', scratchTmpDir, {
+        readOAuthCredentialFile: () => null,
+        readClaudeKeychainCredential: () => payload
+      })
+      expect(result, payload).toBeNull()
+      expect(existsSync(join(scratchTmpDir, 'claude-config'))).toBe(false)
+    }
+  })
+
+  it('O1: the real Keychain read never throws, and is null off macOS', () => {
+    const value = readRealClaudeKeychainCredential()
+    if (process.platform !== 'darwin') expect(value).toBeNull()
+    else expect(value === null || typeof value === 'string').toBe(true)
+  })
+
   it('falls back to a real file read when no readOAuthCredentialFile dep is given', () => {
     const scratchTmpDir = tempDir('vinaya-wb-oauth-stage-realread-')
-    const result = stageOAuthCredential({ CLAUDE_CONFIG_DIR: '/definitely/does/not/exist' }, '/home/dev', scratchTmpDir)
+    const result = stageOAuthCredential(
+      { CLAUDE_CONFIG_DIR: '/definitely/does/not/exist' },
+      '/home/dev',
+      scratchTmpDir,
+      {
+        readClaudeKeychainCredential: () => null
+      }
+    )
     expect(result).toBeNull()
   })
 })
@@ -346,7 +411,7 @@ describe('resolveWorkerBoundaryLaunch — OAuth credential staging (O1, Issue #6
         extraWritableDirs: [],
         stageOAuthCredential: true
       },
-      { ...AVAILABLE_DEPS, readOAuthCredentialFile: () => null }
+      { ...AVAILABLE_DEPS, readOAuthCredentialFile: () => null, readClaudeKeychainCredential: () => null }
     )
     expect(result.ok).toBe(true)
     if (!result.ok) return
@@ -1611,6 +1676,55 @@ describe('resolveWorkerBoundaryLaunch — OAuth credential staging, live sandbox
           "the real ~/.claude/.credentials.json stays denied — it is a subpath of the boundary's own HOME deny rule, never widened by staging"
         ).toBe('REAL:BLOCKED')
         expect(lines[2], 'the Keychain deny rule is unaffected by OAuth staging').toBe('KEYCHAIN:BLOCKED')
+      } finally {
+        result.launch.cleanup()
+      }
+    }
+  )
+
+  it.skipIf(!isWorkerBoundaryAvailable(REAL_WORKER_BOUNDARY_DEPS))(
+    'O1: a Keychain-only login is staged by the controller and read by the confined child while the Keychain itself stays denied',
+    () => {
+      const allowedDir = tempDir('vinaya-wb-live-keychain-allowed-')
+      const login = { accessToken: 'fixture-not-a-real-access-token' }
+      const probeScript = join(allowedDir, 'keychain-probe.sh')
+      // A shell probe, not bun/node: a confined bun reads `process.env` back empty.
+      writeFileSync(
+        probeScript,
+        [
+          '#!/bin/bash',
+          'printf \'STAGED:%s\\n\' "$(cat "$CLAUDE_CONFIG_DIR/.credentials.json" 2>/dev/null)"',
+          `if /usr/bin/security find-generic-password -s 'Claude Code-credentials' -w >/dev/null 2>&1; then echo 'KEYCHAIN:READABLE'; else echo 'KEYCHAIN:BLOCKED'; fi`,
+          `if ls ${JSON.stringify(join(homedir(), 'Library', 'Keychains'))} >/dev/null 2>&1; then echo 'KEYCHAINDIR:READABLE'; else echo 'KEYCHAINDIR:BLOCKED'; fi`
+        ].join('\n')
+      )
+      chmodSync(probeScript, 0o755)
+
+      const result = resolveWorkerBoundaryLaunch(
+        { binaryPath: probeScript, args: [], allowedDir, extraWritableDirs: [], stageOAuthCredential: true },
+        {
+          ...REAL_WORKER_BOUNDARY_DEPS,
+          readOAuthCredentialFile: () => null,
+          readClaudeKeychainCredential: () => JSON.stringify({ claudeAiOauth: login })
+        }
+      )
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.launch.oauthConfigDir).not.toBeNull()
+      try {
+        const env = buildWorkerEnv(process.env, { CLAUDE_CONFIG_DIR: result.launch.oauthConfigDir as string })
+        const spawnResult = spawnConfinedSync(result.launch.command, result.launch.args, {
+          cwd: allowedDir,
+          encoding: 'utf8',
+          env
+        })
+        expect(spawnResult.status, `stderr: ${spawnResult.stderr}`).toBe(0)
+        const lines = spawnResult.stdout.trim().split('\n')
+        expect(lines[0], 'the confined child reads the staged login through CLAUDE_CONFIG_DIR').toBe(
+          `STAGED:${JSON.stringify({ claudeAiOauth: login })}`
+        )
+        expect(lines[1], 'the Keychain entry stays unreachable from inside the profile').toBe('KEYCHAIN:BLOCKED')
+        expect(lines[2], 'the Keychain directory stays denied').toBe('KEYCHAINDIR:BLOCKED')
       } finally {
         result.launch.cleanup()
       }

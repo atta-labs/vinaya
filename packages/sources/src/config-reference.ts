@@ -531,14 +531,6 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     example: `{ "dispatch": { "agent": "claude" } }`
   },
   {
-    key: 'dispatch.requireWorkerIsolation',
-    type: 'boolean (optional)',
-    semantics: [
-      "The declared, visible setting that makes an unattended dispatch (`DispatchOpts.unattended` — `vinaya dispatch --unattended`, and the automated `task run`/`dev-review-loop` driver's own developer/reviewer dispatches) refuse before any spawn when `apps/cli/specs/isolation.md`'s OS-level boundary cannot be established on this host. Absent, the effective default is platform-conditional: `true` on macOS (Darwin) — the boundary's only currently-supported mechanism, Apple Seatbelt, works there, so \"fail closed\" is automatic on the declared supported environment — and `false` on any other host, where forcing it on would only ever refuse (no mechanism exists there yet) rather than protect anything. An explicit `true`/`false` always overrides the platform-conditional default, on any host."
-    ],
-    example: `{ "dispatch": { "requireWorkerIsolation": true } }`
-  },
-  {
     key: 'reviewPolicy',
     type: 'object (optional)',
     semantics: [

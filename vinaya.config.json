@@ -46,8 +46,7 @@
     "agentBoxesRefusedSincePr": 396
   },
   "dispatch": {
-    "agent": "claude",
-    "requireWorkerIsolation": false
+    "agent": "claude"
   },
   "proseGates": {
     "sourceComments": {

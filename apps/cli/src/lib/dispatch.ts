@@ -93,6 +93,7 @@ import {
 } from './run-paths.js'
 import { basename, dirname, join } from 'node:path'
 import {
+  CLAUDE_KEYCHAIN_SERVICE,
   buildWorkerEnv,
   hasSubscriptionLogin,
   resolveWorkerBoundaryLaunch,
@@ -222,27 +223,15 @@ export type DispatchOpts = {
    * O1/O3: marks this dispatch as an unattended start —
    * a driver launching a Developer, Reviewer or operational agent with
    * nobody watching each tool call, as opposed to an Operator running
-   * `vinaya dispatch` by hand. Attribution only by itself: whether an
-   * unattended start actually REQUIRES `apps/cli/specs/isolation.md`'s
-   * OS-level boundary is the separate, declared `dispatch.requireWorkerIsolation`
-   * config setting (`config.ts`) — `true` by default on Darwin (the declared
-   * supported environment, where O3's "fail closed" is now the automatic
-   * default this objective's own unconditional wording names), `false`
-   * elsewhere unless a repo opts in explicitly (round 2 review, HIGH — see
-   * that config field's own doc comment for why an unconditional default
-   * everywhere would only ever refuse on an unsupported host, never protect
-   * anything). When BOTH `unattended` is `true` here AND the resolved
-   * setting is `true`, the dispatch REFUSES, before ever spawning, if the
-   * boundary cannot be established on this host
-   * (`worker-boundary.ts`'s `isWorkerBoundaryAvailable`) — never a silent
-   * fallback to full environment inheritance (isolation.md §3, "Refusal
-   * conditions"). On a host where the setting resolves off (Linux, absent an
-   * explicit override), this field changes nothing observable — the plain
-   * `vinaya dispatch` CLI command, this file's own pre-existing test suite
-   * (`apps/cli/tests/lib/dispatch.test.ts`), and the pre-existing
-   * `dev-review-loop`/`dispatch-task` automated-loop dispatch sites (which
-   * DO set this field, for attribution) all keep their exact pre-task-3
-   * behavior there.
+   * `vinaya dispatch` by hand. An unattended start runs inside
+   * `apps/cli/specs/isolation.md`'s OS-level boundary wherever one is
+   * supported (macOS) and REFUSES, before ever spawning, if it cannot be
+   * established there (`worker-boundary.ts`'s `isWorkerBoundaryAvailable`) —
+   * never a silent fallback to full environment inheritance (isolation.md
+   * §3, "Refusal conditions"). There is no setting that turns it off. On a
+   * host with no supported mechanism a Claude start runs as it always has;
+   * a Codex start refuses there too, since its per-run `CODEX_HOME` exists
+   * only inside the boundary.
    */
   unattended?: boolean
   /**
@@ -1157,9 +1146,8 @@ const EMPTY_ROLE_PERMISSIONS: RolePermissions = { allow: [], deny: [] }
  * login at all, so every run on that machine died with "Not logged in" until
  * the keychain list was restored by hand, some eight hours later. The
  * Seatbelt boundary that would have contained it (§§3–4 of
- * `apps/cli/specs/isolation.md`) is off on that host
- * (`dispatch.requireWorkerIsolation: false`), so the dispatched role's own
- * permission policy is the only barrier there is.
+ * `apps/cli/specs/isolation.md`) was switched off on that host, so the
+ * dispatched role's own permission policy was the only barrier there was.
  *
  * Expressed as `permissions.deny` entries in the host's OWN `Bash(<command>:*)`
  * grammar, and nothing else — the host matches each part of a compound
@@ -3160,7 +3148,8 @@ export function missingSubscriptionLoginReason(
     const configDir = env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
     return (
       `no Claude subscription login found at ${join(configDir, '.credentials.json')} ` +
-      '(the Claude config directory — CLAUDE_CONFIG_DIR when set, else ~/.claude). ' +
+      '(the Claude config directory — CLAUDE_CONFIG_DIR when set, else ~/.claude) ' +
+      `or in the macOS Keychain entry "${CLAUDE_KEYCHAIN_SERVICE}". ` +
       'Sign in as the operator with `claude` and its `/login`, then dispatch again.'
     )
   }
@@ -3500,7 +3489,12 @@ export async function dispatchRole(
   // and the boundary-resolution block further down read the SAME value,
   // never two independently-evaluated `loadConfig()` calls that could
   // observe a config change mid-dispatch and disagree with each other.
-  const requireIsolation = loadConfig()?.dispatch?.requireWorkerIsolation ?? process.platform === 'darwin'
+  // The sandbox is not a setting: it is on wherever it is supported (macOS),
+  // and an unattended Codex dispatch additionally refuses where it is not —
+  // Codex's per-run `CODEX_HOME` (the machine-state command rules, the staged
+  // login) only exists inside the boundary, so a Codex run outside it would
+  // fall back to the operator's real `~/.codex` with none of those rules.
+  const requireIsolation = process.platform === 'darwin' || (agent === 'codex' && opts.unattended === true)
   // O1: claude only — see `writeDispatchSettings`'s own doc comment for why
   // Codex/Gemini are not silently included. Computed here, once, before the
   // 'dispatched' log line — moved up from inside the spawn `Promise`
@@ -3684,18 +3678,9 @@ export async function dispatchRole(
   // O1/O3: an unattended start must run inside the proven
   // boundary — refused, before the 'dispatched' event and before any spawn,
   // when it cannot be established (`DispatchOpts.unattended`'s own doc
-  // comment) — but only when `dispatch.requireWorkerIsolation` (`config.ts`)
-  // resolves `true`, the "declared, visible setting" this tranche's
-  // milestone names. Round 2 review, HIGH: an unconditional off-by-default
-  // left O3's "fail closed" as opt-in everywhere, including the ONE
-  // environment the boundary actually works on — the default is now
-  // platform-conditional (`config.ts`'s own doc comment on this field):
-  // `true` on Darwin (the declared supported environment, where nothing
-  // needs to change for O3 to hold as the automatic default), `false`
-  // elsewhere (where forcing it on would only ever refuse, never protect
-  // anything, since no mechanism exists there yet). An explicit config value
-  // always wins either way. This repo's own CI/operational host (Linux)
-  // keeps today's exact behavior unless a repo explicitly opts in.
+  // comment). `requireIsolation` (above) is the platform's own answer, never
+  // a setting: on macOS the boundary is always required; elsewhere only an
+  // unattended Codex start requires it, and refuses because it cannot be had.
   let boundaryLaunch: ReturnType<typeof resolveWorkerBoundaryLaunch> | null = null
   let boundaryAllowedDir: string | null = null
   if (opts.unattended === true && requireIsolation) {
@@ -3981,6 +3966,12 @@ export async function dispatchRole(
             TMPDIR: resolvedBoundary.tmpDir,
             TMP: resolvedBoundary.tmpDir,
             TEMP: resolvedBoundary.tmpDir,
+            // Claude Code keeps its own working files under
+            // `/tmp/claude-<uid>` and ignores `TMPDIR` for them (live,
+            // 2.1.286: a confined `claude` died with `EPERM ... open
+            // '/tmp/claude-501'` before it ever read a login), so its own
+            // override must name the same granted scratch directory.
+            ...(agent === 'claude' ? { CLAUDE_CODE_TMPDIR: resolvedBoundary.tmpDir } : {}),
             // O1: only set when a real OAuth session
             // credential was actually staged (`resolveWorkerBoundaryLaunch`'s
             // `stageOAuthCredential` opt, claude-only) — repoints the
