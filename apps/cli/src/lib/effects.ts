@@ -27,8 +27,8 @@
  *
  * This is a distinct mechanism from the Vinaya Log's own `effect` event
  * family (`apps/cli/specs/log.md`, "the spec's 'shared effect executor'"):
- * that family is fail-open telemetry — an `attempted`/`observed`/`verified`
- * OBSERVATION that never blocks anything — while this is the fail-closed
+ * that family is fail-open telemetry — one `verified` OBSERVATION of a
+ * write's final outcome that never blocks anything — while this is the fail-closed
  * durable control store this module is built on. Neither replaces the other.
  */
 
@@ -149,7 +149,7 @@ function sameIdentity(a: EffectIdentity, b: EffectIdentity): boolean {
 
 /**
  * Builds this write's `effect` log family target (O1: "normalized ...
- * attempted, observed and verified outcomes"). `effect_id` is the
+ * outcomes", one final event per write). `effect_id` is the
  * control-store `key` itself — the SAME idempotent identity every retry or
  * idempotent replay of this write already shares, so two log lines carrying
  * the same `effect_id` are provably the same effect observed twice, never a
@@ -202,13 +202,7 @@ export class EffectExecutor {
       // the SAME observed/uncertain log line that branch emits (round 2
       // review, MAJOR: this branch used to throw with no log event at all,
       // leaving a real refused-replay outcome invisible in the Vinaya Log).
-      this.logEffectEvent({
-        kind: 'effect',
-        event: 'observed',
-        outcome: 'uncertain',
-        payload: {},
-        ...effectLogTarget(key, identity)
-      })
+      this.logFinal('uncertain', key, identity)
       throw new EffectRetryRefusedError(this.task, key, `existing effect record is corrupt: ${existing.reason}`)
     }
 
@@ -241,23 +235,11 @@ export class EffectExecutor {
       // second `log()` line at the SAME `effect_id`, reporting the SAME
       // true outcome, is what tells a reader "this ran twice and both
       // times agreed" apart from "this never ran a second time at all."
-      this.logEffectEvent({
-        kind: 'effect',
-        event: 'verified',
-        outcome: 'success',
-        payload: {},
-        ...effectLogTarget(key, recorded)
-      })
+      this.logFinal('success', key, recorded)
       return recorded.url
     }
     if (recorded.status === 'uncertain') {
-      this.logEffectEvent({
-        kind: 'effect',
-        event: 'observed',
-        outcome: 'uncertain',
-        payload: {},
-        ...effectLogTarget(key, recorded)
-      })
+      this.logFinal('uncertain', key, recorded)
       throw new EffectRetryRefusedError(
         this.task,
         key,
@@ -303,31 +285,12 @@ export class EffectExecutor {
         url: result.url,
         recordedAt: now
       })
-      this.logEffectEvent({
-        kind: 'effect',
-        event: 'observed',
-        outcome: 'success',
-        payload: {},
-        ...effectLogTarget(key, identity)
-      })
-      this.logEffectEvent({
-        kind: 'effect',
-        event: 'verified',
-        outcome: 'success',
-        payload: {},
-        ...effectLogTarget(key, identity)
-      })
+      this.logFinal('success', key, identity)
       return result.url
     }
     if (result.outcome === 'ambiguous') {
       writeEffect(this.deps, this.task, this.epoch, key, { ...identity, status: 'uncertain', recordedAt: now })
-      this.logEffectEvent({
-        kind: 'effect',
-        event: 'observed',
-        outcome: 'uncertain',
-        payload: {},
-        ...effectLogTarget(key, identity)
-      })
+      this.logFinal('uncertain', key, identity)
       throw new EffectRetryRefusedError(this.task, key, result.reason)
     }
     // 'absent' — the intent was recorded but nothing actually landed
@@ -339,37 +302,34 @@ export class EffectExecutor {
   private postAndRecord(key: string, identity: EffectIdentity, poster: () => string): string {
     const startedAt = this.deps.now().toISOString()
     writeEffect(this.deps, this.task, this.epoch, key, { ...identity, status: 'started', recordedAt: startedAt })
-    this.logEffectEvent({ kind: 'effect', event: 'attempted', payload: {}, ...effectLogTarget(key, identity) })
     let url: string
     try {
       url = poster()
     } catch (err) {
-      this.logEffectEvent({
-        kind: 'effect',
-        event: 'observed',
-        outcome: 'failure',
-        payload: {},
-        ...effectLogTarget(key, identity)
-      })
+      this.logFinal('failure', key, identity)
       throw err
     }
-    this.logEffectEvent({
-      kind: 'effect',
-      event: 'observed',
-      outcome: 'success',
-      payload: {},
-      ...effectLogTarget(key, identity)
-    })
     const verifiedAt = this.deps.now().toISOString()
     writeEffect(this.deps, this.task, this.epoch, key, { ...identity, status: 'verified', url, recordedAt: verifiedAt })
+    this.logFinal('success', key, identity)
+    return url
+  }
+
+  /**
+   * The write's ONE `effect` event: its final outcome, recorded as
+   * `verified` whatever that outcome is (`success`, `failure` or
+   * `uncertain`). The local control-store record still advances through
+   * `started`/`verified`/`uncertain` — that is what recovery reads — and
+   * this is only the observation of where it ended.
+   */
+  private logFinal(outcome: 'success' | 'failure' | 'uncertain', key: string, identity: EffectIdentity): void {
     this.logEffectEvent({
       kind: 'effect',
       event: 'verified',
-      outcome: 'success',
+      outcome,
       payload: {},
       ...effectLogTarget(key, identity)
     })
-    return url
   }
 }
 

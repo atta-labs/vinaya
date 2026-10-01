@@ -70,8 +70,8 @@ import { fileURLToPath } from 'node:url'
  * other; both join `CALLER_ALLOWLIST` alone.
  *
  * Amended by #563: `runner.ts` (`apps/cli/src/checks/`)
- * is the `gate` family's own chokepoint — one `log()` call per check per
- * attempt, from `runOne`, plus a one-time `warmupLogSink()` call from
+ * is the `gate` family's own chokepoint — one `log()` call per check that did
+ * not pass, from `runOne`, and one `summary` per run from `runChecks`, plus a one-time `warmupLogSink()` call from
  * `runChecks` before dispatching a batch. Read-only against the outbox
  * itself (it never truncates or writes a held-verdict file), the same
  * "joins `CALLER_ALLOWLIST` alone" shape `journal-history.ts`/`resume.ts`/
@@ -512,18 +512,17 @@ const PRODUCER_BOUNDARIES: ProducerBoundary[] = [
     ]
   },
   {
-    name: 'runOne — one gate `checked` observation per attempted check',
+    name: 'runChecks — one gate `summary` per run, a `checked` observation per check that did not pass',
     files: [RUNNER_PATH],
-    requires: [{ kind: 'gate', event: 'checked' }]
+    requires: [
+      { kind: 'gate', event: 'summary' },
+      { kind: 'gate', event: 'checked' }
+    ]
   },
   {
-    name: 'EffectExecutor — attempted/observed/verified around every idempotent external write',
+    name: 'EffectExecutor — one final `verified` observation per idempotent external write',
     files: [EFFECTS_PATH],
-    requires: [
-      { kind: 'effect', event: 'attempted' },
-      { kind: 'effect', event: 'observed' },
-      { kind: 'effect', event: 'verified' }
-    ]
+    requires: [{ kind: 'effect', event: 'verified' }]
   },
   {
     name: 'broker — authenticate*Invocation / requestEffect',
@@ -559,6 +558,10 @@ const PRODUCER_BOUNDARIES: ProducerBoundary[] = [
 const LOG_COVERAGE_EXEMPTIONS: RequiredEvent[] = [
   { kind: 'handoff', event: 'raised' },
   { kind: 'handoff', event: 'resolved' },
+  // `effect` `attempted`/`observed` stay in the schema so a line stored
+  // before a write recorded one final event still reads; nothing emits them.
+  { kind: 'effect', event: 'attempted' },
+  { kind: 'effect', event: 'observed' },
   { kind: 'forge_write', event: 'validated' },
   { kind: 'forge_write', event: 'refused' },
   { kind: 'forge_write', event: 'written' }
@@ -637,7 +640,7 @@ describe('log coverage — O1 (task-log-v1 7, Issue #567): every schema event ma
     // A change to this number is a real schema change (a family or event
     // added/removed) — update it alongside PRODUCER_BOUNDARIES /
     // LOG_COVERAGE_EXEMPTIONS in the same diff, never silently.
-    expect(allDeclaredEvents.length).toBe(29)
+    expect(allDeclaredEvents.length).toBe(30)
   })
 
   it('every declared kind/event pair is required by a producer boundary, or named in LOG_COVERAGE_EXEMPTIONS', () => {

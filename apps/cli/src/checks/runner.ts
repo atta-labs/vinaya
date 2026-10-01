@@ -107,6 +107,12 @@ function isCheckError(value: unknown): value is CheckError {
  * no retry inside this file, so there is nothing here that could double-emit
  * for one check.
  *
+ * Only a check that did NOT pass records an event: a `pass` or a `skip`
+ * returns here without logging, because a run of thirty checks that all pass
+ * would otherwise write thirty rows the Log's free daily limit cannot afford
+ * and no reader needs — `logGateSummary` counts them in the run's one
+ * `summary` event instead.
+ *
  * `check_version` is this contract's own schema version (`CHECK_SCHEMA_VERSION`
  * — every `CheckError` a check emits is validated against it); `policy_version`
  * is honestly `null` — no per-check policy-version concept exists in the
@@ -131,6 +137,7 @@ function logGateChecked(params: {
   fingerprint: string
   logFn: (e: LogEventInput) => void
 }): void {
+  if (params.outcome === 'pass' || params.outcome === 'skip') return
   params.logFn({
     kind: 'gate',
     event: 'checked',
@@ -140,6 +147,36 @@ function logGateChecked(params: {
     input_fingerprint: params.fingerprint,
     outcome: params.outcome,
     ...(params.reason !== undefined ? { reason: params.reason } : {}),
+    duration_ms: params.durationMs,
+    payload: {}
+  })
+}
+
+/**
+ * The ONE `gate` `summary` event a check run records: how many checks
+ * executed, passed, failed and were skipped, the names of those that did not
+ * pass, and the run's total time. A check that did not pass is also its own
+ * `checked` event (`logGateChecked`), so a reader that wants a failure's
+ * reason and commit finds it there and a reader that wants the run's shape
+ * finds it here. Derived from the returned outcomes, so it can never
+ * disagree with what `runChecks` returned.
+ */
+function logGateSummary(params: {
+  results: CheckOutcome[]
+  durationMs: number
+  logFn: (e: LogEventInput) => void
+}): void {
+  const skipped = params.results.filter((r) => r.status === 'skipped').length
+  const passed = params.results.filter((r) => r.status === 'pass').length
+  const failedChecks = params.results.filter((r) => r.status !== 'pass' && r.status !== 'skipped').map((r) => r.name)
+  params.logFn({
+    kind: 'gate',
+    event: 'summary',
+    ran: passed + failedChecks.length,
+    passed,
+    failed: failedChecks.length,
+    skipped,
+    failed_checks: failedChecks,
     duration_ms: params.durationMs,
     payload: {}
   })
@@ -707,13 +744,14 @@ async function runOne(
  * `scope: 'diff'` check skipped by `--diff-only` never reaches `runOne`, so
  * it can never fail over an env var it was never going to read.
  *
- * Every outcome this function or `runOne` reaches — skip, pass, fail
- * (rejected or waiting), timeout, and the two `error` flavors
+ * Every outcome this function or `runOne` reaches that is NOT a pass or a
+ * skip — fail (rejected or waiting), timeout, and the two `error` flavors
  * (`unavailable_dependency`/`invalid_input`) — is recorded as one `gate`
  * `checked` observation (`logGateChecked`) at the exact point the outcome
  * is decided, so the recorded reason always matches real local context
  * rather than being re-derived from the returned `CheckOutcome` after the
- * fact. This never changes what `runChecks` returns or what `isRunFailed`
+ * fact. The whole run is then recorded as one `gate` `summary`
+ * (`logGateSummary`), derived from the returned outcomes. This never changes what `runChecks` returns or what `isRunFailed`
  * reads from it, and never modifies a gate decision while adding an
  * observation — the log call is strictly additional to every existing
  * return statement.
@@ -721,6 +759,7 @@ async function runOne(
 export async function runChecks(specs: CheckSpec[], opts: RunOptions): Promise<CheckOutcome[]> {
   const callerEnv = opts.callerEnv ?? process.env
   const logFn = opts.log ?? defaultLog
+  const runStart = performance.now()
   // Only for the real default sink — an injected test logger has no
   // doctrine/repo resolution to warm, and calling this before a burst of
   // concurrent check completions is precisely what closes the race
@@ -769,5 +808,6 @@ export async function runChecks(specs: CheckSpec[], opts: RunOptions): Promise<C
   const workerCount = Math.max(1, Math.min(opts.parallel, toRun.length))
   await Promise.all(Array.from({ length: workerCount }, worker))
 
+  logGateSummary({ results, durationMs: performance.now() - runStart, logFn })
   return results
 }

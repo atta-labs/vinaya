@@ -466,3 +466,43 @@ describe('runChecks — the commit a gate event records', () => {
     expect(gate.subject.sha).toBe(git('rev-parse', 'HEAD'))
   })
 })
+
+describe('runChecks — what a run records in the Log', () => {
+  it('a run of thirty checks with two failures records one summary and two checked events', async () => {
+    const events: Array<Record<string, unknown>> = []
+    const specs = Array.from({ length: 30 }, (_, i) =>
+      fullScope({ name: `check-${i}`, run: i === 3 || i === 17 ? FAILING : PASSING })
+    )
+    await runChecks(specs, {
+      ...BASE_OPTS,
+      parallel: 8,
+      log: (e) => events.push(e as unknown as Record<string, unknown>)
+    })
+    const summaries = events.filter((e) => e.event === 'summary')
+    const checked = events.filter((e) => e.event === 'checked')
+    expect(events).toHaveLength(3)
+    expect(summaries).toHaveLength(1)
+    expect(summaries[0]).toMatchObject({
+      kind: 'gate',
+      ran: 30,
+      passed: 28,
+      failed: 2,
+      skipped: 0,
+      failed_checks: ['check-3', 'check-17']
+    })
+    expect(typeof summaries[0]?.duration_ms).toBe('number')
+    expect(checked.map((e) => e.check).sort()).toEqual(['check-17', 'check-3'])
+    expect(checked.every((e) => e.outcome === 'fail' && e.reason === 'errors:1')).toBe(true)
+  })
+
+  it('counts a skipped check in the summary and records no event for it', async () => {
+    const events: Array<Record<string, unknown>> = []
+    await runChecks([fullScope({ name: 'ran', run: PASSING }), fullScope({ name: 'full-one', run: PASSING })], {
+      ...BASE_OPTS,
+      skipFull: true,
+      log: (e) => events.push(e as unknown as Record<string, unknown>)
+    })
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({ event: 'summary', ran: 0, passed: 0, failed: 0, skipped: 2 })
+  })
+})
