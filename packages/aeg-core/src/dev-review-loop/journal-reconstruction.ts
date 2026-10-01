@@ -35,23 +35,23 @@
  * what the numbering and the "already published?" decision need.
  */
 
-import { SEVERITY_COLUMNS, type RoundRecord } from './types'
+import type { RoundRecord } from './types'
 
 /**
- * The published summary's own header row, byte-for-byte as `render-summary.ts`
- * emits it — both derived from `SEVERITY_COLUMNS`, so the detector here and
- * the renderer there can never drift about what a summary comment looks like.
- * A principal-authored comment carrying this line is the ready-for-merge
- * summary itself: the one honest "the summary was actually published" signal,
+ * The published marker line — `<!-- aeg:loop:published head=<sha>
+ * confidence=<round>:<cell>,… -->`, as `render-summary.ts` emits it. A
+ * principal-authored comment carrying this line is the ready-for-merge
+ * publication itself: the one honest "the loop actually published" signal,
  * distinct from a round merely deciding `publish` (the control store's own
  * `loop_state.phase === 'publish'` is written before `publishRound` runs, so
- * it can never stand in for this).
+ * it can never stand in for this). Group 1 is the published head, group 2 the
+ * confidence entries.
  */
-export const SUMMARY_TABLE_HEADER = `| round | ${SEVERITY_COLUMNS.join(' | ')} | confidence | outcome |`
+export const PUBLISHED_MARKER_LINE = /^<!-- aeg:loop:published head=([0-9a-f]{7,64}) confidence=([^\s]*) -->$/
 
-/** True when `body` is (or contains, verbatim on its own line) the published summary's header — the caller has already confirmed the comment is principal-authored. */
+/** True when `body` carries the published marker verbatim on its own line — the caller has already confirmed the comment is principal-authored. */
 export function isPublishedSummaryComment(body: string): boolean {
-  return body.split('\n').some((line) => line.trim() === SUMMARY_TABLE_HEADER)
+  return body.split('\n').some((line) => PUBLISHED_MARKER_LINE.test(line.trim()))
 }
 
 /**
@@ -112,15 +112,15 @@ export type ReconstructedJournal = {
   reviewGate: ReviewGateFact
   /**
    * `{ result: 'merged_ready' }` while a principal-authored ready-for-merge
-   * summary comment is actually on the forge AND the review gate has not
+   * publication comment is actually on the forge AND the review gate has not
    * FAILED against the pull request's CURRENT state (`ReviewGateFact`, whose
    * own doc explains why an `'unknown'` gate is not a reopen). Concluded is a
    * property of the pull request now, not a one-way latch it once passed
    * through.
    *
    * The summary alone was the old signal, and it is sticky in a way the forge
-   * is not: the summary table records no head, so a summary posted for an
-   * older head keeps reading "done forever" after a red gate, a newer
+   * is not: the published marker comment is never edited, so a publication posted
+   * for an older head keeps reading "done forever" after a red gate, a newer
    * Principal ruling, a superseded brief or a moved head — observed on an
    * adopter pull request whose every `--resume` was refused while the gate was
    * red and a ruling sat unaddressed. The gate is the one evaluation already

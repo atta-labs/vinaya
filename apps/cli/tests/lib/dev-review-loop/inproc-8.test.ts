@@ -288,7 +288,7 @@ describe('devReviewLoop — a pull request counts as concluded only while the re
     expect(reopened.finalDecision).toEqual({ type: 'publish' })
     // O3: numbered after the last round marker on the forge, never back at 1.
     expect(world.publishedRounds).toEqual([1, 2])
-    // O3: the published summary table carries every prior round, not only the
+    // O3: the published marker carries every prior round, not only the
     // one this process computed.
     expect(publishedJournalRounds).toEqual([[1, 2]])
   })

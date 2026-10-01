@@ -611,11 +611,11 @@ export {
   isPublishedSummaryComment,
   nextRoundNumber,
   parseSummaryConfidenceRows,
+  PUBLISHED_MARKER_LINE,
   reconstructRounds,
   renderPhaseBreakdown,
-  renderSummary,
+  renderPublishedMarker,
   renderTaskBudgetDetail,
-  SUMMARY_TABLE_HEADER,
   taskBudgetExceeded
 } from './dev-review-loop'
 export type {

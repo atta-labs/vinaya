@@ -804,7 +804,7 @@ export function readLoopPhase(root: string, task: number, now: () => Date = () =
  *
  *   - the developer's own statement for a round the driver has not consumed
  *     yet (`.vinaya-confidence`, under that round's own Developer folder), and
- *   - the run's published summary table, which records every round's
+ *   - the run's published marker, which records every round's
  *     confidence at publish.
  *
  * A round the driver has already read and cleared, and never published, leaves

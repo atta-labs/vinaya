@@ -1,182 +1,82 @@
 /**
- * `renderSummary(journal)` — the publication comment. One markdown table, rows per round, counts and the
- * outcome only — no finding prose, and no line either verdict extractor
- * (`../verdict-extraction`) would read as a real verdict: no `VERDICT:`,
- * `Judged head:`, or `Objectives version:` label anywhere in the output.
+ * `renderPublishedMarker(journal, head)` — the publication comment. A single
+ * HTML comment line, invisible on the pull request, carrying what the loop's
+ * own readers need: that the loop published, the head it published, and each
+ * round's confidence. The round table is not posted — the Vinaya Log is the
+ * record of each round's findings and outcome. The line carries no `VERDICT:`,
+ * `Judged head:`, or `Objectives version:` label, so neither verdict extractor
+ * (`../verdict-extraction`) can read it as a real verdict.
  */
 
-import { DEFERRAL_REASON_TEXT } from '../review-policy'
-import { SUMMARY_TABLE_HEADER } from './journal-reconstruction'
-import {
-  SEVERITY_COLUMNS,
-  type Confidence,
-  type DeferredFindingRow,
-  type Journal,
-  type NotReviewedReason,
-  type RoundRecord
-} from './types'
+import { PUBLISHED_MARKER_LINE } from './journal-reconstruction'
+import type { Confidence, Journal } from './types'
 
-/**
- * The two non-numeric cells this table writes, named once so the parser below
- * reads the same literals the renderer wrote. They are DIFFERENT facts: the
- * loop never asked this round for a confidence at all (round 1 never is), or
- * it asked and the developer stated nothing readable.
- *
- * `CONFIDENCE_NOT_ASKED_CELL`'s glyph is also the count columns' own
- * "nothing to report" cell (`countCells` below) — one glyph for one meaning
- * across the table, rather than a second literal saying the same thing. Only
- * the confidence column is read back out of a posted table, so the shared
- * glyph never makes a count cell parseable as a confidence.
- */
-export const CONFIDENCE_NOT_ASKED_CELL = '—'
+/** The cell a round the loop never asked for a confidence at all (round 1 never is) writes. */
+export const CONFIDENCE_NOT_ASKED_CELL = '-'
+/** The cell a round that was asked, with no readable statement, writes. */
 export const CONFIDENCE_ABSENT_CELL = 'absent'
 
-/** The highest percentage this table ever records — the same ceiling `CONFIDENCE_LINE`'s own `0-100` grammar accepts, named here because the parser below refuses a row that exceeds it. */
+/** The highest percentage the marker ever records — the same ceiling `CONFIDENCE_LINE`'s own `0-100` grammar accepts, named here because the parser below refuses a figure that exceeds it. */
 export const CONFIDENCE_MAX_PERCENT = 100
 
 function confidenceCell(confidence: Confidence | null): string {
   if (confidence === null) return CONFIDENCE_NOT_ASKED_CELL
   if (confidence === 'absent') return CONFIDENCE_ABSENT_CELL
-  return `${confidence.value}%`
+  return String(confidence.value)
 }
 
 /**
- * One round's count cells — numbers when the loop recorded this round's
- * findings, the not-reported glyph when it never recorded them at all.
- *
- * A round the loop ASSESSED records every severity column, zeros included
- * (`buildRoundRecord`, `assess-round.ts`), so a record carrying none of them
- * is one whose counts have no source. Two kinds carry none: a round rebuilt
- * from the pull request's own round markers after a restart, which name a
- * round's number and head and carry no finding breakdown at all
- * (`journal-reconstruction.ts`); and a round no reviewer ever saw — its gate
- * was red, or a low confidence sent the developer back — which records no
- * counts on purpose (`buildUnreviewedRecord`, `assess-round.ts`) and names why
- * in its outcome cell (`outcomeCell` below). Writing `0` for those cells told a
- * reader the round was clean — four rounds of a real task's published table
- * read as zero findings when the truth was that nobody knew, and an unreviewed
- * round read as a clean review that never ran. The distinction is whether the
- * counts were recorded, never whether they are zero: a round the loop assessed
- * and found nothing in still reads `0`, because that zero is a measurement.
+ * The published marker: `<!-- aeg:loop:published head=<sha> confidence=1:-,2:80,3:absent -->`.
+ * Each round contributes `<round>:<cell>` — a percentage, `absent` (asked, no
+ * readable statement) or `-` (never asked).
  */
-function countCells(record: RoundRecord): string[] {
-  const recorded = SEVERITY_COLUMNS.some((key) => record.countsBySeverity[key] !== undefined)
-  if (!recorded) return SEVERITY_COLUMNS.map(() => CONFIDENCE_NOT_ASKED_CELL)
-  return SEVERITY_COLUMNS.map((key) => String(record.countsBySeverity[key] ?? 0))
+export function renderPublishedMarker(journal: Journal, head: string): string {
+  const confidence = journal.rounds.map((record) => `${record.round}:${confidenceCell(record.confidence)}`).join(',')
+  return `<!-- aeg:loop:published head=${head} confidence=${confidence} -->`
 }
 
 /**
- * The outcome cell. A round the loop assessed (or one rebuilt from a marker)
- * prints its own `outcome` verbatim — the vocabulary `render-summary.test.ts`
- * pins (`green`, `changes_requested`, `escalated`, `stopped`). A round no
- * reviewer saw (`notReviewed` set, `buildUnreviewedRecord` in
- * `assess-round.ts`) instead states that no review ran and why, so a reader
- * never takes its `—` counts for a clean round the way the old `0` /
- * `changes_requested` row read.
- */
-const NOT_REVIEWED_REASON_TEXT: Record<NotReviewedReason, string> = {
-  checks_red: 'checks red',
-  low_confidence: 'low confidence',
-  mechanical_failure: 'mechanical failure',
-  time_budget: 'task time budget'
-}
-
-function outcomeCell(record: RoundRecord): string {
-  if (record.notReviewed !== undefined) return `not reviewed — ${NOT_REVIEWED_REASON_TEXT[record.notReviewed]}`
-  return record.outcome
-}
-
-function row(record: RoundRecord): string {
-  return `| ${record.round} | ${countCells(record).join(' | ')} | ${confidenceCell(record.confidence)} | ${outcomeCell(record)} |`
-}
-
-/** The heading that opens the deferred-findings block, so a reader (and a test) can find it without matching a whole line. */
-export const DEFERRED_FINDINGS_HEADING = 'Deferred findings (reported, not blocking this round):'
-
-/** One deferred finding as the summary lists it (O4): its original severity, its `file:line` (or `(no location)` when it carried none), and why. */
-export function renderDeferredFindingLine(round: number, f: DeferredFindingRow): string {
-  const where = f.location.length > 0 ? f.location : '(no location)'
-  return `- round ${round} — ${f.severity} ${where} — ${DEFERRAL_REASON_TEXT[f.reason]}`
-}
-
-/**
- * The deferred-findings block appended below the table (O4) — one line per
- * deferred finding across every round, in round then report order. Empty
- * string when no round deferred anything, so the summary is byte-identical to
- * what it was before this task on a run that deferred nothing. Deliberately
- * NOT a `|`-delimited table: `parseSummaryConfidenceRows` reads the table by
- * its pipe-delimited rows, so a plain-list block can never be misread as a
- * round row.
- */
-function renderDeferredBlock(journal: Journal): string[] {
-  const lines: string[] = []
-  for (const record of journal.rounds) {
-    for (const f of record.deferred ?? []) lines.push(renderDeferredFindingLine(record.round, f))
-  }
-  return lines.length === 0 ? [] : ['', DEFERRED_FINDINGS_HEADING, ...lines]
-}
-
-export function renderSummary(journal: Journal): string {
-  const header = SUMMARY_TABLE_HEADER
-  const divider = `| --- | ${SEVERITY_COLUMNS.map(() => '---').join(' | ')} | --- | --- |`
-  const rows = journal.rounds.map(row)
-  return [header, divider, ...rows, ...renderDeferredBlock(journal)].join('\n')
-}
-
-/**
- * One round's confidence as this table records it, in three distinguishable
+ * One round's confidence as the marker records it, in three distinguishable
  * states rather than two:
  *
  *   - `asked: true` with a `percent` — the developer stated that figure;
  *   - `asked: true`, `percent: null` — the round WAS asked and the statement
- *     was missing or unreadable (the table's own `absent` cell);
+ *     was missing or unreadable (the `absent` cell);
  *   - `asked: false`, `percent: null` — the loop never asked this round at all
- *     (its `—` cell; round 1 is never asked), so the round has no confidence
- *     to report and a reader must not be told the developer skipped one.
+ *     (the `-` cell; round 1 is never asked), so a reader must not be told the
+ *     developer skipped a statement.
  */
 export type SummaryConfidenceRow = { round: number; percent: number | null; asked: boolean }
 
 /**
- * The inverse of `row` above — the confidence column read back out of a
- * posted summary table. Kept here, beside the renderer, so the column's
- * position is written down once: a reader elsewhere would have to hand-copy
- * the table's shape and would drift the first time a column moved.
+ * The inverse of `renderPublishedMarker` — the confidence entries read back out
+ * of a posted marker. Kept beside the renderer so the entry shape is written
+ * down once.
  *
- * Only rows this renderer could have produced are read: a leading round
- * number, then one cell per severity column, then the confidence cell, then
- * the outcome. Anything else in the comment — prose above or below the table,
- * a differently-shaped table — yields no row at all rather than a guess.
- *
- * This function is the boundary between pull-request comment text (which
- * anybody with write access to a fork's branch can shape) and the confidence
- * figure a tool result publishes, so the percentage is bounded HERE: a cell
- * claiming more than `CONFIDENCE_MAX_PERCENT` is dropped rather than carried
- * out of range into a caller that declares `0-100`.
+ * This is the boundary between pull-request comment text (which anybody with
+ * write access to a fork's branch can shape) and the confidence figure a tool
+ * result publishes, so the percentage is bounded HERE: an entry claiming more
+ * than `CONFIDENCE_MAX_PERCENT` is dropped rather than carried out of range. A
+ * comment with no marker line, and any entry not shaped `<round>:<cell>`,
+ * yields no row at all rather than a guess.
  */
 export function parseSummaryConfidenceRows(body: string): SummaryConfidenceRow[] {
-  const cellCount = SEVERITY_COLUMNS.length + 3
   const rows: SummaryConfidenceRow[] = []
   for (const line of body.split('\n')) {
-    const trimmed = line.trim()
-    if (!trimmed.startsWith('|') || !trimmed.endsWith('|')) continue
-    const cells = trimmed.slice(1, -1).split('|')
-    if (cells.length !== cellCount) continue
-    const round = Number((cells[0] as string).trim())
-    if (!Number.isInteger(round) || round <= 0) continue
-    const confidenceCellText = (cells[cellCount - 2] as string).trim()
-    if (confidenceCellText === CONFIDENCE_NOT_ASKED_CELL) {
-      rows.push({ round, percent: null, asked: false })
-      continue
+    const match = PUBLISHED_MARKER_LINE.exec(line.trim())
+    if (!match) continue
+    for (const entry of (match[2] as string).split(',')) {
+      const [roundText, cell] = entry.split(':')
+      const round = Number(roundText)
+      if (!Number.isInteger(round) || round <= 0 || cell === undefined) continue
+      if (cell === CONFIDENCE_NOT_ASKED_CELL) {
+        rows.push({ round, percent: null, asked: false })
+      } else if (cell === CONFIDENCE_ABSENT_CELL) {
+        rows.push({ round, percent: null, asked: true })
+      } else if (/^\d{1,3}$/.test(cell) && Number(cell) <= CONFIDENCE_MAX_PERCENT) {
+        rows.push({ round, percent: Number(cell), asked: true })
+      }
     }
-    if (confidenceCellText === CONFIDENCE_ABSENT_CELL) {
-      rows.push({ round, percent: null, asked: true })
-      continue
-    }
-    const percentMatch = /^(\d{1,3})%$/.exec(confidenceCellText)
-    if (!percentMatch) continue
-    const percent = Number(percentMatch[1])
-    if (percent > CONFIDENCE_MAX_PERCENT) continue
-    rows.push({ round, percent, asked: true })
   }
   return rows
 }

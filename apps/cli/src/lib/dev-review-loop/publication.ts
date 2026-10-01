@@ -1,5 +1,5 @@
 /**
- * `dev-review-loop`'s publication concern — posting a round's already-held verdicts and summary to the
+ * `dev-review-loop`'s publication concern — posting a round's already-held verdicts and published marker to the
  * forge, idempotently, with a policy self-check before either verdict counts
  * as publishable (O3: a reviewer's own APPROVE/PASS never overrides the
  * evaluator). Moved out of `apps/cli/src/lib/dev-review-loop.ts` verbatim;
@@ -23,7 +23,7 @@ import {
   extractSecurityReviewVerdict,
   type Journal,
   type ManifestBindingResult,
-  renderSummary,
+  renderPublishedMarker,
   type ReviewInputManifest,
   type ReviewPolicy,
   type VerdictExtraction
@@ -165,9 +165,9 @@ export type PublishInput = {
   manifest: ReviewInputManifest
   /**
    * O1: the backlog Issue this pull request's deferred findings were tracked
-   * in, linked from the summary so the loop's readers can find the durable
-   * record. `undefined` when nothing was deferred (O3) — the summary then
-   * carries no link, byte-identical to before this task.
+   * in, linked from the publication comment so the loop's readers can find the durable
+   * record. `undefined` when nothing was deferred (O3) — the comment then
+   * carries no link.
    */
   deferredIssue?: DeferredFindingsIssueRef
 }
@@ -206,16 +206,32 @@ export function bindingOfPosted(posted: VerdictExtraction, manifest: ReviewInput
 }
 
 /**
+ * The text of the publication comment: the hidden published marker
+ * (`renderPublishedMarker`) and nothing else, plus one plain sentence linking
+ * the deferred-findings Issue only when this publication opened or updated one.
+ */
+export function publicationComment(
+  journal: Journal,
+  expectedHead: string,
+  deferredIssue?: DeferredFindingsIssueRef
+): string {
+  const marker = renderPublishedMarker(journal, expectedHead)
+  return deferredIssue
+    ? `${marker}\n\nDeferred findings that no longer block a round are tracked in #${deferredIssue.issue}.`
+    : marker
+}
+
+/**
  * O1: at green, posts the two verdicts `writeHeldVerdict` already wrote for
- * `round`, then one summary comment from `renderSummary` — each through
+ * `round`, then one publication comment from `renderPublishedMarker` — each through
  * `postForgeEffectOnce`'s idempotent forge-write, each re-read afterward
  * through the SAME extractors the merge gate calls (`extractCodeReviewVerdict`/
  * `extractSecurityReviewVerdict`), confirming the posted comment resolves
- * cleanly to `expectedHead`. The summary is checked BEFORE it is posted,
- * never after: `renderSummary`'s own doc comment guarantees no `VERDICT:`/
+ * cleanly to `expectedHead`. The comment is checked BEFORE it is posted,
+ * never after: `renderPublishedMarker`'s own doc comment guarantees no `VERDICT:`/
  * `Judged head:`/`Objectives version:` line, but this is re-verified live
  * against the two real extractors rather than trusted from that comment
- * alone (Traps to avoid) — a summary that parses as a verdict is refused,
+ * alone (Traps to avoid) — a comment that parses as a verdict is refused,
  * not posted.
  */
 export function publishRound(root: string, input: PublishInput): void {
@@ -277,19 +293,18 @@ export function publishRound(root: string, input: PublishInput): void {
     )
   }
 
-  // O1: link the deferred-findings tracking Issue from the summary when this
-  // publication opened or updated one. A plain trailing sentence — never a
-  // `VERDICT:`/`Judged head:`/`Objectives version:` line — so the
-  // re-parses-as-a-verdict guard below still holds; that guard runs over this
-  // full text, link included.
-  const summary = input.deferredIssue
-    ? `${renderSummary(input.journal)}\n\nDeferred findings that no longer block a round are tracked in #${input.deferredIssue.issue}.`
-    : renderSummary(input.journal)
+  // The publication comment: one hidden marker line (`renderPublishedMarker`) —
+  // that the loop published, the head, each round's confidence — never a round
+  // table; the Vinaya Log holds each round. When this publication opened or
+  // updated a deferred-findings Issue, one plain trailing sentence links it.
+  // Neither is a `VERDICT:`/`Judged head:`/`Objectives version:` line, and the
+  // re-parses-as-a-verdict guard below runs over the full text, link included.
+  const summary = publicationComment(input.journal, expectedHead, input.deferredIssue)
   const summaryAsCodeReview = extractCodeReviewVerdict([summary])
   const summaryAsSecurity = extractSecurityReviewVerdict([summary])
   if (summaryAsCodeReview.danglingNote === null || summaryAsSecurity.danglingNote === null) {
     throw new Error(
-      "publishRound: the rendered summary re-parses as a real verdict through the gate's own extractors — refusing to post it (a summary mistaken for a verdict decides a merge)."
+      "publishRound: the published marker comment re-parses as a real verdict through the gate's own extractors — refusing to post it (a summary mistaken for a verdict decides a merge)."
     )
   }
   postPrCommentOnce(task, round, `${round}-summary`, prNumber, summary)

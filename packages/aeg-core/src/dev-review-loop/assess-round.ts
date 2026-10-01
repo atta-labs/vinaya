@@ -270,8 +270,8 @@ function buildRoundRecord(
 ): RoundRecord {
   // Every column this round MEASURED, seeded at zero before a single finding
   // is counted — so a round the loop assessed and found nothing in is a
-  // recorded zero, not an absent count. The published table needs the two told
-  // apart (`countCells`, `render-summary.ts`): a round rebuilt from the pull
+  // recorded zero, not an absent count. A reader needs the two told
+  // apart: a round rebuilt from the pull
   // request's markers after a restart has no counts at all, and must report
   // nothing rather than a zero a reader would take for a clean round.
   const countsBySeverity: Record<string, number> = {}
@@ -300,9 +300,7 @@ function buildRoundRecord(
  * below-threshold confidence sent the developer back — has no findings from any
  * source. Unlike `buildRoundRecord`, it records NO counts (an empty
  * `countsBySeverity`, the shape a marker-reconstructed round also carries), so
- * the published table reports `—` for every severity column through the
- * renderer's existing "counts have no source" path, never a `0` a reader would
- * take for a clean review (`countCells`, `render-summary.ts`). `outcome` is left
+ * no severity column reads as a `0` a reader would take for a clean review. `outcome` is left
  * exactly as this round would otherwise carry — the `round_ended` log event is
  * unchanged — and `notReviewed` names why no reviewer saw it for the table's
  * outcome cell.
@@ -846,7 +844,7 @@ export function renderTaskBudgetDetail(maxTaskMinutes: number, clock: TaskClock)
  * complete pause record, not a special case.
  *
  * The round it lands on is a round no reviewer saw, and records as one
- * (`notReviewed: 'time_budget'`, `—` counts in the published table): this
+ * (`notReviewed: 'time_budget'`, no counts): this
  * stop is only ever checked at a round boundary or a mechanical retry, never
  * on a `verdicts` observation, so verdicts already back from reviewers are
  * never thrown away by it. `lastFailure` is left exactly as it stands — the

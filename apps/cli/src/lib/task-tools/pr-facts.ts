@@ -36,11 +36,9 @@ import {
   extractCodeReviewVerdict,
   extractSecurityReviewVerdict,
   isPrincipal,
-  isPublishedSummaryComment,
   MAX_RETURNED_TEXT_CHARS,
   parseDeveloperRoundMarker,
   redact,
-  SUMMARY_TABLE_HEADER,
   type TaskPrCheck,
   type TaskPrReviewRecord,
   type TaskPrVerdict
@@ -163,7 +161,7 @@ function scrubForgeText(raw: string): string {
  * The pull request's review record for the task, derived from
  * PRINCIPAL-AUTHORED comments only. A comment whose author does not resolve
  * against `allowlist` is dropped before anything below reads it — it
- * contributes no verdict, no round marker, no summary table, no pause, and
+ * contributes no verdict, no round marker, no pause, and
  * its body is never returned.
  *
  * The verdicts come from the merge gate's OWN extractors
@@ -199,24 +197,13 @@ export function buildReviewRecord(comments: readonly PrComment[], allowlist: rea
     ...new Set(bodies.map((body) => parseDeveloperRoundMarker(body)).filter((n): n is number => n !== null))
   ].sort((a, b) => a - b)
 
-  // The newest published summary wins — a later round republishes the whole
-  // table, so an earlier one is never the current record.
-  const summaryBody = bodies.filter((body) => isPublishedSummaryComment(body)).at(-1) ?? null
-  const summaryTable = summaryBody === null ? null : capText(summaryTableOf(summaryBody))
-
   const pauseBody = bodies.filter((body) => PAUSE_MARKER.test(body)).at(-1) ?? null
   const pauseReason = pauseBody === null ? null : (pauseBody.match(PAUSE_MARKER)?.[1] ?? null)
   const pause = pauseBody !== null && pauseReason !== null ? { reason: pauseReason, body: capText(pauseBody) } : null
 
-  return { verdicts, roundMarkers, summaryTable, pause }
+  return { verdicts, roundMarkers, pause }
 }
 
-/** The table itself, from its header line on — a summary comment may carry a marker line above it, and the table is what the Operator reads. */
-function summaryTableOf(body: string): string {
-  const lines = body.split('\n')
-  const start = lines.findIndex((line) => line.trim() === SUMMARY_TABLE_HEADER)
-  return start === -1 ? body : lines.slice(start).join('\n')
-}
 // --- the status table's own pull-request columns ------------------------------
 
 /**
