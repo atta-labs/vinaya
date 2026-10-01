@@ -2120,6 +2120,27 @@ describe('renderTaskStatusTable (O3)', () => {
     expect(lines[2]).toContain('absent (round 2)')
     expect(lines[2]).toContain('paused (confidence)')
   })
+
+  it('says what a paused run is waiting for — needs ruling, or ruled and start continues it (O3)', () => {
+    const paused = (disposition: PauseDisposition): TaskStatusRow => ({
+      ...base,
+      pr: { number: 517 },
+      state: { kind: 'paused', reason: 'escalation', round: 2 },
+      round: 2,
+      phase: 'paused',
+      recordedPhase: 'pause',
+      minutesInPhase: 10,
+      phaseIsCurrent: true,
+      pauseDisposition: disposition
+    })
+    const awaiting = renderTaskStatusTable([paused('awaiting_ruling')], deps)
+    expect(rowCells(awaiting, 0)[3]).toBe('paused (escalation) — needs ruling')
+    expect(rowCells(awaiting, 0)[14]).toBe('rule')
+
+    const ruled = renderTaskStatusTable([paused('ruled')], deps)
+    expect(rowCells(ruled, 0)[3]).toBe('paused (escalation) — ruled, start continues it')
+    expect(rowCells(ruled, 0)[14]).toBe('start')
+  })
 })
 
 /**
@@ -2200,6 +2221,7 @@ describe('the Next column (O3)', () => {
       expect(action).toBe(NEXT_ACTION_BY_PAUSE_DISPOSITION[disposition])
     }
     expect(NEXT_ACTION_BY_PAUSE_DISPOSITION.awaiting_ruling).toBe('rule')
+    expect(NEXT_ACTION_BY_PAUSE_DISPOSITION.ruled).toBe('start')
     expect(NEXT_ACTION_BY_PAUSE_DISPOSITION.resolved_cancel).toBe('cancel')
     expect(NEXT_ACTION_BY_PAUSE_DISPOSITION.unreadable).toBe('investigate')
   })

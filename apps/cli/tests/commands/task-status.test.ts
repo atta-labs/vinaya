@@ -515,7 +515,7 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
         '[demo] 2',
         '#602',
         '#702',
-        'paused (escalation)',
+        'paused (escalation) — needs ruling',
         '1',
         'paused',
         '40m',
@@ -674,7 +674,7 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
     expect(tableCells(r.stdout).map((cells) => [cells[0], cells[1], cells[2], cells[3]])).toEqual([
       ['task', 'issue', 'pr', 'state'],
       ['[demo] 1', '#601', '#701', `running (pid ${process.pid})`],
-      ['[demo] 2', '#602', '#702', 'paused (escalation)'],
+      ['[demo] 2', '#602', '#702', 'paused (escalation) — needs ruling'],
       ['[demo] 3', '#603', '#703', 'published'],
       ['[demo] 4', '#606', '—', 'not started'],
       ['[backlog] 604', '#604', '#704', `running (pid ${process.pid})`]
@@ -788,7 +788,7 @@ describe('vinaya task status <tranche> <n> (O2 — the single-task form)', () =>
         '[demo] 2',
         '#602',
         '#702',
-        'paused (escalation)',
+        'paused (escalation) — needs ruling',
         '1',
         'paused',
         '40m',

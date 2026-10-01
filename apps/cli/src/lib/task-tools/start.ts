@@ -113,9 +113,11 @@ import {
 import { dirname } from 'node:path'
 import {
   defaultControlStoreDeps,
+  principalRulingMarker,
   readLoopState,
   readResolution,
   TaskStartInputSchema,
+  type TaskResumeResult,
   type TaskStartResult,
   type TaskToolError,
   type TaskToolRef,
@@ -136,8 +138,16 @@ import {
   isDriverPidAlive,
   pauseStatePath,
   readDriverLock,
-  readPauseState
+  readEscalationRecord,
+  readPauseState,
+  rulingAuthenticatesResume
 } from '../dev-review-loop/pause-resume.js'
+import {
+  fetchIssueRulings,
+  fetchNewestIssueRulingOrdinal,
+  fetchNewestRulingOrdinal,
+  fetchRulings
+} from '../dev-review-loop/developer-dispatch.js'
 import { ensureRunDir, runPath, runtimeDirForThisRepo, tasksExecutionRoot } from '../run-paths.js'
 import { repoRoot as gitRepoRoot } from '../diff-evidence.js'
 import {
@@ -149,6 +159,7 @@ import {
 } from '../task-status.js'
 import { describeTaskRef, readTaskIssueFacts, resolveOpenTaskIssueForRef } from './handlers.js'
 import type { TaskIssueFacts, TaskToolCallResult } from './handlers.js'
+import { defaultTaskResumeHandler } from './resume.js'
 import type { CallerContext } from './server.js'
 
 /** The durable claim one `task_start` request writes before it launches — the record a duplicate start (same request identity) replays instead of starting again, unless the run it names is found dead and superseded. `target` is the address the call used, so a replay answers in the same form it was asked. */
@@ -242,6 +253,20 @@ export type TaskStartDeps = {
   pauseDisposition: (issue: number) => PauseDisposition
   /** The agent a held run was dispatched with, from its own pause record — `null` when there is no pause record or it names none. What a CONTINUATION must be relaunched under; the loop refuses any other. */
   heldAgent: (issue: number) => AgentVendor | null
+  /**
+   * O1: the `task_resume` handler, to which this tool HANDS a `ruled` pause —
+   * one a Principal ruling already posted authorizes. Delegating rather than
+   * relaunching through {@link TaskStartDeps.launch} is deliberate: it records
+   * the SAME resolution and emits the SAME `operation: task_resume` Log event a
+   * resume records, and re-applies the SAME ordinal-freshness check (the loop's
+   * own `--resume` entry checks ruling PRESENCE but not freshness), so a
+   * continuation `task_start` takes can never bypass an authentication
+   * `task_resume` makes. Injectable so a fixture asserts the hand-off without a
+   * second handler; the default is the bound `task_resume` handler.
+   */
+  resume: (input: { task: TaskToolRef }, ctx: CallerContext) => Promise<TaskToolCallResult<TaskResumeResult>>
+  /** O2: where a ruling for a still-`awaiting_ruling` pause goes and the ordinal it must carry — read ONLY to build that refusal, so it names the place, the marker and the command. `null` when this host could not resolve it. */
+  rulingPlacement: (issue: number) => RulingPlacement | null
   /** Is this pid still running? Asked of the pid a claim's own launch recorded — the one liveness signal that exists BEFORE a driver lock does, and so the one that tells a still-preparing run apart from a dead claim. */
   isPidAlive: (pid: number) => boolean
   /** A live re-read of a pid's own identity, for {@link claimLaunchIsAlive} — what keeps a recycled pid from reading as this launch's child. `null` when no process answers at that pid. */
@@ -644,8 +669,20 @@ export const INFRASTRUCTURE_RETRY_BOUND = 5
  * What a paused run is actually waiting for — the fact that decides whether
  * `task_resume` can move it, or whether this tool is the one that can.
  *
- *   - `awaiting_ruling` — a pause nobody has decided yet. `task_resume`'s
- *     case: it authenticates the Principal's ruling and continues from it.
+ *   - `awaiting_ruling` — a pause nobody has decided yet, and no ruling
+ *     authenticating one is posted where this pause's comment went.
+ *     `task_resume`'s case: it waits for the Principal to post a ruling, then
+ *     authenticates and continues from it.
+ *   - `ruled` — a pause whose decision is NOT yet consumed into a resolution
+ *     record, but a Principal ruling NEWER than the one this escalation was
+ *     raised under is already posted where its comment went (the pull request,
+ *     or the Issue when there is none). The authentication `task_resume` would
+ *     perform has, in effect, already passed — so `task_start` finishes what
+ *     that posted ruling authorizes, by handing the continuation to the
+ *     `task_resume` handler itself (reusing its exact check, resolution write
+ *     and Log event, never a second copy). Computed by `resolvePauseDisposition`
+ *     only — `defaultPauseDisposition` never reads the forge and never returns
+ *     it, so an `awaiting_ruling` with no ruling-aware reader stays that.
  *   - `resolved_resume` — a ruling was already given and consumed into a
  *     resolution record, and the continuing driver then died. `task_resume`
  *     answers `already_resumed` and launches nothing — an ok result, not a
@@ -669,6 +706,7 @@ export const INFRASTRUCTURE_RETRY_BOUND = 5
 
 export type PauseDisposition =
   | 'awaiting_ruling'
+  | 'ruled'
   | 'resolved_resume'
   | 'resolved_cancel'
   | 'self_resuming'
@@ -780,6 +818,111 @@ export function defaultHeldAgent(issue: number, root: string = runtimeDirForThis
   }
 }
 
+// --- the ruling-aware disposition: awaiting_ruling → ruled ------------------
+
+/**
+ * The forge reads the ruling-aware disposition needs — the SAME four readers
+ * `task_resume` authenticates a continuation through (`developer-dispatch.ts`),
+ * so the `ruled` this computes and the resume that then continues read the
+ * ruling off the same source under the same principal allowlist. Injectable so
+ * a fixture drives `ruled`/`awaiting_ruling` with no `gh` on `PATH`.
+ */
+export type PauseRulingDeps = {
+  fetchRulings: (pr: number) => string[]
+  fetchNewestRulingOrdinal: (pr: number) => number
+  fetchIssueRulings: (issue: number) => string[]
+  fetchNewestIssueRulingOrdinal: (issue: number) => number
+}
+
+export const defaultPauseRulingDeps: PauseRulingDeps = {
+  fetchRulings,
+  fetchNewestRulingOrdinal,
+  fetchIssueRulings,
+  fetchNewestIssueRulingOrdinal
+}
+
+/**
+ * Where a ruling for this pause goes, and the ordinal the next one must carry —
+ * everything the refusal for a still-unruled pause names so the Planner can
+ * post it without looking anything up (O2). `pr` is the pull request the pause
+ * posted its comment on, or `null` when it paused before one existed and the
+ * ruling goes on the Issue; `nextOrdinal` is one past the newest ruling already
+ * posted there, the `<k>` the marker must carry to postdate this pause's own.
+ */
+export type RulingPlacement = {
+  pr: number | null
+  issue: number
+  nextOrdinal: number
+}
+
+type RulingAssessment = { authenticated: boolean; placement: RulingPlacement }
+
+/**
+ * Reads the pause and its escalation record, then the ruling posted where that
+ * pause's comment went — once, so the disposition upgrade and the refusal's own
+ * placement are the SAME reading. `null` when there is no pause or no durable
+ * escalation to compare a ruling against, which is never read as authenticated:
+ * a pause this host cannot bind a ruling to is one `task_resume` would refuse
+ * too. A non-positive `prNumber` is the pre-pull-request sentinel, normalized to
+ * `null` the same way every other reader of this record normalizes it.
+ */
+function assessPostedRuling(issue: number, root: string, deps: PauseRulingDeps): RulingAssessment | null {
+  const held = readPauseState(root, issue)
+  if (held === null) return null
+  const pr = typeof held.prNumber === 'number' && held.prNumber > 0 ? held.prNumber : null
+  const csDeps = defaultControlStoreDeps(() => tasksExecutionRoot(root))
+  const escalationId = held.escalationId ?? escalationIdFor(issue, held.round, held.head)
+  const escalation = readEscalationRecord(issue, escalationId, csDeps)
+  if (escalation === null) return null
+  const rulings = pr === null ? deps.fetchIssueRulings(issue) : deps.fetchRulings(pr)
+  const newestOrdinal = pr === null ? deps.fetchNewestIssueRulingOrdinal(issue) : deps.fetchNewestRulingOrdinal(pr)
+  return {
+    authenticated: rulingAuthenticatesResume(rulings.length, newestOrdinal, escalation.rulingOrdinal),
+    placement: { pr, issue, nextOrdinal: newestOrdinal + 1 }
+  }
+}
+
+/**
+ * The ONE disposition `task_start` and `task_status` both read (the brief's
+ * "one disposition shared by two readers"): `defaultPauseDisposition`'s
+ * pure-local answer, with the one case that hangs on the forge resolved —
+ * `awaiting_ruling` becomes `ruled` when a Principal ruling that postdates this
+ * pause is already posted (the exact check `task_resume` makes, reused). Every
+ * other disposition is returned unchanged and makes no forge read at all, so
+ * only a genuinely undecided pause pays for the ruling read.
+ *
+ * A forge read that throws never UPGRADES a pause to `ruled`: the safe
+ * direction is always to keep waiting for a ruling this host can confirm, so a
+ * read failure reads as `awaiting_ruling`, exactly the refusal `task_resume`
+ * would give.
+ */
+export function resolvePauseDisposition(
+  issue: number,
+  root: string = runtimeDirForThisRepo(),
+  deps: PauseRulingDeps = defaultPauseRulingDeps
+): PauseDisposition {
+  const base = defaultPauseDisposition(issue, root)
+  if (base !== 'awaiting_ruling') return base
+  try {
+    return assessPostedRuling(issue, root, deps)?.authenticated ? 'ruled' : 'awaiting_ruling'
+  } catch {
+    return 'awaiting_ruling'
+  }
+}
+
+/** Where the Planner posts the ruling that would unblock a still-awaiting pause (O2) — `null` when there is no pause or no escalation to place it against. */
+export function defaultRulingPlacement(
+  issue: number,
+  root: string = runtimeDirForThisRepo(),
+  deps: PauseRulingDeps = defaultPauseRulingDeps
+): RulingPlacement | null {
+  try {
+    return assessPostedRuling(issue, root, deps)?.placement ?? null
+  } catch {
+    return null
+  }
+}
+
 /**
  * The one state gate: is this task's run another tool's to act on?
  *
@@ -842,7 +985,9 @@ export function defaultHeldAgent(issue: number, root: string = runtimeDirForThis
 export function startRefusalForState(
   state: TaskLoopState,
   target: TaskToolRef,
-  disposition: PauseDisposition
+  disposition: PauseDisposition,
+  /** Where a ruling for this pause goes and the ordinal it must carry — read only for the `awaiting_ruling` refusal, so it names the place, the marker and the command (O2). `null` when this host could not resolve it, which falls back to the generic phrasing. */
+  placement: RulingPlacement | null = null
 ): TaskToolError | null {
   if (state.kind === 'running') {
     return taskToolError(
@@ -863,9 +1008,26 @@ export function startRefusalForState(
     )
   }
   if (disposition === 'awaiting_ruling') {
+    const reasonSuffix =
+      state.kind === 'paused'
+        ? ` (${state.reason})`
+        : ' (its driver has since exited, but the pause still holds the run)'
+    // O2: name WHERE the ruling goes, the exact marker the next one must carry,
+    // and the command that posts it — so the Planner posts it without looking
+    // anything up. `null` placement (this host could not resolve it) falls back
+    // to the generic phrasing rather than inventing a number.
+    let whereAndHow =
+      "against a Principal ruling posted on the run's own pull request. `task_start` never resumes past a pause that is still asking for one."
+    if (placement !== null) {
+      const marker = principalRulingMarker(placement.pr ?? placement.issue, placement.nextOrdinal)
+      whereAndHow =
+        placement.pr !== null
+          ? `against a Principal ruling posted on PR #${placement.pr}. Post it with \`vinaya pr rule ${placement.pr} --file <ruling.md>\`, which stamps the next marker \`${marker}\` itself. \`task_start\` never resumes past a pause that is still asking for one.`
+          : `against a Principal ruling posted on Issue #${placement.issue} (this pause predates any pull request). Post it as a principal comment on Issue #${placement.issue} whose first line is the marker \`${marker}\`. \`task_start\` never resumes past a pause that is still asking for one.`
+    }
     return taskToolError(
       'precondition',
-      `task_start: ${describeTaskRef(target)} is held by a pause awaiting a decision${state.kind === 'paused' ? ` (${state.reason})` : ' (its driver has since exited, but the pause still holds the run)'} — a pause nobody has ruled on is continued by \`task_resume\`, which authenticates it against a Principal ruling posted on the run's own pull request. \`task_start\` never resumes past a pause that is still asking for one.`
+      `task_start: ${describeTaskRef(target)} is held by a pause awaiting a decision${reasonSuffix} — a pause nobody has ruled on is continued by \`task_resume\`, which authenticates it ${whereAndHow}`
     )
   }
   if (disposition === 'resolved_cancel') {
@@ -874,13 +1036,16 @@ export function startRefusalForState(
       `task_start: ${describeTaskRef(target)}'s pause was already resolved as 'cancel' — that run was stopped deliberately, and restarting it here would reverse a Principal decision. \`task_cancel\` reports the cancellation again if you need to read it.`
     )
   }
-  // `resolved_resume` and `self_resuming` both continue through THIS tool:
-  // the decision they needed has already been made (a ruling consumed into a
-  // resolution record) or is one the loop makes for itself (a recoverable
-  // infrastructure hiccup, within its own retry bound). `task_resume`
-  // launches nothing for either — it replays `already_resumed` for the first
-  // and refuses `authority` for the second, since it carries no waiver of
-  // its own — so refusing here would leave those runs with no tool at all.
+  // `resolved_resume`, `self_resuming` and `ruled` all continue through THIS
+  // tool: the decision they needed has already been made (a ruling consumed
+  // into a resolution record), is one the loop makes for itself (a recoverable
+  // infrastructure hiccup, within its own retry bound), or is a ruling already
+  // posted that postdates this pause (`ruled`) — the very check `task_resume`
+  // makes, having passed before this call. `task_resume` launches nothing for
+  // the first two — it replays `already_resumed` for one and refuses
+  // `authority` for the other — so refusing here would leave those runs with
+  // no tool; the `ruled` continuation is `task_resume`'s own, which the handler
+  // hands to it directly rather than relaunching past the authentication.
   return null
 }
 
@@ -1149,8 +1314,16 @@ export const defaultTaskStartDeps: TaskStartDeps = {
       readStartClaim(root, issue, claimAddressFor(ref), undefined, ownRequestId)
     )
   },
-  pauseDisposition: (issue) => defaultPauseDisposition(issue),
+  // The ruling-AWARE disposition: both this tool and `task_status` read the
+  // one reader, so a run a ruling has already authorized reads `ruled` to both.
+  pauseDisposition: (issue) => resolvePauseDisposition(issue),
   heldAgent: (issue) => defaultHeldAgent(issue),
+  // Wrapped in an arrow, never referenced bare: `resume.js` reaches back here
+  // through `task-status.js`, so this module can begin evaluating before
+  // `defaultTaskResumeHandler` is bound — deferring the read to call time is
+  // what keeps the cycle from capturing an undefined handler.
+  resume: (input, ctx) => defaultTaskResumeHandler(input, ctx),
+  rulingPlacement: (issue) => defaultRulingPlacement(issue),
   isPidAlive: isDriverPidAlive,
   processSnapshot: getProcessSnapshot,
   captureChildSnapshot: captureSettledChildSnapshot,
@@ -1271,7 +1444,10 @@ export function createTaskStartHandler(
       try {
         const state = deps.loopState(issue, target, requestId)
         disposition = state.kind === 'running' ? 'none' : deps.pauseDisposition(issue)
-        refusal = startRefusalForState(state, target, disposition)
+        // O2: only a still-unruled pause needs its placement, so the refusal
+        // can name where the ruling goes, the marker and the command.
+        const placement = disposition === 'awaiting_ruling' ? deps.rulingPlacement(issue) : null
+        refusal = startRefusalForState(state, target, disposition, placement)
       } catch (err) {
         // Neither read is allowed to escape past the claim this call already
         // wrote: an identity claimed with nothing launched replays
@@ -1290,6 +1466,42 @@ export function createTaskStartHandler(
         deps.store.release(requestId)
         return { ok: false, error: refusal }
       }
+
+      // O1: a `ruled` pause is one a Principal ruling already posted
+      // authorizes — the continuation is `task_resume`'s own, and this tool
+      // HANDS it there rather than relaunching through `launch`. That is what
+      // keeps the ordinal-freshness check the loop's bare `--resume` omits
+      // (`dev-review-loop.ts`'s own resume gate checks ruling PRESENCE only),
+      // and what records the same resolution and the same `operation:
+      // task_resume` Log event a resume records — never a second copy. The
+      // start claim this call already wrote STAYS (so a repeat of the same
+      // request replays `started: false` rather than handing the same pause to
+      // a second continuation) and is marked confirmed (so no later status read
+      // calls it a start still coming up — the run `task_resume` launched is
+      // the one with a driver lock). A refusal from the hand-off releases the
+      // claim, so a corrected retry reclaims it.
+      if (disposition === 'ruled') {
+        const resumed = await deps.resume({ task: target }, ctx)
+        if (!resumed.ok) {
+          deps.store.release(requestId)
+          return { ok: false, error: resumed.error }
+        }
+        claim = { claimed: true, record: { ...claim.record, confirmedAt: deps.now() } }
+        deps.store.update(claim.record)
+        return {
+          ok: true,
+          result: {
+            requestId: claim.record.requestId,
+            run: claim.record.target,
+            // `already_resumed` means the continuation was already launched by
+            // an earlier call — this one started nothing new.
+            started: resumed.result.outcome === 'started',
+            startedAt: claim.record.startedAt,
+            mode: 'attended'
+          }
+        }
+      }
+
       // Continuing a pause is not the same as starting fresh. `runTask` takes
       // its resume path for any task with a pause record, and the loop
       // refuses outright when the agent it is handed is not the one that

@@ -57,8 +57,8 @@ import {
   claimIsPastReporting,
   claimIsStale,
   claimLaunchIsAlive,
-  defaultPauseDisposition,
   readStartClaims,
+  resolvePauseDisposition,
   type PauseDisposition,
   type StartRecord
 } from './task-tools/start.js'
@@ -985,12 +985,21 @@ export function phaseIsCurrentFor(state: TaskLoopState, recordedPhase: string): 
   return state.kind === 'paused' && recordedPhase === 'pause'
 }
 
-function renderStateText(state: TaskLoopState): string {
+function renderStateText(state: TaskLoopState, disposition: PauseDisposition | null = null): string {
   switch (state.kind) {
     case 'running':
       return `running (pid ${state.pid})`
-    case 'paused':
-      return `paused (${state.reason})`
+    case 'paused': {
+      // O3: a paused row says what the pause is waiting for, read off the same
+      // disposition the `next` column is. A run a ruling has already authorized
+      // reads `ruled, start continues it` (and `next` is `start`), one still
+      // owed a ruling reads `needs ruling` (and `next` is `rule`) — never
+      // `exited`. Every other disposition keeps the bare reason, as before.
+      const base = `paused (${state.reason})`
+      if (disposition === 'awaiting_ruling') return `${base} — needs ruling`
+      if (disposition === 'ruled') return `${base} — ruled, start continues it`
+      return base
+    }
     case 'published':
       return 'published'
     case 'exited':
@@ -1047,6 +1056,10 @@ export const NEXT_ACTION_BY_STATE_KIND: Record<TaskLoopState['kind'], TaskNextAc
  */
 export const NEXT_ACTION_BY_PAUSE_DISPOSITION: Record<PauseDisposition, TaskNextAction> = {
   awaiting_ruling: 'rule',
+  // A ruling is already posted that postdates this pause — `task_start`
+  // continues it (by handing it to `task_resume`), so the action is `start`,
+  // not another `rule`.
+  ruled: 'start',
   resolved_resume: 'start',
   self_resuming: 'start',
   resolved_cancel: 'cancel',
@@ -1250,7 +1263,7 @@ function cellsFor(row: TaskStatusRow): string[] {
     `[${row.tranche}] ${row.id}`,
     `#${row.issue}`,
     row.pr ? `#${row.pr.number}` : NO_VALUE,
-    renderStateText(row.state),
+    renderStateText(row.state, row.pauseDisposition),
     row.round === null ? NO_VALUE : String(row.round),
     phaseCell(row),
     inPhaseCell(row),
@@ -1550,7 +1563,25 @@ function buildRow(
     }
   }
   const pr = findPrForRef(ref)
-  const state = deriveLoopState(root, ref.issue, undefined, startClaim)
+  const derived = deriveLoopState(root, ref.issue, undefined, startClaim)
+  // O3: a pause holds the run whatever its driver did. `task run`'s watching
+  // driver keeps its lock through a pause, so a pause whose driver was then
+  // killed derives `exited` while its record still holds the run —
+  // `deriveLoopState` reads the dead lock's exit trace before it looks at the
+  // pause. So the row reads the SAME disposition `task_start` reads
+  // (`resolvePauseDisposition`, ruling-aware), and when it names a live hold it
+  // reports `paused` off the pause record rather than the `exited`/`no_driver`
+  // the derivation alone would show — never `exited` for a run a pause still
+  // holds. A live driver (`running`) and a start coming up (`starting`) are
+  // already the truth and never a pause; a published round means the pause was
+  // superseded, which the disposition reads as `none`.
+  const disposition: PauseDisposition | null =
+    derived.kind === 'running' || derived.kind === 'starting' ? null : resolvePauseDisposition(ref.issue, root)
+  const held = disposition !== null && disposition !== 'none' ? readPauseState(root, ref.issue) : null
+  const state: TaskLoopState =
+    held !== null && derived.kind !== 'paused'
+      ? { kind: 'paused', reason: held.reason, detail: held.detail, round: held.round }
+      : derived
   const phase = readLoopPhase(root, ref.issue)
   // One read per pull request, and none at all for a row without one.
   const prRead = pr ? readPrFacts(pr.number) : null
@@ -1590,10 +1621,10 @@ function buildRow(
       // out of a listing where nothing is in flight.
       phaseHistory: phase !== null && phaseIsCurrent === true ? history(phase.recordedPhase) : null,
       prFacts: prRead === null ? null : prRead.facts,
-      // Read only where it means something: the disposition is what a PAUSE is
-      // waiting for, and reading it for a running or published row would cost
-      // every listing a control-store read for a cell that names no pause.
-      pauseDisposition: state.kind === 'paused' ? defaultPauseDisposition(ref.issue, root) : null
+      // The disposition is what a PAUSE is waiting for — carried only for a row
+      // that reads `paused` (whether derived so or recovered from a killed
+      // pause above), and already computed, never read twice.
+      pauseDisposition: state.kind === 'paused' ? disposition : null
     }
   }
 }

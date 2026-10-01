@@ -84,6 +84,7 @@ import {
   readPauseState,
   ReplayedResolutionError,
   resolveEscalation,
+  rulingAuthenticatesResume,
   StaleEscalationError,
   WrongTargetResolutionError
 } from '../dev-review-loop/pause-resume.js'
@@ -604,7 +605,7 @@ export function createTaskResumeHandler(
     const rulings = pr === null ? deps.fetchIssueRulings(issue) : deps.fetchRulings(pr)
     const newestRulingOrdinal =
       pr === null ? deps.fetchNewestIssueRulingOrdinal(issue) : deps.fetchNewestRulingOrdinal(pr)
-    if (rulings.length === 0 || newestRulingOrdinal <= escalation.rulingOrdinal) {
+    if (!rulingAuthenticatesResume(rulings.length, newestRulingOrdinal, escalation.rulingOrdinal)) {
       emitOperationEvent(deps.log, issue, target, 'refused', 'authority')
       return fail(
         taskToolError(

@@ -74,7 +74,7 @@ The five registered tools and their handlers:
 
 | Tool | Handler | What it does |
 | ---- | ------- | ------------- |
-| `task_start` | `apps/cli/src/lib/task-tools/start.ts` | Starts the dev-review-loop for an explicitly selected, already-frozen task, attended; idempotent per request identity. |
+| `task_start` | `apps/cli/src/lib/task-tools/start.ts` | Starts the dev-review-loop for an explicitly selected, already-frozen task, attended; idempotent per request identity. Also continues a stopped run, including a pause whose Principal ruling is already posted — which it hands to `task_resume`'s own authentication rather than relaunching past it. A pause still awaiting a ruling is refused, naming where the ruling goes, the marker and the command. |
 | `task_status` | `apps/cli/src/lib/task-tools/handlers.ts` | Reads a task's current loop state (running/paused/published/exited/no driver); never explains why. Lists a planned backlog task — an open Issue with a frozen brief and no run yet — as `not started`, from one forge search per listing. |
 | `task_escalation_read` | `apps/cli/src/lib/task-tools/read.ts` | Reads the full escalation packet for a paused task — reason, round inputs, attempted recovery, permitted next actions; never resumes or cancels. |
 | `task_resume` | `apps/cli/src/lib/task-tools/resume.ts` | Continues a paused run once a Principal ruling, read fresh from the forge, authenticates it. |

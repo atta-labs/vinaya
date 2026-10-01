@@ -986,6 +986,30 @@ export function readEscalationRecord(
   return parsed.status === 'ok' ? parsed.value : null
 }
 
+/**
+ * Does a Principal ruling posted where this pause's own comment went
+ * authenticate continuing past it? The ONE comparison `task_resume` makes,
+ * shared so the start tool's ruled-pause disposition and `task_resume` can
+ * never disagree about what a posted ruling authorizes — neither copies the
+ * ordinal comparison, both call this.
+ *
+ * Two things must hold: a ruling must EXIST (`rulingCount > 0`), and its
+ * ordinal must strictly POSTDATE the one this escalation was already raised
+ * under (`EscalationRecord.rulingOrdinal`). A ruling that merely exists proves
+ * only that SOME principal ruling stands on the pull request at some point in
+ * its history — an older approval left over from a round already addressed
+ * would satisfy a presence check forever after, authenticating a resume it
+ * never spoke to. The strict `>` is the same inequality `compareManifest`'s own
+ * `binding.rulingOrdinal` already checks for "a new ruling landed".
+ */
+export function rulingAuthenticatesResume(
+  rulingCount: number,
+  newestRulingOrdinal: number,
+  escalationRulingOrdinal: number
+): boolean {
+  return rulingCount > 0 && newestRulingOrdinal > escalationRulingOrdinal
+}
+
 /** O2: a resolution attempt whose escalation record cannot be trusted — never written (this pause predates escalation-record adoption), or unparseable. Refused rather than guessed at: a `--resume`/`--cancel` with no durable escalation to bind against is not distinguishable from one targeting a superseded pause. */
 export class StaleEscalationError extends Error {
   constructor(
