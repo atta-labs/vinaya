@@ -72,9 +72,21 @@ function correctionsOf(events: readonly CheckedEvent[]): { times: number[]; unco
   return { times: times.sort((a, b) => a - b), uncorrected }
 }
 
+/** Merges each unit's own corrections into one list for the check — an episode never crosses units. */
+function correctionsAcrossUnits(events: readonly CheckedEvent[]): { times: number[]; uncorrected: number } {
+  const times: number[] = []
+  let uncorrected = 0
+  for (const unitEvents of groupBy(events, (e) => e.unit).values()) {
+    const result = correctionsOf(unitEvents)
+    times.push(...result.times)
+    uncorrected += result.uncorrected
+  }
+  return { times: times.sort((a, b) => a - b), uncorrected }
+}
+
 function outcomeOf(check: string, events: readonly CheckedEvent[], unknowns: UnknownFigure[]): CheckOutcome {
   const failures = events.filter((e) => e.outcome === 'fail').length
-  const { times, uncorrected } = correctionsOf(events)
+  const { times, uncorrected } = correctionsAcrossUnits(events)
   let correctionTimesMs: Measured<number[]>
   if (failures === 0) {
     correctionTimesMs = unknownBecause(`no failure of ${check} was recorded`)

@@ -93,13 +93,14 @@ describe('question 6 — which check catches most', () => {
 
 const at = (seconds: number) => `2026-09-05T00:00:${String(seconds).padStart(2, '0')}.000Z`
 
-/** A `checked` line for `check`/`outcome` at `at`, built from a fixture's own gate line so it stays schema-valid. */
-function checked(id: string, check: string, outcome: string, atTime: string): string {
+/** A `checked` line for `check`/`outcome` at `at`, built from a fixture's own gate line so it stays schema-valid. `unit` defaults to the base line's own work reference. */
+function checked(id: string, check: string, outcome: string, atTime: string, unit?: string): string {
   const object = JSON.parse(rawLines('gate-two-commits')[0] as string)
   object.check = check
   object.outcome = outcome
   object.meta.ts = atTime
   object.meta.event_id = `evt-checked-${id}`
+  if (unit !== undefined) object.meta.work.ref = unit
   return JSON.stringify(object)
 }
 
@@ -131,6 +132,31 @@ describe('question 6 — a run of consecutive failures is one episode, corrected
       },
       { figure: 'falseRejections', reason: 'no labels recorded' }
     ])
+  })
+})
+
+describe('question 6 — a correction episode never crosses units of work', () => {
+  it("does not read another unit's later pass as correcting this unit's failure", () => {
+    const lines = [checked('a', 'test', 'fail', at(0), 'A'), checked('b', 'test', 'pass', at(10), 'B')]
+    const answer = checkOutcomes(datasetOf(lines))
+    expect(answer.checks).toEqual([
+      {
+        check: 'test',
+        failures: 1,
+        correctionTimesMs: unknown('no failure of test was followed by a pass of the same unit')
+      }
+    ])
+  })
+
+  it("measures each unit's own episode independently when they interleave on the clock", () => {
+    const lines = [
+      checked('a', 'test', 'fail', at(0), 'A'),
+      checked('b', 'test', 'fail', at(5), 'B'),
+      checked('c', 'test', 'pass', at(10), 'A'),
+      checked('d', 'test', 'pass', at(20), 'B')
+    ]
+    const answer = checkOutcomes(datasetOf(lines))
+    expect(answer.checks).toEqual([{ check: 'test', failures: 2, correctionTimesMs: known([10_000, 15_000]) }])
   })
 })
 
