@@ -622,7 +622,26 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
         'green',
         'merge'
       ],
-      ['[demo] 4', '#606', '—', 'not started', '—', '—', '—', '—', '—', '—', '—', '—', '—', '—', 'start']
+      ['[demo] 4', '#606', '—', 'not started', '—', '—', '—', '—', '—', '—', '—', '—', '—', '—', 'start'],
+      // A backlog Issue with a frozen brief and no outbox yet is planned, not
+      // started: the one brief search finds it and it lists as `not started`.
+      [
+        '[backlog] 604',
+        '#604',
+        '#704',
+        'not started',
+        '—',
+        '—',
+        '—',
+        '—',
+        '—',
+        '704aaaa',
+        'green',
+        '—',
+        '—',
+        '—',
+        'start'
+      ]
     ])
     // No row is in a phase, so no row carries a typical time — and the
     // history sentence is not printed at all (O4).
@@ -675,9 +694,10 @@ describe('vinaya task status (O1/O3 — the list form)', () => {
       data: { tasks: Array<Record<string, unknown>> }
     }
     expect(parsed.schema).toBe(1)
-    // Three frozen tranche tasks plus the planned one (O4) — the planned task
-    // carries the structured `not_started` state in the JSON envelope too.
-    expect(parsed.data.tasks).toHaveLength(4)
+    // Three frozen tranche tasks, the planned one (O4) and the frozen backlog
+    // task with no outbox yet — both carry the structured `not_started` state
+    // in the JSON envelope too.
+    expect(parsed.data.tasks).toHaveLength(5)
     expect(parsed.data.tasks[0]).toEqual({
       tranche: 'demo',
       id: '1',
