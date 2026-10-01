@@ -41,6 +41,7 @@ tests/lib/dev-review-loop/inproc-11.test.ts
 tests/lib/dispatch-task.test.ts
 tests/lib/dispatch.test.ts
 tests/lib/codex-execpolicy.test.ts
+tests/lib/log-sync-folder-source.test.ts
 tests/lib/log-webhook-drain.test.ts
 tests/lib/pr-report-engine.test.ts
 tests/lib/remote-base.test.ts
