@@ -4,7 +4,7 @@ Status: draft
 
 Everything below ships.
 
-A small server that receives the events a Vinaya installation delivers to a `logs.url` destination (`apps/cli/specs/log.md` § The destination), keeps every one of them, lets a reader page through them from any position, and pushes each new one to live viewers as it arrives. It runs on Cloudflare's free plan and can absorb the volume its known adopters have produced to date; beyond that volume, cost or stricter limits apply. Any Vinaya adopter can deploy their own copy; the sending side needs no change, because the server accepts exactly what the CLI already sends.
+A small server that receives the events a Vinaya installation delivers to a `logs.url` destination (`apps/cli/specs/log.md` § The destination), keeps every one of them, lets a reader page through them from any position, and pushes each new one to live viewers as it arrives. It runs on Cloudflare. The free plan's daily write limit is the first ceiling a busy installation meets (§ 2), and this repository's own deployment has run on the paid Workers plan since 2026-10-01, after reaching it. Any Vinaya adopter can deploy their own copy; the sending side needs no change, because the server accepts exactly what the CLI already sends.
 
 It is telemetry, never authority. Nothing in Vinaya reads this server to decide dispatch, approval, publication or recovery, and an outage here never fails or slows a run: the sender keeps events in its local retry queue until the server is back.
 
@@ -17,9 +17,9 @@ The path and method grammar of § 5 lives in one pure module (`src/route.ts`) th
 
 Nothing else: no D1 database, no R2 bucket, no scheduled job.
 
-## 2. Free-plan budget
+## 2. Plan budget
 
-Measured 2026-09-26 to 2026-09-30 by reading every stored event from each of the three delivering repositories (atta-labs/vinaya, attalabs, onchain-rewind) through the read route and the stats route's byte count. Peak day 2026-09-27 carried about 43,000 events across the three, totaling about 40 MB of database growth at peak. The free plan can absorb this volume but hits its first ceiling — the daily rows-written cap — before storage becomes a constraint.
+Measured 2026-09-26 to 2026-09-30 by reading every stored event from each of the three delivering repositories (atta-labs/vinaya, attalabs, onchain-rewind) through the read route and the stats route's byte count. Peak day 2026-09-27 carried about 43,000 events across the three, totaling about 40 MB of database growth at peak. The free plan hits its first ceiling — the daily rows-written cap — before storage becomes a constraint. The figures in the table below are the free plan's; a paid plan lifts them.
 
 | Limit (Workers Free) | Measured 2026-09-26 to 2026-09-30 | Allowance |
 |---|---|---|
@@ -33,7 +33,7 @@ Measured 2026-09-26 to 2026-09-30 by reading every stored event from each of the
 
 **The first ceiling is the daily rows-written cap: at peak measured volume (about 87,000 rows a day on 2026-09-27), the free plan's 100,000 daily limit is reached.** When ingest past that cap is attempted, the sender's ingest request is refused; the sender keeps the batch in its retry queue and resends it later. Storage (about 40 MB a day at peak) would reach the 5 GB account cap in roughly four months at the measured volume.
 
-Three ways are open to reduce or absorb the volume without choosing now:
+The cap was reached on 2026-10-01: a backlog of events queued on developers' machines flushed at once, writes were refused, and every route answered with an error until the plan changed. Senders keep their events in the local retry queue meanwhile, so the loss is bounded by the queue's size. Three ways were open to reduce or absorb the volume; the reference deployment took the third:
 - Record fewer repeated events at the source.
 - Retire (delete) old rows from the log, tracked against the daily allowance.
 - Move to a paid plan on Cloudflare with higher daily limits.
@@ -183,7 +183,7 @@ bunx wrangler secret put INGEST_TOKEN
 bunx wrangler secret put READ_TOKEN
 ```
 
-The Durable Object class is declared with `new_sqlite_classes` in its migration: SQLite-backed objects are the only kind the free plan offers. Then point `logs.url` at the ingest route (§ 5) for their own `<owner>/<repo>` on the default branch, set `VINAYA_LOG_TOKEN` to the ingest token as a repository secret for CI and in the shell environment for local runs.
+The Durable Object class is declared with `new_sqlite_classes` in its migration: SQLite-backed objects are the only kind the free plan offers, and a paid plan offers them too. Then point `logs.url` at the ingest route (§ 5) for their own `<owner>/<repo>` on the default branch, set `VINAYA_LOG_TOKEN` to the ingest token as a repository secret for CI and in the shell environment for local runs.
 
 Setting `logs.url` moves local runs off the default local folder as well: a Vinaya installation delivers to exactly one destination.
 
