@@ -137,7 +137,7 @@ import {
   renderDeveloperDoctrineBlock,
   resolveDeveloperDoctrineText,
   resolveIssueObjectives,
-  reviewPolicy,
+  reviewPolicyForLoop,
   taskFromPrBody,
   withPromptFile
 } from './dev-review-loop/developer-dispatch.js'
@@ -263,6 +263,7 @@ export {
   parseObjectivesEditComment,
   resolveIssueObjectives,
   reviewPolicy,
+  reviewPolicyForLoop,
   taskFromPrBody
 } from './dev-review-loop/developer-dispatch.js'
 export type {
@@ -320,13 +321,14 @@ export type LoopDeps = {
   resolveHead: typeof resolveHead
   /**
    * The repository's review policy, read once per run from the default
-   * branch's trust anchor. A FAILED read throws (after its own retry),
-   * which the setup-phase `try` turns into a decided `pause(infrastructure)`
-   * rather than letting the loop cast a verdict under the built-in default
-   * policy the gate would reject; a missing/no-policy config resolves to the
-   * defaults. Injected so a test can drive both paths without a real forge.
+   * branch's trust anchor — `reviewPolicyForLoop`, the fail-loud variant: a
+   * FAILED read throws (after its own retry), which the setup-phase `try`
+   * turns into a decided `pause(infrastructure)` rather than letting the loop
+   * cast a verdict under the built-in default policy the gate would reject; a
+   * missing/no-policy config resolves to the defaults. Injected so a test can
+   * drive both paths without a real forge.
    */
-  reviewPolicy: typeof reviewPolicy
+  reviewPolicy: typeof reviewPolicyForLoop
   fetchCiConclusion: typeof fetchCiConclusion
   /** O3: named check-runs, never the review gate's own (excluded upstream). */
   fetchFailingCheckRuns: typeof fetchFailingCheckRuns
@@ -925,7 +927,7 @@ function defaultDeps(): LoopDeps {
   return {
     dispatchRole: realDispatchRole,
     resolveHead,
-    reviewPolicy,
+    reviewPolicy: reviewPolicyForLoop,
     fetchCiConclusion,
     fetchFailingCheckRuns,
     fetchRulings,

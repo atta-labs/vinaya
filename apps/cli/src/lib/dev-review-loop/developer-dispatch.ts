@@ -108,6 +108,21 @@ export function principalAllowlist(): string[] {
 }
 
 /**
+ * Which severities block is repository policy — resolved from the SAME
+ * default-branch trust-anchor source `principalAllowlist()` already reads,
+ * never from the PR's own checkout, so a change cannot lower its own threshold.
+ * `resolveReviewPolicy` refuses (throws) on a present-but-unknown severity
+ * value; a FAILED read falls back to the built-in defaults (the historic
+ * `loadTrustAnchorConfig` behaviour every other caller still relies on —
+ * `review status`, for one). The one caller that must NOT default on a failed
+ * read is the dev-review-loop, which would then cast a verdict the gate
+ * rejects; it uses `reviewPolicyForLoop` below instead.
+ */
+export function reviewPolicy(): ReviewPolicy {
+  return resolveReviewPolicy(loadTrustAnchorConfig())
+}
+
+/**
  * The policy read is retried once (two attempts total) before the loop gives
  * up — a transient forge hiccup (a rate-limit window, a brief outage) often
  * clears on the very next attempt, and an in-process retry is cheaper than the
@@ -117,13 +132,9 @@ export function principalAllowlist(): string[] {
 const POLICY_READ_ATTEMPTS = 2
 
 /**
- * Which severities block is repository policy — resolved from the SAME
- * default-branch trust-anchor source
- * `principalAllowlist()` already reads, never from the PR's own checkout, so
- * a change cannot lower its own threshold.
- *
- * A FAILED read of that source (the forge read threw or timed out) must never
- * resolve to the built-in defaults here. On `2026-10-01` a loop cast
+ * `reviewPolicy` for the dev-review-loop ONLY: a FAILED read of the
+ * default-branch trust-anchor source (the forge read threw or timed out) must
+ * never resolve to the built-in defaults here. On `2026-10-01` a loop cast
  * APPROVE/PASS under the `BLOCKER` default after a GitHub API limit broke the
  * read, while this repository's `reviewPolicy` sets `MAJOR`; the merge gate,
  * which read the real policy, refused both verdicts on a policy-digest
@@ -138,19 +149,20 @@ const POLICY_READ_ATTEMPTS = 2
  * the built-in defaults exactly as before. `resolveReviewPolicy` still refuses
  * (throws) a present-but-unknown severity value — a config defect, not a read
  * failure, so it is never retried: that throw propagates to the same setup
- * `try` on the first attempt.
+ * `try` on the first attempt. This is the ONLY caller with the fail-loud
+ * behaviour; `reviewPolicy` above keeps the shared fail-to-defaults contract.
  *
  * `load` is injectable for tests only; production callers pass nothing.
  */
-export function reviewPolicy(load: () => VinayaConfig | null = loadTrustAnchorConfigOrThrow): ReviewPolicy {
+export function reviewPolicyForLoop(load: () => VinayaConfig | null = loadTrustAnchorConfigOrThrow): ReviewPolicy {
   return resolveReviewPolicy(readTrustAnchorConfigWithRetry(load))
 }
 
 /**
- * The retried read behind `reviewPolicy`. Only the READ is retried; a config
- * that resolves to a value `resolveReviewPolicy` later rejects is a defect, not
- * a hiccup, and is handled by `reviewPolicy`'s own caller, not here. Throws
- * naming the last read error once every attempt has failed.
+ * The retried read behind `reviewPolicyForLoop`. Only the READ is retried; a
+ * config that resolves to a value `resolveReviewPolicy` later rejects is a
+ * defect, not a hiccup, and is handled by that function's caller, not here.
+ * Throws naming the last read error once every attempt has failed.
  */
 function readTrustAnchorConfigWithRetry(load: () => VinayaConfig | null): VinayaConfig | null {
   let lastErr: unknown
@@ -162,7 +174,7 @@ function readTrustAnchorConfigWithRetry(load: () => VinayaConfig | null): Vinaya
     }
   }
   throw new Error(
-    `reviewPolicy: could not read the repository's review policy from the default branch after ${POLICY_READ_ATTEMPTS} attempts — not casting a verdict under the built-in default policy: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`
+    `reviewPolicyForLoop: could not read the repository's review policy from the default branch after ${POLICY_READ_ATTEMPTS} attempts — not casting a verdict under the built-in default policy: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`
   )
 }
 
