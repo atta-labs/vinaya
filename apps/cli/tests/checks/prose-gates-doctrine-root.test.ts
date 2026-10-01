@@ -783,7 +783,51 @@ describe('reader-resolvable-prose: the spec class checks a root spec, context an
 
       const { exitCode, stderr } = runReaderBin(root)
       expect(exitCode).toBe(0)
-      expect(stderr).not.toContain('SPEC.md')
+      // The array form's one warning names the path; the citations themselves stay unreported.
+      expect(stderr).not.toContain('aeg-coherence-v1')
+      expect(stderr).not.toContain('#4213')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('specGrandfather as an object passes a file at its limit and fails one above it, naming both numbers', () => {
+    const root = fixtureWithConfig('spec-grandfather-limit', {
+      proseGates: { specGrandfather: { 'SPEC.md': 1 } }
+    })
+    try {
+      writeFileSync(join(root, 'SPEC.md'), '# Spec\n\nThe gate landed in aeg-coherence-v1.\n')
+      commitAll(root, 'Chore: add a root spec at its limit')
+      const atLimit = runReaderBin(root)
+      expect(atLimit.exitCode).toBe(0)
+      expect(atLimit.stderr).not.toContain('SPEC.md')
+
+      writeFileSync(join(root, 'SPEC.md'), '# Spec\n\nThe gate landed in aeg-coherence-v1, closing (#4213).\n')
+      commitAll(root, 'Chore: add one more citation')
+      const above = runReaderBin(root)
+      expect(above.exitCode).toBe(1)
+      expect(above.stderr).toContain('SPEC.md carries 2 such findings')
+      expect(above.stderr).toContain('limit of 1')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('specGrandfather as an array warns once per entry and still exempts the whole file', () => {
+    const root = fixtureWithConfig('spec-grandfather-array-warning', {
+      proseGates: { specGrandfather: ['SPEC.md', 'CONTEXT.md'] }
+    })
+    try {
+      writeFileSync(join(root, 'SPEC.md'), '# Spec\n\nThe gate landed in aeg-coherence-v1, closing (#4213).\n')
+      commitAll(root, 'Chore: add a grandfathered root spec')
+
+      const { exitCode, stderr } = runReaderBin(root)
+      expect(exitCode).toBe(0)
+      expect(stderr.split('exempts the whole file').length - 1).toBe(2)
+      // stderr carries JSON lines, so the quotes around a path arrive escaped.
+      expect(stderr).toContain('SPEC.md\\" exempts the whole file')
+      expect(stderr).toContain('CONTEXT.md\\" exempts the whole file')
+      expect(stderr).toContain('object form')
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

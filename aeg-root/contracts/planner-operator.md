@@ -56,7 +56,7 @@ Two carriers, one per direction:
 | The Planner may ask the Operator to… | The Operator may ask the Planner to… |
 |---|---|
 | Run a task the dispatch act has made dispatchable | Re-plan or re-scope a task whose plan a run proved wrong (`severity: strategy`) |
-| Operate the run it cut — start, follow status, present escalations, request continuation or cancellation | Supply a missing execution detail the brief did not anticipate (`severity: execution`) |
+| Operate the run it cut — start, read status, present escalations, request continuation or cancellation | Supply a missing execution detail the brief did not anticipate (`severity: execution`) |
 | Stop or cancel a run the plan has superseded | Cut or make dispatchable a task that is not yet ready, rather than running a task that is not |
 | — (the Planner never asks the Operator to author the plan) | Edit the Issue or its criteria on the Operator's behalf — the Operator never edits it directly |
 

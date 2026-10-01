@@ -275,6 +275,57 @@ describe('devReviewLoop — O2 (#543): unpushed real work is resumed once, then 
   })
 })
 
+describe('devReviewLoop — a resume that finds the branch already pushed and clean proceeds to reviewers (issue-894)', () => {
+  it('O1: dirty before the resume, clean and nothing ahead after, remote at the same head — no pause, reviewers run', async () => {
+    const world = makeWorld({ gate: 'red' })
+    let reads = 0
+    const { deps } = withCapturedDeveloperDispatch(world, {
+      readUnpushedWorkDetail: () => {
+        reads += 1
+        return reads === 1 ? { dirtyFiles: ['smoke.ts'], aheadCount: 0 } : { dirtyFiles: [], aheadCount: 0 }
+      },
+      fetchCiConclusion: () => ((world.dispatchCountByRole.developer ?? 0) >= 3 ? 'green' : 'red'),
+      fetchFailingCheckRuns: () => []
+    })
+    const result = await runLoopInProcessSafe(world, deps, { gatePollMaxAttempts: 2, gatePollIntervalMs: 5 })
+
+    expect(result.finalDecision.type).not.toBe('pause')
+    expect(world.reviewerDispatchStarted).toBe(true)
+    expect(existsSync(join(controlDir(world), 'pause-state.json'))).toBe(false)
+  })
+
+  it('O3: commits still ahead of the remote after the resume pause no_push, and the detail names the count', async () => {
+    const world = makeWorld({ gate: 'red' })
+    let reads = 0
+    const { deps } = withCapturedDeveloperDispatch(world, {
+      readUnpushedWorkDetail: () => {
+        reads += 1
+        return reads === 1 ? { dirtyFiles: ['a.ts'], aheadCount: 0 } : { dirtyFiles: [], aheadCount: 3 }
+      }
+    })
+    const result = await runLoopInProcessSafe(world, deps, { gatePollMaxAttempts: 2, gatePollIntervalMs: 5 })
+
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'no_push' })
+    expect((result.finalDecision as { detail: string }).detail).toBe(
+      `branch ${world.branch}; 3 commit(s) ahead of the remote`
+    )
+    expect(world.reviewerDispatchStarted).toBe(false)
+  })
+
+  it('O2/O3: dirty files alone pause no_push without claiming any commits ahead', async () => {
+    const world = makeWorld({ gate: 'red' })
+    const { deps } = withCapturedDeveloperDispatch(world, {
+      readUnpushedWorkDetail: () => ({ dirtyFiles: ['smoke.ts'], aheadCount: 0 })
+    })
+    const result = await runLoopInProcessSafe(world, deps, { gatePollMaxAttempts: 2, gatePollIntervalMs: 5 })
+
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'no_push' })
+    const detail = (result.finalDecision as { detail: string }).detail
+    expect(detail).toBe(`branch ${world.branch}; dirty file(s): smoke.ts`)
+    expect(detail).not.toMatch(/ahead of the remote/)
+  })
+})
+
 // --- O2 (task-files-v1 2, #649): the loop's two OLD worktree-root control-file names get no exemption any more ---
 
 describe("devReviewLoop — O2 (task-files-v1 2, #649): the loop's two OLD worktree-root control-file names get no exemption any more", () => {

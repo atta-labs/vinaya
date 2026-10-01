@@ -70,7 +70,8 @@ import {
   normalizeSpecPath,
   parseGlossaryTerms,
   PRODUCT_SLUG_SCOPE,
-  type ProseSourceFile
+  type ProseSourceFile,
+  specGrandfatherPaths
 } from '@attalabs/aeg-core'
 import { hasDoctrineEntry, resolveDoctrineRoot } from '../../commands/doctrine.js'
 import { loadConfig } from '../../lib/config'
@@ -508,6 +509,26 @@ function main(): void {
   // boundary resolvable at all) is unchanged.
   const reportable = findingsInThisDiff(findings)
 
+  // The array form exempts a whole file, so it can never notice that file
+  // gaining a citation; one warning per entry names the form that can.
+  if (Array.isArray(SPEC_GRANDFATHER)) {
+    for (const path of SPEC_GRANDFATHER as readonly string[]) {
+      emitCheckError({
+        schema: CHECK_SCHEMA_VERSION,
+        check: CHECK_NAME,
+        severity: 'warning',
+        message:
+          `proseGates.specGrandfather entry "${path}" exempts the whole file: it can gain any number of ` +
+          'citations and still pass. Use the object form, mapping the path to its current finding count.',
+        file: path,
+        agent_recovery_prompt:
+          'Replace the array in proseGates.specGrandfather with an object mapping each listed path to the most ' +
+          'spec-class findings that file may carry, e.g. { "apps/cli/specs/loop.md": 12 }, so the file can no ' +
+          'longer gain a citation and its number only goes down.'
+      })
+    }
+  }
+
   const sourceCommentFindings = checkSourceComments(sourceCommentFiles, SOURCE_COMMENTS_ALLOWLIST)
   const reportableSourceComments = findingsInThisDiff(sourceCommentFindings)
 
@@ -519,7 +540,7 @@ function main(): void {
     `${CHECK_NAME}: doctrine root "${DOCTRINE_ROOT}"; reader-facing class ${READER_FACING_ACTIVE ? 'ran' : 'dormant — proseGates.readerFacingPrefix/readerFacingSuffix not both set'}; ` +
       `legacy-slug class ${legacySlugsDormant ? `dormant — ${legacySlugDir} is absent` : `ran (${slugs.length} slug(s))`}; ` +
       `product class ran (${productRelPaths.length} file(s) swept); ` +
-      `spec class ran (${specRelPaths.length} file(s) swept, ${SPEC_GRANDFATHER.length} grandfathered); ` +
+      `spec class ran (${specRelPaths.length} file(s) swept, ${specGrandfatherPaths(SPEC_GRANDFATHER).length} grandfathered); ` +
       `source-comment class ${SOURCE_COMMENTS_GLOBS.length === 0 ? 'dormant — proseGates.sourceComments.globs not set' : `ran (${sourceCommentRelPaths.length} file(s) swept, severity: ${SOURCE_COMMENTS_SEVERITY})`}; ` +
       `${findings.length + sourceCommentFindings.length} finding(s) swept, ${reportable.length + reportableSourceComments.length} in this diff`
   )
@@ -549,8 +570,8 @@ function main(): void {
             'reading this spec after the Issue is closed) gets nothing from the citation, and a copied task number ' +
             'goes stale the moment the plan is renumbered. Rewrite the sentence to state the fact ' +
             'plainly instead. If this spec is pre-existing backlog, list its path in ' +
-            '`proseGates.specGrandfather` rather than fixing it as a drive-by in an unrelated PR — do not add a ' +
-            'NEW citation to a spec even while it is grandfathered.'
+            '`proseGates.specGrandfather` with its current finding count rather than fixing it as a drive-by in an ' +
+            'unrelated PR — a listed file that gains a citation exceeds its count and fails.'
           : finding.blocking
             ? 'This product-code file cites an internal tranche slug a reader outside this repo cannot resolve ' +
               '(the reader-resolvable-prose product class). Remove the citation or rewrite the comment/doc to state ' +

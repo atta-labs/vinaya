@@ -386,10 +386,11 @@ export {
   normalizeSpecPath,
   parseGlossaryTerms,
   PRODUCT_SLUG_SCOPE,
+  specGrandfatherPaths,
   stripNonProse,
   TASK_NUMBER_PATTERN
 } from './reader-resolvable-prose'
-export type { ProseFileClass, ProseFinding, ProseSourceFile } from './reader-resolvable-prose'
+export type { ProseFileClass, ProseFinding, ProseSourceFile, SpecGrandfather } from './reader-resolvable-prose'
 export {
   checkQuotedCommandStaleness,
   evaluateCitedQuotes,
@@ -447,7 +448,6 @@ export {
   isOperatorGranted,
   isTaskToolName,
   MAX_PAGE_LIMIT,
-  OPERATOR_STATUS_FOLLOW,
   OPERATOR_TOOL_GRANT,
   TASK_CANCEL_TOOL,
   TASK_ESCALATION_READ_TOOL,

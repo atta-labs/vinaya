@@ -20,6 +20,18 @@ export type {
   CustomFieldValue
 } from './custom'
 export type { HeaderInput } from './envelope'
+export {
+  buildExecution,
+  buildExecutions,
+  EXECUTION_NAMES,
+  FACT_SHEETS,
+  FIXTURE_EPOCH,
+  FIXTURE_REPO,
+  FIXTURE_SEED,
+  FIXTURE_VINAYA_VERSION,
+  LOW_TRUST_VINAYA_VERSION
+} from './fixtures'
+export type { ExecutionName, FactSheet, FixtureExecution, FixtureLine, FixtureValidity } from './fixtures'
 export { redact } from './redact'
 export {
   classifyStoredLine,

@@ -493,12 +493,13 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
   },
   {
     key: 'proseGates.specGrandfather',
-    type: 'string[] (optional)',
+    type: 'Record<string, integer ≥ 0> | string[] (optional)',
     semantics: [
-      'Exact repo-relative paths skipped entirely by the spec class — pre-existing prose that already carried citations when this class started reading it, listed so the class can block on day one without failing every open pull request against that backlog. Not a pattern; every entry is a full path.',
-      "Exempts a file the defaults brought in (a root spec, a decision record) exactly as it exempts one under an app's own `specs/**`, and exempts it from every rule the class runs, the task-number one included. The list is meant to shrink as each document is rewritten to state its facts plainly — a file on it should still never gain a NEW citation."
+      'Exact repo-relative paths of pre-existing spec prose that already carried citations when the spec class started reading it, so the class can block on day one without failing every open pull request against that backlog. Not a pattern; every key is a full path.',
+      'The object form maps each path to the most spec-class findings that file may carry — the count the check reports for it today. A listed file with more findings than its number fails, naming the file, its count and its limit; a file at or below its number passes. A listed file therefore can never gain a citation, and its number is lowered as the document is rewritten to state its facts plainly, down to `0`.',
+      "The array form exempts each listed file entirely, from every rule the class runs, the task-number one included, and the check prints one warning per entry saying so — a file on it can gain any number of citations and still pass. Either form covers a file the defaults brought in (a root spec, a decision record) exactly as it covers one under an app's own `specs/**`."
     ],
-    example: `{ "specGrandfather": ["apps/cli/specs/loop.md"] }`
+    example: `{ "specGrandfather": { "apps/cli/specs/loop.md": 130 } }`
   },
   {
     key: 'dispatch',

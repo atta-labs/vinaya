@@ -717,27 +717,16 @@ export function taskToolByName(name: TaskToolName): TaskToolDefinition {
 // --- the Operator's tool grant, the boundary the router enforces -----------
 
 /**
- * The one grant the task Operator holds beyond the six catalog tools: the
- * append-only `task status --follow` read (`apps/cli/src/lib/task-status.ts`'s
- * own `--follow` narration). Named as a grant token rather than a catalog
- * tool because it is a bounded status stream the Operator follows, not one of
- * the six typed task tools — but it is still part of what the router must
- * recognize as granted, so it lives here beside the catalog rather than as a
- * bare string a caller reinvents.
+ * The complete, closed set of tools the task Operator is granted — exactly the
+ * catalog's tool names, and nothing else. This is the machine-readable twin of
+ * `aeg-root/roles/operator.md`'s `allowed-tools` frontmatter and of the
+ * generated skill's `allowed-tools`, and it is the list the task-tools server
+ * serves; a test binds all four so no representation drifts from another. The
+ * router refuses every tool outside this set: a registered tool is a
+ * capability, but the grant is what says the Operator may call it — a shell, a
+ * forge write, an Issue edit, a review publish or a merge is never in it.
  */
-export const OPERATOR_STATUS_FOLLOW = 'task_status_follow' as const
-
-/**
- * The complete, closed set of tools the task Operator is granted — the
- * six catalog tools plus the status-follow read, and nothing else. This is
- * the machine-readable twin of `aeg-root/roles/operator.md`'s `allowed-tools`
- * frontmatter and of the generated skill's `allowed-tools`; a test binds all
- * three so no representation drifts from another. The router refuses every
- * tool outside this set: a registered tool is a capability, but the grant is
- * what says the Operator may call it — a shell, a forge write, an Issue edit,
- * a review publish or a merge is never in it.
- */
-export const OPERATOR_TOOL_GRANT = [...TASK_TOOL_NAMES, OPERATOR_STATUS_FOLLOW] as const
+export const OPERATOR_TOOL_GRANT = TASK_TOOL_NAMES
 
 export type OperatorGrantedTool = (typeof OPERATOR_TOOL_GRANT)[number]
 
