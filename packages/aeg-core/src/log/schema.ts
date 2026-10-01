@@ -627,7 +627,8 @@ export const ForgeWriteEventSchema = z.discriminatedUnion('event', [
 export type ForgeWriteEvent = z.infer<typeof ForgeWriteEventSchema>
 
 // ---------------------------------------------------------------------------
-// `gate` family (O2) — one gate runner's attempted check. `loop` (the
+// `gate` family (O2) — one gate runner's check run: a `summary` per run and a
+// `checked` event for each check that did not pass. `loop` (the
 // spec's "loop coordinator") is already typed by `dev_review_loop` above;
 // this task does not introduce a second loop schema for it.
 
@@ -661,6 +662,27 @@ export const GateEventSchema = z.discriminatedUnion('event', [
       event: z.literal('checked'),
       outcome: GateOutcomeSchema,
       reason: z.string().optional()
+    })
+    .strict(),
+  // One per check run. A run records this and a `checked` event only for a
+  // check that did not pass, so the Log's volume tracks failures, not the
+  // number of checks. `ran` counts the checks that executed (`passed` +
+  // `failed`); `skipped` are not in it. `failed` is every executed check that
+  // did not pass — a failure, a wait, a timeout or an error — and
+  // `failed_checks` names them. The run's total time is the envelope's
+  // `duration_ms`.
+  z
+    .object({
+      meta: HeaderMetaSchema,
+      subject: SubjectSchema,
+      kind: z.literal('gate'),
+      ...envelopeTail,
+      event: z.literal('summary'),
+      ran: z.number().int().nonnegative(),
+      passed: z.number().int().nonnegative(),
+      failed: z.number().int().nonnegative(),
+      skipped: z.number().int().nonnegative(),
+      failed_checks: z.array(z.string())
     })
     .strict()
 ])
@@ -822,8 +844,10 @@ export type HandoffEvent = z.infer<typeof HandoffEventSchema>
 
 // ---------------------------------------------------------------------------
 // `effect` family (O2) — the spec's "shared effect executor": a generic
-// external effect's attempted/observed/verified outcome, including failure
-// and uncertainty. This is additive to, and does not replace, the existing
+// external effect's outcome, including failure and uncertainty. The
+// executor records ONE `verified` event per write, carrying its final
+// outcome; `attempted` and `observed` stay parseable so a line stored
+// before that change still reads, but nothing emits them any more. This is additive to, and does not replace, the existing
 // `forge_write` family, which stays exactly as it was — a forge write is
 // one specific effect this schema does not yet generalize `forge_write`
 // into; "telemetry never substitutes for required intent" (the spec's own

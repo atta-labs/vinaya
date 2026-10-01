@@ -409,6 +409,50 @@ const gateEvent = {
   outcome: 'pass' as const
 }
 
+const gateSummary = {
+  meta,
+  subject,
+  kind: 'gate' as const,
+  event: 'summary' as const,
+  payload: {},
+  duration_ms: 41_000,
+  ran: 28,
+  passed: 26,
+  failed: 2,
+  skipped: 2,
+  failed_checks: ['typecheck', 'doc-coverage']
+}
+
+describe('LogEventSchema — gate summary (one per check run)', () => {
+  it('parses a run summary with its counts, its failing check names and its total duration', () => {
+    const result = LogEventSchema.safeParse(gateSummary)
+    expect(result.success).toBe(true)
+    if (result.success && result.data.kind === 'gate' && result.data.event === 'summary') {
+      expect(result.data.failed_checks).toEqual(['typecheck', 'doc-coverage'])
+      expect(result.data.duration_ms).toBe(41_000)
+    }
+  })
+
+  it('parses an all-passing run with no failing check names', () => {
+    expect(LogEventSchema.safeParse({ ...gateSummary, failed: 0, passed: 28, failed_checks: [] }).success).toBe(true)
+  })
+
+  it('refuses a summary missing a count, or with a negative or fractional one', () => {
+    const { ran: _ran, ...withoutRan } = gateSummary
+    expect(LogEventSchema.safeParse(withoutRan).success).toBe(false)
+    expect(LogEventSchema.safeParse({ ...gateSummary, failed: -1 }).success).toBe(false)
+    expect(LogEventSchema.safeParse({ ...gateSummary, skipped: 1.5 }).success).toBe(false)
+  })
+
+  it('refuses a summary carrying a per-check field — it describes a run, not one check', () => {
+    expect(LogEventSchema.safeParse({ ...gateSummary, check: 'typecheck' }).success).toBe(false)
+  })
+
+  it('still parses a per-check `checked` event stored before a pass stopped recording one', () => {
+    expect(LogEventSchema.safeParse(gateEvent).success).toBe(true)
+  })
+})
+
 describe('LogEventSchema — gate family (O2)', () => {
   it('parses a passing check', () => {
     expect(LogEventSchema.safeParse(gateEvent).success).toBe(true)
@@ -669,6 +713,12 @@ const effectEvent = {
 describe('LogEventSchema — effect family (O2)', () => {
   it('parses an attempted effect', () => {
     expect(LogEventSchema.safeParse(effectEvent).success).toBe(true)
+  })
+
+  it('parses the one final verified event a write records, whether it succeeded, failed or stayed uncertain', () => {
+    for (const outcome of ['success', 'failure', 'uncertain'] as const) {
+      expect(LogEventSchema.safeParse({ ...effectEvent, event: 'verified', outcome }).success).toBe(true)
+    }
   })
 
   it('parses observed/verified effects with an outcome, including uncertain', () => {
