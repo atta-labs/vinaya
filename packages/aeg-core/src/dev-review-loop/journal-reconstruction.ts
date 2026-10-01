@@ -112,15 +112,15 @@ export type ReconstructedJournal = {
   reviewGate: ReviewGateFact
   /**
    * `{ result: 'merged_ready' }` while a principal-authored ready-for-merge
-   * summary comment is actually on the forge AND the review gate has not
+   * publication comment is actually on the forge AND the review gate has not
    * FAILED against the pull request's CURRENT state (`ReviewGateFact`, whose
    * own doc explains why an `'unknown'` gate is not a reopen). Concluded is a
    * property of the pull request now, not a one-way latch it once passed
    * through.
    *
    * The summary alone was the old signal, and it is sticky in a way the forge
-   * is not: the summary table records no head, so a summary posted for an
-   * older head keeps reading "done forever" after a red gate, a newer
+   * is not: the published marker comment is never edited, so a publication posted
+   * for an older head keeps reading "done forever" after a red gate, a newer
    * Principal ruling, a superseded brief or a moved head — observed on an
    * adopter pull request whose every `--resume` was refused while the gate was
    * red and a ruling sat unaddressed. The gate is the one evaluation already

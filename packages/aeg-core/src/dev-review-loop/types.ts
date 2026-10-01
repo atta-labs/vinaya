@@ -19,7 +19,7 @@ type Envelope = { meta: unknown; subject: unknown }
 type StripEnvelope<T> = T extends Envelope ? Omit<T, 'meta' | 'subject'> : never
 export type DevReviewLoopEventInput = StripEnvelope<DevReviewLoopEvent>
 
-/** O4's fixed column order — shared by `assess-round.ts` (counting) and `render-summary.ts` (rendering) so the two never drift apart. */
+/** O4's fixed column order — shared by `assess-round.ts` (counting) so every round records the same columns. */
 export const SEVERITY_COLUMNS = ['blocker', 'major', 'minor', 'critical', 'high', 'medium', 'low'] as const
 
 /** The built form's finding identity (spec §0 item 1) — no fingerprint hashing. */
@@ -42,7 +42,7 @@ export type FindingObservation = {
   id: string
   severity: string
   /**
-   * The finding's own `file:line` (O4) — carried so the round summary can name
+   * The finding's own `file:line` (O4) — carried so the round record can name
    * every deferred finding's location. Optional: an older extraction shape, or
    * a finding with none, simply has none to report.
    */
@@ -261,7 +261,7 @@ export type Decision =
     }
 
 /**
- * The summary's own outcome vocabulary — wider than `round_ended`'s
+ * The journal's own outcome vocabulary — wider than `round_ended`'s
  * schema-constrained `green | changes_requested | escalated`: a round whose
  * processing triggered one of the assessment exits (max_rounds, confidence,
  * reappearance) records `'stopped'` here, even though the log
@@ -272,9 +272,9 @@ export type Decision =
 export type RoundOutcome = 'green' | 'changes_requested' | 'escalated' | 'stopped'
 
 /**
- * Why a round ended before any reviewer ran, for the published table's outcome
+ * Why a round ended before any reviewer ran, for the journal's outcome
  * cell. A round no reviewer saw has no findings from any source, so it records
- * no counts at all (an empty `countsBySeverity`, `render-summary.ts`' own `—`)
+ * no counts at all (an empty `countsBySeverity`)
  * rather than a zero that reads as a clean review — and this names the reason
  * the outcome cell states instead of the log-parity `outcome` a reviewed round
  * carries:
@@ -291,11 +291,11 @@ export type RoundOutcome = 'green' | 'changes_requested' | 'escalated' | 'stoppe
  *
  * `outcome` stays whatever the round would otherwise carry (both reasons are
  * `changes_requested` today), so the `round_ended` log event a reader parses is
- * unaffected — only the summary table's rendering changes.
+ * unaffected — only the `RoundRecord` the journal carries changes.
  */
 export type NotReviewedReason = 'checks_red' | 'low_confidence' | 'mechanical_failure' | 'time_budget'
 
-/** One deferred finding, as the published summary reports it (O4) — its original severity, its `file:line`, and why this round set it aside, never its reported severity mutated. */
+/** One deferred finding, as the journal records it (O4) — its original severity, its `file:line`, and why this round set it aside, never its reported severity mutated. */
 export type DeferredFindingRow = {
   severity: string
   /** The finding's own `file:line`, or `''` when it carried none. */
@@ -303,7 +303,7 @@ export type DeferredFindingRow = {
   reason: DeferralReason
 }
 
-/** One row of the published summary (`renderSummary`, O4) — counts only, no finding prose. */
+/** One round of the journal (O4) — counts only, no finding prose. */
 export type RoundRecord = {
   round: number
   countsBySeverity: Record<string, number>
@@ -311,7 +311,7 @@ export type RoundRecord = {
   outcome: RoundOutcome
   /**
    * Every finding this round set aside rather than let it block (O2/O3),
-   * carried so the published summary can list each with its original severity,
+   * carried so a reader can list each with its original severity,
    * location and reason (O4). Absent/`[]` for a round that deferred none, and
    * for a marker-reconstructed round (its findings are unknown — see
    * `journal-reconstruction.ts`).
@@ -320,7 +320,7 @@ export type RoundRecord = {
   /**
    * Set only for a round no reviewer saw (`buildUnreviewedRecord`,
    * `assess-round.ts`): its counts are absent (empty `countsBySeverity`) and the
-   * table's outcome cell names this reason. Absent for every round the loop
+   * the round's outcome names this reason. Absent for every round the loop
    * assessed and for a round rebuilt from a marker — a marker-reconstructed
    * round's counts are likewise unknown, but the round DID reach review, so it
    * keeps its `outcome`, not a not-reviewed reason.
