@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'bun:test'
-import { appendFileSync, mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createLogSink, type LogSinkDeps } from '../../src/lib/log-sink.js'
@@ -318,5 +327,42 @@ describe('log-sync-folder-source — refuses a symlink or a non-regular file (O5
     const source = createFolderLogSource({ folderRoot: join(dir, 'outbox'), repo: REPO })
     const page = await source.readPage(null, 100)
     expect(page.lines).toEqual([])
+  })
+})
+
+describe('log-sync-folder-source — proven against real folders (O6)', () => {
+  it('a deleted stream file reports nothing and never throws — readPage, not only look-back', async () => {
+    const dir = tmpDir()
+    await writeRealLines(dir, 999, 2)
+    const source = createFolderLogSource({ folderRoot: join(dir, 'outbox'), repo: REPO })
+    const page1 = await source.readPage(null, 1)
+    expect(page1.lines).toHaveLength(1)
+
+    rmSync(livePath(dir, '999'))
+
+    const page2 = await source.readPage(page1.next, 100)
+    expect(page2.lines).toEqual([])
+    expect(page2.gaps).toEqual([])
+  })
+
+  it("reads only the repository's own folder — a foreign repository's streams are never touched (O5, O6)", async () => {
+    const dir = tmpDir()
+    const foreign = { owner: 'other-corp', repo: 'other-repo' }
+    await writeRealLines(dir, 1, 2) // atta-labs/vinaya, via REPO's own resolveRepo
+    const { log: foreignLog } = createLogSink(sinkDeps(dir, 1, { resolveRepo: () => Promise.resolve(foreign) }))
+    foreignLog(DISPATCHED)
+    foreignLog(DISPATCHED)
+    await flush()
+
+    const foreignDir = join(dir, 'outbox', 'other-corp-other-repo')
+    const before = readFileSync(join(foreignDir, '1.ndjson'), 'utf8')
+
+    const source = createFolderLogSource({ folderRoot: join(dir, 'outbox'), repo: REPO })
+    const page = await source.readPage(null, 100)
+    expect(page.lines).toHaveLength(2) // only this repo's own two lines
+
+    // The foreign repository's own file is exactly as it was — never opened
+    // for write, renamed or truncated by a source scoped to a different repo.
+    expect(readFileSync(join(foreignDir, '1.ndjson'), 'utf8')).toBe(before)
   })
 })
