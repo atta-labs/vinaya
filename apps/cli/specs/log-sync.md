@@ -74,6 +74,22 @@ A quarantine record is keyed by the hash of its raw text. The cache also stores 
 
 The cache's behaviours are written once, as a list of cases (`cacheContractCases`, `cache-contract.ts`) that throw on the first broken expectation and import no test framework. Every backend's own test runs every case against a fresh instance of that backend. `createMemoryCache` (`memory-cache.ts`) is the in-memory backend — no I/O, no clock — that passes them and that every reader is tested against; a durable backend passes the same list.
 
+## The durable cache
+
+`createSqliteCache` (`apps/cli/src/lib/log-cache-sqlite.ts`) is the `LogCache` a real `sync` run and Studio hold between reads: a `node:sqlite` database file, `cache.sqlite`, inside a directory the caller gives, passing the same shared cache contract above.
+
+**Lazy load.** `node:sqlite` is loaded with `createRequire`, inside `createSqliteCache` itself — the one place in the CLI that ever loads it. No other file imports it, so a command that never opens a cache pays nothing for it, a Node below the CLI's own floor still runs every other command, and the module's one-time experimental warning prints to standard error exactly where Node puts it — never silenced.
+
+**Schema version.** The file's own `PRAGMA user_version` names the schema it was written under. Opening a file written by a newer version than this build knows refuses outright, naming the file and both versions. An older (including a brand-new, still-`0`) version runs every migration step between it and the build's current version inside one transaction before anything else touches the file — so a cache that outlives a release still opens, and a migration never loses a row.
+
+**Transaction per page.** A write transaction opens lazily on the cache's first `put`/`recordGap` since its last commit, and commits only when `setCursor` is called (or the cache is closed) — mirroring `syncSource`'s own call shape (`put`/`recordGap` per line of a page, `setCursor` once after the run's pages are stored). A process killed before the next `setCursor` leaves the database at the previous commit; the next `syncSource` run resumes from the cursor that was actually stored and safely replays the lost span, since `put` is idempotent by identity.
+
+**Locking.** `PRAGMA busy_timeout` makes a second process's write wait for the first to finish rather than racing it; past that wait it fails with a message naming the file, never silently overwriting. `journal_mode = WAL` lets a reader proceed from the last committed snapshot while a writer holds the lock.
+
+**Refusal.** A directory that does not exist or cannot be written, and a file that is not a SQLite database, both fail with a message naming the path and leave whatever was there untouched.
+
+**Indexed columns.** The rows table carries indexes on `kind`+`event`, `runId`, `workRef` and `time` — the columns a question reads by — and a row's `payload` reads back as parsed JSON, never a string.
+
 ## The server source
 
 `createServerLogSource` (`apps/cli/src/lib/log-sync-server-source.ts`) is the `LogSource` that reads a log server over its wire contract (`apps/log-server/specs/server.md` § 5): the read route (`GET events?after=&limit=`, paged by `seq`, bounded at 1000 lines a request — the server's own maximum), the stats route (the server's head position and stored event count) and the rejected route (why lines were refused). It takes `fetch` itself, the destination's events URL and the raw `logs.readHeaders` as constructor arguments — never a resolved destination — so a fake `fetch` proves every behaviour with no network. On the wire, an empty page's response header repeats the `after` that was asked for (§ 5); the source translates that into this contract's own `next: null` ("nothing followed", above) rather than passing the repeated position through, so a caller that stops on `next === null` actually stops.
