@@ -128,6 +128,19 @@ Three kinds of record state usage, and each is counted by its own rule:
 
 A figure is the sum of its terms and is **known only when every term states it**. When any term does not, the figure is unknown with the reason (`2 of 6 observations record no input`); it is never counted as zero. A stated zero is a number. A role is the `target_role` of a dispatch, otherwise the role the line itself names; a line that names none reads `unattributed`.
 
+### Question 4 — where does the time go?
+
+`timeByUnit`. For each unit of work, four durations, each built from intervals:
+
+- **develop** — a developer dispatch, from its `dispatched` line to the `outcome_received` or `dispatch_failed` line that ends it (matched by effect id);
+- **review** — the same for a `code-reviewer` or `security` dispatch. A dispatch of any other role is in neither;
+- **check** — a check run's own total time (the `duration_ms` of its `gate` `summary` line), measured backwards from that line. The per-check `checked` lines are not used, so a run is not counted twice;
+- **wait** — a pause, from the `paused` line to the `resumed` or `cancelled` line that ends it.
+
+**Elapsed and summed are different things.** Work overlaps — two dispatches can run at once — so each duration is reported twice: `summedMs`, every interval's length added together, and `elapsedMs`, the length of the union of the intervals, which counts an overlap once. They are equal only when nothing overlapped. Neither is ever presented as the other.
+
+A category with no complete interval is unknown, with the reason — nothing recorded, or intervals that never ended (a dispatch with no outcome line, a pause never resumed, a check run with no duration). A category with some complete intervals reports them and counts the ones it could not measure in `incomplete`. A duration is never zero unless a line states it.
+
 <!-- AEG:CLAIM: packages/aeg-core/src/log/sync/engine.ts contains:export async function syncSource(source: LogSource, cache: LogCache, options: SyncOptions): Promise<SyncSummary> { -->
 <!-- AEG:CLAIM: packages/aeg-core/src/log/sync/normalize.ts contains:const classified = classifyStoredLine(raw, '') -->
 <!-- AEG:CLAIM: packages/aeg-core/src/log/sync/row.ts contains:export const LOW_TRUST_BELOW_VERSION = '0.33.0' -->
