@@ -198,6 +198,41 @@ describe('devReviewLoop — the host attribution set at loop start', () => {
     expect(hostAfterReturn).toBe('hook')
   })
 
+  // A full publish under `GITHUB_ACTIONS` is deliberately NOT exercised here:
+  // `log-sink.ts`'s own O3 rule ("a CI job never falls back to a folder")
+  // means every one of this run's events resolves to `{kind: 'none'}` with
+  // no configured server — `logEvents`'s own `waitForOwnLoopLine` then burns
+  // its full 5s budget per event with nothing ever landing, which is exactly
+  // right for a real CI job's log() calls but far too slow for a test that
+  // logs a dozen events across a whole round. The quick developer-stop pause
+  // below reaches its outcome before any of that matters.
+  it("does not special-case CI — still sets VINAYA_HOST to 'loop' unconditionally when GITHUB_ACTIONS is set and VINAYA_HOST is unset; log-sink.ts's own precedence (GITHUB_ACTIONS checked before VINAYA_HOST, unchanged by this task) is what keeps the reported host 'ci'", async () => {
+    const world = makeWorld({ developerStop: 'ESCALATE: no brief section names this repo at all.' as never })
+    const base = makeInProcessDeps(world)
+    let hostSeenAtDeveloperDispatch: string | undefined
+    let ciSeenAtDeveloperDispatch: string | undefined
+    const dispatchRole: LoopDeps['dispatchRole'] = async (role, agent, prompt, opts) => {
+      if (role === 'developer') {
+        hostSeenAtDeveloperDispatch = process.env.VINAYA_HOST
+        ciSeenAtDeveloperDispatch = process.env.GITHUB_ACTIONS
+        return { exitCode: 0, durationMs: 1, usage: null, resumeId: null, timedOut: false, effectId: 'eff-dev-1' }
+      }
+      return base.dispatchRole!(role, agent, prompt, opts)
+    }
+    let hostAfterReturn: string | undefined
+    const result = await withWorldEnv(world, async () => {
+      process.env.GITHUB_ACTIONS = 'true'
+      const r = await devReviewLoop({ task: world.task, agent: 'claude' }, { ...base, dispatchRole })
+      hostAfterReturn = process.env.VINAYA_HOST
+      return r
+    })
+
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'escalation' })
+    expect(hostSeenAtDeveloperDispatch).toBe('loop')
+    expect(ciSeenAtDeveloperDispatch).toBe('true')
+    expect(hostAfterReturn).toBeUndefined()
+  })
+
   it('restores the host after a pause too, not only after a clean publish', async () => {
     const world = makeWorld({ developerStop: 'ESCALATE: no brief section names this repo at all.' as never })
     const base = makeInProcessDeps(world)
