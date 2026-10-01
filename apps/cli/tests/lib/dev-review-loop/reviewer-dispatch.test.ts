@@ -714,9 +714,9 @@ describe('buildVerdictFromReport — the security SECRETS: line follows the same
   })
 })
 
-// --- the agent-configuration security scan (role-reach-v1 task 5) -----------
+// --- the agent-configuration security scan -----------
 
-describe('touchesAgentConfig — applicability from the fixed path list (O1)', () => {
+describe('touchesAgentConfig — applicability from the fixed path list', () => {
   it('is true for a change under any agent-config glob', () => {
     expect(touchesAgentConfig(['.claude/settings.json'])).toBe(true)
     expect(touchesAgentConfig(['.mcp.json'])).toBe(true)
@@ -736,7 +736,7 @@ describe('touchesAgentConfig — applicability from the fixed path list (O1)', (
   })
 })
 
-describe('decideSecurityScan — the four outcomes (O1/O3)', () => {
+describe('decideSecurityScan — the four outcomes', () => {
   const ran = () => ({ ok: true as const, output: 'scanner: 0 findings' })
   const neverRun = () => {
     throw new Error('runScan must not be called')
@@ -813,7 +813,7 @@ describe('decideSecurityScan — the four outcomes (O1/O3)', () => {
   })
 })
 
-describe('capSecurityScanOutput — bounds only an over-long scan (O2)', () => {
+describe('capSecurityScanOutput — bounds only an over-long scan', () => {
   it('returns short output unchanged', () => {
     expect(capSecurityScanOutput('clean')).toBe('clean')
   })
@@ -824,7 +824,7 @@ describe('capSecurityScanOutput — bounds only an over-long scan (O2)', () => {
   })
 })
 
-describe('securityScanPieces / renderReviewerDispatchPrompt — the scan reaches the security prompt only (O1/O3)', () => {
+describe('securityScanPieces / renderReviewerDispatchPrompt — the scan reaches the security prompt only', () => {
   const MANIFEST: ReviewInputManifest = {
     headSha: 'a'.repeat(40),
     baseSha: 'e'.repeat(40),
@@ -895,7 +895,7 @@ describe('securityScanPieces / renderReviewerDispatchPrompt — the scan reaches
   })
 })
 
-describe('defaultRunSecurityScanSubprocess — the real runner isolates the scanner (O2, round-2 security HIGH)', () => {
+describe('defaultRunSecurityScanSubprocess — the real runner isolates the scanner (round-2 security HIGH)', () => {
   it('strips the forge token and runs from a fresh sandbox HOME/cwd, never the PR-authored scan target', () => {
     const target = mkdtempSync(join(tmpdir(), 'vinaya-scan-target-'))
     const priorGh = process.env.GH_TOKEN
@@ -910,7 +910,7 @@ describe('defaultRunSecurityScanSubprocess — the real runner isolates the scan
       const result = defaultRunSecurityScanSubprocess(['sh', '-c', 'env; echo "PWD=$(pwd)"'], target)
       expect(result.ok).toBe(true)
       if (result.ok) {
-        // O2: no forge credential reaches the scanner child.
+        // No forge credential reaches the scanner child.
         expect(result.output).not.toContain('forge-token-sentinel-gh')
         expect(result.output).not.toContain('forge-token-sentinel-github')
         // HIGH fix: HOME is a fresh scan sandbox, never the real host HOME, so

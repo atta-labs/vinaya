@@ -1382,7 +1382,7 @@ describe('tokens.collect trust cache', () => {
   })
 })
 
-describe('resolveSecurityScanCommand — the configured agent-config scanner (role-reach-v1 task 5, O1/O5)', () => {
+describe('resolveSecurityScanCommand — the configured agent-config scanner', () => {
   it('returns null when unset', () => {
     expect(resolveSecurityScanCommand(null)).toBeNull()
     expect(resolveSecurityScanCommand({})).toBeNull()

@@ -712,7 +712,7 @@ export const VinayaConfigSchema = z.object({
     })
     .optional(),
   // The agent-configuration security scanner the review loop runs before the
-  // security pass (task 5). `command` is the scanner as an argv
+  // security pass. `command` is the scanner as an argv
   // list — its first element the executable, the rest its arguments, a pinned
   // version included in the args (`["npx", "--yes", "ecc-agentshield@1.6.0",
   // "scan"]`). The loop appends the directory to scan (the head-verified
@@ -1173,7 +1173,7 @@ export function resolveReviewPolicy(config: VinayaConfig | null): ReviewPolicy {
 
 /**
  * The configured agent-configuration security scanner as an argv list, or
- * `null` when unset (task 5, O1). The review loop runs this
+ * `null` when unset. The review loop runs this
  * before dispatching the security pass, on the head-verified candidate copy,
  * appending the directory to scan as a final argument (`decideSecurityScan`).
  *

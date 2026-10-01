@@ -423,7 +423,7 @@ export type LoopDeps = {
    */
   resolveTaskSurface?: (task: number) => IssueSurface | null
   /**
-   * task 5, O1: the configured agent-config scanner argv, from
+   * The configured agent-config scanner argv, from
    * the default-branch trust anchor (`resolveSecurityScanCommand` +
    * `loadTrustAnchorConfig`). `null` when no `securityScan.command` is set —
    * the security pass is then told no scanner is configured. Optional, for the
@@ -433,14 +433,14 @@ export type LoopDeps = {
    */
   resolveSecurityScanCommand?: () => readonly string[] | null
   /**
-   * task 5, O1: the pull request's changed paths (`base...head`),
+   * The pull request's changed paths (`base...head`),
    * for the scan's applicability decision. Absent leaves the changed-path list
    * empty, so a configured scanner reports `not_applicable` rather than
    * scanning paths the driver could not read.
    */
   gitChangedPaths?: (base: string, head: string) => readonly string[]
   /**
-   * task 5, O2: runs the configured scanner over the head-verified
+   * Runs the configured scanner over the head-verified
    * candidate copy with a constructed environment (no forge credential), a time
    * limit and an output cap (`defaultRunSecurityScanSubprocess`). A fixture
    * injects a fake here to exercise the scan path without spawning a process.
@@ -646,15 +646,15 @@ function defaultGitUnifiedDiff(from: string, to: string): string | null {
   }
 }
 
-// --- the agent-configuration security scan (task 5) -----------
+// --- the agent-configuration security scan -----------
 
-/** O2: the scanner subprocess's wall-time ceiling — a stuck scanner is reported `failed` (a timeout), never a pause the loop waits on. */
+/** The scanner subprocess's wall-time ceiling — a stuck scanner is reported `failed` (a timeout), never a pause the loop waits on. */
 const SECURITY_SCAN_TIMEOUT_MS = 120_000
-/** O2: the scanner subprocess's output-buffer cap, so a runaway scanner can never flood the driver's memory (the prompt itself is capped separately, tighter, by `capSecurityScanOutput`). */
+/** The scanner subprocess's output-buffer cap, so a runaway scanner can never flood the driver's memory (the prompt itself is capped separately, tighter, by `capSecurityScanOutput`). */
 const SECURITY_SCAN_MAX_BUFFER_BYTES = 8 * 1024 * 1024
 
 /**
- * O1: the configured scanner argv from the DEFAULT-BRANCH trust anchor — the
+ * The configured scanner argv from the DEFAULT-BRANCH trust anchor — the
  * same source `reviewPolicy()`/`principalAllowlist()` read, never the pull
  * request's own checkout, so a pull request cannot choose the subprocess that
  * runs in the driver's environment by editing its own `vinaya.config.json`.
@@ -663,7 +663,7 @@ function defaultResolveSecurityScanCommand(): readonly string[] | null {
   return resolveSecurityScanCommand(loadTrustAnchorConfig())
 }
 
-/** O1: the pull request's changed paths, `git diff --name-only <base>...<head>` (the PR's own diff against its merge base). `[]` on any git failure — the scan is then `not_applicable` rather than run against paths that could not be read. */
+/** The pull request's changed paths, `git diff --name-only <base>...<head>` (the PR's own diff against its merge base). `[]` on any git failure — the scan is then `not_applicable` rather than run against paths that could not be read. */
 function defaultGitChangedPaths(base: string, head: string): readonly string[] {
   try {
     const out = execFileSync('git', ['diff', '--name-only', `${base}...${head}`], {
@@ -686,7 +686,7 @@ function scanStreamToString(stream: Buffer | string | null | undefined): string 
 }
 
 /**
- * O2: runs the configured scanner as a repository subprocess over `cwd` (the
+ * Runs the configured scanner as a repository subprocess over `cwd` (the
  * head-verified candidate copy, appended as the final argument), with:
  *   - a CONSTRUCTED environment carrying only `WORKER_ENV_ALLOWLIST_KEYS` —
  *     the same baseline `checks/runner.ts`'s `buildCheckEnv` gives every check
@@ -4251,7 +4251,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             d.readWorktreeHead
           )
 
-          // task 5 (O1/O2/O3): ONCE per round, after the
+          // ONCE per round, after the
           // head-verified candidate is built and BEFORE either reviewer is
           // dispatched, decide the agent-config scan from the pull request's
           // changed paths and run the configured scanner on that candidate copy
@@ -4259,7 +4259,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           // reaches the SECURITY prompt only (`facts.configScan` — the
           // code-reviewer never sees it) and is recorded in the driver Log; a
           // not-configured, not-applicable or failed scan is reported to the
-          // reviewer and logged, and the round proceeds — never a pause (O3).
+          // reviewer and logged, and the round proceeds — never a pause.
           // The whole decision is wrapped so a scan-infrastructure error (an
           // unreadable trust anchor, a git failure resolving changed paths)
           // degrades to "the scan could not run" rather than crashing the round.

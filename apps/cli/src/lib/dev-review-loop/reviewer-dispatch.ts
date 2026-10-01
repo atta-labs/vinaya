@@ -80,7 +80,7 @@ export type ReviewerPromptFacts = {
    */
   deferralContext?: FindingDeferralContext
   /**
-   * task 5, O1/O3: the round's agent-configuration scan outcome,
+   * The round's agent-configuration scan outcome,
    * decided once by the driver (`decideSecurityScan`) before either reviewer
    * dispatches. Rendered into the SECURITY prompt only (`renderReviewerDispatchPrompt`),
    * never the code-reviewer's — the scan is a fact piece the security pass reads
@@ -129,7 +129,7 @@ export type ReviewerPromptPiece = { readonly driver: string } | { readonly fact:
 const driverPiece = (text: string): ReviewerPromptPiece => ({ driver: text })
 const factPiece = (text: string): ReviewerPromptPiece => ({ fact: text })
 
-// --- the agent-configuration security scan (task 5) -----------
+// --- the agent-configuration security scan -----------
 
 /**
  * The fixed agent-configuration path list the scan applies to (Boundary: fixed
@@ -138,13 +138,13 @@ const factPiece = (text: string): ReviewerPromptPiece => ({ fact: text })
  */
 export const AGENT_CONFIG_GLOBS: readonly string[] = ['.claude/**', '.mcp.json', '.agents/**']
 
-/** O1: whether any of the pull request's changed paths is agent configuration, by `AGENT_CONFIG_GLOBS` — the same `globCoversPath` matcher the Issue's own Surface checks use, never a second matcher. */
+/** Whether any of the pull request's changed paths is agent configuration, by `AGENT_CONFIG_GLOBS` — the same `globCoversPath` matcher the Issue's own Surface checks use, never a second matcher. */
 export function touchesAgentConfig(changedPaths: readonly string[]): boolean {
   return changedPaths.some((p) => AGENT_CONFIG_GLOBS.some((g) => globCoversPath(g, p)))
 }
 
 /**
- * The cap on how much of a scanner's output reaches the security prompt (O2) —
+ * The cap on how much of a scanner's output reaches the security prompt —
  * a runaway or verbose scanner never floods the prompt. The TAIL is kept
  * (a scanner's summary/verdict lands last), with a one-line note of how much
  * was dropped — the same shape `pr-report-engine.ts`'s own agent-output cap uses.
@@ -158,7 +158,7 @@ export function capSecurityScanOutput(output: string): string {
 }
 
 /**
- * The round's agent-config scan outcome (O1/O3), one of four states the
+ * The round's agent-config scan outcome, one of four states the
  * security pass is told about and the Log records:
  *   - `ran` — the scanner ran on the head-verified copy; `output` is its
  *     (capped) stdout+stderr, a fact piece the security pass reads.
@@ -181,7 +181,7 @@ export type SecurityScanRun =
   | { readonly ok: false; readonly reason: string }
 
 /**
- * Decides the round's scan outcome (O1/O3) from the configured command, the
+ * Decides the round's scan outcome from the configured command, the
  * pull request's changed paths, the head-verified candidate copy, and a runner
  * that actually spawns the scanner. Pure but for the injected `runScan`, so the
  * whole decision — not-configured, not-applicable, the missing-candidate
@@ -211,7 +211,7 @@ export function decideSecurityScan(args: {
 }
 
 /**
- * The scan block for the SECURITY prompt (O1/O3): a `driver` label piece the
+ * The scan block for the SECURITY prompt: a `driver` label piece the
  * lint reads, plus — for `ran`/`failed` — a `fact` piece the lint never reads,
  * carrying the scanner's own output or failure reason (untrusted text that
  * must never be able to end a round by tripping the banned-framing lint, the
@@ -1121,7 +1121,7 @@ export function renderReviewerDispatchPrompt(
    */
   roleDoctrine: string | null = null
 ): string {
-  // O1/O3: the agent-config scan reaches the SECURITY prompt only, as a fact
+  // The agent-config scan reaches the SECURITY prompt only, as a fact
   // piece — the code-reviewer never sees it. `facts.configScan` is `undefined`
   // for the code-reviewer and for any round the driver ran no scan, so this
   // adds nothing there.

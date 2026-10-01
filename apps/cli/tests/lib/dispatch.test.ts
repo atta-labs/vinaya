@@ -3259,7 +3259,7 @@ describe('buildRolePermissions — Issue #663, O1: an explicit per-role Bash all
         'Bash(bun install:*)',
         'Bash(bun test:*)',
         'Bash(bun run:*)',
-        // role-reach-v1 task 5, O4: the agent-config scanner's own launcher —
+        // The agent-config scanner's own launcher —
         // a dispatched reviewer reads the driver-run scan, never runs one.
         'Bash(npx:*)'
       ]) {

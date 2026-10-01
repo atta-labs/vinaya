@@ -2532,7 +2532,7 @@ describe('noneFoundClaimCitesScanCheck — the cited check must have passed', ()
   })
 })
 
-describe('noneFoundClaimCitesScanCheck — the evidence must tie to the judged head (role-reach-v1 task 5, O6)', () => {
+describe('noneFoundClaimCitesScanCheck — the evidence must tie to the judged head', () => {
   const HEAD = 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2'
   const OTHER = 'f6e5d4c3b2a1f6e5d4c3b2a1f6e5d4c3b2a1f6e5'
 

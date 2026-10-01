@@ -571,7 +571,7 @@ export const SECRET_SCAN_CHECK = 'atta-labs/secret-scan'
  * A git commit sha as it appears free in `gh pr checks`/`gh pr view` evidence:
  * 7–40 hex, word-bounded, AND carrying at least one hex LETTER (the `(?=…[a-f])`
  * lookahead), so a purely-decimal token in the same evidence — a check run id,
- * a line number, a duration — is never mistaken for a commit (task 5, O6).
+ * a line number, a duration — is never mistaken for a commit.
  */
 const EVIDENCE_COMMIT_SHA = /\b(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b/gi
 
@@ -592,14 +592,14 @@ function shaNamesSameCommit(a: string, b: string): boolean {
  * no real token") never decides it. A check named beside a failing, missing,
  * skipped, pending or absent conclusion, or not named at all, backs nothing.
  *
- * O6: when `judgedHead` is supplied (the `review post` command, which resolves
+ * When `judgedHead` is supplied (the `review post` command, which resolves
  * the PR's real head), the evidence must ALSO tie the passing result to THAT
  * head — it must name the judged head's sha (7–40 hex) and name no OTHER
  * commit: a scan result read on a different commit, or an evidence file that
  * names the check passing but ties it to no head at all, backs nothing. A
  * `null` judgedHead (the default, and the dispatched-loop path, whose head
  * binding is the verdict comment's own `Judged head:` line, not this evidence
- * file) skips the head check — the pre-O6 behaviour, unchanged.
+ * file) skips the head check — the prior behaviour, unchanged.
  */
 export function noneFoundClaimCitesScanCheck(
   claim: string,
@@ -613,7 +613,7 @@ export function noneFoundClaimCitesScanCheck(
   const passingCited = cited.length > 0 && cited.every((line) => scanCheckConclusionPasses(line))
   if (!passingCited) return false
   if (judgedHead === null) return true
-  // O6: the evidence must name the judged head and no foreign commit.
+  // The evidence must name the judged head and no foreign commit.
   const shas = text.match(EVIDENCE_COMMIT_SHA) ?? []
   const namesJudged = shas.some((sha) => shaNamesSameCommit(sha, judgedHead))
   const namesForeign = shas.some((sha) => !shaNamesSameCommit(sha, judgedHead))
@@ -2079,7 +2079,7 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
   }
   const verdict = derived
 
-  // Resolved up front (O6): the `SECRETS: none found` evidence must tie its
+  // Resolved up front: the `SECRETS: none found` evidence must tie its
   // passing scan-check result to this exact head, so the head is needed for the
   // `noneFoundClaimCitesScanCheck` gate below, not only for the rendered
   // `Judged head:` line further down.
