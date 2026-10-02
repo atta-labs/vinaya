@@ -1129,14 +1129,16 @@ const DISPATCH_BASH_MAX_TIMEOUT_MS = '1800000'
  * `v2`: `writeAccessHookScript` now denies a `directory`-scoped Write/Edit
  * outside its granted worktree instead of falling through, and
  * `backgroundDenyHookScript` now also denies a `git commit`/`git push`
- * whose working directory is a checkout on the default branch — neither
- * touches `buildRolePermissions`'s own `allow`/`deny` arrays, but both are
- * as much "the written policy" as those arrays are) —
+ * whose working directory is a checkout on the default branch; the bump to
+ * `v4`: `writeAccessHookScript` now also denies an `exact-files`-scoped
+ * Write/Edit outside its granted hand-off files instead of falling through —
+ * neither touches `buildRolePermissions`'s own `allow`/`deny` arrays, but all
+ * are as much "the written policy" as those arrays are) —
  * `writeDispatchSettings`'s own first lifecycle line for a role names it, so
  * a run's own log says which policy shape it started under without needing
  * to diff `dispatch.ts` against the run's own timestamp.
  */
-export const PERMISSION_POLICY_VERSION = 'v3'
+export const PERMISSION_POLICY_VERSION = 'v4'
 
 type RolePermissions = { allow: string[]; deny: string[] }
 
@@ -1536,6 +1538,14 @@ export const WRITE_OUTSIDE_WORKTREE_DENY_REASON =
   "Dispatched sessions cannot write or edit a file outside the developer's own worktree — this policy grants a path inside the worktree and denies everything else, rather than falling through to the host's own classifier for an out-of-scope path."
 
 /**
+ * `exact-files` scope's own counterpart to `WRITE_OUTSIDE_WORKTREE_DENY_REASON`
+ * — a code-reviewer/security dispatch's three named hand-off files
+ * (`findings.txt`/`report.txt`/`objectives.txt`), rather than a worktree.
+ */
+export const WRITE_OUTSIDE_HANDOFF_FILES_DENY_REASON =
+  "Dispatched sessions cannot write or edit a file outside their own hand-off files — this policy grants exactly findings.txt/report.txt/objectives.txt in the work directory this role was given and denies everything else, rather than falling through to the host's own classifier for an out-of-scope path."
+
+/**
  * The `PreToolUse` hook that grants a real `Write`/`Edit` call — matched on
  * `Write|Edit`, never folded into `backgroundDenyHookScript`'s own
  * `Bash|Agent|Task` matcher, since the two check entirely different tool
@@ -1547,24 +1557,26 @@ export const WRITE_OUTSIDE_WORKTREE_DENY_REASON =
  * (the normal case for a fresh `Write`) still has a real, existing parent
  * directory to resolve through.
  *
- * **A `directory`-scoped path outside the written scope now
- * DENIES, rather than falling through.** Before this task, EVERY out-of-scope
- * path (both scope kinds) fell through silently, "exactly like
+ * **A path outside the written scope now DENIES, rather than falling
+ * through — for EITHER scope kind.** Before O4, every out-of-scope path
+ * (both scope kinds) fell through silently, "exactly like
  * `backgroundDenyHookScript`'s own 'silent otherwise' posture" — this hook's
  * job was only ever to GRANT a real capability the built-in engine cannot
  * express, never to add a new restriction. The origin incident (a developer
  * session working in the shared main checkout instead of its own worktree)
  * showed that posture leaves the door open: an out-of-worktree Write/Edit
  * simply resolved through the host's own default classifier, which can allow
- * it in a non-interactive dispatch. `directory` scope (the developer role's
- * own worktree grant, `buildWriteAccessScope`) now denies explicitly outside
- * it — a real, written restriction, not a silent gap. `exact-files` scope
- * (a reviewer/security dispatch's own three hand-off files) is UNCHANGED: it
- * still falls through silently outside its own narrow allowlist, since O4
- * scopes this rule to "a developer session," and a reviewer/security dispatch
- * was never granted a directory to begin with — denying every path outside
- * three exact filenames would be a far broader new restriction than O4 asks
- * for, on a role this task's Objectives never named.
+ * it in a non-interactive dispatch. O4 closed this for `directory` scope (the
+ * developer role's own worktree grant). **`exact-files` scope (a
+ * reviewer/security dispatch's own three hand-off files) now denies the
+ * same way (round 2 BLOCKER fix)** — the prior posture ("UNCHANGED, since O4
+ * scopes this rule to 'a developer session'") left exactly the gap O4 had
+ * just closed for the Developer open for the Reviewer/Security roles: a
+ * reviewer/security Write/Edit outside its three named files resolved
+ * through the host's own default classifier instead of this hook's own
+ * written restriction. Both scope kinds now deny explicitly outside their
+ * own grant — a real, written restriction, not a silent gap, for every
+ * unattended role this hook is wired for.
  *
  * **`directory` scope's own `extraFiles` (O3).** A `directory`-scoped write additionally allows an exact match on
  * one of `scope.extraFiles` — this round's confidence and round-response
@@ -1607,6 +1619,8 @@ function writeAccessHookScript(dir: string): string {
     allowOutput("in-scope for this role's written write-access policy"),
     "    } else if (scope.kind === 'directory') {",
     denyOutput(WRITE_OUTSIDE_WORKTREE_DENY_REASON),
+    "    } else if (scope.kind === 'exact-files') {",
+    denyOutput(WRITE_OUTSIDE_HANDOFF_FILES_DENY_REASON),
     '    }',
     '  } catch {',
     '    // an unreadable/malformed hook payload never blocks a call this hook cannot evaluate',

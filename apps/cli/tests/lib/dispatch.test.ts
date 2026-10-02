@@ -3352,7 +3352,7 @@ describe('buildRolePermissions — Issue #865, O1/O2/O3: machine-state commands 
   })
 
   it('O3: the written policy names a version later than the one that denied no machine-state command', () => {
-    expect(PERMISSION_POLICY_VERSION).toBe('v3')
+    expect(PERMISSION_POLICY_VERSION).toBe('v4')
     expect(PERMISSION_POLICY_VERSION).not.toBe('v2')
   })
 
@@ -3747,6 +3747,110 @@ describe('writeDispatchSettings — Issue #663, O1/O3: the permission policy is 
       expect(out.hookSpecificOutput.permissionDecisionReason).toMatch(/worktree/)
     }
   })
+
+  for (const role of ['code-reviewer', 'security'] as const) {
+    it(`a ${role} dispatch's exact-files scope DENIES a Write and an Edit to a path outside its own hand-off files (round 2 BLOCKER fix) — the gap O4 left open for this scope kind, now closed the same way`, () => {
+      // Before this fix, `exact-files` scope (the Reviewer/Security's own
+      // `findings.txt`/`report.txt`/`objectives.txt` hand-off files) fell
+      // through silently outside its own allowlist — only `directory` scope
+      // (the Developer's worktree) denied explicitly (O4). That left a
+      // reviewer/security Write/Edit outside its three named files resolving
+      // through the host's own default classifier instead of this hook's own
+      // written restriction, exactly the gap O4 had just closed one role
+      // over. `extraWritableDirs` has no CLI flag (same reasoning the
+      // `developerFiles` test above gives — only `dev-review-loop.ts`'s
+      // internal call site ever supplies one), so this calls `dispatchRole`
+      // directly rather than through the `vinaya dispatch` CLI.
+      const home = tempDir('vinaya-dispatch-home-')
+      const cwd = tempDir('vinaya-dispatch-cwd-')
+      const binDir = tempDir('vinaya-dispatch-bin-')
+      const reviewWorkDir = tempDir('vinaya-dispatch-reviewwork-')
+      const argvOut = join(cwd, 'argv.out')
+      writeFakeBinary(
+        binDir,
+        'claude',
+        `#!/bin/sh\nfor a in "$@"; do echo "$a"; done > "${argvOut}"\ncat > /dev/null\necho '{}'\nexit 0\n`
+      )
+      const promptFile = join(cwd, 'prompt.txt')
+      writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+
+      const dispatchLib = join(CLI_ROOT, 'src', 'lib', 'dispatch.ts')
+      const script = join(cwd, `${role}-exact-files-dispatch.ts`)
+      writeFileSync(
+        script,
+        [
+          `import { dispatchRole } from ${JSON.stringify(dispatchLib)}`,
+          'const opts = {',
+          `  promptFile: ${JSON.stringify(promptFile)},`,
+          `  cwd: ${JSON.stringify(cwd)},`,
+          `  extraWritableDirs: [${JSON.stringify(reviewWorkDir)}]`,
+          '}',
+          `await dispatchRole(${JSON.stringify(role)}, 'claude', 'p', opts)`
+        ].join('\n')
+      )
+      const spawnEnv: NodeJS.ProcessEnv = stripVinayaEnv({
+        ...process.env,
+        HOME: home,
+        PATH: `${binDir}:${pathWithoutRealVendors()}`
+      })
+      runScriptWithBudget(script, cwd, spawnEnv)
+
+      const argv = readFileSync(argvOut, 'utf8').trim().split('\n')
+      const settingsIdx = argv.indexOf('--settings')
+      const settingsPath = argv[settingsIdx + 1] as string
+      const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as {
+        hooks: { PreToolUse: Array<{ matcher: string; hooks: Array<{ command: string }> }> }
+      }
+      const writeEntry = settings.hooks.PreToolUse.find((h) => h.matcher === 'Write|Edit')
+      expect(writeEntry).toBeDefined()
+      const hookCommand = writeEntry?.hooks[0]?.command as string
+      const scriptPath = hookCommand.slice('bun "'.length, -1)
+      const scopeFiles = readdirSync(dirname(scriptPath)).filter((f) => f.startsWith('write-access-'))
+      expect(scopeFiles).toHaveLength(1)
+      const runId = (scopeFiles[0] as string).slice('write-access-'.length, -'.json'.length)
+
+      // The exact hand-off file is still ALLOWED — the existing allowed-file
+      // behavior this fix must not regress.
+      const allowedPath = join(realpathSync(reviewWorkDir), 'findings.txt')
+      const allowed = spawnBudgeted(
+        [scriptPath],
+        {
+          input: JSON.stringify({ tool_name: 'Write', tool_input: { file_path: allowedPath } }),
+          encoding: 'utf8',
+          env: { ...process.env, VINAYA_RUN_ID: runId }
+        },
+        'write-access hook'
+      )
+      expect(allowed.status).toBe(0)
+      const allowedOut = JSON.parse(allowed.stdout) as { hookSpecificOutput: { permissionDecision: string } }
+      expect(allowedOut.hookSpecificOutput.permissionDecision).toBe('allow')
+
+      // A sibling file in the SAME directory, never named by the exact-files
+      // allowlist, and a path entirely outside both the real home and the
+      // real temp root — both DENIED, for both `Write` and `Edit`.
+      const siblingPath = join(reviewWorkDir, 'not-a-handoff-file.txt')
+      const outsidePath = '/opt/vinaya-should-never-write-here/x'
+      for (const toolName of ['Write', 'Edit']) {
+        for (const deniedPath of [siblingPath, outsidePath]) {
+          const result = spawnBudgeted(
+            [scriptPath],
+            {
+              input: JSON.stringify({ tool_name: toolName, tool_input: { file_path: deniedPath } }),
+              encoding: 'utf8',
+              env: { ...process.env, VINAYA_RUN_ID: runId }
+            },
+            'write-access hook'
+          )
+          expect(result.status).toBe(0)
+          const out = JSON.parse(result.stdout) as {
+            hookSpecificOutput: { permissionDecision: string; permissionDecisionReason: string }
+          }
+          expect(out.hookSpecificOutput.permissionDecision).toBe('deny')
+          expect(out.hookSpecificOutput.permissionDecisionReason).toMatch(/hand-off/)
+        }
+      }
+    })
+  }
 
   it('a developer dispatch carrying developerFiles (O3, task-files-v1 2, #649) ALLOWS a write to exactly those two files outside its worktree, and still DENIES an unrelated outside path', () => {
     // `developerFiles` has no CLI flag (same reasoning `extraWritableDirs`'s
