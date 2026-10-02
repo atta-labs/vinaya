@@ -135,6 +135,17 @@ import { fileURLToPath } from 'node:url'
  * outbox path itself — the same "mentions `outbox`, writes elsewhere (or
  * nowhere)" false positive `OUTBOX_PROSE_MENTION_ALLOWLIST`'s own doc
  * comment already describes, so it joins that allowlist too.
+ *
+ * `pause-resume.ts` (`DEV_REVIEW_LOOP_PAUSE_RESUME_PATH`) now calls `log()`
+ * too — a human handoff, raised at its own escalation-record write and
+ * resolved at its own resolution-consume function — and joins
+ * `CALLER_ALLOWLIST` alone, the same read-only-against-the-outbox shape
+ * `journal-history.ts`/`resume.ts`/`cancel.ts`/`runner.ts`/`effects.ts`/
+ * `broker.ts` already occupy above (it was already a member of
+ * `OUTBOX_HELD_VERDICT_ALLOWLIST`, for the pause-state and driver-lock
+ * writes it has always performed — an unrelated category, since a handoff
+ * event goes through the sink's own append, never a direct write under the
+ * outbox root).
  */
 
 const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..', '..')
@@ -258,6 +269,7 @@ const CALLER_ALLOWLIST = new Set([
   LOG_WEBHOOK_DRAIN_LIB_PATH,
   DISPATCH_PATH,
   DEV_REVIEW_LOOP_PATH,
+  DEV_REVIEW_LOOP_PAUSE_RESUME_PATH,
   DEV_REVIEW_LOOP_JOURNAL_HISTORY_PATH,
   LOG_SYNC_FOLDER_SOURCE_PATH,
   TASK_TOOLS_RESUME_PATH,
@@ -512,14 +524,16 @@ describe('log-callers — O2 (task 3, #482): no internal subprocess flush', () =
  *    gap explicitly, fails this file rather than silently shipping an
  *    uninstrumented event.
  *
- * `handoff` (`raised`/`resolved`) is the one family with zero real callers
- * anywhere in the tree today — declared, not yet real, the same
- * "declared here, enforced later" pattern this doctrine already applies to
- * `meta.lineage.attempt`/`meta.lineage.parent` (`apps/cli/specs/log.md`
- * "Attribution"). It is named in `LOG_COVERAGE_EXEMPTIONS` explicitly rather
- * than silently passing (a hand-trusted table that forgot to require it) or
+ * `handoff` (`raised`/`resolved`) now has a real producer boundary of its
+ * own, below — `pause-resume.ts`'s `writeEscalationRecord`/`resolveEscalation`
+ * — rather than sitting in `LOG_COVERAGE_EXEMPTIONS` declared-but-not-real,
+ * the same "declared here, enforced later" pattern this doctrine still
+ * applies to `meta.lineage.attempt`/`meta.lineage.parent` (`apps/cli/specs/log.md`
+ * "Attribution"). `forge_write`'s three events remain the pattern's one
+ * surviving example: named in `LOG_COVERAGE_EXEMPTIONS` explicitly rather
+ * than silently passing (a hand-trusted table that forgot to require them) or
  * silently failing (this file refusing to land until a task outside this
- * one's boundary wires a producer it was never asked to build).
+ * one's boundary wires a producer no caller needs).
  */
 
 type RequiredEvent = { kind: string; event: string }
@@ -600,6 +614,14 @@ const PRODUCER_BOUNDARIES: ProducerBoundary[] = [
     name: 'task-tools cancel/resume handlers',
     files: [TASK_TOOLS_CANCEL_PATH, TASK_TOOLS_RESUME_PATH],
     requires: [{ kind: 'operation', event: 'completed' }]
+  },
+  {
+    name: 'pause-resume — a human handoff raised at the escalation record write, resolved at the resolution record',
+    files: [DEV_REVIEW_LOOP_PAUSE_RESUME_PATH],
+    requires: [
+      { kind: 'handoff', event: 'raised' },
+      { kind: 'handoff', event: 'resolved' }
+    ]
   }
 ]
 
@@ -615,8 +637,6 @@ const PRODUCER_BOUNDARIES: ProducerBoundary[] = [
  * check demanding a producer that no longer exists.
  */
 const LOG_COVERAGE_EXEMPTIONS: RequiredEvent[] = [
-  { kind: 'handoff', event: 'raised' },
-  { kind: 'handoff', event: 'resolved' },
   // `effect` `attempted`/`observed` stay in the schema so a line stored
   // before a write recorded one final event still reads; nothing emits them.
   { kind: 'effect', event: 'attempted' },

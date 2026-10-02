@@ -47,7 +47,7 @@ import {
   type LoopResult,
   runDriverLoop
 } from '../../src/lib/dev-review-loop.js'
-import { resetTrustAnchorConfigMemo } from '../../src/lib/log-sink.js'
+import { resetDefaultLogSinkContext, resetTrustAnchorConfigMemo } from '../../src/lib/log-sink.js'
 import { resetRuntimeDirCache } from '../../src/lib/run-paths.js'
 import type { DispatchHandle } from '../../src/lib/dispatch.js'
 import {
@@ -710,11 +710,21 @@ export async function withWorldEnv<T>(world: LoopWorld, fn: () => Promise<T> | T
   // the runtime-dir memo is, so a world's own config is what decides its
   // destination whatever ran first.
   resetTrustAnchorConfigMemo()
+  // The bare default sink's own `context()` resolution (repo/doctrine/
+  // destination) is memoized for its whole process life too, with no
+  // per-repository key the way the trust-anchor memo above has — a direct
+  // caller of the module-level `log()` (`pause-resume.ts`'s
+  // `writeEscalationRecord`/`resolveEscalation`, among others) would
+  // otherwise have its SECOND isolated world silently reuse the first
+  // world's already-torn-down destination. Same "reset on entry and again
+  // in `finally`" shape as the two resets above.
+  resetDefaultLogSinkContext()
   try {
     return await fn()
   } finally {
     resetRuntimeDirCache()
     resetTrustAnchorConfigMemo()
+    resetDefaultLogSinkContext()
     process.chdir(savedCwd)
     if (savedHome === undefined) delete process.env.HOME
     else process.env.HOME = savedHome

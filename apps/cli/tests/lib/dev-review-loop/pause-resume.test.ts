@@ -25,6 +25,7 @@ import {
   writeEffect
 } from '@attalabs/aeg-core'
 import type { LoopDeps } from '../../../src/lib/dev-review-loop'
+import { drainLogSink } from '../../../src/lib/log-sink'
 import { MAX_INFRASTRUCTURE_RETRIES } from '../../../src/lib/dev-review-loop/round-assess'
 import {
   cleanupWorlds,
@@ -32,10 +33,14 @@ import {
   type LoopWorld,
   makeInProcessDeps,
   makeWorld,
+  outboxLines,
   runLoopInProcess,
-  taskRunDir
+  taskRunDir,
+  withWorldEnv
 } from '../dev-review-loop-harness'
 import {
+  type EscalationFacts,
+  escalationIdFor,
   fenceStartedEffectsAsUncertain,
   noPushResumeArgv,
   noPushResumeCommandFor,
@@ -44,6 +49,8 @@ import {
   readPauseState,
   renderNoPushStopComment,
   renderPauseComment,
+  resolveEscalation,
+  writeEscalationRecord,
   writePauseState
 } from '../../../src/lib/dev-review-loop/pause-resume'
 
@@ -616,5 +623,139 @@ describe('a pre-spawn sign-in refusal never blocks the task', () => {
     const held = heldPauseState(world)
     expect(String(held.detail)).not.toContain('could not sign in')
     expect(held.infrastructureRetries).toBe(1)
+  })
+})
+
+/**
+ * Round 2 review, MAJOR: the once-only, cancel-skip and replay-skip emission
+ * logic (O1/O3) had no behavioral test — only a source-text grep (the
+ * producer-coverage boundary in `log-callers.test.ts`) confirmed the event
+ * NAMES exist, which would still pass with the `decision === 'resume'` guard
+ * or the `existedBefore` idempotency check inverted or removed. These drive
+ * `writeEscalationRecord`/`resolveEscalation` directly — in-process, isolated
+ * the same way `runLoopInProcess` isolates a full loop run (`withWorldEnv`,
+ * `dev-review-loop-harness.ts`) — and read back the REAL logged ndjson lines
+ * (`outboxLines`), never a mock of `log()`.
+ */
+describe('writeEscalationRecord / resolveEscalation — the handoff Log family (O1-O3)', () => {
+  afterEach(cleanupWorlds)
+
+  function escalationFacts(world: LoopWorld, overrides: Partial<EscalationFacts> = {}): EscalationFacts {
+    return {
+      task: world.task,
+      round: 1,
+      head: world.head,
+      branch: world.branch,
+      pr: world.prNumber,
+      runId: 'run-1',
+      agent: 'claude',
+      reason: 'escalation',
+      detail: 'a concrete, observed fact about this pause',
+      briefHash: 'deadbeef',
+      objectivesVersion: null,
+      rulingOrdinal: 0,
+      policyDigest: 'policy-digest',
+      ...overrides
+    }
+  }
+
+  function handoffEvents(world: LoopWorld): Array<Record<string, unknown>> {
+    return outboxLines(world).filter((e) => e.kind === 'handoff')
+  }
+
+  it('O1: logs exactly one handoff raised event, carrying class/reason/requested_decision, and none again on an idempotent rerun of the identical pause', async () => {
+    const world = makeWorld()
+    const facts = escalationFacts(world)
+
+    await withWorldEnv(world, async () => {
+      writeEscalationRecord(facts)
+      // A rerun of the SAME pause instance — identical round/head/branch/pr/
+      // reason/detail — which the control store answers with the same
+      // canonical escalation id (`writeEscalation`, `@attalabs/aeg-core`).
+      writeEscalationRecord(facts)
+      // `log()` is fire-and-forget (queued, never awaited by its own
+      // caller) — drained here, still inside this world's own isolated
+      // env/cwd, so the write actually lands before `outboxLines` reads it.
+      await drainLogSink()
+    })
+
+    const raised = handoffEvents(world).filter((e) => e.event === 'raised')
+    expect(raised).toHaveLength(1)
+    expect(raised[0]).toMatchObject({
+      kind: 'handoff',
+      event: 'raised',
+      class: 'authority',
+      reason: 'escalation',
+      requested_decision: 'a concrete, observed fact about this pause'
+    })
+  })
+
+  it('O1: a genuinely different pause colliding on the same round/head still logs its own raised event', async () => {
+    const world = makeWorld()
+    const facts = escalationFacts(world)
+    const collidingFacts = escalationFacts(world, { detail: 'a different pause condition, same round and head' })
+
+    await withWorldEnv(world, async () => {
+      writeEscalationRecord(facts)
+      writeEscalationRecord(collidingFacts)
+      await drainLogSink()
+    })
+
+    expect(handoffEvents(world).filter((e) => e.event === 'raised')).toHaveLength(2)
+  })
+
+  it('O2: resolving with `resume` logs exactly one handoff resolved event, naming the resolution and who resolved it', async () => {
+    const world = makeWorld()
+    const facts = escalationFacts(world)
+    const escalationId = escalationIdFor(facts.task, facts.round, facts.head)
+
+    await withWorldEnv(world, async () => {
+      writeEscalationRecord(facts)
+      resolveEscalation(facts.task, escalationId, facts.pr, 'resume', 'daniboomerang', `${facts.pr}-1`)
+      await drainLogSink()
+    })
+
+    const resolved = handoffEvents(world).filter((e) => e.event === 'resolved')
+    expect(resolved).toHaveLength(1)
+    expect(resolved[0]).toMatchObject({
+      kind: 'handoff',
+      event: 'resolved',
+      class: 'authority',
+      reason: 'escalation',
+      resolution: 'resume',
+      resolved_by: 'daniboomerang'
+    })
+  })
+
+  it('O3: a cancel records no resolved event at all, leaving the earlier raised event untouched', async () => {
+    const world = makeWorld()
+    const facts = escalationFacts(world)
+    const escalationId = escalationIdFor(facts.task, facts.round, facts.head)
+
+    await withWorldEnv(world, async () => {
+      writeEscalationRecord(facts)
+      resolveEscalation(facts.task, escalationId, facts.pr, 'cancel', 'daniboomerang', `${facts.pr}-1`)
+      await drainLogSink()
+    })
+
+    expect(handoffEvents(world).filter((e) => e.event === 'resolved')).toEqual([])
+    expect(handoffEvents(world).filter((e) => e.event === 'raised')).toHaveLength(1)
+  })
+
+  it('O3: a replayed resolve is refused and logs no second resolved event', async () => {
+    const world = makeWorld()
+    const facts = escalationFacts(world)
+    const escalationId = escalationIdFor(facts.task, facts.round, facts.head)
+
+    await withWorldEnv(world, async () => {
+      writeEscalationRecord(facts)
+      resolveEscalation(facts.task, escalationId, facts.pr, 'resume', 'daniboomerang', `${facts.pr}-1`)
+      expect(() =>
+        resolveEscalation(facts.task, escalationId, facts.pr, 'resume', 'daniboomerang', `${facts.pr}-2`)
+      ).toThrow()
+      await drainLogSink()
+    })
+
+    expect(handoffEvents(world).filter((e) => e.event === 'resolved')).toHaveLength(1)
   })
 })
