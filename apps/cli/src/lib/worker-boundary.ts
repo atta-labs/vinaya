@@ -46,6 +46,7 @@ import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
+import type { Role } from '@attalabs/aeg-core'
 
 /** The same allowlist discipline `apps/cli/src/checks/runner.ts`'s `buildCheckEnv` already applies to a custom check's child — named here again, deliberately, rather than imported: `checks/runner.ts` sits outside this task's surface (`apps/cli/src/checks` is explicitly named `out:` in the dispatched brief), and this list is small enough that naming it twice costs less than reaching across that boundary. `apps/cli/specs/isolation.md` §2 documents this precedent as the pattern this module extends to the Worker/Reviewer dispatch path. */
 export const WORKER_ENV_ALLOWLIST_KEYS = [
@@ -1686,5 +1687,216 @@ export function resolveWorkerBoundaryLaunch(
     }
   } catch (error) {
     return { ok: false, reason: `worker boundary profile could not be built: ${(error as Error).message}` }
+  }
+}
+
+// --- O1/O2/O5: the provider-neutral confinement interface -------------------
+
+/**
+ * Linux hosts: Claude Code's own sandbox needs `bubblewrap` (`bwrap`) to
+ * build its mount/pid namespace and `socat` to bridge its outbound network
+ * proxy into it — confirmed live against the installed binary (2.1.197,
+ * `grep -a` over its own strings: `"bubblewrap (bwrap) not installed"`,
+ * `sta(){let{seccompConfig:t,bwrapPath:n,socatPath:r}=e??{}...`). Named here,
+ * once, so `resolveClaudeConfinement`'s own refusal to set
+ * `sandbox.enabled`/`failIfUnavailable` on a host that cannot satisfy them —
+ * falling back to an unconfined run with a named warning instead (Principal
+ * ruling, 2026-10-02: nobody is ever required to install anything) — and
+ * `apps/cli/specs/self-hosting.md`'s own description of that same fallback
+ * read the identical list, never a second one that could drift.
+ */
+export const LINUX_CLAUDE_SANDBOX_TOOLS = ['bwrap', 'socat'] as const
+
+export type LinuxSandboxToolDeps = {
+  /** `true` when `bin` resolves on `PATH` — the real implementation shells out to `which`; injectable so the missing-tool fallback is provable without uninstalling anything on the test host. */
+  commandExists: (bin: string) => boolean
+}
+
+function realCommandExists(bin: string): boolean {
+  try {
+    execFileSync('which', [bin], { stdio: 'ignore' })
+    return true
+  } catch {
+    return false
+  }
+}
+
+export const REAL_LINUX_SANDBOX_TOOL_DEPS: LinuxSandboxToolDeps = { commandExists: realCommandExists }
+
+export type LinuxSandboxToolCheck = {
+  readonly available: boolean
+  readonly missing: readonly string[]
+}
+
+/** Which of `LINUX_CLAUDE_SANDBOX_TOOLS` this host is missing, if any — `available` is `true` only when neither is. Never installs anything; a missing tool is reported, not remedied (Principal ruling, 2026-10-02). */
+export function checkLinuxSandboxTools(
+  deps: LinuxSandboxToolDeps = REAL_LINUX_SANDBOX_TOOL_DEPS
+): LinuxSandboxToolCheck {
+  const missing = LINUX_CLAUDE_SANDBOX_TOOLS.filter((tool) => !deps.commandExists(tool))
+  return { available: missing.length === 0, missing }
+}
+
+/**
+ * O2: the two network destinations a confined Developer's own Bash-tool
+ * subprocesses (`git fetch`, `gh pr`/`issue` read calls, `bun install`) need
+ * to reach. Never the model-runtime endpoint itself — Claude Code's own MAIN
+ * process reaches that unconfined; it is not inside its own sandbox, only
+ * the tools it dispatches are (`apps/cli/specs/isolation.md` §4) — so the
+ * model endpoint needs no entry here at all.
+ */
+export const CLAUDE_SANDBOX_ALLOWED_DOMAINS: readonly string[] = [
+  'github.com',
+  'api.github.com',
+  'raw.githubusercontent.com',
+  'codeload.github.com',
+  'objects.githubusercontent.com',
+  'registry.npmjs.org'
+]
+
+export type ConfinementRequest = {
+  readonly role: Role
+  /** A plain string, never `AgentVendor` — that type lives in `dispatch.ts`, which imports this module, and importing it back here would cycle; `hasSubscriptionLogin` (above) already takes the same shape for the same reason. */
+  readonly agent: string
+  readonly worktreeDir: string
+  readonly scratchDir: string
+  readonly allowedHosts: readonly string[]
+}
+
+export type ClaudeSandboxSettings = {
+  readonly sandbox: {
+    readonly enabled: true
+    readonly failIfUnavailable: true
+    readonly allowUnsandboxedCommands: false
+    readonly network: { readonly allowedDomains: string[] }
+    readonly filesystem: {
+      readonly allowWrite: string[]
+      readonly allowRead: string[]
+      readonly denyRead: string[]
+    }
+  }
+  readonly permissionsDeny: readonly string[]
+}
+
+/**
+ * O2: Claude Code's own `sandbox` settings block — `enabled`,
+ * `failIfUnavailable` and `allowUnsandboxedCommands: false` exactly as the
+ * brief specifies, and deliberately no `excludedCommands` key: an entry
+ * there runs a command OUTSIDE the sandbox, which is the one thing a loaded
+ * settings source must never be able to add back (O3's own trap).
+ *
+ * `filesystem.allowWrite` grants exactly the two directories a confined role
+ * is trusted to write: its own worktree (a Developer's worktree, or a
+ * Reviewer's candidate checkout) and this dispatch's own scratch
+ * directory — never a third path, and never the real `HOME`.
+ * `filesystem.denyRead`/`allowRead` together express "readable inside the
+ * worktree and scratch directory, denied in the real home outside them":
+ * `denyRead` names the real home broadly, and `allowRead` re-permits the two
+ * granted directories, which on an ordinary checkout sit nested inside it.
+ * Confirmed against the installed binary's own schema, whose `denyRead` doc
+ * comment reads "Merged with paths from `Read(...)` deny permission rules" —
+ * so `permissionsDeny`'s matching `Read(<home>/**)` entry (below) reaches the
+ * SAME merged sandbox list from the permission layer, not a second,
+ * independent restriction; `Write`/`Edit` mirror it for the same reason.
+ *
+ * All three paths are `realpath`'d before being written into the settings
+ * file — the same "every substituted path must be canonicalized" discipline
+ * `isolation.md` §3 already states for the hand-built Seatbelt profile this
+ * mechanism replaces for Claude: an unresolved symlinked alias (this host's
+ * own `/tmp` → `/private/tmp`, the doc's own standing example) would
+ * otherwise make the sandbox's own resolved-path check disagree with the
+ * literal string this settings file names.
+ */
+export function buildClaudeSandboxSettings(request: ConfinementRequest): ClaudeSandboxSettings {
+  const real = (p: string): string => {
+    try {
+      return realpathSync(p)
+    } catch {
+      return p
+    }
+  }
+  const worktreeDir = real(request.worktreeDir)
+  const scratchDir = real(request.scratchDir)
+  const realHome = real(homedir())
+  return {
+    sandbox: {
+      enabled: true,
+      failIfUnavailable: true,
+      allowUnsandboxedCommands: false,
+      network: { allowedDomains: [...request.allowedHosts] },
+      filesystem: {
+        allowWrite: [worktreeDir, scratchDir],
+        allowRead: [worktreeDir, scratchDir],
+        denyRead: [realHome]
+      }
+    },
+    permissionsDeny: [`Read(${realHome}/**)`, `Write(${realHome}/**)`, `Edit(${realHome}/**)`]
+  }
+}
+
+export type ConfinementResolution =
+  | {
+      readonly ok: true
+      readonly confined: true
+      readonly settings: ClaudeSandboxSettings
+      readonly scratchDir: string
+    }
+  | { readonly ok: true; readonly confined: false; readonly warning: string }
+
+export type ConfinementPlatformDeps = {
+  readonly platform: NodeJS.Platform
+  readonly linuxTools: LinuxSandboxToolCheck
+}
+
+/** Real platform/tool facts — `process.platform` plus a fresh `checkLinuxSandboxTools()` read. A caller wanting a stable answer across one dispatch reads it once and threads the result, the same posture `detectRealHost` already documents for the Seatbelt path. */
+export function realConfinementPlatformDeps(): ConfinementPlatformDeps {
+  return { platform: process.platform, linuxTools: checkLinuxSandboxTools() }
+}
+
+/**
+ * O1/O2/O5 — the Claude half of the provider-neutral confinement interface:
+ * takes a role, its task worktree, its scratch directory and the hosts it
+ * may reach (`ConfinementRequest`), and returns the vendor configuration for
+ * that dispatch (`ConfinementResolution`) — `dispatch.ts` calls this once for
+ * every unattended Claude dispatch rather than branching on platform itself
+ * to decide whether to build a Seatbelt profile the way it did before this
+ * task.
+ *
+ * Always confined on macOS — Claude Code's own sandbox there "needs nothing
+ * installed" (it ships with the OS, Seatbelt-backed). On Linux, confined
+ * only when both `LINUX_CLAUDE_SANDBOX_TOOLS` are present; otherwise returns
+ * the unconfined fallback carrying a `warning` naming the missing tool(s),
+ * rather than setting `failIfUnavailable: true` on a host that cannot
+ * satisfy it — which would make `claude` itself exit with "Sandbox required
+ * but unavailable" instead of merely running unconfined (see
+ * `LINUX_CLAUDE_SANDBOX_TOOLS`'s own doc comment). Never refuses the
+ * dispatch, and never installs anything (Principal ruling, 2026-10-02): the
+ * one degraded outcome this function reports is `confined: false`, always
+ * paired with a `warning` the caller surfaces in the run's own output and
+ * the Vinaya Log.
+ */
+export function resolveClaudeConfinement(
+  request: ConfinementRequest,
+  deps: ConfinementPlatformDeps = realConfinementPlatformDeps()
+): ConfinementResolution {
+  if (deps.platform === 'darwin') {
+    return { ok: true, confined: true, settings: buildClaudeSandboxSettings(request), scratchDir: request.scratchDir }
+  }
+  if (deps.platform === 'linux') {
+    if (deps.linuxTools.available) {
+      return { ok: true, confined: true, settings: buildClaudeSandboxSettings(request), scratchDir: request.scratchDir }
+    }
+    return {
+      ok: true,
+      confined: false,
+      warning:
+        `Claude Code's own sandbox needs ${LINUX_CLAUDE_SANDBOX_TOOLS.join(' and ')} on Linux; missing: ` +
+        `${deps.linuxTools.missing.join(', ')} — running this dispatch unconfined rather than requiring an ` +
+        'install (Principal ruling, 2026-10-02).'
+    }
+  }
+  return {
+    ok: true,
+    confined: false,
+    warning: `Claude Code's own sandbox names no mechanism for platform '${deps.platform}' — running this dispatch unconfined.`
   }
 }

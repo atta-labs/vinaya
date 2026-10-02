@@ -137,29 +137,39 @@ function outboxLines(home: string): unknown[] {
     .map((l) => JSON.parse(l))
 }
 
-describe('vinaya dispatch --unattended — O3 fail-closed refusal', () => {
+describe('vinaya dispatch --unattended — task 3: Claude never refuses for confinement, it degrades instead', () => {
   it.skipIf(process.platform !== 'darwin')(
-    'refuses before ever spawning the vendor binary, with the boundary required and no boundary resolvable',
+    "on darwin, confines via Claude Code's own sandbox settings and still spawns the vendor binary, even with no git worktree",
     () => {
+      // Task 3 retires the OLD premise this fixture was built to exercise —
+      // that an unattended Claude start shared Codex's `repoRoot()`-dependent
+      // Seatbelt boundary and so refused on a plain, non-git `cwd`. Claude's
+      // own confinement (`resolveClaudeConfinement`) needs no worktree
+      // resolution at all: it is always available on macOS, so this exact
+      // fixture now succeeds, confined, rather than refusing.
       const fixture = buildFixture()
       const result = runDispatch(fixture, ['--unattended'])
 
-      expect(result.status).not.toBe(0)
-      expect(existsSync(fixture.markerFile)).toBe(false)
-      expect(result.stderr).toContain('refused')
+      expect(result.status, `stderr: ${result.stderr}`).toBe(0)
+      expect(existsSync(fixture.markerFile)).toBe(true)
 
-      const lines = outboxLines(fixture.home) as Array<{ event?: string; reason?: string }>
-      const failed = lines.find((l) => l.event === 'dispatch_failed')
-      expect(failed).toBeDefined()
-      expect(failed?.reason).toBe('refused')
-      // No 'dispatched' event either — the refusal happens before that line.
-      expect(lines.find((l) => l.event === 'dispatched')).toBeUndefined()
+      const lines = outboxLines(fixture.home) as Array<{ event?: string }>
+      expect(lines.find((l) => l.event === 'dispatched')).toBeDefined()
+      expect(lines.find((l) => l.event === 'dispatch_failed')).toBeUndefined()
     }
   )
 
   it.skipIf(process.platform === 'darwin')(
-    'a host with no sandbox support runs an unattended Claude start as it always has',
+    'on a linux host without bubblewrap/socat, runs unconfined rather than refusing (O5)',
     () => {
+      // `runVinayaDispatch` only captures `stderr` on a NON-zero exit (its
+      // own `try` branch returns `stderr: ''` on success), so the warning
+      // text itself — confirmed live via a direct `vinaya dispatch` run on
+      // this exact dev/CI host, which genuinely lacks `bwrap` — is proven by
+      // `worker-boundary.test.ts`'s own unit-level coverage of
+      // `resolveClaudeConfinement`'s `warning` field, not observable through
+      // this subprocess harness. What this test proves is the behavioral
+      // half: the dispatch still succeeds and still spawns the vendor.
       const fixture = buildFixture()
       const result = runDispatch(fixture, ['--unattended'])
 
@@ -258,71 +268,57 @@ function runDispatchNoAmbientLogin(
   )
 }
 
-describe('vinaya dispatch --unattended — O2 fail-closed refusal (Issue #640, no resolvable credential)', () => {
-  it.skipIf(process.platform !== 'darwin')(
-    'refuses before ever spawning the vendor binary, boundary resolved but no subscription login to stage',
-    () => {
-      const fixture = buildGitFixture()
-      const result = runDispatchNoAmbientLogin(fixture, ['--unattended'])
+describe('vinaya dispatch --unattended — task 3: Claude stages and pre-checks no credential at all', () => {
+  // Pre-task-3, an unattended Claude dispatch ran through the hand-built
+  // Seatbelt boundary, which denied the real `HOME` outright — so a staged
+  // COPY of the OAuth credential, and a pre-spawn refusal when none could be
+  // staged, were load-bearing (Issue #640). Claude's own native sandbox
+  // never confines Claude Code's own main process (`isolation.md` §4,
+  // "Claude Code itself runs unconfined") — only its tools are — so this
+  // dispatch now needs neither: it never rewrites `CLAUDE_CONFIG_DIR` and
+  // never pre-checks a credential before spawning, on EITHER platform,
+  // which is why these two tests are not platform-gated.
+  it('never stages or rewrites CLAUDE_CONFIG_DIR, and still succeeds with no credential at the fixture HOME', () => {
+    const fixture = buildGitFixture()
+    const result = runDispatchNoAmbientLogin(fixture, ['--unattended'])
 
-      expect(result.status).not.toBe(0)
-      expect(existsSync(fixture.markerFile), 'the vendor binary must never be spawned at all').toBe(false)
-      expect(existsSync(fixture.envCaptureFile)).toBe(false)
-      expect(result.stderr).toContain('refused')
-      expect(result.stderr).toContain('no resolvable credential')
-      // O3: the refusal names where this looked and how to sign in, never
-      // an API key — the operator can act on it without reading the source.
-      expect(result.stderr).toContain(join(fixture.home, '.claude', '.credentials.json'))
-      expect(result.stderr).toContain('Claude Code-credentials')
-      expect(result.stderr).toContain('/login')
-      expect(result.stderr.toLowerCase()).not.toContain('api key')
+    expect(result.status, `stderr: ${result.stderr}`).toBe(0)
+    expect(existsSync(fixture.markerFile)).toBe(true)
 
-      const lines = outboxLines(fixture.home) as Array<{ event?: string; reason?: string }>
-      const failed = lines.find((l) => l.event === 'dispatch_failed')
-      expect(failed).toBeDefined()
-      expect(failed?.reason).toBe('refused')
-      expect(lines.find((l) => l.event === 'dispatched')).toBeUndefined()
-    }
-  )
+    const captured = JSON.parse(readFileSync(fixture.envCaptureFile, 'utf8')) as { claudeConfigDir: string }
+    expect(captured.claudeConfigDir, 'dispatch.ts never sets CLAUDE_CONFIG_DIR for Claude any more').toBe('')
+  })
 
-  it.skipIf(process.platform !== 'darwin')(
-    'succeeds, staging a scoped copy, when a real OAuth session credential exists at the fixture HOME — never refused',
-    () => {
-      const fixture = buildGitFixture({
-        homeCredential: JSON.stringify({ accessToken: 'fixture-not-a-real-oauth-token' })
-      })
-      const result = runDispatchNoAmbientLogin(fixture, ['--unattended'])
+  it('still never stages or rewrites CLAUDE_CONFIG_DIR when a real OAuth session credential exists at the fixture HOME', () => {
+    const fixture = buildGitFixture({
+      homeCredential: JSON.stringify({ accessToken: 'fixture-not-a-real-oauth-token' })
+    })
+    const result = runDispatchNoAmbientLogin(fixture, ['--unattended'])
 
-      expect(result.status, `stderr: ${result.stderr}`).toBe(0)
-      expect(existsSync(fixture.markerFile)).toBe(true)
+    expect(result.status, `stderr: ${result.stderr}`).toBe(0)
+    expect(existsSync(fixture.markerFile)).toBe(true)
 
-      const captured = JSON.parse(readFileSync(fixture.envCaptureFile, 'utf8')) as { claudeConfigDir: string }
-      expect(captured.claudeConfigDir.length).toBeGreaterThan(0)
-      expect(
-        captured.claudeConfigDir,
-        'the confined child must see a STAGED copy, never the real fixture HOME/.claude'
-      ).not.toBe(join(fixture.home, '.claude'))
-    }
-  )
+    const captured = JSON.parse(readFileSync(fixture.envCaptureFile, 'utf8')) as { claudeConfigDir: string }
+    expect(
+      captured.claudeConfigDir,
+      "unset — Claude Code's own main process reads the real fixture HOME directly, unconfined"
+    ).toBe('')
+  })
 
-  it.skipIf(process.platform !== 'darwin')(
-    'O1: a vendor API key on the controller environment no longer authenticates anything — the same fixture still refuses, and still never spawns',
-    () => {
-      const fixture = buildGitFixture()
-      // The variable name is COMPOSED rather than written out, for the same
-      // reason `worker-boundary.test.ts`'s own allowlist test composes
-      // hers: no API-key name appears anywhere in this repository's
-      // sources, tests or specs, and a regression test must not be the one
-      // exception that reintroduces one.
-      const result = runDispatchNoAmbientLogin(fixture, ['--unattended'], 'claude', {
-        [`${'ANTHROPIC'}_API_KEY`]: 'sk-ant-fixture-not-real'
-      })
+  it('a vendor API key on the controller environment is simply inert — no credential gate reads it, for or against', () => {
+    const fixture = buildGitFixture()
+    // The variable name is COMPOSED rather than written out, for the same
+    // reason `worker-boundary.test.ts`'s own allowlist test composes
+    // hers: no API-key name appears anywhere in this repository's
+    // sources, tests or specs, and a regression test must not be the one
+    // exception that reintroduces one.
+    const result = runDispatchNoAmbientLogin(fixture, ['--unattended'], 'claude', {
+      [`${'ANTHROPIC'}_API_KEY`]: 'sk-ant-fixture-not-real'
+    })
 
-      expect(result.status).not.toBe(0)
-      expect(existsSync(fixture.markerFile), 'an API key must not start a vendor process').toBe(false)
-      expect(result.stderr).toContain('no resolvable credential')
-    }
-  )
+    expect(result.status, `stderr: ${result.stderr}`).toBe(0)
+    expect(existsSync(fixture.markerFile)).toBe(true)
+  })
 })
 
 describe('vinaya dispatch --unattended — O2 Gemini has no subscription login yet', () => {

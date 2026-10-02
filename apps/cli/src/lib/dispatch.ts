@@ -68,15 +68,17 @@ import {
   accessSync,
   constants as fsConstants,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   realpathSync,
+  rmSync,
   writeFileSync
 } from 'node:fs'
 import { chmodSync, createWriteStream } from 'node:fs'
 import { execFileSync, spawn } from 'node:child_process'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
-import { homedir, hostname as osHostname } from 'node:os'
+import { homedir, hostname as osHostname, tmpdir } from 'node:os'
 import { parseIssueDocumentation, redact, summarizeTranscript } from '@attalabs/aeg-core'
 import type { IssueDocumentationSource, Role, RoleAttemptOutcome, TranscriptSummary } from '@attalabs/aeg-core'
 import { createLogSink, resolveLogAppendPath } from './log-sink.js'
@@ -95,10 +97,13 @@ import {
 import { basename, dirname, join } from 'node:path'
 import {
   CLAUDE_KEYCHAIN_SERVICE,
+  CLAUDE_SANDBOX_ALLOWED_DOMAINS,
   buildWorkerEnv,
   hasSubscriptionLogin,
+  resolveClaudeConfinement,
   resolveWorkerBoundaryLaunch,
-  stageCodexPolicyHome
+  stageCodexPolicyHome,
+  type ClaudeSandboxSettings
 } from './worker-boundary.js'
 import { repoRoot } from './diff-evidence.js'
 
@@ -1679,7 +1684,19 @@ export function writeDispatchSettings(
   role: Role = 'developer',
   allowedDir = '.',
   extraWritableDirs: readonly string[] = [],
-  developerFiles: readonly string[] = []
+  developerFiles: readonly string[] = [],
+  /**
+   * O1/O2: the Claude-native sandbox block `resolveClaudeConfinement`
+   * resolved for THIS dispatch, when it is confined — `null` for every
+   * attended dispatch and for an unattended one running unconfined (Linux
+   * without `bubblewrap`/`socat`). Embeds `settings.sandbox` verbatim and
+   * folds `permissionsDeny` into `buildRolePermissions(role)`'s own `deny`
+   * array, so the ONE settings file this function already writes carries
+   * the sandbox boundary alongside the existing hooks/permissions blocks,
+   * never a second file a confined `claude --settings` would also have to
+   * be told to load.
+   */
+  confinement: ClaudeSandboxSettings | null = null
 ): string | null {
   try {
     const dir = join(runPath(runtimeDirForThisRepo(), scope, { area: 'hooks' }), role)
@@ -1713,6 +1730,11 @@ export function writeDispatchSettings(
       })
     }
     const settingsPath = join(dir, 'settings.json')
+    const rolePermissions = buildRolePermissions(role)
+    const permissions =
+      confinement === null
+        ? rolePermissions
+        : { allow: rolePermissions.allow, deny: [...rolePermissions.deny, ...confinement.permissionsDeny] }
     const settings = {
       env: {
         CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1',
@@ -1726,7 +1748,8 @@ export function writeDispatchSettings(
         BASH_DEFAULT_TIMEOUT_MS: DISPATCH_BASH_MAX_TIMEOUT_MS,
         BASH_MAX_TIMEOUT_MS: DISPATCH_BASH_MAX_TIMEOUT_MS
       },
-      permissions: buildRolePermissions(role),
+      permissions,
+      ...(confinement === null ? {} : { sandbox: confinement.sandbox }),
       hooks: {
         PreToolUse: preToolUseHooks,
         PostToolUse: [
@@ -3523,16 +3546,50 @@ export async function dispatchRole(
           opts.developerFiles ?? []
         )
       : vendorArgs
-  // Computed here, once — both the settings-write fail-closed check below
-  // and the boundary-resolution block further down read the SAME value,
-  // never two independently-evaluated `loadConfig()` calls that could
-  // observe a config change mid-dispatch and disagree with each other.
-  // The sandbox is not a setting: it is on wherever it is supported (macOS),
-  // and an unattended Codex dispatch additionally refuses where it is not —
-  // Codex's per-run `CODEX_HOME` (the machine-state command rules, the staged
-  // login) only exists inside the boundary, so a Codex run outside it would
-  // fall back to the operator's real `~/.codex` with none of those rules.
-  const requireIsolation = process.platform === 'darwin' || (agent === 'codex' && opts.unattended === true)
+  // O1 (task 3): Codex's own OS-level boundary is the hand-built Seatbelt
+  // profile, unchanged by this task ("Out: Codex" — the brief's own
+  // Boundary paragraph) — still required wherever this dispatch is
+  // unattended, since its per-run `CODEX_HOME` (the machine-state command
+  // rules, the staged login) only exists inside that boundary; a Codex run
+  // outside it would fall back to the operator's real `~/.codex` with none
+  // of those rules. Claude no longer shares this formula at all: its own
+  // confinement is resolved below, through `resolveClaudeConfinement`
+  // (`worker-boundary.ts`), never by wrapping the whole process in this
+  // hand-built profile.
+  const codexRequireIsolation = agent === 'codex' && opts.unattended === true
+  // O1/O2/O5 (task 3): Claude's own confinement decision — resolved through
+  // the provider-neutral interface (`ConfinementRequest`/
+  // `resolveClaudeConfinement`) rather than this function branching on
+  // platform itself. `null` for every non-Claude agent and every attended
+  // dispatch; otherwise always a resolution (never a refusal — Claude
+  // degrades to an unconfined run with a `warning` rather than ever
+  // requiring an install, Principal ruling 2026-10-02). The scratch
+  // directory is minted fresh per dispatch, the same `mkdtemp`-in-`tmpdir()`
+  // discipline `resolveWorkerBoundaryLaunch`'s own `scratchTmpDir` already
+  // uses, and is removed in `finish()` below alongside every other
+  // dispatch-scoped temp resource.
+  const claudeScratchDir =
+    agent === 'claude' && opts.unattended === true
+      ? realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-claude-sandbox-')))
+      : null
+  const claudeConfinement =
+    agent === 'claude' && opts.unattended === true && claudeScratchDir !== null
+      ? resolveClaudeConfinement({
+          role,
+          agent,
+          worktreeDir: opts.cwd ?? repoRoot() ?? process.cwd(),
+          scratchDir: claudeScratchDir,
+          allowedHosts: CLAUDE_SANDBOX_ALLOWED_DOMAINS
+        })
+      : null
+  if (claudeConfinement !== null && !claudeConfinement.confined) {
+    // O5: named in the run's own output AND the Vinaya Log — a confined
+    // role's own `log()` call still reaches the Log (it is not denied by
+    // anything this task changes), so one `writeLifecycle` call, which
+    // already mirrors to both (`roleLogPath` and the terminal), satisfies
+    // both halves of this requirement.
+    writeLifecycle(`[vinaya dispatch ${effectId}] ${role} via ${agent}: WARNING — ${claudeConfinement.warning}`)
+  }
   // O1: claude only — see `writeDispatchSettings`'s own doc comment for why
   // Codex/Gemini are not silently included. Computed here, once, before the
   // 'dispatched' log line — moved up from inside the spawn `Promise`
@@ -3574,7 +3631,8 @@ export async function dispatchRole(
           role,
           permissionAllowedDir,
           opts.extraWritableDirs ?? [],
-          opts.developerFiles ?? []
+          opts.developerFiles ?? [],
+          claudeConfinement?.confined === true ? claudeConfinement.settings : null
         )
       : null
   const codexHooksPath =
@@ -3602,7 +3660,7 @@ export async function dispatchRole(
   // `null` when the operator has no `~/.codex/auth.json` to re-home from (a
   // keychain-only login can't be re-pointed) — the lifecycle line then says the
   // floor was not applied rather than claiming a protection that is not there.
-  const willUseWorkerBoundary = opts.unattended === true && requireIsolation
+  const willUseWorkerBoundary = opts.unattended === true && codexRequireIsolation
   const codexPolicyHome =
     agent === 'codex' && codexExecpolicyRules !== null && !willUseWorkerBoundary
       ? stageCodexPolicyHome({
@@ -3621,8 +3679,16 @@ export async function dispatchRole(
   // early-return refusal branch (binary not resolvable, non-Claude
   // Documentation degrade) that a normal Claude dispatch never reaches.
   if (dispatchSettingsPath !== null) {
+    // O2/O5: the SAME line a Claude dispatch always wrote before this task,
+    // now also naming whether Claude Code's own native sandbox is confining
+    // this dispatch — `confined` on every macOS run and on a Linux run with
+    // `bubblewrap`/`socat`; the `claudeConfinement !== null && !confined`
+    // branch above already wrote its own WARNING line for the remaining
+    // case, so this one states the positive fact rather than repeating it.
+    const sandboxNote =
+      claudeConfinement?.confined === true ? " — Claude Code's own sandbox is confining this dispatch's tools" : ''
     writeLifecycle(
-      `[vinaya dispatch ${effectId}] ${role} via ${agent}: permission policy ${PERMISSION_POLICY_VERSION} written to ${dispatchSettingsPath}`
+      `[vinaya dispatch ${effectId}] ${role} via ${agent}: permission policy ${PERMISSION_POLICY_VERSION} written to ${dispatchSettingsPath}${sandboxNote}`
     )
   } else if (
     agent === 'codex' &&
@@ -3665,18 +3731,23 @@ export async function dispatchRole(
       `[vinaya dispatch ${effectId}] ${role} via ${agent}: NO permission policy — machine-state commands (keychain, services, global settings) are NOT denied for this agent; only claude carries policy ${PERMISSION_POLICY_VERSION}`
     )
   }
-  // Round 5 review, MEDIUM: an unattended, isolation-required Claude dispatch
-  // whose settings write failed (a disk/permission fault under this task's
-  // own hooks directory) previously dropped `--settings`
-  // silently and launched anyway — the PreToolUse background-deny hook the
-  // brief names a trap to preserve would never load, with no refusal and no
-  // surfaced error, unlike O3's own boundary-unavailable path. Fail closed
-  // here the same way: refuse before any spawn, exactly as the
-  // binary-not-resolvable and boundary-unavailable refusals below do.
+  // Round 5 review, MEDIUM: an unattended Claude dispatch whose settings
+  // write failed (a disk/permission fault under this task's own hooks
+  // directory) previously dropped `--settings` silently and launched
+  // anyway — the PreToolUse background-deny hook the brief names a trap to
+  // preserve would never load, with no refusal and no surfaced error,
+  // unlike O3's own boundary-unavailable path. Fail closed here the same
+  // way: refuse before any spawn, exactly as the binary-not-resolvable and
+  // boundary-unavailable refusals below do. Unlike `codexRequireIsolation`
+  // (gated to Codex's own OS-level boundary, task 3 does not touch), this
+  // settings file carries the background-deny hook on EVERY unattended
+  // Claude dispatch regardless of platform or sandbox availability — task
+  // 3 removes the old platform-gated condition on this half of the check,
+  // which previously left a Linux Claude dispatch free to launch unguarded
+  // when the write failed.
   if (
-    (agent === 'claude' ? dispatchSettingsPath === null : agent === 'codex' ? codexHooksPath === null : false) &&
-    opts.unattended === true &&
-    requireIsolation
+    (agent === 'claude' && opts.unattended === true && dispatchSettingsPath === null) ||
+    (agent === 'codex' && opts.unattended === true && codexRequireIsolation && codexHooksPath === null)
   ) {
     const failureReason: DispatchFailureReason = 'hook-setup-failed'
     const durationMs = Date.now() - start
@@ -3699,6 +3770,16 @@ export async function dispatchRole(
       `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended start requires the PreToolUse ` +
         "background-deny hook's settings file, which could not be written into this task's own hooks directory"
     )
+    // O1/O2: never leak the scratch directory minted for Claude's own
+    // confinement (above) on this early refusal — `finish()`'s own cleanup
+    // is never reached from this `return`.
+    if (claudeScratchDir !== null) {
+      try {
+        rmSync(claudeScratchDir, { recursive: true, force: true })
+      } catch {
+        // best-effort, same reasoning as `finish()`'s own cleanup.
+      }
+    }
     patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason })
     await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
     return {
@@ -3713,15 +3794,15 @@ export async function dispatchRole(
   }
   const spawnArgs = dispatchSettingsPath ? [...baseArgs, '--settings', dispatchSettingsPath] : baseArgs
 
-  // O1/O3: an unattended start must run inside the proven
-  // boundary — refused, before the 'dispatched' event and before any spawn,
-  // when it cannot be established (`DispatchOpts.unattended`'s own doc
-  // comment). `requireIsolation` (above) is the platform's own answer, never
-  // a setting: on macOS the boundary is always required; elsewhere only an
-  // unattended Codex start requires it, and refuses because it cannot be had.
+  // O1/O3 (task 3): the hand-built Seatbelt boundary below is Codex's own
+  // OS-level mechanism now — no longer applied to Claude, which resolves
+  // its own confinement earlier, through `resolveClaudeConfinement`. An
+  // unattended Codex start must still run inside this proven boundary —
+  // refused, before the 'dispatched' event and before any spawn, when it
+  // cannot be established (`DispatchOpts.unattended`'s own doc comment).
   let boundaryLaunch: ReturnType<typeof resolveWorkerBoundaryLaunch> | null = null
   let boundaryAllowedDir: string | null = null
-  if (opts.unattended === true && requireIsolation) {
+  if (opts.unattended === true && codexRequireIsolation) {
     // O2 (round 2 review, CRITICAL): when no real worktree exists yet
     // (`opts.cwd` omitted — the round-1 Developer bootstrap, whose own Step 0
     // is `git worktree add`), `boundaryAllowedDir` falls back to the shared
@@ -3743,11 +3824,15 @@ export async function dispatchRole(
             args: spawnArgs,
             allowedDir: boundaryAllowedDir,
 
-            // O1: claude only — the one vendor whose OAuth
-            // credential shape `stageOAuthCredential` knows how to stage;
-            // Claude stages its OAuth material; Codex stages only the brokered
-            // access token plus the task-scoped config/hooks described below.
-            stageOAuthCredential: agent === 'claude',
+            // Task 3: this block is reached only for Codex now (gated on
+            // `codexRequireIsolation` above) — Claude no longer stages an
+            // OAuth credential copy at all; its own main process keeps its
+            // real, unconfined `HOME` access and reads its real credential
+            // directly (`apps/cli/specs/isolation.md` §4's own "Claude Code
+            // itself runs unconfined" framing). `stageCodexCredential`
+            // stages the brokered access token plus the task-scoped
+            // config/hooks described below.
+            stageOAuthCredential: false,
             stageCodexCredential: agent === 'codex',
             // O2: the PERSISTENT per-task directory this dispatch stages its
             // subscription login and vendor session store into, so a round-2
@@ -4039,20 +4124,12 @@ export async function dispatchRole(
             TMPDIR: resolvedBoundary.tmpDir,
             TMP: resolvedBoundary.tmpDir,
             TEMP: resolvedBoundary.tmpDir,
-            // Claude Code keeps its own working files under
-            // `/tmp/claude-<uid>` and ignores `TMPDIR` for them (live,
-            // 2.1.286: a confined `claude` died with `EPERM ... open
-            // '/tmp/claude-501'` before it ever read a login), so its own
-            // override must name the same granted scratch directory.
-            ...(agent === 'claude' ? { CLAUDE_CODE_TMPDIR: resolvedBoundary.tmpDir } : {}),
-            // O1: only set when a real OAuth session
-            // credential was actually staged (`resolveWorkerBoundaryLaunch`'s
-            // `stageOAuthCredential` opt, claude-only) — repoints the
-            // confined child's own config-dir lookup at the staged COPY
-            // (`worker-boundary.ts`'s `stageOAuthCredential`), never the
-            // real, denied `<realHome>/.claude`. The key is omitted
-            // entirely (not set to `undefined`) when nothing was staged,
-            // so a non-Claude dispatch's env is unaffected.
+            // Task 3: this branch is reached only for a confined Codex
+            // dispatch now (Claude no longer goes through
+            // `resolvedBoundary` at all — see `codexRequireIsolation`,
+            // above) — `oauthConfigDir` is always `null` here
+            // (`stageOAuthCredential: false`), so this spread is a no-op
+            // kept for shape-stability rather than deleted outright.
             ...(resolvedBoundary.oauthConfigDir ? { CLAUDE_CONFIG_DIR: resolvedBoundary.oauthConfigDir } : {}),
             // Round 6 security review, CRITICAL — see
             // `codexSpawnEnvExtras`'s own doc comment for what this
@@ -4068,7 +4145,29 @@ export async function dispatchRole(
             // so the machine-state floor is discovered even with no worker
             // boundary. Omitted (child keeps the inherited/operator home) when
             // nothing was staged — a non-Codex dispatch, or no re-homable login.
-            ...(codexPolicyHome ? { CODEX_HOME: codexPolicyHome.codexHome } : {})
+            ...(codexPolicyHome ? { CODEX_HOME: codexPolicyHome.codexHome } : {}),
+            // O1/O2 (task 3): a CONFINED Claude dispatch still runs through
+            // this unconfined spawn shape — Claude Code itself is never
+            // process-wrapped, only its own tools are sandboxed, via the
+            // settings file's `sandbox` block (`writeDispatchSettings`,
+            // above). `TMPDIR`/`TMP`/`TEMP` point a confined role's own
+            // scratch writes (a `bun install` cache, a build artifact) at
+            // the SAME scratch directory `buildClaudeSandboxSettings`
+            // granted `allowWrite` on, never the real, denied-outside-it
+            // `HOME`-based default; `CLAUDE_CODE_TMPDIR` repoints Claude
+            // Code's own working-files directory the same way (it keeps
+            // them under `/tmp/claude-<uid>` and ignores `TMPDIR` for them).
+            // Omitted entirely — the real environment's own TMPDIR stands,
+            // same as every other unconfined dispatch — when Claude's own
+            // sandbox could not be established on this host (O5).
+            ...(claudeConfinement?.confined === true
+              ? {
+                  TMPDIR: claudeConfinement.scratchDir,
+                  TMP: claudeConfinement.scratchDir,
+                  TEMP: claudeConfinement.scratchDir,
+                  CLAUDE_CODE_TMPDIR: claudeConfinement.scratchDir
+                }
+              : {})
           }
     })
 
@@ -4262,6 +4361,16 @@ export async function dispatchRole(
       // filesystem-bookkeeping concern in this file (`removeIfPresent`,
       // `reviewer-isolation.ts`'s own posture).
       resolvedBoundary?.cleanup()
+      // O1/O2: the scratch directory minted for a Claude dispatch's own
+      // confinement (`claudeScratchDir`, above) — same best-effort removal,
+      // never blocking `finish()` on a filesystem fault.
+      if (claudeScratchDir !== null) {
+        try {
+          rmSync(claudeScratchDir, { recursive: true, force: true })
+        } catch {
+          // best-effort, same reasoning as `resolvedBoundary?.cleanup()`.
+        }
+      }
       // The corresponding `log()` call already ran, with `priorSize` taken
       // right before it — this just confirms it landed before the caller
       // can possibly exit the process out from under it.
