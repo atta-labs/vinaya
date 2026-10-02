@@ -339,9 +339,16 @@ describe('commit-msg hook fires on a real commit (issue-989)', () => {
         realishInitDeps(() => root)
       )
     )
-    // Swap the real hook's `npx --yes @attalabs/vinaya` body for one that
-    // invokes this workspace's own source directly, same technique
-    // quickstart.test.ts uses to stay network-free.
+    // Neutralize every hook a `git commit` fires besides the one under test
+    // — pre-commit — so this test's result turns only on commit-msg.
+    // Leaving pre-commit's real body in place ran a real `npx --yes
+    // @attalabs/vinaya@<version>`, reaching the npm registry and failing on
+    // an unpublished release version: the bad-header commit threw for the
+    // wrong reason (that npx failure, not the commit-msg refusal) and the
+    // good-header commit failed the same way. A no-op is enough here — this
+    // test doesn't exercise pre-commit's own behavior, so it isn't swapped
+    // for a real invocation the way quickstart.test.ts's pre-commit stub is.
+    writeFileSync(join(root, TRACKED_HOOK_DIR, 'pre-commit'), '#!/usr/bin/env sh\nexit 0\n', { mode: 0o755 })
     writeFileSync(
       join(root, TRACKED_HOOK_DIR, 'commit-msg'),
       `#!/usr/bin/env sh\nbun ${INDEX_TS} commit-msg "$1" "$2" || exit 1\n`,
@@ -350,7 +357,18 @@ describe('commit-msg hook fires on a real commit (issue-989)', () => {
 
     writeFileSync(join(root, 'file.txt'), 'x\n')
     git(root, ['add', 'file.txt'])
-    expect(() => git(root, ['commit', '-q', '-m', 'Part 1 (O1): something'])).toThrow()
+    let refusal: unknown
+    try {
+      git(root, ['commit', '-q', '-m', 'Part 1 (O1): something'])
+    } catch (error) {
+      refusal = error
+    }
+    // Assert the commit-msg hook's OWN refusal, not merely that the commit
+    // threw — a throw alone can't distinguish this from the unrelated
+    // pre-commit/npx failure the boundary describes.
+    expect((refusal as { stderr: string }).stderr).toContain(
+      `vinaya commit-msg: "Part 1 (O1): something" doesn't match this repo's commit convention.`
+    )
     git(root, ['commit', '-q', '-m', 'Fix(cli): something'])
     expect(git(root, ['log', '-1', '--format=%s'])).toBe('Fix(cli): something')
   }, 20_000)
