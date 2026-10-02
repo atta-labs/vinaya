@@ -135,6 +135,17 @@ import { fileURLToPath } from 'node:url'
  * outbox path itself — the same "mentions `outbox`, writes elsewhere (or
  * nowhere)" false positive `OUTBOX_PROSE_MENTION_ALLOWLIST`'s own doc
  * comment already describes, so it joins that allowlist too.
+ *
+ * `pause-resume.ts` (`DEV_REVIEW_LOOP_PAUSE_RESUME_PATH`) now calls `log()`
+ * too — a human handoff, raised at its own escalation-record write and
+ * resolved at its own resolution-consume function — and joins
+ * `CALLER_ALLOWLIST` alone, the same read-only-against-the-outbox shape
+ * `journal-history.ts`/`resume.ts`/`cancel.ts`/`runner.ts`/`effects.ts`/
+ * `broker.ts` already occupy above (it was already a member of
+ * `OUTBOX_HELD_VERDICT_ALLOWLIST`, for the pause-state and driver-lock
+ * writes it has always performed — an unrelated category, since a handoff
+ * event goes through the sink's own append, never a direct write under the
+ * outbox root).
  */
 
 const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..', '..')
@@ -258,6 +269,7 @@ const CALLER_ALLOWLIST = new Set([
   LOG_WEBHOOK_DRAIN_LIB_PATH,
   DISPATCH_PATH,
   DEV_REVIEW_LOOP_PATH,
+  DEV_REVIEW_LOOP_PAUSE_RESUME_PATH,
   DEV_REVIEW_LOOP_JOURNAL_HISTORY_PATH,
   LOG_SYNC_FOLDER_SOURCE_PATH,
   TASK_TOOLS_RESUME_PATH,

@@ -38,6 +38,7 @@ import {
   sha256Hex
 } from '../effects.js'
 import { markedCommentBody, postMarkedCommentOrThrow, reconcileGhComment } from '../forge-write.js'
+import { log } from '../log-sink.js'
 import { loadLoopState } from './round-assess.js'
 import { readIfExists } from './reviewer-dispatch.js'
 import { DRIVER_LOCK_FILENAME, ensureRunDir, runPath } from '../run-paths.js'
@@ -885,6 +886,30 @@ export function escalationIdFor(task: number, round: number, head: string): stri
 }
 
 /**
+ * O1/O2 — the `handoff` Log family's `class`, derived from this pause's own
+ * `requestedAuthority` (`PAUSE_REASON_PROFILE`, above): the one
+ * classification already available at either of this module's two call
+ * sites, since no caller threads a reviewer's own `ESCALATE: <class>` choice
+ * this far — `review-post.ts`'s `EscalationClass` is rendered into a PR
+ * comment and never carried structurally past `reviewer-dispatch.ts`'s own
+ * verdict parsing. A principal-addressed pause asks for a ruling only the
+ * Principal has the AUTHORITY to make; an operator-addressed pause is a
+ * mechanical PRODUCT/environment fix; a self-addressed pause is the loop's
+ * own STRATEGY input moving underneath it. Takes `string`, not `PauseReason`
+ * — the `resolved`-event call site re-derives this from an
+ * `EscalationRecord.reason`, which the control-store schema types as a plain
+ * string — and falls back to `'strategy'` for a value outside today's
+ * `PauseReason` union, which a durable record written under a future reason
+ * could in principle carry.
+ */
+function handoffClassFor(reason: string): 'authority' | 'strategy' | 'product' {
+  const profile = (PAUSE_REASON_PROFILE as Record<string, { requestedAuthority: RequestedAuthority }>)[reason]
+  if (profile?.requestedAuthority === 'principal') return 'authority'
+  if (profile?.requestedAuthority === 'operator') return 'product'
+  return 'strategy'
+}
+
+/**
  * `escalationIdFor`'s leading segment — the task an escalation id belongs
  * to. Read by the task tools, which are handed only the id (a `release`
  * call has nothing else) but must still resolve the task folder the
@@ -928,6 +953,11 @@ export type EscalationFacts = {
 export function writeEscalationRecord(facts: EscalationFacts): EscalationRecord {
   const escalationId = escalationIdFor(facts.task, facts.round, facts.head)
   const deps = defaultControlStoreDeps(controlStoreRoot)
+  // O1/O3: read BEFORE the write below, so a rerun of the identical pause
+  // instance — which `writeEscalation` (`@attalabs/aeg-core`) answers with
+  // this SAME canonical id — is told apart from a genuinely first write.
+  // Only the latter is a real `raised` occurrence.
+  const existedBefore = readEscalation(deps, facts.task, escalationId).status === 'ok'
   const acquired = acquireOwnership(deps, facts.task, `dev-review-loop:${facts.task}:escalation:${escalationId}`)
   if (!acquired.acquired) {
     throw new Error(
@@ -959,6 +989,23 @@ export function writeEscalationRecord(facts: EscalationFacts): EscalationRecord 
     recordedAt: now
   })
   appendTransition(deps, facts.task, acquired.epoch, { from: 'running', to: 'paused', detail: facts.reason, at: now })
+  // O1: logged only AFTER both control-store writes above succeed — a
+  // failed write throws out of this function before reaching this line,
+  // recording no handoff. O3: exactly one `raised` per real escalation — a
+  // new `escalationId` (none existed before, or a genuinely different pause
+  // collided and claimed its own disambiguating suffix) is the one real
+  // occurrence; an idempotent rerun of the identical instance, which keeps
+  // the SAME canonical id, logs nothing a second time.
+  if (!existedBefore || record.escalationId !== escalationId) {
+    log({
+      kind: 'handoff',
+      event: 'raised',
+      payload: {},
+      class: handoffClassFor(facts.reason),
+      reason: facts.reason,
+      requested_decision: facts.detail ? sanitizePublicPauseDetail(facts.detail) : null
+    })
+  }
   return record
 }
 
