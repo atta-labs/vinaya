@@ -339,9 +339,18 @@ describe('commit-msg hook fires on a real commit (issue-989)', () => {
         realishInitDeps(() => root)
       )
     )
-    // Swap the real hook's `npx --yes @attalabs/vinaya` body for one that
-    // invokes this workspace's own source directly, same technique
-    // quickstart.test.ts uses to stay network-free.
+    // Swap every hook a `git commit` fires — pre-commit AND commit-msg — for
+    // one that invokes this workspace's own source directly instead of the
+    // real hook's `npx --yes @attalabs/vinaya@<version>` body, same technique
+    // quickstart.test.ts uses to stay network-free. Leaving pre-commit real
+    // made the bad-header commit throw for the wrong reason (an unpublished
+    // package version, not the commit-msg refusal) and made the good-header
+    // commit fail the same way.
+    writeFileSync(
+      join(root, TRACKED_HOOK_DIR, 'pre-commit'),
+      `#!/usr/bin/env sh\nbun ${INDEX_TS} check --all --diff-only --local --skip-full || exit 1\n`,
+      { mode: 0o755 }
+    )
     writeFileSync(
       join(root, TRACKED_HOOK_DIR, 'commit-msg'),
       `#!/usr/bin/env sh\nbun ${INDEX_TS} commit-msg "$1" "$2" || exit 1\n`,
