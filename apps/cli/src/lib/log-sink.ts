@@ -1287,6 +1287,7 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
   runId: string
   warmup: () => void
   drain: () => Promise<void>
+  resetContext: () => void
 } {
   const deps: LogSinkDeps = {
     ...defaultDeps(),
@@ -1445,6 +1446,23 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
       })
     }
     return contextCache
+  }
+
+  /**
+   * Test-only: drops this sink's own memoized `context()` resolution, so its
+   * next `log()`/`logSync()` call resolves the repo/doctrine/destination
+   * again, from the env/cwd in force then — the same "memoized once per
+   * process, reset for a clean slate" shape `resetTrustAnchorConfigMemo`
+   * already gives the trust-anchor read below. Needed because `context()`
+   * itself has no per-repository key the way `processTrustAnchorByRepo`
+   * does: it resolves once for THIS sink instance's whole life, so a test
+   * driving the bare default sink's `log()` twice, under two different
+   * isolated worlds, would otherwise have its second call silently reuse the
+   * first world's already-torn-down destination.
+   */
+  const resetContext = (): void => {
+    contextCache = undefined
+    settledContext = undefined
   }
 
   // Every `url`-destination append schedules a drain of the local retry
@@ -1756,10 +1774,24 @@ export function createLogSink(overrides: Partial<LogSinkDeps> = {}): {
     await drainChain.catch(() => undefined)
   }
 
-  return { log, logSync, runId, warmup, drain }
+  return { log, logSync, runId, warmup, drain, resetContext }
 }
 
 const defaultSink = createLogSink()
+
+/**
+ * Test-only: drops the module-level default sink's own memoized `context()`
+ * resolution — see `createLogSink`'s own `resetContext` doc comment for why
+ * this is needed alongside `resetTrustAnchorConfigMemo`/`resetRuntimeDirCache`,
+ * not replaced by either. Every direct caller of the bare `log()` export
+ * (`task-tools/resume.ts`/`cancel.ts`, `runner.ts`, `effects.ts`, `broker.ts`,
+ * `pause-resume.ts`) shares this ONE sink instance, so a test isolating its
+ * own env/cwd for a SECOND such call still needs this reset — the first
+ * call's already-resolved destination otherwise survives untouched.
+ */
+export function resetDefaultLogSinkContext(): void {
+  defaultSink.resetContext()
+}
 
 /**
  * The current process's own `run_id` — fixed once, for the process lifetime,
