@@ -4045,11 +4045,21 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // the prompt the same way the confidence file is.
             const round1HeaderPath = commitHeaderPathFor(root, task, round)
             const round1BodyPath = prBodyPathFor(root, task, round)
+            // O6: the commit-header and PR-body instructions sit in the
+            // preamble OUTSIDE the frozen brief — after the doctrine, before the
+            // brief — so the brief stays the prompt's contiguous, byte-for-byte
+            // suffix: its verdict-binding hash is computed from
+            // `fetchFrozenBrief(task)`, never this prompt, and the invariant that
+            // the doctrine (and now these instructions) are prepended OUTSIDE the
+            // brief holds unchanged.
             const round1Prompt = [
-              developerDoctrine ? `${renderDeveloperDoctrineBlock(developerDoctrine)}\n\n${brief}` : brief,
+              developerDoctrine ? renderDeveloperDoctrineBlock(developerDoctrine) : null,
               commitHeaderPromptLine(round1HeaderPath),
-              prBodyPromptLine(round1BodyPath)
-            ].join('\n\n')
+              prBodyPromptLine(round1BodyPath),
+              brief
+            ]
+              .filter((part): part is string => part !== null)
+              .join('\n\n')
             await dispatchDeveloper(round1Prompt, round, {
               skipResumeContext: true,
               developerFiles: [round1HeaderPath, round1BodyPath]
