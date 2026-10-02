@@ -3213,16 +3213,31 @@ describe('buildRolePermissions — Issue #663, O1: an explicit per-role Bash all
       'Bash(git worktree add:*)',
       'Bash(git fetch:*)',
       'Bash(git commit:*)',
-      'Bash(git push:*)',
-      'Bash(gh pr create:*)',
+      'Bash(gh pr edit:*)',
       'Bash(gh issue view:*)',
       'Bash(bun install:*)',
       'Bash(bun test:*)',
-      'Bash(bun run:*)'
+      'Bash(bun run:*)',
+      'Bash(bun apps/cli/src/index.ts:*)'
     ]) {
       expect(perms.allow).toContain(rule)
     }
     expect(perms.allow.some((r) => r.startsWith('Write(') || r.startsWith('Edit('))).toBe(false)
+  })
+
+  it('developer: no longer granted push or PR-open — the driver publishes each turn (O6)', () => {
+    const perms = buildRolePermissions('developer')
+    // Revoked from the allow list outright.
+    expect(perms.allow).not.toContain('Bash(git push:*)')
+    expect(perms.allow).not.toContain('Bash(gh pr create:*)')
+    // And denied explicitly (deny overrides any broader allow): `git push` and
+    // `gh pr create` directly, and the repository's own `pr create` subcommand,
+    // which the broad `Bash(bun apps/cli/src/index.ts:*)` allow would otherwise cover.
+    expect(perms.deny).toContain('Bash(git push:*)')
+    expect(perms.deny).toContain('Bash(gh pr create:*)')
+    expect(perms.deny).toContain('Bash(bun apps/cli/src/index.ts pr create:*)')
+    // Every other vinaya CLI subcommand the Developer uses stays granted.
+    expect(perms.allow).toContain('Bash(bun apps/cli/src/index.ts:*)')
   })
 
   it('developer: forbidden shapes doctrine names are denied, narrower than the broader allow rule that would otherwise cover them', () => {
@@ -3238,11 +3253,12 @@ describe('buildRolePermissions — Issue #663, O1: an explicit per-role Bash all
     ]) {
       expect(perms.deny).toContain(rule)
     }
-    // Every deny rule is a narrower shape than some broader allow rule
-    // already granted (`git push`, `git commit`) — proving these are
-    // real overrides, not merely commands that were never allowed at all.
-    expect(perms.allow).toContain('Bash(git push:*)')
+    // `git commit:*` stays as the broader allow whose narrower `--no-verify`
+    // shape the deny list overrides — proving these are real overrides, not
+    // merely commands that were never allowed at all. (`git push` is now
+    // revoked outright, O6, so it is no longer the example here.)
     expect(perms.allow).toContain('Bash(git commit:*)')
+    expect(perms.deny).toContain('Bash(git commit --no-verify*)')
   })
 
   for (const role of ['code-reviewer', 'security'] as const) {
@@ -3342,15 +3358,15 @@ describe('buildRolePermissions — Issue #865, O1/O2/O3: machine-state commands 
 
   it('nothing else in either role’s policy regressed — every rule the previous policy carried is still there', () => {
     const developer = buildRolePermissions('developer')
-    for (const rule of [
-      'Bash(git push:*)',
-      'Bash(git commit:*)',
-      'Bash(gh pr create:*)',
-      'Bash(bun apps/cli/src/index.ts:*)'
-    ]) {
+    // `git push`/`gh pr create` are revoked (O6, agent-confinement-v1/1) — the
+    // driver publishes each turn; every other capability the Developer carries stays.
+    for (const rule of ['Bash(git commit:*)', 'Bash(gh pr edit:*)', 'Bash(bun apps/cli/src/index.ts:*)']) {
       expect(developer.allow).toContain(rule)
     }
     for (const rule of [
+      'Bash(git push:*)',
+      'Bash(gh pr create:*)',
+      'Bash(bun apps/cli/src/index.ts pr create:*)',
       'Bash(git push --force*)',
       'Bash(git push -f*)',
       'Bash(git commit --no-verify*)',
