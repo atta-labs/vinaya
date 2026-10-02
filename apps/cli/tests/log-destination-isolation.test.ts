@@ -1063,7 +1063,8 @@ const LOG_PRODUCERS: readonly string[] = [...SINK_PRODUCERS, ...BOUNDARY_PRODUCE
  */
 const BOUNDARIES_NAMED_IN_PROSE: Record<string, readonly string[]> = {
   'task-tools': ['createTaskCancelHandler', 'createTaskResumeHandler'],
-  broker: ['requestEffect', 'authenticateWorkerInvocation', 'authenticateOperatorInvocation']
+  broker: ['requestEffect', 'authenticateWorkerInvocation', 'authenticateOperatorInvocation'],
+  'pause-resume': ['log']
 }
 
 /** A name that table uses for its OWN self-test fixture rather than for a producer — never a boundary this scan could watch. */
