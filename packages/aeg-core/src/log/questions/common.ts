@@ -101,6 +101,19 @@ export function stringArrayField(row: DatasetRow, key: string): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
 }
 
+/** An array-of-objects field of the row's family body: each element that is itself a plain object, in order; a non-object element is dropped. `[]` when the field is absent or not an array. */
+export function objectArrayField(row: DatasetRow, key: string): JsonObject[] {
+  const value: unknown = row.payload[key]
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is JsonObject => typeof item === 'object' && item !== null && !Array.isArray(item))
+}
+
+/** A string field of a plain JSON object (e.g. one element `objectArrayField` returned), or `null` when absent or not a string. */
+export function textOf(object: JsonObject, key: string): string | null {
+  const value: unknown = object[key]
+  return typeof value === 'string' ? value : null
+}
+
 export function compareText(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0
 }
