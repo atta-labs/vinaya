@@ -52,6 +52,7 @@ import {
   SECRET_SCAN_CHECK
 } from '../../commands/review-post.js'
 import type { AgentVendor, DispatchHandle } from '../dispatch.js'
+import type { ReviewerCandidateInputPaths } from './reviewer-isolation.js'
 import { ensureRunDir, runPath, runtimeDirForThisRepo, tasksExecutionRoot } from '../run-paths.js'
 
 // --- reviewer prompt (facts only) -----------------------------------------
@@ -250,6 +251,34 @@ export function securityScanPieces(outcome: SecurityScanOutcome | undefined): re
   }
 }
 
+// --- the driver-staged pull-request inputs (O1/O2/O3) -----------------------
+
+/**
+ * O1/O2/O3: names the three files the driver staged into the reviewer's own
+ * read-only checkout (`reviewer-isolation.ts`'s `writeReviewerCandidateInputs`
+ * / `reviewerCandidateInputPaths`) — the pull request's body, the unified
+ * diff of the judged head against its base, and the prior round's findings —
+ * so a dispatched reviewer holding no `gh` command and no forge credential
+ * still has a way to read what it judges. `paths` is `null` exactly when no
+ * candidate copy exists for this attempt (the existing no-`cwd` fallback
+ * shape, or a staging write that failed) — then this contributes no pieces at
+ * all, the dispatch's pre-task shape, same as `securityScanPieces`'s own
+ * `undefined` case.
+ */
+export function candidateInputPieces(paths: ReviewerCandidateInputPaths | null): readonly ReviewerPromptPiece[] {
+  if (paths === null) return []
+  return [
+    driverPiece(
+      '\n\nYou hold no GitHub credential for this dispatch, and your tool grant carries no `gh` command — read the pull request only through the three files below, inside your own checkout, never through `gh`.\n\nPULL REQUEST BODY: '
+    ),
+    factPiece(paths.prBody),
+    driverPiece('\nDIFF (base...head): '),
+    factPiece(paths.diff),
+    driverPiece('\nPRIOR ROUND FINDINGS: '),
+    factPiece(paths.priorFindings)
+  ]
+}
+
 /**
  * The reviewer prompt's facts block, piece by piece — the one place its shape
  * lives. Facts only: no developer-authored text, no PR-body prose (Traps to
@@ -446,6 +475,32 @@ export function writeHeldVerdict(
 ): void {
   ensureRunDir(runPath(root, task, { area: 'round', round }), root)
   writeFileSync(heldVerdictPath(root, task, round, role), renderedComment, 'utf8')
+}
+
+/**
+ * O1: "the prior round's findings" the driver stages for both reviewer
+ * roles — the rendered REVIEWER and SECURITY verdict text `round - 1` held
+ * (`heldVerdictPath`'s own files are never deleted once written, so this
+ * reads the durable record, never a round's own transient `findings.txt`,
+ * which a fresh attempt's directory can overwrite). Round 1, or a round
+ * whose own held pair was discarded (O5, a merge-conflict invalidation),
+ * names that plainly rather than fabricating an empty-findings claim this
+ * round's reviewer could mistake for an actual clean prior round (Traps to
+ * avoid: never guess).
+ */
+export function buildPriorRoundFindingsText(root: string, task: number, round: number): string {
+  if (round <= 1) return 'This is round 1 — there is no prior round.'
+  const reviewerBody = readIfExists(heldVerdictPath(root, task, round - 1, 'reviewer'))
+  const securityBody = readIfExists(heldVerdictPath(root, task, round - 1, 'security'))
+  if (!reviewerBody && !securityBody) {
+    return `No held verdict survives on disk from round ${round - 1} — its findings could not be recovered.`
+  }
+  return [
+    reviewerBody ? `## Code-reviewer verdict — round ${round - 1}\n\n${reviewerBody}` : null,
+    securityBody ? `## Security verdict — round ${round - 1}\n\n${securityBody}` : null
+  ]
+    .filter((s): s is string => s !== null)
+    .join('\n\n---\n\n')
 }
 
 /** O5: removes both held-verdict files for a round whose head fell into conflict after reviewers judged it — nothing is published against a head that cannot merge. Missing files are not an error (a round can hold only one role's verdict, or none). */
@@ -1119,14 +1174,28 @@ export function renderReviewerDispatchPrompt(
    * doctrine block, the dispatch's pre-task shape and the fallback for a round
    * whose doctrine could not be resolved.
    */
-  roleDoctrine: string | null = null
+  roleDoctrine: string | null = null,
+  /**
+   * O1/O2: this attempt's own staged input-file paths (`reviewer-isolation.ts`'s
+   * `reviewerCandidateInputPaths`, resolved by the caller against the scratch
+   * copy this attempt's `cwd` actually is — never against `facts`, which is
+   * shared, unmutated, across both roles and every attempt). `null` (the
+   * default) injects no block at all — no candidate existed this round, or
+   * staging the files failed — the dispatch's pre-task shape.
+   */
+  candidateInputPaths: ReviewerCandidateInputPaths | null = null
 ): string {
   // The agent-config scan reaches the SECURITY prompt only, as a fact
   // piece — the code-reviewer never sees it. `facts.configScan` is `undefined`
   // for the code-reviewer and for any round the driver ran no scan, so this
   // adds nothing there.
   const scanPieces = role === 'security' ? securityScanPieces(facts.configScan) : []
-  const pieces = [...buildReviewerPromptPieces(facts), ...roleDoctrinePieces(role, roleDoctrine), ...scanPieces]
+  const pieces = [
+    ...buildReviewerPromptPieces(facts),
+    ...candidateInputPieces(candidateInputPaths),
+    ...roleDoctrinePieces(role, roleDoctrine),
+    ...scanPieces
+  ]
   const base = joinReviewerPromptPieces(pieces)
   // The lint reads the renderer's own fixed text only. A Principal ruling, an
   // Issue's objectives, or an injected role doctrine may say anything at all —
@@ -1166,7 +1235,7 @@ export function renderReviewerDispatchPrompt(
     '  If findings.txt is non-empty, also write `FINDING_IDS: <id>,<id>,...` — one id per findings.txt line, in the SAME order, e.g. `F1,F2,F3`. A report with findings but no matching `FINDING_IDS:` line is sent back once for this alone.',
     ...(role === 'security'
       ? [
-          `\`SECRETS:\` is required — never leave it blank or omit it. The secret scan is the required \`${SECRET_SCAN_CHECK}\` CI check: the scan runs inside the \`vinaya check --all --diff-only\` CI job, so read its result from that job on this PR — \`gh pr checks\` lists no separate \`${SECRET_SCAN_CHECK}\` entry — and never run a scanner yourself or paste its output. Write \`SECRETS: none found — ${SECRET_SCAN_CHECK} passed\` only when that job ran and the scan passed, with any note from your own read of the diff on the lines below it; if the job failed or did not run, say so on the line instead. Your own read of the diff for a credential the scanner's rules cannot see still applies.`,
+          `\`SECRETS:\` is required — never leave it blank or omit it. The secret scan is the required \`${SECRET_SCAN_CHECK}\` CI check, running inside the \`vinaya check --all --diff-only\` CI job — you hold no GitHub credential and must never call \`gh\` to inspect it; judge it from the CI line above instead (\`CI: green\` means that job, and so this scan, passed) plus your own read of the diff. Write \`SECRETS: none found — ${SECRET_SCAN_CHECK} passed\` only when CI above is green, with any note from your own read of the diff on the lines below it; if CI is red or pending, say so on the line instead. Your own read of the diff for a credential the scanner's rules cannot see still applies.`,
           '`CONFIG_SCAN:` — when an AGENT-CONFIG SCAN block appears above, base this line on it plus your own read of the agent-config diff; the driver already ran the scanner outside its own trust, so never run `npx`, install a package, or run a scanner yourself. When that block says the scan was not applicable, not configured, or could not run, write exactly that on the line and judge the config on your own read.'
         ]
       : []),

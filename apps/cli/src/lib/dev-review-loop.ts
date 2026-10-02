@@ -149,6 +149,7 @@ import {
   withPromptFile
 } from './dev-review-loop/developer-dispatch.js'
 import {
+  buildPriorRoundFindingsText,
   buildRoundDeferralContext,
   buildVerdictFromReport,
   discardHeldVerdicts,
@@ -176,7 +177,9 @@ import {
   buildVerifiedReviewerCandidate,
   cleanupAllReviewerIsolationArtifacts,
   cleanupAllStagedAgentConfigs,
-  cleanupReviewerIsolationForRound
+  cleanupReviewerIsolationForRound,
+  reviewerCandidateInputPaths,
+  writeReviewerCandidateInputs
 } from './dev-review-loop/reviewer-isolation.js'
 import {
   assertDispatchOrEscalate,
@@ -3340,7 +3343,16 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       role: 'reviewer' | 'security',
       roundNum: number,
       facts: ReviewerPromptFacts,
-      candidateDir: string | null
+      candidateDir: string | null,
+      /**
+       * O1: whether `writeReviewerCandidateInputs` actually staged the PR
+       * body/diff/prior-findings into `candidateDir` this round — decided
+       * once by the caller, before either role dispatches (never re-derived
+       * per attempt): a staging write that failed leaves this `false`, so
+       * every attempt's prompt omits the candidate-input block rather than
+       * naming three files that do not exist in the scratch copy.
+       */
+      candidateInputsReady: boolean
     ): Promise<{ verdict: RoundVerdictParse; findingsUncitable: boolean }> {
       const hasObjectives = hasObjectivesFacts(facts)
       const dispatchRoleName = role === 'reviewer' ? ('code-reviewer' as const) : ('security' as const)
@@ -3364,7 +3376,6 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       for (let attempt = 1; attempt <= 2; attempt++) {
         const workDir = reviewerWorkDir(root, task, roundNum, role, attempt)
         ensureRunDir(workDir, root)
-        const prompt = renderReviewerDispatchPrompt(role, facts, workDir, roleDoctrine)
         // O1/O2: a fresh, writable copy of this round's shared,
         // read-only candidate (built once, below, before both roles
         // dispatch) — never the candidate itself, never the sibling role's
@@ -3372,8 +3383,12 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         // same invariant `reviewerWorkDir`'s own `attempt` suffix already
         // holds for `findings.txt`/`report.txt`). `null` when no candidate
         // was built this round — `cwd` is then omitted, exactly as every
-        // dispatch before this task.
+        // dispatch before this task. Built BEFORE the prompt (O1): the
+        // prompt names the staged inputs' paths INSIDE this attempt's own
+        // scratch copy, which only exists once this call returns.
         const scratchDir = candidateDir ? buildReviewerScratch(root, task, roundNum, role, attempt, candidateDir) : null
+        const candidateInputPaths = scratchDir && candidateInputsReady ? reviewerCandidateInputPaths(scratchDir) : null
+        const prompt = renderReviewerDispatchPrompt(role, facts, workDir, roleDoctrine, candidateInputPaths)
         const handle = await withPromptFile(prompt, (promptFile) =>
           d.dispatchRole(dispatchRoleName, dispatchAgent, prompt, {
             task: task,
@@ -5019,6 +5034,35 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             d.readWorktreeHead
           )
 
+          // O1: the pull request's own facts the driver stages for both
+          // reviewer roles — the PR body, the unified diff of this round's
+          // judged head against its base, and the prior round's held
+          // findings — written ONCE per round, into `candidateDir` itself
+          // (never a second readable path), BEFORE either role's own
+          // scratch copy is taken below, so both roles' attempts read the
+          // identical, immutable bytes (Traps to avoid). This is what lets
+          // a dispatched reviewer holding no `gh` command and no forge
+          // credential (O2) still read what it judges. `false` when no
+          // candidate exists this round, or the staging write itself
+          // failed — `dispatchReviewer` then omits the candidate-input
+          // block from every attempt's prompt rather than naming a file
+          // that was never written.
+          const candidateInputsReady = candidateDir
+            ? writeReviewerCandidateInputs(candidateDir, {
+                prBody: (() => {
+                  try {
+                    return d.fetchPrBody(prNumber)
+                  } catch (err) {
+                    return `(the pull request body could not be fetched this round: ${err instanceof Error ? err.message : String(err)})`
+                  }
+                })(),
+                diff:
+                  d.gitUnifiedDiff?.(baseSha, head) ??
+                  '(the diff of the judged head against its base could not be computed this round)',
+                priorFindings: buildPriorRoundFindingsText(root, task, round)
+              })
+            : false
+
           // ONCE per round, after the
           // head-verified candidate is built and BEFORE either reviewer is
           // dispatched, decide the agent-config scan from the pull request's
@@ -5064,8 +5108,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // gate's own `evidence-fresh` check is the real backstop for a
             // report that never lands.
             const [reviewerResult, securityResult, evidenceOutcome] = await Promise.all([
-              dispatchReviewer('reviewer', round, facts, candidateDir),
-              dispatchReviewer('security', round, facts, candidateDir),
+              dispatchReviewer('reviewer', round, facts, candidateDir, candidateInputsReady),
+              dispatchReviewer('security', round, facts, candidateDir, candidateInputsReady),
               d.runEvidenceReport(prNumber, worktreePathForBranch(), branch)
             ])
             verdicts = [reviewerResult, securityResult]

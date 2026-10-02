@@ -13,13 +13,16 @@ import { defaultRunSecurityScanSubprocess } from '../../../src/lib/dev-review-lo
 import {
   AGENT_CONFIG_GLOBS,
   buildManifestRecord,
+  buildPriorRoundFindingsText,
   buildReviewerPromptPieces,
   buildRoundDeferralContext,
   buildVerdictFromReport,
+  candidateInputPieces,
   capSecurityScanOutput,
   controlStoreRootFor,
   decideSecurityScan,
   driverAuthoredPromptText,
+  joinReviewerPromptPieces,
   lintReviewerPrompt,
   makeChangedLinePredicate,
   makeInSurfacePredicate,
@@ -32,7 +35,8 @@ import {
   roleDoctrinePieces,
   SECURITY_SCAN_OUTPUT_MAX_CHARS,
   securityScanPieces,
-  touchesAgentConfig
+  touchesAgentConfig,
+  writeHeldVerdict
 } from '../../../src/lib/dev-review-loop/reviewer-dispatch'
 import type {
   ReviewerPromptFacts,
@@ -501,6 +505,107 @@ describe('renderReviewerDispatchPrompt — carries the role doctrine as a fact',
     const driverText = driverAuthoredPromptText(pieces)
     expect(driverText).toContain('take precedence')
     expect(lintReviewerPrompt(driverText)).toEqual([])
+  })
+})
+
+// --- the driver-staged pull-request inputs: no gh, no forge credential (task 992, O1/O2/O3) ---
+
+describe('candidateInputPieces / renderReviewerDispatchPrompt — the driver-staged PR body/diff/prior-findings', () => {
+  const MANIFEST: ReviewInputManifest = {
+    headSha: 'a'.repeat(40),
+    baseSha: 'e'.repeat(40),
+    briefHash: 'b'.repeat(64),
+    objectivesVersion: 'c'.repeat(64),
+    rulingOrdinal: 0,
+    policyDigest: 'd'.repeat(64)
+  }
+  const FACTS: ReviewerPromptFacts = {
+    objectives: 'O1. Do the thing.',
+    resolvedObjectives: [{ id: 'O1', text: 'Do the thing.' }],
+    rulings: [],
+    ciConclusion: 'green',
+    revision: 'f'.repeat(40),
+    manifest: MANIFEST
+  }
+  const PATHS = {
+    prBody: '/scratch/.vinaya-reviewer-inputs/pr-body.md',
+    diff: '/scratch/.vinaya-reviewer-inputs/diff.patch',
+    priorFindings: '/scratch/.vinaya-reviewer-inputs/prior-findings.md'
+  }
+
+  it('contributes no pieces at all when paths is null — the pre-task shape', () => {
+    expect(candidateInputPieces(null)).toEqual([])
+  })
+
+  it('names all three files, and states no gh/no credential, as driver text the lint reads', () => {
+    const pieces = candidateInputPieces(PATHS)
+    const rendered = joinReviewerPromptPieces(pieces)
+    expect(rendered).toContain(PATHS.prBody)
+    expect(rendered).toContain(PATHS.diff)
+    expect(rendered).toContain(PATHS.priorFindings)
+    expect(rendered).toContain('no GitHub credential')
+    expect(rendered).toContain('no `gh` command')
+    // The three interpolated paths are facts, never read by the banned-framing
+    // lint; everything else in this block is the renderer's own fixed text.
+    const driverText = driverAuthoredPromptText(pieces)
+    expect(lintReviewerPrompt(driverText)).toEqual([])
+  })
+
+  it('renderReviewerDispatchPrompt injects the block for either role when paths are given', () => {
+    const reviewerPrompt = renderReviewerDispatchPrompt('reviewer', FACTS, '/tmp/work', null, PATHS)
+    const securityPrompt = renderReviewerDispatchPrompt('security', FACTS, '/tmp/work', null, PATHS)
+    expect(reviewerPrompt).toContain(PATHS.diff)
+    expect(securityPrompt).toContain(PATHS.priorFindings)
+  })
+
+  it('omits the block, unchanged from before this feature, when candidateInputPaths is omitted or null', () => {
+    const omitted = renderReviewerDispatchPrompt('reviewer', FACTS, '/tmp/work')
+    const explicitNull = renderReviewerDispatchPrompt('reviewer', FACTS, '/tmp/work', null, null)
+    expect(omitted).not.toContain('.vinaya-reviewer-inputs')
+    expect(omitted).toBe(explicitNull)
+  })
+
+  it("the security prompt's SECRETS instruction reads the CI line above, never gh pr checks", () => {
+    const prompt = renderReviewerDispatchPrompt('security', FACTS, '/tmp/work')
+    expect(prompt).toContain('must never call `gh`')
+    expect(prompt).not.toContain('gh pr checks')
+  })
+})
+
+describe("buildPriorRoundFindingsText — the prior round's held verdict text, staged for both roles (O1)", () => {
+  let root: string
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'vinaya-prior-findings-'))
+  })
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('round 1 names plainly that there is no prior round, without reading any file', () => {
+    expect(buildPriorRoundFindingsText(root, 992, 1)).toBe('This is round 1 — there is no prior round.')
+  })
+
+  it('combines both held verdicts from round - 1 when both survive on disk', () => {
+    writeHeldVerdict(root, 992, 1, 'reviewer', 'VERDICT: APPROVE\n\nJudged head: abc')
+    writeHeldVerdict(root, 992, 1, 'security', 'VERDICT: PASS\n\nJudged head: abc')
+    const text = buildPriorRoundFindingsText(root, 992, 2)
+    expect(text).toContain('Code-reviewer verdict — round 1')
+    expect(text).toContain('VERDICT: APPROVE')
+    expect(text).toContain('Security verdict — round 1')
+    expect(text).toContain('VERDICT: PASS')
+  })
+
+  it('names plainly that no held verdict survives, never a fabricated empty-findings claim', () => {
+    const text = buildPriorRoundFindingsText(root, 992, 2)
+    expect(text).toBe('No held verdict survives on disk from round 1 — its findings could not be recovered.')
+  })
+
+  it('carries whichever single role survived, never pretending the other one ran clean', () => {
+    writeHeldVerdict(root, 992, 1, 'reviewer', 'VERDICT: REQUEST CHANGES')
+    const text = buildPriorRoundFindingsText(root, 992, 2)
+    expect(text).toContain('Code-reviewer verdict — round 1')
+    expect(text).toContain('VERDICT: REQUEST CHANGES')
+    expect(text).not.toContain('Security verdict')
   })
 })
 
