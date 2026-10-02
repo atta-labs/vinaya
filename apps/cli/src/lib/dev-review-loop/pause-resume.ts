@@ -1183,6 +1183,24 @@ export function resolveEscalation(
     detail: authenticatedFrom,
     at: now
   })
+  // O2/O3: a `resolved` handoff only for an actual resolution — a
+  // cancellation ends the escalation without anyone ruling on it, a
+  // different outcome this family does not record. Reached at most once per
+  // escalation: `consumeResolutionOnce` above already refused a replay of an
+  // already-consumed decision (`ReplayedResolutionError`, thrown before this
+  // point), and the pre-check earlier in this function refuses one racing in
+  // ahead of that.
+  if (decision === 'resume') {
+    log({
+      kind: 'handoff',
+      event: 'resolved',
+      payload: {},
+      class: handoffClassFor(escalation.value.reason),
+      reason: escalation.value.reason,
+      resolution: outcome.record.decision,
+      resolved_by: outcome.record.authenticatedBy
+    })
+  }
   return { escalation: escalation.value, resolution: outcome.record, epoch: acquired.epoch }
 }
 
