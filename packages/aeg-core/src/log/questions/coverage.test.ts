@@ -5,6 +5,7 @@ import type { Dataset } from '../sync'
 import { catchesAndEscapes } from './catches'
 import { checkOutcomes } from './checks'
 import { completionByModel } from './completion'
+import { changeSizeBands, confidenceVsOutcome, outcomesByInstructionVersion, recurringFindings } from './convergence'
 import { determinism } from './determinism'
 import { reviewerStrictness } from './judgment'
 import { timeByUnit } from './time'
@@ -37,7 +38,11 @@ describe('every answer states its coverage', () => {
     q4: timeByUnit(dataset),
     q5: catchesAndEscapes(dataset),
     q6: checkOutcomes(dataset),
-    q7: determinism(dataset)
+    q7: determinism(dataset),
+    q8: recurringFindings(dataset),
+    q9: outcomesByInstructionVersion(dataset),
+    q10: changeSizeBands(dataset),
+    confidence: confidenceVsOutcome(dataset)
   }
 
   for (const [name, answer] of Object.entries(answers)) {
