@@ -3262,17 +3262,20 @@ describe('buildRolePermissions — Issue #663, O1: an explicit per-role Bash all
   })
 
   for (const role of ['code-reviewer', 'security'] as const) {
-    it(`${role}: read-only git/gh commands allowed, no Write/Edit entry at all, forge-write/package/test commands denied`, () => {
+    it(`${role}: read-only git commands allowed, no gh and no Write/Edit entry at all, forge-write/package/test commands denied (task 992, O2)`, () => {
       const perms = buildRolePermissions(role)
-      for (const rule of ['Bash(git diff:*)', 'Bash(git log:*)', 'Bash(gh pr view:*)', 'Bash(gh issue view:*)']) {
+      for (const rule of ['Bash(git diff:*)', 'Bash(git log:*)']) {
         expect(perms.allow).toContain(rule)
       }
+      // O2: no `gh` subcommand is granted at all — the driver stages the PR
+      // body/diff/prior findings as files instead.
+      expect(perms.allow.some((r) => r.startsWith('Bash(gh'))).toBe(false)
       expect(perms.allow.some((r) => r.startsWith('Write(') || r.startsWith('Edit('))).toBe(false)
       for (const rule of [
         'Bash(git push:*)',
         'Bash(git commit:*)',
-        'Bash(gh pr create:*)',
-        'Bash(gh pr merge:*)',
+        // O2: the whole `gh` family is denied, never a per-subcommand split.
+        'Bash(gh:*)',
         'Bash(bun install:*)',
         'Bash(bun test:*)',
         'Bash(bun run:*)',
@@ -3380,10 +3383,8 @@ describe('buildRolePermissions — Issue #865, O1/O2/O3: machine-state commands 
     }
     for (const role of ['code-reviewer', 'security'] as const) {
       const perms = buildRolePermissions(role)
-      for (const rule of ['Bash(git log:*)', 'Bash(gh pr view:*)', 'Bash(gh issue view:*)']) {
-        expect(perms.allow).toContain(rule)
-      }
-      for (const rule of ['Bash(git push:*)', 'Bash(bun install:*)', 'Bash(bun test:*)']) {
+      expect(perms.allow).toContain('Bash(git log:*)')
+      for (const rule of ['Bash(git push:*)', 'Bash(gh:*)', 'Bash(bun install:*)', 'Bash(bun test:*)']) {
         expect(perms.deny).toContain(rule)
       }
     }

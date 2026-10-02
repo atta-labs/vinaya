@@ -1244,14 +1244,20 @@ const MACHINE_STATE_DENY_RULES: readonly string[] = [
  * reset, `rm -rf`, and `MACHINE_STATE_DENY_RULES` — none of which any
  * doctrine command needs.
  *
- * `code-reviewer`/`security` get read-only git/`gh` commands
- * (`roles/reviewer.md`: "CI is your input, never your job — read it, don't
- * reproduce it: no `bun install`, no re-running tests or checks"). A
- * forge-write/package/test command a Reviewer has no doctrine reason to run
- * is explicitly denied, the same defense-in-depth posture the Developer's own
- * deny list takes, rather than left to fall through as merely unlisted. Both
- * roles carry `MACHINE_STATE_DENY_RULES` too — the role that broke this
- * machine's keychain was a security reviewer.
+ * `code-reviewer`/`security` get read-only git commands and no `gh` at all
+ * (task 2, O2) — the driver now stages the pull request's own body, its diff
+ * against its base, and the prior round's findings as files inside the
+ * reviewer's own read-only checkout (`reviewer-dispatch.ts`'s
+ * `candidateInputPieces`/`reviewer-isolation.ts`'s
+ * `writeReviewerCandidateInputs`), so a dispatched review pass has no
+ * remaining doctrine reason to hold a forge credential or call `gh` at all —
+ * `roles/reviewer.md`/`roles/security.md`'s dispatched case now says so.
+ * `gh` in full (never a per-subcommand allow/deny split, the same whole-family
+ * posture `MACHINE_STATE_DENY_RULES` already takes for `security`/`launchctl`)
+ * is denied below, defense-in-depth alongside the forge-write/package/test
+ * commands a Reviewer has no doctrine reason to run — rather than left to fall
+ * through as merely unlisted. Both roles carry `MACHINE_STATE_DENY_RULES` too
+ * — the role that broke this machine's keychain was a security reviewer.
  *
  * Every other role (`planner`/`principal`/`archivist`/`architect`) gets no
  * rules at all — this task's own Objectives name only these three roles, and
@@ -1333,18 +1339,20 @@ export function buildRolePermissions(role: Role): RolePermissions {
         'Bash(git show:*)',
         'Bash(git grep:*)',
         'Bash(git status:*)',
-        'Bash(git fetch:*)',
-        'Bash(gh pr view:*)',
-        'Bash(gh pr diff:*)',
-        'Bash(gh issue view:*)'
+        'Bash(git fetch:*)'
       ],
       deny: [
         'Bash(git push:*)',
         'Bash(git commit:*)',
         'Bash(git add:*)',
-        'Bash(gh pr create:*)',
-        'Bash(gh pr edit:*)',
-        'Bash(gh pr merge:*)',
+        // O2: no `gh` subcommand at all — the driver stages the pull
+        // request's body, diff and prior findings as files instead
+        // (`reviewer-dispatch.ts`'s `candidateInputPieces`), so a dispatched
+        // review pass has no remaining doctrine reason to hold a forge
+        // credential. The whole family, never a per-subcommand split — the
+        // same posture `MACHINE_STATE_DENY_RULES` already takes for
+        // `security`/`launchctl`.
+        'Bash(gh:*)',
         'Bash(bun install:*)',
         'Bash(bun test:*)',
         'Bash(bun run:*)',

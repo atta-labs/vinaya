@@ -34,7 +34,9 @@ import {
   cleanupAllReviewerIsolationArtifacts,
   cleanupReviewerIsolationForRound,
   reviewerCandidateDir,
-  reviewerScratchDir
+  reviewerCandidateInputPaths,
+  reviewerScratchDir,
+  writeReviewerCandidateInputs
 } from '../../../src/lib/dev-review-loop/reviewer-isolation'
 
 const tempDirs: string[] = []
@@ -310,6 +312,60 @@ describe('buildReviewerScratch — O2, a fresh writable copy per reviewer, deriv
     const scratch = buildReviewerScratch(root, 9001, 1, 'reviewer', 1, candidate) as string
 
     expect(statSync(scratch).mode & 0o077).toBe(0)
+  })
+})
+
+describe('writeReviewerCandidateInputs — O1, the PR body/diff/prior-findings staged beside the candidate', () => {
+  it('writes all three files into the candidate, readable at the paths reviewerCandidateInputPaths names', () => {
+    const root = tempDir('vinaya-riso-root-')
+    const src = writeSourceWorktree()
+    const candidate = buildReviewerCandidate(root, 9001, 1, src) as string
+
+    const ok = writeReviewerCandidateInputs(candidate, {
+      prBody: 'the PR report, verbatim',
+      diff: '--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-old\n+new\n',
+      priorFindings: 'This is round 1 — there is no prior round.'
+    })
+
+    expect(ok).toBe(true)
+    const paths = reviewerCandidateInputPaths(candidate)
+    expect(readFileSync(paths.prBody, 'utf8')).toBe('the PR report, verbatim')
+    expect(readFileSync(paths.diff, 'utf8')).toContain('+new')
+    expect(readFileSync(paths.priorFindings, 'utf8')).toBe('This is round 1 — there is no prior round.')
+  })
+
+  it('a scratch copy taken AFTER staging carries the same three files at the same relative path', () => {
+    const root = tempDir('vinaya-riso-root-')
+    const src = writeSourceWorktree()
+    const candidate = buildReviewerCandidate(root, 9001, 1, src) as string
+    writeReviewerCandidateInputs(candidate, { prBody: 'body text', diff: 'diff text', priorFindings: 'findings text' })
+
+    const scratch = buildReviewerScratch(root, 9001, 1, 'reviewer', 1, candidate) as string
+
+    const paths = reviewerCandidateInputPaths(scratch)
+    expect(readFileSync(paths.prBody, 'utf8')).toBe('body text')
+    expect(readFileSync(paths.diff, 'utf8')).toBe('diff text')
+    expect(readFileSync(paths.priorFindings, 'utf8')).toBe('findings text')
+  })
+
+  it('leaves the candidate read-only afterward — the write never leaves the tree writable for the dispatches that follow', () => {
+    const root = tempDir('vinaya-riso-root-')
+    const src = writeSourceWorktree()
+    const candidate = buildReviewerCandidate(root, 9001, 1, src) as string
+    writeReviewerCandidateInputs(candidate, { prBody: 'b', diff: 'd', priorFindings: 'f' })
+    expect(attemptWrite(join(candidate, 'README.md'))).toBe('refused')
+    const paths = reviewerCandidateInputPaths(candidate)
+    expect(attemptWrite(paths.prBody)).toBe('refused')
+  })
+
+  it('a second call for the same candidate replaces the prior staged content rather than merging it', () => {
+    const root = tempDir('vinaya-riso-root-')
+    const src = writeSourceWorktree()
+    const candidate = buildReviewerCandidate(root, 9001, 1, src) as string
+    writeReviewerCandidateInputs(candidate, { prBody: 'first', diff: 'first', priorFindings: 'first' })
+    writeReviewerCandidateInputs(candidate, { prBody: 'second', diff: 'second', priorFindings: 'second' })
+    const paths = reviewerCandidateInputPaths(candidate)
+    expect(readFileSync(paths.prBody, 'utf8')).toBe('second')
   })
 })
 
