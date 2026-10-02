@@ -1798,8 +1798,29 @@ export type ClaudeSandboxSettings = {
  * SAME merged sandbox list from the permission layer, not a second,
  * independent restriction; `Write`/`Edit` mirror it for the same reason.
  *
- * All three paths are `realpath`'d before being written into the settings
- * file — the same "every substituted path must be canonicalized" discipline
+ * `denyRead` ALSO names the real OS temp root (round 2 review, MAJOR —
+ * worker-boundary.ts:1832 finding), not only the real home: `scratchDir`
+ * is always a fresh `mkdtemp` under `os.tmpdir()` (`dispatch.ts`'s
+ * `claudeScratchDir`), so that root is the ONE other directory, beside
+ * home, every confined dispatch's own allowed paths are nested inside —
+ * and, left unnamed, it would leave a SIBLING task's own scratch
+ * directory (the exact sibling-exposure shape `isolation.md` §4's own
+ * `vinayaHomeWritableFiles` discussion already closes for the outbox/
+ * resume-record files) freely readable by this one. **This narrows, but
+ * does not close, O2's full "outside the worktree and scratch directory"
+ * wording**: a path outside BOTH the real home and the real temp root
+ * (`/etc`, `/opt`, a second filesystem mount) is covered by neither
+ * `denyRead` nor `permissionsDeny` here — closing that fully would mean
+ * denying read from the filesystem root and re-allowing only the two
+ * granted directories, and `allowManagedReadPathsOnly` (the installed
+ * binary's own documented route to exactly that shape) is honored only
+ * from MANAGED settings, never from a per-dispatch `--settings` file this
+ * module writes — so a stronger close is not expressible here. Disclosed,
+ * not silently assumed closed, the same posture `isolation.md` §4 already
+ * takes for its own residual gaps.
+ *
+ * All paths are `realpath`'d before being written into the settings file —
+ * the same "every substituted path must be canonicalized" discipline
  * `isolation.md` §3 already states for the hand-built Seatbelt profile this
  * mechanism replaces for Claude: an unresolved symlinked alias (this host's
  * own `/tmp` → `/private/tmp`, the doc's own standing example) would
@@ -1817,6 +1838,8 @@ export function buildClaudeSandboxSettings(request: ConfinementRequest): ClaudeS
   const worktreeDir = real(request.worktreeDir)
   const scratchDir = real(request.scratchDir)
   const realHome = real(homedir())
+  const realTmpRoot = real(tmpdir())
+  const denyRoots = realTmpRoot === realHome ? [realHome] : [realHome, realTmpRoot]
   return {
     sandbox: {
       enabled: true,
@@ -1826,10 +1849,10 @@ export function buildClaudeSandboxSettings(request: ConfinementRequest): ClaudeS
       filesystem: {
         allowWrite: [worktreeDir, scratchDir],
         allowRead: [worktreeDir, scratchDir],
-        denyRead: [realHome]
+        denyRead: denyRoots
       }
     },
-    permissionsDeny: [`Read(${realHome}/**)`, `Write(${realHome}/**)`, `Edit(${realHome}/**)`]
+    permissionsDeny: denyRoots.flatMap((root) => [`Read(${root}/**)`, `Write(${root}/**)`, `Edit(${root}/**)`])
   }
 }
 
@@ -1840,7 +1863,13 @@ export type ConfinementResolution =
       readonly settings: ClaudeSandboxSettings
       readonly scratchDir: string
     }
-  | { readonly ok: true; readonly confined: false; readonly warning: string }
+  | {
+      readonly ok: true
+      readonly confined: false
+      readonly warning: string
+      /** The missing tool name(s), for a caller that wants to log the fact structurally rather than parse `warning`'s own prose — empty on a platform with no named mechanism at all (nothing to name). */
+      readonly missingTools: readonly string[]
+    }
 
 export type ConfinementPlatformDeps = {
   readonly platform: NodeJS.Platform
@@ -1891,12 +1920,14 @@ export function resolveClaudeConfinement(
       warning:
         `Claude Code's own sandbox needs ${LINUX_CLAUDE_SANDBOX_TOOLS.join(' and ')} on Linux; missing: ` +
         `${deps.linuxTools.missing.join(', ')} — running this dispatch unconfined rather than requiring an ` +
-        'install (Principal ruling, 2026-10-02).'
+        'install (Principal ruling, 2026-10-02).',
+      missingTools: deps.linuxTools.missing
     }
   }
   return {
     ok: true,
     confined: false,
-    warning: `Claude Code's own sandbox names no mechanism for platform '${deps.platform}' — running this dispatch unconfined.`
+    warning: `Claude Code's own sandbox names no mechanism for platform '${deps.platform}' — running this dispatch unconfined.`,
+    missingTools: []
   }
 }

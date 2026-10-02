@@ -160,21 +160,39 @@ describe('vinaya dispatch --unattended — task 3: Claude never refuses for conf
   )
 
   it.skipIf(process.platform === 'darwin')(
-    'on a linux host without bubblewrap/socat, runs unconfined rather than refusing (O5)',
+    'on a linux host without bubblewrap/socat, runs unconfined rather than refusing, and records the fact in the Vinaya Log (O5)',
     () => {
       // `runVinayaDispatch` only captures `stderr` on a NON-zero exit (its
       // own `try` branch returns `stderr: ''` on success), so the warning
-      // text itself — confirmed live via a direct `vinaya dispatch` run on
+      // TEXT itself — confirmed live via a direct `vinaya dispatch` run on
       // this exact dev/CI host, which genuinely lacks `bwrap` — is proven by
       // `worker-boundary.test.ts`'s own unit-level coverage of
       // `resolveClaudeConfinement`'s `warning` field, not observable through
-      // this subprocess harness. What this test proves is the behavioral
-      // half: the dispatch still succeeds and still spawns the vendor.
+      // this subprocess harness. What IS observable here, through the
+      // fixture's own isolated outbox: the dispatch still succeeds and
+      // still spawns the vendor, AND (round 2 review, MAJOR) the fallback
+      // reaches the Vinaya Log itself, not only `writeLifecycle`'s own
+      // stderr/driver.log mirror — a real `operation`/`completed` line,
+      // read back from the SAME fixture `HOME` every other assertion in
+      // this file already reads its own outbox from.
       const fixture = buildFixture()
       const result = runDispatch(fixture, ['--unattended'])
 
       expect(result.status).toBe(0)
       expect(existsSync(fixture.markerFile)).toBe(true)
+
+      const lines = outboxLines(fixture.home) as Array<{
+        kind?: string
+        event?: string
+        operation?: string
+        result?: string
+        target?: string | null
+      }>
+      const confinementLine = lines.find((l) => l.kind === 'operation' && l.operation === 'claude-sandbox-confinement')
+      expect(confinementLine).toBeDefined()
+      expect(confinementLine?.event).toBe('completed')
+      expect(confinementLine?.result).toBe('unavailable')
+      expect(confinementLine?.target).toContain('bwrap')
     }
   )
 

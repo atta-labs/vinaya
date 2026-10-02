@@ -3583,12 +3583,29 @@ export async function dispatchRole(
         })
       : null
   if (claudeConfinement !== null && !claudeConfinement.confined) {
-    // O5: named in the run's own output AND the Vinaya Log — a confined
-    // role's own `log()` call still reaches the Log (it is not denied by
-    // anything this task changes), so one `writeLifecycle` call, which
-    // already mirrors to both (`roleLogPath` and the terminal), satisfies
-    // both halves of this requirement.
+    // O5: named in the run's own output (`writeLifecycle`, which mirrors to
+    // the terminal and `roleLogPath`'s driver.log) AND the Vinaya Log.
+    // Round 2 review, MAJOR: `writeLifecycle` alone never reaches the Log —
+    // it never calls `log()` — so this ALSO records a real `operation`
+    // event, the same established "an infrastructure-level fact, not a
+    // dispatch outcome" family `broker.ts`'s own `operationEvent` helper
+    // already writes (`kind: 'operation'`, `event: 'completed'`); `result:
+    // 'unavailable'` is this family's own documented answer for exactly
+    // this case — a mechanism that could not be established. `target`
+    // names the missing tool(s), never a free-text message (the schema's
+    // own fields carry no prose slot, and `OperationResult` already says
+    // WHAT happened); the full warning text stays in `writeLifecycle`'s own
+    // line, which is what an operator actually reads.
     writeLifecycle(`[vinaya dispatch ${effectId}] ${role} via ${agent}: WARNING — ${claudeConfinement.warning}`)
+    log({
+      kind: 'operation',
+      event: 'completed',
+      payload: {},
+      operation: 'claude-sandbox-confinement',
+      target: claudeConfinement.missingTools.length > 0 ? claudeConfinement.missingTools.join(',') : null,
+      result: 'unavailable',
+      error_class: null
+    })
   }
   // O1: claude only — see `writeDispatchSettings`'s own doc comment for why
   // Codex/Gemini are not silently included. Computed here, once, before the
@@ -4136,39 +4153,48 @@ export async function dispatchRole(
             // closes.
             ...codexEnvExtras!.attribution
           })
-        : {
-            ...process.env,
-            ...attribution,
-            // O1 (round 2 review, F1): a non-boundary Codex dispatch points at
-            // the run-scoped `CODEX_HOME` `stageCodexPolicyHome` built (the
-            // operator's `~/.codex` symlinked through, plus this run's rules),
-            // so the machine-state floor is discovered even with no worker
-            // boundary. Omitted (child keeps the inherited/operator home) when
-            // nothing was staged — a non-Codex dispatch, or no re-homable login.
-            ...(codexPolicyHome ? { CODEX_HOME: codexPolicyHome.codexHome } : {}),
-            // O1/O2 (task 3): a CONFINED Claude dispatch still runs through
-            // this unconfined spawn shape — Claude Code itself is never
-            // process-wrapped, only its own tools are sandboxed, via the
-            // settings file's `sandbox` block (`writeDispatchSettings`,
-            // above). `TMPDIR`/`TMP`/`TEMP` point a confined role's own
-            // scratch writes (a `bun install` cache, a build artifact) at
-            // the SAME scratch directory `buildClaudeSandboxSettings`
-            // granted `allowWrite` on, never the real, denied-outside-it
-            // `HOME`-based default; `CLAUDE_CODE_TMPDIR` repoints Claude
-            // Code's own working-files directory the same way (it keeps
-            // them under `/tmp/claude-<uid>` and ignores `TMPDIR` for them).
-            // Omitted entirely — the real environment's own TMPDIR stands,
-            // same as every other unconfined dispatch — when Claude's own
-            // sandbox could not be established on this host (O5).
-            ...(claudeConfinement?.confined === true
-              ? {
-                  TMPDIR: claudeConfinement.scratchDir,
-                  TMP: claudeConfinement.scratchDir,
-                  TEMP: claudeConfinement.scratchDir,
-                  CLAUDE_CODE_TMPDIR: claudeConfinement.scratchDir
-                }
-              : {})
-          }
+        : claudeConfinement?.confined === true
+          ? // Round 2 security review, CRITICAL: a confined Claude dispatch
+            // was spawned through the UNCONFINED branch below (a bare
+            // `{ ...process.env }` spread) — Claude Code's own sandbox
+            // confines only its tools' filesystem and network, never their
+            // ENVIRONMENT, so every operator secret in this process's own
+            // env (a forge token, a cloud credential) reached the Bash
+            // tool's own child/subagent/MCP processes and could be
+            // exfiltrated over any of the sandbox's ALLOWED hosts (a `git
+            // push` to an attacker-controlled repo on `github.com`, say —
+            // exactly the gap §4a's own "Egress is destination-allowlisted,
+            // not content-inspected" line discloses, widened here from a
+            // theoretical residual gap to the operator's WHOLE environment).
+            // `buildWorkerEnv` is the SAME named-allowlist discipline the
+            // Codex boundary above already uses — `HOME` stays in the
+            // allowlist (unlike the old Seatbelt path, nothing here denies
+            // reading it), so Claude's own unconfined main process still
+            // resolves its real OAuth session and `gh`'s own config-based
+            // auth exactly as before; only the SPAWNED CHILD's env changes,
+            // narrowing it to the same eight keys every other confined
+            // dispatch already carries.
+            buildWorkerEnv(process.env, {
+              ...attribution,
+              TMPDIR: claudeConfinement.scratchDir,
+              TMP: claudeConfinement.scratchDir,
+              TEMP: claudeConfinement.scratchDir,
+              // Claude Code keeps its own working files under
+              // `/tmp/claude-<uid>` and ignores `TMPDIR` for them, so its
+              // own override must name the same granted scratch directory.
+              CLAUDE_CODE_TMPDIR: claudeConfinement.scratchDir
+            })
+          : {
+              ...process.env,
+              ...attribution,
+              // O1 (round 2 review, F1): a non-boundary Codex dispatch points at
+              // the run-scoped `CODEX_HOME` `stageCodexPolicyHome` built (the
+              // operator's `~/.codex` symlinked through, plus this run's rules),
+              // so the machine-state floor is discovered even with no worker
+              // boundary. Omitted (child keeps the inherited/operator home) when
+              // nothing was staged — a non-Codex dispatch, or no re-homable login.
+              ...(codexPolicyHome ? { CODEX_HOME: codexPolicyHome.codexHome } : {})
+            }
     })
 
     // O1/O3: bind the child's own identity onto the launch record right
