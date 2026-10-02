@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { buildExecution, buildExecutions, type ExecutionName } from '../fixtures'
 import { createMemoryCache, normalizeStoredLine } from '../sync'
 import type { Dataset, Measured } from '../sync'
-import { recurringFindings } from './convergence'
+import { outcomesByInstructionVersion, recurringFindings } from './convergence'
 
 /**
  * Questions 8, 9 and 10, and the confidence comparison, over the fixture
@@ -101,5 +101,81 @@ describe('question 8 — which findings recur', () => {
     const answer = recurringFindings(datasetOf(lowTrust))
     expect(answer.findings).toEqual([])
     expect(answer.coverage).toMatchObject({ lowTrustLeftOut: 32, rowsRead: 32, rowsUsed: 0 })
+  })
+})
+
+describe('question 9 — is the instruction version the problem', () => {
+  it("groups outcomes by the doctrine a unit's own lines name", () => {
+    const answer = outcomesByInstructionVersion(allFixtures())
+    expect(answer.versions).toEqual([
+      {
+        version: 'fixture-doctrine',
+        flowVersions: [],
+        units: 4,
+        escalated: 1,
+        roundsToGreen: [
+          { rounds: 1, units: 1 },
+          { rounds: 2, units: 1 },
+          { rounds: 3, units: 1 }
+        ],
+        // green-one-round 0 + three-rounds 2 (rounds 1, 2) + paused 1 (round 1) + escalated-handoff 0 (no verdict) = 3.
+        unmetObjectives: knownOf(3)
+      }
+    ])
+  })
+
+  it('states its coverage: every dev_review_loop and dispatch row read, no figure unknown', () => {
+    const answer = outcomesByInstructionVersion(allFixtures())
+    expect(answer.coverage).toEqual({
+      rowsRead: 93,
+      lowTrustLeftOut: 3,
+      unitUnknown: 0,
+      // dev_review_loop 43 + dispatch 26.
+      rowsUsed: 69,
+      gaps: 0,
+      quarantined: 2,
+      unknowns: []
+    })
+  })
+
+  it('reads unmet objectives as unknown — never zero — when a version recorded no verdict at all', () => {
+    const answer = outcomesByInstructionVersion(datasetOf(rawLines('escalated-handoff')))
+    expect(answer.versions).toEqual([
+      {
+        version: 'fixture-doctrine',
+        flowVersions: [],
+        units: 1,
+        escalated: 1,
+        roundsToGreen: [],
+        unmetObjectives: unknownOf("no verdict was recorded for version fixture-doctrine's units")
+      }
+    ])
+  })
+
+  it('never compares instruction versions as a cause — each version is counted independently', () => {
+    const otherVersion = rawLines('green-one-round').map((raw) => {
+      const object = JSON.parse(raw)
+      object.meta.doctrine = 'fixture-doctrine-v2'
+      return JSON.stringify(object)
+    })
+    const answer = outcomesByInstructionVersion(datasetOf([...otherVersion, ...rawLines('paused-and-resumed')]))
+    expect(answer.versions).toEqual([
+      {
+        version: 'fixture-doctrine',
+        flowVersions: [],
+        units: 1,
+        escalated: 0,
+        roundsToGreen: [{ rounds: 2, units: 1 }],
+        unmetObjectives: knownOf(1)
+      },
+      {
+        version: 'fixture-doctrine-v2',
+        flowVersions: [],
+        units: 1,
+        escalated: 0,
+        roundsToGreen: [{ rounds: 1, units: 1 }],
+        unmetObjectives: knownOf(0)
+      }
+    ])
   })
 })
