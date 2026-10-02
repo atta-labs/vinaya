@@ -3679,6 +3679,75 @@ describe('writeDispatchSettings — Issue #663, O1/O3: the permission policy is 
     expect(outsideOut.hookSpecificOutput.permissionDecisionReason).toMatch(/worktree/)
   })
 
+  it("a developer dispatch DENIES both a Write and an Edit to a path outside BOTH the real home and the real temp root (round 2 ruling, F1) — the sandbox's own disclosed gap, closed here by this same Write|Edit hook", () => {
+    // `isolation.md` §4a's own disclosed gap: "a path outside BOTH the real
+    // home and the real temp root (`/etc`, `/opt`, a second mount) is covered
+    // by neither `denyRead` nor `permissionsDeny`". The Write/Edit hook under
+    // test here is scoped to the worktree directly — never relative to home
+    // or temp — so it denies a path like this regardless, closing the gap for
+    // Write/Edit even though the sandbox's own read-deny rows do not reach it.
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const argvOut = join(cwd, 'argv.out')
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\nfor a in "$@"; do echo "$a"; done > "${argvOut}"\ncat > /dev/null\necho '{}'\nexit 0\n`
+    )
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(0)
+
+    const argv = readFileSync(argvOut, 'utf8').trim().split('\n')
+    const settingsIdx = argv.indexOf('--settings')
+    const settingsPath = argv[settingsIdx + 1] as string
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as {
+      hooks: { PreToolUse: Array<{ matcher: string; hooks: Array<{ command: string }> }> }
+    }
+    const writeEntry = settings.hooks.PreToolUse.find((h) => h.matcher === 'Write|Edit')
+    expect(writeEntry).toBeDefined()
+    const hookCommand = writeEntry?.hooks[0]?.command as string
+    const scriptPath = hookCommand.slice('bun "'.length, -1)
+    const scopeFiles = readdirSync(dirname(scriptPath)).filter((f) => f.startsWith('write-access-'))
+    expect(scopeFiles).toHaveLength(1)
+    const runId = (scopeFiles[0] as string).slice('write-access-'.length, -'.json'.length)
+
+    // Neither under the real `os.homedir()` nor under the real `os.tmpdir()`
+    // (where every fixture `home`/`cwd` in this file lives) — its immediate
+    // parent does not exist either, exercising the hook's own
+    // `realpathSync` failure fallback (raw, unresolved comparison) the same
+    // way a genuinely out-of-scope path would on a live host.
+    const outsidePath = '/opt/vinaya-should-never-write-here/x'
+    expect(outsidePath.startsWith(homedir())).toBe(false)
+    expect(outsidePath.startsWith(tmpdir())).toBe(false)
+
+    for (const toolName of ['Write', 'Edit']) {
+      const result = spawnBudgeted(
+        [scriptPath],
+        {
+          input: JSON.stringify({ tool_name: toolName, tool_input: { file_path: outsidePath } }),
+          encoding: 'utf8',
+          env: { ...process.env, VINAYA_RUN_ID: runId }
+        },
+        'write-access hook'
+      )
+      expect(result.status).toBe(0)
+      const out = JSON.parse(result.stdout) as {
+        hookSpecificOutput: { permissionDecision: string; permissionDecisionReason: string }
+      }
+      expect(out.hookSpecificOutput.permissionDecision).toBe('deny')
+      expect(out.hookSpecificOutput.permissionDecisionReason).toMatch(/worktree/)
+    }
+  })
+
   it('a developer dispatch carrying developerFiles (O3, task-files-v1 2, #649) ALLOWS a write to exactly those two files outside its worktree, and still DENIES an unrelated outside path', () => {
     // `developerFiles` has no CLI flag (same reasoning `extraWritableDirs`'s
     // own comment gives — only `dev-review-loop.ts`'s internal call site
