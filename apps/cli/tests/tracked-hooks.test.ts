@@ -359,7 +359,18 @@ describe('commit-msg hook fires on a real commit (issue-989)', () => {
 
     writeFileSync(join(root, 'file.txt'), 'x\n')
     git(root, ['add', 'file.txt'])
-    expect(() => git(root, ['commit', '-q', '-m', 'Part 1 (O1): something'])).toThrow()
+    let refusal: unknown
+    try {
+      git(root, ['commit', '-q', '-m', 'Part 1 (O1): something'])
+    } catch (error) {
+      refusal = error
+    }
+    // Assert the commit-msg hook's OWN refusal, not merely that the commit
+    // threw — a throw alone can't distinguish this from the unrelated
+    // pre-commit/npx failure the boundary describes.
+    expect((refusal as { stderr: string }).stderr).toContain(
+      `vinaya commit-msg: "Part 1 (O1): something" doesn't match this repo's commit convention.`
+    )
     git(root, ['commit', '-q', '-m', 'Fix(cli): something'])
     expect(git(root, ['log', '-1', '--format=%s'])).toBe('Fix(cli): something')
   }, 20_000)
