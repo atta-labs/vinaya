@@ -36,7 +36,7 @@
  */
 
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
   devReviewLoop,
@@ -49,6 +49,7 @@ import {
 } from '../../src/lib/dev-review-loop.js'
 import { resetTrustAnchorConfigMemo } from '../../src/lib/log-sink.js'
 import { resetRuntimeDirCache } from '../../src/lib/run-paths.js'
+import { commitHeaderPathFor, prBodyPathFor } from '../../src/lib/dev-review-loop/developer-publication.js'
 import type { DispatchHandle } from '../../src/lib/dispatch.js'
 import {
   pauseMarker,
@@ -189,6 +190,36 @@ export type LoopWorld = {
   reviewerDispatchStarted: boolean
   /** Set if `blockEvidenceUntilReviewerStarts` never observed a reviewer start within its budget. */
   evidenceReportTimedOut: boolean
+  // --- developer publication (agent-confinement-v1/1) ---
+  /**
+   * When true, `<repoRoot>/.worktrees/<branch>` is created so the driver's
+   * publication step passes its worktree-existence check and proceeds. Default
+   * `false` — the publication step is then a no-op (`existsSync` false), which
+   * is why every pre-task fixture that fakes a published turn needs no change.
+   */
+  worktreeExists?: boolean
+  /** What `readWorktreeBranch` returns; default the task `branch`. A fixture sets a different value to exercise the O7 branch check. */
+  worktreeBranchName?: string
+  /** `readUnpushedWorkDetail().dirtyFiles` — the Developer's uncommitted work; default `[]`. */
+  worktreeDirty: string[]
+  /** `readUnpushedWorkDetail().aheadCount` — local commits ahead of the remote; default `0`. */
+  worktreeAhead: number
+  /** `gitWorktreeChangedPaths` — the paths the turn changed, for the O7 Surface check; default `[]`. */
+  worktreeChangedPaths: string[]
+  /** The sha `commitWorktree` returns and sets the worktree head to; default `sha('c')`. */
+  nextCommitSha: string
+  /** When set, `pushTaskBranch` refuses with this text (O4); default `null` (the push lands). */
+  pushRefusal: string | null
+  /** Set true once `openTaskPullRequest` opens the PR; `findOpenPrForBranch` then returns it too. */
+  prOpened: boolean
+  /** `fetchIssueTitle` — the PR title the publication step uses; default a stable `[task <n>] …`. */
+  issueTitle: string
+  /** Each commit the driver's publication step made (`commitWorktree`). */
+  commits: Array<{ header: string; sha: string }>
+  /** Each push the driver's publication step made (`pushTaskBranch`). */
+  pushes: Array<{ sha: string }>
+  /** Each pull-request open the driver's publication step made (`openTaskPullRequest`). */
+  prOpens: Array<{ title: string; body: string }>
   // --- recorded side effects, for assertions ---
   /** O1/O2: each developer branch the loop created on the remote at round-1 start (`createRemoteTaskBranch`) — empty on a start that found the branch already there (an open PR, or a remote branch with none). */
   remoteBranchCreations: string[]
@@ -295,6 +326,16 @@ export function makeWorld(overrides: Partial<LoopWorld> = {}): LoopWorld {
     prBody: `Closes #${task}`,
     shortstat: ' 2 files changed, 10 insertions(+), 3 deletions(-)',
     roleOutcomes: {},
+    worktreeDirty: [],
+    worktreeAhead: 0,
+    worktreeChangedPaths: [],
+    nextCommitSha: sha('c'),
+    pushRefusal: null,
+    prOpened: false,
+    issueTitle: `[task ${task}] do the thing`,
+    commits: [],
+    pushes: [],
+    prOpens: [],
     remoteBranchCreations: [],
     evidenceOutcome: { ok: true, gatesFailed: false },
     blockEvidenceUntilReviewerStarts: false,
@@ -318,6 +359,12 @@ export function makeWorld(overrides: Partial<LoopWorld> = {}): LoopWorld {
     logPath,
     cleanup: cleanupWorlds,
     ...overrides
+  }
+  // A fixture that exercises the driver's publication step needs the task
+  // worktree to exist (the step's own `existsSync` guard) — create it here so
+  // the real `existsSync(<repoRoot>/.worktrees/<branch>)` the driver runs finds it.
+  if (world.worktreeExists) {
+    mkdirSync(join(repoRoot, '.worktrees', world.branch), { recursive: true })
   }
   return world
 }
@@ -421,7 +468,9 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
     },
     fetchSourceRevision: (_issue) => world.sourceRevision,
     developerBranchFor: (_n) => world.branch,
-    findOpenPrForBranch: (branch) => (world.developerPushed ? { number: world.prNumber, branch } : null),
+    findOpenPrForBranch: (branch) =>
+      world.developerPushed || world.prOpened ? { number: world.prNumber, branch } : null,
+    fetchIssueTitle: (_issue) => world.issueTitle,
     // O1/O2: record the round-1 remote-branch creation so a test can assert it
     // fires exactly on the genuinely-fresh path and never on an attach/reentry.
     createRemoteTaskBranch: (branch) => {
@@ -464,8 +513,39 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
     prPollIntervalMs: 1,
     gatePollMaxAttempts: 3,
     gatePollIntervalMs: 1,
-    readWorktreeHead: (_worktreePath) => (world.developerPushed ? world.worktreeHead : null),
-    readUnpushedWorkDetail: (_worktreePath) => ({ dirtyFiles: [], aheadCount: 0 }),
+    readWorktreeHead: (_worktreePath) => (world.worktreeExists || world.developerPushed ? world.worktreeHead : null),
+    readUnpushedWorkDetail: (_worktreePath) => ({
+      dirtyFiles: [...world.worktreeDirty],
+      aheadCount: world.worktreeAhead
+    }),
+    // --- developer publication (agent-confinement-v1/1) ---
+    readWorktreeBranch: (_worktreePath) => world.worktreeBranchName ?? world.branch,
+    gitWorktreeChangedPaths: (_worktreePath, _base) => [...world.worktreeChangedPaths],
+    commitWorktree: (_worktreePath, header) => {
+      const commitSha = world.nextCommitSha
+      world.commits.push({ header, sha: commitSha })
+      // The commit clears the uncommitted work and advances the worktree head;
+      // the branch now sits one commit ahead of the remote, awaiting the push.
+      world.worktreeDirty = []
+      world.worktreeHead = commitSha
+      world.worktreeAhead = world.worktreeAhead + 1
+      return commitSha
+    },
+    pushTaskBranch: (input) => {
+      if (world.pushRefusal !== null) return { ok: false, refusal: world.pushRefusal }
+      world.pushes.push({ sha: input.sha })
+      // The push lands: the remote head is now the pushed sha, the branch is no
+      // longer ahead, and the branch resolves on the remote.
+      world.head = input.sha
+      world.worktreeAhead = 0
+      world.remoteBranchExists = true
+      return { ok: true }
+    },
+    openTaskPullRequest: (input) => {
+      world.prOpens.push({ title: input.title, body: input.body })
+      world.prOpened = true
+      return world.prNumber
+    },
     fetchPrBody: (_pr) => world.prBody,
     fetchDeveloperStop: (_issue) => (world.developerStop === null ? null : (world.developerStop as never)),
     fetchMergeableState: (_pr) => world.mergeable,
@@ -542,6 +622,58 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
       world.postedComments.push({ kind: 'pr', ref: String(input.prNumber), marker: 'reviewer-verdict', body: '' })
       world.postedComments.push({ kind: 'pr', ref: String(input.prNumber), marker: 'security-verdict', body: '' })
       world.postedComments.push({ kind: 'pr', ref: String(input.prNumber), marker: 'summary', body: '' })
+    }
+  }
+}
+
+/**
+ * agent-confinement-v1/1 — deps whose Developer dispatch models the new
+ * confined shape: it leaves its changes UNCOMMITTED (sets `worktreeDirty`/
+ * `worktreeChangedPaths`) and writes its commit-header (and, round 1, PR-body)
+ * file into that round's own Developer folder, then returns — it never pushes
+ * or opens the PR itself. The driver's own publication step (commit, push,
+ * open) then runs against the world's publication fakes. Pair with
+ * `makeWorld({ worktreeExists: true })`.
+ */
+export function developerLeavesWorkDeps(
+  world: LoopWorld,
+  opts: {
+    changedPaths?: string[]
+    header?: string
+    headerByRound?: Record<number, string>
+    body?: string
+    /** When true, the Developer "commits" itself (advances the worktree head) — the O7 head-check violation. */
+    developerCommits?: boolean
+    /** When true, writes NO header file — the O2 missing-header path. */
+    writeNoHeader?: boolean
+  } = {}
+): Partial<LoopDeps> {
+  const base = makeInProcessDeps(world)
+  let devSeq = 0
+  return {
+    ...base,
+    dispatchRole: async (role, agent, prompt, dOpts) => {
+      if (role !== 'developer') return base.dispatchRole!(role, agent, prompt, dOpts)
+      const round = dOpts.round ?? 1
+      devSeq += 1
+      world.dispatchCountByRole.developer = (world.dispatchCountByRole.developer ?? 0) + 1
+      const changed = opts.changedPaths ?? ['apps/cli/src/lib/x.ts']
+      world.worktreeDirty = [...changed]
+      world.worktreeChangedPaths = [...changed]
+      if (opts.developerCommits) world.worktreeHead = sha('z')
+      if (!opts.writeNoHeader) {
+        const header = opts.headerByRound?.[round] ?? opts.header ?? 'Feat(cli): leave the work for the driver'
+        const headerPath = commitHeaderPathFor(world.runtimeDir, world.task, round)
+        mkdirSync(dirname(headerPath), { recursive: true })
+        writeFileSync(headerPath, header)
+      }
+      if (round === 1) {
+        const bodyPath = prBodyPathFor(world.runtimeDir, world.task, round)
+        mkdirSync(dirname(bodyPath), { recursive: true })
+        writeFileSync(bodyPath, opts.body ?? '## Decisions\n\nNone.\n\n## Scope\n\n**Tier:** 1\n')
+      }
+      world.dispatches.push({ role, round, resumeId: 'dev-session-1', prompt })
+      return handle('dev-session-1', `eff-dev-${devSeq}`)
     }
   }
 }
