@@ -14,12 +14,19 @@
  * - `changeSizeBands` (q10) bands the converging round's own files changed,
  *   reporting a band under the sample floor as insufficient rather than as
  *   a figure.
+ * - `confidenceVsOutcome` (the confidence comparison) reads the developer's
+ *   stated confidence from the second round on, beside whether that round's
+ *   reviewers approved — round one is never asked and never appears.
+ *
+ * None of the four scores a choice as having caused an outcome; each
+ * reports what the loop recorded.
  */
 
 import { known, unknownBecause } from '../sync'
 import type { Dataset, DatasetRow, Measured } from '../sync'
 import type { RoundsToGreen } from './completion'
 import {
+  booleanField,
   buildCoverage,
   compareText,
   groupBy,
@@ -336,4 +343,78 @@ export function changeSizeBands(dataset: Dataset): ChangeSizeAnswer {
   })
 
   return { bands, coverage: buildCoverage(dataset, lowTrust, used, unknowns) }
+}
+
+// ---------------------------------------------------------------------------
+// The confidence comparison — does stated confidence predict review outcome?
+
+const MIN_CONFIDENCE_ROUND = 2
+const CONFIDENCE_UNAVAILABLE_REASON = "the developer's confidence was recorded unavailable"
+const NO_CONFIDENCE_REASON = 'no confidence was stated this round'
+
+export type ConfidenceOutcome = {
+  unit: string
+  round: number
+  /** The confidence as first stated this round. Unknown when missing or explicitly recorded unavailable. */
+  confidenceValue: Measured<number>
+  /** Whether the confidence rule's one extra developer turn was spent before this statement. Unknown the same way. */
+  extraTurnSpent: Measured<boolean>
+  /** Whether this round's reviewers approved. Unknown when this round recorded no verdicts at all. */
+  approved: Measured<boolean>
+}
+
+export type ConfidenceAnswer = {
+  /** Ascending by unit, then round. Round 1 is never asked, so it never appears. */
+  rounds: ConfidenceOutcome[]
+  coverage: Coverage
+}
+
+function confidenceOf(row: DatasetRow): { value: Measured<number>; extraTurnSpent: Measured<boolean> } {
+  const value = numberField(row, 'confidence_value')
+  const unavailable = booleanField(row, 'confidence_unavailable') === true
+  const extraTurnSpent = booleanField(row, 'extra_turn_spent')
+  return {
+    value:
+      value !== null
+        ? known(value)
+        : unknownBecause(unavailable ? CONFIDENCE_UNAVAILABLE_REASON : NO_CONFIDENCE_REASON),
+    extraTurnSpent: extraTurnSpent !== null ? known(extraTurnSpent) : unknownBecause(NO_CONFIDENCE_REASON)
+  }
+}
+
+/** The confidence comparison: stated confidence against review outcome, by round, from the second round on. */
+export function confidenceVsOutcome(dataset: Dataset): ConfidenceAnswer {
+  const { rows, lowTrust } = trustedRows(dataset)
+  const used = rowsOfKinds(rows, LOOP_KINDS)
+  const unknowns: UnknownFigure[] = []
+
+  const rounds: ConfidenceOutcome[] = []
+  for (const [unit, unitRows] of groupBy(used.withUnit, (row) => row.workRef)) {
+    const gateReads = unitRows.filter(
+      (row) => row.event === 'gate_result_read' && (numberField(row, 'round') ?? 0) >= MIN_CONFIDENCE_ROUND
+    )
+    for (const gateRead of gateReads) {
+      const round = numberField(gateRead, 'round') as number
+      const { value, extraTurnSpent } = confidenceOf(gateRead)
+      const verdictsRead = unitRows.find((row) => row.event === 'verdicts_read' && numberField(row, 'round') === round)
+      const approved: Measured<boolean> =
+        verdictsRead === undefined
+          ? unknownBecause(`no verdicts_read recorded for round ${round} of unit ${unit}`)
+          : (() => {
+              const allApprove = booleanField(verdictsRead, 'all_approve')
+              return allApprove === null
+                ? unknownBecause(`round ${round}'s verdicts_read of unit ${unit} states no all_approve`)
+                : known(allApprove)
+            })()
+
+      if (!value.known) unknowns.push({ figure: `${unit}.${round}.confidenceValue`, reason: value.reason })
+      if (!extraTurnSpent.known)
+        unknowns.push({ figure: `${unit}.${round}.extraTurnSpent`, reason: extraTurnSpent.reason })
+      if (!approved.known) unknowns.push({ figure: `${unit}.${round}.approved`, reason: approved.reason })
+      rounds.push({ unit, round, confidenceValue: value, extraTurnSpent, approved })
+    }
+  }
+  rounds.sort((a, b) => compareText(a.unit, b.unit) || a.round - b.round)
+
+  return { rounds, coverage: buildCoverage(dataset, lowTrust, used, unknowns) }
 }

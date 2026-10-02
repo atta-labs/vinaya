@@ -114,6 +114,12 @@ export function textOf(object: JsonObject, key: string): string | null {
   return typeof value === 'string' ? value : null
 }
 
+/** A boolean field of the row's family body, or `null` when absent or not a boolean. */
+export function booleanField(row: DatasetRow, key: string): boolean | null {
+  const value: unknown = row.payload[key]
+  return typeof value === 'boolean' ? value : null
+}
+
 export function compareText(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0
 }

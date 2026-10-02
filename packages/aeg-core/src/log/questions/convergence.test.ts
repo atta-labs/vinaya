@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { buildExecution, buildExecutions, type ExecutionName } from '../fixtures'
 import { createMemoryCache, normalizeStoredLine } from '../sync'
 import type { Dataset, Measured } from '../sync'
-import { changeSizeBands, outcomesByInstructionVersion, recurringFindings } from './convergence'
+import { changeSizeBands, confidenceVsOutcome, outcomesByInstructionVersion, recurringFindings } from './convergence'
 
 /**
  * Questions 8, 9 and 10, and the confidence comparison, over the fixture
@@ -40,6 +40,8 @@ function knownOf<T>(value: T): Measured<T> {
 function unknownOf<T>(reason: string): Measured<T> {
   return { known: false, reason }
 }
+
+const NO_CONFIDENCE_REASON = 'no confidence was stated this round'
 
 describe('question 8 — which findings recur', () => {
   it("reads the loop's own comparison, with the severity and treatment that round's verdicts read", () => {
@@ -253,5 +255,63 @@ describe('question 10 — what change size converges', () => {
   it('never bands a unit that did not converge — escalated-handoff names no band member', () => {
     const answer = changeSizeBands(datasetOf(rawLines('escalated-handoff')))
     expect(answer.bands.every((b) => b.units === 0)).toBe(true)
+  })
+})
+
+describe('the confidence comparison — does stated confidence predict review outcome', () => {
+  it('reads the confidence as first stated from the second round on, beside whether that round approved', () => {
+    const answer = confidenceVsOutcome(allFixtures())
+    expect(answer.rounds).toEqual([
+      { unit: '102', round: 2, confidenceValue: knownOf(70), extraTurnSpent: knownOf(false), approved: knownOf(false) },
+      { unit: '102', round: 3, confidenceValue: knownOf(92), extraTurnSpent: knownOf(true), approved: knownOf(true) },
+      {
+        unit: '103',
+        round: 2,
+        confidenceValue: unknownOf(NO_CONFIDENCE_REASON),
+        extraTurnSpent: unknownOf(NO_CONFIDENCE_REASON),
+        approved: knownOf(true)
+      }
+    ])
+  })
+
+  it('states its coverage: a missing confidence is named, never a default', () => {
+    const answer = confidenceVsOutcome(allFixtures())
+    expect(answer.coverage).toEqual({
+      rowsRead: 93,
+      lowTrustLeftOut: 3,
+      unitUnknown: 0,
+      rowsUsed: 43,
+      gaps: 0,
+      quarantined: 2,
+      unknowns: [
+        { figure: '103.2.confidenceValue', reason: NO_CONFIDENCE_REASON },
+        { figure: '103.2.extraTurnSpent', reason: NO_CONFIDENCE_REASON }
+      ]
+    })
+  })
+
+  it('never asks round one — a unit green in round one states no confidence row at all', () => {
+    const answer = confidenceVsOutcome(datasetOf(rawLines('green-one-round')))
+    expect(answer.rounds).toEqual([])
+  })
+
+  it('reads approval as unknown when a round recorded no verdicts_read at all', () => {
+    const gateRead = JSON.parse(
+      rawLines('three-rounds-recurring-finding').find(
+        (raw) =>
+          (JSON.parse(raw) as { event: string }).event === 'gate_result_read' &&
+          (JSON.parse(raw) as { round: number }).round === 2
+      )!
+    )
+    const answer = confidenceVsOutcome(datasetOf([JSON.stringify(gateRead)]))
+    expect(answer.rounds).toEqual([
+      {
+        unit: '102',
+        round: 2,
+        confidenceValue: knownOf(70),
+        extraTurnSpent: knownOf(false),
+        approved: unknownOf('no verdicts_read recorded for round 2 of unit 102')
+      }
+    ])
   })
 })
