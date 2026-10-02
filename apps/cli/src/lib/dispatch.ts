@@ -68,15 +68,17 @@ import {
   accessSync,
   constants as fsConstants,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   realpathSync,
+  rmSync,
   writeFileSync
 } from 'node:fs'
 import { chmodSync, createWriteStream } from 'node:fs'
 import { execFileSync, spawn } from 'node:child_process'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
-import { homedir, hostname as osHostname } from 'node:os'
+import { homedir, hostname as osHostname, tmpdir } from 'node:os'
 import { parseIssueDocumentation, redact, summarizeTranscript } from '@attalabs/aeg-core'
 import type { IssueDocumentationSource, Role, RoleAttemptOutcome, TranscriptSummary } from '@attalabs/aeg-core'
 import { createLogSink, resolveLogAppendPath } from './log-sink.js'
@@ -95,10 +97,13 @@ import {
 import { basename, dirname, join } from 'node:path'
 import {
   CLAUDE_KEYCHAIN_SERVICE,
+  CLAUDE_SANDBOX_ALLOWED_DOMAINS,
   buildWorkerEnv,
   hasSubscriptionLogin,
+  resolveClaudeConfinement,
   resolveWorkerBoundaryLaunch,
-  stageCodexPolicyHome
+  stageCodexPolicyHome,
+  type ClaudeSandboxSettings
 } from './worker-boundary.js'
 import { repoRoot } from './diff-evidence.js'
 
@@ -1124,14 +1129,16 @@ const DISPATCH_BASH_MAX_TIMEOUT_MS = '1800000'
  * `v2`: `writeAccessHookScript` now denies a `directory`-scoped Write/Edit
  * outside its granted worktree instead of falling through, and
  * `backgroundDenyHookScript` now also denies a `git commit`/`git push`
- * whose working directory is a checkout on the default branch — neither
- * touches `buildRolePermissions`'s own `allow`/`deny` arrays, but both are
- * as much "the written policy" as those arrays are) —
+ * whose working directory is a checkout on the default branch; the bump to
+ * `v4`: `writeAccessHookScript` now also denies an `exact-files`-scoped
+ * Write/Edit outside its granted hand-off files instead of falling through —
+ * neither touches `buildRolePermissions`'s own `allow`/`deny` arrays, but all
+ * are as much "the written policy" as those arrays are) —
  * `writeDispatchSettings`'s own first lifecycle line for a role names it, so
  * a run's own log says which policy shape it started under without needing
  * to diff `dispatch.ts` against the run's own timestamp.
  */
-export const PERMISSION_POLICY_VERSION = 'v3'
+export const PERMISSION_POLICY_VERSION = 'v4'
 
 type RolePermissions = { allow: string[]; deny: string[] }
 
@@ -1539,6 +1546,14 @@ export const WRITE_OUTSIDE_WORKTREE_DENY_REASON =
   "Dispatched sessions cannot write or edit a file outside the developer's own worktree — this policy grants a path inside the worktree and denies everything else, rather than falling through to the host's own classifier for an out-of-scope path."
 
 /**
+ * `exact-files` scope's own counterpart to `WRITE_OUTSIDE_WORKTREE_DENY_REASON`
+ * — a code-reviewer/security dispatch's three named hand-off files
+ * (`findings.txt`/`report.txt`/`objectives.txt`), rather than a worktree.
+ */
+export const WRITE_OUTSIDE_HANDOFF_FILES_DENY_REASON =
+  "Dispatched sessions cannot write or edit a file outside their own hand-off files — this policy grants exactly findings.txt/report.txt/objectives.txt in the work directory this role was given and denies everything else, rather than falling through to the host's own classifier for an out-of-scope path."
+
+/**
  * The `PreToolUse` hook that grants a real `Write`/`Edit` call — matched on
  * `Write|Edit`, never folded into `backgroundDenyHookScript`'s own
  * `Bash|Agent|Task` matcher, since the two check entirely different tool
@@ -1550,24 +1565,26 @@ export const WRITE_OUTSIDE_WORKTREE_DENY_REASON =
  * (the normal case for a fresh `Write`) still has a real, existing parent
  * directory to resolve through.
  *
- * **A `directory`-scoped path outside the written scope now
- * DENIES, rather than falling through.** Before this task, EVERY out-of-scope
- * path (both scope kinds) fell through silently, "exactly like
+ * **A path outside the written scope now DENIES, rather than falling
+ * through — for EITHER scope kind.** Before O4, every out-of-scope path
+ * (both scope kinds) fell through silently, "exactly like
  * `backgroundDenyHookScript`'s own 'silent otherwise' posture" — this hook's
  * job was only ever to GRANT a real capability the built-in engine cannot
  * express, never to add a new restriction. The origin incident (a developer
  * session working in the shared main checkout instead of its own worktree)
  * showed that posture leaves the door open: an out-of-worktree Write/Edit
  * simply resolved through the host's own default classifier, which can allow
- * it in a non-interactive dispatch. `directory` scope (the developer role's
- * own worktree grant, `buildWriteAccessScope`) now denies explicitly outside
- * it — a real, written restriction, not a silent gap. `exact-files` scope
- * (a reviewer/security dispatch's own three hand-off files) is UNCHANGED: it
- * still falls through silently outside its own narrow allowlist, since O4
- * scopes this rule to "a developer session," and a reviewer/security dispatch
- * was never granted a directory to begin with — denying every path outside
- * three exact filenames would be a far broader new restriction than O4 asks
- * for, on a role this task's Objectives never named.
+ * it in a non-interactive dispatch. O4 closed this for `directory` scope (the
+ * developer role's own worktree grant). **`exact-files` scope (a
+ * reviewer/security dispatch's own three hand-off files) now denies the
+ * same way (round 2 BLOCKER fix)** — the prior posture ("UNCHANGED, since O4
+ * scopes this rule to 'a developer session'") left exactly the gap O4 had
+ * just closed for the Developer open for the Reviewer/Security roles: a
+ * reviewer/security Write/Edit outside its three named files resolved
+ * through the host's own default classifier instead of this hook's own
+ * written restriction. Both scope kinds now deny explicitly outside their
+ * own grant — a real, written restriction, not a silent gap, for every
+ * unattended role this hook is wired for.
  *
  * **`directory` scope's own `extraFiles` (O3).** A `directory`-scoped write additionally allows an exact match on
  * one of `scope.extraFiles` — this round's confidence and round-response
@@ -1610,6 +1627,8 @@ function writeAccessHookScript(dir: string): string {
     allowOutput("in-scope for this role's written write-access policy"),
     "    } else if (scope.kind === 'directory') {",
     denyOutput(WRITE_OUTSIDE_WORKTREE_DENY_REASON),
+    "    } else if (scope.kind === 'exact-files') {",
+    denyOutput(WRITE_OUTSIDE_HANDOFF_FILES_DENY_REASON),
     '    }',
     '  } catch {',
     '    // an unreadable/malformed hook payload never blocks a call this hook cannot evaluate',
@@ -1687,7 +1706,19 @@ export function writeDispatchSettings(
   role: Role = 'developer',
   allowedDir = '.',
   extraWritableDirs: readonly string[] = [],
-  developerFiles: readonly string[] = []
+  developerFiles: readonly string[] = [],
+  /**
+   * O1/O2: the Claude-native sandbox block `resolveClaudeConfinement`
+   * resolved for THIS dispatch, when it is confined — `null` for every
+   * attended dispatch and for an unattended one running unconfined (Linux
+   * without `bubblewrap`/`socat`). Embeds `settings.sandbox` verbatim and
+   * folds `permissionsDeny` into `buildRolePermissions(role)`'s own `deny`
+   * array, so the ONE settings file this function already writes carries
+   * the sandbox boundary alongside the existing hooks/permissions blocks,
+   * never a second file a confined `claude --settings` would also have to
+   * be told to load.
+   */
+  confinement: ClaudeSandboxSettings | null = null
 ): string | null {
   try {
     const dir = join(runPath(runtimeDirForThisRepo(), scope, { area: 'hooks' }), role)
@@ -1721,6 +1752,11 @@ export function writeDispatchSettings(
       })
     }
     const settingsPath = join(dir, 'settings.json')
+    const rolePermissions = buildRolePermissions(role)
+    const permissions =
+      confinement === null
+        ? rolePermissions
+        : { allow: rolePermissions.allow, deny: [...rolePermissions.deny, ...confinement.permissionsDeny] }
     const settings = {
       env: {
         CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1',
@@ -1734,7 +1770,8 @@ export function writeDispatchSettings(
         BASH_DEFAULT_TIMEOUT_MS: DISPATCH_BASH_MAX_TIMEOUT_MS,
         BASH_MAX_TIMEOUT_MS: DISPATCH_BASH_MAX_TIMEOUT_MS
       },
-      permissions: buildRolePermissions(role),
+      permissions,
+      ...(confinement === null ? {} : { sandbox: confinement.sandbox }),
       hooks: {
         PreToolUse: preToolUseHooks,
         PostToolUse: [
@@ -3531,16 +3568,67 @@ export async function dispatchRole(
           opts.developerFiles ?? []
         )
       : vendorArgs
-  // Computed here, once — both the settings-write fail-closed check below
-  // and the boundary-resolution block further down read the SAME value,
-  // never two independently-evaluated `loadConfig()` calls that could
-  // observe a config change mid-dispatch and disagree with each other.
-  // The sandbox is not a setting: it is on wherever it is supported (macOS),
-  // and an unattended Codex dispatch additionally refuses where it is not —
-  // Codex's per-run `CODEX_HOME` (the machine-state command rules, the staged
-  // login) only exists inside the boundary, so a Codex run outside it would
-  // fall back to the operator's real `~/.codex` with none of those rules.
-  const requireIsolation = process.platform === 'darwin' || (agent === 'codex' && opts.unattended === true)
+  // O1 (task 3): Codex's own OS-level boundary is the hand-built Seatbelt
+  // profile, unchanged by this task ("Out: Codex" — the brief's own
+  // Boundary paragraph) — still required wherever this dispatch is
+  // unattended, since its per-run `CODEX_HOME` (the machine-state command
+  // rules, the staged login) only exists inside that boundary; a Codex run
+  // outside it would fall back to the operator's real `~/.codex` with none
+  // of those rules. Claude no longer shares this formula at all: its own
+  // confinement is resolved below, through `resolveClaudeConfinement`
+  // (`worker-boundary.ts`), never by wrapping the whole process in this
+  // hand-built profile.
+  const codexRequireIsolation = agent === 'codex' && opts.unattended === true
+  // O1/O2/O5 (task 3): Claude's own confinement decision — resolved through
+  // the provider-neutral interface (`ConfinementRequest`/
+  // `resolveClaudeConfinement`) rather than this function branching on
+  // platform itself. `null` for every non-Claude agent and every attended
+  // dispatch; otherwise always a resolution (never a refusal — Claude
+  // degrades to an unconfined run with a `warning` rather than ever
+  // requiring an install, Principal ruling 2026-10-02). The scratch
+  // directory is minted fresh per dispatch, the same `mkdtemp`-in-`tmpdir()`
+  // discipline `resolveWorkerBoundaryLaunch`'s own `scratchTmpDir` already
+  // uses, and is removed in `finish()` below alongside every other
+  // dispatch-scoped temp resource.
+  const claudeScratchDir =
+    agent === 'claude' && opts.unattended === true
+      ? realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-claude-sandbox-')))
+      : null
+  const claudeConfinement =
+    agent === 'claude' && opts.unattended === true && claudeScratchDir !== null
+      ? resolveClaudeConfinement({
+          role,
+          agent,
+          worktreeDir: opts.cwd ?? repoRoot() ?? process.cwd(),
+          scratchDir: claudeScratchDir,
+          allowedHosts: CLAUDE_SANDBOX_ALLOWED_DOMAINS
+        })
+      : null
+  if (claudeConfinement !== null && !claudeConfinement.confined) {
+    // O5: named in the run's own output (`writeLifecycle`, which mirrors to
+    // the terminal and `roleLogPath`'s driver.log) AND the Vinaya Log.
+    // Round 2 review, MAJOR: `writeLifecycle` alone never reaches the Log —
+    // it never calls `log()` — so this ALSO records a real `operation`
+    // event, the same established "an infrastructure-level fact, not a
+    // dispatch outcome" family `broker.ts`'s own `operationEvent` helper
+    // already writes (`kind: 'operation'`, `event: 'completed'`); `result:
+    // 'unavailable'` is this family's own documented answer for exactly
+    // this case — a mechanism that could not be established. `target`
+    // names the missing tool(s), never a free-text message (the schema's
+    // own fields carry no prose slot, and `OperationResult` already says
+    // WHAT happened); the full warning text stays in `writeLifecycle`'s own
+    // line, which is what an operator actually reads.
+    writeLifecycle(`[vinaya dispatch ${effectId}] ${role} via ${agent}: WARNING — ${claudeConfinement.warning}`)
+    log({
+      kind: 'operation',
+      event: 'completed',
+      payload: {},
+      operation: 'claude-sandbox-confinement',
+      target: claudeConfinement.missingTools.length > 0 ? claudeConfinement.missingTools.join(',') : null,
+      result: 'unavailable',
+      error_class: null
+    })
+  }
   // O1: claude only — see `writeDispatchSettings`'s own doc comment for why
   // Codex/Gemini are not silently included. Computed here, once, before the
   // 'dispatched' log line — moved up from inside the spawn `Promise`
@@ -3582,7 +3670,8 @@ export async function dispatchRole(
           role,
           permissionAllowedDir,
           opts.extraWritableDirs ?? [],
-          opts.developerFiles ?? []
+          opts.developerFiles ?? [],
+          claudeConfinement?.confined === true ? claudeConfinement.settings : null
         )
       : null
   const codexHooksPath =
@@ -3610,7 +3699,7 @@ export async function dispatchRole(
   // `null` when the operator has no `~/.codex/auth.json` to re-home from (a
   // keychain-only login can't be re-pointed) — the lifecycle line then says the
   // floor was not applied rather than claiming a protection that is not there.
-  const willUseWorkerBoundary = opts.unattended === true && requireIsolation
+  const willUseWorkerBoundary = opts.unattended === true && codexRequireIsolation
   const codexPolicyHome =
     agent === 'codex' && codexExecpolicyRules !== null && !willUseWorkerBoundary
       ? stageCodexPolicyHome({
@@ -3629,8 +3718,16 @@ export async function dispatchRole(
   // early-return refusal branch (binary not resolvable, non-Claude
   // Documentation degrade) that a normal Claude dispatch never reaches.
   if (dispatchSettingsPath !== null) {
+    // O2/O5: the SAME line a Claude dispatch always wrote before this task,
+    // now also naming whether Claude Code's own native sandbox is confining
+    // this dispatch — `confined` on every macOS run and on a Linux run with
+    // `bubblewrap`/`socat`; the `claudeConfinement !== null && !confined`
+    // branch above already wrote its own WARNING line for the remaining
+    // case, so this one states the positive fact rather than repeating it.
+    const sandboxNote =
+      claudeConfinement?.confined === true ? " — Claude Code's own sandbox is confining this dispatch's tools" : ''
     writeLifecycle(
-      `[vinaya dispatch ${effectId}] ${role} via ${agent}: permission policy ${PERMISSION_POLICY_VERSION} written to ${dispatchSettingsPath}`
+      `[vinaya dispatch ${effectId}] ${role} via ${agent}: permission policy ${PERMISSION_POLICY_VERSION} written to ${dispatchSettingsPath}${sandboxNote}`
     )
   } else if (
     agent === 'codex' &&
@@ -3673,18 +3770,23 @@ export async function dispatchRole(
       `[vinaya dispatch ${effectId}] ${role} via ${agent}: NO permission policy — machine-state commands (keychain, services, global settings) are NOT denied for this agent; only claude carries policy ${PERMISSION_POLICY_VERSION}`
     )
   }
-  // Round 5 review, MEDIUM: an unattended, isolation-required Claude dispatch
-  // whose settings write failed (a disk/permission fault under this task's
-  // own hooks directory) previously dropped `--settings`
-  // silently and launched anyway — the PreToolUse background-deny hook the
-  // brief names a trap to preserve would never load, with no refusal and no
-  // surfaced error, unlike O3's own boundary-unavailable path. Fail closed
-  // here the same way: refuse before any spawn, exactly as the
-  // binary-not-resolvable and boundary-unavailable refusals below do.
+  // Round 5 review, MEDIUM: an unattended Claude dispatch whose settings
+  // write failed (a disk/permission fault under this task's own hooks
+  // directory) previously dropped `--settings` silently and launched
+  // anyway — the PreToolUse background-deny hook the brief names a trap to
+  // preserve would never load, with no refusal and no surfaced error,
+  // unlike O3's own boundary-unavailable path. Fail closed here the same
+  // way: refuse before any spawn, exactly as the binary-not-resolvable and
+  // boundary-unavailable refusals below do. Unlike `codexRequireIsolation`
+  // (gated to Codex's own OS-level boundary, task 3 does not touch), this
+  // settings file carries the background-deny hook on EVERY unattended
+  // Claude dispatch regardless of platform or sandbox availability — task
+  // 3 removes the old platform-gated condition on this half of the check,
+  // which previously left a Linux Claude dispatch free to launch unguarded
+  // when the write failed.
   if (
-    (agent === 'claude' ? dispatchSettingsPath === null : agent === 'codex' ? codexHooksPath === null : false) &&
-    opts.unattended === true &&
-    requireIsolation
+    (agent === 'claude' && opts.unattended === true && dispatchSettingsPath === null) ||
+    (agent === 'codex' && opts.unattended === true && codexRequireIsolation && codexHooksPath === null)
   ) {
     const failureReason: DispatchFailureReason = 'hook-setup-failed'
     const durationMs = Date.now() - start
@@ -3707,6 +3809,16 @@ export async function dispatchRole(
       `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended start requires the PreToolUse ` +
         "background-deny hook's settings file, which could not be written into this task's own hooks directory"
     )
+    // O1/O2: never leak the scratch directory minted for Claude's own
+    // confinement (above) on this early refusal — `finish()`'s own cleanup
+    // is never reached from this `return`.
+    if (claudeScratchDir !== null) {
+      try {
+        rmSync(claudeScratchDir, { recursive: true, force: true })
+      } catch {
+        // best-effort, same reasoning as `finish()`'s own cleanup.
+      }
+    }
     patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason })
     await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
     return {
@@ -3721,15 +3833,15 @@ export async function dispatchRole(
   }
   const spawnArgs = dispatchSettingsPath ? [...baseArgs, '--settings', dispatchSettingsPath] : baseArgs
 
-  // O1/O3: an unattended start must run inside the proven
-  // boundary — refused, before the 'dispatched' event and before any spawn,
-  // when it cannot be established (`DispatchOpts.unattended`'s own doc
-  // comment). `requireIsolation` (above) is the platform's own answer, never
-  // a setting: on macOS the boundary is always required; elsewhere only an
-  // unattended Codex start requires it, and refuses because it cannot be had.
+  // O1/O3 (task 3): the hand-built Seatbelt boundary below is Codex's own
+  // OS-level mechanism now — no longer applied to Claude, which resolves
+  // its own confinement earlier, through `resolveClaudeConfinement`. An
+  // unattended Codex start must still run inside this proven boundary —
+  // refused, before the 'dispatched' event and before any spawn, when it
+  // cannot be established (`DispatchOpts.unattended`'s own doc comment).
   let boundaryLaunch: ReturnType<typeof resolveWorkerBoundaryLaunch> | null = null
   let boundaryAllowedDir: string | null = null
-  if (opts.unattended === true && requireIsolation) {
+  if (opts.unattended === true && codexRequireIsolation) {
     // O2 (round 2 review, CRITICAL): when no real worktree exists yet
     // (`opts.cwd` omitted — the round-1 Developer bootstrap, whose own Step 0
     // is `git worktree add`), `boundaryAllowedDir` falls back to the shared
@@ -3751,11 +3863,15 @@ export async function dispatchRole(
             args: spawnArgs,
             allowedDir: boundaryAllowedDir,
 
-            // O1: claude only — the one vendor whose OAuth
-            // credential shape `stageOAuthCredential` knows how to stage;
-            // Claude stages its OAuth material; Codex stages only the brokered
-            // access token plus the task-scoped config/hooks described below.
-            stageOAuthCredential: agent === 'claude',
+            // Task 3: this block is reached only for Codex now (gated on
+            // `codexRequireIsolation` above) — Claude no longer stages an
+            // OAuth credential copy at all; its own main process keeps its
+            // real, unconfined `HOME` access and reads its real credential
+            // directly (`apps/cli/specs/isolation.md` §4's own "Claude Code
+            // itself runs unconfined" framing). `stageCodexCredential`
+            // stages the brokered access token plus the task-scoped
+            // config/hooks described below.
+            stageOAuthCredential: false,
             stageCodexCredential: agent === 'codex',
             // O2: the PERSISTENT per-task directory this dispatch stages its
             // subscription login and vendor session store into, so a round-2
@@ -4047,37 +4163,60 @@ export async function dispatchRole(
             TMPDIR: resolvedBoundary.tmpDir,
             TMP: resolvedBoundary.tmpDir,
             TEMP: resolvedBoundary.tmpDir,
-            // Claude Code keeps its own working files under
-            // `/tmp/claude-<uid>` and ignores `TMPDIR` for them (live,
-            // 2.1.286: a confined `claude` died with `EPERM ... open
-            // '/tmp/claude-501'` before it ever read a login), so its own
-            // override must name the same granted scratch directory.
-            ...(agent === 'claude' ? { CLAUDE_CODE_TMPDIR: resolvedBoundary.tmpDir } : {}),
-            // O1: only set when a real OAuth session
-            // credential was actually staged (`resolveWorkerBoundaryLaunch`'s
-            // `stageOAuthCredential` opt, claude-only) — repoints the
-            // confined child's own config-dir lookup at the staged COPY
-            // (`worker-boundary.ts`'s `stageOAuthCredential`), never the
-            // real, denied `<realHome>/.claude`. The key is omitted
-            // entirely (not set to `undefined`) when nothing was staged,
-            // so a non-Claude dispatch's env is unaffected.
+            // Task 3: this branch is reached only for a confined Codex
+            // dispatch now (Claude no longer goes through
+            // `resolvedBoundary` at all — see `codexRequireIsolation`,
+            // above) — `oauthConfigDir` is always `null` here
+            // (`stageOAuthCredential: false`), so this spread is a no-op
+            // kept for shape-stability rather than deleted outright.
             ...(resolvedBoundary.oauthConfigDir ? { CLAUDE_CONFIG_DIR: resolvedBoundary.oauthConfigDir } : {}),
             // Round 6 security review, CRITICAL — see
             // `codexSpawnEnvExtras`'s own doc comment for what this
             // closes.
             ...codexEnvExtras!.attribution
           })
-        : {
-            ...process.env,
-            ...attribution,
-            // O1 (round 2 review, F1): a non-boundary Codex dispatch points at
-            // the run-scoped `CODEX_HOME` `stageCodexPolicyHome` built (the
-            // operator's `~/.codex` symlinked through, plus this run's rules),
-            // so the machine-state floor is discovered even with no worker
-            // boundary. Omitted (child keeps the inherited/operator home) when
-            // nothing was staged — a non-Codex dispatch, or no re-homable login.
-            ...(codexPolicyHome ? { CODEX_HOME: codexPolicyHome.codexHome } : {})
-          }
+        : claudeConfinement?.confined === true
+          ? // Round 2 security review, CRITICAL: a confined Claude dispatch
+            // was spawned through the UNCONFINED branch below (a bare
+            // `{ ...process.env }` spread) — Claude Code's own sandbox
+            // confines only its tools' filesystem and network, never their
+            // ENVIRONMENT, so every operator secret in this process's own
+            // env (a forge token, a cloud credential) reached the Bash
+            // tool's own child/subagent/MCP processes and could be
+            // exfiltrated over any of the sandbox's ALLOWED hosts (a `git
+            // push` to an attacker-controlled repo on `github.com`, say —
+            // exactly the gap §4a's own "Egress is destination-allowlisted,
+            // not content-inspected" line discloses, widened here from a
+            // theoretical residual gap to the operator's WHOLE environment).
+            // `buildWorkerEnv` is the SAME named-allowlist discipline the
+            // Codex boundary above already uses — `HOME` stays in the
+            // allowlist (unlike the old Seatbelt path, nothing here denies
+            // reading it), so Claude's own unconfined main process still
+            // resolves its real OAuth session and `gh`'s own config-based
+            // auth exactly as before; only the SPAWNED CHILD's env changes,
+            // narrowing it to the same eight keys every other confined
+            // dispatch already carries.
+            buildWorkerEnv(process.env, {
+              ...attribution,
+              TMPDIR: claudeConfinement.scratchDir,
+              TMP: claudeConfinement.scratchDir,
+              TEMP: claudeConfinement.scratchDir,
+              // Claude Code keeps its own working files under
+              // `/tmp/claude-<uid>` and ignores `TMPDIR` for them, so its
+              // own override must name the same granted scratch directory.
+              CLAUDE_CODE_TMPDIR: claudeConfinement.scratchDir
+            })
+          : {
+              ...process.env,
+              ...attribution,
+              // O1 (round 2 review, F1): a non-boundary Codex dispatch points at
+              // the run-scoped `CODEX_HOME` `stageCodexPolicyHome` built (the
+              // operator's `~/.codex` symlinked through, plus this run's rules),
+              // so the machine-state floor is discovered even with no worker
+              // boundary. Omitted (child keeps the inherited/operator home) when
+              // nothing was staged — a non-Codex dispatch, or no re-homable login.
+              ...(codexPolicyHome ? { CODEX_HOME: codexPolicyHome.codexHome } : {})
+            }
     })
 
     // O1/O3: bind the child's own identity onto the launch record right
@@ -4270,6 +4409,16 @@ export async function dispatchRole(
       // filesystem-bookkeeping concern in this file (`removeIfPresent`,
       // `reviewer-isolation.ts`'s own posture).
       resolvedBoundary?.cleanup()
+      // O1/O2: the scratch directory minted for a Claude dispatch's own
+      // confinement (`claudeScratchDir`, above) — same best-effort removal,
+      // never blocking `finish()` on a filesystem fault.
+      if (claudeScratchDir !== null) {
+        try {
+          rmSync(claudeScratchDir, { recursive: true, force: true })
+        } catch {
+          // best-effort, same reasoning as `resolvedBoundary?.cleanup()`.
+        }
+      }
       // The corresponding `log()` call already ran, with `priorSize` taken
       // right before it — this just confirms it landed before the caller
       // can possibly exit the process out from under it.
