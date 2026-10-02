@@ -8,14 +8,15 @@ import type { Dataset } from '../sync'
 import { catchesAndEscapes } from './catches'
 import { checkOutcomes } from './checks'
 import { completionByModel } from './completion'
+import { changeSizeBands, confidenceVsOutcome, outcomesByInstructionVersion, recurringFindings } from './convergence'
 import { determinism } from './determinism'
 import { reviewerStrictness } from './judgment'
 import { timeByUnit } from './time'
 import { usageByUnitAndRole } from './usage'
 
 export type Question<Answer> = {
-  /** The question's number. */
-  number: number
+  /** The question's number; `null` for the confidence comparison, a companion comparison the spec names but does not number among the ten. */
+  number: number | null
   title: string
   /** A pure function over the dataset: no I/O, no clock. */
   run(dataset: Dataset): Answer
@@ -28,8 +29,12 @@ export const QUESTIONS = {
   q4: { number: 4, title: 'Where does the time go?', run: timeByUnit },
   q5: { number: 5, title: 'Does the product catch anything?', run: catchesAndEscapes },
   q6: { number: 6, title: 'Which check catches most?', run: checkOutcomes },
-  q7: { number: 7, title: 'Are checks deterministic?', run: determinism }
-} satisfies Record<`q${number}`, Question<unknown>>
+  q7: { number: 7, title: 'Are checks deterministic?', run: determinism },
+  q8: { number: 8, title: 'Which findings recur?', run: recurringFindings },
+  q9: { number: 9, title: 'Is the instruction version the problem?', run: outcomesByInstructionVersion },
+  q10: { number: 10, title: 'What change size converges?', run: changeSizeBands },
+  confidence: { number: null, title: 'Does stated confidence predict review outcome?', run: confidenceVsOutcome }
+} satisfies Record<`q${number}` | 'confidence', Question<unknown>>
 
 export type QuestionId = keyof typeof QUESTIONS
 
@@ -40,6 +45,18 @@ export type { CheckOutcome, ChecksAnswer } from './checks'
 export { completionByModel } from './completion'
 export type { CompletionAnswer, ModelCompletion, RoundsToGreen } from './completion'
 export type { Coverage, UnknownFigure } from './common'
+export { changeSizeBands, confidenceVsOutcome, outcomesByInstructionVersion, recurringFindings } from './convergence'
+export type {
+  ChangeSizeAnswer,
+  ChangeSizeBand,
+  ConfidenceAnswer,
+  ConfidenceOutcome,
+  OutcomesByVersionAnswer,
+  RecurringFinding,
+  RecurringFindingsAnswer,
+  SizeBandOutcome,
+  VersionOutcome
+} from './convergence'
 export { determinism } from './determinism'
 export type { DeterminismAnswer, FailureRecord } from './determinism'
 export { reviewerStrictness } from './judgment'
