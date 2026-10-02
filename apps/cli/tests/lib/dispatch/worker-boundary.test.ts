@@ -2770,10 +2770,17 @@ describe('checkLinuxSandboxTools — O5 detection (fakes, never a real install c
     expect(result.missing).toEqual(['bwrap', 'socat'])
   })
 
-  it('the real dependency genuinely answers for THIS host, which has socat but not bwrap (no install performed by this test)', () => {
+  it('the real dependency genuinely runs `which` against this host, rather than throwing or stubbing a fixed answer', () => {
+    // Deliberately makes no assertion about WHICH tools this host has —
+    // found live: this dev box has `socat` installed but CI's own
+    // `ubuntu-latest` image has neither `bwrap` nor `socat`, so asserting a
+    // specific combination here binds this test to whatever happens to be
+    // on one runner's image rather than to this module's own behavior. The
+    // real behavior under test — detection without ever installing anything
+    // (Principal ruling, 2026-10-02) — is already proven with fakes, above.
     const result = checkLinuxSandboxTools()
-    if (process.platform !== 'linux') return
-    expect(result.missing).not.toContain('socat')
+    expect(result.available).toBe(result.missing.length === 0)
+    for (const tool of result.missing) expect(LINUX_CLAUDE_SANDBOX_TOOLS).toContain(tool)
   })
 })
 
