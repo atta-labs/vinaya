@@ -11,6 +11,9 @@
  *   round's report (`schema.ts`, the finding schema).
  * - `outcomesByInstructionVersion` (q9) groups by the doctrine a line's own
  *   header names, reporting outcomes beside it — never a cause.
+ * - `changeSizeBands` (q10) bands the converging round's own files changed,
+ *   reporting a band under the sample floor as insufficient rather than as
+ *   a figure.
  */
 
 import { known, unknownBecause } from '../sync'
@@ -216,4 +219,121 @@ export function outcomesByInstructionVersion(dataset: Dataset): OutcomesByVersio
   })
 
   return { versions, coverage: buildCoverage(dataset, lowTrust, used, unknowns) }
+}
+
+// ---------------------------------------------------------------------------
+// Question 10 — what change size converges?
+
+/** The fixed size bands (Decisions, reversible): files changed at most 3, 4 to 10, or 11 or more. */
+export type ChangeSizeBand = 'at most 3' | '4 to 10' | '11 or more'
+
+const CHANGE_SIZE_BANDS: readonly ChangeSizeBand[] = ['at most 3', '4 to 10', '11 or more']
+/** Five units is the floor for a figure (Decisions, reversible). */
+const SIZE_BAND_FLOOR = 5
+
+function bandOf(filesChanged: number): ChangeSizeBand {
+  if (filesChanged <= 3) return 'at most 3'
+  if (filesChanged <= 10) return '4 to 10'
+  return '11 or more'
+}
+
+export type SizeBandOutcome =
+  | { band: ChangeSizeBand; units: number; sample: 'insufficient' }
+  | {
+      band: ChangeSizeBand
+      units: number
+      sample: 'sufficient'
+      /** The converging round's own insertions, ascending, one per unit in the band. */
+      insertions: number[]
+      /** The converging round's own deletions, the same way. */
+      deletions: number[]
+      roundsToGreen: RoundsToGreen[]
+      timeToGreenMs: Measured<number[]>
+    }
+
+export type ChangeSizeAnswer = {
+  /** All three bands, fixed, ascending — `'insufficient'` where the sample is too thin for a figure, never silently dropped. */
+  bands: SizeBandOutcome[]
+  coverage: Coverage
+}
+
+type GreenUnit = {
+  round: number
+  filesChanged: number
+  insertions: number
+  deletions: number
+  timeToGreenMs: number | null
+}
+
+/** This unit's converging round — the `round_ended` line whose own round is the one `stop_condition_met` named green — or `null` when the unit never went green or that round's size was never stated. */
+function greenUnitOf(unitRows: readonly DatasetRow[]): GreenUnit | null {
+  const stop = unitRows.find((r) => r.event === 'stop_condition_met' && textField(r, 'condition') === 'green')
+  if (stop === undefined) return null
+  const round = numberField(stop, 'round')
+  if (round === null) return null
+  const roundEnded = unitRows.find(
+    (r) => r.event === 'round_ended' && numberField(r, 'round') === round && textField(r, 'outcome') === 'green'
+  )
+  if (roundEnded === undefined) return null
+  const filesChanged = numberField(roundEnded, 'files_changed')
+  const insertions = numberField(roundEnded, 'insertions')
+  const deletions = numberField(roundEnded, 'deletions')
+  if (filesChanged === null || insertions === null || deletions === null) return null
+  const finalized = unitRows.find((r) => r.event === 'journal_finalized')
+  const timeToGreenMs = finalized === undefined ? null : numberField(finalized, 'time_to_green_ms')
+  return { round, filesChanged, insertions, deletions, timeToGreenMs }
+}
+
+/** Question 10: the converging round's own change size, banded, against the rounds and time it took to get there. */
+export function changeSizeBands(dataset: Dataset): ChangeSizeAnswer {
+  const { rows, lowTrust } = trustedRows(dataset)
+  const used = rowsOfKinds(rows, LOOP_KINDS)
+  const unknowns: UnknownFigure[] = []
+
+  const greenUnits: GreenUnit[] = []
+  for (const [, unitRows] of groupBy(used.withUnit, (row) => row.workRef)) {
+    const greenUnit = greenUnitOf(unitRows)
+    if (greenUnit !== null) greenUnits.push(greenUnit)
+  }
+
+  const bands: SizeBandOutcome[] = CHANGE_SIZE_BANDS.map((band) => {
+    const members = greenUnits.filter((u) => bandOf(u.filesChanged) === band)
+    if (members.length < SIZE_BAND_FLOOR) {
+      if (members.length > 0)
+        unknowns.push({
+          figure: band,
+          reason: `only ${members.length} unit(s) converged in this band, fewer than the ${SIZE_BAND_FLOOR}-unit floor for a figure`
+        })
+      return { band, units: members.length, sample: 'insufficient' as const }
+    }
+
+    const rounds = new Map<number, number>()
+    for (const m of members) rounds.set(m.round, (rounds.get(m.round) ?? 0) + 1)
+    const times = members.flatMap((m) => (m.timeToGreenMs === null ? [] : [m.timeToGreenMs])).sort((a, b) => a - b)
+
+    let timeToGreenMs: Measured<number[]>
+    if (times.length === 0) {
+      timeToGreenMs = unknownBecause('no unit in this band recorded a time to green')
+    } else {
+      timeToGreenMs = known(times)
+      if (times.length < members.length)
+        unknowns.push({
+          figure: `${band}.timeToGreenMs`,
+          reason: `${members.length - times.length} of ${members.length} units in this band recorded no time to green`
+        })
+    }
+    if (!timeToGreenMs.known) unknowns.push({ figure: `${band}.timeToGreenMs`, reason: timeToGreenMs.reason })
+
+    return {
+      band,
+      units: members.length,
+      sample: 'sufficient' as const,
+      insertions: members.map((m) => m.insertions).sort((a, b) => a - b),
+      deletions: members.map((m) => m.deletions).sort((a, b) => a - b),
+      roundsToGreen: [...rounds.entries()].sort((a, b) => a[0] - b[0]).map(([r, n]) => ({ rounds: r, units: n })),
+      timeToGreenMs
+    }
+  })
+
+  return { bands, coverage: buildCoverage(dataset, lowTrust, used, unknowns) }
 }

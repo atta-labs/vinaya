@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { buildExecution, buildExecutions, type ExecutionName } from '../fixtures'
 import { createMemoryCache, normalizeStoredLine } from '../sync'
 import type { Dataset, Measured } from '../sync'
-import { outcomesByInstructionVersion, recurringFindings } from './convergence'
+import { changeSizeBands, outcomesByInstructionVersion, recurringFindings } from './convergence'
 
 /**
  * Questions 8, 9 and 10, and the confidence comparison, over the fixture
@@ -177,5 +177,81 @@ describe('question 9 — is the instruction version the problem', () => {
         unmetObjectives: knownOf(0)
       }
     ])
+  })
+})
+
+describe('question 10 — what change size converges', () => {
+  it('bands the converging round by its own files changed — all three bands, fixed', () => {
+    const answer = changeSizeBands(allFixtures())
+    expect(answer.bands).toEqual([
+      { band: 'at most 3', units: 0, sample: 'insufficient' },
+      // green 9 files, three-rounds 6 files (round 3, the green one), paused 8 files (round 2) — all 4 to 10.
+      { band: '4 to 10', units: 3, sample: 'insufficient' },
+      { band: '11 or more', units: 0, sample: 'insufficient' }
+    ])
+  })
+
+  it('states its coverage: a thin band is named, never silently reported as a figure', () => {
+    const answer = changeSizeBands(allFixtures())
+    expect(answer.coverage).toEqual({
+      rowsRead: 93,
+      lowTrustLeftOut: 3,
+      unitUnknown: 0,
+      rowsUsed: 43,
+      gaps: 0,
+      quarantined: 2,
+      unknowns: [
+        {
+          figure: '4 to 10',
+          reason: 'only 3 unit(s) converged in this band, fewer than the 5-unit floor for a figure'
+        }
+      ]
+    })
+  })
+
+  it('reports a figure once a band reaches the five-unit floor', () => {
+    function unit(ref: string, filesChanged: number, timeToGreenMs: number | null): string[] {
+      return rawLines('green-one-round').map((raw) => {
+        const object = JSON.parse(raw)
+        object.meta.work.ref = ref
+        object.meta.event_id = `${object.meta.event_id}-${ref}`
+        if (object.event === 'round_ended') object.files_changed = filesChanged
+        if (object.event === 'journal_finalized') object.time_to_green_ms = timeToGreenMs
+        return JSON.stringify(object)
+      })
+    }
+
+    const lines = [
+      ...unit('u1', 4, 100),
+      ...unit('u2', 5, 200),
+      ...unit('u3', 6, 300),
+      ...unit('u4', 7, null),
+      ...unit('u5', 8, 500)
+    ]
+    const answer = changeSizeBands(datasetOf(lines))
+    expect(answer.bands).toEqual([
+      { band: 'at most 3', units: 0, sample: 'insufficient' },
+      {
+        band: '4 to 10',
+        units: 5,
+        sample: 'sufficient',
+        insertions: [66, 66, 66, 66, 66],
+        deletions: [31, 31, 31, 31, 31],
+        roundsToGreen: [{ rounds: 1, units: 5 }],
+        timeToGreenMs: knownOf([100, 200, 300, 500])
+      },
+      { band: '11 or more', units: 0, sample: 'insufficient' }
+    ])
+    expect(answer.coverage.unknowns).toEqual([
+      {
+        figure: '4 to 10.timeToGreenMs',
+        reason: '1 of 5 units in this band recorded no time to green'
+      }
+    ])
+  })
+
+  it('never bands a unit that did not converge — escalated-handoff names no band member', () => {
+    const answer = changeSizeBands(datasetOf(rawLines('escalated-handoff')))
+    expect(answer.bands.every((b) => b.units === 0)).toBe(true)
   })
 })
