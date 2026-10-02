@@ -12,6 +12,7 @@ import {
   cleanupWorlds,
   controlDir,
   developerDir,
+  developerLeavesWorkDeps,
   makeInProcessDeps,
   makeWorld,
   outboxLines,
@@ -21,6 +22,11 @@ import {
 } from '../dev-review-loop-harness.js'
 import type { LoopDeps } from '../../../src/lib/dev-review-loop.js'
 import { CONFIDENCE_FILE_NAME } from '../../../src/lib/dev-review-loop.js'
+import {
+  prBodyPathFor,
+  readDeveloperPublicationRecord,
+  writeDeveloperPublicationRecord
+} from '../../../src/lib/dev-review-loop/developer-publication.js'
 import type { DispatchHandle } from '../../../src/lib/dispatch.js'
 
 afterEach(cleanupWorlds)
@@ -197,8 +203,10 @@ describe('devReviewLoop — O2 (#543): unpushed real work is resumed once, then 
     // `.dev-prompt-3.txt` existing and `.dev-prompt-4.txt` not). The resume
     // prompt itself names the uncommitted changes and how to push them.
     expect(prompts).toHaveLength(3)
-    expect(prompts[2]).toMatch(/uncommitted changes.*local commits ahead/)
-    expect(prompts[2]).toMatch(/`git push`/)
+    // O6: the resume prompt now tells the Developer to leave its work
+    // uncommitted — the driver commits and pushes it; the Developer never pushes.
+    expect(prompts[2]).toMatch(/left work that is not yet on the remote/)
+    expect(prompts[2]).toMatch(/leave your changes UNCOMMITTED/)
 
     const pauseState = JSON.parse(readFileSync(join(controlDir(world), 'pause-state.json'), 'utf8')) as Record<
       string,
@@ -518,7 +526,9 @@ describe('devReviewLoop — a remote branch with no open PR resumes the recorded
     expect(fullPrompt).toMatch(new RegExp(`^Branch: \`${world.branch}\`$`, 'm'))
     expect(fullPrompt).toMatch(new RegExp(`^Worktree: \`.*\\.worktrees/${world.branch}\`$`, 'm'))
     expect(fullPrompt).toMatch(/^Remote head: [0-9a-f]{40}$/m)
-    expect(fullPrompt).toMatch(/already exists with no open pull request/)
+    // O6: the branch is pushed but has no PR — the Developer writes the body
+    // file and the driver opens the PR; the Developer never opens it itself.
+    expect(fullPrompt).toMatch(/pushed but has no open pull request/)
   })
 })
 
@@ -697,9 +707,12 @@ describe("devReviewLoop — the developer's first turn ends with no push at all,
     expect(prompts).toHaveLength(2)
 
     const resumedPrompt = prompts[1] as string
-    expect(resumedPrompt).toMatch(/push and the pull-request open are foreground steps/i)
-    expect(resumedPrompt).toMatch(/git push/)
-    expect(resumedPrompt).toMatch(/pr create/)
+    // O6: the resume asks the Developer to leave its changes uncommitted and
+    // write the header/body files — the driver commits, pushes and opens the PR.
+    expect(resumedPrompt).toMatch(/left no commit on the remote for this branch yet/)
+    expect(resumedPrompt).toMatch(/The driver commits them, pushes the branch and opens the pull request/i)
+    expect(resumedPrompt).toMatch(/\.vinaya-commit-header/)
+    expect(resumedPrompt).toMatch(/\.vinaya-pr-body/)
   })
 })
 
@@ -926,3 +939,152 @@ describe('devReviewLoop — a conflicting head is sent back to the developer, ne
 function runLoopInProcessSafe(world: LoopWorld, deps: Partial<LoopDeps>, extra: Partial<LoopDeps> = {}) {
   return runLoopInProcess(world, { task: world.task, agent: 'claude' }, { ...deps, ...extra })
 }
+
+// ---------------------------------------------------------------------------
+// agent-confinement-v1/1 — the driver publishes each Developer turn
+// ---------------------------------------------------------------------------
+
+describe('devReviewLoop — the driver commits and publishes each Developer turn (agent-confinement-v1/1)', () => {
+  it('O1/O2/O3: commits the turn under its header, pushes and opens the PR before any poll', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    const result = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      developerLeavesWorkDeps(world, {
+        header: 'Feat(cli): leave the work for the driver',
+        changedPaths: ['apps/cli/src/lib/x.ts']
+      })
+    )
+    expect(result.finalDecision.type).toBe('publish')
+    // The driver — not the Developer — made the single commit, the push and the open.
+    expect(world.commits).toHaveLength(1)
+    expect(world.commits[0]!.header).toBe('Feat(cli): leave the work for the driver')
+    expect(world.pushes).toHaveLength(1)
+    expect(world.prOpens).toHaveLength(1)
+    expect(world.prOpens[0]!.title).toBe(world.issueTitle)
+    // The durable record reflects the completed publication (O8's own trace).
+    const rec = readDeveloperPublicationRecord(world.runtimeDir, world.task)
+    expect(rec?.pushed).toBe(true)
+    expect(rec?.prNumber).toBe(world.prNumber)
+  })
+
+  it('O5: does nothing on a turn with nothing new — a clean worktree and an open PR', async () => {
+    // The default dispatch fake is the pre-task "fakes a published turn" shape:
+    // it leaves the worktree clean and the PR open. With the worktree present,
+    // the publication step still reaches its no-op check and commits/pushes/opens
+    // nothing — exactly as before this task.
+    const world = makeWorld({ worktreeExists: true })
+    const result = await runLoopInProcess(world)
+    expect(result.finalDecision.type).toBe('publish')
+    expect(world.commits).toHaveLength(0)
+    expect(world.pushes).toHaveLength(0)
+    expect(world.prOpens).toHaveLength(0)
+  })
+
+  it('O7: sends the turn back and commits nothing when a changed path is outside the Surface', async () => {
+    const world = makeWorld({ worktreeExists: true, surface: { in: ['apps/cli'], out: ['packages'] } })
+    await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      developerLeavesWorkDeps(world, { changedPaths: ['packages/aeg-core/src/x.ts'] })
+    )
+    // The pre-publication check refuses — nothing is committed or pushed.
+    expect(world.commits).toHaveLength(0)
+    expect(world.pushes).toHaveLength(0)
+    // The same Developer session was sent back naming the Surface problem.
+    expect(world.dispatchCountByRole.developer ?? 0).toBeGreaterThanOrEqual(2)
+    const reask = world.dispatches.find(
+      (dd) => dd.role === 'developer' && (dd.prompt ?? '').includes("outside the task's Surface")
+    )
+    expect(reask).toBeDefined()
+  })
+
+  it('O2: sends the turn back and commits nothing when the commit header is missing', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      developerLeavesWorkDeps(world, { writeNoHeader: true })
+    )
+    expect(world.commits).toHaveLength(0)
+    expect(world.dispatchCountByRole.developer ?? 0).toBeGreaterThanOrEqual(2)
+    const reask = world.dispatches.find(
+      (dd) => dd.role === 'developer' && (dd.prompt ?? '').includes('commit header file')
+    )
+    expect(reask).toBeDefined()
+  })
+
+  it('O4: a refused push leaves the turn committed-but-unpushed and never publishes', async () => {
+    const world = makeWorld({ worktreeExists: true, pushRefusal: 'pre-push hook refused: 2 tests failed' })
+    const result = await runLoopInProcess(world, { task: world.task, agent: 'claude' }, developerLeavesWorkDeps(world))
+    expect(world.commits.length).toBeGreaterThanOrEqual(1)
+    // The push never landed, so the PR never opened and the round never published.
+    expect(world.pushes).toHaveLength(0)
+    expect(world.prOpens).toHaveLength(0)
+    expect(result.finalDecision.type).not.toBe('publish')
+  })
+})
+
+describe('devReviewLoop — a restart finishes an interrupted publication exactly once (agent-confinement-v1/1, O8)', () => {
+  // Each restart seeds the branch as present on the remote with no open PR and a
+  // durable publication record left at one of the three boundaries, then enters
+  // the loop-start already-pushed path.
+  function seedBody(world: LoopWorld): void {
+    const bodyPath = prBodyPathFor(world.runtimeDir, world.task, 1)
+    mkdirSync(join(bodyPath, '..'), { recursive: true })
+    writeFileSync(bodyPath, '## Decisions\n\nNone.\n\n## Scope\n\n**Tier:** 1\n')
+  }
+
+  it('restart after the commit (not yet pushed) finishes by pushing and opening — no second commit', async () => {
+    const world = makeWorld({ worktreeExists: true, remoteBranchExists: true, head: 'a'.repeat(40) })
+    seedBody(world)
+    writeDeveloperPublicationRecord(world.runtimeDir, world.task, {
+      round: 1,
+      preTurnHead: 'a'.repeat(40),
+      commitSha: 'c'.repeat(40),
+      pushed: false,
+      prNumber: null
+    })
+    const result = await runLoopInProcess(world)
+    expect(result.finalDecision.type).toBe('publish')
+    expect(world.commits).toHaveLength(0) // the commit was already made before the crash
+    expect(world.pushes).toHaveLength(1) // recovery pushes the recorded commit
+    expect(world.prOpens).toHaveLength(1) // then opens the PR
+    expect(readDeveloperPublicationRecord(world.runtimeDir, world.task)?.prNumber).toBe(world.prNumber)
+  })
+
+  it('restart after the push (not yet opened) finishes by opening only — no second commit or push', async () => {
+    const world = makeWorld({ worktreeExists: true, remoteBranchExists: true, head: 'c'.repeat(40) })
+    seedBody(world)
+    writeDeveloperPublicationRecord(world.runtimeDir, world.task, {
+      round: 1,
+      preTurnHead: 'a'.repeat(40),
+      commitSha: 'c'.repeat(40),
+      pushed: true,
+      prNumber: null
+    })
+    const result = await runLoopInProcess(world)
+    expect(result.finalDecision.type).toBe('publish')
+    expect(world.commits).toHaveLength(0)
+    expect(world.pushes).toHaveLength(0)
+    expect(world.prOpens).toHaveLength(1)
+  })
+
+  it('restart after the PR opened finishes by doing nothing — no second commit, push or open', async () => {
+    // The PR is already open, so the loop attaches at start and never reaches
+    // the recovery path at all.
+    const world = makeWorld({ worktreeExists: true, developerPushed: true, prOpened: true, head: 'c'.repeat(40) })
+    writeDeveloperPublicationRecord(world.runtimeDir, world.task, {
+      round: 1,
+      preTurnHead: 'a'.repeat(40),
+      commitSha: 'c'.repeat(40),
+      pushed: true,
+      prNumber: world.prNumber
+    })
+    const result = await runLoopInProcess(world)
+    expect(result.finalDecision.type).toBe('publish')
+    expect(world.commits).toHaveLength(0)
+    expect(world.pushes).toHaveLength(0)
+    expect(world.prOpens).toHaveLength(0)
+  })
+})

@@ -1272,13 +1272,18 @@ export function buildRolePermissions(role: Role): RolePermissions {
         'Bash(git show:*)',
         'Bash(git add:*)',
         'Bash(git commit:*)',
-        'Bash(git push:*)',
+        // The Developer no longer pushes or opens the pull request itself — the
+        // review-loop driver commits each turn and publishes it through the
+        // Broker's governed `branch-push`/`pr-open` operations, so a confined
+        // Developer holding no forge credential never needs `git push`, `gh pr
+        // create` or the repository's own `pr create` command. They are revoked
+        // from the grant here (the `pr create` subcommand by the deny rule
+        // below); every other git/gh/CLI capability the Developer uses stays.
         'Bash(git config:*)',
         'Bash(git branch:*)',
         'Bash(git checkout:*)',
         'Bash(git merge:*)',
         'Bash(git rebase:*)',
-        'Bash(gh pr create:*)',
         'Bash(gh pr edit:*)',
         'Bash(gh pr view:*)',
         'Bash(gh pr comment:*)',
@@ -1294,10 +1299,19 @@ export function buildRolePermissions(role: Role): RolePermissions {
         'Bash(bun apps/cli/src/index.ts:*)'
       ],
       deny: [
+        // O6: the Developer does not push or open the pull request — the driver
+        // publishes each turn. `git push` and `gh pr create` are already absent
+        // from the allow list above; `pr create` reaches the repository CLI
+        // through the broad `Bash(bun apps/cli/src/index.ts:*)` allow, so it is
+        // denied explicitly here (deny overrides allow) while every other
+        // `vinaya` subcommand the Developer uses stays granted.
+        'Bash(bun apps/cli/src/index.ts pr create:*)',
+        'Bash(git push:*)',
         'Bash(git push --force*)',
         'Bash(git push -f*)',
         'Bash(git push --force-with-lease*)',
         'Bash(git push --no-verify*)',
+        'Bash(gh pr create:*)',
         'Bash(git commit --no-verify*)',
         'Bash(git commit -n*)',
         'Bash(git stash*)',
