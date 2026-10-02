@@ -231,6 +231,17 @@ const LOG_EMIT_PATH = 'apps/cli/src/commands/log-emit.ts'
  */
 const CLI_ENTRY_PATH = 'apps/cli/src/index.ts'
 const CLI_OPERATION_LOG_PATH = 'apps/cli/src/lib/cli-operation-log.ts'
+/**
+ * `vinaya sync` (`log-readers-v1` 8, O1) fills the local cache from this
+ * repository's configured destination. Like `DOCTOR_PATH`, `LOG_SEND_PATH`
+ * and `LOG_SELFTEST_PATH` it is NOT a producer — it calls no `log()` and
+ * builds no sink. It imports the sink's pure `resolveLogDestinationFrom`
+ * (the SAME attended/unattended decision `LOG_SEND_PATH` uses, never
+ * forced), `logsCredentialMissing`, `withDeadline` and its
+ * `LOG_DESTINATION_ANCHOR_DEADLINE_MS` bound, and the `ResolvedLogDestination`
+ * type, to resolve where to read from — never where to write to.
+ */
+const LOG_SYNC_PATH = 'apps/cli/src/lib/log-sync.ts'
 /** Exactly what `DOCTOR_PATH` is allowed to take from the sink module (sorted). */
 const DOCTOR_SINK_IMPORTS = [
   'FolderFallbackRecord',
@@ -260,7 +271,8 @@ const CALLER_ALLOWLIST = new Set([
   LOG_CUSTOM_PATH,
   LOG_EMIT_PATH,
   CLI_ENTRY_PATH,
-  CLI_OPERATION_LOG_PATH
+  CLI_OPERATION_LOG_PATH,
+  LOG_SYNC_PATH
 ])
 const OUTBOX_TRUNCATE_ALLOWLIST = new Set([LOG_WEBHOOK_DRAIN_LIB_PATH])
 const OUTBOX_HELD_VERDICT_ALLOWLIST = new Set([

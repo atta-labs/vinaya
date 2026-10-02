@@ -51,7 +51,8 @@ const COMMAND_NAMES: ReadonlySet<string> = new Set([
   'release',
   'dispatch',
   'dev-review-loop',
-  'log'
+  'log',
+  'sync'
 ])
 
 /** The two commands whose subcommand is part of the target, and the subcommands that are. Any other subcommand records the command alone. */

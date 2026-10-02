@@ -797,5 +797,23 @@ export const COMMANDS: readonly Command[] = [
       'Safe to run more than once: the server stores events by `event_id` and ignores one it already holds, so a re-sent chunk creates no duplicate, and a second run finds the folder emptied and the queue drained.'
     ],
     status: 'shipped'
+  },
+  {
+    name: 'sync',
+    description:
+      "Fill, resume and rebuild the local log cache from this repository's configured destination (read-only)",
+    flags: [
+      {
+        flag: '--rebuild',
+        description: 'Delete the cache file and sync from the beginning of what the destination still retains'
+      },
+      { flag: '--json', description: 'Enveloped JSON output (schema: 1)' }
+    ],
+    details: [
+      "Resolves the destination exactly the way a normal event does — the sink's own decision over `vinaya.config.json`'s `logs` setting, trust-anchor-gated for an unattended caller — then reads a folder destination through the folder source or a server destination through the server source (with the configured `logs.readHeaders`, substituted from the environment), and runs the bounded sync engine against the durable cache this repository holds under its runtime directory. Prints pages read, rows stored, duplicates, edits, deletions, gaps, quarantined lines and, for a server destination, its lost-event diagnostic. Reads the destination and writes only its own cache directory — never the folder, the server, or the forge.",
+      'Exits 0 when the run completed or stopped cleanly on its page bound (and says more is available), 1 when it failed part way (the progress made is kept — a second run resumes from the stored cursor), and 2 for a usage or configuration problem: no destination is configured, or a server destination is configured with no usable read credential. A missing credential names the environment variable to set and never prints its value.',
+      "`--rebuild` deletes the cache file ALONE — never anything else under the cache directory — and syncs again from the beginning of what the destination still retains; an event already rotated out of a folder's single backup slot, or no longer retained by the destination, cannot be recovered and shows up as a gap, never silently."
+    ],
+    status: 'shipped'
   }
 ]

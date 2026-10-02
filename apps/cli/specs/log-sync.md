@@ -141,6 +141,24 @@ The slot's own unread tail is drained in full in that one `readPage` call, never
 
 **The summary.** `SyncSummary` reports the run's pages read, rows stored, duplicates seen, edits, deletions, gaps and quarantined lines, whether the run completed (reached the source's end without a failure) and whether more is available, and the failure when one ended it early. Because the cache keeps no deletion record, the summary is where a deletion is reported.
 
+## `vinaya sync`
+
+The one command a person types to fill, resume and rebuild the local cache. Its whole flow is one library function, `runLogSync` (`apps/cli/src/lib/log-sync.ts`) — the command file (`apps/cli/src/commands/sync.ts`) only parses `--rebuild`/`--json` and calls it (`surface.md`: a command calls exactly one effects-layer function).
+
+**Flow.** Resolves this repository's log destination exactly as the sink itself does (`resolveLogDestinationFrom`, attended for a human at a terminal, trust-anchor-gated for an unattended caller — never forced either way, unlike `log selftest`'s forced-unattended proof run). A folder destination is read through the folder source; a server destination is read through the server source, with `logs.readHeaders` (never the ingest `logs.headers`) substituted from the environment. Opens the durable cache under this repository's runtime directory, runs `syncSource` within its bounds, and prints the run's summary: pages read, rows stored, duplicates, edits, deletions, gaps, quarantined lines, and — for a server destination only — the server's own lost-event diagnostic (`rejected()`). `--json` prints the whole result as one enveloped JSON object; otherwise it prints as text on standard output, with a configuration problem or a stopped-early failure on standard error.
+
+**Exit codes.** `0` when the run completed, or stopped cleanly on its own page bound (and says more is available — a run never treats its page bound as a failure or loops past it, since the bound protects a server's daily read allowance). `1` when the run failed part way through — a page already stored stays stored, and a second invocation resumes from the stored cursor. `2` for a usage or configuration problem, before anything is attempted: the repository's destination records nothing (`kind: 'none'`, the sink's own reason), or a server destination has no usable read credential — `logs.readHeaders` is unset entirely, or one of its `${VAR}` references holds no value in this process's environment. A missing or unresolvable read credential names the `${VAR}` to set and never prints a value.
+
+**The cache location.** `<runtime directory>/logs-cache/cache.sqlite` — `runtimeDirForRepoAsync`'s own per-repository directory (the same one the default log folder resolves under), never a path inside the repository or a log folder, so a sync never dirties a working tree.
+
+**`--rebuild`.** Deletes `cache.sqlite` alone — nothing else the cache directory might hold — then syncs again from the beginning of what the destination still retains. An event already rotated out of a folder's single backup slot, or no longer retained by a server's own policy, cannot be recovered by a rebuild: it is reported as a gap in the first post-rebuild run's summary, the same as any other gap, never silently.
+
+**Read-only.** The command reads the destination and writes only its own cache directory — never the folder, never the server (it only ever issues `GET` requests through the server source), and never the forge.
+
+<!-- AEG:CLAIM: apps/cli/src/lib/log-sync.ts contains:export async function runLogSync(opts: SyncRunOptions, deps: LogSyncDeps = realLogSyncDeps()): Promise<number> { -->
+<!-- AEG:CLAIM: apps/cli/src/lib/log-sync.ts contains:export const LOGS_CACHE_DIR_NAME = 'logs-cache' -->
+<!-- AEG:CLAIM: apps/cli/src/commands/sync.ts contains:export async function syncCommand(args: string[]): Promise<number> { -->
+
 ## The questions
 
 A question is a pure function over a `Dataset` (`packages/aeg-core/src/log/questions/`): no I/O, no clock, and no switch over the event families — it picks rows by comparing `kind` and `event` as text. Its answer is built from `Measured`, so a figure the log cannot state is unknown with the reason, never a number that looks measured.
