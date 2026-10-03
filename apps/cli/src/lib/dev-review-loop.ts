@@ -48,7 +48,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
 import { loadTrustAnchorConfig, resolveSecurityScanCommand } from './config.js'
-import { WORKER_ENV_ALLOWLIST_KEYS } from './worker-boundary.js'
+import { agentOwnConfigSubpaths, WORKER_ENV_ALLOWLIST_KEYS } from './worker-boundary.js'
 import {
   activeBudgetMs,
   assessRound,
@@ -63,6 +63,7 @@ import {
   initialLoopState,
   isConcludedJournal,
   type IssueSurface,
+  globCoversPath,
   manifestAsEchoed,
   nextRoundNumber,
   parseIssueSurface,
@@ -123,7 +124,7 @@ import {
   sh
 } from './dev-review-loop/gate-reading.js'
 import {
-  createRemoteTaskBranch,
+  createTaskWorktree,
   describeObjectivesEdit,
   developerBranchFor,
   DeveloperStopSignal,
@@ -374,16 +375,22 @@ export type LoopDeps = {
   /** O3: the task Issue's own title — used verbatim as the pull request's title when the publication step opens it. */
   fetchIssueTitle: typeof fetchIssueTitle
   /**
-   * O1: creates this task's developer branch on the remote at `origin/main`'s
-   * tip, so GitHub shows the task in flight from its first minute — the round-1
-   * fresh-dispatch path calls it once, ONLY when the branch exists neither as an
-   * open PR nor on the remote (O2 leaves an existing one untouched). Pushes the
-   * tip via an explicit refspec, never by checking the branch out in this
-   * checkout, and never force-pushes. Throwing is tolerated by the one caller —
-   * logged, then the loop continues, since the Developer's own first push
-   * creates the same branch later.
+   * O1: creates this task's own worktree (`.worktrees/<branch>`, cut from
+   * `origin/main`'s tip, reused untouched if one already exists) and pushes
+   * `branch` to the remote FROM that worktree with `-u` — the round-1
+   * fresh-dispatch path calls it once, ONLY when the branch exists neither as
+   * an open PR nor on the remote (O2 leaves an existing one untouched) —
+   * BEFORE the first Developer dispatch, so the brief's own Step 0 can enter
+   * the worktree rather than create it (`packages/aeg-core/src/brief-render.ts`).
+   * Never pushes from this process's own default-branch checkout (Traps to
+   * avoid — that checkout's own pre-push hook judges `main`, not the task,
+   * and refuses), and never force-pushes. Throwing is tolerated by the one
+   * caller — logged, then the loop continues, since the Developer's own first
+   * push creates the same remote branch later if this push failed; a failed
+   * WORKTREE creation instead surfaces at the Developer's own Step 0, which
+   * can no longer fall back to creating one itself.
    */
-  createRemoteTaskBranch: (branch: string) => void
+  createTaskWorktree: (branch: string) => void
   /** O4: the durable session id `dispatch.ts` last recorded for this repo+role+vendor+task, or `null`. */
   readResumeRecord: (
     task: number,
@@ -1371,7 +1378,7 @@ function defaultDeps(): LoopDeps {
     developerBranchFor: (n) => developerBranchFor(n),
     findOpenPrForBranch,
     fetchIssueTitle,
-    createRemoteTaskBranch,
+    createTaskWorktree,
     readResumeRecord: (task, agent, repo) => realReadResumeRecord('developer', agent, repo, task),
     runtimeDir,
     resolveLogAppendPath,
@@ -1562,6 +1569,25 @@ async function defaultSweepTasksAtStart(task: number): Promise<void> {
   } catch (err) {
     console.error(`vinaya dev-review-loop: sweep failed — ${err instanceof Error ? err.message : String(err)}`)
   }
+}
+
+/**
+ * O3: `true` only when `surface`'s own `in:` globs
+ * cover at least one of `agent`'s own configuration subpaths
+ * (`agentOwnConfigSubpaths` — `.claude/`/`.mcp.json` for Claude, `.codex/`/
+ * `.agents/` for Codex) — checked with `globCoversPath`, the SAME matcher
+ * the Issue's own Surface checks and `AGENT_CONFIG_GLOBS`'s security-scan
+ * sibling check (`reviewer-dispatch.ts`) already use, never a second one. A
+ * representative path under each subpath stands in for the directory itself
+ * (`globCoversPath` matches concrete paths, not bare directory names).
+ * `false` (protected) when `surface` is `null` — a task with no resolvable
+ * Surface names nothing, so the default protection stays in force (Traps to
+ * avoid: "a task that does not name them keeps the vendor's protection").
+ */
+export function surfaceCoversAgentConfig(surface: IssueSurface | null, agent: string): boolean {
+  if (!surface) return false
+  const representativePaths = agentOwnConfigSubpaths(agent).map((p) => (p.endsWith('.json') ? p : `${p}/x`))
+  return representativePaths.some((p) => surface.in.some((glob) => globCoversPath(glob, p)))
 }
 
 export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = {}): Promise<LoopResult> {
@@ -2471,8 +2497,10 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     /**
      * O7: the worktree head captured right before the current Developer
      * dispatch — what the publication step's own head check (the Developer
-     * left its work uncommitted) is read against. `null` on a fresh round-1
-     * turn whose worktree the Developer's own Step 0 is still creating.
+     * left its work uncommitted) is read against. `null` when no worktree
+     * exists yet for this dispatch — a driver running on a different host than
+     * the Developer's own machine, or a worktree this driver's own O1
+     * creation attempt (`createTaskWorktree`) could not establish.
      */
     let turnPreHead: string | null = null
     /**
@@ -2544,12 +2572,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       const isResume = devResumeId !== null
       const fullPrompt = opts.skipResumeContext ? promptText : `${resumeContextBlock()}\n\n${promptText}`
       // O1/O3: confine the Developer to
-      // its own worktree when one already exists on this machine — `null`
-      // on a fresh attach with nothing dispatched here yet (the same
-      // "driver running on a different host" case `reviewer-isolation.ts`'s
-      // own doc names), where `dispatchRole` falls back to the repo root
-      // instead (its own doc comment on `unattended`) rather than refusing
-      // a round-1 dispatch whose own Step 0 is creating that worktree.
+      // its own worktree — this driver's own round-1 `createTaskWorktree`
+      // call (above, in the branch-creation branch) already created it before
+      // the first dispatch, so this is non-null from round 1 on in the normal
+      // case. `null` on a fresh attach with nothing dispatched here yet (the
+      // same "driver running on a different host" case `reviewer-isolation.ts`'s
+      // own doc names, or this driver's own worktree creation failing) — where
+      // `dispatchRole` falls back to the repo root instead (its own doc
+      // comment on `unattended`) rather than refusing.
       const devWorktreeDir = existsSync(worktreePathForBranch()) ? worktreePathForBranch() : null
       // O7: the head the Developer starts this turn from — its own worktree's
       // HEAD, when one exists — recorded so the publication step can confirm
@@ -2566,6 +2596,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       if (opts.developerFiles && opts.developerFiles.length > 0) {
         ensureRunDir(runPath(root, task, { area: 'developer', round: roundNum }), root)
       }
+      // O3: resolved fresh per dispatch, the same "never cached across a
+      // round" posture `resolveTaskSurface` already has at its two existing
+      // call sites (the publication precondition checks) — a Surface a
+      // Principal edits mid-task is picked up by the very next dispatch.
+      const agentConfigSurfaceCovered = surfaceCoversAgentConfig(
+        d.resolveTaskSurface ? d.resolveTaskSurface(task) : null,
+        dispatchAgent
+      )
       const attemptDispatch = (): Promise<DispatchHandle> =>
         withPromptFile(fullPrompt, (promptFile) =>
           d.dispatchRole('developer', dispatchAgent, fullPrompt, {
@@ -2581,6 +2619,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // already reports `requested:<model>` vs `'default'`, so no
             // separate log line is needed on this side.
             ...(dispatchModel ? { model: dispatchModel } : {}),
+            agentConfigSurfaceCovered,
             unattended: true
           })
         )
@@ -2764,9 +2803,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     async function publishDeveloperTurn(roundNum: number): Promise<PublishTurnResult> {
       const worktree = worktreePathForBranch()
       // No worktree here — a driver running on a different host than the
-      // Developer's own machine, or a round-1 turn whose Step 0 has not run.
-      // Nothing to publish from here; the existing poll machinery still covers
-      // a branch another host published.
+      // Developer's own machine, or this driver's own round-1 `createTaskWorktree`
+      // call has not run/failed. Nothing to publish from here; the existing
+      // poll machinery still covers a branch another host published.
       if (!existsSync(worktree)) return { kind: 'nothing' }
 
       const existingPr = d.findOpenPrForBranch(branch)
@@ -4013,23 +4052,27 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             await finishPublicationFromRecord()
             prNumber = await afterDeveloperTurnBeforePrPoll(true)
           } else {
-            // O1/O2: the branch exists neither as an open PR (checked above)
-            // nor on the remote (`resolveHead` just threw) — create it now, at
-            // `origin/main`'s tip, BEFORE the first Developer turn below, so a
+            // O1: the branch exists neither as an open PR (checked above) nor
+            // on the remote (`resolveHead` just threw) — create the task's own
+            // worktree now, outside any sandbox, and push it to the remote FROM
+            // that worktree, BEFORE the first Developer turn below. This is
+            // what makes `devWorktreeDir` (below) non-null from round 1 on, so
+            // the brief's own Step 0 can simply enter the worktree rather than
+            // create it (`packages/aeg-core/src/brief-render.ts`), and so a
             // dashboard reading only GitHub counts this task in flight from its
-            // first minute instead of only after the Developer's first push
-            // (often an hour later, and never at all for a run that dies before
-            // pushing). A failed push is logged and swallowed here, never a
-            // reason the loop stops: the Developer's own first push creates the
-            // same branch later (Traps to avoid). The default dep pushes an
-            // explicit refspec from `origin/main`, never checking the branch out
-            // in this checkout and never force-pushing.
+            // first minute instead of only after the Developer's first push.
+            // A failed push is logged and swallowed here, never a reason the
+            // loop stops: the Developer's own first push creates the same
+            // remote branch later (Traps to avoid) — but a failed WORKTREE
+            // creation is swallowed the same way for now, surfacing instead at
+            // the Developer's own Step 0 (which can no longer fall back to
+            // creating one itself), never a reason this driver turn stops.
             try {
-              d.createRemoteTaskBranch(branch)
-              console.error(`vinaya dev-review-loop: created task branch ${branch} on origin at start`)
+              d.createTaskWorktree(branch)
+              console.error(`vinaya dev-review-loop: created task worktree and branch ${branch} on origin at start`)
             } catch (err) {
               console.error(
-                `vinaya dev-review-loop: could not create task branch ${branch} on origin at start: ${err instanceof Error ? err.message : String(err)} — continuing; the developer's first push will create it`
+                `vinaya dev-review-loop: could not create task worktree/branch ${branch} on origin at start: ${err instanceof Error ? err.message : String(err)} — continuing; the developer's first push will create it`
               )
             }
 

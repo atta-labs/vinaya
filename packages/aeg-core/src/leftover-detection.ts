@@ -4,12 +4,17 @@
  * exist, does a local worktree exist, how many commits is the branch ahead
  * of main) and passes them in.
  *
- * Exists to answer, deterministically, "is it safe to run Step 0's
- * `git worktree add -b <branch> origin/main` for this task?" — Step 0 itself
- * never creates a commit, so ANY commit already ahead of main on this branch
- * is real prior work, never an artifact of re-running Step 0. Silently
- * recreating a branch that already has commits ahead of main would discard
- * that work — the failure this module exists to prevent.
+ * Exists to answer, deterministically, "is it safe to (re)run
+ * `git worktree add -b <branch> origin/main` for this task?" — asked by the
+ * driver before the first Developer dispatch (O1: the driver creates the
+ * task's worktree now, not Step 0 — see
+ * `apps/cli/src/lib/dev-review-loop/developer-dispatch.ts`'s
+ * `createTaskWorktree`) and, for a brief rendered before that changed, still
+ * named by Step 0 itself. Neither ever creates a commit, so ANY commit
+ * already ahead of main on this branch is real prior work, never an
+ * artifact of re-running it. Silently recreating a branch that already has
+ * commits ahead of main would discard that work — the failure this module
+ * exists to prevent.
  */
 
 export type LeftoverInput = {

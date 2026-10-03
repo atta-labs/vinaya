@@ -719,18 +719,18 @@ describe('renderBrief', () => {
     expect(validated.status).toBe('pass')
   })
 
-  it("§5 Step 0 creates the worktree branch with --no-track and configures push.autoSetupRemote, so a plain `git push` reaches the task's own ref (task 5, Issue #447, O2)", () => {
+  it('§5 Step 0 only enters the task worktree the driver already created, then installs — it no longer creates the worktree itself (O1)', () => {
     const result = renderBrief(baseFacts(), TEMPLATE)
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    // Without `--no-track`, `git worktree add -b <branch> origin/main` tracks
-    // `origin/main` itself — a plain `git push` then fails with git's
-    // upstream-name-mismatch error, which suggests `git push origin HEAD:main`
-    // (live evidence: reproduced dispatching this exact task).
-    expect(result.brief).toContain(
-      'git worktree add .worktrees/task/review-convergence-v1/42 -b task/review-convergence-v1/42 --no-track origin/main'
-    )
-    expect(result.brief).toContain('git config push.autoSetupRemote true')
+    // O1: the driver (`dev-review-loop.ts`'s
+    // `createTaskWorktree`) now creates `.worktrees/<branch>` — with
+    // `--no-track`, so a plain `git push` from inside it reaches the task's
+    // own ref rather than tracking `origin/main` — and pushes it to the
+    // remote with `-u`, so Step 0 only enters it.
+    expect(result.brief).toContain('cd .worktrees/task/review-convergence-v1/42 && bun install')
+    expect(result.brief).not.toContain('git worktree add')
+    expect(result.brief).not.toContain('git config push.autoSetupRemote')
   })
 
   it('§6/§8 no longer instruct running the affected suite per Part — the pre-push hook already does (O10)', () => {

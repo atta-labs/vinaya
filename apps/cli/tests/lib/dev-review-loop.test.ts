@@ -79,7 +79,8 @@ import {
   renderReviewerPrompt,
   type ReviewerPromptFacts,
   reviewPolicyForLoop,
-  routeCompletionEvents
+  routeCompletionEvents,
+  surfaceCoversAgentConfig
 } from '../../src/lib/dev-review-loop.js'
 import {
   deriveCodeReviewVerdict,
@@ -824,12 +825,37 @@ if [ "$1" = "-C" ] && [ "$3" = "rev-parse" ] && [ "$4" = "HEAD" ]; then
   echo "${HEAD_SHA}"
   exit 0
 fi
+if [ "$1" = "worktree" ] && [ "$2" = "add" ]; then
+  # O1: the loop creates the task's own worktree at
+  # start, before the first Developer dispatch — succeed without touching
+  # real disk; nothing in this fixture reads the directory's own contents.
+  exit 0
+fi
+if [ "$1" = "config" ]; then
+  exit 0
+fi
 if [ "$1" = "fetch" ]; then
   exit 0
 fi
+if [ "$1" = "-C" ] && [ "$3" = "branch" ] && [ "$4" = "-u" ]; then
+  # Principal ruling 1: after the commit-free ref push below creates the
+  # remote branch, the loop sets the worktree's own upstream directly
+  # (\`git -C <worktree> branch -u origin/<branch>\`) — succeed without
+  # touching real disk.
+  exit 0
+fi
+if [ "$1" = "-C" ] && [ "$3" = "push" ]; then
+  # The Developer's own later publish push (\`publishRound\`/
+  # \`developer-publication.ts\`) still runs FROM the worktree with an
+  # explicit refspec — record it and succeed.
+  echo "$@" >> "$HOME/.fake-git-pushes"
+  exit 0
+fi
 if [ "$1" = "push" ]; then
-  # O1 (#919): the loop creates the task branch on the remote at start with
-  # \`git push origin origin/main:refs/heads/<branch>\` — record it and succeed.
+  # Principal ruling 1: the loop creates the remote task branch with a
+  # commit-free, \`--no-verify\`'d ref push (\`git push --no-verify origin
+  # origin/main:refs/heads/<branch>\`), never \`git -C <worktree> push -u
+  # origin HEAD\` — record it and succeed.
   echo "$@" >> "$HOME/.fake-git-pushes"
   exit 0
 fi
@@ -1070,7 +1096,7 @@ describe('devReviewLoop — round 1 start creates the task branch on the remote 
     const world = makeWorld()
     let attempted = 0
     const result = await runLoopInProcess(world, undefined, {
-      createRemoteTaskBranch: () => {
+      createTaskWorktree: () => {
         attempted += 1
         throw new Error('simulated push rejection')
       }
@@ -1082,24 +1108,28 @@ describe('devReviewLoop — round 1 start creates the task branch on the remote 
 })
 
 describe('devReviewLoop — the developer flow still works on the loop-created branch (O3)', () => {
-  // REAL PROCESS: exercises the REAL `createRemoteTaskBranch` (`git push origin
-  // origin/main:refs/heads/<branch>`, answered by the fixture's fake git) on the
-  // genuinely-fresh path, then the Developer's own worktree setup and first
-  // push, all the way to publish — proving the branch the loop creates at start
-  // does not disturb the Developer's own downstream flow on the same branch.
+  // REAL PROCESS: exercises the REAL `createTaskWorktree` (`git worktree add`
+  // then the commit-free, `--no-verify`'d ref push plus `git -C <worktree>
+  // branch -u`, Principal ruling 1, answered by the fixture's fake git) on
+  // the genuinely-fresh path, then the Developer's own worktree setup and
+  // first push, all the way to publish — proving the worktree/branch the
+  // loop creates at start does not disturb the Developer's own downstream
+  // flow on the same branch.
   it.skipIf(process.platform === 'darwin')(
-    'creates the branch at start with the explicit origin/main refspec, then dispatches, opens the PR, and publishes',
+    'creates the worktree and branch at start with a --no-verify ref push, then dispatches, opens the PR, and publishes',
     () => {
       const { home, cwd, path } = setUp()
       const r = runLoop(home, cwd, path)
       expect(r.status).toBe(0)
       expect(r.stdout).toMatch(/publish/)
 
-      // The loop's own start-of-run branch creation reached the remote: the fake
-      // git recorded exactly the `origin/main:refs/heads/<branch>` refspec, never
-      // a force-push and never a branch checkout.
+      // The loop's own start-of-run branch creation reached the remote: the
+      // fake git recorded exactly the commit-free `push --no-verify origin
+      // origin/main:refs/heads/<branch>` ref push — never the old `-u origin
+      // HEAD` shape, and never a force-push.
       const pushes = readFileSync(join(home, '.fake-git-pushes'), 'utf8')
-      expect(pushes).toMatch(new RegExp(`origin origin/main:refs/heads/${BRANCH}`))
+      expect(pushes).toMatch(new RegExp(`push --no-verify origin origin/main:refs/heads/${BRANCH}`))
+      expect(pushes).not.toMatch(/push -u origin HEAD/)
       expect(pushes).not.toMatch(/--force|\+/)
     },
     45000
@@ -2935,12 +2965,37 @@ if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
   echo "$PWD"
   exit 0
 fi
+if [ "$1" = "worktree" ] && [ "$2" = "add" ]; then
+  # O1: the loop creates the task's own worktree at
+  # start, before the first Developer dispatch — succeed without touching
+  # real disk; nothing in this fixture reads the directory's own contents.
+  exit 0
+fi
+if [ "$1" = "config" ]; then
+  exit 0
+fi
 if [ "$1" = "fetch" ]; then
   exit 0
 fi
+if [ "$1" = "-C" ] && [ "$3" = "branch" ] && [ "$4" = "-u" ]; then
+  # Principal ruling 1: after the commit-free ref push below creates the
+  # remote branch, the loop sets the worktree's own upstream directly
+  # (\`git -C <worktree> branch -u origin/<branch>\`) — succeed without
+  # touching real disk.
+  exit 0
+fi
+if [ "$1" = "-C" ] && [ "$3" = "push" ]; then
+  # The Developer's own later publish push (\`publishRound\`/
+  # \`developer-publication.ts\`) still runs FROM the worktree with an
+  # explicit refspec — record it and succeed.
+  echo "$@" >> "$HOME/.fake-git-pushes"
+  exit 0
+fi
 if [ "$1" = "push" ]; then
-  # O1 (#919): the loop creates the task branch on the remote at start with
-  # \`git push origin origin/main:refs/heads/<branch>\` — record it and succeed.
+  # Principal ruling 1: the loop creates the remote task branch with a
+  # commit-free, \`--no-verify\`'d ref push (\`git push --no-verify origin
+  # origin/main:refs/heads/<branch>\`), never \`git -C <worktree> push -u
+  # origin HEAD\` — record it and succeed.
   echo "$@" >> "$HOME/.fake-git-pushes"
   exit 0
 fi
@@ -3182,12 +3237,37 @@ if [ "$1" = "-C" ] && [ "$3" = "rev-parse" ] && [ "$4" = "HEAD" ]; then
   echo "${HEAD_SHA}"
   exit 0
 fi
+if [ "$1" = "worktree" ] && [ "$2" = "add" ]; then
+  # O1: the loop creates the task's own worktree at
+  # start, before the first Developer dispatch — succeed without touching
+  # real disk; nothing in this fixture reads the directory's own contents.
+  exit 0
+fi
+if [ "$1" = "config" ]; then
+  exit 0
+fi
 if [ "$1" = "fetch" ]; then
   exit 0
 fi
+if [ "$1" = "-C" ] && [ "$3" = "branch" ] && [ "$4" = "-u" ]; then
+  # Principal ruling 1: after the commit-free ref push below creates the
+  # remote branch, the loop sets the worktree's own upstream directly
+  # (\`git -C <worktree> branch -u origin/<branch>\`) — succeed without
+  # touching real disk.
+  exit 0
+fi
+if [ "$1" = "-C" ] && [ "$3" = "push" ]; then
+  # The Developer's own later publish push (\`publishRound\`/
+  # \`developer-publication.ts\`) still runs FROM the worktree with an
+  # explicit refspec — record it and succeed.
+  echo "$@" >> "$HOME/.fake-git-pushes"
+  exit 0
+fi
 if [ "$1" = "push" ]; then
-  # O1 (#919): the loop creates the task branch on the remote at start with
-  # \`git push origin origin/main:refs/heads/<branch>\` — record it and succeed.
+  # Principal ruling 1: the loop creates the remote task branch with a
+  # commit-free, \`--no-verify\`'d ref push (\`git push --no-verify origin
+  # origin/main:refs/heads/<branch>\`), never \`git -C <worktree> push -u
+  # origin HEAD\` — record it and succeed.
   echo "$@" >> "$HOME/.fake-git-pushes"
   exit 0
 fi
@@ -4911,5 +4991,33 @@ describe('devReviewLoop — a failed policy read pauses infrastructure and casts
     expect(result.finalDecision.type).toBe('publish')
     expect(world.dispatchCountByRole['code-reviewer'] ?? 0).toBeGreaterThanOrEqual(1)
     expect(world.dispatchCountByRole.security ?? 0).toBeGreaterThanOrEqual(1)
+  })
+})
+
+describe('surfaceCoversAgentConfig (O3)', () => {
+  it('is false (protected) when the Surface is null — a task that names nothing keeps the vendor default', () => {
+    expect(surfaceCoversAgentConfig(null, 'claude')).toBe(false)
+    expect(surfaceCoversAgentConfig(null, 'codex')).toBe(false)
+  })
+
+  it('is true for claude when the Surface in: list names .claude or .mcp.json', () => {
+    expect(surfaceCoversAgentConfig({ in: ['.claude'], out: [] }, 'claude')).toBe(true)
+    expect(surfaceCoversAgentConfig({ in: ['.claude/**'], out: [] }, 'claude')).toBe(true)
+    expect(surfaceCoversAgentConfig({ in: ['.mcp.json'], out: [] }, 'claude')).toBe(true)
+  })
+
+  it('is true for codex when the Surface in: list names .codex or .agents', () => {
+    expect(surfaceCoversAgentConfig({ in: ['.codex'], out: [] }, 'codex')).toBe(true)
+    expect(surfaceCoversAgentConfig({ in: ['.agents/**'], out: [] }, 'codex')).toBe(true)
+  })
+
+  it('is false when the Surface names unrelated paths, or only the OTHER vendor’s own config path', () => {
+    expect(surfaceCoversAgentConfig({ in: ['apps/cli/src/lib'], out: [] }, 'claude')).toBe(false)
+    expect(surfaceCoversAgentConfig({ in: ['.codex'], out: [] }, 'claude')).toBe(false)
+    expect(surfaceCoversAgentConfig({ in: ['.claude'], out: [] }, 'codex')).toBe(false)
+  })
+
+  it('is false for a vendor with no agent-native configuration path of its own (gemini)', () => {
+    expect(surfaceCoversAgentConfig({ in: ['.gemini'], out: [] }, 'gemini')).toBe(false)
   })
 })

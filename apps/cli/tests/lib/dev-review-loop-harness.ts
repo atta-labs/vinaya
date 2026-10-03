@@ -122,7 +122,7 @@ export type LoopWorld = {
    * and from `findOpenPrForBranch` (which stays `null` while this is set), so a
    * fixture can reach the branch-exists-with-no-open-PR sub-case of the
    * round-1 entry, where `afterDeveloperTurnBeforePrPoll` resumes to open the
-   * PR and `createRemoteTaskBranch` must NOT fire. Defaults `false`.
+   * PR and `createTaskWorktree` must NOT fire. Defaults `false`.
    */
   remoteBranchExists: boolean
   /** The developer's local worktree head; defaults to `head` (nothing unpushed). */
@@ -221,7 +221,7 @@ export type LoopWorld = {
   /** Each pull-request open the driver's publication step made (`openTaskPullRequest`). */
   prOpens: Array<{ title: string; body: string }>
   // --- recorded side effects, for assertions ---
-  /** O1/O2: each developer branch the loop created on the remote at round-1 start (`createRemoteTaskBranch`) — empty on a start that found the branch already there (an open PR, or a remote branch with none). */
+  /** O1/O2: each developer branch the loop created on the remote at round-1 start (`createTaskWorktree`) — empty on a start that found the branch already there (an open PR, or a remote branch with none). */
   remoteBranchCreations: string[]
   postedComments: PostedComment[]
   dispatches: DispatchRecord[]
@@ -471,9 +471,10 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
     findOpenPrForBranch: (branch) =>
       world.developerPushed || world.prOpened ? { number: world.prNumber, branch } : null,
     fetchIssueTitle: (_issue) => world.issueTitle,
-    // O1/O2: record the round-1 remote-branch creation so a test can assert it
-    // fires exactly on the genuinely-fresh path and never on an attach/reentry.
-    createRemoteTaskBranch: (branch) => {
+    // O1/O2: record the round-1 worktree/remote-branch creation so a test can
+    // assert it fires exactly on the genuinely-fresh path and never on an
+    // attach/reentry.
+    createTaskWorktree: (branch: string) => {
       world.remoteBranchCreations.push(branch)
     },
     readResumeRecord: () => null,

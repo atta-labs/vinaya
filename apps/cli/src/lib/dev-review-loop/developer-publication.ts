@@ -11,7 +11,7 @@
  * governed push and pull-request open themselves (the one part that holds a
  * credential) are the driver's own `LoopDeps` closures in
  * `dev-review-loop.ts`, faked wholesale by the harness exactly as
- * `publishRound`/`createRemoteTaskBranch` already are.
+ * `publishRound`/`createTaskWorktree` already are.
  */
 
 import { writeFileSync } from 'node:fs'

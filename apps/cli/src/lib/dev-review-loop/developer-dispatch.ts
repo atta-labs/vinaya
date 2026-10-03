@@ -9,7 +9,7 @@
  * path it always had.
  */
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { hostname as osHostname, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
@@ -594,19 +594,43 @@ export function developerBranchFor(
 }
 
 /**
- * O1: creates `branch` on the remote at `origin/main`'s tip — the loop's
- * round-1 fresh-dispatch path calls it once, so GitHub shows the task in flight
- * from its first minute rather than only after the Developer's own first push.
- * Pushes an explicit `origin/main:refs/heads/<branch>` refspec: the source is
- * the local `origin/main` tracking ref, so the branch is never checked out in
- * this checkout (Traps to avoid) and nothing in the working tree moves, and it
- * is never force-pushed. Throws on any git failure; the one caller catches it,
- * logs, and continues, since the Developer's own first push creates the same
- * branch later. Paired with `developerBranchFor` above — that names the branch,
- * this is what first makes it exist on the remote.
+ * O1: creates the task's own worktree at `.worktrees/<branch>`, on `<branch>`,
+ * cut from `origin/main`'s tip — the loop's round-1 fresh-dispatch path calls
+ * it once, before the first Developer dispatch, so the brief's own Step 0 can
+ * simply ENTER the worktree rather than create it (`brief-render.ts`). Reuses
+ * an existing worktree untouched rather than recreating it (Traps to avoid) —
+ * a worktree another host or a crashed prior run already created for this
+ * branch is left alone, and only the push/upstream step below still runs.
+ *
+ * Then creates the remote branch with a commit-free REF push —
+ * `origin/main:refs/heads/<branch>`, `--no-verify` — never `git -C
+ * <worktree> push -u origin HEAD` (Principal ruling 1): a freshly created
+ * worktree carries no `apps/cli/dist`, which the managed pre-push hook's own
+ * dispatch-readiness/typecheck/test gate requires, so that push failed
+ * outright on the Principal's own Mac. The ref push moves no commits (the
+ * ref already equals `origin/main`) and `--no-verify` is safe precisely
+ * because of that — there is no task-branch content yet for the gate to
+ * judge; the Developer's own first later push still runs it for real.
+ * `git branch -u` then sets the worktree's own upstream, so GitHub shows the
+ * task in flight from its first minute rather than only after the
+ * Developer's own first later push. Never force-pushed.
+ *
+ * Throws on any git failure (worktree creation, ref push, or upstream set);
+ * the one caller catches it, logs, and continues — a failed push here is
+ * never fatal, since the Developer's own first push creates the same branch
+ * later; a failed worktree creation surfaces instead at the Developer's own
+ * Step 0, which can no longer silently fall back to creating one itself.
+ * Paired with `developerBranchFor` above — that names the branch, this is
+ * what first makes the worktree and the remote branch exist.
  */
-export function createRemoteTaskBranch(branch: string): void {
-  sh('git', ['push', 'origin', `origin/main:refs/heads/${branch}`])
+export function createTaskWorktree(branch: string): void {
+  const worktreeDir = join('.worktrees', branch)
+  if (!existsSync(worktreeDir)) {
+    sh('git', ['worktree', 'add', worktreeDir, '-b', branch, '--no-track', 'origin/main'])
+  }
+  sh('git', ['config', 'push.autoSetupRemote', 'true'])
+  sh('git', ['push', '--no-verify', 'origin', `origin/main:refs/heads/${branch}`])
+  sh('git', ['-C', worktreeDir, 'branch', '-u', `origin/${branch}`])
 }
 
 type PrRef = { number: number; branch: string }

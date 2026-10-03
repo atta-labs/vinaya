@@ -62,6 +62,7 @@ import {
   buildRolePermissions,
   buildCodexExecpolicyRules,
   buildWriteAccessScope,
+  writeAccessHookScript,
   addCodexWritableDirs,
   PERMISSION_POLICY_VERSION,
   codexSpawnEnvExtras,
@@ -70,6 +71,7 @@ import {
   codexBoundaryFailureReason,
   type DispatchTeeRecoveryDeps
 } from '../../src/lib/dispatch.js'
+import { agentConfigProtectedSubpaths } from '../../src/lib/worker-boundary.js'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
@@ -3676,7 +3678,7 @@ describe('buildWriteAccessScope — Issue #663, O1 round 2 fix: the real Write/E
   it('developer: a directory scope, realpath-resolved', () => {
     const dir = tempDir('vinaya-write-scope-')
     const scope = buildWriteAccessScope('developer', dir, [])
-    expect(scope).toEqual({ kind: 'directory', allowedDir: realpathSync(dir), extraFiles: [] })
+    expect(scope).toEqual({ kind: 'directory', allowedDir: realpathSync(dir), extraFiles: [], protectedSubpaths: [] })
   })
 
   it('developer: extraFiles (O3, task-files-v1 2, #649) carries this round’s confidence/round-response paths, realpath-resolved, alongside the worktree directory grant', () => {
@@ -3694,7 +3696,8 @@ describe('buildWriteAccessScope — Issue #663, O1 round 2 fix: the real Write/E
     expect(scope).toEqual({
       kind: 'directory',
       allowedDir: realpathSync(dir),
-      extraFiles: [join(realDevDir, '.vinaya-confidence'), join(realDevDir, '.vinaya-round-response')]
+      extraFiles: [join(realDevDir, '.vinaya-confidence'), join(realDevDir, '.vinaya-round-response')],
+      protectedSubpaths: []
     })
   })
 
@@ -3769,7 +3772,127 @@ describe('buildWriteAccessScope — Issue #663, O1 round 2 fix: the real Write/E
 
   it('a directory that does not exist yet degrades to its own raw form rather than throwing', () => {
     const scope = buildWriteAccessScope('developer', '/tmp/does-not-exist-vinaya-663', [])
-    expect(scope).toEqual({ kind: 'directory', allowedDir: '/tmp/does-not-exist-vinaya-663', extraFiles: [] })
+    expect(scope).toEqual({
+      kind: 'directory',
+      allowedDir: '/tmp/does-not-exist-vinaya-663',
+      extraFiles: [],
+      protectedSubpaths: []
+    })
+  })
+
+  it('developer: protectedSubpaths (O3) carries the realpath-resolved agent-config paths the caller named', () => {
+    const dir = tempDir('vinaya-write-scope-protected-')
+    const protectedPath = join(dir, '.claude')
+    const scope = buildWriteAccessScope('developer', dir, [], [], [protectedPath])
+    expect(scope).toEqual({
+      kind: 'directory',
+      allowedDir: realpathSync(dir),
+      extraFiles: [],
+      protectedSubpaths: [join(realpathSync(dir), '.claude')]
+    })
+  })
+})
+
+// O3: the write-access.mjs hook itself DENIES an
+// agent's own configuration path inside the worktree when the caller names
+// it `protectedSubpaths`, and ALLOWS it (the ordinary in-worktree case) when
+// the caller does not — real `node`, real stdin, the same harness the O4
+// "outside worktree DENIES" test above already uses, since this is the SAME
+// hook script, not a second mechanism.
+describe('writeAccessHookScript — O3 agent-configuration protectedSubpaths', () => {
+  type HookDecision = { permissionDecision: string; permissionDecisionReason?: string }
+
+  function runHook(scriptDir: string, runId: string, filePath: string): HookDecision {
+    const scriptPath = join(scriptDir, 'write-access.mjs')
+    writeFileSync(scriptPath, writeAccessHookScript(scriptDir), { mode: 0o600 })
+    const result = spawnBudgeted(
+      [scriptPath],
+      {
+        input: JSON.stringify({ tool_name: 'Write', tool_input: { file_path: filePath } }),
+        encoding: 'utf8',
+        env: { ...process.env, VINAYA_RUN_ID: runId }
+      },
+      'write-access hook'
+    )
+    expect(result.status).toBe(0)
+    return (JSON.parse(result.stdout) as { hookSpecificOutput: HookDecision }).hookSpecificOutput
+  }
+
+  it('denies a write to .claude/settings.json inside the worktree when it is a named protectedSubpath', () => {
+    const scriptDir = tempDir('vinaya-write-access-protected-')
+    const worktree = tempDir('vinaya-write-access-protected-wt-')
+    const runId = randomUUID()
+    const scope = buildWriteAccessScope(
+      'developer',
+      worktree,
+      [],
+      [],
+      agentConfigProtectedSubpaths(worktree, 'claude', false)
+    )
+    writeFileSync(join(scriptDir, `write-access-${runId}.json`), JSON.stringify(scope))
+
+    const decision = runHook(scriptDir, runId, join(realpathSync(worktree), '.claude', 'settings.json'))
+    expect(decision.permissionDecision).toBe('deny')
+    expect(decision.permissionDecisionReason).toMatch(/configuration/)
+
+    // An ordinary file elsewhere in the same worktree stays allowed —
+    // protection is scoped to exactly the named agent-config path.
+    const ordinary = runHook(scriptDir, runId, join(realpathSync(worktree), 'src', 'index.ts'))
+    expect(ordinary.permissionDecision).toBe('allow')
+  })
+
+  it('allows a write to .claude/settings.json when the Surface covers it (protectedSubpaths empty)', () => {
+    const scriptDir = tempDir('vinaya-write-access-covered-')
+    const worktree = tempDir('vinaya-write-access-covered-wt-')
+    const runId = randomUUID()
+    const scope = buildWriteAccessScope(
+      'developer',
+      worktree,
+      [],
+      [],
+      agentConfigProtectedSubpaths(worktree, 'claude', true)
+    )
+    writeFileSync(join(scriptDir, `write-access-${runId}.json`), JSON.stringify(scope))
+
+    const decision = runHook(scriptDir, runId, join(realpathSync(worktree), '.claude', 'settings.json'))
+    expect(decision.permissionDecision).toBe('allow')
+  })
+
+  it('also denies a write to the bare .mcp.json file (Claude)', () => {
+    const scriptDir = tempDir('vinaya-write-access-mcpjson-')
+    const worktree = tempDir('vinaya-write-access-mcpjson-wt-')
+    const runId = randomUUID()
+    const scope = buildWriteAccessScope(
+      'developer',
+      worktree,
+      [],
+      [],
+      agentConfigProtectedSubpaths(worktree, 'claude', false)
+    )
+    writeFileSync(join(scriptDir, `write-access-${runId}.json`), JSON.stringify(scope))
+
+    expect(runHook(scriptDir, runId, join(realpathSync(worktree), '.mcp.json')).permissionDecision).toBe('deny')
+  })
+
+  it("denies a write to Codex's own .codex/ and .agents/ paths the same way", () => {
+    const scriptDir = tempDir('vinaya-write-access-codex-')
+    const worktree = tempDir('vinaya-write-access-codex-wt-')
+    const runId = randomUUID()
+    const scope = buildWriteAccessScope(
+      'developer',
+      worktree,
+      [],
+      [],
+      agentConfigProtectedSubpaths(worktree, 'codex', false)
+    )
+    writeFileSync(join(scriptDir, `write-access-${runId}.json`), JSON.stringify(scope))
+
+    expect(runHook(scriptDir, runId, join(realpathSync(worktree), '.codex', 'config.toml')).permissionDecision).toBe(
+      'deny'
+    )
+    expect(
+      runHook(scriptDir, runId, join(realpathSync(worktree), '.agents', 'skills', 'x', 'SKILL.md')).permissionDecision
+    ).toBe('deny')
   })
 })
 

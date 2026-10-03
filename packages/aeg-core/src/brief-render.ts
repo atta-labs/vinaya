@@ -657,6 +657,18 @@ function renderSection4(facts: BriefFacts): string {
   return lines.join('\n')
 }
 
+/**
+ * O1 : Step 0 only ENTERS the task's own
+ * worktree — it no longer creates it. The driver (`dev-review-loop.ts`'s
+ * `createTaskWorktree`) now creates `.worktrees/<branch>` and pushes the
+ * branch to the remote, FROM that worktree, before the first Developer
+ * dispatch ever runs — outside any sandbox, so neither vendor's own
+ * filesystem confinement (which denies writing the main checkout's `.git`)
+ * stands between a dispatched Developer and a worktree it would otherwise
+ * have had to create itself. `bun install` stays in Step 0: a fresh worktree
+ * still needs its own `node_modules` before the dispatched session can run
+ * its own toolchain.
+ */
 function renderSection5(facts: BriefFacts): string {
   const branch = developerBranchForFacts(facts)
   // The portable form first — `dispatch-readiness` is a shipped check every
@@ -679,7 +691,7 @@ function renderSection5(facts: BriefFacts): string {
     '**Step 0 (mandatory, verbatim):**',
     '',
     '```',
-    `git worktree add .worktrees/${branch} -b ${branch} --no-track origin/main && cd .worktrees/${branch} && git config push.autoSetupRemote true && bun install --frozen-lockfile --silent`,
+    `cd .worktrees/${branch} && bun install --frozen-lockfile --silent`,
     '```',
     '',
     '1. Clean status; parent `origin/main`; branch suffix literal-matches the task id.',

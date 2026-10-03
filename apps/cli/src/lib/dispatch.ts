@@ -99,6 +99,7 @@ import { basename, dirname, join } from 'node:path'
 import {
   CLAUDE_KEYCHAIN_SERVICE,
   CLAUDE_SANDBOX_ALLOWED_DOMAINS,
+  agentConfigProtectedSubpaths,
   buildWorkerEnv,
   hasSubscriptionLogin,
   resolveClaudeConfinement,
@@ -295,6 +296,20 @@ export type DispatchOpts = {
     rulingOrdinal?: number | null
     policyDigest?: string | null
   }
+  /**
+   * O3: `true` only when the caller has already
+   * confirmed the task's own Surface `in:` globs cover this agent's own
+   * configuration paths (`AGENT_OWN_CONFIG_GLOBS`) — `dev-review-loop.ts`
+   * resolves this once per round, from the same `resolveTaskSurface` read
+   * its deferral rules already use, and passes it only for the `developer`
+   * role. Omitted/`false` (every other caller, and a task whose Surface
+   * says nothing about them) keeps those paths protected — the safe
+   * default (Traps to avoid: "a task that does not name them keeps the
+   * vendor's protection"). Never resolved inside this module itself: Surface
+   * is an Issue-level fact this generic launcher has no business fetching
+   * on its own.
+   */
+  agentConfigSurfaceCovered?: boolean
 }
 
 /**
@@ -1464,7 +1479,7 @@ export function buildCodexExecpolicyRules(role: Role): string | null {
 }
 
 export type WriteAccessScope =
-  | { kind: 'directory'; allowedDir: string; extraFiles: string[] }
+  | { kind: 'directory'; allowedDir: string; extraFiles: string[]; protectedSubpaths: string[] }
   | { kind: 'exact-files'; paths: string[] }
 
 /**
@@ -1508,12 +1523,24 @@ export type WriteAccessScope =
  * the hook's resolved comparison — and deny the Developer's own legitimate
  * confidence/round-response write. `realFile` mirrors the hook's exact
  * resolution so both sides compute the identical string.
+ *
+ * `protectedSubpaths` (O3): absolute, inside
+ * `allowedDir`, resolved (realpath'd) the same way `allowedDir` itself is —
+ * the agent's own configuration paths (`.claude/`, `.mcp.json`) to keep
+ * DENIED for Write/Edit even though they sit inside the developer's own
+ * otherwise-granted worktree, when the caller says the task's Surface does
+ * not cover them. The caller (`dispatch.ts`'s `writeDispatchSettings`)
+ * resolves that Surface check; this function stays a generic scope builder
+ * with no opinion of its own about which paths are agent configuration.
+ * Empty (every pre-O3 caller, and a task whose Surface DOES cover these
+ * paths) grants `allowedDir` fully, unmodified.
  */
 export function buildWriteAccessScope(
   role: Role,
   allowedDir: string,
   extraWritableDirs: readonly string[],
-  developerFiles: readonly string[] = []
+  developerFiles: readonly string[] = [],
+  protectedSubpaths: readonly string[] = []
 ): WriteAccessScope | null {
   const real = (p: string): string => {
     try {
@@ -1530,7 +1557,12 @@ export function buildWriteAccessScope(
     }
   }
   if (role === 'developer') {
-    return { kind: 'directory', allowedDir: real(allowedDir), extraFiles: developerFiles.map(realFile) }
+    return {
+      kind: 'directory',
+      allowedDir: real(allowedDir),
+      extraFiles: developerFiles.map(realFile),
+      protectedSubpaths: protectedSubpaths.map(real)
+    }
   }
   if (role === 'code-reviewer' || role === 'security') {
     if (extraWritableDirs.length === 0) return null
@@ -1553,6 +1585,16 @@ export const WRITE_OUTSIDE_WORKTREE_DENY_REASON =
  */
 export const WRITE_OUTSIDE_HANDOFF_FILES_DENY_REASON =
   "Dispatched sessions cannot write or edit a file outside their own hand-off files — this policy grants exactly findings.txt/report.txt/objectives.txt in the work directory this role was given and denies everything else, rather than falling through to the host's own classifier for an out-of-scope path."
+
+/**
+ * O3: the `directory` scope's own deny reason for
+ * a path inside the worktree that is ALSO inside `scope.protectedSubpaths`
+ * — the agent's own configuration paths, kept denied unless the task's
+ * Surface names them as this task's own work (`buildWriteAccessScope`'s own
+ * doc comment).
+ */
+export const WRITE_PROTECTED_AGENT_CONFIG_DENY_REASON =
+  "Dispatched sessions cannot write or edit this agent's own configuration path — this task's Surface does not name it, so it stays protected even though it sits inside the developer's own worktree."
 
 /**
  * The `PreToolUse` hook that grants a real `Write`/`Edit` call — matched on
@@ -1591,8 +1633,17 @@ export const WRITE_OUTSIDE_HANDOFF_FILES_DENY_REASON =
  * one of `scope.extraFiles` — this round's confidence and round-response
  * paths, outside the worktree — before falling through to the deny above.
  * Never a directory grant: only these exact, driver-named files.
+ *
+ * **`directory` scope's own `protectedSubpaths` (O3).** A path inside the worktree that is ALSO inside one of
+ * `scope.protectedSubpaths` (the agent's own configuration paths) denies
+ * with its own reason (`WRITE_PROTECTED_AGENT_CONFIG_DENY_REASON`), checked
+ * BEFORE the general in-worktree allow — so a `.claude/**`/`.mcp.json` path
+ * this task's Surface does not name stays denied even though the rest of
+ * the worktree is granted. Never affects `extraFiles` — the driver's own
+ * confidence/round-response files are named by the driver, never by this
+ * protection.
  */
-function writeAccessHookScript(dir: string): string {
+export function writeAccessHookScript(dir: string): string {
   return [
     "const fs = require('fs');",
     "const path = require('path');",
@@ -1614,18 +1665,22 @@ function writeAccessHookScript(dir: string): string {
     '      const realParent = fs.realpathSync(path.dirname(filePath));',
     '      real = path.join(realParent, path.basename(filePath));',
     '    } catch { real = filePath; }',
+    '    const underPath = (target, base) => target === base || target.startsWith(base.endsWith(path.sep) ? base : base + path.sep);',
     '    let allowed = false;',
+    '    let protectedMatch = false;',
     "    if (scope.kind === 'directory') {",
-    '      const base = scope.allowedDir.endsWith(path.sep) ? scope.allowedDir : scope.allowedDir + path.sep;',
-    '      allowed =',
-    '        real === scope.allowedDir ||',
-    '        real.startsWith(base) ||',
-    '        (Array.isArray(scope.extraFiles) && scope.extraFiles.includes(real));',
+    '      const inDir = underPath(real, scope.allowedDir);',
+    '      const isExtraFile = Array.isArray(scope.extraFiles) && scope.extraFiles.includes(real);',
+    '      protectedMatch =',
+    '        Array.isArray(scope.protectedSubpaths) && scope.protectedSubpaths.some((p) => underPath(real, p));',
+    '      allowed = (inDir && !protectedMatch) || isExtraFile;',
     "    } else if (scope.kind === 'exact-files' && Array.isArray(scope.paths)) {",
     '      allowed = scope.paths.includes(real);',
     '    }',
     '    if (allowed) {',
     allowOutput("in-scope for this role's written write-access policy"),
+    "    } else if (scope.kind === 'directory' && protectedMatch) {",
+    denyOutput(WRITE_PROTECTED_AGENT_CONFIG_DENY_REASON),
     "    } else if (scope.kind === 'directory') {",
     denyOutput(WRITE_OUTSIDE_WORKTREE_DENY_REASON),
     "    } else if (scope.kind === 'exact-files') {",
@@ -1719,7 +1774,17 @@ export function writeDispatchSettings(
    * never a second file a confined `claude --settings` would also have to
    * be told to load.
    */
-  confinement: ClaudeSandboxSettings | null = null
+  confinement: ClaudeSandboxSettings | null = null,
+  /**
+   * O3: ABSOLUTE agent-configuration paths
+   * (`.claude/`, `.mcp.json`, resolved by the caller from this task's own
+   * Surface — `dev-review-loop.ts`'s `agentOwnConfigProtectedSubpaths`) to
+   * keep write-denied even though they sit inside the developer's own
+   * worktree. Empty (every pre-O3 caller, and a task whose Surface covers
+   * them) grants the worktree fully, unmodified — see
+   * `buildWriteAccessScope`'s own doc comment.
+   */
+  agentConfigProtectedSubpaths: readonly string[] = []
 ): string | null {
   try {
     const dir = join(runPath(runtimeDirForThisRepo(), scope, { area: 'hooks' }), role)
@@ -1735,7 +1800,13 @@ export function writeDispatchSettings(
       const sourcesPath = join(dir, `documentation-sources-${runId}.json`)
       writeFileSync(sourcesPath, JSON.stringify(documentation), { mode: 0o600 })
     }
-    const writeAccessScope = buildWriteAccessScope(role, allowedDir, extraWritableDirs, developerFiles)
+    const writeAccessScope = buildWriteAccessScope(
+      role,
+      allowedDir,
+      extraWritableDirs,
+      developerFiles,
+      agentConfigProtectedSubpaths
+    )
     const writeAccessScriptPath = join(dir, 'write-access.mjs')
     const preToolUseHooks = [
       {
@@ -3772,7 +3843,8 @@ export async function dispatchRole(
           permissionAllowedDir,
           opts.extraWritableDirs ?? [],
           opts.developerFiles ?? [],
-          claudeConfinement?.confined === true ? claudeConfinement.settings : null
+          claudeConfinement?.confined === true ? claudeConfinement.settings : null,
+          agentConfigProtectedSubpaths(permissionAllowedDir, agent, opts.agentConfigSurfaceCovered === true)
         )
       : null
   const codexHooksPath =
@@ -4102,6 +4174,17 @@ export async function dispatchRole(
             // caller today, naming its own `reviewerWorkDir`, already
             // uniquely scoped per task/round/role/attempt.
             extraWritableDirs: opts.extraWritableDirs ?? [],
+            // O3: Codex's own `.codex/`/`.agents/`
+            // paths stay write-denied unless the task's Surface names them —
+            // see `agentConfigProtectedSubpaths`'s own doc comment. Empty on
+            // the repo-root-fallback path (`usingRepoRootFallback`): that
+            // directory has no task worktree under it yet, so there is
+            // nothing of this shape to protect there (the existing
+            // `bootstrapWritableSubpaths` carve-out, below, already keeps
+            // that whole fallback read-only beyond `.git`/`.worktrees`).
+            protectedSubpaths: usingRepoRootFallback
+              ? []
+              : agentConfigProtectedSubpaths(boundaryAllowedDir, agent, opts.agentConfigSurfaceCovered === true),
             // Round 4 review, BLOCKER: the confined child's own `--settings
             // <path>` argv (added above, before this resolution) points at
             // `writeDispatchSettings`'s `dispatch-settings` directory, which
@@ -4271,6 +4354,15 @@ export async function dispatchRole(
             // (`stageOAuthCredential: false`), so this spread is a no-op
             // kept for shape-stability rather than deleted outright.
             ...(resolvedBoundary.oauthConfigDir ? { CLAUDE_CONFIG_DIR: resolvedBoundary.oauthConfigDir } : {}),
+            // O2: `resolveGitFirstPath`'s own result for this host — puts the
+            // real `git` ahead of the `/usr/bin/git` xcrun shim on macOS, a
+            // no-op (the allowlisted PATH, unmodified) elsewhere. Guarded on
+            // `!== undefined` rather than spread unconditionally — an
+            // `attribution` key set to `undefined` would override, not skip,
+            // the allowlisted PATH `buildWorkerEnv` already carries forward
+            // (object spread keeps a key present even when its value is
+            // `undefined`).
+            ...(resolvedBoundary.pathOverride !== undefined ? { PATH: resolvedBoundary.pathOverride } : {}),
             // Round 6 security review, CRITICAL — see
             // `codexSpawnEnvExtras`'s own doc comment for what this
             // closes.
@@ -4305,7 +4397,11 @@ export async function dispatchRole(
               // Claude Code keeps its own working files under
               // `/tmp/claude-<uid>` and ignores `TMPDIR` for them, so its
               // own override must name the same granted scratch directory.
-              CLAUDE_CODE_TMPDIR: claudeConfinement.scratchDir
+              CLAUDE_CODE_TMPDIR: claudeConfinement.scratchDir,
+              // O2: see the Codex branch's own comment on this same guard,
+              // above — `resolveGitFirstPath`'s result, puts the real `git`
+              // ahead of the `/usr/bin/git` xcrun shim on macOS.
+              ...(claudeConfinement.pathOverride !== undefined ? { PATH: claudeConfinement.pathOverride } : {})
             })
           : {
               ...process.env,
