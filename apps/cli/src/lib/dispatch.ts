@@ -73,6 +73,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   writeFileSync
 } from 'node:fs'
 import { chmodSync, createWriteStream } from 'node:fs'
@@ -1973,6 +1974,106 @@ export function parseClaudeUsageUnits(stdout: string): UsageObservation {
   return {
     units: NO_USAGE_UNITS,
     unknownReason: 'claude emitted no stream-json line carrying a `usage.input_tokens`/`usage.output_tokens` pair'
+  }
+}
+
+/** The `usage` event's `source` for figures read from a Claude session transcript rather than from the dispatch's own stream. */
+export const CLAUDE_TRANSCRIPT_USAGE_SOURCE = 'claude-transcript'
+
+/** A transcript larger than this is not read: a dispatch never waits on a huge file, it records unknown with that reason. */
+const MAX_TRANSCRIPT_BYTES = 64 * 1024 * 1024
+
+/** The shape of a session identifier Claude writes; anything else never reaches a path join. */
+const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/
+
+/**
+ * Reads a Claude dispatch's token usage from the session's own transcript —
+ * `<configDir>/projects/<project>/<sessionId>.jsonl`, which Claude appends to
+ * as the session runs, so it holds the usage of a dispatch that was killed,
+ * timed out or crashed before its stream printed a terminal usage line. The
+ * file is located by the session identifier alone (the project directory name
+ * is Claude's own encoding of the working directory and is not re-derived), the
+ * identifier must match `SESSION_ID_PATTERN`, and the resolved file must sit
+ * inside the real `projects` directory. Only summed units leave this function —
+ * never a prompt or a message. Units are summed once per unique message
+ * (`summarizeTranscript`); `cache` is creation plus read, as the stream reader
+ * does. A missing, oversized, unreadable or message-less transcript is
+ * unknown with a reason, never zero.
+ */
+export function readClaudeTranscriptUsage(sessionId: string | null, configDir: string): UsageObservation {
+  const unknown = (why: string): UsageObservation => ({
+    units: NO_USAGE_UNITS,
+    unknownReason: `session transcript fallback: ${why}`
+  })
+  if (sessionId === null)
+    return unknown('the dispatch never learned a session identifier, so no transcript could be located')
+  if (!SESSION_ID_PATTERN.test(sessionId))
+    return unknown('the session identifier is not a plain identifier, so no transcript path was formed')
+
+  let projectsDir: string
+  try {
+    projectsDir = realpathSync(join(configDir, 'projects'))
+  } catch {
+    return unknown(`no projects directory under ${configDir}`)
+  }
+  let projectDirs: string[]
+  try {
+    projectDirs = readdirSync(projectsDir)
+  } catch {
+    return unknown('the projects directory could not be listed')
+  }
+  for (const projectDir of projectDirs) {
+    let file: string
+    try {
+      file = realpathSync(join(projectsDir, projectDir, `${sessionId}.jsonl`))
+    } catch {
+      continue
+    }
+    if (!file.startsWith(`${projectsDir}/`)) continue
+    let text: string
+    try {
+      if (statSync(file).size > MAX_TRANSCRIPT_BYTES) return unknown('the transcript is larger than the read bound')
+      text = readFileSync(file, 'utf8')
+    } catch {
+      return unknown('the transcript could not be read')
+    }
+    const summary = summarizeTranscript(text)
+    if (summary.messageCount === 0) return unknown('the transcript held no assistant message with usage')
+    const c = summary.components
+    return {
+      units: {
+        input: c.inputTokens,
+        output: c.outputTokens,
+        cache: c.cacheCreationInputTokens + c.cacheReadInputTokens
+      },
+      unknownReason: null
+    }
+  }
+  return unknown(`no transcript for session ${sessionId} under ${projectsDir}`)
+}
+
+/**
+ * The stream's own usage when it carried one, else — for Claude only — the
+ * session transcript's. Never both: they describe the same session, so the
+ * transcript is a fallback, never an addition. When neither yields usage the
+ * units stay unknown and the reason names both sources that were tried.
+ */
+export function resolveClaudeUsageUnits(
+  streamUnits: UsageObservation,
+  sessionId: string | null,
+  configDir: string
+): { observation: UsageObservation; source: 'stream' | typeof CLAUDE_TRANSCRIPT_USAGE_SOURCE } {
+  if (streamUnits.unknownReason === null) return { observation: streamUnits, source: 'stream' }
+  const fromTranscript = readClaudeTranscriptUsage(sessionId, configDir)
+  if (fromTranscript.unknownReason === null) {
+    return { observation: fromTranscript, source: CLAUDE_TRANSCRIPT_USAGE_SOURCE }
+  }
+  return {
+    observation: {
+      units: NO_USAGE_UNITS,
+      unknownReason: `${streamUnits.unknownReason}; ${fromTranscript.unknownReason}`
+    },
+    source: 'stream'
   }
 }
 
@@ -4506,7 +4607,20 @@ export async function dispatchRole(
       // the same buffer, and reused by whichever branch below actually logs.
       const reportedModel = vendor.parseModel(stdoutBuf)
       const attemptModel = reportedModel ?? resolvedModel
-      const usageUnits = vendor.parseUsageUnits(stdoutBuf)
+      const streamUsageUnits = vendor.parseUsageUnits(stdoutBuf)
+      // The stream is the primary source. Only a Claude dispatch whose stream
+      // carried no usage line falls back to the session's own transcript,
+      // located by the session id this dispatch already records.
+      const resolvedUsage =
+        agent === 'claude'
+          ? resolveClaudeUsageUnits(
+              streamUsageUnits,
+              launch.resumeId ?? vendor.parseResumeId(stdoutBuf),
+              process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
+            )
+          : { observation: streamUsageUnits, source: 'stream' as const }
+      const usageUnits = resolvedUsage.observation
+      const usageSource = resolvedUsage.source === 'stream' ? agent : resolvedUsage.source
       // O5: this dispatch never produced a working vendor
       // session — checked against the SAME two sources every other resumeId
       // read in this function already uses (the stream-bound `launch.resumeId`,
@@ -4545,7 +4659,7 @@ export async function dispatchRole(
           event: 'observed',
           payload: {},
           model: attemptModel,
-          source: agent,
+          source: usageSource,
           semantics: 'cumulative',
           units: usageUnits.units,
           unknown_reason: usageUnits.unknownReason,
@@ -4623,7 +4737,7 @@ export async function dispatchRole(
           event: 'observed',
           payload: {},
           model: attemptModel,
-          source: agent,
+          source: usageSource,
           semantics: 'cumulative',
           units: usageUnits.units,
           unknown_reason: usageUnits.unknownReason,
@@ -4716,7 +4830,7 @@ export async function dispatchRole(
         event: 'observed',
         payload: {},
         model: attemptModel,
-        source: agent,
+        source: usageSource,
         semantics: 'cumulative',
         units: usageUnits.units,
         unknown_reason: usageUnits.unknownReason,
