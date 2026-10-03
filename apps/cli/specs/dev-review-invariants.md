@@ -20,6 +20,7 @@ keeps the data honest against the checkout.
 
 ## The surface
 
+<!-- AEG:CLAIM: apps/cli/tests/conformance/dev-review-invariant-coverage.test.ts contains:return readdirSync(abs, { withFileTypes: true }) -->
 The surface is found by listing directories, never by scanning source
 text:
 
@@ -38,6 +39,7 @@ block. Two files on the surface are neither: `fakes.ts`, the policy
 layer's test fakes, and `dev-review-loop-harness.ts`, the in-process
 harness. They are declared as support files, each with a reason.
 
+<!-- AEG:CLAIM: apps/cli/tests/conformance/dev-review-invariant-coverage.test.ts contains:expect(implementation).toEqual(expectedImpl) -->
 One module and its test landed after the baseline: the driver-side
 publication of each Developer turn (`developer-publication.ts`). They are
 recorded under `addedSinceBaseline` and classified from loop.md's
@@ -46,6 +48,8 @@ holds 16 modules and 27 test files. The test fails when a file appears or
 disappears without a matching entry, so the baseline can never drift
 silently.
 
+<!-- AEG:CLAIM: apps/cli/tests/conformance/dev-review-invariant-coverage.test.ts contains:const excluded = new Set(inv.exclusions.filter((e) => e.reason.trim().length > 0).map((e) => e.path)) -->
+<!-- AEG:CLAIM: apps/cli/tests/fixtures/dev-review-architecture-invariants.json contains:"path": "packages/aeg-core/src/dev-review-loop/index.ts", -->
 Every surface file is either cited by at least one invariant (as a
 source or as a test) or listed under `exclusions` with a concrete reason
 why it encodes no loop behavior. There are two exclusions:
@@ -97,14 +101,23 @@ Each invariant records:
 
 ## Control state versus telemetry
 
-The Vinaya Log is never control truth. Every resume and recovery path
-reads the control store, the pause and escalation records, or forge
-comments written by the Principal's account. No path reads the Log or the
-per-task driver log back to make a decision. Telemetry entries are
-therefore classified on their own terms. A telemetry defect, such as a
-duplicated `round_started` or a five-second wait for the event's own line
-when the destination records nothing, can add latency or noise, but it
-never changes a transition.
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop/pause-resume.ts contains:export function recoverLoopState( -->
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop/pause-resume.ts contains:export function readPauseState(root: string, task: number): PauseState | null { -->
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop/journal-history.ts contains:export function fetchLoopHistory(prNumber: number | null): ReconstructedJournal { -->
+<!-- AEG:CLAIM: apps/cli/tests/fixtures/dev-review-architecture-invariants.json contains:"id": "INV-096", -->
+The map treats the Vinaya Log as telemetry, never as control truth. The
+recovery reads the audit traced are the control store's loop state
+(`recoverLoopState`), the pause record (`readPauseState`), and comments
+written by the Principal's account (`fetchLoopHistory`). That finding is
+recorded as `INV-096`, a product guarantee, and the Engine path must keep
+it.
+
+<!-- AEG:CLAIM: apps/cli/src/lib/dev-review-loop/round-assess.ts contains:export async function waitForOwnLoopLine( -->
+<!-- AEG:CLAIM: apps/cli/tests/fixtures/dev-review-architecture-invariants.json contains:"id": "INV-111", -->
+Telemetry entries are therefore classified on their own terms (`INV-111`
+and its neighbours). A telemetry defect, such as the per-event wait in
+`waitForOwnLoopLine` for the event's own line, is recorded for the latency
+it adds, and the map records no transition that depends on it.
 
 ## Registers
 
@@ -138,6 +151,7 @@ ruling can, and that ruling's status is then recorded on the entry.
 
 ## Changing the map
 
+<!-- AEG:CLAIM: apps/cli/tests/conformance/dev-review-invariant-coverage.test.ts contains:`unmapped paths: ${unmapped.length}`, -->
 When a loop module or test file is added, removed or renamed, update the
 fixture in the same change: map the file to an invariant or exclude it
 with a reason. When a defect is fixed, keep its entry and set its status
