@@ -94,6 +94,27 @@ const KNOWN_FAILURES: readonly KnownFailure[] = [
     denial:
       'turbo exits 1: "failed to create directory `<main checkout>/.turbo/cache` … Read-only file system" — turbo keeps a linked worktree\'s cache in the main checkout, outside the writable roots'
   },
+  {
+    id: 'bun-install',
+    agent: 'codex',
+    platform: 'linux',
+    denial:
+      'bun install exits 1: "bun is unable to write files to tempdir: EROFS" — its temp directory is outside the writable roots'
+  },
+  {
+    id: 'verify-dispatch',
+    agent: 'codex',
+    platform: 'linux',
+    denial:
+      'verify-dispatch exits 1 on "leftover-detection: stop — 2 commit(s) already ahead of origin/main on this task branch", then "verify-dispatch: NOT READY"'
+  },
+  {
+    id: 'check-all',
+    agent: 'codex',
+    platform: 'linux',
+    denial:
+      'check --all exits 1 on "closes-n: PR body does not contain `Closes #1026`" (no PR body reaches the sandbox); the log outbox also hits "EROFS: read-only file system, mkdir ~/.vinaya"'
+  },
   { id: 'check-dispatch-readiness', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },
   { id: 'verify-dispatch', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },
   { id: 'check-all', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },
