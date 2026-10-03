@@ -40,6 +40,8 @@ import {
   parseClaudeModel,
   parseClaudeResumeId,
   parseClaudeUsage,
+  readClaudeTranscriptUsage,
+  resolveClaudeUsageUnits,
   parseGeminiModel,
   parseGeminiUsage,
   renderClaudeEvent,
@@ -60,6 +62,7 @@ import {
   buildRolePermissions,
   buildCodexExecpolicyRules,
   buildWriteAccessScope,
+  writeAccessHookScript,
   addCodexWritableDirs,
   PERMISSION_POLICY_VERSION,
   codexSpawnEnvExtras,
@@ -68,6 +71,7 @@ import {
   codexBoundaryFailureReason,
   type DispatchTeeRecoveryDeps
 } from '../../src/lib/dispatch.js'
+import { agentConfigProtectedSubpaths } from '../../src/lib/worker-boundary.js'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
@@ -907,6 +911,207 @@ describe('dispatchRole — timeout ceiling', () => {
     expect(usageEvent?.unknown_reason).toBeNull()
     expect(lines.find((l) => l.kind === 'role_attempt')).toMatchObject({ outcome: 'timed_out' })
   }, 10_000)
+})
+
+// A Claude dispatch whose stream ends without a usage line records the usage
+// its session transcript holds instead, and records unknown only with a reason.
+const SESSION_ID = 'a1b2c3d4-0000-4000-8000-000000000001'
+
+function transcriptLine(id: string, input: number, output: number, cacheCreate: number, cacheRead: number): string {
+  return JSON.stringify({
+    type: 'assistant',
+    message: {
+      id,
+      model: 'claude-opus-x',
+      usage: {
+        input_tokens: input,
+        output_tokens: output,
+        cache_creation_input_tokens: cacheCreate,
+        cache_read_input_tokens: cacheRead
+      }
+    }
+  })
+}
+
+function plantTranscript(configDir: string, sessionId: string, lines: string[]): string {
+  const dir = join(configDir, 'projects', '-some-project')
+  mkdirSync(dir, { recursive: true })
+  const file = join(dir, `${sessionId}.jsonl`)
+  writeFileSync(file, `${lines.join('\n')}\n`)
+  return file
+}
+
+describe('readClaudeTranscriptUsage', () => {
+  it('sums input, output and cache once per unique message', () => {
+    const configDir = tempDir('vinaya-transcript-cfg-')
+    plantTranscript(configDir, SESSION_ID, [
+      transcriptLine('m1', 10, 5, 100, 200),
+      transcriptLine('m1', 10, 5, 100, 200),
+      transcriptLine('m2', 1, 2, 3, 4)
+    ])
+    expect(readClaudeTranscriptUsage(SESSION_ID, configDir)).toEqual({
+      units: { input: 11, output: 7, cache: 307 },
+      unknownReason: null
+    })
+  })
+
+  it('is unknown with a reason, never zero, when there is no session id, no file, or no message', () => {
+    const configDir = tempDir('vinaya-transcript-cfg-')
+    const noId = readClaudeTranscriptUsage(null, configDir)
+    expect(noId.units).toEqual({ input: null, output: null, cache: null })
+    expect(noId.unknownReason).toContain('session identifier')
+    const missing = readClaudeTranscriptUsage(SESSION_ID, configDir)
+    expect(missing.units).toEqual({ input: null, output: null, cache: null })
+    expect(missing.unknownReason).toContain('session transcript')
+    plantTranscript(configDir, SESSION_ID, ['not json', JSON.stringify({ type: 'user' })])
+    const empty = readClaudeTranscriptUsage(SESSION_ID, configDir)
+    expect(empty.units).toEqual({ input: null, output: null, cache: null })
+    expect(empty.unknownReason).toContain('no assistant message')
+  })
+
+  it('refuses an identifier that would escape the transcript directory', () => {
+    const configDir = tempDir('vinaya-transcript-cfg-')
+    const outside = join(configDir, 'secret')
+    writeFileSync(`${outside}.jsonl`, `${transcriptLine('m1', 9, 9, 9, 9)}\n`)
+    mkdirSync(join(configDir, 'projects', 'p'), { recursive: true })
+    const r = readClaudeTranscriptUsage('../../secret', configDir)
+    expect(r.units).toEqual({ input: null, output: null, cache: null })
+    expect(r.unknownReason).not.toBeNull()
+  })
+
+  it('refuses a transcript symlinked to a file outside the projects directory', () => {
+    const configDir = tempDir('vinaya-transcript-cfg-')
+    const outsideDir = tempDir('vinaya-transcript-outside-')
+    const outside = join(outsideDir, 'real.jsonl')
+    writeFileSync(outside, `${transcriptLine('m1', 9, 9, 9, 9)}\n`)
+    const dir = join(configDir, 'projects', 'p')
+    mkdirSync(dir, { recursive: true })
+    symlinkSync(outside, join(dir, `${SESSION_ID}.jsonl`))
+    const r = readClaudeTranscriptUsage(SESSION_ID, configDir)
+    expect(r.units).toEqual({ input: null, output: null, cache: null })
+    expect(r.unknownReason).toContain('no transcript for session')
+  })
+})
+
+describe('resolveClaudeUsageUnits', () => {
+  const streamKnown = { units: { input: 1, output: 2, cache: 3 }, unknownReason: null }
+  const streamUnknown = {
+    units: { input: null, output: null, cache: null },
+    unknownReason: 'claude emitted no stream-json line'
+  }
+
+  it('keeps the stream figures and never reads the transcript when the stream carried usage', () => {
+    const configDir = tempDir('vinaya-transcript-cfg-')
+    plantTranscript(configDir, SESSION_ID, [transcriptLine('m1', 999, 999, 999, 999)])
+    expect(resolveClaudeUsageUnits(streamKnown, SESSION_ID, configDir)).toEqual({
+      observation: streamKnown,
+      source: 'stream'
+    })
+  })
+
+  it('uses the transcript alone, labelled as its source, when the stream had none', () => {
+    const configDir = tempDir('vinaya-transcript-cfg-')
+    plantTranscript(configDir, SESSION_ID, [transcriptLine('m1', 10, 5, 1, 2)])
+    expect(resolveClaudeUsageUnits(streamUnknown, SESSION_ID, configDir)).toEqual({
+      observation: { units: { input: 10, output: 5, cache: 3 }, unknownReason: null },
+      source: 'claude-transcript'
+    })
+  })
+
+  it('names both sources in the reason when neither yields usage', () => {
+    const configDir = tempDir('vinaya-transcript-cfg-')
+    const r = resolveClaudeUsageUnits(streamUnknown, SESSION_ID, configDir)
+    expect(r.source).toBe('stream')
+    expect(r.observation.units).toEqual({ input: null, output: null, cache: null })
+    expect(r.observation.unknownReason).toContain('claude emitted no stream-json line')
+    expect(r.observation.unknownReason).toContain('session transcript')
+  })
+})
+
+describe('dispatchRole — transcript usage fallback', () => {
+  const initLine = JSON.stringify({ type: 'system', subtype: 'init', session_id: SESSION_ID })
+
+  it('a clean exit with no usage line records the transcript totals as the claude-transcript source', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    plantTranscript(join(home, '.claude'), SESSION_ID, [
+      transcriptLine('m1', 100, 20, 30, 40),
+      transcriptLine('m1', 100, 20, 30, 40),
+      transcriptLine('m2', 1, 2, 3, 4)
+    ])
+    writeFakeBinary(binDir, 'claude', `#!/bin/sh\ncat > /dev/null\necho '${initLine}'\nexit 0\n`)
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(0)
+    const usageEvents = (outboxLines(home, 'none') as Array<Record<string, unknown>>).filter((l) => l.kind === 'usage')
+    expect(usageEvents).toHaveLength(1)
+    expect(usageEvents[0]).toMatchObject({
+      source: 'claude-transcript',
+      semantics: 'cumulative',
+      units: { input: 101, output: 22, cache: 77 },
+      unknown_reason: null
+    })
+  }, 20_000)
+
+  it('a killed dispatch still records the usage its transcript holds so far', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    plantTranscript(join(home, '.claude'), SESSION_ID, [transcriptLine('m1', 7, 8, 9, 10)])
+    writeFakeBinary(binDir, 'claude', `#!/bin/sh\necho '${initLine}'\ntrap '' TERM\ncat > /dev/null &\nsleep 30\n`)
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ dispatch: { timeoutMs: 2500, killGraceMs: 200 } }))
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(1)
+    const lines = outboxLines(home, 'none') as Array<Record<string, unknown>>
+    expect(lines.find((l) => l.event === 'dispatch_failed')).toMatchObject({ reason: 'timeout' })
+    expect(lines.find((l) => l.kind === 'usage')).toMatchObject({
+      source: 'claude-transcript',
+      units: { input: 7, output: 8, cache: 19 },
+      unknown_reason: null
+    })
+  }, 20_000)
+
+  it('with neither a stream usage line nor a transcript the units are unknown and the reason names both', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    writeFakeBinary(binDir, 'claude', `#!/bin/sh\ncat > /dev/null\necho '${initLine}'\nexit 0\n`)
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(0)
+    const usage = (outboxLines(home, 'none') as Array<Record<string, unknown>>).find((l) => l.kind === 'usage') as {
+      source: string
+      units: Record<string, unknown>
+      unknown_reason: string
+    }
+    expect(usage.source).toBe('claude')
+    expect(usage.units).toEqual({ input: null, output: null, cache: null })
+    expect(usage.unknown_reason).toContain('claude emitted no stream-json line')
+    expect(usage.unknown_reason).toContain('session transcript')
+  }, 20_000)
 })
 
 // O4 — the Vinaya log's `usage` event is the record of a turn's token use now
@@ -3473,7 +3678,7 @@ describe('buildWriteAccessScope — Issue #663, O1 round 2 fix: the real Write/E
   it('developer: a directory scope, realpath-resolved', () => {
     const dir = tempDir('vinaya-write-scope-')
     const scope = buildWriteAccessScope('developer', dir, [])
-    expect(scope).toEqual({ kind: 'directory', allowedDir: realpathSync(dir), extraFiles: [] })
+    expect(scope).toEqual({ kind: 'directory', allowedDir: realpathSync(dir), extraFiles: [], protectedSubpaths: [] })
   })
 
   it('developer: extraFiles (O3, task-files-v1 2, #649) carries this round’s confidence/round-response paths, realpath-resolved, alongside the worktree directory grant', () => {
@@ -3491,7 +3696,8 @@ describe('buildWriteAccessScope — Issue #663, O1 round 2 fix: the real Write/E
     expect(scope).toEqual({
       kind: 'directory',
       allowedDir: realpathSync(dir),
-      extraFiles: [join(realDevDir, '.vinaya-confidence'), join(realDevDir, '.vinaya-round-response')]
+      extraFiles: [join(realDevDir, '.vinaya-confidence'), join(realDevDir, '.vinaya-round-response')],
+      protectedSubpaths: []
     })
   })
 
@@ -3566,7 +3772,127 @@ describe('buildWriteAccessScope — Issue #663, O1 round 2 fix: the real Write/E
 
   it('a directory that does not exist yet degrades to its own raw form rather than throwing', () => {
     const scope = buildWriteAccessScope('developer', '/tmp/does-not-exist-vinaya-663', [])
-    expect(scope).toEqual({ kind: 'directory', allowedDir: '/tmp/does-not-exist-vinaya-663', extraFiles: [] })
+    expect(scope).toEqual({
+      kind: 'directory',
+      allowedDir: '/tmp/does-not-exist-vinaya-663',
+      extraFiles: [],
+      protectedSubpaths: []
+    })
+  })
+
+  it('developer: protectedSubpaths (O3) carries the realpath-resolved agent-config paths the caller named', () => {
+    const dir = tempDir('vinaya-write-scope-protected-')
+    const protectedPath = join(dir, '.claude')
+    const scope = buildWriteAccessScope('developer', dir, [], [], [protectedPath])
+    expect(scope).toEqual({
+      kind: 'directory',
+      allowedDir: realpathSync(dir),
+      extraFiles: [],
+      protectedSubpaths: [join(realpathSync(dir), '.claude')]
+    })
+  })
+})
+
+// O3: the write-access.mjs hook itself DENIES an
+// agent's own configuration path inside the worktree when the caller names
+// it `protectedSubpaths`, and ALLOWS it (the ordinary in-worktree case) when
+// the caller does not — real `node`, real stdin, the same harness the O4
+// "outside worktree DENIES" test above already uses, since this is the SAME
+// hook script, not a second mechanism.
+describe('writeAccessHookScript — O3 agent-configuration protectedSubpaths', () => {
+  type HookDecision = { permissionDecision: string; permissionDecisionReason?: string }
+
+  function runHook(scriptDir: string, runId: string, filePath: string): HookDecision {
+    const scriptPath = join(scriptDir, 'write-access.mjs')
+    writeFileSync(scriptPath, writeAccessHookScript(scriptDir), { mode: 0o600 })
+    const result = spawnBudgeted(
+      [scriptPath],
+      {
+        input: JSON.stringify({ tool_name: 'Write', tool_input: { file_path: filePath } }),
+        encoding: 'utf8',
+        env: { ...process.env, VINAYA_RUN_ID: runId }
+      },
+      'write-access hook'
+    )
+    expect(result.status).toBe(0)
+    return (JSON.parse(result.stdout) as { hookSpecificOutput: HookDecision }).hookSpecificOutput
+  }
+
+  it('denies a write to .claude/settings.json inside the worktree when it is a named protectedSubpath', () => {
+    const scriptDir = tempDir('vinaya-write-access-protected-')
+    const worktree = tempDir('vinaya-write-access-protected-wt-')
+    const runId = randomUUID()
+    const scope = buildWriteAccessScope(
+      'developer',
+      worktree,
+      [],
+      [],
+      agentConfigProtectedSubpaths(worktree, 'claude', false)
+    )
+    writeFileSync(join(scriptDir, `write-access-${runId}.json`), JSON.stringify(scope))
+
+    const decision = runHook(scriptDir, runId, join(realpathSync(worktree), '.claude', 'settings.json'))
+    expect(decision.permissionDecision).toBe('deny')
+    expect(decision.permissionDecisionReason).toMatch(/configuration/)
+
+    // An ordinary file elsewhere in the same worktree stays allowed —
+    // protection is scoped to exactly the named agent-config path.
+    const ordinary = runHook(scriptDir, runId, join(realpathSync(worktree), 'src', 'index.ts'))
+    expect(ordinary.permissionDecision).toBe('allow')
+  })
+
+  it('allows a write to .claude/settings.json when the Surface covers it (protectedSubpaths empty)', () => {
+    const scriptDir = tempDir('vinaya-write-access-covered-')
+    const worktree = tempDir('vinaya-write-access-covered-wt-')
+    const runId = randomUUID()
+    const scope = buildWriteAccessScope(
+      'developer',
+      worktree,
+      [],
+      [],
+      agentConfigProtectedSubpaths(worktree, 'claude', true)
+    )
+    writeFileSync(join(scriptDir, `write-access-${runId}.json`), JSON.stringify(scope))
+
+    const decision = runHook(scriptDir, runId, join(realpathSync(worktree), '.claude', 'settings.json'))
+    expect(decision.permissionDecision).toBe('allow')
+  })
+
+  it('also denies a write to the bare .mcp.json file (Claude)', () => {
+    const scriptDir = tempDir('vinaya-write-access-mcpjson-')
+    const worktree = tempDir('vinaya-write-access-mcpjson-wt-')
+    const runId = randomUUID()
+    const scope = buildWriteAccessScope(
+      'developer',
+      worktree,
+      [],
+      [],
+      agentConfigProtectedSubpaths(worktree, 'claude', false)
+    )
+    writeFileSync(join(scriptDir, `write-access-${runId}.json`), JSON.stringify(scope))
+
+    expect(runHook(scriptDir, runId, join(realpathSync(worktree), '.mcp.json')).permissionDecision).toBe('deny')
+  })
+
+  it("denies a write to Codex's own .codex/ and .agents/ paths the same way", () => {
+    const scriptDir = tempDir('vinaya-write-access-codex-')
+    const worktree = tempDir('vinaya-write-access-codex-wt-')
+    const runId = randomUUID()
+    const scope = buildWriteAccessScope(
+      'developer',
+      worktree,
+      [],
+      [],
+      agentConfigProtectedSubpaths(worktree, 'codex', false)
+    )
+    writeFileSync(join(scriptDir, `write-access-${runId}.json`), JSON.stringify(scope))
+
+    expect(runHook(scriptDir, runId, join(realpathSync(worktree), '.codex', 'config.toml')).permissionDecision).toBe(
+      'deny'
+    )
+    expect(
+      runHook(scriptDir, runId, join(realpathSync(worktree), '.agents', 'skills', 'x', 'SKILL.md')).permissionDecision
+    ).toBe('deny')
   })
 })
 

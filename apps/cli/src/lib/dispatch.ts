@@ -74,6 +74,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   writeFileSync
 } from 'node:fs'
 import { chmodSync, createWriteStream } from 'node:fs'
@@ -94,16 +95,18 @@ import {
   scopeFromSegment,
   tasksExecutionRoot
 } from './run-paths.js'
-import { basename, dirname, isAbsolute, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import {
   CLAUDE_KEYCHAIN_SERVICE,
   CLAUDE_SANDBOX_ALLOWED_DOMAINS,
+  agentConfigProtectedSubpaths,
   buildCodexHooksMarketplace,
   buildWorkerEnv,
   hasSubscriptionLogin,
   REAL_WORKER_BOUNDARY_DEPS,
   resolveClaudeConfinement,
   resolveCodexConfinement,
+  resolveGitCommonDir,
   stageCodexPolicyHome,
   type ClaudeSandboxSettings
 } from './worker-boundary.js'
@@ -296,6 +299,20 @@ export type DispatchOpts = {
     rulingOrdinal?: number | null
     policyDigest?: string | null
   }
+  /**
+   * O3: `true` only when the caller has already
+   * confirmed the task's own Surface `in:` globs cover this agent's own
+   * configuration paths (`AGENT_OWN_CONFIG_GLOBS`) — `dev-review-loop.ts`
+   * resolves this once per round, from the same `resolveTaskSurface` read
+   * its deferral rules already use, and passes it only for the `developer`
+   * role. Omitted/`false` (every other caller, and a task whose Surface
+   * says nothing about them) keeps those paths protected — the safe
+   * default (Traps to avoid: "a task that does not name them keeps the
+   * vendor's protection"). Never resolved inside this module itself: Surface
+   * is an Issue-level fact this generic launcher has no business fetching
+   * on its own.
+   */
+  agentConfigSurfaceCovered?: boolean
 }
 
 /**
@@ -403,43 +420,6 @@ export function addCodexWritableDirs(
     ? ['--config', `sandbox_workspace_write.writable_roots=${JSON.stringify(uniqueDirs)}`]
     : uniqueDirs.flatMap((dir) => ['--add-dir', dir])
   return [...args.slice(0, insertionIndex), ...writableArgs, ...args.slice(insertionIndex)]
-}
-
-/**
- * Ruling 1 fix: Codex's own `.git` protection (`buildCodexSandboxConfigToml`'s
- * doc comment — "some environments keep `.git/` ... read-only even when the
- * rest of the workspace is writable") holds even though `worktreeDir` is
- * Codex's writable primary workspace, so Step 0's `git worktree add -b
- * <branch>` could not lock the new branch's ref — live-reproduced on the
- * Principal's Mac (`fatal: cannot lock ref ... Operation not permitted`).
- *
- * Scoped to exactly the three git-internal directories that operation
- * writes: `refs/` (the new branch's loose ref — a brand-new branch is always
- * written loose, never through `packed-refs`, so that file is never touched
- * here), `logs/` (its reflog), and `worktrees/` (the new linked worktree's
- * own private gitdir, created fresh under here, which already holds ITS OWN
- * `index`/`HEAD`/`ORIG_HEAD`/`logs/HEAD` — granting this one parent root
- * covers all of them without a second, name-the-worktree-in-advance grant).
- * Deliberately never the common dir's top-level `hooks/` or `config` — round
- * 3 security review, HIGH: those are the unconfined driver's own trusted
- * files, and a bare common-dir grant would hand a confined Codex child write
- * access to both.
- *
- * `null`/caught `git` failure resolves to no extra grant — boundary
- * construction's own fail-closed path (Codex's pre-spawn refusal) is the
- * authoritative response to a genuinely broken `git`, not this helper.
- */
-export function codexGitMetadataWritableDirs(worktreeDir: string): string[] {
-  try {
-    const commonDir = execFileSync('git', ['-C', worktreeDir, 'rev-parse', '--git-common-dir'], {
-      encoding: 'utf8'
-    }).trim()
-    if (commonDir === '') return []
-    const absCommonDir = isAbsolute(commonDir) ? commonDir : join(worktreeDir, commonDir)
-    return ['refs', 'logs', 'worktrees'].map((sub) => join(absCommonDir, sub))
-  } catch {
-    return []
-  }
 }
 
 /**
@@ -1502,7 +1482,7 @@ export function buildCodexExecpolicyRules(role: Role): string | null {
 }
 
 export type WriteAccessScope =
-  | { kind: 'directory'; allowedDir: string; extraFiles: string[] }
+  | { kind: 'directory'; allowedDir: string; extraFiles: string[]; protectedSubpaths: string[] }
   | { kind: 'exact-files'; paths: string[] }
 
 /**
@@ -1546,12 +1526,24 @@ export type WriteAccessScope =
  * the hook's resolved comparison — and deny the Developer's own legitimate
  * confidence/round-response write. `realFile` mirrors the hook's exact
  * resolution so both sides compute the identical string.
+ *
+ * `protectedSubpaths` (O3): absolute, inside
+ * `allowedDir`, resolved (realpath'd) the same way `allowedDir` itself is —
+ * the agent's own configuration paths (`.claude/`, `.mcp.json`) to keep
+ * DENIED for Write/Edit even though they sit inside the developer's own
+ * otherwise-granted worktree, when the caller says the task's Surface does
+ * not cover them. The caller (`dispatch.ts`'s `writeDispatchSettings`)
+ * resolves that Surface check; this function stays a generic scope builder
+ * with no opinion of its own about which paths are agent configuration.
+ * Empty (every pre-O3 caller, and a task whose Surface DOES cover these
+ * paths) grants `allowedDir` fully, unmodified.
  */
 export function buildWriteAccessScope(
   role: Role,
   allowedDir: string,
   extraWritableDirs: readonly string[],
-  developerFiles: readonly string[] = []
+  developerFiles: readonly string[] = [],
+  protectedSubpaths: readonly string[] = []
 ): WriteAccessScope | null {
   const real = (p: string): string => {
     try {
@@ -1568,7 +1560,12 @@ export function buildWriteAccessScope(
     }
   }
   if (role === 'developer') {
-    return { kind: 'directory', allowedDir: real(allowedDir), extraFiles: developerFiles.map(realFile) }
+    return {
+      kind: 'directory',
+      allowedDir: real(allowedDir),
+      extraFiles: developerFiles.map(realFile),
+      protectedSubpaths: protectedSubpaths.map(real)
+    }
   }
   if (role === 'code-reviewer' || role === 'security') {
     if (extraWritableDirs.length === 0) return null
@@ -1591,6 +1588,16 @@ export const WRITE_OUTSIDE_WORKTREE_DENY_REASON =
  */
 export const WRITE_OUTSIDE_HANDOFF_FILES_DENY_REASON =
   "Dispatched sessions cannot write or edit a file outside their own hand-off files — this policy grants exactly findings.txt/report.txt/objectives.txt in the work directory this role was given and denies everything else, rather than falling through to the host's own classifier for an out-of-scope path."
+
+/**
+ * O3: the `directory` scope's own deny reason for
+ * a path inside the worktree that is ALSO inside `scope.protectedSubpaths`
+ * — the agent's own configuration paths, kept denied unless the task's
+ * Surface names them as this task's own work (`buildWriteAccessScope`'s own
+ * doc comment).
+ */
+export const WRITE_PROTECTED_AGENT_CONFIG_DENY_REASON =
+  "Dispatched sessions cannot write or edit this agent's own configuration path — this task's Surface does not name it, so it stays protected even though it sits inside the developer's own worktree."
 
 /**
  * The `PreToolUse` hook that grants a real `Write`/`Edit` call — matched on
@@ -1629,8 +1636,17 @@ export const WRITE_OUTSIDE_HANDOFF_FILES_DENY_REASON =
  * one of `scope.extraFiles` — this round's confidence and round-response
  * paths, outside the worktree — before falling through to the deny above.
  * Never a directory grant: only these exact, driver-named files.
+ *
+ * **`directory` scope's own `protectedSubpaths` (O3).** A path inside the worktree that is ALSO inside one of
+ * `scope.protectedSubpaths` (the agent's own configuration paths) denies
+ * with its own reason (`WRITE_PROTECTED_AGENT_CONFIG_DENY_REASON`), checked
+ * BEFORE the general in-worktree allow — so a `.claude/**`/`.mcp.json` path
+ * this task's Surface does not name stays denied even though the rest of
+ * the worktree is granted. Never affects `extraFiles` — the driver's own
+ * confidence/round-response files are named by the driver, never by this
+ * protection.
  */
-function writeAccessHookScript(dir: string): string {
+export function writeAccessHookScript(dir: string): string {
   return [
     "const fs = require('fs');",
     "const path = require('path');",
@@ -1652,18 +1668,22 @@ function writeAccessHookScript(dir: string): string {
     '      const realParent = fs.realpathSync(path.dirname(filePath));',
     '      real = path.join(realParent, path.basename(filePath));',
     '    } catch { real = filePath; }',
+    '    const underPath = (target, base) => target === base || target.startsWith(base.endsWith(path.sep) ? base : base + path.sep);',
     '    let allowed = false;',
+    '    let protectedMatch = false;',
     "    if (scope.kind === 'directory') {",
-    '      const base = scope.allowedDir.endsWith(path.sep) ? scope.allowedDir : scope.allowedDir + path.sep;',
-    '      allowed =',
-    '        real === scope.allowedDir ||',
-    '        real.startsWith(base) ||',
-    '        (Array.isArray(scope.extraFiles) && scope.extraFiles.includes(real));',
+    '      const inDir = underPath(real, scope.allowedDir);',
+    '      const isExtraFile = Array.isArray(scope.extraFiles) && scope.extraFiles.includes(real);',
+    '      protectedMatch =',
+    '        Array.isArray(scope.protectedSubpaths) && scope.protectedSubpaths.some((p) => underPath(real, p));',
+    '      allowed = (inDir && !protectedMatch) || isExtraFile;',
     "    } else if (scope.kind === 'exact-files' && Array.isArray(scope.paths)) {",
     '      allowed = scope.paths.includes(real);',
     '    }',
     '    if (allowed) {',
     allowOutput("in-scope for this role's written write-access policy"),
+    "    } else if (scope.kind === 'directory' && protectedMatch) {",
+    denyOutput(WRITE_PROTECTED_AGENT_CONFIG_DENY_REASON),
     "    } else if (scope.kind === 'directory') {",
     denyOutput(WRITE_OUTSIDE_WORKTREE_DENY_REASON),
     "    } else if (scope.kind === 'exact-files') {",
@@ -1757,7 +1777,17 @@ export function writeDispatchSettings(
    * never a second file a confined `claude --settings` would also have to
    * be told to load.
    */
-  confinement: ClaudeSandboxSettings | null = null
+  confinement: ClaudeSandboxSettings | null = null,
+  /**
+   * O3: ABSOLUTE agent-configuration paths
+   * (`.claude/`, `.mcp.json`, resolved by the caller from this task's own
+   * Surface — `dev-review-loop.ts`'s `agentOwnConfigProtectedSubpaths`) to
+   * keep write-denied even though they sit inside the developer's own
+   * worktree. Empty (every pre-O3 caller, and a task whose Surface covers
+   * them) grants the worktree fully, unmodified — see
+   * `buildWriteAccessScope`'s own doc comment.
+   */
+  agentConfigProtectedSubpaths: readonly string[] = []
 ): string | null {
   try {
     const dir = join(runPath(runtimeDirForThisRepo(), scope, { area: 'hooks' }), role)
@@ -1773,7 +1803,13 @@ export function writeDispatchSettings(
       const sourcesPath = join(dir, `documentation-sources-${runId}.json`)
       writeFileSync(sourcesPath, JSON.stringify(documentation), { mode: 0o600 })
     }
-    const writeAccessScope = buildWriteAccessScope(role, allowedDir, extraWritableDirs, developerFiles)
+    const writeAccessScope = buildWriteAccessScope(
+      role,
+      allowedDir,
+      extraWritableDirs,
+      developerFiles,
+      agentConfigProtectedSubpaths
+    )
     const writeAccessScriptPath = join(dir, 'write-access.mjs')
     const preToolUseHooks = [
       {
@@ -2012,6 +2048,106 @@ export function parseClaudeUsageUnits(stdout: string): UsageObservation {
   return {
     units: NO_USAGE_UNITS,
     unknownReason: 'claude emitted no stream-json line carrying a `usage.input_tokens`/`usage.output_tokens` pair'
+  }
+}
+
+/** The `usage` event's `source` for figures read from a Claude session transcript rather than from the dispatch's own stream. */
+export const CLAUDE_TRANSCRIPT_USAGE_SOURCE = 'claude-transcript'
+
+/** A transcript larger than this is not read: a dispatch never waits on a huge file, it records unknown with that reason. */
+const MAX_TRANSCRIPT_BYTES = 64 * 1024 * 1024
+
+/** The shape of a session identifier Claude writes; anything else never reaches a path join. */
+const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/
+
+/**
+ * Reads a Claude dispatch's token usage from the session's own transcript —
+ * `<configDir>/projects/<project>/<sessionId>.jsonl`, which Claude appends to
+ * as the session runs, so it holds the usage of a dispatch that was killed,
+ * timed out or crashed before its stream printed a terminal usage line. The
+ * file is located by the session identifier alone (the project directory name
+ * is Claude's own encoding of the working directory and is not re-derived), the
+ * identifier must match `SESSION_ID_PATTERN`, and the resolved file must sit
+ * inside the real `projects` directory. Only summed units leave this function —
+ * never a prompt or a message. Units are summed once per unique message
+ * (`summarizeTranscript`); `cache` is creation plus read, as the stream reader
+ * does. A missing, oversized, unreadable or message-less transcript is
+ * unknown with a reason, never zero.
+ */
+export function readClaudeTranscriptUsage(sessionId: string | null, configDir: string): UsageObservation {
+  const unknown = (why: string): UsageObservation => ({
+    units: NO_USAGE_UNITS,
+    unknownReason: `session transcript fallback: ${why}`
+  })
+  if (sessionId === null)
+    return unknown('the dispatch never learned a session identifier, so no transcript could be located')
+  if (!SESSION_ID_PATTERN.test(sessionId))
+    return unknown('the session identifier is not a plain identifier, so no transcript path was formed')
+
+  let projectsDir: string
+  try {
+    projectsDir = realpathSync(join(configDir, 'projects'))
+  } catch {
+    return unknown(`no projects directory under ${configDir}`)
+  }
+  let projectDirs: string[]
+  try {
+    projectDirs = readdirSync(projectsDir)
+  } catch {
+    return unknown('the projects directory could not be listed')
+  }
+  for (const projectDir of projectDirs) {
+    let file: string
+    try {
+      file = realpathSync(join(projectsDir, projectDir, `${sessionId}.jsonl`))
+    } catch {
+      continue
+    }
+    if (!file.startsWith(`${projectsDir}/`)) continue
+    let text: string
+    try {
+      if (statSync(file).size > MAX_TRANSCRIPT_BYTES) return unknown('the transcript is larger than the read bound')
+      text = readFileSync(file, 'utf8')
+    } catch {
+      return unknown('the transcript could not be read')
+    }
+    const summary = summarizeTranscript(text)
+    if (summary.messageCount === 0) return unknown('the transcript held no assistant message with usage')
+    const c = summary.components
+    return {
+      units: {
+        input: c.inputTokens,
+        output: c.outputTokens,
+        cache: c.cacheCreationInputTokens + c.cacheReadInputTokens
+      },
+      unknownReason: null
+    }
+  }
+  return unknown(`no transcript for session ${sessionId} under ${projectsDir}`)
+}
+
+/**
+ * The stream's own usage when it carried one, else — for Claude only — the
+ * session transcript's. Never both: they describe the same session, so the
+ * transcript is a fallback, never an addition. When neither yields usage the
+ * units stay unknown and the reason names both sources that were tried.
+ */
+export function resolveClaudeUsageUnits(
+  streamUnits: UsageObservation,
+  sessionId: string | null,
+  configDir: string
+): { observation: UsageObservation; source: 'stream' | typeof CLAUDE_TRANSCRIPT_USAGE_SOURCE } {
+  if (streamUnits.unknownReason === null) return { observation: streamUnits, source: 'stream' }
+  const fromTranscript = readClaudeTranscriptUsage(sessionId, configDir)
+  if (fromTranscript.unknownReason === null) {
+    return { observation: fromTranscript, source: CLAUDE_TRANSCRIPT_USAGE_SOURCE }
+  }
+  return {
+    observation: {
+      units: NO_USAGE_UNITS,
+      unknownReason: `${streamUnits.unknownReason}; ${fromTranscript.unknownReason}`
+    },
+    source: 'stream'
   }
 }
 
@@ -3533,14 +3669,21 @@ export async function dispatchRole(
   const codexScratchDir = codexRequireIsolation
     ? realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-codex-sandbox-')))
     : null
-  // Ruling 1 fix: Step 0's `git worktree add` runs INSIDE this same confined
-  // dispatch, before the task worktree exists — see `codexGitMetadataWritableDirs`'s
-  // own doc comment for why `refs/`/`logs/`/`worktrees/` under the git common
-  // dir need an explicit grant despite `worktreeDir` already being Codex's
-  // writable primary workspace.
-  const codexGitWritableDirs = codexRequireIsolation
-    ? codexGitMetadataWritableDirs(opts.cwd ?? repoRoot() ?? process.cwd())
-    : []
+  // Round 3 Principal ruling: the driver now creates the task worktree,
+  // outside any sandbox, before every Developer dispatch — round 1 included
+  // (`dev-review-loop.ts`'s `createTaskWorktree`) — so `opts.cwd` is always
+  // the real worktree here, never the repo root a round-1 bootstrap used to
+  // fall back to. A linked worktree's `.git` resolves into the repository's
+  // git common dir, which git itself writes on an ordinary `status`/`commit`
+  // (the index lock, `HEAD`, `ORIG_HEAD`), not only on a ref-creating
+  // `worktree add` — `resolveGitCommonDir` (`worker-boundary.ts`) is the SAME
+  // resolver `buildClaudeSandboxSettings` already uses for Claude, reused
+  // here rather than re-derived, in place of the narrower, Codex-only
+  // `codexGitMetadataWritableDirs` this replaces. `null` when `opts.cwd` is
+  // absent (no worktree to confine to) or `git` cannot resolve one —
+  // contributes nothing extra to the grant, the same best-effort posture
+  // every other optional grant in this module already takes.
+  const codexGitCommonDir = codexRequireIsolation && opts.cwd !== undefined ? resolveGitCommonDir(opts.cwd) : null
   const vendorArgs = opts.resumeId ? vendor.resumeArgs(opts.resumeId, opts.model) : vendor.args(opts.model)
   const baseArgs =
     agent === 'codex'
@@ -3549,7 +3692,7 @@ export async function dispatchRole(
           [
             ...(opts.extraWritableDirs ?? []),
             ...(codexScratchDir !== null ? [codexScratchDir] : []),
-            ...codexGitWritableDirs
+            ...(codexGitCommonDir !== null ? [codexGitCommonDir] : [])
           ],
           opts.resumeId !== undefined,
           opts.developerFiles ?? []
@@ -3627,7 +3770,10 @@ export async function dispatchRole(
       ? resolveCodexConfinement({
           role,
           agent,
-          worktreeDir: opts.cwd ?? repoRoot() ?? process.cwd(),
+          // Round 3 Principal ruling: never a repo-root bootstrap fallback —
+          // the driver always creates and passes the task worktree, round 1
+          // included, before an unattended Codex dispatch starts.
+          worktreeDir: opts.cwd ?? process.cwd(),
           scratchDir: codexScratchDir,
           allowedHosts: CLAUDE_SANDBOX_ALLOWED_DOMAINS
         })
@@ -3672,7 +3818,8 @@ export async function dispatchRole(
           permissionAllowedDir,
           opts.extraWritableDirs ?? [],
           opts.developerFiles ?? [],
-          claudeConfinement?.confined === true ? claudeConfinement.settings : null
+          claudeConfinement?.confined === true ? claudeConfinement.settings : null,
+          agentConfigProtectedSubpaths(permissionAllowedDir, agent, opts.agentConfigSurfaceCovered === true)
         )
       : null
   const codexHooksPath =
@@ -4058,7 +4205,11 @@ export async function dispatchRole(
               // Claude Code keeps its own working files under
               // `/tmp/claude-<uid>` and ignores `TMPDIR` for them, so its
               // own override must name the same granted scratch directory.
-              CLAUDE_CODE_TMPDIR: claudeConfinement.scratchDir
+              CLAUDE_CODE_TMPDIR: claudeConfinement.scratchDir,
+              // O2: see the Codex branch's own comment on this same guard,
+              // above — `resolveGitFirstPath`'s result, puts the real `git`
+              // ahead of the `/usr/bin/git` xcrun shim on macOS.
+              ...(claudeConfinement.pathOverride !== undefined ? { PATH: claudeConfinement.pathOverride } : {})
             })
           : {
               ...process.env,
@@ -4361,7 +4512,20 @@ export async function dispatchRole(
       // the same buffer, and reused by whichever branch below actually logs.
       const reportedModel = vendor.parseModel(stdoutBuf)
       const attemptModel = reportedModel ?? resolvedModel
-      const usageUnits = vendor.parseUsageUnits(stdoutBuf)
+      const streamUsageUnits = vendor.parseUsageUnits(stdoutBuf)
+      // The stream is the primary source. Only a Claude dispatch whose stream
+      // carried no usage line falls back to the session's own transcript,
+      // located by the session id this dispatch already records.
+      const resolvedUsage =
+        agent === 'claude'
+          ? resolveClaudeUsageUnits(
+              streamUsageUnits,
+              launch.resumeId ?? vendor.parseResumeId(stdoutBuf),
+              process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
+            )
+          : { observation: streamUsageUnits, source: 'stream' as const }
+      const usageUnits = resolvedUsage.observation
+      const usageSource = resolvedUsage.source === 'stream' ? agent : resolvedUsage.source
       // O5: this dispatch never produced a working vendor
       // session — checked against the SAME two sources every other resumeId
       // read in this function already uses (the stream-bound `launch.resumeId`,
@@ -4400,7 +4564,7 @@ export async function dispatchRole(
           event: 'observed',
           payload: {},
           model: attemptModel,
-          source: agent,
+          source: usageSource,
           semantics: 'cumulative',
           units: usageUnits.units,
           unknown_reason: usageUnits.unknownReason,
@@ -4478,7 +4642,7 @@ export async function dispatchRole(
           event: 'observed',
           payload: {},
           model: attemptModel,
-          source: agent,
+          source: usageSource,
           semantics: 'cumulative',
           units: usageUnits.units,
           unknown_reason: usageUnits.unknownReason,
@@ -4571,7 +4735,7 @@ export async function dispatchRole(
         event: 'observed',
         payload: {},
         model: attemptModel,
-        source: agent,
+        source: usageSource,
         semantics: 'cumulative',
         units: usageUnits.units,
         unknown_reason: usageUnits.unknownReason,

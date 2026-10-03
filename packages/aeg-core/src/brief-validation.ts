@@ -249,11 +249,22 @@ export function checkDocUpdateList(prBody: string): BriefSectionResult {
   return headingCheck(prBody, '(?:documentation|doc)[- ]update(?:\\s+list)?', 'Documentation-update list')
 }
 
+/**
+ * O1: Step 0 no longer creates the worktree
+ * (`git worktree add`) — the driver does that before the first Developer
+ * dispatch, and Step 0 only ENTERS the already-existing worktree
+ * (`cd .worktrees/<branch> && …`). Accepts EITHER shape so a brief rendered
+ * before this task (still carrying `git worktree add`) and one rendered
+ * after it (carrying only `cd .worktrees/`) both pass — this gate judges
+ * presence of a Step 0 worktree marker, never which generation rendered it.
+ */
 export function checkWorktreeStep0(prBody: string): BriefSectionResult {
-  if (/git worktree add/.test(prBody)) return { status: 'pass', errors: [] }
+  if (/git worktree add/.test(prBody) || /cd \.worktrees\//.test(prBody)) return { status: 'pass', errors: [] }
   return {
     status: 'fail',
-    errors: ['brief-validation worktree Step 0: no `git worktree add` command found in the PR body.']
+    errors: [
+      'brief-validation worktree Step 0: no `git worktree add` or `cd .worktrees/` command found in the PR body.'
+    ]
   }
 }
 
@@ -504,14 +515,21 @@ export function isBriefShaped(prBody: string): boolean {
 /**
  * The branch a brief declares for itself, read from its Step 0 command. At
  * authoring time there is no `BRANCH` env var and no branch yet — but every
- * brief carries `git worktree add <path> -b <branch> origin/main`, so the brief
- * states what it is going to be, and `verify-brief --body-file` can grade it as
- * that. Matched on the RAW body, not `stripCode`'s output: Step 0 lives inside a
- * fence in every real brief, so the stripped text never contains it.
+ * brief carries either `git worktree add <path> -b <branch> origin/main`
+ * (an older rendering) or `cd .worktrees/<branch> && …` (O1: the driver now
+ * creates the worktree, so Step 0 only enters it), so the brief states what
+ * it is going to be either way, and
+ * `verify-brief --body-file` can grade it as that. Matched on the RAW body,
+ * not `stripCode`'s output: Step 0 lives inside a fence in every real brief,
+ * so the stripped text never contains it. The `-b` form is tried first so an
+ * OLD brief quoting both shapes (unlikely, but never assumed impossible)
+ * still reads the worktree-creation branch, not a later, unrelated `cd`.
  */
 export function inferBranchFromBody(prBody: string): string {
-  const m = prBody.match(/git worktree add\s+\S+\s+-b\s+(\S+)/)
-  return m?.[1] ?? ''
+  const created = prBody.match(/git worktree add\s+\S+\s+-b\s+(\S+)/)
+  if (created) return created[1] ?? ''
+  const entered = prBody.match(/cd \.worktrees\/(\S+?)(?=\s|&&|$)/)
+  return entered?.[1] ?? ''
 }
 
 /**
@@ -783,9 +801,15 @@ function isCommandBlock(content: string): boolean {
   return (COMMAND_WORDS as readonly string[]).includes(commandWordOf(firstNonBlankLine(content)))
 }
 
-/** The Step 0 exemption — `git worktree add …` is a command with no separate output block by convention. */
+/**
+ * The Step 0 exemption — a command with no separate output block by
+ * convention. Matches either generation: `git worktree add …` (an older
+ * rendering) or `cd .worktrees/… && …` (O1: the driver now creates the
+ * worktree, Step 0 only enters it).
+ */
 function isStep0Block(content: string): boolean {
-  return firstNonBlankLine(content).startsWith('git worktree add')
+  const first = firstNonBlankLine(content)
+  return first.startsWith('git worktree add') || first.startsWith('cd .worktrees/')
 }
 
 /**

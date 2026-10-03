@@ -16,7 +16,7 @@ import { chmodSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runPath } from '../../../src/lib/run-paths'
-import { codexGitMetadataWritableDirs } from '../../../src/lib/dispatch'
+import { addCodexWritableDirs } from '../../../src/lib/dispatch'
 import {
   buildWorkerEnv,
   buildWorkerSandboxProfile,
@@ -37,6 +37,13 @@ import {
   checkLinuxSandboxTools,
   CLAUDE_SANDBOX_ALLOWED_DOMAINS,
   LINUX_CLAUDE_SANDBOX_TOOLS,
+  gitConfigReadOnlyPaths,
+  resolveGitFirstPath,
+  resolveGitCommonDir,
+  agentOwnConfigSubpaths,
+  agentConfigProtectedSubpaths,
+  CLAUDE_OWN_CONFIG_SUBPATHS,
+  CODEX_OWN_CONFIG_SUBPATHS,
   buildCodexSandboxConfigToml,
   resolveCodexConfinement,
   checkLinuxCodexSandboxTools,
@@ -129,6 +136,28 @@ function fakeBinaryIn(binDir: string): string {
   writeFileSync(fakeBinary, '#!/bin/sh\nexit 0\n')
   chmodSync(fakeBinary, 0o755)
   return fakeBinary
+}
+
+/**
+ * Principal ruling 1, failure 2: a REAL git repo with a REAL linked
+ * worktree (`git worktree add`) — a plain temp directory never exercises
+ * `resolveGitCommonDir`'s own `git -C <dir> rev-parse --git-common-dir`,
+ * since that call fails outright on a non-worktree and contributes nothing.
+ */
+function initRealGitWorktree(): { repoDir: string; worktreeDir: string; gitCommonDir: string } {
+  const repoDir = tempDir('vinaya-wb-git-common-repo-')
+  execFileSync('git', ['init', '-b', 'main', repoDir])
+  execFileSync('git', ['-C', repoDir, 'config', 'user.email', 'test@example.com'])
+  execFileSync('git', ['-C', repoDir, 'config', 'user.name', 'Test'])
+  execFileSync('git', ['-C', repoDir, 'commit', '--allow-empty', '-m', 'initial'])
+  const worktreeDir = join(repoDir, '.worktrees', 'task', 'x', '1')
+  execFileSync('git', ['-C', repoDir, 'worktree', 'add', worktreeDir, '-b', 'task/x/1'])
+  const gitCommonDir = realpathSync(
+    execFileSync('git', ['-C', worktreeDir, 'rev-parse', '--path-format=absolute', '--git-common-dir'], {
+      encoding: 'utf8'
+    }).trim()
+  )
+  return { repoDir, worktreeDir, gitCommonDir }
 }
 
 describe('buildWorkerEnv — O2 allowlist, never a spread', () => {
@@ -485,6 +514,167 @@ describe('resolveWorkerBoundaryLaunch — O1 Apple developer-directory grant (Is
     expect(result.ok).toBe(true)
     if (!result.ok) return
     result.launch.cleanup()
+  })
+})
+
+describe('gitConfigReadOnlyPaths / resolveGitFirstPath (O2)', () => {
+  it('names exactly ~/.gitconfig and ~/.config/git, under the given real home', () => {
+    const realHome = tempDir('vinaya-wb-gitconfig-home-')
+    expect(gitConfigReadOnlyPaths(realHome)).toEqual([join(realHome, '.gitconfig'), join(realHome, '.config', 'git')])
+  })
+
+  it('prepends the developer bin dir ahead of the existing PATH when a developer dir is given', () => {
+    const path = resolveGitFirstPath({ PATH: '/usr/bin:/bin' }, '/Library/Developer/CommandLineTools')
+    expect(path).toBe('/Library/Developer/CommandLineTools/usr/bin:/usr/bin:/bin')
+  })
+
+  it('leaves PATH unchanged when there is no developer dir to prepend', () => {
+    expect(resolveGitFirstPath({ PATH: '/usr/bin:/bin' }, null)).toBe('/usr/bin:/bin')
+  })
+
+  it('returns the bare developer bin dir when the source PATH is unset', () => {
+    expect(resolveGitFirstPath({}, '/Library/Developer/CommandLineTools')).toBe(
+      '/Library/Developer/CommandLineTools/usr/bin'
+    )
+  })
+})
+
+describe('agentOwnConfigSubpaths / agentConfigProtectedSubpaths (O3)', () => {
+  it("names exactly .claude and .mcp.json for 'claude', and .codex and .agents for 'codex'", () => {
+    expect(agentOwnConfigSubpaths('claude')).toEqual([...CLAUDE_OWN_CONFIG_SUBPATHS])
+    expect(agentOwnConfigSubpaths('codex')).toEqual([...CODEX_OWN_CONFIG_SUBPATHS])
+  })
+
+  it('names nothing for a vendor with no agent-native configuration path of its own', () => {
+    expect(agentOwnConfigSubpaths('gemini')).toEqual([])
+  })
+
+  it('resolves absolute protected paths, inside the worktree, when the Surface does not cover them', () => {
+    expect(agentConfigProtectedSubpaths('/wt', 'claude', false)).toEqual([
+      join('/wt', '.claude'),
+      join('/wt', '.mcp.json')
+    ])
+    expect(agentConfigProtectedSubpaths('/wt', 'codex', false)).toEqual([join('/wt', '.codex'), join('/wt', '.agents')])
+  })
+
+  it('returns an empty list when the Surface covers them — nothing extra denied', () => {
+    expect(agentConfigProtectedSubpaths('/wt', 'claude', true)).toEqual([])
+    expect(agentConfigProtectedSubpaths('/wt', 'codex', true)).toEqual([])
+  })
+})
+
+describe('resolveWorkerBoundaryLaunch — O2 git-config read grant and PATH override', () => {
+  it('grants ~/.gitconfig and ~/.config/git read-only, never write', () => {
+    const allowedDir = tempDir('vinaya-wb-gitconfig-allowed-')
+    const binDir = tempDir('vinaya-wb-gitconfig-bin-')
+    const fakeBinary = fakeBinaryIn(binDir)
+    const realHome = realpathSync(homedir())
+    const result = resolveWorkerBoundaryLaunch(
+      { binaryPath: fakeBinary, args: [], allowedDir, extraWritableDirs: [] },
+      AVAILABLE_DEPS
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    try {
+      const profile = readFileSync(result.launch.args[1] as string, 'utf8')
+      for (const p of gitConfigReadOnlyPaths(realHome)) {
+        expect(profile).toContain(`(subpath "${p}")`)
+      }
+      const rwIdx = profile.indexOf('(allow file-read* file-write*')
+      const rwEnd = profile.indexOf('))', rwIdx) + 2
+      expect(profile.slice(rwIdx, rwEnd)).not.toContain('.gitconfig')
+    } finally {
+      result.launch.cleanup()
+    }
+  })
+
+  it('carries a pathOverride on the resolved launch, resolved via resolveGitFirstPath for this host', () => {
+    const allowedDir = tempDir('vinaya-wb-pathoverride-allowed-')
+    const binDir = tempDir('vinaya-wb-pathoverride-bin-')
+    const fakeBinary = fakeBinaryIn(binDir)
+    const result = resolveWorkerBoundaryLaunch(
+      { binaryPath: fakeBinary, args: [], allowedDir, extraWritableDirs: [] },
+      AVAILABLE_DEPS
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    try {
+      // On this (non-darwin) authoring host `resolveDeveloperDir` resolves
+      // `null`, so this is the allowlisted PATH unchanged — the same value
+      // `resolveGitFirstPath(process.env, null)` returns.
+      expect(result.launch.pathOverride).toBe(process.env.PATH)
+    } finally {
+      result.launch.cleanup()
+    }
+  })
+})
+
+describe('resolveWorkerBoundaryLaunch — O4 git common dir grant for a linked worktree (Principal ruling 1)', () => {
+  it('grants the resolved git common dir read+write so git works inside a linked worktree', () => {
+    const { repoDir, worktreeDir, gitCommonDir } = initRealGitWorktree()
+    const binDir = tempDir('vinaya-wb-gitcommon-bin-')
+    const fakeBinary = fakeBinaryIn(binDir)
+    const result = resolveWorkerBoundaryLaunch(
+      { binaryPath: fakeBinary, args: [], allowedDir: worktreeDir, extraWritableDirs: [] },
+      AVAILABLE_DEPS
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    try {
+      const profile = readFileSync(result.launch.args[1] as string, 'utf8')
+      const rwIdx = profile.indexOf('(allow file-read* file-write*')
+      const rwEnd = profile.indexOf('))', rwIdx) + 2
+      expect(profile.slice(rwIdx, rwEnd)).toContain(`(subpath "${gitCommonDir}")`)
+    } finally {
+      result.launch.cleanup()
+      rmSync(repoDir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('resolveWorkerBoundaryLaunch — O3 agent-configuration protectedSubpaths', () => {
+  it('keeps a named subpath write-denied even though it sits inside the writable allowedDir — still readable', () => {
+    const allowedDir = tempDir('vinaya-wb-protected-allowed-')
+    const binDir = tempDir('vinaya-wb-protected-bin-')
+    const fakeBinary = fakeBinaryIn(binDir)
+    const protectedDir = join(realpathSync(allowedDir), '.codex')
+    const result = resolveWorkerBoundaryLaunch(
+      { binaryPath: fakeBinary, args: [], allowedDir, extraWritableDirs: [], protectedSubpaths: [protectedDir] },
+      AVAILABLE_DEPS
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    try {
+      const profile = readFileSync(result.launch.args[1] as string, 'utf8')
+      // Denied for write, and that deny rule sits AFTER the broad
+      // `readWriteDirs` allow so it wins (Seatbelt's own later-rule-wins
+      // ordering for the same operation).
+      const allowIdx = profile.indexOf('(allow file-read* file-write*')
+      const denyIdx = profile.indexOf(`(deny file-write*\n    (subpath "${protectedDir}")`)
+      expect(denyIdx).toBeGreaterThan(allowIdx)
+      // Still readable: no `file-read*` deny names this path.
+      expect(profile).not.toContain(`(deny file-read*\n    (subpath "${protectedDir}")`)
+    } finally {
+      result.launch.cleanup()
+    }
+  })
+
+  it('omitted/empty leaves allowedDir fully read+write, unmodified (Surface covers the agent-config path)', () => {
+    const allowedDir = tempDir('vinaya-wb-unprotected-allowed-')
+    const binDir = tempDir('vinaya-wb-unprotected-bin-')
+    const fakeBinary = fakeBinaryIn(binDir)
+    const result = resolveWorkerBoundaryLaunch(
+      { binaryPath: fakeBinary, args: [], allowedDir, extraWritableDirs: [] },
+      AVAILABLE_DEPS
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    try {
+      const profile = readFileSync(result.launch.args[1] as string, 'utf8')
+      expect(profile).not.toContain(join(realpathSync(allowedDir), '.codex'))
+    } finally {
+      result.launch.cleanup()
+    }
   })
 })
 
@@ -2786,7 +2976,24 @@ describe('buildClaudeSandboxSettings — O2 the generated sandbox block', () => 
     const settings = buildClaudeSandboxSettings(request({ worktreeDir, scratchDir }))
 
     expect(settings.sandbox.filesystem.allowWrite).toEqual([realpathSync(worktreeDir), realpathSync(scratchDir)])
-    expect(settings.sandbox.filesystem.allowRead).toEqual([realpathSync(worktreeDir), realpathSync(scratchDir)])
+    // O2: the two git-config read-only carve-outs ride along on every
+    // `allowRead` list now — never write (`allowWrite`, above, is unaffected)
+    // — plus the active developer dir when the caller named one (omitted
+    // here: `request()` passes no `developerDir`, so this call is the
+    // `null` default, exactly the pre-O2 shape plus the two git-config
+    // paths).
+    const expectGitConfigPaths = gitConfigReadOnlyPaths(realpathSync(homedir())).map((p) => {
+      try {
+        return realpathSync(p)
+      } catch {
+        return p
+      }
+    })
+    expect(settings.sandbox.filesystem.allowRead).toEqual([
+      realpathSync(worktreeDir),
+      realpathSync(scratchDir),
+      ...expectGitConfigPaths
+    ])
     // Round 2 review, MAJOR: `scratchDir` always sits under `os.tmpdir()`
     // (`dispatch.ts`'s `claudeScratchDir`), so that root must be denied
     // too, or a SIBLING task's own scratch directory — nested in the same
@@ -2794,6 +3001,16 @@ describe('buildClaudeSandboxSettings — O2 the generated sandbox block', () => 
     expect(settings.sandbox.filesystem.denyRead.sort()).toEqual(
       [realpathSync(homedir()), realpathSync(tmpdir())].sort()
     )
+  })
+
+  it('O2: also re-permits the active developer directory for read when the caller names one — never write', () => {
+    const worktreeDir = tempDir('vinaya-claude-settings-wt-')
+    const scratchDir = tempDir('vinaya-claude-settings-scratch-')
+    const developerDir = tempDir('vinaya-claude-settings-devdir-')
+    const settings = buildClaudeSandboxSettings(request({ worktreeDir, scratchDir }), developerDir)
+
+    expect(settings.sandbox.filesystem.allowRead).toContain(realpathSync(developerDir))
+    expect(settings.sandbox.filesystem.allowWrite).not.toContain(realpathSync(developerDir))
   })
 
   it('folds a matching Read/Write/Edit deny entry for both the real home and the real OS temp root into permissionsDeny', () => {
@@ -2818,6 +3035,18 @@ describe('buildClaudeSandboxSettings — O2 the generated sandbox block', () => 
     const settings = buildClaudeSandboxSettings(request({ worktreeDir: linkedWorktree, scratchDir }))
     expect(settings.sandbox.filesystem.allowWrite).toContain(realpathSync(realDir))
     expect(settings.sandbox.filesystem.allowWrite).not.toContain(linkedWorktree)
+  })
+
+  it('O4: grants the resolved git common dir of a REAL linked worktree both read AND write (Principal ruling 1)', () => {
+    const { repoDir, worktreeDir, gitCommonDir } = initRealGitWorktree()
+    const scratchDir = tempDir('vinaya-claude-settings-scratch-')
+    try {
+      const settings = buildClaudeSandboxSettings(request({ worktreeDir, scratchDir }))
+      expect(settings.sandbox.filesystem.allowWrite).toContain(gitCommonDir)
+      expect(settings.sandbox.filesystem.allowRead).toContain(gitCommonDir)
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true })
+    }
   })
 })
 
@@ -2871,7 +3100,8 @@ describe('resolveClaudeConfinement — O1/O2/O5 the Claude half of the provider-
   it('is always confined on darwin — needs nothing installed', () => {
     const result = resolveClaudeConfinement(request(), {
       platform: 'darwin',
-      linuxTools: { available: false, missing: ['bwrap', 'socat'] }
+      linuxTools: { available: false, missing: ['bwrap', 'socat'] },
+      developerDir: null
     })
     expect(result.ok).toBe(true)
     expect(result.confined).toBe(true)
@@ -2881,7 +3111,8 @@ describe('resolveClaudeConfinement — O1/O2/O5 the Claude half of the provider-
   it('is confined on linux when bwrap and socat are both present', () => {
     const result = resolveClaudeConfinement(request(), {
       platform: 'linux',
-      linuxTools: { available: true, missing: [] }
+      linuxTools: { available: true, missing: [] },
+      developerDir: null
     })
     expect(result.confined).toBe(true)
   })
@@ -2889,7 +3120,8 @@ describe('resolveClaudeConfinement — O1/O2/O5 the Claude half of the provider-
   it('falls back unconfined, with a warning naming the missing tool, on linux without bubblewrap — never requires an install', () => {
     const result = resolveClaudeConfinement(request(), {
       platform: 'linux',
-      linuxTools: { available: false, missing: ['bwrap'] }
+      linuxTools: { available: false, missing: ['bwrap'] },
+      developerDir: null
     })
     expect(result.confined).toBe(false)
     if (!result.confined) {
@@ -2904,7 +3136,8 @@ describe('resolveClaudeConfinement — O1/O2/O5 the Claude half of the provider-
   it('falls back unconfined, with a warning naming both missing tools, on linux without either', () => {
     const result = resolveClaudeConfinement(request(), {
       platform: 'linux',
-      linuxTools: { available: false, missing: ['bwrap', 'socat'] }
+      linuxTools: { available: false, missing: ['bwrap', 'socat'] },
+      developerDir: null
     })
     expect(result.confined).toBe(false)
     if (!result.confined) {
@@ -2917,7 +3150,8 @@ describe('resolveClaudeConfinement — O1/O2/O5 the Claude half of the provider-
   it('falls back unconfined, naming the platform, on a platform with no named mechanism', () => {
     const result = resolveClaudeConfinement(request(), {
       platform: 'win32',
-      linuxTools: { available: false, missing: ['bwrap', 'socat'] }
+      linuxTools: { available: false, missing: ['bwrap', 'socat'] },
+      developerDir: null
     })
     expect(result.confined).toBe(false)
     if (!result.confined) {
@@ -2928,7 +3162,11 @@ describe('resolveClaudeConfinement — O1/O2/O5 the Claude half of the provider-
 
   it('a resolved, confined launch carries the SAME scratchDir the request named', () => {
     const req = request()
-    const result = resolveClaudeConfinement(req, { platform: 'darwin', linuxTools: { available: false, missing: [] } })
+    const result = resolveClaudeConfinement(req, {
+      platform: 'darwin',
+      linuxTools: { available: false, missing: [] },
+      developerDir: null
+    })
     expect(result.confined).toBe(true)
     if (result.confined) expect(result.scratchDir).toBe(req.scratchDir)
   })
@@ -2979,44 +3217,28 @@ describe('buildCodexSandboxConfigToml — O1/O2/O5 the generated config.toml', (
   })
 })
 
-describe('codexGitMetadataWritableDirs — Ruling 1 fix, Step 0 git worktree add inside the Codex sandbox', () => {
-  function makeGitRepo(): string {
-    const dir = tempDir('vinaya-codex-git-common-')
-    const g = (args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' })
-    g(['init', '-q', '-b', 'main'])
-    g(['config', 'user.email', 't@example.com'])
-    g(['config', 'user.name', 'test'])
-    writeFileSync(join(dir, 'a.txt'), 'x\n')
-    g(['add', '-A'])
-    g(['commit', '-qm', 'init'])
-    return dir
-  }
-
-  it('grants exactly the git common dir refs/logs/worktrees subdirectories, never hooks or config', () => {
-    const repo = makeGitRepo()
-    const commonDir = realpathSync(join(repo, '.git'))
-    expect(codexGitMetadataWritableDirs(repo)).toEqual([
-      join(commonDir, 'refs'),
-      join(commonDir, 'logs'),
-      join(commonDir, 'worktrees')
-    ])
+describe('resolveGitCommonDir — round 3 Principal ruling: the ONE resolver both Claude and Codex grant, replacing codexGitMetadataWritableDirs', () => {
+  it('resolves the real git common dir from inside an already-created linked worktree, whose own .git is a gitlink file', () => {
+    const { worktreeDir, gitCommonDir } = initRealGitWorktree()
+    expect(resolveGitCommonDir(worktreeDir)).toBe(gitCommonDir)
   })
 
-  it('resolves the SAME shared common dir from inside an already-created linked worktree, whose own .git is a gitlink file', () => {
-    const repo = makeGitRepo()
-    const worktreeDir = join(repo, '.worktrees', 'task', '1')
-    execFileSync('git', ['worktree', 'add', '-b', 'task/1', worktreeDir], { cwd: repo, stdio: 'ignore' })
-    const commonDir = realpathSync(join(repo, '.git'))
-    expect(codexGitMetadataWritableDirs(worktreeDir)).toEqual([
-      join(commonDir, 'refs'),
-      join(commonDir, 'logs'),
-      join(commonDir, 'worktrees')
-    ])
+  it('resolves the SAME common dir from the main checkout itself, not only from a linked worktree', () => {
+    const { repoDir, gitCommonDir } = initRealGitWorktree()
+    expect(resolveGitCommonDir(repoDir)).toBe(gitCommonDir)
   })
 
-  it('returns no grant when the directory is not inside a git repository at all — boundary construction, not this helper, is the fail-closed response', () => {
+  it('returns null when the directory is not inside a git repository at all — boundary construction, not this helper, is the fail-closed response', () => {
     const notARepo = tempDir('vinaya-codex-not-a-repo-')
-    expect(codexGitMetadataWritableDirs(notARepo)).toEqual([])
+    expect(resolveGitCommonDir(notARepo)).toBeNull()
+  })
+
+  it("addCodexWritableDirs threads the resolved common dir into Codex's own --add-dir writable roots, never scoped to just refs/logs/worktrees", () => {
+    const { worktreeDir, gitCommonDir } = initRealGitWorktree()
+    const commonDir = resolveGitCommonDir(worktreeDir)
+    expect(commonDir).not.toBeNull()
+    const args = addCodexWritableDirs(['exec'], [commonDir as string], false)
+    expect(args).toEqual(['exec', '--add-dir', gitCommonDir])
   })
 })
 
@@ -3057,7 +3279,8 @@ describe('resolveCodexConfinement — O1/O2/O4/O5 the Codex half of the provider
   it('is always available on darwin — needs nothing installed', () => {
     const result = resolveCodexConfinement(request(), {
       platform: 'darwin',
-      linuxTools: { available: false, missing: ['bwrap'] }
+      linuxTools: { available: false, missing: ['bwrap'] },
+      developerDir: null
     })
     expect(result.ok).toBe(true)
     if (result.ok) expect(result.configToml).toContain('sandbox_mode = "workspace-write"')
@@ -3066,7 +3289,8 @@ describe('resolveCodexConfinement — O1/O2/O4/O5 the Codex half of the provider
   it('is available on linux when bwrap is present', () => {
     const result = resolveCodexConfinement(request(), {
       platform: 'linux',
-      linuxTools: { available: true, missing: [] }
+      linuxTools: { available: true, missing: [] },
+      developerDir: null
     })
     expect(result.ok).toBe(true)
   })
@@ -3074,7 +3298,8 @@ describe('resolveCodexConfinement — O1/O2/O4/O5 the Codex half of the provider
   it('O4: refuses — never a silent unconfined fallback — on linux without bwrap, naming the missing capability', () => {
     const result = resolveCodexConfinement(request(), {
       platform: 'linux',
-      linuxTools: { available: false, missing: ['bwrap'] }
+      linuxTools: { available: false, missing: ['bwrap'] },
+      developerDir: null
     })
     expect(result.ok).toBe(false)
     if (!result.ok) {
@@ -3086,7 +3311,8 @@ describe('resolveCodexConfinement — O1/O2/O4/O5 the Codex half of the provider
   it('O4: refuses, naming the platform, on a platform with no named mechanism', () => {
     const result = resolveCodexConfinement(request(), {
       platform: 'win32',
-      linuxTools: { available: false, missing: ['bwrap'] }
+      linuxTools: { available: false, missing: ['bwrap'] },
+      developerDir: null
     })
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.reason).toContain('win32')
@@ -3095,7 +3321,8 @@ describe('resolveCodexConfinement — O1/O2/O4/O5 the Codex half of the provider
   it('a resolved launch carries the SAME allowed hosts the request named, mapped to "allow"', () => {
     const result = resolveCodexConfinement(request(), {
       platform: 'darwin',
-      linuxTools: { available: true, missing: [] }
+      linuxTools: { available: true, missing: [] },
+      developerDir: null
     })
     expect(result.ok).toBe(true)
     if (result.ok) {

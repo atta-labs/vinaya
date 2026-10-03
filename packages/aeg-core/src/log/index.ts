@@ -151,20 +151,28 @@ export type {
 } from './sync'
 export {
   catchesAndEscapes,
+  changeSizeBands,
   checkOutcomes,
   completionByModel,
+  confidenceVsOutcome,
   determinism,
   NO_LABELS_REASON,
+  outcomesByInstructionVersion,
   QUESTIONS,
+  recurringFindings,
   reviewerStrictness,
   timeByUnit,
   usageByUnitAndRole
 } from './questions'
 export type {
   CatchesAnswer,
+  ChangeSizeAnswer,
+  ChangeSizeBand,
   CheckOutcome,
   ChecksAnswer,
   CompletionAnswer,
+  ConfidenceAnswer,
+  ConfidenceOutcome,
   Coverage,
   DeterminismAnswer,
   FailureRecord,
@@ -172,12 +180,16 @@ export type {
   HumanLabelKind,
   JudgmentAnswer,
   ModelCompletion,
+  OutcomesByVersionAnswer,
   Question,
   QuestionId,
+  RecurringFinding,
+  RecurringFindingsAnswer,
   ReviewerStrictness,
   RoleUsage,
   RoundsToGreen,
   SeverityFindings,
+  SizeBandOutcome,
   Span,
   TimeAnswer,
   UnitTime,
@@ -185,5 +197,6 @@ export type {
   UnknownFigure,
   UsageAnswer,
   UsageTotals,
-  VerdictFindings
+  VerdictFindings,
+  VersionOutcome
 } from './questions'

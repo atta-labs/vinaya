@@ -736,6 +736,13 @@ function sbSubpathAllows(operations: string, dirs: readonly string[]): string {
   return `(allow ${operations}\n    ${rules})`
 }
 
+/** `sbSubpathAllows`'s own `(deny ...)` counterpart — O3's agent-configuration carve-out (below) is the one caller: a `(subpath ...)` DENY placed after `readWriteDirs`'s own allow wins for exactly these paths, Seatbelt's own later-rule-wins-for-the-same-operation ordering, the same way `writableFiles`/the Keychain denial already rely on it. */
+function sbSubpathDenies(operations: string, dirs: readonly string[]): string {
+  if (dirs.length === 0) return ''
+  const rules = dirs.map((d) => `(subpath ${sbLiteral(d)})`).join('\n    ')
+  return `(deny ${operations}\n    ${rules})`
+}
+
 /**
  * `(literal ...)`, never `(subpath ...)` — round 4 review, BLOCKER fix: a
  * directory a confined role must be able to TRAVERSE INTO (so the kernel
@@ -890,6 +897,22 @@ export function buildWorkerSandboxProfile(opts: {
    * caller alongside this list.
    */
   writableFiles?: readonly string[]
+  /**
+   * O3: absolute directories to keep WRITE-DENIED even though they sit
+   * inside `readWriteDirs` (the confined role's own worktree) — an agent's
+   * own configuration directories (`.codex/`, `.agents/`) when the task's
+   * Surface does not name them, so a dispatched Codex session cannot
+   * rewrite its own MCP registration or plugin/skill configuration unless
+   * the brief's own work is exactly that. Still READABLE (only `file-write*`
+   * is denied, never `file-read*`) — the caller (`resolveWorkerBoundaryLaunch`)
+   * passes an empty list when the Surface covers them, so no extra rule is
+   * added at all and the broad `readWriteDirs` grant applies unmodified.
+   * Rendered via `sbSubpathDenies`, placed AFTER `readWriteDirs`'s own
+   * allow so this later, more specific deny wins for exactly these paths —
+   * the identical "later same-operation rule wins" ordering `writableFiles`
+   * (above) already relies on for its own, narrower carve-out.
+   */
+  protectedSubpaths?: readonly string[]
   execAllowDirs: readonly string[]
   runtimeDir: string
   sshSockCanon: string
@@ -980,6 +1003,14 @@ export function buildWorkerSandboxProfile(opts: {
     ';; later rule wins for exactly these paths, matching the ordering',
     ';; `sbLiteralMetadataAllows` already relies on for directory children.',
     sbLiteralAllows('file-read* file-write*', opts.writableFiles ?? []),
+    '',
+    ";; O3: an agent's own configuration paths stay write-denied even though",
+    ";; they sit inside `readWriteDirs` above, unless the caller's own",
+    ";; `protectedSubpaths` list is empty (the task's Surface covers them) —",
+    ";; see `protectedSubpaths`'s own doc comment. Still readable; only",
+    ';; `file-write*` is named. Placed after every write-grant rule above so',
+    ';; this later, more specific deny wins for exactly these paths.',
+    sbSubpathDenies('file-write*', opts.protectedSubpaths ?? []),
     '',
     ';; Network (round 3 security review, HIGH): denied by default, allowed',
     ';; ONLY on ports 80/443 — a real Worker must reach the model runtime',
@@ -1078,6 +1109,8 @@ export type WorkerBoundaryLaunch = {
   oauthConfigDir: string | null
   codexHomeDir: string | null
   codexAccessToken: string | null
+  /** O2: `resolveGitFirstPath`'s own result for this launch's host — the caller (`dispatch.ts`) overrides the confined child's `PATH` env with this value, so a bare `git` resolves the real binary ahead of the `/usr/bin/git` shim. `sourceEnv.PATH` unchanged when there is no developer dir to prepend. */
+  pathOverride: string | undefined
 }
 
 export type WorkerBoundaryResolution = { ok: true; launch: WorkerBoundaryLaunch } | { ok: false; reason: string }
@@ -1107,6 +1140,119 @@ function resolveRealDeveloperDir(): string | null {
   try {
     const out = execFileSync('xcode-select', ['-p'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
     return out.length > 0 && existsSync(out) ? realpathSync(out) : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * O2: `<developerDir>/usr/bin` — the directory `resolveRealDeveloperDir`'s
+ * own doc comment names as where the REAL `git` (and every other `/usr/bin`
+ * developer-tool stub's real target) actually lives on the declared
+ * supported host. `null` when there is no developer dir to derive one from.
+ */
+function developerBinDir(developerDir: string | null): string | null {
+  return developerDir ? join(developerDir, 'usr', 'bin') : null
+}
+
+/**
+ * O2: both vendor adapters' confined child is already granted read+exec on
+ * `developerDir` (Claude via `buildClaudeSandboxSettings`'s `filesystem.allowRead`,
+ * Codex via `resolveWorkerBoundaryLaunch`'s `execAllowDirs`) — but a grant
+ * alone does not make a bare `git` invocation USE the real binary there: PATH
+ * order decides which `git` a plain exec resolves, and the real host's
+ * ambient PATH still lists `/usr/bin` (the `xcrun` shim) ahead of it. The
+ * shim itself still execs fine under either grant, but on first use it
+ * `dlopen`s `libxcrun.dylib` and writes an `xcrun` cache under the user's
+ * real temp folder — a write outside the worktree/scratch directory either
+ * confinement grants, found live on 2026-10-01 and again on 2026-10-03 (this
+ * task's own Boundary). Prepending `developerBinDir(developerDir)` to
+ * `sourceEnv.PATH` makes a bare `git` resolve the real binary FIRST, so the
+ * shim is never reached at all. `undefined`/unchanged when there is nothing
+ * to prepend (off darwin, or `xcode-select` unresolved) — the same
+ * best-effort posture every other optional grant in this module already
+ * takes for a missing `git`/`bun`/developer dir.
+ */
+export function resolveGitFirstPath(
+  sourceEnv: Readonly<Record<string, string | undefined>>,
+  developerDir: string | null
+): string | undefined {
+  const bin = developerBinDir(developerDir)
+  if (!bin) return sourceEnv.PATH
+  return sourceEnv.PATH ? `${bin}:${sourceEnv.PATH}` : bin
+}
+
+/**
+ * O2: the two git-configuration paths every confined role must be able to
+ * READ, never write, so a plain `git` command inside the worktree still
+ * resolves the operator's own identity, aliases and `[include]` directives —
+ * `~/.gitconfig` (the file both adapters' own HOME-deny rule previously
+ * denied outright) and `~/.config/git` (the XDG config directory, holding a
+ * second `config`/`attributes`/`ignore`). Read-only: nothing inside a
+ * confined dispatch is trusted to rewrite the operator's own git
+ * configuration. Named as two exact paths, never the whole real `HOME` —
+ * the same narrow, named-grant discipline every other carve-out in this
+ * module already applies to the real home.
+ */
+export function gitConfigReadOnlyPaths(realHome: string): readonly string[] {
+  return [join(realHome, '.gitconfig'), join(realHome, '.config', 'git')]
+}
+
+/** O3: the subpaths, relative to a task's own worktree, Claude's own configuration lives at — the Developer's `.mcp.json` registration and its own `.claude/` directory (commands, hooks, settings). */
+export const CLAUDE_OWN_CONFIG_SUBPATHS = ['.claude', '.mcp.json'] as const
+
+/** O3: the subpaths, relative to a task's own worktree, Codex's own configuration lives at — its `.codex/` directory and the `.agents/` tree this repo's own skill/plugin emitters write into. */
+export const CODEX_OWN_CONFIG_SUBPATHS = ['.codex', '.agents'] as const
+
+/** `CLAUDE_OWN_CONFIG_SUBPATHS`/`CODEX_OWN_CONFIG_SUBPATHS` for the named agent, or `[]` for a vendor with no agent-native configuration path of its own (`gemini` today). */
+export function agentOwnConfigSubpaths(agent: string): readonly string[] {
+  if (agent === 'claude') return CLAUDE_OWN_CONFIG_SUBPATHS
+  if (agent === 'codex') return CODEX_OWN_CONFIG_SUBPATHS
+  return []
+}
+
+/**
+ * O3: the ABSOLUTE paths, inside `worktreeDir`, a confined dispatch's own
+ * write grant must keep DENIED — this agent's own configuration subpaths,
+ * UNLESS `surfaceCovered` says the task's own Surface `in:` globs already
+ * name them as this task's own work, in which case `[]` (nothing extra
+ * denied; the worktree's own blanket grant applies unmodified). The one
+ * function both adapters' dispatch wiring calls to resolve the same caller
+ * input (`DispatchOpts.agentConfigSurfaceCovered`) into the shape each
+ * adapter's own write-gating mechanism takes — `WriteAccessScope.protectedSubpaths`
+ * for Claude, `WorkerBoundaryLaunchOpts.protectedSubpaths` for Codex.
+ */
+export function agentConfigProtectedSubpaths(worktreeDir: string, agent: string, surfaceCovered: boolean): string[] {
+  if (surfaceCovered) return []
+  return agentOwnConfigSubpaths(agent).map((rel) => join(worktreeDir, rel))
+}
+
+/**
+ * Principal ruling 1, failure 2: a linked worktree's `.git` is a FILE
+ * pointing at this real directory (`<repo>/.git/worktrees/<branch>`), not a
+ * directory of its own — every git operation inside the worktree (`status`,
+ * `diff`, `log`, the branch-creation push's own `branch -u`) opens it, so a
+ * confinement that grants only `worktreeDir` leaves git reporting "fatal:
+ * not a git repository" the moment it needs to read or lock anything there.
+ * Resolved fresh, from INSIDE `worktreeDir`, the same best-effort way
+ * `resolveGitExecPath` below resolves its own binary — `null` on any
+ * failure (no `git`, or `worktreeDir` not actually a worktree yet), which
+ * simply contributes nothing extra to the grant rather than widening it on a
+ * guess.
+ *
+ * Round 3 Principal ruling: exported so `dispatch.ts` can thread the SAME
+ * resolved grant into Codex's `sandbox_workspace_write.writable_roots`
+ * (`addCodexWritableDirs`) that Claude's own `buildClaudeSandboxSettings`
+ * already uses — one resolver, both vendors — in place of the narrower,
+ * Codex-only `codexGitMetadataWritableDirs` this replaces.
+ */
+export function resolveGitCommonDir(worktreeDir: string): string | null {
+  try {
+    const out = execFileSync('git', ['-C', worktreeDir, 'rev-parse', '--path-format=absolute', '--git-common-dir'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    }).trim()
+    return out.length > 0 ? realpathSync(out) : null
   } catch {
     return null
   }
@@ -1285,6 +1431,19 @@ export type WorkerBoundaryLaunchOpts = {
    * dispatch that reuses this shared, unscoped directory.
    */
   extraReadOnlyDirs?: readonly string[]
+  /**
+   * O3: ABSOLUTE directories, inside `allowedDir`, to keep write-DENIED even
+   * though `allowedDir` itself is otherwise granted read+write — an agent's
+   * own configuration directories (Codex's `.codex/`, `.agents/`) when the
+   * task's Surface does not name them (the caller resolves that check;
+   * this module stays a generic confinement primitive with no opinion of
+   * its own about Surface or any directory's internal layout, the same
+   * posture `extraWritableDirs`'s own doc comment already states). Omitted
+   * or empty (every pre-O3 caller) grants `allowedDir` fully, unmodified —
+   * the steady-state case. See `buildWorkerSandboxProfile`'s own
+   * `protectedSubpaths` for the rendered Seatbelt rule.
+   */
+  protectedSubpaths?: readonly string[]
   /**
    * Round-1 Developer bootstrap only (round 2 review, CRITICAL): when given
    * (as directory names relative to `allowedDir`, e.g. `['.git', '.worktrees']`),
@@ -1608,18 +1767,37 @@ export function resolveWorkerBoundaryLaunch(
     // child is ever spawned). Taking absolute paths rather than a root plus
     // subpaths keeps that true now that a task's run files and the
     // telemetry outbox live under two different roots.
+    // O2: read-only, named exactly — never the whole real `HOME` this
+    // profile otherwise denies outright. `gitConfigReadOnlyPaths` names the
+    // file/dir by relative suffix; resolved the same "realpath when it
+    // already exists, else leave the join exact" way `.worktrees` already
+    // is, above, since `~/.config/git` may not exist on every host.
+    const gitConfigPaths = gitConfigReadOnlyPaths(realHome).map((p) =>
+      resolveExistingOrJoined(realHome, p.slice(realHome.length + 1))
+    )
+    // Principal ruling 1, failure 2: a linked worktree's `.git` resolves
+    // into the main repository's git common dir — granted read+write (never
+    // read-only) because git itself writes there (the index lock, `HEAD`,
+    // `ORIG_HEAD`) on an ordinary `status`/`commit`, not only on an explicit
+    // worktree operation. `null` (a host with no `git`, or `allowedDirReal`
+    // not actually a worktree — the reviewer's own scratch copy case) adds
+    // nothing, same best-effort posture every other optional grant here
+    // takes.
+    const gitCommonDir = resolveGitCommonDir(allowedDirReal)
     const readOnlyDirs = Array.from(
       new Set([
         ...(opts.bootstrapWritableSubpaths ? [allowedDirReal] : []),
         ...vinayaReadOnlyDirs,
-        ...runtimeReadOnlyDirs
+        ...runtimeReadOnlyDirs,
+        ...gitConfigPaths
       ])
     )
     const readWriteDirs = Array.from(
       new Set([
         ...(opts.bootstrapWritableSubpaths ? bootstrapWriteDirs : [allowedDirReal]),
         scratchTmpDir,
-        ...vinayaWritableDirs
+        ...vinayaWritableDirs,
+        ...(gitCommonDir ? [gitCommonDir] : [])
       ])
     )
 
@@ -1690,6 +1868,7 @@ export function resolveWorkerBoundaryLaunch(
       readWriteDirs,
       metadataOnlyDirs: vinayaWritableParents,
       writableFiles: vinayaWritableFiles,
+      protectedSubpaths: (opts.protectedSubpaths ?? []).map(canonical),
       execAllowDirs,
       runtimeDir,
       sshSockCanon: resolveSshSockCanon(),
@@ -1717,7 +1896,8 @@ export function resolveWorkerBoundaryLaunch(
         tmpDir: scratchTmpDir,
         oauthConfigDir,
         codexHomeDir,
-        codexAccessToken
+        codexAccessToken,
+        pathOverride: resolveGitFirstPath(process.env, developerDir)
       }
     }
   } catch (error) {
@@ -1862,7 +2042,10 @@ export type ClaudeSandboxSettings = {
  * otherwise make the sandbox's own resolved-path check disagree with the
  * literal string this settings file names.
  */
-export function buildClaudeSandboxSettings(request: ConfinementRequest): ClaudeSandboxSettings {
+export function buildClaudeSandboxSettings(
+  request: ConfinementRequest,
+  developerDir: string | null = null
+): ClaudeSandboxSettings {
   const real = (p: string): string => {
     try {
       return realpathSync(p)
@@ -1875,6 +2058,24 @@ export function buildClaudeSandboxSettings(request: ConfinementRequest): ClaudeS
   const realHome = real(homedir())
   const realTmpRoot = real(tmpdir())
   const denyRoots = realTmpRoot === realHome ? [realHome] : [realHome, realTmpRoot]
+  // O2: read-only carve-outs re-permitting exactly the git-config paths and
+  // the active Apple developer directory (never write) despite `denyRead`
+  // naming the whole real home above — the same "named, narrow carve-out
+  // inside a broader deny" shape `worktreeDir`/`scratchDir` already use on
+  // this same list. The developer dir needs read here (not only exec) so a
+  // confined Bash subprocess can actually load the real `git` binary and its
+  // adjacent `libxcrun.dylib` once `resolveGitFirstPath` points PATH at it.
+  const gitConfigPaths = gitConfigReadOnlyPaths(realHome).map(real)
+  const extraAllowRead = [...gitConfigPaths, ...(developerDir ? [real(developerDir)] : [])]
+  // Principal ruling 1, failure 2: a linked worktree's `.git` resolves into
+  // the main repository's git common dir — granted read AND write (git
+  // itself writes the index lock/`HEAD`/`ORIG_HEAD` there on an ordinary
+  // `status`/`commit`, not only on an explicit worktree operation), the
+  // same way `worktreeDir`/`scratchDir` already are, rather than folded
+  // into the read-only `extraAllowRead` carve-out above. `null` (no `git`,
+  // or `worktreeDir` not actually a worktree) adds nothing.
+  const gitCommonDir = resolveGitCommonDir(worktreeDir)
+  const extraReadWrite = gitCommonDir ? [real(gitCommonDir)] : []
   return {
     sandbox: {
       enabled: true,
@@ -1882,8 +2083,8 @@ export function buildClaudeSandboxSettings(request: ConfinementRequest): ClaudeS
       allowUnsandboxedCommands: false,
       network: { allowedDomains: [...request.allowedHosts] },
       filesystem: {
-        allowWrite: [worktreeDir, scratchDir],
-        allowRead: [worktreeDir, scratchDir],
+        allowWrite: [worktreeDir, scratchDir, ...extraReadWrite],
+        allowRead: [worktreeDir, scratchDir, ...extraAllowRead, ...extraReadWrite],
         denyRead: denyRoots
       }
     },
@@ -1897,6 +2098,8 @@ export type ConfinementResolution =
       readonly confined: true
       readonly settings: ClaudeSandboxSettings
       readonly scratchDir: string
+      /** O2: `resolveGitFirstPath`'s own result — the caller overrides the confined child's `PATH` env with this value. `sourceEnv.PATH` unchanged off darwin or with no developer dir resolved. */
+      readonly pathOverride: string | undefined
     }
   | {
       readonly ok: true
@@ -1909,11 +2112,13 @@ export type ConfinementResolution =
 export type ConfinementPlatformDeps = {
   readonly platform: NodeJS.Platform
   readonly linuxTools: LinuxSandboxToolCheck
+  /** O2: the active Apple developer directory (`resolveRealDeveloperDir`) — injectable so a non-Mac test host can assert the PATH-prepend/read-grant behavior without a real `xcode-select`. `null` off darwin or when unresolved, exactly like every other optional grant in this module. */
+  readonly developerDir: string | null
 }
 
-/** Real platform/tool facts — `process.platform` plus a fresh `checkLinuxSandboxTools()` read. A caller wanting a stable answer across one dispatch reads it once and threads the result, the same posture `detectRealHost` already documents for the Seatbelt path. */
+/** Real platform/tool/developer-dir facts — `process.platform`, a fresh `checkLinuxSandboxTools()` read, and a fresh `resolveRealDeveloperDir()` read. A caller wanting a stable answer across one dispatch reads it once and threads the result, the same posture `detectRealHost` already documents for the Seatbelt path. */
 export function realConfinementPlatformDeps(): ConfinementPlatformDeps {
-  return { platform: process.platform, linuxTools: checkLinuxSandboxTools() }
+  return { platform: process.platform, linuxTools: checkLinuxSandboxTools(), developerDir: resolveRealDeveloperDir() }
 }
 
 /**
@@ -1942,12 +2147,25 @@ export function resolveClaudeConfinement(
   request: ConfinementRequest,
   deps: ConfinementPlatformDeps = realConfinementPlatformDeps()
 ): ConfinementResolution {
+  const pathOverride = resolveGitFirstPath(process.env, deps.developerDir)
   if (deps.platform === 'darwin') {
-    return { ok: true, confined: true, settings: buildClaudeSandboxSettings(request), scratchDir: request.scratchDir }
+    return {
+      ok: true,
+      confined: true,
+      settings: buildClaudeSandboxSettings(request, deps.developerDir),
+      scratchDir: request.scratchDir,
+      pathOverride
+    }
   }
   if (deps.platform === 'linux') {
     if (deps.linuxTools.available) {
-      return { ok: true, confined: true, settings: buildClaudeSandboxSettings(request), scratchDir: request.scratchDir }
+      return {
+        ok: true,
+        confined: true,
+        settings: buildClaudeSandboxSettings(request, deps.developerDir),
+        scratchDir: request.scratchDir,
+        pathOverride
+      }
     }
     return {
       ok: true,
@@ -2074,9 +2292,18 @@ export type CodexConfinementResolution =
       readonly reason: string
     }
 
-/** Real platform/tool facts for Codex's own mechanism — mirrors `realConfinementPlatformDeps`, over `checkLinuxCodexSandboxTools` rather than Claude's tool list, so the two never share one (possibly stale) cached answer. */
+/**
+ * Real platform/tool facts for Codex's own mechanism — mirrors
+ * `realConfinementPlatformDeps`, over `checkLinuxCodexSandboxTools` rather
+ * than Claude's tool list, so the two never share one (possibly stale)
+ * cached answer. `developerDir` is always `null` here: `resolveCodexConfinement`
+ * never reads it (Codex's own `buildCodexSandboxConfigToml` carries no PATH
+ * override — that is `dispatch.ts`'s Claude-only `resolveGitFirstPath`
+ * concern) — the field exists only so Codex can share `ConfinementPlatformDeps`
+ * with Claude's own resolver rather than needing a second, near-identical type.
+ */
 export function realCodexConfinementPlatformDeps(): ConfinementPlatformDeps {
-  return { platform: process.platform, linuxTools: checkLinuxCodexSandboxTools() }
+  return { platform: process.platform, linuxTools: checkLinuxCodexSandboxTools(), developerDir: null }
 }
 
 /**

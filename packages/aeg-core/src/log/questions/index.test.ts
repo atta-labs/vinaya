@@ -3,6 +3,7 @@ import { createMemoryCache } from '../sync'
 import { catchesAndEscapes } from './catches'
 import { checkOutcomes } from './checks'
 import { completionByModel } from './completion'
+import { changeSizeBands, confidenceVsOutcome, outcomesByInstructionVersion, recurringFindings } from './convergence'
 import { determinism } from './determinism'
 import { QUESTIONS } from './index'
 import { reviewerStrictness } from './judgment'
@@ -10,9 +11,12 @@ import { timeByUnit } from './time'
 import { usageByUnitAndRole } from './usage'
 
 describe('QUESTIONS', () => {
-  it('holds one entry per question under its number: q1 through q7, skipping none registered yet', () => {
-    expect(Object.keys(QUESTIONS)).toEqual(['q1', 'q2', 'q3', 'q4', 'q5', 'q6', 'q7'])
-    for (const [id, question] of Object.entries(QUESTIONS)) expect(id).toBe(`q${question.number}`)
+  it('holds one entry per question under its number — q1 through q10 — plus the confidence comparison, skipping none registered yet', () => {
+    expect(Object.keys(QUESTIONS)).toEqual(['q1', 'q2', 'q3', 'q4', 'q5', 'q6', 'q7', 'q8', 'q9', 'q10', 'confidence'])
+    for (const [id, question] of Object.entries(QUESTIONS)) {
+      if (id === 'confidence') expect(question.number).toBeNull()
+      else expect(id).toBe(`q${question.number}`)
+    }
   })
 
   it('registers each question as the function that answers it', () => {
@@ -23,6 +27,10 @@ describe('QUESTIONS', () => {
     expect(QUESTIONS.q5.run).toBe(catchesAndEscapes)
     expect(QUESTIONS.q6.run).toBe(checkOutcomes)
     expect(QUESTIONS.q7.run).toBe(determinism)
+    expect(QUESTIONS.q8.run).toBe(recurringFindings)
+    expect(QUESTIONS.q9.run).toBe(outcomesByInstructionVersion)
+    expect(QUESTIONS.q10.run).toBe(changeSizeBands)
+    expect(QUESTIONS.confidence.run).toBe(confidenceVsOutcome)
   })
 
   // q5 and q6 always name an unknown label-dependent figure when run with no labels (O5), and q7's
