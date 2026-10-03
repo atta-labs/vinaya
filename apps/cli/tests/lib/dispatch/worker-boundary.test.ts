@@ -132,6 +132,28 @@ function fakeBinaryIn(binDir: string): string {
   return fakeBinary
 }
 
+/**
+ * Principal ruling 1, failure 2: a REAL git repo with a REAL linked
+ * worktree (`git worktree add`) — a plain temp directory never exercises
+ * `resolveGitCommonDir`'s own `git -C <dir> rev-parse --git-common-dir`,
+ * since that call fails outright on a non-worktree and contributes nothing.
+ */
+function initRealGitWorktree(): { repoDir: string; worktreeDir: string; gitCommonDir: string } {
+  const repoDir = tempDir('vinaya-wb-git-common-repo-')
+  execFileSync('git', ['init', '-b', 'main', repoDir])
+  execFileSync('git', ['-C', repoDir, 'config', 'user.email', 'test@example.com'])
+  execFileSync('git', ['-C', repoDir, 'config', 'user.name', 'Test'])
+  execFileSync('git', ['-C', repoDir, 'commit', '--allow-empty', '-m', 'initial'])
+  const worktreeDir = join(repoDir, '.worktrees', 'task', 'x', '1')
+  execFileSync('git', ['-C', repoDir, 'worktree', 'add', worktreeDir, '-b', 'task/x/1'])
+  const gitCommonDir = realpathSync(
+    execFileSync('git', ['-C', worktreeDir, 'rev-parse', '--path-format=absolute', '--git-common-dir'], {
+      encoding: 'utf8'
+    }).trim()
+  )
+  return { repoDir, worktreeDir, gitCommonDir }
+}
+
 describe('buildWorkerEnv — O2 allowlist, never a spread', () => {
   it('carries over only WORKER_ENV_ALLOWLIST_KEYS from sourceEnv', () => {
     const env = buildWorkerEnv(
@@ -577,6 +599,29 @@ describe('resolveWorkerBoundaryLaunch — O2 git-config read grant and PATH over
       expect(result.launch.pathOverride).toBe(process.env.PATH)
     } finally {
       result.launch.cleanup()
+    }
+  })
+})
+
+describe('resolveWorkerBoundaryLaunch — O4 git common dir grant for a linked worktree (Principal ruling 1)', () => {
+  it('grants the resolved git common dir read+write so git works inside a linked worktree', () => {
+    const { repoDir, worktreeDir, gitCommonDir } = initRealGitWorktree()
+    const binDir = tempDir('vinaya-wb-gitcommon-bin-')
+    const fakeBinary = fakeBinaryIn(binDir)
+    const result = resolveWorkerBoundaryLaunch(
+      { binaryPath: fakeBinary, args: [], allowedDir: worktreeDir, extraWritableDirs: [] },
+      AVAILABLE_DEPS
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    try {
+      const profile = readFileSync(result.launch.args[1] as string, 'utf8')
+      const rwIdx = profile.indexOf('(allow file-read* file-write*')
+      const rwEnd = profile.indexOf('))', rwIdx) + 2
+      expect(profile.slice(rwIdx, rwEnd)).toContain(`(subpath "${gitCommonDir}")`)
+    } finally {
+      result.launch.cleanup()
+      rmSync(repoDir, { recursive: true, force: true })
     }
   })
 })
@@ -2929,6 +2974,18 @@ describe('buildClaudeSandboxSettings — O2 the generated sandbox block', () => 
     const settings = buildClaudeSandboxSettings(request({ worktreeDir: linkedWorktree, scratchDir }))
     expect(settings.sandbox.filesystem.allowWrite).toContain(realpathSync(realDir))
     expect(settings.sandbox.filesystem.allowWrite).not.toContain(linkedWorktree)
+  })
+
+  it('O4: grants the resolved git common dir of a REAL linked worktree both read AND write (Principal ruling 1)', () => {
+    const { repoDir, worktreeDir, gitCommonDir } = initRealGitWorktree()
+    const scratchDir = tempDir('vinaya-claude-settings-scratch-')
+    try {
+      const settings = buildClaudeSandboxSettings(request({ worktreeDir, scratchDir }))
+      expect(settings.sandbox.filesystem.allowWrite).toContain(gitCommonDir)
+      expect(settings.sandbox.filesystem.allowRead).toContain(gitCommonDir)
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true })
+    }
   })
 })
 

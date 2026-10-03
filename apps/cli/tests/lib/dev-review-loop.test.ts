@@ -837,14 +837,25 @@ fi
 if [ "$1" = "fetch" ]; then
   exit 0
 fi
+if [ "$1" = "-C" ] && [ "$3" = "branch" ] && [ "$4" = "-u" ]; then
+  # Principal ruling 1: after the commit-free ref push below creates the
+  # remote branch, the loop sets the worktree's own upstream directly
+  # (\`git -C <worktree> branch -u origin/<branch>\`) — succeed without
+  # touching real disk.
+  exit 0
+fi
 if [ "$1" = "-C" ] && [ "$3" = "push" ]; then
-  # O1: the loop pushes the task branch FROM the
-  # worktree it just created (\`git -C <worktree> push -u origin HEAD\`),
-  # never from this checkout — record it and succeed.
+  # The Developer's own later publish push (\`publishRound\`/
+  # \`developer-publication.ts\`) still runs FROM the worktree with an
+  # explicit refspec — record it and succeed.
   echo "$@" >> "$HOME/.fake-git-pushes"
   exit 0
 fi
 if [ "$1" = "push" ]; then
+  # Principal ruling 1: the loop creates the remote task branch with a
+  # commit-free, \`--no-verify\`'d ref push (\`git push --no-verify origin
+  # origin/main:refs/heads/<branch>\`), never \`git -C <worktree> push -u
+  # origin HEAD\` — record it and succeed.
   echo "$@" >> "$HOME/.fake-git-pushes"
   exit 0
 fi
@@ -1098,25 +1109,27 @@ describe('devReviewLoop — round 1 start creates the task branch on the remote 
 
 describe('devReviewLoop — the developer flow still works on the loop-created branch (O3)', () => {
   // REAL PROCESS: exercises the REAL `createTaskWorktree` (`git worktree add`
-  // then `git -C <worktree> push -u origin HEAD`, answered by the fixture's
-  // fake git) on the genuinely-fresh path, then the Developer's own worktree
-  // setup and first push, all the way to publish — proving the worktree/branch
-  // the loop creates at start does not disturb the Developer's own downstream
+  // then the commit-free, `--no-verify`'d ref push plus `git -C <worktree>
+  // branch -u`, Principal ruling 1, answered by the fixture's fake git) on
+  // the genuinely-fresh path, then the Developer's own worktree setup and
+  // first push, all the way to publish — proving the worktree/branch the
+  // loop creates at start does not disturb the Developer's own downstream
   // flow on the same branch.
   it.skipIf(process.platform === 'darwin')(
-    'creates the worktree and branch at start by pushing FROM the worktree, then dispatches, opens the PR, and publishes',
+    'creates the worktree and branch at start with a --no-verify ref push, then dispatches, opens the PR, and publishes',
     () => {
       const { home, cwd, path } = setUp()
       const r = runLoop(home, cwd, path)
       expect(r.status).toBe(0)
       expect(r.stdout).toMatch(/publish/)
 
-      // The loop's own start-of-run worktree/branch creation reached the
-      // remote: the fake git recorded exactly the `-C .worktrees/<branch> push
-      // -u origin HEAD` call — pushed FROM the worktree, never the default
-      // checkout — and never a force-push.
+      // The loop's own start-of-run branch creation reached the remote: the
+      // fake git recorded exactly the commit-free `push --no-verify origin
+      // origin/main:refs/heads/<branch>` ref push — never the old `-u origin
+      // HEAD` shape, and never a force-push.
       const pushes = readFileSync(join(home, '.fake-git-pushes'), 'utf8')
-      expect(pushes).toMatch(new RegExp(`-C \\.worktrees/${BRANCH} push -u origin HEAD`))
+      expect(pushes).toMatch(new RegExp(`push --no-verify origin origin/main:refs/heads/${BRANCH}`))
+      expect(pushes).not.toMatch(/push -u origin HEAD/)
       expect(pushes).not.toMatch(/--force|\+/)
     },
     45000
@@ -2964,14 +2977,25 @@ fi
 if [ "$1" = "fetch" ]; then
   exit 0
 fi
+if [ "$1" = "-C" ] && [ "$3" = "branch" ] && [ "$4" = "-u" ]; then
+  # Principal ruling 1: after the commit-free ref push below creates the
+  # remote branch, the loop sets the worktree's own upstream directly
+  # (\`git -C <worktree> branch -u origin/<branch>\`) — succeed without
+  # touching real disk.
+  exit 0
+fi
 if [ "$1" = "-C" ] && [ "$3" = "push" ]; then
-  # O1: the loop pushes the task branch FROM the
-  # worktree it just created (\`git -C <worktree> push -u origin HEAD\`),
-  # never from this checkout — record it and succeed.
+  # The Developer's own later publish push (\`publishRound\`/
+  # \`developer-publication.ts\`) still runs FROM the worktree with an
+  # explicit refspec — record it and succeed.
   echo "$@" >> "$HOME/.fake-git-pushes"
   exit 0
 fi
 if [ "$1" = "push" ]; then
+  # Principal ruling 1: the loop creates the remote task branch with a
+  # commit-free, \`--no-verify\`'d ref push (\`git push --no-verify origin
+  # origin/main:refs/heads/<branch>\`), never \`git -C <worktree> push -u
+  # origin HEAD\` — record it and succeed.
   echo "$@" >> "$HOME/.fake-git-pushes"
   exit 0
 fi
@@ -3225,14 +3249,25 @@ fi
 if [ "$1" = "fetch" ]; then
   exit 0
 fi
+if [ "$1" = "-C" ] && [ "$3" = "branch" ] && [ "$4" = "-u" ]; then
+  # Principal ruling 1: after the commit-free ref push below creates the
+  # remote branch, the loop sets the worktree's own upstream directly
+  # (\`git -C <worktree> branch -u origin/<branch>\`) — succeed without
+  # touching real disk.
+  exit 0
+fi
 if [ "$1" = "-C" ] && [ "$3" = "push" ]; then
-  # O1: the loop pushes the task branch FROM the
-  # worktree it just created (\`git -C <worktree> push -u origin HEAD\`),
-  # never from this checkout — record it and succeed.
+  # The Developer's own later publish push (\`publishRound\`/
+  # \`developer-publication.ts\`) still runs FROM the worktree with an
+  # explicit refspec — record it and succeed.
   echo "$@" >> "$HOME/.fake-git-pushes"
   exit 0
 fi
 if [ "$1" = "push" ]; then
+  # Principal ruling 1: the loop creates the remote task branch with a
+  # commit-free, \`--no-verify\`'d ref push (\`git push --no-verify origin
+  # origin/main:refs/heads/<branch>\`), never \`git -C <worktree> push -u
+  # origin HEAD\` — record it and succeed.
   echo "$@" >> "$HOME/.fake-git-pushes"
   exit 0
 fi

@@ -1192,6 +1192,31 @@ export function agentConfigProtectedSubpaths(worktreeDir: string, agent: string,
   return agentOwnConfigSubpaths(agent).map((rel) => join(worktreeDir, rel))
 }
 
+/**
+ * Principal ruling 1, failure 2: a linked worktree's `.git` is a FILE
+ * pointing at this real directory (`<repo>/.git/worktrees/<branch>`), not a
+ * directory of its own — every git operation inside the worktree (`status`,
+ * `diff`, `log`, the branch-creation push's own `branch -u`) opens it, so a
+ * confinement that grants only `worktreeDir` leaves git reporting "fatal:
+ * not a git repository" the moment it needs to read or lock anything there.
+ * Resolved fresh, from INSIDE `worktreeDir`, the same best-effort way
+ * `resolveGitExecPath` below resolves its own binary — `null` on any
+ * failure (no `git`, or `worktreeDir` not actually a worktree yet), which
+ * simply contributes nothing extra to the grant rather than widening it on a
+ * guess.
+ */
+function resolveGitCommonDir(worktreeDir: string): string | null {
+  try {
+    const out = execFileSync('git', ['-C', worktreeDir, 'rev-parse', '--path-format=absolute', '--git-common-dir'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    }).trim()
+    return out.length > 0 ? realpathSync(out) : null
+  } catch {
+    return null
+  }
+}
+
 /** Best-effort, `null` on any failure — a host with no `git` at all, or whose `git --exec-path` cannot be resolved, simply contributes nothing extra to the allowlist (git itself would then also fail to exec inside the confinement, which is a dispatch-time toolchain problem, never a reason to widen the profile). */
 function resolveGitExecPath(): string | null {
   try {
@@ -1709,6 +1734,15 @@ export function resolveWorkerBoundaryLaunch(
     const gitConfigPaths = gitConfigReadOnlyPaths(realHome).map((p) =>
       resolveExistingOrJoined(realHome, p.slice(realHome.length + 1))
     )
+    // Principal ruling 1, failure 2: a linked worktree's `.git` resolves
+    // into the main repository's git common dir — granted read+write (never
+    // read-only) because git itself writes there (the index lock, `HEAD`,
+    // `ORIG_HEAD`) on an ordinary `status`/`commit`, not only on an explicit
+    // worktree operation. `null` (a host with no `git`, or `allowedDirReal`
+    // not actually a worktree — the reviewer's own scratch copy case) adds
+    // nothing, same best-effort posture every other optional grant here
+    // takes.
+    const gitCommonDir = resolveGitCommonDir(allowedDirReal)
     const readOnlyDirs = Array.from(
       new Set([
         ...(opts.bootstrapWritableSubpaths ? [allowedDirReal] : []),
@@ -1721,7 +1755,8 @@ export function resolveWorkerBoundaryLaunch(
       new Set([
         ...(opts.bootstrapWritableSubpaths ? bootstrapWriteDirs : [allowedDirReal]),
         scratchTmpDir,
-        ...vinayaWritableDirs
+        ...vinayaWritableDirs,
+        ...(gitCommonDir ? [gitCommonDir] : [])
       ])
     )
 
@@ -1991,6 +2026,15 @@ export function buildClaudeSandboxSettings(
   // adjacent `libxcrun.dylib` once `resolveGitFirstPath` points PATH at it.
   const gitConfigPaths = gitConfigReadOnlyPaths(realHome).map(real)
   const extraAllowRead = [...gitConfigPaths, ...(developerDir ? [real(developerDir)] : [])]
+  // Principal ruling 1, failure 2: a linked worktree's `.git` resolves into
+  // the main repository's git common dir — granted read AND write (git
+  // itself writes the index lock/`HEAD`/`ORIG_HEAD` there on an ordinary
+  // `status`/`commit`, not only on an explicit worktree operation), the
+  // same way `worktreeDir`/`scratchDir` already are, rather than folded
+  // into the read-only `extraAllowRead` carve-out above. `null` (no `git`,
+  // or `worktreeDir` not actually a worktree) adds nothing.
+  const gitCommonDir = resolveGitCommonDir(worktreeDir)
+  const extraReadWrite = gitCommonDir ? [real(gitCommonDir)] : []
   return {
     sandbox: {
       enabled: true,
@@ -1998,8 +2042,8 @@ export function buildClaudeSandboxSettings(
       allowUnsandboxedCommands: false,
       network: { allowedDomains: [...request.allowedHosts] },
       filesystem: {
-        allowWrite: [worktreeDir, scratchDir],
-        allowRead: [worktreeDir, scratchDir, ...extraAllowRead],
+        allowWrite: [worktreeDir, scratchDir, ...extraReadWrite],
+        allowRead: [worktreeDir, scratchDir, ...extraAllowRead, ...extraReadWrite],
         denyRead: denyRoots
       }
     },

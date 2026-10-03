@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -326,6 +326,35 @@ describe('createTaskWorktree (O1)', () => {
     // `--no-track` flag left it with at creation).
     const remoteBranches = execFileSync('git', ['-C', originDir, 'branch', '--list', branch], { encoding: 'utf8' })
     expect(remoteBranches).toContain(branch)
+    const upstream = execFileSync('git', ['-C', worktreeDir, 'rev-parse', '--abbrev-ref', `${branch}@{upstream}`], {
+      encoding: 'utf8'
+    }).trim()
+    expect(upstream).toBe(`origin/${branch}`)
+  })
+
+  // Ruling 1, finding 4: a regression test that fails if `--no-verify` is
+  // ever dropped from the branch-creation ref push. A managed pre-push hook
+  // that unconditionally exits 1 stands in for the real dispatch-readiness
+  // gate a fresh worktree (no `apps/cli/dist`) cannot pass — hooks live in
+  // the shared `.git` common dir, so this one hook covers a push run from
+  // either the main checkout or the worktree. `createTaskWorktree` must
+  // still succeed (the ref push is commit-free and `--no-verify`d), proving
+  // the hook was bypassed rather than satisfied.
+  it('creates the remote branch even when the local pre-push hook unconditionally refuses (--no-verify)', () => {
+    const { repoDir, originDir } = initRepoWithOrigin()
+    cleanupDirs.push(repoDir, originDir)
+    const branch = 'task/x/3'
+
+    const hooksDir = join(repoDir, '.git', 'hooks')
+    mkdirSync(hooksDir, { recursive: true })
+    const hookPath = join(hooksDir, 'pre-push')
+    writeFileSync(hookPath, '#!/bin/sh\nexit 1\n', { mode: 0o755 })
+
+    withCwd(repoDir, () => createTaskWorktree(branch))
+
+    const remoteBranches = execFileSync('git', ['-C', originDir, 'branch', '--list', branch], { encoding: 'utf8' })
+    expect(remoteBranches).toContain(branch)
+    const worktreeDir = join(repoDir, '.worktrees', branch)
     const upstream = execFileSync('git', ['-C', worktreeDir, 'rev-parse', '--abbrev-ref', `${branch}@{upstream}`], {
       encoding: 'utf8'
     }).trim()
