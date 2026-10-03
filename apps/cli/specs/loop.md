@@ -6,6 +6,8 @@ Status: draft
 
 `packages/aeg-core/src/dev-review-loop/` is the policy layer: `assessRound` is the ENTIRE decision logic — every stop condition, every confidence rule, the `Decision` a round produces — as one pure function, no `fs`/`fetch`/`process.env`/subprocess/prompt anywhere in that directory. `apps/cli/src/lib/dev-review-loop.ts` (`devReviewLoop`) is the driver: it turns real forge/dispatch facts into `Observations`, calls `assessRound`, and acts on the `Decision` it returns. It never re-implements a stop condition or a confidence rule.
 
+Every behavior this file describes is also inventoried, one entry per observed behavior, in `apps/cli/specs/dev-review-invariants.md`: each classified as a product guarantee, an implementation accident, a named defect, an advisory mechanism, or a question awaiting a Principal ruling, with its sources and tests. That inventory is the oracle the Atta Engine path is measured against. A loop module or test file added, removed or renamed updates it in the same change, since its architecture test fails otherwise.
+
 ## The command
 
 `vinaya task run <tranche> <n> --agent <claude|codex|gemini>` (`apps/cli/src/commands/task-run.ts`, `taskRunCommand`) is the normal entry: it composes `task brief`'s own preparation (renders and freezes the brief, starts no agent) with this loop, so one command runs the whole way from a planned Issue — `n` a tranche task ordinal there, resolved to its real forge Issue by preparation — to a reviewed pull request, exactly one developer started. `dev-review-loop` below is `task run`'s own debug/direct entry, kept for resuming a paused run and for driving the loop straight off an Issue number without going through preparation:
