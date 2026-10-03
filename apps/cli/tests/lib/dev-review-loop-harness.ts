@@ -482,6 +482,7 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
     runtimeDir: () => world.runtimeDir,
     repoRoot: () => world.repoRoot,
     gitRevParseOriginMain: () => world.base,
+    gitIsAncestor: (ancestor, descendant) => ancestor === descendant,
     gitMergeBase: async (_head) => world.mergeBase,
     gitFetch: () => {},
     gitDiffShortstat: (_base, _head) => world.shortstat,

@@ -419,6 +419,8 @@ export type LoopDeps = {
   resolveLogAppendPath: (repo: { owner: string; repo: string } | null, issue: number) => string | Promise<string>
   repoRoot: () => string
   gitRevParseOriginMain: () => string
+  /** True when `ancestor` is contained in `descendant`'s history. */
+  gitIsAncestor: (ancestor: string, descendant: string) => boolean
   /**
    * issue-657, O4 — the review-input manifest's own base identity: the
    * merge base of `head` and the default branch, never the default branch's
@@ -699,6 +701,18 @@ function defaultRepoRoot(): string {
 
 function defaultGitRevParseOriginMain(): string {
   return sh('git', ['rev-parse', 'origin/main'])
+}
+
+function defaultGitIsAncestor(ancestor: string, descendant: string): boolean {
+  try {
+    execFileSync('git', ['merge-base', '--is-ancestor', ancestor, descendant], {
+      stdio: ['ignore', 'ignore', 'ignore']
+    })
+    return true
+  } catch (err) {
+    if (typeof err === 'object' && err !== null && 'status' in err && err.status === 1) return false
+    throw err
+  }
 }
 
 function defaultGitMergeBase(head: string): Promise<string> {
@@ -1557,6 +1571,7 @@ function defaultDeps(): LoopDeps {
     resolveLogAppendPath,
     repoRoot: defaultRepoRoot,
     gitRevParseOriginMain: defaultGitRevParseOriginMain,
+    gitIsAncestor: defaultGitIsAncestor,
     gitMergeBase: defaultGitMergeBase,
     gitFetch: defaultGitFetch,
     gitDiffShortstat: defaultGitDiffShortstat,
@@ -4253,12 +4268,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           } catch {
             branchHead = null
           }
-          // A task branch created at origin/main before the first Developer
-          // turn is only an address reservation: it contains no task work to
-          // recover. Treat that commit-free ref exactly like an absent branch
-          // so round 1 still receives the frozen brief. Recovery begins only
-          // once the task branch has moved beyond the default-branch head.
-          const branchHasTaskCommits = branchHead !== null && branchHead !== d.gitRevParseOriginMain()
+          // A task branch whose head is contained in origin/main has no task
+          // commits beyond the default branch. It is only an address
+          // reservation even when main has advanced since the ref was created.
+          // Recovery begins only once the task branch has moved beyond main.
+          const branchHasTaskCommits = branchHead !== null && !d.gitIsAncestor(branchHead, d.gitRevParseOriginMain())
           if (branchHasTaskCommits) {
             // Crash-recovery re-entry: the branch already exists (pushed by a
             // prior process), no dispatch here. O8: first finish any
@@ -4284,7 +4298,7 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             announcePr()
           } else {
             // O1/O7: the branch either does not exist on the remote or is the
-            // commit-free address reservation at origin/main — create/reuse the task's own
+            // commit-free address reservation at or behind origin/main — create/reuse the task's own
             // worktree now, outside any sandbox, and push it to the remote FROM
             // that worktree, BEFORE the first Developer turn below. This is
             // what makes `devWorktreeDir` (below) non-null from round 1 on, so
