@@ -362,6 +362,25 @@ export type DispatchEvent = z.infer<typeof DispatchEventSchema>
 // `infrastructure_retry`, and the `driver_heartbeat`/`driver_exited`
 // liveness pair that lets a reader tell a running loop from a dead one.
 
+/**
+ * A short code token: letters, digits, dot, dash, underscore, 64 characters
+ * at most. The shape carries no path separator, no whitespace and no room for
+ * a sentence, so a pause code or an error class can never hold a path or a
+ * message. Used by `paused.reason_code` and `driver_exited.error_class`.
+ */
+export const CODE_TOKEN_PATTERN = /^[A-Za-z0-9._-]{1,64}$/
+const CodeTokenSchema = z.string().regex(CODE_TOKEN_PATTERN)
+
+/** One reviewer role's outcome in a round's `verdicts_read`: the role, one of three words, and how many blocking verdicts it contributed (0 or 1). */
+const ReviewerVerdictSchema = z
+  .object({
+    role: RoleSchema,
+    outcome: z.enum(['approve', 'changes_requested', 'not_reviewed']),
+    blockers: z.number().int().nonnegative()
+  })
+  .strict()
+export type ReviewerVerdict = z.infer<typeof ReviewerVerdictSchema>
+
 const loopShared = {
   meta: HeaderMetaSchema,
   subject: SubjectSchema,
@@ -429,7 +448,12 @@ export const DevReviewLoopEventSchema = z.discriminatedUnion('event', [
       // — a schema change is additive here, never a reason an old line on
       // disk starts reading as corrupt. This task's own producer
       // (`assess-round.ts`) always sets it explicitly, `[]` included.
-      findings: z.array(ReviewFindingSchema).optional()
+      findings: z.array(ReviewFindingSchema).optional(),
+      // One entry per reviewer role the loop held or expected a verdict from,
+      // so a reader tells a role that approved with no findings from one that
+      // never reported. The entries' `blockers` add up to `blockers` above.
+      // Optional: a line recorded before it existed still parses.
+      reviewers: z.array(ReviewerVerdictSchema).optional()
     })
     .strict(),
   z
@@ -480,7 +504,12 @@ export const DevReviewLoopEventSchema = z.discriminatedUnion('event', [
       ...loopShared,
       event: z.literal('paused'),
       round: z.number().int(),
-      reason: z.enum(['escalation', 'principal_item', 'refreeze_needed'])
+      reason: z.enum(['escalation', 'principal_item', 'refreeze_needed']),
+      // The loop's own pause reason code (`confidence`, `max_rounds`,
+      // `infrastructure`, …) as a short string, never prose and never a closed
+      // list: a new pause reason needs no schema change. Optional: a line
+      // recorded before it existed still parses.
+      reason_code: CodeTokenSchema.optional()
     })
     .strict(),
   z
@@ -621,7 +650,12 @@ export const DevReviewLoopEventSchema = z.discriminatedUnion('event', [
       event: z.literal('driver_exited'),
       task: z.number().int(),
       reason: z.enum(['finished', 'paused', 'reexec', 'error', 'signal']),
-      last_decision: z.string()
+      last_decision: z.string(),
+      // The process exit code when the driver ends with one, and — when it
+      // ends on an error — the error's own code or constructor name, never its
+      // message. Both optional: a line recorded before them still parses.
+      exit_code: z.number().int().optional(),
+      error_class: CodeTokenSchema.optional()
     })
     .strict()
 ])

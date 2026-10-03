@@ -360,6 +360,63 @@ describe('LogEventSchema — dev_review_loop family', () => {
     }
   })
 
+  it('parses driver_exited, paused and verdicts_read lines with and without the optional fields', () => {
+    const exited = {
+      meta,
+      subject,
+      kind: 'dev_review_loop' as const,
+      event: 'driver_exited' as const,
+      payload: {},
+      loop_id: 'loop-1',
+      task: 963,
+      reason: 'error' as const,
+      last_decision: 'pause(infrastructure)'
+    }
+    expect(LogEventSchema.safeParse(exited).success).toBe(true)
+    const withFields = LogEventSchema.safeParse({ ...exited, exit_code: 1, error_class: 'ENOENT' })
+    expect(withFields.success && 'exit_code' in withFields.data && withFields.data.exit_code).toBe(1)
+    expect(LogEventSchema.safeParse({ ...exited, error_class: 'ENOENT: no such file /tmp/x' }).success).toBe(false)
+    expect(LogEventSchema.safeParse({ ...exited, error_class: 'a'.repeat(65) }).success).toBe(false)
+
+    const paused = {
+      meta,
+      subject,
+      kind: 'dev_review_loop' as const,
+      event: 'paused' as const,
+      payload: {},
+      loop_id: 'loop-1',
+      round: 2,
+      reason: 'principal_item' as const
+    }
+    expect(LogEventSchema.safeParse(paused).success).toBe(true)
+    expect(LogEventSchema.safeParse({ ...paused, reason_code: 'repeat_failure' }).success).toBe(true)
+    expect(LogEventSchema.safeParse({ ...paused, reason_code: 'two words' }).success).toBe(false)
+
+    const verdicts = {
+      meta,
+      subject,
+      kind: 'dev_review_loop' as const,
+      event: 'verdicts_read' as const,
+      payload: {},
+      loop_id: 'loop-1',
+      round: 2,
+      head: 'h',
+      all_approve: false,
+      blockers: 1
+    }
+    expect(LogEventSchema.safeParse(verdicts).success).toBe(true)
+    const reviewers = [
+      { role: 'code-reviewer', outcome: 'changes_requested', blockers: 1 },
+      { role: 'security', outcome: 'not_reviewed', blockers: 0 }
+    ]
+    const parsed = LogEventSchema.safeParse({ ...verdicts, reviewers })
+    expect(parsed.success && 'reviewers' in parsed.data && parsed.data.reviewers).toEqual(reviewers)
+    expect(
+      LogEventSchema.safeParse({ ...verdicts, reviewers: [{ role: 'security', outcome: 'maybe', blockers: 0 }] })
+        .success
+    ).toBe(false)
+  })
+
   it('refuses a driver_exited line with an unrecognized reason (#949, O2)', () => {
     const line = {
       meta,

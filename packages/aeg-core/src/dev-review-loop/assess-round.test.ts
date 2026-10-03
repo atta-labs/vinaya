@@ -71,7 +71,11 @@ describe('assessRound — Part 1 (O1, O5): green path', () => {
         head: 'head1',
         all_approve: true,
         blockers: 0,
-        findings: []
+        findings: [],
+        reviewers: [
+          { role: 'code-reviewer', outcome: 'approve', blockers: 0 },
+          { role: 'security', outcome: 'approve', blockers: 0 }
+        ]
       },
       {
         kind: 'dev_review_loop',
@@ -163,6 +167,45 @@ describe('assessRound — Part 1 (O1, O5): green path', () => {
     const ended = events.find((e) => e.event === 'round_ended')
     expect(ended).toMatchObject({ outcome: 'changes_requested' })
     expect(events.some((e) => e.event === 'stop_condition_met')).toBe(false)
+  })
+})
+
+describe('assessRound — verdicts_read reviewers', () => {
+  type Reviewers = { role: string; outcome: string; blockers: number }[]
+  function reviewersOf(verdicts: Parameters<typeof fakeVerdicts>[1]): { reviewers: Reviewers; blockers: number } {
+    const { events } = runScenario(freshState(), [fakeGate(1, true), fakeVerdicts(1, verdicts)])
+    const read = events.find((e) => e.event === 'verdicts_read') as unknown as {
+      reviewers: Reviewers
+      blockers: number
+    }
+    return read
+  }
+
+  it('a blocking verdict reads changes_requested with one blocker, and the entries add up to blockers', () => {
+    const read = reviewersOf([
+      blockingVerdict('reviewer', [{ id: 'F1', severity: 'blocker', state: 'open' }]),
+      cleanVerdict('security')
+    ])
+    expect(read.reviewers).toEqual([
+      { role: 'code-reviewer', outcome: 'changes_requested', blockers: 1 },
+      { role: 'security', outcome: 'approve', blockers: 0 }
+    ])
+    expect(read.reviewers.reduce((n, r) => n + r.blockers, 0)).toBe(read.blockers)
+  })
+
+  it('a configured role with no verdict reads not_reviewed with no blockers', () => {
+    const read = reviewersOf([cleanVerdict('reviewer')])
+    expect(read.reviewers).toEqual([
+      { role: 'code-reviewer', outcome: 'approve', blockers: 0 },
+      { role: 'security', outcome: 'not_reviewed', blockers: 0 }
+    ])
+    expect(read.reviewers.reduce((n, r) => n + r.blockers, 0)).toBe(read.blockers)
+  })
+
+  it('an ESCALATE verdict reads changes_requested with no counted blocker, matching the event count', () => {
+    const read = reviewersOf([escalateVerdict('reviewer'), blockingVerdict('security', [])])
+    expect(read.reviewers[0]).toEqual({ role: 'code-reviewer', outcome: 'changes_requested', blockers: 0 })
+    expect(read.reviewers.reduce((n, r) => n + r.blockers, 0)).toBe(read.blockers)
   })
 })
 
@@ -1041,7 +1084,9 @@ describe('assessRound — the task time budget (O1, O2)', () => {
     expect(events[0]).toEqual(
       expect.objectContaining({ event: 'stop_condition_met', round: 1, condition: 'time_budget' })
     )
-    expect(events[1]).toEqual(expect.objectContaining({ event: 'paused', round: 1, reason: 'principal_item' }))
+    expect(events[1]).toEqual(
+      expect.objectContaining({ event: 'paused', round: 1, reason: 'principal_item', reason_code: 'time_budget' })
+    )
     expect(events[3]).toEqual(expect.objectContaining({ event: 'journal_finalized', result: 'stopped' }))
   })
 
