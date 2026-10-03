@@ -106,14 +106,14 @@ const KNOWN_FAILURES: readonly KnownFailure[] = [
     agent: 'codex',
     platform: 'linux',
     denial:
-      'verify-dispatch exits 1 on "leftover-detection: stop — 2 commit(s) already ahead of origin/main on this task branch", then "verify-dispatch: NOT READY"'
+      'verify-dispatch exits 1 on "leftover-detection: stop — <n> commit(s) already ahead of origin/main on this task branch", then "verify-dispatch: NOT READY"'
   },
   {
     id: 'check-all',
     agent: 'codex',
     platform: 'linux',
     denial:
-      'check --all exits 1 on "closes-n: PR body does not contain `Closes #1026`" (no PR body reaches the sandbox); the log outbox also hits "EROFS: read-only file system, mkdir ~/.vinaya"'
+      'check --all exits 1 on "closes-n: PR body does not contain `Closes #<task Issue>`" (no PR body reaches the sandbox); the log outbox also hits "EROFS: read-only file system, mkdir ~/.vinaya"'
   },
   { id: 'check-dispatch-readiness', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },
   { id: 'verify-dispatch', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },
