@@ -223,14 +223,43 @@ export const CODEX_POLICY_RULES_FILE = 'vinaya-machine-state.rules'
  * a host with no operator login — the same disclosed limit
  * `runRealCodexLoginWithAccessToken` already carries; a run-scoped `CODEX_HOME`
  * with `exec resume` is the shape `resolveWorkerBoundaryLaunch` already ships.
+ *
+ * **O1–O3, O7 (task 4):** when the caller names `sandboxConfigToml`, `auth.json`
+ * and `config.toml` are excluded from the generic symlink-through loop above
+ * and handled differently instead:
+ *
+ * - `auth.json` is COPIED (a real `readFileSync`/`writeFileSync`, never
+ *   `symlinkSync`), not symlinked — O7: a symlinked credential
+ *   lets anything this task-scoped session writes back to `auth.json` (a
+ *   token refresh, say) land in the OPERATOR's own real `~/.codex/auth.json`;
+ *   a copy is independent, and the installed Codex rejects
+ *   `codex login --with-access-token` for a subscription session token
+ *   outright ("agent identity JWT payload is not valid JSON" —
+ *   `runRealCodexLoginWithAccessToken`'s own disclosed limit), so a copy is
+ *   also the only working route to a confined, authenticated session today.
+ * - `config.toml` is this run's OWN generated content (`sandboxConfigToml` —
+ *   `buildCodexSandboxConfigToml`, below) instead of the operator's real
+ *   file (symlinked through, pre-O1): a resumed `codex exec resume` accepts
+ *   no `--sandbox` flag at all, so `sandbox_mode`/`sandbox_workspace_write.
+ *   network_access`/`features.network_proxy` must come from the CODEX_HOME
+ *   this call stages, read identically by a fresh start and a resumed one —
+ *   symlinking the operator's own config.toml through would leave both
+ *   reading whatever (or nothing) the operator happens to have configured,
+ *   never this task's own policy.
+ *
+ * Omitted (every pre-O1 caller — an attended Codex dispatch, which this task
+ * does not confine): both files are symlinked through exactly as before,
+ * byte-for-byte the pre-existing behavior.
  */
 export function stageCodexPolicyHome(input: {
   targetDir: string
   realHome: string
   execpolicyRules: string
+  sandboxConfigToml?: string
 }): { codexHome: string } | null {
   const operatorHome = join(input.realHome, '.codex')
-  if (!existsSync(join(operatorHome, CODEX_AUTH_FILE_NAME))) return null
+  const operatorAuthPath = join(operatorHome, CODEX_AUTH_FILE_NAME)
+  if (!existsSync(operatorAuthPath)) return null
   try {
     mkdirSync(input.targetDir, { recursive: true, mode: 0o700 })
     // Idempotent across a resumed turn that reuses the same run-scoped path:
@@ -238,9 +267,15 @@ export function stageCodexPolicyHome(input: {
     for (const entry of readdirSync(input.targetDir)) {
       rmSync(join(input.targetDir, entry), { recursive: true, force: true })
     }
+    const ownedEntries =
+      input.sandboxConfigToml !== undefined ? new Set([CODEX_AUTH_FILE_NAME, 'config.toml']) : new Set()
     for (const entry of readdirSync(operatorHome)) {
-      if (entry === 'rules') continue
+      if (entry === 'rules' || ownedEntries.has(entry)) continue
       symlinkSync(join(operatorHome, entry), join(input.targetDir, entry))
+    }
+    if (input.sandboxConfigToml !== undefined) {
+      writeFileSync(join(input.targetDir, CODEX_AUTH_FILE_NAME), readFileSync(operatorAuthPath), { mode: 0o600 })
+      writeFileSync(join(input.targetDir, 'config.toml'), input.sandboxConfigToml, { mode: 0o600 })
     }
     const scopedRules = join(input.targetDir, 'rules')
     mkdirSync(scopedRules, { recursive: true, mode: 0o700 })
@@ -351,7 +386,7 @@ const CODEX_HOOKS_PLUGIN_NAME = 'vinaya-documentation-gate'
  * output, unmodified — this function only relocates it into the shape
  * Codex's plugin system actually discovers.
  */
-function buildCodexHooksMarketplace(marketplaceDir: string, hooksJsonContent: string): void {
+export function buildCodexHooksMarketplace(marketplaceDir: string, hooksJsonContent: string): void {
   const pluginRelDir = `./plugins/${CODEX_HOOKS_PLUGIN_NAME}`
   const pluginDir = join(marketplaceDir, 'plugins', CODEX_HOOKS_PLUGIN_NAME)
   mkdirSync(join(marketplaceDir, '.agents', 'plugins'), { recursive: true, mode: 0o700 })
@@ -1929,5 +1964,160 @@ export function resolveClaudeConfinement(
     confined: false,
     warning: `Claude Code's own sandbox names no mechanism for platform '${deps.platform}' — running this dispatch unconfined.`,
     missingTools: []
+  }
+}
+
+// --- O1/O2/O4/O5 (task 4): Codex's half of the provider-neutral confinement
+// interface ----------------------------------------------------------------
+
+/**
+ * Codex's own `workspace-write` sandbox on Linux is bubblewrap-backed, the
+ * same primitive Claude Code's shipped sandbox drives internally (§4a) —
+ * confirmed against the real installed CLI's own help text ("Codex uses the
+ * first `bwrap` executable it finds on PATH") and `doctor` output (a Linux
+ * helper path under `codex-linux-sandbox`). Unlike Claude's own Linux
+ * mechanism, Codex's documented network proxy is self-contained (the Codex
+ * binary runs its own local proxy process) — it names no second bridging
+ * tool the way Claude's `socat` egress bridge does, so this list is `bwrap`
+ * alone, never `LINUX_CLAUDE_SANDBOX_TOOLS`'s pair.
+ */
+export const LINUX_CODEX_SANDBOX_TOOLS = ['bwrap'] as const
+
+/** `LINUX_CODEX_SANDBOX_TOOLS`'s own availability check — same shape as `checkLinuxSandboxTools`, over the narrower Codex tool list, so the two mechanisms' availability can differ (a host missing only `socat` fails Claude's check but passes this one). */
+export function checkLinuxCodexSandboxTools(
+  deps: LinuxSandboxToolDeps = REAL_LINUX_SANDBOX_TOOL_DEPS
+): LinuxSandboxToolCheck {
+  const missing = LINUX_CODEX_SANDBOX_TOOLS.filter((tool) => !deps.commandExists(tool))
+  return { available: missing.length === 0, missing }
+}
+
+/** Escapes a value for a TOML basic string (`"..."`) — the two characters that would otherwise terminate the literal early or splice an escape sequence into it, the same minimal discipline `escapeSbString` already applies to a Seatbelt profile's own string-literal syntax. */
+function escapeTomlString(value: string): string {
+  return value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')
+}
+
+function tomlString(value: string): string {
+  return `"${escapeTomlString(value)}"`
+}
+
+/**
+ * O1–O3: the config.toml content `stageCodexPolicyHome` writes into a
+ * confined Codex dispatch's own staged `CODEX_HOME`, read identically by a
+ * fresh `codex exec` and a resumed `codex exec resume` (O3) — the latter
+ * accepts no `--sandbox` flag at all (confirmed live via `codex exec resume
+ * --help` against the real installed CLI, 0.152.1/0.160.0), so this file is
+ * the only place that can set its sandbox mode.
+ *
+ * Confirmed live against the real installed `codex-cli` (0.152.1 and
+ * 0.160.0, `@openai/codex` on npm), and cross-checked against the vendor's
+ * own published documentation (`developers.openai.com/codex/config-reference`,
+ * `.../config-advanced`):
+ *
+ * - `sandbox_mode = "workspace-write"` — the top-level config key `-s,
+ *   --sandbox` sets per-invocation; this is its config.toml equivalent, the
+ *   only route a resumed run has to it.
+ * - `[sandbox_workspace_write] network_access = true` — confirmed as the
+ *   ONLY network-related field `SandboxWorkspaceWrite` carries (the other
+ *   three are `writable_roots`/`exclude_tmpdir_env_var`/`exclude_slash_tmp`,
+ *   none of them network-shaped) by enumerating the struct's own serialized
+ *   field names directly off the installed binary. The task's own worktree
+ *   is the implicit, always-writable "primary workspace" (`codex exec
+ *   --help`'s own `--add-dir` wording: "Additional directories that should
+ *   be writable ALONGSIDE the primary workspace") — `writable_roots` is
+ *   deliberately omitted here; `addCodexWritableDirs` (`dispatch.ts`) is the
+ *   existing, already fresh/resumed-safe mechanism for the EXTRA roots a
+ *   given dispatch needs (the scratch directory, a reviewer's own work
+ *   directory), and duplicating that list here would risk a resumed run's
+ *   own `--config sandbox_workspace_write.writable_roots=…` override (a
+ *   plain key assignment, not a merge) silently replacing — not
+ *   extending — whatever this file names.
+ * - `.git` read-only: per the vendor's own documentation ("In workspace-write
+ *   mode, some environments keep `.git/` and `.codex/` read-only even when
+ *   the rest of the workspace is writable") — Codex's own protection, not
+ *   something this config requests or could turn off; O1's own framing
+ *   ("as Codex protects it") names this as a fact to rely on, not a setting.
+ * - `[features.network_proxy] enabled = true` plus `[features.network_proxy.
+ *   domains]` as a `map<string, "allow"|"deny">` — confirmed live: `codex
+ *   exec --strict-config` accepts exactly this shape (neither a bare
+ *   `allowed_domains` array under `sandbox_workspace_write` nor a top-level
+ *   `[network]`/`[network_proxy]` table exists in the installed schema —
+ *   both were tried live and rejected with "unknown configuration field").
+ *   O5: a request to a host with no entry here is refused by the proxy
+ *   (never allowed by a missing-entry default) — a domain list limits WHERE
+ *   traffic goes, never WHAT is sent to an allowed host (`isolation.md` O5).
+ *   Only `request.allowedHosts` ever appears here, each mapped to `"allow"`
+ *   — this function never writes a `"deny"` entry, since nothing this task
+ *   dispatches needs one named explicitly to stay refused by default.
+ */
+export function buildCodexSandboxConfigToml(request: ConfinementRequest): string {
+  const domainLines = request.allowedHosts.map((host) => `${tomlString(host)} = "allow"`)
+  return [
+    'sandbox_mode = "workspace-write"',
+    '',
+    '[sandbox_workspace_write]',
+    'network_access = true',
+    '',
+    '[features.network_proxy]',
+    'enabled = true',
+    '',
+    '[features.network_proxy.domains]',
+    ...domainLines,
+    ''
+  ].join('\n')
+}
+
+export type CodexConfinementResolution =
+  | { readonly ok: true; readonly configToml: string }
+  | {
+      readonly ok: false
+      /** Names the missing capability (O4) — `bwrap` on Linux, or the platform itself when neither mechanism this module knows applies. */
+      readonly reason: string
+    }
+
+/** Real platform/tool facts for Codex's own mechanism — mirrors `realConfinementPlatformDeps`, over `checkLinuxCodexSandboxTools` rather than Claude's tool list, so the two never share one (possibly stale) cached answer. */
+export function realCodexConfinementPlatformDeps(): ConfinementPlatformDeps {
+  return { platform: process.platform, linuxTools: checkLinuxCodexSandboxTools() }
+}
+
+/**
+ * O1/O2/O4 — the Codex half of the provider-neutral confinement interface:
+ * the SAME `ConfinementRequest` shape `resolveClaudeConfinement` takes,
+ * resolved through Codex's own mechanism instead. Unlike Claude's own
+ * resolution, this NEVER degrades to an unconfined run — O4 requires an
+ * unattended Codex dispatch to refuse before starting, naming the missing
+ * capability, when its sandbox or network proxy is unavailable, since Codex
+ * carries no per-dispatch machine-state floor outside this boundary the way
+ * `stageCodexPolicyHome`'s own non-boundary branch gives Claude's settings
+ * file (`isolation.md` §4's own framing for why an unattended Codex start
+ * has always refused, never degraded, on an unsupported host).
+ *
+ * Always available on macOS — Codex's own sandbox there is Seatbelt-backed
+ * and "needs nothing installed," the same posture Claude's shipped sandbox
+ * takes on the same platform. On Linux, available only when `bwrap`
+ * resolves on `PATH` (`checkLinuxCodexSandboxTools`); the caller
+ * (`dispatchRole`) turns an `ok: false` here into a pre-spawn refusal,
+ * before any Codex process starts.
+ */
+export function resolveCodexConfinement(
+  request: ConfinementRequest,
+  deps: ConfinementPlatformDeps = realCodexConfinementPlatformDeps()
+): CodexConfinementResolution {
+  if (deps.platform === 'darwin') {
+    return { ok: true, configToml: buildCodexSandboxConfigToml(request) }
+  }
+  if (deps.platform === 'linux') {
+    if (deps.linuxTools.available) {
+      return { ok: true, configToml: buildCodexSandboxConfigToml(request) }
+    }
+    return {
+      ok: false,
+      reason:
+        `Codex's own sandbox and network proxy need ${LINUX_CODEX_SANDBOX_TOOLS.join(' and ')} on Linux; missing: ` +
+        `${deps.linuxTools.missing.join(', ')}`
+    }
+  }
+  return {
+    ok: false,
+    reason: `Codex's own sandbox and network proxy name no mechanism for platform '${deps.platform}'`
   }
 }

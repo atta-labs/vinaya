@@ -424,26 +424,34 @@ describe('vinaya dispatch --unattended — O4 a Codex start never runs outside t
     expect(result.status).not.toBe(0)
     expect(existsSync(fixture.markerFile), 'the codex binary must never be spawned').toBe(false)
     expect(result.stderr).toContain('refused')
-    expect(result.stderr).toContain('worker isolation boundary')
+    // O4 (task 4): Codex's own sandbox/network-proxy mechanism, resolved
+    // through `resolveCodexConfinement`, replaced the hand-built Seatbelt
+    // boundary's own "worker isolation boundary" refusal wording.
+    expect(result.stderr).toContain("Codex's own sandbox and network proxy")
     const lines = outboxLines(fixture.home) as Array<{ event?: string; reason?: string }>
     expect(lines.find((l) => l.event === 'dispatch_failed')?.reason).toBe('refused')
     expect(lines.find((l) => l.event === 'dispatched')).toBeUndefined()
   })
 
-  it.skipIf(process.platform === 'darwin')('names the host as the reason where the sandbox is unsupported', () => {
-    const fixture = buildGitFixture()
-    writeFileSync(
-      join(fixture.binDir, 'codex'),
-      `#!/bin/sh\ntouch "${fixture.markerFile}"\ncat > /dev/null\nprintf '%s' '{}'\nexit 0\n`
-    )
-    chmodSync(join(fixture.binDir, 'codex'), 0o755)
+  it.skipIf(process.platform === 'darwin')(
+    'names the missing capability where the sandbox/network-proxy mechanism is unsupported',
+    () => {
+      const fixture = buildGitFixture()
+      writeFileSync(
+        join(fixture.binDir, 'codex'),
+        `#!/bin/sh\ntouch "${fixture.markerFile}"\ncat > /dev/null\nprintf '%s' '{}'\nexit 0\n`
+      )
+      chmodSync(join(fixture.binDir, 'codex'), 0o755)
 
-    const result = runDispatchNoAmbientLogin(fixture, ['--unattended'], 'codex')
+      const result = runDispatchNoAmbientLogin(fixture, ['--unattended'], 'codex')
 
-    expect(result.status).not.toBe(0)
-    expect(existsSync(fixture.markerFile)).toBe(false)
-    expect(result.stderr).toContain('worker boundary unavailable on this host')
-  })
+      expect(result.status).not.toBe(0)
+      expect(existsSync(fixture.markerFile)).toBe(false)
+      // O4: this CI host is Linux without `bwrap` — the missing capability
+      // `resolveCodexConfinement` names, not a bare "unavailable on this host".
+      expect(result.stderr).toContain('bwrap')
+    }
+  )
 })
 
 describe('vinaya dispatch — a host with no sandbox support behaves exactly as today', () => {
