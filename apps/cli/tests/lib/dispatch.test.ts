@@ -976,6 +976,19 @@ describe('readClaudeTranscriptUsage', () => {
     expect(r.units).toEqual({ input: null, output: null, cache: null })
     expect(r.unknownReason).not.toBeNull()
   })
+
+  it('refuses a transcript symlinked to a file outside the projects directory', () => {
+    const configDir = tempDir('vinaya-transcript-cfg-')
+    const outsideDir = tempDir('vinaya-transcript-outside-')
+    const outside = join(outsideDir, 'real.jsonl')
+    writeFileSync(outside, `${transcriptLine('m1', 9, 9, 9, 9)}\n`)
+    const dir = join(configDir, 'projects', 'p')
+    mkdirSync(dir, { recursive: true })
+    symlinkSync(outside, join(dir, `${SESSION_ID}.jsonl`))
+    const r = readClaudeTranscriptUsage(SESSION_ID, configDir)
+    expect(r.units).toEqual({ input: null, output: null, cache: null })
+    expect(r.unknownReason).toContain('no transcript for session')
+  })
 })
 
 describe('resolveClaudeUsageUnits', () => {
