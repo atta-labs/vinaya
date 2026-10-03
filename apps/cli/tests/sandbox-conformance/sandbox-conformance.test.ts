@@ -87,6 +87,13 @@ const KNOWN_FAILURES: readonly KnownFailure[] = [
     denial:
       'turbo exits 1: "Encountered an I/O error while attempting to read ~/Library/Application Support/com.vercel.cli/auth.json" — the real home is denied read'
   },
+  {
+    id: 'typecheck',
+    agent: 'codex',
+    platform: 'linux',
+    denial:
+      'turbo exits 1: "failed to create directory `<main checkout>/.turbo/cache` … Read-only file system" — turbo keeps a linked worktree\'s cache in the main checkout, outside the writable roots'
+  },
   { id: 'check-dispatch-readiness', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },
   { id: 'verify-dispatch', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },
   { id: 'check-all', agent: 'claude', platform: 'darwin', denial: GH_CONFIG_DENIED },

@@ -17,6 +17,10 @@
  *   sandbox_workspace_write.writable_roots=…` the way a resumed dispatch
  *   receives them. `codex sandbox` needs no login; the staged home's
  *   `auth.json` is a placeholder copied from a throwaway operator home.
+ *   Unlike `codex exec`, `codex sandbox` ignores the staged config's
+ *   `sandbox_mode` and runs read-only unless that key also arrives as a
+ *   `--config` override (codex-rs `cli/src/debug_sandbox.rs`), so the
+ *   staged config's own value is passed that way too.
  *
  * Each agent gets its own fresh linked worktree of `HEAD` under
  * `.worktrees/`, as a dispatched Developer does: the driver creates it, the
@@ -174,8 +178,14 @@ function codexSession(): SandboxSession {
     sandboxConfigToml: resolution.configToml
   })
   if (staged === null) throw new Error('stageCodexPolicyHome staged no CODEX_HOME')
+  const sandboxMode = resolution.configToml.match(/^sandbox_mode = ("[^"]+")$/m)?.[1]
+  if (sandboxMode === undefined) throw new Error('the staged Codex config names no sandbox_mode')
   const gitCommonDir = resolveGitCommonDir(worktreeDir)
-  const sandboxArgs = addCodexWritableDirs(['sandbox'], [scratchDir, ...(gitCommonDir ? [gitCommonDir] : [])], true)
+  const sandboxArgs = addCodexWritableDirs(
+    ['sandbox', '--config', `sandbox_mode=${sandboxMode}`],
+    [scratchDir, ...(gitCommonDir ? [gitCommonDir] : [])],
+    true
+  )
   return {
     agent: 'codex',
     worktreeDir,

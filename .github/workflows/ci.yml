@@ -384,6 +384,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bubblewrap socat ripgrep
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      # The tools this repository's own checks need (`ci.setup`, today
+      # gitleaks), as a Developer's machine has them — so `check --all`
+      # inside a sandbox fails only on what the sandbox denies.
+      - name: Install the checks' own tools
+        run: bun -e 'process.stdout.write(require("./vinaya.config.json").ci.setup)' | bash
       - name: Run the suite under both sandboxes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
