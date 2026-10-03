@@ -1,6 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
 import {
   assembleDeveloperDoctrine,
+  createTaskWorktree,
   DEVELOPER_CHECKLIST_HEADINGS,
   developerBranchFor,
   extractDeveloperSection,
@@ -260,5 +265,87 @@ describe('renderDeveloperDoctrineBlock', () => {
     expect(block).toContain('## Stop conditions')
     expect(block).toContain('bun apps/cli/src/index.ts doctrine --role developer --print')
     expect(block).not.toContain('aeg-root/roles/developer.md')
+  })
+})
+
+// O1: real git, real worktree — `createTaskWorktree`
+// shells out directly (`sh()`, no injectable deps), so these drive a real
+// local checkout with a real `origin` remote rather than faking git calls.
+describe('createTaskWorktree (O1)', () => {
+  function initRepoWithOrigin(): { repoDir: string; originDir: string } {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-create-task-worktree-')))
+    const originDir = join(base, 'origin.git')
+    const repoDir = join(base, 'repo')
+    execFileSync('git', ['init', '--bare', '-b', 'main', originDir])
+    execFileSync('git', ['init', '-b', 'main', repoDir])
+    const run = (args: string[]): void => {
+      execFileSync('git', args, { cwd: repoDir })
+    }
+    run(['config', 'user.email', 'test@example.com'])
+    run(['config', 'user.name', 'Test'])
+    run(['commit', '--allow-empty', '-m', 'initial'])
+    run(['remote', 'add', 'origin', originDir])
+    run(['push', 'origin', 'main'])
+    run(['fetch', 'origin'])
+    return { repoDir, originDir }
+  }
+
+  const cwdStack: string[] = []
+  function withCwd<T>(dir: string, fn: () => T): T {
+    cwdStack.push(process.cwd())
+    process.chdir(dir)
+    try {
+      return fn()
+    } finally {
+      const prev = cwdStack.pop()
+      if (prev) process.chdir(prev)
+    }
+  }
+
+  const cleanupDirs: string[] = []
+  afterEach(() => {
+    for (const d of cleanupDirs.splice(0)) rmSync(d, { recursive: true, force: true })
+  })
+
+  it('creates the worktree on a fresh branch cut from origin/main, then pushes it from the worktree with upstream set', () => {
+    const { repoDir, originDir } = initRepoWithOrigin()
+    cleanupDirs.push(repoDir, originDir)
+    const branch = 'task/x/1'
+
+    withCwd(repoDir, () => createTaskWorktree(branch))
+
+    const worktreeDir = join(repoDir, '.worktrees', branch)
+    expect(existsSync(worktreeDir)).toBe(true)
+    const checkedOutBranch = execFileSync('git', ['-C', worktreeDir, 'rev-parse', '--abbrev-ref', 'HEAD'], {
+      encoding: 'utf8'
+    }).trim()
+    expect(checkedOutBranch).toBe(branch)
+
+    // Pushed FROM the worktree, reached the remote, and the worktree's own
+    // upstream is now set (never the bare `--no-track origin/main` the
+    // `--no-track` flag left it with at creation).
+    const remoteBranches = execFileSync('git', ['-C', originDir, 'branch', '--list', branch], { encoding: 'utf8' })
+    expect(remoteBranches).toContain(branch)
+    const upstream = execFileSync('git', ['-C', worktreeDir, 'rev-parse', '--abbrev-ref', `${branch}@{upstream}`], {
+      encoding: 'utf8'
+    }).trim()
+    expect(upstream).toBe(`origin/${branch}`)
+  })
+
+  it('reuses an already-existing worktree rather than recreating it (Traps to avoid)', () => {
+    const { repoDir, originDir } = initRepoWithOrigin()
+    cleanupDirs.push(repoDir, originDir)
+    const branch = 'task/x/2'
+
+    withCwd(repoDir, () => createTaskWorktree(branch))
+    const worktreeDir = join(repoDir, '.worktrees', branch)
+    const headAfterFirst = execFileSync('git', ['-C', worktreeDir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+
+    // A second call must not attempt `git worktree add` again (which would
+    // fail outright against an already-existing branch/dir) — it only
+    // re-pushes/re-asserts the upstream.
+    withCwd(repoDir, () => createTaskWorktree(branch))
+    const headAfterSecond = execFileSync('git', ['-C', worktreeDir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+    expect(headAfterSecond).toBe(headAfterFirst)
   })
 })

@@ -12,7 +12,7 @@ The Developer's full procedure — moved out of the seat file (`roles/developer.
 
 **Passing typecheck/lint/pre-commit hooks.** If the hooks reject, you fix the rejection — you do not bypass it. Skipping verification hooks (e.g. `--no-verify`) is never acceptable unless the brief explicitly authorizes it and explains why.
 
-**Worktree discipline.** Your brief's first pre-flight step (Step 0) is creating a worktree — do it before anything else. If dispatched by an automation layer, you work in the worktree it created at `.worktrees/task/<tranche>/<n>/`. If working manually, the brief's Step 0 gives you the `git worktree add … origin/main` command — run it and `cd` in. Never branch from a local checkout that may be behind.
+**Worktree discipline.** Your brief's first pre-flight step (Step 0) is entering your worktree — do it before anything else. If dispatched by an automation layer, the driver already created it, OUTSIDE any sandbox, and pushed its branch to the remote before your first turn ever ran; Step 0 just `cd`s into `.worktrees/task/<tranche>/<n>/` and installs. If working manually (no driver), nobody created it for you — create it yourself, from `origin/main`'s tip, BEFORE running Step 0: `git worktree add .worktrees/task/<tranche>/<n> -b task/<tranche>/<n> --no-track origin/main`, then run Step 0 as written. Never branch from a local checkout that may be behind.
 
 **Who commits and publishes — the driver when the loop dispatches you, you when working manually.** When the review loop dispatches you, you run confined, holding no forge credential and (under a sandbox) a read-only `.git`: you never `git commit`, `git push`, or open the pull request. You leave all your changes **uncommitted** and, before your turn ends, write your one-line commit header (`Type(scope): Description`, ≤72 characters) to this round's `.vinaya-commit-header` file and, on round 1, your full PR body to its `.vinaya-pr-body` file — both granted to you in this round's own Developer folder, named in your prompt the same way the confidence file is. The driver then makes one commit per turn under that header, checks the worktree is on the task branch, at the expected base and the recorded head with every changed path inside the task's Surface, pushes the branch and opens the pull request through the Broker's governed `branch-push`/`pr-open` operations — before any review poll runs. A missing or malformed header, a check that fails, or a push the pre-push hook refuses comes back to your same session naming the problem. The rest of this section — committing per Part, pushing once, opening the PR — is the **manual** path, for when you run with no driver watching.
 
@@ -245,13 +245,14 @@ Every brief includes stop conditions. Honor them unconditionally. Common reasons
 
 ## Worktree discipline
 
-When dispatched by an automation layer, you work in the worktree it created at `.worktrees/task/<tranche>/<n>/` on branch `task/<tranche>/<n>` — your isolated workspace, branched from `origin/main`.
+When dispatched by an automation layer, the driver already created your worktree — OUTSIDE any sandbox, before your first turn ever ran — at `.worktrees/task/<tranche>/<n>/` on branch `task/<tranche>/<n>`, cut from `origin/main`, and already pushed that branch to the remote with its upstream set. The brief's own Step 0 only enters it (`cd .worktrees/task/<tranche>/<n> && bun install …`) — it never creates it.
 
-When working manually, the brief's pre-flight Step 0 gives you the worktree command. Run it first:
+When working manually (no driver watching), nobody created it for you. Create it yourself, BEFORE running the brief's own Step 0:
 - `git worktree add .worktrees/task/<tranche>/<n> -b task/<tranche>/<n> --no-track origin/main && cd .worktrees/task/<tranche>/<n> && git config push.autoSetupRemote true`
 - Then `git worktree list` to confirm you're not accidentally working in another task's worktree
 - Branch from `origin/main`, never from `HEAD` of the current local checkout (which may be behind)
 - Confirm the branch was created correctly: `git log --oneline -3` should show the expected parent
+- Then run the brief's own Step 0 as written
 
 The `task/<tranche>/<n>` branch name is the convention that lets any role find this task's branch and PR (and therefore its derived status) with one forge query. Use it exactly.
 

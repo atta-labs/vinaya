@@ -515,7 +515,8 @@ const BUILTIN_RECOVERY: Record<BriefBuiltin, string> = {
     'Delete the `**[principal]**` "None" placeholder checklist item entirely (an untickable box blocks the merge gate forever), then re-run `{cmd}`.',
   surfaceMap: 'Add a `## Technical surface map` section listing the files this change touches, then re-run `{cmd}`.',
   docUpdateList: 'Add a `## Documentation-update list` section, then re-run `{cmd}`.',
-  worktreeStep0: 'Add the `git worktree add …` Step 0 command to the body, then re-run `{cmd}`.',
+  worktreeStep0:
+    'Add the Step 0 worktree command to the body — `git worktree add …` or `cd .worktrees/… && …` — then re-run `{cmd}`.',
   stopConditions: 'Add a `## Stop conditions` section, then re-run `{cmd}`.',
   autonomyClause:
     'Add the standing autonomy clause ("Do not stop to ask clarifying questions…") to the body, then re-run `{cmd}`.',
