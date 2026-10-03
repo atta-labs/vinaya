@@ -1,0 +1,2088 @@
+{
+  "schemaVersion": 1,
+  "normativeDesign": {
+    "title": "Tech spec — Developer-review on Atta Engine",
+    "revision": 7,
+    "url": "https://linear.app/attalabs/document/tech-spec-developer-review-on-atta-engine-95fb28028b78",
+    "sections": ["16.2", "16.4", "16.7", "16.10", "16.12", "16.13", "16.17 Outcome A"]
+  },
+  "loopSpec": "apps/cli/specs/loop.md",
+  "baseline": {
+    "revision": "d01194ea93f4c89c5df53b12386ede0fe3f3b56e",
+    "implementationModules": [
+      "apps/cli/src/commands/dev-review-loop.ts",
+      "apps/cli/src/lib/dev-review-loop.ts",
+      "apps/cli/src/lib/dev-review-loop/developer-dispatch.ts",
+      "apps/cli/src/lib/dev-review-loop/gate-reading.ts",
+      "apps/cli/src/lib/dev-review-loop/journal-history.ts",
+      "apps/cli/src/lib/dev-review-loop/pause-resume.ts",
+      "apps/cli/src/lib/dev-review-loop/publication.ts",
+      "apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts",
+      "apps/cli/src/lib/dev-review-loop/reviewer-isolation.ts",
+      "apps/cli/src/lib/dev-review-loop/round-assess.ts",
+      "packages/aeg-core/src/dev-review-loop/assess-round.ts",
+      "packages/aeg-core/src/dev-review-loop/index.ts",
+      "packages/aeg-core/src/dev-review-loop/journal-reconstruction.ts",
+      "packages/aeg-core/src/dev-review-loop/render-summary.ts",
+      "packages/aeg-core/src/dev-review-loop/types.ts"
+    ],
+    "testFiles": [
+      "apps/cli/tests/commands/dev-review-loop.test.ts",
+      "apps/cli/tests/lib/dev-review-loop-real-process-debt.test.ts",
+      "apps/cli/tests/lib/dev-review-loop.test.ts",
+      "apps/cli/tests/lib/dev-review-loop/developer-dispatch.test.ts",
+      "apps/cli/tests/lib/dev-review-loop/gate-reading.test.ts",
+      "apps/cli/tests/lib/dev-review-loop/inproc-1.test.ts",
+      "apps/cli/tests/lib/dev-review-loop/inproc-10.test.ts",
+      "apps/cli/tests/lib/dev-review-loop/inproc-11.test.ts",
+      "apps/cli/tests/lib/dev-review-loop/inproc-2.test.ts",
+      "apps/cli/tests/lib/dev-review-loop/inproc-3.test.ts",
+      "apps/cli/tests/lib/dev-review-loop/inproc-4.test.ts",
+      "apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts",
+      "apps/cli/tests/lib/dev-review-loop/inproc-6.test.ts",
+      "apps/cli/tests/lib/dev-review-loop/inproc-7.test.ts",
+      "apps/cli/tests/lib/dev-review-loop/inproc-8.test.ts",
+      "apps/cli/tests/lib/dev-review-loop/inproc-9.test.ts",
+      "apps/cli/tests/lib/dev-review-loop/journal-history.test.ts",
+      "apps/cli/tests/lib/dev-review-loop/pause-resume.test.ts",
+      "apps/cli/tests/lib/dev-review-loop/publication.test.ts",
+      "apps/cli/tests/lib/dev-review-loop/reviewer-dispatch.test.ts",
+      "apps/cli/tests/lib/dev-review-loop/reviewer-isolation.test.ts",
+      "apps/cli/tests/lib/dev-review-loop/round-assess.test.ts",
+      "apps/cli/tests/lib/dev-review-loop/takeover-phase.test.ts",
+      "packages/aeg-core/src/dev-review-loop/assess-round.test.ts",
+      "packages/aeg-core/src/dev-review-loop/journal-reconstruction.test.ts",
+      "packages/aeg-core/src/dev-review-loop/render-summary.test.ts"
+    ],
+    "addedSinceBaseline": [
+      {
+        "path": "apps/cli/src/lib/dev-review-loop/developer-publication.ts",
+        "kind": "implementation",
+        "reason": "Landed after the baseline revision with the driver-commits-and-publishes-each-Developer-turn change; classifiable from the existing loop.md section \"Publishing each Developer turn (the driver commits and publishes; no agent pushes)\"."
+      },
+      {
+        "path": "apps/cli/tests/lib/dev-review-loop/developer-publication.test.ts",
+        "kind": "test",
+        "reason": "The unit tests of developer-publication.ts, landed in the same change."
+      }
+    ]
+  },
+  "exclusions": [
+    {
+      "path": "packages/aeg-core/src/dev-review-loop/index.ts",
+      "kind": "implementation",
+      "reason": "Pure barrel: re-exports assessRound, the budget renderers, the published-marker render/parse, initialLoopState, the types and the journal-reconstruction helpers; it contains no statement that decides, reads or writes anything."
+    },
+    {
+      "path": "apps/cli/tests/lib/dev-review-loop-real-process-debt.test.ts",
+      "kind": "test",
+      "reason": "A ratchet over the source text of dev-review-loop.test.ts (real-process helper call sites minus reasoned ones must stay under a fixed count); it never runs the loop and asserts no loop behavior."
+    }
+  ],
+  "supportFiles": [
+    {
+      "path": "packages/aeg-core/src/dev-review-loop/fakes.ts",
+      "reason": "Test fakes (fake gate/verdict observations and a runScenario helper that threads state through assessRound); imported only by tests and not re-exported from index.ts, so it is neither an implementation module nor a test file."
+    },
+    {
+      "path": "apps/cli/tests/lib/dev-review-loop-harness.ts",
+      "reason": "Shared in-process harness backing a full LoopDeps with one mutable fake world; it is imported by the in-process tests and asserts nothing itself."
+    }
+  ],
+  "invariants": [
+    {
+      "id": "INV-001",
+      "behavior": "Every verdict APPROVE/PASS with every objective MET ends the round green: decision publish, round recorded green, journal_finalized merged_ready.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "pure-policy",
+      "scenarios": ["happy-path"],
+      "sources": [{ "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts", "symbol": "assessVerdicts" }],
+      "tests": [
+        "packages/aeg-core/src/dev-review-loop/assess-round.test.ts",
+        "apps/cli/tests/lib/dev-review-loop.test.ts"
+      ],
+      "loopSpec": ["The exits"],
+      "reason": "The exits table promises it and the pure layer enforces it deterministically."
+    },
+    {
+      "id": "INV-002",
+      "behavior": "An ESCALATE verdict is checked first and wins over every other outcome: pause(escalation) with the journal closed.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "pure-policy",
+      "scenarios": ["operator-intervention"],
+      "sources": [{ "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts", "symbol": "assessVerdicts" }],
+      "tests": [
+        "packages/aeg-core/src/dev-review-loop/assess-round.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-3.test.ts"
+      ],
+      "loopSpec": ["The exits"],
+      "reason": "Spec row and journal-close paragraph match the code."
+    },
+    {
+      "id": "INV-003",
+      "behavior": "A NOT MET objective forces changes_requested and a developer dispatch even when the verdict is APPROVE with zero findings.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "pure-policy",
+      "scenarios": ["revisions"],
+      "sources": [{ "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts", "symbol": "assessVerdicts" }],
+      "tests": ["packages/aeg-core/src/dev-review-loop/assess-round.test.ts"],
+      "loopSpec": ["Rounds"],
+      "reason": "Rounds states any NOT MET objective is changes_requested regardless of findings."
+    },
+    {
+      "id": "INV-004",
+      "behavior": "The pure layer publishes on an empty or single-element verdict list and on an empty objectives list; only the driver's own reviewer-count and objective-coverage checks keep a partial set from publishing.",
+      "classification": "named-defect",
+      "defect": "DEF-01",
+      "owner": "vinaya-policy",
+      "authority": "pure-policy",
+      "scenarios": ["invalid-reviews"],
+      "sources": [{ "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts", "symbol": "assessVerdicts" }],
+      "tests": [],
+      "loopSpec": ["The exits"],
+      "reason": "Revision 7 section 16.10: absence of a failure signal is never completion; the decision function itself does not require both verdicts."
+    },
+    {
+      "id": "INV-005",
+      "behavior": "A non-green round at or past config.maxRounds pauses max_rounds; a green round at the cap still publishes; the cap is configuration, never hardcoded.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "pure-policy",
+      "scenarios": ["revisions"],
+      "sources": [{ "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts", "symbol": "assessVerdicts" }],
+      "tests": [
+        "packages/aeg-core/src/dev-review-loop/assess-round.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-11.test.ts"
+      ],
+      "loopSpec": ["The exits"],
+      "reason": "Exact match with the capped row and its claim."
+    },
+    {
+      "id": "INV-006",
+      "behavior": "When several exits apply to one verdicts observation the fixed order is escalation, green, reappearance, repeat_finding, max_rounds, then dispatch_developer.",
+      "classification": "principal-ruling-required",
+      "ambiguity": "AMB-01",
+      "owner": "vinaya-policy",
+      "authority": "pure-policy",
+      "scenarios": ["revisions"],
+      "sources": [{ "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts", "symbol": "assessVerdicts" }],
+      "tests": [],
+      "loopSpec": ["The exits"],
+      "reason": "The exits table is unordered; which pause reason wins is a policy choice nobody has made."
+    },
+    {
+      "id": "INV-007",
+      "behavior": "Reappearance fires only when a finding resolved earlier is re-reported with state exactly reproduced; a re-report with state open or null is not recurring.",
+      "classification": "principal-ruling-required",
+      "ambiguity": "AMB-02",
+      "owner": "vinaya-policy",
+      "authority": "pure-policy",
+      "scenarios": ["revisions"],
+      "sources": [
+        { "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts", "symbol": "computeFindingsCompared" }
+      ],
+      "tests": ["packages/aeg-core/src/dev-review-loop/assess-round.test.ts"],
+      "loopSpec": ["The exits"],
+      "reason": "The spec says a fingerprint resolved earlier reappears; the code narrows it to the reproduced state."
+    },
+    {
+      "id": "INV-008",
+      "behavior": "A blocking, unresolved finding present in two consecutive reviewed rounds pauses repeat_finding; non-blocking or deferred findings never count and red-gate or low-confidence rounds do not reset the chain.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "pure-policy",
+      "scenarios": ["revisions"],
+      "sources": [{ "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts", "symbol": "blockingOpenKeys" }],
+      "tests": ["packages/aeg-core/src/dev-review-loop/assess-round.test.ts"],
+      "loopSpec": ["The exits"],
+      "reason": "All three narrowings in the spec are implemented and tested."
+    },
+    {
+      "id": "INV-009",
+      "behavior": "The removed no_progress exit stays removed: rounds that resolve nothing but raise new or keep non-blocking ids continue to the developer.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "pure-policy",
+      "scenarios": ["revisions"],
+      "sources": [{ "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts", "symbol": "assessRound" }],
+      "tests": ["packages/aeg-core/src/dev-review-loop/assess-round.test.ts"],
+      "loopSpec": ["The exits"],
+      "reason": "The spec records the removal and tests pin its absence."
+    },
+    {
+      "id": "INV-010",
+      "behavior": "The same normalized mechanical failure twice in a row (red gate or headless attempt, one shared chain) pauses repeat_failure; a green gate clears it.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "pure-policy",
+      "scenarios": ["developer-failure"],
+      "sources": [
+        { "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts", "symbol": "normalizeFailureSignature" }
+      ],
+      "tests": [
+        "packages/aeg-core/src/dev-review-loop/assess-round.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-4.test.ts"
+      ],
+      "loopSpec": ["The exits"],
+      "reason": "Spec and code match exactly."
+    },
+    {
+      "id": "INV-011",
+      "behavior": "Confidence rule: round 1 never branches on confidence; from round 2 an absent value is asked once then pauses, a value below 50 earns one extra developer turn then pauses, 50 or more dispatches reviewers; a red gate never reads it.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "pure-policy",
+      "scenarios": ["revisions"],
+      "sources": [{ "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts", "symbol": "assessGate" }],
+      "tests": ["packages/aeg-core/src/dev-review-loop/assess-round.test.ts"],
+      "loopSpec": ["The confidence rule"],
+      "reason": "Matches the confidence rule section exactly."
+    },
+    {
+      "id": "INV-012",
+      "behavior": "The below-50 extra turn flag lives only in memory: it is not part of the persisted loop-state snapshot nor seeded on recovery, so a re-exec, attach or resume grants the extra turn again.",
+      "classification": "named-defect",
+      "defect": "DEF-02",
+      "owner": "vinaya-policy",
+      "authority": "control-state",
+      "scenarios": ["restart"],
+      "sources": [
+        { "path": "packages/aeg-core/src/dev-review-loop/types.ts", "symbol": "initialLoopState" },
+        { "path": "apps/cli/src/lib/dev-review-loop/round-assess.ts", "symbol": "LoopStateSnapshot" }
+      ],
+      "tests": [],
+      "loopSpec": ["The confidence rule"],
+      "reason": "The spec says spent once, ever; the control state drops the flag."
+    },
+    {
+      "id": "INV-013",
+      "behavior": "The confidence reply is parsed by the driver from the developer's file; out-of-range values, a missing line or a missing reason read absent, never a fabricated number.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "pure-policy",
+      "scenarios": ["invalid-reviews"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop/round-assess.ts", "symbol": "parseConfidenceReply" }],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/round-assess.test.ts",
+        "apps/cli/tests/lib/dev-review-loop.test.ts"
+      ],
+      "loopSpec": ["The confidence rule"],
+      "reason": "Deterministic driver-side parse; the worker only writes the file."
+    },
+    {
+      "id": "INV-014",
+      "behavior": "A red gate or a below-50 turn clears the pending round while the round number is reused, so round_started and round_ended are logged a second time for the same round and a second record with the same round is appended.",
+      "classification": "named-defect",
+      "defect": "DEF-03",
+      "owner": "log",
+      "authority": "telemetry",
+      "scenarios": ["revisions"],
+      "sources": [{ "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts", "symbol": "assessGate" }],
+      "tests": ["packages/aeg-core/src/dev-review-loop/assess-round.test.ts"],
+      "loopSpec": ["The confidence rule", "Rounds"],
+      "reason": "The spec says round_started fires only on a round's first gate call."
+    },
+    {
+      "id": "INV-015",
+      "behavior": "journal_finalized.rounds counts every appended attempt record, red-gate and low-confidence attempts included, not distinct reviewed rounds.",
+      "classification": "principal-ruling-required",
+      "ambiguity": "AMB-03",
+      "owner": "log",
+      "authority": "telemetry",
+      "scenarios": ["revisions"],
+      "sources": [
+        { "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts", "symbol": "journalFinalizedEvent" }
+      ],
+      "tests": ["packages/aeg-core/src/dev-review-loop/assess-round.test.ts"],
+      "loopSpec": ["Attempt and finding telemetry"],
+      "reason": "The spec acknowledges append-only records but never says what the rounds figure counts."
+    },
+    {
+      "id": "INV-016",
+      "behavior": "A round no reviewer saw (red gate, low-confidence send-back, repeat_failure or time_budget stop) records no severity counts and names why it was not reviewed.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "pure-policy",
+      "scenarios": ["developer-failure"],
+      "sources": [
+        { "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts", "symbol": "buildUnreviewedRecord" }
+      ],
+      "tests": ["packages/aeg-core/src/dev-review-loop/assess-round.test.ts"],
+      "loopSpec": ["The exits"],
+      "reason": "Promised by the not-reviewed rendering rule."
+    },
+    {
+      "id": "INV-017",
+      "behavior": "The two confidence-collapse pauses record the round with zero-seeded severity counts and no not-reviewed reason, although no reviewer saw it.",
+      "classification": "named-defect",
+      "defect": "DEF-04",
+      "owner": "vinaya-policy",
+      "authority": "pure-policy",
+      "scenarios": ["revisions"],
+      "sources": [{ "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts", "symbol": "assessGate" }],
+      "tests": [],
+      "loopSpec": ["The exits"],
+      "reason": "Contradicts the module's own rule that an unseen round never reads as a clean zero."
+    },
+    {
+      "id": "INV-018",
+      "behavior": "Severity thresholds and deferral are decided upstream from repository policy; assessRound only reads the derived verdict, objectives and policy treatment, and copies deferred findings onto the round record.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "pure-policy",
+      "scenarios": ["revisions"],
+      "sources": [
+        { "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts", "symbol": "buildRoundRecord" },
+        { "path": "apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts", "symbol": "buildVerdictFromReport" }
+      ],
+      "tests": [
+        "packages/aeg-core/src/dev-review-loop/assess-round.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/reviewer-dispatch.test.ts"
+      ],
+      "loopSpec": [
+        "Which severities block is repository policy",
+        "Which findings block after round 1 — the deferral rules"
+      ],
+      "reason": "Revision 7 section 16.10: reviewers classify, policy decides; the layering is promised."
+    },
+    {
+      "id": "INV-019",
+      "behavior": "verdicts_read and gate_result_read carry the documented fields (all_approve, blockers, findings with severity scale and policy treatment; confidence value, reason or unavailable, extra_turn_spent).",
+      "classification": "product-guarantee",
+      "owner": "log",
+      "authority": "telemetry",
+      "scenarios": ["happy-path"],
+      "sources": [{ "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts", "symbol": "verdictsReadEvent" }],
+      "tests": ["packages/aeg-core/src/dev-review-loop/assess-round.test.ts"],
+      "loopSpec": ["Attempt and finding telemetry", "The confidence rule"],
+      "reason": "Telemetry shape is promised; it is fail-open and never read back for a decision."
+    },
+    {
+      "id": "INV-020",
+      "behavior": "The task time budget counts active phase time, is checked only on gate and mechanical-failure observations, and exhaustion pauses time_budget with a not-reviewed record.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "pure-policy",
+      "scenarios": ["context-pressure"],
+      "sources": [{ "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts", "symbol": "taskBudgetExceeded" }],
+      "tests": ["packages/aeg-core/src/dev-review-loop/assess-round.test.ts"],
+      "loopSpec": ["The exits"],
+      "reason": "Revision 7 section 16.14: exhaustion is a typed non-success pause; spec and tests match."
+    },
+    {
+      "id": "INV-021",
+      "behavior": "On a publish decision journal_finalized is held back and logged only after publication succeeds, so a crash mid-publish never logs merged_ready.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "telemetry",
+      "scenarios": ["restart"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop/round-assess.ts", "symbol": "routeCompletionEvents" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-1.test.ts"],
+      "loopSpec": ["No round-end flush"],
+      "reason": "The completion claim follows the verified effect, not the decision."
+    },
+    {
+      "id": "INV-022",
+      "behavior": "The published marker is one hidden line naming the head and per-round confidence cells; the parser bounds values and never matches a verdict extractor.",
+      "classification": "product-guarantee",
+      "owner": "governed-operation",
+      "authority": "forge",
+      "scenarios": ["happy-path", "restart"],
+      "sources": [
+        { "path": "packages/aeg-core/src/dev-review-loop/render-summary.ts", "symbol": "renderPublishedMarker" }
+      ],
+      "tests": ["packages/aeg-core/src/dev-review-loop/render-summary.test.ts"],
+      "loopSpec": ["Publication"],
+      "reason": "A deterministic forge-text contract that recovery reads."
+    },
+    {
+      "id": "INV-023",
+      "behavior": "Driver bounds: two consecutive gate-stalled no-push turns pause infrastructure, and at most five infrastructure or stale_driver pauses are retried before a ruling is required; a sign-in refusal spends no retry.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "control-state",
+      "scenarios": ["developer-failure", "reviewer-failure"],
+      "sources": [
+        { "path": "apps/cli/src/lib/dev-review-loop/round-assess.ts", "symbol": "spendsInfrastructureRetry" }
+      ],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/inproc-4.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-7.test.ts"
+      ],
+      "loopSpec": ["Infrastructure failures and driver-decided pauses"],
+      "reason": "Revision 7 section 16.14: retries are class-specific and bounded."
+    },
+    {
+      "id": "INV-024",
+      "behavior": "The wording chosen for a failed developer resume (assertDispatchOrEscalate, DeveloperDispatchHistory latching) is selected from the dispatch history.",
+      "classification": "implementation-accident",
+      "owner": "standalone-only",
+      "authority": "effect",
+      "scenarios": ["developer-failure"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop/round-assess.ts", "symbol": "assertDispatchOrEscalate" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/round-assess.test.ts"],
+      "loopSpec": [],
+      "reason": "Message selection is presentation, not a promised transition."
+    },
+    {
+      "id": "INV-025",
+      "behavior": "The prior developer launch is reconciled from its durable record: a live identity-confirmed child pauses (continuity lost), a bound session is resumed, a launch refused before spawn dispatches fresh, a spawned launch with no session or a corrupt record pauses.",
+      "classification": "product-guarantee",
+      "owner": "provider-adapter",
+      "authority": "control-state",
+      "scenarios": ["restart"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop/developer-dispatch.ts", "symbol": "reconcileLaunch" }],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/developer-dispatch.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"
+      ],
+      "loopSpec": ["Durable launch identity and recovery"],
+      "reason": "Deterministic driver code over the durable launch record; the worker cannot influence it."
+    },
+    {
+      "id": "INV-026",
+      "behavior": "A killed driver leaves no orphan: shutdown terminates in-flight children after an identity check, and recovery reaps a child abandoned by its dead dispatcher while never touching a process whose identity does not match.",
+      "classification": "product-guarantee",
+      "owner": "provider-adapter",
+      "authority": "control-state",
+      "scenarios": ["restart", "cancellation"],
+      "sources": [
+        { "path": "apps/cli/src/lib/dev-review-loop/developer-dispatch.ts", "symbol": "classifyChildLiveness" },
+        { "path": "apps/cli/src/lib/dispatch.ts", "symbol": "terminateLaunchedChildOnShutdown" }
+      ],
+      "tests": ["apps/cli/tests/lib/dispatch/reconcile-launch.test.ts", "apps/cli/tests/lib/dispatch.test.ts"],
+      "loopSpec": ["A killed driver leaves no orphan"],
+      "reason": "Revision 7 section 16.15: cancellation terminates owned process trees."
+    },
+    {
+      "id": "INV-027",
+      "behavior": "Feedback returns to the same developer session: after the first successful dispatch every later dispatch resumes the recorded session id with a resume-context block.",
+      "classification": "product-guarantee",
+      "owner": "provider-adapter",
+      "authority": "control-state",
+      "scenarios": ["revisions"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "dispatchDeveloperOnce" }],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/inproc-3.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"
+      ],
+      "loopSpec": ["Rounds"],
+      "reason": "Revision 7 section 2 guarantee 4; the driver holds the session id."
+    },
+    {
+      "id": "INV-028",
+      "behavior": "Only the round-1 developer prompt prepends the resolved developer doctrine and carries the frozen brief verbatim; obeying it is up to the worker.",
+      "classification": "advisory",
+      "owner": "provider-adapter",
+      "authority": "effect",
+      "scenarios": ["happy-path"],
+      "sources": [
+        { "path": "apps/cli/src/lib/dev-review-loop/developer-dispatch.ts", "symbol": "assembleDeveloperDoctrine" }
+      ],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/developer-dispatch.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-1.test.ts"
+      ],
+      "loopSpec": ["Publishing each Developer turn (the driver commits and publishes; no agent pushes)"],
+      "reason": "Prompt text: the layout is deterministic, compliance is not enforced outside the worker."
+    },
+    {
+      "id": "INV-029",
+      "behavior": "Later-round prompts carry only the delta (CI-red, findings or conflict text, commit-header and confidence lines), never the brief or its Documentation section.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "pure-policy",
+      "scenarios": ["revisions"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "dispatchDeveloper" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop.test.ts"],
+      "loopSpec": ["The Documentation read-gate"],
+      "reason": "Revision 7 section 16.6: later rounds receive a delta packet."
+    },
+    {
+      "id": "INV-030",
+      "behavior": "On --resume the developer model is the newly supplied --model when given, else the held model; a different --model silently overrides the paused run's model.",
+      "classification": "principal-ruling-required",
+      "ambiguity": "AMB-04",
+      "owner": "operator-control",
+      "authority": "control-state",
+      "scenarios": ["operator-intervention"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "devReviewLoop" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/pause-resume.test.ts"],
+      "loopSpec": ["Pause and `--resume`"],
+      "reason": "The spec is silent on whether a resume may change the execution path's model."
+    },
+    {
+      "id": "INV-031",
+      "behavior": "The driver validates the developer's commit header (one Type(scope): Description line, at most 72 characters) before committing, and sends the turn back without committing when it fails.",
+      "classification": "product-guarantee",
+      "owner": "governed-operation",
+      "authority": "pure-policy",
+      "scenarios": ["invalid-reviews", "revisions"],
+      "sources": [
+        { "path": "apps/cli/src/lib/dev-review-loop/developer-publication.ts", "symbol": "validateCommitHeader" }
+      ],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/developer-publication.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"
+      ],
+      "loopSpec": ["Publishing each Developer turn (the driver commits and publishes; no agent pushes)"],
+      "reason": "Pure driver-side check before the effect."
+    },
+    {
+      "id": "INV-032",
+      "behavior": "The commit-header and PR-body files live in the round's own Developer folder outside the worktree; a missing or empty PR body is sent back; the PR title is the Issue title.",
+      "classification": "product-guarantee",
+      "owner": "governed-operation",
+      "authority": "control-state",
+      "scenarios": ["happy-path"],
+      "sources": [
+        { "path": "apps/cli/src/lib/dev-review-loop/developer-publication.ts", "symbol": "commitHeaderPathFor" },
+        { "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "openPullRequestFromBody" }
+      ],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/developer-publication.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"
+      ],
+      "loopSpec": ["Publishing each Developer turn (the driver commits and publishes; no agent pushes)"],
+      "reason": "Driver-owned paths and a driver-owned open."
+    },
+    {
+      "id": "INV-033",
+      "behavior": "Before publishing a turn the driver checks branch, base, pre-turn head and that every changed path is inside the Surface; a failure is sent back at most twice.",
+      "classification": "product-guarantee",
+      "owner": "governed-operation",
+      "authority": "pure-policy",
+      "scenarios": ["isolation-refusal"],
+      "sources": [
+        {
+          "path": "apps/cli/src/lib/dev-review-loop/developer-publication.ts",
+          "symbol": "checkPublicationPreconditions"
+        }
+      ],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/developer-publication.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"
+      ],
+      "loopSpec": ["Publishing each Developer turn (the driver commits and publishes; no agent pushes)"],
+      "reason": "Deterministic precondition check outside the worker."
+    },
+    {
+      "id": "INV-034",
+      "behavior": "The expected publication base is held only in memory, never in the durable publication record, and while it is unset the Surface check sees no changed paths.",
+      "classification": "named-defect",
+      "defect": "DEF-05",
+      "owner": "governed-operation",
+      "authority": "control-state",
+      "scenarios": ["restart", "isolation-refusal"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "publishDeveloperTurn" }],
+      "tests": [],
+      "loopSpec": ["Publishing each Developer turn (the driver commits and publishes; no agent pushes)"],
+      "reason": "The spec says the base is recorded on the first publication and compared on every later one."
+    },
+    {
+      "id": "INV-035",
+      "behavior": "The driver commits at most once per turn with the repository's hooks enabled and writes the commit to the durable publication record before any push.",
+      "classification": "product-guarantee",
+      "owner": "governed-operation",
+      "authority": "effect",
+      "scenarios": ["happy-path", "uncertain-effects"],
+      "sources": [
+        {
+          "path": "apps/cli/src/lib/dev-review-loop/developer-publication.ts",
+          "symbol": "writeDeveloperPublicationRecord"
+        }
+      ],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/developer-publication.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"
+      ],
+      "loopSpec": ["Publishing each Developer turn (the driver commits and publishes; no agent pushes)"],
+      "reason": "Revision 7 section 16.12: prepare and record before commit."
+    },
+    {
+      "id": "INV-036",
+      "behavior": "A commit hook that refuses the driver's commit throws out of publication into the outer handler, becoming an infrastructure pause rather than a send-back.",
+      "classification": "principal-ruling-required",
+      "ambiguity": "AMB-05",
+      "owner": "governed-operation",
+      "authority": "effect",
+      "scenarios": ["developer-failure"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "publishDeveloperTurn" }],
+      "tests": [],
+      "loopSpec": ["Publishing each Developer turn (the driver commits and publishes; no agent pushes)"],
+      "reason": "The spec says hooks run but not what a refusal leads to."
+    },
+    {
+      "id": "INV-037",
+      "behavior": "Push and pull-request open go through the Broker's governed effect, keyed by the commit for the push and reconciled against the remote head or the open PR; with no launch record the push is refused.",
+      "classification": "product-guarantee",
+      "owner": "governed-operation",
+      "authority": "forge",
+      "scenarios": ["uncertain-effects"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "defaultPushTaskBranch" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"],
+      "loopSpec": ["Publishing each Developer turn (the driver commits and publishes; no agent pushes)"],
+      "reason": "Revision 7 section 16.12: effects are authorized, keyed and reconciled."
+    },
+    {
+      "id": "INV-038",
+      "behavior": "A refused push leaves the turn committed but unpushed and the next send-back quotes the refusal text.",
+      "classification": "product-guarantee",
+      "owner": "governed-operation",
+      "authority": "effect",
+      "scenarios": ["developer-failure"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "commitAndPushPrompt" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"],
+      "loopSpec": ["Publishing each Developer turn (the driver commits and publishes; no agent pushes)"],
+      "reason": "Driver-side and deterministic."
+    },
+    {
+      "id": "INV-039",
+      "behavior": "A clean worktree with nothing ahead and an open PR publishes nothing.",
+      "classification": "product-guarantee",
+      "owner": "governed-operation",
+      "authority": "control-state",
+      "scenarios": ["happy-path"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "publishDeveloperTurn" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"],
+      "loopSpec": ["Publishing each Developer turn (the driver commits and publishes; no agent pushes)"],
+      "reason": "Promised no-op publication."
+    },
+    {
+      "id": "INV-040",
+      "behavior": "A missing worktree (for example a driver on another host) also publishes nothing, silently.",
+      "classification": "implementation-accident",
+      "owner": "standalone-only",
+      "authority": "control-state",
+      "scenarios": ["restart"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "publishDeveloperTurn" }],
+      "tests": [],
+      "loopSpec": [],
+      "reason": "Not promised anywhere; the remote poll and no_push net catch the outcome."
+    },
+    {
+      "id": "INV-041",
+      "behavior": "After a crash the publication record is finished exactly once: a recorded unpushed commit is pushed, a PR is opened only if none is open, and nothing is committed again.",
+      "classification": "product-guarantee",
+      "owner": "governed-operation",
+      "authority": "control-state",
+      "scenarios": ["restart", "uncertain-effects"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "finishPublicationFromRecord" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"],
+      "loopSpec": ["Publishing each Developer turn (the driver commits and publishes; no agent pushes)"],
+      "reason": "Revision 7 section 16.12: resume reconciles, never blindly replays."
+    },
+    {
+      "id": "INV-042",
+      "behavior": "Unpushed work is resumed exactly once per stall with a commit-and-push instruction, decided from the driver's own git reads, then pauses no_push naming the branch, files and ahead count.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "control-state",
+      "scenarios": ["developer-failure"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "defaultReadUnpushedWorkDetail" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"],
+      "loopSpec": ["Unpushed work is resumed once, then `no_push`"],
+      "reason": "Decided from observed repository state, never the developer's reply."
+    },
+    {
+      "id": "INV-043",
+      "behavior": "A conflicting head is sent back to the developer with the conflicting files and never reaches a reviewer; a conflict before publish discards the held verdicts.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "forge",
+      "scenarios": ["stale-evidence"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "pollMergeableState" }],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-6.test.ts"
+      ],
+      "loopSpec": ["A conflicting head is sent back to the developer, never to a reviewer"],
+      "reason": "A forge fact read by the driver."
+    },
+    {
+      "id": "INV-044",
+      "behavior": "The conflict prompt tells the developer to merge or rebase origin/main and then git push, which the driver's own publication preconditions (pre-turn head, recorded base) then refuse.",
+      "classification": "named-defect",
+      "defect": "DEF-06",
+      "owner": "vinaya-policy",
+      "authority": "effect",
+      "scenarios": ["stale-evidence"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "renderConflictPrompt" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"],
+      "loopSpec": [
+        "Publishing each Developer turn (the driver commits and publishes; no agent pushes)",
+        "A conflicting head is sent back to the developer, never to a reviewer"
+      ],
+      "reason": "Contradicts no-agent-pushes; a real conflict resolution cannot pass the publication path."
+    },
+    {
+      "id": "INV-045",
+      "behavior": "Publication posts the held code verdict, the security verdict and the marker through a reconciling effect executor keyed by round and body digest, then re-reads each posted verdict from Principal-authored comments and requires head and full manifest binding.",
+      "classification": "product-guarantee",
+      "owner": "governed-operation",
+      "authority": "forge",
+      "scenarios": ["happy-path", "uncertain-effects"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop/publication.ts", "symbol": "publishRound" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/publication.test.ts", "apps/cli/tests/lib/dev-review-loop.test.ts"],
+      "loopSpec": ["Publication"],
+      "reason": "Revision 7 section 16.10: all publish effects have verified postconditions."
+    },
+    {
+      "id": "INV-046",
+      "behavior": "loop.md's Publication idempotency paragraph still names postForgeEffectOnce with a started-then-posted outbox record, while the code posts through postPrCommentOnce with remote reconcile.",
+      "classification": "named-defect",
+      "defect": "DEF-07",
+      "owner": "governed-operation",
+      "authority": "effect",
+      "scenarios": ["uncertain-effects"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop/publication.ts", "symbol": "postPrCommentOnce" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/publication.test.ts"],
+      "loopSpec": ["Publication"],
+      "reason": "Spec drift: the oracle documentation describes a weaker mechanism than the one shipped."
+    },
+    {
+      "id": "INV-047",
+      "behavior": "A posted verdict whose base moved while its head stayed identical still binds at publication, although PublishInput documents binding on every field.",
+      "classification": "principal-ruling-required",
+      "ambiguity": "AMB-06",
+      "owner": "vinaya-policy",
+      "authority": "pure-policy",
+      "scenarios": ["stale-evidence"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop/publication.ts", "symbol": "bindingOfPosted" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/publication.test.ts"],
+      "loopSpec": ["Publication", "The review-input manifest and its equivalence"],
+      "reason": "Code comment and test disagree; the Publication section does not settle it."
+    },
+    {
+      "id": "INV-048",
+      "behavior": "The marker comment is refused before posting if either gate extractor would parse it as a verdict.",
+      "classification": "product-guarantee",
+      "owner": "governed-operation",
+      "authority": "pure-policy",
+      "scenarios": ["happy-path"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop/publication.ts", "symbol": "publicationComment" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/publication.test.ts"],
+      "loopSpec": ["Publication"],
+      "reason": "Live re-verification by the driver before the effect."
+    },
+    {
+      "id": "INV-049",
+      "behavior": "The deferred-findings Issue is upserted at publish from an in-memory map of this run's own verdicts; after a restart it is rewritten with only the post-restart rounds.",
+      "classification": "principal-ruling-required",
+      "ambiguity": "AMB-07",
+      "owner": "governed-operation",
+      "authority": "forge",
+      "scenarios": ["restart"],
+      "sources": [{ "path": "apps/cli/src/lib/forge-write.ts", "symbol": "upsertDeferredFindingsIssue" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop.test.ts"],
+      "loopSpec": ["The deferred-findings Issue"],
+      "reason": "The spec concedes reconstructed rounds carry no detail but not whether a republish may shrink the Issue."
+    },
+    {
+      "id": "INV-050",
+      "behavior": "The Documentation read-gate blocks a developer's Stop while a URL source is unfetched, through hooks whose receipt files sit inside the developer process's reach and fail open on a missing run id or sources file.",
+      "classification": "advisory",
+      "owner": "provider-adapter",
+      "authority": "telemetry",
+      "scenarios": ["isolation-refusal"],
+      "sources": [{ "path": "apps/cli/src/lib/dispatch.ts", "symbol": "documentationStopHookScript" }],
+      "tests": ["apps/cli/tests/lib/dispatch.test.ts"],
+      "loopSpec": ["The Documentation read-gate"],
+      "reason": "Revision 7 section 16.7 names this mechanism advisory; controller-owned receipts replace it."
+    },
+    {
+      "id": "INV-051",
+      "behavior": "\"Leave your changes uncommitted; the driver commits\" is prompt text; a developer who commits anyway is caught only by the driver's head check.",
+      "classification": "advisory",
+      "owner": "provider-adapter",
+      "authority": "effect",
+      "scenarios": ["isolation-refusal"],
+      "sources": [
+        { "path": "apps/cli/src/lib/dev-review-loop/developer-publication.ts", "symbol": "commitHeaderPromptLine" }
+      ],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"],
+      "loopSpec": ["Publishing each Developer turn (the driver commits and publishes; no agent pushes)"],
+      "reason": "The instruction is advisory; the sandbox's read-only .git is the enforcement where present."
+    },
+    {
+      "id": "INV-052",
+      "behavior": "At a fresh start the driver creates the task worktree and pushes origin/main to the task branch directly through git with --no-verify, outside the Broker, and writes repository-level push.autoSetupRemote.",
+      "classification": "principal-ruling-required",
+      "ambiguity": "AMB-08",
+      "owner": "governed-operation",
+      "authority": "effect",
+      "scenarios": ["happy-path"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop/developer-dispatch.ts", "symbol": "createTaskWorktree" }],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/developer-dispatch.test.ts",
+        "apps/cli/tests/lib/dev-review-loop.test.ts"
+      ],
+      "loopSpec": ["Publishing each Developer turn (the driver commits and publishes; no agent pushes)"],
+      "reason": "Every other push goes through the Broker with hooks; whether the bootstrap push may bypass both is unruled."
+    },
+    {
+      "id": "INV-053",
+      "behavior": "The developer branch is derived from the Issue: a tranche-labelled Issue must carry a [<tranche>] <n> — title and gets task/<tranche>/<n>; an unlabelled Issue gets task/issue-<n>.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "forge",
+      "scenarios": ["happy-path"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop/developer-dispatch.ts", "symbol": "developerBranchFor" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/developer-dispatch.test.ts"],
+      "loopSpec": [],
+      "reason": "The branch name is the developer doctrine's whole addressing scheme for a task's state."
+    },
+    {
+      "id": "INV-054",
+      "behavior": "Code and security reviewers are dispatched concurrently against the same candidate, and held verdicts are written only after both resolve.",
+      "classification": "product-guarantee",
+      "owner": "engine-runtime",
+      "authority": "effect",
+      "scenarios": ["happy-path"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "dispatchReviewer" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-2.test.ts"],
+      "loopSpec": ["Rounds", "Infrastructure failures and driver-decided pauses"],
+      "reason": "Revision 7 section 16.5: parallel fan-out and join, a target runtime capability."
+    },
+    {
+      "id": "INV-055",
+      "behavior": "When one reviewer dispatch rejects, the round's finally deletes the candidate and scratch copies while the sibling dispatch is still running; a sibling retry then runs with no isolated cwd.",
+      "classification": "named-defect",
+      "defect": "DEF-08",
+      "owner": "engine-runtime",
+      "authority": "effect",
+      "scenarios": ["reviewer-failure", "isolation-refusal"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "devReviewLoop" }],
+      "tests": [],
+      "loopSpec": ["Reviewer isolation — one immutable candidate, isolated scratch space"],
+      "reason": "The spec says cleanup runs once dispatches have concluded."
+    },
+    {
+      "id": "INV-056",
+      "behavior": "Every reviewer attempt is a fresh session with its own work directory and scratch copy; a retry never inherits a prior attempt's files.",
+      "classification": "product-guarantee",
+      "owner": "provider-adapter",
+      "authority": "effect",
+      "scenarios": ["reviewer-failure"],
+      "sources": [
+        { "path": "apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts", "symbol": "reviewerWorkDir" },
+        { "path": "apps/cli/src/lib/dev-review-loop/reviewer-isolation.ts", "symbol": "buildReviewerScratch" }
+      ],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/reviewer-isolation.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-4.test.ts"
+      ],
+      "loopSpec": ["Reviewer isolation — one immutable candidate, isolated scratch space"],
+      "reason": "The driver chooses the paths; the worker cannot."
+    },
+    {
+      "id": "INV-057",
+      "behavior": "A missing reviewer artifact or an unparseable report gets one fresh retry; a second miss pauses infrastructure with no verdict held and the round number unchanged — an invalid review counts as no review.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "control-state",
+      "scenarios": ["invalid-reviews", "reviewer-failure"],
+      "sources": [
+        { "path": "apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts", "symbol": "missingReviewerArtifacts" }
+      ],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/inproc-4.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/reviewer-dispatch.test.ts"
+      ],
+      "loopSpec": ["Infrastructure failures and driver-decided pauses"],
+      "reason": "Revision 7 section 16.9: invalid output never becomes approval."
+    },
+    {
+      "id": "INV-058",
+      "behavior": "A report whose ESCALATE class is not authority, strategy or product throws a plain Error, skipping the one-retry path every other malformed report gets.",
+      "classification": "named-defect",
+      "defect": "DEF-09",
+      "owner": "vinaya-policy",
+      "authority": "control-state",
+      "scenarios": ["invalid-reviews"],
+      "sources": [
+        { "path": "apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts", "symbol": "buildVerdictFromReport" }
+      ],
+      "tests": [],
+      "loopSpec": ["Infrastructure failures and driver-decided pauses"],
+      "reason": "Inconsistent malformed-output handling."
+    },
+    {
+      "id": "INV-059",
+      "behavior": "A report with findings but no matching FINDING_IDS line is resent once into a fresh directory; if still uncitable a marked report-uncitable comment is posted once and the round continues on its severities.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "forge",
+      "scenarios": ["invalid-reviews"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "resendForFindingIds" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"],
+      "loopSpec": ["A reviewer report missing finding ids is resent once, then `report_uncitable`"],
+      "reason": "The resend-once rule and the marked comment are driver-enforced."
+    },
+    {
+      "id": "INV-060",
+      "behavior": "The ids a reviewer cites are validated for count and uniqueness and then discarded; findings keep positional ids (F1, F2, …), which is what cross-round comparison uses.",
+      "classification": "named-defect",
+      "defect": "DEF-10",
+      "owner": "vinaya-policy",
+      "authority": "pure-policy",
+      "scenarios": ["revisions"],
+      "sources": [
+        { "path": "apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts", "symbol": "buildVerdictFromReport" }
+      ],
+      "tests": [],
+      "loopSpec": ["A reviewer report missing finding ids is resent once, then `report_uncitable`"],
+      "reason": "The spec adds FINDING_IDS precisely because positional numbering is not a stable identity."
+    },
+    {
+      "id": "INV-061",
+      "behavior": "The finding-id resend is a context-free session (no head, objectives, rulings or staged inputs) and never asks for objectives.txt, so for a task with objectives it practically always ends report_uncitable.",
+      "classification": "named-defect",
+      "defect": "DEF-11",
+      "owner": "vinaya-policy",
+      "authority": "effect",
+      "scenarios": ["invalid-reviews"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "citeFindingIdsPrompt" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"],
+      "loopSpec": ["A reviewer report missing finding ids is resent once, then `report_uncitable`"],
+      "reason": "The resend exists to let the next attempt succeed; as built it cannot."
+    },
+    {
+      "id": "INV-062",
+      "behavior": "One driver-built review-input manifest (head, merge base, brief hash, objectives version, ruling ordinal, policy digest) is the only source of the reviewer prompt's binding lines and the rendered verdict, and is persisted to the control store best-effort.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "control-state",
+      "scenarios": ["stale-evidence"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts", "symbol": "buildManifestRecord" }],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/reviewer-dispatch.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-2.test.ts"
+      ],
+      "loopSpec": ["The review-input manifest and its equivalence"],
+      "reason": "Revision 7 section 16.9: review evidence is bound to head, brief, objectives, ruling and policy."
+    },
+    {
+      "id": "INV-063",
+      "behavior": "After reviewers return and before anything is held, objectives, ruling ordinal, brief and policy are re-read; any change discards both verdicts and pauses objectives_changed, ruling_posted, brief_superseded or policy_changed.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "control-state",
+      "scenarios": ["stale-evidence"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "devReviewLoop" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-6.test.ts"],
+      "loopSpec": ["Objectives changed mid-round", "Ruling posted mid-round"],
+      "reason": "Stale evidence never becomes a verdict."
+    },
+    {
+      "id": "INV-064",
+      "behavior": "The mid-round manifest re-check reuses the in-memory head and base rather than re-resolving the branch head; a push during review is left to publication and the merge gate.",
+      "classification": "implementation-accident",
+      "owner": "standalone-only",
+      "authority": "control-state",
+      "scenarios": ["stale-evidence"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "devReviewLoop" }],
+      "tests": [],
+      "loopSpec": ["The review-input manifest and its equivalence"],
+      "reason": "The spec lists only objectives, ruling and brief re-reads; head drift is caught later."
+    },
+    {
+      "id": "INV-065",
+      "behavior": "One read-only reviewer candidate per round is copied from the worktree only if its head equals the round head before and after the copy, leaving out .git, dependencies, symlinks, ignored and secret-named files.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "effect",
+      "scenarios": ["isolation-refusal", "stale-evidence"],
+      "sources": [
+        { "path": "apps/cli/src/lib/dev-review-loop/reviewer-isolation.ts", "symbol": "buildVerifiedReviewerCandidate" }
+      ],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/reviewer-isolation.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-2.test.ts"
+      ],
+      "loopSpec": ["Reviewer isolation — one immutable candidate, isolated scratch space"],
+      "reason": "Both reviewers judge the same immutable input (revision 7 section 16.10)."
+    },
+    {
+      "id": "INV-066",
+      "behavior": "Candidate immutability and zero cross-talk rest on owner permission bits under the reviewer's own uid; an unconfined reviewer can restore write bits or write into the other role's scratch at its predictable path.",
+      "classification": "named-defect",
+      "defect": "DEF-12",
+      "owner": "provider-adapter",
+      "authority": "effect",
+      "scenarios": ["isolation-refusal"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop/reviewer-isolation.ts", "symbol": "chmodTree" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/reviewer-isolation.test.ts"],
+      "loopSpec": ["Reviewer isolation — one immutable candidate, isolated scratch space"],
+      "reason": "Revision 7 section 16.15: missing confinement must fail with a capability refusal."
+    },
+    {
+      "id": "INV-067",
+      "behavior": "When the worktree is missing or diverged, or the scratch copy fails, the reviewer still runs, in the driver's own directory with no staged PR facts.",
+      "classification": "principal-ruling-required",
+      "ambiguity": "AMB-09",
+      "owner": "vinaya-policy",
+      "authority": "effect",
+      "scenarios": ["isolation-refusal"],
+      "sources": [
+        { "path": "apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts", "symbol": "candidateInputPieces" }
+      ],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-2.test.ts"],
+      "loopSpec": ["Reviewer isolation — one immutable candidate, isolated scratch space"],
+      "reason": "The spec calls the degrade deliberate; since reviewers lost gh it leaves them without evidence — pause or proceed is a policy call."
+    },
+    {
+      "id": "INV-068",
+      "behavior": "The PR body, base…head diff and prior-round held verdicts are staged once into the candidate so both reviewers read identical bytes, and each prompt names that attempt's own copies.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "effect",
+      "scenarios": ["happy-path"],
+      "sources": [
+        { "path": "apps/cli/src/lib/dev-review-loop/reviewer-isolation.ts", "symbol": "writeReviewerCandidateInputs" }
+      ],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/reviewer-isolation.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/reviewer-dispatch.test.ts"
+      ],
+      "loopSpec": ["Reviewer isolation — one immutable candidate, isolated scratch space"],
+      "reason": "Driver-staged evidence before any scratch copy."
+    },
+    {
+      "id": "INV-069",
+      "behavior": "Reviewers are denied gh, push, commit and installs by the agent CLI's permission rules; forge credentials leave the environment only on the confined spawn path.",
+      "classification": "advisory",
+      "owner": "provider-adapter",
+      "authority": "effect",
+      "scenarios": ["isolation-refusal"],
+      "sources": [{ "path": "apps/cli/src/lib/dispatch.ts", "symbol": "buildRolePermissions" }],
+      "tests": ["apps/cli/tests/lib/dispatch.test.ts", "apps/cli/tests/lib/dev-review-loop/reviewer-dispatch.test.ts"],
+      "loopSpec": ["Reviewer isolation — one immutable candidate, isolated scratch space"],
+      "reason": "Revision 7 section 16.3: hooks and permission prompts are defense in depth, not the boundary."
+    },
+    {
+      "id": "INV-070",
+      "behavior": "The reviewer prompt's banned-framing lint reads only driver-authored text; objectives, rulings and doctrine pass through as facts; the agent-config scan goes only to the security reviewer.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "pure-policy",
+      "scenarios": ["happy-path"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts", "symbol": "lintReviewerPrompt" }],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/reviewer-dispatch.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-1.test.ts"
+      ],
+      "loopSpec": ["Rounds"],
+      "reason": "Deterministic prompt rendering."
+    },
+    {
+      "id": "INV-071",
+      "behavior": "CI is read mechanically: check-runs deduped to the newest start per name, the review-gate and test-plan-wait runs excluded; incomplete, absent or unfetchable reads pending; success, neutral or skipped reads green; each read retried with backoff.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "forge",
+      "scenarios": ["happy-path", "developer-failure"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop/gate-reading.ts", "symbol": "fetchCiConclusion" }],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/gate-reading.test.ts",
+        "apps/cli/tests/lib/dev-review-loop.test.ts"
+      ],
+      "loopSpec": ["Rounds"],
+      "reason": "A pure read of forge state with the promised exclusions."
+    },
+    {
+      "id": "INV-072",
+      "behavior": "Malformed check-run JSON throws out of the CI readers instead of reading pending, contrary to their own contract.",
+      "classification": "named-defect",
+      "defect": "DEF-13",
+      "owner": "vinaya-policy",
+      "authority": "forge",
+      "scenarios": ["developer-failure"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop/gate-reading.ts", "symbol": "fetchMechanicalCheckRuns" }],
+      "tests": [],
+      "loopSpec": ["Rounds"],
+      "reason": "Revision 7 section 16.14: raw exceptions must become typed outcomes."
+    },
+    {
+      "id": "INV-073",
+      "behavior": "A gate still pending when its poll budget runs out reads red with no failing check named, and a repository with no check-runs can never read green.",
+      "classification": "principal-ruling-required",
+      "ambiguity": "AMB-10",
+      "owner": "vinaya-policy",
+      "authority": "control-state",
+      "scenarios": ["developer-failure"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "waitForGreenGate" }],
+      "tests": [],
+      "loopSpec": ["Rounds", "Infrastructure failures and driver-decided pauses"],
+      "reason": "Whether stuck or absent CI is red-for-the-developer or an infrastructure pause is unruled."
+    },
+    {
+      "id": "INV-074",
+      "behavior": "The reviewer-dispatch branch re-resolves the head and takes one CI reading without requiring green, so reviewers can judge a head whose CI never passed the gate.",
+      "classification": "named-defect",
+      "defect": "DEF-14",
+      "owner": "vinaya-policy",
+      "authority": "forge",
+      "scenarios": ["stale-evidence"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "devReviewLoop" }],
+      "tests": [],
+      "loopSpec": ["Rounds"],
+      "reason": "Reviewers are meant to run only on a gate-green head."
+    },
+    {
+      "id": "INV-075",
+      "behavior": "On restart held verdicts are recovered only from the highest round with a reviewer file, both roles agreeing on head; a clean pair carries across a patch-identical head move and a different patch starts a fresh round.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "control-state",
+      "scenarios": ["restart", "stale-evidence"],
+      "sources": [
+        { "path": "apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts", "symbol": "latestHeldCleanVerdict" }
+      ],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/inproc-9.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-11.test.ts"
+      ],
+      "loopSpec": ["The review-input manifest and its equivalence"],
+      "reason": "Deterministic re-parse of the durable held files."
+    },
+    {
+      "id": "INV-076",
+      "behavior": "Every pause writes a pause record (task, round, head, branch, PR or absent, reason, detail, agent and model, escalation id, retry snapshot) before any forge post.",
+      "classification": "product-guarantee",
+      "owner": "operator-control",
+      "authority": "control-state",
+      "scenarios": ["operator-intervention", "restart"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop/pause-resume.ts", "symbol": "writePauseState" }],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/inproc-7.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-1.test.ts"
+      ],
+      "loopSpec": ["Pause and `--resume`"],
+      "reason": "Revision 7 section 16.11: a pause is a durable record."
+    },
+    {
+      "id": "INV-077",
+      "behavior": "The pause record is a non-atomic, unfenced side file, and an unparseable record reads exactly like an absent one.",
+      "classification": "named-defect",
+      "defect": "DEF-15",
+      "owner": "operator-control",
+      "authority": "control-state",
+      "scenarios": ["restart"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop/pause-resume.ts", "symbol": "readPauseState" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/pause-resume.test.ts"],
+      "loopSpec": ["The control store — built; the manifest record now adopted"],
+      "reason": "The control-store section itself names corrupt-as-absent as the defect class to remove."
+    },
+    {
+      "id": "INV-078",
+      "behavior": "The pause comment is posted once through the reconciling effect executor with sanitized detail and no verdict grammar; a failed post is retried first on the next resume.",
+      "classification": "product-guarantee",
+      "owner": "governed-operation",
+      "authority": "effect",
+      "scenarios": ["operator-intervention", "uncertain-effects"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop/pause-resume.ts", "symbol": "postPauseComment" }],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/pause-resume.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-8.test.ts"
+      ],
+      "loopSpec": ["Pause and `--resume`"],
+      "reason": "Idempotent, reconciled effect."
+    },
+    {
+      "id": "INV-079",
+      "behavior": "--resume <pr> takes the task from the PR's Closes line, requires a held pause naming that PR and an agent matching the held one.",
+      "classification": "product-guarantee",
+      "owner": "operator-control",
+      "authority": "control-state",
+      "scenarios": ["operator-intervention"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "devReviewLoop" }],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/inproc-7.test.ts",
+        "apps/cli/tests/commands/dev-review-loop.test.ts"
+      ],
+      "loopSpec": ["Pause and `--resume`", "The command"],
+      "reason": "Deterministic checks against the pause record and the forge PR body."
+    },
+    {
+      "id": "INV-080",
+      "behavior": "Direct dev-review-loop --resume and --cancel accept any non-empty ruling list, never requiring an ordinal newer than the escalation's, unlike the Operator's task_resume and task_cancel.",
+      "classification": "named-defect",
+      "defect": "DEF-16",
+      "owner": "operator-control",
+      "authority": "forge",
+      "scenarios": ["operator-intervention", "cancellation"],
+      "sources": [
+        { "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "devReviewLoop" },
+        { "path": "apps/cli/src/lib/dev-review-loop/pause-resume.ts", "symbol": "rulingAuthenticatesResume" }
+      ],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-3.test.ts"],
+      "loopSpec": ["Escalation, resolution, and `--cancel`"],
+      "reason": "Revision 7 section 16.11: CLI and Operator call the same run-control operation; a stale ruling must not resume."
+    },
+    {
+      "id": "INV-081",
+      "behavior": "--resume consumes the escalation's single resolution before the one-driver-per-task lock check, so a resume refused by a live driver has already burned it and the watching driver then fails on every poll.",
+      "classification": "named-defect",
+      "defect": "DEF-17",
+      "owner": "operator-control",
+      "authority": "control-state",
+      "scenarios": ["operator-intervention"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop/pause-resume.ts", "symbol": "resolveEscalation" }],
+      "tests": [],
+      "loopSpec": ["Escalation, resolution, and `--cancel`", "One driver per task"],
+      "reason": "A refused action must not consume the resolution."
+    },
+    {
+      "id": "INV-082",
+      "behavior": "A resume against an already-consumed resolution, with no live driver and the review not concluded, attaches through the ordinary existing-PR path instead of refusing.",
+      "classification": "product-guarantee",
+      "owner": "operator-control",
+      "authority": "control-state",
+      "scenarios": ["restart", "operator-intervention"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "devReviewLoop" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-8.test.ts"],
+      "loopSpec": ["Pause and `--resume`"],
+      "reason": "Deterministic lock and concluded checks; never reads the Log."
+    },
+    {
+      "id": "INV-083",
+      "behavior": "On that replay-attach path the infrastructure-retry seed loses the pause record's floor and can write a lower count back.",
+      "classification": "named-defect",
+      "defect": "DEF-18",
+      "owner": "operator-control",
+      "authority": "control-state",
+      "scenarios": ["restart"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "devReviewLoop" }],
+      "tests": [],
+      "loopSpec": ["The loop's own recovery record"],
+      "reason": "The spec makes the floor a no-op only on a fresh start; this is a resume entry."
+    },
+    {
+      "id": "INV-084",
+      "behavior": "A bare --resume without a ruling is allowed only for an infrastructure pause and only under the retry bound, with a corrupt store read counting as exhausted.",
+      "classification": "product-guarantee",
+      "owner": "operator-control",
+      "authority": "control-state",
+      "scenarios": ["restart"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "devReviewLoop" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-7.test.ts"],
+      "loopSpec": ["Pause and `--resume`", "The loop's own recovery record"],
+      "reason": "Bounded and fail-closed."
+    },
+    {
+      "id": "INV-085",
+      "behavior": "The watcher treats stale_driver as a bounded bare retry, but devReviewLoop grants the bare allowance to infrastructure only, so the unattended stale_driver retry always fails back to waiting for a ruling.",
+      "classification": "principal-ruling-required",
+      "ambiguity": "AMB-11",
+      "owner": "operator-control",
+      "authority": "control-state",
+      "scenarios": ["restart"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "watchPauseThenResume" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-10.test.ts"],
+      "loopSpec": ["The driver never ends on a pause", "Pause and `--resume`"],
+      "reason": "loop.md contradicts itself on stale_driver; whether it resumes unattended is a policy choice."
+    },
+    {
+      "id": "INV-086",
+      "behavior": "Each pause writes a durable escalation record (input versions, recipient, attempted recovery) with a running-to-paused transition under a fresh control-store epoch, and logs handoff raised once per new escalation.",
+      "classification": "product-guarantee",
+      "owner": "operator-control",
+      "authority": "control-state",
+      "scenarios": ["operator-intervention"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop/pause-resume.ts", "symbol": "writeEscalationRecord" }],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/pause-resume.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-3.test.ts"
+      ],
+      "loopSpec": ["Escalation, resolution, and `--cancel`"],
+      "reason": "Control record first, telemetry after."
+    },
+    {
+      "id": "INV-087",
+      "behavior": "A failed escalation-record write is swallowed at every call site while resume and cancel refuse without that record, leaving the pause unrecoverable through either tool.",
+      "classification": "principal-ruling-required",
+      "ambiguity": "AMB-12",
+      "owner": "operator-control",
+      "authority": "control-state",
+      "scenarios": ["operator-intervention", "restart"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop/pause-resume.ts", "symbol": "resolveEscalation" }],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/inproc-8.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"
+      ],
+      "loopSpec": ["Escalation, resolution, and `--cancel`"],
+      "reason": "Fail-closed versus re-raise is a policy choice; the in-code \"authoritative\" comments contradict how resume decides."
+    },
+    {
+      "id": "INV-088",
+      "behavior": "A resolution is checked for existence, target PR and prior consumption, then claimed at most once by an exclusive store claim; a replay never bumps the epoch.",
+      "classification": "product-guarantee",
+      "owner": "operator-control",
+      "authority": "control-state",
+      "scenarios": ["operator-intervention"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop/pause-resume.ts", "symbol": "resolveEscalation" }],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/pause-resume.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-8.test.ts",
+        "apps/cli/tests/lib/dev-review-loop.test.ts"
+      ],
+      "loopSpec": ["Escalation, resolution, and `--cancel`"],
+      "reason": "Single consumption enforced at the storage layer."
+    },
+    {
+      "id": "INV-089",
+      "behavior": "--cancel checks the persisted agent, consumes the cancel resolution, terminates in-flight children, and fences every still-started effect to uncertain under the control-store epoch.",
+      "classification": "product-guarantee",
+      "owner": "operator-control",
+      "authority": "control-state",
+      "scenarios": ["cancellation", "uncertain-effects"],
+      "sources": [
+        { "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "cancelDevReviewLoop" },
+        { "path": "apps/cli/src/lib/dev-review-loop/pause-resume.ts", "symbol": "fenceStartedEffectsAsUncertain" }
+      ],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/pause-resume.test.ts",
+        "apps/cli/tests/lib/dev-review-loop.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-3.test.ts"
+      ],
+      "loopSpec": ["Escalation, resolution, and `--cancel`", "Resumed/cancelled are now logged too"],
+      "reason": "Revision 7 section 16.12: a timed-out commit is uncertain, never assumed failed."
+    },
+    {
+      "id": "INV-090",
+      "behavior": "The watching driver holds its lock for its whole life, polls PR state, the cancel resolution and the newest ruling ordinal, and resumes through the same devReviewLoop call.",
+      "classification": "product-guarantee",
+      "owner": "engine-runtime",
+      "authority": "forge",
+      "scenarios": ["operator-intervention", "cancellation"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "runDriverLoop" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-10.test.ts"],
+      "loopSpec": ["The driver never ends on a pause"],
+      "reason": "Revision 7 section 16.2: interrupts and continuation are runtime capabilities."
+    },
+    {
+      "id": "INV-091",
+      "behavior": "If the watcher's baseline ruling read fails it falls back to ordinal 0, so a ruling posted before the pause later reads as newer and authenticates the resume.",
+      "classification": "named-defect",
+      "defect": "DEF-19",
+      "owner": "operator-control",
+      "authority": "forge",
+      "scenarios": ["operator-intervention"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "watchPauseThenResume" }],
+      "tests": [],
+      "loopSpec": ["The driver never ends on a pause"],
+      "reason": "The spec says never any ruling ever posted."
+    },
+    {
+      "id": "INV-092",
+      "behavior": "One driver per task: the lock is an exclusive create; a live pid refuses the start and dispatches nothing; a dead pid is taken over; self re-entry needs both pid and token.",
+      "classification": "product-guarantee",
+      "owner": "engine-runtime",
+      "authority": "control-state",
+      "scenarios": ["restart"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop/pause-resume.ts", "symbol": "acquireDriverLockAtomic" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-10.test.ts", "apps/cli/tests/lib/dev-review-loop.test.ts"],
+      "loopSpec": ["One driver per task"],
+      "reason": "Deterministic exclusive create plus pid probe."
+    },
+    {
+      "id": "INV-093",
+      "behavior": "Recovery reads the control store's loop state (round, budgets, held result, delivered findings, repeat memory) as the authoritative record; absent seeds defaults; corrupt or unreadable decides an infrastructure pause at the retry maximum.",
+      "classification": "product-guarantee",
+      "owner": "engine-runtime",
+      "authority": "control-state",
+      "scenarios": ["restart"],
+      "sources": [
+        { "path": "apps/cli/src/lib/dev-review-loop/pause-resume.ts", "symbol": "recoverLoopState" },
+        { "path": "apps/cli/src/lib/dev-review-loop/round-assess.ts", "symbol": "persistLoopState" }
+      ],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-4.test.ts"],
+      "loopSpec": ["The loop's own recovery record"],
+      "reason": "Revision 7 section 16.4: checkpoint/control state is authoritative for continuation."
+    },
+    {
+      "id": "INV-094",
+      "behavior": "At takeover the driver persists phase dispatch_developer before any dispatch, keeping the recovered round non-regressing.",
+      "classification": "product-guarantee",
+      "owner": "engine-runtime",
+      "authority": "control-state",
+      "scenarios": ["restart"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "persistCurrentLoopState" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/takeover-phase.test.ts"],
+      "loopSpec": ["The loop's own recovery record"],
+      "reason": "Status never reads an earlier run's pause under a live driver."
+    },
+    {
+      "id": "INV-095",
+      "behavior": "In the general pause branch the pause phase is persisted only after the pause-comment post and its retries, while the crash path persists before posting.",
+      "classification": "implementation-accident",
+      "owner": "standalone-only",
+      "authority": "control-state",
+      "scenarios": ["restart"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "devReviewLoop" }],
+      "tests": [],
+      "loopSpec": ["The loop's own recovery record"],
+      "reason": "The ordering is not specified; the pause record and escalation remain authoritative."
+    },
+    {
+      "id": "INV-096",
+      "behavior": "Journal reconstruction reads only Principal-authored forge comments and the review-gate verdict; concluded means a summary and a non-failing gate; no resume or recovery path reads the Vinaya Log as truth.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "forge",
+      "scenarios": ["restart"],
+      "sources": [
+        { "path": "apps/cli/src/lib/dev-review-loop/journal-history.ts", "symbol": "fetchLoopHistory" },
+        { "path": "packages/aeg-core/src/dev-review-loop/journal-reconstruction.ts", "symbol": "reconstructRounds" }
+      ],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/journal-history.test.ts",
+        "packages/aeg-core/src/dev-review-loop/journal-reconstruction.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-8.test.ts"
+      ],
+      "loopSpec": ["Pause and `--resume`", "The loop's own recovery record"],
+      "reason": "Revision 7 section 16.4: forge state is authoritative for externally visible facts; the Log never is."
+    },
+    {
+      "id": "INV-097",
+      "behavior": "A valueless trailing --agent parses as undefined and is silently replaced by the configured dispatch agent.",
+      "classification": "named-defect",
+      "defect": "DEF-20",
+      "owner": "operator-control",
+      "authority": "pure-policy",
+      "scenarios": ["operator-intervention"],
+      "sources": [{ "path": "apps/cli/src/commands/dev-review-loop.ts", "symbol": "devReviewLoopCommand" }],
+      "tests": ["apps/cli/tests/commands/dev-review-loop.test.ts"],
+      "loopSpec": ["The command"],
+      "reason": "The spec says a valueless --agent is a usage error, never rescued by the config."
+    },
+    {
+      "id": "INV-098",
+      "behavior": "The command builds one LoopInput and makes exactly one call into devReviewLoop or cancelDevReviewLoop, exiting non-zero on a pause.",
+      "classification": "product-guarantee",
+      "owner": "operator-control",
+      "authority": "pure-policy",
+      "scenarios": ["operator-intervention"],
+      "sources": [{ "path": "apps/cli/src/commands/dev-review-loop.ts", "symbol": "devReviewLoopCommand" }],
+      "tests": ["apps/cli/tests/commands/dev-review-loop.test.ts"],
+      "loopSpec": ["The command"],
+      "reason": "Revision 7 section 16.11: transports, not separate implementations."
+    },
+    {
+      "id": "INV-099",
+      "behavior": "A round runs develop, mergeability, CI gate, premise re-check, mergeability, both reviewers, assessment, then publish or back to the developer.",
+      "classification": "product-guarantee",
+      "owner": "engine-runtime",
+      "authority": "control-state",
+      "scenarios": ["happy-path", "revisions"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "devReviewLoop" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop.test.ts", "apps/cli/tests/lib/dev-review-loop/inproc-6.test.ts"],
+      "loopSpec": ["Rounds"],
+      "reason": "Revision 7 section 16.5 graph; the order is the oracle's legal transition sequence."
+    },
+    {
+      "id": "INV-100",
+      "behavior": "The controller, not a model, picks every next step: assessRound over gate and verdict observations returns the decision; model output is only an input.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "pure-policy",
+      "scenarios": ["happy-path"],
+      "sources": [
+        { "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "devReviewLoop" },
+        { "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts", "symbol": "assessRound" }
+      ],
+      "tests": ["apps/cli/tests/lib/dev-review-loop.test.ts", "apps/cli/tests/lib/dev-review-loop/inproc-4.test.ts"],
+      "loopSpec": ["Rounds"],
+      "reason": "Revision 7 section 2 guarantee 5."
+    },
+    {
+      "id": "INV-101",
+      "behavior": "Round 1 attaches to an already-open PR without dispatching a developer, otherwise dispatches fresh from the frozen brief; round numbering recovers from held rounds, forge markers and the control store.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "control-state",
+      "scenarios": ["restart"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "seedLoopHistory" }],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-4.test.ts"
+      ],
+      "loopSpec": ["Rounds"],
+      "reason": "Spelled out in Rounds and enforced by driver code."
+    },
+    {
+      "id": "INV-102",
+      "behavior": "A stale Premise pin found at the round head pauses the loop before reviewers run.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "forge",
+      "scenarios": ["stale-evidence"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "checkPremiseAtHead" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts"],
+      "loopSpec": ["Rounds"],
+      "reason": "A deterministic re-check of the frozen input against the head."
+    },
+    {
+      "id": "INV-103",
+      "behavior": "A review policy that cannot be read pauses the loop instead of falling back to defaults.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "control-state",
+      "scenarios": ["reviewer-failure"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "reviewPolicyForLoop" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop.test.ts"],
+      "loopSpec": ["Which severities block is repository policy"],
+      "reason": "Revision 7 section 16.10: the policy digest is pinned into the run."
+    },
+    {
+      "id": "INV-104",
+      "behavior": "The start-of-run sweep starts without being awaited, excludes this run's own task, swallows its failures, and is awaited once in the outer finally.",
+      "classification": "product-guarantee",
+      "owner": "standalone-only",
+      "authority": "effect",
+      "scenarios": ["happy-path"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "defaultSweepTasksAtStart" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop.test.ts"],
+      "loopSpec": ["The sweep, at the start of every run (non-blocking and narrated as it runs)"],
+      "reason": "Promised housekeeping; non-blocking and fail-open."
+    },
+    {
+      "id": "INV-105",
+      "behavior": "A start refused by the lock, and a successful stale-driver re-exec, both exit without awaiting the sweep they already started.",
+      "classification": "named-defect",
+      "defect": "DEF-21",
+      "owner": "standalone-only",
+      "authority": "effect",
+      "scenarios": ["restart"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "checkStaleDriver" }],
+      "tests": [],
+      "loopSpec": ["The sweep, at the start of every run (non-blocking and narrated as it runs)"],
+      "reason": "The spec says the process never exits while the sweep is mid-removal."
+    },
+    {
+      "id": "INV-106",
+      "behavior": "The driver lock is cleared on exit except on infrastructure or stale_driver pauses, an uncaught-error pause, or any pause under the watching driver.",
+      "classification": "product-guarantee",
+      "owner": "engine-runtime",
+      "authority": "control-state",
+      "scenarios": ["restart"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "devReviewLoop" }],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/inproc-1.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-10.test.ts"
+      ],
+      "loopSpec": ["One driver per task"],
+      "reason": "Matches the spec's lock-retention rules."
+    },
+    {
+      "id": "INV-107",
+      "behavior": "A default-branch move touching driver-owned paths fast-forwards and re-execs the driver as --task (never --resume) with the lock handed over; a failed pull or spawn pauses stale_driver.",
+      "classification": "product-guarantee",
+      "owner": "standalone-only",
+      "authority": "control-state",
+      "scenarios": ["restart"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "buildReexecArgs" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-6.test.ts", "apps/cli/tests/lib/dev-review-loop.test.ts"],
+      "loopSpec": ["A stale driver re-execs in place, and pauses only if that fails"],
+      "reason": "Promised for the standalone driver; the Engine path pins process versions instead (revision 7 section 16.4)."
+    },
+    {
+      "id": "INV-108",
+      "behavior": "Staleness compares the local origin/main ref without fetching, and the re-exec pull is hard-coded to origin main in the process's cwd.",
+      "classification": "principal-ruling-required",
+      "ambiguity": "AMB-13",
+      "owner": "standalone-only",
+      "authority": "forge",
+      "scenarios": ["restart"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "defaultPullDefaultBranch" }],
+      "tests": [],
+      "loopSpec": ["A stale driver re-execs in place, and pauses only if that fails"],
+      "reason": "How fresh the check must be and how a non-main default branch behaves are unspecified."
+    },
+    {
+      "id": "INV-109",
+      "behavior": "Any uncaught error in the loop body becomes pause(infrastructure) with a pause record, escalation and comment; the catch never rethrows.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "control-state",
+      "scenarios": ["developer-failure", "reviewer-failure"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "devReviewLoop" }],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/inproc-1.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-4.test.ts",
+        "apps/cli/tests/lib/dev-review-loop.test.ts"
+      ],
+      "loopSpec": ["No round-end flush"],
+      "reason": "Revision 7 section 16.14: failures are typed outcomes."
+    },
+    {
+      "id": "INV-110",
+      "behavior": "Inside the crash catch the crash events are logged outside the inner best-effort guard, so an event-schema violation there escapes uncaught.",
+      "classification": "named-defect",
+      "defect": "DEF-22",
+      "owner": "log",
+      "authority": "telemetry",
+      "scenarios": ["developer-failure"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop/round-assess.ts", "symbol": "driverCrashEvents" }],
+      "tests": [],
+      "loopSpec": ["No round-end flush"],
+      "reason": "The spec says a schema throw becomes a decided pause, never a crash."
+    },
+    {
+      "id": "INV-111",
+      "behavior": "Loop events reach the configured destination live and fail-open; there is no round-end flush, and no decision reads the Log back.",
+      "classification": "product-guarantee",
+      "owner": "log",
+      "authority": "telemetry",
+      "scenarios": ["happy-path"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "logEvents" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-1.test.ts", "apps/cli/tests/lib/dev-review-loop.test.ts"],
+      "loopSpec": ["No round-end flush"],
+      "reason": "Revision 7 section 16.13: the Log observes and never decides."
+    },
+    {
+      "id": "INV-112",
+      "behavior": "After each event the driver polls the destination for its own line for up to five seconds; where the destination records nothing every event waits the full timeout.",
+      "classification": "named-defect",
+      "defect": "DEF-23",
+      "owner": "log",
+      "authority": "telemetry",
+      "scenarios": ["happy-path"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop/round-assess.ts", "symbol": "waitForOwnLoopLine" }],
+      "tests": [],
+      "loopSpec": ["No round-end flush", "Where the driver's own files live"],
+      "reason": "Telemetry absence adds control-path latency, against the spec's reads-nothing-from-the-destination sentence."
+    },
+    {
+      "id": "INV-113",
+      "behavior": "The per-task driver log is append-only best-effort narration (run-start marker, sweep lines, driver_exited) read by task status, never by the loop.",
+      "classification": "product-guarantee",
+      "owner": "log",
+      "authority": "telemetry",
+      "scenarios": ["happy-path"],
+      "sources": [{ "path": "apps/cli/src/lib/loop-log.ts", "symbol": "appendLoopLogLine" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-1.test.ts", "apps/cli/tests/lib/dev-review-loop.test.ts"],
+      "loopSpec": ["The per-task driver log"],
+      "reason": "Narration only; fail-open."
+    },
+    {
+      "id": "INV-114",
+      "behavior": "The driver-log path resolves the runtime directory itself instead of through the injected runtimeDir seam.",
+      "classification": "implementation-accident",
+      "owner": "standalone-only",
+      "authority": "telemetry",
+      "scenarios": ["happy-path"],
+      "sources": [{ "path": "apps/cli/src/lib/loop-log.ts", "symbol": "loopLogPathFor" }],
+      "tests": [],
+      "loopSpec": ["Where the driver's own files live"],
+      "reason": "The two agree in production; only the injection path differs."
+    },
+    {
+      "id": "INV-115",
+      "behavior": "loop.md's re-exec section still names the old role-log path and the checkStaleDriver comment still says re-exec uses --resume, both contradicting the shipped code and the rest of the spec.",
+      "classification": "named-defect",
+      "defect": "DEF-24",
+      "owner": "standalone-only",
+      "authority": "telemetry",
+      "scenarios": ["restart"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "checkStaleDriver" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop.test.ts"],
+      "loopSpec": ["A stale driver re-execs in place, and pauses only if that fails", "The per-task driver log"],
+      "reason": "Documentation drift inside the oracle."
+    },
+    {
+      "id": "INV-116",
+      "behavior": "A heartbeat fires every five minutes and driver_exited is emitted exactly once on finished, paused, re-exec, error or signal; signal handlers terminate in-flight children.",
+      "classification": "product-guarantee",
+      "owner": "log",
+      "authority": "telemetry",
+      "scenarios": ["cancellation"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "recordDriverExited" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop.test.ts", "apps/cli/tests/lib/dev-review-loop/inproc-1.test.ts"],
+      "loopSpec": ["A stale driver re-execs in place, and pauses only if that fails"],
+      "reason": "Liveness telemetry; fire-and-forget."
+    },
+    {
+      "id": "INV-117",
+      "behavior": "Every forge, git and dispatch read and effect is a LoopDeps field with a real default, so the whole loop runs in process against a fake world; exactly one exitProcess call site exists.",
+      "classification": "implementation-accident",
+      "owner": "standalone-only",
+      "authority": "effect",
+      "scenarios": ["happy-path"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "LoopDeps" }],
+      "tests": [
+        "apps/cli/tests/lib/dev-review-loop/inproc-1.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-2.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-3.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-4.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-5.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-6.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-7.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-8.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-9.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-10.test.ts",
+        "apps/cli/tests/lib/dev-review-loop/inproc-11.test.ts",
+        "apps/cli/tests/lib/dev-review-loop.test.ts"
+      ],
+      "loopSpec": ["The in-process test seam", "No round-end flush"],
+      "reason": "A test seam of the standalone module; the Engine path carries its own node-level seams."
+    },
+    {
+      "id": "INV-118",
+      "behavior": "Run files resolve under the task's runtime folder and stale reviewer candidate and scratch directories are removed at start, before any dispatch.",
+      "classification": "product-guarantee",
+      "owner": "vinaya-policy",
+      "authority": "control-state",
+      "scenarios": ["restart", "isolation-refusal"],
+      "sources": [
+        {
+          "path": "apps/cli/src/lib/dev-review-loop/reviewer-isolation.ts",
+          "symbol": "cleanupAllReviewerIsolationArtifacts"
+        }
+      ],
+      "tests": ["apps/cli/tests/lib/dev-review-loop/inproc-2.test.ts"],
+      "loopSpec": ["Where the driver's own files live"],
+      "reason": "Deterministic driver housekeeping; a reviewer never inherits a crashed run's candidate."
+    },
+    {
+      "id": "INV-119",
+      "behavior": "The driver is one composition-root module of about six thousand lines with split helpers, every split module covered by DRIVER_OWNED_PATHS.",
+      "classification": "implementation-accident",
+      "owner": "standalone-only",
+      "authority": "effect",
+      "scenarios": ["happy-path"],
+      "sources": [{ "path": "apps/cli/src/lib/dev-review-loop.ts", "symbol": "DRIVER_OWNED_PATHS" }],
+      "tests": ["apps/cli/tests/lib/dev-review-loop.test.ts"],
+      "loopSpec": ["The in-process test seam"],
+      "reason": "File layout is incidental; revision 7 section 16 does not protect accidental structure."
+    }
+  ],
+  "defects": [
+    {
+      "id": "DEF-01",
+      "summary": "assessRound publishes on an empty or partial verdict set and on no objectives.",
+      "code": { "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts", "locator": "assessVerdicts" },
+      "spec": { "path": "apps/cli/specs/loop.md", "locator": "The exits" },
+      "status": "open"
+    },
+    {
+      "id": "DEF-02",
+      "summary": "extraTurnUsed is not persisted in the loop-state snapshot, so a restart re-grants the below-50 extra turn.",
+      "code": {
+        "path": "apps/cli/src/lib/dev-review-loop/round-assess.ts",
+        "locator": "LoopStateSnapshot.repeatMemory"
+      },
+      "spec": { "path": "apps/cli/specs/loop.md", "locator": "The confidence rule" },
+      "status": "open"
+    },
+    {
+      "id": "DEF-03",
+      "summary": "round_started/round_ended repeat for a reused round number after a red gate or below-50 turn.",
+      "code": { "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts", "locator": "assessGate" },
+      "spec": { "path": "apps/cli/specs/loop.md", "locator": "The confidence rule" },
+      "status": "open"
+    },
+    {
+      "id": "DEF-04",
+      "summary": "Confidence-collapse pauses record zero-seeded counts with no not-reviewed reason.",
+      "code": { "path": "packages/aeg-core/src/dev-review-loop/assess-round.ts", "locator": "assessGate" },
+      "spec": { "path": "apps/cli/specs/loop.md", "locator": "The exits" },
+      "status": "open"
+    },
+    {
+      "id": "DEF-05",
+      "summary": "The expected publication base is never persisted, and an unset base skips the Surface check.",
+      "code": { "path": "apps/cli/src/lib/dev-review-loop.ts", "locator": "publicationExpectedBase" },
+      "spec": {
+        "path": "apps/cli/specs/loop.md",
+        "locator": "Publishing each Developer turn (the driver commits and publishes; no agent pushes)"
+      },
+      "status": "open"
+    },
+    {
+      "id": "DEF-06",
+      "summary": "The conflict prompt instructs merge/rebase and git push, which the publication preconditions then refuse.",
+      "code": { "path": "apps/cli/src/lib/dev-review-loop.ts", "locator": "renderConflictPrompt" },
+      "spec": {
+        "path": "apps/cli/specs/loop.md",
+        "locator": "Publishing each Developer turn (the driver commits and publishes; no agent pushes)"
+      },
+      "status": "open"
+    },
+    {
+      "id": "DEF-07",
+      "summary": "loop.md's Publication idempotency paragraph names postForgeEffectOnce; the code uses postPrCommentOnce with remote reconcile.",
+      "code": { "path": "apps/cli/src/lib/dev-review-loop/publication.ts", "locator": "postPrCommentOnce" },
+      "spec": { "path": "apps/cli/specs/loop.md", "locator": "Publication" },
+      "status": "open"
+    },
+    {
+      "id": "DEF-08",
+      "summary": "Reviewer isolation cleanup runs on the first reviewer rejection while the sibling dispatch still runs.",
+      "code": {
+        "path": "apps/cli/src/lib/dev-review-loop.ts",
+        "locator": "Promise.all over dispatchReviewer; cleanupReviewerIsolationForRound in finally"
+      },
+      "spec": {
+        "path": "apps/cli/specs/loop.md",
+        "locator": "Reviewer isolation — one immutable candidate, isolated scratch space"
+      },
+      "status": "open"
+    },
+    {
+      "id": "DEF-09",
+      "summary": "An unknown ESCALATE class throws a plain Error and skips the one fresh retry.",
+      "code": { "path": "apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts", "locator": "buildVerdictFromReport" },
+      "spec": { "path": "apps/cli/specs/loop.md", "locator": "Infrastructure failures and driver-decided pauses" },
+      "status": "open"
+    },
+    {
+      "id": "DEF-10",
+      "summary": "Cited FINDING_IDS are discarded; findings keep positional ids across rounds.",
+      "code": {
+        "path": "apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts",
+        "locator": "buildVerdictFromReport (id: F<n>)"
+      },
+      "spec": {
+        "path": "apps/cli/specs/loop.md",
+        "locator": "A reviewer report missing finding ids is resent once, then `report_uncitable`"
+      },
+      "status": "open"
+    },
+    {
+      "id": "DEF-11",
+      "summary": "The finding-id resend carries no context and never asks for objectives.txt.",
+      "code": { "path": "apps/cli/src/lib/dev-review-loop.ts", "locator": "citeFindingIdsPrompt" },
+      "spec": {
+        "path": "apps/cli/specs/loop.md",
+        "locator": "A reviewer report missing finding ids is resent once, then `report_uncitable`"
+      },
+      "status": "open"
+    },
+    {
+      "id": "DEF-12",
+      "summary": "Reviewer candidate immutability and scratch separation rely on same-uid permission bits outside a sandbox.",
+      "code": { "path": "apps/cli/src/lib/dev-review-loop/reviewer-isolation.ts", "locator": "chmodTree" },
+      "spec": {
+        "path": "apps/cli/specs/loop.md",
+        "locator": "Reviewer isolation — one immutable candidate, isolated scratch space"
+      },
+      "status": "open"
+    },
+    {
+      "id": "DEF-13",
+      "summary": "Malformed check-run JSON throws out of the CI readers instead of reading pending.",
+      "code": { "path": "apps/cli/src/lib/dev-review-loop/gate-reading.ts", "locator": "fetchMechanicalCheckRuns" },
+      "spec": { "path": "apps/cli/specs/loop.md", "locator": "Rounds" },
+      "status": "open"
+    },
+    {
+      "id": "DEF-14",
+      "summary": "Reviewer dispatch re-resolves the head without requiring a green gate for it.",
+      "code": {
+        "path": "apps/cli/src/lib/dev-review-loop.ts",
+        "locator": "dispatch_reviewers branch: resolveHead then fetchCiConclusion"
+      },
+      "spec": { "path": "apps/cli/specs/loop.md", "locator": "Rounds" },
+      "status": "open"
+    },
+    {
+      "id": "DEF-15",
+      "summary": "pause-state.json is written non-atomically and a corrupt record reads as absent.",
+      "code": {
+        "path": "apps/cli/src/lib/dev-review-loop/pause-resume.ts",
+        "locator": "writePauseState / readPauseState"
+      },
+      "spec": {
+        "path": "apps/cli/specs/loop.md",
+        "locator": "The control store — built; the manifest record now adopted"
+      },
+      "status": "open"
+    },
+    {
+      "id": "DEF-16",
+      "summary": "CLI --resume/--cancel authenticate on any ruling's presence, not a newer ordinal.",
+      "code": {
+        "path": "apps/cli/src/lib/dev-review-loop.ts",
+        "locator": "devReviewLoop resume block (rulings.length === 0)"
+      },
+      "spec": { "path": "apps/cli/specs/loop.md", "locator": "Escalation, resolution, and `--cancel`" },
+      "status": "open"
+    },
+    {
+      "id": "DEF-17",
+      "summary": "--resume consumes the resolution before the one-driver lock check.",
+      "code": {
+        "path": "apps/cli/src/lib/dev-review-loop.ts",
+        "locator": "resolveEscalation call precedes readDriverLock"
+      },
+      "spec": { "path": "apps/cli/specs/loop.md", "locator": "Escalation, resolution, and `--cancel`" },
+      "status": "open"
+    },
+    {
+      "id": "DEF-18",
+      "summary": "The replay-attach path loses the pause-state retry floor.",
+      "code": { "path": "apps/cli/src/lib/dev-review-loop.ts", "locator": "resumeFrom?.infrastructureRetries ?? 0" },
+      "spec": { "path": "apps/cli/specs/loop.md", "locator": "The loop's own recovery record" },
+      "status": "open"
+    },
+    {
+      "id": "DEF-19",
+      "summary": "The watcher's ruling baseline falls back to 0 on a failed read, letting an old ruling authenticate.",
+      "code": { "path": "apps/cli/src/lib/dev-review-loop.ts", "locator": "watchPauseThenResume" },
+      "spec": { "path": "apps/cli/specs/loop.md", "locator": "The driver never ends on a pause" },
+      "status": "open"
+    },
+    {
+      "id": "DEF-20",
+      "summary": "A valueless trailing --agent is silently rescued by the config default.",
+      "code": { "path": "apps/cli/src/commands/dev-review-loop.ts", "locator": "parseArgs (agent = args[++i])" },
+      "spec": { "path": "apps/cli/specs/loop.md", "locator": "The command" },
+      "status": "open"
+    },
+    {
+      "id": "DEF-21",
+      "summary": "A lock-refused start and a stale-driver re-exec exit without awaiting the started sweep.",
+      "code": {
+        "path": "apps/cli/src/lib/dev-review-loop.ts",
+        "locator": "sweepDone started before the lock check; checkStaleDriver exitProcess"
+      },
+      "spec": {
+        "path": "apps/cli/specs/loop.md",
+        "locator": "The sweep, at the start of every run (non-blocking and narrated as it runs)"
+      },
+      "status": "open"
+    },
+    {
+      "id": "DEF-22",
+      "summary": "The crash catch logs its own events outside the best-effort guard.",
+      "code": {
+        "path": "apps/cli/src/lib/dev-review-loop.ts",
+        "locator": "outer catch: await logEvents(driverCrashEvents(...))"
+      },
+      "spec": { "path": "apps/cli/specs/loop.md", "locator": "No round-end flush" },
+      "status": "open"
+    },
+    {
+      "id": "DEF-23",
+      "summary": "Each event waits up to five seconds for its own line even when the destination records nothing.",
+      "code": { "path": "apps/cli/src/lib/dev-review-loop/round-assess.ts", "locator": "waitForOwnLoopLine" },
+      "spec": { "path": "apps/cli/specs/loop.md", "locator": "No round-end flush" },
+      "status": "open"
+    },
+    {
+      "id": "DEF-24",
+      "summary": "Stale role-log path in loop.md's re-exec section and a stale --resume claim in the checkStaleDriver comment.",
+      "code": { "path": "apps/cli/src/lib/dev-review-loop.ts", "locator": "checkStaleDriver comment" },
+      "spec": {
+        "path": "apps/cli/specs/loop.md",
+        "locator": "A stale driver re-execs in place, and pauses only if that fails"
+      },
+      "status": "open"
+    }
+  ],
+  "ambiguities": [
+    {
+      "id": "AMB-01",
+      "question": "When several exits apply to one round, which pause reason wins?",
+      "citations": ["packages/aeg-core/src/dev-review-loop/assess-round.ts", "apps/cli/specs/loop.md"],
+      "rulingStatus": "ruled",
+      "ruling": "Several exits in one round: the most severe wins — escalation, then principal item, then repeat, then max rounds, then infrastructure. Every applicable reason is recorded; the top one is shown."
+    },
+    {
+      "id": "AMB-02",
+      "question": "Does a resolved finding re-reported as open or with no state count as reappearance, or only one reported as reproduced?",
+      "citations": [
+        "packages/aeg-core/src/dev-review-loop/assess-round.ts",
+        "packages/aeg-core/src/dev-review-loop/types.ts"
+      ],
+      "rulingStatus": "ruled",
+      "ruling": "Yes. A resolved finding re-reported as open, or with no state, counts as a reappearance; silence never hides a regression."
+    },
+    {
+      "id": "AMB-03",
+      "question": "Should journal_finalized.rounds count attempts or distinct reviewed rounds?",
+      "citations": ["packages/aeg-core/src/dev-review-loop/assess-round.ts", "apps/cli/specs/loop.md"],
+      "rulingStatus": "ruled",
+      "ruling": "Distinct reviewed rounds. Attempts are recorded in their own field."
+    },
+    {
+      "id": "AMB-04",
+      "question": "May a resume run under a different developer model than the paused run?",
+      "citations": ["apps/cli/src/lib/dev-review-loop.ts", "apps/cli/specs/loop.md"],
+      "rulingStatus": "ruled",
+      "ruling": "Yes. A resume may run under a different developer model; the resume event records it."
+    },
+    {
+      "id": "AMB-05",
+      "question": "Is a commit-hook refusal of the driver's commit a send-back to the developer or an infrastructure pause?",
+      "citations": ["apps/cli/src/lib/dev-review-loop.ts", "apps/cli/specs/loop.md"],
+      "rulingStatus": "ruled",
+      "ruling": "A send-back to the developer, at once, with the refusing hook output — never an infrastructure pause."
+    },
+    {
+      "id": "AMB-06",
+      "question": "Must a posted verdict's base still match at publication when its head is identical?",
+      "citations": [
+        "apps/cli/src/lib/dev-review-loop/publication.ts",
+        "apps/cli/tests/lib/dev-review-loop/publication.test.ts"
+      ],
+      "rulingStatus": "ruled",
+      "ruling": "No. An identical head means the same code was reviewed; publication re-checks only mergeability."
+    },
+    {
+      "id": "AMB-07",
+      "question": "May a republish after a restart shrink an existing deferred-findings Issue?",
+      "citations": ["apps/cli/src/lib/forge-write.ts", "apps/cli/specs/loop.md"],
+      "rulingStatus": "ruled",
+      "ruling": "No. A republish only appends to a deferred-findings Issue, and each entry carries the finding text, not only its location."
+    },
+    {
+      "id": "AMB-08",
+      "question": "May the bootstrap task-branch push bypass the Broker and the repository's hooks?",
+      "citations": ["apps/cli/src/lib/dev-review-loop/developer-dispatch.ts", "apps/cli/specs/loop.md"],
+      "rulingStatus": "ruled",
+      "ruling": "The ref-only bootstrap push of the default branch may skip the repository hooks; it never bypasses the Broker."
+    },
+    {
+      "id": "AMB-09",
+      "question": "Should a reviewer without a verified candidate pause the round instead of running unisolated without staged evidence?",
+      "citations": ["apps/cli/src/lib/dev-review-loop/reviewer-dispatch.ts", "apps/cli/specs/loop.md"],
+      "rulingStatus": "ruled",
+      "ruling": "Re-stage the candidate and retry the reviewer. Only after a bound does it become an infrastructure retry, which resumes by itself. A reviewer never runs unisolated."
+    },
+    {
+      "id": "AMB-10",
+      "question": "Is CI stuck pending, or absent entirely, red-for-the-developer or an infrastructure pause?",
+      "citations": ["apps/cli/src/lib/dev-review-loop.ts", "apps/cli/src/lib/dev-review-loop/gate-reading.ts"],
+      "rulingStatus": "ruled",
+      "ruling": "Neither is the developer's fault. Stuck-pending or absent CI is re-run, then retried as infrastructure. A check that waits on the Principal is waited on, never sent to the developer."
+    },
+    {
+      "id": "AMB-11",
+      "question": "Does a stale_driver pause resume unattended without a ruling, like infrastructure?",
+      "citations": ["apps/cli/src/lib/dev-review-loop.ts", "apps/cli/specs/loop.md"],
+      "rulingStatus": "ruled",
+      "ruling": "Yes. A stale_driver pause resumes unattended, like infrastructure, within a retry bound."
+    },
+    {
+      "id": "AMB-12",
+      "question": "When the escalation record could not be written, should the pause stay unrecoverable or be re-raised?",
+      "citations": ["apps/cli/src/lib/dev-review-loop/pause-resume.ts", "apps/cli/src/lib/dev-review-loop.ts"],
+      "rulingStatus": "ruled",
+      "ruling": "Re-raised on the next driver start; a pause is never left silently unrecoverable."
+    },
+    {
+      "id": "AMB-13",
+      "question": "Must the stale-driver check fetch the remote, and how does it behave when the default branch is not main?",
+      "citations": ["apps/cli/src/lib/dev-review-loop.ts", "apps/cli/specs/loop.md"],
+      "rulingStatus": "ruled",
+      "ruling": "Yes, it fetches the remote, and it compares against the actual default branch of the repository, never a hard-coded main."
+    }
+  ]
+}

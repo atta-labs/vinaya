@@ -43,7 +43,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
@@ -115,10 +115,13 @@ import {
 } from './forge-write.js'
 import { controlStoreRoot } from './effects.js'
 import { resolveRoleDoctrineText } from '../roles/plan.js'
+import { validatePrBodyForCreate } from '../commands/pr.js'
+import type { CheckError } from '../checks/contract.js'
 import { createLogSink, drainLogSink, resolveLogAppendPath } from './log-sink.js'
 import { ensureRunDir, markProcessUnattended, runPath } from './run-paths.js'
 import { defaultTaskSweepAsyncDeps, sweepModernTasksAsync } from './task-sweep.js'
 import { appendRoleLine, appendRunStartMarker, loopLogPathFor } from './loop-log.js'
+import { detectVendoredVinaya } from './self-host.js'
 import { resolveRepo } from '@attalabs/aeg-forge-state'
 import {
   describeFailingCheckRun,
@@ -426,6 +429,8 @@ export type LoopDeps = {
   resolveLogAppendPath: (repo: { owner: string; repo: string } | null, issue: number) => string | Promise<string>
   repoRoot: () => string
   gitRevParseOriginMain: () => string
+  /** True when `ancestor` is contained in `descendant`'s history. */
+  gitIsAncestor: (ancestor: string, descendant: string) => boolean
   /**
    * issue-657, O4 — the review-input manifest's own base identity: the
    * merge base of `head` and the default branch, never the default branch's
@@ -653,6 +658,8 @@ export type LoopDeps = {
   gitWorktreeChangedPaths: (worktreePath: string, base: string) => string[]
   /** O1/O2: the worktree's own diff text since `base`, for the after-turn credential scan. `null` when unreadable. */
   gitWorktreeDiffText: (worktreePath: string, base: string) => string | null
+  /** Builds this repository's vendored CLI before the driver's commit when its ignored bin is absent; ordinary adopters are a no-op. */
+  buildVendoredCliIfMissing: (worktreePath: string) => void
   /**
    * O2: stages every change in the worktree and makes ONE commit under
    * `header`, returning the new HEAD sha. The commit runs the repository's
@@ -660,7 +667,9 @@ export type LoopDeps = {
    * never `--no-verify`. Injected so the in-process harness records a fake
    * commit instead of touching a real `.git`.
    */
-  commitWorktree: (worktreePath: string, header: string) => string
+  commitWorktree: (worktreePath: string, header: string) => CommitWorktreeResult
+  /** The same aggregate body gates `vinaya pr create` runs, injected for fakes-based publication tests. */
+  validatePrBodyForCreate: typeof validatePrBodyForCreate
   /**
    * O3/O4: pushes the task branch through the Broker's governed `branch-push`
    * operation, authenticated from the Developer's own launch record
@@ -679,7 +688,7 @@ export type LoopDeps = {
     agent: AgentVendor
     repo: { owner: string; repo: string } | null
     worktreePath: string
-  }) => { ok: true } | { ok: false; refusal: string }
+  }) => { ok: true } | { ok: false; refusal: string; hook: boolean }
   /**
    * O3: opens the pull request through the Broker's governed `pr-open`
    * operation, authenticated the same way as `pushTaskBranch`, with `body` as
@@ -704,6 +713,18 @@ function defaultRepoRoot(): string {
 
 function defaultGitRevParseOriginMain(): string {
   return sh('git', ['rev-parse', 'origin/main'])
+}
+
+function defaultGitIsAncestor(ancestor: string, descendant: string): boolean {
+  try {
+    execFileSync('git', ['merge-base', '--is-ancestor', ancestor, descendant], {
+      stdio: ['ignore', 'ignore', 'ignore']
+    })
+    return true
+  } catch (err) {
+    if (typeof err === 'object' && err !== null && 'status' in err && err.status === 1) return false
+    throw err
+  }
 }
 
 function defaultGitMergeBase(head: string): Promise<string> {
@@ -1028,10 +1049,141 @@ function defaultGitWorktreeDiffText(worktreePath: string, base: string): string 
  * new HEAD sha. Runs the repository's own `commit-msg`/`pre-commit` hooks
  * (never `--no-verify`) — a hook that refuses throws, surfaced by the caller.
  */
-function defaultCommitWorktree(worktreePath: string, header: string): string {
+type CommitWorktreeResult =
+  | { ok: true; sha: string }
+  | { ok: false; check: 'commit-hook'; errorLine: string; output: string }
+
+/** True only when Git's own trace says a commit hook exited non-zero. */
+function traceHasRefusingHook(trace: string, names: ReadonlySet<string>): boolean {
+  const hooks = new Set<number>()
+  for (const line of trace.split('\n')) {
+    try {
+      const event = JSON.parse(line) as {
+        event?: string
+        child_id?: number
+        child_class?: string
+        hook_name?: string
+        code?: number
+      }
+      if (
+        event.event === 'child_start' &&
+        event.child_class === 'hook' &&
+        typeof event.hook_name === 'string' &&
+        names.has(event.hook_name) &&
+        typeof event.child_id === 'number'
+      ) {
+        hooks.add(event.child_id)
+      }
+      if (
+        event.event === 'child_exit' &&
+        typeof event.child_id === 'number' &&
+        hooks.has(event.child_id) &&
+        typeof event.code === 'number' &&
+        event.code !== 0
+      ) {
+        return true
+      }
+    } catch {
+      // Trace2 is newline-delimited JSON; an unreadable line proves nothing.
+    }
+  }
+  return false
+}
+
+function firstErrorLine(output: string, fallback: string): string {
+  return (
+    output
+      .split('\n')
+      .map((line) => line.trim())
+      .find(Boolean) ?? fallback
+  )
+}
+
+type PublicationRefusal = {
+  kind: 'refused'
+  check: string
+  errorLine: string
+  reason: string
+  signature: string
+}
+
+function publicationRefusal(
+  check: string,
+  errorLine: string,
+  reason = errorLine,
+  signature = `${check}\n${errorLine}`
+): PublicationRefusal {
+  return { kind: 'refused', check, errorLine, reason, signature }
+}
+
+function bodyGateRefusal(errors: CheckError[]): PublicationRefusal {
+  const first = errors[0] as CheckError
+  const reason = errors.map((error) => `[${error.check}] ${error.message}\n${error.agent_recovery_prompt}`).join('\n\n')
+  return publicationRefusal(
+    first.check,
+    first.message,
+    reason,
+    errors.map((error) => `${error.check}\n${error.message}`).join('\n---\n')
+  )
+}
+
+class PublicationRefusalPause extends Error {
+  constructor(
+    readonly check: string,
+    readonly errorLine: string
+  ) {
+    super(`publication refused by ${check}: ${errorLine}`)
+    this.name = 'PublicationRefusalPause'
+  }
+}
+
+function defaultBuildVendoredCliIfMissing(worktreePath: string): void {
+  const vendored = detectVendoredVinaya(worktreePath)
+  if (vendored === null || existsSync(join(worktreePath, vendored.bin))) return
+  const result = spawnSync('bun', ['run', '--cwd', vendored.dir, 'build'], {
+    cwd: worktreePath,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+  if (result.error || result.status !== 0) {
+    const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`.trim()
+    throw new Error(
+      `vendored CLI build failed before publication commit: ${firstErrorLine(output, result.error?.message ?? `exit ${result.status ?? 'unknown'}`)}`
+    )
+  }
+}
+
+function defaultCommitWorktree(worktreePath: string, header: string): CommitWorktreeResult {
   sh('git', ['-C', worktreePath, 'add', '-A'])
-  sh('git', ['-C', worktreePath, 'commit', '-m', header])
-  return sh('git', ['-C', worktreePath, 'rev-parse', 'HEAD']).trim()
+  const traceDir = mkdtempSync(join(tmpdir(), 'vinaya-commit-trace-'))
+  const tracePath = join(traceDir, 'trace.jsonl')
+  try {
+    execFileSync('git', ['-C', worktreePath, 'commit', '-m', header], {
+      encoding: 'utf8',
+      env: { ...process.env, GIT_TRACE2_EVENT: tracePath },
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+  } catch (err) {
+    const output =
+      err && typeof err === 'object'
+        ? `${'stdout' in err ? String((err as { stdout?: unknown }).stdout ?? '') : ''}\n${
+            'stderr' in err ? String((err as { stderr?: unknown }).stderr ?? '') : ''
+          }`.trim()
+        : String(err)
+    const trace = existsSync(tracePath) ? readFileSync(tracePath, 'utf8') : ''
+    if (traceHasRefusingHook(trace, new Set(['pre-commit', 'commit-msg']))) {
+      return {
+        ok: false,
+        check: 'commit-hook',
+        errorLine: firstErrorLine(output, 'commit hook refused with no captured output'),
+        output
+      }
+    }
+    throw err
+  } finally {
+    rmSync(traceDir, { recursive: true, force: true })
+  }
+  return { ok: true, sha: sh('git', ['-C', worktreePath, 'rev-parse', 'HEAD']).trim() }
 }
 
 /** The developer launch record's `runId`, or `null` when no usable record names this task — what the broker context is authenticated from (O3). */
@@ -1042,6 +1194,13 @@ function developerRunIdFor(
 ): string | null {
   const parsed = readLaunchRecord('developer', agent, repo, task)
   return parsed.status === 'ok' ? parsed.record.runId : null
+}
+
+class PushHookRefusal extends Error {
+  constructor(readonly output: string) {
+    super(firstErrorLine(output, 'pre-push hook refused with no captured output'))
+    this.name = 'PushHookRefusal'
+  }
 }
 
 /**
@@ -1062,10 +1221,14 @@ function defaultPushTaskBranch(input: {
   agent: AgentVendor
   repo: { owner: string; repo: string } | null
   worktreePath: string
-}): { ok: true } | { ok: false; refusal: string } {
+}): { ok: true } | { ok: false; refusal: string; hook: boolean } {
   const runId = developerRunIdFor(input.agent, input.repo, input.task)
   if (runId === null) {
-    return { ok: false, refusal: `no developer launch record for task ${input.task} to authenticate the push against` }
+    return {
+      ok: false,
+      refusal: `no developer launch record for task ${input.task} to authenticate the push against`,
+      hook: false
+    }
   }
   let context: ReturnType<typeof authenticateWorkerInvocation>
   try {
@@ -1074,7 +1237,7 @@ function defaultPushTaskBranch(input: {
       realDispatchTeeRecoveryDeps()
     )
   } catch (err) {
-    return { ok: false, refusal: err instanceof Error ? err.message : String(err) }
+    return { ok: false, refusal: err instanceof Error ? err.message : String(err), hook: false }
   }
   try {
     requestEffect(defaultControlStoreDeps(controlStoreRoot), context, {
@@ -1085,10 +1248,27 @@ function defaultPushTaskBranch(input: {
       key: `branch-push-${input.sha}`,
       payload: input.sha,
       poster: () => {
-        execFileSync('git', ['-C', input.worktreePath, 'push', 'origin', `HEAD:refs/heads/${input.branch}`], {
-          encoding: 'utf8',
-          stdio: ['ignore', 'pipe', 'pipe']
-        })
+        const traceDir = mkdtempSync(join(tmpdir(), 'vinaya-push-trace-'))
+        const tracePath = join(traceDir, 'trace.jsonl')
+        try {
+          execFileSync('git', ['-C', input.worktreePath, 'push', 'origin', `HEAD:refs/heads/${input.branch}`], {
+            encoding: 'utf8',
+            env: { ...process.env, GIT_TRACE2_EVENT: tracePath },
+            stdio: ['ignore', 'pipe', 'pipe']
+          })
+        } catch (err) {
+          const output =
+            err && typeof err === 'object'
+              ? `${'stdout' in err ? String((err as { stdout?: unknown }).stdout ?? '') : ''}\n${
+                  'stderr' in err ? String((err as { stderr?: unknown }).stderr ?? '') : ''
+                }`.trim()
+              : String(err)
+          const trace = existsSync(tracePath) ? readFileSync(tracePath, 'utf8') : ''
+          if (traceHasRefusingHook(trace, new Set(['pre-push']))) throw new PushHookRefusal(output)
+          throw err
+        } finally {
+          rmSync(traceDir, { recursive: true, force: true })
+        }
         return input.sha
       },
       reconcile: () => {
@@ -1108,12 +1288,18 @@ function defaultPushTaskBranch(input: {
     // surfaces the same way. Either is a failed push, returned for the
     // existing mechanical-failure path to carry (O4), never raised.
     const message =
-      err && typeof err === 'object' && 'stderr' in err && (err as { stderr?: unknown }).stderr
-        ? String((err as { stderr: unknown }).stderr)
-        : err instanceof Error
-          ? err.message
-          : String(err)
-    return { ok: false, refusal: message.trim() || 'the push was refused with no captured output' }
+      err instanceof PushHookRefusal
+        ? err.output
+        : err && typeof err === 'object' && 'stderr' in err && (err as { stderr?: unknown }).stderr
+          ? String((err as { stderr: unknown }).stderr)
+          : err instanceof Error
+            ? err.message
+            : String(err)
+    return {
+      ok: false,
+      refusal: message.trim() || 'the push was refused with no captured output',
+      hook: err instanceof PushHookRefusal
+    }
   }
 }
 
@@ -1410,6 +1596,7 @@ function defaultDeps(): LoopDeps {
     resolveLogAppendPath,
     repoRoot: defaultRepoRoot,
     gitRevParseOriginMain: defaultGitRevParseOriginMain,
+    gitIsAncestor: defaultGitIsAncestor,
     gitMergeBase: defaultGitMergeBase,
     gitFetch: defaultGitFetch,
     gitDiffShortstat: defaultGitDiffShortstat,
@@ -1438,7 +1625,9 @@ function defaultDeps(): LoopDeps {
     readWorktreeBranch: defaultReadWorktreeBranch,
     gitWorktreeChangedPaths: defaultGitWorktreeChangedPaths,
     gitWorktreeDiffText: defaultGitWorktreeDiffText,
+    buildVendoredCliIfMissing: defaultBuildVendoredCliIfMissing,
     commitWorktree: defaultCommitWorktree,
+    validatePrBodyForCreate,
     pushTaskBranch: defaultPushTaskBranch,
     openTaskPullRequest: defaultOpenTaskPullRequest,
     fetchDeveloperStop,
@@ -2879,10 +3068,17 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
     async function dispatchDeveloper(
       prompt: string,
       roundNum: number,
-      opts: { skipResumeContext?: boolean; developerFiles?: readonly string[]; skipPublish?: boolean } = {}
+      opts: {
+        skipResumeContext?: boolean
+        developerFiles?: readonly string[]
+        skipPublish?: boolean
+        publicationRefusal?: PublicationRefusal
+      } = {}
     ): Promise<DispatchHandle> {
       let currentPrompt = prompt
       let publishReasks = 0
+      let publicationRefusals = opts.publicationRefusal ? 1 : 0
+      let previousPublicationRefusal: string | null = opts.publicationRefusal?.signature ?? null
       while (true) {
         const handle = await dispatchDeveloperOnce(currentPrompt, roundNum, opts)
         // A dispatch whose own turn failed, or one that only answers a
@@ -2908,29 +3104,25 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         }
         const published = await publishDeveloperTurn(roundNum)
         if (published.kind === 'published' || published.kind === 'nothing') return handle
-        // O4: a refused push stays committed-but-unpushed; the existing
-        // head-change-wait / `no_push` machinery carries it from here, with the
-        // hook's own refusal text (`lastPushRefusal`) in its resume prompt.
-        if (published.kind === 'push_refused') return handle
-        // O2/O7: a reask — nothing was committed or pushed. Send the turn back
-        // to the same session naming the problem, bounded; a persistent
-        // failure falls through to the poll's own unmoved-head safety net.
-        if (publishReasks >= MAX_PUBLISH_REASKS) return handle
-        publishReasks += 1
-        currentPrompt = [
-          'Your previous turn could not be committed and published by the driver:',
-          published.reason,
-          'Fix the problem above and end your turn — leave your changes UNCOMMITTED and (re)write your commit-header and (round 1) PR-body files; the driver commits and publishes, never you.'
-        ].join('\n\n')
+        publicationRefusals += 1
+        if (published.signature === previousPublicationRefusal || publicationRefusals >= MAX_PUBLISH_REASKS) {
+          throw new PublicationRefusalPause(published.check, published.errorLine)
+        }
+        previousPublicationRefusal = published.signature
+        currentPrompt = publicationRefusalPrompt(published)
       }
     }
 
+    function publicationRefusalPrompt(refusal: PublicationRefusal): string {
+      return [
+        `The driver's publication check \`${refusal.check}\` refused your previous turn:`,
+        refusal.reason,
+        'Fix the problem above and end your turn — leave your changes UNCOMMITTED and (re)write your commit-header and (round 1) PR-body files; the driver commits and publishes, never you.'
+      ].join('\n\n')
+    }
+
     /** O2/O7: the publication step's outcome — nothing to do, published, a reask the Developer must fix, or a refused push the existing machinery carries. */
-    type PublishTurnResult =
-      | { kind: 'nothing' }
-      | { kind: 'published' }
-      | { kind: 'reask'; reason: string }
-      | { kind: 'push_refused' }
+    type PublishTurnResult = { kind: 'nothing' } | { kind: 'published' } | PublicationRefusal
 
     /** O7: at most this many times the publication step re-asks the same Developer session to fix a missing header or a failed check before leaving the unmoved head to the poll/`no_push` safety net. */
     const MAX_PUBLISH_REASKS = 2
@@ -2959,15 +3151,16 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * empty body file is a reask (O7); an open that cannot be confirmed leaves
      * the record's `prNumber` null for the existing poll to pick up.
      */
-    function openPullRequestFromBody(
-      roundNum: number
-    ): { kind: 'opened'; prNumber: number | null } | { kind: 'reask'; reason: string } {
+    async function openPullRequestFromBody(
+      roundNum: number,
+      changedPaths: string[]
+    ): Promise<{ kind: 'opened'; prNumber: number | null } | Extract<PublishTurnResult, { kind: 'refused' }>> {
       const body = readIfExists(prBodyPathFor(root, task, roundNum))
       if (!body || body.trim().length === 0) {
-        return {
-          kind: 'reask',
-          reason: `no pull-request body file was written at this round's \`${PR_BODY_FILE_NAME}\` path`
-        }
+        return publicationRefusal(
+          'pr-body-file',
+          `no pull-request body file was written at this round's \`${PR_BODY_FILE_NAME}\` path`
+        )
       }
       let title: string
       try {
@@ -2975,6 +3168,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       } catch {
         title = `[task ${task}]`
       }
+      const bodyErrors = await d.validatePrBodyForCreate({
+        body,
+        title,
+        changedFiles: changedPaths,
+        branch,
+        baseBranch: 'main'
+      })
+      if (bodyErrors.length > 0) return bodyGateRefusal(bodyErrors)
       const prNumber = d.openTaskPullRequest({ task, branch, title, body, round: roundNum, agent: dispatchAgent, repo })
       return { kind: 'opened', prNumber }
     }
@@ -3023,15 +3224,20 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         changedPaths,
         surface: d.resolveTaskSurface ? d.resolveTaskSurface(task) : null
       })
-      if (!check.ok) return { kind: 'reask', reason: check.reason }
+      if (!check.ok) return publicationRefusal('publication-preconditions', check.reason)
 
       // O2: commit the uncommitted changes under the Developer's header,
       // recording the SHA before the push (O8).
       let record: DeveloperPublicationRecord | null = readDeveloperPublicationRecord(root, task)
       if (unpushed.dirtyFiles.length > 0) {
         const header = validateCommitHeader(readIfExists(commitHeaderPathFor(root, task, roundNum)))
-        if (!header.ok) return { kind: 'reask', reason: header.reason }
-        const sha = d.commitWorktree(worktree, header.header)
+        if (!header.ok) return publicationRefusal('commit-header', header.reason)
+        d.buildVendoredCliIfMissing(worktree)
+        const committed = d.commitWorktree(worktree, header.header)
+        if (!committed.ok) {
+          return publicationRefusal(committed.check, committed.errorLine, committed.output)
+        }
+        const sha = committed.sha
         record = {
           round: roundNum,
           preTurnHead: turnPreHead,
@@ -3062,8 +3268,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           worktreePath: worktree
         })
         if (!push.ok) {
+          if (!push.hook) throw new Error(`task branch push failed outside the pre-push hook: ${push.refusal}`)
           lastPushRefusal = push.refusal
-          return { kind: 'push_refused' }
+          return publicationRefusal('pre-push-hook', firstErrorLine(push.refusal, 'push hook refused'), push.refusal)
         }
         lastPushRefusal = null
         record = {
@@ -3078,8 +3285,8 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
 
       // O3: open the pull request when none is open, from the Developer's body file.
       if (!existingPr) {
-        const opened = openPullRequestFromBody(roundNum)
-        if (opened.kind === 'reask') return { kind: 'reask', reason: opened.reason }
+        const opened = await openPullRequestFromBody(roundNum, changedPaths)
+        if (opened.kind === 'refused') return opened
         if (opened.prNumber !== null) {
           record = {
             round: roundNum,
@@ -3104,11 +3311,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
      * restart after the commit, after the push, or after the open each finish
      * exactly once.
      */
-    async function finishPublicationFromRecord(): Promise<void> {
+    async function finishPublicationFromRecord(): Promise<PublicationRefusal | null> {
       const record = readDeveloperPublicationRecord(root, task)
-      if (record === null || record.commitSha === null) return
+      if (record === null || record.commitSha === null) return null
       const worktree = worktreePathForBranch()
-      if (!existsSync(worktree)) return
+      if (!existsSync(worktree)) return null
 
       if (!record.pushed) {
         let remoteHead: string | null
@@ -3132,19 +3339,23 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             worktreePath: worktree
           })
           if (!push.ok) {
+            if (!push.hook) throw new Error(`task branch push failed outside the pre-push hook: ${push.refusal}`)
             lastPushRefusal = push.refusal
-            return
+            return publicationRefusal('pre-push-hook', firstErrorLine(push.refusal, 'push hook refused'), push.refusal)
           }
         }
         writeDeveloperPublicationRecord(root, task, { ...record, pushed: true })
       }
 
       if (d.findOpenPrForBranch(branch) === null && record.prNumber === null) {
-        const opened = openPullRequestFromBody(record.round)
+        const changedPaths = publicationExpectedBase ? d.gitWorktreeChangedPaths(worktree, publicationExpectedBase) : []
+        const opened = await openPullRequestFromBody(record.round, changedPaths)
+        if (opened.kind === 'refused') return opened
         if (opened.kind === 'opened' && opened.prNumber !== null) {
           writeDeveloperPublicationRecord(root, task, { ...record, pushed: true, prNumber: opened.prNumber })
         }
       }
+      return null
     }
 
     /**
@@ -4248,13 +4459,18 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             }
           }
         } else {
-          let branchExists = true
+          let branchHead: string | null = null
           try {
-            d.resolveHead(branch)
+            branchHead = d.resolveHead(branch)
           } catch {
-            branchExists = false
+            branchHead = null
           }
-          if (branchExists) {
+          // A task branch whose head is contained in origin/main has no task
+          // commits beyond the default branch. It is only an address
+          // reservation even when main has advanced since the ref was created.
+          // Recovery begins only once the task branch has moved beyond main.
+          const branchHasTaskCommits = branchHead !== null && !d.gitIsAncestor(branchHead, d.gitRevParseOriginMain())
+          if (branchHasTaskCommits) {
             // Crash-recovery re-entry: the branch already exists (pushed by a
             // prior process), no dispatch here. O8: first finish any
             // publication a crash interrupted — push a recorded-but-unpushed
@@ -4263,12 +4479,23 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
             // any of the three publication boundaries finishes exactly once.
             // `afterDeveloperTurnBeforePrPoll` then finds the open PR (or
             // resumes once to open it, the pre-existing safety net).
-            await finishPublicationFromRecord()
+            const recoveryRefusal = await finishPublicationFromRecord()
+            if (recoveryRefusal) {
+              const recoveryRecord = readDeveloperPublicationRecord(root, task)
+              const recoveryRound = recoveryRecord?.round ?? round
+              await dispatchDeveloper(publicationRefusalPrompt(recoveryRefusal), recoveryRound, {
+                developerFiles: [
+                  commitHeaderPathFor(root, task, recoveryRound),
+                  prBodyPathFor(root, task, recoveryRound)
+                ],
+                publicationRefusal: recoveryRefusal
+              })
+            }
             prNumber = await afterDeveloperTurnBeforePrPoll(true)
             announcePr()
           } else {
-            // O1: the branch exists neither as an open PR (checked above) nor
-            // on the remote (`resolveHead` just threw) — create the task's own
+            // O1/O7: the branch either does not exist on the remote or is the
+            // commit-free address reservation at or behind origin/main — create/reuse the task's own
             // worktree now, outside any sandbox, and push it to the remote FROM
             // that worktree, BEFORE the first Developer turn below. This is
             // what makes `devWorktreeDir` (below) non-null from round 1 on, so

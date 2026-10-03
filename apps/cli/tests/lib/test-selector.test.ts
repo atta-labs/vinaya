@@ -2223,15 +2223,22 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
 // `writeEscalationRecord`/`resolveEscalation` handoff-event tests before
 // reading the real logged lines back), so a `log-sink.ts` change now selects
 // that one extra suite too. Same rule.
+//
+// Raised 28 → 29 (`log-readers-v1` 12): `apps/cli/tests/lib/log-readers-integration.test.ts`
+// newly imports both `log-sink.ts` (`appendHardenedLine`/`outboxPathFor`, to
+// write real fixture folders the folder source reads) and `config.ts`
+// (`resolveLogsHeaderValues`, to resolve the fake server's read credential)
+// directly — one new file, so a change to either now selects that one extra
+// suite, never two. Same rule.
 describe('selectAffectedTestFiles depth: "one" — reference change-set ceilings (Issue #707, O1)', () => {
-  it('a change to the log sink (log-sink.ts/config.ts/run-paths.ts) selects at most 28 files', () => {
+  it('a change to the log sink (log-sink.ts/config.ts/run-paths.ts) selects at most 29 files', () => {
     const changed = [
       join(REPO_ROOT, 'apps/cli/src/lib/log-sink.ts'),
       join(REPO_ROOT, 'apps/cli/src/lib/config.ts'),
       join(REPO_ROOT, 'apps/cli/src/lib/run-paths.ts')
     ]
     const { selected } = selectAffectedTestFiles(REPO_ROOT, changed, { depth: 'one' })
-    expect(selected.length).toBeLessThanOrEqual(28)
+    expect(selected.length).toBeLessThanOrEqual(29)
   })
 
   it('a change to a widely imported export of the shared core package selects at most 25 files', () => {

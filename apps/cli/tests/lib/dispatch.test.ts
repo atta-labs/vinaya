@@ -4507,10 +4507,11 @@ describe('writeDispatchSettings — Issue #663, O1/O3: the permission policy is 
     mkdirSync(join(home, '.codex'), { recursive: true })
     writeFileSync(join(home, '.codex', 'auth.json'), '{"tokens":{"access_token":"operator-token"}}')
     const codexHomeOut = join(cwd, 'codex-home.txt')
+    const ghTelemetryOut = join(cwd, 'gh-telemetry.txt')
     writeFakeBinary(
       binDir,
       'codex',
-      `#!/bin/sh\nprintf '%s' "$CODEX_HOME" > "${codexHomeOut}"\nwhile read -r line; do :; done\ncat > /dev/null\necho '{}'\nexit 0\n`
+      `#!/bin/sh\nprintf '%s' "$CODEX_HOME" > "${codexHomeOut}"\nprintf '%s' "$GH_TELEMETRY" > "${ghTelemetryOut}"\nwhile read -r line; do :; done\ncat > /dev/null\necho '{}'\nexit 0\n`
     )
     const promptFile = join(cwd, 'prompt.txt')
     writeFileSync(promptFile, PROMPT_FILE_CONTENT)
@@ -4535,6 +4536,7 @@ describe('writeDispatchSettings — Issue #663, O1/O3: the permission policy is 
     // carries the machine-state floor, with the operator's auth symlinked in.
     const codexHome = readFileSync(codexHomeOut, 'utf8').trim()
     expect(codexHome).not.toBe('')
+    expect(readFileSync(ghTelemetryOut, 'utf8')).toBe('0')
     expect(readFileSync(join(codexHome, 'rules', 'vinaya-machine-state.rules'), 'utf8')).toContain(
       'prefix_rule(pattern = ["sudo"], decision = "forbidden"'
     )
