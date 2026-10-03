@@ -9,7 +9,9 @@
  * either exits 0 under both, or is listed in `KNOWN_FAILURES` below with its
  * agent, its platform and the denial it hits today. A listed command that
  * now exits 0 fails the suite until its entry is removed, so the list only
- * shrinks.
+ * shrinks. A listed command that also fails with no sandbox around it, in the
+ * same worktree with the same inputs, is no sandbox denial: the suite fails
+ * until the entry is removed or the command is given inputs it can pass on.
  *
  * The command-list checks run on every `bun test`. The sandboxed runs need
  * both runtimes and minutes of wall time, so they run only when
@@ -19,8 +21,8 @@
  *   VINAYA_SANDBOX_CONFORMANCE=1 bun test --timeout=900000 tests/sandbox-conformance/sandbox-conformance.test.ts
  *
  * in a terminal outside any agent's sandbox (a sandbox cannot start another
- * one inside itself). On a task branch every entry runs; elsewhere the
- * entries that need a task's identity are skipped.
+ * one inside itself). The entries that need a dispatchable task, or the
+ * branch's open pull request body, run only when the forge offers one.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
@@ -33,8 +35,7 @@ import {
   COMMAND_BUDGET_MS,
   openSandboxSession,
   type SandboxSession,
-  sourceBranch,
-  taskIdentity
+  sourceBranch
 } from './sandbox-launch.js'
 
 type CommandEntry = {
@@ -42,7 +43,10 @@ type CommandEntry = {
   forms: string[]
   run?: string
   notRun?: string
-  needsTaskBranch?: boolean
+  /** Runs against a tranche task that is dispatchable now (open, dependencies merged, no work on its branch). */
+  needsDispatchableTask?: boolean
+  /** Runs with the body of the branch's open pull request as `PR_BODY`. */
+  needsPrBody?: boolean
 }
 
 const ENTRIES: CommandEntry[] = (
@@ -100,13 +104,6 @@ const KNOWN_FAILURES: readonly KnownFailure[] = [
     platform: 'linux',
     denial:
       'bun install exits 1: "bun is unable to write files to tempdir: EROFS" — its temp directory is outside the writable roots'
-  },
-  {
-    id: 'verify-dispatch',
-    agent: 'codex',
-    platform: 'linux',
-    denial:
-      'verify-dispatch exits 1 on "leftover-detection: stop — <n> commit(s) already ahead of origin/main on this task branch", then "verify-dispatch: NOT READY"'
   },
   {
     id: 'check-all',
@@ -182,7 +179,6 @@ const LIVE = process.env.VINAYA_SANDBOX_CONFORMANCE === '1'
 for (const agent of AGENTS) {
   describe.skipIf(!LIVE)(`sandbox conformance — ${agent}'s sandbox`, () => {
     const branch = sourceBranch()
-    const identity = taskIdentity(branch)
     const platform = process.platform
     let session: SandboxSession
 
@@ -192,15 +188,56 @@ for (const agent of AGENTS) {
     })
     afterAll(() => session?.dispose())
 
+    let dispatchable: Promise<{ tranche: string; n: string } | null> | undefined
+    let prBody: Promise<string | null> | undefined
+
+    /** The first open tranche task whose branch holds no work and that `verify-dispatch` calls ready with no sandbox around it. */
+    const findDispatchable = async (): Promise<{ tranche: string; n: string } | null> => {
+      const listed = await session.runOutside('gh issue list --state open --limit 100 --json title', {})
+      if (listed.exitCode !== 0) return null
+      const titles = (JSON.parse(listed.output) as { title: string }[]).map((i) => i.title)
+      for (const title of titles) {
+        const m = title.match(/^\[([^\]]+)\] (\d+) — /)
+        if (!m?.[1] || !m[2]) continue
+        const probe = await session.runOutside(`bun packages/aeg-core/bin/verify-dispatch.ts ${m[1]} ${m[2]}`, {})
+        if (probe.exitCode === 0) return { tranche: m[1], n: m[2] }
+      }
+      return null
+    }
+
+    const findPrBody = async (): Promise<string | null> => {
+      if (!branch) return null
+      const r = await session.runOutside(`gh pr view ${JSON.stringify(branch)} --json body --jq .body`, {})
+      return r.exitCode === 0 && r.output.trim() !== '' ? r.output : null
+    }
+
     for (const entry of ENTRIES) {
       const run = entry.run
       if (run === undefined) continue
-      const runnable = !entry.needsTaskBranch || identity !== null
-      it.skipIf(!runnable)(
+      it(
         `${entry.id}: ${run}`,
         async () => {
-          const command = identity ? run.replaceAll('{tranche}', identity.tranche).replaceAll('{n}', identity.n) : run
-          const result = await session.run(command, branch ? { BRANCH: branch } : {})
+          const env: Record<string, string> = branch ? { BRANCH: branch } : {}
+          let command = run
+          if (entry.needsDispatchableTask) {
+            dispatchable ??= findDispatchable()
+            const target = await dispatchable
+            if (!target) {
+              console.warn(`[${agent}] ${entry.id}: skipped — no tranche task is dispatchable now`)
+              return
+            }
+            command = run.replaceAll('{tranche}', target.tranche).replaceAll('{n}', target.n)
+          }
+          if (entry.needsPrBody) {
+            prBody ??= findPrBody()
+            const body = await prBody
+            if (body === null) {
+              console.warn(`[${agent}] ${entry.id}: skipped — branch '${branch}' has no open pull request body`)
+              return
+            }
+            env.PR_BODY = body
+          }
+          const result = await session.run(command, env)
           const listed = knownFailure(entry.id, agent, platform)
           console.info(
             `[${agent}] ${entry.id}: exit ${result.exitCode}${listed ? ' (listed as a known failure)' : ''} — ${command}`
@@ -210,6 +247,15 @@ for (const agent of AGENTS) {
               `${entry.id} now exits 0 under ${agent}'s sandbox on ${platform} — remove its KNOWN_FAILURES entry ("${listed.denial}").`
             )
           }
+          if (listed) {
+            const outside = await session.runOutside(command, env)
+            if (outside.exitCode !== 0) {
+              throw new Error(
+                `${entry.id} is listed as a sandbox denial for ${agent} on ${platform}, but it exits ${outside.exitCode} with no sandbox too — the failure is the command's own, not the boundary's. ` +
+                  `Give it inputs it can pass on, or remove the entry. Its unsandboxed output ends:\n${outside.output.slice(-3000)}`
+              )
+            }
+          }
           if (!listed && result.exitCode !== 0) {
             throw new Error(
               `${entry.id} exits ${result.exitCode} under ${agent}'s sandbox on ${platform}, and no KNOWN_FAILURES entry lists it. ` +
@@ -217,7 +263,7 @@ for (const agent of AGENTS) {
             )
           }
         },
-        COMMAND_BUDGET_MS + 60_000
+        COMMAND_BUDGET_MS * 2 + 60_000
       )
     }
   })

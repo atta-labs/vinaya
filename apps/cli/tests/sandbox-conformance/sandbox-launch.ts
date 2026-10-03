@@ -59,6 +59,8 @@ export type SandboxSession = {
   readonly agent: Agent
   readonly worktreeDir: string
   run(command: string, env: Record<string, string>): Promise<CommandResult>
+  /** The same command in the same worktree with no sandbox around it — the control that tells a sandbox denial from a command that fails anywhere. */
+  runOutside(command: string, env: Record<string, string>): Promise<CommandResult>
   dispose(): void
 }
 
@@ -76,12 +78,6 @@ export function sourceBranch(): string {
   } catch {
     return ''
   }
-}
-
-/** `{ tranche, n }` for a `task/<tranche>/<n>` branch, `null` otherwise. */
-export function taskIdentity(branch: string): { tranche: string; n: string } | null {
-  const m = branch.match(/^task\/([^/]+)\/(\d+)$/)
-  return m?.[1] && m[2] ? { tranche: m[1], n: m[2] } : null
 }
 
 function createWorktree(agent: Agent): string {
@@ -117,6 +113,15 @@ async function runIn(
   return { exitCode: r.status, output: `${r.stdout}${r.stderr}` }
 }
 
+function runOutsideSandbox(worktreeDir: string, command: string, env: Record<string, string>): Promise<CommandResult> {
+  return runIn(
+    ['bash', '-c', withAbsoluteBun(command)],
+    worktreeDir,
+    { ...stripVinayaEnv(), ...env },
+    `outside: ${command}`
+  )
+}
+
 function claudeSession(): SandboxSession {
   const worktreeDir = createWorktree('claude')
   const scratchDir = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-claude-sandbox-')))
@@ -147,6 +152,7 @@ function claudeSession(): SandboxSession {
   return {
     agent: 'claude',
     worktreeDir,
+    runOutside: (command, env) => runOutsideSandbox(worktreeDir, command, env),
     run: (command, env) =>
       runIn(
         [process.execPath, 'x', SANDBOX_RUNTIME_PACKAGE, '--settings', settingsPath, '-c', withAbsoluteBun(command)],
@@ -194,6 +200,7 @@ function codexSession(): SandboxSession {
   return {
     agent: 'codex',
     worktreeDir,
+    runOutside: (command, env) => runOutsideSandbox(worktreeDir, command, env),
     run: (command, env) =>
       runIn(
         [process.execPath, 'x', CODEX_PACKAGE, ...sandboxArgs, '--', 'bash', '-c', withAbsoluteBun(command)],

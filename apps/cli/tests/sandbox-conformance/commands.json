@@ -1,5 +1,5 @@
 {
-  "about": "Every command the Developer doctrine and the rendered brief name, one entry each. `forms` are the exact command forms read off the texts (command-sources.ts); `run` is the command the suite runs inside each agent's sandbox, from the task worktree; an entry with `notRun` instead names why no Developer runs it inside its sandbox. `{tranche}` and `{n}` are the task branch's own identity; an entry with `needsTaskBranch` runs only when the suite runs on a task branch.",
+  "about": "Every command the Developer doctrine and the rendered brief name, one entry each. `forms` are the exact command forms read off the texts (command-sources.ts); `run` is the command the suite runs inside each agent's sandbox, from the task worktree; an entry with `notRun` instead names why no Developer runs it inside its sandbox. `{tranche}` and `{n}` are a tranche task that is dispatchable now, found by the suite; an entry with `needsDispatchableTask` runs only when one exists, and an entry with `needsPrBody` runs only when the branch has an open pull request, with its body as `PR_BODY` — each runs on inputs it can pass on, so a failure is the sandbox's.",
   "commands": [
     {
       "id": "bun-install",
@@ -53,9 +53,14 @@
         "bun packages/aeg-core/bin/verify-dispatch.ts conformance-fixture-v1 1"
       ],
       "run": "bun packages/aeg-core/bin/verify-dispatch.ts {tranche} {n}",
-      "needsTaskBranch": true
+      "needsDispatchableTask": true
     },
-    { "id": "check-all", "forms": ["vinaya check --all"], "run": "bun apps/cli/src/index.ts check --all" },
+    {
+      "id": "check-all",
+      "forms": ["vinaya check --all"],
+      "run": "bun apps/cli/src/index.ts check --all",
+      "needsPrBody": true
+    },
     { "id": "gh-issue-view", "forms": [], "run": "gh issue view 1026 --json number,title" },
     { "id": "gh-pr-view", "forms": ["gh pr view"], "run": "gh pr view 1010 --json number,state" },
     {

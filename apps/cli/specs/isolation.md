@@ -231,6 +231,6 @@ How to run it:
   VINAYA_SANDBOX_CONFORMANCE=1 bun test --timeout=900000 tests/sandbox-conformance/sandbox-conformance.test.ts
   ```
 
-  It prints each command's exit status under each agent. On a task branch every entry runs. Elsewhere the entries that need a task's identity are skipped.
+  It prints each command's exit status under each agent. Every entry runs on inputs it can pass on: `verify-dispatch` on a tranche task that is dispatchable now, `check --all` with the body of the branch's open pull request. Where the forge offers neither, that entry is skipped and says so. A listed known failure is also run with no sandbox around it, in the same worktree with the same inputs; if it fails there too, it is no sandbox denial and the suite fails until the entry is removed.
 
 Without `VINAYA_SANDBOX_CONFORMANCE=1`, an ordinary run of the test file runs only the command-list checks.
