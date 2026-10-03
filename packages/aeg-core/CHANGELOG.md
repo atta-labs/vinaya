@@ -1,5 +1,72 @@
 # @atta/aeg-core
 
+## 0.37.0
+
+### Minor Changes
+
+- 5acfab2: A repository can declare its own Vinaya Log events in `vinaya.config.json`, under `logs.events`, and record them with no code written. Each event is named `<namespace>.<event>` (the `vinaya.` namespace is reserved) and declares up to 20 flat fields typed text, number, boolean, or one of a listed set of words; a declaration that breaks a rule is refused when the config loads, naming the entry.
+  
+  A declared event with every field present and of its declared type is written as one line of the new `custom` family, valid under a schema 3 header only. An undeclared or malformed event writes no `custom` line: one `operation` event named `log.emit`, result `refused`, records the reason and the field names — never the values — and the caller receives the refusal. Secret-shaped values in a custom field are redacted like in every other event.
+- e5f561b: The Vinaya Log header is now `schema: 3`: it names the unit of work (`work`), the way of working (`flow`), the runtime and the source, set through `VINAYA_WORK_REF`, `VINAYA_FLOW`, `VINAYA_FLOW_VERSION`, `VINAYA_RUNTIME` and `VINAYA_SOURCE`. Lines of schema 1 and 2 still read back unchanged.
+- c588a60: The Operator is granted exactly the task tools the task-tools server serves; the unserved `task_status_follow` tool is dropped.
+  
+  The Operator's grant named a seventh tool, `task_status_follow`, that the server never listed, so a call to it was refused as "no such task tool" and the grant check could never refuse anything on the real call path. `OPERATOR_TOOL_GRANT` is now the catalog's tool names, so the role file, its contracts, the planner reference and the conformance spec say "the task tools the server serves" and carry no fixed count. `bun apps/cli/src/index.ts task status --follow` is unchanged and stays a command for the Principal.
+  
+  **Breaking for `@attalabs/aeg-core` consumers:** the `OPERATOR_STATUS_FOLLOW` export is removed. `apps/cli/tests/lib/operator-grant.test.ts` now asserts the grant, the catalog, the role file's `allowed-tools`, the generated skill and the server's `tools/list` are the same set.
+
+### Patch Changes
+
+- 3e037aa: A check run now records one `gate` `summary` event and a `gate` `checked` event only for each check that did not pass, and a forge write records one `effect` event instead of three, so the Vinaya Log stays inside a log server's free daily write limit.
+  
+  The `summary` carries how many checks ran, passed, failed and were skipped, the names of the checks that did not pass, and the run's total duration. A passing or skipped check records no event of its own. A failing check's `checked` event keeps its `reason`, fingerprint and commit exactly as before. A forge write records a single `effect` `verified` event whose `outcome` is `success`, `failure` or `uncertain`; the `attempted` and `observed` events still parse, so lines stored earlier still read, but nothing records them any more. The local effect records a write recovers from are unchanged.
+- d999b48: The driver now creates each task's own worktree, outside any sandbox, before the first Developer dispatch runs — the brief's own Step 0 only enters it, so a Developer dispatched on macOS under either vendor's own sandbox no longer has to run `git worktree add` from inside a confinement that denies writing the main checkout's `.git`. The confinement interface also grants both vendor adapters read-only access to the operator's own `~/.gitconfig` and `~/.config/git`, and on macOS puts the real git binary of the active developer directory ahead of the `/usr/bin/git` shim on `PATH`, so a plain `git` command resolves identity/aliases and never writes an `xcrun` cache outside the worktree.
+  
+  `dev-review-loop/developer-dispatch.ts`'s `createTaskWorktree` replaces `createRemoteTaskBranch`: it creates `.worktrees/<branch>` (reusing one that already exists, never recreating it) and pushes the branch to the remote FROM that worktree with `-u`, never from the driver's own default-branch checkout, whose managed pre-push hook judges `main` itself against the task's own dispatch-readiness/test gate and refuses. `packages/aeg-core/src/brief-render.ts`'s rendered Step 0 is now `cd .worktrees/<branch> && bun install --frozen-lockfile --silent` — `brief-validation.ts`'s worktree-Step-0 checks accept either generation.
+  
+  `worker-boundary.ts`'s `gitConfigReadOnlyPaths`/`resolveGitFirstPath` supply the new grants to both `buildClaudeSandboxSettings` (Claude's own native sandbox) and `resolveWorkerBoundaryLaunch` (Codex's Seatbelt boundary); `dispatch.ts` threads the resolved `PATH` into the confined child's env.
+  
+  An agent's own configuration paths inside the worktree (`.claude/`, `.mcp.json` for Claude; `.codex/`, `.agents/` for Codex) now stay write-protected — Claude via a `write-access.mjs` hook carve-out, Codex via a Seatbelt deny layered after the worktree's own write grant — unless the task's own Surface `in:` globs name them, checked once per round from `dev-review-loop.ts`'s own Surface read.
+- 4dac087: The review loop now tells the Vinaya Log it is alive and when it exits, so Mission Control can show which agents are working — across every machine reporting to one Log.
+  
+  The `dev_review_loop` family gains two events. A `driver_heartbeat` records the task Issue, the pull request once one exists, the round and the phase, at most every five minutes while a driver process is alive — on a `.unref()`'d timer that never keeps the process alive and whose dropped deliveries are dropped like any other event. A `driver_exited` records the task Issue, the reason (`finished`, `paused`, `reexec`, `error` or `signal`) and the last decision, exactly once on every exit path. Both carry `meta.machine`, so a reader can tell, from the Log alone, whether a loop for an Issue is running (a heartbeat or lifecycle event within the last ten minutes with no later `driver_exited`), finished, paused or exited, and on which machine.
+  
+  Only the driver emits these — never a reviewer or Developer child — and the diagnostic role-log `driver_exited:` line stays abnormal-only. A log server not yet redeployed stores either event verbatim as `unknown_version`, which a reader still parses.
+- 43a27cc: The review-policy digest a verdict binds to now covers only the two settings that decide whether a verdict's findings block — `codeReviewThreshold` and `securityThreshold`. The loop's own limits, `maxRounds` and `maxTaskMinutes`, no longer feed `policyDigest`, so changing either one never re-opens an already-approved pull request.
+  
+  The round cap and the wall-clock budget bound how long the loop runs; they cannot change whether a finding in an already-cast verdict blocks, so a verdict cast under one round cap or time budget stays bound after that limit changes. Changing either threshold still invalidates verdicts cast under the old one, exactly as before. This is a one-time digest move: any pull request with verdicts open when it merges needs one fresh review round.
+- b10e221: A pull-request body no longer carries a token table. `vinaya pr report --write` and `--push` write the `AEG:EVIDENCE` block and nothing else, `vinaya pr create` splices no row into the body it opens, and the registered `token-report` check — which refused a task pull request whose body carried no such row — is retired: a body without one now passes every check, and `vinaya check --all` and the generated CI workflows list no such name.
+  
+  Token use is recorded as the Vinaya log's own `usage` event instead, one per dispatched attempt, collected from the agent host by the dispatch path with no step of the role's own in between. The collection behind those events is unchanged, as is `vinaya tokens`.
+  
+  A body opened before this change keeps its table byte for byte: nothing rewrites it, nothing removes it, and the `--push` self-verification now treats it as prose the report does not own — a change inside it reads as real drift. The `--phase`, `--role`, `--model` and `--transcript` flags on `vinaya pr report` went with the row they shaped; `vinaya tokens` still accepts its own.
+  
+  `ANCHOR_FIELDS` drops `TOKENS`, since the one writer of that anchor is gone and no gate reads it.
+- bc56c75: The review loop no longer posts a round table on the pull request; each round's findings, outcome and confidence are recorded only in the Vinaya Log.
+  
+  Publication now posts one comment whose content is a single hidden line, `<!-- aeg:loop:published head=<sha> confidence=1:-,2:80 -->`, followed by a link to the deferred-findings Issue only when one was opened or updated. The loop reads that marker, from principal-authored comments only, to know a review already published and to report each round's confidence in `task_status`. Rounds rebuilt after a restart no longer show "—" in a second, weaker copy of the Log. `task_pr_read` no longer returns a `summaryTable` field.
+- 16205d8: Reviewer and security passes the review loop dispatches now carry their own role doctrine — the role's short version and its "What you check" list — instead of a one-line role label.
+  
+  `@attalabs/aeg-core` gains `extractShortVersionAndChecklist`, a pure extractor that returns a role document's short version (with its trailing `---` rule stripped) plus its `## What you check` section, reusing `extractShortVersion` so the injected text and the published `/docs` page can never disagree.
+  
+  The dev-review-loop resolves that text through the same override-aware role plan `vinaya check --plan` renders, so an adopter's `roles` override supplies its own doctrine (`code-reviewer` resolves to `reviewer`). The text is injected as a prompt `fact` piece — the banned-framing lint never reads it, so a role text whose wording happens to match a banned phrase renders and the round proceeds — followed by one precedence sentence stating that the dispatch's own findings/report/objectives file hand-off wins over the doctrine's output wording. `RoleContract` now carries the contract body so the plan can hand an override's own prose through.
+- 50c6418: `proseGates.specGrandfather` now also accepts an object mapping each listed spec path to the most spec-class findings that file may carry. A listed file above its number fails `reader-resolvable-prose`, naming the file, its count and its limit; a file at or below it passes. A grandfathered spec can therefore no longer gain a plan reference, and its number is lowered as the spec is rewritten. The array form keeps exempting a whole file, and now prints one warning per entry saying so and naming the object form; nothing that passed before fails.
+- 13c21bf: `task_start` now continues a paused run once its Principal ruling is posted, and `task_status` never shows a run a pause still holds as `exited`.
+  
+  A pause whose ruling is already posted where the pause asked for it — newer than the one the pause was raised under — is continued by `task_start` itself, by handing it to the `task_resume` handler. That reuses `task_resume`'s own ruling authentication (the same ordinal-freshness check, now a shared `rulingAuthenticatesResume` predicate neither tool copies), its resolution write and its `operation: task_resume` Log event, so a continuation `task_start` takes never bypasses a check `task_resume` makes, and a stale or older approval never authenticates one. `task_resume` is unchanged and stays available for callers already using it.
+  
+  When `task_start` refuses because a pause still awaits a ruling, the refusal now names where the ruling goes (the pull request, or the Issue when there is none), the exact marker line with the next ordinal, and the command that posts it.
+  
+  `task_status` and `vinaya task status` read each row's state from the same pause disposition `task_start` uses: a run a pause still holds reads `paused (<reason>) — needs ruling` or `paused (<reason>) — ruled, start continues it`, with a `next` of `rule` or `start` accordingly — never `exited`, even when its driver was killed and the derivation alone would read the dead lock's exit trace.
+- e81806f: Every task's review loop now ends within a known amount of WORK, not only a known number of rounds. `reviewPolicy.maxTaskMinutes` (default 180, `0` turns it off) bounds the time a task spends in its active phases; over budget is `pause{reason:'time_budget'}`, and the pause names the budget, the active minutes actually spent, and where they went phase by phase — `task time budget: 180 min, spent 214 min — developing 190 min, reviewing 24 min`.
+  
+  This bounds what the round cap cannot. The round number advances only when verdicts come back, so a loop spending its hours pushing, rebasing, waiting on checks and retrying approaches no cap at all; runs of six hours, and push attempts of over an hour, happened that way with every existing bound intact.
+  
+  The budget counts only the phases a driver is working the task forward — developing (which spans the push and the gate wait after it, and the mechanical retries recorded under the same phase), reviewing, and awaiting the developer's confidence. Time the task sat `paused` waiting for a Principal, time it spent `publishing` an already-approved pull request, and any stretch with no driver running at all never count: the clock is the sum of the loop's own recorded active-phase times (`phaseMs`, carried across restarts), not the wall-clock age since the task first started. So a task first started days ago is bounded by the minutes it has actually worked — an approved pull request resumed only to re-cast a verdict is never paused for the hours it sat waiting.
+  
+  The budget is checked at every round boundary and every mechanical retry, so a phase stuck short of review cannot run past it by more than the one attempt in flight when it ran out. It is deliberately not checked once a round's verdicts are back: reviewers have already done that round's work, so their verdicts still decide it and the loop stops at the boundary that follows. `maxTaskMinutes` joins the review-policy digest, so a verdict cast before this change needs one fresh review round.
+- @attalabs/aeg-forge-state@0.37.0
+  - @attalabs/aeg-types@0.37.0
+
 ## 0.36.0
 
 ### Minor Changes
