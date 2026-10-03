@@ -1031,10 +1031,27 @@ function defaultGitWorktreeChangedPaths(worktreePath: string, base: string): str
   }
 }
 
-/** O1/O2: the worktree's own uncommitted-and-committed diff text since `base` (`git diff --unified=0 <base>`, run inside the worktree so a linked worktree's own working-tree state is what is compared, never the main checkout's) — what the after-turn credential scan reads. `null` on any failure, so the scan simply has nothing to read rather than treating an unreadable diff as clean. */
+/**
+ * O1/O2: the worktree's own uncommitted-and-committed diff text since `base`
+ * (`git diff --unified=0 <base>`, run inside the worktree so a linked
+ * worktree's own working-tree state is what is compared, never the main
+ * checkout's) — what the after-turn credential scan reads. `null` on any
+ * failure, so the scan simply has nothing to read rather than treating an
+ * unreadable diff as clean.
+ *
+ * Round 3 review, LOW: `git diff` never lists an untracked file regardless
+ * of flags, so a recognized credential value written into a brand-new
+ * unstaged file would otherwise reach the driver's commit unscanned. Each
+ * untracked file's own raw content (`git ls-files --others
+ * --exclude-standard`, read directly off the worktree) is appended, never
+ * diffed, named by its own path so a finding's `location` still points
+ * somewhere real. Best-effort per file — an unreadable (binary, removed
+ * mid-scan) file is skipped, never a reason to fail the whole scan.
+ */
 function defaultGitWorktreeDiffText(worktreePath: string, base: string): string | null {
+  let text: string | null
   try {
-    return execFileSync('git', ['-C', worktreePath, 'diff', '--unified=0', base], {
+    text = execFileSync('git', ['-C', worktreePath, 'diff', '--unified=0', base], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       maxBuffer: 64 * 1024 * 1024
@@ -1042,6 +1059,27 @@ function defaultGitWorktreeDiffText(worktreePath: string, base: string): string 
   } catch {
     return null
   }
+  let untrackedPaths: string[] = []
+  try {
+    untrackedPaths = execFileSync('git', ['-C', worktreePath, 'ls-files', '--others', '--exclude-standard'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+  } catch {
+    untrackedPaths = []
+  }
+  for (const path of untrackedPaths) {
+    try {
+      const content = readFileSync(join(worktreePath, path), 'utf8')
+      text += `\n--- untracked: ${path} ---\n${content}`
+    } catch {
+      // Binary, removed mid-scan, or otherwise unreadable — skipped.
+    }
+  }
+  return text
 }
 
 /**
@@ -3081,10 +3119,14 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       let previousPublicationRefusal: string | null = opts.publicationRefusal?.signature ?? null
       while (true) {
         const handle = await dispatchDeveloperOnce(currentPrompt, roundNum, opts)
-        // A dispatch whose own turn failed, or one that only answers a
-        // confidence question (O1), publishes nothing.
-        if (opts.skipPublish || handle.failureReason) return handle
-        // O1/O2: refuse BEFORE any commit or credential use — the same
+        // A dispatch whose own turn failed publishes nothing — there is no
+        // trusted output to check or commit.
+        if (handle.failureReason) return handle
+        // O1/O2: every Developer turn is checked, including a
+        // `skipPublish` confidence-only reask — its confidence file is still
+        // trusted by `assessRound` to decide pause-or-proceed, so it is
+        // checked the same as a publishing turn; it is simply never
+        // published. Refused BEFORE any commit or credential use — the same
         // "before any commit or credential use" discipline
         // `checkPublicationPreconditions` already applies, below, to the
         // branch/head/Surface checks. A violation is a reask, bounded the
@@ -3102,6 +3144,9 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
           ].join('\n\n')
           continue
         }
+        // A dispatch that only answers a confidence question (O1) is now
+        // confirmed clean and publishes nothing.
+        if (opts.skipPublish) return handle
         const published = await publishDeveloperTurn(roundNum)
         if (published.kind === 'published' || published.kind === 'nothing') return handle
         publicationRefusals += 1
@@ -3726,6 +3771,11 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
       // attach with no local worktree yet) — `d.dispatchRole` then gets no
       // `cwd` override, exactly as before this task.
       const scratchDir = candidateDir ? buildReviewerScratch(root, task, roundNum, role, 3, candidateDir) : null
+      // O1/O2: the protected-path snapshot this resend's own after-dispatch
+      // check compares against — taken right before this dispatch, never
+      // from a cached copy, the same discipline `dispatchReviewer`'s own
+      // attempt loop already applies.
+      snapshotTurnConfinement(dispatchRoleName, roundNum)
       const handle = await withPromptFile(prompt, (promptFile) =>
         d.dispatchRole(dispatchRoleName, dispatchAgent, prompt, {
           task: task,
@@ -3758,6 +3808,19 @@ export async function devReviewLoop(input: LoopInput, deps: Partial<LoopDeps> = 
         false,
         role === 'reviewer' ? 'the reviewer' : 'the security reviewer'
       )
+      // O1/O2: never trust this resend's own hand-off files once a protected
+      // path changed or a recognized credential pattern appeared — thrown
+      // before `missingReviewerArtifacts`/`buildVerdictFromReport` ever read
+      // them, the same invariant `dispatchReviewer`'s own attempt loop holds.
+      const confinement = checkTurnConfinement(dispatchRoleName, reviewerScanTexts(handle))
+      if (confinement.changedPaths.length > 0 || confinement.credentialFindings.length > 0) {
+        throw new ReviewerConfinementViolation(
+          role,
+          describeTurnConfinementViolation(confinement),
+          handle.effectId ?? null,
+          handle.durationMs
+        )
+      }
       if (missingReviewerArtifacts(workDir, hasObjectives).length > 0) {
         return { verdict: firstVerdict, findingsUncitable: true }
       }
