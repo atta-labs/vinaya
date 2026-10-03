@@ -945,6 +945,23 @@ function runLoopInProcessSafe(world: LoopWorld, deps: Partial<LoopDeps>, extra: 
 // ---------------------------------------------------------------------------
 
 describe('devReviewLoop — the driver commits and publishes each Developer turn (agent-confinement-v1/1)', () => {
+  it('O1: builds a missing vendored CLI immediately before the publication commit', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    const calls: string[] = []
+    const deps = developerLeavesWorkDeps(world)
+    const commitWorktree = deps.commitWorktree!
+    deps.buildVendoredCliIfMissing = () => calls.push('build')
+    deps.commitWorktree = (worktree, header) => {
+      calls.push('commit')
+      return commitWorktree(worktree, header)
+    }
+
+    const result = await runLoopInProcess(world, { task: world.task, agent: 'claude' }, deps)
+
+    expect(result.finalDecision.type).toBe('publish')
+    expect(calls.slice(0, 2)).toEqual(['build', 'commit'])
+  })
+
   it('O1/O2/O3: commits the turn under its header, pushes and opens the PR before any poll', async () => {
     const world = makeWorld({ worktreeExists: true })
     const result = await runLoopInProcess(
@@ -1014,14 +1031,68 @@ describe('devReviewLoop — the driver commits and publishes each Developer turn
     expect(reask).toBeDefined()
   })
 
-  it('O4: a refused push leaves the turn committed-but-unpushed and never publishes', async () => {
+  it('O3/O5: a repeated pre-push-hook refusal re-asks immediately, then pauses naming the hook', async () => {
     const world = makeWorld({ worktreeExists: true, pushRefusal: 'pre-push hook refused: 2 tests failed' })
     const result = await runLoopInProcess(world, { task: world.task, agent: 'claude' }, developerLeavesWorkDeps(world))
     expect(world.commits.length).toBeGreaterThanOrEqual(1)
     // The push never landed, so the PR never opened and the round never published.
     expect(world.pushes).toHaveLength(0)
     expect(world.prOpens).toHaveLength(0)
-    expect(result.finalDecision.type).not.toBe('publish')
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
+    expect((result.finalDecision as { detail: string }).detail).toContain('pre-push-hook')
+    expect((result.finalDecision as { detail: string }).detail).toContain('2 tests failed')
+    expect(world.dispatchCountByRole.developer ?? 0).toBe(2)
+  })
+
+  it('O2/O5: a repeated commit-hook refusal re-asks once, then pauses naming the hook', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    const deps = developerLeavesWorkDeps(world)
+    deps.commitWorktree = () => ({
+      ok: false,
+      check: 'commit-hook',
+      errorLine: 'ci-shard-coverage: missing shard entry',
+      output: 'ci-shard-coverage: missing shard entry'
+    })
+
+    const result = await runLoopInProcess(world, { task: world.task, agent: 'claude' }, deps)
+
+    expect(world.pushes).toHaveLength(0)
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
+    expect((result.finalDecision as { detail: string }).detail).toContain('commit-hook')
+    expect((result.finalDecision as { detail: string }).detail).toContain('ci-shard-coverage')
+    expect(world.dispatchCountByRole.developer ?? 0).toBe(2)
+  })
+
+  it('O4/O5: PR-body gates re-ask with every message and repeat-stop before opening', async () => {
+    const world = makeWorld({ worktreeExists: true })
+    const deps = developerLeavesWorkDeps(world)
+    deps.validatePrBodyForCreate = async () => [
+      {
+        schema: 1,
+        check: 'pr-premise-own-additions',
+        severity: 'error',
+        message: 'Premise names this PR own addition',
+        agent_recovery_prompt: 'Drop the self-referential pin.'
+      },
+      {
+        schema: 1,
+        check: 'body-bare-digits',
+        severity: 'error',
+        message: 'body-bare-digits: bare digit on line 7',
+        agent_recovery_prompt: 'Backtick the digit.'
+      }
+    ]
+
+    const result = await runLoopInProcess(world, { task: world.task, agent: 'claude' }, deps)
+
+    expect(world.prOpens).toHaveLength(0)
+    expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
+    expect((result.finalDecision as { detail: string }).detail).toContain('pr-premise-own-additions')
+    const reask = world.dispatches.find(
+      (dispatch) => dispatch.role === 'developer' && (dispatch.prompt ?? '').includes('body-bare-digits')
+    )
+    expect(reask?.prompt).toContain('Premise names this PR own addition')
+    expect(reask?.prompt).toContain('bare digit on line 7')
   })
 })
 
