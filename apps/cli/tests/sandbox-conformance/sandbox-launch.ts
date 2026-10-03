@@ -126,6 +126,11 @@ function claudeSession(): SandboxSession {
     throw new Error(`Claude's sandbox cannot run on this host: ${resolution.warning}`)
   }
   const { network, filesystem } = resolution.settings.sandbox
+  // The settings file carries exactly what the driver ships. Fail if the driver grows a deny list this file would drop.
+  const shipped = JSON.stringify([Object.keys(network).sort(), Object.keys(filesystem).sort()])
+  if (shipped !== JSON.stringify([['allowedDomains'], ['allowRead', 'allowWrite', 'denyRead']])) {
+    throw new Error(`resolveClaudeConfinement emits settings the conformance file does not carry: ${shipped}`)
+  }
   const settingsPath = join(settingsDir, 'srt-settings.json')
   writeFileSync(
     settingsPath,
