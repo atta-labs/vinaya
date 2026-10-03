@@ -1421,6 +1421,21 @@ describe('devReviewLoop — the driver_exited lifecycle event (#949, O2/O3)', ()
     expect(exit.task).toBe(world.task)
     expect(exit.reason).toBe('finished')
     expect(exit.last_decision).toBe('publish')
+    // A clean return records no exit code and no error class.
+    expect(exit).not.toHaveProperty('exit_code')
+    expect(exit).not.toHaveProperty('error_class')
+
+    // This world's pull request is already open when the driver starts, so
+    // every event the driver records carries its number in the header subject.
+    const lines = ipOutboxLines(world) as Array<{ event?: string; subject?: { pr?: number } }>
+    expect(typeof lines.find((l) => l.event === 'driver_exited')?.subject?.pr).toBe('number')
+    const verdicts = lines.find((l) => l.event === 'verdicts_read') as Record<string, unknown> | undefined
+    expect(verdicts?.reviewers).toEqual([
+      { role: 'code-reviewer', outcome: 'approve', blockers: 0 },
+      { role: 'security', outcome: 'approve', blockers: 0 }
+    ])
+    // Restored on return: nothing left in this process's environment.
+    expect(process.env.VINAYA_PR).toBeUndefined()
 
     // The role log stays diagnostic: a clean return writes no `driver_exited`
     // line there (Boundary — "diagnostic rather than routine").
@@ -1442,6 +1457,9 @@ describe('devReviewLoop — the driver_exited lifecycle event (#949, O2/O3)', ()
     const exit = exits[0] as Record<string, unknown>
     expect(exit.reason).toBe('paused')
     expect(exit.last_decision).toBe('pause(infrastructure)')
+    const paused = ipOutboxLines(world).filter((l) => l.event === 'paused')
+    expect(paused.length).toBeGreaterThan(0)
+    expect((paused[0] as Record<string, unknown>).reason_code).toBe('infrastructure')
   })
 
   it('an uncaught error emits one driver_exited reason=error and still writes the diagnostic role-log line', async () => {
@@ -1460,6 +1478,9 @@ describe('devReviewLoop — the driver_exited lifecycle event (#949, O2/O3)', ()
     const exits = ipOutboxLines(world).filter((l) => l.event === 'driver_exited')
     expect(exits).toHaveLength(1)
     expect((exits[0] as Record<string, unknown>).reason).toBe('error')
+    // The class is the constructor name; the message never reaches the record.
+    expect((exits[0] as Record<string, unknown>).error_class).toBe('Error')
+    expect(JSON.stringify(exits[0])).not.toContain('trust-anchor')
 
     // An abnormal exit DOES leave the role-log trace — the signal a reader
     // follows when no decision reached the forge.

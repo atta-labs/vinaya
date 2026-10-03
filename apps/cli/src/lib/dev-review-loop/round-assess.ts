@@ -10,6 +10,7 @@
  */
 
 import { readFileSync } from 'node:fs'
+import { CODE_TOKEN_PATTERN } from '@attalabs/aeg-core/log'
 import {
   CONFIDENCE_REASON_MAX_LENGTH,
   defaultControlStoreDeps,
@@ -490,7 +491,14 @@ export function driverDecidedPauseEvents(
   const envelope = { kind: 'dev_review_loop' as const, payload: {} }
   return [
     { ...envelope, loop_id: loopId, event: 'stop_condition_met', round, condition: 'principal_stop' },
-    { ...envelope, loop_id: loopId, event: 'paused', round, reason: 'principal_item', reason_code: reasonCode },
+    {
+      ...envelope,
+      loop_id: loopId,
+      event: 'paused',
+      round,
+      reason: 'principal_item',
+      reason_code: CODE_TOKEN_PATTERN.test(reasonCode) ? reasonCode : 'unknown'
+    },
     {
       ...envelope,
       loop_id: loopId,
@@ -559,9 +567,6 @@ export function driverCrashEvents(
   ]
 }
 
-/** The shape `driver_exited.error_class` accepts: letters, digits, dot, dash, underscore, 64 at most. */
-const ERROR_CLASS_PATTERN = /^[A-Za-z0-9._-]{1,64}$/
-
 /**
  * The class of a thrown value, for `driver_exited.error_class`: the error's
  * own string `code` when it has one, else its constructor name — never its
@@ -573,5 +578,5 @@ export function errorClassOf(err: unknown): string {
   const code = typeof err === 'object' && err !== null ? (err as { code?: unknown }).code : undefined
   const name = typeof err === 'object' && err !== null ? err.constructor?.name : undefined
   const candidate = typeof code === 'string' && code !== '' ? code : name
-  return typeof candidate === 'string' && ERROR_CLASS_PATTERN.test(candidate) ? candidate : 'unknown'
+  return typeof candidate === 'string' && CODE_TOKEN_PATTERN.test(candidate) ? candidate : 'unknown'
 }

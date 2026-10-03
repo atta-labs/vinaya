@@ -170,6 +170,45 @@ describe('assessRound — Part 1 (O1, O5): green path', () => {
   })
 })
 
+describe('assessRound — verdicts_read reviewers', () => {
+  type Reviewers = { role: string; outcome: string; blockers: number }[]
+  function reviewersOf(verdicts: Parameters<typeof fakeVerdicts>[1]): { reviewers: Reviewers; blockers: number } {
+    const { events } = runScenario(freshState(), [fakeGate(1, true), fakeVerdicts(1, verdicts)])
+    const read = events.find((e) => e.event === 'verdicts_read') as unknown as {
+      reviewers: Reviewers
+      blockers: number
+    }
+    return read
+  }
+
+  it('a blocking verdict reads changes_requested with one blocker, and the entries add up to blockers', () => {
+    const read = reviewersOf([
+      blockingVerdict('reviewer', [{ id: 'F1', severity: 'blocker', state: 'open' }]),
+      cleanVerdict('security')
+    ])
+    expect(read.reviewers).toEqual([
+      { role: 'code-reviewer', outcome: 'changes_requested', blockers: 1 },
+      { role: 'security', outcome: 'approve', blockers: 0 }
+    ])
+    expect(read.reviewers.reduce((n, r) => n + r.blockers, 0)).toBe(read.blockers)
+  })
+
+  it('a configured role with no verdict reads not_reviewed with no blockers', () => {
+    const read = reviewersOf([cleanVerdict('reviewer')])
+    expect(read.reviewers).toEqual([
+      { role: 'code-reviewer', outcome: 'approve', blockers: 0 },
+      { role: 'security', outcome: 'not_reviewed', blockers: 0 }
+    ])
+    expect(read.reviewers.reduce((n, r) => n + r.blockers, 0)).toBe(read.blockers)
+  })
+
+  it('an ESCALATE verdict reads changes_requested with no counted blocker, matching the event count', () => {
+    const read = reviewersOf([escalateVerdict('reviewer'), blockingVerdict('security', [])])
+    expect(read.reviewers[0]).toEqual({ role: 'code-reviewer', outcome: 'changes_requested', blockers: 0 })
+    expect(read.reviewers.reduce((n, r) => n + r.blockers, 0)).toBe(read.blockers)
+  })
+})
+
 describe('assessRound — Part 2 (O3): objectives and confidence', () => {
   it('a NOT MET objective with zero findings → dispatch_developer, verdicts_read.all_approve false', () => {
     const { events, decisions } = runScenario(freshState(), [

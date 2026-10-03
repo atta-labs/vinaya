@@ -65,6 +65,7 @@
  * there and nowhere else"), built on the reused map.
  */
 
+import { CODE_TOKEN_PATTERN, ROLE_VALUES, type Role } from '../log/schema'
 import { groupRounds, type Round, type VerdictComment } from '../review-status'
 import { isActiveBudgetPhase, taskPhaseLabel } from '../task-phase-history'
 import {
@@ -174,7 +175,7 @@ function toReviewFinding(f: VerdictObservation['findings'][number]): {
 }
 
 /** The doctrine role a verdict's own role names — `VerdictObservation.role` says `'reviewer'` where the log's role vocabulary says `'code-reviewer'`. */
-function verdictLogRole(role: VerdictObservation['role']): string {
+function verdictLogRole(role: VerdictObservation['role']): Role {
   return role === 'reviewer' ? 'code-reviewer' : role
 }
 
@@ -192,7 +193,8 @@ function reviewerEntries(
   verdicts: VerdictObservation[]
 ): NonNullable<Extract<DevReviewLoopEventInput, { event: 'verdicts_read' }>['reviewers']> {
   const held = new Map(verdicts.map((v) => [verdictLogRole(v.role), v]))
-  const roles = [...new Set([...state.config.reviewers, ...held.keys()])]
+  const isRole = (value: string): value is Role => (ROLE_VALUES as readonly string[]).includes(value)
+  const roles = [...new Set([...state.config.reviewers.filter(isRole), ...held.keys()])]
   return roles.map((role) => {
     const v = held.get(role)
     const entry =
@@ -201,7 +203,7 @@ function reviewerEntries(
         : v.verdict === 'APPROVE' || v.verdict === 'PASS'
           ? { outcome: 'approve' as const, blockers: 0 }
           : { outcome: 'changes_requested' as const, blockers: v.verdict === 'ESCALATE' ? 0 : 1 }
-    return { role: role as never, ...entry }
+    return { role, ...entry }
   })
 }
 
@@ -251,7 +253,13 @@ function pausedEvent(
   reason: 'escalation' | 'principal_item',
   reasonCode: string
 ): DevReviewLoopEventInput {
-  return { ...loopEventEnvelope(state), event: 'paused', round, reason, reason_code: reasonCode }
+  return {
+    ...loopEventEnvelope(state),
+    event: 'paused',
+    round,
+    reason,
+    reason_code: CODE_TOKEN_PATTERN.test(reasonCode) ? reasonCode : 'unknown'
+  }
 }
 
 function roundEndedEvent(

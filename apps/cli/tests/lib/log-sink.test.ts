@@ -168,6 +168,24 @@ describe('log-sink — a valid line', () => {
   })
 })
 
+describe('log-sink — the pull request number', () => {
+  it('parses VINAYA_PR into subject.pr and records none when it is unset', async () => {
+    for (const [value, expected] of [
+      ['977', 977],
+      [undefined, undefined]
+    ] as const) {
+      const { dir, deps } = testDeps({
+        env: () => ({ VINAYA_ROLE: 'developer', VINAYA_TASK: '404', ...(value ? { VINAYA_PR: value } : {}) })
+      })
+      const { log } = createLogSink(deps)
+      log(DISPATCHED)
+      await flush()
+      const parsed = JSON.parse(readFileSync(join(dir, 'outbox', 'atta-labs-vinaya', '404.ndjson'), 'utf8').trim())
+      expect(parsed.subject.pr).toBe(expected)
+    }
+  })
+})
+
 describe('log-sink — defeat cases', () => {
   it('refuses an invalid payload without writing anything', async () => {
     const { dir, deps } = testDeps()
